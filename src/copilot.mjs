@@ -139,7 +139,7 @@ export async function listModels() {
   return { status: resp.status, body: await resp.text() };
 }
 
-// 新模型（RESPONSES_ONLY）直连官方 /v1/responses，返回 fetch Response。
+// 新模型（RESPONSES_ONLY）直连官方 /responses，返回 fetch Response。
 export async function responses(reqBody) {
   const token = await getCopilotToken();
   const headers = buildHeaders({

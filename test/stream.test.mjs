@@ -25,3 +25,18 @@ test("webStreamLines: 末尾无换行的残留行也产出", async () => {
   for await (const line of webStreamLines(resp)) lines.push(line);
   assert.deepEqual(lines, ["a", "b"]);
 });
+
+test("webStreamLines: CRLF 行尾的 \\r 被剥除", async () => {
+  const resp = responseFrom(["data: a\r\n", "data: b\r\n"]);
+  const lines = [];
+  for await (const line of webStreamLines(resp)) lines.push(line);
+  assert.deepEqual(lines, ["data: a", "data: b"]);
+});
+
+test("webStreamLines: 提前 break 后 body 解锁(reader 不泄漏)", async () => {
+  const resp = responseFrom(["x\n", "y\n", "z\n"]);
+  for await (const line of webStreamLines(resp)) {
+    if (line === "x") break;
+  }
+  assert.equal(resp.body.locked, false);
+});

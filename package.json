@@ -1,0 +1,26 @@
+{
+  "name": "codex-copilot-dx",
+  "version": "0.1.5",
+  "description": "Use Codex Desktop app with your GitHub Copilot subscription",
+  "type": "module",
+  "bin": {
+    "codex-copilot-dx": "bin/cli.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md"
+  ],
+  "keywords": [
+    "codex",
+    "copilot",
+    "github",
+    "openai",
+    "proxy",
+    "responses-api"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "copilot-api": "^0.7.0"
+  }
+}

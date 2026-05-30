@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Use Codex Desktop app with your GitHub Copilot subscription",
   "type": "module",
   "bin": {
@@ -23,7 +23,5 @@
   "scripts": {
     "test": "node --test"
   },
-  "dependencies": {
-    "copilot-api": "^0.7.0"
-  }
+  "dependencies": {}
 }

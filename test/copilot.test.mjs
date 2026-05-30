@@ -66,3 +66,22 @@ test("FALLBACK_VSCODE_VERSION 为已知最新", () => {
 test("parseVSCodeVersion: 空字符串 → fallback", () => {
   assert.equal(parseVSCodeVersion({ productVersion: "" }), FALLBACK_VSCODE_VERSION);
 });
+
+import { parseApiBase, DEFAULT_API_BASE } from "../src/copilot.mjs";
+
+test("parseApiBase: 读取 endpoints.api", () => {
+  assert.equal(parseApiBase({ endpoints: { api: "https://api.enterprise.githubcopilot.com" } }),
+    "https://api.enterprise.githubcopilot.com");
+});
+
+test("parseApiBase: 缺 endpoints → 默认", () => {
+  assert.equal(parseApiBase({}), DEFAULT_API_BASE);
+});
+
+test("parseApiBase: endpoints 无 api 字段 → 默认", () => {
+  assert.equal(parseApiBase({ endpoints: {} }), DEFAULT_API_BASE);
+});
+
+test("DEFAULT_API_BASE 为个人版 host", () => {
+  assert.equal(DEFAULT_API_BASE, "https://api.githubcopilot.com");
+});

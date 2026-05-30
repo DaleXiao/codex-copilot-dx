@@ -4,7 +4,18 @@ import os from "node:os";
 import { randomUUID } from "node:crypto";
 
 const GITHUB_TOKEN_PATH = path.join(os.homedir(), ".local", "share", "copilot-api", "github_token");
-const COPILOT_API = "https://api.githubcopilot.com";
+export const DEFAULT_API_BASE = "https://api.githubcopilot.com";
+let apiBase = DEFAULT_API_BASE;
+
+export function parseApiBase(data) {
+  return (data && data.endpoints && typeof data.endpoints.api === "string" && data.endpoints.api)
+    ? data.endpoints.api
+    : DEFAULT_API_BASE;
+}
+
+export function getApiBase() {
+  return apiBase;
+}
 const GITHUB_API = "https://api.github.com";
 
 export function computeInitiator(messages) {
@@ -93,6 +104,7 @@ export async function getCopilotToken() {
   const data = await resp.json();
   if (!data.token) throw new Error("Copilot token response missing token field");
   copilotToken = data.token;
+  apiBase = parseApiBase(data);
   copilotTokenExpiry = typeof data.expires_at === "number"
     ? data.expires_at * 1000
     : Date.now() + 25 * 60 * 1000; // fallback if expires_at absent: refresh in ~25min
@@ -111,7 +123,7 @@ export async function chatCompletions(chatReq) {
     initiator: computeInitiator(messages),
     vision: computeVision(messages),
   });
-  return fetch(`${COPILOT_API}/v1/chat/completions`, {
+  return fetch(`${getApiBase()}/chat/completions`, {
     method: "POST",
     headers,
     body: JSON.stringify(chatReq),
@@ -123,7 +135,7 @@ export async function listModels() {
   const headers = buildHeaders({
     token, version: getVSCodeVersion(), initiator: "user", vision: false,
   });
-  const resp = await fetch(`${COPILOT_API}/v1/models`, { headers });
+  const resp = await fetch(`${getApiBase()}/models`, { headers });
   return { status: resp.status, body: await resp.text() };
 }
 
@@ -136,7 +148,7 @@ export async function responses(reqBody) {
     initiator: "user",
     vision: false,
   });
-  return fetch(`${COPILOT_API}/v1/responses`, {
+  return fetch(`${getApiBase()}/responses`, {
     method: "POST",
     headers,
     body: JSON.stringify(reqBody),

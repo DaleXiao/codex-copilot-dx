@@ -72,3 +72,70 @@ export async function refreshVSCodeVersion() {
   }
   return cachedVersion;
 }
+
+let copilotToken = null;
+let copilotTokenExpiry = 0;
+
+function getGithubToken() {
+  if (!fs.existsSync(GITHUB_TOKEN_PATH)) {
+    throw new Error("GitHub token not found. Run the tool once to log in.");
+  }
+  return fs.readFileSync(GITHUB_TOKEN_PATH, "utf-8").trim();
+}
+
+export async function getCopilotToken() {
+  if (copilotToken && Date.now() < copilotTokenExpiry - 60000) return copilotToken;
+  const ghToken = getGithubToken();
+  const resp = await fetch(`${GITHUB_API}/copilot_internal/v2/token`, {
+    headers: { Authorization: `token ${ghToken}`, Accept: "application/json" },
+  });
+  if (!resp.ok) throw new Error(`Failed to get Copilot token: ${resp.status}`);
+  const data = await resp.json();
+  copilotToken = data.token;
+  copilotTokenExpiry = data.expires_at * 1000;
+  console.log("[codex-copilot-dx] Copilot token refreshed");
+  return copilotToken;
+}
+
+// chatReq: OpenAI chat/completions 请求体（已由 adapter 从 Responses 转换好）。
+// 返回原始 fetch Response（流式 body），由调用方解析。
+export async function chatCompletions(chatReq) {
+  const token = await getCopilotToken();
+  const messages = chatReq.messages || [];
+  const headers = buildHeaders({
+    token,
+    version: getVSCodeVersion(),
+    initiator: computeInitiator(messages),
+    vision: computeVision(messages),
+  });
+  return fetch(`${COPILOT_API}/v1/chat/completions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(chatReq),
+  });
+}
+
+export async function listModels() {
+  const token = await getCopilotToken();
+  const headers = buildHeaders({
+    token, version: getVSCodeVersion(), initiator: "user", vision: false,
+  });
+  const resp = await fetch(`${COPILOT_API}/v1/models`, { headers });
+  return { status: resp.status, body: await resp.text() };
+}
+
+// 新模型（RESPONSES_ONLY）直连官方 /v1/responses，返回 fetch Response。
+export async function responses(reqBody) {
+  const token = await getCopilotToken();
+  const headers = buildHeaders({
+    token,
+    version: getVSCodeVersion(),
+    initiator: "user",
+    vision: false,
+  });
+  return fetch(`${COPILOT_API}/v1/responses`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(reqBody),
+  });
+}

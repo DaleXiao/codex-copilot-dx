@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeInitiator, computeVision, buildHeaders } from "../src/copilot.mjs";
+import { computeInitiator, computeVision, buildHeaders, parseVSCodeVersion, FALLBACK_VSCODE_VERSION } from "../src/copilot.mjs";
 
 test("computeInitiator: 纯 user 消息 → user", () => {
   const msgs = [{ role: "user", content: "hi" }];
@@ -45,4 +45,20 @@ test("buildHeaders: vision=false 不含 Copilot-Vision-Request", () => {
   const h = buildHeaders({ token: "tok", version: "1.122.1", initiator: "user", vision: false });
   assert.equal(h["Copilot-Vision-Request"], undefined);
   assert.equal(h["X-Initiator"], "user");
+});
+
+test("parseVSCodeVersion: 正常解析 productVersion", () => {
+  assert.equal(parseVSCodeVersion({ productVersion: "1.122.1" }), "1.122.1");
+});
+
+test("parseVSCodeVersion: 缺字段 → fallback", () => {
+  assert.equal(parseVSCodeVersion({}), FALLBACK_VSCODE_VERSION);
+});
+
+test("parseVSCodeVersion: null → fallback", () => {
+  assert.equal(parseVSCodeVersion(null), FALLBACK_VSCODE_VERSION);
+});
+
+test("FALLBACK_VSCODE_VERSION 为已知最新", () => {
+  assert.equal(FALLBACK_VSCODE_VERSION, "1.122.1");
 });

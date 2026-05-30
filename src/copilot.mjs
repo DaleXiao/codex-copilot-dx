@@ -38,3 +38,37 @@ export function buildHeaders({ token, version, initiator, vision }) {
   if (vision) h["Copilot-Vision-Request"] = "true";
   return h;
 }
+
+export const FALLBACK_VSCODE_VERSION = "1.122.1";
+
+let cachedVersion = FALLBACK_VSCODE_VERSION;
+
+export function parseVSCodeVersion(json) {
+  return (json && typeof json.productVersion === "string")
+    ? json.productVersion
+    : FALLBACK_VSCODE_VERSION;
+}
+
+export function getVSCodeVersion() {
+  return cachedVersion;
+}
+
+// 启动时调用：异步抓最新版本，成功则替换缓存；失败静默保留 fallback。
+export async function refreshVSCodeVersion() {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    const resp = await fetch(
+      "https://update.code.visualstudio.com/api/update/darwin-arm64/stable/latest",
+      { signal: ctrl.signal },
+    );
+    clearTimeout(timer);
+    if (resp.ok) {
+      cachedVersion = parseVSCodeVersion(await resp.json());
+      console.log(`[codex-copilot-dx] VSCode version: ${cachedVersion}`);
+    }
+  } catch {
+    // 静默保留 fallback
+  }
+  return cachedVersion;
+}

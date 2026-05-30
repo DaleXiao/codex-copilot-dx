@@ -36,7 +36,7 @@ async function proxyCopilotResponses(reqBody, req, res) {
   }
 }
 
-// ── Chat Completions conversion (for older models via copilot-api) ──
+// ── Chat Completions conversion (for older models) ──
 
 function responsesToChat(body) {
   const messages = [];
@@ -143,11 +143,12 @@ async function forwardToChat(chatReq, emitEvent, onDone, onError) {
         }
       }
     }
-    emitCompleted();
-    onDone();
   } catch (e) {
     onError(500, e?.message || "upstream stream error");
+    return;
   }
+  emitCompleted();
+  onDone();
 }
 
 // ── Export ──

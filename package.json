@@ -20,6 +20,9 @@
     "responses-api"
   ],
   "license": "MIT",
+  "scripts": {
+    "test": "node --test"
+  },
   "dependencies": {
     "copilot-api": "^0.7.0"
   }

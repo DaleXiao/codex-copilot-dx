@@ -44,7 +44,7 @@ export const FALLBACK_VSCODE_VERSION = "1.122.1";
 let cachedVersion = FALLBACK_VSCODE_VERSION;
 
 export function parseVSCodeVersion(json) {
-  return (json && typeof json.productVersion === "string")
+  return (json && typeof json.productVersion === "string" && json.productVersion)
     ? json.productVersion
     : FALLBACK_VSCODE_VERSION;
 }

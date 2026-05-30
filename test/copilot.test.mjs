@@ -62,3 +62,7 @@ test("parseVSCodeVersion: null → fallback", () => {
 test("FALLBACK_VSCODE_VERSION 为已知最新", () => {
   assert.equal(FALLBACK_VSCODE_VERSION, "1.122.1");
 });
+
+test("parseVSCodeVersion: 空字符串 → fallback", () => {
+  assert.equal(parseVSCodeVersion({ productVersion: "" }), FALLBACK_VSCODE_VERSION);
+});

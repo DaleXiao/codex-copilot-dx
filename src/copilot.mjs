@@ -91,8 +91,11 @@ export async function getCopilotToken() {
   });
   if (!resp.ok) throw new Error(`Failed to get Copilot token: ${resp.status}`);
   const data = await resp.json();
+  if (!data.token) throw new Error("Copilot token response missing token field");
   copilotToken = data.token;
-  copilotTokenExpiry = data.expires_at * 1000;
+  copilotTokenExpiry = typeof data.expires_at === "number"
+    ? data.expires_at * 1000
+    : Date.now() + 25 * 60 * 1000; // fallback if expires_at absent: refresh in ~25min
   console.log("[codex-copilot-dx] Copilot token refreshed");
   return copilotToken;
 }

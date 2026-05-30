@@ -15,9 +15,13 @@ test("interpretPoll: slow_down → slow", () => {
 });
 
 test("interpretPoll: expired_token → fail", () => {
-  assert.equal(interpretPoll({ error: "expired_token" }).state, "fail");
+  assert.deepEqual(interpretPoll({ error: "expired_token" }), { state: "fail", error: "expired_token" });
 });
 
 test("interpretPoll: 未知 error → fail", () => {
-  assert.equal(interpretPoll({ error: "access_denied" }).state, "fail");
+  assert.deepEqual(interpretPoll({ error: "access_denied" }), { state: "fail", error: "access_denied" });
+});
+
+test("interpretPoll: 空 access_token 不算 done", () => {
+  assert.equal(interpretPoll({ access_token: "" }).state, "fail");
 });

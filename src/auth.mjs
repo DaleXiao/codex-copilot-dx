@@ -9,7 +9,7 @@ const GITHUB_TOKEN_PATH = path.join(os.homedir(), ".local", "share", "copilot-ap
 
 // 纯函数：把 GitHub poll 响应映射为状态。
 export function interpretPoll(data) {
-  if (data.access_token) return { state: "done", token: data.access_token };
+  if (typeof data.access_token === "string" && data.access_token) return { state: "done", token: data.access_token };
   switch (data.error) {
     case "authorization_pending": return { state: "wait" };
     case "slow_down": return { state: "slow" };
@@ -24,12 +24,17 @@ function openAndCopy(userCode, verificationUri) {
   if (process.platform !== "darwin") return;
   try {
     const pb = spawn("pbcopy");
+    pb.on("error", () => {});
+    pb.stdin.on("error", () => {});
+    pb.on("close", (code) => {
+      if (code === 0) console.log("[codex-copilot-dx] (user code 已复制到剪贴板)");
+    });
     pb.stdin.write(userCode);
     pb.stdin.end();
-    console.log("[codex-copilot-dx] (user code 已复制到剪贴板)");
   } catch {}
   try {
-    spawn("open", [verificationUri], { detached: true, stdio: "ignore" });
+    const op = spawn("open", [verificationUri], { detached: true, stdio: "ignore" });
+    op.on("error", () => {});
   } catch {}
 }
 
@@ -66,6 +71,10 @@ export async function ensureAuth() {
         grant_type: "urn:ietf:params:oauth:grant-type:device_code",
       }),
     });
+    if (!pollResp.ok) {
+      // 瞬时网络/服务端错误：当作 pending，下一轮重试
+      continue;
+    }
     const data = await pollResp.json();
     const r = interpretPoll(data);
     if (r.state === "done") {

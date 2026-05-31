@@ -51,7 +51,10 @@ function convertMessage(msg) {
     if (b.type === "text") {
       textImageParts.push({ type: "text", text: b.text });
     } else if (b.type === "image") {
-      textImageParts.push({ type: "image_url", image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` } });
+      const url = b.source?.type === "url"
+        ? b.source.url
+        : `data:${b.source.media_type};base64,${b.source.data}`;
+      textImageParts.push({ type: "image_url", image_url: { url } });
     } else if (b.type === "tool_use") {
       toolCalls.push({ id: b.id, type: "function", function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) } });
     }

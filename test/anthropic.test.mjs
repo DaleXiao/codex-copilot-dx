@@ -85,3 +85,12 @@ test("anthropicToChat: stop_sequences → stop, 透传采样参数", () => {
   assert.equal(r.temperature, 0.5);
   assert.equal(r.top_p, 0.9);
 });
+
+test("anthropicToChat: image url-type source → 直接用 url", () => {
+  const r = anthropicToChat({ model: "m", messages: [{ role: "user", content: [
+    { type: "image", source: { type: "url", url: "https://example.com/x.png" } },
+  ] }] });
+  const parts = r.messages[0].content;
+  assert.equal(parts[0].type, "image_url");
+  assert.equal(parts[0].image_url.url, "https://example.com/x.png");
+});

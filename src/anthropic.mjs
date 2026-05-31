@@ -149,3 +149,90 @@ export function chatToAnthropic(openaiResp, model) {
     usage,
   };
 }
+
+// 消费 OpenAI chat SSE 行迭代器,产出 Anthropic 事件。emit(event, dataObj)。
+export async function streamAnthropicFromLines(lineIterator, emit, model) {
+  const msgId = `msg_${uid()}`;
+  let started = false;
+  let blockIndex = -1;
+  let textOpen = false;
+  let actualModel = model;
+  let finishReason = null;
+  const toolBlocks = {}; // openaiIndex -> { anthropicIndex }
+  let sawToolUse = false;
+  let outputTokens = 0;
+
+  const ensureStart = () => {
+    if (started) return;
+    started = true;
+    emit("message_start", { type: "message_start", message: {
+      id: msgId, type: "message", role: "assistant", model: actualModel,
+      content: [], stop_reason: null, stop_sequence: null,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    } });
+  };
+
+  const openText = () => {
+    if (textOpen) return;
+    blockIndex += 1;
+    textOpen = true;
+    emit("content_block_start", { type: "content_block_start", index: blockIndex,
+      content_block: { type: "text", text: "" } });
+  };
+  const closeText = () => {
+    if (!textOpen) return;
+    emit("content_block_stop", { type: "content_block_stop", index: blockIndex });
+    textOpen = false;
+  };
+
+  for await (const line of lineIterator) {
+    if (!line.startsWith("data: ")) continue;
+    const data = line.slice(6).trim();
+    if (data === "[DONE]") break;
+    let parsed;
+    try { parsed = JSON.parse(data); } catch { continue; }
+    if (parsed.model) actualModel = parsed.model;
+    const choice = parsed.choices?.[0];
+    if (!choice) continue;
+    const delta = choice.delta || {};
+    ensureStart();
+
+    if (delta.content) {
+      openText();
+      emit("content_block_delta", { type: "content_block_delta", index: blockIndex,
+        delta: { type: "text_delta", text: delta.content } });
+    }
+
+    if (Array.isArray(delta.tool_calls)) {
+      sawToolUse = true;
+      closeText();
+      for (const tc of delta.tool_calls) {
+        const oi = tc.index ?? 0;
+        if (!toolBlocks[oi]) {
+          blockIndex += 1;
+          toolBlocks[oi] = { anthropicIndex: blockIndex };
+          emit("content_block_start", { type: "content_block_start", index: blockIndex,
+            content_block: { type: "tool_use", id: tc.id || `tu_${uid()}`, name: tc.function?.name || "", input: {} } });
+        }
+        if (tc.function?.arguments) {
+          emit("content_block_delta", { type: "content_block_delta", index: toolBlocks[oi].anthropicIndex,
+            delta: { type: "input_json_delta", partial_json: tc.function.arguments } });
+        }
+      }
+    }
+
+    if (choice.finish_reason) finishReason = choice.finish_reason;
+    if (parsed.usage?.completion_tokens) outputTokens = parsed.usage.completion_tokens;
+  }
+
+  ensureStart();
+  if (textOpen) closeText();
+  for (const oi of Object.keys(toolBlocks)) {
+    emit("content_block_stop", { type: "content_block_stop", index: toolBlocks[oi].anthropicIndex });
+  }
+
+  const stop_reason = finishReason ? mapStopReason(finishReason) : (sawToolUse ? "tool_use" : "end_turn");
+  emit("message_delta", { type: "message_delta", delta: { stop_reason, stop_sequence: null },
+    usage: { output_tokens: outputTokens } });
+  emit("message_stop", { type: "message_stop" });
+}

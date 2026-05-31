@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mapStopReason, anthropicToChat, chatToAnthropic } from "../src/anthropic.mjs";
+import { streamAnthropicFromLines } from "../src/anthropic.mjs";
 
 test("mapStopReason: 四种映射", () => {
   assert.equal(mapStopReason("stop"), "end_turn");
@@ -136,4 +137,50 @@ test("chatToAnthropic: cached_tokens → cache_read_input_tokens", () => {
   const a = chatToAnthropic(openai, "m");
   assert.equal(a.usage.input_tokens, 70);
   assert.equal(a.usage.cache_read_input_tokens, 30);
+});
+
+async function collect(lines, model = "m") {
+  async function* gen() { for (const l of lines) yield l; }
+  const events = [];
+  await streamAnthropicFromLines(gen(), (event, data) => events.push([event, data]), model);
+  return events;
+}
+
+test("streamAnthropicFromLines: 纯文本流", async () => {
+  const lines = [
+    'data: {"model":"claude","choices":[{"delta":{"content":"He"}}]}',
+    'data: {"choices":[{"delta":{"content":"llo"}}]}',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+    'data: [DONE]',
+  ];
+  const ev = await collect(lines);
+  const types = ev.map((e) => e[0]);
+  assert.deepEqual(types, [
+    "message_start", "content_block_start", "content_block_delta", "content_block_delta",
+    "content_block_stop", "message_delta", "message_stop",
+  ]);
+  assert.equal(ev[2][1].delta.text, "He");
+  assert.equal(ev[3][1].delta.text, "llo");
+  assert.equal(ev[5][1].delta.stop_reason, "end_turn");
+});
+
+test("streamAnthropicFromLines: 工具调用流", async () => {
+  const lines = [
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tu_1","function":{"name":"get_x","arguments":""}}]}}]}',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"a\\":"}}]}}]}',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}',
+    'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+    'data: [DONE]',
+  ];
+  const ev = await collect(lines);
+  const types = ev.map((e) => e[0]);
+  const startTool = ev.find((e) => e[0] === "content_block_start" && e[1].content_block.type === "tool_use");
+  assert.ok(startTool);
+  assert.equal(startTool[1].content_block.name, "get_x");
+  assert.equal(startTool[1].content_block.id, "tu_1");
+  const jsonDeltas = ev.filter((e) => e[0] === "content_block_delta" && e[1].delta.type === "input_json_delta");
+  assert.equal(jsonDeltas.map((e) => e[1].delta.partial_json).join(""), '{"a":1}');
+  const md = ev.find((e) => e[0] === "message_delta");
+  assert.equal(md[1].delta.stop_reason, "tool_use");
+  assert.equal(types[types.length - 1], "message_stop");
 });

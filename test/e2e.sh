@@ -20,5 +20,20 @@ curl -s -N -X POST "http://localhost:$PORT/v1/responses" \
 echo "=== 3. 确认 OUR adapter 进程未派生 copilot-api 子进程 ==="
 pgrep -f "copilot-api (start|auth)" >/dev/null && echo "WARN: a copilot-api process exists (may be unrelated legacy)" || echo "OK: 无 copilot-api 子进程"
 
+echo "=== 4. POST /v1/messages 非流式 ==="
+curl -s -X POST "http://localhost:$PORT/v1/messages" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"claude-sonnet-4.5","max_tokens":50,"messages":[{"role":"user","content":"say OK"}]}' | head -c 400; echo
+
+echo "=== 5. POST /v1/messages 流式 ==="
+curl -s -N -X POST "http://localhost:$PORT/v1/messages" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"claude-sonnet-4.5","max_tokens":50,"stream":true,"messages":[{"role":"user","content":"say OK"}]}' 2>&1 | grep -aE "^event:" | head -10; echo
+
+echo "=== 6. POST /v1/messages/count_tokens ==="
+curl -s -X POST "http://localhost:$PORT/v1/messages/count_tokens" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"claude-sonnet-4.5","messages":[{"role":"user","content":"hello world how many tokens"}]}'; echo
+
 kill $PID 2>/dev/null || true
 echo "=== done ==="

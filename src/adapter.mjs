@@ -2,6 +2,7 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { chatCompletions, listModels, responses as copilotResponses } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
+import { anthropicToChat, chatToAnthropic, streamAnthropicFromLines, countTokens } from "./anthropic.mjs";
 
 // Models that only support Responses API (not chat/completions)
 const RESPONSES_ONLY = new Set([
@@ -200,6 +201,61 @@ export function startAdapter(port = 4142) {
       listModels()
         .then(({ status, body }) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(body); })
         .catch((e) => { if (!res.headersSent) res.writeHead(502); res.end(JSON.stringify({ error: e.message })); });
+      return;
+    }
+
+    if (req.method === "POST" && req.url?.startsWith("/v1/messages/count_tokens")) {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        try {
+          const parsed = JSON.parse(body);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(countTokens(parsed)));
+        } catch (e) {
+          if (!res.headersSent) res.writeHead(400);
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      });
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/v1/messages") {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", async () => {
+        try {
+          const parsed = JSON.parse(body);
+          const model = parsed.model || "unknown";
+          console.log(`[codex-copilot-dx] messages ${model} stream=${!!parsed.stream}`);
+          const chatReq = anthropicToChat(parsed);
+          if (parsed.stream) {
+            const upstream = await chatCompletions({ ...chatReq, stream: true });
+            if (!upstream.ok) {
+              if (!res.headersSent) res.writeHead(upstream.status);
+              res.end(await upstream.text());
+              return;
+            }
+            res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+            await streamAnthropicFromLines(
+              webStreamLines(upstream),
+              (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+              model,
+            );
+            if (!res.writableEnded) res.end();
+          } else {
+            const upstream = await chatCompletions({ ...chatReq, stream: false });
+            const data = await upstream.text();
+            const anthropicMsg = chatToAnthropic(JSON.parse(data), model);
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(anthropicMsg));
+          }
+        } catch (e) {
+          console.error("[codex-copilot-dx] messages error:", e.message);
+          if (!res.headersSent) res.writeHead(400);
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      });
       return;
     }
 

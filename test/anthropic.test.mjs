@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapStopReason, anthropicToChat } from "../src/anthropic.mjs";
+import { mapStopReason, anthropicToChat, chatToAnthropic } from "../src/anthropic.mjs";
 
 test("mapStopReason: 四种映射", () => {
   assert.equal(mapStopReason("stop"), "end_turn");
@@ -93,4 +93,47 @@ test("anthropicToChat: image url-type source → 直接用 url", () => {
   const parts = r.messages[0].content;
   assert.equal(parts[0].type, "image_url");
   assert.equal(parts[0].image_url.url, "https://example.com/x.png");
+});
+
+test("chatToAnthropic: 纯文本响应", () => {
+  const openai = { model: "Claude", choices: [{ message: { content: "hello" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 9, completion_tokens: 2 } };
+  const a = chatToAnthropic(openai, "claude-sonnet-4.5");
+  assert.equal(a.type, "message");
+  assert.equal(a.role, "assistant");
+  assert.deepEqual(a.content, [{ type: "text", text: "hello" }]);
+  assert.equal(a.stop_reason, "end_turn");
+  assert.equal(a.usage.input_tokens, 9);
+  assert.equal(a.usage.output_tokens, 2);
+  assert.ok(a.id);
+});
+
+test("chatToAnthropic: tool_use 响应", () => {
+  const openai = { choices: [{ message: { content: null, tool_calls: [
+    { id: "tu_1", function: { name: "get_x", arguments: '{"a":1}' } },
+  ] }, finish_reason: "tool_calls" }], usage: { prompt_tokens: 5, completion_tokens: 3 } };
+  const a = chatToAnthropic(openai, "m");
+  assert.equal(a.content[0].type, "tool_use");
+  assert.equal(a.content[0].id, "tu_1");
+  assert.equal(a.content[0].name, "get_x");
+  assert.deepEqual(a.content[0].input, { a: 1 });
+  assert.equal(a.stop_reason, "tool_use");
+});
+
+test("chatToAnthropic: 文本+工具混合", () => {
+  const openai = { choices: [{ message: { content: "let me check", tool_calls: [
+    { id: "tu_2", function: { name: "f", arguments: "{}" } },
+  ] }, finish_reason: "tool_calls" }], usage: { prompt_tokens: 1, completion_tokens: 1 } };
+  const a = chatToAnthropic(openai, "m");
+  assert.equal(a.content[0].type, "text");
+  assert.equal(a.content[0].text, "let me check");
+  assert.equal(a.content[1].type, "tool_use");
+});
+
+test("chatToAnthropic: cached_tokens → cache_read_input_tokens", () => {
+  const openai = { choices: [{ message: { content: "x" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 100, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 30 } } };
+  const a = chatToAnthropic(openai, "m");
+  assert.equal(a.usage.input_tokens, 70);
+  assert.equal(a.usage.cache_read_input_tokens, 30);
 });

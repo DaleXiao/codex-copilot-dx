@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 // Anthropic Messages API ⇄ OpenAI chat/completions 翻译层。
 // 纯函数，不碰网络；上游由 adapter 经 copilot.mjs chatCompletions() 调用。
 
@@ -110,4 +112,40 @@ export function anthropicToChat(body) {
   if (tc !== undefined) chatReq.tool_choice = tc;
 
   return chatReq;
+}
+
+function uid() { return randomUUID().replace(/-/g, ""); }
+
+export function chatToAnthropic(openaiResp, model) {
+  const choice = openaiResp.choices?.[0];
+  const msg = choice?.message || {};
+  const content = [];
+
+  if (msg.content) content.push({ type: "text", text: msg.content });
+  if (Array.isArray(msg.tool_calls)) {
+    for (const tc of msg.tool_calls) {
+      let input = {};
+      try { input = JSON.parse(tc.function.arguments || "{}"); } catch { input = {}; }
+      content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
+    }
+  }
+
+  const u = openaiResp.usage || {};
+  const cached = u.prompt_tokens_details?.cached_tokens ?? 0;
+  const usage = {
+    input_tokens: (u.prompt_tokens ?? 0) - cached,
+    output_tokens: u.completion_tokens ?? 0,
+  };
+  if (cached > 0) usage.cache_read_input_tokens = cached;
+
+  return {
+    id: `msg_${uid()}`,
+    type: "message",
+    role: "assistant",
+    model: openaiResp.model || model,
+    content,
+    stop_reason: mapStopReason(choice?.finish_reason),
+    stop_sequence: null,
+    usage,
+  };
 }

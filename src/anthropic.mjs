@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { encode } from "gpt-tokenizer";
 
 // Anthropic Messages API ⇄ OpenAI chat/completions 翻译层。
 // 纯函数，不碰网络；上游由 adapter 经 copilot.mjs chatCompletions() 调用。
@@ -235,4 +236,32 @@ export async function streamAnthropicFromLines(lineIterator, emit, model) {
   emit("message_delta", { type: "message_delta", delta: { stop_reason, stop_sequence: null },
     usage: { output_tokens: outputTokens } });
   emit("message_stop", { type: "message_stop" });
+}
+
+// 用 gpt-tokenizer 对请求文本化后计 token。Copilot 上游无 count_tokens 端点，本地计算（与 copilot-api 一致）。
+export function countTokens(body) {
+  const parts = [];
+  const sys = systemToText(body.system);
+  if (sys) parts.push(sys);
+
+  for (const m of body.messages || []) {
+    if (typeof m.content === "string") {
+      parts.push(m.content);
+    } else if (Array.isArray(m.content)) {
+      for (const b of m.content) {
+        if (b.type === "text") parts.push(b.text);
+        else if (b.type === "tool_use") parts.push(b.name + JSON.stringify(b.input ?? {}));
+        else if (b.type === "tool_result") parts.push(toolResultContent(b.content));
+      }
+    }
+  }
+
+  if (Array.isArray(body.tools)) {
+    for (const t of body.tools) {
+      parts.push(t.name + (t.description || "") + JSON.stringify(t.input_schema || {}));
+    }
+  }
+
+  const text = parts.join("\n");
+  return { input_tokens: encode(text).length };
 }

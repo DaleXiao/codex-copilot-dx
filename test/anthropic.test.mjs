@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapStopReason, anthropicToChat, chatToAnthropic } from "../src/anthropic.mjs";
+import { mapStopReason, anthropicToChat, chatToAnthropic, countTokens } from "../src/anthropic.mjs";
 import { streamAnthropicFromLines } from "../src/anthropic.mjs";
 
 test("mapStopReason: 四种映射", () => {
@@ -210,4 +210,23 @@ test("streamAnthropicFromLines: 工具后的文本不再开新块", async () => 
   assert.equal(textStart, undefined);
   // 末尾顺序正常
   assert.equal(ev[ev.length - 1][0], "message_stop");
+});
+
+test("countTokens: 返回正整数 input_tokens", () => {
+  const r = countTokens({ model: "m", messages: [{ role: "user", content: "hello world how many tokens is this" }] });
+  assert.equal(typeof r.input_tokens, "number");
+  assert.ok(r.input_tokens > 0);
+});
+
+test("countTokens: 更多内容 → 更多 token(单调)", () => {
+  const small = countTokens({ model: "m", messages: [{ role: "user", content: "hi" }] }).input_tokens;
+  const big = countTokens({ model: "m", system: "you are a helpful assistant with many rules",
+    tools: [{ name: "t", description: "a tool", input_schema: { type: "object", properties: { x: { type: "string" } } } }],
+    messages: [{ role: "user", content: "hello world this is a much longer message with more tokens" }] }).input_tokens;
+  assert.ok(big > small);
+});
+
+test("countTokens: 确定性(同输入同输出)", () => {
+  const body = { model: "m", messages: [{ role: "user", content: "stable input" }] };
+  assert.equal(countTokens(body).input_tokens, countTokens(body).input_tokens);
 });

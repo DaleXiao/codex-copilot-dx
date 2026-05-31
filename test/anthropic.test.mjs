@@ -184,3 +184,30 @@ test("streamAnthropicFromLines: 工具调用流", async () => {
   assert.equal(md[1].delta.stop_reason, "tool_use");
   assert.equal(types[types.length - 1], "message_stop");
 });
+
+test("streamAnthropicFromLines: stream_options usage chunk 被采纳", async () => {
+  const lines = [
+    'data: {"choices":[{"delta":{"content":"hi"}}]}',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+    'data: {"choices":[],"usage":{"completion_tokens":7}}',
+    'data: [DONE]',
+  ];
+  const ev = await collect(lines);
+  const md = ev.find((e) => e[0] === "message_delta");
+  assert.equal(md[1].usage.output_tokens, 7);
+});
+
+test("streamAnthropicFromLines: 工具后的文本不再开新块", async () => {
+  const lines = [
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tu_1","function":{"name":"f","arguments":"{}"}}]}}]}',
+    'data: {"choices":[{"delta":{"content":"trailing text"}}]}',
+    'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+    'data: [DONE]',
+  ];
+  const ev = await collect(lines);
+  // 不应出现 type:text 的 content_block_start
+  const textStart = ev.find((e) => e[0] === "content_block_start" && e[1].content_block.type === "text");
+  assert.equal(textStart, undefined);
+  // 末尾顺序正常
+  assert.equal(ev[ev.length - 1][0], "message_stop");
+});

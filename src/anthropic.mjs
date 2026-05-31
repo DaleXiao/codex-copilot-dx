@@ -192,12 +192,13 @@ export async function streamAnthropicFromLines(lineIterator, emit, model) {
     let parsed;
     try { parsed = JSON.parse(data); } catch { continue; }
     if (parsed.model) actualModel = parsed.model;
+    if (parsed.usage?.completion_tokens != null) outputTokens = parsed.usage.completion_tokens;
     const choice = parsed.choices?.[0];
     if (!choice) continue;
     const delta = choice.delta || {};
     ensureStart();
 
-    if (delta.content) {
+    if (delta.content && !sawToolUse) {
       openText();
       emit("content_block_delta", { type: "content_block_delta", index: blockIndex,
         delta: { type: "text_delta", text: delta.content } });
@@ -222,7 +223,6 @@ export async function streamAnthropicFromLines(lineIterator, emit, model) {
     }
 
     if (choice.finish_reason) finishReason = choice.finish_reason;
-    if (parsed.usage?.completion_tokens) outputTokens = parsed.usage.completion_tokens;
   }
 
   ensureStart();

@@ -4,7 +4,7 @@ import os from "node:os";
 
 const CONFIG_PATH = path.join(os.homedir(), ".codex", "config.toml");
 
-export function ensureCodexConfig(adapterPort = 4142) {
+export function ensureCodexConfig(adapterPort = 8148) {
   const baseUrl = `http://localhost:${adapterPort}/v1`;
 
   if (!fs.existsSync(CONFIG_PATH)) {

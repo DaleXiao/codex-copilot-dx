@@ -1,21 +1,21 @@
 # codex-copilot-dx
 
-Use [Codex Desktop](https://openai.com/codex) app with your **GitHub Copilot** subscription.
+Use [Codex Desktop](https://openai.com/codex) **and** [Claude Code](https://claude.com/claude-code) with your **GitHub Copilot** subscription.
 
 ## How it works
 
-Codex Desktop uses OpenAI's Responses API (`/v1/responses`), which isn't directly exposed by the GitHub Copilot API proxy. This tool bridges the gap:
+A single in-process adapter (port `8148`) exposes both APIs over your Copilot subscription:
 
-- **GPT-5.5, GPT-5.4** and other Responses-only models → proxied directly to `api.githubcopilot.com/v1/responses`
-- **GPT-4o, GPT-4.1** and other chat models → converted from Responses API to Chat Completions format via `copilot-api`
+- **Codex** → OpenAI Responses API (`/v1/responses`); Responses-only models proxy directly, chat models convert to Chat Completions.
+- **Claude Code** → Anthropic Messages API (`/v1/messages`, `/v1/messages/count_tokens`), translated to/from Chat Completions.
 
-Supports both HTTP SSE streaming and WebSocket connections.
+Supports both HTTP SSE streaming and non-streaming.
 
 ## Prerequisites
 
-- [Codex Desktop](https://openai.com/codex) app installed
 - GitHub Copilot subscription (Individual, Business, or Enterprise)
 - Node.js 18+
+- [Codex Desktop](https://openai.com/codex) and/or [Claude Code](https://claude.com/claude-code) installed
 
 ## Usage
 
@@ -27,10 +27,12 @@ npx codex-copilot-dx@latest
 
 On first run, it will:
 1. Authenticate with GitHub via device flow (if needed)
-2. Start `copilot-api` proxy (port 4141)
-3. Start the Responses API adapter (port 4142)
-4. Configure Codex to use the adapter
+2. Start the adapter (port `8148`)
+3. Configure Codex (`~/.codex/config.toml`) to use the adapter
+4. Configure Claude Code (`~/.claude/settings.json` `ANTHROPIC_BASE_URL`) to use the adapter — backs up `settings.json.bak` first, only touches that one key
 5. Launch Codex Desktop
+
+Claude Code picks up the new `ANTHROPIC_BASE_URL` on its next launch.
 
 ## Configuration
 
@@ -38,8 +40,7 @@ Environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `COPILOT_API_PORT` | `4141` | Port for copilot-api |
-| `ADAPTER_PORT` | `4142` | Port for the adapter |
+| `ADAPTER_PORT` | `8148` | Port for the adapter |
 
 ## License
 

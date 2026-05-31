@@ -2,10 +2,11 @@
 
 import { ensureAuth, openCodex } from "../src/launcher.mjs";
 import { ensureCodexConfig } from "../src/config.mjs";
+import { ensureClaudeConfig } from "../src/claude-config.mjs";
 import { startAdapter } from "../src/adapter.mjs";
 import { refreshVSCodeVersion } from "../src/copilot.mjs";
 
-const ADAPTER_PORT = parseInt(process.env.ADAPTER_PORT || "4142");
+const ADAPTER_PORT = parseInt(process.env.ADAPTER_PORT || "8148");
 
 console.log(`
   codex-copilot-dx
@@ -22,8 +23,9 @@ try {
   // 3. 启动进程内 adapter
   await startAdapter(ADAPTER_PORT);
 
-  // 4. 配置 Codex
+  // 4. 配置 Codex 与 Claude Code 指向 adapter
   ensureCodexConfig(ADAPTER_PORT);
+  ensureClaudeConfig(ADAPTER_PORT);
 
   // 5. 启动 Codex
   openCodex();

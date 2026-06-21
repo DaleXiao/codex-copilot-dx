@@ -1,5 +1,5 @@
-// 把 fetch Response 的 body 按 \n 拆成行，逐行 yield（保留 SSE 语义，调用方自行处理 data:/event:）。
-// 剥除行尾 \r 以兼容 CRLF；提前 break 时通过 finally 取消 reader，释放 body 锁。
+// Yield fetch Response body lines while preserving SSE semantics for callers.
+// Strip CRLF tails and release the reader if iteration stops early.
 export async function* webStreamLines(response) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

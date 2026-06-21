@@ -1,8 +1,10 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
-import { chatCompletions, listModels, responses as copilotResponses } from "./copilot.mjs";
+import { chatCompletions, listModels, responses as copilotResponses, responsesCompact as copilotResponsesCompact } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
 import { anthropicToChat, chatToAnthropic, streamAnthropicFromLines, countTokens } from "./anthropic.mjs";
+import { status } from "./status.mjs";
+import { recordAnthropicUsage, recordResponsesUsage } from "./usage.mjs";
 
 // Models that only support Responses API (not chat/completions)
 const RESPONSES_ONLY = new Set([
@@ -13,31 +15,148 @@ const RESPONSES_ONLY = new Set([
   "gpt-5.2-codex",
 ]);
 
-// ── Direct Copilot Responses API proxy ──
+// Direct Copilot Responses API proxy.
 
-async function proxyCopilotResponses(reqBody, req, res) {
-  const resp = await copilotResponses(reqBody);
+const RESPONSE_HISTORY_LIMIT = 64;
+const responseHistories = new Map();
 
-  if (reqBody.stream) {
+export function requestPath(reqUrl) {
+  return new URL(reqUrl || "/", "http://localhost").pathname;
+}
+
+function cloneJson(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function responsesInputItems(input) {
+  if (input === undefined || input === null) return [];
+  if (typeof input === "string") {
+    return [{ type: "message", role: "user", content: [{ type: "input_text", text: input }] }];
+  }
+  return Array.isArray(input) ? cloneJson(input) : [cloneJson(input)];
+}
+
+function responsesOutputItems(output) {
+  if (!Array.isArray(output)) return [];
+  return cloneJson(output.filter((item) => item?.type === "message" || item?.type === "function_call"));
+}
+
+export function clearResponseHistoryForTests() {
+  responseHistories.clear();
+}
+
+export function prepareResponsesRequest(reqBody) {
+  const body = cloneJson(reqBody);
+  const currentInputItems = responsesInputItems(body.input);
+  const previousId = body.previous_response_id;
+
+  if (previousId !== undefined && previousId !== null) {
+    const previousItems = responseHistories.get(previousId);
+    if (!previousItems) {
+      const err = new Error(`previous_response_id is not available in local adapter history: ${previousId}`);
+      err.statusCode = 400;
+      throw err;
+    }
+    body.input = [...cloneJson(previousItems), ...currentInputItems];
+  } else {
+    body.input = currentInputItems;
+  }
+
+  delete body.previous_response_id;
+  delete body.store;
+
+  return { body, inputItems: body.input };
+}
+
+export function rememberResponseHistory(reqContext, responseJson) {
+  if (!responseJson?.id || !Array.isArray(reqContext?.inputItems)) return;
+  const items = [...cloneJson(reqContext.inputItems), ...responsesOutputItems(responseJson.output)];
+  responseHistories.set(responseJson.id, items);
+  while (responseHistories.size > RESPONSE_HISTORY_LIMIT) {
+    responseHistories.delete(responseHistories.keys().next().value);
+  }
+}
+
+function storeCompletedResponseFromSse(reqContext, data) {
+  if (!data || data === "[DONE]") return;
+  try {
+    const event = JSON.parse(data);
+    const response = event.response;
+    if (response?.id && response.status === "completed") {
+      rememberResponseHistory(reqContext, response);
+      recordResponsesUsage({
+        surface: reqContext.surface,
+        mode: "stream",
+        model: reqContext.body?.model,
+        response,
+        event,
+      });
+    }
+  } catch {
+    // Ignore non-JSON stream fragments.
+  }
+}
+
+function readSseEvents(buffer, onData) {
+  while (true) {
+    const match = buffer.match(/\r?\n\r?\n/);
+    if (!match) return buffer;
+    const chunk = buffer.slice(0, match.index);
+    buffer = buffer.slice(match.index + match[0].length);
+    const data = chunk
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (data) onData(data);
+  }
+}
+
+async function proxyCopilotResponses(reqContext, req, res, upstream = copilotResponses) {
+  const resp = await upstream(reqContext.body);
+
+  if (reqContext.body.stream) {
     res.writeHead(resp.status, {
       "Content-Type": resp.headers.get("content-type") || "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
     });
     const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
     while (true) {
       const { done, value } = await reader.read();
-      if (done) { res.end(); return; }
+      if (done) {
+        buffer += decoder.decode();
+        readSseEvents(buffer, (data) => storeCompletedResponseFromSse(reqContext, data));
+        res.end();
+        return;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      buffer = readSseEvents(buffer, (data) => storeCompletedResponseFromSse(reqContext, data));
       res.write(value);
     }
   } else {
     const data = await resp.text();
     res.writeHead(resp.status, { "Content-Type": "application/json" });
     res.end(data);
+    if (resp.ok) {
+      try {
+        const response = JSON.parse(data);
+        rememberResponseHistory(reqContext, response);
+        recordResponsesUsage({
+          surface: reqContext.surface,
+          mode: "json",
+          model: reqContext.body?.model,
+          response,
+          event: response,
+        });
+      } catch {}
+    }
   }
 }
 
-// ── Chat Completions conversion (for older models) ──
+// Chat Completions conversion for older models.
 
 function responsesToChat(body) {
   const messages = [];
@@ -152,26 +271,34 @@ async function forwardToChat(chatReq, emitEvent, onDone, onError) {
   onDone();
 }
 
-// ── Export ──
+// Public server entry point.
 
-export function startAdapter(port = 4142) {
+export function startAdapter(port = 2026) {
   const server = http.createServer((req, res) => {
-    if (req.method === "POST" && req.url?.startsWith("/v1/responses")) {
+    const pathname = requestPath(req.url);
+
+    if (req.method === "POST" && pathname === "/v1/responses") {
       let body = "";
       req.on("data", (c) => (body += c));
       req.on("end", async () => {
         try {
           const parsed = JSON.parse(body);
+          const prepared = prepareResponsesRequest(parsed);
+          prepared.surface = "responses";
           const model = parsed.model || "unknown";
-          console.log(`[codex-copilot-dx] ${model} stream=${!!parsed.stream}`);
+          console.log(status("info", `responses model=${model} stream=${!!parsed.stream}`));
           if (RESPONSES_ONLY.has(model)) {
-            await proxyCopilotResponses(parsed, req, res);
+            await proxyCopilotResponses(prepared, req, res);
           } else {
-            const chatReq = responsesToChat(parsed);
+            const chatReq = responsesToChat(prepared.body);
             if (parsed.stream) {
               forwardToChat(chatReq, (event, data) => {
                 if (!res.headersSent) res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
                 res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+                if (event === "response.completed") {
+                  rememberResponseHistory(prepared, data.response);
+                  recordResponsesUsage({ surface: prepared.surface, mode: "stream", model, response: data.response, event: data });
+                }
               }, () => { if (!res.writableEnded) res.end(); }, (status, errMsg) => { if (!res.headersSent) res.writeHead(status || 500); res.end(errMsg); });
             } else {
               chatReq.stream = false;
@@ -180,6 +307,8 @@ export function startAdapter(port = 4142) {
                 const upstream = await chatCompletions({ ...chatReq, stream: false });
                 const data = await upstream.text();
                 const resp = chatToResponses(JSON.parse(data), model);
+                rememberResponseHistory(prepared, resp);
+                recordResponsesUsage({ surface: prepared.surface, mode: "json", model, response: resp, event: resp });
                 res.writeHead(200, { "Content-Type": "application/json" });
                 res.end(JSON.stringify(resp));
               } catch (e) {
@@ -189,7 +318,7 @@ export function startAdapter(port = 4142) {
             }
           }
         } catch (e) {
-          console.error("[codex-copilot-dx] error:", e.message);
+          console.error(status("err", `Responses request failed: ${e.message}`));
           if (!res.headersSent) res.writeHead(400);
           res.end(JSON.stringify({ error: e.message }));
         }
@@ -197,14 +326,34 @@ export function startAdapter(port = 4142) {
       return;
     }
 
-    if (req.method === "GET" && req.url?.startsWith("/v1/models")) {
+    if (req.method === "POST" && pathname === "/v1/responses/compact") {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", async () => {
+        try {
+          const parsed = JSON.parse(body);
+          const prepared = prepareResponsesRequest(parsed);
+          prepared.surface = "responses_compact";
+          const model = parsed.model || "unknown";
+          console.log(status("info", `responses compact model=${model} stream=${!!parsed.stream}`));
+          await proxyCopilotResponses(prepared, req, res, copilotResponsesCompact);
+        } catch (e) {
+          console.error(status("err", `Responses compact request failed: ${e.message}`));
+          if (!res.headersSent) res.writeHead(400);
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      });
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/v1/models") {
       listModels()
         .then(({ status, body }) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(body); })
         .catch((e) => { if (!res.headersSent) res.writeHead(502); res.end(JSON.stringify({ error: e.message })); });
       return;
     }
 
-    if (req.method === "POST" && req.url?.startsWith("/v1/messages/count_tokens")) {
+    if (req.method === "POST" && pathname === "/v1/messages/count_tokens") {
       let body = "";
       req.on("data", (c) => (body += c));
       req.on("end", () => {
@@ -220,14 +369,14 @@ export function startAdapter(port = 4142) {
       return;
     }
 
-    if (req.method === "POST" && req.url === "/v1/messages") {
+    if (req.method === "POST" && pathname === "/v1/messages") {
       let body = "";
       req.on("data", (c) => (body += c));
       req.on("end", async () => {
         try {
           const parsed = JSON.parse(body);
           const model = parsed.model || "unknown";
-          console.log(`[codex-copilot-dx] messages ${model} stream=${!!parsed.stream}`);
+          console.log(status("info", `messages model=${model} stream=${!!parsed.stream}`));
           const chatReq = anthropicToChat(parsed);
           if (parsed.stream) {
             const upstream = await chatCompletions({ ...chatReq, stream: true });
@@ -237,21 +386,29 @@ export function startAdapter(port = 4142) {
               return;
             }
             res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+            let messageId;
+            let usage;
             await streamAnthropicFromLines(
               webStreamLines(upstream),
-              (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+              (event, data) => {
+                if (event === "message_start") messageId = data.message?.id;
+                if (event === "message_delta") usage = data.usage;
+                res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+              },
               model,
             );
+            recordAnthropicUsage({ surface: "messages", mode: "stream", model, responseId: messageId, usage });
             if (!res.writableEnded) res.end();
           } else {
             const upstream = await chatCompletions({ ...chatReq, stream: false });
             const data = await upstream.text();
             const anthropicMsg = chatToAnthropic(JSON.parse(data), model);
+            recordAnthropicUsage({ surface: "messages", mode: "json", model: anthropicMsg.model, responseId: anthropicMsg.id, usage: anthropicMsg.usage });
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(anthropicMsg));
           }
         } catch (e) {
-          console.error("[codex-copilot-dx] messages error:", e.message);
+          console.error(status("err", `Messages request failed: ${e.message}`));
           if (!res.headersSent) res.writeHead(400);
           res.end(JSON.stringify({ error: e.message }));
         }
@@ -275,7 +432,7 @@ export function startAdapter(port = 4142) {
 
   return new Promise((resolve) => {
     server.listen(port, () => {
-      console.log(`[codex-copilot-dx] Adapter listening on http://localhost:${port}`);
+      console.log(status("ok", `Adapter listening on http://localhost:${port}`));
       resolve(server);
     });
   });

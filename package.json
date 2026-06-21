@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.4.0",
+  "version": "0.4.3",
   "description": "Use Codex Desktop app with your GitHub Copilot subscription",
   "type": "module",
   "bin": {
@@ -24,6 +24,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "gpt-tokenizer": "^3.4.0"
+    "gpt-tokenizer": "^3.4.0",
+    "sharp": "^0.34.5"
   }
 }

@@ -2,10 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
+import { status } from "./status.mjs";
 
 const GITHUB_TOKEN_PATH = path.join(os.homedir(), ".local", "share", "copilot-api", "github_token");
 export const DEFAULT_API_BASE = "https://api.githubcopilot.com";
 let apiBase = DEFAULT_API_BASE;
+const IMG_MAX_DIM = parseInt(process.env.CCDX_IMG_MAX_DIM || "2048", 10);
+const IMG_QUALITY = parseInt(process.env.CCDX_IMG_QUALITY || "85", 10);
+const IMG_MIN_BYTES = parseInt(process.env.CCDX_IMG_MIN_BYTES || "100000", 10);
+const IMG_OPT_DISABLED = process.env.CCDX_DISABLE_IMG_OPT === "1";
+let sharpImport = null;
 
 export function parseApiBase(data) {
   return (data && data.endpoints && typeof data.endpoints.api === "string" && data.endpoints.api)
@@ -16,7 +22,142 @@ export function parseApiBase(data) {
 export function getApiBase() {
   return apiBase;
 }
+
+export function responsesEndpointPath() {
+  return "/responses";
+}
 const GITHUB_API = "https://api.github.com";
+
+async function sharp() {
+  sharpImport ||= import("sharp");
+  const mod = await sharpImport;
+  return mod.default || mod;
+}
+
+export async function optimizeImageDataUrl(dataUrl) {
+  if (IMG_OPT_DISABLED) return dataUrl;
+  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) return dataUrl;
+  const match = /^data:(image\/[a-z+.-]+);base64,(.+)$/i.exec(dataUrl);
+  if (!match) return dataUrl;
+  const mime = match[1].toLowerCase();
+  const raw = Buffer.from(match[2], "base64");
+  if (raw.length < IMG_MIN_BYTES || mime.includes("gif")) return dataUrl;
+
+  try {
+    const resize = await sharp();
+    const out = await resize(raw, { failOn: "none" })
+      .rotate()
+      .resize(IMG_MAX_DIM, IMG_MAX_DIM, { fit: "inside", withoutEnlargement: true })
+      .webp({ quality: IMG_QUALITY, effort: 4 })
+      .toBuffer();
+    const ratio = ((out.length / raw.length) * 100).toFixed(1);
+    console.log(status("info", `image ${(raw.length / 1024).toFixed(0)}KB ${mime} -> ${(out.length / 1024).toFixed(0)}KB webp (${ratio}%)`));
+    return `data:image/webp;base64,${out.toString("base64")}`;
+  } catch (e) {
+    console.warn(status("warn", `image optimize failed (${mime}, ${raw.length}b): ${e.message}`));
+    return dataUrl;
+  }
+}
+
+function visitImageParts(parts, tasks) {
+  if (!Array.isArray(parts)) return;
+  for (const part of parts) {
+    if (!part) continue;
+    if (part.type === "input_image" && typeof part.image_url === "string") {
+      tasks.push((async () => { part.image_url = await optimizeImageDataUrl(part.image_url); })());
+    } else if (part.type === "image" && part.source?.type === "base64" && part.source?.data) {
+      tasks.push((async () => {
+        const dataUrl = `data:${part.source.media_type || "image/png"};base64,${part.source.data}`;
+        const opt = await optimizeImageDataUrl(dataUrl);
+        const match = /^data:([^;]+);base64,(.+)$/.exec(opt);
+        if (match) {
+          part.source.media_type = match[1];
+          part.source.data = match[2];
+        }
+      })());
+    }
+  }
+}
+
+export async function optimizeImagesInBody(reqBody) {
+  if (IMG_OPT_DISABLED || !Array.isArray(reqBody.input)) return reqBody;
+  const tasks = [];
+
+  for (const item of reqBody.input) {
+    if (!item) continue;
+    if (item.type === "message" && Array.isArray(item.content)) {
+      visitImageParts(item.content, tasks);
+    }
+    if (item.type === "function_call_output") {
+      if (Array.isArray(item.output)) {
+        visitImageParts(item.output, tasks);
+      } else if (typeof item.output === "string") {
+        const trimmed = item.output.trim();
+        if (trimmed.startsWith("[")) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+              const before = tasks.length;
+              visitImageParts(parsed, tasks);
+              const localTasks = tasks.slice(before);
+              if (localTasks.length) {
+                tasks.push(Promise.all(localTasks).then(() => {
+                  item.output = JSON.stringify(parsed);
+                }));
+              }
+            }
+          } catch {
+            // Leave non-JSON tool output untouched.
+          }
+        }
+      }
+    }
+  }
+
+  if (tasks.length) await Promise.all(tasks);
+  return reqBody;
+}
+
+export function summarizeReqBody(reqBody) {
+  try {
+    const input = reqBody.input;
+    if (!Array.isArray(input)) return { items: 0, images: 0, biggest: 0, biggestKind: "n/a" };
+    let biggest = 0;
+    let biggestKind = "";
+    let images = 0;
+    const countImages = (parts) => {
+      if (!Array.isArray(parts)) return;
+      for (const part of parts) {
+        if (part?.type === "input_image" || part?.type === "image") images++;
+      }
+    };
+
+    for (const item of input) {
+      const size = JSON.stringify(item).length;
+      if (size > biggest) {
+        biggest = size;
+        biggestKind = item?.type || "?";
+      }
+      if (item?.type === "message") countImages(item.content);
+      if (item?.type === "function_call_output") {
+        if (Array.isArray(item.output)) {
+          countImages(item.output);
+        } else if (typeof item.output === "string" && item.output.trim().startsWith("[")) {
+          try {
+            const parsed = JSON.parse(item.output);
+            if (Array.isArray(parsed)) countImages(parsed);
+          } catch {
+            // Ignore non-JSON tool output.
+          }
+        }
+      }
+    }
+
+    return { items: input.length, images, biggest, biggestKind };
+  } catch {
+    return { items: -1, images: -1, biggest: -1, biggestKind: "err" };
+  }
+}
 
 export function computeInitiator(messages) {
   const isAgent = Array.isArray(messages)
@@ -64,7 +205,7 @@ export function getVSCodeVersion() {
   return cachedVersion;
 }
 
-// 启动时调用：异步抓最新版本，成功则替换缓存；失败静默保留 fallback。
+// Refresh the VS Code version asynchronously; keep the fallback on failure.
 export async function refreshVSCodeVersion() {
   try {
     const ctrl = new AbortController();
@@ -76,10 +217,10 @@ export async function refreshVSCodeVersion() {
     clearTimeout(timer);
     if (resp.ok) {
       cachedVersion = parseVSCodeVersion(await resp.json());
-      console.log(`[codex-copilot-dx] VSCode version: ${cachedVersion}`);
+      console.log(status("info", `VS Code version: ${cachedVersion}`));
     }
   } catch {
-    // 静默保留 fallback
+    // Keep the fallback quietly.
   }
   return cachedVersion;
 }
@@ -108,12 +249,11 @@ export async function getCopilotToken() {
   copilotTokenExpiry = typeof data.expires_at === "number"
     ? data.expires_at * 1000
     : Date.now() + 25 * 60 * 1000; // fallback if expires_at absent: refresh in ~25min
-  console.log("[codex-copilot-dx] Copilot token refreshed");
+  console.log(status("ok", "Copilot token refreshed"));
   return copilotToken;
 }
 
-// chatReq: OpenAI chat/completions 请求体（已由 adapter 从 Responses 转换好）。
-// 返回原始 fetch Response（流式 body），由调用方解析。
+// chatReq is already converted by the adapter. The caller parses the raw Response.
 export async function chatCompletions(chatReq) {
   const token = await getCopilotToken();
   const messages = chatReq.messages || [];
@@ -139,18 +279,38 @@ export async function listModels() {
   return { status: resp.status, body: await resp.text() };
 }
 
-// 新模型（RESPONSES_ONLY）直连官方 /responses，返回 fetch Response。
+// Responses-only models go directly to Copilot's /responses endpoint.
 export async function responses(reqBody) {
   const token = await getCopilotToken();
+  const beforeBytes = Buffer.byteLength(JSON.stringify(reqBody));
+  await optimizeImagesInBody(reqBody);
+  const bodyBuf = Buffer.from(JSON.stringify(reqBody), "utf8");
+  const summary = summarizeReqBody(reqBody);
+  console.log(status("info", `responses payload bytes=${bodyBuf.length} was=${beforeBytes} input_items=${summary.items} images=${summary.images} biggest_item=${summary.biggest}b (${summary.biggestKind})`));
   const headers = buildHeaders({
     token,
     version: getVSCodeVersion(),
     initiator: "user",
     vision: false,
   });
-  return fetch(`${getApiBase()}/responses`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(reqBody),
-  });
+  headers["Content-Type"] = "application/json; charset=utf-8";
+  headers["Content-Length"] = String(bodyBuf.length);
+  headers["Accept"] = reqBody.stream ? "text/event-stream" : "application/json";
+
+  try {
+    return await fetch(`${getApiBase()}${responsesEndpointPath()}`, {
+      method: "POST",
+      headers,
+      body: bodyBuf,
+    });
+  } catch (e) {
+    const cause = e?.cause;
+    const causeText = cause ? ` (${[cause.code, cause.message].filter(Boolean).join(": ")})` : "";
+    throw new Error(`Copilot responses fetch failed: ${e.message}${causeText}`);
+  }
+}
+
+export async function responsesCompact(reqBody) {
+  // GitHub Copilot accepts Codex compact payloads on the regular Responses endpoint.
+  return responses(reqBody);
 }

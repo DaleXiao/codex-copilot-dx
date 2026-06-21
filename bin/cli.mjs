@@ -5,33 +5,54 @@ import { ensureCodexConfig } from "../src/config.mjs";
 import { ensureClaudeConfig } from "../src/claude-config.mjs";
 import { startAdapter } from "../src/adapter.mjs";
 import { refreshVSCodeVersion } from "../src/copilot.mjs";
+import { status } from "../src/status.mjs";
+import { printUsageSummary } from "../src/usage.mjs";
+import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
 
-const ADAPTER_PORT = parseInt(process.env.ADAPTER_PORT || "8148");
+const ADAPTER_PORT = parseInt(process.env.ADAPTER_PORT || "2026");
+const LOCAL_VERSION = localPackageVersion();
+const command = process.argv[2];
+
+if (command === "--version" || command === "-v" || command === "version") {
+  console.log(`codex-copilot-dx v${LOCAL_VERSION}`);
+  process.exit(0);
+}
+
+if (command === "usage") {
+  await printUsageSummary();
+  process.exit(0);
+}
 
 console.log(`
-  codex-copilot-dx
+  codex-copilot-dx v${LOCAL_VERSION}
   Use Codex Desktop with GitHub Copilot
 `);
 
+checkForUpdate({ currentVersion: LOCAL_VERSION }).then(({ latestVersion, updateAvailable }) => {
+  if (!updateAvailable) return;
+  console.log(`\n  ${status("warn", `Update available: ${LOCAL_VERSION} -> ${latestVersion}`)}`);
+  console.log("  npm install -g codex-copilot-dx@latest\n");
+});
+
 try {
-  // 1. 确保 GitHub 登录（无 token 则走 device flow）
+  // Ensure GitHub login, using device flow if no token exists.
   await ensureAuth();
 
-  // 2. 后台异步抓取最新 VSCode 版本（不阻塞，失败用 fallback）
+  // Refresh the VS Code version in the background; fallback is non-blocking.
   refreshVSCodeVersion();
 
-  // 3. 启动进程内 adapter
+  // Start the in-process adapter.
   await startAdapter(ADAPTER_PORT);
 
-  // 4. 配置 Codex 与 Claude Code 指向 adapter
+  // Point Codex and Claude Code at the adapter.
   ensureCodexConfig(ADAPTER_PORT);
   ensureClaudeConfig(ADAPTER_PORT);
 
-  // 5. 启动 Codex
+  // Launch Codex when available.
   openCodex();
 
   console.log(`
-  Ready! Codex is using your GitHub Copilot subscription.
+  ${status("ok", "Ready. Codex and Claude Code are using your GitHub Copilot subscription.")}
 
   Adapter: http://localhost:${ADAPTER_PORT}
 
@@ -39,10 +60,10 @@ try {
 `);
 
   process.on("SIGINT", () => {
-    console.log("\nShutting down...");
+    console.log(`\n${status("wait", "Shutting down...")}`);
     process.exit(0);
   });
 } catch (e) {
-  console.error(`Error: ${e.message}`);
+  console.error(status("err", e.message));
   process.exit(1);
 }

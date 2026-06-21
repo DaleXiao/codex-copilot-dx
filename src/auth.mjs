@@ -2,12 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
+import { status } from "./status.mjs";
 
-const CLIENT_ID = "Iv1.b507a08c87ecfe98"; // GitHub Copilot 官方公开 client_id
+const CLIENT_ID = "Iv1.b507a08c87ecfe98"; // Public GitHub Copilot client ID.
 const SCOPE = "read:user";
 const GITHUB_TOKEN_PATH = path.join(os.homedir(), ".local", "share", "copilot-api", "github_token");
 
-// 纯函数：把 GitHub poll 响应映射为状态。
+// Map GitHub polling responses to a small local state machine.
 export function interpretPoll(data) {
   if (typeof data.access_token === "string" && data.access_token) return { state: "done", token: data.access_token };
   switch (data.error) {
@@ -19,7 +20,7 @@ export function interpretPoll(data) {
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-// macOS：复制 user_code 到剪贴板 + 打开验证页。失败静默降级。
+// On macOS, copy the user code and open the verification page. Fail quietly.
 function openAndCopy(userCode, verificationUri) {
   if (process.platform !== "darwin") return;
   try {
@@ -27,7 +28,7 @@ function openAndCopy(userCode, verificationUri) {
     pb.on("error", () => {});
     pb.stdin.on("error", () => {});
     pb.on("close", (code) => {
-      if (code === 0) console.log("[codex-copilot-dx] (user code 已复制到剪贴板)");
+      if (code === 0) console.log(status("ok", "Device code copied to the clipboard"));
     });
     pb.stdin.write(userCode);
     pb.stdin.end();
@@ -40,12 +41,12 @@ function openAndCopy(userCode, verificationUri) {
 
 export async function ensureAuth() {
   if (fs.existsSync(GITHUB_TOKEN_PATH)) {
-    console.log("[codex-copilot-dx] GitHub token found");
+    console.log(status("ok", "GitHub token found"));
     return;
   }
-  console.log("[codex-copilot-dx] No GitHub token. Starting login...");
+  console.log(status("wait", "No GitHub token found. Starting device login..."));
 
-  // 1. 请求 device code
+  // Request a device code.
   const codeResp = await fetch("https://github.com/login/device/code", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -54,11 +55,11 @@ export async function ensureAuth() {
   if (!codeResp.ok) throw new Error(`device code request failed: ${codeResp.status}`);
   const { device_code, user_code, verification_uri, interval } = await codeResp.json();
 
-  // 2. 提示用户
-  console.log(`\n  打开 ${verification_uri}\n  输入码: ${user_code}\n`);
+  // Prompt the user.
+  console.log(`\n${status("info", `Open ${verification_uri}`)}\n${status("info", `Enter code: ${user_code}`)}\n`);
   openAndCopy(user_code, verification_uri);
 
-  // 3. 轮询
+  // Poll until GitHub completes the device flow.
   let waitMs = (interval || 5) * 1000;
   while (true) {
     await sleep(waitMs);
@@ -72,19 +73,19 @@ export async function ensureAuth() {
       }),
     });
     if (!pollResp.ok) {
-      // 瞬时网络/服务端错误：当作 pending，下一轮重试
+      // Treat transient network/server errors as pending and retry.
       continue;
     }
     const data = await pollResp.json();
     const r = interpretPoll(data);
     if (r.state === "done") {
       writeToken(r.token);
-      console.log("[codex-copilot-dx] Login successful");
+      console.log(status("ok", "Login successful"));
       return;
     }
     if (r.state === "slow") { waitMs += 5000; continue; }
     if (r.state === "fail") throw new Error(`Login failed: ${r.error}`);
-    // wait → 继续
+    // wait: continue polling.
   }
 }
 

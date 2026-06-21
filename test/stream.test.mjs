@@ -12,28 +12,28 @@ function responseFrom(chunks) {
   return new Response(stream);
 }
 
-test("webStreamLines: 跨 chunk 的行被正确拼接", async () => {
+test("webStreamLines: joins lines split across chunks", async () => {
   const resp = responseFrom(["data: hel", "lo\n", "data: wor", "ld\n"]);
   const lines = [];
   for await (const line of webStreamLines(resp)) lines.push(line);
   assert.deepEqual(lines, ["data: hello", "data: world"]);
 });
 
-test("webStreamLines: 末尾无换行的残留行也产出", async () => {
+test("webStreamLines: yields a final line without trailing newline", async () => {
   const resp = responseFrom(["a\n", "b"]);
   const lines = [];
   for await (const line of webStreamLines(resp)) lines.push(line);
   assert.deepEqual(lines, ["a", "b"]);
 });
 
-test("webStreamLines: CRLF 行尾的 \\r 被剥除", async () => {
+test("webStreamLines: strips CRLF carriage returns", async () => {
   const resp = responseFrom(["data: a\r\n", "data: b\r\n"]);
   const lines = [];
   for await (const line of webStreamLines(resp)) lines.push(line);
   assert.deepEqual(lines, ["data: a", "data: b"]);
 });
 
-test("webStreamLines: 提前 break 后 body 解锁(reader 不泄漏)", async () => {
+test("webStreamLines: releases the body lock after early break", async () => {
   const resp = responseFrom(["x\n", "y\n", "z\n"]);
   for await (const line of webStreamLines(resp)) {
     if (line === "x") break;

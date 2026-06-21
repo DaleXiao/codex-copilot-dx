@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { encode } from "gpt-tokenizer";
 
-// Anthropic Messages API ⇄ OpenAI chat/completions 翻译层。
-// 纯函数，不碰网络；上游由 adapter 经 copilot.mjs chatCompletions() 调用。
+// Anthropic Messages API to OpenAI chat/completions translation.
+// Pure functions only; network calls stay in adapter.mjs and copilot.mjs.
 
 export function mapStopReason(finishReason) {
   switch (finishReason) {
@@ -13,7 +13,7 @@ export function mapStopReason(finishReason) {
   }
 }
 
-// system 字段(字符串或 text block 数组)→ 单条 system 文本
+// Convert a string or text-block system field into one system message.
 function systemToText(system) {
   if (!system) return null;
   if (typeof system === "string") return system;
@@ -21,7 +21,7 @@ function systemToText(system) {
   return null;
 }
 
-// tool_result 的 content(字符串或 block 数组)→ OpenAI tool message 的 content 字符串
+// Convert tool_result content into the string payload expected by OpenAI tool messages.
 function toolResultContent(content) {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -30,7 +30,7 @@ function toolResultContent(content) {
   return JSON.stringify(content);
 }
 
-// 单条 Anthropic message → 0..N 条 OpenAI message
+// Convert one Anthropic message into zero or more OpenAI messages.
 function convertMessage(msg) {
   const out = [];
   const role = msg.role; // "user" | "assistant"
@@ -41,13 +41,13 @@ function convertMessage(msg) {
   }
   if (!Array.isArray(msg.content)) return out;
 
-  // 先抽出 tool_result(它们必须成为独立的 role:"tool" 消息)
+  // tool_result blocks must become independent role:"tool" messages.
   const toolResults = msg.content.filter((b) => b.type === "tool_result");
   for (const tr of toolResults) {
     out.push({ role: "tool", tool_call_id: tr.tool_use_id, content: toolResultContent(tr.content) });
   }
 
-  // 其余 block:text / image / tool_use
+  // Convert remaining text, image, and tool_use blocks.
   const textImageParts = [];
   const toolCalls = [];
   for (const b of msg.content) {
@@ -151,7 +151,7 @@ export function chatToAnthropic(openaiResp, model) {
   };
 }
 
-// 消费 OpenAI chat SSE 行迭代器,产出 Anthropic 事件。emit(event, dataObj)。
+// Consume OpenAI chat SSE lines and emit Anthropic SSE events.
 export async function streamAnthropicFromLines(lineIterator, emit, model) {
   const msgId = `msg_${uid()}`;
   let started = false;
@@ -238,7 +238,7 @@ export async function streamAnthropicFromLines(lineIterator, emit, model) {
   emit("message_stop", { type: "message_stop" });
 }
 
-// 用 gpt-tokenizer 对请求文本化后计 token。Copilot 上游无 count_tokens 端点，本地计算（与 copilot-api 一致）。
+// Copilot has no count_tokens endpoint; estimate locally with gpt-tokenizer.
 export function countTokens(body) {
   const parts = [];
   const sys = systemToText(body.system);

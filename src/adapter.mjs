@@ -1,5 +1,7 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
+import { promisify } from "node:util";
+import * as zlib from "node:zlib";
 import { chatCompletions, listModels, responses as copilotResponses, responsesCompact as copilotResponsesCompact } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
 import { anthropicToChat, chatToAnthropic, streamAnthropicFromLines, countTokens } from "./anthropic.mjs";
@@ -19,6 +21,10 @@ const RESPONSES_ONLY = new Set([
 
 const RESPONSE_HISTORY_LIMIT = 64;
 const responseHistories = new Map();
+const gunzipAsync = promisify(zlib.gunzip);
+const inflateAsync = promisify(zlib.inflate);
+const brotliDecompressAsync = promisify(zlib.brotliDecompress);
+const zstdDecompressAsync = zlib.zstdDecompress ? promisify(zlib.zstdDecompress) : null;
 
 export function requestPath(reqUrl) {
   return new URL(reqUrl || "/", "http://localhost").pathname;
@@ -26,6 +32,45 @@ export function requestPath(reqUrl) {
 
 function cloneJson(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+async function readRequestBuffer(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+async function decodeRequestBuffer(buffer, contentEncoding) {
+  const encodings = String(contentEncoding || "identity")
+    .split(",")
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+
+  let decoded = buffer;
+  for (const encoding of encodings.reverse()) {
+    if (encoding === "identity") continue;
+    if (encoding === "gzip" || encoding === "x-gzip") {
+      decoded = await gunzipAsync(decoded);
+    } else if (encoding === "deflate") {
+      decoded = await inflateAsync(decoded);
+    } else if (encoding === "br") {
+      decoded = await brotliDecompressAsync(decoded);
+    } else if (encoding === "zstd") {
+      if (!zstdDecompressAsync) throw new Error("Unsupported Content-Encoding: zstd");
+      decoded = await zstdDecompressAsync(decoded);
+    } else {
+      throw new Error(`Unsupported Content-Encoding: ${encoding}`);
+    }
+  }
+  return decoded;
+}
+
+export async function readJsonBody(req) {
+  const buffer = await readRequestBuffer(req);
+  const decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"]);
+  return JSON.parse(decoded.toString("utf8"));
 }
 
 function responsesInputItems(input) {
@@ -64,6 +109,10 @@ export function prepareResponsesRequest(reqBody) {
 
   delete body.previous_response_id;
   delete body.store;
+  if (Array.isArray(body.tools)) {
+    body.tools = body.tools.filter((tool) => tool?.type !== "image_generation");
+    if (!body.tools.length) delete body.tools;
+  }
 
   return { body, inputItems: body.input };
 }
@@ -278,11 +327,9 @@ export function startAdapter(port = 2026) {
     const pathname = requestPath(req.url);
 
     if (req.method === "POST" && pathname === "/v1/responses") {
-      let body = "";
-      req.on("data", (c) => (body += c));
-      req.on("end", async () => {
+      (async () => {
         try {
-          const parsed = JSON.parse(body);
+          const parsed = await readJsonBody(req);
           const prepared = prepareResponsesRequest(parsed);
           prepared.surface = "responses";
           const model = parsed.model || "unknown";
@@ -322,16 +369,14 @@ export function startAdapter(port = 2026) {
           if (!res.headersSent) res.writeHead(400);
           res.end(JSON.stringify({ error: e.message }));
         }
-      });
+      })();
       return;
     }
 
     if (req.method === "POST" && pathname === "/v1/responses/compact") {
-      let body = "";
-      req.on("data", (c) => (body += c));
-      req.on("end", async () => {
+      (async () => {
         try {
-          const parsed = JSON.parse(body);
+          const parsed = await readJsonBody(req);
           const prepared = prepareResponsesRequest(parsed);
           prepared.surface = "responses_compact";
           const model = parsed.model || "unknown";
@@ -342,7 +387,7 @@ export function startAdapter(port = 2026) {
           if (!res.headersSent) res.writeHead(400);
           res.end(JSON.stringify({ error: e.message }));
         }
-      });
+      })();
       return;
     }
 
@@ -354,27 +399,23 @@ export function startAdapter(port = 2026) {
     }
 
     if (req.method === "POST" && pathname === "/v1/messages/count_tokens") {
-      let body = "";
-      req.on("data", (c) => (body += c));
-      req.on("end", () => {
+      (async () => {
         try {
-          const parsed = JSON.parse(body);
+          const parsed = await readJsonBody(req);
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(countTokens(parsed)));
         } catch (e) {
           if (!res.headersSent) res.writeHead(400);
           res.end(JSON.stringify({ error: e.message }));
         }
-      });
+      })();
       return;
     }
 
     if (req.method === "POST" && pathname === "/v1/messages") {
-      let body = "";
-      req.on("data", (c) => (body += c));
-      req.on("end", async () => {
+      (async () => {
         try {
-          const parsed = JSON.parse(body);
+          const parsed = await readJsonBody(req);
           const model = parsed.model || "unknown";
           console.log(status("info", `messages model=${model} stream=${!!parsed.stream}`));
           const chatReq = anthropicToChat(parsed);
@@ -412,7 +453,7 @@ export function startAdapter(port = 2026) {
           if (!res.headersSent) res.writeHead(400);
           res.end(JSON.stringify({ error: e.message }));
         }
-      });
+      })();
       return;
     }
 

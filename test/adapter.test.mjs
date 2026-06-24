@@ -1,6 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clearResponseHistoryForTests, prepareResponsesRequest, rememberResponseHistory, requestPath } from "../src/adapter.mjs";
+import { promisify } from "node:util";
+import { Readable } from "node:stream";
+import * as zlib from "node:zlib";
+import { clearResponseHistoryForTests, prepareResponsesRequest, readJsonBody, rememberResponseHistory, requestPath } from "../src/adapter.mjs";
+
+const gzipAsync = promisify(zlib.gzip);
+const zstdCompressAsync = zlib.zstdCompress ? promisify(zlib.zstdCompress) : null;
+
+function jsonRequest(body, contentEncoding) {
+  const req = Readable.from([body]);
+  req.headers = contentEncoding ? { "content-encoding": contentEncoding } : {};
+  return req;
+}
 
 test("requestPath: ignores Claude Code beta query on messages route", () => {
   assert.equal(requestPath("/v1/messages?beta=true"), "/v1/messages");
@@ -57,4 +69,43 @@ test("prepareResponsesRequest: rejects missing local previous response history",
     () => prepareResponsesRequest({ model: "gpt-5.5", previous_response_id: "missing", input: "hello" }),
     /previous_response_id is not available/,
   );
+});
+
+test("prepareResponsesRequest: drops unsupported image generation tools", () => {
+  const prepared = prepareResponsesRequest({
+    model: "gpt-5.5",
+    input: "hello",
+    tools: [
+      { type: "image_generation" },
+      { type: "function", name: "lookup" },
+    ],
+  });
+
+  assert.deepEqual(prepared.body.tools, [{ type: "function", name: "lookup" }]);
+
+  const onlyUnsupported = prepareResponsesRequest({
+    model: "gpt-5.5",
+    input: "hello",
+    tools: [{ type: "image_generation" }],
+  });
+  assert.equal(onlyUnsupported.body.tools, undefined);
+});
+
+test("readJsonBody: parses gzip-compressed JSON request bodies", async () => {
+  const compressed = await gzipAsync(JSON.stringify({ model: "gpt-5.5", input: "hello" }));
+  const parsed = await readJsonBody(jsonRequest(compressed, "gzip"));
+
+  assert.deepEqual(parsed, { model: "gpt-5.5", input: "hello" });
+});
+
+test("readJsonBody: parses zstd-compressed JSON request bodies", async (t) => {
+  if (!zstdCompressAsync) {
+    t.skip("zstd compression is not available in this Node runtime");
+    return;
+  }
+
+  const compressed = await zstdCompressAsync(JSON.stringify({ model: "gpt-5.5", input: "hello" }));
+  const parsed = await readJsonBody(jsonRequest(compressed, "zstd"));
+
+  assert.deepEqual(parsed, { model: "gpt-5.5", input: "hello" });
 });

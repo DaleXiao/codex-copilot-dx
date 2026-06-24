@@ -33,8 +33,8 @@ function setTomlKey(lines, sectionName, key, value) {
 }
 
 export function computeUpdatedCodexConfig(content, adapterPort = 2026) {
-  const baseUrl = `http://localhost:${adapterPort}/v1`;
-  const anthropicBaseUrl = `http://localhost:${adapterPort}`;
+  const baseUrl = `http://127.0.0.1:${adapterPort}/v1`;
+  const anthropicBaseUrl = `http://127.0.0.1:${adapterPort}`;
   const hadTrailingNewline = content.endsWith("\n");
   const lines = content.split("\n");
   if (hadTrailingNewline) lines.pop();
@@ -59,8 +59,8 @@ export function computeUpdatedCodexConfig(content, adapterPort = 2026) {
 }
 
 function initialCodexConfig(adapterPort) {
-  const baseUrl = `http://localhost:${adapterPort}/v1`;
-  const anthropicBaseUrl = `http://localhost:${adapterPort}`;
+  const baseUrl = `http://127.0.0.1:${adapterPort}/v1`;
+  const anthropicBaseUrl = `http://127.0.0.1:${adapterPort}`;
   return `openai_base_url = "${baseUrl}"
 
 [shell_environment_policy]
@@ -75,7 +75,7 @@ OPENAI_API_KEY = "dummy"
 }
 
 export function ensureCodexConfig(adapterPort = 2026) {
-  const baseUrl = `http://localhost:${adapterPort}/v1`;
+  const baseUrl = `http://127.0.0.1:${adapterPort}/v1`;
 
   if (!fs.existsSync(CONFIG_PATH)) {
     // Codex config does not exist yet; create the local proxy defaults.

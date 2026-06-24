@@ -7,7 +7,7 @@ const SETTINGS_PATH = path.join(os.homedir(), ".claude", "settings.json");
 
 // Return an updated settings object without mutating the input.
 export function computeUpdatedSettings(settings, port) {
-  const target = `http://localhost:${port}`;
+  const target = `http://127.0.0.1:${port}`;
   const current = settings?.env?.ANTHROPIC_BASE_URL;
   const currentToken = settings?.env?.ANTHROPIC_AUTH_TOKEN;
   const changed = current !== target || currentToken !== "dummy";
@@ -24,7 +24,7 @@ export function computeUpdatedSettings(settings, port) {
 
 // Point Claude Code at the adapter by updating ~/.claude/settings.json.
 export function ensureClaudeConfig(port = 2026) {
-  const target = `http://localhost:${port}`;
+  const target = `http://127.0.0.1:${port}`;
 
   if (!fs.existsSync(SETTINGS_PATH)) {
     fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });

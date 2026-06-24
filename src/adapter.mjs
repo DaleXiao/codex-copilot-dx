@@ -21,10 +21,22 @@ const RESPONSES_ONLY = new Set([
 
 const RESPONSE_HISTORY_LIMIT = 64;
 const responseHistories = new Map();
+const DEFAULT_MAX_BODY_BYTES = 128 * 1024 * 1024;
+const DEFAULT_MAX_DECODED_BODY_BYTES = 256 * 1024 * 1024;
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 120 * 1000;
 const gunzipAsync = promisify(zlib.gunzip);
 const inflateAsync = promisify(zlib.inflate);
 const brotliDecompressAsync = promisify(zlib.brotliDecompress);
 const zstdDecompressAsync = zlib.zstdDecompress ? promisify(zlib.zstdDecompress) : null;
+
+function positiveInt(value, fallback) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const MAX_BODY_BYTES = positiveInt(process.env.CCDX_MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES);
+const MAX_DECODED_BODY_BYTES = positiveInt(process.env.CCDX_MAX_DECODED_BODY_BYTES, DEFAULT_MAX_DECODED_BODY_BYTES);
+const UPSTREAM_TIMEOUT_MS = positiveInt(process.env.CCDX_UPSTREAM_TIMEOUT_MS, DEFAULT_UPSTREAM_TIMEOUT_MS);
 
 export function requestPath(reqUrl) {
   return new URL(reqUrl || "/", "http://localhost").pathname;
@@ -34,15 +46,45 @@ function cloneJson(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
-async function readRequestBuffer(req) {
+function httpError(message, statusCode) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
+function payloadTooLarge(kind, maxBytes) {
+  return httpError(`${kind} request body exceeds ${maxBytes} bytes`, 413);
+}
+
+async function readRequestBuffer(req, maxBytes) {
+  const contentLength = Number.parseInt(req.headers?.["content-length"] || "", 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw payloadTooLarge("Raw", maxBytes);
+  }
+
   const chunks = [];
+  let total = 0;
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buf.length;
+    if (total > maxBytes) throw payloadTooLarge("Raw", maxBytes);
+    chunks.push(buf);
   }
   return Buffer.concat(chunks);
 }
 
-async function decodeRequestBuffer(buffer, contentEncoding) {
+async function decompressBody(decompress, buffer, maxBytes) {
+  try {
+    return await decompress(buffer, { maxOutputLength: maxBytes });
+  } catch (e) {
+    if (e?.code === "ERR_BUFFER_TOO_LARGE" || /maxOutputLength/i.test(e?.message || "")) {
+      throw payloadTooLarge("Decoded", maxBytes);
+    }
+    throw e;
+  }
+}
+
+async function decodeRequestBuffer(buffer, contentEncoding, maxBytes) {
   const encodings = String(contentEncoding || "identity")
     .split(",")
     .map((v) => v.trim().toLowerCase())
@@ -52,25 +94,77 @@ async function decodeRequestBuffer(buffer, contentEncoding) {
   for (const encoding of encodings.reverse()) {
     if (encoding === "identity") continue;
     if (encoding === "gzip" || encoding === "x-gzip") {
-      decoded = await gunzipAsync(decoded);
+      decoded = await decompressBody(gunzipAsync, decoded, maxBytes);
     } else if (encoding === "deflate") {
-      decoded = await inflateAsync(decoded);
+      decoded = await decompressBody(inflateAsync, decoded, maxBytes);
     } else if (encoding === "br") {
-      decoded = await brotliDecompressAsync(decoded);
+      decoded = await decompressBody(brotliDecompressAsync, decoded, maxBytes);
     } else if (encoding === "zstd") {
       if (!zstdDecompressAsync) throw new Error("Unsupported Content-Encoding: zstd");
-      decoded = await zstdDecompressAsync(decoded);
+      decoded = await decompressBody(zstdDecompressAsync, decoded, maxBytes);
     } else {
       throw new Error(`Unsupported Content-Encoding: ${encoding}`);
     }
+    if (decoded.length > maxBytes) throw payloadTooLarge("Decoded", maxBytes);
   }
+  if (decoded.length > maxBytes) throw payloadTooLarge("Decoded", maxBytes);
   return decoded;
 }
 
-export async function readJsonBody(req) {
-  const buffer = await readRequestBuffer(req);
-  const decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"]);
+export async function readJsonBody(req, {
+  maxBodyBytes = MAX_BODY_BYTES,
+  maxDecodedBodyBytes = MAX_DECODED_BODY_BYTES,
+} = {}) {
+  const buffer = await readRequestBuffer(req, maxBodyBytes);
+  const decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"], maxDecodedBodyBytes);
   return JSON.parse(decoded.toString("utf8"));
+}
+
+function sendJsonError(res, err, fallbackStatus = 400) {
+  if (!res.headersSent) res.writeHead(err?.statusCode || fallbackStatus, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: err?.message || "Request failed" }));
+}
+
+export function writeOrDrain(res, chunk) {
+  if (res.destroyed || res.writableEnded) return Promise.resolve(false);
+  if (res.write(chunk)) return Promise.resolve(true);
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      res.off("drain", onDrain);
+      res.off("error", onError);
+      res.off("close", onClose);
+    };
+    const onDrain = () => { cleanup(); resolve(true); };
+    const onClose = () => { cleanup(); resolve(false); };
+    const onError = (err) => { cleanup(); reject(err); };
+    res.once("drain", onDrain);
+    res.once("close", onClose);
+    res.once("error", onError);
+  });
+}
+
+function createRequestAbort(req, res) {
+  const controller = new AbortController();
+  let timer = null;
+  let cleaned = false;
+  const abort = () => {
+    if (!cleaned && !controller.signal.aborted) controller.abort();
+  };
+  req.on("aborted", abort);
+  res.on("close", abort);
+  return {
+    signal: controller.signal,
+    setTimeout(ms) {
+      if (timer) clearTimeout(timer);
+      if (ms > 0) timer = setTimeout(abort, ms);
+    },
+    cleanup() {
+      cleaned = true;
+      if (timer) clearTimeout(timer);
+      req.off("aborted", abort);
+      res.off("close", abort);
+    },
+  };
 }
 
 function responsesInputItems(input) {
@@ -161,8 +255,8 @@ function readSseEvents(buffer, onData) {
   }
 }
 
-async function proxyCopilotResponses(reqContext, req, res, upstream = copilotResponses) {
-  const resp = await upstream(reqContext.body);
+async function proxyCopilotResponses(reqContext, req, res, upstream = copilotResponses, options = {}) {
+  const resp = await upstream(reqContext.body, { signal: options.signal });
 
   if (reqContext.body.stream) {
     res.writeHead(resp.status, {
@@ -183,7 +277,7 @@ async function proxyCopilotResponses(reqContext, req, res, upstream = copilotRes
       }
       buffer += decoder.decode(value, { stream: true });
       buffer = readSseEvents(buffer, (data) => storeCompletedResponseFromSse(reqContext, data));
-      res.write(value);
+      await writeOrDrain(res, value);
     }
   } else {
     const data = await resp.text();
@@ -260,11 +354,11 @@ function chatToResponses(chatResp, model) {
   return { id, object: "response", status: "completed", model: chatResp.model || model, output, usage: chatResp.usage ? { input_tokens: chatResp.usage.prompt_tokens || 0, output_tokens: chatResp.usage.completion_tokens || 0, total_tokens: chatResp.usage.total_tokens || 0 } : undefined };
 }
 
-async function forwardToChat(chatReq, emitEvent, onDone, onError) {
+async function forwardToChat(chatReq, emitEvent, onDone, onError, options = {}) {
   delete chatReq.max_tokens;
   let resp;
   try {
-    resp = await chatCompletions({ ...chatReq, stream: true });
+    resp = await chatCompletions({ ...chatReq, stream: true }, { signal: options.signal });
   } catch (e) {
     onError(502, e.message);
     return;
@@ -276,37 +370,37 @@ async function forwardToChat(chatReq, emitEvent, onDone, onError) {
   const respId = `resp_${uid()}`, itemId = `item_${uid()}`;
   let actualModel = "unknown", fullText = "", toolCalls = {}, hasToolCalls = false;
 
-  emitEvent("response.created", { response: { id: respId, object: "response", status: "in_progress", model: actualModel, output: [] } });
-  emitEvent("response.output_item.added", { output_index: 0, item: { type: "message", id: itemId, role: "assistant", status: "in_progress", content: [] } });
-  emitEvent("response.content_part.added", { output_index: 0, content_index: 0, part: { type: "output_text", text: "" } });
+  await emitEvent("response.created", { response: { id: respId, object: "response", status: "in_progress", model: actualModel, output: [] } });
+  await emitEvent("response.output_item.added", { output_index: 0, item: { type: "message", id: itemId, role: "assistant", status: "in_progress", content: [] } });
+  await emitEvent("response.content_part.added", { output_index: 0, content_index: 0, part: { type: "output_text", text: "" } });
 
-  const emitCompleted = () => {
+  const emitCompleted = async () => {
     if (!hasToolCalls) {
-      emitEvent("response.output_text.done", { output_index: 0, content_index: 0, text: fullText });
-      emitEvent("response.output_item.done", { output_index: 0, item: { type: "message", id: itemId, role: "assistant", status: "completed", content: [{ type: "output_text", text: fullText }] } });
+      await emitEvent("response.output_text.done", { output_index: 0, content_index: 0, text: fullText });
+      await emitEvent("response.output_item.done", { output_index: 0, item: { type: "message", id: itemId, role: "assistant", status: "completed", content: [{ type: "output_text", text: fullText }] } });
     }
     const output = hasToolCalls
       ? Object.entries(toolCalls).map(([id, tc]) => ({ type: "function_call", id, call_id: id, name: tc.name, arguments: tc.arguments, status: "completed" }))
       : [{ type: "message", id: itemId, role: "assistant", status: "completed", content: [{ type: "output_text", text: fullText }] }];
-    emitEvent("response.completed", { response: { id: respId, object: "response", status: "completed", model: actualModel, output, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } });
+    await emitEvent("response.completed", { response: { id: respId, object: "response", status: "completed", model: actualModel, output, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } });
   };
 
   try {
     for await (const line of webStreamLines(resp)) {
       if (!line.startsWith("data: ")) continue;
       const data = line.slice(6).trim();
-      if (data === "[DONE]") { emitCompleted(); onDone(); return; }
+      if (data === "[DONE]") { await emitCompleted(); onDone(); return; }
       let parsed;
       try { parsed = JSON.parse(data); } catch { continue; }
       if (parsed.model) actualModel = parsed.model;
       const delta = parsed.choices?.[0]?.delta;
       if (!delta) continue;
-      if (delta.content) { fullText += delta.content; emitEvent("response.output_text.delta", { output_index: 0, content_index: 0, delta: delta.content }); }
+      if (delta.content) { fullText += delta.content; await emitEvent("response.output_text.delta", { output_index: 0, content_index: 0, delta: delta.content }); }
       if (delta.tool_calls) {
         hasToolCalls = true;
         for (const tc of delta.tool_calls) {
           const id = tc.id || Object.keys(toolCalls)[tc.index] || `call_${tc.index}`;
-          if (!toolCalls[id]) { toolCalls[id] = { name: "", arguments: "" }; emitEvent("response.output_item.added", { output_index: Object.keys(toolCalls).length - 1, item: { type: "function_call", id, call_id: id, name: tc.function?.name || "", arguments: "", status: "in_progress" } }); }
+          if (!toolCalls[id]) { toolCalls[id] = { name: "", arguments: "" }; await emitEvent("response.output_item.added", { output_index: Object.keys(toolCalls).length - 1, item: { type: "function_call", id, call_id: id, name: tc.function?.name || "", arguments: "", status: "in_progress" } }); }
           if (tc.function?.name) toolCalls[id].name += tc.function.name;
           if (tc.function?.arguments) toolCalls[id].arguments += tc.function.arguments;
         }
@@ -316,42 +410,44 @@ async function forwardToChat(chatReq, emitEvent, onDone, onError) {
     onError(500, e?.message || "upstream stream error");
     return;
   }
-  emitCompleted();
+  await emitCompleted();
   onDone();
 }
 
 // Public server entry point.
 
-export function startAdapter(port = 2026) {
+export function startAdapter(port = 2026, host = "127.0.0.1") {
   const server = http.createServer((req, res) => {
     const pathname = requestPath(req.url);
 
     if (req.method === "POST" && pathname === "/v1/responses") {
       (async () => {
+        const abort = createRequestAbort(req, res);
         try {
           const parsed = await readJsonBody(req);
+          if (!parsed.stream) abort.setTimeout(UPSTREAM_TIMEOUT_MS);
           const prepared = prepareResponsesRequest(parsed);
           prepared.surface = "responses";
           const model = parsed.model || "unknown";
           console.log(status("info", `responses model=${model} stream=${!!parsed.stream}`));
           if (RESPONSES_ONLY.has(model)) {
-            await proxyCopilotResponses(prepared, req, res);
+            await proxyCopilotResponses(prepared, req, res, copilotResponses, { signal: abort.signal });
           } else {
             const chatReq = responsesToChat(prepared.body);
             if (parsed.stream) {
-              forwardToChat(chatReq, (event, data) => {
+              await forwardToChat(chatReq, async (event, data) => {
                 if (!res.headersSent) res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
-                res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+                await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
                 if (event === "response.completed") {
                   rememberResponseHistory(prepared, data.response);
                   recordResponsesUsage({ surface: prepared.surface, mode: "stream", model, response: data.response, event: data });
                 }
-              }, () => { if (!res.writableEnded) res.end(); }, (status, errMsg) => { if (!res.headersSent) res.writeHead(status || 500); res.end(errMsg); });
+              }, () => { if (!res.writableEnded) res.end(); }, (status, errMsg) => { if (!res.headersSent) res.writeHead(status || 500); res.end(errMsg); }, { signal: abort.signal });
             } else {
               chatReq.stream = false;
               delete chatReq.max_tokens;
               try {
-                const upstream = await chatCompletions({ ...chatReq, stream: false });
+                const upstream = await chatCompletions({ ...chatReq, stream: false }, { signal: abort.signal });
                 const data = await upstream.text();
                 const resp = chatToResponses(JSON.parse(data), model);
                 rememberResponseHistory(prepared, resp);
@@ -366,8 +462,9 @@ export function startAdapter(port = 2026) {
           }
         } catch (e) {
           console.error(status("err", `Responses request failed: ${e.message}`));
-          if (!res.headersSent) res.writeHead(400);
-          res.end(JSON.stringify({ error: e.message }));
+          sendJsonError(res, e);
+        } finally {
+          abort.cleanup();
         }
       })();
       return;
@@ -375,38 +472,46 @@ export function startAdapter(port = 2026) {
 
     if (req.method === "POST" && pathname === "/v1/responses/compact") {
       (async () => {
+        const abort = createRequestAbort(req, res);
         try {
           const parsed = await readJsonBody(req);
+          if (!parsed.stream) abort.setTimeout(UPSTREAM_TIMEOUT_MS);
           const prepared = prepareResponsesRequest(parsed);
           prepared.surface = "responses_compact";
           const model = parsed.model || "unknown";
           console.log(status("info", `responses compact model=${model} stream=${!!parsed.stream}`));
-          await proxyCopilotResponses(prepared, req, res, copilotResponsesCompact);
+          await proxyCopilotResponses(prepared, req, res, copilotResponsesCompact, { signal: abort.signal });
         } catch (e) {
           console.error(status("err", `Responses compact request failed: ${e.message}`));
-          if (!res.headersSent) res.writeHead(400);
-          res.end(JSON.stringify({ error: e.message }));
+          sendJsonError(res, e);
+        } finally {
+          abort.cleanup();
         }
       })();
       return;
     }
 
     if (req.method === "GET" && pathname === "/v1/models") {
-      listModels()
+      const abort = createRequestAbort(req, res);
+      abort.setTimeout(UPSTREAM_TIMEOUT_MS);
+      listModels({ signal: abort.signal })
         .then(({ status, body }) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(body); })
-        .catch((e) => { if (!res.headersSent) res.writeHead(502); res.end(JSON.stringify({ error: e.message })); });
+        .catch((e) => { if (!res.headersSent) res.writeHead(502); res.end(JSON.stringify({ error: e.message })); })
+        .finally(() => abort.cleanup());
       return;
     }
 
     if (req.method === "POST" && pathname === "/v1/messages/count_tokens") {
       (async () => {
+        const abort = createRequestAbort(req, res);
         try {
           const parsed = await readJsonBody(req);
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(countTokens(parsed)));
         } catch (e) {
-          if (!res.headersSent) res.writeHead(400);
-          res.end(JSON.stringify({ error: e.message }));
+          sendJsonError(res, e);
+        } finally {
+          abort.cleanup();
         }
       })();
       return;
@@ -414,13 +519,15 @@ export function startAdapter(port = 2026) {
 
     if (req.method === "POST" && pathname === "/v1/messages") {
       (async () => {
+        const abort = createRequestAbort(req, res);
         try {
           const parsed = await readJsonBody(req);
+          if (!parsed.stream) abort.setTimeout(UPSTREAM_TIMEOUT_MS);
           const model = parsed.model || "unknown";
           console.log(status("info", `messages model=${model} stream=${!!parsed.stream}`));
           const chatReq = anthropicToChat(parsed);
           if (parsed.stream) {
-            const upstream = await chatCompletions({ ...chatReq, stream: true });
+            const upstream = await chatCompletions({ ...chatReq, stream: true }, { signal: abort.signal });
             if (!upstream.ok) {
               if (!res.headersSent) res.writeHead(upstream.status);
               res.end(await upstream.text());
@@ -431,17 +538,17 @@ export function startAdapter(port = 2026) {
             let usage;
             await streamAnthropicFromLines(
               webStreamLines(upstream),
-              (event, data) => {
+              async (event, data) => {
                 if (event === "message_start") messageId = data.message?.id;
                 if (event === "message_delta") usage = data.usage;
-                res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+                await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
               },
               model,
             );
             recordAnthropicUsage({ surface: "messages", mode: "stream", model, responseId: messageId, usage });
             if (!res.writableEnded) res.end();
           } else {
-            const upstream = await chatCompletions({ ...chatReq, stream: false });
+            const upstream = await chatCompletions({ ...chatReq, stream: false }, { signal: abort.signal });
             const data = await upstream.text();
             const anthropicMsg = chatToAnthropic(JSON.parse(data), model);
             recordAnthropicUsage({ surface: "messages", mode: "json", model: anthropicMsg.model, responseId: anthropicMsg.id, usage: anthropicMsg.usage });
@@ -450,8 +557,9 @@ export function startAdapter(port = 2026) {
           }
         } catch (e) {
           console.error(status("err", `Messages request failed: ${e.message}`));
-          if (!res.headersSent) res.writeHead(400);
-          res.end(JSON.stringify({ error: e.message }));
+          sendJsonError(res, e);
+        } finally {
+          abort.cleanup();
         }
       })();
       return;
@@ -472,8 +580,9 @@ export function startAdapter(port = 2026) {
   });
 
   return new Promise((resolve) => {
-    server.listen(port, () => {
-      console.log(status("ok", `Adapter listening on http://localhost:${port}`));
+    server.listen(port, host, () => {
+      const actualPort = server.address()?.port || port;
+      console.log(status("ok", `Adapter listening on http://${host}:${actualPort}`));
       resolve(server);
     });
   });

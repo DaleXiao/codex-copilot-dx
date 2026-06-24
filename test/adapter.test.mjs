@@ -2,15 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { promisify } from "node:util";
 import { Readable } from "node:stream";
+import { EventEmitter } from "node:events";
 import * as zlib from "node:zlib";
-import { clearResponseHistoryForTests, prepareResponsesRequest, readJsonBody, rememberResponseHistory, requestPath } from "../src/adapter.mjs";
+import { clearResponseHistoryForTests, prepareResponsesRequest, readJsonBody, rememberResponseHistory, requestPath, writeOrDrain } from "../src/adapter.mjs";
 
 const gzipAsync = promisify(zlib.gzip);
 const zstdCompressAsync = zlib.zstdCompress ? promisify(zlib.zstdCompress) : null;
 
-function jsonRequest(body, contentEncoding) {
+function jsonRequest(body, contentEncoding, headers = {}) {
   const req = Readable.from([body]);
-  req.headers = contentEncoding ? { "content-encoding": contentEncoding } : {};
+  req.headers = { ...headers };
+  if (contentEncoding) req.headers["content-encoding"] = contentEncoding;
   return req;
 }
 
@@ -98,6 +100,22 @@ test("readJsonBody: parses gzip-compressed JSON request bodies", async () => {
   assert.deepEqual(parsed, { model: "gpt-5.5", input: "hello" });
 });
 
+test("readJsonBody: rejects raw request bodies above the configured limit", async () => {
+  await assert.rejects(
+    readJsonBody(jsonRequest(Buffer.from("{}"), undefined, { "content-length": "2" }), { maxBodyBytes: 1 }),
+    (err) => err.statusCode === 413 && /Raw request body/.test(err.message),
+  );
+});
+
+test("readJsonBody: rejects decoded request bodies above the configured limit", async () => {
+  const compressed = await gzipAsync(JSON.stringify({ input: "hello" }));
+
+  await assert.rejects(
+    readJsonBody(jsonRequest(compressed, "gzip"), { maxDecodedBodyBytes: 8 }),
+    (err) => err.statusCode === 413 && /Decoded request body/.test(err.message),
+  );
+});
+
 test("readJsonBody: parses zstd-compressed JSON request bodies", async (t) => {
   if (!zstdCompressAsync) {
     t.skip("zstd compression is not available in this Node runtime");
@@ -108,4 +126,21 @@ test("readJsonBody: parses zstd-compressed JSON request bodies", async (t) => {
   const parsed = await readJsonBody(jsonRequest(compressed, "zstd"));
 
   assert.deepEqual(parsed, { model: "gpt-5.5", input: "hello" });
+});
+
+test("writeOrDrain: waits for drain when response backpressure is active", async () => {
+  const res = new EventEmitter();
+  res.destroyed = false;
+  res.writableEnded = false;
+  let writes = 0;
+  res.write = () => {
+    writes += 1;
+    return false;
+  };
+
+  const waiting = writeOrDrain(res, "chunk");
+  res.emit("drain");
+
+  assert.equal(await waiting, true);
+  assert.equal(writes, 1);
 });

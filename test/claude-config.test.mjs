@@ -5,7 +5,7 @@ import { computeUpdatedSettings } from "../src/claude-config.mjs";
 test("computeUpdatedSettings: updates only ANTHROPIC_BASE_URL when env exists", () => {
   const before = { env: { ANTHROPIC_BASE_URL: "http://localhost:4141", ANTHROPIC_AUTH_TOKEN: "dummy" }, model: "claude-opus-4.8" };
   const { json, changed } = computeUpdatedSettings(before, 2026);
-  assert.equal(json.env.ANTHROPIC_BASE_URL, "http://localhost:2026");
+  assert.equal(json.env.ANTHROPIC_BASE_URL, "http://127.0.0.1:2026");
   assert.equal(json.env.ANTHROPIC_AUTH_TOKEN, "dummy");
   assert.equal(json.model, "claude-opus-4.8");
   assert.equal(changed, true);
@@ -13,14 +13,14 @@ test("computeUpdatedSettings: updates only ANTHROPIC_BASE_URL when env exists", 
 
 test("computeUpdatedSettings: creates env when missing", () => {
   const { json, changed } = computeUpdatedSettings({ model: "x" }, 2026);
-  assert.equal(json.env.ANTHROPIC_BASE_URL, "http://localhost:2026");
+  assert.equal(json.env.ANTHROPIC_BASE_URL, "http://127.0.0.1:2026");
   assert.equal(json.env.ANTHROPIC_AUTH_TOKEN, "dummy");
   assert.equal(json.model, "x");
   assert.equal(changed, true);
 });
 
 test("computeUpdatedSettings: reports unchanged when already current", () => {
-  const before = { env: { ANTHROPIC_BASE_URL: "http://localhost:2026", ANTHROPIC_AUTH_TOKEN: "dummy" } };
+  const before = { env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:2026", ANTHROPIC_AUTH_TOKEN: "dummy" } };
   const { changed } = computeUpdatedSettings(before, 2026);
   assert.equal(changed, false);
 });

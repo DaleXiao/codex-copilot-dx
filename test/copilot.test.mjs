@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeInitiator, computeVision, buildHeaders, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, summarizeReqBody } from "../src/copilot.mjs";
+import { computeInitiator, computeVision, buildHeaders, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, summarizeReqBody, parseImageConcurrency, runWithConcurrency } from "../src/copilot.mjs";
 
 test("computeInitiator: user-only messages return user", () => {
   const msgs = [{ role: "user", content: "hi" }];
@@ -88,6 +88,32 @@ test("DEFAULT_API_BASE is the public Copilot host", () => {
 
 test("responsesEndpointPath: compact uses regular Responses upstream", () => {
   assert.equal(responsesEndpointPath(), "/responses");
+});
+
+test("parseImageConcurrency: defaults and caps image optimization concurrency", () => {
+  assert.equal(parseImageConcurrency(undefined), 4);
+  assert.equal(parseImageConcurrency("0"), 4);
+  assert.equal(parseImageConcurrency("bad"), 4);
+  assert.equal(parseImageConcurrency("12"), 12);
+  assert.equal(parseImageConcurrency("99"), 12);
+});
+
+test("runWithConcurrency: caps simultaneously running tasks", async () => {
+  let active = 0;
+  let maxActive = 0;
+  let completed = 0;
+  const tasks = Array.from({ length: 10 }, () => async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active -= 1;
+    completed += 1;
+  });
+
+  await runWithConcurrency(tasks, 3);
+
+  assert.equal(completed, 10);
+  assert.ok(maxActive <= 3);
 });
 
 test("summarizeReqBody: counts direct and stringified tool images", () => {

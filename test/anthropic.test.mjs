@@ -197,6 +197,25 @@ test("streamAnthropicFromLines: uses stream_options usage chunks", async () => {
   assert.equal(md[1].usage.output_tokens, 7);
 });
 
+test("streamAnthropicFromLines: waits for async emit backpressure", async () => {
+  async function* gen() {
+    yield 'data: {"choices":[{"delta":{"content":"a"}}]}';
+    yield 'data: {"choices":[{"delta":{"content":"b"}}]}';
+    yield 'data: [DONE]';
+  }
+
+  let active = 0;
+  let maxActive = 0;
+  await streamAnthropicFromLines(gen(), async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active -= 1;
+  }, "m");
+
+  assert.equal(maxActive, 1);
+});
+
 test("streamAnthropicFromLines: text after tools does not open a new block", async () => {
   const lines = [
     'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tu_1","function":{"name":"f","arguments":"{}"}}]}}]}',

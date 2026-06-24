@@ -163,26 +163,26 @@ export async function streamAnthropicFromLines(lineIterator, emit, model) {
   let sawToolUse = false;
   let outputTokens = 0;
 
-  const ensureStart = () => {
+  const ensureStart = async () => {
     if (started) return;
     started = true;
-    emit("message_start", { type: "message_start", message: {
+    await emit("message_start", { type: "message_start", message: {
       id: msgId, type: "message", role: "assistant", model: actualModel,
       content: [], stop_reason: null, stop_sequence: null,
       usage: { input_tokens: 0, output_tokens: 0 },
     } });
   };
 
-  const openText = () => {
+  const openText = async () => {
     if (textOpen) return;
     blockIndex += 1;
     textOpen = true;
-    emit("content_block_start", { type: "content_block_start", index: blockIndex,
+    await emit("content_block_start", { type: "content_block_start", index: blockIndex,
       content_block: { type: "text", text: "" } });
   };
-  const closeText = () => {
+  const closeText = async () => {
     if (!textOpen) return;
-    emit("content_block_stop", { type: "content_block_stop", index: blockIndex });
+    await emit("content_block_stop", { type: "content_block_stop", index: blockIndex });
     textOpen = false;
   };
 
@@ -197,27 +197,27 @@ export async function streamAnthropicFromLines(lineIterator, emit, model) {
     const choice = parsed.choices?.[0];
     if (!choice) continue;
     const delta = choice.delta || {};
-    ensureStart();
+    await ensureStart();
 
     if (delta.content && !sawToolUse) {
-      openText();
-      emit("content_block_delta", { type: "content_block_delta", index: blockIndex,
+      await openText();
+      await emit("content_block_delta", { type: "content_block_delta", index: blockIndex,
         delta: { type: "text_delta", text: delta.content } });
     }
 
     if (Array.isArray(delta.tool_calls)) {
       sawToolUse = true;
-      closeText();
+      await closeText();
       for (const tc of delta.tool_calls) {
         const oi = tc.index ?? 0;
         if (!toolBlocks[oi]) {
           blockIndex += 1;
           toolBlocks[oi] = { anthropicIndex: blockIndex };
-          emit("content_block_start", { type: "content_block_start", index: blockIndex,
+          await emit("content_block_start", { type: "content_block_start", index: blockIndex,
             content_block: { type: "tool_use", id: tc.id || `tu_${uid()}`, name: tc.function?.name || "", input: {} } });
         }
         if (tc.function?.arguments) {
-          emit("content_block_delta", { type: "content_block_delta", index: toolBlocks[oi].anthropicIndex,
+          await emit("content_block_delta", { type: "content_block_delta", index: toolBlocks[oi].anthropicIndex,
             delta: { type: "input_json_delta", partial_json: tc.function.arguments } });
         }
       }
@@ -226,16 +226,16 @@ export async function streamAnthropicFromLines(lineIterator, emit, model) {
     if (choice.finish_reason) finishReason = choice.finish_reason;
   }
 
-  ensureStart();
-  if (textOpen) closeText();
+  await ensureStart();
+  if (textOpen) await closeText();
   for (const oi of Object.keys(toolBlocks)) {
-    emit("content_block_stop", { type: "content_block_stop", index: toolBlocks[oi].anthropicIndex });
+    await emit("content_block_stop", { type: "content_block_stop", index: toolBlocks[oi].anthropicIndex });
   }
 
   const stop_reason = finishReason ? mapStopReason(finishReason) : (sawToolUse ? "tool_use" : "end_turn");
-  emit("message_delta", { type: "message_delta", delta: { stop_reason, stop_sequence: null },
+  await emit("message_delta", { type: "message_delta", delta: { stop_reason, stop_sequence: null },
     usage: { output_tokens: outputTokens } });
-  emit("message_stop", { type: "message_stop" });
+  await emit("message_stop", { type: "message_stop" });
 }
 
 // Copilot has no count_tokens endpoint; estimate locally with gpt-tokenizer.

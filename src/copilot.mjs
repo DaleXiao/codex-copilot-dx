@@ -10,8 +10,16 @@ let apiBase = DEFAULT_API_BASE;
 const IMG_MAX_DIM = parseInt(process.env.CCDX_IMG_MAX_DIM || "2048", 10);
 const IMG_QUALITY = parseInt(process.env.CCDX_IMG_QUALITY || "85", 10);
 const IMG_MIN_BYTES = parseInt(process.env.CCDX_IMG_MIN_BYTES || "100000", 10);
+const DEFAULT_IMG_CONCURRENCY = 4;
+const IMG_MAX_CONCURRENCY = 12;
 const IMG_OPT_DISABLED = process.env.CCDX_DISABLE_IMG_OPT === "1";
+const IMG_CONCURRENCY = parseImageConcurrency(process.env.CCDX_IMG_CONCURRENCY);
 let sharpImport = null;
+
+export function parseImageConcurrency(value) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, IMG_MAX_CONCURRENCY) : DEFAULT_IMG_CONCURRENCY;
+}
 
 export function parseApiBase(data) {
   return (data && data.endpoints && typeof data.endpoints.api === "string" && data.endpoints.api)
@@ -59,14 +67,26 @@ export async function optimizeImageDataUrl(dataUrl) {
   }
 }
 
+export async function runWithConcurrency(taskFns, concurrency) {
+  if (!Array.isArray(taskFns) || taskFns.length === 0) return;
+  const limit = Math.min(parseImageConcurrency(concurrency), taskFns.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: limit }, async () => {
+    while (next < taskFns.length) {
+      const task = taskFns[next++];
+      await task();
+    }
+  }));
+}
+
 function visitImageParts(parts, tasks) {
   if (!Array.isArray(parts)) return;
   for (const part of parts) {
     if (!part) continue;
     if (part.type === "input_image" && typeof part.image_url === "string") {
-      tasks.push((async () => { part.image_url = await optimizeImageDataUrl(part.image_url); })());
+      tasks.push(async () => { part.image_url = await optimizeImageDataUrl(part.image_url); });
     } else if (part.type === "image" && part.source?.type === "base64" && part.source?.data) {
-      tasks.push((async () => {
+      tasks.push(async () => {
         const dataUrl = `data:${part.source.media_type || "image/png"};base64,${part.source.data}`;
         const opt = await optimizeImageDataUrl(dataUrl);
         const match = /^data:([^;]+);base64,(.+)$/.exec(opt);
@@ -74,7 +94,7 @@ function visitImageParts(parts, tasks) {
           part.source.media_type = match[1];
           part.source.data = match[2];
         }
-      })());
+      });
     }
   }
 }
@@ -97,13 +117,13 @@ export async function optimizeImagesInBody(reqBody) {
           try {
             const parsed = JSON.parse(trimmed);
             if (Array.isArray(parsed)) {
-              const before = tasks.length;
-              visitImageParts(parsed, tasks);
-              const localTasks = tasks.slice(before);
+              const localTasks = [];
+              visitImageParts(parsed, localTasks);
               if (localTasks.length) {
-                tasks.push(Promise.all(localTasks).then(() => {
+                tasks.push(async () => {
+                  await runWithConcurrency(localTasks, IMG_CONCURRENCY);
                   item.output = JSON.stringify(parsed);
-                }));
+                });
               }
             }
           } catch {
@@ -114,7 +134,7 @@ export async function optimizeImagesInBody(reqBody) {
     }
   }
 
-  if (tasks.length) await Promise.all(tasks);
+  if (tasks.length) await runWithConcurrency(tasks, IMG_CONCURRENCY);
   return reqBody;
 }
 
@@ -235,11 +255,12 @@ function getGithubToken() {
   return fs.readFileSync(GITHUB_TOKEN_PATH, "utf-8").trim();
 }
 
-export async function getCopilotToken() {
+export async function getCopilotToken({ signal } = {}) {
   if (copilotToken && Date.now() < copilotTokenExpiry - 60000) return copilotToken;
   const ghToken = getGithubToken();
   const resp = await fetch(`${GITHUB_API}/copilot_internal/v2/token`, {
     headers: { Authorization: `token ${ghToken}`, Accept: "application/json" },
+    signal,
   });
   if (!resp.ok) throw new Error(`Failed to get Copilot token: ${resp.status}`);
   const data = await resp.json();
@@ -254,8 +275,8 @@ export async function getCopilotToken() {
 }
 
 // chatReq is already converted by the adapter. The caller parses the raw Response.
-export async function chatCompletions(chatReq) {
-  const token = await getCopilotToken();
+export async function chatCompletions(chatReq, { signal } = {}) {
+  const token = await getCopilotToken({ signal });
   const messages = chatReq.messages || [];
   const headers = buildHeaders({
     token,
@@ -267,21 +288,22 @@ export async function chatCompletions(chatReq) {
     method: "POST",
     headers,
     body: JSON.stringify(chatReq),
+    signal,
   });
 }
 
-export async function listModels() {
-  const token = await getCopilotToken();
+export async function listModels({ signal } = {}) {
+  const token = await getCopilotToken({ signal });
   const headers = buildHeaders({
     token, version: getVSCodeVersion(), initiator: "user", vision: false,
   });
-  const resp = await fetch(`${getApiBase()}/models`, { headers });
+  const resp = await fetch(`${getApiBase()}/models`, { headers, signal });
   return { status: resp.status, body: await resp.text() };
 }
 
 // Responses-only models go directly to Copilot's /responses endpoint.
-export async function responses(reqBody) {
-  const token = await getCopilotToken();
+export async function responses(reqBody, { signal } = {}) {
+  const token = await getCopilotToken({ signal });
   const beforeBytes = Buffer.byteLength(JSON.stringify(reqBody));
   await optimizeImagesInBody(reqBody);
   const bodyBuf = Buffer.from(JSON.stringify(reqBody), "utf8");
@@ -302,6 +324,7 @@ export async function responses(reqBody) {
       method: "POST",
       headers,
       body: bodyBuf,
+      signal,
     });
   } catch (e) {
     const cause = e?.cause;
@@ -310,7 +333,7 @@ export async function responses(reqBody) {
   }
 }
 
-export async function responsesCompact(reqBody) {
+export async function responsesCompact(reqBody, options = {}) {
   // GitHub Copilot accepts Codex compact payloads on the regular Responses endpoint.
-  return responses(reqBody);
+  return responses(reqBody, options);
 }

@@ -10,8 +10,13 @@ import { printUsageSummary } from "../src/usage.mjs";
 import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
 
 const ADAPTER_PORT = parseInt(process.env.ADAPTER_PORT || "2026");
+const ADAPTER_HOST = process.env.ADAPTER_HOST || "127.0.0.1";
 const LOCAL_VERSION = localPackageVersion();
 const command = process.argv[2];
+
+function isLoopbackHost(host) {
+  return ["127.0.0.1", "localhost", "::1"].includes(String(host).toLowerCase());
+}
 
 if (command === "--version" || command === "-v" || command === "version") {
   console.log(`codex-copilot-dx v${LOCAL_VERSION}`);
@@ -41,8 +46,12 @@ try {
   // Refresh the VS Code version in the background; fallback is non-blocking.
   refreshVSCodeVersion();
 
+  if (!isLoopbackHost(ADAPTER_HOST)) {
+    console.log(status("warn", `ADAPTER_HOST=${ADAPTER_HOST} exposes the adapter beyond loopback. Use only on trusted networks.`));
+  }
+
   // Start the in-process adapter.
-  await startAdapter(ADAPTER_PORT);
+  await startAdapter(ADAPTER_PORT, ADAPTER_HOST);
 
   // Point Codex and Claude Code at the adapter.
   ensureCodexConfig(ADAPTER_PORT);
@@ -54,7 +63,7 @@ try {
   console.log(`
   ${status("ok", "Ready. Codex and Claude Code are using your GitHub Copilot subscription.")}
 
-  Adapter: http://localhost:${ADAPTER_PORT}
+  Adapter: http://${ADAPTER_HOST}:${ADAPTER_PORT}
 
   Press Ctrl+C to stop.
 `);

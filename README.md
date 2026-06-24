@@ -28,7 +28,7 @@ npx codex-copilot-dx@latest
 On first run, it will:
 1. Authenticate with GitHub via device flow (if needed)
 2. Print the local package version and warn when a newer npm release is available
-3. Start the adapter (port `2026`)
+3. Start the adapter on loopback (`127.0.0.1:2026`)
 4. Configure Codex (`~/.codex/config.toml`) to use the adapter, including stale shell env base URLs if present
 5. Configure Claude Code (`~/.claude/settings.json`) to use the adapter; it creates the file when missing, otherwise backs up `settings.json.bak` before updating the local API env keys
 6. Launch Codex Desktop
@@ -43,10 +43,15 @@ Environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `ADAPTER_HOST` | `127.0.0.1` | Host for the adapter; set `0.0.0.0` only if you knowingly expose it on a trusted network |
 | `ADAPTER_PORT` | `2026` | Port for the adapter |
+| `CCDX_MAX_BODY_BYTES` | `134217728` | Maximum compressed/raw request body size |
+| `CCDX_MAX_DECODED_BODY_BYTES` | `268435456` | Maximum decoded request body size after decompression |
+| `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Timeout for non-streaming upstream Copilot requests |
 | `CCDX_IMG_MAX_DIM` | `2048` | Max long edge in pixels for image downscaling |
 | `CCDX_IMG_QUALITY` | `85` | WebP quality used when re-encoding images |
 | `CCDX_IMG_MIN_BYTES` | `100000` | Images smaller than this are left untouched |
+| `CCDX_IMG_CONCURRENCY` | `4` | Concurrent image optimization tasks; values above `12` are capped at `12` |
 | `CCDX_DISABLE_IMG_OPT` | unset | Set to `1` to disable image optimization |
 | `CCDX_USAGE_PATH` | `~/.local/share/codex-copilot-dx/usage.jsonl` | Local JSONL token usage log |
 | `CCDX_DISABLE_USAGE` | unset | Set to `1` to disable usage logging |

@@ -21,10 +21,10 @@ trust_level = "trusted"
 
   const { content, changed } = computeUpdatedCodexConfig(before, 2026);
   assert.equal(changed, true);
-  assert.match(content, /^openai_base_url = "http:\/\/localhost:2026\/v1"$/m);
+  assert.match(content, /^openai_base_url = "http:\/\/127\.0\.0\.1:2026\/v1"$/m);
   assert.match(content, /^ANTHROPIC_AUTH_TOKEN = "dummy"$/m);
-  assert.match(content, /^ANTHROPIC_BASE_URL = "http:\/\/localhost:2026"$/m);
-  assert.match(content, /^OPENAI_BASE_URL = "http:\/\/localhost:2026\/v1"$/m);
+  assert.match(content, /^ANTHROPIC_BASE_URL = "http:\/\/127\.0\.0\.1:2026"$/m);
+  assert.match(content, /^OPENAI_BASE_URL = "http:\/\/127\.0\.0\.1:2026\/v1"$/m);
   assert.match(content, /^OPENAI_API_KEY = "dummy"$/m);
   assert.match(content, /^\[projects."\/tmp\/example"\]$/m);
 });
@@ -36,10 +36,10 @@ ANTHROPIC_AUTH_TOKEN = "dummy"
 
   const { content, changed } = computeUpdatedCodexConfig(before, 2026);
   assert.equal(changed, true);
-  assert.match(content, /^openai_base_url = "http:\/\/localhost:2026\/v1"$/m);
+  assert.match(content, /^openai_base_url = "http:\/\/127\.0\.0\.1:2026\/v1"$/m);
   assert.match(content, /^ANTHROPIC_AUTH_TOKEN = "dummy"$/m);
-  assert.match(content, /^ANTHROPIC_BASE_URL = "http:\/\/localhost:2026"$/m);
-  assert.match(content, /^OPENAI_BASE_URL = "http:\/\/localhost:2026\/v1"$/m);
+  assert.match(content, /^ANTHROPIC_BASE_URL = "http:\/\/127\.0\.0\.1:2026"$/m);
+  assert.match(content, /^OPENAI_BASE_URL = "http:\/\/127\.0\.0\.1:2026\/v1"$/m);
   assert.match(content, /^OPENAI_API_KEY = "dummy"$/m);
 });
 
@@ -49,18 +49,18 @@ openai_base_url = "http://localhost:4142/v1"
 `;
 
   const { content } = computeUpdatedCodexConfig(before, 2026);
-  assert.match(content, /^openai_base_url = "http:\/\/localhost:2026\/v1"$/m);
+  assert.match(content, /^openai_base_url = "http:\/\/127\.0\.0\.1:2026\/v1"$/m);
   assert.doesNotMatch(content, /shell_environment_policy\.set/);
   assert.doesNotMatch(content, /ANTHROPIC_BASE_URL/);
 });
 
 test("computeUpdatedCodexConfig: reports unchanged when already current", () => {
-  const before = `openai_base_url = "http://localhost:2026/v1"
+  const before = `openai_base_url = "http://127.0.0.1:2026/v1"
 
 [shell_environment_policy.set]
 ANTHROPIC_AUTH_TOKEN = "dummy"
-ANTHROPIC_BASE_URL = "http://localhost:2026"
-OPENAI_BASE_URL = "http://localhost:2026/v1"
+ANTHROPIC_BASE_URL = "http://127.0.0.1:2026"
+OPENAI_BASE_URL = "http://127.0.0.1:2026/v1"
 OPENAI_API_KEY = "dummy"
 `;
 

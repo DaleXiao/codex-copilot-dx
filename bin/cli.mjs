@@ -32,7 +32,7 @@ if (command === "usage") {
 
 console.log(`
   codex-copilot-dx v${LOCAL_VERSION}
-  Use Codex Desktop, Claude Code, and Claude Desktop with GitHub Copilot
+  Use Codex Desktop, Claude Code, and Claude App with GitHub Copilot
 `);
 
 checkForUpdate({ currentVersion: LOCAL_VERSION }).then(({ latestVersion, updateAvailable }) => {
@@ -68,8 +68,10 @@ try {
       host: ADAPTER_HOST,
       gatewayApiKey: claudeDesktopApiKey,
     });
-    console.log(status("ok", `Configured Claude Desktop gateway profile at ${result.baseUrl}`));
+    console.log(status("ok", `Configured Claude App gateway profile at ${result.baseUrl}`));
     console.log(formatClaudeDesktopApplyResult(result));
+  } else {
+    console.log(status("ok", "Claude App support available with --configure-claude-desktop"));
   }
 
   // Launch Codex when available.
@@ -77,8 +79,8 @@ try {
 
   console.log(`
   ${status("ok", CONFIGURE_CLAUDE_DESKTOP
-    ? "Ready. Codex, Claude Code, and Claude Desktop are using your GitHub Copilot subscription."
-    : "Ready. Codex and Claude Code are using your GitHub Copilot subscription.")}
+    ? "Ready. Codex, Claude Code, and Claude App are using your GitHub Copilot subscription."
+    : "Ready. Codex and Claude Code are using your GitHub Copilot subscription. Claude App support is available with --configure-claude-desktop.")}
 
   Adapter: http://${ADAPTER_HOST}:${ADAPTER_PORT}
 

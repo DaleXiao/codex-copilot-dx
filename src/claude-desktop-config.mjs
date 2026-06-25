@@ -54,16 +54,16 @@ export function validateClaudeDesktopBaseUrl(raw) {
   try {
     parsed = new URL(raw);
   } catch {
-    throw new Error(`Claude Desktop gateway base URL is not valid: ${raw}`);
+    throw new Error(`Claude App gateway base URL is not valid: ${raw}`);
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Claude Desktop gateway base URL must use http or https");
+    throw new Error("Claude App gateway base URL must use http or https");
   }
   if (parsed.protocol === "http:" && !isLoopbackHost(parsed.hostname)) {
-    throw new Error("Claude Desktop allows http only for loopback; use https for LAN or remote gateways");
+    throw new Error("Claude App allows http only for loopback; use https for LAN or remote gateways");
   }
   if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
-    throw new Error("Claude Desktop gateway base URL must be the root URL without /v1, query, or hash");
+    throw new Error("Claude App gateway base URL must be the root URL without /v1, query, or hash");
   }
 }
 
@@ -84,7 +84,7 @@ export function computeClaudeDesktopProfile(sourceProfile = {}, {
 } = {}) {
   validateClaudeDesktopBaseUrl(baseUrl);
   if (!String(gatewayApiKey || "").trim()) {
-    throw new Error("Claude Desktop gateway API key is required");
+    throw new Error("Claude App gateway API key is required");
   }
 
   const profile = {};
@@ -207,7 +207,7 @@ export function applyClaudeDesktopConfig({
 
 export function formatClaudeDesktopApplyResult(result) {
   return [
-    "Claude Desktop local gateway profile",
+    "Claude App local gateway profile",
     `profile id: ${result.profileId}`,
     `profile path: ${result.profilePath}`,
     `base url: ${result.baseUrl}`,
@@ -222,7 +222,7 @@ export function ensureClaudeDesktopConfig(port = 2026, host = "127.0.0.1") {
     host,
     gatewayApiKey: process.env.CCDX_CLAUDE_DESKTOP_API_KEY || process.env.CCDX_PROXY_API_KEY || generatedClaudeDesktopApiKey(),
   });
-  console.log(status("ok", `Configured Claude Desktop gateway profile at ${result.baseUrl}`));
+  console.log(status("ok", `Configured Claude App gateway profile at ${result.baseUrl}`));
   console.log(formatClaudeDesktopApplyResult(result));
   return result;
 }

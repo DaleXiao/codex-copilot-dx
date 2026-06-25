@@ -125,6 +125,13 @@ function sendJsonError(res, err, fallbackStatus = 400) {
   res.end(JSON.stringify({ error: err?.message || "Request failed" }));
 }
 
+function sendUpstreamError(res, resp, text) {
+  if (!res.headersSent) {
+    res.writeHead(resp.status || 502, { "Content-Type": resp.headers?.get("content-type") || "application/json" });
+  }
+  res.end(text || JSON.stringify({ error: "Upstream request failed" }));
+}
+
 export function writeOrDrain(res, chunk) {
   if (res.destroyed || res.writableEnded) return Promise.resolve(false);
   if (res.write(chunk)) return Promise.resolve(true);
@@ -178,6 +185,81 @@ function responsesInputItems(input) {
 function responsesOutputItems(output) {
   if (!Array.isArray(output)) return [];
   return cloneJson(output.filter((item) => item?.type === "message" || item?.type === "function_call"));
+}
+
+function stripEncryptedReasoningValue(value, state) {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripEncryptedReasoningValue(item, state));
+  }
+
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "encrypted_content") {
+        state.changed = true;
+        continue;
+      }
+      out[key] = stripEncryptedReasoningValue(child, state);
+    }
+    return out;
+  }
+
+  return value;
+}
+
+function isEncryptedReasoningInputItem(item) {
+  return item && typeof item === "object"
+    && (item.type === "reasoning" || Object.prototype.hasOwnProperty.call(item, "encrypted_content"));
+}
+
+export function sanitizeEncryptedReasoningRequest(reqContext) {
+  const state = { changed: false };
+  let body = cloneJson(reqContext.body);
+  if (Array.isArray(body.input)) {
+    const input = [];
+    for (const item of body.input) {
+      if (isEncryptedReasoningInputItem(item)) {
+        state.changed = true;
+        continue;
+      }
+      input.push(stripEncryptedReasoningValue(item, state));
+    }
+    body.input = input;
+  } else {
+    body = stripEncryptedReasoningValue(body, state);
+  }
+  if (!state.changed) return null;
+  return {
+    ...reqContext,
+    body,
+    inputItems: Array.isArray(body.input) ? body.input : reqContext.inputItems,
+  };
+}
+
+export function isEncryptedContentVerificationError(statusCode, text) {
+  if (statusCode < 400 || !text) return false;
+  const lower = String(text).toLowerCase();
+  return lower.includes("encrypted content")
+    && lower.includes("could not be verified")
+    && (lower.includes("could not be decrypted") || lower.includes("could not be parsed"));
+}
+
+export async function openCopilotResponse(reqContext, upstream = copilotResponses, options = {}) {
+  let resp = await upstream(reqContext.body, { signal: options.signal });
+  if (resp.ok) return { resp, reqContext };
+
+  const errorText = await resp.text();
+  if (!isEncryptedContentVerificationError(resp.status, errorText)) {
+    return { resp, reqContext, errorText };
+  }
+
+  const retryContext = sanitizeEncryptedReasoningRequest(reqContext);
+  if (!retryContext) return { resp, reqContext, errorText };
+
+  console.warn(status("warn", "encrypted reasoning rejected by upstream; retrying without encrypted reasoning"));
+  resp = await upstream(retryContext.body, { signal: options.signal });
+  if (resp.ok) return { resp, reqContext: retryContext };
+  return { resp, reqContext: retryContext, errorText: await resp.text() };
 }
 
 export function clearResponseHistoryForTests() {
@@ -256,7 +338,13 @@ function readSseEvents(buffer, onData) {
 }
 
 async function proxyCopilotResponses(reqContext, req, res, upstream = copilotResponses, options = {}) {
-  const resp = await upstream(reqContext.body, { signal: options.signal });
+  const opened = await openCopilotResponse(reqContext, upstream, options);
+  const { resp, errorText } = opened;
+  reqContext = opened.reqContext;
+  if (errorText !== undefined) {
+    sendUpstreamError(res, resp, errorText);
+    return;
+  }
 
   if (reqContext.body.stream) {
     res.writeHead(resp.status, {

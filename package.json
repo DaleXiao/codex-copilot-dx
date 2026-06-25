@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Use Codex Desktop app with your GitHub Copilot subscription",
   "type": "module",
   "bin": {

@@ -9,6 +9,7 @@ import { refreshVSCodeVersion } from "../src/copilot.mjs";
 import { status } from "../src/status.mjs";
 import { printUsageSummary } from "../src/usage.mjs";
 import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
+import { runDoctor } from "../src/doctor.mjs";
 
 const ADAPTER_PORT = parseInt(process.env.ADAPTER_PORT || "2026");
 const ADAPTER_HOST = process.env.ADAPTER_HOST || "127.0.0.1";
@@ -27,6 +28,11 @@ if (command === "--version" || command === "-v" || command === "version") {
 
 if (command === "usage") {
   await printUsageSummary();
+  process.exit(0);
+}
+
+if (command === "doctor" || command === "--doctor") {
+  await runDoctor({ port: ADAPTER_PORT, host: ADAPTER_HOST });
   process.exit(0);
 }
 

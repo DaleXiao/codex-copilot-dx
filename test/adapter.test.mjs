@@ -5,7 +5,10 @@ import { Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import * as zlib from "node:zlib";
 import {
+  abortErrorStatusCode,
   clearResponseHistoryForTests,
+  createRequestAbort,
+  isAbortLikeError,
   isEncryptedContentVerificationError,
   openCopilotResponse,
   prepareResponsesRequest,
@@ -44,6 +47,54 @@ test("shouldServeClaudeDesktopModels: detects only configured Desktop keys", () 
   assert.equal(shouldServeClaudeDesktopModels({ headers: { "x-api-key": "ccdx_secret" } }, "ccdx_secret"), true);
   assert.equal(shouldServeClaudeDesktopModels({ headers: { authorization: "Bearer dummy" } }, "dummy"), false);
   assert.equal(shouldServeClaudeDesktopModels({ headers: { authorization: "Bearer other" } }, "ccdx_secret"), false);
+});
+
+test("createRequestAbort: records client close reason", () => {
+  const req = new EventEmitter();
+  const res = new EventEmitter();
+  res.writableEnded = false;
+
+  const abort = createRequestAbort(req, res);
+  res.emit("close");
+
+  assert.equal(abort.signal.aborted, true);
+  assert.equal(abort.reason, "client_closed");
+  abort.cleanup();
+});
+
+test("createRequestAbort: ignores normal response close after end", () => {
+  const req = new EventEmitter();
+  const res = new EventEmitter();
+  res.writableEnded = true;
+
+  const abort = createRequestAbort(req, res);
+  res.emit("close");
+
+  assert.equal(abort.signal.aborted, false);
+  assert.equal(abort.reason, null);
+  abort.cleanup();
+});
+
+test("createRequestAbort: records timeout reason", async () => {
+  const req = new EventEmitter();
+  const res = new EventEmitter();
+  res.writableEnded = false;
+
+  const abort = createRequestAbort(req, res);
+  abort.setTimeout(1);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(abort.signal.aborted, true);
+  assert.equal(abort.reason, "upstream_timeout");
+  abort.cleanup();
+});
+
+test("abort helpers classify expected abort errors", () => {
+  assert.equal(isAbortLikeError(new DOMException("This operation was aborted", "AbortError")), true);
+  assert.equal(isAbortLikeError(new Error("This operation was aborted")), true);
+  assert.equal(isAbortLikeError(new Error("socket hang up")), false);
+  assert.equal(abortErrorStatusCode("upstream_timeout"), 504);
+  assert.equal(abortErrorStatusCode("client_closed"), 499);
 });
 
 test("prepareResponsesRequest: expands previous response history locally", () => {

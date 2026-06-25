@@ -38,6 +38,16 @@ Claude Code picks up the new `ANTHROPIC_BASE_URL` on its next launch.
 
 Do not set Claude Code by manually exporting `ANTHROPIC_BASE_URL` or `ANTHROPIC_AUTH_TOKEN` in your shell. Let `codex-copilot-dx` write the local config files instead. If you previously exported those variables, remove them from shell startup files and restart the terminal before launching Claude Code.
 
+### Diagnostics
+
+Run a read-only config check without starting the adapter or changing files:
+
+```bash
+codex-copilot-dx doctor
+```
+
+The doctor checks the GitHub token, Codex config, Claude Code settings, Claude App gateway profile, and whether the local adapter port is listening.
+
 ### Claude App opt-in
 
 Claude App support is opt-in so the default Codex Desktop and Claude Code setup stays unchanged:

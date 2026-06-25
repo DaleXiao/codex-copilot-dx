@@ -122,6 +122,7 @@ export async function readJsonBody(req, {
 }
 
 function sendJsonError(res, err, fallbackStatus = 400) {
+  if (res.destroyed || res.writableEnded) return;
   if (!res.headersSent) res.writeHead(err?.statusCode || fallbackStatus, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: err?.message || "Request failed" }));
 }
@@ -164,28 +165,59 @@ export function writeOrDrain(res, chunk) {
   });
 }
 
-function createRequestAbort(req, res) {
+export function isAbortLikeError(err) {
+  return err?.name === "AbortError" || /operation was aborted/i.test(String(err?.message || ""));
+}
+
+export function abortErrorStatusCode(reason) {
+  if (reason === "upstream_timeout") return 504;
+  if (reason === "client_aborted" || reason === "client_closed") return 499;
+  return 400;
+}
+
+export function createRequestAbort(req, res) {
   const controller = new AbortController();
   let timer = null;
   let cleaned = false;
-  const abort = () => {
-    if (!cleaned && !controller.signal.aborted) controller.abort();
+  let reason = null;
+  const abort = (nextReason = "aborted") => {
+    if (!cleaned && !controller.signal.aborted) {
+      reason = nextReason;
+      controller.abort();
+    }
   };
-  req.on("aborted", abort);
-  res.on("close", abort);
+  const onReqAborted = () => abort("client_aborted");
+  const onResClose = () => {
+    if (!res.writableEnded) abort("client_closed");
+  };
+  req.on("aborted", onReqAborted);
+  res.on("close", onResClose);
   return {
     signal: controller.signal,
+    get reason() { return reason; },
     setTimeout(ms) {
       if (timer) clearTimeout(timer);
-      if (ms > 0) timer = setTimeout(abort, ms);
+      if (ms > 0) timer = setTimeout(() => abort("upstream_timeout"), ms);
     },
     cleanup() {
       cleaned = true;
       if (timer) clearTimeout(timer);
-      req.off("aborted", abort);
-      res.off("close", abort);
+      req.off("aborted", onReqAborted);
+      res.off("close", onResClose);
     },
   };
+}
+
+function logRequestFailure(label, err, abort) {
+  if (!isAbortLikeError(err)) {
+    console.error(status("err", `${label} request failed: ${err.message}`));
+    return;
+  }
+
+  const reason = abort?.reason || "aborted";
+  err.statusCode ||= abortErrorStatusCode(reason);
+  const detail = reason === "upstream_timeout" ? `${reason} after ${UPSTREAM_TIMEOUT_MS}ms` : reason;
+  console.warn(status("warn", `${label} request aborted: ${detail}`));
 }
 
 function responsesInputItems(input) {
@@ -562,13 +594,16 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
                 res.writeHead(200, { "Content-Type": "application/json" });
                 res.end(JSON.stringify(resp));
               } catch (e) {
-                if (!res.headersSent) res.writeHead(502);
-                res.end("Bad Gateway");
+                logRequestFailure("Responses", e, abort);
+                if (!res.destroyed && !res.writableEnded) {
+                  if (!res.headersSent) res.writeHead(e?.statusCode || 502);
+                  res.end("Bad Gateway");
+                }
               }
             }
           }
         } catch (e) {
-          console.error(status("err", `Responses request failed: ${e.message}`));
+          logRequestFailure("Responses", e, abort);
           sendJsonError(res, e);
         } finally {
           abort.cleanup();
@@ -589,7 +624,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
           console.log(status("info", `responses compact model=${model} stream=${!!parsed.stream}`));
           await proxyCopilotResponses(prepared, req, res, copilotResponsesCompact, { signal: abort.signal });
         } catch (e) {
-          console.error(status("err", `Responses compact request failed: ${e.message}`));
+          logRequestFailure("Responses compact", e, abort);
           sendJsonError(res, e);
         } finally {
           abort.cleanup();
@@ -608,7 +643,13 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
       abort.setTimeout(UPSTREAM_TIMEOUT_MS);
       listModels({ signal: abort.signal })
         .then(({ status, body }) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(body); })
-        .catch((e) => { if (!res.headersSent) res.writeHead(502); res.end(JSON.stringify({ error: e.message })); })
+        .catch((e) => {
+          logRequestFailure("Models", e, abort);
+          if (!res.destroyed && !res.writableEnded) {
+            if (!res.headersSent) res.writeHead(e?.statusCode || 502);
+            res.end(JSON.stringify({ error: e.message }));
+          }
+        })
         .finally(() => abort.cleanup());
       return;
     }
@@ -671,7 +712,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
             res.end(JSON.stringify(anthropicMsg));
           }
         } catch (e) {
-          console.error(status("err", `Messages request failed: ${e.message}`));
+          logRequestFailure("Messages", e, abort);
           sendJsonError(res, e);
         } finally {
           abort.cleanup();

@@ -6,7 +6,10 @@ import { status } from "./status.mjs";
 
 const CLIENT_ID = "Iv1.b507a08c87ecfe98"; // Public GitHub Copilot client ID.
 const SCOPE = "read:user";
-const GITHUB_TOKEN_PATH = path.join(os.homedir(), ".local", "share", "copilot-api", "github_token");
+
+export function githubTokenPath(home = os.homedir()) {
+  return path.join(home, ".local", "share", "copilot-api", "github_token");
+}
 
 // Map GitHub polling responses to a small local state machine.
 export function interpretPoll(data) {
@@ -40,6 +43,7 @@ function openAndCopy(userCode, verificationUri) {
 }
 
 export async function ensureAuth() {
+  const GITHUB_TOKEN_PATH = githubTokenPath();
   if (fs.existsSync(GITHUB_TOKEN_PATH)) {
     console.log(status("ok", "GitHub token found"));
     return;
@@ -90,6 +94,7 @@ export async function ensureAuth() {
 }
 
 function writeToken(token) {
+  const GITHUB_TOKEN_PATH = githubTokenPath();
   fs.mkdirSync(path.dirname(GITHUB_TOKEN_PATH), { recursive: true });
   fs.writeFileSync(GITHUB_TOKEN_PATH, token, { mode: 0o600 });
 }

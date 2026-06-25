@@ -5,6 +5,7 @@ import * as zlib from "node:zlib";
 import { chatCompletions, listModels, responses as copilotResponses, responsesCompact as copilotResponsesCompact } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
 import { anthropicToChat, chatToAnthropic, streamAnthropicFromLines, countTokens } from "./anthropic.mjs";
+import { claudeDesktopModelsResponse, resolveAnthropicModel } from "./models.mjs";
 import { status } from "./status.mjs";
 import { recordAnthropicUsage, recordResponsesUsage } from "./usage.mjs";
 
@@ -130,6 +131,19 @@ function sendUpstreamError(res, resp, text) {
     res.writeHead(resp.status || 502, { "Content-Type": resp.headers?.get("content-type") || "application/json" });
   }
   res.end(text || JSON.stringify({ error: "Upstream request failed" }));
+}
+
+function bearerToken(headers = {}) {
+  const value = headers.authorization || headers.Authorization || "";
+  const match = /^Bearer\s+(.+)$/i.exec(String(value));
+  return match?.[1]?.trim() || "";
+}
+
+export function shouldServeClaudeDesktopModels(req, claudeDesktopApiKey) {
+  if (!claudeDesktopApiKey || claudeDesktopApiKey === "dummy") return false;
+  const token = bearerToken(req.headers);
+  const xApiKey = req.headers?.["x-api-key"] || req.headers?.["X-Api-Key"] || req.headers?.["X-API-Key"] || "";
+  return token === claudeDesktopApiKey || xApiKey === claudeDesktopApiKey;
 }
 
 export function writeOrDrain(res, chunk) {
@@ -504,7 +518,12 @@ async function forwardToChat(chatReq, emitEvent, onDone, onError, options = {}) 
 
 // Public server entry point.
 
-export function startAdapter(port = 2026, host = "127.0.0.1") {
+export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
+  const claudeDesktopApiKey = options.claudeDesktopApiKey
+    || process.env.CCDX_CLAUDE_DESKTOP_API_KEY
+    || process.env.CCDX_PROXY_API_KEY
+    || "";
+
   const server = http.createServer((req, res) => {
     const pathname = requestPath(req.url);
 
@@ -580,6 +599,11 @@ export function startAdapter(port = 2026, host = "127.0.0.1") {
     }
 
     if (req.method === "GET" && pathname === "/v1/models") {
+      if (shouldServeClaudeDesktopModels(req, claudeDesktopApiKey)) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(claudeDesktopModelsResponse()));
+        return;
+      }
       const abort = createRequestAbort(req, res);
       abort.setTimeout(UPSTREAM_TIMEOUT_MS);
       listModels({ signal: abort.signal })
@@ -611,9 +635,11 @@ export function startAdapter(port = 2026, host = "127.0.0.1") {
         try {
           const parsed = await readJsonBody(req);
           if (!parsed.stream) abort.setTimeout(UPSTREAM_TIMEOUT_MS);
-          const model = parsed.model || "unknown";
-          console.log(status("info", `messages model=${model} stream=${!!parsed.stream}`));
-          const chatReq = anthropicToChat(parsed);
+          const { requestedModel, upstreamModel } = resolveAnthropicModel(parsed.model || "unknown");
+          const modelNote = upstreamModel === requestedModel ? requestedModel : `${requestedModel} -> ${upstreamModel}`;
+          console.log(status("info", `messages model=${modelNote} stream=${!!parsed.stream}`));
+          const chatReq = anthropicToChat(parsed, { upstreamModel });
+          const forceRequestedModel = upstreamModel !== requestedModel;
           if (parsed.stream) {
             const upstream = await chatCompletions({ ...chatReq, stream: true }, { signal: abort.signal });
             if (!upstream.ok) {
@@ -631,14 +657,15 @@ export function startAdapter(port = 2026, host = "127.0.0.1") {
                 if (event === "message_delta") usage = data.usage;
                 await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
               },
-              model,
+              requestedModel,
+              { forceModel: forceRequestedModel },
             );
-            recordAnthropicUsage({ surface: "messages", mode: "stream", model, responseId: messageId, usage });
+            recordAnthropicUsage({ surface: "messages", mode: "stream", model: requestedModel, responseId: messageId, usage });
             if (!res.writableEnded) res.end();
           } else {
             const upstream = await chatCompletions({ ...chatReq, stream: false }, { signal: abort.signal });
             const data = await upstream.text();
-            const anthropicMsg = chatToAnthropic(JSON.parse(data), model);
+            const anthropicMsg = chatToAnthropic(JSON.parse(data), requestedModel, { forceModel: forceRequestedModel });
             recordAnthropicUsage({ surface: "messages", mode: "json", model: anthropicMsg.model, responseId: anthropicMsg.id, usage: anthropicMsg.usage });
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(anthropicMsg));

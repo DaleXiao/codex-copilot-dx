@@ -19,6 +19,13 @@ test("anthropicToChat: string system becomes system message", () => {
   assert.equal(r.model, "m");
 });
 
+test("anthropicToChat: can separate requested and upstream model", () => {
+  const r = anthropicToChat({ model: "claude-sonnet-4-6", messages: [{ role: "user", content: "hi" }] }, {
+    upstreamModel: "claude-sonnet-4.6",
+  });
+  assert.equal(r.model, "claude-sonnet-4.6");
+});
+
 test("anthropicToChat: system blocks are joined", () => {
   const r = anthropicToChat({ model: "m", system: [{ type: "text", text: "a" }, { type: "text", text: "b" }], messages: [{ role: "user", content: "hi" }] });
   assert.equal(r.messages[0].content, "a\nb");
@@ -139,10 +146,16 @@ test("chatToAnthropic: cached_tokens becomes cache_read_input_tokens", () => {
   assert.equal(a.usage.cache_read_input_tokens, 30);
 });
 
-async function collect(lines, model = "m") {
+test("chatToAnthropic: forceModel preserves the requested Claude Desktop alias", () => {
+  const openai = { model: "claude-sonnet-4.6", choices: [{ message: { content: "x" }, finish_reason: "stop" }] };
+  const a = chatToAnthropic(openai, "claude-sonnet-4-6", { forceModel: true });
+  assert.equal(a.model, "claude-sonnet-4-6");
+});
+
+async function collect(lines, model = "m", options = {}) {
   async function* gen() { for (const l of lines) yield l; }
   const events = [];
-  await streamAnthropicFromLines(gen(), (event, data) => events.push([event, data]), model);
+  await streamAnthropicFromLines(gen(), (event, data) => events.push([event, data]), model, options);
   return events;
 }
 
@@ -195,6 +208,15 @@ test("streamAnthropicFromLines: uses stream_options usage chunks", async () => {
   const ev = await collect(lines);
   const md = ev.find((e) => e[0] === "message_delta");
   assert.equal(md[1].usage.output_tokens, 7);
+});
+
+test("streamAnthropicFromLines: forceModel preserves the requested Claude Desktop alias", async () => {
+  const ev = await collect([
+    'data: {"model":"claude-sonnet-4.6","choices":[{"delta":{"content":"hi"}}]}',
+    'data: [DONE]',
+  ], "claude-sonnet-4-6", { forceModel: true });
+  const start = ev.find((e) => e[0] === "message_start");
+  assert.equal(start[1].message.model, "claude-sonnet-4-6");
 });
 
 test("streamAnthropicFromLines: waits for async emit backpressure", async () => {

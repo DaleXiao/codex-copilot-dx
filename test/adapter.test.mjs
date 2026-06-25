@@ -13,6 +13,7 @@ import {
   rememberResponseHistory,
   requestPath,
   sanitizeEncryptedReasoningRequest,
+  shouldServeClaudeDesktopModels,
   writeOrDrain,
 } from "../src/adapter.mjs";
 
@@ -35,6 +36,14 @@ test("requestPath: ignores query strings on other API routes", () => {
   assert.equal(requestPath("/v1/responses?stream=true"), "/v1/responses");
   assert.equal(requestPath("/v1/responses/compact?stream=true"), "/v1/responses/compact");
   assert.equal(requestPath("/v1/models?foo=bar"), "/v1/models");
+});
+
+test("shouldServeClaudeDesktopModels: detects only configured Desktop keys", () => {
+  assert.equal(shouldServeClaudeDesktopModels({ headers: { "anthropic-version": "2023-06-01" } }, ""), false);
+  assert.equal(shouldServeClaudeDesktopModels({ headers: { authorization: "Bearer ccdx_secret" } }, "ccdx_secret"), true);
+  assert.equal(shouldServeClaudeDesktopModels({ headers: { "x-api-key": "ccdx_secret" } }, "ccdx_secret"), true);
+  assert.equal(shouldServeClaudeDesktopModels({ headers: { authorization: "Bearer dummy" } }, "dummy"), false);
+  assert.equal(shouldServeClaudeDesktopModels({ headers: { authorization: "Bearer other" } }, "ccdx_secret"), false);
 });
 
 test("prepareResponsesRequest: expands previous response history locally", () => {

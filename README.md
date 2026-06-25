@@ -1,6 +1,6 @@
 # codex-copilot-dx
 
-Use [Codex Desktop](https://openai.com/codex) **and** [Claude Code](https://claude.com/claude-code) with your **GitHub Copilot** subscription.
+Use [Codex Desktop](https://openai.com/codex), [Claude Code](https://claude.com/claude-code), and optionally Claude Desktop with your **GitHub Copilot** subscription.
 
 ## How it works
 
@@ -8,6 +8,7 @@ A single in-process adapter (port `2026`) exposes both APIs over your Copilot su
 
 - **Codex** -> OpenAI Responses API (`/v1/responses`, `/v1/responses/compact`); Responses-only models and compaction proxy directly, chat models convert to Chat Completions.
 - **Claude Code** -> Anthropic Messages API (`/v1/messages`, `/v1/messages/count_tokens`), translated to/from Chat Completions.
+- **Claude Desktop** -> optional Anthropic gateway profile using the same local Messages API plus local model discovery for the configured gateway key.
 
 Supports both HTTP SSE streaming and non-streaming.
 
@@ -15,7 +16,7 @@ Supports both HTTP SSE streaming and non-streaming.
 
 - GitHub Copilot subscription (Individual, Business, or Enterprise)
 - Node.js 18+
-- [Codex Desktop](https://openai.com/codex) and/or [Claude Code](https://claude.com/claude-code) installed
+- [Codex Desktop](https://openai.com/codex), [Claude Code](https://claude.com/claude-code), and/or Claude Desktop installed
 
 ## Usage
 
@@ -37,6 +38,22 @@ Claude Code picks up the new `ANTHROPIC_BASE_URL` on its next launch.
 
 Do not set Claude Code by manually exporting `ANTHROPIC_BASE_URL` or `ANTHROPIC_AUTH_TOKEN` in your shell. Let `codex-copilot-dx` write the local config files instead. If you previously exported those variables, remove them from shell startup files and restart the terminal before launching Claude Code.
 
+### Claude Desktop opt-in
+
+Claude Desktop support is opt-in so the default Codex Desktop and Claude Code setup stays unchanged:
+
+```bash
+npx codex-copilot-dx@latest --configure-claude-desktop
+```
+
+Or set:
+
+```bash
+CCDX_CONFIGURE_CLAUDE_DESKTOP=1 npx codex-copilot-dx@latest
+```
+
+This writes a local Claude Desktop 3P gateway profile that points to the adapter root URL, such as `http://127.0.0.1:2026`. The profile uses a generated local bearer key unless `CCDX_CLAUDE_DESKTOP_API_KEY` is set. Restart Claude Desktop after running the command.
+
 ## Configuration
 
 Environment variables:
@@ -53,6 +70,9 @@ Environment variables:
 | `CCDX_IMG_MIN_BYTES` | `100000` | Images smaller than this are left untouched |
 | `CCDX_IMG_CONCURRENCY` | `4` | Concurrent image optimization tasks; values above `12` are capped at `12` |
 | `CCDX_DISABLE_IMG_OPT` | unset | Set to `1` to disable image optimization |
+| `CCDX_CONFIGURE_CLAUDE_DESKTOP` | unset | Set to `1` to write the Claude Desktop 3P gateway profile during startup |
+| `CCDX_CLAUDE_DESKTOP_API_KEY` | generated for opt-in setup | Bearer key written into the Claude Desktop profile and recognized by the adapter for model discovery |
+| `CCDX_CLAUDE_MODEL_ALIASES` | built-in Claude aliases | Comma-separated Desktop-to-upstream aliases, for example `claude-sonnet-4-6=claude-sonnet-4.6` |
 | `CCDX_USAGE_PATH` | `~/.local/share/codex-copilot-dx/usage.jsonl` | Local JSONL token usage log |
 | `CCDX_DISABLE_USAGE` | unset | Set to `1` to disable usage logging |
 

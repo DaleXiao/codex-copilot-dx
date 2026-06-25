@@ -89,7 +89,7 @@ function mapToolChoice(tc) {
   }
 }
 
-export function anthropicToChat(body) {
+export function anthropicToChat(body, options = {}) {
   const messages = [];
   const sys = systemToText(body.system);
   if (sys) messages.push({ role: "system", content: sys });
@@ -97,7 +97,7 @@ export function anthropicToChat(body) {
     for (const converted of convertMessage(m)) messages.push(converted);
   }
 
-  const chatReq = { model: body.model, messages };
+  const chatReq = { model: options.upstreamModel || body.model, messages };
   if (body.max_tokens !== undefined) chatReq.max_tokens = body.max_tokens;
   if (body.temperature !== undefined) chatReq.temperature = body.temperature;
   if (body.top_p !== undefined) chatReq.top_p = body.top_p;
@@ -117,7 +117,7 @@ export function anthropicToChat(body) {
 
 function uid() { return randomUUID().replace(/-/g, ""); }
 
-export function chatToAnthropic(openaiResp, model) {
+export function chatToAnthropic(openaiResp, model, options = {}) {
   const choice = openaiResp.choices?.[0];
   const msg = choice?.message || {};
   const content = [];
@@ -143,7 +143,7 @@ export function chatToAnthropic(openaiResp, model) {
     id: `msg_${uid()}`,
     type: "message",
     role: "assistant",
-    model: openaiResp.model || model,
+    model: options.forceModel ? model : (openaiResp.model || model),
     content,
     stop_reason: mapStopReason(choice?.finish_reason),
     stop_sequence: null,
@@ -152,7 +152,7 @@ export function chatToAnthropic(openaiResp, model) {
 }
 
 // Consume OpenAI chat SSE lines and emit Anthropic SSE events.
-export async function streamAnthropicFromLines(lineIterator, emit, model) {
+export async function streamAnthropicFromLines(lineIterator, emit, model, options = {}) {
   const msgId = `msg_${uid()}`;
   let started = false;
   let blockIndex = -1;
@@ -192,7 +192,7 @@ export async function streamAnthropicFromLines(lineIterator, emit, model) {
     if (data === "[DONE]") break;
     let parsed;
     try { parsed = JSON.parse(data); } catch { continue; }
-    if (parsed.model) actualModel = parsed.model;
+    if (!options.forceModel && parsed.model) actualModel = parsed.model;
     if (parsed.usage?.completion_tokens != null) outputTokens = parsed.usage.completion_tokens;
     const choice = parsed.choices?.[0];
     if (!choice) continue;

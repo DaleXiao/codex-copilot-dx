@@ -32,7 +32,7 @@ if (command === "usage") {
 
 console.log(`
   codex-copilot-dx v${LOCAL_VERSION}
-  Use Codex Desktop with GitHub Copilot
+  Use Codex Desktop, Claude Code, and Claude Desktop with GitHub Copilot
 `);
 
 checkForUpdate({ currentVersion: LOCAL_VERSION }).then(({ latestVersion, updateAvailable }) => {

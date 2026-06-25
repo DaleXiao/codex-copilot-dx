@@ -1,7 +1,7 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.4.7",
-  "description": "Use Codex Desktop app with your GitHub Copilot subscription",
+  "version": "0.4.8",
+  "description": "Use Codex Desktop, Claude Code, and Claude Desktop with GitHub Copilot",
   "type": "module",
   "bin": {
     "codex-copilot-dx": "bin/cli.mjs"
@@ -15,6 +15,10 @@
     "codex",
     "copilot",
     "github",
+    "claude",
+    "claude-code",
+    "claude-desktop",
+    "anthropic",
     "openai",
     "proxy",
     "responses-api"

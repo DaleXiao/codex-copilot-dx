@@ -228,6 +228,17 @@ function responsesInputItems(input) {
   return Array.isArray(input) ? cloneJson(input) : [cloneJson(input)];
 }
 
+export function stripInternalResponsesInputFields(inputItems) {
+  if (!Array.isArray(inputItems)) return inputItems;
+  for (const item of inputItems) {
+    if (!item || typeof item !== "object") continue;
+    for (const key of Object.keys(item)) {
+      if (key.startsWith("internal_")) delete item[key];
+    }
+  }
+  return inputItems;
+}
+
 function responsesOutputItems(output) {
   if (!Array.isArray(output)) return [];
   return cloneJson(output.filter((item) => item?.type === "message" || item?.type === "function_call"));
@@ -335,6 +346,7 @@ export function prepareResponsesRequest(reqBody) {
     body.tools = body.tools.filter((tool) => tool?.type !== "image_generation");
     if (!body.tools.length) delete body.tools;
   }
+  stripInternalResponsesInputFields(body.input);
 
   return { body, inputItems: body.input };
 }

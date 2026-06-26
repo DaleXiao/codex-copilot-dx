@@ -17,6 +17,7 @@ import {
   requestPath,
   sanitizeEncryptedReasoningRequest,
   shouldServeClaudeDesktopModels,
+  stripInternalResponsesInputFields,
   writeOrDrain,
 } from "../src/adapter.mjs";
 
@@ -161,6 +162,78 @@ test("prepareResponsesRequest: drops unsupported image generation tools", () => 
     tools: [{ type: "image_generation" }],
   });
   assert.equal(onlyUnsupported.body.tools, undefined);
+});
+
+test("stripInternalResponsesInputFields: drops only top-level internal input fields", () => {
+  const input = [
+    {
+      type: "message",
+      role: "user",
+      internal_chat_message_metadata_passthrough: { hidden: true },
+      content: [{ type: "input_text", text: "hello" }],
+    },
+  ];
+
+  assert.equal(stripInternalResponsesInputFields(input), input);
+  assert.deepEqual(input, [
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "hello" }],
+    },
+  ]);
+});
+
+test("prepareResponsesRequest: strips Codex private input fields without mutating request", () => {
+  const req = {
+    model: "gpt-5.5",
+    input: [{
+      type: "message",
+      role: "user",
+      internal_chat_message_metadata_passthrough: { hidden: true },
+      content: [{ type: "input_text", text: "hello" }],
+    }],
+  };
+
+  const prepared = prepareResponsesRequest(req);
+
+  assert.equal(req.input[0].internal_chat_message_metadata_passthrough.hidden, true);
+  assert.deepEqual(prepared.body.input, [{
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: "hello" }],
+  }]);
+  assert.deepEqual(prepared.inputItems, prepared.body.input);
+});
+
+test("prepareResponsesRequest: strips private fields from expanded previous response history", () => {
+  clearResponseHistoryForTests();
+
+  const first = prepareResponsesRequest({
+    model: "gpt-5.5",
+    input: [{
+      type: "message",
+      role: "user",
+      internal_chat_message_metadata_passthrough: { hidden: true },
+      content: [{ type: "input_text", text: "remember alpha" }],
+    }],
+  });
+  rememberResponseHistory(first, {
+    id: "resp_internal",
+    output: [{ type: "message", id: "msg_internal", role: "assistant", content: [{ type: "output_text", text: "ok" }] }],
+  });
+
+  const second = prepareResponsesRequest({
+    model: "gpt-5.5",
+    previous_response_id: "resp_internal",
+    input: "what did I say?",
+  });
+
+  assert.deepEqual(second.body.input, [
+    { type: "message", role: "user", content: [{ type: "input_text", text: "remember alpha" }] },
+    { type: "message", id: "msg_internal", role: "assistant", content: [{ type: "output_text", text: "ok" }] },
+    { type: "message", role: "user", content: [{ type: "input_text", text: "what did I say?" }] },
+  ]);
 });
 
 test("isEncryptedContentVerificationError: detects upstream encrypted reasoning failures", () => {

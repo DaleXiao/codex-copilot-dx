@@ -1,5 +1,13 @@
 const DEFAULT_CLAUDE_DESKTOP_MODEL_DEFS = [
   {
+    id: "claude-sonnet-5",
+    upstream: "claude-sonnet-5",
+    displayName: "Claude Sonnet 5",
+    createdAt: "2026-06-30T00:00:00Z",
+    maxInputTokens: 1000000,
+    maxOutputTokens: 64000,
+  },
+  {
     id: "claude-sonnet-4.6",
     upstream: "claude-sonnet-4.6",
     displayName: "Claude Sonnet 4.6",
@@ -73,18 +81,81 @@ export function parseModelAliasEnv(value) {
   return aliases;
 }
 
-export function claudeDesktopModelDefs(env = process.env) {
+function cloneModelDefs(modelDefs) {
+  return modelDefs.map((model) => ({ ...model }));
+}
+
+function numericLimit(value, fallback) {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function hasMessagesEndpoint(model) {
+  const endpoints = Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];
+  return endpoints.includes("/v1/messages") || endpoints.includes("/chat/completions");
+}
+
+function isClaudeCopilotModel(model) {
+  const id = String(model?.id || "").trim();
+  const vendor = String(model?.vendor || "").toLowerCase();
+  return id
+    && (id.startsWith("claude-") || vendor === "anthropic")
+    && model?.model_picker_enabled !== false
+    && hasMessagesEndpoint(model);
+}
+
+export function claudeDesktopModelDefsFromCopilotModels(models) {
+  const data = Array.isArray(models) ? models : models?.data;
+  if (!Array.isArray(data)) return [];
+
+  const defs = [];
+  const seen = new Set();
+  for (const model of data) {
+    if (!isClaudeCopilotModel(model)) continue;
+    const id = String(model.id || "").trim();
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    const limits = model.capabilities?.limits || {};
+    defs.push({
+      id,
+      upstream: id,
+      displayName: String(model.name || id),
+      createdAt: "2025-01-01T00:00:00Z",
+      maxInputTokens: numericLimit(limits.max_context_window_tokens, numericLimit(limits.max_prompt_tokens, 200000)),
+      maxOutputTokens: numericLimit(limits.max_output_tokens, 8192),
+    });
+  }
+
+  const upstreamIds = new Set(defs.map((model) => model.upstream));
+  for (const alias of DEFAULT_CLAUDE_DESKTOP_MODEL_DEFS) {
+    if (alias.id === alias.upstream || seen.has(alias.id) || !upstreamIds.has(alias.upstream)) continue;
+    const upstream = defs.find((model) => model.upstream === alias.upstream);
+    defs.push({
+      ...alias,
+      displayName: upstream?.displayName || alias.displayName,
+      maxInputTokens: upstream?.maxInputTokens || alias.maxInputTokens,
+      maxOutputTokens: upstream?.maxOutputTokens || alias.maxOutputTokens,
+    });
+    seen.add(alias.id);
+  }
+
+  return defs;
+}
+
+export function claudeDesktopModelDefs(env = process.env, options = {}) {
   const custom = parseModelAliasEnv(env.CCDX_CLAUDE_MODEL_ALIASES);
-  return custom.length ? custom : DEFAULT_CLAUDE_DESKTOP_MODEL_DEFS.map((model) => ({ ...model }));
+  if (custom.length) return custom;
+  if (Array.isArray(options.modelDefs) && options.modelDefs.length) return cloneModelDefs(options.modelDefs);
+  return cloneModelDefs(DEFAULT_CLAUDE_DESKTOP_MODEL_DEFS);
 }
 
-export function claudeDesktopModelIds(env = process.env) {
-  return claudeDesktopModelDefs(env).map((model) => model.id);
+export function claudeDesktopModelIds(env = process.env, options = {}) {
+  return claudeDesktopModelDefs(env, options).map((model) => model.id);
 }
 
-export function resolveAnthropicModel(model, env = process.env) {
+export function resolveAnthropicModel(model, env = process.env, options = {}) {
   const requestedModel = String(model || "");
-  const match = claudeDesktopModelDefs(env).find((entry) => entry.id === requestedModel);
+  const match = claudeDesktopModelDefs(env, options).find((entry) => entry.id === requestedModel);
   return {
     requestedModel,
     upstreamModel: match?.upstream || requestedModel,
@@ -102,9 +173,9 @@ export function anthropicModelInfo(model) {
   };
 }
 
-export function claudeDesktopModelsResponse(env = process.env) {
+export function claudeDesktopModelsResponse(env = process.env, options = {}) {
   return {
     object: "list",
-    data: claudeDesktopModelDefs(env).map(anthropicModelInfo),
+    data: claudeDesktopModelDefs(env, options).map(anthropicModelInfo),
   };
 }

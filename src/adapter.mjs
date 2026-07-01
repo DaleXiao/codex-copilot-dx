@@ -567,6 +567,9 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
     || process.env.CCDX_CLAUDE_DESKTOP_API_KEY
     || process.env.CCDX_PROXY_API_KEY
     || "";
+  const claudeDesktopModelOptions = Array.isArray(options.claudeDesktopModelDefs)
+    ? { modelDefs: options.claudeDesktopModelDefs }
+    : {};
 
   const server = http.createServer((req, res) => {
     const pathname = requestPath(req.url);
@@ -648,7 +651,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
     if (req.method === "GET" && pathname === "/v1/models") {
       if (shouldServeClaudeDesktopModels(req, claudeDesktopApiKey)) {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(claudeDesktopModelsResponse()));
+        res.end(JSON.stringify(claudeDesktopModelsResponse(process.env, claudeDesktopModelOptions)));
         return;
       }
       const abort = createRequestAbort(req, res);
@@ -688,7 +691,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
         try {
           const parsed = await readJsonBody(req);
           if (!parsed.stream) abort.setTimeout(UPSTREAM_TIMEOUT_MS);
-          const { requestedModel, upstreamModel } = resolveAnthropicModel(parsed.model || "unknown");
+          const { requestedModel, upstreamModel } = resolveAnthropicModel(parsed.model || "unknown", process.env, claudeDesktopModelOptions);
           const modelNote = upstreamModel === requestedModel ? requestedModel : `${requestedModel} -> ${upstreamModel}`;
           console.log(status("info", `messages model=${modelNote} stream=${!!parsed.stream}`));
           const chatReq = anthropicToChat(parsed, { upstreamModel });

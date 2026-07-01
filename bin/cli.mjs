@@ -5,7 +5,8 @@ import { ensureCodexConfig } from "../src/config.mjs";
 import { ensureClaudeConfig } from "../src/claude-config.mjs";
 import { applyClaudeDesktopConfig, formatClaudeDesktopApplyResult, generatedClaudeDesktopApiKey } from "../src/claude-desktop-config.mjs";
 import { startAdapter } from "../src/adapter.mjs";
-import { refreshVSCodeVersion } from "../src/copilot.mjs";
+import { listModels, refreshVSCodeVersion } from "../src/copilot.mjs";
+import { claudeDesktopModelDefsFromCopilotModels, claudeDesktopModelIds, parseModelAliasEnv } from "../src/models.mjs";
 import { status } from "../src/status.mjs";
 import { printUsageSummary } from "../src/usage.mjs";
 import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
@@ -13,12 +14,38 @@ import { runDoctor } from "../src/doctor.mjs";
 
 const ADAPTER_PORT = parseInt(process.env.ADAPTER_PORT || "2026");
 const ADAPTER_HOST = process.env.ADAPTER_HOST || "127.0.0.1";
+const MODEL_REFRESH_TIMEOUT_MS = parseInt(process.env.CCDX_MODEL_REFRESH_TIMEOUT_MS || "5000", 10);
 const LOCAL_VERSION = localPackageVersion();
 const command = process.argv[2];
 const CONFIGURE_CLAUDE_DESKTOP = command === "--configure-claude-desktop" || process.env.CCDX_CONFIGURE_CLAUDE_DESKTOP === "1";
 
 function isLoopbackHost(host) {
   return ["127.0.0.1", "localhost", "::1"].includes(String(host).toLowerCase());
+}
+
+async function refreshClaudeDesktopModelDefs() {
+  if (parseModelAliasEnv(process.env.CCDX_CLAUDE_MODEL_ALIASES).length) {
+    console.log(status("info", "Using CCDX_CLAUDE_MODEL_ALIASES for Claude models"));
+    return undefined;
+  }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), MODEL_REFRESH_TIMEOUT_MS);
+  try {
+    const { status: httpStatus, body } = await listModels({ signal: ctrl.signal });
+    if (httpStatus < 200 || httpStatus >= 300) {
+      throw new Error(`Copilot models returned HTTP ${httpStatus}`);
+    }
+    const modelDefs = claudeDesktopModelDefsFromCopilotModels(JSON.parse(body));
+    if (!modelDefs.length) throw new Error("Copilot models response contained no Claude models");
+    console.log(status("ok", `Refreshed Claude models from GitHub Copilot: ${modelDefs.map((model) => model.id).join(", ")}`));
+    return modelDefs;
+  } catch (e) {
+    console.log(status("warn", `Could not refresh Claude models; using built-in model list (${e.message})`));
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 if (command === "--version" || command === "-v" || command === "version") {
@@ -53,6 +80,7 @@ try {
 
   // Refresh the VS Code version in the background; fallback is non-blocking.
   refreshVSCodeVersion();
+  const claudeDesktopModelDefs = await refreshClaudeDesktopModelDefs();
 
   if (!isLoopbackHost(ADAPTER_HOST)) {
     console.log(status("warn", `ADAPTER_HOST=${ADAPTER_HOST} exposes the adapter beyond loopback. Use only on trusted networks.`));
@@ -63,7 +91,7 @@ try {
     : (process.env.CCDX_CLAUDE_DESKTOP_API_KEY || process.env.CCDX_PROXY_API_KEY || "");
 
   // Start the in-process adapter.
-  await startAdapter(ADAPTER_PORT, ADAPTER_HOST, { claudeDesktopApiKey });
+  await startAdapter(ADAPTER_PORT, ADAPTER_HOST, { claudeDesktopApiKey, claudeDesktopModelDefs });
 
   // Point Codex and Claude Code at the adapter.
   ensureCodexConfig(ADAPTER_PORT);
@@ -73,6 +101,7 @@ try {
       port: ADAPTER_PORT,
       host: ADAPTER_HOST,
       gatewayApiKey: claudeDesktopApiKey,
+      modelIds: claudeDesktopModelIds(process.env, { modelDefs: claudeDesktopModelDefs }),
     });
     console.log(status("ok", `Configured Claude App gateway profile at ${result.baseUrl}`));
     console.log(formatClaudeDesktopApplyResult(result));

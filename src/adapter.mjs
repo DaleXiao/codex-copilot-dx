@@ -750,8 +750,18 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
     socket.destroy();
   });
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const onListenError = (e) => {
+      if (e?.code === "EADDRINUSE") {
+        reject(new Error(`Adapter address http://${host}:${port} is already in use. Stop the existing codex-copilot-dx process or set ADAPTER_PORT to another port.`));
+        return;
+      }
+      reject(e);
+    };
+
+    server.once("error", onListenError);
     server.listen(port, host, () => {
+      server.off("error", onListenError);
       const actualPort = server.address()?.port || port;
       console.log(status("ok", `Adapter listening on http://${host}:${actualPort}`));
       resolve(server);

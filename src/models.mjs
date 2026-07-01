@@ -31,6 +31,9 @@ const DEFAULT_CLAUDE_DESKTOP_MODEL_DEFS = [
     maxInputTokens: 200000,
     maxOutputTokens: 8192,
   },
+];
+
+const DEFAULT_CLAUDE_MODEL_ALIAS_DEFS = [
   {
     id: "claude-sonnet-4-6",
     upstream: "claude-sonnet-4.6",
@@ -126,19 +129,6 @@ export function claudeDesktopModelDefsFromCopilotModels(models) {
     });
   }
 
-  const upstreamIds = new Set(defs.map((model) => model.upstream));
-  for (const alias of DEFAULT_CLAUDE_DESKTOP_MODEL_DEFS) {
-    if (alias.id === alias.upstream || seen.has(alias.id) || !upstreamIds.has(alias.upstream)) continue;
-    const upstream = defs.find((model) => model.upstream === alias.upstream);
-    defs.push({
-      ...alias,
-      displayName: upstream?.displayName || alias.displayName,
-      maxInputTokens: upstream?.maxInputTokens || alias.maxInputTokens,
-      maxOutputTokens: upstream?.maxOutputTokens || alias.maxOutputTokens,
-    });
-    seen.add(alias.id);
-  }
-
   return defs;
 }
 
@@ -153,9 +143,18 @@ export function claudeDesktopModelIds(env = process.env, options = {}) {
   return claudeDesktopModelDefs(env, options).map((model) => model.id);
 }
 
+function claudeModelResolutionDefs(env = process.env, options = {}) {
+  const defs = claudeDesktopModelDefs(env, options);
+  if (parseModelAliasEnv(env.CCDX_CLAUDE_MODEL_ALIASES).length) return defs;
+
+  const upstreamIds = new Set(defs.map((model) => model.upstream));
+  const aliases = DEFAULT_CLAUDE_MODEL_ALIAS_DEFS.filter((alias) => upstreamIds.has(alias.upstream));
+  return [...defs, ...aliases];
+}
+
 export function resolveAnthropicModel(model, env = process.env, options = {}) {
   const requestedModel = String(model || "");
-  const match = claudeDesktopModelDefs(env, options).find((entry) => entry.id === requestedModel);
+  const match = claudeModelResolutionDefs(env, options).find((entry) => entry.id === requestedModel);
   return {
     requestedModel,
     upstreamModel: match?.upstream || requestedModel,

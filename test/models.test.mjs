@@ -8,11 +8,11 @@ import {
   resolveAnthropicModel,
 } from "../src/models.mjs";
 
-test("claudeDesktopModelIds: includes stable Claude Desktop aliases", () => {
+test("claudeDesktopModelIds: includes only visible Claude Desktop models", () => {
   const ids = claudeDesktopModelIds({});
   assert.ok(ids.includes("claude-sonnet-5"));
   assert.ok(ids.includes("claude-sonnet-4.6"));
-  assert.ok(ids.includes("claude-sonnet-4-6"));
+  assert.ok(!ids.includes("claude-sonnet-4-6"));
 });
 
 test("claudeDesktopModelDefsFromCopilotModels: maps enabled Anthropic chat models", () => {
@@ -49,7 +49,7 @@ test("claudeDesktopModelDefsFromCopilotModels: maps enabled Anthropic chat model
   assert.equal(defs[0].maxOutputTokens, 64000);
 });
 
-test("claudeDesktopModelDefsFromCopilotModels: keeps built-in dash aliases for available upstreams", () => {
+test("claudeDesktopModelDefsFromCopilotModels: does not expose dash aliases", () => {
   const defs = claudeDesktopModelDefsFromCopilotModels({
     data: [{
       id: "claude-sonnet-4.6",
@@ -61,7 +61,16 @@ test("claudeDesktopModelDefsFromCopilotModels: keeps built-in dash aliases for a
     }],
   });
 
-  assert.ok(defs.some((model) => model.id === "claude-sonnet-4-6"));
+  assert.deepEqual(defs.map((model) => model.id), ["claude-sonnet-4.6"]);
+});
+
+test("resolveAnthropicModel: keeps dash aliases internal for runtime models", () => {
+  const defs = [{
+    id: "claude-sonnet-4.6",
+    upstream: "claude-sonnet-4.6",
+    displayName: "Claude Sonnet 4.6",
+  }];
+
   assert.deepEqual(resolveAnthropicModel("claude-sonnet-4-6", {}, { modelDefs: defs }), {
     requestedModel: "claude-sonnet-4-6",
     upstreamModel: "claude-sonnet-4.6",

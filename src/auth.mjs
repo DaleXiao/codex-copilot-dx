@@ -11,6 +11,14 @@ export function githubTokenPath(home = os.homedir()) {
   return path.join(home, ".local", "share", "copilot-api", "github_token");
 }
 
+export function githubReauthMessage(reason, home = os.homedir()) {
+  const tokenPath = githubTokenPath(home);
+  return `${reason}
+Delete the saved GitHub token, then run codex-copilot-dx again to log in:
+  rm '${tokenPath}'
+  codex-copilot-dx`;
+}
+
 // Map GitHub polling responses to a small local state machine.
 export function interpretPoll(data) {
   if (typeof data.access_token === "string" && data.access_token) return { state: "done", token: data.access_token };

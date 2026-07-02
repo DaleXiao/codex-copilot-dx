@@ -1,10 +1,8 @@
 import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { status } from "./status.mjs";
+import { githubReauthMessage, githubTokenPath } from "./auth.mjs";
 
-const GITHUB_TOKEN_PATH = path.join(os.homedir(), ".local", "share", "copilot-api", "github_token");
 export const DEFAULT_API_BASE = "https://api.githubcopilot.com";
 let apiBase = DEFAULT_API_BASE;
 const IMG_MAX_DIM = parseInt(process.env.CCDX_IMG_MAX_DIM || "2048", 10);
@@ -249,10 +247,13 @@ let copilotToken = null;
 let copilotTokenExpiry = 0;
 
 function getGithubToken() {
+  const GITHUB_TOKEN_PATH = githubTokenPath();
   if (!fs.existsSync(GITHUB_TOKEN_PATH)) {
-    throw new Error("GitHub token not found. Run the tool once to log in.");
+    throw new Error("GitHub token not found. Run codex-copilot-dx again to log in.");
   }
-  return fs.readFileSync(GITHUB_TOKEN_PATH, "utf-8").trim();
+  const token = fs.readFileSync(GITHUB_TOKEN_PATH, "utf-8").trim();
+  if (!token) throw new Error(githubReauthMessage("GitHub token file is empty."));
+  return token;
 }
 
 export async function getCopilotToken({ signal } = {}) {
@@ -262,7 +263,12 @@ export async function getCopilotToken({ signal } = {}) {
     headers: { Authorization: `token ${ghToken}`, Accept: "application/json" },
     signal,
   });
-  if (!resp.ok) throw new Error(`Failed to get Copilot token: ${resp.status}`);
+  if (!resp.ok) {
+    if (resp.status === 401 || resp.status === 403) {
+      throw new Error(githubReauthMessage(`Failed to get Copilot token: ${resp.status}. The saved GitHub token may be expired, revoked, or missing Copilot access.`));
+    }
+    throw new Error(`Failed to get Copilot token: ${resp.status}`);
+  }
   const data = await resp.json();
   if (!data.token) throw new Error("Copilot token response missing token field");
   copilotToken = data.token;

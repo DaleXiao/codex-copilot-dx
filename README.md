@@ -48,6 +48,13 @@ codex-copilot-dx doctor
 
 The doctor checks the GitHub token, Codex config, Claude Code settings, Claude App gateway profile, and whether the local adapter port is listening.
 
+If Copilot token refresh fails with `401` or `403`, the saved GitHub token may be expired, revoked, or missing Copilot access. Delete the saved token and start the tool again to trigger GitHub device login:
+
+```bash
+rm ~/.local/share/copilot-api/github_token
+codex-copilot-dx
+```
+
 ### Claude App opt-in
 
 Claude App support is opt-in so the default Codex Desktop and Claude Code setup stays unchanged:

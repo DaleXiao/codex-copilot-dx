@@ -6,7 +6,7 @@ import { ensureClaudeConfig } from "../src/claude-config.mjs";
 import { applyClaudeDesktopConfig, formatClaudeDesktopApplyResult, generatedClaudeDesktopApiKey } from "../src/claude-desktop-config.mjs";
 import { startAdapter } from "../src/adapter.mjs";
 import { listModels, refreshVSCodeVersion } from "../src/copilot.mjs";
-import { claudeDesktopModelDefsFromCopilotModels, claudeDesktopModelIds, parseModelAliasEnv } from "../src/models.mjs";
+import { claudeDesktopModelDefsFromCopilotModels, claudeDesktopModelIds, gptModelIdsFromCopilotModels, parseModelAliasEnv } from "../src/models.mjs";
 import { status } from "../src/status.mjs";
 import { printUsageSummary } from "../src/usage.mjs";
 import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
@@ -36,7 +36,15 @@ async function refreshClaudeDesktopModelDefs() {
     if (httpStatus < 200 || httpStatus >= 300) {
       throw new Error(`Copilot models returned HTTP ${httpStatus}`);
     }
-    const modelDefs = claudeDesktopModelDefsFromCopilotModels(JSON.parse(body));
+    const models = JSON.parse(body);
+    const gptModelIds = gptModelIdsFromCopilotModels(models);
+    if (gptModelIds.length) {
+      console.log(status("ok", `Refreshed GPT models from GitHub Copilot: ${gptModelIds.join(", ")}`));
+    } else {
+      console.log(status("warn", "Copilot models response contained no GPT models"));
+    }
+
+    const modelDefs = claudeDesktopModelDefsFromCopilotModels(models);
     if (!modelDefs.length) throw new Error("Copilot models response contained no Claude models");
     console.log(status("ok", `Refreshed Claude models from GitHub Copilot: ${modelDefs.map((model) => model.id).join(", ")}`));
     return modelDefs;
@@ -113,9 +121,7 @@ try {
   openCodex();
 
   console.log(`
-  ${status("ok", CONFIGURE_CLAUDE_DESKTOP
-    ? "Ready. Codex, Claude Code, and Claude App are using your GitHub Copilot subscription."
-    : "Ready. Codex and Claude Code are using your GitHub Copilot subscription. Claude App support is available with --configure-claude-desktop.")}
+  ${status("ok", "Ready, Claude Code, Claude App and Codex App are now ready to use")}
 
   Adapter: http://${ADAPTER_HOST}:${ADAPTER_PORT}
 

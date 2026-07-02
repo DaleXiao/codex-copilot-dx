@@ -4,6 +4,7 @@ import {
   claudeDesktopModelDefsFromCopilotModels,
   claudeDesktopModelIds,
   claudeDesktopModelsResponse,
+  gptModelIdsFromCopilotModels,
   parseModelAliasEnv,
   resolveAnthropicModel,
 } from "../src/models.mjs";
@@ -47,6 +48,19 @@ test("claudeDesktopModelDefsFromCopilotModels: maps enabled Anthropic chat model
   assert.equal(defs[0].displayName, "Claude Sonnet 5");
   assert.equal(defs[0].maxInputTokens, 1000000);
   assert.equal(defs[0].maxOutputTokens, 64000);
+});
+
+test("gptModelIdsFromCopilotModels: maps enabled GPT models", () => {
+  const ids = gptModelIdsFromCopilotModels({
+    data: [
+      { id: "gpt-5.5", model_picker_enabled: true, supported_endpoints: ["/responses"] },
+      { id: "gpt-5.4", model_picker_enabled: true, supported_endpoints: ["/chat/completions"] },
+      { id: "gpt-disabled", model_picker_enabled: false, supported_endpoints: ["/responses"] },
+      { id: "claude-sonnet-5", vendor: "Anthropic", model_picker_enabled: true, supported_endpoints: ["/v1/messages"] },
+    ],
+  });
+
+  assert.deepEqual(ids, ["gpt-5.5", "gpt-5.4"]);
 });
 
 test("claudeDesktopModelDefsFromCopilotModels: does not expose dash aliases", () => {

@@ -97,6 +97,29 @@ function hasMessagesEndpoint(model) {
   return endpoints.includes("/v1/messages") || endpoints.includes("/chat/completions");
 }
 
+function hasOpenAIEndpoint(model) {
+  const endpoints = Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];
+  return endpoints.includes("/responses") || endpoints.includes("/v1/responses") || endpoints.includes("/chat/completions");
+}
+
+function copilotModelData(models) {
+  const data = Array.isArray(models) ? models : models?.data;
+  return Array.isArray(data) ? data : [];
+}
+
+function uniqueIds(models, predicate) {
+  const ids = [];
+  const seen = new Set();
+  for (const model of models) {
+    if (!predicate(model)) continue;
+    const id = String(model.id || "").trim();
+    if (!id || seen.has(id)) continue;
+    ids.push(id);
+    seen.add(id);
+  }
+  return ids;
+}
+
 function isClaudeCopilotModel(model) {
   const id = String(model?.id || "").trim();
   const vendor = String(model?.vendor || "").toLowerCase();
@@ -106,9 +129,17 @@ function isClaudeCopilotModel(model) {
     && hasMessagesEndpoint(model);
 }
 
+export function gptModelIdsFromCopilotModels(models) {
+  return uniqueIds(copilotModelData(models), (model) => {
+    const id = String(model?.id || "").trim();
+    return id.startsWith("gpt-")
+      && model?.model_picker_enabled !== false
+      && hasOpenAIEndpoint(model);
+  });
+}
+
 export function claudeDesktopModelDefsFromCopilotModels(models) {
-  const data = Array.isArray(models) ? models : models?.data;
-  if (!Array.isArray(data)) return [];
+  const data = copilotModelData(models);
 
   const defs = [];
   const seen = new Set();

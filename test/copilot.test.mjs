@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { githubTokenPath } from "../src/auth.mjs";
-import { computeInitiator, computeVision, buildHeaders, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, summarizeReqBody, parseImageConcurrency, runWithConcurrency, getCopilotToken } from "../src/copilot.mjs";
+import { computeInitiator, computeVision, buildHeaders, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, summarizeReqBody, parseImageConcurrency, runWithConcurrency, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
 
 function jsonResp(status, body) {
   return {
@@ -187,6 +187,7 @@ test("optimizeImageDataUrl: downscales large images to webp", async () => {
 });
 
 test("getCopilotToken: imports a valid local token after saved token is rejected", async () => {
+  resetCopilotTokenForTests();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-recover-"));
   writeText(githubTokenPath(home), "ghu_old");
   writeLocalCopilotAuth(home, "ghu_local");
@@ -227,5 +228,41 @@ test("getCopilotToken: imports a valid local token after saved token is rejected
     ]);
   } finally {
     console.log = originalLog;
+    resetCopilotTokenForTests();
+  }
+});
+
+test("getCopilotToken: shares one in-flight refresh across concurrent callers", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-singleflight-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  let calls = 0;
+  let releaseRefresh;
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    const fetchImpl = async (url, options) => {
+      assert.equal(url, "https://api.github.com/copilot_internal/v2/token");
+      assert.equal(options.headers.Authorization, "token ghu_saved");
+      calls += 1;
+      await new Promise((resolve) => { releaseRefresh = resolve; });
+      return jsonResp(200, {
+        token: "copilot_singleflight",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      });
+    };
+
+    const first = getCopilotToken({ home, fetchImpl });
+    const second = getCopilotToken({ home, fetchImpl });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(calls, 1);
+    releaseRefresh();
+
+    assert.deepEqual(await Promise.all([first, second]), ["copilot_singleflight", "copilot_singleflight"]);
+    assert.equal(calls, 1);
+  } finally {
+    console.log = originalLog;
+    resetCopilotTokenForTests();
   }
 });

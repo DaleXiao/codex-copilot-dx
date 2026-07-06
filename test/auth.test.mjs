@@ -8,10 +8,13 @@ import {
   ensureAuth,
   extractGithubTokenFromAuthJson,
   githubReauthMessage,
+  githubTokenLockPath,
   githubTokenPath,
   githubTokenSources,
   interpretPoll,
+  writeToken,
 } from "../src/auth.mjs";
+import { withFileLock } from "../src/lock.mjs";
 
 function jsonResp(status, body) {
   return {
@@ -148,4 +151,35 @@ test("ensureAuth: imports a valid local auth token before device flow", async ()
   assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_local");
   assert.equal((fs.statSync(githubTokenPath(home)).mode & 0o777), 0o600);
   assert.equal(lines.some((line) => /Imported GitHub token from local auth file/.test(line)), true);
+});
+
+test("ensureAuth: rechecks the saved token after waiting for the auth lock", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-lock-"));
+  const lines = [];
+  let releaseLock;
+  let lockHeld;
+  const lockIsHeld = new Promise((resolve) => { lockHeld = resolve; });
+
+  const holder = withFileLock(githubTokenLockPath(home), async () => {
+    lockHeld();
+    await new Promise((resolve) => { releaseLock = resolve; });
+  }, { timeoutMs: 1000, pollMs: 5 });
+
+  await lockIsHeld;
+  const auth = ensureAuth({
+    home,
+    env: { CCDX_TOKEN_LOCK_TIMEOUT_MS: "1000" },
+    log: (line) => lines.push(line),
+    fetchImpl: async () => {
+      throw new Error("device flow should not start");
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  writeToken("ghu_written_by_other_process", home);
+  releaseLock();
+
+  await Promise.all([holder, auth]);
+  assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_written_by_other_process");
+  assert.equal(lines.some((line) => /\[OK\] GitHub token found/.test(line)), true);
 });

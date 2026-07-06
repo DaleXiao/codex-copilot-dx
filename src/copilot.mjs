@@ -246,6 +246,7 @@ export async function refreshVSCodeVersion() {
 
 let copilotToken = null;
 let copilotTokenExpiry = 0;
+let copilotTokenRefresh = null;
 
 function getGithubToken({ home = os.homedir() } = {}) {
   const GITHUB_TOKEN_PATH = githubTokenPath(home);
@@ -275,13 +276,12 @@ function cacheCopilotTokenData(data) {
   return copilotToken;
 }
 
-export async function getCopilotToken({
+async function refreshCopilotToken({
   signal,
   home = os.homedir(),
   env = process.env,
   fetchImpl = fetch,
 } = {}) {
-  if (copilotToken && Date.now() < copilotTokenExpiry - 60000) return copilotToken;
   const ghToken = getGithubToken({ home });
   const resp = await requestCopilotToken(ghToken, { fetchImpl, signal });
   if (!resp.ok) {
@@ -292,6 +292,7 @@ export async function getCopilotToken({
         fetchImpl,
         signal,
         excludeTokens: [ghToken],
+        validateSavedToken: true,
       });
       if (imported?.validation?.copilotTokenData?.token) {
         return cacheCopilotTokenData(imported.validation.copilotTokenData);
@@ -302,6 +303,26 @@ export async function getCopilotToken({
   }
   const data = await resp.json();
   return cacheCopilotTokenData(data);
+}
+
+export async function getCopilotToken(options = {}) {
+  if (copilotToken && Date.now() < copilotTokenExpiry - 60000) return copilotToken;
+  const home = options.home || os.homedir();
+  const refreshKey = githubTokenPath(home);
+  if (copilotTokenRefresh?.key === refreshKey) return copilotTokenRefresh.promise;
+
+  const promise = refreshCopilotToken(options).finally(() => {
+    if (copilotTokenRefresh?.promise === promise) copilotTokenRefresh = null;
+  });
+  copilotTokenRefresh = { key: refreshKey, promise };
+  return promise;
+}
+
+export function resetCopilotTokenForTests() {
+  copilotToken = null;
+  copilotTokenExpiry = 0;
+  copilotTokenRefresh = null;
+  apiBase = DEFAULT_API_BASE;
 }
 
 // chatReq is already converted by the adapter. The caller parses the raw Response.

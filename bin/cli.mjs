@@ -11,10 +11,12 @@ import { status } from "../src/status.mjs";
 import { printUsageSummary } from "../src/usage.mjs";
 import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
 import { runDoctor } from "../src/doctor.mjs";
+import { checkRunningAdapter } from "../src/running-adapter.mjs";
 
 const ADAPTER_PORT = parseInt(process.env.ADAPTER_PORT || "2026");
 const ADAPTER_HOST = process.env.ADAPTER_HOST || "127.0.0.1";
 const MODEL_REFRESH_TIMEOUT_MS = parseInt(process.env.CCDX_MODEL_REFRESH_TIMEOUT_MS || "5000", 10);
+const EXISTING_ADAPTER_TIMEOUT_MS = parseInt(process.env.CCDX_EXISTING_ADAPTER_TIMEOUT_MS || "500", 10);
 const LOCAL_VERSION = localPackageVersion();
 const command = process.argv[2];
 const CONFIGURE_CLAUDE_DESKTOP = command === "--configure-claude-desktop" || process.env.CCDX_CONFIGURE_CLAUDE_DESKTOP === "1";
@@ -56,6 +58,49 @@ async function refreshClaudeDesktopModelDefs() {
   }
 }
 
+function currentClaudeDesktopApiKey() {
+  return process.env.CCDX_CLAUDE_DESKTOP_API_KEY || process.env.CCDX_PROXY_API_KEY || "";
+}
+
+async function reuseRunningAdapterIfAvailable() {
+  const running = await checkRunningAdapter({
+    port: ADAPTER_PORT,
+    host: ADAPTER_HOST,
+    timeoutMs: EXISTING_ADAPTER_TIMEOUT_MS,
+  });
+  if (!running.ok) return false;
+
+  console.log(status("ok", `Using existing adapter at ${running.baseUrl}`));
+  ensureCodexConfig(ADAPTER_PORT);
+  ensureClaudeConfig(ADAPTER_PORT);
+
+  if (CONFIGURE_CLAUDE_DESKTOP) {
+    const claudeDesktopApiKey = currentClaudeDesktopApiKey();
+    if (claudeDesktopApiKey) {
+      const result = applyClaudeDesktopConfig({
+        port: ADAPTER_PORT,
+        host: ADAPTER_HOST,
+        gatewayApiKey: claudeDesktopApiKey,
+        modelIds: claudeDesktopModelIds(process.env),
+      });
+      console.log(status("ok", `Configured Claude App gateway profile at ${result.baseUrl}`));
+      console.log(formatClaudeDesktopApplyResult(result));
+    } else {
+      console.log(status("warn", "Existing adapter is running; skip Claude App profile update unless CCDX_CLAUDE_DESKTOP_API_KEY or CCDX_PROXY_API_KEY is set"));
+    }
+  } else {
+    console.log(status("ok", "Claude App support available with --configure-claude-desktop"));
+  }
+
+  openCodex();
+  console.log(`
+  ${status("ok", "Ready, using the existing codex-copilot-dx adapter")}
+
+  Adapter: ${running.baseUrl}
+`);
+  return true;
+}
+
 if (command === "--version" || command === "-v" || command === "version") {
   console.log(`codex-copilot-dx v${LOCAL_VERSION}`);
   process.exit(0);
@@ -83,6 +128,8 @@ checkForUpdate({ currentVersion: LOCAL_VERSION }).then(({ latestVersion, updateA
 });
 
 try {
+  if (await reuseRunningAdapterIfAvailable()) process.exit(0);
+
   // Ensure GitHub login, using device flow if no token exists.
   await ensureAuth();
 
@@ -95,8 +142,8 @@ try {
   }
 
   const claudeDesktopApiKey = CONFIGURE_CLAUDE_DESKTOP
-    ? (process.env.CCDX_CLAUDE_DESKTOP_API_KEY || process.env.CCDX_PROXY_API_KEY || generatedClaudeDesktopApiKey())
-    : (process.env.CCDX_CLAUDE_DESKTOP_API_KEY || process.env.CCDX_PROXY_API_KEY || "");
+    ? (currentClaudeDesktopApiKey() || generatedClaudeDesktopApiKey())
+    : currentClaudeDesktopApiKey();
 
   // Start the in-process adapter.
   await startAdapter(ADAPTER_PORT, ADAPTER_HOST, { claudeDesktopApiKey, claudeDesktopModelDefs });

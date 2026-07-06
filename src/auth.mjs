@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { status } from "./status.mjs";
+import { withFileLock } from "./lock.mjs";
 
 const CLIENT_ID = "Iv1.b507a08c87ecfe98"; // Public GitHub Copilot client ID.
 const SCOPE = "read:user";
@@ -10,9 +11,15 @@ const GITHUB_API = "https://api.github.com";
 const COPILOT_TOKEN_URL = `${GITHUB_API}/copilot_internal/v2/token`;
 const DISABLE_TOKEN_DISCOVERY_VALUES = new Set(["1", "true", "yes"]);
 const MAX_AUTH_JSON_BYTES = 1024 * 1024;
+const DEFAULT_TOKEN_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_TOKEN_LOCK_STALE_MS = 15 * 60 * 1000;
 
 export function githubTokenPath(home = os.homedir()) {
   return path.join(home, ".local", "share", "copilot-api", "github_token");
+}
+
+export function githubTokenLockPath(home = os.homedir()) {
+  return `${githubTokenPath(home)}.lock`;
 }
 
 export function githubReauthMessage(reason, home = os.homedir()) {
@@ -44,6 +51,18 @@ function expandHome(filePath, home = os.homedir()) {
 
 function isTokenDiscoveryDisabled(env = process.env) {
   return DISABLE_TOKEN_DISCOVERY_VALUES.has(String(env.CCDX_DISABLE_TOKEN_DISCOVERY || "").toLowerCase());
+}
+
+function positiveInt(value, fallback) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function tokenLockOptions(env = process.env) {
+  return {
+    timeoutMs: positiveInt(env.CCDX_TOKEN_LOCK_TIMEOUT_MS, DEFAULT_TOKEN_LOCK_TIMEOUT_MS),
+    staleMs: positiveInt(env.CCDX_TOKEN_LOCK_STALE_MS, DEFAULT_TOKEN_LOCK_STALE_MS),
+  };
 }
 
 function splitPathList(value) {
@@ -185,6 +204,12 @@ export function readGithubTokenSource(source) {
   return "";
 }
 
+function readSavedGithubToken(home = os.homedir()) {
+  const filePath = githubTokenPath(home);
+  if (!fs.existsSync(filePath)) return "";
+  return fs.readFileSync(filePath, "utf8").trim();
+}
+
 export async function validateGithubToken(token, {
   fetchImpl = fetch,
   signal,
@@ -283,13 +308,32 @@ export async function importDiscoveredGithubToken({
   signal,
   excludeTokens = [],
   log = console.log,
+  lock = true,
+  validateSavedToken = false,
 } = {}) {
-  const discovered = await discoverGithubToken({ home, env, fetchImpl, signal, excludeTokens });
-  if (!discovered.ok) return null;
-  writeToken(discovered.token, home);
-  const login = discovered.validation.login ? ` for ${discovered.validation.login}` : "";
-  log(status("ok", `Imported GitHub token from ${sourceDescription(discovered.source)}${login}`));
-  return discovered;
+  const run = async () => {
+    const excluded = new Set(excludeTokens);
+    const savedToken = readSavedGithubToken(home);
+    if (savedToken && !excluded.has(savedToken)) {
+      if (!validateSavedToken) {
+        return { ok: true, token: savedToken, source: { type: "saved-token" }, imported: false };
+      }
+      const validation = await validateGithubToken(savedToken, { fetchImpl, signal });
+      if (validation.ok) {
+        return { ok: true, token: savedToken, source: { type: "saved-token" }, validation, imported: false };
+      }
+    }
+
+    const discovered = await discoverGithubToken({ home, env, fetchImpl, signal, excludeTokens });
+    if (!discovered.ok) return null;
+    writeToken(discovered.token, home);
+    const login = discovered.validation.login ? ` for ${discovered.validation.login}` : "";
+    log(status("ok", `Imported GitHub token from ${sourceDescription(discovered.source)}${login}`));
+    return { ...discovered, imported: true };
+  };
+
+  if (!lock) return run();
+  return withFileLock(githubTokenLockPath(home), run, tokenLockOptions(env));
 }
 
 // On macOS, copy the user code and open the verification page. Fail quietly.
@@ -329,54 +373,63 @@ export async function ensureAuth({
     log(status("warn", "GitHub token file is empty"));
   }
 
-  const imported = await importDiscoveredGithubToken({ home, env, fetchImpl, signal, log });
-  if (imported) return;
-
-  log(status("wait", "No usable GitHub token found. Starting device login..."));
-
-  // Request a device code.
-  const codeResp = await fetchImpl("https://github.com/login/device/code", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ client_id: CLIENT_ID, scope: SCOPE }),
-    signal,
-  });
-  if (!codeResp.ok) throw new Error(`device code request failed: ${codeResp.status}`);
-  const { device_code, user_code, verification_uri, interval } = await codeResp.json();
-
-  // Prompt the user.
-  log(`\n${status("info", `Open ${verification_uri}`)}\n${status("info", `Enter code: ${user_code}`)}\n`);
-  openAndCopyFn(user_code, verification_uri);
-
-  // Poll until GitHub completes the device flow.
-  let waitMs = (interval || 5) * 1000;
-  while (true) {
-    await sleep(waitMs);
-    const pollResp = await fetchImpl("https://github.com/login/oauth/access_token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        client_id: CLIENT_ID,
-        device_code,
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-      }),
-      signal,
-    });
-    if (!pollResp.ok) {
-      // Treat transient network/server errors as pending and retry.
-      continue;
-    }
-    const data = await pollResp.json();
-    const r = interpretPoll(data);
-    if (r.state === "done") {
-      writeToken(r.token, home);
-      log(status("ok", "Login successful"));
+  await withFileLock(githubTokenLockPath(home), async () => {
+    const savedToken = readSavedGithubToken(home);
+    if (savedToken) {
+      log(status("ok", "GitHub token found"));
       return;
     }
-    if (r.state === "slow") { waitMs += 5000; continue; }
-    if (r.state === "fail") throw new Error(`Login failed: ${r.error}`);
-    // wait: continue polling.
-  }
+
+    const imported = await importDiscoveredGithubToken({ home, env, fetchImpl, signal, log, lock: false });
+    if (imported) return;
+
+    log(status("wait", "No usable GitHub token found. Starting device login..."));
+
+    // Request a device code while holding the auth lock so concurrent starts do not
+    // trigger multiple browser/device-flow sessions for the same local token.
+    const codeResp = await fetchImpl("https://github.com/login/device/code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ client_id: CLIENT_ID, scope: SCOPE }),
+      signal,
+    });
+    if (!codeResp.ok) throw new Error(`device code request failed: ${codeResp.status}`);
+    const { device_code, user_code, verification_uri, interval } = await codeResp.json();
+
+    // Prompt the user.
+    log(`\n${status("info", `Open ${verification_uri}`)}\n${status("info", `Enter code: ${user_code}`)}\n`);
+    openAndCopyFn(user_code, verification_uri);
+
+    // Poll until GitHub completes the device flow.
+    let waitMs = (interval || 5) * 1000;
+    while (true) {
+      await sleep(waitMs);
+      const pollResp = await fetchImpl("https://github.com/login/oauth/access_token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          client_id: CLIENT_ID,
+          device_code,
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        }),
+        signal,
+      });
+      if (!pollResp.ok) {
+        // Treat transient network/server errors as pending and retry.
+        continue;
+      }
+      const data = await pollResp.json();
+      const r = interpretPoll(data);
+      if (r.state === "done") {
+        writeToken(r.token, home);
+        log(status("ok", "Login successful"));
+        return;
+      }
+      if (r.state === "slow") { waitMs += 5000; continue; }
+      if (r.state === "fail") throw new Error(`Login failed: ${r.error}`);
+      // wait: continue polling.
+    }
+  }, tokenLockOptions(env));
 }
 
 export function writeToken(token, home = os.homedir()) {

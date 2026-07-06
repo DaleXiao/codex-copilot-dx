@@ -8,6 +8,7 @@ import { anthropicToChat, chatToAnthropic, streamAnthropicFromLines, countTokens
 import { claudeDesktopModelsResponse, resolveAnthropicModel } from "./models.mjs";
 import { status } from "./status.mjs";
 import { recordAnthropicUsage, recordResponsesUsage } from "./usage.mjs";
+import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 
 // Models that only support Responses API (not chat/completions)
 const RESPONSES_ONLY = new Set([
@@ -573,6 +574,12 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
 
   const server = http.createServer((req, res) => {
     const pathname = requestPath(req.url);
+
+    if (req.method === "GET" && pathname === ADAPTER_HEALTH_PATH) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(adapterHealthPayload()));
+      return;
+    }
 
     if (req.method === "POST" && pathname === "/v1/responses") {
       (async () => {

@@ -1,6 +1,37 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeInitiator, computeVision, buildHeaders, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, summarizeReqBody, parseImageConcurrency, runWithConcurrency } from "../src/copilot.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { githubTokenPath } from "../src/auth.mjs";
+import { computeInitiator, computeVision, buildHeaders, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, summarizeReqBody, parseImageConcurrency, runWithConcurrency, getCopilotToken } from "../src/copilot.mjs";
+
+function jsonResp(status, body) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  };
+}
+
+function writeText(filePath, content) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content);
+}
+
+function writeJson(filePath, data) {
+  writeText(filePath, JSON.stringify(data, null, 2));
+}
+
+function writeLocalCopilotAuth(home, token) {
+  writeJson(path.join(home, "Library", "Application Support", "some-copilot-client", "profiles", "dingxiao_microsoft", "auth.json"), {
+    ghcAuth: {
+      gitHubTokens: {
+        access_token: token,
+      },
+    },
+  });
+}
 
 test("computeInitiator: user-only messages return user", () => {
   const msgs = [{ role: "user", content: "hi" }];
@@ -153,4 +184,48 @@ test("optimizeImageDataUrl: downscales large images to webp", async () => {
 
   assert.match(output, /^data:image\/webp;base64,/);
   assert.ok(Buffer.byteLength(output) < Buffer.byteLength(input));
+});
+
+test("getCopilotToken: imports a valid local token after saved token is rejected", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-recover-"));
+  writeText(githubTokenPath(home), "ghu_old");
+  writeLocalCopilotAuth(home, "ghu_local");
+  const calls = [];
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    const token = await getCopilotToken({
+      home,
+      env: {},
+      fetchImpl: async (url, options) => {
+        const authorization = options.headers.Authorization;
+        calls.push([url, authorization]);
+        if (url.endsWith("/copilot_internal/v2/token") && authorization === "token ghu_old") {
+          return jsonResp(401, {});
+        }
+        if (url.endsWith("/user") && authorization === "token ghu_local") {
+          return jsonResp(200, { login: "dingxiao_microsoft" });
+        }
+        if (url.endsWith("/copilot_internal/v2/token") && authorization === "token ghu_local") {
+          return jsonResp(200, {
+            token: "copilot_recovered",
+            expires_at: Math.floor(Date.now() / 1000) + 3600,
+            endpoints: { api: "https://api.enterprise.githubcopilot.com" },
+          });
+        }
+        throw new Error(`unexpected request ${url} ${authorization}`);
+      },
+    });
+
+    assert.equal(token, "copilot_recovered");
+    assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_local");
+    assert.deepEqual(calls.map((call) => call[1]), [
+      "token ghu_old",
+      "token ghu_local",
+      "token ghu_local",
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
 });

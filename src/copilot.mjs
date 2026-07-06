@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { status } from "./status.mjs";
-import { githubReauthMessage, githubTokenPath } from "./auth.mjs";
+import { githubReauthMessage, githubTokenPath, importDiscoveredGithubToken } from "./auth.mjs";
 
 export const DEFAULT_API_BASE = "https://api.githubcopilot.com";
 let apiBase = DEFAULT_API_BASE;
@@ -246,8 +247,8 @@ export async function refreshVSCodeVersion() {
 let copilotToken = null;
 let copilotTokenExpiry = 0;
 
-function getGithubToken() {
-  const GITHUB_TOKEN_PATH = githubTokenPath();
+function getGithubToken({ home = os.homedir() } = {}) {
+  const GITHUB_TOKEN_PATH = githubTokenPath(home);
   if (!fs.existsSync(GITHUB_TOKEN_PATH)) {
     throw new Error("GitHub token not found. Run codex-copilot-dx again to log in.");
   }
@@ -256,20 +257,14 @@ function getGithubToken() {
   return token;
 }
 
-export async function getCopilotToken({ signal } = {}) {
-  if (copilotToken && Date.now() < copilotTokenExpiry - 60000) return copilotToken;
-  const ghToken = getGithubToken();
-  const resp = await fetch(`${GITHUB_API}/copilot_internal/v2/token`, {
+function requestCopilotToken(ghToken, { fetchImpl = fetch, signal } = {}) {
+  return fetchImpl(`${GITHUB_API}/copilot_internal/v2/token`, {
     headers: { Authorization: `token ${ghToken}`, Accept: "application/json" },
     signal,
   });
-  if (!resp.ok) {
-    if (resp.status === 401 || resp.status === 403) {
-      throw new Error(githubReauthMessage(`Failed to get Copilot token: ${resp.status}. The saved GitHub token may be expired, revoked, or missing Copilot access.`));
-    }
-    throw new Error(`Failed to get Copilot token: ${resp.status}`);
-  }
-  const data = await resp.json();
+}
+
+function cacheCopilotTokenData(data) {
   if (!data.token) throw new Error("Copilot token response missing token field");
   copilotToken = data.token;
   apiBase = parseApiBase(data);
@@ -278,6 +273,35 @@ export async function getCopilotToken({ signal } = {}) {
     : Date.now() + 25 * 60 * 1000; // fallback if expires_at absent: refresh in ~25min
   console.log(status("ok", "Copilot token refreshed"));
   return copilotToken;
+}
+
+export async function getCopilotToken({
+  signal,
+  home = os.homedir(),
+  env = process.env,
+  fetchImpl = fetch,
+} = {}) {
+  if (copilotToken && Date.now() < copilotTokenExpiry - 60000) return copilotToken;
+  const ghToken = getGithubToken({ home });
+  const resp = await requestCopilotToken(ghToken, { fetchImpl, signal });
+  if (!resp.ok) {
+    if (resp.status === 401 || resp.status === 403) {
+      const imported = await importDiscoveredGithubToken({
+        home,
+        env,
+        fetchImpl,
+        signal,
+        excludeTokens: [ghToken],
+      });
+      if (imported?.validation?.copilotTokenData?.token) {
+        return cacheCopilotTokenData(imported.validation.copilotTokenData);
+      }
+      throw new Error(githubReauthMessage(`Failed to get Copilot token: ${resp.status}. The saved GitHub token may be expired, revoked, or missing Copilot access.`));
+    }
+    throw new Error(`Failed to get Copilot token: ${resp.status}`);
+  }
+  const data = await resp.json();
+  return cacheCopilotTokenData(data);
 }
 
 // chatReq is already converted by the adapter. The caller parses the raw Response.

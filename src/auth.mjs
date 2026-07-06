@@ -6,6 +6,10 @@ import { status } from "./status.mjs";
 
 const CLIENT_ID = "Iv1.b507a08c87ecfe98"; // Public GitHub Copilot client ID.
 const SCOPE = "read:user";
+const GITHUB_API = "https://api.github.com";
+const COPILOT_TOKEN_URL = `${GITHUB_API}/copilot_internal/v2/token`;
+const DISABLE_TOKEN_DISCOVERY_VALUES = new Set(["1", "true", "yes"]);
+const MAX_AUTH_JSON_BYTES = 1024 * 1024;
 
 export function githubTokenPath(home = os.homedir()) {
   return path.join(home, ".local", "share", "copilot-api", "github_token");
@@ -31,6 +35,263 @@ export function interpretPoll(data) {
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
+function expandHome(filePath, home = os.homedir()) {
+  if (!filePath) return "";
+  if (filePath === "~") return home;
+  if (filePath.startsWith("~/")) return path.join(home, filePath.slice(2));
+  return filePath;
+}
+
+function isTokenDiscoveryDisabled(env = process.env) {
+  return DISABLE_TOKEN_DISCOVERY_VALUES.has(String(env.CCDX_DISABLE_TOKEN_DISCOVERY || "").toLowerCase());
+}
+
+function splitPathList(value) {
+  return String(value || "")
+    .split(path.delimiter)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function localAuthRoots(home, env = process.env) {
+  const roots = [
+    path.join(home, "Library", "Application Support"),
+    env.APPDATA ? expandHome(env.APPDATA, home) : "",
+    env.XDG_CONFIG_HOME ? expandHome(env.XDG_CONFIG_HOME, home) : path.join(home, ".config"),
+  ].filter(Boolean);
+  return [...new Set(roots)];
+}
+
+function addAuthJsonSource(sources, seen, filePath) {
+  if (seen.has(filePath)) return;
+  if (!fs.existsSync(filePath)) return;
+  seen.add(filePath);
+  sources.push({ type: "auth-json", path: filePath });
+}
+
+function localAuthJsonSources(home, env = process.env) {
+  const sources = [];
+  const seen = new Set();
+
+  for (const root of localAuthRoots(home, env)) {
+    let appDirs;
+    try {
+      appDirs = fs.readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const appDirent of appDirs) {
+      if (!appDirent.isDirectory()) continue;
+      const appDir = path.join(root, appDirent.name);
+      addAuthJsonSource(sources, seen, path.join(appDir, "auth.json"));
+
+      const profilesDir = path.join(appDir, "profiles");
+      let profileDirs;
+      try {
+        profileDirs = fs.readdirSync(profilesDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const profileDirent of profileDirs) {
+        if (!profileDirent.isDirectory()) continue;
+        addAuthJsonSource(sources, seen, path.join(profilesDir, profileDirent.name, "auth.json"));
+      }
+    }
+  }
+
+  return sources;
+}
+
+function explicitTokenFileSources(home, env = process.env) {
+  const paths = [];
+  if (typeof env.CCDX_GITHUB_TOKEN_PATH === "string" && env.CCDX_GITHUB_TOKEN_PATH.trim()) {
+    paths.push(env.CCDX_GITHUB_TOKEN_PATH.trim());
+  }
+  paths.push(...splitPathList(env.CCDX_GITHUB_TOKEN_PATHS));
+
+  const seen = new Set();
+  return paths
+    .map((filePath) => expandHome(filePath, home))
+    .filter((filePath) => {
+      if (seen.has(filePath)) return false;
+      seen.add(filePath);
+      return true;
+    })
+    .map((filePath) => ({
+      type: "token-file",
+      name: "configured token file",
+      path: filePath,
+    }));
+}
+
+function looksLikeCopilotAuthJson(json) {
+  if (!json || typeof json !== "object") return false;
+  if (json.ghcAuth || json.gitHubTokens || json.githubToken || json.githubCopilot || json.copilot) return true;
+  return typeof json.access_token === "string" && Boolean(json.copilotAccess || json.copilotToken || json.copilot_token);
+}
+
+function readSmallJson(filePath) {
+  const stat = fs.statSync(filePath);
+  if (!stat.isFile() || stat.size > MAX_AUTH_JSON_BYTES) return null;
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+export function githubTokenSources({
+  home = os.homedir(),
+  env = process.env,
+} = {}) {
+  if (isTokenDiscoveryDisabled(env)) return [];
+  const sources = [];
+  if (typeof env.CCDX_GITHUB_TOKEN === "string" && env.CCDX_GITHUB_TOKEN.trim()) {
+    sources.push({ type: "env", name: "CCDX_GITHUB_TOKEN", token: env.CCDX_GITHUB_TOKEN.trim() });
+  }
+  sources.push(...explicitTokenFileSources(home, env));
+  sources.push(...localAuthJsonSources(home, env));
+  return sources;
+}
+
+export function sourceDescription(source) {
+  if (!source) return "unknown source";
+  if (source.type === "env") return source.name;
+  if (source.type === "token-file") return `${source.name} (${source.path})`;
+  if (source.type === "auth-json") return `local auth file (${source.path})`;
+  return source.path || source.name || "unknown source";
+}
+
+export function extractGithubTokenFromAuthJson(json) {
+  const candidates = [
+    json?.ghcAuth?.gitHubTokens?.access_token,
+    json?.ghcAuth?.gitHubTokens?.accessToken,
+    json?.ghcAuth?.githubToken,
+    json?.gitHubTokens?.access_token,
+    json?.gitHubTokens?.accessToken,
+    json?.githubToken,
+    json?.access_token,
+    json?.accessToken,
+  ];
+  return candidates.find((value) => typeof value === "string" && value.trim())?.trim() || "";
+}
+
+export function readGithubTokenSource(source) {
+  if (source?.type === "env") return source.token || "";
+  if (source?.type === "token-file") return fs.readFileSync(source.path, "utf8").trim();
+  if (source?.type === "auth-json") {
+    const json = readSmallJson(source.path);
+    if (!looksLikeCopilotAuthJson(json)) return "";
+    return extractGithubTokenFromAuthJson(json);
+  }
+  return "";
+}
+
+export async function validateGithubToken(token, {
+  fetchImpl = fetch,
+  signal,
+} = {}) {
+  if (typeof token !== "string" || !token.trim()) {
+    return { ok: false, reason: "empty_token" };
+  }
+
+  const headers = { Authorization: `token ${token.trim()}`, Accept: "application/json" };
+  let userResp;
+  try {
+    userResp = await fetchImpl(`${GITHUB_API}/user`, { headers, signal });
+  } catch (e) {
+    return { ok: false, transient: true, reason: "github_user_request_failed", error: e };
+  }
+
+  if (!userResp.ok) {
+    return {
+      ok: false,
+      status: userResp.status,
+      reason: userResp.status === 401 || userResp.status === 403 ? "github_token_invalid" : "github_user_failed",
+    };
+  }
+
+  let userData = {};
+  try {
+    userData = await userResp.json();
+  } catch {}
+  const login = typeof userData.login === "string" ? userData.login : "";
+
+  let copilotResp;
+  try {
+    copilotResp = await fetchImpl(COPILOT_TOKEN_URL, { headers, signal });
+  } catch (e) {
+    return { ok: false, transient: true, reason: "copilot_token_request_failed", login, error: e };
+  }
+
+  if (!copilotResp.ok) {
+    return {
+      ok: false,
+      status: copilotResp.status,
+      reason: copilotResp.status === 401 || copilotResp.status === 403 ? "copilot_access_denied" : "copilot_token_failed",
+      login,
+    };
+  }
+
+  let copilotTokenData = {};
+  try {
+    copilotTokenData = await copilotResp.json();
+  } catch (e) {
+    return { ok: false, reason: "copilot_token_parse_failed", login, error: e };
+  }
+
+  if (!copilotTokenData.token) {
+    return { ok: false, reason: "copilot_token_missing", login };
+  }
+
+  return { ok: true, login, copilotTokenData };
+}
+
+export async function discoverGithubToken({
+  home = os.homedir(),
+  env = process.env,
+  fetchImpl = fetch,
+  signal,
+  excludeTokens = [],
+} = {}) {
+  const excluded = new Set(excludeTokens);
+  const seen = new Set(excluded);
+  const failures = [];
+
+  for (const source of githubTokenSources({ home, env })) {
+    let token = "";
+    try {
+      token = readGithubTokenSource(source).trim();
+    } catch (e) {
+      failures.push({ source, reason: "read_failed", error: e });
+      continue;
+    }
+
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+
+    const validation = await validateGithubToken(token, { fetchImpl, signal });
+    if (validation.ok) return { ok: true, token, source, validation };
+    failures.push({ source, validation });
+  }
+
+  return { ok: false, failures };
+}
+
+export async function importDiscoveredGithubToken({
+  home = os.homedir(),
+  env = process.env,
+  fetchImpl = fetch,
+  signal,
+  excludeTokens = [],
+  log = console.log,
+} = {}) {
+  const discovered = await discoverGithubToken({ home, env, fetchImpl, signal, excludeTokens });
+  if (!discovered.ok) return null;
+  writeToken(discovered.token, home);
+  const login = discovered.validation.login ? ` for ${discovered.validation.login}` : "";
+  log(status("ok", `Imported GitHub token from ${sourceDescription(discovered.source)}${login}`));
+  return discovered;
+}
+
 // On macOS, copy the user code and open the verification page. Fail quietly.
 function openAndCopy(userCode, verificationUri) {
   if (process.platform !== "darwin") return;
@@ -50,32 +311,48 @@ function openAndCopy(userCode, verificationUri) {
   } catch {}
 }
 
-export async function ensureAuth() {
-  const GITHUB_TOKEN_PATH = githubTokenPath();
+export async function ensureAuth({
+  home = os.homedir(),
+  env = process.env,
+  fetchImpl = fetch,
+  signal,
+  log = console.log,
+  openAndCopyFn = openAndCopy,
+} = {}) {
+  const GITHUB_TOKEN_PATH = githubTokenPath(home);
   if (fs.existsSync(GITHUB_TOKEN_PATH)) {
-    console.log(status("ok", "GitHub token found"));
-    return;
+    const existing = fs.readFileSync(GITHUB_TOKEN_PATH, "utf8").trim();
+    if (existing) {
+      log(status("ok", "GitHub token found"));
+      return;
+    }
+    log(status("warn", "GitHub token file is empty"));
   }
-  console.log(status("wait", "No GitHub token found. Starting device login..."));
+
+  const imported = await importDiscoveredGithubToken({ home, env, fetchImpl, signal, log });
+  if (imported) return;
+
+  log(status("wait", "No usable GitHub token found. Starting device login..."));
 
   // Request a device code.
-  const codeResp = await fetch("https://github.com/login/device/code", {
+  const codeResp = await fetchImpl("https://github.com/login/device/code", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ client_id: CLIENT_ID, scope: SCOPE }),
+    signal,
   });
   if (!codeResp.ok) throw new Error(`device code request failed: ${codeResp.status}`);
   const { device_code, user_code, verification_uri, interval } = await codeResp.json();
 
   // Prompt the user.
-  console.log(`\n${status("info", `Open ${verification_uri}`)}\n${status("info", `Enter code: ${user_code}`)}\n`);
-  openAndCopy(user_code, verification_uri);
+  log(`\n${status("info", `Open ${verification_uri}`)}\n${status("info", `Enter code: ${user_code}`)}\n`);
+  openAndCopyFn(user_code, verification_uri);
 
   // Poll until GitHub completes the device flow.
   let waitMs = (interval || 5) * 1000;
   while (true) {
     await sleep(waitMs);
-    const pollResp = await fetch("https://github.com/login/oauth/access_token", {
+    const pollResp = await fetchImpl("https://github.com/login/oauth/access_token", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
@@ -83,6 +360,7 @@ export async function ensureAuth() {
         device_code,
         grant_type: "urn:ietf:params:oauth:grant-type:device_code",
       }),
+      signal,
     });
     if (!pollResp.ok) {
       // Treat transient network/server errors as pending and retry.
@@ -91,8 +369,8 @@ export async function ensureAuth() {
     const data = await pollResp.json();
     const r = interpretPoll(data);
     if (r.state === "done") {
-      writeToken(r.token);
-      console.log(status("ok", "Login successful"));
+      writeToken(r.token, home);
+      log(status("ok", "Login successful"));
       return;
     }
     if (r.state === "slow") { waitMs += 5000; continue; }
@@ -101,8 +379,9 @@ export async function ensureAuth() {
   }
 }
 
-function writeToken(token) {
-  const GITHUB_TOKEN_PATH = githubTokenPath();
+export function writeToken(token, home = os.homedir()) {
+  const GITHUB_TOKEN_PATH = githubTokenPath(home);
   fs.mkdirSync(path.dirname(GITHUB_TOKEN_PATH), { recursive: true });
   fs.writeFileSync(GITHUB_TOKEN_PATH, token, { mode: 0o600 });
+  fs.chmodSync(GITHUB_TOKEN_PATH, 0o600);
 }

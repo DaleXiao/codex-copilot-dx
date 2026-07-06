@@ -27,7 +27,7 @@ npx codex-copilot-dx@latest
 > Tip: the `@latest` suffix forces `npx` to fetch the newest release instead of using a stale cached copy.
 
 On first run, it will:
-1. Authenticate with GitHub via device flow (if needed)
+1. Authenticate with GitHub via device flow (if needed), after first trying compatible local Copilot token sources
 2. Print the local package version and warn when a newer npm release is available
 3. Start the adapter on loopback (`127.0.0.1:2026`)
 4. Configure Codex (`~/.codex/config.toml`) to use the adapter, including stale shell env base URLs if present
@@ -48,7 +48,9 @@ codex-copilot-dx doctor
 
 The doctor checks the GitHub token, Codex config, Claude Code settings, Claude App gateway profile, and whether the local adapter port is listening.
 
-If Copilot token refresh fails with `401` or `403`, the saved GitHub token may be expired, revoked, or missing Copilot access. Delete the saved token and start the tool again to trigger GitHub device login:
+When the saved token is missing, `codex-copilot-dx` first looks for compatible local Copilot GitHub tokens, validates them with GitHub and Copilot, and imports a valid one before starting device login. It checks explicit token sources (`CCDX_GITHUB_TOKEN`, `CCDX_GITHUB_TOKEN_PATH`, `CCDX_GITHUB_TOKEN_PATHS`) plus common local `auth.json` layouts under application config directories. It does not rely on a specific app name. If a saved token later fails with `401` or `403`, the adapter repeats that discovery and retries once before asking you to reauthenticate.
+
+If Copilot token refresh still fails with `401` or `403`, the saved GitHub token may be expired, revoked, or missing Copilot access. Delete the saved token and start the tool again to trigger GitHub device login:
 
 ```bash
 rm ~/.local/share/copilot-api/github_token
@@ -90,6 +92,10 @@ Environment variables:
 | `CCDX_CONFIGURE_CLAUDE_DESKTOP` | unset | Set to `1` to write the Claude App 3P gateway profile during startup |
 | `CCDX_CLAUDE_DESKTOP_API_KEY` | generated for opt-in setup | Bearer key written into the Claude App profile and recognized by the adapter for model discovery |
 | `CCDX_CLAUDE_MODEL_ALIASES` | built-in Claude aliases | Comma-separated Desktop-to-upstream aliases, for example `claude-sonnet-4-6=claude-sonnet-4.6` |
+| `CCDX_GITHUB_TOKEN` | unset | Explicit GitHub Copilot OAuth token to validate and import before device login |
+| `CCDX_GITHUB_TOKEN_PATH` | unset | Explicit file containing a GitHub Copilot OAuth token to validate and import before device login |
+| `CCDX_GITHUB_TOKEN_PATHS` | unset | Multiple token files separated by the platform path delimiter (`:` on macOS/Linux, `;` on Windows) |
+| `CCDX_DISABLE_TOKEN_DISCOVERY` | unset | Set to `1` to skip local token discovery and go straight to the saved token or device flow |
 | `CCDX_USAGE_PATH` | `~/.local/share/codex-copilot-dx/usage.jsonl` | Local JSONL token usage log |
 | `CCDX_DISABLE_USAGE` | unset | Set to `1` to disable usage logging |
 

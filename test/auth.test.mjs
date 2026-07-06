@@ -1,6 +1,40 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { githubReauthMessage, interpretPoll } from "../src/auth.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  discoverGithubToken,
+  ensureAuth,
+  extractGithubTokenFromAuthJson,
+  githubReauthMessage,
+  githubTokenPath,
+  githubTokenSources,
+  interpretPoll,
+} from "../src/auth.mjs";
+
+function jsonResp(status, body) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  };
+}
+
+function writeJson(filePath, data) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+}
+
+function writeLocalCopilotAuth(home, appName, profileName, token) {
+  writeJson(path.join(home, "Library", "Application Support", appName, "profiles", profileName, "auth.json"), {
+    ghcAuth: {
+      gitHubTokens: {
+        access_token: token,
+      },
+    },
+  });
+}
 
 test("interpretPoll: access_token returns done", () => {
   assert.deepEqual(interpretPoll({ access_token: "gho_x" }), { state: "done", token: "gho_x" });
@@ -31,4 +65,87 @@ test("githubReauthMessage: points users to the token file and login command", ()
   assert.match(message, /Saved token is invalid\./);
   assert.match(message, /rm '\/tmp\/ccdx-home\/\.local\/share\/copilot-api\/github_token'/);
   assert.match(message, /codex-copilot-dx/);
+});
+
+test("extractGithubTokenFromAuthJson: reads Copilot auth JSON shape", () => {
+  assert.equal(extractGithubTokenFromAuthJson({
+    ghcAuth: {
+      gitHubTokens: {
+        access_token: "  ghu_local  ",
+      },
+    },
+  }), "ghu_local");
+});
+
+test("githubTokenSources: includes explicit env and generic local auth files", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-sources-"));
+  writeLocalCopilotAuth(home, "some-copilot-client", "dingxiao_microsoft", "ghu_local");
+
+  const sources = githubTokenSources({
+    home,
+    env: {
+      CCDX_GITHUB_TOKEN: "ghu_env",
+      CCDX_GITHUB_TOKEN_PATH: "~/copilot-token",
+      CCDX_GITHUB_TOKEN_PATHS: ["~/copilot-token-a", "~/copilot-token-b"].join(path.delimiter),
+    },
+  });
+
+  assert.equal(sources.some((source) => source.type === "env" && source.name === "CCDX_GITHUB_TOKEN"), true);
+  assert.equal(sources.filter((source) => source.type === "token-file").length, 3);
+  assert.equal(sources.some((source) => source.type === "token-file" && source.path === path.join(home, "copilot-token")), true);
+  assert.equal(sources.some((source) => source.type === "token-file" && source.path === path.join(home, "copilot-token-b")), true);
+  assert.equal(sources.some((source) => source.type === "auth-json" && source.path.endsWith(path.join("some-copilot-client", "profiles", "dingxiao_microsoft", "auth.json"))), true);
+});
+
+test("discoverGithubToken: validates candidates before returning one", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-discover-"));
+  writeLocalCopilotAuth(home, "some-copilot-client", "dingxiao_microsoft", "ghu_local");
+  const calls = [];
+
+  const result = await discoverGithubToken({
+    home,
+    env: {},
+    fetchImpl: async (url, options) => {
+      calls.push([url, options.headers.Authorization]);
+      if (url.endsWith("/user")) return jsonResp(200, { login: "dingxiao_microsoft" });
+      if (url.endsWith("/copilot_internal/v2/token")) {
+        return jsonResp(200, { token: "copilot_short", expires_at: 9999999999 });
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.validation.login, "dingxiao_microsoft");
+  assert.equal(result.token, "ghu_local");
+  assert.deepEqual(calls.map((call) => call[0]), [
+    "https://api.github.com/user",
+    "https://api.github.com/copilot_internal/v2/token",
+  ]);
+});
+
+test("ensureAuth: imports a valid local auth token before device flow", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-import-"));
+  writeLocalCopilotAuth(home, "some-copilot-client", "dingxiao_microsoft", "ghu_local");
+  const lines = [];
+
+  await ensureAuth({
+    home,
+    env: {},
+    log: (line) => lines.push(line),
+    openAndCopyFn: () => {
+      throw new Error("device flow should not start");
+    },
+    fetchImpl: async (url) => {
+      if (url.endsWith("/user")) return jsonResp(200, { login: "dingxiao_microsoft" });
+      if (url.endsWith("/copilot_internal/v2/token")) {
+        return jsonResp(200, { token: "copilot_short", expires_at: 9999999999 });
+      }
+      throw new Error(`device flow should not request ${url}`);
+    },
+  });
+
+  assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_local");
+  assert.equal((fs.statSync(githubTokenPath(home)).mode & 0o777), 0o600);
+  assert.equal(lines.some((line) => /Imported GitHub token from local auth file/.test(line)), true);
 });

@@ -12,6 +12,7 @@ import { printUsageSummary } from "../src/usage.mjs";
 import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
 import { runDoctor } from "../src/doctor.mjs";
 import { checkRunningAdapter } from "../src/running-adapter.mjs";
+import { assertSafeAdapterHost, isLoopbackHost } from "../src/security.mjs";
 
 const ADAPTER_PORT = parseInt(process.env.ADAPTER_PORT || "2026");
 const ADAPTER_HOST = process.env.ADAPTER_HOST || "127.0.0.1";
@@ -20,10 +21,6 @@ const EXISTING_ADAPTER_TIMEOUT_MS = parseInt(process.env.CCDX_EXISTING_ADAPTER_T
 const LOCAL_VERSION = localPackageVersion();
 const command = process.argv[2];
 const CONFIGURE_CLAUDE_DESKTOP = command === "--configure-claude-desktop" || process.env.CCDX_CONFIGURE_CLAUDE_DESKTOP === "1";
-
-function isLoopbackHost(host) {
-  return ["127.0.0.1", "localhost", "::1"].includes(String(host).toLowerCase());
-}
 
 async function refreshClaudeDesktopModelDefs() {
   if (parseModelAliasEnv(process.env.CCDX_CLAUDE_MODEL_ALIASES).length) {
@@ -128,6 +125,7 @@ checkForUpdate({ currentVersion: LOCAL_VERSION }).then(({ latestVersion, updateA
 });
 
 try {
+  assertSafeAdapterHost(ADAPTER_HOST, process.env);
   if (await reuseRunningAdapterIfAvailable()) process.exit(0);
 
   // Ensure GitHub login, using device flow if no token exists.
@@ -138,7 +136,7 @@ try {
   const claudeDesktopModelDefs = await refreshClaudeDesktopModelDefs();
 
   if (!isLoopbackHost(ADAPTER_HOST)) {
-    console.log(status("warn", `ADAPTER_HOST=${ADAPTER_HOST} exposes the adapter beyond loopback. Use only on trusted networks.`));
+    console.log(status("warn", `ADAPTER_HOST=${ADAPTER_HOST} exposes the adapter beyond loopback because CCDX_ALLOW_LAN=1 is set. Use only on trusted networks.`));
   }
 
   const claudeDesktopApiKey = CONFIGURE_CLAUDE_DESKTOP

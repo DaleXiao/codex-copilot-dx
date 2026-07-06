@@ -83,8 +83,9 @@ Environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ADAPTER_HOST` | `127.0.0.1` | Host for the adapter; set `0.0.0.0` only if you knowingly expose it on a trusted network |
+| `ADAPTER_HOST` | `127.0.0.1` | Host for the adapter; only loopback hosts are allowed by default |
 | `ADAPTER_PORT` | `2026` | Port for the adapter |
+| `CCDX_ALLOW_LAN` | unset | Set to `1` to allow non-loopback `ADAPTER_HOST` values such as `0.0.0.0`; exposes your Copilot-backed adapter beyond this machine |
 | `CCDX_MAX_BODY_BYTES` | `134217728` | Maximum compressed/raw request body size |
 | `CCDX_MAX_DECODED_BODY_BYTES` | `268435456` | Maximum decoded request body size after decompression |
 | `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Timeout for non-streaming upstream Copilot requests |

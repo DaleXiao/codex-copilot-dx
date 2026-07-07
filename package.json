@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.4.19",
+  "version": "0.4.20",
   "description": "Use Codex Desktop, Claude Code, and Claude App with GitHub Copilot",
   "type": "module",
   "bin": {
@@ -27,9 +27,5 @@
   "license": "MIT",
   "scripts": {
     "test": "node --test"
-  },
-  "dependencies": {
-    "gpt-tokenizer": "^3.4.0",
-    "sharp": "^0.34.5"
   }
 }

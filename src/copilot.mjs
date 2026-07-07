@@ -21,8 +21,6 @@ const IMG_CONCURRENCY = parseImageConcurrency(process.env.CCDX_IMG_CONCURRENCY);
 const UPSTREAM_RETRIES = parseUpstreamRetries(process.env.CCDX_UPSTREAM_RETRIES);
 const UPSTREAM_RETRY_DELAY_MS = parseUpstreamRetryDelayMs(process.env.CCDX_UPSTREAM_RETRY_DELAY_MS);
 let sharpImport = null;
-let sharpUnavailable = false;
-let sharpUnavailableLogged = false;
 
 export function parseImageConcurrency(value) {
   const n = Number.parseInt(value, 10);
@@ -175,16 +173,9 @@ export async function fetchCopilotUpstream(
 }
 
 async function sharp() {
-  if (sharpUnavailable) return null;
-  try {
-    sharpImport ||= import("sharp");
-    const mod = await sharpImport;
-    return mod.default || mod;
-  } catch {
-    sharpUnavailable = true;
-    sharpImport = null;
-    return null;
-  }
+  sharpImport ||= import("sharp");
+  const mod = await sharpImport;
+  return mod.default || mod;
 }
 
 export async function optimizeImageDataUrl(dataUrl) {
@@ -198,13 +189,6 @@ export async function optimizeImageDataUrl(dataUrl) {
 
   try {
     const resize = await sharp();
-    if (!resize) {
-      if (!sharpUnavailableLogged) {
-        sharpUnavailableLogged = true;
-        console.warn(status("warn", "image optimization skipped because optional dependency sharp is not installed"));
-      }
-      return dataUrl;
-    }
     const out = await resize(raw, { failOn: "none" })
       .rotate()
       .resize(IMG_MAX_DIM, IMG_MAX_DIM, { fit: "inside", withoutEnlargement: true })

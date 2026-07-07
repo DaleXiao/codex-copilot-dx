@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { encode } from "gpt-tokenizer";
 
 // Anthropic Messages API to OpenAI chat/completions translation.
 // Pure functions only; network calls stay in adapter.mjs and copilot.mjs.
@@ -237,19 +238,7 @@ export async function streamAnthropicFromLines(lineIterator, emit, model, option
   await emit("message_stop", { type: "message_stop" });
 }
 
-function estimateTokens(text) {
-  if (!text) return 0;
-  let asciiChars = 0;
-  let nonAsciiChars = 0;
-  for (const ch of text) {
-    if (/\s/.test(ch)) continue;
-    if (ch.codePointAt(0) <= 0x7f) asciiChars += 1;
-    else nonAsciiChars += 1;
-  }
-  return Math.max(1, Math.ceil(asciiChars / 4) + nonAsciiChars);
-}
-
-// Copilot has no count_tokens endpoint; estimate locally without install-time dependencies.
+// Copilot has no count_tokens endpoint; estimate locally with gpt-tokenizer.
 export function countTokens(body) {
   const parts = [];
   const sys = systemToText(body.system);
@@ -274,5 +263,5 @@ export function countTokens(body) {
   }
 
   const text = parts.join("\n");
-  return { input_tokens: estimateTokens(text) };
+  return { input_tokens: encode(text).length };
 }

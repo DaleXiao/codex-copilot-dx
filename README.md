@@ -93,8 +93,8 @@ Environment variables:
 | `CCDX_UPSTREAM_RETRY_DELAY_MS` | `300` | Initial upstream retry backoff in milliseconds; capped at `5000` |
 | `CCDX_LOG_PATH` | unset | Mirror terminal logs to a file; set to `1` for `~/.local/share/codex-copilot-dx/debug.log` |
 | `CCDX_LOG_LEVEL` | `info` | Set to `debug` to include upstream request attempts, status codes, retry causes, and timings |
-| `CCDX_IMG_MAX_DIM` | `2048` | Max long edge in pixels for optional image downscaling |
-| `CCDX_IMG_QUALITY` | `85` | WebP quality used when optional image re-encoding is available |
+| `CCDX_IMG_MAX_DIM` | `2048` | Max long edge in pixels for image downscaling |
+| `CCDX_IMG_QUALITY` | `85` | WebP quality used when re-encoding images |
 | `CCDX_IMG_MIN_BYTES` | `100000` | Images smaller than this are left untouched |
 | `CCDX_IMG_CONCURRENCY` | `4` | Concurrent image optimization tasks; values above `12` are capped at `12` |
 | `CCDX_DISABLE_IMG_OPT` | unset | Set to `1` to disable image optimization |
@@ -127,7 +127,7 @@ codex-copilot-dx usage
 
 Long computer-use sessions can accumulate screenshots inside the conversation history. Each screenshot is shipped on later turns, and GitHub Copilot's `/responses` endpoint can reject oversized requests with `413 Payload Too Large`.
 
-When the optional `sharp` package is available, the adapter downsamples embedded screenshots to long-edge <= 2048 px and re-encodes them as WebP before forwarding `/v1/responses`. `sharp` is not installed by default so the CLI stays lightweight and avoids native package install stalls; install it alongside `codex-copilot-dx` if you want this optimization.
+The adapter automatically downsamples embedded screenshots to long-edge <= 2048 px and re-encodes them as WebP before forwarding `/v1/responses`.
 
 ## License
 

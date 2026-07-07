@@ -8,6 +8,7 @@ import { startAdapter } from "../src/adapter.mjs";
 import { listModels, refreshVSCodeVersion } from "../src/copilot.mjs";
 import { claudeDesktopModelDefsFromCopilotModels, claudeDesktopModelIds, gptModelIdsFromCopilotModels, parseModelAliasEnv } from "../src/models.mjs";
 import { status } from "../src/status.mjs";
+import { configureLogging } from "../src/log.mjs";
 import { printUsageSummary } from "../src/usage.mjs";
 import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
 import { runDoctor } from "../src/doctor.mjs";
@@ -21,6 +22,12 @@ const EXISTING_ADAPTER_TIMEOUT_MS = parseInt(process.env.CCDX_EXISTING_ADAPTER_T
 const LOCAL_VERSION = localPackageVersion();
 const command = process.argv[2];
 const CONFIGURE_CLAUDE_DESKTOP = command === "--configure-claude-desktop" || process.env.CCDX_CONFIGURE_CLAUDE_DESKTOP === "1";
+const LOGGING = configureLogging();
+
+if (LOGGING.filePath) {
+  console.log(status("info", `Debug log: ${LOGGING.filePath}`));
+  if (LOGGING.level === "debug") console.log(status("debug", "Debug logging enabled"));
+}
 
 async function refreshClaudeDesktopModelDefs() {
   if (parseModelAliasEnv(process.env.CCDX_CLAUDE_MODEL_ALIASES).length) {

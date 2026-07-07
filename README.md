@@ -89,6 +89,10 @@ Environment variables:
 | `CCDX_MAX_BODY_BYTES` | `134217728` | Maximum compressed/raw request body size |
 | `CCDX_MAX_DECODED_BODY_BYTES` | `268435456` | Maximum decoded request body size after decompression |
 | `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Timeout for non-streaming upstream Copilot requests |
+| `CCDX_UPSTREAM_RETRIES` | `2` | Retries for transient Copilot upstream network errors; capped at `5` |
+| `CCDX_UPSTREAM_RETRY_DELAY_MS` | `300` | Initial upstream retry backoff in milliseconds; capped at `5000` |
+| `CCDX_LOG_PATH` | unset | Mirror terminal logs to a file; set to `1` for `~/.local/share/codex-copilot-dx/debug.log` |
+| `CCDX_LOG_LEVEL` | `info` | Set to `debug` to include upstream request attempts, status codes, retry causes, and timings |
 | `CCDX_IMG_MAX_DIM` | `2048` | Max long edge in pixels for image downscaling |
 | `CCDX_IMG_QUALITY` | `85` | WebP quality used when re-encoding images |
 | `CCDX_IMG_MIN_BYTES` | `100000` | Images smaller than this are left untouched |
@@ -110,6 +114,10 @@ Environment variables:
 ### Usage logging
 
 The adapter records token usage metadata to `~/.local/share/codex-copilot-dx/usage.jsonl` when upstream responses include usage fields. It logs counts, model names, API surface, and response IDs only; it does not log prompts, completions, tool arguments, or image content.
+
+### Debug logging
+
+Set `CCDX_LOG_PATH=1` to mirror terminal logs to `~/.local/share/codex-copilot-dx/debug.log`, or set `CCDX_LOG_PATH` to a custom file. Add `CCDX_LOG_LEVEL=debug` to include upstream request attempts, retry causes, status codes, and timings. Debug logs do not include prompts, completions, request bodies, or authorization tokens.
 
 ```bash
 codex-copilot-dx usage

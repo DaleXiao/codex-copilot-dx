@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { githubTokenPath } from "../src/auth.mjs";
-import { computeInitiator, computeVision, buildHeaders, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, summarizeReqBody, parseImageConcurrency, runWithConcurrency, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
+import { computeInitiator, computeVision, buildHeaders, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, summarizeReqBody, parseImageConcurrency, parseUpstreamRetries, parseUpstreamRetryDelayMs, runWithConcurrency, fetchCopilotUpstream, responses, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
 
 function jsonResp(status, body) {
   return {
@@ -129,6 +129,22 @@ test("parseImageConcurrency: defaults and caps image optimization concurrency", 
   assert.equal(parseImageConcurrency("99"), 12);
 });
 
+test("parseUpstreamRetries: defaults and caps upstream retries", () => {
+  assert.equal(parseUpstreamRetries(undefined), 2);
+  assert.equal(parseUpstreamRetries("bad"), 2);
+  assert.equal(parseUpstreamRetries("-1"), 2);
+  assert.equal(parseUpstreamRetries("0"), 0);
+  assert.equal(parseUpstreamRetries("99"), 5);
+});
+
+test("parseUpstreamRetryDelayMs: defaults and caps upstream retry delay", () => {
+  assert.equal(parseUpstreamRetryDelayMs(undefined), 300);
+  assert.equal(parseUpstreamRetryDelayMs("0"), 300);
+  assert.equal(parseUpstreamRetryDelayMs("bad"), 300);
+  assert.equal(parseUpstreamRetryDelayMs("1200"), 1200);
+  assert.equal(parseUpstreamRetryDelayMs("99999"), 5000);
+});
+
 test("runWithConcurrency: caps simultaneously running tasks", async () => {
   let active = 0;
   let maxActive = 0;
@@ -184,6 +200,113 @@ test("optimizeImageDataUrl: downscales large images to webp", async () => {
 
   assert.match(output, /^data:image\/webp;base64,/);
   assert.ok(Buffer.byteLength(output) < Buffer.byteLength(input));
+});
+
+test("fetchCopilotUpstream: retries transient network errors", async () => {
+  let calls = 0;
+  const originalWarn = console.warn;
+  console.warn = () => {};
+
+  try {
+    const resp = await fetchCopilotUpstream("https://api.enterprise.githubcopilot.com/responses", {
+      method: "POST",
+      body: Buffer.from("{}"),
+    }, {
+      retries: 1,
+      retryDelayMs: 1,
+      fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) {
+          const err = new TypeError("fetch failed");
+          err.cause = { code: "UND_ERR_CONNECT_TIMEOUT", message: "Connect Timeout Error" };
+          throw err;
+        }
+        return new Response("{}", { status: 200 });
+      },
+    });
+
+    assert.equal(resp.status, 200);
+    assert.equal(calls, 2);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test("fetchCopilotUpstream: retries transient safe-method statuses only", async () => {
+  const originalWarn = console.warn;
+  console.warn = () => {};
+
+  try {
+    let getCalls = 0;
+    const getResp = await fetchCopilotUpstream("https://api.enterprise.githubcopilot.com/models", {}, {
+      retries: 1,
+      retryDelayMs: 1,
+      fetchImpl: async () => {
+        getCalls += 1;
+        return new Response("{}", { status: getCalls === 1 ? 503 : 200 });
+      },
+    });
+    assert.equal(getResp.status, 200);
+    assert.equal(getCalls, 2);
+
+    let postCalls = 0;
+    const postResp = await fetchCopilotUpstream("https://api.enterprise.githubcopilot.com/responses", { method: "POST" }, {
+      retries: 1,
+      retryDelayMs: 1,
+      fetchImpl: async () => {
+        postCalls += 1;
+        return new Response("{}", { status: 503 });
+      },
+    });
+    assert.equal(postResp.status, 503);
+    assert.equal(postCalls, 1);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test("responses: retries a Copilot connect timeout before returning upstream response", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-response-retry-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  console.log = () => {};
+  console.warn = () => {};
+
+  try {
+    await getCopilotToken({
+      home,
+      fetchImpl: async () => jsonResp(200, {
+        token: "copilot_short",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        endpoints: { api: "https://api.enterprise.githubcopilot.com" },
+      }),
+    });
+
+    let calls = 0;
+    const resp = await responses({ model: "gpt-5.5", input: [] }, {
+      retryOptions: { retries: 1, retryDelayMs: 1 },
+      fetchImpl: async (url, options) => {
+        assert.equal(url, "https://api.enterprise.githubcopilot.com/responses");
+        assert.equal(options.method, "POST");
+        calls += 1;
+        if (calls === 1) {
+          const err = new TypeError("fetch failed");
+          err.cause = { code: "UND_ERR_CONNECT_TIMEOUT", message: "Connect Timeout Error" };
+          throw err;
+        }
+        return new Response(JSON.stringify({ id: "resp_retry", output: [] }), { status: 200 });
+      },
+    });
+
+    assert.equal(resp.status, 200);
+    assert.equal(calls, 2);
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+    resetCopilotTokenForTests();
+  }
 });
 
 test("getCopilotToken: imports a valid local token after saved token is rejected", async () => {

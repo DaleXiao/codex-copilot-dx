@@ -4,6 +4,7 @@ const LABELS = {
   wait: "[WAIT]",
   warn: "[WARN]",
   err: "[ERR]",
+  debug: "[DEBUG]",
 };
 
 export function status(kind, message) {

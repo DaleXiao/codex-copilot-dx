@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { status } from "./status.mjs";
+import { debugLog } from "./log.mjs";
 import { githubReauthMessage, githubTokenPath, importDiscoveredGithubToken } from "./auth.mjs";
 
 export const DEFAULT_API_BASE = "https://api.githubcopilot.com";
@@ -11,13 +12,29 @@ const IMG_QUALITY = parseInt(process.env.CCDX_IMG_QUALITY || "85", 10);
 const IMG_MIN_BYTES = parseInt(process.env.CCDX_IMG_MIN_BYTES || "100000", 10);
 const DEFAULT_IMG_CONCURRENCY = 4;
 const IMG_MAX_CONCURRENCY = 12;
+const DEFAULT_UPSTREAM_RETRIES = 2;
+const MAX_UPSTREAM_RETRIES = 5;
+const DEFAULT_UPSTREAM_RETRY_DELAY_MS = 300;
+const MAX_UPSTREAM_RETRY_DELAY_MS = 5000;
 const IMG_OPT_DISABLED = process.env.CCDX_DISABLE_IMG_OPT === "1";
 const IMG_CONCURRENCY = parseImageConcurrency(process.env.CCDX_IMG_CONCURRENCY);
+const UPSTREAM_RETRIES = parseUpstreamRetries(process.env.CCDX_UPSTREAM_RETRIES);
+const UPSTREAM_RETRY_DELAY_MS = parseUpstreamRetryDelayMs(process.env.CCDX_UPSTREAM_RETRY_DELAY_MS);
 let sharpImport = null;
 
 export function parseImageConcurrency(value) {
   const n = Number.parseInt(value, 10);
   return Number.isFinite(n) && n > 0 ? Math.min(n, IMG_MAX_CONCURRENCY) : DEFAULT_IMG_CONCURRENCY;
+}
+
+export function parseUpstreamRetries(value) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n >= 0 ? Math.min(n, MAX_UPSTREAM_RETRIES) : DEFAULT_UPSTREAM_RETRIES;
+}
+
+export function parseUpstreamRetryDelayMs(value) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, MAX_UPSTREAM_RETRY_DELAY_MS) : DEFAULT_UPSTREAM_RETRY_DELAY_MS;
 }
 
 export function parseApiBase(data) {
@@ -34,6 +51,126 @@ export function responsesEndpointPath() {
   return "/responses";
 }
 const GITHUB_API = "https://api.github.com";
+const RETRYABLE_UPSTREAM_ERROR_CODES = new Set([
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "ETIMEDOUT",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EPIPE",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+]);
+const RETRYABLE_UPSTREAM_STATUSES = new Set([408, 502, 503, 504]);
+
+function upstreamTarget(url) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.hostname}${parsed.pathname}`;
+  } catch {
+    return String(url);
+  }
+}
+
+function upstreamErrorCode(err) {
+  return err?.cause?.code || err?.code || "";
+}
+
+function isAbortError(err, signal) {
+  return signal?.aborted || err?.name === "AbortError" || err?.code === "ABORT_ERR";
+}
+
+function abortError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const err = new Error("The operation was aborted");
+  err.name = "AbortError";
+  return err;
+}
+
+function sleep(ms, { signal } = {}) {
+  if (signal?.aborted) return Promise.reject(abortError(signal));
+  return new Promise((resolve, reject) => {
+    let timer;
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(abortError(signal));
+    };
+    timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    if (!signal) return;
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function requestMethod(init = {}) {
+  return String(init.method || "GET").toUpperCase();
+}
+
+export function isRetryableUpstreamError(err, { signal } = {}) {
+  if (isAbortError(err, signal)) return false;
+  return RETRYABLE_UPSTREAM_ERROR_CODES.has(upstreamErrorCode(err));
+}
+
+export function isRetryableUpstreamStatus(status, method = "GET") {
+  const safeMethod = ["GET", "HEAD", "OPTIONS"].includes(String(method || "GET").toUpperCase());
+  return safeMethod && RETRYABLE_UPSTREAM_STATUSES.has(status);
+}
+
+function upstreamRetryDelay(attempt, baseDelayMs) {
+  return Math.min(baseDelayMs * (2 ** attempt), MAX_UPSTREAM_RETRY_DELAY_MS);
+}
+
+function describeUpstreamError(err) {
+  const code = upstreamErrorCode(err);
+  return [code, err?.cause?.message || err?.message].filter(Boolean).join(": ") || "network error";
+}
+
+export async function fetchCopilotUpstream(
+  url,
+  init = {},
+  {
+    fetchImpl = fetch,
+    retries = UPSTREAM_RETRIES,
+    retryDelayMs = UPSTREAM_RETRY_DELAY_MS,
+  } = {},
+) {
+  const retryCount = parseUpstreamRetries(retries);
+  const baseDelay = parseUpstreamRetryDelayMs(retryDelayMs);
+  const method = requestMethod(init);
+  const signal = init.signal;
+  const target = upstreamTarget(url);
+  const totalStart = Date.now();
+
+  for (let attempt = 0; ; attempt += 1) {
+    const attemptStart = Date.now();
+    debugLog(`upstream ${method} ${target} attempt=${attempt + 1}/${retryCount + 1}`);
+    try {
+      const resp = await fetchImpl(url, init);
+      debugLog(`upstream ${method} ${target} status=${resp.status} attempt=${attempt + 1}/${retryCount + 1} attempt_ms=${Date.now() - attemptStart} total_ms=${Date.now() - totalStart}`);
+      if (attempt < retryCount && isRetryableUpstreamStatus(resp.status, method)) {
+        await resp.arrayBuffer?.().catch(() => {});
+        const delay = upstreamRetryDelay(attempt, baseDelay);
+        console.warn(status("warn", `upstream ${target} returned ${resp.status}; retry ${attempt + 1}/${retryCount} in ${delay}ms`));
+        await sleep(delay, { signal });
+        continue;
+      }
+      return resp;
+    } catch (e) {
+      debugLog(`upstream ${method} ${target} error=${describeUpstreamError(e)} attempt=${attempt + 1}/${retryCount + 1} attempt_ms=${Date.now() - attemptStart} total_ms=${Date.now() - totalStart}`);
+      if (attempt >= retryCount || !isRetryableUpstreamError(e, { signal })) throw e;
+      const delay = upstreamRetryDelay(attempt, baseDelay);
+      console.warn(status("warn", `upstream ${target} ${describeUpstreamError(e)}; retry ${attempt + 1}/${retryCount} in ${delay}ms`));
+      await sleep(delay, { signal });
+    }
+  }
+}
 
 async function sharp() {
   sharpImport ||= import("sharp");
@@ -326,7 +463,7 @@ export function resetCopilotTokenForTests() {
 }
 
 // chatReq is already converted by the adapter. The caller parses the raw Response.
-export async function chatCompletions(chatReq, { signal } = {}) {
+export async function chatCompletions(chatReq, { signal, fetchImpl, retryOptions } = {}) {
   const token = await getCopilotToken({ signal });
   const messages = chatReq.messages || [];
   const headers = buildHeaders({
@@ -335,25 +472,25 @@ export async function chatCompletions(chatReq, { signal } = {}) {
     initiator: computeInitiator(messages),
     vision: computeVision(messages),
   });
-  return fetch(`${getApiBase()}/chat/completions`, {
+  return fetchCopilotUpstream(`${getApiBase()}/chat/completions`, {
     method: "POST",
     headers,
     body: JSON.stringify(chatReq),
     signal,
-  });
+  }, { fetchImpl, ...retryOptions });
 }
 
-export async function listModels({ signal } = {}) {
+export async function listModels({ signal, fetchImpl, retryOptions } = {}) {
   const token = await getCopilotToken({ signal });
   const headers = buildHeaders({
     token, version: getVSCodeVersion(), initiator: "user", vision: false,
   });
-  const resp = await fetch(`${getApiBase()}/models`, { headers, signal });
+  const resp = await fetchCopilotUpstream(`${getApiBase()}/models`, { headers, signal }, { fetchImpl, ...retryOptions });
   return { status: resp.status, body: await resp.text() };
 }
 
 // Responses-only models go directly to Copilot's /responses endpoint.
-export async function responses(reqBody, { signal } = {}) {
+export async function responses(reqBody, { signal, fetchImpl, retryOptions } = {}) {
   const token = await getCopilotToken({ signal });
   const beforeBytes = Buffer.byteLength(JSON.stringify(reqBody));
   await optimizeImagesInBody(reqBody);
@@ -371,12 +508,12 @@ export async function responses(reqBody, { signal } = {}) {
   headers["Accept"] = reqBody.stream ? "text/event-stream" : "application/json";
 
   try {
-    return await fetch(`${getApiBase()}${responsesEndpointPath()}`, {
+    return await fetchCopilotUpstream(`${getApiBase()}${responsesEndpointPath()}`, {
       method: "POST",
       headers,
       body: bodyBuf,
       signal,
-    });
+    }, { fetchImpl, ...retryOptions });
   } catch (e) {
     const cause = e?.cause;
     const causeText = cause ? ` (${[cause.code, cause.message].filter(Boolean).join(": ")})` : "";

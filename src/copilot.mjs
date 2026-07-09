@@ -7,6 +7,30 @@ import { githubReauthMessage, githubTokenPath, importDiscoveredGithubToken } fro
 
 export const DEFAULT_API_BASE = "https://api.githubcopilot.com";
 let apiBase = DEFAULT_API_BASE;
+
+// Cache of model id -> supported_endpoints, populated from listModels(). Used to
+// route requests to /responses vs /chat/completions based on real model metadata.
+const modelEndpointCache = new Map();
+
+export function cacheModelEndpoints(models) {
+  const data = Array.isArray(models) ? models : models?.data;
+  if (!Array.isArray(data)) return;
+  for (const model of data) {
+    const id = String(model?.id || "").trim();
+    if (id && Array.isArray(model?.supported_endpoints)) {
+      modelEndpointCache.set(id, model.supported_endpoints);
+    }
+  }
+}
+
+// Returns the cached supported_endpoints for a model id, or null if unknown.
+export function getCachedModelEndpoints(modelId) {
+  return modelEndpointCache.get(String(modelId || "").trim()) || null;
+}
+
+export function resetModelEndpointCacheForTests() {
+  modelEndpointCache.clear();
+}
 const IMG_MAX_DIM = parseInt(process.env.CCDX_IMG_MAX_DIM || "2048", 10);
 const IMG_QUALITY = parseInt(process.env.CCDX_IMG_QUALITY || "85", 10);
 const IMG_MIN_BYTES = parseInt(process.env.CCDX_IMG_MIN_BYTES || "100000", 10);
@@ -486,7 +510,11 @@ export async function listModels({ signal, fetchImpl, retryOptions } = {}) {
     token, version: getVSCodeVersion(), initiator: "user", vision: false,
   });
   const resp = await fetchCopilotUpstream(`${getApiBase()}/models`, { headers, signal }, { fetchImpl, ...retryOptions });
-  return { status: resp.status, body: await resp.text() };
+  const body = await resp.text();
+  if (resp.ok) {
+    try { cacheModelEndpoints(JSON.parse(body)); } catch {}
+  }
+  return { status: resp.status, body };
 }
 
 // Responses-only models go directly to Copilot's /responses endpoint.

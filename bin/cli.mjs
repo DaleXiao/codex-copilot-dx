@@ -125,11 +125,20 @@ console.log(`
   Use Codex Desktop, Claude Code, and Claude App with GitHub Copilot
 `);
 
-checkForUpdate({ currentVersion: LOCAL_VERSION }).then(({ latestVersion, updateAvailable }) => {
-  if (!updateAvailable) return;
-  console.log(`\n  ${status("warn", `Update available: ${LOCAL_VERSION} -> ${latestVersion}`)}`);
-  console.log("  npm install -g codex-copilot-dx@latest\n");
-});
+async function printUpdateNotice() {
+  try {
+    const { latestVersion, updateAvailable } = await checkForUpdate({ currentVersion: LOCAL_VERSION });
+    if (!updateAvailable) return;
+    console.log(`\n  ${status("warn", `Update available: ${LOCAL_VERSION} -> ${latestVersion}`)}`);
+    console.log("  npm install -g codex-copilot-dx@latest\n");
+  } catch {
+    // Never block startup on the update check.
+  }
+}
+
+// Await the update check up front so the notice is shown even on the
+// "reuse existing adapter" path, which exits early below.
+await printUpdateNotice();
 
 try {
   assertSafeAdapterHost(ADAPTER_HOST, process.env);
@@ -171,6 +180,16 @@ try {
 
   // Launch Codex when available.
   openCodex();
+
+  // Periodically refresh the model list + endpoint cache so a long-running
+  // adapter picks up newly released models without a restart.
+  const refreshIntervalMs = parseInt(process.env.CCDX_MODEL_REFRESH_INTERVAL_MS || String(30 * 60 * 1000), 10);
+  if (Number.isFinite(refreshIntervalMs) && refreshIntervalMs > 0) {
+    const timer = setInterval(() => {
+      refreshClaudeDesktopModelDefs().catch(() => {});
+    }, refreshIntervalMs);
+    if (typeof timer.unref === "function") timer.unref();
+  }
 
   console.log(`
   ${status("ok", "Ready, Claude Code, Claude App and Codex App are now ready to use")}

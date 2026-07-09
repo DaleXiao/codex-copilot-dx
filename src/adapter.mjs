@@ -2,22 +2,38 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import * as zlib from "node:zlib";
-import { chatCompletions, listModels, responses as copilotResponses, responsesCompact as copilotResponsesCompact } from "./copilot.mjs";
+import { chatCompletions, listModels, responses as copilotResponses, responsesCompact as copilotResponsesCompact, getCachedModelEndpoints } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
 import { anthropicToChat, chatToAnthropic, streamAnthropicFromLines, countTokens } from "./anthropic.mjs";
-import { claudeDesktopModelsResponse, resolveAnthropicModel } from "./models.mjs";
+import { claudeDesktopModelsResponse, resolveAnthropicModel, modelIsResponsesOnly, modelSupportsChatCompletions } from "./models.mjs";
 import { status } from "./status.mjs";
 import { recordAnthropicUsage, recordResponsesUsage } from "./usage.mjs";
 import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 
-// Models that only support Responses API (not chat/completions)
-const RESPONSES_ONLY = new Set([
+// Fallback list for models known to only support the Responses API, used when
+// live model metadata (supported_endpoints) has not been cached yet.
+const RESPONSES_ONLY_FALLBACK = new Set([
+  "gpt-5.6-luna",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
   "gpt-5.5",
   "gpt-5.4",
   "gpt-5.4-mini",
   "gpt-5.3-codex",
   "gpt-5.2-codex",
 ]);
+
+// Decide whether a model must be proxied straight to /responses (vs converted to
+// /chat/completions). Prefer real endpoint metadata; fall back to the static list.
+function isResponsesOnlyModel(model) {
+  const endpoints = getCachedModelEndpoints(model);
+  if (endpoints) {
+    const fakeModel = { supported_endpoints: endpoints };
+    if (modelSupportsChatCompletions(fakeModel)) return false;
+    if (modelIsResponsesOnly(fakeModel)) return true;
+  }
+  return RESPONSES_ONLY_FALLBACK.has(model);
+}
 
 // Direct Copilot Responses API proxy.
 
@@ -324,6 +340,19 @@ export function clearResponseHistoryForTests() {
   responseHistories.clear();
 }
 
+// The GPT (gpt-5.6) Responses backend registers a built-in `image_gen` tool
+// namespace. When the client also sends an image generation tool, the upstream
+// rejects the request with "User-defined namespace 'image_gen' collides ...".
+// Strip any built-in image tool (matched by type/name/namespace) before proxying.
+function isBuiltinImageTool(tool) {
+  if (!tool || typeof tool !== "object") return false;
+  const candidates = [tool.type, tool.name, tool.namespace];
+  return candidates.some((v) => {
+    const s = String(v || "").toLowerCase();
+    return s === "image_gen" || s === "image_generation" || s.startsWith("image_gen");
+  });
+}
+
 export function prepareResponsesRequest(reqBody) {
   const body = cloneJson(reqBody);
   const currentInputItems = responsesInputItems(body.input);
@@ -344,7 +373,7 @@ export function prepareResponsesRequest(reqBody) {
   delete body.previous_response_id;
   delete body.store;
   if (Array.isArray(body.tools)) {
-    body.tools = body.tools.filter((tool) => tool?.type !== "image_generation");
+    body.tools = body.tools.filter((tool) => !isBuiltinImageTool(tool));
     if (!body.tools.length) delete body.tools;
   }
   stripInternalResponsesInputFields(body.input);
@@ -591,7 +620,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
           prepared.surface = "responses";
           const model = parsed.model || "unknown";
           console.log(status("info", `responses model=${model} stream=${!!parsed.stream}`));
-          if (RESPONSES_ONLY.has(model)) {
+          if (isResponsesOnlyModel(model)) {
             await proxyCopilotResponses(prepared, req, res, copilotResponses, { signal: abort.signal });
           } else {
             const chatReq = responsesToChat(prepared.body);

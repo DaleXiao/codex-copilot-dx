@@ -102,6 +102,23 @@ function hasOpenAIEndpoint(model) {
   return endpoints.includes("/responses") || endpoints.includes("/v1/responses") || endpoints.includes("/chat/completions");
 }
 
+// Endpoint-based routing helpers. A model is "responses-only" when it exposes a
+// /responses endpoint but does NOT accept /chat/completions. These read the real
+// model metadata so new models (e.g. gpt-5.6-*) route correctly without a hardcoded list.
+export function modelEndpoints(model) {
+  return Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];
+}
+
+export function modelSupportsChatCompletions(model) {
+  return modelEndpoints(model).includes("/chat/completions");
+}
+
+export function modelIsResponsesOnly(model) {
+  const endpoints = modelEndpoints(model);
+  const hasResponses = endpoints.includes("/responses") || endpoints.includes("/v1/responses");
+  return hasResponses && !endpoints.includes("/chat/completions");
+}
+
 function copilotModelData(models) {
   const data = Array.isArray(models) ? models : models?.data;
   return Array.isArray(data) ? data : [];

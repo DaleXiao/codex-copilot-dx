@@ -96,7 +96,7 @@ async function reuseRunningAdapterIfAvailable() {
     console.log(status("ok", "Claude App support available with --configure-claude-desktop"));
   }
 
-  openCodex();
+  await openCodex();
   console.log(`
   ${status("ok", "Ready, using the existing codex-copilot-dx adapter")}
 
@@ -179,7 +179,7 @@ try {
   }
 
   // Launch Codex when available.
-  openCodex();
+  await openCodex();
 
   // Periodically refresh the model list + endpoint cache so a long-running
   // adapter picks up newly released models without a restart.

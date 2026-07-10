@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { githubTokenPath } from "../src/auth.mjs";
-import { computeInitiator, computeVision, buildHeaders, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, summarizeReqBody, parseImageConcurrency, parseUpstreamRetries, parseUpstreamRetryDelayMs, runWithConcurrency, fetchCopilotUpstream, responses, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
+import { cacheModelEndpoints, computeInitiator, computeVision, buildHeaders, getCachedModelEndpoints, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, summarizeReqBody, parseImageConcurrency, parseUpstreamRetries, parseUpstreamRetryDelayMs, resetModelEndpointCacheForTests, runWithConcurrency, fetchCopilotUpstream, responses, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
 
 function jsonResp(status, body) {
   return {
@@ -115,6 +115,24 @@ test("parseApiBase: endpoints without api falls back", () => {
 
 test("DEFAULT_API_BASE is the public Copilot host", () => {
   assert.equal(DEFAULT_API_BASE, "https://api.githubcopilot.com");
+});
+
+test("cacheModelEndpoints: atomically replaces valid endpoint metadata", () => {
+  resetModelEndpointCacheForTests();
+  assert.equal(cacheModelEndpoints({ data: [
+    { id: "old", supported_endpoints: ["/chat/completions"] },
+  ] }), true);
+  assert.deepEqual(getCachedModelEndpoints("old"), ["/chat/completions"]);
+
+  assert.equal(cacheModelEndpoints({ data: [
+    { id: "new", supported_endpoints: ["/responses"] },
+  ] }), true);
+  assert.equal(getCachedModelEndpoints("old"), null);
+  assert.deepEqual(getCachedModelEndpoints("new"), ["/responses"]);
+
+  assert.equal(cacheModelEndpoints({ data: [{ id: "malformed" }] }), false);
+  assert.deepEqual(getCachedModelEndpoints("new"), ["/responses"]);
+  resetModelEndpointCacheForTests();
 });
 
 test("responsesEndpointPath: compact uses regular Responses upstream", () => {

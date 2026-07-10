@@ -5,7 +5,7 @@ import { ensureCodexConfig } from "../src/config.mjs";
 import { ensureClaudeConfig } from "../src/claude-config.mjs";
 import { applyClaudeDesktopConfig, formatClaudeDesktopApplyResult, generatedClaudeDesktopApiKey } from "../src/claude-desktop-config.mjs";
 import { startAdapter } from "../src/adapter.mjs";
-import { listModels, refreshVSCodeVersion } from "../src/copilot.mjs";
+import { cacheModelEndpoints, listModels, refreshVSCodeVersion } from "../src/copilot.mjs";
 import { claudeDesktopModelDefsFromCopilotModels, claudeDesktopModelIds, gptModelIdsFromCopilotModels, parseModelAliasEnv } from "../src/models.mjs";
 import { status } from "../src/status.mjs";
 import { configureLogging } from "../src/log.mjs";
@@ -14,6 +14,7 @@ import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
 import { runDoctor } from "../src/doctor.mjs";
 import { checkRunningAdapter } from "../src/running-adapter.mjs";
 import { assertSafeAdapterHost, isLoopbackHost } from "../src/security.mjs";
+import { loadModelCache, saveModelCache } from "../src/model-cache.mjs";
 
 const ADAPTER_PORT = parseInt(process.env.ADAPTER_PORT || "2026");
 const ADAPTER_HOST = process.env.ADAPTER_HOST || "127.0.0.1";
@@ -23,17 +24,38 @@ const LOCAL_VERSION = localPackageVersion();
 const command = process.argv[2];
 const CONFIGURE_CLAUDE_DESKTOP = command === "--configure-claude-desktop" || process.env.CCDX_CONFIGURE_CLAUDE_DESKTOP === "1";
 const LOGGING = configureLogging();
+const MODEL_REGISTRY = { modelDefs: undefined, source: "built-in" };
 
 if (LOGGING.filePath) {
   console.log(status("info", `Debug log: ${LOGGING.filePath}`));
   if (LOGGING.level === "debug") console.log(status("debug", "Debug logging enabled"));
 }
 
-async function refreshClaudeDesktopModelDefs() {
-  if (parseModelAliasEnv(process.env.CCDX_CLAUDE_MODEL_ALIASES).length) {
-    console.log(status("info", "Using CCDX_CLAUDE_MODEL_ALIASES for Claude models"));
-    return undefined;
+function applyModelsToRegistry(models, source, { updateClaudeModels = true } = {}) {
+  const modelDefs = updateClaudeModels
+    ? claudeDesktopModelDefsFromCopilotModels(models)
+    : MODEL_REGISTRY.modelDefs;
+  if (updateClaudeModels && !modelDefs.length) throw new Error("Copilot models response contained no Claude models");
+  cacheModelEndpoints(models);
+  if (updateClaudeModels) MODEL_REGISTRY.modelDefs = modelDefs;
+  MODEL_REGISTRY.source = source;
+  return modelDefs;
+}
+
+function loadCachedModelRegistry() {
+  const cached = loadModelCache();
+  if (!cached) return false;
+  try {
+    const customAliases = parseModelAliasEnv(process.env.CCDX_CLAUDE_MODEL_ALIASES).length > 0;
+    applyModelsToRegistry(cached, "cache", { updateClaudeModels: !customAliases });
+    return true;
+  } catch {
+    return false;
   }
+}
+
+async function refreshClaudeDesktopModelDefs() {
+  const customAliases = parseModelAliasEnv(process.env.CCDX_CLAUDE_MODEL_ALIASES).length > 0;
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), MODEL_REFRESH_TIMEOUT_MS);
@@ -50,13 +72,22 @@ async function refreshClaudeDesktopModelDefs() {
       console.log(status("warn", "Copilot models response contained no GPT models"));
     }
 
-    const modelDefs = claudeDesktopModelDefsFromCopilotModels(models);
-    if (!modelDefs.length) throw new Error("Copilot models response contained no Claude models");
-    console.log(status("ok", `Refreshed Claude models from GitHub Copilot: ${modelDefs.map((model) => model.id).join(", ")}`));
+    const modelDefs = applyModelsToRegistry(models, "live", { updateClaudeModels: !customAliases });
+    try {
+      saveModelCache(models);
+    } catch (e) {
+      console.log(status("warn", `Could not persist the Copilot model cache (${e.message})`));
+    }
+    if (customAliases) {
+      console.log(status("info", "Using CCDX_CLAUDE_MODEL_ALIASES for Claude models"));
+    } else {
+      console.log(status("ok", `Refreshed Claude models from GitHub Copilot: ${modelDefs.map((model) => model.id).join(", ")}`));
+    }
     return modelDefs;
   } catch (e) {
-    console.log(status("warn", `Could not refresh Claude models; using built-in model list (${e.message})`));
-    return undefined;
+    const fallback = MODEL_REGISTRY.modelDefs?.length ? `${MODEL_REGISTRY.source} model list` : "built-in model list";
+    console.log(status("warn", `Could not refresh Claude models; using ${fallback} (${e.message})`));
+    return MODEL_REGISTRY.modelDefs;
   } finally {
     clearTimeout(timer);
   }
@@ -72,6 +103,10 @@ async function reuseRunningAdapterIfAvailable() {
     host: ADAPTER_HOST,
     timeoutMs: EXISTING_ADAPTER_TIMEOUT_MS,
   });
+  if (running.incompatible) {
+    const found = running.data?.version || "unknown";
+    throw new Error(`Adapter ${found} is already running at ${running.baseUrl}, but this CLI is ${LOCAL_VERSION}. Stop the existing process and run codex-copilot-dx again.`);
+  }
   if (!running.ok) return false;
 
   console.log(status("ok", `Using existing adapter at ${running.baseUrl}`));
@@ -116,7 +151,11 @@ if (command === "usage") {
 }
 
 if (command === "doctor" || command === "--doctor") {
-  await runDoctor({ port: ADAPTER_PORT, host: ADAPTER_HOST });
+  await runDoctor({
+    port: ADAPTER_PORT,
+    host: ADAPTER_HOST,
+    online: process.argv.slice(3).includes("--online"),
+  });
   process.exit(0);
 }
 
@@ -149,6 +188,7 @@ try {
 
   // Refresh the VS Code version in the background; fallback is non-blocking.
   refreshVSCodeVersion();
+  loadCachedModelRegistry();
   const claudeDesktopModelDefs = await refreshClaudeDesktopModelDefs();
 
   if (!isLoopbackHost(ADAPTER_HOST)) {
@@ -160,7 +200,7 @@ try {
     : currentClaudeDesktopApiKey();
 
   // Start the in-process adapter.
-  await startAdapter(ADAPTER_PORT, ADAPTER_HOST, { claudeDesktopApiKey, claudeDesktopModelDefs });
+  await startAdapter(ADAPTER_PORT, ADAPTER_HOST, { claudeDesktopApiKey, claudeDesktopModelDefs, modelRegistry: MODEL_REGISTRY });
 
   // Point Codex and Claude Code at the adapter.
   ensureCodexConfig(ADAPTER_PORT);

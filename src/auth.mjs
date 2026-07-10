@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { status } from "./status.mjs";
 import { withFileLock } from "./lock.mjs";
 
@@ -20,6 +21,10 @@ export function githubTokenPath(home = os.homedir()) {
 
 export function githubTokenLockPath(home = os.homedir()) {
   return `${githubTokenPath(home)}.lock`;
+}
+
+export function githubTokenMetadataPath(home = os.homedir()) {
+  return `${githubTokenPath(home)}.account.json`;
 }
 
 export function githubReauthMessage(reason, home = os.homedir()) {
@@ -210,6 +215,73 @@ function readSavedGithubToken(home = os.homedir()) {
   return fs.readFileSync(filePath, "utf8").trim();
 }
 
+function normalizeGithubIdentity(identity) {
+  if (!identity || typeof identity !== "object") return null;
+  const login = typeof identity.login === "string" ? identity.login.trim() : "";
+  const id = identity.id === undefined || identity.id === null ? "" : String(identity.id).trim();
+  if (!login && !id) return null;
+  return { login, id };
+}
+
+function tokenFingerprint(token) {
+  return createHash("sha256").update(String(token || "")).digest("hex").slice(0, 24);
+}
+
+export function readGithubTokenMetadata(home = os.homedir(), token = null) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(githubTokenMetadataPath(home), "utf8"));
+    if (token && parsed.token_fingerprint !== tokenFingerprint(token)) return null;
+    const identity = normalizeGithubIdentity(parsed);
+    return identity ? { ...identity, token_fingerprint: parsed.token_fingerprint || "" } : null;
+  } catch {
+    return null;
+  }
+}
+
+function githubIdentityMatches(identity, expected) {
+  const actual = normalizeGithubIdentity(identity);
+  const wanted = normalizeGithubIdentity(expected);
+  if (!wanted) return true;
+  if (!actual) return false;
+  if (wanted.id && actual.id) return wanted.id === actual.id;
+  return Boolean(wanted.login && actual.login && wanted.login.toLowerCase() === actual.login.toLowerCase());
+}
+
+function expectedGithubIdentity(home, env, token) {
+  const configuredLogin = String(env.CCDX_GITHUB_LOGIN || "").trim();
+  if (configuredLogin) return { login: configuredLogin };
+  return token ? readGithubTokenMetadata(home, token) : null;
+}
+
+export async function fetchGithubIdentity(token, { fetchImpl = fetch, signal } = {}) {
+  if (typeof token !== "string" || !token.trim()) return { ok: false, reason: "empty_token" };
+  try {
+    const resp = await fetchImpl(`${GITHUB_API}/user`, {
+      headers: { Authorization: `token ${token.trim()}`, Accept: "application/json" },
+      signal,
+    });
+    if (!resp.ok) return { ok: false, status: resp.status, reason: "github_user_failed" };
+    const data = await resp.json();
+    const identity = normalizeGithubIdentity(data);
+    return identity ? { ok: true, ...identity } : { ok: false, reason: "github_identity_missing" };
+  } catch (error) {
+    return { ok: false, transient: true, reason: "github_user_request_failed", error };
+  }
+}
+
+export async function ensureGithubTokenMetadata(token, {
+  home = os.homedir(),
+  fetchImpl = fetch,
+  signal,
+} = {}) {
+  const existing = readGithubTokenMetadata(home, token);
+  if (existing) return existing;
+  const identity = await fetchGithubIdentity(token, { fetchImpl, signal });
+  if (!identity.ok) return null;
+  writeGithubTokenMetadata(identity, home, token);
+  return normalizeGithubIdentity(identity);
+}
+
 export async function validateGithubToken(token, {
   fetchImpl = fetch,
   signal,
@@ -239,6 +311,7 @@ export async function validateGithubToken(token, {
     userData = await userResp.json();
   } catch {}
   const login = typeof userData.login === "string" ? userData.login : "";
+  const id = userData.id === undefined || userData.id === null ? "" : String(userData.id);
 
   let copilotResp;
   try {
@@ -267,7 +340,7 @@ export async function validateGithubToken(token, {
     return { ok: false, reason: "copilot_token_missing", login };
   }
 
-  return { ok: true, login, copilotTokenData };
+  return { ok: true, login, id, copilotTokenData };
 }
 
 export async function discoverGithubToken({
@@ -276,10 +349,13 @@ export async function discoverGithubToken({
   fetchImpl = fetch,
   signal,
   excludeTokens = [],
+  expectedIdentity,
+  strictExpectedIdentity = false,
 } = {}) {
   const excluded = new Set(excludeTokens);
   const seen = new Set(excluded);
   const failures = [];
+  const candidates = [];
 
   for (const source of githubTokenSources({ home, env })) {
     let token = "";
@@ -294,8 +370,38 @@ export async function discoverGithubToken({
     seen.add(token);
 
     const validation = await validateGithubToken(token, { fetchImpl, signal });
-    if (validation.ok) return { ok: true, token, source, validation };
+    if (validation.ok) {
+      const candidate = { ok: true, token, source, validation };
+      const explicitSource = source.type === "env" || source.type === "token-file";
+      if (expectedIdentity && (strictExpectedIdentity || !explicitSource)) {
+        if (githubIdentityMatches(validation, expectedIdentity)) return candidate;
+        failures.push({ source, validation, reason: "github_account_mismatch" });
+        continue;
+      }
+      if (explicitSource) return candidate;
+      candidates.push(candidate);
+      continue;
+    }
     failures.push({ source, validation });
+  }
+
+  if (candidates.length) {
+    const identities = new Set(candidates.map(({ validation, token }) => {
+      if (validation.id) return `id:${validation.id}`;
+      if (validation.login) return `login:${validation.login.toLowerCase()}`;
+      return `token:${token}`;
+    }));
+    if (identities.size === 1) return candidates[0];
+    return {
+      ok: false,
+      ambiguous: true,
+      candidates: candidates.map(({ source, validation }) => ({
+        source,
+        login: validation.login,
+        id: validation.id,
+      })),
+      failures,
+    };
   }
 
   return { ok: false, failures };
@@ -314,19 +420,34 @@ export async function importDiscoveredGithubToken({
   const run = async () => {
     const excluded = new Set(excludeTokens);
     const savedToken = readSavedGithubToken(home);
+    const expectedIdentity = expectedGithubIdentity(home, env, savedToken);
+    const strictExpectedIdentity = Boolean(String(env.CCDX_GITHUB_LOGIN || "").trim());
     if (savedToken && !excluded.has(savedToken)) {
       if (!validateSavedToken) {
         return { ok: true, token: savedToken, source: { type: "saved-token" }, imported: false };
       }
       const validation = await validateGithubToken(savedToken, { fetchImpl, signal });
-      if (validation.ok) {
+      if (validation.ok && githubIdentityMatches(validation, expectedIdentity)) {
+        writeGithubTokenMetadata(validation, home, savedToken);
         return { ok: true, token: savedToken, source: { type: "saved-token" }, validation, imported: false };
       }
     }
 
-    const discovered = await discoverGithubToken({ home, env, fetchImpl, signal, excludeTokens });
+    const discovered = await discoverGithubToken({
+      home,
+      env,
+      fetchImpl,
+      signal,
+      excludeTokens,
+      expectedIdentity,
+      strictExpectedIdentity,
+    });
+    if (discovered.ambiguous) {
+      const logins = [...new Set(discovered.candidates.map((candidate) => candidate.login || candidate.id || "unknown"))];
+      throw new Error(`Multiple GitHub Copilot accounts were found (${logins.join(", ")}). Set CCDX_GITHUB_LOGIN or CCDX_GITHUB_TOKEN_PATH to select one explicitly.`);
+    }
     if (!discovered.ok) return null;
-    writeToken(discovered.token, home);
+    writeToken(discovered.token, home, discovered.validation);
     const login = discovered.validation.login ? ` for ${discovered.validation.login}` : "";
     log(status("ok", `Imported GitHub token from ${sourceDescription(discovered.source)}${login}`));
     return { ...discovered, imported: true };
@@ -421,7 +542,8 @@ export async function ensureAuth({
       const data = await pollResp.json();
       const r = interpretPoll(data);
       if (r.state === "done") {
-        writeToken(r.token, home);
+        const identity = await fetchGithubIdentity(r.token, { fetchImpl, signal });
+        writeToken(r.token, home, identity.ok ? identity : null);
         log(status("ok", "Login successful"));
         return;
       }
@@ -432,9 +554,28 @@ export async function ensureAuth({
   }, tokenLockOptions(env));
 }
 
-export function writeToken(token, home = os.homedir()) {
+export function writeGithubTokenMetadata(identity, home = os.homedir(), token = "") {
+  const normalized = normalizeGithubIdentity(identity);
+  if (!normalized) return false;
+  const filePath = githubTokenMetadataPath(home);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(filePath, `${JSON.stringify({
+    ...normalized,
+    token_fingerprint: tokenFingerprint(token),
+    updated_at: new Date().toISOString(),
+  }, null, 2)}\n`, { mode: 0o600 });
+  fs.chmodSync(filePath, 0o600);
+  return true;
+}
+
+export function writeToken(token, home = os.homedir(), identity = null) {
   const GITHUB_TOKEN_PATH = githubTokenPath(home);
   fs.mkdirSync(path.dirname(GITHUB_TOKEN_PATH), { recursive: true });
   fs.writeFileSync(GITHUB_TOKEN_PATH, token, { mode: 0o600 });
   fs.chmodSync(GITHUB_TOKEN_PATH, 0o600);
+  if (normalizeGithubIdentity(identity)) {
+    writeGithubTokenMetadata(identity, home, token);
+  } else {
+    try { fs.unlinkSync(githubTokenMetadataPath(home)); } catch (e) { if (e?.code !== "ENOENT") throw e; }
+  }
 }

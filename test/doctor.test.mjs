@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { githubTokenPath } from "../src/auth.mjs";
 import { claudeDesktopPaths } from "../src/claude-desktop-config.mjs";
-import { collectDoctorChecks, runDoctor } from "../src/doctor.mjs";
+import { collectDoctorChecks, inspectGitHubTokenOnline, runDoctor } from "../src/doctor.mjs";
 
 function writeFile(filePath, content) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -89,4 +89,36 @@ test("runDoctor: prints status lines", async () => {
 
   assert.equal(lines[0], "codex-copilot-dx doctor");
   assert.equal(lines.some((line) => line.startsWith("[OK] GitHub token found")), true);
+});
+
+test("inspectGitHubTokenOnline: validates Copilot access and models without changing token", async () => {
+  const home = configuredHome();
+  const tokenPath = githubTokenPath(home);
+  const before = fs.readFileSync(tokenPath, "utf8");
+  const calls = [];
+
+  const checks = await inspectGitHubTokenOnline({
+    home,
+    fetchImpl: async (url, options) => {
+      calls.push([url, options.headers.Authorization]);
+      if (url.endsWith("/user")) return new Response(JSON.stringify({ login: "dingxiao", id: 42 }), { status: 200 });
+      if (url.endsWith("/copilot_internal/v2/token")) {
+        return new Response(JSON.stringify({
+          token: "copilot_short",
+          endpoints: { api: "https://api.enterprise.githubcopilot.com" },
+        }), { status: 200 });
+      }
+      if (url.endsWith("/models")) return new Response(JSON.stringify({ data: [{ id: "gpt-5.6-sol" }] }), { status: 200 });
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+
+  assert.equal(checks.every((check) => check.kind === "ok"), true);
+  assert.equal(checks.some((check) => /returned 1 models/.test(check.message)), true);
+  assert.equal(fs.readFileSync(tokenPath, "utf8"), before);
+  assert.deepEqual(calls.map(([url]) => url), [
+    "https://api.github.com/user",
+    "https://api.github.com/copilot_internal/v2/token",
+    "https://api.enterprise.githubcopilot.com/models",
+  ]);
 });

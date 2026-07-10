@@ -38,6 +38,8 @@ Claude Code picks up the new `ANTHROPIC_BASE_URL` on its next launch.
 
 If an existing `codex-copilot-dx` adapter is already running on the configured host and port, a second launch reuses it instead of starting another proxy. The second launch still refreshes Codex and Claude Code config, then exits.
 
+The running adapter reports its package and protocol versions. After upgrading `codex-copilot-dx`, stop the old process before starting the new version; the new CLI refuses to silently reuse an incompatible adapter.
+
 Do not set Claude Code by manually exporting `ANTHROPIC_BASE_URL` or `ANTHROPIC_AUTH_TOKEN` in your shell. Let `codex-copilot-dx` write the local config files instead. If you previously exported those variables, remove them from shell startup files and restart the terminal before launching Claude Code.
 
 ### Diagnostics
@@ -50,7 +52,15 @@ codex-copilot-dx doctor
 
 The doctor checks the GitHub token, Codex config, Claude Code settings, Claude App gateway profile, and whether the local adapter port is listening.
 
-When the saved token is missing, `codex-copilot-dx` first looks for compatible local Copilot GitHub tokens, validates them with GitHub and Copilot, and imports a valid one before starting device login. It checks explicit token sources (`CCDX_GITHUB_TOKEN`, `CCDX_GITHUB_TOKEN_PATH`, `CCDX_GITHUB_TOKEN_PATHS`) plus common local `auth.json` layouts under application config directories. It does not rely on a specific app name. If a saved token later fails with `401` or `403`, the adapter repeats that discovery and retries once before asking you to reauthenticate.
+For a read-only live check of the saved GitHub token, Copilot entitlement, and models endpoint, run:
+
+```bash
+codex-copilot-dx doctor --online
+```
+
+The online doctor never starts device flow, scans for replacement tokens, or changes the saved token.
+
+When the saved token is missing, `codex-copilot-dx` first looks for compatible local Copilot GitHub tokens, validates them with GitHub and Copilot, and imports a valid one before starting device login. It checks explicit token sources (`CCDX_GITHUB_TOKEN`, `CCDX_GITHUB_TOKEN_PATH`, `CCDX_GITHUB_TOKEN_PATHS`) plus common local `auth.json` layouts under application config directories. It does not rely on a specific app name. Generic discovery refuses to choose silently when valid tokens for multiple GitHub accounts are found. After an account is selected, automatic `401`/`403` recovery accepts only the same GitHub account. Explicit token variables remain the intentional way to switch accounts.
 
 If Copilot token refresh still fails with `401` or `403`, the saved GitHub token may be expired, revoked, or missing Copilot access. Delete the saved token and start the tool again to trigger GitHub device login:
 
@@ -104,10 +114,14 @@ Environment variables:
 | `CCDX_GITHUB_TOKEN` | unset | Explicit GitHub Copilot OAuth token to validate and import before device login |
 | `CCDX_GITHUB_TOKEN_PATH` | unset | Explicit file containing a GitHub Copilot OAuth token to validate and import before device login |
 | `CCDX_GITHUB_TOKEN_PATHS` | unset | Multiple token files separated by the platform path delimiter (`:` on macOS/Linux, `;` on Windows) |
+| `CCDX_GITHUB_LOGIN` | saved account | Require automatic discovery and recovery to use this GitHub login |
 | `CCDX_DISABLE_TOKEN_DISCOVERY` | unset | Set to `1` to skip local token discovery and go straight to the saved token or device flow |
 | `CCDX_TOKEN_LOCK_TIMEOUT_MS` | `600000` | Maximum time to wait for another local process to finish GitHub token login/import |
 | `CCDX_TOKEN_LOCK_STALE_MS` | `900000` | Age after which a stale GitHub token lock file can be removed |
 | `CCDX_EXISTING_ADAPTER_TIMEOUT_MS` | `500` | Timeout for detecting an already-running local adapter during startup |
+| `CCDX_MODEL_REFRESH_INTERVAL_MS` | `1800000` | Interval for refreshing Copilot model metadata; successful lists are cached locally as last-known-good data |
+| `CCDX_RESPONSE_HISTORY_MAX_BYTES` | `67108864` | Total in-memory byte budget for locally expanded Responses history |
+| `CCDX_RESPONSE_HISTORY_MAX_ENTRIES` | `4096` | Maximum stored incremental Responses history nodes |
 | `CCDX_USAGE_PATH` | `~/.local/share/codex-copilot-dx/usage.jsonl` | Local JSONL token usage log |
 | `CCDX_DISABLE_USAGE` | unset | Set to `1` to disable usage logging |
 
@@ -128,6 +142,8 @@ codex-copilot-dx usage
 Long computer-use sessions can accumulate screenshots inside the conversation history. Each screenshot is shipped on later turns, and GitHub Copilot's `/responses` endpoint can reject oversized requests with `413 Payload Too Large`.
 
 The adapter automatically downsamples embedded screenshots to long-edge <= 2048 px and re-encodes them as WebP before forwarding `/v1/responses`.
+
+Newer ChatGPT/Codex clients can advertise an `image_gen` namespace that already exists upstream. The adapter removes that exact conflicting client tool before forwarding and retries once only when Copilot explicitly reports an image namespace collision. Image inputs and screenshot optimization remain enabled.
 
 ## License
 

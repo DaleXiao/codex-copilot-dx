@@ -3,24 +3,28 @@ import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { status } from "./status.mjs";
 import { debugLog } from "./log.mjs";
-import { githubReauthMessage, githubTokenPath, importDiscoveredGithubToken } from "./auth.mjs";
+import { ensureGithubTokenMetadata, githubReauthMessage, githubTokenPath, importDiscoveredGithubToken } from "./auth.mjs";
 
 export const DEFAULT_API_BASE = "https://api.githubcopilot.com";
 let apiBase = DEFAULT_API_BASE;
 
 // Cache of model id -> supported_endpoints, populated from listModels(). Used to
 // route requests to /responses vs /chat/completions based on real model metadata.
-const modelEndpointCache = new Map();
+let modelEndpointCache = new Map();
 
 export function cacheModelEndpoints(models) {
   const data = Array.isArray(models) ? models : models?.data;
-  if (!Array.isArray(data)) return;
+  if (!Array.isArray(data)) return false;
+  const next = new Map();
   for (const model of data) {
     const id = String(model?.id || "").trim();
     if (id && Array.isArray(model?.supported_endpoints)) {
-      modelEndpointCache.set(id, model.supported_endpoints);
+      next.set(id, [...model.supported_endpoints]);
     }
   }
+  if (!next.size) return false;
+  modelEndpointCache = next;
+  return true;
 }
 
 // Returns the cached supported_endpoints for a model id, or null if unknown.
@@ -463,6 +467,7 @@ async function refreshCopilotToken({
     throw new Error(`Failed to get Copilot token: ${resp.status}`);
   }
   const data = await resp.json();
+  await ensureGithubTokenMetadata(ghToken, { home, fetchImpl, signal });
   return cacheCopilotTokenData(data);
 }
 

@@ -2,9 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import net from "node:net";
-import { githubTokenPath } from "./auth.mjs";
+import { githubTokenPath, readGithubTokenMetadata, validateGithubToken } from "./auth.mjs";
 import { claudeDesktopPaths } from "./claude-desktop-config.mjs";
 import { status } from "./status.mjs";
+import { buildHeaders, DEFAULT_API_BASE, FALLBACK_VSCODE_VERSION } from "./copilot.mjs";
+import { checkRunningAdapter } from "./running-adapter.mjs";
 
 function localGatewayBaseUrl(host, port) {
   const safeHost = String(host || "127.0.0.1");
@@ -55,7 +57,60 @@ export function inspectGitHubToken({ home = os.homedir() } = {}) {
   if (!token.text.trim()) {
     return [{ kind: "err", message: `GitHub token file is empty at ${displayPath(home, filePath)}` }];
   }
-  return [{ kind: "ok", message: "GitHub token found" }];
+  const metadata = readGithubTokenMetadata(home, token.text.trim());
+  const account = metadata?.login ? ` for ${metadata.login}` : "";
+  return [{ kind: "ok", message: `GitHub token found${account}` }];
+}
+
+export async function inspectGitHubTokenOnline({
+  home = os.homedir(),
+  fetchImpl = fetch,
+  timeoutMs = 10000,
+} = {}) {
+  const token = readText(githubTokenPath(home));
+  if (!token.ok || !token.text.trim()) {
+    return [{ kind: "warn", message: "Online Copilot check skipped because the GitHub token is missing" }];
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const validation = await validateGithubToken(token.text.trim(), {
+      fetchImpl,
+      signal: controller.signal,
+    });
+    if (!validation.ok) {
+      const statusText = validation.status ? ` (HTTP ${validation.status})` : "";
+      return [{ kind: validation.transient ? "warn" : "err", message: `GitHub Copilot authentication failed: ${validation.reason}${statusText}` }];
+    }
+
+    const tokenData = validation.copilotTokenData;
+    const apiBase = tokenData.endpoints?.api || DEFAULT_API_BASE;
+    const headers = buildHeaders({
+      token: tokenData.token,
+      version: FALLBACK_VSCODE_VERSION,
+      initiator: "user",
+      vision: false,
+    });
+    const modelResp = await fetchImpl(`${apiBase}/models`, { headers, signal: controller.signal });
+    if (!modelResp.ok) {
+      return [
+        { kind: "ok", message: `GitHub Copilot access verified for ${validation.login || "current account"}` },
+        { kind: "err", message: `Copilot models endpoint returned HTTP ${modelResp.status}` },
+      ];
+    }
+    const models = await modelResp.json();
+    const data = Array.isArray(models) ? models : models?.data;
+    return [
+      { kind: "ok", message: `GitHub Copilot access verified for ${validation.login || "current account"}` },
+      { kind: "ok", message: `Copilot models endpoint returned ${Array.isArray(data) ? data.length : 0} models` },
+    ];
+  } catch (e) {
+    const reason = e?.name === "AbortError" ? `timed out after ${timeoutMs}ms` : e.message;
+    return [{ kind: "warn", message: `Online Copilot check failed: ${reason}` }];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function inspectCodexConfig({ home = os.homedir(), port = 2026 } = {}) {
@@ -180,6 +235,10 @@ export async function collectDoctorChecks({
   port = 2026,
   checkAdapter = true,
   checkAdapterListeningFn = checkAdapterListening,
+  checkRunningAdapterFn = checkRunningAdapter,
+  online = false,
+  fetchImpl = fetch,
+  onlineTimeoutMs = 10000,
 } = {}) {
   const checks = [
     ...inspectGitHubToken({ home }),
@@ -188,11 +247,27 @@ export async function collectDoctorChecks({
     ...inspectClaudeAppConfig({ home, platform, env, host, port }),
   ];
 
+  if (online) {
+    checks.push(...await inspectGitHubTokenOnline({ home, fetchImpl, timeoutMs: onlineTimeoutMs }));
+  }
+
   if (checkAdapter) {
-    const listening = await checkAdapterListeningFn({ host, port });
-    checks.push(listening
-      ? { kind: "ok", message: `Adapter is listening on ${localGatewayBaseUrl(host, port)}` }
-      : { kind: "warn", message: `Adapter is not listening on ${localGatewayBaseUrl(host, port)}` });
+    let running;
+    try {
+      running = await checkRunningAdapterFn({ host, port, fetchImpl });
+    } catch {
+      running = null;
+    }
+    if (running?.ok) {
+      checks.push({ kind: "ok", message: `Adapter ${running.data.version} is listening on ${running.baseUrl}` });
+    } else if (running?.incompatible) {
+      checks.push({ kind: "warn", message: `Adapter ${running.data?.version || "legacy"} is running at ${running.baseUrl}, but it is incompatible with this CLI` });
+    } else {
+      const listening = await checkAdapterListeningFn({ host, port });
+      checks.push(listening
+        ? { kind: "warn", message: `A service is listening on ${localGatewayBaseUrl(host, port)}, but it is not a compatible codex-copilot-dx adapter` }
+        : { kind: "warn", message: `Adapter is not listening on ${localGatewayBaseUrl(host, port)}` });
+    }
   }
 
   return checks;
@@ -200,7 +275,7 @@ export async function collectDoctorChecks({
 
 export async function runDoctor(options = {}) {
   const log = options.log || console.log;
-  log("codex-copilot-dx doctor");
+  log(`codex-copilot-dx doctor${options.online ? " --online" : ""}`);
   const checks = await collectDoctorChecks(options);
   for (const check of checks) log(status(check.kind, check.message));
   return checks;

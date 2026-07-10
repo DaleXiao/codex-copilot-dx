@@ -9,9 +9,12 @@ import {
   extractGithubTokenFromAuthJson,
   githubReauthMessage,
   githubTokenLockPath,
+  githubTokenMetadataPath,
   githubTokenPath,
   githubTokenSources,
+  importDiscoveredGithubToken,
   interpretPoll,
+  readGithubTokenMetadata,
   writeToken,
 } from "../src/auth.mjs";
 import { withFileLock } from "../src/lock.mjs";
@@ -182,4 +185,87 @@ test("ensureAuth: rechecks the saved token after waiting for the auth lock", asy
   await Promise.all([holder, auth]);
   assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_written_by_other_process");
   assert.equal(lines.some((line) => /\[OK\] GitHub token found/.test(line)), true);
+});
+
+test("discoverGithubToken: rejects ambiguous generic accounts", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-ambiguous-"));
+  writeLocalCopilotAuth(home, "client-a", "profile", "ghu_alice");
+  writeLocalCopilotAuth(home, "client-b", "profile", "ghu_bob");
+
+  const result = await discoverGithubToken({
+    home,
+    env: {},
+    fetchImpl: async (url, options) => {
+      const token = options.headers.Authorization.split(" ").at(-1);
+      const login = token === "ghu_alice" ? "alice" : "bob";
+      const id = token === "ghu_alice" ? 1 : 2;
+      if (url.endsWith("/user")) return jsonResp(200, { login, id });
+      if (url.endsWith("/copilot_internal/v2/token")) return jsonResp(200, { token: `copilot_${login}` });
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ambiguous, true);
+  assert.deepEqual(result.candidates.map((candidate) => candidate.login).sort(), ["alice", "bob"]);
+});
+
+test("importDiscoveredGithubToken: bound account rejects a different local account", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-bound-"));
+  writeToken("ghu_old_alice", home, { login: "alice", id: 1 });
+  writeLocalCopilotAuth(home, "client-b", "profile", "ghu_bob");
+
+  const imported = await importDiscoveredGithubToken({
+    home,
+    env: {},
+    excludeTokens: ["ghu_old_alice"],
+    validateSavedToken: true,
+    fetchImpl: async (url, options) => {
+      const token = options.headers.Authorization.split(" ").at(-1);
+      if (token === "ghu_old_alice") return jsonResp(401, {});
+      if (url.endsWith("/user")) return jsonResp(200, { login: "bob", id: 2 });
+      if (url.endsWith("/copilot_internal/v2/token")) return jsonResp(200, { token: "copilot_bob" });
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+
+  assert.equal(imported, null);
+  assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_old_alice");
+  assert.equal(readGithubTokenMetadata(home, "ghu_old_alice").login, "alice");
+});
+
+test("token metadata is ignored after another app replaces the token file", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-fingerprint-"));
+  writeToken("ghu_alice", home, { login: "alice", id: 1 });
+  assert.equal(readGithubTokenMetadata(home, "ghu_alice").login, "alice");
+
+  fs.writeFileSync(githubTokenPath(home), "ghu_bob");
+
+  assert.equal(readGithubTokenMetadata(home, "ghu_bob"), null);
+  assert.equal(fs.existsSync(githubTokenMetadataPath(home)), true);
+});
+
+test("explicit token sources can intentionally switch the bound account", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-explicit-switch-"));
+  writeToken("ghu_old_alice", home, { login: "alice", id: 1 });
+  const explicitPath = path.join(home, "bob-token");
+  fs.writeFileSync(explicitPath, "ghu_bob");
+
+  const imported = await importDiscoveredGithubToken({
+    home,
+    env: { CCDX_GITHUB_TOKEN_PATH: explicitPath },
+    excludeTokens: ["ghu_old_alice"],
+    validateSavedToken: true,
+    fetchImpl: async (url, options) => {
+      const token = options.headers.Authorization.split(" ").at(-1);
+      if (token === "ghu_old_alice") return jsonResp(401, {});
+      if (url.endsWith("/user")) return jsonResp(200, { login: "bob", id: 2 });
+      if (url.endsWith("/copilot_internal/v2/token")) return jsonResp(200, { token: "copilot_bob" });
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+
+  assert.equal(imported.token, "ghu_bob");
+  assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_bob");
+  assert.equal(readGithubTokenMetadata(home, "ghu_bob").login, "bob");
 });

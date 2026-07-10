@@ -37,8 +37,12 @@ function isResponsesOnlyModel(model) {
 
 // Direct Copilot Responses API proxy.
 
-const RESPONSE_HISTORY_LIMIT = 64;
 const responseHistories = new Map();
+const responseHistoryChildren = new Map();
+const evictedResponseIds = new Set();
+const DEFAULT_RESPONSE_HISTORY_MAX_BYTES = 64 * 1024 * 1024;
+const DEFAULT_RESPONSE_HISTORY_MAX_ENTRIES = 4096;
+let responseHistoryBytes = 0;
 const DEFAULT_MAX_BODY_BYTES = 128 * 1024 * 1024;
 const DEFAULT_MAX_DECODED_BODY_BYTES = 256 * 1024 * 1024;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 120 * 1000;
@@ -55,6 +59,8 @@ function positiveInt(value, fallback) {
 const MAX_BODY_BYTES = positiveInt(process.env.CCDX_MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES);
 const MAX_DECODED_BODY_BYTES = positiveInt(process.env.CCDX_MAX_DECODED_BODY_BYTES, DEFAULT_MAX_DECODED_BODY_BYTES);
 const UPSTREAM_TIMEOUT_MS = positiveInt(process.env.CCDX_UPSTREAM_TIMEOUT_MS, DEFAULT_UPSTREAM_TIMEOUT_MS);
+let responseHistoryMaxBytes = positiveInt(process.env.CCDX_RESPONSE_HISTORY_MAX_BYTES, DEFAULT_RESPONSE_HISTORY_MAX_BYTES);
+let responseHistoryMaxEntries = positiveInt(process.env.CCDX_RESPONSE_HISTORY_MAX_ENTRIES, DEFAULT_RESPONSE_HISTORY_MAX_ENTRIES);
 
 export function requestPath(reqUrl) {
   return new URL(reqUrl || "/", "http://localhost").pathname;
@@ -62,6 +68,65 @@ export function requestPath(reqUrl) {
 
 function cloneJson(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function jsonStringByteLength(value) {
+  let bytes = 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 0x22 || code === 0x5c) {
+      bytes += 2;
+    } else if (code <= 0x1f) {
+      bytes += [0x08, 0x09, 0x0a, 0x0c, 0x0d].includes(code) ? 2 : 6;
+    } else if (code <= 0x7f) {
+      bytes += 1;
+    } else if (code <= 0x7ff) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else {
+        bytes += 6;
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      bytes += 6;
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
+function jsonByteLength(value, seen = new Set()) {
+  if (value === null) return 4;
+  if (typeof value === "string") return jsonStringByteLength(value);
+  if (typeof value === "number") return Buffer.byteLength(JSON.stringify(value));
+  if (typeof value === "boolean") return value ? 4 : 5;
+  if (Array.isArray(value)) {
+    if (seen.has(value)) throw new TypeError("Circular response history value");
+    seen.add(value);
+    let bytes = 2 + Math.max(0, value.length - 1);
+    for (const item of value) {
+      bytes += item === undefined || typeof item === "function" || typeof item === "symbol"
+        ? 4
+        : jsonByteLength(item, seen);
+    }
+    seen.delete(value);
+    return bytes;
+  }
+  if (value && typeof value === "object") {
+    if (seen.has(value)) throw new TypeError("Circular response history value");
+    seen.add(value);
+    const entries = Object.entries(value)
+      .filter(([, item]) => item !== undefined && typeof item !== "function" && typeof item !== "symbol");
+    let bytes = 2 + Math.max(0, entries.length - 1);
+    for (const [key, item] of entries) bytes += jsonStringByteLength(key) + 1 + jsonByteLength(item, seen);
+    seen.delete(value);
+    return bytes;
+  }
+  return 4;
 }
 
 function httpError(message, statusCode) {
@@ -258,7 +323,7 @@ export function stripInternalResponsesInputFields(inputItems) {
 
 function responsesOutputItems(output) {
   if (!Array.isArray(output)) return [];
-  return cloneJson(output.filter((item) => item?.type === "message" || item?.type === "function_call"));
+  return output.filter((item) => item?.type === "message" || item?.type === "function_call");
 }
 
 function stripEncryptedReasoningValue(value, state) {
@@ -303,10 +368,16 @@ export function sanitizeEncryptedReasoningRequest(reqContext) {
     body = stripEncryptedReasoningValue(body, state);
   }
   if (!state.changed) return null;
+  const historyInputItems = Array.isArray(reqContext.historyInputItems)
+    ? reqContext.historyInputItems
+      .filter((item) => !isEncryptedReasoningInputItem(item))
+      .map((item) => stripEncryptedReasoningValue(item, { changed: false }))
+    : reqContext.historyInputItems;
   return {
     ...reqContext,
     body,
     inputItems: Array.isArray(body.input) ? body.input : reqContext.inputItems,
+    historyInputItems,
   };
 }
 
@@ -318,39 +389,163 @@ export function isEncryptedContentVerificationError(statusCode, text) {
     && (lower.includes("could not be decrypted") || lower.includes("could not be parsed"));
 }
 
-export async function openCopilotResponse(reqContext, upstream = copilotResponses, options = {}) {
-  let resp = await upstream(reqContext.body, { signal: options.signal });
-  if (resp.ok) return { resp, reqContext };
+export function isImageNamespaceCollisionError(statusCode, text) {
+  if (statusCode < 400 || !text) return false;
+  const lower = String(text).toLowerCase();
+  return lower.includes("namespace")
+    && lower.includes("image_gen")
+    && lower.includes("collid");
+}
 
-  const errorText = await resp.text();
-  if (!isEncryptedContentVerificationError(resp.status, errorText)) {
+function isImageNamespaceTool(tool, { collisionFallback = false } = {}) {
+  if (!tool || typeof tool !== "object") return false;
+  const type = String(tool.type || "").toLowerCase();
+  const name = String(tool.name || tool.function?.name || "").toLowerCase();
+  const namespace = String(tool.namespace || "").toLowerCase();
+  if (["image_gen", "image_generation"].includes(type)) return true;
+  if (["image_gen", "image_generation"].includes(name)) return true;
+  if (namespace === "image_gen" || namespace === "image_generation") return true;
+  return collisionFallback && [type, name, namespace].some((value) => value.startsWith("image_gen"));
+}
+
+export function sanitizeImageNamespaceCollisionRequest(reqContext) {
+  if (!Array.isArray(reqContext?.body?.tools)) return null;
+  const body = cloneJson(reqContext.body);
+  const filtered = body.tools.filter((tool) => !isImageNamespaceTool(tool, { collisionFallback: true }));
+  if (filtered.length === body.tools.length) return null;
+  if (filtered.length) body.tools = filtered;
+  else delete body.tools;
+  return { ...reqContext, body };
+}
+
+export async function openCopilotResponse(reqContext, upstream = copilotResponses, options = {}) {
+  let encryptedRetried = false;
+  let imageNamespaceRetried = false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const resp = await upstream(reqContext.body, { signal: options.signal });
+    if (resp.ok) return { resp, reqContext };
+
+    const errorText = await resp.text();
+    if (!imageNamespaceRetried && isImageNamespaceCollisionError(resp.status, errorText)) {
+      const retryContext = sanitizeImageNamespaceCollisionRequest(reqContext);
+      if (retryContext) {
+        imageNamespaceRetried = true;
+        reqContext = retryContext;
+        console.warn(status("warn", "image_gen namespace rejected by upstream; retrying without the conflicting image tool"));
+        continue;
+      }
+    }
+    if (!encryptedRetried && isEncryptedContentVerificationError(resp.status, errorText)) {
+      const retryContext = sanitizeEncryptedReasoningRequest(reqContext);
+      if (retryContext) {
+        encryptedRetried = true;
+        reqContext = retryContext;
+        console.warn(status("warn", "encrypted reasoning rejected by upstream; retrying without encrypted reasoning"));
+        continue;
+      }
+    }
     return { resp, reqContext, errorText };
   }
-
-  const retryContext = sanitizeEncryptedReasoningRequest(reqContext);
-  if (!retryContext) return { resp, reqContext, errorText };
-
-  console.warn(status("warn", "encrypted reasoning rejected by upstream; retrying without encrypted reasoning"));
-  resp = await upstream(retryContext.body, { signal: options.signal });
-  if (resp.ok) return { resp, reqContext: retryContext };
-  return { resp, reqContext: retryContext, errorText: await resp.text() };
+  throw httpError("Responses compatibility retry limit exceeded", 502);
 }
 
 export function clearResponseHistoryForTests() {
   responseHistories.clear();
+  responseHistoryChildren.clear();
+  evictedResponseIds.clear();
+  responseHistoryBytes = 0;
+  responseHistoryMaxBytes = DEFAULT_RESPONSE_HISTORY_MAX_BYTES;
+  responseHistoryMaxEntries = DEFAULT_RESPONSE_HISTORY_MAX_ENTRIES;
+}
+
+export function configureResponseHistoryForTests({ maxBytes, maxEntries } = {}) {
+  if (maxBytes !== undefined) responseHistoryMaxBytes = positiveInt(maxBytes, DEFAULT_RESPONSE_HISTORY_MAX_BYTES);
+  if (maxEntries !== undefined) responseHistoryMaxEntries = positiveInt(maxEntries, DEFAULT_RESPONSE_HISTORY_MAX_ENTRIES);
+}
+
+export function responseHistoryStats() {
+  return { entries: responseHistories.size, bytes: responseHistoryBytes, evicted: evictedResponseIds.size };
+}
+
+function rememberEvictedId(id) {
+  evictedResponseIds.add(id);
+  while (evictedResponseIds.size > 256) evictedResponseIds.delete(evictedResponseIds.values().next().value);
+}
+
+function linkHistoryChild(parentId, id) {
+  if (!parentId) return;
+  let children = responseHistoryChildren.get(parentId);
+  if (!children) {
+    children = new Set();
+    responseHistoryChildren.set(parentId, children);
+  }
+  children.add(id);
+}
+
+function unlinkHistoryChild(parentId, id) {
+  if (!parentId) return;
+  const children = responseHistoryChildren.get(parentId);
+  if (!children) return;
+  children.delete(id);
+  if (!children.size) responseHistoryChildren.delete(parentId);
+}
+
+function removeHistorySubtree(rootId) {
+  const pending = [rootId];
+  const removed = new Set();
+  while (pending.length) {
+    const id = pending.pop();
+    if (removed.has(id)) continue;
+    removed.add(id);
+    const children = responseHistoryChildren.get(id);
+    if (children) pending.push(...children);
+  }
+  for (const id of removed) {
+    const entry = responseHistories.get(id);
+    if (!entry) continue;
+    unlinkHistoryChild(entry.parentId, id);
+    responseHistoryChildren.delete(id);
+    responseHistoryBytes -= entry.bytes;
+    responseHistories.delete(id);
+    rememberEvictedId(id);
+  }
+}
+
+function enforceResponseHistoryLimits() {
+  while (responseHistories.size > responseHistoryMaxEntries || responseHistoryBytes > responseHistoryMaxBytes) {
+    const oldestId = responseHistories.keys().next().value;
+    if (!oldestId) break;
+    removeHistorySubtree(oldestId);
+  }
+}
+
+function materializeResponseHistory(responseId) {
+  const chain = [];
+  const seen = new Set();
+  let currentId = responseId;
+  while (currentId) {
+    if (seen.has(currentId)) throw httpError(`Cycle detected in local response history: ${currentId}`, 500);
+    seen.add(currentId);
+    const entry = responseHistories.get(currentId);
+    if (!entry) {
+      const reason = evictedResponseIds.has(currentId) ? " was evicted after reaching the local history limit" : " is not available";
+      throw httpError(`previous_response_id${reason}: ${currentId}`, 400);
+    }
+    chain.push(entry);
+    currentId = entry.parentId;
+  }
+  const items = [];
+  for (const entry of chain.reverse()) items.push(...entry.inputItems, ...entry.outputItems);
+  return cloneJson(items);
 }
 
 // The GPT (gpt-5.6) Responses backend registers a built-in `image_gen` tool
 // namespace. When the client also sends an image generation tool, the upstream
 // rejects the request with "User-defined namespace 'image_gen' collides ...".
-// Strip any built-in image tool (matched by type/name/namespace) before proxying.
+// Strip exact built-in image tools before proxying. Broader namespace variants
+// are removed only after the upstream explicitly reports a collision.
 function isBuiltinImageTool(tool) {
-  if (!tool || typeof tool !== "object") return false;
-  const candidates = [tool.type, tool.name, tool.namespace];
-  return candidates.some((v) => {
-    const s = String(v || "").toLowerCase();
-    return s === "image_gen" || s === "image_generation" || s.startsWith("image_gen");
-  });
+  return isImageNamespaceTool(tool);
 }
 
 export function prepareResponsesRequest(reqBody) {
@@ -359,13 +554,7 @@ export function prepareResponsesRequest(reqBody) {
   const previousId = body.previous_response_id;
 
   if (previousId !== undefined && previousId !== null) {
-    const previousItems = responseHistories.get(previousId);
-    if (!previousItems) {
-      const err = new Error(`previous_response_id is not available in local adapter history: ${previousId}`);
-      err.statusCode = 400;
-      throw err;
-    }
-    body.input = [...cloneJson(previousItems), ...currentInputItems];
+    body.input = [...materializeResponseHistory(previousId), ...currentInputItems];
   } else {
     body.input = currentInputItems;
   }
@@ -377,17 +566,44 @@ export function prepareResponsesRequest(reqBody) {
     if (!body.tools.length) delete body.tools;
   }
   stripInternalResponsesInputFields(body.input);
+  stripInternalResponsesInputFields(currentInputItems);
 
-  return { body, inputItems: body.input };
+  return {
+    body,
+    inputItems: body.input,
+    historyParentId: previousId ?? null,
+    historyInputItems: currentInputItems,
+  };
 }
 
 export function rememberResponseHistory(reqContext, responseJson) {
-  if (!responseJson?.id || !Array.isArray(reqContext?.inputItems)) return;
-  const items = [...cloneJson(reqContext.inputItems), ...responsesOutputItems(responseJson.output)];
-  responseHistories.set(responseJson.id, items);
-  while (responseHistories.size > RESPONSE_HISTORY_LIMIT) {
-    responseHistories.delete(responseHistories.keys().next().value);
+  if (!responseJson?.id || !Array.isArray(reqContext?.historyInputItems || reqContext?.inputItems)) return;
+  const sourceInputItems = reqContext.historyInputItems || reqContext.inputItems;
+  const sourceOutputItems = responsesOutputItems(responseJson.output);
+  const bytes = jsonByteLength([sourceInputItems, sourceOutputItems]);
+  if (bytes > responseHistoryMaxBytes) {
+    if (responseHistories.has(responseJson.id)) removeHistorySubtree(responseJson.id);
+    rememberEvictedId(responseJson.id);
+    return;
   }
+  const inputItems = cloneJson(sourceInputItems);
+  const outputItems = cloneJson(sourceOutputItems);
+  const entry = {
+    parentId: reqContext.historyParentId || null,
+    inputItems,
+    outputItems,
+    bytes,
+  };
+  const existing = responseHistories.get(responseJson.id);
+  if (existing) {
+    responseHistoryBytes -= existing.bytes;
+    unlinkHistoryChild(existing.parentId, responseJson.id);
+  }
+  responseHistories.set(responseJson.id, entry);
+  linkHistoryChild(entry.parentId, responseJson.id);
+  responseHistoryBytes += entry.bytes;
+  evictedResponseIds.delete(responseJson.id);
+  enforceResponseHistoryLimits();
 }
 
 function storeCompletedResponseFromSse(reqContext, data) {
@@ -477,22 +693,39 @@ async function proxyCopilotResponses(reqContext, req, res, upstream = copilotRes
 
 // Chat Completions conversion for older models.
 
-function responsesToChat(body) {
+export function responsesToChat(body) {
   const messages = [];
   if (body.instructions) messages.push({ role: "system", content: body.instructions });
+
+  const messageContent = (content) => {
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return JSON.stringify(content);
+    const parts = [];
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      if (["input_text", "output_text", "text"].includes(part.type)) {
+        parts.push({ type: "text", text: String(part.text || "") });
+      } else if (part.type === "input_image" || part.type === "image_url") {
+        const raw = part.image_url ?? part.url;
+        const imageUrl = typeof raw === "string"
+          ? { url: raw }
+          : raw && typeof raw === "object" ? cloneJson(raw) : null;
+        if (imageUrl && part.detail !== undefined && imageUrl.detail === undefined) imageUrl.detail = part.detail;
+        if (imageUrl?.url) parts.push({ type: "image_url", image_url: imageUrl });
+      } else {
+        parts.push({ type: "text", text: JSON.stringify(part) });
+      }
+    }
+    if (parts.length === 1 && parts[0].type === "text") return parts[0].text;
+    return parts;
+  };
 
   if (typeof body.input === "string") {
     messages.push({ role: "user", content: body.input });
   } else if (Array.isArray(body.input)) {
     for (const item of body.input) {
       if (item.type === "message") {
-        const content =
-          typeof item.content === "string"
-            ? item.content
-            : Array.isArray(item.content)
-              ? item.content.map((p) => (p.type === "input_text" || p.type === "text" ? p.text : JSON.stringify(p))).join("")
-              : JSON.stringify(item.content);
-        messages.push({ role: item.role, content });
+        messages.push({ role: item.role, content: messageContent(item.content) });
       } else if (item.type === "function_call") {
         messages.push({
           role: "assistant",
@@ -514,9 +747,43 @@ function responsesToChat(body) {
 
   if (body.tools?.length) {
     chatReq.tools = body.tools
-      .map((t) => (t.type === "function" ? t : { type: "function", function: t }))
+      .map((tool) => {
+        if (tool?.type !== "function") return null;
+        if (tool.function?.name) return cloneJson(tool);
+        const fn = {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+          strict: tool.strict,
+        };
+        for (const key of Object.keys(fn)) if (fn[key] === undefined) delete fn[key];
+        return { type: "function", function: fn };
+      })
+      .filter(Boolean)
       .filter((t) => t.function?.name);
     if (!chatReq.tools.length) delete chatReq.tools;
+  }
+  if (body.tool_choice !== undefined) {
+    if (typeof body.tool_choice === "string") {
+      chatReq.tool_choice = body.tool_choice;
+    } else if (body.tool_choice?.type === "function" && body.tool_choice.name) {
+      chatReq.tool_choice = { type: "function", function: { name: body.tool_choice.name } };
+    }
+  }
+  if (body.parallel_tool_calls !== undefined) chatReq.parallel_tool_calls = body.parallel_tool_calls;
+  const textFormat = body.text?.format;
+  if (textFormat?.type === "json_schema") {
+    chatReq.response_format = {
+      type: "json_schema",
+      json_schema: Object.fromEntries(Object.entries({
+        name: textFormat.name,
+        description: textFormat.description,
+        schema: textFormat.schema,
+        strict: textFormat.strict,
+      }).filter(([, value]) => value !== undefined)),
+    };
+  } else if (textFormat?.type === "json_object") {
+    chatReq.response_format = { type: "json_object" };
   }
   return chatReq;
 }
@@ -530,11 +797,15 @@ function chatToResponses(chatResp, model) {
   return { id, object: "response", status: "completed", model: chatResp.model || model, output, usage: chatResp.usage ? { input_tokens: chatResp.usage.prompt_tokens || 0, output_tokens: chatResp.usage.completion_tokens || 0, total_tokens: chatResp.usage.total_tokens || 0 } : undefined };
 }
 
-async function forwardToChat(chatReq, emitEvent, onDone, onError, options = {}) {
+export async function forwardToChat(chatReq, emitEvent, onDone, onError, options = {}) {
   delete chatReq.max_tokens;
   let resp;
   try {
-    resp = await chatCompletions({ ...chatReq, stream: true }, { signal: options.signal });
+    const chatCompletionsFn = options.chatCompletionsFn || chatCompletions;
+    resp = await chatCompletionsFn({
+      ...chatReq,
+      stream: true,
+    }, { signal: options.signal });
   } catch (e) {
     onError(502, e.message);
     return;
@@ -543,22 +814,100 @@ async function forwardToChat(chatReq, emitEvent, onDone, onError, options = {}) 
     onError(resp.status, await resp.text());
     return;
   }
-  const respId = `resp_${uid()}`, itemId = `item_${uid()}`;
-  let actualModel = "unknown", fullText = "", toolCalls = {}, hasToolCalls = false;
+  const respId = `resp_${uid()}`;
+  let actualModel = chatReq.model || "unknown";
+  let fullText = "";
+  let messageItem = null;
+  let nextOutputIndex = 0;
+  let usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+  const toolCalls = new Map();
 
   await emitEvent("response.created", { response: { id: respId, object: "response", status: "in_progress", model: actualModel, output: [] } });
-  await emitEvent("response.output_item.added", { output_index: 0, item: { type: "message", id: itemId, role: "assistant", status: "in_progress", content: [] } });
-  await emitEvent("response.content_part.added", { output_index: 0, content_index: 0, part: { type: "output_text", text: "" } });
+
+  const ensureMessageItem = async () => {
+    if (messageItem) return messageItem;
+    messageItem = { id: `msg_${uid()}`, outputIndex: nextOutputIndex++ };
+    await emitEvent("response.output_item.added", {
+      output_index: messageItem.outputIndex,
+      item: { type: "message", id: messageItem.id, role: "assistant", status: "in_progress", content: [] },
+    });
+    await emitEvent("response.content_part.added", {
+      output_index: messageItem.outputIndex,
+      content_index: 0,
+      part: { type: "output_text", text: "" },
+    });
+    return messageItem;
+  };
+
+  const ensureToolCall = async (chunk) => {
+    const key = Number.isInteger(chunk.index) ? `index:${chunk.index}` : `id:${chunk.id || toolCalls.size}`;
+    if (toolCalls.has(key)) return { tool: toolCalls.get(key), created: false };
+    const id = chunk.id || `call_${uid()}`;
+    const tool = {
+      id,
+      callId: id,
+      name: chunk.function?.name || "",
+      arguments: "",
+      outputIndex: nextOutputIndex++,
+    };
+    toolCalls.set(key, tool);
+    await emitEvent("response.output_item.added", {
+      output_index: tool.outputIndex,
+      item: {
+        type: "function_call",
+        id: tool.id,
+        call_id: tool.callId,
+        name: tool.name,
+        arguments: "",
+        status: "in_progress",
+      },
+    });
+    return { tool, created: true };
+  };
 
   const emitCompleted = async () => {
-    if (!hasToolCalls) {
-      await emitEvent("response.output_text.done", { output_index: 0, content_index: 0, text: fullText });
-      await emitEvent("response.output_item.done", { output_index: 0, item: { type: "message", id: itemId, role: "assistant", status: "completed", content: [{ type: "output_text", text: fullText }] } });
+    if (!messageItem && toolCalls.size === 0) await ensureMessageItem();
+    const output = [];
+    if (messageItem) {
+      const item = {
+        type: "message",
+        id: messageItem.id,
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: fullText }],
+      };
+      await emitEvent("response.output_text.done", { output_index: messageItem.outputIndex, content_index: 0, text: fullText });
+      await emitEvent("response.content_part.done", { output_index: messageItem.outputIndex, content_index: 0, part: item.content[0] });
+      await emitEvent("response.output_item.done", { output_index: messageItem.outputIndex, item });
+      output[messageItem.outputIndex] = item;
     }
-    const output = hasToolCalls
-      ? Object.entries(toolCalls).map(([id, tc]) => ({ type: "function_call", id, call_id: id, name: tc.name, arguments: tc.arguments, status: "completed" }))
-      : [{ type: "message", id: itemId, role: "assistant", status: "completed", content: [{ type: "output_text", text: fullText }] }];
-    await emitEvent("response.completed", { response: { id: respId, object: "response", status: "completed", model: actualModel, output, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } });
+    for (const tool of toolCalls.values()) {
+      const item = {
+        type: "function_call",
+        id: tool.id,
+        call_id: tool.callId,
+        name: tool.name,
+        arguments: tool.arguments,
+        status: "completed",
+      };
+      await emitEvent("response.function_call_arguments.done", {
+        output_index: tool.outputIndex,
+        item_id: tool.id,
+        arguments: tool.arguments,
+      });
+      await emitEvent("response.output_item.done", { output_index: tool.outputIndex, item });
+      output[tool.outputIndex] = item;
+    }
+    await emitEvent("response.completed", {
+      response: {
+        id: respId,
+        object: "response",
+        status: "completed",
+        model: actualModel,
+        output: output.filter(Boolean),
+        usage,
+      },
+    });
   };
 
   try {
@@ -569,16 +918,35 @@ async function forwardToChat(chatReq, emitEvent, onDone, onError, options = {}) 
       let parsed;
       try { parsed = JSON.parse(data); } catch { continue; }
       if (parsed.model) actualModel = parsed.model;
+      if (parsed.usage) {
+        usage = {
+          input_tokens: parsed.usage.prompt_tokens || 0,
+          output_tokens: parsed.usage.completion_tokens || 0,
+          total_tokens: parsed.usage.total_tokens || 0,
+        };
+        const cached = parsed.usage.prompt_tokens_details?.cached_tokens;
+        if (cached) usage.input_tokens_details = { cached_tokens: cached };
+      }
       const delta = parsed.choices?.[0]?.delta;
       if (!delta) continue;
-      if (delta.content) { fullText += delta.content; await emitEvent("response.output_text.delta", { output_index: 0, content_index: 0, delta: delta.content }); }
+      if (delta.content) {
+        const message = await ensureMessageItem();
+        fullText += delta.content;
+        await emitEvent("response.output_text.delta", { output_index: message.outputIndex, content_index: 0, delta: delta.content });
+      }
       if (delta.tool_calls) {
-        hasToolCalls = true;
         for (const tc of delta.tool_calls) {
-          const id = tc.id || Object.keys(toolCalls)[tc.index] || `call_${tc.index}`;
-          if (!toolCalls[id]) { toolCalls[id] = { name: "", arguments: "" }; await emitEvent("response.output_item.added", { output_index: Object.keys(toolCalls).length - 1, item: { type: "function_call", id, call_id: id, name: tc.function?.name || "", arguments: "", status: "in_progress" } }); }
-          if (tc.function?.name) toolCalls[id].name += tc.function.name;
-          if (tc.function?.arguments) toolCalls[id].arguments += tc.function.arguments;
+          const { tool, created } = await ensureToolCall(tc);
+          if (tc.id) tool.callId = tc.id;
+          if (!created && tc.function?.name) tool.name += tc.function.name;
+          if (tc.function?.arguments) {
+            tool.arguments += tc.function.arguments;
+            await emitEvent("response.function_call_arguments.delta", {
+              output_index: tool.outputIndex,
+              item_id: tool.id,
+              delta: tc.function.arguments,
+            });
+          }
         }
       }
     }
@@ -590,18 +958,23 @@ async function forwardToChat(chatReq, emitEvent, onDone, onError, options = {}) 
   onDone();
 }
 
-// Public server entry point.
-
-export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
+// Shared request handler. Keeping this separate from the listener makes the
+// complete HTTP routing layer testable without opening a local port.
+export function createAdapterHandler(options = {}) {
   const claudeDesktopApiKey = options.claudeDesktopApiKey
     || process.env.CCDX_CLAUDE_DESKTOP_API_KEY
     || process.env.CCDX_PROXY_API_KEY
     || "";
-  const claudeDesktopModelOptions = Array.isArray(options.claudeDesktopModelDefs)
-    ? { modelDefs: options.claudeDesktopModelDefs }
-    : {};
+  const chatCompletionsFn = options.chatCompletionsFn || chatCompletions;
+  const responsesFn = options.responsesFn || copilotResponses;
+  const responsesCompactFn = options.responsesCompactFn || copilotResponsesCompact;
+  const listModelsFn = options.listModelsFn || listModels;
+  const claudeDesktopModelOptions = () => {
+    const modelDefs = options.modelRegistry?.modelDefs || options.claudeDesktopModelDefs;
+    return Array.isArray(modelDefs) ? { modelDefs } : {};
+  };
 
-  const server = http.createServer((req, res) => {
+  return (req, res) => {
     const pathname = requestPath(req.url);
 
     if (req.method === "GET" && pathname === ADAPTER_HEALTH_PATH) {
@@ -611,7 +984,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
     }
 
     if (req.method === "POST" && pathname === "/v1/responses") {
-      (async () => {
+      return (async () => {
         const abort = createRequestAbort(req, res);
         try {
           const parsed = await readJsonBody(req);
@@ -621,7 +994,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
           const model = parsed.model || "unknown";
           console.log(status("info", `responses model=${model} stream=${!!parsed.stream}`));
           if (isResponsesOnlyModel(model)) {
-            await proxyCopilotResponses(prepared, req, res, copilotResponses, { signal: abort.signal });
+            await proxyCopilotResponses(prepared, req, res, responsesFn, { signal: abort.signal });
           } else {
             const chatReq = responsesToChat(prepared.body);
             if (parsed.stream) {
@@ -632,13 +1005,17 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
                   rememberResponseHistory(prepared, data.response);
                   recordResponsesUsage({ surface: prepared.surface, mode: "stream", model, response: data.response, event: data });
                 }
-              }, () => { if (!res.writableEnded) res.end(); }, (status, errMsg) => { if (!res.headersSent) res.writeHead(status || 500); res.end(errMsg); }, { signal: abort.signal });
+              }, () => { if (!res.writableEnded) res.end(); }, (status, errMsg) => { if (!res.headersSent) res.writeHead(status || 500); res.end(errMsg); }, { signal: abort.signal, chatCompletionsFn });
             } else {
               chatReq.stream = false;
               delete chatReq.max_tokens;
               try {
-                const upstream = await chatCompletions({ ...chatReq, stream: false }, { signal: abort.signal });
+                const upstream = await chatCompletionsFn({ ...chatReq, stream: false }, { signal: abort.signal });
                 const data = await upstream.text();
+                if (!upstream.ok) {
+                  sendUpstreamError(res, upstream, data);
+                  return;
+                }
                 const resp = chatToResponses(JSON.parse(data), model);
                 rememberResponseHistory(prepared, resp);
                 recordResponsesUsage({ surface: prepared.surface, mode: "json", model, response: resp, event: resp });
@@ -660,7 +1037,6 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
           abort.cleanup();
         }
       })();
-      return;
     }
 
     if (req.method === "POST" && pathname === "/v1/responses/compact") {
@@ -673,7 +1049,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
           prepared.surface = "responses_compact";
           const model = parsed.model || "unknown";
           console.log(status("info", `responses compact model=${model} stream=${!!parsed.stream}`));
-          await proxyCopilotResponses(prepared, req, res, copilotResponsesCompact, { signal: abort.signal });
+          await proxyCopilotResponses(prepared, req, res, responsesCompactFn, { signal: abort.signal });
         } catch (e) {
           logRequestFailure("Responses compact", e, abort);
           sendJsonError(res, e);
@@ -687,12 +1063,12 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
     if (req.method === "GET" && pathname === "/v1/models") {
       if (shouldServeClaudeDesktopModels(req, claudeDesktopApiKey)) {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(claudeDesktopModelsResponse(process.env, claudeDesktopModelOptions)));
+        res.end(JSON.stringify(claudeDesktopModelsResponse(process.env, claudeDesktopModelOptions())));
         return;
       }
       const abort = createRequestAbort(req, res);
       abort.setTimeout(UPSTREAM_TIMEOUT_MS);
-      listModels({ signal: abort.signal })
+      listModelsFn({ signal: abort.signal })
         .then(({ status, body }) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(body); })
         .catch((e) => {
           logRequestFailure("Models", e, abort);
@@ -727,13 +1103,13 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
         try {
           const parsed = await readJsonBody(req);
           if (!parsed.stream) abort.setTimeout(UPSTREAM_TIMEOUT_MS);
-          const { requestedModel, upstreamModel } = resolveAnthropicModel(parsed.model || "unknown", process.env, claudeDesktopModelOptions);
+          const { requestedModel, upstreamModel } = resolveAnthropicModel(parsed.model || "unknown", process.env, claudeDesktopModelOptions());
           const modelNote = upstreamModel === requestedModel ? requestedModel : `${requestedModel} -> ${upstreamModel}`;
           console.log(status("info", `messages model=${modelNote} stream=${!!parsed.stream}`));
           const chatReq = anthropicToChat(parsed, { upstreamModel });
           const forceRequestedModel = upstreamModel !== requestedModel;
           if (parsed.stream) {
-            const upstream = await chatCompletions({ ...chatReq, stream: true }, { signal: abort.signal });
+            const upstream = await chatCompletionsFn({ ...chatReq, stream: true }, { signal: abort.signal });
             if (!upstream.ok) {
               if (!res.headersSent) res.writeHead(upstream.status);
               res.end(await upstream.text());
@@ -755,8 +1131,12 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
             recordAnthropicUsage({ surface: "messages", mode: "stream", model: requestedModel, responseId: messageId, usage });
             if (!res.writableEnded) res.end();
           } else {
-            const upstream = await chatCompletions({ ...chatReq, stream: false }, { signal: abort.signal });
+            const upstream = await chatCompletionsFn({ ...chatReq, stream: false }, { signal: abort.signal });
             const data = await upstream.text();
+            if (!upstream.ok) {
+              sendUpstreamError(res, upstream, data);
+              return;
+            }
             const anthropicMsg = chatToAnthropic(JSON.parse(data), requestedModel, { forceModel: forceRequestedModel });
             recordAnthropicUsage({ surface: "messages", mode: "json", model: anthropicMsg.model, responseId: anthropicMsg.id, usage: anthropicMsg.usage });
             res.writeHead(200, { "Content-Type": "application/json" });
@@ -774,7 +1154,13 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
 
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
-  });
+  };
+}
+
+// Public server entry point.
+
+export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
+  const server = http.createServer(createAdapterHandler(options));
 
   server.on("upgrade", (req, socket) => {
     // Codex Desktop 0.130+ negotiates a "responses_websockets" server-push

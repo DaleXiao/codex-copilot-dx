@@ -1,10 +1,19 @@
+import { randomUUID } from "node:crypto";
+import { localPackageVersion } from "./version.mjs";
+
 export const ADAPTER_HEALTH_PATH = "/_ccdx/health";
+export const ADAPTER_PROTOCOL_VERSION = 2;
+export const ADAPTER_VERSION = localPackageVersion();
+const ADAPTER_INSTANCE_ID = randomUUID();
 
 export function adapterHealthPayload() {
   return {
     ok: true,
     name: "codex-copilot-dx",
     pid: process.pid,
+    version: ADAPTER_VERSION,
+    protocol_version: ADAPTER_PROTOCOL_VERSION,
+    instance_id: ADAPTER_INSTANCE_ID,
   };
 }
 
@@ -25,6 +34,8 @@ export async function checkRunningAdapter({
   port = 2026,
   fetchImpl = fetch,
   timeoutMs = 500,
+  expectedVersion = ADAPTER_VERSION,
+  expectedProtocolVersion = ADAPTER_PROTOCOL_VERSION,
 } = {}) {
   const baseUrl = adapterBaseUrl(host, port);
   const ctrl = new AbortController();
@@ -38,6 +49,17 @@ export async function checkRunningAdapter({
     const data = await resp.json();
     if (data?.name !== "codex-copilot-dx" || data?.ok !== true) {
       return { ok: false, baseUrl, status: resp.status, data };
+    }
+    if (data.version !== expectedVersion || data.protocol_version !== expectedProtocolVersion) {
+      return {
+        ok: false,
+        incompatible: true,
+        baseUrl,
+        status: resp.status,
+        data,
+        expectedVersion,
+        expectedProtocolVersion,
+      };
     }
     return { ok: true, baseUrl, data };
   } catch (e) {

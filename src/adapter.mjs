@@ -1,7 +1,5 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
-import { promisify } from "node:util";
-import * as zlib from "node:zlib";
 import { chatCompletions, listModels, responses as copilotResponses, responsesCompact as copilotResponsesCompact, getCachedModelEndpoints } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
 import { anthropicToChat, chatToAnthropic, streamAnthropicFromLines, countTokens } from "./anthropic.mjs";
@@ -9,6 +7,37 @@ import { claudeDesktopModelsResponse, resolveAnthropicModel, modelIsResponsesOnl
 import { status } from "./status.mjs";
 import { recordAnthropicUsage, recordResponsesUsage } from "./usage.mjs";
 import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
+import {
+  abortErrorStatusCode,
+  createRequestAbort,
+  httpError,
+  isAbortLikeError,
+  logRequestFailure,
+  readJsonBody,
+  sendJsonError,
+  sendUpstreamError,
+  writeOrDrain,
+} from "./http-transport.mjs";
+import {
+  clearResponseHistoryForTests,
+  configureResponseHistoryForTests,
+  materializeResponseHistory,
+  rememberResponseHistoryNode,
+  responseHistoryStats,
+} from "./response-history.mjs";
+
+export {
+  abortErrorStatusCode,
+  createRequestAbort,
+  isAbortLikeError,
+  readJsonBody,
+  writeOrDrain,
+} from "./http-transport.mjs";
+export {
+  clearResponseHistoryForTests,
+  configureResponseHistoryForTests,
+  responseHistoryStats,
+} from "./response-history.mjs";
 
 // Fallback list for models known to only support the Responses API, used when
 // live model metadata (supported_endpoints) has not been cached yet.
@@ -37,183 +66,25 @@ function isResponsesOnlyModel(model) {
 
 // Direct Copilot Responses API proxy.
 
-const responseHistories = new Map();
-const responseHistoryChildren = new Map();
-const evictedResponseIds = new Set();
-const DEFAULT_RESPONSE_HISTORY_MAX_BYTES = 64 * 1024 * 1024;
-const DEFAULT_RESPONSE_HISTORY_MAX_ENTRIES = 4096;
-let responseHistoryBytes = 0;
-const DEFAULT_MAX_BODY_BYTES = 128 * 1024 * 1024;
-const DEFAULT_MAX_DECODED_BODY_BYTES = 256 * 1024 * 1024;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 120 * 1000;
-const gunzipAsync = promisify(zlib.gunzip);
-const inflateAsync = promisify(zlib.inflate);
-const brotliDecompressAsync = promisify(zlib.brotliDecompress);
-const zstdDecompressAsync = zlib.zstdDecompress ? promisify(zlib.zstdDecompress) : null;
+const DEFAULT_STREAM_HANDSHAKE_TIMEOUT_MS = 120 * 1000;
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 120 * 1000;
 
 function positiveInt(value, fallback) {
   const n = Number.parseInt(value, 10);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-const MAX_BODY_BYTES = positiveInt(process.env.CCDX_MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES);
-const MAX_DECODED_BODY_BYTES = positiveInt(process.env.CCDX_MAX_DECODED_BODY_BYTES, DEFAULT_MAX_DECODED_BODY_BYTES);
 const UPSTREAM_TIMEOUT_MS = positiveInt(process.env.CCDX_UPSTREAM_TIMEOUT_MS, DEFAULT_UPSTREAM_TIMEOUT_MS);
-let responseHistoryMaxBytes = positiveInt(process.env.CCDX_RESPONSE_HISTORY_MAX_BYTES, DEFAULT_RESPONSE_HISTORY_MAX_BYTES);
-let responseHistoryMaxEntries = positiveInt(process.env.CCDX_RESPONSE_HISTORY_MAX_ENTRIES, DEFAULT_RESPONSE_HISTORY_MAX_ENTRIES);
+const STREAM_HANDSHAKE_TIMEOUT_MS = positiveInt(process.env.CCDX_STREAM_HANDSHAKE_TIMEOUT_MS, DEFAULT_STREAM_HANDSHAKE_TIMEOUT_MS);
+const STREAM_IDLE_TIMEOUT_MS = positiveInt(process.env.CCDX_STREAM_IDLE_TIMEOUT_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS);
 
 export function requestPath(reqUrl) {
   return new URL(reqUrl || "/", "http://localhost").pathname;
 }
 
 function cloneJson(value) {
-  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
-}
-
-function jsonStringByteLength(value) {
-  let bytes = 2;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code === 0x22 || code === 0x5c) {
-      bytes += 2;
-    } else if (code <= 0x1f) {
-      bytes += [0x08, 0x09, 0x0a, 0x0c, 0x0d].includes(code) ? 2 : 6;
-    } else if (code <= 0x7f) {
-      bytes += 1;
-    } else if (code <= 0x7ff) {
-      bytes += 2;
-    } else if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (next >= 0xdc00 && next <= 0xdfff) {
-        bytes += 4;
-        index += 1;
-      } else {
-        bytes += 6;
-      }
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      bytes += 6;
-    } else {
-      bytes += 3;
-    }
-  }
-  return bytes;
-}
-
-function jsonByteLength(value, seen = new Set()) {
-  if (value === null) return 4;
-  if (typeof value === "string") return jsonStringByteLength(value);
-  if (typeof value === "number") return Buffer.byteLength(JSON.stringify(value));
-  if (typeof value === "boolean") return value ? 4 : 5;
-  if (Array.isArray(value)) {
-    if (seen.has(value)) throw new TypeError("Circular response history value");
-    seen.add(value);
-    let bytes = 2 + Math.max(0, value.length - 1);
-    for (const item of value) {
-      bytes += item === undefined || typeof item === "function" || typeof item === "symbol"
-        ? 4
-        : jsonByteLength(item, seen);
-    }
-    seen.delete(value);
-    return bytes;
-  }
-  if (value && typeof value === "object") {
-    if (seen.has(value)) throw new TypeError("Circular response history value");
-    seen.add(value);
-    const entries = Object.entries(value)
-      .filter(([, item]) => item !== undefined && typeof item !== "function" && typeof item !== "symbol");
-    let bytes = 2 + Math.max(0, entries.length - 1);
-    for (const [key, item] of entries) bytes += jsonStringByteLength(key) + 1 + jsonByteLength(item, seen);
-    seen.delete(value);
-    return bytes;
-  }
-  return 4;
-}
-
-function httpError(message, statusCode) {
-  const err = new Error(message);
-  err.statusCode = statusCode;
-  return err;
-}
-
-function payloadTooLarge(kind, maxBytes) {
-  return httpError(`${kind} request body exceeds ${maxBytes} bytes`, 413);
-}
-
-async function readRequestBuffer(req, maxBytes) {
-  const contentLength = Number.parseInt(req.headers?.["content-length"] || "", 10);
-  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    throw payloadTooLarge("Raw", maxBytes);
-  }
-
-  const chunks = [];
-  let total = 0;
-  for await (const chunk of req) {
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    total += buf.length;
-    if (total > maxBytes) throw payloadTooLarge("Raw", maxBytes);
-    chunks.push(buf);
-  }
-  return Buffer.concat(chunks);
-}
-
-async function decompressBody(decompress, buffer, maxBytes) {
-  try {
-    return await decompress(buffer, { maxOutputLength: maxBytes });
-  } catch (e) {
-    if (e?.code === "ERR_BUFFER_TOO_LARGE" || /maxOutputLength/i.test(e?.message || "")) {
-      throw payloadTooLarge("Decoded", maxBytes);
-    }
-    throw e;
-  }
-}
-
-async function decodeRequestBuffer(buffer, contentEncoding, maxBytes) {
-  const encodings = String(contentEncoding || "identity")
-    .split(",")
-    .map((v) => v.trim().toLowerCase())
-    .filter(Boolean);
-
-  let decoded = buffer;
-  for (const encoding of encodings.reverse()) {
-    if (encoding === "identity") continue;
-    if (encoding === "gzip" || encoding === "x-gzip") {
-      decoded = await decompressBody(gunzipAsync, decoded, maxBytes);
-    } else if (encoding === "deflate") {
-      decoded = await decompressBody(inflateAsync, decoded, maxBytes);
-    } else if (encoding === "br") {
-      decoded = await decompressBody(brotliDecompressAsync, decoded, maxBytes);
-    } else if (encoding === "zstd") {
-      if (!zstdDecompressAsync) throw new Error("Unsupported Content-Encoding: zstd");
-      decoded = await decompressBody(zstdDecompressAsync, decoded, maxBytes);
-    } else {
-      throw new Error(`Unsupported Content-Encoding: ${encoding}`);
-    }
-    if (decoded.length > maxBytes) throw payloadTooLarge("Decoded", maxBytes);
-  }
-  if (decoded.length > maxBytes) throw payloadTooLarge("Decoded", maxBytes);
-  return decoded;
-}
-
-export async function readJsonBody(req, {
-  maxBodyBytes = MAX_BODY_BYTES,
-  maxDecodedBodyBytes = MAX_DECODED_BODY_BYTES,
-} = {}) {
-  const buffer = await readRequestBuffer(req, maxBodyBytes);
-  const decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"], maxDecodedBodyBytes);
-  return JSON.parse(decoded.toString("utf8"));
-}
-
-function sendJsonError(res, err, fallbackStatus = 400) {
-  if (res.destroyed || res.writableEnded) return;
-  if (!res.headersSent) res.writeHead(err?.statusCode || fallbackStatus, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ error: err?.message || "Request failed" }));
-}
-
-function sendUpstreamError(res, resp, text) {
-  if (!res.headersSent) {
-    res.writeHead(resp.status || 502, { "Content-Type": resp.headers?.get("content-type") || "application/json" });
-  }
-  res.end(text || JSON.stringify({ error: "Upstream request failed" }));
+  return value === undefined ? undefined : structuredClone(value);
 }
 
 function bearerToken(headers = {}) {
@@ -229,85 +100,13 @@ export function shouldServeClaudeDesktopModels(req, claudeDesktopApiKey) {
   return token === claudeDesktopApiKey || xApiKey === claudeDesktopApiKey;
 }
 
-export function writeOrDrain(res, chunk) {
-  if (res.destroyed || res.writableEnded) return Promise.resolve(false);
-  if (res.write(chunk)) return Promise.resolve(true);
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      res.off("drain", onDrain);
-      res.off("error", onError);
-      res.off("close", onClose);
-    };
-    const onDrain = () => { cleanup(); resolve(true); };
-    const onClose = () => { cleanup(); resolve(false); };
-    const onError = (err) => { cleanup(); reject(err); };
-    res.once("drain", onDrain);
-    res.once("close", onClose);
-    res.once("error", onError);
-  });
-}
-
-export function isAbortLikeError(err) {
-  return err?.name === "AbortError" || /operation was aborted/i.test(String(err?.message || ""));
-}
-
-export function abortErrorStatusCode(reason) {
-  if (reason === "upstream_timeout") return 504;
-  if (reason === "client_aborted" || reason === "client_closed") return 499;
-  return 400;
-}
-
-export function createRequestAbort(req, res) {
-  const controller = new AbortController();
-  let timer = null;
-  let cleaned = false;
-  let reason = null;
-  const abort = (nextReason = "aborted") => {
-    if (!cleaned && !controller.signal.aborted) {
-      reason = nextReason;
-      controller.abort();
-    }
-  };
-  const onReqAborted = () => abort("client_aborted");
-  const onResClose = () => {
-    if (!res.writableEnded) abort("client_closed");
-  };
-  req.on("aborted", onReqAborted);
-  res.on("close", onResClose);
-  return {
-    signal: controller.signal,
-    get reason() { return reason; },
-    setTimeout(ms) {
-      if (timer) clearTimeout(timer);
-      if (ms > 0) timer = setTimeout(() => abort("upstream_timeout"), ms);
-    },
-    cleanup() {
-      cleaned = true;
-      if (timer) clearTimeout(timer);
-      req.off("aborted", onReqAborted);
-      res.off("close", onResClose);
-    },
-  };
-}
-
-function logRequestFailure(label, err, abort) {
-  if (!isAbortLikeError(err)) {
-    console.error(status("err", `${label} request failed: ${err.message}`));
-    return;
-  }
-
-  const reason = abort?.reason || "aborted";
-  err.statusCode ||= abortErrorStatusCode(reason);
-  const detail = reason === "upstream_timeout" ? `${reason} after ${UPSTREAM_TIMEOUT_MS}ms` : reason;
-  console.warn(status("warn", `${label} request aborted: ${detail}`));
-}
-
-function responsesInputItems(input) {
+function responsesInputItems(input, { clone = true } = {}) {
   if (input === undefined || input === null) return [];
   if (typeof input === "string") {
     return [{ type: "message", role: "user", content: [{ type: "input_text", text: input }] }];
   }
-  return Array.isArray(input) ? cloneJson(input) : [cloneJson(input)];
+  if (Array.isArray(input)) return clone ? cloneJson(input) : input;
+  return [clone ? cloneJson(input) : input];
 }
 
 export function stripInternalResponsesInputFields(inputItems) {
@@ -449,96 +248,6 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
   throw httpError("Responses compatibility retry limit exceeded", 502);
 }
 
-export function clearResponseHistoryForTests() {
-  responseHistories.clear();
-  responseHistoryChildren.clear();
-  evictedResponseIds.clear();
-  responseHistoryBytes = 0;
-  responseHistoryMaxBytes = DEFAULT_RESPONSE_HISTORY_MAX_BYTES;
-  responseHistoryMaxEntries = DEFAULT_RESPONSE_HISTORY_MAX_ENTRIES;
-}
-
-export function configureResponseHistoryForTests({ maxBytes, maxEntries } = {}) {
-  if (maxBytes !== undefined) responseHistoryMaxBytes = positiveInt(maxBytes, DEFAULT_RESPONSE_HISTORY_MAX_BYTES);
-  if (maxEntries !== undefined) responseHistoryMaxEntries = positiveInt(maxEntries, DEFAULT_RESPONSE_HISTORY_MAX_ENTRIES);
-}
-
-export function responseHistoryStats() {
-  return { entries: responseHistories.size, bytes: responseHistoryBytes, evicted: evictedResponseIds.size };
-}
-
-function rememberEvictedId(id) {
-  evictedResponseIds.add(id);
-  while (evictedResponseIds.size > 256) evictedResponseIds.delete(evictedResponseIds.values().next().value);
-}
-
-function linkHistoryChild(parentId, id) {
-  if (!parentId) return;
-  let children = responseHistoryChildren.get(parentId);
-  if (!children) {
-    children = new Set();
-    responseHistoryChildren.set(parentId, children);
-  }
-  children.add(id);
-}
-
-function unlinkHistoryChild(parentId, id) {
-  if (!parentId) return;
-  const children = responseHistoryChildren.get(parentId);
-  if (!children) return;
-  children.delete(id);
-  if (!children.size) responseHistoryChildren.delete(parentId);
-}
-
-function removeHistorySubtree(rootId) {
-  const pending = [rootId];
-  const removed = new Set();
-  while (pending.length) {
-    const id = pending.pop();
-    if (removed.has(id)) continue;
-    removed.add(id);
-    const children = responseHistoryChildren.get(id);
-    if (children) pending.push(...children);
-  }
-  for (const id of removed) {
-    const entry = responseHistories.get(id);
-    if (!entry) continue;
-    unlinkHistoryChild(entry.parentId, id);
-    responseHistoryChildren.delete(id);
-    responseHistoryBytes -= entry.bytes;
-    responseHistories.delete(id);
-    rememberEvictedId(id);
-  }
-}
-
-function enforceResponseHistoryLimits() {
-  while (responseHistories.size > responseHistoryMaxEntries || responseHistoryBytes > responseHistoryMaxBytes) {
-    const oldestId = responseHistories.keys().next().value;
-    if (!oldestId) break;
-    removeHistorySubtree(oldestId);
-  }
-}
-
-function materializeResponseHistory(responseId) {
-  const chain = [];
-  const seen = new Set();
-  let currentId = responseId;
-  while (currentId) {
-    if (seen.has(currentId)) throw httpError(`Cycle detected in local response history: ${currentId}`, 500);
-    seen.add(currentId);
-    const entry = responseHistories.get(currentId);
-    if (!entry) {
-      const reason = evictedResponseIds.has(currentId) ? " was evicted after reaching the local history limit" : " is not available";
-      throw httpError(`previous_response_id${reason}: ${currentId}`, 400);
-    }
-    chain.push(entry);
-    currentId = entry.parentId;
-  }
-  const items = [];
-  for (const entry of chain.reverse()) items.push(...entry.inputItems, ...entry.outputItems);
-  return cloneJson(items);
-}
-
 // The GPT (gpt-5.6) Responses backend registers a built-in `image_gen` tool
 // namespace. When the client also sends an image generation tool, the upstream
 // rejects the request with "User-defined namespace 'image_gen' collides ...".
@@ -548,9 +257,9 @@ function isBuiltinImageTool(tool) {
   return isImageNamespaceTool(tool);
 }
 
-export function prepareResponsesRequest(reqBody) {
-  const body = cloneJson(reqBody);
-  const currentInputItems = responsesInputItems(body.input);
+export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
+  const body = mutate ? reqBody : cloneJson(reqBody);
+  const currentInputItems = responsesInputItems(body.input, { clone: !mutate });
   const previousId = body.previous_response_id;
 
   if (previousId !== undefined && previousId !== null) {
@@ -573,6 +282,7 @@ export function prepareResponsesRequest(reqBody) {
     inputItems: body.input,
     historyParentId: previousId ?? null,
     historyInputItems: currentInputItems,
+    takeHistoryOwnership: mutate,
   };
 }
 
@@ -580,30 +290,13 @@ export function rememberResponseHistory(reqContext, responseJson) {
   if (!responseJson?.id || !Array.isArray(reqContext?.historyInputItems || reqContext?.inputItems)) return;
   const sourceInputItems = reqContext.historyInputItems || reqContext.inputItems;
   const sourceOutputItems = responsesOutputItems(responseJson.output);
-  const bytes = jsonByteLength([sourceInputItems, sourceOutputItems]);
-  if (bytes > responseHistoryMaxBytes) {
-    if (responseHistories.has(responseJson.id)) removeHistorySubtree(responseJson.id);
-    rememberEvictedId(responseJson.id);
-    return;
-  }
-  const inputItems = cloneJson(sourceInputItems);
-  const outputItems = cloneJson(sourceOutputItems);
-  const entry = {
-    parentId: reqContext.historyParentId || null,
-    inputItems,
-    outputItems,
-    bytes,
-  };
-  const existing = responseHistories.get(responseJson.id);
-  if (existing) {
-    responseHistoryBytes -= existing.bytes;
-    unlinkHistoryChild(existing.parentId, responseJson.id);
-  }
-  responseHistories.set(responseJson.id, entry);
-  linkHistoryChild(entry.parentId, responseJson.id);
-  responseHistoryBytes += entry.bytes;
-  evictedResponseIds.delete(responseJson.id);
-  enforceResponseHistoryLimits();
+  rememberResponseHistoryNode({
+    id: responseJson.id,
+    parentId: reqContext.historyParentId,
+    inputItems: sourceInputItems,
+    outputItems: sourceOutputItems,
+    takeOwnership: reqContext.takeHistoryOwnership,
+  });
 }
 
 function storeCompletedResponseFromSse(reqContext, data) {
@@ -651,6 +344,7 @@ async function proxyCopilotResponses(reqContext, req, res, upstream = copilotRes
   }
 
   if (reqContext.body.stream) {
+    options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
     res.writeHead(resp.status, {
       "Content-Type": resp.headers.get("content-type") || "text/event-stream",
       "Cache-Control": "no-cache",
@@ -659,17 +353,23 @@ async function proxyCopilotResponses(reqContext, req, res, upstream = copilotRes
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        buffer += decoder.decode();
-        readSseEvents(buffer, (data) => storeCompletedResponseFromSse(reqContext, data));
-        res.end();
-        return;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          buffer += decoder.decode();
+          readSseEvents(buffer, (data) => storeCompletedResponseFromSse(reqContext, data));
+          res.end();
+          return;
+        }
+        options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
+        buffer += decoder.decode(value, { stream: true });
+        buffer = readSseEvents(buffer, (data) => storeCompletedResponseFromSse(reqContext, data));
+        if (!await writeOrDrain(res, value)) return;
       }
-      buffer += decoder.decode(value, { stream: true });
-      buffer = readSseEvents(buffer, (data) => storeCompletedResponseFromSse(reqContext, data));
-      await writeOrDrain(res, value);
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
     }
   } else {
     const data = await resp.text();
@@ -807,13 +507,15 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
       stream: true,
     }, { signal: options.signal });
   } catch (e) {
-    onError(502, e.message);
+    const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(options.abort?.reason) : 502;
+    onError(statusCode, e.message);
     return;
   }
   if (!resp.ok) {
     onError(resp.status, await resp.text());
     return;
   }
+  options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
   const respId = `resp_${uid()}`;
   let actualModel = chatReq.model || "unknown";
   let fullText = "";
@@ -911,7 +613,9 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   };
 
   try {
-    for await (const line of webStreamLines(resp)) {
+    for await (const line of webStreamLines(resp, {
+      onChunk: () => options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout"),
+    })) {
       if (!line.startsWith("data: ")) continue;
       const data = line.slice(6).trim();
       if (data === "[DONE]") { await emitCompleted(); onDone(); return; }
@@ -969,6 +673,9 @@ export function createAdapterHandler(options = {}) {
   const responsesFn = options.responsesFn || copilotResponses;
   const responsesCompactFn = options.responsesCompactFn || copilotResponsesCompact;
   const listModelsFn = options.listModelsFn || listModels;
+  const upstreamTimeoutMs = positiveInt(options.upstreamTimeoutMs, UPSTREAM_TIMEOUT_MS);
+  const streamHandshakeTimeoutMs = positiveInt(options.streamHandshakeTimeoutMs, STREAM_HANDSHAKE_TIMEOUT_MS);
+  const streamIdleTimeoutMs = positiveInt(options.streamIdleTimeoutMs, STREAM_IDLE_TIMEOUT_MS);
   const claudeDesktopModelOptions = () => {
     const modelDefs = options.modelRegistry?.modelDefs || options.claudeDesktopModelDefs;
     return Array.isArray(modelDefs) ? { modelDefs } : {};
@@ -988,13 +695,20 @@ export function createAdapterHandler(options = {}) {
         const abort = createRequestAbort(req, res);
         try {
           const parsed = await readJsonBody(req);
-          if (!parsed.stream) abort.setTimeout(UPSTREAM_TIMEOUT_MS);
-          const prepared = prepareResponsesRequest(parsed);
+          abort.setTimeout(
+            parsed.stream ? streamHandshakeTimeoutMs : upstreamTimeoutMs,
+              parsed.stream ? "stream_handshake_timeout" : "upstream_timeout",
+          );
+          const prepared = prepareResponsesRequest(parsed, { mutate: true });
           prepared.surface = "responses";
           const model = parsed.model || "unknown";
           console.log(status("info", `responses model=${model} stream=${!!parsed.stream}`));
           if (isResponsesOnlyModel(model)) {
-            await proxyCopilotResponses(prepared, req, res, responsesFn, { signal: abort.signal });
+            await proxyCopilotResponses(prepared, req, res, responsesFn, {
+              signal: abort.signal,
+              abort,
+              streamIdleTimeoutMs,
+            });
           } else {
             const chatReq = responsesToChat(prepared.body);
             if (parsed.stream) {
@@ -1005,7 +719,12 @@ export function createAdapterHandler(options = {}) {
                   rememberResponseHistory(prepared, data.response);
                   recordResponsesUsage({ surface: prepared.surface, mode: "stream", model, response: data.response, event: data });
                 }
-              }, () => { if (!res.writableEnded) res.end(); }, (status, errMsg) => { if (!res.headersSent) res.writeHead(status || 500); res.end(errMsg); }, { signal: abort.signal, chatCompletionsFn });
+              }, () => { if (!res.writableEnded) res.end(); }, (status, errMsg) => { if (!res.headersSent) res.writeHead(status || 500); res.end(errMsg); }, {
+                signal: abort.signal,
+                abort,
+                streamIdleTimeoutMs,
+                chatCompletionsFn,
+              });
             } else {
               chatReq.stream = false;
               delete chatReq.max_tokens;
@@ -1044,12 +763,19 @@ export function createAdapterHandler(options = {}) {
         const abort = createRequestAbort(req, res);
         try {
           const parsed = await readJsonBody(req);
-          if (!parsed.stream) abort.setTimeout(UPSTREAM_TIMEOUT_MS);
-          const prepared = prepareResponsesRequest(parsed);
+          abort.setTimeout(
+            parsed.stream ? streamHandshakeTimeoutMs : upstreamTimeoutMs,
+            parsed.stream ? "stream_handshake_timeout" : "upstream_timeout",
+          );
+          const prepared = prepareResponsesRequest(parsed, { mutate: true });
           prepared.surface = "responses_compact";
           const model = parsed.model || "unknown";
           console.log(status("info", `responses compact model=${model} stream=${!!parsed.stream}`));
-          await proxyCopilotResponses(prepared, req, res, responsesCompactFn, { signal: abort.signal });
+          await proxyCopilotResponses(prepared, req, res, responsesCompactFn, {
+            signal: abort.signal,
+            abort,
+            streamIdleTimeoutMs,
+          });
         } catch (e) {
           logRequestFailure("Responses compact", e, abort);
           sendJsonError(res, e);
@@ -1067,7 +793,7 @@ export function createAdapterHandler(options = {}) {
         return;
       }
       const abort = createRequestAbort(req, res);
-      abort.setTimeout(UPSTREAM_TIMEOUT_MS);
+      abort.setTimeout(upstreamTimeoutMs);
       listModelsFn({ signal: abort.signal })
         .then(({ status, body }) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(body); })
         .catch((e) => {
@@ -1102,7 +828,10 @@ export function createAdapterHandler(options = {}) {
         const abort = createRequestAbort(req, res);
         try {
           const parsed = await readJsonBody(req);
-          if (!parsed.stream) abort.setTimeout(UPSTREAM_TIMEOUT_MS);
+          abort.setTimeout(
+            parsed.stream ? streamHandshakeTimeoutMs : upstreamTimeoutMs,
+            parsed.stream ? "stream_handshake_timeout" : "upstream_timeout",
+          );
           const { requestedModel, upstreamModel } = resolveAnthropicModel(parsed.model || "unknown", process.env, claudeDesktopModelOptions());
           const modelNote = upstreamModel === requestedModel ? requestedModel : `${requestedModel} -> ${upstreamModel}`;
           console.log(status("info", `messages model=${modelNote} stream=${!!parsed.stream}`));
@@ -1115,11 +844,14 @@ export function createAdapterHandler(options = {}) {
               res.end(await upstream.text());
               return;
             }
+            abort.setTimeout(streamIdleTimeoutMs, "stream_idle_timeout");
             res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
             let messageId;
             let usage;
             await streamAnthropicFromLines(
-              webStreamLines(upstream),
+              webStreamLines(upstream, {
+                onChunk: () => abort.setTimeout(streamIdleTimeoutMs, "stream_idle_timeout"),
+              }),
               async (event, data) => {
                 if (event === "message_start") messageId = data.message?.id;
                 if (event === "message_delta") usage = data.usage;

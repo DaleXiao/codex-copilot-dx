@@ -3,8 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { format } from "node:util";
 import { status } from "./status.mjs";
+import { parseByteLimit, rotateFileIfNeededSync } from "./file-rotation.mjs";
 
 let globalInstall = null;
+const DEFAULT_LOG_MAX_BYTES = 16 * 1024 * 1024;
 
 export function normalizeLogLevel(value) {
   return String(value || "info").trim().toLowerCase() === "debug" ? "debug" : "info";
@@ -25,6 +27,10 @@ export function resolveLogPath(value, { home = os.homedir() } = {}) {
 
 export function isDebugLoggingEnabled(env = process.env) {
   return normalizeLogLevel(env.CCDX_LOG_LEVEL) === "debug";
+}
+
+export function debugLogMaxBytes(env = process.env) {
+  return parseByteLimit(env.CCDX_LOG_MAX_BYTES, DEFAULT_LOG_MAX_BYTES);
 }
 
 function renderLogPayload(args) {
@@ -56,7 +62,9 @@ export function configureLogging({
 
   function append(args) {
     try {
-      fs.appendFileSync(filePath, renderLogPayload(args), { encoding: "utf8", mode: 0o600 });
+      const payload = renderLogPayload(args);
+      rotateFileIfNeededSync(filePath, Buffer.byteLength(payload), debugLogMaxBytes(env));
+      fs.appendFileSync(filePath, payload, { encoding: "utf8", mode: 0o600 });
     } catch (e) {
       if (writeFailed) return;
       writeFailed = true;

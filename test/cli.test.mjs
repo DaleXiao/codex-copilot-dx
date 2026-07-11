@@ -22,6 +22,28 @@ test("cli --version exits without starting the adapter", async () => {
   assert.equal(stderr, "");
 });
 
+test("cli --help exits without validating runtime configuration", async () => {
+  const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, "--help"], {
+    timeout: 2000,
+    env: { ...process.env, ADAPTER_PORT: "invalid" },
+  });
+
+  assert.match(stdout, /Usage:/);
+  assert.match(stdout, /doctor \[--online\]/);
+  assert.equal(stderr, "");
+});
+
+test("cli rejects unknown commands without starting the adapter", async () => {
+  await assert.rejects(
+    execFileAsync(process.execPath, [cliPath, "serve"], { timeout: 2000, env: { ...process.env } }),
+    (error) => {
+      assert.equal(error.code, 2);
+      assert.match(error.stderr, /Unknown command or option: serve/);
+      return true;
+    },
+  );
+});
+
 test("cli doctor exits without starting the adapter", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-doctor-"));
   const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, "doctor"], {
@@ -32,6 +54,24 @@ test("cli doctor exits without starting the adapter", async () => {
   assert.match(stdout, /codex-copilot-dx doctor/);
   assert.match(stdout, /\[WARN\] Adapter is not listening on http:\/\/127\.0\.0\.1:9/);
   assert.equal(stderr, "");
+});
+
+test("cli doctor returns nonzero when a configuration file is invalid", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-doctor-invalid-"));
+  fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+  fs.writeFileSync(path.join(home, ".claude", "settings.json"), "{broken");
+
+  await assert.rejects(
+    execFileAsync(process.execPath, [cliPath, "doctor"], {
+      timeout: 2000,
+      env: { ...process.env, HOME: home, ADAPTER_PORT: "9" },
+    }),
+    (error) => {
+      assert.equal(error.code, 1);
+      assert.match(error.stdout, /\[ERR\] Claude Code settings could not parse/);
+      return true;
+    },
+  );
 });
 
 test("isLanAllowed: requires an explicit opt-in", () => {

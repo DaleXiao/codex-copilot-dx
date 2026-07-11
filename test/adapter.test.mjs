@@ -142,7 +142,44 @@ test("abort helpers classify expected abort errors", () => {
   assert.equal(isAbortLikeError(new Error("This operation was aborted")), true);
   assert.equal(isAbortLikeError(new Error("socket hang up")), false);
   assert.equal(abortErrorStatusCode("upstream_timeout"), 504);
+  assert.equal(abortErrorStatusCode("stream_handshake_timeout"), 504);
+  assert.equal(abortErrorStatusCode("stream_idle_timeout"), 504);
   assert.equal(abortErrorStatusCode("client_closed"), 499);
+});
+
+test("HTTP streaming responses time out while waiting for upstream headers", async () => {
+  const result = await invokeAdapter({
+    streamHandshakeTimeoutMs: 5,
+    chatCompletionsFn: (_body, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new DOMException("This operation was aborted", "AbortError")), { once: true });
+    }),
+  }, {
+    body: { model: "gpt-4o", stream: true, input: "hello" },
+  });
+
+  assert.equal(result.status, 504);
+  assert.match(result.text, /aborted/i);
+});
+
+test("HTTP streaming responses time out when the upstream body becomes idle", async () => {
+  const result = await invokeAdapter({
+    streamIdleTimeoutMs: 5,
+    chatCompletionsFn: (_body, { signal }) => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"));
+          signal.addEventListener("abort", () => controller.error(new DOMException("This operation was aborted", "AbortError")), { once: true });
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    },
+  }, {
+    body: { model: "gpt-4o", stream: true, input: "hello" },
+  });
+
+  assert.equal(result.status, 200);
+  assert.match(result.text, /response\.output_text\.delta/);
+  assert.match(result.text, /aborted/i);
 });
 
 test("prepareResponsesRequest: expands previous response history locally", () => {
@@ -516,6 +553,22 @@ test("prepareResponsesRequest: strips Codex private input fields without mutatin
     content: [{ type: "input_text", text: "hello" }],
   }]);
   assert.deepEqual(prepared.inputItems, prepared.body.input);
+});
+
+test("prepareResponsesRequest: can take ownership of a freshly parsed request", () => {
+  const request = {
+    model: "gpt-5.5",
+    store: true,
+    input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] }],
+  };
+  const input = request.input;
+  const prepared = prepareResponsesRequest(request, { mutate: true });
+
+  assert.equal(prepared.body, request);
+  assert.equal(prepared.body.input, input);
+  assert.equal(prepared.historyInputItems, input);
+  assert.equal(prepared.takeHistoryOwnership, true);
+  assert.equal(request.store, undefined);
 });
 
 test("prepareResponsesRequest: strips private fields from expanded previous response history", () => {

@@ -1,0 +1,182 @@
+import { promisify } from "node:util";
+import * as zlib from "node:zlib";
+import { status } from "./status.mjs";
+
+const DEFAULT_MAX_BODY_BYTES = 128 * 1024 * 1024;
+const DEFAULT_MAX_DECODED_BODY_BYTES = 256 * 1024 * 1024;
+const gunzipAsync = promisify(zlib.gunzip);
+const inflateAsync = promisify(zlib.inflate);
+const brotliDecompressAsync = promisify(zlib.brotliDecompress);
+const zstdDecompressAsync = zlib.zstdDecompress ? promisify(zlib.zstdDecompress) : null;
+
+function positiveInt(value, fallback) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const MAX_BODY_BYTES = positiveInt(process.env.CCDX_MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES);
+const MAX_DECODED_BODY_BYTES = positiveInt(process.env.CCDX_MAX_DECODED_BODY_BYTES, DEFAULT_MAX_DECODED_BODY_BYTES);
+
+export function httpError(message, statusCode) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
+function payloadTooLarge(kind, maxBytes) {
+  return httpError(`${kind} request body exceeds ${maxBytes} bytes`, 413);
+}
+
+async function readRequestBuffer(req, maxBytes) {
+  const contentLength = Number.parseInt(req.headers?.["content-length"] || "", 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw payloadTooLarge("Raw", maxBytes);
+  }
+
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > maxBytes) throw payloadTooLarge("Raw", maxBytes);
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function decompressBody(decompress, buffer, maxBytes) {
+  try {
+    return await decompress(buffer, { maxOutputLength: maxBytes });
+  } catch (e) {
+    if (e?.code === "ERR_BUFFER_TOO_LARGE" || /maxOutputLength/i.test(e?.message || "")) {
+      throw payloadTooLarge("Decoded", maxBytes);
+    }
+    throw e;
+  }
+}
+
+async function decodeRequestBuffer(buffer, contentEncoding, maxBytes) {
+  const encodings = String(contentEncoding || "identity")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+
+  let decoded = buffer;
+  for (const encoding of encodings.reverse()) {
+    if (encoding === "identity") continue;
+    if (encoding === "gzip" || encoding === "x-gzip") {
+      decoded = await decompressBody(gunzipAsync, decoded, maxBytes);
+    } else if (encoding === "deflate") {
+      decoded = await decompressBody(inflateAsync, decoded, maxBytes);
+    } else if (encoding === "br") {
+      decoded = await decompressBody(brotliDecompressAsync, decoded, maxBytes);
+    } else if (encoding === "zstd") {
+      if (!zstdDecompressAsync) throw new Error("Unsupported Content-Encoding: zstd");
+      decoded = await decompressBody(zstdDecompressAsync, decoded, maxBytes);
+    } else {
+      throw new Error(`Unsupported Content-Encoding: ${encoding}`);
+    }
+    if (decoded.length > maxBytes) throw payloadTooLarge("Decoded", maxBytes);
+  }
+  if (decoded.length > maxBytes) throw payloadTooLarge("Decoded", maxBytes);
+  return decoded;
+}
+
+export async function readJsonBody(req, {
+  maxBodyBytes = MAX_BODY_BYTES,
+  maxDecodedBodyBytes = MAX_DECODED_BODY_BYTES,
+} = {}) {
+  const buffer = await readRequestBuffer(req, maxBodyBytes);
+  const decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"], maxDecodedBodyBytes);
+  return JSON.parse(decoded.toString("utf8"));
+}
+
+export function sendJsonError(res, err, fallbackStatus = 400) {
+  if (res.destroyed || res.writableEnded) return;
+  if (!res.headersSent) res.writeHead(err?.statusCode || fallbackStatus, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: err?.message || "Request failed" }));
+}
+
+export function sendUpstreamError(res, response, text) {
+  if (!res.headersSent) {
+    res.writeHead(response.status || 502, { "Content-Type": response.headers?.get("content-type") || "application/json" });
+  }
+  res.end(text || JSON.stringify({ error: "Upstream request failed" }));
+}
+
+export function writeOrDrain(res, chunk) {
+  if (res.destroyed || res.writableEnded) return Promise.resolve(false);
+  if (res.write(chunk)) return Promise.resolve(true);
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      res.off("drain", onDrain);
+      res.off("error", onError);
+      res.off("close", onClose);
+    };
+    const onDrain = () => { cleanup(); resolve(true); };
+    const onClose = () => { cleanup(); resolve(false); };
+    const onError = (err) => { cleanup(); reject(err); };
+    res.once("drain", onDrain);
+    res.once("close", onClose);
+    res.once("error", onError);
+  });
+}
+
+export function isAbortLikeError(err) {
+  return err?.name === "AbortError" || /operation was aborted/i.test(String(err?.message || ""));
+}
+
+export function abortErrorStatusCode(reason) {
+  if (["upstream_timeout", "stream_handshake_timeout", "stream_idle_timeout"].includes(reason)) return 504;
+  if (reason === "client_aborted" || reason === "client_closed") return 499;
+  return 400;
+}
+
+export function createRequestAbort(req, res) {
+  const controller = new AbortController();
+  let timer = null;
+  let cleaned = false;
+  let reason = null;
+  const abort = (nextReason = "aborted") => {
+    if (!cleaned && !controller.signal.aborted) {
+      reason = nextReason;
+      controller.abort();
+    }
+  };
+  const onReqAborted = () => abort("client_aborted");
+  const onResClose = () => {
+    if (!res.writableEnded) abort("client_closed");
+  };
+  req.on("aborted", onReqAborted);
+  res.on("close", onResClose);
+  return {
+    signal: controller.signal,
+    get reason() { return reason; },
+    setTimeout(ms, nextReason = "upstream_timeout") {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (ms > 0) timer = setTimeout(() => abort(nextReason), ms);
+    },
+    clearTimeout() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
+    cleanup() {
+      cleaned = true;
+      if (timer) clearTimeout(timer);
+      req.off("aborted", onReqAborted);
+      res.off("close", onResClose);
+    },
+  };
+}
+
+export function logRequestFailure(label, err, abort) {
+  if (!isAbortLikeError(err)) {
+    console.error(status("err", `${label} request failed: ${err.message}`));
+    return;
+  }
+
+  const reason = abort?.reason || "aborted";
+  err.statusCode ||= abortErrorStatusCode(reason);
+  console.warn(status("warn", `${label} request aborted: ${reason}`));
+}

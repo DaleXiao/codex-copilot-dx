@@ -71,3 +71,22 @@ test("debugLog: writes only when CCDX_LOG_LEVEL is debug", () => {
 
   assert.deepEqual(lines, ["[DEBUG] shown"]);
 });
+
+test("configureLogging: rotates an oversized debug log before appending", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-log-rotate-"));
+  const logPath = path.join(dir, "debug.log");
+  fs.writeFileSync(logPath, "old-log-content".repeat(10));
+  const fakeConsole = { log() {}, warn() {}, error() {}, debug() {} };
+  const configured = configureLogging({
+    env: { CCDX_LOG_PATH: logPath, CCDX_LOG_MAX_BYTES: "170" },
+    consoleObj: fakeConsole,
+  });
+  try {
+    fakeConsole.log("new content");
+  } finally {
+    configured.cleanup();
+  }
+
+  assert.match(fs.readFileSync(`${logPath}.1`, "utf8"), /old-log-content/);
+  assert.match(fs.readFileSync(logPath, "utf8"), /new content/);
+});

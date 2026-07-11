@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { status } from "./status.mjs";
+import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 
 const SETTINGS_PATH = path.join(os.homedir(), ".claude", "settings.json");
 
@@ -23,20 +24,19 @@ export function computeUpdatedSettings(settings, port) {
 }
 
 // Point Claude Code at the adapter by updating ~/.claude/settings.json.
-export function ensureClaudeConfig(port = 2026) {
+export function ensureClaudeConfig(port = 2026, { filePath = SETTINGS_PATH } = {}) {
   const target = `http://127.0.0.1:${port}`;
 
-  if (!fs.existsSync(SETTINGS_PATH)) {
-    fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
+  if (!fs.existsSync(filePath)) {
     const { json } = computeUpdatedSettings({}, port);
-    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(json, null, 2) + "\n");
+    atomicWriteFileIfChangedSync(filePath, JSON.stringify(json, null, 2) + "\n");
     console.log(status("ok", `Created ~/.claude/settings.json for Claude Code at ${target}`));
     return;
   }
 
   let raw, settings;
   try {
-    raw = fs.readFileSync(SETTINGS_PATH, "utf-8");
+    raw = fs.readFileSync(filePath, "utf-8");
     settings = JSON.parse(raw);
   } catch (e) {
     console.log(status("warn", `Could not parse ~/.claude/settings.json: ${e.message}`));
@@ -50,7 +50,7 @@ export function ensureClaudeConfig(port = 2026) {
     return;
   }
 
-  fs.writeFileSync(`${SETTINGS_PATH}.bak`, raw);
-  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(json, null, 2) + "\n");
+  atomicWriteFileIfChangedSync(`${filePath}.bak`, raw);
+  atomicWriteFileIfChangedSync(filePath, JSON.stringify(json, null, 2) + "\n");
   console.log(status("ok", `Configured Claude Code ANTHROPIC_BASE_URL="${target}" and backed up settings.json.bak`));
 }

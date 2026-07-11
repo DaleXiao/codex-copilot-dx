@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeUpdatedSettings } from "../src/claude-config.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { computeUpdatedSettings, ensureClaudeConfig } from "../src/claude-config.mjs";
 
 test("computeUpdatedSettings: updates only ANTHROPIC_BASE_URL when env exists", () => {
   const before = { env: { ANTHROPIC_BASE_URL: "http://localhost:4141", ANTHROPIC_AUTH_TOKEN: "dummy" }, model: "claude-opus-4.8" };
@@ -38,4 +41,18 @@ test("computeUpdatedSettings: does not mutate input", () => {
   const before = { env: { ANTHROPIC_BASE_URL: "http://localhost:4141" } };
   computeUpdatedSettings(before, 2026);
   assert.equal(before.env.ANTHROPIC_BASE_URL, "http://localhost:4141");
+});
+
+test("ensureClaudeConfig: atomically updates settings and keeps a backup", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-claude-config-"));
+  const filePath = path.join(dir, "settings.json");
+  const before = JSON.stringify({ env: { ANTHROPIC_BASE_URL: "http://old" }, keep: true }, null, 2) + "\n";
+  fs.writeFileSync(filePath, before, { mode: 0o640 });
+
+  ensureClaudeConfig(2026, { filePath });
+
+  assert.equal(fs.readFileSync(`${filePath}.bak`, "utf8"), before);
+  assert.equal(JSON.parse(fs.readFileSync(filePath, "utf8")).keep, true);
+  assert.equal(fs.statSync(filePath).mode & 0o777, 0o640);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ["settings.json", "settings.json.bak"]);
 });

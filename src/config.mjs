@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { status } from "./status.mjs";
+import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 
 const CONFIG_PATH = path.join(os.homedir(), ".codex", "config.toml");
 
@@ -74,20 +75,23 @@ OPENAI_API_KEY = "dummy"
 `;
 }
 
-export function ensureCodexConfig(adapterPort = 2026) {
+export function ensureCodexConfig(adapterPort = 2026, { filePath = CONFIG_PATH } = {}) {
   const baseUrl = `http://127.0.0.1:${adapterPort}/v1`;
 
-  if (!fs.existsSync(CONFIG_PATH)) {
+  if (!fs.existsSync(filePath)) {
     // Codex config does not exist yet; create the local proxy defaults.
-    fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
-    fs.writeFileSync(CONFIG_PATH, initialCodexConfig(adapterPort));
+    atomicWriteFileIfChangedSync(filePath, initialCodexConfig(adapterPort));
     console.log(status("ok", "Created ~/.codex/config.toml"));
     return;
   }
 
-  let content = fs.readFileSync(CONFIG_PATH, "utf-8");
+  const content = fs.readFileSync(filePath, "utf-8");
   const updated = computeUpdatedCodexConfig(content, adapterPort);
 
-  fs.writeFileSync(CONFIG_PATH, updated.content);
+  if (!updated.changed) {
+    console.log(status("ok", `Codex already points to ${baseUrl}`));
+    return;
+  }
+  atomicWriteFileIfChangedSync(filePath, updated.content);
   console.log(status("ok", `Configured Codex base URL: ${baseUrl}`));
 }

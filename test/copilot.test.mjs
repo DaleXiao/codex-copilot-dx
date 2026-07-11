@@ -191,7 +191,6 @@ test("summarizeReqBody: counts direct and stringified tool images", () => {
   const summary = summarizeReqBody(reqBody);
   assert.equal(summary.items, 2);
   assert.equal(summary.images, 2);
-  assert.ok(summary.biggest > 0);
 });
 
 test("optimizeImagesInBody: preserves small images and rewrites parsed tool output", async () => {
@@ -308,6 +307,8 @@ test("responses: retries a Copilot connect timeout before returning upstream res
       fetchImpl: async (url, options) => {
         assert.equal(url, "https://api.enterprise.githubcopilot.com/responses");
         assert.equal(options.method, "POST");
+        assert.equal(typeof options.body, "string");
+        assert.equal(options.headers["Content-Length"], String(Buffer.byteLength(options.body)));
         calls += 1;
         if (calls === 1) {
           const err = new TypeError("fetch failed");

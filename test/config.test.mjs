@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeUpdatedCodexConfig } from "../src/config.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { computeUpdatedCodexConfig, ensureCodexConfig } from "../src/config.mjs";
 
 test("computeUpdatedCodexConfig: updates stale Codex and shell env URLs", () => {
   const before = `model = "gpt-5.5"
@@ -67,4 +70,24 @@ OPENAI_API_KEY = "dummy"
   const { content, changed } = computeUpdatedCodexConfig(before, 2026);
   assert.equal(changed, false);
   assert.equal(content, before);
+});
+
+test("ensureCodexConfig: leaves an already-current file untouched", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-codex-config-"));
+  const filePath = path.join(dir, "config.toml");
+  const content = `openai_base_url = "http://127.0.0.1:2026/v1"
+
+[shell_environment_policy.set]
+ANTHROPIC_AUTH_TOKEN = "dummy"
+ANTHROPIC_BASE_URL = "http://127.0.0.1:2026"
+OPENAI_BASE_URL = "http://127.0.0.1:2026/v1"
+OPENAI_API_KEY = "dummy"
+`;
+  fs.writeFileSync(filePath, content);
+  const before = fs.statSync(filePath);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  ensureCodexConfig(2026, { filePath });
+  const after = fs.statSync(filePath);
+  assert.equal(after.ino, before.ino);
+  assert.equal(after.mtimeMs, before.mtimeMs);
 });

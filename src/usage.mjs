@@ -1,13 +1,20 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import readline from "node:readline";
+import { parseByteLimit, rotateFileIfNeededSync, rotatedFilePath } from "./file-rotation.mjs";
 
 const DEFAULT_USAGE_PATH = path.join(os.homedir(), ".local", "share", "codex-copilot-dx", "usage.jsonl");
+const DEFAULT_USAGE_MAX_BYTES = 32 * 1024 * 1024;
 
 let writeQueue = Promise.resolve();
 
 export function usageLogPath() {
   return process.env.CCDX_USAGE_PATH || DEFAULT_USAGE_PATH;
+}
+
+export function usageLogMaxBytes(env = process.env) {
+  return parseByteLimit(env.CCDX_USAGE_MAX_BYTES, DEFAULT_USAGE_MAX_BYTES);
 }
 
 function numberOrUndefined(value) {
@@ -119,6 +126,7 @@ export function recordUsage(record) {
     .catch(() => {})
     .then(async () => {
       await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+      rotateFileIfNeededSync(filePath, Buffer.byteLength(line), usageLogMaxBytes());
       await fs.promises.appendFile(filePath, line, { encoding: "utf8", mode: 0o600 });
     })
     .catch((e) => console.error(`codex-copilot-dx usage log write failed: ${e.message}`));
@@ -137,14 +145,34 @@ export async function flushUsageWritesForTests() {
   await writeQueue;
 }
 
-export async function readUsageRecords(filePath = usageLogPath()) {
+export async function flushUsageWrites() {
+  await writeQueue;
+}
+
+async function* iterateUsageRecords(filePath) {
+  let input;
   try {
-    const text = await fs.promises.readFile(filePath, "utf8");
-    return text.split(/\n/).filter(Boolean).map((line) => JSON.parse(line));
+    input = fs.createReadStream(filePath, { encoding: "utf8" });
+    await new Promise((resolve, reject) => {
+      input.once("open", resolve);
+      input.once("error", reject);
+    });
   } catch (e) {
-    if (e.code === "ENOENT") return [];
+    input?.destroy();
+    if (e?.code === "ENOENT") return;
     throw e;
   }
+
+  const lines = readline.createInterface({ input, crlfDelay: Infinity });
+  for await (const line of lines) {
+    if (line) yield JSON.parse(line);
+  }
+}
+
+export async function readUsageRecords(filePath = usageLogPath()) {
+  const records = [];
+  for await (const record of iterateUsageRecords(filePath)) records.push(record);
+  return records;
 }
 
 function addUsageTotals(target, usage = {}) {
@@ -154,21 +182,37 @@ function addUsageTotals(target, usage = {}) {
 }
 
 export function summarizeUsage(records) {
-  const totals = {};
-  const byModel = new Map();
+  const summary = { requests: 0, totals: {}, byModel: {} };
   for (const record of records) {
-    addUsageTotals(totals, record.usage);
+    summary.requests += 1;
+    addUsageTotals(summary.totals, record.usage);
     if (record.copilot_usage) {
-      totals.copilot_total_tokens = (totals.copilot_total_tokens || 0) + (record.copilot_usage.total_tokens || 0);
-      totals.total_nano_aiu = (totals.total_nano_aiu || 0) + (record.copilot_usage.total_nano_aiu || 0);
+      summary.totals.copilot_total_tokens = (summary.totals.copilot_total_tokens || 0) + (record.copilot_usage.total_tokens || 0);
+      summary.totals.total_nano_aiu = (summary.totals.total_nano_aiu || 0) + (record.copilot_usage.total_nano_aiu || 0);
     }
     const model = record.model || "unknown";
-    if (!byModel.has(model)) byModel.set(model, { requests: 0 });
-    const modelTotals = byModel.get(model);
+    if (!summary.byModel[model]) summary.byModel[model] = { requests: 0 };
+    const modelTotals = summary.byModel[model];
     modelTotals.requests += 1;
     addUsageTotals(modelTotals, record.usage);
   }
-  return { requests: records.length, totals, byModel: Object.fromEntries(byModel) };
+  return summary;
+}
+
+export async function summarizeUsageLogs(filePath = usageLogPath()) {
+  const summary = { requests: 0, totals: {}, byModel: {} };
+  for (const candidate of [rotatedFilePath(filePath), filePath]) {
+    for await (const record of iterateUsageRecords(candidate)) {
+      const one = summarizeUsage([record]);
+      summary.requests += one.requests;
+      addUsageTotals(summary.totals, one.totals);
+      for (const [model, values] of Object.entries(one.byModel)) {
+        if (!summary.byModel[model]) summary.byModel[model] = { requests: 0 };
+        addUsageTotals(summary.byModel[model], values);
+      }
+    }
+  }
+  return summary;
 }
 
 function fmt(n) {
@@ -176,8 +220,7 @@ function fmt(n) {
 }
 
 export async function printUsageSummary() {
-  const records = await readUsageRecords();
-  const summary = summarizeUsage(records);
+  const summary = await summarizeUsageLogs();
   console.log(`Usage log: ${usageLogPath()}`);
   if (summary.requests === 0) {
     console.log("No usage records yet.");

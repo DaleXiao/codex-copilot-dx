@@ -1,6 +1,6 @@
 // Yield fetch Response body lines while preserving SSE semantics for callers.
 // Strip CRLF tails and release the reader if iteration stops early.
-export async function* webStreamLines(response) {
+export async function* webStreamLines(response, { onChunk } = {}) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
@@ -8,6 +8,7 @@ export async function* webStreamLines(response) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      onChunk?.(value);
       buf += decoder.decode(value, { stream: true });
       const lines = buf.split("\n");
       buf = lines.pop();

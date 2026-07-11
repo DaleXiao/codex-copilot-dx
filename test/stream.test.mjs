@@ -40,3 +40,14 @@ test("webStreamLines: releases the body lock after early break", async () => {
   }
   assert.equal(resp.body.locked, false);
 });
+
+test("webStreamLines: reports every received byte chunk", async () => {
+  const resp = responseFrom(["data: a", "\n", "data: b\n"]);
+  const chunks = [];
+  const lines = [];
+  for await (const line of webStreamLines(resp, { onChunk: (chunk) => chunks.push(chunk.byteLength) })) {
+    lines.push(line);
+  }
+  assert.deepEqual(chunks, [7, 1, 8]);
+  assert.deepEqual(lines, ["data: a", "data: b"]);
+});

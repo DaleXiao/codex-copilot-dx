@@ -4,6 +4,7 @@ import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { claudeDesktopModelIds } from "./models.mjs";
 import { status } from "./status.mjs";
+import { atomicWriteFileIfChangedSync, atomicWriteFileSync } from "./atomic-file.mjs";
 
 const CONFIG_FILE = "claude_desktop_config.json";
 const CONFIG_LIBRARY_DIR = "configLibrary";
@@ -127,8 +128,7 @@ function readJsonFile(filePath, fallback = {}) {
 }
 
 function writeJsonFile(filePath, data) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+  return atomicWriteFileIfChangedSync(filePath, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
 }
 
 function snapshotFiles(files) {
@@ -148,8 +148,7 @@ function restoreSnapshots(snapshots) {
       fs.rmSync(snapshot.filePath, { force: true });
       continue;
     }
-    fs.mkdirSync(path.dirname(snapshot.filePath), { recursive: true });
-    fs.writeFileSync(snapshot.filePath, snapshot.data, { mode: 0o600 });
+    atomicWriteFileSync(snapshot.filePath, snapshot.data, { mode: 0o600 });
   }
 }
 

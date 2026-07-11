@@ -10,6 +10,7 @@ import {
   readUsageRecords,
   recordUsage,
   summarizeUsage,
+  summarizeUsageLogs,
 } from "../src/usage.mjs";
 
 test("buildResponsesUsageRecord: captures response and Copilot token usage", () => {
@@ -45,6 +46,31 @@ test("buildResponsesUsageRecord: captures response and Copilot token usage", () 
   assert.equal(record.copilot_usage.cache_read_tokens, 80);
   assert.equal(record.copilot_usage.total_tokens, 112);
   assert.equal(record.copilot_usage.total_nano_aiu, 123);
+});
+
+test("recordUsage: rotates at the configured size and streaming summary includes both files", async () => {
+  const oldPath = process.env.CCDX_USAGE_PATH;
+  const oldMax = process.env.CCDX_USAGE_MAX_BYTES;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-usage-rotate-"));
+  const filePath = path.join(dir, "usage.jsonl");
+  process.env.CCDX_USAGE_PATH = filePath;
+  process.env.CCDX_USAGE_MAX_BYTES = "180";
+  try {
+    await recordUsage({ ts: "2026-01-01T00:00:00.000Z", model: "a", usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 } });
+    await recordUsage({ ts: "2026-01-01T00:00:01.000Z", model: "b", usage: { input_tokens: 4, output_tokens: 5, total_tokens: 9 } });
+    await flushUsageWritesForTests();
+    assert.equal(await fs.stat(`${filePath}.1`).then(() => true), true);
+    const summary = await summarizeUsageLogs(filePath);
+    assert.equal(summary.requests, 2);
+    assert.equal(summary.totals.total_tokens, 12);
+    assert.equal(summary.byModel.a.requests, 1);
+    assert.equal(summary.byModel.b.requests, 1);
+  } finally {
+    if (oldPath === undefined) delete process.env.CCDX_USAGE_PATH;
+    else process.env.CCDX_USAGE_PATH = oldPath;
+    if (oldMax === undefined) delete process.env.CCDX_USAGE_MAX_BYTES;
+    else process.env.CCDX_USAGE_MAX_BYTES = oldMax;
+  }
 });
 
 test("buildResponsesUsageRecord: skips empty usage", () => {

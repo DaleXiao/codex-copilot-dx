@@ -15,7 +15,7 @@ Supports both HTTP SSE streaming and non-streaming.
 ## Prerequisites
 
 - GitHub Copilot subscription (Individual, Business, or Enterprise)
-- Node.js 18+
+- Node.js 18.17+
 - [Codex Desktop](https://openai.com/codex), [Claude Code](https://claude.com/claude-code), and/or Claude App installed
 
 ## Usage
@@ -28,7 +28,7 @@ npx codex-copilot-dx@latest
 
 On first run, it will:
 1. Authenticate with GitHub via device flow (if needed), after first trying compatible local Copilot token sources
-2. Print the local package version and warn when a newer npm release is available
+2. Print the local package version and check for a newer npm release in the background
 3. Start the adapter on loopback (`127.0.0.1:2026`)
 4. Configure Codex (`~/.codex/config.toml`) to use the adapter, including stale shell env base URLs if present
 5. Configure Claude Code (`~/.claude/settings.json`) to use the adapter; it creates the file when missing, otherwise backs up `settings.json.bak` before updating the local API env keys
@@ -49,6 +49,8 @@ Run a read-only config check without starting the adapter or changing files:
 ```bash
 codex-copilot-dx doctor
 ```
+
+The command exits with status `1` when it finds an invalid configuration and `0` when checks contain only OK or warning results.
 
 The doctor checks the GitHub token, Codex config, Claude Code settings, Claude App gateway profile, and whether the local adapter port is listening.
 
@@ -99,10 +101,13 @@ Environment variables:
 | `CCDX_MAX_BODY_BYTES` | `134217728` | Maximum compressed/raw request body size |
 | `CCDX_MAX_DECODED_BODY_BYTES` | `268435456` | Maximum decoded request body size after decompression |
 | `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Timeout for non-streaming upstream Copilot requests |
+| `CCDX_STREAM_HANDSHAKE_TIMEOUT_MS` | `120000` | Timeout while waiting for upstream streaming response headers |
+| `CCDX_STREAM_IDLE_TIMEOUT_MS` | `120000` | Maximum idle time between upstream streaming body chunks |
 | `CCDX_UPSTREAM_RETRIES` | `2` | Retries for transient Copilot upstream network errors; capped at `5` |
 | `CCDX_UPSTREAM_RETRY_DELAY_MS` | `300` | Initial upstream retry backoff in milliseconds; capped at `5000` |
 | `CCDX_LOG_PATH` | unset | Mirror terminal logs to a file; set to `1` for `~/.local/share/codex-copilot-dx/debug.log` |
 | `CCDX_LOG_LEVEL` | `info` | Set to `debug` to include upstream request attempts, status codes, retry causes, and timings |
+| `CCDX_LOG_MAX_BYTES` | `16777216` | Rotate the debug log at this size, retaining one `.1` backup; set to `0` to disable rotation |
 | `CCDX_IMG_MAX_DIM` | `2048` | Max long edge in pixels for image downscaling |
 | `CCDX_IMG_QUALITY` | `85` | WebP quality used when re-encoding images |
 | `CCDX_IMG_MIN_BYTES` | `100000` | Images smaller than this are left untouched |
@@ -123,7 +128,9 @@ Environment variables:
 | `CCDX_RESPONSE_HISTORY_MAX_BYTES` | `67108864` | Total in-memory byte budget for locally expanded Responses history |
 | `CCDX_RESPONSE_HISTORY_MAX_ENTRIES` | `4096` | Maximum stored incremental Responses history nodes |
 | `CCDX_USAGE_PATH` | `~/.local/share/codex-copilot-dx/usage.jsonl` | Local JSONL token usage log |
+| `CCDX_USAGE_MAX_BYTES` | `33554432` | Rotate the usage log at this size, retaining one `.1` backup; set to `0` to disable rotation |
 | `CCDX_DISABLE_USAGE` | unset | Set to `1` to disable usage logging |
+| `CCDX_SHUTDOWN_TIMEOUT_MS` | `5000` | Time to drain active HTTP connections before forcing shutdown |
 
 ### Usage logging
 
@@ -148,3 +155,12 @@ Newer ChatGPT/Codex clients can advertise an `image_gen` namespace that already 
 ## License
 
 MIT
+
+## Development
+
+```bash
+npm ci
+npm run verify
+```
+
+`npm test` runs the unit and handler-level suite. `npm run test:smoke` starts a real local HTTP adapter with fully injected offline upstreams. `npm run pack:check` verifies the npm tarball contents without publishing. The CI workflow runs all three checks on supported Node.js release lines.

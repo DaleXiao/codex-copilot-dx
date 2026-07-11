@@ -9,22 +9,58 @@ import { cacheModelEndpoints, listModels, refreshVSCodeVersion } from "../src/co
 import { claudeDesktopModelDefsFromCopilotModels, claudeDesktopModelIds, gptModelIdsFromCopilotModels, parseModelAliasEnv } from "../src/models.mjs";
 import { status } from "../src/status.mjs";
 import { configureLogging } from "../src/log.mjs";
-import { printUsageSummary } from "../src/usage.mjs";
+import { flushUsageWrites, printUsageSummary } from "../src/usage.mjs";
 import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
 import { runDoctor } from "../src/doctor.mjs";
 import { checkRunningAdapter } from "../src/running-adapter.mjs";
 import { assertSafeAdapterHost, isLoopbackHost } from "../src/security.mjs";
 import { loadModelCache, saveModelCache } from "../src/model-cache.mjs";
+import { initializeModelRegistry, runInBackground } from "../src/startup.mjs";
+import { cliHelp, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
+import { closeHttpServer } from "../src/shutdown.mjs";
 
-const ADAPTER_PORT = parseInt(process.env.ADAPTER_PORT || "2026");
-const ADAPTER_HOST = process.env.ADAPTER_HOST || "127.0.0.1";
-const MODEL_REFRESH_TIMEOUT_MS = parseInt(process.env.CCDX_MODEL_REFRESH_TIMEOUT_MS || "5000", 10);
-const EXISTING_ADAPTER_TIMEOUT_MS = parseInt(process.env.CCDX_EXISTING_ADAPTER_TIMEOUT_MS || "500", 10);
 const LOCAL_VERSION = localPackageVersion();
-const command = process.argv[2];
-const CONFIGURE_CLAUDE_DESKTOP = command === "--configure-claude-desktop" || process.env.CCDX_CONFIGURE_CLAUDE_DESKTOP === "1";
+
+let CLI;
+try {
+  CLI = parseCliArgs(process.argv.slice(2));
+} catch (e) {
+  console.error(e.message);
+  console.error("Run codex-copilot-dx --help for usage.");
+  process.exit(2);
+}
+
+if (CLI.command === "help") {
+  console.log(cliHelp());
+  process.exit(0);
+}
+if (CLI.command === "version") {
+  console.log(`codex-copilot-dx v${LOCAL_VERSION}`);
+  process.exit(0);
+}
+if (CLI.command === "usage") {
+  await printUsageSummary();
+  process.exit(0);
+}
+
+let RUNTIME;
+try {
+  RUNTIME = parseRuntimeOptions(process.env);
+} catch (e) {
+  console.error(e.message);
+  process.exit(2);
+}
+
+const ADAPTER_PORT = RUNTIME.adapterPort;
+const ADAPTER_HOST = RUNTIME.adapterHost;
+const MODEL_REFRESH_TIMEOUT_MS = RUNTIME.modelRefreshTimeoutMs;
+const EXISTING_ADAPTER_TIMEOUT_MS = RUNTIME.existingAdapterTimeoutMs;
+const CONFIGURE_CLAUDE_DESKTOP = CLI.configureClaudeDesktop || process.env.CCDX_CONFIGURE_CLAUDE_DESKTOP === "1";
 const LOGGING = configureLogging();
 const MODEL_REGISTRY = { modelDefs: undefined, source: "built-in" };
+let activeServer = null;
+let modelRefreshTimer = null;
+let shuttingDown = false;
 
 if (LOGGING.filePath) {
   console.log(status("info", `Debug log: ${LOGGING.filePath}`));
@@ -140,23 +176,13 @@ async function reuseRunningAdapterIfAvailable() {
   return true;
 }
 
-if (command === "--version" || command === "-v" || command === "version") {
-  console.log(`codex-copilot-dx v${LOCAL_VERSION}`);
-  process.exit(0);
-}
-
-if (command === "usage") {
-  await printUsageSummary();
-  process.exit(0);
-}
-
-if (command === "doctor" || command === "--doctor") {
-  await runDoctor({
+if (CLI.command === "doctor") {
+  const checks = await runDoctor({
     port: ADAPTER_PORT,
     host: ADAPTER_HOST,
-    online: process.argv.slice(3).includes("--online"),
+    online: CLI.online,
   });
-  process.exit(0);
+  process.exit(checks.some((check) => check.kind === "err") ? 1 : 0);
 }
 
 console.log(`
@@ -175,21 +201,22 @@ async function printUpdateNotice() {
   }
 }
 
-// Await the update check up front so the notice is shown even on the
-// "reuse existing adapter" path, which exits early below.
-await printUpdateNotice();
-
 try {
   assertSafeAdapterHost(ADAPTER_HOST, process.env);
+  void runInBackground(printUpdateNotice);
   if (await reuseRunningAdapterIfAvailable()) process.exit(0);
 
   // Ensure GitHub login, using device flow if no token exists.
   await ensureAuth();
 
   // Refresh the VS Code version in the background; fallback is non-blocking.
-  refreshVSCodeVersion();
-  loadCachedModelRegistry();
-  const claudeDesktopModelDefs = await refreshClaudeDesktopModelDefs();
+  void refreshVSCodeVersion();
+  const modelInitialization = await initializeModelRegistry({
+    loadCached: loadCachedModelRegistry,
+    currentModelDefs: () => MODEL_REGISTRY.modelDefs,
+    refresh: refreshClaudeDesktopModelDefs,
+  });
+  const claudeDesktopModelDefs = modelInitialization.modelDefs;
 
   if (!isLoopbackHost(ADAPTER_HOST)) {
     console.log(status("warn", `ADAPTER_HOST=${ADAPTER_HOST} exposes the adapter beyond loopback because CCDX_ALLOW_LAN=1 is set. Use only on trusted networks.`));
@@ -200,7 +227,14 @@ try {
     : currentClaudeDesktopApiKey();
 
   // Start the in-process adapter.
-  await startAdapter(ADAPTER_PORT, ADAPTER_HOST, { claudeDesktopApiKey, claudeDesktopModelDefs, modelRegistry: MODEL_REGISTRY });
+  activeServer = await startAdapter(ADAPTER_PORT, ADAPTER_HOST, {
+    claudeDesktopApiKey,
+    claudeDesktopModelDefs,
+    modelRegistry: MODEL_REGISTRY,
+    upstreamTimeoutMs: RUNTIME.upstreamTimeoutMs,
+    streamHandshakeTimeoutMs: RUNTIME.streamHandshakeTimeoutMs,
+    streamIdleTimeoutMs: RUNTIME.streamIdleTimeoutMs,
+  });
 
   // Point Codex and Claude Code at the adapter.
   ensureCodexConfig(ADAPTER_PORT);
@@ -223,12 +257,12 @@ try {
 
   // Periodically refresh the model list + endpoint cache so a long-running
   // adapter picks up newly released models without a restart.
-  const refreshIntervalMs = parseInt(process.env.CCDX_MODEL_REFRESH_INTERVAL_MS || String(30 * 60 * 1000), 10);
+  const refreshIntervalMs = RUNTIME.modelRefreshIntervalMs;
   if (Number.isFinite(refreshIntervalMs) && refreshIntervalMs > 0) {
-    const timer = setInterval(() => {
+    modelRefreshTimer = setInterval(() => {
       refreshClaudeDesktopModelDefs().catch(() => {});
     }, refreshIntervalMs);
-    if (typeof timer.unref === "function") timer.unref();
+    modelRefreshTimer.unref?.();
   }
 
   console.log(`
@@ -239,11 +273,30 @@ try {
   Press Ctrl+C to stop.
 `);
 
-  process.on("SIGINT", () => {
-    console.log(`\n${status("wait", "Shutting down...")}`);
-    process.exit(0);
-  });
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n${status("wait", `Shutting down on ${signal}...`)}`);
+    let exitCode = 0;
+    try {
+      if (modelRefreshTimer) clearInterval(modelRefreshTimer);
+      const result = await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs });
+      if (result.forced) console.warn(status("warn", "Forced remaining adapter connections closed"));
+      await flushUsageWrites();
+    } catch (e) {
+      exitCode = 1;
+      console.error(status("err", `Shutdown failed: ${e.message}`));
+    } finally {
+      LOGGING.cleanup();
+      process.exit(exitCode);
+    }
+  };
+  process.once("SIGINT", () => { void shutdown("SIGINT"); });
+  process.once("SIGTERM", () => { void shutdown("SIGTERM"); });
 } catch (e) {
   console.error(status("err", e.message));
+  await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs }).catch(() => {});
+  await flushUsageWrites();
+  LOGGING.cleanup();
   process.exit(1);
 }

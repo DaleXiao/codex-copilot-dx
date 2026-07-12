@@ -461,7 +461,7 @@ test("HTTP responses route maps Codex auto-review directly to Responses", async 
 
   assert.equal(response.status, 200);
   assert.equal(chatCalled, false);
-  assert.equal(upstreamBody.model, "gpt-5.4-mini");
+  assert.equal(upstreamBody.model, "gpt-5.5");
   assert.deepEqual(upstreamBody.tools, [
     { type: "function", name: "approve", parameters: { type: "object" } },
   ]);

@@ -106,7 +106,7 @@ test("resolveAnthropicModel: maps dash alias to upstream dot model", () => {
 test("resolveOpenAIModel: maps only the Codex auto-review model", () => {
   assert.deepEqual(resolveOpenAIModel("codex-auto-review", {}), {
     requestedModel: "codex-auto-review",
-    upstreamModel: "gpt-5.4-mini",
+    upstreamModel: "gpt-5.5",
   });
   assert.deepEqual(resolveOpenAIModel("codex-auto-review", { CCDX_AUTO_REVIEW_MODEL: " gpt-5.6-sol " }), {
     requestedModel: "codex-auto-review",

@@ -61,7 +61,7 @@ const DEFAULT_CLAUDE_MODEL_ALIAS_DEFS = [
 ];
 
 export const CODEX_AUTO_REVIEW_MODEL = "codex-auto-review";
-export const DEFAULT_CODEX_AUTO_REVIEW_MODEL = "gpt-5.4-mini";
+export const DEFAULT_CODEX_AUTO_REVIEW_MODEL = "gpt-5.5";
 
 function cleanList(value) {
   return String(value || "")

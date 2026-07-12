@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { chatCompletions, listModels, responses as copilotResponses, responsesCompact as copilotResponsesCompact, getCachedModelEndpoints } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
 import { anthropicToChat, chatToAnthropic, streamAnthropicFromLines, countTokens } from "./anthropic.mjs";
-import { claudeDesktopModelsResponse, resolveAnthropicModel, modelIsResponsesOnly, modelSupportsChatCompletions } from "./models.mjs";
+import { CODEX_AUTO_REVIEW_MODEL, claudeDesktopModelsResponse, resolveAnthropicModel, resolveOpenAIModel, modelIsResponsesOnly, modelSupportsChatCompletions } from "./models.mjs";
 import { status } from "./status.mjs";
 import { recordAnthropicUsage, recordResponsesUsage } from "./usage.mjs";
 import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
@@ -673,6 +673,7 @@ export function createAdapterHandler(options = {}) {
   const responsesFn = options.responsesFn || copilotResponses;
   const responsesCompactFn = options.responsesCompactFn || copilotResponsesCompact;
   const listModelsFn = options.listModelsFn || listModels;
+  const openAIModelEnv = options.openAIModelEnv || process.env;
   const upstreamTimeoutMs = positiveInt(options.upstreamTimeoutMs, UPSTREAM_TIMEOUT_MS);
   const streamHandshakeTimeoutMs = positiveInt(options.streamHandshakeTimeoutMs, STREAM_HANDSHAKE_TIMEOUT_MS);
   const streamIdleTimeoutMs = positiveInt(options.streamIdleTimeoutMs, STREAM_IDLE_TIMEOUT_MS);
@@ -702,8 +703,11 @@ export function createAdapterHandler(options = {}) {
           const prepared = prepareResponsesRequest(parsed, { mutate: true });
           prepared.surface = "responses";
           const model = parsed.model || "unknown";
-          console.log(status("info", `responses model=${model} stream=${!!parsed.stream}`));
-          if (isResponsesOnlyModel(model)) {
+          const { requestedModel, upstreamModel } = resolveOpenAIModel(model, openAIModelEnv);
+          if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
+          const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
+          console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${!!parsed.stream}`));
+          if (requestedModel === CODEX_AUTO_REVIEW_MODEL || isResponsesOnlyModel(upstreamModel)) {
             await proxyCopilotResponses(prepared, req, res, responsesFn, {
               signal: abort.signal,
               abort,
@@ -770,7 +774,10 @@ export function createAdapterHandler(options = {}) {
           const prepared = prepareResponsesRequest(parsed, { mutate: true });
           prepared.surface = "responses_compact";
           const model = parsed.model || "unknown";
-          console.log(status("info", `responses compact model=${model} stream=${!!parsed.stream}`));
+          const { requestedModel, upstreamModel } = resolveOpenAIModel(model, openAIModelEnv);
+          if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
+          const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
+          console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=${!!parsed.stream}`));
           await proxyCopilotResponses(prepared, req, res, responsesCompactFn, {
             signal: abort.signal,
             abort,

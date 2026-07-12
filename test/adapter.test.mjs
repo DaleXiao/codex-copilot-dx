@@ -428,6 +428,66 @@ test("HTTP responses route preserves 0.4.23 image_gen compatibility", async () =
   ]);
 });
 
+test("HTTP responses route maps Codex auto-review directly to Responses", async () => {
+  let upstreamBody;
+  let chatCalled = false;
+  const response = await invokeAdapter({
+    openAIModelEnv: {},
+    responsesFn: async (body) => {
+      upstreamBody = body;
+      return new Response(JSON.stringify({ id: "resp_review", status: "completed", output: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+    chatCompletionsFn: async () => {
+      chatCalled = true;
+      throw new Error("auto-review must not use Chat Completions");
+    },
+  }, {
+    body: {
+      model: "codex-auto-review",
+      input: "Review this command",
+      tools: [{ type: "function", name: "approve", parameters: { type: "object" } }],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "review",
+          schema: { type: "object", properties: { approved: { type: "boolean" } } },
+        },
+      },
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(chatCalled, false);
+  assert.equal(upstreamBody.model, "gpt-5.4-mini");
+  assert.deepEqual(upstreamBody.tools, [
+    { type: "function", name: "approve", parameters: { type: "object" } },
+  ]);
+  assert.equal(upstreamBody.text.format.name, "review");
+});
+
+test("HTTP compact route honors the Codex auto-review model override", async () => {
+  let upstreamBody;
+  const response = await invokeAdapter({
+    openAIModelEnv: { CCDX_AUTO_REVIEW_MODEL: "gpt-5.6-sol" },
+    responsesCompactFn: async (body) => {
+      upstreamBody = body;
+      return new Response(JSON.stringify({ id: "resp_compact", status: "completed", output: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  }, {
+    url: "/v1/responses/compact",
+    body: { model: "codex-auto-review", input: "compact review context" },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(upstreamBody.model, "gpt-5.6-sol");
+});
+
 test("HTTP non-stream Responses conversion preserves upstream error status", async () => {
   const response = await invokeAdapter({
     chatCompletionsFn: async () => new Response(JSON.stringify({ error: { message: "denied" } }), {

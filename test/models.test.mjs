@@ -7,6 +7,7 @@ import {
   gptModelIdsFromCopilotModels,
   parseModelAliasEnv,
   resolveAnthropicModel,
+  resolveOpenAIModel,
 } from "../src/models.mjs";
 
 test("claudeDesktopModelIds: includes only visible Claude Desktop models", () => {
@@ -97,6 +98,21 @@ test("resolveAnthropicModel: maps dash alias to upstream dot model", () => {
     upstreamModel: "claude-sonnet-4.6",
   });
   assert.deepEqual(resolveAnthropicModel("custom-model", {}), {
+    requestedModel: "custom-model",
+    upstreamModel: "custom-model",
+  });
+});
+
+test("resolveOpenAIModel: maps only the Codex auto-review model", () => {
+  assert.deepEqual(resolveOpenAIModel("codex-auto-review", {}), {
+    requestedModel: "codex-auto-review",
+    upstreamModel: "gpt-5.4-mini",
+  });
+  assert.deepEqual(resolveOpenAIModel("codex-auto-review", { CCDX_AUTO_REVIEW_MODEL: " gpt-5.6-sol " }), {
+    requestedModel: "codex-auto-review",
+    upstreamModel: "gpt-5.6-sol",
+  });
+  assert.deepEqual(resolveOpenAIModel("custom-model", { CCDX_AUTO_REVIEW_MODEL: "gpt-5.6-sol" }), {
     requestedModel: "custom-model",
     upstreamModel: "custom-model",
   });

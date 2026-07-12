@@ -60,6 +60,9 @@ const DEFAULT_CLAUDE_MODEL_ALIAS_DEFS = [
   },
 ];
 
+export const CODEX_AUTO_REVIEW_MODEL = "codex-auto-review";
+export const DEFAULT_CODEX_AUTO_REVIEW_MODEL = "gpt-5.4-mini";
+
 function cleanList(value) {
   return String(value || "")
     .split(",")
@@ -206,6 +209,19 @@ export function resolveAnthropicModel(model, env = process.env, options = {}) {
   return {
     requestedModel,
     upstreamModel: match?.upstream || requestedModel,
+  };
+}
+
+export function resolveOpenAIModel(model, env = process.env) {
+  const requestedModel = String(model || "");
+  if (requestedModel !== CODEX_AUTO_REVIEW_MODEL) {
+    return { requestedModel, upstreamModel: requestedModel };
+  }
+
+  const configuredModel = String(env.CCDX_AUTO_REVIEW_MODEL || "").trim();
+  return {
+    requestedModel,
+    upstreamModel: configuredModel || DEFAULT_CODEX_AUTO_REVIEW_MODEL,
   };
 }
 

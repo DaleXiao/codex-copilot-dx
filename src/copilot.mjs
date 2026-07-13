@@ -4,18 +4,13 @@ import { randomUUID } from "node:crypto";
 import { status } from "./status.mjs";
 import { debugLog } from "./log.mjs";
 import { ensureGithubTokenMetadata, githubReauthMessage, githubTokenPath, importDiscoveredGithubToken } from "./auth.mjs";
-import {
-  optimizeImageDataUrl,
-  optimizeImagesInBody,
-  parseImageConcurrency,
-  runWithConcurrency,
-  summarizeReqBody,
-} from "./image-optimization.mjs";
+import { prepareResponsesPayload } from "./image-optimization.mjs";
 
 export {
   optimizeImageDataUrl,
   optimizeImagesInBody,
   parseImageConcurrency,
+  prepareResponsesPayload,
   runWithConcurrency,
   summarizeReqBody,
 } from "./image-optimization.mjs";
@@ -384,10 +379,7 @@ export async function listModels({ signal, fetchImpl, retryOptions } = {}) {
 // Responses-only models go directly to Copilot's /responses endpoint.
 export async function responses(reqBody, { signal, fetchImpl, retryOptions } = {}) {
   const token = await getCopilotToken({ signal });
-  await optimizeImagesInBody(reqBody);
-  const bodyText = JSON.stringify(reqBody);
-  const bodyBytes = Buffer.byteLength(bodyText);
-  const summary = summarizeReqBody(reqBody);
+  const { bodyText, bodyBytes, summary } = await prepareResponsesPayload(reqBody);
   console.log(status("info", `responses payload bytes=${bodyBytes} input_items=${summary.items} images=${summary.images}`));
   const headers = buildHeaders({
     token,

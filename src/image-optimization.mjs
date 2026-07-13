@@ -1,14 +1,23 @@
+import { createHash } from "node:crypto";
 import { status } from "./status.mjs";
 
 const DEFAULT_IMG_CONCURRENCY = 2;
 const IMG_MAX_CONCURRENCY = 12;
 const DEFAULT_IMG_MAX_INPUT_PIXELS = 40 * 1000 * 1000;
+const DEFAULT_MAX_UPSTREAM_BODY_BYTES = 30 * 1024 * 1024;
+const MAX_OPTIMIZED_IMAGE_DIGESTS = 4096;
 const IMG_MAX_DIM = positiveInt(process.env.CCDX_IMG_MAX_DIM, 2048);
 const IMG_QUALITY = positiveInt(process.env.CCDX_IMG_QUALITY, 85, 100);
 const IMG_MIN_BYTES = nonNegativeInt(process.env.CCDX_IMG_MIN_BYTES, 100000);
 const IMG_MAX_INPUT_PIXELS = positiveInt(process.env.CCDX_IMG_MAX_INPUT_PIXELS, DEFAULT_IMG_MAX_INPUT_PIXELS);
+const MAX_UPSTREAM_BODY_BYTES = positiveInt(process.env.CCDX_MAX_UPSTREAM_BODY_BYTES, DEFAULT_MAX_UPSTREAM_BODY_BYTES);
 const IMG_OPT_DISABLED = process.env.CCDX_DISABLE_IMG_OPT === "1";
 const IMG_CONCURRENCY = parseImageConcurrency(process.env.CCDX_IMG_CONCURRENCY);
+const OVERSIZE_IMAGE_PROFILES = [
+  { maxDim: Math.min(IMG_MAX_DIM, 1600), quality: Math.min(IMG_QUALITY, 75) },
+  { maxDim: Math.min(IMG_MAX_DIM, 1280), quality: Math.min(IMG_QUALITY, 65) },
+];
+const optimizedImageDigests = new Set();
 let sharpImport = null;
 
 function positiveInt(value, fallback, max = Number.MAX_SAFE_INTEGER) {
@@ -32,7 +41,29 @@ async function sharp() {
   return mod.default || mod;
 }
 
-export async function optimizeImageDataUrl(dataUrl) {
+function imageDigest(raw) {
+  return createHash("sha256").update(raw).digest("base64url");
+}
+
+function touchOptimizedImage(digest) {
+  if (!optimizedImageDigests.delete(digest)) return false;
+  optimizedImageDigests.add(digest);
+  return true;
+}
+
+function rememberOptimizedImage(digest) {
+  optimizedImageDigests.delete(digest);
+  optimizedImageDigests.add(digest);
+  if (optimizedImageDigests.size > MAX_OPTIMIZED_IMAGE_DIGESTS) {
+    optimizedImageDigests.delete(optimizedImageDigests.values().next().value);
+  }
+}
+
+export async function optimizeImageDataUrl(dataUrl, {
+  maxDim = IMG_MAX_DIM,
+  quality = IMG_QUALITY,
+  force = false,
+} = {}) {
   if (IMG_OPT_DISABLED) return dataUrl;
   if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) return dataUrl;
   const match = /^data:(image\/[a-z+.-]+);base64,(.+)$/i.exec(dataUrl);
@@ -40,23 +71,22 @@ export async function optimizeImageDataUrl(dataUrl) {
   const mime = match[1].toLowerCase();
   const raw = Buffer.from(match[2], "base64");
   if (raw.length < IMG_MIN_BYTES || mime.includes("gif")) return dataUrl;
+  const digest = imageDigest(raw);
+  if (!force && touchOptimizedImage(digest)) return dataUrl;
 
   try {
     const resize = await sharp();
     const image = resize(raw, { failOn: "none", limitInputPixels: IMG_MAX_INPUT_PIXELS });
-    const metadata = await image.metadata();
-    if (mime === "image/webp"
-      && metadata.width <= IMG_MAX_DIM
-      && metadata.height <= IMG_MAX_DIM
-      && (!metadata.orientation || metadata.orientation === 1)) {
-      return dataUrl;
-    }
     const out = await image
       .rotate()
-      .resize(IMG_MAX_DIM, IMG_MAX_DIM, { fit: "inside", withoutEnlargement: true })
-      .webp({ quality: IMG_QUALITY, effort: 4 })
+      .resize(positiveInt(maxDim, IMG_MAX_DIM), positiveInt(maxDim, IMG_MAX_DIM), { fit: "inside", withoutEnlargement: true })
+      .webp({ quality: positiveInt(quality, IMG_QUALITY, 100), effort: 4 })
       .toBuffer();
-    if (out.length >= raw.length) return dataUrl;
+    if (out.length >= raw.length) {
+      rememberOptimizedImage(digest);
+      return dataUrl;
+    }
+    rememberOptimizedImage(imageDigest(out));
     const ratio = ((out.length / raw.length) * 100).toFixed(1);
     console.log(status("info", `image ${(raw.length / 1024).toFixed(0)}KB ${mime} -> ${(out.length / 1024).toFixed(0)}KB webp (${ratio}%)`));
     return `data:image/webp;base64,${out.toString("base64")}`;
@@ -135,6 +165,35 @@ export async function optimizeImagesInBody(reqBody, {
   if (tasks.length) await runWithConcurrency(tasks, concurrency);
   for (const apply of finalize) apply();
   return reqBody;
+}
+
+export async function prepareResponsesPayload(reqBody, {
+  maxBytes = MAX_UPSTREAM_BODY_BYTES,
+  profiles = OVERSIZE_IMAGE_PROFILES,
+} = {}) {
+  await optimizeImagesInBody(reqBody);
+  let bodyText = JSON.stringify(reqBody);
+  let bodyBytes = Buffer.byteLength(bodyText);
+  const summary = summarizeReqBody(reqBody);
+  const targetBytes = positiveInt(maxBytes, MAX_UPSTREAM_BODY_BYTES);
+  let adapted = false;
+
+  if (!IMG_OPT_DISABLED && summary.images > 0 && bodyBytes > targetBytes) {
+    for (const profile of profiles) {
+      const beforeBytes = bodyBytes;
+      bodyText = "";
+      await optimizeImagesInBody(reqBody, {
+        optimizeImage: (dataUrl) => optimizeImageDataUrl(dataUrl, { ...profile, force: true }),
+      });
+      bodyText = JSON.stringify(reqBody);
+      bodyBytes = Buffer.byteLength(bodyText);
+      adapted ||= bodyBytes < beforeBytes;
+      console.warn(status("warn", `responses payload ${beforeBytes}b exceeds ${targetBytes}b; image profile max_dim=${profile.maxDim} quality=${profile.quality} -> ${bodyBytes}b`));
+      if (bodyBytes <= targetBytes) break;
+    }
+  }
+
+  return { bodyText, bodyBytes, summary, adapted };
 }
 
 export function summarizeReqBody(reqBody) {

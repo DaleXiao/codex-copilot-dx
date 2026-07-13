@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { githubTokenPath } from "../src/auth.mjs";
-import { cacheModelEndpoints, computeInitiator, computeVision, buildHeaders, getCachedModelEndpoints, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, summarizeReqBody, parseImageConcurrency, parseUpstreamRetries, parseUpstreamRetryDelayMs, resetModelEndpointCacheForTests, runWithConcurrency, fetchCopilotUpstream, responses, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
+import { cacheModelEndpoints, computeInitiator, computeVision, buildHeaders, getCachedModelEndpoints, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, prepareResponsesPayload, summarizeReqBody, parseImageConcurrency, parseUpstreamRetries, parseUpstreamRetryDelayMs, resetModelEndpointCacheForTests, runWithConcurrency, fetchCopilotUpstream, responses, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
 
 function jsonResp(status, body) {
   return {
@@ -250,7 +250,7 @@ test("optimizeImageDataUrl: downscales large images to webp", async () => {
   assert.ok(Buffer.byteLength(output) < Buffer.byteLength(input));
 });
 
-test("optimizeImageDataUrl: does not re-encode an optimized in-bounds webp", async () => {
+test("optimizeImageDataUrl: compresses an unknown webp once and remembers the result", async () => {
   const pixels = Buffer.alloc(512 * 512 * 3);
   let seed = 0x12345678;
   for (let index = 0; index < pixels.length; index += 1) {
@@ -263,9 +263,67 @@ test("optimizeImageDataUrl: does not re-encode an optimized in-bounds webp", asy
   assert.ok(webp.length > 100000);
   const input = `data:image/webp;base64,${webp.toString("base64")}`;
 
-  const output = await optimizeImageDataUrl(input);
+  const originalLog = console.log;
+  console.log = () => {};
+  let output;
+  let repeated;
+  try {
+    output = await optimizeImageDataUrl(input);
+    repeated = await optimizeImageDataUrl(output);
+  } finally {
+    console.log = originalLog;
+  }
 
-  assert.equal(output, input);
+  assert.notEqual(output, input);
+  assert.ok(Buffer.byteLength(output) < Buffer.byteLength(input));
+  assert.equal(repeated, output);
+});
+
+test("prepareResponsesPayload: applies stronger image compression only above the payload budget", async () => {
+  const pixels = Buffer.alloc(512 * 512 * 3);
+  let seed = 0x87654321;
+  for (let index = 0; index < pixels.length; index += 1) {
+    seed = ((seed * 1664525) + 1013904223) >>> 0;
+    pixels[index] = seed >>> 24;
+  }
+  const webp = await sharp(pixels, { raw: { width: 512, height: 512, channels: 3 } })
+    .webp({ quality: 100 })
+    .toBuffer();
+  const reqBody = {
+    input: [{
+      type: "message",
+      content: [{ type: "input_image", image_url: `data:image/webp;base64,${webp.toString("base64")}` }],
+    }],
+  };
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  console.log = () => {};
+  console.warn = () => {};
+  let standardPayload;
+  let payload;
+  try {
+    standardPayload = await prepareResponsesPayload(reqBody, {
+      maxBytes: 1000000,
+      profiles: [{ maxDim: 128, quality: 50 }],
+    });
+    payload = await prepareResponsesPayload(reqBody, {
+      maxBytes: 100000,
+      profiles: [{ maxDim: 128, quality: 50 }],
+    });
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+  }
+
+  assert.equal(standardPayload.adapted, false);
+  assert.ok(standardPayload.bodyBytes < 1000000);
+  assert.equal(payload.adapted, true);
+  assert.ok(payload.bodyBytes <= 100000);
+  assert.equal(payload.bodyBytes, Buffer.byteLength(payload.bodyText));
+  const optimized = Buffer.from(reqBody.input[0].content[0].image_url.split(",", 2)[1], "base64");
+  const metadata = await sharp(optimized).metadata();
+  assert.ok(metadata.width <= 128);
+  assert.ok(metadata.height <= 128);
 });
 
 test("fetchCopilotUpstream: retries transient network errors", async () => {

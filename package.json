@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.4.28",
+  "version": "0.4.29",
   "description": "Use Codex Desktop, Claude Code, and Claude App with GitHub Copilot",
   "type": "module",
   "bin": {
@@ -25,15 +25,24 @@
     "responses-api"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dalexiao/codex-copilot-dx.git"
+  },
+  "homepage": "https://github.com/dalexiao/codex-copilot-dx#readme",
+  "bugs": {
+    "url": "https://github.com/dalexiao/codex-copilot-dx/issues"
+  },
   "engines": {
-    "node": ">=18.17"
+    "node": ">=22.15.0"
   },
   "scripts": {
     "test": "node --test",
     "test:smoke": "node scripts/offline-smoke.mjs",
     "test:e2e": "bash test/e2e.sh",
     "pack:check": "npm pack --dry-run --json",
-    "verify": "npm test && npm run test:smoke && npm run pack:check"
+    "verify": "npm test && npm run test:smoke && npm run pack:check",
+    "prepublishOnly": "npm run verify"
   },
   "dependencies": {
     "gpt-tokenizer": "^3.4.0",

@@ -179,7 +179,53 @@ test("HTTP streaming responses time out when the upstream body becomes idle", as
 
   assert.equal(result.status, 200);
   assert.match(result.text, /response\.output_text\.delta/);
-  assert.match(result.text, /aborted/i);
+  assert.match(result.text, /event: error\ndata: \{"type":"error"/);
+  assert.match(result.text, /stream_idle_timeout/);
+});
+
+test("HTTP native Responses stream emits a valid SSE error after headers", async () => {
+  const result = await invokeAdapter({
+    streamIdleTimeoutMs: 5,
+    responsesFn: (_body, { signal }) => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n"));
+          signal.addEventListener("abort", () => controller.error(new DOMException("This operation was aborted", "AbortError")), { once: true });
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+    },
+  }, {
+    body: { model: "gpt-5.6-sol", stream: true, input: "hello" },
+  });
+
+  assert.equal(result.status, 200);
+  assert.match(result.text, /response\.output_text\.delta/);
+  assert.match(result.text, /event: error\ndata: \{"type":"error"/);
+  assert.match(result.text, /stream_idle_timeout/);
+});
+
+test("HTTP Messages stream emits an Anthropic SSE error after headers", async () => {
+  const result = await invokeAdapter({
+    streamIdleTimeoutMs: 5,
+    chatCompletionsFn: (_body, { signal }) => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"));
+          signal.addEventListener("abort", () => controller.error(new DOMException("This operation was aborted", "AbortError")), { once: true });
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    },
+  }, {
+    url: "/v1/messages",
+    body: { model: "claude-sonnet-4.6", stream: true, messages: [{ role: "user", content: "hello" }] },
+  });
+
+  assert.equal(result.status, 200);
+  assert.match(result.text, /event: content_block_delta/);
+  assert.match(result.text, /event: error\ndata: \{"type":"error","error":\{"type":"api_error"/);
+  assert.match(result.text, /stream_idle_timeout/);
 });
 
 test("prepareResponsesRequest: expands previous response history locally", () => {
@@ -807,6 +853,17 @@ test("readJsonBody: parses gzip-compressed JSON request bodies", async () => {
   assert.deepEqual(parsed, { model: "gpt-5.5", input: "hello" });
 });
 
+test("readJsonBody: streams identity JSON across a split UTF-8 character", async () => {
+  const encoded = Buffer.from(JSON.stringify({ input: "你好" }));
+  const splitAt = encoded.indexOf(Buffer.from("你")) + 1;
+  const req = Readable.from([encoded.subarray(0, splitAt), encoded.subarray(splitAt)]);
+  req.headers = {};
+
+  const parsed = await readJsonBody(req);
+
+  assert.deepEqual(parsed, { input: "你好" });
+});
+
 test("readJsonBody: rejects raw request bodies above the configured limit", async () => {
   await assert.rejects(
     readJsonBody(jsonRequest(Buffer.from("{}"), undefined, { "content-length": "2" }), { maxBodyBytes: 1 }),
@@ -823,12 +880,8 @@ test("readJsonBody: rejects decoded request bodies above the configured limit", 
   );
 });
 
-test("readJsonBody: parses zstd-compressed JSON request bodies", async (t) => {
-  if (!zstdCompressAsync) {
-    t.skip("zstd compression is not available in this Node runtime");
-    return;
-  }
-
+test("readJsonBody: parses zstd-compressed JSON request bodies", async () => {
+  assert.ok(zstdCompressAsync, "Node 22.15+ must provide built-in zstd support");
   const compressed = await zstdCompressAsync(JSON.stringify({ model: "gpt-5.5", input: "hello" }));
   const parsed = await readJsonBody(jsonRequest(compressed, "zstd"));
 

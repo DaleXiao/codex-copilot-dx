@@ -51,3 +51,15 @@ test("webStreamLines: reports every received byte chunk", async () => {
   assert.deepEqual(chunks, [7, 1, 8]);
   assert.deepEqual(lines, ["data: a", "data: b"]);
 });
+
+test("webStreamLines: rejects an upstream line above the buffer limit", async () => {
+  const resp = responseFrom(["data: ", "x".repeat(32), "\n"]);
+
+  await assert.rejects(async () => {
+    for await (const _line of webStreamLines(resp, { maxBufferBytes: 16 })) {
+      // Consume the iterator.
+    }
+  }, /SSE buffer exceeds 16 bytes/);
+
+  assert.equal(resp.body.locked, false);
+});

@@ -2,8 +2,8 @@ import { promisify } from "node:util";
 import * as zlib from "node:zlib";
 import { status } from "./status.mjs";
 
-const DEFAULT_MAX_BODY_BYTES = 128 * 1024 * 1024;
-const DEFAULT_MAX_DECODED_BODY_BYTES = 256 * 1024 * 1024;
+const DEFAULT_MAX_BODY_BYTES = 64 * 1024 * 1024;
+const DEFAULT_MAX_DECODED_BODY_BYTES = 128 * 1024 * 1024;
 const gunzipAsync = promisify(zlib.gunzip);
 const inflateAsync = promisify(zlib.inflate);
 const brotliDecompressAsync = promisify(zlib.brotliDecompress);
@@ -27,8 +27,12 @@ function payloadTooLarge(kind, maxBytes) {
   return httpError(`${kind} request body exceeds ${maxBytes} bytes`, 413);
 }
 
+function requestContentLength(req) {
+  return Number.parseInt(req.headers?.["content-length"] || "", 10);
+}
+
 async function readRequestBuffer(req, maxBytes) {
-  const contentLength = Number.parseInt(req.headers?.["content-length"] || "", 10);
+  const contentLength = requestContentLength(req);
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
     throw payloadTooLarge("Raw", maxBytes);
   }
@@ -44,6 +48,35 @@ async function readRequestBuffer(req, maxBytes) {
   return Buffer.concat(chunks);
 }
 
+async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes) {
+  const contentLength = requestContentLength(req);
+  if (Number.isFinite(contentLength) && contentLength > maxBodyBytes) {
+    throw payloadTooLarge("Raw", maxBodyBytes);
+  }
+  if (Number.isFinite(contentLength) && contentLength > maxDecodedBodyBytes) {
+    throw payloadTooLarge("Decoded", maxDecodedBodyBytes);
+  }
+
+  const decoder = new TextDecoder();
+  let text = "";
+  let total = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > maxBodyBytes) throw payloadTooLarge("Raw", maxBodyBytes);
+    if (total > maxDecodedBodyBytes) throw payloadTooLarge("Decoded", maxDecodedBodyBytes);
+    text += decoder.decode(buffer, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
+function contentEncodings(contentEncoding) {
+  return String(contentEncoding || "identity")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 async function decompressBody(decompress, buffer, maxBytes) {
   try {
     return await decompress(buffer, { maxOutputLength: maxBytes });
@@ -56,10 +89,7 @@ async function decompressBody(decompress, buffer, maxBytes) {
 }
 
 async function decodeRequestBuffer(buffer, contentEncoding, maxBytes) {
-  const encodings = String(contentEncoding || "identity")
-    .split(",")
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
+  const encodings = contentEncodings(contentEncoding);
 
   let decoded = buffer;
   for (const encoding of encodings.reverse()) {
@@ -86,6 +116,10 @@ export async function readJsonBody(req, {
   maxBodyBytes = MAX_BODY_BYTES,
   maxDecodedBodyBytes = MAX_DECODED_BODY_BYTES,
 } = {}) {
+  const encodings = contentEncodings(req.headers?.["content-encoding"]);
+  if (encodings.every((encoding) => encoding === "identity")) {
+    return JSON.parse(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes));
+  }
   const buffer = await readRequestBuffer(req, maxBodyBytes);
   const decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"], maxDecodedBodyBytes);
   return JSON.parse(decoded.toString("utf8"));
@@ -93,7 +127,11 @@ export async function readJsonBody(req, {
 
 export function sendJsonError(res, err, fallbackStatus = 400) {
   if (res.destroyed || res.writableEnded) return;
-  if (!res.headersSent) res.writeHead(err?.statusCode || fallbackStatus, { "Content-Type": "application/json" });
+  if (res.headersSent) {
+    res.end();
+    return;
+  }
+  res.writeHead(err?.statusCode || fallbackStatus, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: err?.message || "Request failed" }));
 }
 

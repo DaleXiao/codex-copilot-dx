@@ -1,15 +1,52 @@
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function readLockSnapshot(lockPath) {
+  const stat = fs.statSync(lockPath);
+  let record = {};
+  try {
+    record = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+  } catch {}
+  return {
+    dev: stat.dev,
+    ino: stat.ino,
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    pid: Number(record.pid),
+    owner: typeof record.owner === "string" ? record.owner : "",
+  };
+}
+
+function processIsAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e?.code === "EPERM";
+  }
+}
+
+function sameLock(left, right) {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.mtimeMs === right.mtimeMs
+    && left.size === right.size
+    && left.owner === right.owner;
+}
+
 function maybeRemoveStaleLock(lockPath, staleMs, nowMs) {
   if (!Number.isFinite(staleMs) || staleMs <= 0) return false;
   try {
-    const stat = fs.statSync(lockPath);
-    if (nowMs - stat.mtimeMs <= staleMs) return false;
+    const first = readLockSnapshot(lockPath);
+    if (nowMs - first.mtimeMs <= staleMs || processIsAlive(first.pid)) return false;
+    const current = readLockSnapshot(lockPath);
+    if (!sameLock(first, current)) return false;
     fs.unlinkSync(lockPath);
     return true;
   } catch (e) {
@@ -26,12 +63,20 @@ export async function withFileLock(lockPath, fn, {
 } = {}) {
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   const started = now();
+  const owner = randomUUID();
   let fd = null;
 
   while (fd === null) {
     try {
-      fd = fs.openSync(lockPath, "wx", 0o600);
-      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }));
+      const candidateFd = fs.openSync(lockPath, "wx", 0o600);
+      try {
+        fs.writeFileSync(candidateFd, JSON.stringify({ pid: process.pid, owner, created_at: new Date().toISOString() }));
+        fd = candidateFd;
+      } catch (e) {
+        fs.closeSync(candidateFd);
+        try { fs.unlinkSync(lockPath); } catch {}
+        throw e;
+      }
       break;
     } catch (e) {
       if (e?.code !== "EEXIST") throw e;
@@ -50,10 +95,18 @@ export async function withFileLock(lockPath, fn, {
     try {
       if (fd !== null) fs.closeSync(fd);
     } finally {
+      let currentOwner = "";
       try {
-        fs.unlinkSync(lockPath);
+        currentOwner = readLockSnapshot(lockPath).owner;
       } catch (e) {
         if (e?.code !== "ENOENT") throw e;
+      }
+      if (currentOwner === owner) {
+        try {
+          fs.unlinkSync(lockPath);
+        } catch (e) {
+          if (e?.code !== "ENOENT") throw e;
+        }
       }
     }
   }

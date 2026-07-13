@@ -1,13 +1,25 @@
 import { status } from "./status.mjs";
 
-const IMG_MAX_DIM = Number.parseInt(process.env.CCDX_IMG_MAX_DIM || "2048", 10);
-const IMG_QUALITY = Number.parseInt(process.env.CCDX_IMG_QUALITY || "85", 10);
-const IMG_MIN_BYTES = Number.parseInt(process.env.CCDX_IMG_MIN_BYTES || "100000", 10);
-const DEFAULT_IMG_CONCURRENCY = 4;
+const DEFAULT_IMG_CONCURRENCY = 2;
 const IMG_MAX_CONCURRENCY = 12;
+const DEFAULT_IMG_MAX_INPUT_PIXELS = 40 * 1000 * 1000;
+const IMG_MAX_DIM = positiveInt(process.env.CCDX_IMG_MAX_DIM, 2048);
+const IMG_QUALITY = positiveInt(process.env.CCDX_IMG_QUALITY, 85, 100);
+const IMG_MIN_BYTES = nonNegativeInt(process.env.CCDX_IMG_MIN_BYTES, 100000);
+const IMG_MAX_INPUT_PIXELS = positiveInt(process.env.CCDX_IMG_MAX_INPUT_PIXELS, DEFAULT_IMG_MAX_INPUT_PIXELS);
 const IMG_OPT_DISABLED = process.env.CCDX_DISABLE_IMG_OPT === "1";
 const IMG_CONCURRENCY = parseImageConcurrency(process.env.CCDX_IMG_CONCURRENCY);
 let sharpImport = null;
+
+function positiveInt(value, fallback, max = Number.MAX_SAFE_INTEGER) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, max) : fallback;
+}
+
+function nonNegativeInt(value, fallback) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
 
 export function parseImageConcurrency(value) {
   const n = Number.parseInt(value, 10);
@@ -31,11 +43,20 @@ export async function optimizeImageDataUrl(dataUrl) {
 
   try {
     const resize = await sharp();
-    const out = await resize(raw, { failOn: "none" })
+    const image = resize(raw, { failOn: "none", limitInputPixels: IMG_MAX_INPUT_PIXELS });
+    const metadata = await image.metadata();
+    if (mime === "image/webp"
+      && metadata.width <= IMG_MAX_DIM
+      && metadata.height <= IMG_MAX_DIM
+      && (!metadata.orientation || metadata.orientation === 1)) {
+      return dataUrl;
+    }
+    const out = await image
       .rotate()
       .resize(IMG_MAX_DIM, IMG_MAX_DIM, { fit: "inside", withoutEnlargement: true })
       .webp({ quality: IMG_QUALITY, effort: 4 })
       .toBuffer();
+    if (out.length >= raw.length) return dataUrl;
     const ratio = ((out.length / raw.length) * 100).toFixed(1);
     console.log(status("info", `image ${(raw.length / 1024).toFixed(0)}KB ${mime} -> ${(out.length / 1024).toFixed(0)}KB webp (${ratio}%)`));
     return `data:image/webp;base64,${out.toString("base64")}`;
@@ -57,16 +78,16 @@ export async function runWithConcurrency(taskFns, concurrency) {
   }));
 }
 
-function visitImageParts(parts, tasks) {
+function visitImageParts(parts, tasks, optimizeImage) {
   if (!Array.isArray(parts)) return;
   for (const part of parts) {
     if (!part) continue;
     if (part.type === "input_image" && typeof part.image_url === "string") {
-      tasks.push(async () => { part.image_url = await optimizeImageDataUrl(part.image_url); });
+      tasks.push(async () => { part.image_url = await optimizeImage(part.image_url); });
     } else if (part.type === "image" && part.source?.type === "base64" && part.source?.data) {
       tasks.push(async () => {
         const dataUrl = `data:${part.source.media_type || "image/png"};base64,${part.source.data}`;
-        const optimized = await optimizeImageDataUrl(dataUrl);
+        const optimized = await optimizeImage(dataUrl);
         const match = /^data:([^;]+);base64,(.+)$/.exec(optimized);
         if (match) {
           part.source.media_type = match[1];
@@ -77,32 +98,31 @@ function visitImageParts(parts, tasks) {
   }
 }
 
-export async function optimizeImagesInBody(reqBody) {
+export async function optimizeImagesInBody(reqBody, {
+  concurrency = IMG_CONCURRENCY,
+  optimizeImage = optimizeImageDataUrl,
+} = {}) {
   if (IMG_OPT_DISABLED || !Array.isArray(reqBody.input)) return reqBody;
   const tasks = [];
+  const finalize = [];
 
   for (const item of reqBody.input) {
     if (!item) continue;
     if (item.type === "message" && Array.isArray(item.content)) {
-      visitImageParts(item.content, tasks);
+      visitImageParts(item.content, tasks, optimizeImage);
     }
     if (item.type === "function_call_output") {
       if (Array.isArray(item.output)) {
-        visitImageParts(item.output, tasks);
+        visitImageParts(item.output, tasks, optimizeImage);
       } else if (typeof item.output === "string") {
         const trimmed = item.output.trim();
         if (trimmed.startsWith("[")) {
           try {
             const parsed = JSON.parse(trimmed);
             if (Array.isArray(parsed)) {
-              const localTasks = [];
-              visitImageParts(parsed, localTasks);
-              if (localTasks.length) {
-                tasks.push(async () => {
-                  await runWithConcurrency(localTasks, IMG_CONCURRENCY);
-                  item.output = JSON.stringify(parsed);
-                });
-              }
+              const taskCount = tasks.length;
+              visitImageParts(parsed, tasks, optimizeImage);
+              if (tasks.length > taskCount) finalize.push(() => { item.output = JSON.stringify(parsed); });
             }
           } catch {
             // Leave non-JSON tool output untouched.
@@ -112,7 +132,8 @@ export async function optimizeImagesInBody(reqBody) {
     }
   }
 
-  if (tasks.length) await runWithConcurrency(tasks, IMG_CONCURRENCY);
+  if (tasks.length) await runWithConcurrency(tasks, concurrency);
+  for (const apply of finalize) apply();
   return reqBody;
 }
 

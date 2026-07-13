@@ -69,6 +69,7 @@ function isResponsesOnlyModel(model) {
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 120 * 1000;
 const DEFAULT_STREAM_HANDSHAKE_TIMEOUT_MS = 120 * 1000;
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 120 * 1000;
+const DEFAULT_MAX_SSE_BUFFER_BYTES = 8 * 1024 * 1024;
 
 function positiveInt(value, fallback) {
   const n = Number.parseInt(value, 10);
@@ -78,6 +79,7 @@ function positiveInt(value, fallback) {
 const UPSTREAM_TIMEOUT_MS = positiveInt(process.env.CCDX_UPSTREAM_TIMEOUT_MS, DEFAULT_UPSTREAM_TIMEOUT_MS);
 const STREAM_HANDSHAKE_TIMEOUT_MS = positiveInt(process.env.CCDX_STREAM_HANDSHAKE_TIMEOUT_MS, DEFAULT_STREAM_HANDSHAKE_TIMEOUT_MS);
 const STREAM_IDLE_TIMEOUT_MS = positiveInt(process.env.CCDX_STREAM_IDLE_TIMEOUT_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+const MAX_SSE_BUFFER_BYTES = positiveInt(process.env.CCDX_MAX_SSE_BUFFER_BYTES, DEFAULT_MAX_SSE_BUFFER_BYTES);
 
 export function requestPath(reqUrl) {
   return new URL(reqUrl || "/", "http://localhost").pathname;
@@ -324,6 +326,9 @@ function readSseEvents(buffer, onData) {
     const match = buffer.match(/\r?\n\r?\n/);
     if (!match) return buffer;
     const chunk = buffer.slice(0, match.index);
+    if (Buffer.byteLength(chunk) > MAX_SSE_BUFFER_BYTES) {
+      throw httpError(`Upstream SSE buffer exceeds ${MAX_SSE_BUFFER_BYTES} bytes`, 502);
+    }
     buffer = buffer.slice(match.index + match[0].length);
     const data = chunk
       .split(/\r?\n/)
@@ -332,6 +337,22 @@ function readSseEvents(buffer, onData) {
       .join("\n");
     if (data) onData(data);
   }
+}
+
+function streamErrorData(protocol, error, abort) {
+  const code = abort?.reason || "upstream_stream_error";
+  const message = `${code}: ${error?.message || "Upstream stream failed"}`;
+  if (protocol === "anthropic") {
+    return { type: "error", error: { type: "api_error", message } };
+  }
+  return { type: "error", code, message, param: null };
+}
+
+async function endStreamWithError(res, protocol, error, abort) {
+  if (res.destroyed || res.writableEnded) return;
+  const data = streamErrorData(protocol, error, abort);
+  await writeOrDrain(res, `event: error\ndata: ${JSON.stringify(data)}\n\n`).catch(() => false);
+  if (!res.destroyed && !res.writableEnded) res.end();
 }
 
 async function proxyCopilotResponses(reqContext, req, res, upstream = copilotResponses, options = {}) {
@@ -358,6 +379,9 @@ async function proxyCopilotResponses(reqContext, req, res, upstream = copilotRes
         const { done, value } = await reader.read();
         if (done) {
           buffer += decoder.decode();
+          if (Buffer.byteLength(buffer) > MAX_SSE_BUFFER_BYTES) {
+            throw httpError(`Upstream SSE buffer exceeds ${MAX_SSE_BUFFER_BYTES} bytes`, 502);
+          }
           readSseEvents(buffer, (data) => storeCompletedResponseFromSse(reqContext, data));
           res.end();
           return;
@@ -365,8 +389,14 @@ async function proxyCopilotResponses(reqContext, req, res, upstream = copilotRes
         options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
         buffer += decoder.decode(value, { stream: true });
         buffer = readSseEvents(buffer, (data) => storeCompletedResponseFromSse(reqContext, data));
+        if (Buffer.byteLength(buffer) > MAX_SSE_BUFFER_BYTES) {
+          throw httpError(`Upstream SSE buffer exceeds ${MAX_SSE_BUFFER_BYTES} bytes`, 502);
+        }
         if (!await writeOrDrain(res, value)) return;
       }
+    } catch (e) {
+      logRequestFailure("Responses", e, options.abort);
+      await endStreamWithError(res, "responses", e, options.abort);
     } finally {
       await reader.cancel().catch(() => {});
       reader.releaseLock();
@@ -508,11 +538,11 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
     }, { signal: options.signal });
   } catch (e) {
     const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(options.abort?.reason) : 502;
-    onError(statusCode, e.message);
+    await onError(statusCode, e.message);
     return;
   }
   if (!resp.ok) {
-    onError(resp.status, await resp.text());
+    await onError(resp.status, await resp.text());
     return;
   }
   options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
@@ -655,7 +685,8 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
       }
     }
   } catch (e) {
-    onError(500, e?.message || "upstream stream error");
+    const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(options.abort?.reason) : 502;
+    await onError(statusCode, e?.message || "upstream stream error");
     return;
   }
   await emitCompleted();
@@ -723,7 +754,14 @@ export function createAdapterHandler(options = {}) {
                   rememberResponseHistory(prepared, data.response);
                   recordResponsesUsage({ surface: prepared.surface, mode: "stream", model, response: data.response, event: data });
                 }
-              }, () => { if (!res.writableEnded) res.end(); }, (status, errMsg) => { if (!res.headersSent) res.writeHead(status || 500); res.end(errMsg); }, {
+              }, () => { if (!res.writableEnded) res.end(); }, async (statusCode, errMsg) => {
+                if (!res.headersSent) {
+                  res.writeHead(statusCode || 500, { "Content-Type": "text/plain; charset=utf-8" });
+                  res.end(errMsg);
+                  return;
+                }
+                await endStreamWithError(res, "responses", new Error(errMsg), abort);
+              }, {
                 signal: abort.signal,
                 abort,
                 streamIdleTimeoutMs,
@@ -855,18 +893,24 @@ export function createAdapterHandler(options = {}) {
             res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
             let messageId;
             let usage;
-            await streamAnthropicFromLines(
-              webStreamLines(upstream, {
-                onChunk: () => abort.setTimeout(streamIdleTimeoutMs, "stream_idle_timeout"),
-              }),
-              async (event, data) => {
-                if (event === "message_start") messageId = data.message?.id;
-                if (event === "message_delta") usage = data.usage;
-                await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-              },
-              requestedModel,
-              { forceModel: forceRequestedModel },
-            );
+            try {
+              await streamAnthropicFromLines(
+                webStreamLines(upstream, {
+                  onChunk: () => abort.setTimeout(streamIdleTimeoutMs, "stream_idle_timeout"),
+                }),
+                async (event, data) => {
+                  if (event === "message_start") messageId = data.message?.id;
+                  if (event === "message_delta") usage = data.usage;
+                  await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+                },
+                requestedModel,
+                { forceModel: forceRequestedModel },
+              );
+            } catch (e) {
+              logRequestFailure("Messages", e, abort);
+              await endStreamWithError(res, "anthropic", e, abort);
+              return;
+            }
             recordAnthropicUsage({ surface: "messages", mode: "stream", model: requestedModel, responseId: messageId, usage });
             if (!res.writableEnded) res.end();
           } else {

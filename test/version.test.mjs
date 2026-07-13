@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {
   checkForUpdate,
   fetchLatestVersion,
@@ -9,6 +10,11 @@ import {
 
 test("localPackageVersion: reads package.json version", () => {
   assert.match(localPackageVersion(), /^\d+\.\d+\.\d+/);
+});
+
+test("package requires the first Node release line with built-in zstd", () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(pkg.engines.node, ">=22.15.0");
 });
 
 test("isVersionGreater: compares numeric semver parts", () => {

@@ -17,7 +17,7 @@ Codex Auto-review requests use the hidden `codex-auto-review` model ID. The adap
 ## Prerequisites
 
 - GitHub Copilot subscription (Individual, Business, or Enterprise)
-- Node.js 18.17+
+- Node.js 22.15+ (required for built-in Zstandard request decompression)
 - [Codex Desktop](https://openai.com/codex), [Claude Code](https://claude.com/claude-code), and/or Claude App installed
 
 ## Usage
@@ -100,8 +100,9 @@ Environment variables:
 | `ADAPTER_HOST` | `127.0.0.1` | Host for the adapter; only loopback hosts are allowed by default |
 | `ADAPTER_PORT` | `2026` | Port for the adapter |
 | `CCDX_ALLOW_LAN` | unset | Set to `1` to allow non-loopback `ADAPTER_HOST` values such as `0.0.0.0`; exposes your Copilot-backed adapter beyond this machine |
-| `CCDX_MAX_BODY_BYTES` | `134217728` | Maximum compressed/raw request body size |
-| `CCDX_MAX_DECODED_BODY_BYTES` | `268435456` | Maximum decoded request body size after decompression |
+| `CCDX_MAX_BODY_BYTES` | `67108864` | Maximum compressed/raw request body size |
+| `CCDX_MAX_DECODED_BODY_BYTES` | `134217728` | Maximum decoded request body size after decompression |
+| `CCDX_MAX_SSE_BUFFER_BYTES` | `8388608` | Maximum buffered bytes for one unterminated upstream SSE line/event |
 | `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Timeout for non-streaming upstream Copilot requests |
 | `CCDX_STREAM_HANDSHAKE_TIMEOUT_MS` | `120000` | Timeout while waiting for upstream streaming response headers |
 | `CCDX_STREAM_IDLE_TIMEOUT_MS` | `120000` | Maximum idle time between upstream streaming body chunks |
@@ -114,7 +115,8 @@ Environment variables:
 | `CCDX_IMG_MAX_DIM` | `2048` | Max long edge in pixels for image downscaling |
 | `CCDX_IMG_QUALITY` | `85` | WebP quality used when re-encoding images |
 | `CCDX_IMG_MIN_BYTES` | `100000` | Images smaller than this are left untouched |
-| `CCDX_IMG_CONCURRENCY` | `4` | Concurrent image optimization tasks; values above `12` are capped at `12` |
+| `CCDX_IMG_CONCURRENCY` | `2` | Global concurrent image optimization tasks; values above `12` are capped at `12` |
+| `CCDX_IMG_MAX_INPUT_PIXELS` | `40000000` | Maximum decoded pixels accepted by `sharp` for one image |
 | `CCDX_DISABLE_IMG_OPT` | unset | Set to `1` to disable image optimization |
 | `CCDX_CONFIGURE_CLAUDE_DESKTOP` | unset | Set to `1` to write the Claude App 3P gateway profile during startup |
 | `CCDX_CLAUDE_DESKTOP_API_KEY` | generated for opt-in setup | Bearer key written into the Claude App profile and recognized by the adapter for model discovery |
@@ -151,7 +153,7 @@ codex-copilot-dx usage
 
 Long computer-use sessions can accumulate screenshots inside the conversation history. Each screenshot is shipped on later turns, and GitHub Copilot's `/responses` endpoint can reject oversized requests with `413 Payload Too Large`.
 
-The adapter automatically downsamples embedded screenshots to long-edge <= 2048 px and re-encodes them as WebP before forwarding `/v1/responses`.
+The adapter automatically downsamples embedded screenshots to long-edge <= 2048 px and re-encodes them as WebP before forwarding `/v1/responses`. It keeps an existing in-bounds WebP unchanged, never replaces an image with a larger encoding, and applies one global concurrency limit across direct and tool-output images.
 
 Newer ChatGPT/Codex clients can advertise an `image_gen` namespace that already exists upstream. The adapter removes that exact conflicting client tool before forwarding and retries once only when Copilot explicitly reports an image namespace collision. Image inputs and screenshot optimization remain enabled.
 

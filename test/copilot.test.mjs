@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import sharp from "sharp";
 import { githubTokenPath } from "../src/auth.mjs";
 import { cacheModelEndpoints, computeInitiator, computeVision, buildHeaders, getCachedModelEndpoints, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, summarizeReqBody, parseImageConcurrency, parseUpstreamRetries, parseUpstreamRetryDelayMs, resetModelEndpointCacheForTests, runWithConcurrency, fetchCopilotUpstream, responses, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
 
@@ -140,9 +141,9 @@ test("responsesEndpointPath: compact uses regular Responses upstream", () => {
 });
 
 test("parseImageConcurrency: defaults and caps image optimization concurrency", () => {
-  assert.equal(parseImageConcurrency(undefined), 4);
-  assert.equal(parseImageConcurrency("0"), 4);
-  assert.equal(parseImageConcurrency("bad"), 4);
+  assert.equal(parseImageConcurrency(undefined), 2);
+  assert.equal(parseImageConcurrency("0"), 2);
+  assert.equal(parseImageConcurrency("bad"), 2);
   assert.equal(parseImageConcurrency("12"), 12);
   assert.equal(parseImageConcurrency("99"), 12);
 });
@@ -181,6 +182,36 @@ test("runWithConcurrency: caps simultaneously running tasks", async () => {
   assert.ok(maxActive <= 3);
 });
 
+test("optimizeImagesInBody: applies one concurrency limit across nested tool outputs", async () => {
+  let active = 0;
+  let maxActive = 0;
+  let calls = 0;
+  const reqBody = {
+    input: Array.from({ length: 4 }, (_, group) => ({
+      type: "function_call_output",
+      output: JSON.stringify(Array.from({ length: 4 }, (_, image) => ({
+        type: "input_image",
+        image_url: `data:image/png;base64,${group}${image}`,
+      }))),
+    })),
+  };
+
+  await optimizeImagesInBody(reqBody, {
+    concurrency: 2,
+    optimizeImage: async (value) => {
+      calls += 1;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      active -= 1;
+      return value;
+    },
+  });
+
+  assert.equal(calls, 16);
+  assert.ok(maxActive <= 2);
+});
+
 test("summarizeReqBody: counts direct and stringified tool images", () => {
   const reqBody = {
     input: [
@@ -217,6 +248,24 @@ test("optimizeImageDataUrl: downscales large images to webp", async () => {
 
   assert.match(output, /^data:image\/webp;base64,/);
   assert.ok(Buffer.byteLength(output) < Buffer.byteLength(input));
+});
+
+test("optimizeImageDataUrl: does not re-encode an optimized in-bounds webp", async () => {
+  const pixels = Buffer.alloc(512 * 512 * 3);
+  let seed = 0x12345678;
+  for (let index = 0; index < pixels.length; index += 1) {
+    seed = ((seed * 1664525) + 1013904223) >>> 0;
+    pixels[index] = seed >>> 24;
+  }
+  const webp = await sharp(pixels, { raw: { width: 512, height: 512, channels: 3 } })
+    .webp({ quality: 100 })
+    .toBuffer();
+  assert.ok(webp.length > 100000);
+  const input = `data:image/webp;base64,${webp.toString("base64")}`;
+
+  const output = await optimizeImageDataUrl(input);
+
+  assert.equal(output, input);
 });
 
 test("fetchCopilotUpstream: retries transient network errors", async () => {

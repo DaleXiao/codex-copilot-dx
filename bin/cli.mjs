@@ -3,7 +3,7 @@
 import { ensureAuth, openCodex } from "../src/launcher.mjs";
 import { ensureCodexConfig } from "../src/config.mjs";
 import { ensureClaudeConfig } from "../src/claude-config.mjs";
-import { applyClaudeDesktopConfig, formatClaudeDesktopApplyResult, generatedClaudeDesktopApiKey } from "../src/claude-desktop-config.mjs";
+import { applyClaudeDesktopConfig, formatClaudeDesktopApplyResult, generatedClaudeDesktopApiKey, loadManagedClaudeDesktopApiKey } from "../src/claude-desktop-config.mjs";
 import { startAdapter } from "../src/adapter.mjs";
 import { cacheModelEndpoints, listModels, refreshVSCodeVersion } from "../src/copilot.mjs";
 import { claudeDesktopModelDefsFromCopilotModels, claudeDesktopModelIds, gptModelIdsFromCopilotModels, parseModelAliasEnv } from "../src/models.mjs";
@@ -14,7 +14,7 @@ import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
 import { runDoctor } from "../src/doctor.mjs";
 import { checkRunningAdapter } from "../src/running-adapter.mjs";
 import { assertSafeAdapterHost, isLoopbackHost } from "../src/security.mjs";
-import { loadModelCache, saveModelCache } from "../src/model-cache.mjs";
+import { isValidModelList, loadModelCache, saveModelCache } from "../src/model-cache.mjs";
 import { initializeModelRegistry, runInBackground } from "../src/startup.mjs";
 import { cliHelp, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
@@ -57,7 +57,7 @@ const MODEL_REFRESH_TIMEOUT_MS = RUNTIME.modelRefreshTimeoutMs;
 const EXISTING_ADAPTER_TIMEOUT_MS = RUNTIME.existingAdapterTimeoutMs;
 const CONFIGURE_CLAUDE_DESKTOP = CLI.configureClaudeDesktop || process.env.CCDX_CONFIGURE_CLAUDE_DESKTOP === "1";
 const LOGGING = configureLogging();
-const MODEL_REGISTRY = { modelDefs: undefined, source: "built-in" };
+const MODEL_REGISTRY = { modelDefs: undefined, models: undefined, source: "built-in" };
 let activeServer = null;
 let modelRefreshTimer = null;
 let shuttingDown = false;
@@ -68,13 +68,16 @@ if (LOGGING.filePath) {
 }
 
 function applyModelsToRegistry(models, source, { updateClaudeModels = true } = {}) {
+  if (!isValidModelList(models)) throw new Error("Copilot models response contained no valid models");
   const modelDefs = updateClaudeModels
     ? claudeDesktopModelDefsFromCopilotModels(models)
     : MODEL_REGISTRY.modelDefs;
-  if (updateClaudeModels && !modelDefs.length) throw new Error("Copilot models response contained no Claude models");
   cacheModelEndpoints(models);
-  if (updateClaudeModels) MODEL_REGISTRY.modelDefs = modelDefs;
-  MODEL_REGISTRY.source = source;
+  MODEL_REGISTRY.models = models;
+  if (updateClaudeModels && modelDefs.length) {
+    MODEL_REGISTRY.modelDefs = modelDefs;
+    MODEL_REGISTRY.source = source;
+  }
   return modelDefs;
 }
 
@@ -116,8 +119,10 @@ async function refreshClaudeDesktopModelDefs() {
     }
     if (customAliases) {
       console.log(status("info", "Using CCDX_CLAUDE_MODEL_ALIASES for Claude models"));
-    } else {
+    } else if (modelDefs?.length) {
       console.log(status("ok", `Refreshed Claude models from GitHub Copilot: ${modelDefs.map((model) => model.id).join(", ")}`));
+    } else {
+      console.log(status("warn", "Copilot models response contained no Claude models; using built-in Claude models"));
     }
     return modelDefs;
   } catch (e) {
@@ -130,7 +135,7 @@ async function refreshClaudeDesktopModelDefs() {
 }
 
 function currentClaudeDesktopApiKey() {
-  return process.env.CCDX_CLAUDE_DESKTOP_API_KEY || process.env.CCDX_PROXY_API_KEY || "";
+  return String(process.env.CCDX_CLAUDE_DESKTOP_API_KEY || process.env.CCDX_PROXY_API_KEY || "").trim();
 }
 
 async function reuseRunningAdapterIfAvailable() {
@@ -222,9 +227,17 @@ try {
     console.log(status("warn", `ADAPTER_HOST=${ADAPTER_HOST} exposes the adapter beyond loopback because CCDX_ALLOW_LAN=1 is set. Use only on trusted networks.`));
   }
 
-  const claudeDesktopApiKey = CONFIGURE_CLAUDE_DESKTOP
-    ? (currentClaudeDesktopApiKey() || generatedClaudeDesktopApiKey())
-    : currentClaudeDesktopApiKey();
+  const configuredClaudeDesktopApiKey = currentClaudeDesktopApiKey();
+  const restoredClaudeDesktopApiKey = configuredClaudeDesktopApiKey ? "" : loadManagedClaudeDesktopApiKey({
+    port: ADAPTER_PORT,
+    host: ADAPTER_HOST,
+  });
+  if (restoredClaudeDesktopApiKey) {
+    console.log(status("ok", "Restored Claude App gateway key from the managed profile"));
+  }
+  const claudeDesktopApiKey = configuredClaudeDesktopApiKey
+    || restoredClaudeDesktopApiKey
+    || (CONFIGURE_CLAUDE_DESKTOP ? generatedClaudeDesktopApiKey() : "");
 
   // Start the in-process adapter.
   activeServer = await startAdapter(ADAPTER_PORT, ADAPTER_HOST, {

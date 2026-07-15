@@ -12,6 +12,7 @@ import {
   DEFAULT_CLAUDE_DESKTOP_PROFILE_ID,
   formatClaudeDesktopApplyResult,
   generatedClaudeDesktopApiKey,
+  loadManagedClaudeDesktopApiKey,
   validateClaudeDesktopBaseUrl,
 } from "../src/claude-desktop-config.mjs";
 
@@ -125,6 +126,31 @@ test("applyClaudeDesktopConfig: brackets IPv6 loopback base URLs", () => {
   });
 
   assert.equal(readJson(result.profilePath).inferenceGatewayBaseUrl, "http://[::1]:2026");
+  assert.equal(loadManagedClaudeDesktopApiKey({ home, platform: "darwin", env: {}, host: "::1", port: 2026 }), "secret-client-key");
+});
+
+test("loadManagedClaudeDesktopApiKey: restores only the active matching managed profile", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-claude-desktop-restore-"));
+  const result = applyClaudeDesktopConfig({
+    home,
+    platform: "darwin",
+    env: {},
+    host: "127.0.0.1",
+    port: 2026,
+    gatewayApiKey: "persisted-client-key",
+    modelIds: ["claude-sonnet-4.6"],
+  });
+
+  assert.equal(loadManagedClaudeDesktopApiKey({ home, platform: "darwin", env: {}, port: 2026 }), "persisted-client-key");
+  assert.equal(loadManagedClaudeDesktopApiKey({ home, platform: "darwin", env: {}, port: 2027 }), "");
+
+  const paths = claudeDesktopPaths(home, "darwin", {});
+  writeJson(paths.metaPath, { appliedId: "another-profile" });
+  assert.equal(loadManagedClaudeDesktopApiKey({ home, platform: "darwin", env: {}, port: 2026 }), "");
+
+  writeJson(paths.metaPath, { appliedId: DEFAULT_CLAUDE_DESKTOP_PROFILE_ID });
+  fs.writeFileSync(result.profilePath, "not json");
+  assert.equal(loadManagedClaudeDesktopApiKey({ home, platform: "darwin", env: {}, port: 2026 }), "");
 });
 
 test("generatedClaudeDesktopApiKey: creates a local gateway key prefix", () => {

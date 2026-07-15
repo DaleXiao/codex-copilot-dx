@@ -73,6 +73,7 @@ function jsonByteLength(value, seen = new Set()) {
 
 const histories = new Map();
 const childrenById = new Map();
+const treeLru = new Map();
 const evictedIds = new Set();
 let totalBytes = 0;
 let maxBytes = positiveInt(process.env.CCDX_RESPONSE_HISTORY_MAX_BYTES, DEFAULT_MAX_BYTES);
@@ -81,6 +82,12 @@ let maxEntries = positiveInt(process.env.CCDX_RESPONSE_HISTORY_MAX_ENTRIES, DEFA
 function rememberEvictedId(id) {
   evictedIds.add(id);
   while (evictedIds.size > 256) evictedIds.delete(evictedIds.values().next().value);
+}
+
+function touchTree(rootId) {
+  if (!rootId) return;
+  treeLru.delete(rootId);
+  treeLru.set(rootId, true);
 }
 
 function linkChild(parentId, id) {
@@ -104,6 +111,7 @@ function unlinkChild(parentId, id) {
 function removeSubtree(rootId) {
   const pending = [rootId];
   const removed = new Set();
+  const affectedRoots = new Set();
   while (pending.length) {
     const id = pending.pop();
     if (removed.has(id)) continue;
@@ -114,25 +122,46 @@ function removeSubtree(rootId) {
   for (const id of removed) {
     const entry = histories.get(id);
     if (!entry) continue;
+    affectedRoots.add(entry.rootId);
     unlinkChild(entry.parentId, id);
     childrenById.delete(id);
     totalBytes -= entry.bytes;
     histories.delete(id);
     rememberEvictedId(id);
   }
+  for (const affectedRoot of affectedRoots) {
+    const entry = histories.get(affectedRoot);
+    if (!entry || entry.rootId !== affectedRoot) treeLru.delete(affectedRoot);
+  }
+  if (!histories.has(rootId)) treeLru.delete(rootId);
+}
+
+function assignSubtreeRoot(id, rootId) {
+  const pending = [id];
+  const seen = new Set();
+  while (pending.length) {
+    const currentId = pending.pop();
+    if (seen.has(currentId)) continue;
+    seen.add(currentId);
+    const entry = histories.get(currentId);
+    if (entry) entry.rootId = rootId;
+    const children = childrenById.get(currentId);
+    if (children) pending.push(...children);
+  }
 }
 
 function enforceLimits() {
   while (histories.size > maxEntries || totalBytes > maxBytes) {
-    const oldestId = histories.keys().next().value;
-    if (!oldestId) break;
-    removeSubtree(oldestId);
+    const oldestRootId = treeLru.keys().next().value;
+    if (!oldestRootId) break;
+    removeSubtree(oldestRootId);
   }
 }
 
 export function clearResponseHistoryForTests() {
   histories.clear();
   childrenById.clear();
+  treeLru.clear();
   evictedIds.clear();
   totalBytes = 0;
   maxBytes = DEFAULT_MAX_BYTES;
@@ -163,9 +192,12 @@ export function materializeResponseHistory(responseId) {
     chain.push(entry);
     currentId = entry.parentId;
   }
+  const rootId = chain[0]?.rootId;
   const items = [];
   for (const entry of chain.reverse()) items.push(...entry.inputItems, ...entry.outputItems);
-  return cloneJson(items);
+  const materialized = cloneJson(items);
+  touchTree(rootId);
+  return materialized;
 }
 
 export function rememberResponseHistoryNode({ id, parentId, inputItems, outputItems, takeOwnership = false }) {
@@ -176,20 +208,30 @@ export function rememberResponseHistoryNode({ id, parentId, inputItems, outputIt
     rememberEvictedId(id);
     return;
   }
+  const existing = histories.get(id);
+  const parentEntry = parentId ? histories.get(parentId) : null;
+  const rootId = parentEntry?.rootId || (parentId ? existing?.rootId : id) || id;
   const entry = {
     parentId: parentId || null,
+    rootId,
     inputItems: takeOwnership ? inputItems : cloneJson(inputItems),
     outputItems: takeOwnership ? outputItems : cloneJson(outputItems),
     bytes,
   };
-  const existing = histories.get(id);
+  const oldRootId = existing?.rootId;
   if (existing) {
     totalBytes -= existing.bytes;
     unlinkChild(existing.parentId, id);
   }
   histories.set(id, entry);
   linkChild(entry.parentId, id);
+  if (oldRootId && oldRootId !== rootId) {
+    assignSubtreeRoot(id, rootId);
+    const oldRoot = histories.get(oldRootId);
+    if (!oldRoot || oldRoot.rootId !== oldRootId) treeLru.delete(oldRootId);
+  }
   totalBytes += entry.bytes;
   evictedIds.delete(id);
+  touchTree(rootId);
   enforceLimits();
 }

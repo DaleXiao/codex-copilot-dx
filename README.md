@@ -87,7 +87,7 @@ Or set:
 CCDX_CONFIGURE_CLAUDE_DESKTOP=1 npx codex-copilot-dx@latest
 ```
 
-This writes a local Claude App 3P gateway profile that points to the adapter root URL, such as `http://127.0.0.1:2026`. The profile uses a generated local bearer key unless `CCDX_CLAUDE_DESKTOP_API_KEY` is set. Restart Claude App after running the command.
+This writes a local Claude App 3P gateway profile that points to the adapter root URL, such as `http://127.0.0.1:2026`. The profile uses a generated local bearer key unless `CCDX_CLAUDE_DESKTOP_API_KEY` is set. Later starts restore that key only from the active managed profile when its gateway URL matches the adapter. Restart Claude App after running the command.
 
 When reusing an already-running adapter, Claude App profile updates require `CCDX_CLAUDE_DESKTOP_API_KEY` or `CCDX_PROXY_API_KEY` so the profile key matches the running process. Otherwise the existing adapter is left untouched.
 
@@ -120,7 +120,7 @@ Environment variables:
 | `CCDX_IMG_MAX_INPUT_PIXELS` | `40000000` | Maximum decoded pixels accepted by `sharp` for one image |
 | `CCDX_DISABLE_IMG_OPT` | unset | Set to `1` to disable image optimization |
 | `CCDX_CONFIGURE_CLAUDE_DESKTOP` | unset | Set to `1` to write the Claude App 3P gateway profile during startup |
-| `CCDX_CLAUDE_DESKTOP_API_KEY` | generated for opt-in setup | Bearer key written into the Claude App profile and recognized by the adapter for model discovery |
+| `CCDX_CLAUDE_DESKTOP_API_KEY` | managed profile or generated for opt-in setup | Explicit bearer key written into the Claude App profile and recognized by the adapter for model discovery |
 | `CCDX_CLAUDE_MODEL_ALIASES` | built-in Claude aliases | Comma-separated Desktop-to-upstream aliases, for example `claude-sonnet-4-6=claude-sonnet-4.6` |
 | `CCDX_GITHUB_TOKEN` | unset | Explicit GitHub Copilot OAuth token to validate and import before device login |
 | `CCDX_GITHUB_TOKEN_PATH` | unset | Explicit file containing a GitHub Copilot OAuth token to validate and import before device login |
@@ -130,7 +130,7 @@ Environment variables:
 | `CCDX_TOKEN_LOCK_TIMEOUT_MS` | `600000` | Maximum time to wait for another local process to finish GitHub token login/import |
 | `CCDX_TOKEN_LOCK_STALE_MS` | `900000` | Age after which a stale GitHub token lock file can be removed |
 | `CCDX_EXISTING_ADAPTER_TIMEOUT_MS` | `500` | Timeout for detecting an already-running local adapter during startup |
-| `CCDX_MODEL_REFRESH_INTERVAL_MS` | `1800000` | Interval for refreshing Copilot model metadata; successful lists are cached locally as last-known-good data |
+| `CCDX_MODEL_REFRESH_INTERVAL_MS` | `7200000` | Interval for refreshing Copilot model metadata; successful lists are cached locally as last-known-good data |
 | `CCDX_RESPONSE_HISTORY_MAX_BYTES` | `67108864` | Total in-memory byte budget for locally expanded Responses history |
 | `CCDX_RESPONSE_HISTORY_MAX_ENTRIES` | `4096` | Maximum stored incremental Responses history nodes |
 | `CCDX_USAGE_PATH` | `~/.local/share/codex-copilot-dx/usage.jsonl` | Local JSONL token usage log |

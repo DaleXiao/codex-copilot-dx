@@ -25,7 +25,7 @@ test("parseRuntimeOptions: validates ports and startup timeouts", () => {
     adapterHost: "127.0.0.1",
     modelRefreshTimeoutMs: 5000,
     existingAdapterTimeoutMs: 500,
-    modelRefreshIntervalMs: 1800000,
+    modelRefreshIntervalMs: 7200000,
     upstreamTimeoutMs: 120000,
     streamHandshakeTimeoutMs: 120000,
     streamIdleTimeoutMs: 120000,

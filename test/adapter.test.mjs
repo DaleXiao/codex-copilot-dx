@@ -145,6 +145,22 @@ test("abort helpers classify expected abort errors", () => {
   assert.equal(abortErrorStatusCode("stream_handshake_timeout"), 504);
   assert.equal(abortErrorStatusCode("stream_idle_timeout"), 504);
   assert.equal(abortErrorStatusCode("client_closed"), 499);
+  assert.equal(abortErrorStatusCode(), 502);
+});
+
+test("HTTP proxy routes classify upstream network failures as Bad Gateway", async () => {
+  const failure = async () => { throw new Error("upstream unavailable"); };
+  const cases = [
+    [{ responsesFn: failure }, { body: { model: "gpt-5.6-sol", input: "hello" } }],
+    [{ responsesCompactFn: failure }, { url: "/v1/responses/compact", body: { model: "gpt-5.6-sol", input: "hello" } }],
+    [{ chatCompletionsFn: failure }, { url: "/v1/messages", body: { model: "claude-sonnet-4.6", messages: [{ role: "user", content: "hello" }] } }],
+  ];
+
+  for (const [options, request] of cases) {
+    const result = await invokeAdapter(options, request);
+    assert.equal(result.status, 502);
+    assert.deepEqual(JSON.parse(result.text), { error: "upstream unavailable" });
+  }
 });
 
 test("HTTP streaming responses time out while waiting for upstream headers", async () => {
@@ -226,6 +242,37 @@ test("HTTP Messages stream emits an Anthropic SSE error after headers", async ()
   assert.match(result.text, /event: content_block_delta/);
   assert.match(result.text, /event: error\ndata: \{"type":"error","error":\{"type":"api_error"/);
   assert.match(result.text, /stream_idle_timeout/);
+});
+
+test("HTTP Messages stream preserves text emitted after tool calls", async () => {
+  const body = [
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tu_1","function":{"name":"lookup","arguments":"{}"}}]}}]}',
+    'data: {"choices":[{"delta":{"content":"after tool"}}]}',
+    'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+    "data: [DONE]",
+    "",
+  ].join("\n\n");
+  const result = await invokeAdapter({
+    chatCompletionsFn: async () => new Response(body, { headers: { "Content-Type": "text/event-stream" } }),
+  }, {
+    url: "/v1/messages",
+    body: { model: "claude-sonnet-4.6", stream: true, messages: [{ role: "user", content: "hello" }] },
+  });
+
+  const events = result.text
+    .split(/\n\n/)
+    .map((block) => block.split("\n").find((line) => line.startsWith("data: "))?.slice(6))
+    .filter(Boolean)
+    .map((data) => JSON.parse(data));
+  const starts = events.filter((event) => event.type === "content_block_start");
+  assert.equal(result.status, 200);
+  assert.deepEqual(starts.map((event) => event.content_block.type), ["tool_use", "text"]);
+  assert.equal(events.find((event) => event.delta?.type === "text_delta")?.delta.text, "after tool");
+  assert.ok(
+    events.findIndex((event) => event.type === "content_block_stop" && event.index === 0)
+      < events.findIndex((event) => event.type === "content_block_start" && event.index === 1),
+  );
+  assert.equal(events.at(-1).type, "message_stop");
 });
 
 test("prepareResponsesRequest: expands previous response history locally", () => {
@@ -360,6 +407,118 @@ test("response history eviction removes descendants without affecting other root
   assert.equal(
     prepareResponsesRequest({ model: "gpt-5.5", previous_response_id: "resp_other", input: "next" }).body.input.length,
     2,
+  );
+  clearResponseHistoryForTests();
+});
+
+test("response history tree LRU preserves active image history for compaction", async () => {
+  clearResponseHistoryForTests();
+  configureResponseHistoryForTests({ maxBytes: 1_000_000, maxEntries: 4 });
+  const imageUrl = "data:image/png;base64,aW1hZ2U=";
+
+  const activeRoot = prepareResponsesRequest({
+    model: "gpt-5.6-sol",
+    input: [{
+      type: "message",
+      role: "user",
+      content: [{ type: "input_image", image_url: imageUrl }],
+    }],
+  });
+  rememberResponseHistory(activeRoot, { id: "resp_active_root", output: [] });
+  rememberResponseHistory(
+    prepareResponsesRequest({ model: "gpt-5.6-sol", input: "idle" }),
+    { id: "resp_idle", output: [] },
+  );
+  const activeChild = prepareResponsesRequest({
+    model: "gpt-5.6-sol",
+    previous_response_id: "resp_active_root",
+    input: "continue",
+  });
+  rememberResponseHistory(activeChild, { id: "resp_active_child", output: [] });
+  rememberResponseHistory(
+    prepareResponsesRequest({ model: "gpt-5.6-sol", input: "newer-a" }),
+    { id: "resp_newer_a", output: [] },
+  );
+  rememberResponseHistory(
+    prepareResponsesRequest({ model: "gpt-5.6-sol", input: "newer-b" }),
+    { id: "resp_newer_b", output: [] },
+  );
+
+  let compactBody;
+  const result = await invokeAdapter({
+    responsesCompactFn: async (body) => {
+      compactBody = body;
+      return new Response(JSON.stringify({ id: "resp_compacted", status: "completed", output: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  }, {
+    url: "/v1/responses/compact",
+    body: {
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_active_child",
+      input: "compact",
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(compactBody.input[0].content[0].image_url, imageUrl);
+  assert.throws(
+    () => prepareResponsesRequest({ model: "gpt-5.6-sol", previous_response_id: "resp_idle", input: "next" }),
+    /was evicted after reaching the local history limit/,
+  );
+  clearResponseHistoryForTests();
+});
+
+test("response history tree LRU treats successful materialization as recent use", () => {
+  clearResponseHistoryForTests();
+  configureResponseHistoryForTests({ maxBytes: 1_000_000, maxEntries: 2 });
+
+  rememberResponseHistory(
+    prepareResponsesRequest({ model: "gpt-5.6-sol", input: "active" }),
+    { id: "resp_active", output: [] },
+  );
+  rememberResponseHistory(
+    prepareResponsesRequest({ model: "gpt-5.6-sol", input: "idle" }),
+    { id: "resp_idle", output: [] },
+  );
+  prepareResponsesRequest({ model: "gpt-5.6-sol", previous_response_id: "resp_active", input: "retry" });
+  rememberResponseHistory(
+    prepareResponsesRequest({ model: "gpt-5.6-sol", input: "new" }),
+    { id: "resp_new", output: [] },
+  );
+
+  assert.equal(
+    prepareResponsesRequest({ model: "gpt-5.6-sol", previous_response_id: "resp_active", input: "next" }).body.input.length,
+    2,
+  );
+  assert.throws(
+    () => prepareResponsesRequest({ model: "gpt-5.6-sol", previous_response_id: "resp_idle", input: "next" }),
+    /was evicted after reaching the local history limit/,
+  );
+  clearResponseHistoryForTests();
+});
+
+test("response history tree LRU keeps hard limits for a single oversized tree", () => {
+  clearResponseHistoryForTests();
+  configureResponseHistoryForTests({ maxBytes: 1_000_000, maxEntries: 2 });
+
+  let previousId = null;
+  for (let index = 0; index < 3; index += 1) {
+    const prepared = prepareResponsesRequest({
+      model: "gpt-5.6-sol",
+      ...(previousId ? { previous_response_id: previousId } : {}),
+      input: `turn-${index}`,
+    });
+    previousId = `resp_hard_limit_${index}`;
+    rememberResponseHistory(prepared, { id: previousId, output: [] });
+  }
+
+  assert.equal(responseHistoryStats().entries, 0);
+  assert.throws(
+    () => prepareResponsesRequest({ model: "gpt-5.6-sol", previous_response_id: previousId, input: "next" }),
+    /was evicted after reaching the local history limit/,
   );
   clearResponseHistoryForTests();
 });
@@ -619,6 +778,57 @@ test("HTTP models route reads the live model registry on every request", async (
   assert.deepEqual(JSON.parse(second.text).data.map((model) => model.id), ["claude-b"]);
 });
 
+test("HTTP models route updates and falls back to last-known-good model metadata", async () => {
+  const cached = { data: [{ id: "gpt-cached", supported_endpoints: ["/responses"] }] };
+  const live = { data: [{ id: "gpt-live", supported_endpoints: ["/responses"] }] };
+  const modelRegistry = { models: cached };
+  const request = { method: "GET", url: "/v1/models" };
+
+  const liveResult = await invokeAdapter({
+    modelRegistry,
+    listModelsFn: async () => ({ status: 200, body: JSON.stringify(live) }),
+  }, request);
+  assert.equal(liveResult.status, 200);
+  assert.deepEqual(modelRegistry.models, live);
+
+  const networkFallback = await invokeAdapter({
+    modelRegistry,
+    listModelsFn: async () => { throw new Error("offline"); },
+  }, request);
+  assert.equal(networkFallback.status, 200);
+  assert.equal(networkFallback.headers["X-CCDX-Model-Source"], "last-known-good");
+  assert.deepEqual(JSON.parse(networkFallback.text), live);
+
+  const transientFallback = await invokeAdapter({
+    modelRegistry,
+    listModelsFn: async () => ({ status: 503, body: "unavailable" }),
+  }, request);
+  assert.equal(transientFallback.status, 200);
+  assert.deepEqual(JSON.parse(transientFallback.text), live);
+});
+
+test("HTTP models route does not hide authentication failures with last-known-good data", async () => {
+  const body = JSON.stringify({ error: "expired" });
+  const result = await invokeAdapter({
+    modelRegistry: { models: { data: [{ id: "gpt-cached" }] } },
+    listModelsFn: async () => ({ status: 401, body }),
+  }, { method: "GET", url: "/v1/models" });
+
+  assert.equal(result.status, 401);
+  assert.equal(result.text, body);
+  assert.equal(result.headers["X-CCDX-Model-Source"], undefined);
+});
+
+test("HTTP models route rejects malformed live data when no last-known-good list exists", async () => {
+  const result = await invokeAdapter({
+    modelRegistry: {},
+    listModelsFn: async () => ({ status: 200, body: JSON.stringify({ data: [] }) }),
+  }, { method: "GET", url: "/v1/models" });
+
+  assert.equal(result.status, 502);
+  assert.match(JSON.parse(result.text).error, /no valid models/);
+});
+
 test("stripInternalResponsesInputFields: drops only top-level internal input fields", () => {
   const input = [
     {
@@ -851,6 +1061,17 @@ test("readJsonBody: parses gzip-compressed JSON request bodies", async () => {
   const parsed = await readJsonBody(jsonRequest(compressed, "gzip"));
 
   assert.deepEqual(parsed, { model: "gpt-5.5", input: "hello" });
+});
+
+test("readJsonBody: marks invalid JSON and unsupported encodings as client errors", async () => {
+  await assert.rejects(
+    readJsonBody(jsonRequest(Buffer.from("{"))),
+    (error) => error.statusCode === 400 && /Invalid JSON request body/.test(error.message),
+  );
+  await assert.rejects(
+    readJsonBody(jsonRequest(Buffer.from("{}"), "compress")),
+    (error) => error.statusCode === 415 && /Unsupported Content-Encoding/.test(error.message),
+  );
 });
 
 test("readJsonBody: streams identity JSON across a split UTF-8 character", async () => {

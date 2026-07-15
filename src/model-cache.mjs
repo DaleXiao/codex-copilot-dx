@@ -10,7 +10,12 @@ export function modelCachePath(home = os.homedir()) {
 
 function modelData(models) {
   const data = Array.isArray(models) ? models : models?.data;
-  return Array.isArray(data) ? data : null;
+  if (!Array.isArray(data) || !data.some((model) => String(model?.id || "").trim())) return null;
+  return data;
+}
+
+export function isValidModelList(models) {
+  return modelData(models) !== null;
 }
 
 export function loadModelCache({
@@ -22,7 +27,7 @@ export function loadModelCache({
     const parsed = JSON.parse(fs.readFileSync(modelCachePath(home), "utf8"));
     const savedAt = Date.parse(parsed.saved_at);
     if (!Number.isFinite(savedAt) || now() - savedAt > maxAgeMs) return null;
-    if (!modelData(parsed.models)) return null;
+    if (!isValidModelList(parsed.models)) return null;
     return parsed.models;
   } catch {
     return null;
@@ -30,7 +35,7 @@ export function loadModelCache({
 }
 
 export function saveModelCache(models, { home = os.homedir() } = {}) {
-  if (!modelData(models)) return false;
+  if (!isValidModelList(models)) return false;
   const filePath = modelCachePath(home);
   const tempPath = `${filePath}.${process.pid}.tmp`;
   fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });

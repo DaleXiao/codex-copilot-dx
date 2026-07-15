@@ -161,6 +161,7 @@ export async function streamAnthropicFromLines(lineIterator, emit, model, option
   let finishReason = null;
   const toolBlocks = {}; // openaiIndex -> { anthropicIndex }
   let sawToolUse = false;
+  const trailingTextChunks = [];
   let outputTokens = 0;
 
   const ensureStart = async () => {
@@ -199,10 +200,14 @@ export async function streamAnthropicFromLines(lineIterator, emit, model, option
     const delta = choice.delta || {};
     await ensureStart();
 
-    if (delta.content && !sawToolUse) {
-      await openText();
-      await emit("content_block_delta", { type: "content_block_delta", index: blockIndex,
-        delta: { type: "text_delta", text: delta.content } });
+    if (delta.content) {
+      if (sawToolUse) {
+        trailingTextChunks.push(delta.content);
+      } else {
+        await openText();
+        await emit("content_block_delta", { type: "content_block_delta", index: blockIndex,
+          delta: { type: "text_delta", text: delta.content } });
+      }
     }
 
     if (Array.isArray(delta.tool_calls)) {
@@ -230,6 +235,14 @@ export async function streamAnthropicFromLines(lineIterator, emit, model, option
   if (textOpen) await closeText();
   for (const oi of Object.keys(toolBlocks)) {
     await emit("content_block_stop", { type: "content_block_stop", index: toolBlocks[oi].anthropicIndex });
+  }
+  if (trailingTextChunks.length) {
+    await openText();
+    for (const text of trailingTextChunks) {
+      await emit("content_block_delta", { type: "content_block_delta", index: blockIndex,
+        delta: { type: "text_delta", text } });
+    }
+    await closeText();
   }
 
   const stop_reason = finishReason ? mapStopReason(finishReason) : (sawToolUse ? "tool_use" : "end_turn");

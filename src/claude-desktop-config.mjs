@@ -159,6 +159,34 @@ function readActiveProfile(paths) {
   return readJsonFile(path.join(paths.configLibraryPath, `${appliedId}.json`), {});
 }
 
+export function loadManagedClaudeDesktopApiKey({
+  port = 2026,
+  host = "127.0.0.1",
+  home = os.homedir(),
+  platform = process.platform,
+  env = process.env,
+} = {}) {
+  try {
+    const paths = claudeDesktopPaths(home, platform, env);
+    const meta = readJsonFile(paths.metaPath, {});
+    if (String(meta.appliedId || "").trim() !== DEFAULT_CLAUDE_DESKTOP_PROFILE_ID) return "";
+
+    const profilePath = path.join(paths.configLibraryPath, `${DEFAULT_CLAUDE_DESKTOP_PROFILE_ID}.json`);
+    const profile = readJsonFile(profilePath, {});
+    if (profile.inferenceProvider !== "gateway") return "";
+    if (String(profile.inferenceGatewayAuthScheme || "").trim().toLowerCase() !== "bearer") return "";
+
+    const profileBaseUrl = String(profile.inferenceGatewayBaseUrl || "").trim();
+    validateClaudeDesktopBaseUrl(profileBaseUrl);
+    if (new URL(profileBaseUrl).href !== new URL(localGatewayBaseUrl(host, port)).href) return "";
+
+    const apiKey = String(profile.inferenceGatewayApiKey || "").trim();
+    return apiKey && apiKey !== "dummy" ? apiKey : "";
+  } catch {
+    return "";
+  }
+}
+
 export function applyClaudeDesktopConfig({
   port = 2026,
   host = "127.0.0.1",

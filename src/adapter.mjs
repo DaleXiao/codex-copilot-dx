@@ -4,6 +4,7 @@ import { chatCompletions, listModels, responses as copilotResponses, responsesCo
 import { webStreamLines } from "./stream.mjs";
 import { anthropicToChat, chatToAnthropic, streamAnthropicFromLines, countTokens } from "./anthropic.mjs";
 import { CODEX_AUTO_REVIEW_MODEL, claudeDesktopModelsResponse, resolveAnthropicModel, resolveOpenAIModel, modelIsResponsesOnly, modelSupportsChatCompletions } from "./models.mjs";
+import { isValidModelList } from "./model-cache.mjs";
 import { status } from "./status.mjs";
 import { recordAnthropicUsage, recordResponsesUsage } from "./usage.mjs";
 import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
@@ -100,6 +101,20 @@ export function shouldServeClaudeDesktopModels(req, claudeDesktopApiKey) {
   const token = bearerToken(req.headers);
   const xApiKey = req.headers?.["x-api-key"] || req.headers?.["X-Api-Key"] || req.headers?.["X-API-Key"] || "";
   return token === claudeDesktopApiKey || xApiKey === claudeDesktopApiKey;
+}
+
+function modelListCanUseLastKnownGood(statusCode) {
+  return [408, 425, 429].includes(statusCode) || statusCode >= 500;
+}
+
+function sendLastKnownGoodModels(res, modelRegistry) {
+  if (!isValidModelList(modelRegistry?.models) || res.destroyed || res.writableEnded) return false;
+  res.writeHead(200, {
+    "Content-Type": "application/json",
+    "X-CCDX-Model-Source": "last-known-good",
+  });
+  res.end(JSON.stringify(modelRegistry.models));
+  return true;
 }
 
 function responsesInputItems(input, { clone = true } = {}) {
@@ -784,16 +799,13 @@ export function createAdapterHandler(options = {}) {
                 res.end(JSON.stringify(resp));
               } catch (e) {
                 logRequestFailure("Responses", e, abort);
-                if (!res.destroyed && !res.writableEnded) {
-                  if (!res.headersSent) res.writeHead(e?.statusCode || 502);
-                  res.end("Bad Gateway");
-                }
+                sendJsonError(res, e, 502);
               }
             }
           }
         } catch (e) {
           logRequestFailure("Responses", e, abort);
-          sendJsonError(res, e);
+          sendJsonError(res, e, 502);
         } finally {
           abort.cleanup();
         }
@@ -823,7 +835,7 @@ export function createAdapterHandler(options = {}) {
           });
         } catch (e) {
           logRequestFailure("Responses compact", e, abort);
-          sendJsonError(res, e);
+          sendJsonError(res, e, 502);
         } finally {
           abort.cleanup();
         }
@@ -840,9 +852,29 @@ export function createAdapterHandler(options = {}) {
       const abort = createRequestAbort(req, res);
       abort.setTimeout(upstreamTimeoutMs);
       listModelsFn({ signal: abort.signal })
-        .then(({ status, body }) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(body); })
+        .then(({ status, body }) => {
+          if (status >= 200 && status < 300) {
+            let models;
+            try { models = JSON.parse(body); } catch {}
+            if (isValidModelList(models)) {
+              if (options.modelRegistry) {
+                options.modelRegistry.models = models;
+              }
+              res.writeHead(status, { "Content-Type": "application/json" });
+              res.end(body);
+              return;
+            }
+            if (sendLastKnownGoodModels(res, options.modelRegistry)) return;
+            sendJsonError(res, httpError("Copilot models response contained no valid models", 502), 502);
+            return;
+          }
+          if (modelListCanUseLastKnownGood(status) && sendLastKnownGoodModels(res, options.modelRegistry)) return;
+          res.writeHead(status, { "Content-Type": "application/json" });
+          res.end(body);
+        })
         .catch((e) => {
           logRequestFailure("Models", e, abort);
+          if (sendLastKnownGoodModels(res, options.modelRegistry)) return;
           if (!res.destroyed && !res.writableEnded) {
             if (!res.headersSent) res.writeHead(e?.statusCode || 502);
             res.end(JSON.stringify({ error: e.message }));
@@ -927,7 +959,7 @@ export function createAdapterHandler(options = {}) {
           }
         } catch (e) {
           logRequestFailure("Messages", e, abort);
-          sendJsonError(res, e);
+          sendJsonError(res, e, 502);
         } finally {
           abort.cleanup();
         }

@@ -238,18 +238,28 @@ test("streamAnthropicFromLines: waits for async emit backpressure", async () => 
   assert.equal(maxActive, 1);
 });
 
-test("streamAnthropicFromLines: text after tools does not open a new block", async () => {
+test("streamAnthropicFromLines: preserves text after tools in a valid trailing block", async () => {
   const lines = [
     'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tu_1","function":{"name":"f","arguments":"{}"}}]}}]}',
-    'data: {"choices":[{"delta":{"content":"trailing text"}}]}',
+    'data: {"choices":[{"delta":{"content":"trailing "}}]}',
+    'data: {"choices":[{"delta":{"content":"text"}}]}',
     'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
     'data: [DONE]',
   ];
   const ev = await collect(lines);
-  // No type:text content_block_start should be emitted after tool use.
-  const textStart = ev.find((e) => e[0] === "content_block_start" && e[1].content_block.type === "text");
-  assert.equal(textStart, undefined);
-  // The final event order stays valid.
+  const starts = ev.filter((e) => e[0] === "content_block_start");
+  assert.deepEqual(starts.map((e) => e[1].content_block.type), ["tool_use", "text"]);
+  assert.deepEqual(starts.map((e) => e[1].index), [0, 1]);
+
+  const toolStopIndex = ev.findIndex((e) => e[0] === "content_block_stop" && e[1].index === 0);
+  const textStartIndex = ev.findIndex((e) => e[0] === "content_block_start" && e[1].content_block.type === "text");
+  assert.ok(toolStopIndex < textStartIndex);
+  const trailingText = ev
+    .filter((e) => e[0] === "content_block_delta" && e[1].delta.type === "text_delta")
+    .map((e) => e[1].delta.text)
+    .join("");
+  assert.equal(trailingText, "trailing text");
+  assert.equal(ev.find((e) => e[0] === "message_delta")[1].delta.stop_reason, "tool_use");
   assert.equal(ev[ev.length - 1][0], "message_stop");
 });
 

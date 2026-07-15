@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadModelCache, modelCachePath, saveModelCache } from "../src/model-cache.mjs";
+import { isValidModelList, loadModelCache, modelCachePath, saveModelCache } from "../src/model-cache.mjs";
 
 test("model cache round-trips a valid last-known-good model list", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-cache-"));
@@ -26,4 +26,13 @@ test("model cache ignores stale and malformed data", () => {
   assert.equal(loadModelCache({ home, maxAgeMs: 1000, now: () => Date.parse("2020-01-02T00:00:00.000Z") }), null);
   fs.writeFileSync(filePath, "not json");
   assert.equal(loadModelCache({ home }), null);
+});
+
+test("model cache accepts only non-empty lists with a model id", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-cache-valid-"));
+
+  assert.equal(isValidModelList({ data: [] }), false);
+  assert.equal(isValidModelList({ data: [{}] }), false);
+  assert.equal(saveModelCache({ data: [] }, { home }), false);
+  assert.equal(saveModelCache({ data: [{ id: "gpt-test" }] }, { home }), true);
 });

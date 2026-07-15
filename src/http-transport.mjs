@@ -101,15 +101,23 @@ async function decodeRequestBuffer(buffer, contentEncoding, maxBytes) {
     } else if (encoding === "br") {
       decoded = await decompressBody(brotliDecompressAsync, decoded, maxBytes);
     } else if (encoding === "zstd") {
-      if (!zstdDecompressAsync) throw new Error("Unsupported Content-Encoding: zstd");
+      if (!zstdDecompressAsync) throw httpError("Unsupported Content-Encoding: zstd", 415);
       decoded = await decompressBody(zstdDecompressAsync, decoded, maxBytes);
     } else {
-      throw new Error(`Unsupported Content-Encoding: ${encoding}`);
+      throw httpError(`Unsupported Content-Encoding: ${encoding}`, 415);
     }
     if (decoded.length > maxBytes) throw payloadTooLarge("Decoded", maxBytes);
   }
   if (decoded.length > maxBytes) throw payloadTooLarge("Decoded", maxBytes);
   return decoded;
+}
+
+function parseRequestJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw httpError(`Invalid JSON request body: ${e.message}`, 400);
+  }
 }
 
 export async function readJsonBody(req, {
@@ -118,11 +126,17 @@ export async function readJsonBody(req, {
 } = {}) {
   const encodings = contentEncodings(req.headers?.["content-encoding"]);
   if (encodings.every((encoding) => encoding === "identity")) {
-    return JSON.parse(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes));
+    return parseRequestJson(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes));
   }
   const buffer = await readRequestBuffer(req, maxBodyBytes);
-  const decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"], maxDecodedBodyBytes);
-  return JSON.parse(decoded.toString("utf8"));
+  let decoded;
+  try {
+    decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"], maxDecodedBodyBytes);
+  } catch (e) {
+    if (e?.statusCode) throw e;
+    throw httpError(`Invalid compressed request body: ${e.message}`, 400);
+  }
+  return parseRequestJson(decoded.toString("utf8"));
 }
 
 export function sendJsonError(res, err, fallbackStatus = 400) {
@@ -167,7 +181,7 @@ export function isAbortLikeError(err) {
 export function abortErrorStatusCode(reason) {
   if (["upstream_timeout", "stream_handshake_timeout", "stream_idle_timeout"].includes(reason)) return 504;
   if (reason === "client_aborted" || reason === "client_closed") return 499;
-  return 400;
+  return 502;
 }
 
 export function createRequestAbort(req, res) {

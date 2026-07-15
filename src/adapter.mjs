@@ -890,7 +890,7 @@ export function createAdapterHandler(options = {}) {
         try {
           const parsed = await readJsonBody(req);
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(countTokens(parsed)));
+          res.end(JSON.stringify(await countTokens(parsed)));
         } catch (e) {
           sendJsonError(res, e);
         } finally {

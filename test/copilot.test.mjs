@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { githubTokenPath } from "../src/auth.mjs";
-import { cacheModelEndpoints, computeInitiator, computeVision, buildHeaders, getCachedModelEndpoints, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, prepareResponsesPayload, summarizeReqBody, parseImageConcurrency, parseUpstreamRetries, parseUpstreamRetryDelayMs, resetModelEndpointCacheForTests, runWithConcurrency, fetchCopilotUpstream, responses, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
+import { cacheModelEndpoints, computeInitiator, computeVision, buildHeaders, getCachedModelEndpoints, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, prepareResponsesPayload, summarizeReqBody, createTaskLimiter, parseImageConcurrency, parseUpstreamRetries, parseUpstreamRetryDelayMs, resetModelEndpointCacheForTests, runWithConcurrency, fetchCopilotUpstream, responses, listModels, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
 
 function jsonResp(status, body) {
   return {
@@ -182,6 +182,39 @@ test("runWithConcurrency: caps simultaneously running tasks", async () => {
   assert.ok(maxActive <= 3);
 });
 
+test("createTaskLimiter: caps work across independent callers", async () => {
+  const runLimited = createTaskLimiter(2);
+  let active = 0;
+  let maxActive = 0;
+  await Promise.all(Array.from({ length: 8 }, () => runLimited(async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 3));
+    active -= 1;
+  })));
+
+  assert.equal(maxActive, 2);
+});
+
+test("createTaskLimiter: removes aborted waiters and releases failed tasks", async () => {
+  const runLimited = createTaskLimiter(1);
+  let releaseFirst;
+  let secondRan = false;
+  const first = runLimited(() => new Promise((resolve) => { releaseFirst = resolve; }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const controller = new AbortController();
+  const second = runLimited(async () => { secondRan = true; }, { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(second, { name: "AbortError" });
+  assert.equal(secondRan, false);
+
+  releaseFirst();
+  await first;
+  await assert.rejects(runLimited(async () => { throw new Error("failed"); }), /failed/);
+  assert.equal(await runLimited(async () => "next"), "next");
+});
+
 test("optimizeImagesInBody: applies one concurrency limit across nested tool outputs", async () => {
   let active = 0;
   let maxActive = 0;
@@ -210,6 +243,36 @@ test("optimizeImagesInBody: applies one concurrency limit across nested tool out
 
   assert.equal(calls, 16);
   assert.ok(maxActive <= 2);
+});
+
+test("optimizeImagesInBody: deduplicates identical images within one pass", async () => {
+  const original = "data:image/png;base64,QUJDRA==";
+  const optimized = "data:image/webp;base64,RUZHSA==";
+  const reqBody = {
+    input: [
+      { type: "message", content: [
+        { type: "input_image", image_url: original },
+        { type: "input_image", image_url: original },
+      ] },
+      { type: "function_call_output", output: JSON.stringify([
+        { type: "input_image", image_url: original },
+        { type: "input_image", image_url: original },
+      ]) },
+    ],
+  };
+  let calls = 0;
+
+  await optimizeImagesInBody(reqBody, {
+    concurrency: 4,
+    optimizeImage: async () => {
+      calls += 1;
+      return optimized;
+    },
+  });
+
+  assert.equal(calls, 1);
+  assert.deepEqual(reqBody.input[0].content.map((part) => part.image_url), [optimized, optimized]);
+  assert.deepEqual(JSON.parse(reqBody.input[1].output).map((part) => part.image_url), [optimized, optimized]);
 });
 
 test("summarizeReqBody: counts direct and stringified tool images", () => {
@@ -248,6 +311,15 @@ test("optimizeImageDataUrl: downscales large images to webp", async () => {
 
   assert.match(output, /^data:image\/webp;base64,/);
   assert.ok(Buffer.byteLength(output) < Buffer.byteLength(input));
+});
+
+test("optimizeImageDataUrl: rejects an aborted queued image operation", async () => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="2600" height="1800"><rect width="2600" height="1800" fill="white"/><!-- ${"cancel ".repeat(18000)} --></svg>`;
+  const input = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(optimizeImageDataUrl(input, { signal: controller.signal }), { name: "AbortError" });
 });
 
 test("optimizeImageDataUrl: compresses an unknown webp once and remembers the result", async () => {
@@ -431,6 +503,142 @@ test("responses: retries a Copilot connect timeout before returning upstream res
   } finally {
     console.log = originalLog;
     console.warn = originalWarn;
+    resetCopilotTokenForTests();
+  }
+});
+
+test("listModels: shares one in-flight request across concurrent callers", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-models-singleflight-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    await getCopilotToken({
+      home,
+      fetchImpl: async () => jsonResp(200, {
+        token: "copilot_models",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    });
+
+    let calls = 0;
+    let release;
+    const fetchImpl = async () => {
+      calls += 1;
+      await new Promise((resolve) => { release = resolve; });
+      return new Response(JSON.stringify({ data: [{ id: "gpt-5.6-sol", supported_endpoints: ["/responses"] }] }), { status: 200 });
+    };
+
+    const first = listModels({ fetchImpl });
+    const second = listModels({ fetchImpl });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(calls, 1);
+    release();
+
+    const results = await Promise.all([first, second]);
+    assert.deepEqual(results[0], results[1]);
+    assert.equal(calls, 1);
+  } finally {
+    console.log = originalLog;
+    resetCopilotTokenForTests();
+  }
+});
+
+test("listModels: one caller abort does not cancel other waiters", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-models-abort-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    await getCopilotToken({
+      home,
+      fetchImpl: async () => jsonResp(200, {
+        token: "copilot_models_abort",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    });
+
+    let calls = 0;
+    let release;
+    let upstreamSignal;
+    const fetchImpl = async (_url, options) => {
+      calls += 1;
+      upstreamSignal = options.signal;
+      await new Promise((resolve) => { release = resolve; });
+      return new Response(JSON.stringify({ data: [{ id: "gpt-5.6-sol", supported_endpoints: ["/responses"] }] }), { status: 200 });
+    };
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = listModels({ signal: firstController.signal, fetchImpl });
+    const second = listModels({ signal: secondController.signal, fetchImpl });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    firstController.abort();
+    await assert.rejects(first, { name: "AbortError" });
+    assert.equal(upstreamSignal.aborted, false);
+    release();
+
+    const result = await second;
+    assert.equal(result.status, 200);
+    assert.equal(calls, 1);
+  } finally {
+    console.log = originalLog;
+    resetCopilotTokenForTests();
+  }
+});
+
+test("listModels: aborts an orphaned flight and allows the next request", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-models-orphan-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    await getCopilotToken({
+      home,
+      fetchImpl: async () => jsonResp(200, {
+        token: "copilot_models_orphan",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    });
+
+    let calls = 0;
+    let firstUpstreamSignal;
+    const fetchImpl = async (_url, options) => {
+      calls += 1;
+      if (calls > 1) {
+        return new Response(JSON.stringify({ data: [{ id: "gpt-5.6-sol", supported_endpoints: ["/responses"] }] }), { status: 200 });
+      }
+      firstUpstreamSignal = options.signal;
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+      });
+    };
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = listModels({ signal: firstController.signal, fetchImpl });
+    const second = listModels({ signal: secondController.signal, fetchImpl });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    firstController.abort();
+    secondController.abort();
+    await Promise.all([
+      assert.rejects(first, { name: "AbortError" }),
+      assert.rejects(second, { name: "AbortError" }),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(firstUpstreamSignal.aborted, true);
+
+    const next = await listModels({ fetchImpl });
+    assert.equal(next.status, 200);
+    assert.equal(calls, 2);
+  } finally {
+    console.log = originalLog;
     resetCopilotTokenForTests();
   }
 });

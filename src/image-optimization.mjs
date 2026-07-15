@@ -35,6 +35,66 @@ export function parseImageConcurrency(value) {
   return Number.isFinite(n) && n > 0 ? Math.min(n, IMG_MAX_CONCURRENCY) : DEFAULT_IMG_CONCURRENCY;
 }
 
+function abortError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error("The operation was aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+export function createTaskLimiter(concurrency) {
+  const limit = parseImageConcurrency(concurrency);
+  const queue = [];
+  let active = 0;
+
+  const drain = () => {
+    while (active < limit && queue.length) {
+      const entry = queue.shift();
+      if (entry.cancelled) continue;
+      entry.cleanup();
+      if (entry.signal?.aborted) {
+        entry.reject(abortError(entry.signal));
+        continue;
+      }
+      active += 1;
+      entry.resolve();
+    }
+  };
+
+  return async function runLimited(task, { signal } = {}) {
+    if (signal?.aborted) throw abortError(signal);
+    await new Promise((resolve, reject) => {
+      const entry = {
+        cancelled: false,
+        cleanup: () => signal?.removeEventListener("abort", onAbort),
+        reject,
+        resolve,
+        signal,
+      };
+      const onAbort = () => {
+        entry.cancelled = true;
+        entry.cleanup();
+        reject(abortError(signal));
+        drain();
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      queue.push(entry);
+      if (signal?.aborted) onAbort();
+      else drain();
+    });
+
+    try {
+      if (signal?.aborted) throw abortError(signal);
+      return await task();
+    } finally {
+      active -= 1;
+      drain();
+    }
+  };
+}
+
+const runGlobalImageTask = createTaskLimiter(IMG_CONCURRENCY);
+
 async function sharp() {
   sharpImport ||= import("sharp");
   const mod = await sharpImport;
@@ -63,6 +123,7 @@ export async function optimizeImageDataUrl(dataUrl, {
   maxDim = IMG_MAX_DIM,
   quality = IMG_QUALITY,
   force = false,
+  signal,
 } = {}) {
   if (IMG_OPT_DISABLED) return dataUrl;
   if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) return dataUrl;
@@ -75,22 +136,26 @@ export async function optimizeImageDataUrl(dataUrl, {
   if (!force && touchOptimizedImage(digest)) return dataUrl;
 
   try {
-    const resize = await sharp();
-    const image = resize(raw, { failOn: "none", limitInputPixels: IMG_MAX_INPUT_PIXELS });
-    const out = await image
-      .rotate()
-      .resize(positiveInt(maxDim, IMG_MAX_DIM), positiveInt(maxDim, IMG_MAX_DIM), { fit: "inside", withoutEnlargement: true })
-      .webp({ quality: positiveInt(quality, IMG_QUALITY, 100), effort: 4 })
-      .toBuffer();
-    if (out.length >= raw.length) {
-      rememberOptimizedImage(digest);
-      return dataUrl;
-    }
-    rememberOptimizedImage(imageDigest(out));
-    const ratio = ((out.length / raw.length) * 100).toFixed(1);
-    console.log(status("info", `image ${(raw.length / 1024).toFixed(0)}KB ${mime} -> ${(out.length / 1024).toFixed(0)}KB webp (${ratio}%)`));
-    return `data:image/webp;base64,${out.toString("base64")}`;
+    return await runGlobalImageTask(async () => {
+      const resize = await sharp();
+      const image = resize(raw, { failOn: "none", limitInputPixels: IMG_MAX_INPUT_PIXELS });
+      const out = await image
+        .rotate()
+        .resize(positiveInt(maxDim, IMG_MAX_DIM), positiveInt(maxDim, IMG_MAX_DIM), { fit: "inside", withoutEnlargement: true })
+        .webp({ quality: positiveInt(quality, IMG_QUALITY, 100), effort: 4 })
+        .toBuffer();
+      if (signal?.aborted) throw abortError(signal);
+      if (out.length >= raw.length) {
+        rememberOptimizedImage(digest);
+        return dataUrl;
+      }
+      rememberOptimizedImage(imageDigest(out));
+      const ratio = ((out.length / raw.length) * 100).toFixed(1);
+      console.log(status("info", `image ${(raw.length / 1024).toFixed(0)}KB ${mime} -> ${(out.length / 1024).toFixed(0)}KB webp (${ratio}%)`));
+      return `data:image/webp;base64,${out.toString("base64")}`;
+    }, { signal });
   } catch (e) {
+    if (signal?.aborted || e?.name === "AbortError") throw e;
     console.warn(status("warn", `image optimize failed (${mime}, ${raw.length}b): ${e.message}`));
     return dataUrl;
   }
@@ -131,19 +196,27 @@ function visitImageParts(parts, tasks, optimizeImage) {
 export async function optimizeImagesInBody(reqBody, {
   concurrency = IMG_CONCURRENCY,
   optimizeImage = optimizeImageDataUrl,
+  signal,
 } = {}) {
   if (IMG_OPT_DISABLED || !Array.isArray(reqBody.input)) return reqBody;
   const tasks = [];
   const finalize = [];
+  const optimizedByDataUrl = new Map();
+  const optimizeOnce = (dataUrl) => {
+    if (!optimizedByDataUrl.has(dataUrl)) {
+      optimizedByDataUrl.set(dataUrl, Promise.resolve().then(() => optimizeImage(dataUrl, { signal })));
+    }
+    return optimizedByDataUrl.get(dataUrl);
+  };
 
   for (const item of reqBody.input) {
     if (!item) continue;
     if (item.type === "message" && Array.isArray(item.content)) {
-      visitImageParts(item.content, tasks, optimizeImage);
+      visitImageParts(item.content, tasks, optimizeOnce);
     }
     if (item.type === "function_call_output") {
       if (Array.isArray(item.output)) {
-        visitImageParts(item.output, tasks, optimizeImage);
+        visitImageParts(item.output, tasks, optimizeOnce);
       } else if (typeof item.output === "string") {
         const trimmed = item.output.trim();
         if (trimmed.startsWith("[")) {
@@ -151,7 +224,7 @@ export async function optimizeImagesInBody(reqBody, {
             const parsed = JSON.parse(trimmed);
             if (Array.isArray(parsed)) {
               const taskCount = tasks.length;
-              visitImageParts(parsed, tasks, optimizeImage);
+              visitImageParts(parsed, tasks, optimizeOnce);
               if (tasks.length > taskCount) finalize.push(() => { item.output = JSON.stringify(parsed); });
             }
           } catch {
@@ -170,8 +243,9 @@ export async function optimizeImagesInBody(reqBody, {
 export async function prepareResponsesPayload(reqBody, {
   maxBytes = MAX_UPSTREAM_BODY_BYTES,
   profiles = OVERSIZE_IMAGE_PROFILES,
+  signal,
 } = {}) {
-  await optimizeImagesInBody(reqBody);
+  await optimizeImagesInBody(reqBody, { signal });
   let bodyText = JSON.stringify(reqBody);
   let bodyBytes = Buffer.byteLength(bodyText);
   const summary = summarizeReqBody(reqBody);
@@ -183,7 +257,8 @@ export async function prepareResponsesPayload(reqBody, {
       const beforeBytes = bodyBytes;
       bodyText = "";
       await optimizeImagesInBody(reqBody, {
-        optimizeImage: (dataUrl) => optimizeImageDataUrl(dataUrl, { ...profile, force: true }),
+        optimizeImage: (dataUrl) => optimizeImageDataUrl(dataUrl, { ...profile, force: true, signal }),
+        signal,
       });
       bodyText = JSON.stringify(reqBody);
       bodyBytes = Buffer.byteLength(bodyText);

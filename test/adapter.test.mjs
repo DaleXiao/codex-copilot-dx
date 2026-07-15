@@ -89,6 +89,16 @@ test("requestPath: ignores query strings on other API routes", () => {
   assert.equal(requestPath("/v1/models?foo=bar"), "/v1/models");
 });
 
+test("HTTP count_tokens route awaits the lazy tokenizer", async () => {
+  const result = await invokeAdapter({}, {
+    url: "/v1/messages/count_tokens",
+    body: { model: "m", messages: [{ role: "user", content: "hello world" }] },
+  });
+
+  assert.equal(result.status, 200);
+  assert.ok(JSON.parse(result.text).input_tokens > 0);
+});
+
 test("shouldServeClaudeDesktopModels: detects only configured Desktop keys", () => {
   assert.equal(shouldServeClaudeDesktopModels({ headers: { "anthropic-version": "2023-06-01" } }, ""), false);
   assert.equal(shouldServeClaudeDesktopModels({ headers: { authorization: "Bearer ccdx_secret" } }, "ccdx_secret"), true);

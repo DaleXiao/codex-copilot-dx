@@ -263,21 +263,22 @@ test("streamAnthropicFromLines: preserves text after tools in a valid trailing b
   assert.equal(ev[ev.length - 1][0], "message_stop");
 });
 
-test("countTokens: returns positive input_tokens", () => {
-  const r = countTokens({ model: "m", messages: [{ role: "user", content: "hello world how many tokens is this" }] });
+test("countTokens: returns positive input_tokens", async () => {
+  const r = await countTokens({ model: "m", messages: [{ role: "user", content: "hello world how many tokens is this" }] });
   assert.equal(typeof r.input_tokens, "number");
   assert.ok(r.input_tokens > 0);
 });
 
-test("countTokens: more content yields more tokens", () => {
-  const small = countTokens({ model: "m", messages: [{ role: "user", content: "hi" }] }).input_tokens;
-  const big = countTokens({ model: "m", system: "you are a helpful assistant with many rules",
+test("countTokens: more content yields more tokens", async () => {
+  const small = (await countTokens({ model: "m", messages: [{ role: "user", content: "hi" }] })).input_tokens;
+  const big = (await countTokens({ model: "m", system: "you are a helpful assistant with many rules",
     tools: [{ name: "t", description: "a tool", input_schema: { type: "object", properties: { x: { type: "string" } } } }],
-    messages: [{ role: "user", content: "hello world this is a much longer message with more tokens" }] }).input_tokens;
+    messages: [{ role: "user", content: "hello world this is a much longer message with more tokens" }] })).input_tokens;
   assert.ok(big > small);
 });
 
-test("countTokens: deterministic for the same input", () => {
+test("countTokens: deterministic for the same input", async () => {
   const body = { model: "m", messages: [{ role: "user", content: "stable input" }] };
-  assert.equal(countTokens(body).input_tokens, countTokens(body).input_tokens);
+  const results = await Promise.all([countTokens(body), countTokens(body), countTokens(body)]);
+  assert.deepEqual(results, [results[0], results[0], results[0]]);
 });

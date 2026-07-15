@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.4.32",
+  "version": "0.4.33",
   "description": "Use Codex Desktop, Claude Code, and Claude App with GitHub Copilot",
   "author": "Dale Xiao",
   "type": "module",
@@ -10,6 +10,7 @@
   "files": [
     "bin/",
     "src/",
+    "scripts/benchmark.mjs",
     "README.md"
   ],
   "keywords": [
@@ -41,6 +42,7 @@
     "test": "node --test",
     "test:smoke": "node scripts/offline-smoke.mjs",
     "test:e2e": "bash test/e2e.sh",
+    "bench": "node scripts/benchmark.mjs",
     "pack:check": "npm pack --dry-run --json",
     "verify": "npm test && npm run test:smoke && npm run pack:check",
     "prepublishOnly": "npm run verify"

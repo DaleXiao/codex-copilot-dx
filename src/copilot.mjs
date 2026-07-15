@@ -9,6 +9,7 @@ import { prepareResponsesPayload } from "./image-optimization.mjs";
 export {
   optimizeImageDataUrl,
   optimizeImagesInBody,
+  createTaskLimiter,
   parseImageConcurrency,
   prepareResponsesPayload,
   runWithConcurrency,
@@ -266,6 +267,7 @@ export async function refreshVSCodeVersion() {
 let copilotToken = null;
 let copilotTokenExpiry = 0;
 let copilotTokenRefresh = null;
+const modelListFlights = new Map();
 
 function getGithubToken({ home = os.homedir() } = {}) {
   const GITHUB_TOKEN_PATH = githubTokenPath(home);
@@ -343,6 +345,7 @@ export function resetCopilotTokenForTests() {
   copilotTokenExpiry = 0;
   copilotTokenRefresh = null;
   apiBase = DEFAULT_API_BASE;
+  resetModelListSingleflightForTests();
 }
 
 // chatReq is already converted by the adapter. The caller parses the raw Response.
@@ -363,7 +366,7 @@ export async function chatCompletions(chatReq, { signal, fetchImpl, retryOptions
   }, { fetchImpl, ...retryOptions });
 }
 
-export async function listModels({ signal, fetchImpl, retryOptions } = {}) {
+async function fetchModels({ signal, fetchImpl, retryOptions }) {
   const token = await getCopilotToken({ signal });
   const headers = buildHeaders({
     token, version: getVSCodeVersion(), initiator: "user", vision: false,
@@ -376,10 +379,61 @@ export async function listModels({ signal, fetchImpl, retryOptions } = {}) {
   return { status: resp.status, body };
 }
 
+function waitForModelListFlight(flight, signal) {
+  if (signal?.aborted) return Promise.reject(abortError(signal));
+  flight.waiters += 1;
+
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    const finish = (handler, value) => {
+      if (finished) return;
+      finished = true;
+      signal?.removeEventListener("abort", onAbort);
+      flight.waiters -= 1;
+      if (!flight.settled && flight.waiters === 0) flight.controller.abort();
+      handler(value);
+    };
+    const onAbort = () => finish(reject, abortError(signal));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    flight.promise.then(
+      (value) => finish(resolve, value),
+      (error) => finish(reject, error),
+    );
+  });
+}
+
+export function listModels({ signal, fetchImpl = fetch, retryOptions } = {}) {
+  if (signal?.aborted) return Promise.reject(abortError(signal));
+  let flight = modelListFlights.get(fetchImpl);
+  if (flight?.controller.signal.aborted) {
+    modelListFlights.delete(fetchImpl);
+    flight = null;
+  }
+
+  if (!flight) {
+    const controller = new AbortController();
+    flight = { controller, waiters: 0, settled: false, promise: null };
+    flight.promise = fetchModels({ signal: controller.signal, fetchImpl, retryOptions })
+      .finally(() => {
+        flight.settled = true;
+        if (modelListFlights.get(fetchImpl) === flight) modelListFlights.delete(fetchImpl);
+      });
+    modelListFlights.set(fetchImpl, flight);
+  }
+
+  return waitForModelListFlight(flight, signal);
+}
+
+export function resetModelListSingleflightForTests() {
+  for (const flight of modelListFlights.values()) flight.controller.abort();
+  modelListFlights.clear();
+}
+
 // Responses-only models go directly to Copilot's /responses endpoint.
 export async function responses(reqBody, { signal, fetchImpl, retryOptions } = {}) {
   const token = await getCopilotToken({ signal });
-  const { bodyText, bodyBytes, summary } = await prepareResponsesPayload(reqBody);
+  const { bodyText, bodyBytes, summary } = await prepareResponsesPayload(reqBody, { signal });
   console.log(status("info", `responses payload bytes=${bodyBytes} input_items=${summary.items} images=${summary.images}`));
   const headers = buildHeaders({
     token,

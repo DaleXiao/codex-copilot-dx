@@ -20,6 +20,7 @@ import { cliHelp, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.m
 import { closeHttpServer } from "../src/shutdown.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
+const CLI_BANNER = `codex-copilot-dx v${LOCAL_VERSION} by Dale Xiao`;
 
 let CLI;
 try {
@@ -35,7 +36,7 @@ if (CLI.command === "help") {
   process.exit(0);
 }
 if (CLI.command === "version") {
-  console.log(`codex-copilot-dx v${LOCAL_VERSION}`);
+  console.log(CLI_BANNER);
   process.exit(0);
 }
 if (CLI.command === "usage") {
@@ -191,7 +192,7 @@ if (CLI.command === "doctor") {
 }
 
 console.log(`
-  codex-copilot-dx v${LOCAL_VERSION}
+  ${CLI_BANNER}
   Use Codex Desktop, Claude Code, and Claude App with GitHub Copilot
 `);
 

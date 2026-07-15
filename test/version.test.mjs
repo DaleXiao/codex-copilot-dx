@@ -15,6 +15,7 @@ test("localPackageVersion: reads package.json version", () => {
 test("package requires the first Node release line with built-in zstd", () => {
   const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(pkg.engines.node, ">=22.15.0");
+  assert.equal(pkg.author, "Dale Xiao");
 });
 
 test("isVersionGreater: compares numeric semver parts", () => {

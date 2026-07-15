@@ -18,7 +18,7 @@ test("cli --version exits without starting the adapter", async () => {
     env: { ...process.env, ADAPTER_PORT: "0" },
   });
 
-  assert.equal(stdout.trim(), `codex-copilot-dx v${localPackageVersion()}`);
+  assert.equal(stdout.trim(), `codex-copilot-dx v${localPackageVersion()} by Dale Xiao`);
   assert.equal(stderr, "");
 });
 

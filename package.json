@@ -1,7 +1,8 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.4.31",
+  "version": "0.4.32",
   "description": "Use Codex Desktop, Claude Code, and Claude App with GitHub Copilot",
+  "author": "Dale Xiao",
   "type": "module",
   "bin": {
     "codex-copilot-dx": "bin/cli.mjs"

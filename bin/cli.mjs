@@ -187,6 +187,7 @@ if (CLI.command === "doctor") {
     port: ADAPTER_PORT,
     host: ADAPTER_HOST,
     online: CLI.online,
+    compat: CLI.compat,
   });
   process.exit(checks.some((check) => check.kind === "err") ? 1 : 0);
 }

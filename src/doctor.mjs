@@ -48,6 +48,152 @@ function valueLabel(value) {
   return value ? `"${value}"` : "missing";
 }
 
+function copilotModelData(models) {
+  const data = Array.isArray(models) ? models : models?.data;
+  return Array.isArray(data) ? data : [];
+}
+
+function modelEndpoints(model) {
+  return Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];
+}
+
+export function selectCompatibilityModels(models) {
+  const data = copilotModelData(models).filter((model) => model?.model_picker_enabled !== false);
+  const responsesCandidates = data.filter((model) => {
+    const id = String(model?.id || "");
+    const endpoints = modelEndpoints(model);
+    return id.startsWith("gpt-") && (endpoints.includes("/responses") || endpoints.includes("/v1/responses"));
+  });
+  const responsesOnly = [...responsesCandidates].reverse()
+    .find((model) => !modelEndpoints(model).includes("/chat/completions"));
+  const claude = data.find((model) => {
+    const id = String(model?.id || "");
+    const vendor = String(model?.vendor || "").toLowerCase();
+    return (id.startsWith("claude-") || vendor === "anthropic")
+      && modelEndpoints(model).includes("/chat/completions");
+  });
+  return {
+    responsesModel: String((responsesOnly || responsesCandidates[0])?.id || ""),
+    claudeModel: String(claude?.id || ""),
+  };
+}
+
+async function fetchTextWithTimeout(fetchImpl, url, init, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetchImpl(url, { ...init, signal: controller.signal });
+    return { resp, text: await resp.text() };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function responseFailure(resp, text) {
+  const detail = String(text || "").replace(/\s+/g, " ").trim().slice(0, 240);
+  return new Error(`HTTP ${resp.status}${detail ? `: ${detail}` : ""}`);
+}
+
+async function compatibilityRequest(fetchImpl, url, body, timeoutMs) {
+  const { resp, text } = await fetchTextWithTimeout(fetchImpl, url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: body.stream ? "text/event-stream" : "application/json" },
+    body: JSON.stringify(body),
+  }, timeoutMs);
+  if (!resp.ok) throw responseFailure(resp, text);
+  return text;
+}
+
+async function runCompatibilityCheck(checks, label, task) {
+  const started = Date.now();
+  try {
+    const value = await task();
+    checks.push({ kind: "ok", message: `${label} passed (${Date.now() - started}ms)` });
+    return value;
+  } catch (e) {
+    const reason = e?.name === "AbortError" ? "timed out" : e?.message || "unknown error";
+    checks.push({ kind: "err", message: `${label} failed: ${reason}` });
+    return null;
+  }
+}
+
+function parseResponseObject(text) {
+  const response = JSON.parse(text);
+  if (!response?.id || !Array.isArray(response.output)) throw new Error("response body is missing id or output");
+  return response;
+}
+
+export async function inspectAdapterCompatibility({
+  host = "127.0.0.1",
+  port = 2026,
+  fetchImpl = fetch,
+  timeoutMs = 120000,
+} = {}) {
+  const baseUrl = localGatewayBaseUrl(connectHost(host), port);
+  const checks = [];
+  const models = await runCompatibilityCheck(checks, "Compatibility model discovery", async () => {
+    const { resp, text } = await fetchTextWithTimeout(fetchImpl, `${baseUrl}/v1/models`, { headers: { Accept: "application/json" } }, timeoutMs);
+    if (!resp.ok) throw responseFailure(resp, text);
+    const parsed = JSON.parse(text);
+    if (!copilotModelData(parsed).length) throw new Error("model list is empty");
+    return parsed;
+  });
+  if (!models) return checks;
+
+  const { responsesModel, claudeModel } = selectCompatibilityModels(models);
+  if (!responsesModel) {
+    checks.push({ kind: "err", message: "Compatibility Responses check failed: no GPT model advertises /responses" });
+    return checks;
+  }
+
+  const firstResponse = await runCompatibilityCheck(checks, `Native Responses (${responsesModel})`, async () => {
+    const text = await compatibilityRequest(fetchImpl, `${baseUrl}/v1/responses`, {
+      model: responsesModel,
+      stream: false,
+      input: "Reply with OK only.",
+    }, timeoutMs);
+    return parseResponseObject(text);
+  });
+
+  if (firstResponse) {
+    await runCompatibilityCheck(checks, "Responses stream, history, and image tool compatibility", async () => {
+      const text = await compatibilityRequest(fetchImpl, `${baseUrl}/v1/responses`, {
+        model: responsesModel,
+        stream: true,
+        previous_response_id: firstResponse.id,
+        input: "Reply with OK again.",
+        tools: [{ type: "image_generation" }],
+      }, timeoutMs);
+      if (!/^event:\s*response\.completed\s*$/m.test(text)) throw new Error("stream did not contain response.completed");
+    });
+  }
+
+  await runCompatibilityCheck(checks, "Responses compact", async () => {
+    const text = await compatibilityRequest(fetchImpl, `${baseUrl}/v1/responses/compact`, {
+      model: responsesModel,
+      stream: false,
+      input: "Compact this short context.",
+    }, timeoutMs);
+    parseResponseObject(text);
+  });
+
+  if (!claudeModel) {
+    checks.push({ kind: "warn", message: "Anthropic stream compatibility skipped because no Claude chat model was advertised" });
+    return checks;
+  }
+
+  await runCompatibilityCheck(checks, `Anthropic Messages stream (${claudeModel})`, async () => {
+    const text = await compatibilityRequest(fetchImpl, `${baseUrl}/v1/messages`, {
+      model: claudeModel,
+      max_tokens: 16,
+      stream: true,
+      messages: [{ role: "user", content: "Reply with OK only." }],
+    }, timeoutMs);
+    if (!/^event:\s*message_stop\s*$/m.test(text)) throw new Error("stream did not contain message_stop");
+  });
+  return checks;
+}
+
 export function inspectGitHubToken({ home = os.homedir() } = {}) {
   const filePath = githubTokenPath(home);
   const token = readText(filePath);
@@ -237,8 +383,11 @@ export async function collectDoctorChecks({
   checkAdapterListeningFn = checkAdapterListening,
   checkRunningAdapterFn = checkRunningAdapter,
   online = false,
+  compat = false,
   fetchImpl = fetch,
   onlineTimeoutMs = 10000,
+  compatTimeoutMs = 120000,
+  inspectAdapterCompatibilityFn = inspectAdapterCompatibility,
 } = {}) {
   const checks = [
     ...inspectGitHubToken({ home }),
@@ -251,13 +400,16 @@ export async function collectDoctorChecks({
     checks.push(...await inspectGitHubTokenOnline({ home, fetchImpl, timeoutMs: onlineTimeoutMs }));
   }
 
-  if (checkAdapter) {
-    let running;
+  let running = null;
+  if (checkAdapter || compat) {
     try {
       running = await checkRunningAdapterFn({ host, port, fetchImpl });
     } catch {
       running = null;
     }
+  }
+
+  if (checkAdapter) {
     if (running?.ok) {
       checks.push({ kind: "ok", message: `Adapter ${running.data.version} is listening on ${running.baseUrl}` });
     } else if (running?.incompatible) {
@@ -270,12 +422,21 @@ export async function collectDoctorChecks({
     }
   }
 
+  if (compat) {
+    if (!running?.ok) {
+      checks.push({ kind: "err", message: "Compatibility checks require a running, version-compatible codex-copilot-dx adapter" });
+    } else {
+      checks.push(...await inspectAdapterCompatibilityFn({ host, port, fetchImpl, timeoutMs: compatTimeoutMs }));
+    }
+  }
+
   return checks;
 }
 
 export async function runDoctor(options = {}) {
   const log = options.log || console.log;
-  log(`codex-copilot-dx doctor${options.online ? " --online" : ""}`);
+  const flags = [options.online ? "--online" : "", options.compat ? "--compat" : ""].filter(Boolean);
+  log(`codex-copilot-dx doctor${flags.length ? ` ${flags.join(" ")}` : ""}`);
   const checks = await collectDoctorChecks(options);
   for (const check of checks) log(status(check.kind, check.message));
   return checks;

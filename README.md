@@ -64,7 +64,15 @@ codex-copilot-dx doctor --online
 
 The online doctor never starts device flow, scans for replacement tokens, or changes the saved token.
 
-When the saved token is missing, `codex-copilot-dx` first looks for compatible local Copilot GitHub tokens, validates them with GitHub and Copilot, and imports a valid one before starting device login. It checks explicit token sources (`CCDX_GITHUB_TOKEN`, `CCDX_GITHUB_TOKEN_PATH`, `CCDX_GITHUB_TOKEN_PATHS`) plus common local `auth.json` layouts under application config directories. It does not rely on a specific app name. Generic discovery refuses to choose silently when valid tokens for multiple GitHub accounts are found. After an account is selected, automatic `401`/`403` recovery accepts only the same GitHub account. Explicit token variables remain the intentional way to switch accounts.
+To actively verify the protocol path through an already-running adapter, run:
+
+```bash
+codex-copilot-dx doctor --compat
+```
+
+The compatibility doctor sends a few minimal Copilot requests to check native Responses, streaming history, compaction, image tool namespace handling, and Anthropic streaming. It consumes a small amount of Copilot usage, never starts the adapter or device flow, and does not change client configuration. Combine it with `--online` when both the saved-token entitlement check and the adapter protocol checks are needed.
+
+When the saved token is missing, `codex-copilot-dx` first looks for compatible local Copilot GitHub tokens, validates them with GitHub and Copilot, and imports a valid one before starting device login. It checks explicit token sources (`CCDX_GITHUB_TOKEN`, `CCDX_GITHUB_TOKEN_PATH`, `CCDX_GITHUB_TOKEN_PATHS`) plus common local `auth.json` layouts under application config directories. It does not rely on a specific app name. Generic discovery refuses to choose silently when valid tokens for multiple GitHub accounts are found. After an account is selected, automatic `401`/`403` recovery and in-process token rotation accept only the same GitHub account. Concurrent callers share token refresh work without sharing cancellation, and a still-valid Copilot token may be used briefly after a transient refresh failure. Explicit token variables remain the intentional way to switch accounts.
 
 If Copilot token refresh still fails with `401` or `403`, the saved GitHub token may be expired, revoked, or missing Copilot access. Delete the saved token and start the tool again to trigger GitHub device login:
 
@@ -167,6 +175,7 @@ MIT
 ```bash
 npm ci
 npm run verify
+npm run bench:payload
 ```
 
-`npm test` runs the unit and handler-level suite. `npm run test:smoke` starts a real local HTTP adapter with fully injected offline upstreams. `npm run pack:check` verifies the npm tarball contents without publishing. The CI workflow runs all three checks on supported Node.js release lines.
+`npm test` runs the unit and handler-level suite. `npm run test:smoke` starts a real local HTTP adapter with fully injected offline upstreams. `npm run pack:check` verifies the npm tarball contents without publishing. `npm run bench:payload` is a report-only, isolated-process benchmark for 5-60 MiB image payloads and does not contact Copilot. The CI workflow runs the verification checks on supported Node.js release lines.

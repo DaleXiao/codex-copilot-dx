@@ -3,13 +3,15 @@ import assert from "node:assert/strict";
 import { cliHelp, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
 
 test("parseCliArgs: accepts supported commands and options", () => {
-  assert.deepEqual(parseCliArgs([]), { command: "start", configureClaudeDesktop: false, online: false });
-  assert.deepEqual(parseCliArgs(["--configure-claude-desktop"]), { command: "start", configureClaudeDesktop: true, online: false });
-  assert.deepEqual(parseCliArgs(["doctor", "--online"]), { command: "doctor", configureClaudeDesktop: false, online: true });
+  assert.deepEqual(parseCliArgs([]), { command: "start", configureClaudeDesktop: false, online: false, compat: false });
+  assert.deepEqual(parseCliArgs(["--configure-claude-desktop"]), { command: "start", configureClaudeDesktop: true, online: false, compat: false });
+  assert.deepEqual(parseCliArgs(["doctor", "--online"]), { command: "doctor", configureClaudeDesktop: false, online: true, compat: false });
+  assert.deepEqual(parseCliArgs(["doctor", "--compat"]), { command: "doctor", configureClaudeDesktop: false, online: false, compat: true });
+  assert.deepEqual(parseCliArgs(["doctor", "--compat", "--online"]), { command: "doctor", configureClaudeDesktop: false, online: true, compat: true });
   assert.equal(parseCliArgs(["--help"]).command, "help");
   assert.equal(parseCliArgs(["-v"]).command, "version");
   assert.equal(parseCliArgs(["usage"]).command, "usage");
-  assert.match(cliHelp(), /doctor \[--online\]/);
+  assert.match(cliHelp(), /doctor \[--online\] \[--compat\]/);
 });
 
 test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
@@ -17,6 +19,7 @@ test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
   assert.throws(() => parseCliArgs(["usage", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["doctor", "--write"]), /Unexpected argument: --write/);
   assert.throws(() => parseCliArgs(["doctor", "--online", "--online"]), /Unexpected argument: --online/);
+  assert.throws(() => parseCliArgs(["doctor", "--compat", "--compat"]), /Unexpected argument: --compat/);
 });
 
 test("parseRuntimeOptions: validates ports and startup timeouts", () => {

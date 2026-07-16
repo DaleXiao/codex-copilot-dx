@@ -1,9 +1,16 @@
 import fs from "node:fs";
 import os from "node:os";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { status } from "./status.mjs";
 import { debugLog } from "./log.mjs";
-import { ensureGithubTokenMetadata, githubReauthMessage, githubTokenPath, importDiscoveredGithubToken } from "./auth.mjs";
+import {
+  fetchGithubIdentity,
+  githubReauthMessage,
+  githubTokenPath,
+  importDiscoveredGithubToken,
+  readGithubTokenMetadata,
+  writeGithubTokenMetadata,
+} from "./auth.mjs";
 import { prepareResponsesPayload } from "./image-optimization.mjs";
 
 export {
@@ -267,6 +274,10 @@ export async function refreshVSCodeVersion() {
 let copilotToken = null;
 let copilotTokenExpiry = 0;
 let copilotTokenRefresh = null;
+let copilotTokenSourceKey = null;
+let copilotTokenGithubFingerprint = "";
+let copilotTokenGithubIdentity = null;
+let copilotTokenRefreshRetryAt = 0;
 const modelListFlights = new Map();
 
 function getGithubToken({ home = os.homedir() } = {}) {
@@ -286,15 +297,74 @@ function requestCopilotToken(ghToken, { fetchImpl = fetch, signal } = {}) {
   });
 }
 
-function cacheCopilotTokenData(data) {
+function githubTokenFingerprint(token) {
+  return createHash("sha256").update(String(token || "")).digest("hex").slice(0, 24);
+}
+
+function normalizeGithubIdentity(identity) {
+  if (!identity || typeof identity !== "object") return null;
+  const login = typeof identity.login === "string" ? identity.login.trim() : "";
+  const id = identity.id === undefined || identity.id === null ? "" : String(identity.id).trim();
+  return login || id ? { login, id } : null;
+}
+
+function githubIdentitiesMatch(first, second) {
+  const a = normalizeGithubIdentity(first);
+  const b = normalizeGithubIdentity(second);
+  if (!a || !b) return false;
+  if (a.id && b.id) return a.id === b.id;
+  return Boolean(a.login && b.login && a.login.toLowerCase() === b.login.toLowerCase());
+}
+
+function githubIdentityLabel(identity) {
+  const normalized = normalizeGithubIdentity(identity);
+  return normalized?.login || normalized?.id || "unknown";
+}
+
+function cacheCopilotTokenData(data, {
+  sourceKey,
+  githubToken,
+  githubIdentity,
+  allowAccountSwitch = false,
+} = {}) {
   if (!data.token) throw new Error("Copilot token response missing token field");
+  const fingerprint = githubTokenFingerprint(githubToken);
+  const identity = normalizeGithubIdentity(githubIdentity);
+  const tokenChanged = Boolean(copilotTokenGithubFingerprint && fingerprint !== copilotTokenGithubFingerprint);
+  if (!allowAccountSwitch && copilotTokenGithubIdentity && identity
+    && !githubIdentitiesMatch(copilotTokenGithubIdentity, identity)) {
+    throw new Error(`Refusing to switch GitHub Copilot account from ${githubIdentityLabel(copilotTokenGithubIdentity)} to ${githubIdentityLabel(identity)} while the adapter is running. Restart codex-copilot-dx to switch accounts intentionally.`);
+  }
+  if (!allowAccountSwitch && copilotTokenGithubIdentity && tokenChanged && !identity) {
+    const error = new Error("The saved GitHub token changed, but its account could not be verified. Keeping the running adapter bound to the existing GitHub account.");
+    error.transient = true;
+    throw error;
+  }
   copilotToken = data.token;
   apiBase = parseApiBase(data);
   copilotTokenExpiry = typeof data.expires_at === "number"
     ? data.expires_at * 1000
     : Date.now() + 25 * 60 * 1000; // fallback if expires_at absent: refresh in ~25min
+  copilotTokenSourceKey = sourceKey || copilotTokenSourceKey;
+  copilotTokenGithubFingerprint = fingerprint;
+  if (identity) copilotTokenGithubIdentity = identity;
+  copilotTokenRefreshRetryAt = 0;
   console.log(status("ok", "Copilot token refreshed"));
   return copilotToken;
+}
+
+async function githubIdentityForToken(token, { home, fetchImpl, signal }) {
+  const cached = readGithubTokenMetadata(home, token);
+  if (cached) return cached;
+  const identity = await fetchGithubIdentity(token, { fetchImpl, signal });
+  return identity.ok ? identity : null;
+}
+
+function tokenRefreshError(message, { statusCode, transient = false } = {}) {
+  const error = new Error(message);
+  if (statusCode) error.statusCode = statusCode;
+  if (transient) error.transient = true;
+  return error;
 }
 
 async function refreshCopilotToken({
@@ -304,7 +374,14 @@ async function refreshCopilotToken({
   fetchImpl = fetch,
 } = {}) {
   const ghToken = getGithubToken({ home });
-  const resp = await requestCopilotToken(ghToken, { fetchImpl, signal });
+  const sourceKey = githubTokenPath(home);
+  let resp;
+  try {
+    resp = await requestCopilotToken(ghToken, { fetchImpl, signal });
+  } catch (e) {
+    if (!isAbortError(e, signal)) e.transient = true;
+    throw e;
+  }
   if (!resp.ok) {
     if (resp.status === 401 || resp.status === 403) {
       const imported = await importDiscoveredGithubToken({
@@ -316,34 +393,87 @@ async function refreshCopilotToken({
         validateSavedToken: true,
       });
       if (imported?.validation?.copilotTokenData?.token) {
-        return cacheCopilotTokenData(imported.validation.copilotTokenData);
+        const explicitSource = imported.source?.type === "env" || imported.source?.type === "token-file";
+        return cacheCopilotTokenData(imported.validation.copilotTokenData, {
+          sourceKey,
+          githubToken: imported.token,
+          githubIdentity: imported.validation,
+          allowAccountSwitch: explicitSource,
+        });
       }
       throw new Error(githubReauthMessage(`Failed to get Copilot token: ${resp.status}. The saved GitHub token may be expired, revoked, or missing Copilot access.`));
     }
-    throw new Error(`Failed to get Copilot token: ${resp.status}`);
+    throw tokenRefreshError(`Failed to get Copilot token: ${resp.status}`, {
+      statusCode: resp.status,
+      transient: resp.status === 408 || resp.status === 425 || resp.status === 429 || resp.status >= 500,
+    });
   }
   const data = await resp.json();
-  await ensureGithubTokenMetadata(ghToken, { home, fetchImpl, signal });
-  return cacheCopilotTokenData(data);
+  const identity = await githubIdentityForToken(ghToken, { home, fetchImpl, signal });
+  const token = cacheCopilotTokenData(data, {
+    sourceKey,
+    githubToken: ghToken,
+    githubIdentity: identity,
+  });
+  if (identity) writeGithubTokenMetadata(identity, home, ghToken);
+  return token;
 }
 
-export async function getCopilotToken(options = {}) {
-  if (copilotToken && Date.now() < copilotTokenExpiry - 60000) return copilotToken;
-  const home = options.home || os.homedir();
-  const refreshKey = githubTokenPath(home);
-  if (copilotTokenRefresh?.key === refreshKey) return copilotTokenRefresh.promise;
+function canUseCachedToken(sourceKey, now = Date.now(), allowCurrentProcessToken = false) {
+  const sameSource = copilotTokenSourceKey === sourceKey || allowCurrentProcessToken;
+  return Boolean(copilotToken && sameSource && now < copilotTokenExpiry);
+}
 
-  const promise = refreshCopilotToken(options).finally(() => {
-    if (copilotTokenRefresh?.promise === promise) copilotTokenRefresh = null;
-  });
-  copilotTokenRefresh = { key: refreshKey, promise };
-  return promise;
+export function getCopilotToken(options = {}) {
+  const home = options.home || os.homedir();
+  const sourceKey = githubTokenPath(home);
+  const now = Date.now();
+  const allowCurrentProcessToken = options.home === undefined;
+  if (canUseCachedToken(sourceKey, now, allowCurrentProcessToken) && now < copilotTokenExpiry - 60000) {
+    return Promise.resolve(copilotToken);
+  }
+  if (canUseCachedToken(sourceKey, now, allowCurrentProcessToken) && now < copilotTokenRefreshRetryAt) {
+    return Promise.resolve(copilotToken);
+  }
+  if (options.signal?.aborted) return Promise.reject(abortError(options.signal));
+
+  let flight = copilotTokenRefresh?.key === sourceKey ? copilotTokenRefresh : null;
+  if (flight?.controller.signal.aborted) {
+    if (copilotTokenRefresh === flight) copilotTokenRefresh = null;
+    flight = null;
+  }
+
+  if (!flight) {
+    const controller = new AbortController();
+    flight = { key: sourceKey, controller, waiters: 0, settled: false, promise: null };
+    flight.promise = refreshCopilotToken({ ...options, home, signal: controller.signal })
+      .catch((error) => {
+        const fallbackNow = Date.now();
+        if (error?.transient && canUseCachedToken(sourceKey, fallbackNow)) {
+          copilotTokenRefreshRetryAt = Math.min(copilotTokenExpiry, fallbackNow + 5000);
+          console.warn(status("warn", `Copilot token refresh failed temporarily; using the existing token until ${new Date(copilotTokenExpiry).toISOString()} (${error.message})`));
+          return copilotToken;
+        }
+        throw error;
+      })
+      .finally(() => {
+        flight.settled = true;
+        if (copilotTokenRefresh === flight) copilotTokenRefresh = null;
+      });
+    copilotTokenRefresh = flight;
+  }
+  return waitForSingleflight(flight, options.signal);
 }
 
 export function resetCopilotTokenForTests() {
+  copilotTokenRefresh?.controller.abort();
   copilotToken = null;
   copilotTokenExpiry = 0;
   copilotTokenRefresh = null;
+  copilotTokenSourceKey = null;
+  copilotTokenGithubFingerprint = "";
+  copilotTokenGithubIdentity = null;
+  copilotTokenRefreshRetryAt = 0;
   apiBase = DEFAULT_API_BASE;
   resetModelListSingleflightForTests();
 }
@@ -379,7 +509,7 @@ async function fetchModels({ signal, fetchImpl, retryOptions }) {
   return { status: resp.status, body };
 }
 
-function waitForModelListFlight(flight, signal) {
+function waitForSingleflight(flight, signal) {
   if (signal?.aborted) return Promise.reject(abortError(signal));
   flight.waiters += 1;
 
@@ -422,7 +552,7 @@ export function listModels({ signal, fetchImpl = fetch, retryOptions } = {}) {
     modelListFlights.set(fetchImpl, flight);
   }
 
-  return waitForModelListFlight(flight, signal);
+  return waitForSingleflight(flight, signal);
 }
 
 export function resetModelListSingleflightForTests() {

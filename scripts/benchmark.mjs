@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
@@ -27,6 +30,114 @@ function deterministicPixels(byteLength, initialSeed) {
     pixels[index] = seed >>> 24;
   }
   return pixels;
+}
+
+function largePayloadProbe(targetMiB, concurrency) {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-payload-bench-"));
+  const fixtureStarted = performance.now();
+  try {
+    const generator = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      import fs from "node:fs";
+      import path from "node:path";
+      import sharp from "sharp";
+      const targetBytes = ${targetMiB} * 1024 * 1024;
+      const requestConcurrency = ${concurrency};
+      const imageCount = 8;
+      const fixtureDir = ${JSON.stringify(fixtureDir)};
+      const basePng = await sharp({
+        create: { width: 32, height: 32, channels: 3, background: { r: 40, g: 90, b: 140 } },
+      }).png().toBuffer();
+      for (let requestIndex = 0; requestIndex < requestConcurrency; requestIndex += 1) {
+        const approximateDataUrlBytes = Math.floor(targetBytes / imageCount);
+        const rawBytes = Math.max(basePng.length, Math.floor((approximateDataUrlBytes - 32) * 3 / 4));
+        const content = [];
+        for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
+          const raw = Buffer.alloc(rawBytes, (requestIndex * imageCount + imageIndex + 1) % 251);
+          basePng.copy(raw, 0);
+          content.push({ type: "input_image", image_url: \`data:image/png;base64,\${raw.toString("base64")}\` });
+        }
+        const source = {
+          model: "gpt-benchmark",
+          stream: false,
+          input: [{ type: "message", role: "user", content }],
+        };
+        fs.writeFileSync(path.join(fixtureDir, \`request-\${requestIndex}.json\`), JSON.stringify(source));
+      }
+    `], { cwd: packageRoot, encoding: "utf8" });
+    if (generator.status !== 0) {
+      throw new Error(generator.stderr.trim() || `benchmark fixture generator exited with ${generator.status}`);
+    }
+    const fixturePrepareMs = performance.now() - fixtureStarted;
+    const fixtureFiles = Array.from({ length: concurrency }, (_, index) => path.join(fixtureDir, `request-${index}.json`));
+    const result = runProbe(`
+      import fs from "node:fs";
+      import { prepareResponsesRequest } from "./src/adapter.mjs";
+      import { readJsonBody } from "./src/http-transport.mjs";
+      import { prepareResponsesPayload } from "./src/image-optimization.mjs";
+
+      const fixtureFiles = ${JSON.stringify(fixtureFiles)};
+      const memoryFields = ["rss", "heapUsed", "external", "arrayBuffers"];
+      const peak = {};
+      const sample = () => {
+        const memory = process.memoryUsage();
+        for (const field of memoryFields) peak[field] = Math.max(peak[field] || 0, memory[field] || 0);
+      };
+      globalThis.gc?.();
+      const idleMemory = process.memoryUsage();
+      for (const field of memoryFields) peak[field] = idleMemory[field] || 0;
+      const timer = setInterval(sample, 5);
+      timer.unref?.();
+
+      async function processRequest(filePath) {
+        const inputBytes = fs.statSync(filePath).size;
+        const req = fs.createReadStream(filePath);
+        req.headers = { "content-length": String(inputBytes), "content-encoding": "identity" };
+        const parsed = await readJsonBody(req);
+        req.destroy();
+        sample();
+        const prepared = prepareResponsesRequest(parsed, { mutate: true });
+        const result = await prepareResponsesPayload(prepared.body);
+        sample();
+        return { inputBytes, outputBytes: result.bodyBytes };
+      }
+
+      const originalLog = console.log;
+      const originalWarn = console.warn;
+      console.log = () => {};
+      console.warn = () => {};
+      const started = performance.now();
+      let results;
+      try {
+        results = await Promise.all(fixtureFiles.map(processRequest));
+      } finally {
+        clearInterval(timer);
+        console.log = originalLog;
+        console.warn = originalWarn;
+      }
+      sample();
+      const finalMemory = process.memoryUsage();
+      const mib = (bytes) => +(bytes / 1048576).toFixed(1);
+      const memory = Object.fromEntries(memoryFields.map((field) => [field.replace("Used", "_used").replace("Buffers", "_buffers").toLowerCase(), {
+        idle_mib: mib(idleMemory[field] || 0),
+        peak_mib: mib(peak[field] || 0),
+        peak_delta_mib: mib((peak[field] || 0) - (idleMemory[field] || 0)),
+        final_mib: mib(finalMemory[field] || 0),
+      }]));
+      process.stdout.write(JSON.stringify({
+        target_request_mib: ${targetMiB},
+        concurrency: fixtureFiles.length,
+        elapsed_ms: +(performance.now() - started).toFixed(1),
+        input_body_mib: results.map((entry) => mib(entry.inputBytes)),
+        output_body_mib: results.map((entry) => mib(entry.outputBytes)),
+        output_body_kib: results.map((entry) => +(entry.outputBytes / 1024).toFixed(1)),
+        memory,
+      }));
+    `);
+    result.fixture_prepare_ms = +fixturePrepareMs.toFixed(1);
+    return result;
+  } finally {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
 }
 
 const adapterImport = runProbe(`
@@ -126,10 +237,22 @@ try {
   console.warn = originalWarn;
 }
 
-console.log(JSON.stringify({
+const report = {
   note: "Report-only benchmark; timings vary by machine and are not pass/fail thresholds.",
   adapter_import: adapterImport,
   token_count_100kb: tokenCount,
   duplicate_images: duplicateImages,
   oversized_payload: oversizedPayload,
-}, null, 2));
+};
+
+if (process.argv.includes("--large-payload")) {
+  report.large_payload_peak = [
+    largePayloadProbe(5, 1),
+    largePayloadProbe(5, 4),
+    largePayloadProbe(30, 1),
+    largePayloadProbe(30, 2),
+    largePayloadProbe(60, 1),
+  ];
+}
+
+console.log(JSON.stringify(report, null, 2));

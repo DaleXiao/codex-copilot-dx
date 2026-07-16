@@ -29,7 +29,7 @@ test("cli --help exits without validating runtime configuration", async () => {
   });
 
   assert.match(stdout, /Usage:/);
-  assert.match(stdout, /doctor \[--online\]/);
+  assert.match(stdout, /doctor \[--online\] \[--compat\]/);
   assert.equal(stderr, "");
 });
 

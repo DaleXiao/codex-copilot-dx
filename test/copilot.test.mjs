@@ -723,3 +723,216 @@ test("getCopilotToken: shares one in-flight refresh across concurrent callers", 
     resetCopilotTokenForTests();
   }
 });
+
+test("getCopilotToken: one caller abort does not cancel another refresh waiter", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-waiter-abort-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  let tokenCalls = 0;
+  let releaseRefresh;
+  let upstreamSignal;
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    const fetchImpl = async (url, options) => {
+      if (url.endsWith("/user")) return jsonResp(200, { login: "dale", id: 42 });
+      tokenCalls += 1;
+      upstreamSignal = options.signal;
+      await new Promise((resolve) => { releaseRefresh = resolve; });
+      return jsonResp(200, {
+        token: "copilot_waiter",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      });
+    };
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = getCopilotToken({ home, fetchImpl, signal: firstController.signal });
+    const second = getCopilotToken({ home, fetchImpl, signal: secondController.signal });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    firstController.abort();
+    await assert.rejects(first, { name: "AbortError" });
+    assert.equal(upstreamSignal.aborted, false);
+    releaseRefresh();
+
+    assert.equal(await second, "copilot_waiter");
+    assert.equal(tokenCalls, 1);
+  } finally {
+    console.log = originalLog;
+    resetCopilotTokenForTests();
+  }
+});
+
+test("getCopilotToken: aborts an orphaned refresh and allows the next request", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-orphan-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  let tokenCalls = 0;
+  let firstUpstreamSignal;
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    const fetchImpl = async (url, options) => {
+      if (url.endsWith("/user")) return jsonResp(200, { login: "dale", id: 42 });
+      tokenCalls += 1;
+      if (tokenCalls > 1) {
+        return jsonResp(200, {
+          token: "copilot_next",
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+        });
+      }
+      firstUpstreamSignal = options.signal;
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+      });
+    };
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = getCopilotToken({ home, fetchImpl, signal: firstController.signal });
+    const second = getCopilotToken({ home, fetchImpl, signal: secondController.signal });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    firstController.abort();
+    secondController.abort();
+    await Promise.all([
+      assert.rejects(first, { name: "AbortError" }),
+      assert.rejects(second, { name: "AbortError" }),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(firstUpstreamSignal.aborted, true);
+
+    assert.equal(await getCopilotToken({ home, fetchImpl }), "copilot_next");
+    assert.equal(tokenCalls, 2);
+  } finally {
+    console.log = originalLog;
+    resetCopilotTokenForTests();
+  }
+});
+
+test("getCopilotToken: uses an unexpired token after a transient refresh failure", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-stale-valid-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  let tokenCalls = 0;
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  console.log = () => {};
+  console.warn = () => {};
+
+  try {
+    const fetchImpl = async (url) => {
+      if (url.endsWith("/user")) return jsonResp(200, { login: "dale", id: 42 });
+      tokenCalls += 1;
+      if (tokenCalls === 1) {
+        return jsonResp(200, {
+          token: "copilot_still_valid",
+          expires_at: Math.floor(Date.now() / 1000) + 30,
+        });
+      }
+      return jsonResp(503, {});
+    };
+
+    assert.equal(await getCopilotToken({ home, fetchImpl }), "copilot_still_valid");
+    assert.equal(await getCopilotToken({ home, fetchImpl }), "copilot_still_valid");
+    assert.equal(await getCopilotToken({ home, fetchImpl }), "copilot_still_valid");
+    assert.equal(tokenCalls, 2);
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+    resetCopilotTokenForTests();
+  }
+});
+
+test("getCopilotToken: does not hide 401 with an unexpired Copilot token", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-no-auth-fallback-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  let tokenCalls = 0;
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    const fetchImpl = async (url) => {
+      if (url.endsWith("/user")) return jsonResp(200, { login: "dale", id: 42 });
+      tokenCalls += 1;
+      if (tokenCalls === 1) {
+        return jsonResp(200, {
+          token: "copilot_still_valid",
+          expires_at: Math.floor(Date.now() / 1000) + 30,
+        });
+      }
+      return jsonResp(401, {});
+    };
+
+    assert.equal(await getCopilotToken({ home, env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" }, fetchImpl }), "copilot_still_valid");
+    await assert.rejects(
+      getCopilotToken({ home, env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" }, fetchImpl }),
+      /Failed to get Copilot token: 401/,
+    );
+    assert.equal(tokenCalls, 2);
+  } finally {
+    console.log = originalLog;
+    resetCopilotTokenForTests();
+  }
+});
+
+test("getCopilotToken: allows same-account GitHub token rotation", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-same-account-"));
+  writeText(githubTokenPath(home), "ghu_first");
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    const fetchImpl = async (url, options) => {
+      const authorization = options.headers.Authorization;
+      if (url.endsWith("/user")) return jsonResp(200, { login: "dale", id: 42 });
+      return jsonResp(200, {
+        token: authorization === "token ghu_first" ? "copilot_first" : "copilot_rotated",
+        expires_at: Math.floor(Date.now() / 1000) + 30,
+      });
+    };
+
+    assert.equal(await getCopilotToken({ home, fetchImpl }), "copilot_first");
+    writeText(githubTokenPath(home), "ghu_second");
+    assert.equal(await getCopilotToken({ home, fetchImpl }), "copilot_rotated");
+  } finally {
+    console.log = originalLog;
+    resetCopilotTokenForTests();
+  }
+});
+
+test("getCopilotToken: refuses a silent account switch after the GitHub token changes", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-account-switch-"));
+  writeText(githubTokenPath(home), "ghu_first");
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    const fetchImpl = async (url, options) => {
+      const authorization = options.headers.Authorization;
+      if (url.endsWith("/user")) {
+        return authorization === "token ghu_first"
+          ? jsonResp(200, { login: "dale", id: 42 })
+          : jsonResp(200, { login: "other", id: 99 });
+      }
+      return jsonResp(200, {
+        token: authorization === "token ghu_first" ? "copilot_first" : "copilot_other",
+        expires_at: Math.floor(Date.now() / 1000) + 30,
+      });
+    };
+
+    assert.equal(await getCopilotToken({ home, fetchImpl }), "copilot_first");
+    writeText(githubTokenPath(home), "ghu_other");
+    await assert.rejects(
+      getCopilotToken({ home, fetchImpl }),
+      /Refusing to switch GitHub Copilot account from dale to other/,
+    );
+  } finally {
+    console.log = originalLog;
+    resetCopilotTokenForTests();
+  }
+});

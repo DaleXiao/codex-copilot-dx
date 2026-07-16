@@ -5,7 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { githubTokenPath } from "../src/auth.mjs";
 import { claudeDesktopPaths } from "../src/claude-desktop-config.mjs";
-import { collectDoctorChecks, inspectGitHubTokenOnline, runDoctor } from "../src/doctor.mjs";
+import {
+  collectDoctorChecks,
+  inspectAdapterCompatibility,
+  inspectGitHubTokenOnline,
+  runDoctor,
+  selectCompatibilityModels,
+} from "../src/doctor.mjs";
 
 function writeFile(filePath, content) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -121,4 +127,65 @@ test("inspectGitHubTokenOnline: validates Copilot access and models without chan
     "https://api.github.com/copilot_internal/v2/token",
     "https://api.enterprise.githubcopilot.com/models",
   ]);
+});
+
+test("selectCompatibilityModels: prefers a Responses-only GPT model and finds Claude chat", () => {
+  assert.deepEqual(selectCompatibilityModels({ data: [
+    { id: "gpt-chat", supported_endpoints: ["/responses", "/chat/completions"] },
+    { id: "gpt-native", supported_endpoints: ["/responses"] },
+    { id: "claude-test", supported_endpoints: ["/chat/completions"] },
+  ] }), {
+    responsesModel: "gpt-native",
+    claudeModel: "claude-test",
+  });
+});
+
+test("inspectAdapterCompatibility: checks native Responses, history stream, compact, and Anthropic stream", async () => {
+  const requests = [];
+  const checks = await inspectAdapterCompatibility({
+    port: 2026,
+    timeoutMs: 1000,
+    fetchImpl: async (url, options = {}) => {
+      const body = options.body ? JSON.parse(options.body) : null;
+      requests.push({ url, body });
+      if (url.endsWith("/v1/models")) {
+        return new Response(JSON.stringify({ data: [
+          { id: "gpt-native", supported_endpoints: ["/responses"] },
+          { id: "claude-test", supported_endpoints: ["/chat/completions"] },
+        ] }), { status: 200 });
+      }
+      if (url.endsWith("/v1/responses/compact")) {
+        return new Response(JSON.stringify({ id: "resp_compact", output: [] }), { status: 200 });
+      }
+      if (url.endsWith("/v1/responses") && body?.stream) {
+        return new Response("event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n", { status: 200 });
+      }
+      if (url.endsWith("/v1/responses")) {
+        return new Response(JSON.stringify({ id: "resp_first", output: [] }), { status: 200 });
+      }
+      if (url.endsWith("/v1/messages")) {
+        return new Response("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n", { status: 200 });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+
+  assert.equal(checks.every((check) => check.kind === "ok"), true);
+  assert.equal(checks.length, 5);
+  const historyRequest = requests.find((request) => request.body?.previous_response_id);
+  assert.equal(historyRequest.body.previous_response_id, "resp_first");
+  assert.deepEqual(historyRequest.body.tools, [{ type: "image_generation" }]);
+});
+
+test("collectDoctorChecks: compatibility checks require a running compatible adapter", async () => {
+  const checks = await collectDoctorChecks({
+    home: configuredHome(),
+    platform: "darwin",
+    env: {},
+    checkAdapter: false,
+    compat: true,
+    checkRunningAdapterFn: async () => ({ ok: false }),
+  });
+
+  assert.equal(checks.some((check) => check.kind === "err" && /require a running/.test(check.message)), true);
 });

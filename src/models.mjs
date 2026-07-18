@@ -225,6 +225,19 @@ export function resolveOpenAIModel(model, env = process.env) {
   };
 }
 
+export function codexAutoReviewModelStatus(models, env = process.env) {
+  const { upstreamModel } = resolveOpenAIModel(CODEX_AUTO_REVIEW_MODEL, env);
+  const model = copilotModelData(models).find((entry) => String(entry?.id || "").trim() === upstreamModel);
+  if (!model) return { available: false, upstreamModel, reason: "model is not advertised" };
+  const endpoints = modelEndpoints(model);
+  const available = endpoints.includes("/responses") || endpoints.includes("/v1/responses");
+  return {
+    available,
+    upstreamModel,
+    reason: available ? "" : "model does not advertise a Responses endpoint",
+  };
+}
+
 export function anthropicModelInfo(model) {
   return {
     id: model.id,

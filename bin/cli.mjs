@@ -6,13 +6,13 @@ import { ensureClaudeConfig } from "../src/claude-config.mjs";
 import { applyClaudeDesktopConfig, formatClaudeDesktopApplyResult, generatedClaudeDesktopApiKey, loadManagedClaudeDesktopApiKey } from "../src/claude-desktop-config.mjs";
 import { startAdapter } from "../src/adapter.mjs";
 import { cacheModelEndpoints, listModels, refreshVSCodeVersion } from "../src/copilot.mjs";
-import { claudeDesktopModelDefsFromCopilotModels, claudeDesktopModelIds, gptModelIdsFromCopilotModels, parseModelAliasEnv } from "../src/models.mjs";
+import { claudeDesktopModelDefsFromCopilotModels, claudeDesktopModelIds, codexAutoReviewModelStatus, gptModelIdsFromCopilotModels, parseModelAliasEnv } from "../src/models.mjs";
 import { status } from "../src/status.mjs";
 import { configureLogging } from "../src/log.mjs";
 import { flushUsageWrites, printUsageSummary } from "../src/usage.mjs";
 import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
 import { runDoctor } from "../src/doctor.mjs";
-import { checkRunningAdapter } from "../src/running-adapter.mjs";
+import { adapterBaseUrl, checkRunningAdapter } from "../src/running-adapter.mjs";
 import { assertSafeAdapterHost, isLoopbackHost } from "../src/security.mjs";
 import { isValidModelList, loadModelCache, saveModelCache } from "../src/model-cache.mjs";
 import { initializeModelRegistry, runInBackground } from "../src/startup.mjs";
@@ -105,6 +105,10 @@ async function refreshClaudeDesktopModelDefs() {
       throw new Error(`Copilot models returned HTTP ${httpStatus}`);
     }
     const models = JSON.parse(body);
+    const autoReview = codexAutoReviewModelStatus(models);
+    if (!autoReview.available) {
+      console.log(status("warn", `Auto-review target ${autoReview.upstreamModel} is unavailable: ${autoReview.reason}. Run codex-copilot-dx doctor --compat to verify the live path.`));
+    }
     const gptModelIds = gptModelIdsFromCopilotModels(models);
     if (gptModelIds.length) {
       console.log(status("ok", `Refreshed GPT models from GitHub Copilot: ${gptModelIds.join(", ")}`));
@@ -152,8 +156,8 @@ async function reuseRunningAdapterIfAvailable() {
   if (!running.ok) return false;
 
   console.log(status("ok", `Using existing adapter at ${running.baseUrl}`));
-  ensureCodexConfig(ADAPTER_PORT);
-  ensureClaudeConfig(ADAPTER_PORT);
+  ensureCodexConfig(ADAPTER_PORT, { host: ADAPTER_HOST });
+  ensureClaudeConfig(ADAPTER_PORT, { host: ADAPTER_HOST });
 
   if (CONFIGURE_CLAUDE_DESKTOP) {
     const claudeDesktopApiKey = currentClaudeDesktopApiKey();
@@ -252,8 +256,8 @@ try {
   });
 
   // Point Codex and Claude Code at the adapter.
-  ensureCodexConfig(ADAPTER_PORT);
-  ensureClaudeConfig(ADAPTER_PORT);
+  ensureCodexConfig(ADAPTER_PORT, { host: ADAPTER_HOST });
+  ensureClaudeConfig(ADAPTER_PORT, { host: ADAPTER_HOST });
   if (CONFIGURE_CLAUDE_DESKTOP) {
     const result = applyClaudeDesktopConfig({
       port: ADAPTER_PORT,
@@ -283,7 +287,7 @@ try {
   console.log(`
   ${status("ok", "Ready, Claude Code, Claude App and Codex App are now ready to use")}
 
-  Adapter: http://${ADAPTER_HOST}:${ADAPTER_PORT}
+  Adapter: ${adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT)}
 
   Press Ctrl+C to stop.
 `);

@@ -24,4 +24,5 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run test:smoke
+      - run: npm run bench:check
       - run: npm run pack:check

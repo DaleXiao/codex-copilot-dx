@@ -3,12 +3,13 @@ import path from "node:path";
 import os from "node:os";
 import { status } from "./status.mjs";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
+import { adapterBaseUrl } from "./running-adapter.mjs";
 
 const SETTINGS_PATH = path.join(os.homedir(), ".claude", "settings.json");
 
 // Return an updated settings object without mutating the input.
-export function computeUpdatedSettings(settings, port) {
-  const target = `http://127.0.0.1:${port}`;
+export function computeUpdatedSettings(settings, port, host = "127.0.0.1") {
+  const target = adapterBaseUrl(host, port);
   const current = settings?.env?.ANTHROPIC_BASE_URL;
   const currentToken = settings?.env?.ANTHROPIC_AUTH_TOKEN;
   const changed = current !== target || currentToken !== "dummy";
@@ -24,11 +25,11 @@ export function computeUpdatedSettings(settings, port) {
 }
 
 // Point Claude Code at the adapter by updating ~/.claude/settings.json.
-export function ensureClaudeConfig(port = 2026, { filePath = SETTINGS_PATH } = {}) {
-  const target = `http://127.0.0.1:${port}`;
+export function ensureClaudeConfig(port = 2026, { filePath = SETTINGS_PATH, host = "127.0.0.1" } = {}) {
+  const target = adapterBaseUrl(host, port);
 
   if (!fs.existsSync(filePath)) {
-    const { json } = computeUpdatedSettings({}, port);
+    const { json } = computeUpdatedSettings({}, port, host);
     atomicWriteFileIfChangedSync(filePath, JSON.stringify(json, null, 2) + "\n");
     console.log(status("ok", `Created ~/.claude/settings.json for Claude Code at ${target}`));
     return;
@@ -44,7 +45,7 @@ export function ensureClaudeConfig(port = 2026, { filePath = SETTINGS_PATH } = {
     return;
   }
 
-  const { json, changed } = computeUpdatedSettings(settings, port);
+  const { json, changed } = computeUpdatedSettings(settings, port, host);
   if (!changed) {
     console.log(status("ok", `Claude Code already points to ${target}`));
     return;

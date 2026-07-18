@@ -398,7 +398,7 @@ test("prepareResponsesPayload: applies stronger image compression only above the
   assert.ok(metadata.height <= 128);
 });
 
-test("fetchCopilotUpstream: retries transient network errors", async () => {
+test("fetchCopilotUpstream: retries a pre-connect POST failure", async () => {
   let calls = 0;
   const originalWarn = console.warn;
   console.warn = () => {};
@@ -422,6 +422,79 @@ test("fetchCopilotUpstream: retries transient network errors", async () => {
     });
 
     assert.equal(resp.status, 200);
+    assert.equal(calls, 2);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test("fetchCopilotUpstream: does not retry ambiguous POST network failures", async () => {
+  for (const code of ["UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "ETIMEDOUT", "ECONNRESET", "EPIPE"]) {
+    let calls = 0;
+    await assert.rejects(fetchCopilotUpstream("https://api.enterprise.githubcopilot.com/responses", {
+      method: "POST",
+      body: "{}",
+    }, {
+      retries: 2,
+      retryDelayMs: 1,
+      fetchImpl: async () => {
+        calls += 1;
+        const error = new TypeError("fetch failed");
+        error.cause = { code };
+        throw error;
+      },
+    }), /fetch failed/);
+    assert.equal(calls, 1, code);
+  }
+});
+
+test("fetchCopilotUpstream: retries a POST socket error explicitly attributed to connect", async () => {
+  let calls = 0;
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    const response = await fetchCopilotUpstream("https://api.enterprise.githubcopilot.com/responses", {
+      method: "POST",
+      body: "{}",
+    }, {
+      retries: 1,
+      retryDelayMs: 1,
+      fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) {
+          const error = new TypeError("fetch failed");
+          error.cause = { code: "ETIMEDOUT", syscall: "connect" };
+          throw error;
+        }
+        return new Response("{}", { status: 200 });
+      },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(calls, 2);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test("fetchCopilotUpstream: retains transient network retries for GET", async () => {
+  let calls = 0;
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    const response = await fetchCopilotUpstream("https://api.enterprise.githubcopilot.com/models", {}, {
+      retries: 1,
+      retryDelayMs: 1,
+      fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) {
+          const error = new TypeError("fetch failed");
+          error.cause = { code: "ECONNRESET" };
+          throw error;
+        }
+        return new Response("{}", { status: 200 });
+      },
+    });
+    assert.equal(response.status, 200);
     assert.equal(calls, 2);
   } finally {
     console.warn = originalWarn;

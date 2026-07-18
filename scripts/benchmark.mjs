@@ -72,12 +72,14 @@ function largePayloadProbe(targetMiB, concurrency) {
     const result = runProbe(`
       import fs from "node:fs";
       import { prepareResponsesRequest } from "./src/adapter.mjs";
-      import { readJsonBody } from "./src/http-transport.mjs";
+      import { createRequestAdmission, readJsonBody } from "./src/http-transport.mjs";
       import { prepareResponsesPayload } from "./src/image-optimization.mjs";
 
       const fixtureFiles = ${JSON.stringify(fixtureFiles)};
+      const acquireRequest = createRequestAdmission();
       const memoryFields = ["rss", "heapUsed", "external", "arrayBuffers"];
       const peak = {};
+      let admissionMaxActiveBytes = 0;
       const sample = () => {
         const memory = process.memoryUsage();
         for (const field of memoryFields) peak[field] = Math.max(peak[field] || 0, memory[field] || 0);
@@ -90,15 +92,23 @@ function largePayloadProbe(targetMiB, concurrency) {
 
       async function processRequest(filePath) {
         const inputBytes = fs.statSync(filePath).size;
+        const headers = { "content-length": String(inputBytes), "content-encoding": "identity" };
+        const releaseRequest = await acquireRequest({ headers });
+        admissionMaxActiveBytes = Math.max(admissionMaxActiveBytes, acquireRequest.stats().activeBytes);
         const req = fs.createReadStream(filePath);
-        req.headers = { "content-length": String(inputBytes), "content-encoding": "identity" };
-        const parsed = await readJsonBody(req);
-        req.destroy();
-        sample();
-        const prepared = prepareResponsesRequest(parsed, { mutate: true });
-        const result = await prepareResponsesPayload(prepared.body);
-        sample();
-        return { inputBytes, outputBytes: result.bodyBytes };
+        req.headers = headers;
+        try {
+          const parsed = await readJsonBody(req);
+          req.destroy();
+          sample();
+          const prepared = prepareResponsesRequest(parsed, { mutate: true });
+          const result = await prepareResponsesPayload(prepared.body);
+          sample();
+          return { inputBytes, outputBytes: result.bodyBytes };
+        } finally {
+          req.destroy();
+          releaseRequest();
+        }
       }
 
       const originalLog = console.log;
@@ -130,6 +140,8 @@ function largePayloadProbe(targetMiB, concurrency) {
         input_body_mib: results.map((entry) => mib(entry.inputBytes)),
         output_body_mib: results.map((entry) => mib(entry.outputBytes)),
         output_body_kib: results.map((entry) => +(entry.outputBytes / 1024).toFixed(1)),
+        admission_max_active_mib: mib(admissionMaxActiveBytes),
+        admission_budget_mib: mib(acquireRequest.stats().maxBytes),
         memory,
       }));
     `);
@@ -138,6 +150,30 @@ function largePayloadProbe(targetMiB, concurrency) {
   } finally {
     fs.rmSync(fixtureDir, { recursive: true, force: true });
   }
+}
+
+function largeTokenCountProbe(mode) {
+  return runProbe(`
+    const text = "a ".repeat(2 * 1024 * 1024);
+    const started = performance.now();
+    let tokens;
+    if (${JSON.stringify(mode)} === "proxy") {
+      const { countTokens } = await import("./src/anthropic.mjs");
+      tokens = (await countTokens({ messages: [{ role: "user", content: text }] })).input_tokens;
+    } else {
+      const { encode } = await import("gpt-tokenizer");
+      const encoded = encode(text);
+      tokens = encoded.length;
+    }
+    const memory = process.memoryUsage();
+    process.stdout.write(JSON.stringify({
+      input_mib: +(Buffer.byteLength(text) / 1048576).toFixed(1),
+      tokens,
+      elapsed_ms: +(performance.now() - started).toFixed(1),
+      rss_mib: +(memory.rss / 1048576).toFixed(1),
+      heap_used_mib: +(memory.heapUsed / 1048576).toFixed(1),
+    }));
+  `);
 }
 
 const adapterImport = runProbe(`
@@ -237,15 +273,28 @@ try {
   console.warn = originalWarn;
 }
 
+const checkMode = process.argv.includes("--check");
 const report = {
-  note: "Report-only benchmark; timings vary by machine and are not pass/fail thresholds.",
+  note: checkMode
+    ? "Relative performance and resource checks; absolute timings vary by machine."
+    : "Report-only benchmark; timings vary by machine and are not pass/fail thresholds.",
   adapter_import: adapterImport,
   token_count_100kb: tokenCount,
   duplicate_images: duplicateImages,
   oversized_payload: oversizedPayload,
 };
 
-if (process.argv.includes("--large-payload")) {
+if (checkMode) {
+  report.large_token_count = {
+    proxy: largeTokenCountProbe("proxy"),
+    materialized_array: largeTokenCountProbe("array"),
+  };
+  report.large_payload_peak = [
+    largePayloadProbe(5, 4),
+    largePayloadProbe(30, 1),
+    largePayloadProbe(30, 2),
+  ];
+} else if (process.argv.includes("--large-payload")) {
   report.large_payload_peak = [
     largePayloadProbe(5, 1),
     largePayloadProbe(5, 4),
@@ -256,3 +305,30 @@ if (process.argv.includes("--large-payload")) {
 }
 
 console.log(JSON.stringify(report, null, 2));
+
+if (checkMode) {
+  const failures = [];
+  const proxy = report.large_token_count.proxy;
+  const array = report.large_token_count.materialized_array;
+  if (proxy.tokens !== array.tokens) failures.push(`token counts differ: proxy=${proxy.tokens} array=${array.tokens}`);
+  if (proxy.elapsed_ms > array.elapsed_ms * 1.25) {
+    failures.push(`token counter is materially slower: proxy=${proxy.elapsed_ms}ms array=${array.elapsed_ms}ms`);
+  }
+  if (proxy.rss_mib > array.rss_mib * 0.9) {
+    failures.push(`token counter RSS regression: proxy=${proxy.rss_mib}MiB array=${array.rss_mib}MiB`);
+  }
+  if (proxy.heap_used_mib > array.heap_used_mib * 0.75) {
+    failures.push(`token counter heap regression: proxy=${proxy.heap_used_mib}MiB array=${array.heap_used_mib}MiB`);
+  }
+  for (const payload of report.large_payload_peak) {
+    if (payload.admission_max_active_mib > payload.admission_budget_mib) {
+      failures.push(`request admission exceeded its budget at ${payload.target_request_mib}MiB x${payload.concurrency}`);
+    }
+  }
+  if (failures.length) {
+    for (const failure of failures) console.error(`[FAIL] ${failure}`);
+    process.exitCode = 1;
+  } else {
+    console.error("[OK] Performance and resource checks passed");
+  }
+}

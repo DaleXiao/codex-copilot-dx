@@ -28,6 +28,13 @@ test("computeUpdatedSettings: reports unchanged when already current", () => {
   assert.equal(changed, false);
 });
 
+test("computeUpdatedSettings: uses a bracketed IPv6 loopback URL", () => {
+  const { json, changed } = computeUpdatedSettings({}, 2026, "::1");
+
+  assert.equal(changed, true);
+  assert.equal(json.env.ANTHROPIC_BASE_URL, "http://[::1]:2026");
+});
+
 test("computeUpdatedSettings: preserves unrelated keys", () => {
   const before = { env: { ANTHROPIC_BASE_URL: "http://localhost:4141", FOO: "bar" }, hooks: { a: 1 }, permissions: { deny: ["WebSearch"] } };
   const { json } = computeUpdatedSettings(before, 2026);

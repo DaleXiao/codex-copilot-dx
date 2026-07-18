@@ -95,6 +95,12 @@ const RETRYABLE_UPSTREAM_ERROR_CODES = new Set([
   "EAI_AGAIN",
   "ENOTFOUND",
 ]);
+const RETRYABLE_POST_CONNECT_ERROR_CODES = new Set([
+  "UND_ERR_CONNECT_TIMEOUT",
+  "ECONNREFUSED",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+]);
 const RETRYABLE_UPSTREAM_STATUSES = new Set([408, 502, 503, 504]);
 
 function upstreamTarget(url) {
@@ -146,9 +152,15 @@ function requestMethod(init = {}) {
   return String(init.method || "GET").toUpperCase();
 }
 
-export function isRetryableUpstreamError(err, { signal } = {}) {
+export function isRetryableUpstreamError(err, { signal, method = "GET" } = {}) {
   if (isAbortError(err, signal)) return false;
-  return RETRYABLE_UPSTREAM_ERROR_CODES.has(upstreamErrorCode(err));
+  const code = upstreamErrorCode(err);
+  if (!["GET", "HEAD", "OPTIONS"].includes(String(method || "GET").toUpperCase())) {
+    const syscall = err?.cause?.syscall || err?.syscall || "";
+    return RETRYABLE_POST_CONNECT_ERROR_CODES.has(code)
+      || (syscall === "connect" && ["ETIMEDOUT", "ECONNRESET"].includes(code));
+  }
+  return RETRYABLE_UPSTREAM_ERROR_CODES.has(code);
 }
 
 export function isRetryableUpstreamStatus(status, method = "GET") {
@@ -197,7 +209,7 @@ export async function fetchCopilotUpstream(
       return resp;
     } catch (e) {
       debugLog(`upstream ${method} ${target} error=${describeUpstreamError(e)} attempt=${attempt + 1}/${retryCount + 1} attempt_ms=${Date.now() - attemptStart} total_ms=${Date.now() - totalStart}`);
-      if (attempt >= retryCount || !isRetryableUpstreamError(e, { signal })) throw e;
+      if (attempt >= retryCount || !isRetryableUpstreamError(e, { signal, method })) throw e;
       const delay = upstreamRetryDelay(attempt, baseDelay);
       console.warn(status("warn", `upstream ${target} ${describeUpstreamError(e)}; retry ${attempt + 1}/${retryCount} in ${delay}ms`));
       await sleep(delay, { signal });

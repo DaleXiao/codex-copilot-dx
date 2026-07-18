@@ -4,6 +4,7 @@ import {
   claudeDesktopModelDefsFromCopilotModels,
   claudeDesktopModelIds,
   claudeDesktopModelsResponse,
+  codexAutoReviewModelStatus,
   gptModelIdsFromCopilotModels,
   parseModelAliasEnv,
   resolveAnthropicModel,
@@ -115,6 +116,29 @@ test("resolveOpenAIModel: maps only the Codex auto-review model", () => {
   assert.deepEqual(resolveOpenAIModel("custom-model", { CCDX_AUTO_REVIEW_MODEL: "gpt-5.6-sol" }), {
     requestedModel: "custom-model",
     upstreamModel: "custom-model",
+  });
+});
+
+test("codexAutoReviewModelStatus: validates the configured Responses target", () => {
+  const models = { data: [
+    { id: "gpt-5.5", supported_endpoints: ["/responses"] },
+    { id: "gpt-chat", supported_endpoints: ["/chat/completions"] },
+  ] };
+
+  assert.deepEqual(codexAutoReviewModelStatus(models, {}), {
+    available: true,
+    upstreamModel: "gpt-5.5",
+    reason: "",
+  });
+  assert.deepEqual(codexAutoReviewModelStatus(models, { CCDX_AUTO_REVIEW_MODEL: "gpt-chat" }), {
+    available: false,
+    upstreamModel: "gpt-chat",
+    reason: "model does not advertise a Responses endpoint",
+  });
+  assert.deepEqual(codexAutoReviewModelStatus(models, { CCDX_AUTO_REVIEW_MODEL: "gpt-missing" }), {
+    available: false,
+    upstreamModel: "gpt-missing",
+    reason: "model is not advertised",
   });
 });
 

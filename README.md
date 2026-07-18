@@ -70,7 +70,7 @@ To actively verify the protocol path through an already-running adapter, run:
 codex-copilot-dx doctor --compat
 ```
 
-The compatibility doctor sends a few minimal Copilot requests to check native Responses, streaming history, compaction, image tool namespace handling, and Anthropic streaming. It consumes a small amount of Copilot usage, never starts the adapter or device flow, and does not change client configuration. Combine it with `--online` when both the saved-token entitlement check and the adapter protocol checks are needed.
+The compatibility doctor sends a few minimal Copilot requests to check Codex Auto-review, native Responses, streaming history, compaction, image tool namespace handling, and Anthropic streaming. It consumes a small amount of Copilot usage, never starts the adapter or device flow, and does not change client configuration. Combine it with `--online` when both the saved-token entitlement check and the adapter protocol checks are needed.
 
 When the saved token is missing, `codex-copilot-dx` first looks for compatible local Copilot GitHub tokens, validates them with GitHub and Copilot, and imports a valid one before starting device login. It checks explicit token sources (`CCDX_GITHUB_TOKEN`, `CCDX_GITHUB_TOKEN_PATH`, `CCDX_GITHUB_TOKEN_PATHS`) plus common local `auth.json` layouts under application config directories. It does not rely on a specific app name. Generic discovery refuses to choose silently when valid tokens for multiple GitHub accounts are found. After an account is selected, automatic `401`/`403` recovery and in-process token rotation accept only the same GitHub account. Concurrent callers share token refresh work without sharing cancellation, and a still-valid Copilot token may be used briefly after a transient refresh failure. Explicit token variables remain the intentional way to switch accounts.
 
@@ -110,12 +110,15 @@ Environment variables:
 | `CCDX_ALLOW_LAN` | unset | Set to `1` to allow non-loopback `ADAPTER_HOST` values such as `0.0.0.0`; exposes your Copilot-backed adapter beyond this machine |
 | `CCDX_MAX_BODY_BYTES` | `67108864` | Maximum compressed/raw request body size |
 | `CCDX_MAX_DECODED_BODY_BYTES` | `134217728` | Maximum decoded request body size after decompression |
+| `CCDX_MAX_INFLIGHT_BODY_BYTES` | `33554432` | Shared byte budget for admitted request bodies; a larger single request runs exclusively |
+| `CCDX_MAX_QUEUED_REQUESTS` | `16` | Maximum body requests waiting for the shared byte budget |
+| `CCDX_REQUEST_QUEUE_TIMEOUT_MS` | `120000` | Maximum wait for request-body admission before returning `503` |
 | `CCDX_MAX_UPSTREAM_BODY_BYTES` | `31457280` | Responses body target; larger image payloads are compressed more aggressively before forwarding |
 | `CCDX_MAX_SSE_BUFFER_BYTES` | `8388608` | Maximum buffered bytes for one unterminated upstream SSE line/event |
 | `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Timeout for non-streaming upstream Copilot requests |
 | `CCDX_STREAM_HANDSHAKE_TIMEOUT_MS` | `120000` | Timeout while waiting for upstream streaming response headers |
 | `CCDX_STREAM_IDLE_TIMEOUT_MS` | `120000` | Maximum idle time between upstream streaming body chunks |
-| `CCDX_UPSTREAM_RETRIES` | `2` | Retries for transient Copilot upstream network errors; capped at `5` |
+| `CCDX_UPSTREAM_RETRIES` | `2` | Retries for safe requests and clearly pre-connect POST failures; capped at `5` |
 | `CCDX_UPSTREAM_RETRY_DELAY_MS` | `300` | Initial upstream retry backoff in milliseconds; capped at `5000` |
 | `CCDX_AUTO_REVIEW_MODEL` | `gpt-5.5` | Copilot Responses model used for Codex Auto-review requests |
 | `CCDX_LOG_PATH` | unset | Mirror terminal logs to a file; set to `1` for `~/.local/share/codex-copilot-dx/debug.log` |
@@ -178,4 +181,4 @@ npm run verify
 npm run bench:payload
 ```
 
-`npm test` runs the unit and handler-level suite. `npm run test:smoke` starts a real local HTTP adapter with fully injected offline upstreams. `npm run pack:check` verifies the npm tarball contents without publishing. `npm run bench:payload` is a report-only, isolated-process benchmark for 5-60 MiB image payloads and does not contact Copilot. The CI workflow runs the verification checks on supported Node.js release lines.
+`npm test` runs the unit and handler-level suite. `npm run test:smoke` starts a real local HTTP adapter with fully injected offline upstreams. `npm run bench:check` enforces relative token-counting performance and request-admission resource limits. `npm run pack:check` verifies the npm tarball contents without publishing. `npm run bench:payload` remains a report-only, isolated-process benchmark for 5-60 MiB image payloads and does not contact Copilot. The CI workflow runs the verification checks on supported Node.js release lines.

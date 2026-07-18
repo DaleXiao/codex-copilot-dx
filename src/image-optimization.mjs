@@ -130,13 +130,16 @@ export async function optimizeImageDataUrl(dataUrl, {
   const match = /^data:(image\/[a-z+.-]+);base64,(.+)$/i.exec(dataUrl);
   if (!match) return dataUrl;
   const mime = match[1].toLowerCase();
-  const raw = Buffer.from(match[2], "base64");
-  if (raw.length < IMG_MIN_BYTES || mime.includes("gif")) return dataUrl;
-  const digest = imageDigest(raw);
-  if (!force && touchOptimizedImage(digest)) return dataUrl;
+  const encoded = match[2];
+  const inputBytes = Buffer.byteLength(encoded, "base64");
+  if (inputBytes < IMG_MIN_BYTES || mime.includes("gif")) return dataUrl;
 
   try {
     return await runGlobalImageTask(async () => {
+      const raw = Buffer.from(encoded, "base64");
+      if (raw.length < IMG_MIN_BYTES) return dataUrl;
+      const digest = imageDigest(raw);
+      if (!force && touchOptimizedImage(digest)) return dataUrl;
       const resize = await sharp();
       const image = resize(raw, { failOn: "none", limitInputPixels: IMG_MAX_INPUT_PIXELS });
       const out = await image
@@ -156,7 +159,7 @@ export async function optimizeImageDataUrl(dataUrl, {
     }, { signal });
   } catch (e) {
     if (signal?.aborted || e?.name === "AbortError") throw e;
-    console.warn(status("warn", `image optimize failed (${mime}, ${raw.length}b): ${e.message}`));
+    console.warn(status("warn", `image optimize failed (${mime}, ${inputBytes}b): ${e.message}`));
     return dataUrl;
   }
 }

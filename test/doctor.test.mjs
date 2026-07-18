@@ -7,6 +7,8 @@ import { githubTokenPath } from "../src/auth.mjs";
 import { claudeDesktopPaths } from "../src/claude-desktop-config.mjs";
 import {
   collectDoctorChecks,
+  inspectClaudeCodeConfig,
+  inspectCodexConfig,
   inspectAdapterCompatibility,
   inspectGitHubTokenOnline,
   runDoctor,
@@ -81,6 +83,24 @@ test("collectDoctorChecks: reports missing config as warnings", async () => {
   assert.equal(checks.some((check) => check.kind === "warn" && /GitHub token not found/.test(check.message)), true);
   assert.equal(checks.some((check) => check.kind === "warn" && /Codex config not found/.test(check.message)), true);
   assert.equal(checks.some((check) => check.kind === "warn" && /Claude App gateway profile is not configured/.test(check.message)), true);
+});
+
+test("config doctor checks honor an IPv6 loopback adapter", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-doctor-ipv6-"));
+  writeFile(path.join(home, ".codex", "config.toml"), `openai_base_url = "http://[::1]:2026/v1"
+
+[shell_environment_policy.set]
+ANTHROPIC_AUTH_TOKEN = "dummy"
+ANTHROPIC_BASE_URL = "http://[::1]:2026"
+OPENAI_BASE_URL = "http://[::1]:2026/v1"
+OPENAI_API_KEY = "dummy"
+`);
+  writeJson(path.join(home, ".claude", "settings.json"), {
+    env: { ANTHROPIC_BASE_URL: "http://[::1]:2026", ANTHROPIC_AUTH_TOKEN: "dummy" },
+  });
+
+  assert.equal(inspectCodexConfig({ home, host: "::1", port: 2026 }).every((check) => check.kind === "ok"), true);
+  assert.equal(inspectClaudeCodeConfig({ home, host: "::1", port: 2026 }).every((check) => check.kind === "ok"), true);
 });
 
 test("runDoctor: prints status lines", async () => {
@@ -171,10 +191,38 @@ test("inspectAdapterCompatibility: checks native Responses, history stream, comp
   });
 
   assert.equal(checks.every((check) => check.kind === "ok"), true);
-  assert.equal(checks.length, 5);
+  assert.equal(checks.length, 6);
+  assert.equal(requests.some((request) => request.body?.model === "codex-auto-review"), true);
   const historyRequest = requests.find((request) => request.body?.previous_response_id);
   assert.equal(historyRequest.body.previous_response_id, "resp_first");
   assert.deepEqual(historyRequest.body.tools, [{ type: "image_generation" }]);
+});
+
+test("inspectAdapterCompatibility: reports Auto-review failure independently", async () => {
+  const checks = await inspectAdapterCompatibility({
+    timeoutMs: 1000,
+    fetchImpl: async (url, options = {}) => {
+      const body = options.body ? JSON.parse(options.body) : null;
+      if (url.endsWith("/v1/models")) {
+        return new Response(JSON.stringify({ data: [
+          { id: "gpt-native", supported_endpoints: ["/responses"] },
+        ] }), { status: 200 });
+      }
+      if (body?.model === "codex-auto-review") {
+        return new Response(JSON.stringify({ error: "model_not_supported" }), { status: 400 });
+      }
+      if (url.endsWith("/v1/responses/compact")) {
+        return new Response(JSON.stringify({ id: "resp_compact", output: [] }), { status: 200 });
+      }
+      if (body?.stream) {
+        return new Response("event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n", { status: 200 });
+      }
+      return new Response(JSON.stringify({ id: "resp_native", output: [] }), { status: 200 });
+    },
+  });
+
+  assert.equal(checks.some((check) => check.kind === "err" && /Codex Auto-review failed/.test(check.message)), true);
+  assert.equal(checks.some((check) => check.kind === "ok" && /Native Responses/.test(check.message)), true);
 });
 
 test("collectDoctorChecks: compatibility checks require a running compatible adapter", async () => {

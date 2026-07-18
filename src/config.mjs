@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { status } from "./status.mjs";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
+import { adapterBaseUrl } from "./running-adapter.mjs";
 
 const CONFIG_PATH = path.join(os.homedir(), ".codex", "config.toml");
 
@@ -33,9 +34,9 @@ function setTomlKey(lines, sectionName, key, value) {
   return true;
 }
 
-export function computeUpdatedCodexConfig(content, adapterPort = 2026) {
-  const baseUrl = `http://127.0.0.1:${adapterPort}/v1`;
-  const anthropicBaseUrl = `http://127.0.0.1:${adapterPort}`;
+export function computeUpdatedCodexConfig(content, adapterPort = 2026, adapterHost = "127.0.0.1") {
+  const anthropicBaseUrl = adapterBaseUrl(adapterHost, adapterPort);
+  const baseUrl = `${anthropicBaseUrl}/v1`;
   const hadTrailingNewline = content.endsWith("\n");
   const lines = content.split("\n");
   if (hadTrailingNewline) lines.pop();
@@ -59,9 +60,9 @@ export function computeUpdatedCodexConfig(content, adapterPort = 2026) {
   return { content: lines.join("\n") + (hadTrailingNewline ? "\n" : ""), changed };
 }
 
-function initialCodexConfig(adapterPort) {
-  const baseUrl = `http://127.0.0.1:${adapterPort}/v1`;
-  const anthropicBaseUrl = `http://127.0.0.1:${adapterPort}`;
+function initialCodexConfig(adapterPort, adapterHost) {
+  const anthropicBaseUrl = adapterBaseUrl(adapterHost, adapterPort);
+  const baseUrl = `${anthropicBaseUrl}/v1`;
   return `openai_base_url = "${baseUrl}"
 
 [shell_environment_policy]
@@ -75,18 +76,18 @@ OPENAI_API_KEY = "dummy"
 `;
 }
 
-export function ensureCodexConfig(adapterPort = 2026, { filePath = CONFIG_PATH } = {}) {
-  const baseUrl = `http://127.0.0.1:${adapterPort}/v1`;
+export function ensureCodexConfig(adapterPort = 2026, { filePath = CONFIG_PATH, host = "127.0.0.1" } = {}) {
+  const baseUrl = `${adapterBaseUrl(host, adapterPort)}/v1`;
 
   if (!fs.existsSync(filePath)) {
     // Codex config does not exist yet; create the local proxy defaults.
-    atomicWriteFileIfChangedSync(filePath, initialCodexConfig(adapterPort));
+    atomicWriteFileIfChangedSync(filePath, initialCodexConfig(adapterPort, host));
     console.log(status("ok", "Created ~/.codex/config.toml"));
     return;
   }
 
   const content = fs.readFileSync(filePath, "utf-8");
-  const updated = computeUpdatedCodexConfig(content, adapterPort);
+  const updated = computeUpdatedCodexConfig(content, adapterPort, host);
 
   if (!updated.changed) {
     console.log(status("ok", `Codex already points to ${baseUrl}`));

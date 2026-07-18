@@ -282,3 +282,25 @@ test("countTokens: deterministic for the same input", async () => {
   const results = await Promise.all([countTokens(body), countTokens(body), countTokens(body)]);
   assert.deepEqual(results, [results[0], results[0], results[0]]);
 });
+
+test("countTokens: preserves the established count for mixed Anthropic input", async () => {
+  const result = await countTokens({
+    model: "m",
+    system: [{ type: "text", text: "system rule" }],
+    messages: [{
+      role: "user",
+      content: [
+        { type: "text", text: "hello 世界" },
+        { type: "tool_use", name: "lookup", input: { q: "value" } },
+        { type: "tool_result", content: "done" },
+      ],
+    }],
+    tools: [{
+      name: "lookup",
+      description: "find value",
+      input_schema: { type: "object", properties: { q: { type: "string" } } },
+    }],
+  });
+
+  assert.equal(result.input_tokens, 31);
+});

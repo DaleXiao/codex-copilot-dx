@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 
 let tokenizerModulePromise = null;
 
-async function tokenEncoder() {
+async function tokenCounter() {
   tokenizerModulePromise ||= import("gpt-tokenizer");
-  return (await tokenizerModulePromise).encode;
+  return (await tokenizerModulePromise).countTokens;
 }
 
 // Anthropic Messages API to OpenAI chat/completions translation.
@@ -282,6 +282,6 @@ export async function countTokens(body) {
   }
 
   const text = parts.join("\n");
-  const encode = await tokenEncoder();
-  return { input_tokens: encode(text).length };
+  const count = await tokenCounter();
+  return { input_tokens: count(text) };
 }

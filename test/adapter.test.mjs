@@ -9,6 +9,7 @@ import {
   clearResponseHistoryForTests,
   configureResponseHistoryForTests,
   createAdapterHandler,
+  createRequestAdmission,
   createRequestAbort,
   isAbortLikeError,
   isEncryptedContentVerificationError,
@@ -147,6 +148,61 @@ test("createRequestAbort: records timeout reason", async () => {
   abort.cleanup();
 });
 
+test("createRequestAdmission: shares a byte budget without blocking a fitting request", async () => {
+  const acquire = createRequestAdmission({ maxBytes: 10, maxQueued: 2, waitTimeoutMs: 1000 });
+  const request = (bytes) => ({ headers: { "content-length": String(bytes) } });
+  const releaseFirst = await acquire(request(8));
+  let secondStarted = false;
+  const second = acquire(request(8)).then((release) => {
+    secondStarted = true;
+    return release;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(secondStarted, false);
+  const releaseSmall = await acquire(request(2));
+  assert.deepEqual(acquire.stats(), { activeBytes: 10, queued: 1, maxBytes: 10 });
+
+  releaseSmall();
+  releaseFirst();
+  const releaseSecond = await second;
+  assert.equal(secondStarted, true);
+  releaseSecond();
+  assert.deepEqual(acquire.stats(), { activeBytes: 0, queued: 0, maxBytes: 10 });
+});
+
+test("createRequestAdmission: bounds and times out its waiting queue", async () => {
+  const request = { headers: { "content-length": "10" } };
+  const acquire = createRequestAdmission({ maxBytes: 10, maxQueued: 1, waitTimeoutMs: 10 });
+  const releaseFirst = await acquire(request);
+  const second = acquire(request);
+
+  await assert.rejects(acquire(request), (error) => error.statusCode === 503 && /queue is full/.test(error.message));
+  await assert.rejects(second, (error) => error.statusCode === 503 && /admission timed out/.test(error.message));
+  assert.equal(acquire.stats().queued, 0);
+  releaseFirst();
+});
+
+test("createRequestAdmission: weights compressed bodies and treats unknown bodies as exclusive", async () => {
+  const acquire = createRequestAdmission({ maxBytes: 10, maxQueued: 2, waitTimeoutMs: 1000 });
+  const releaseCompressed = await acquire({ headers: { "content-length": "3", "content-encoding": "gzip" } });
+  let nextStarted = false;
+  const next = acquire({ headers: { "content-length": "1" } }).then((release) => {
+    nextStarted = true;
+    return release;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(nextStarted, false);
+  releaseCompressed();
+  const releaseNext = await next;
+  releaseNext();
+
+  const releaseUnknown = await acquire({ headers: {} });
+  assert.equal(acquire.stats().activeBytes, 10);
+  releaseUnknown();
+});
+
 test("abort helpers classify expected abort errors", () => {
   assert.equal(isAbortLikeError(new DOMException("This operation was aborted", "AbortError")), true);
   assert.equal(isAbortLikeError(new Error("This operation was aborted")), true);
@@ -171,6 +227,34 @@ test("HTTP proxy routes classify upstream network failures as Bad Gateway", asyn
     assert.equal(result.status, 502);
     assert.deepEqual(JSON.parse(result.text), { error: "upstream unavailable" });
   }
+});
+
+test("HTTP native Responses releases request admission after upstream opens", async () => {
+  let released = false;
+  const result = await invokeAdapter({
+    acquireRequest: async () => {
+      let done = false;
+      return () => {
+        if (done) return;
+        done = true;
+        released = true;
+      };
+    },
+    responsesFn: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => "application/json" },
+      text: async () => {
+        assert.equal(released, true);
+        return JSON.stringify({ id: "resp_release", output: [] });
+      },
+    }),
+  }, {
+    body: { model: "gpt-5.6-sol", stream: false, input: "hello" },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(released, true);
 });
 
 test("HTTP streaming responses time out while waiting for upstream headers", async () => {
@@ -1147,17 +1231,22 @@ test("forwardToChat: emits stable mixed text and tool output indexes with usage"
   const events = [];
   let done = false;
   let failure = null;
+  let releaseCalls = 0;
 
   await forwardToChat(
     { model: "gpt-4o", messages: [{ role: "user", content: "hi" }] },
     async (event, data) => events.push({ event, data }),
     () => { done = true; },
     (statusCode, message) => { failure = { statusCode, message }; },
-    { chatCompletionsFn: async () => new Response(body, { status: 200 }) },
+    {
+      chatCompletionsFn: async () => new Response(body, { status: 200 }),
+      releaseRequest: () => { releaseCalls += 1; },
+    },
   );
 
   assert.equal(done, true);
   assert.equal(failure, null);
+  assert.equal(releaseCalls, 1);
   const added = events.filter(({ event }) => event === "response.output_item.added");
   assert.deepEqual(added.map(({ data }) => data.output_index), [0, 1]);
   assert.deepEqual(added.map(({ data }) => data.item.type), ["message", "function_call"]);

@@ -4,6 +4,10 @@ import { status } from "./status.mjs";
 
 const DEFAULT_MAX_BODY_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_DECODED_BODY_BYTES = 128 * 1024 * 1024;
+const DEFAULT_MAX_INFLIGHT_BODY_BYTES = 32 * 1024 * 1024;
+const DEFAULT_MAX_QUEUED_REQUESTS = 16;
+const DEFAULT_REQUEST_QUEUE_TIMEOUT_MS = 120 * 1000;
+const COMPRESSED_BODY_WEIGHT_MULTIPLIER = 4;
 const gunzipAsync = promisify(zlib.gunzip);
 const inflateAsync = promisify(zlib.inflate);
 const brotliDecompressAsync = promisify(zlib.brotliDecompress);
@@ -16,6 +20,9 @@ function positiveInt(value, fallback) {
 
 const MAX_BODY_BYTES = positiveInt(process.env.CCDX_MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES);
 const MAX_DECODED_BODY_BYTES = positiveInt(process.env.CCDX_MAX_DECODED_BODY_BYTES, DEFAULT_MAX_DECODED_BODY_BYTES);
+const MAX_INFLIGHT_BODY_BYTES = positiveInt(process.env.CCDX_MAX_INFLIGHT_BODY_BYTES, DEFAULT_MAX_INFLIGHT_BODY_BYTES);
+const MAX_QUEUED_REQUESTS = positiveInt(process.env.CCDX_MAX_QUEUED_REQUESTS, DEFAULT_MAX_QUEUED_REQUESTS);
+const REQUEST_QUEUE_TIMEOUT_MS = positiveInt(process.env.CCDX_REQUEST_QUEUE_TIMEOUT_MS, DEFAULT_REQUEST_QUEUE_TIMEOUT_MS);
 
 export function httpError(message, statusCode) {
   const err = new Error(message);
@@ -29,6 +36,108 @@ function payloadTooLarge(kind, maxBytes) {
 
 function requestContentLength(req) {
   return Number.parseInt(req.headers?.["content-length"] || "", 10);
+}
+
+function requestAdmissionWeight(req, maxBytes) {
+  const encodings = contentEncodings(req.headers?.["content-encoding"]);
+  const contentLength = requestContentLength(req);
+  if (!Number.isFinite(contentLength) || contentLength < 0) return maxBytes;
+  const compressed = encodings.some((encoding) => encoding !== "identity");
+  const weightedLength = compressed ? contentLength * COMPRESSED_BODY_WEIGHT_MULTIPLIER : contentLength;
+  return Math.max(1, Math.min(weightedLength, maxBytes));
+}
+
+function admissionAbortError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error("The operation was aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+export function createRequestAdmission({
+  maxBytes = MAX_INFLIGHT_BODY_BYTES,
+  maxQueued = MAX_QUEUED_REQUESTS,
+  waitTimeoutMs = REQUEST_QUEUE_TIMEOUT_MS,
+} = {}) {
+  const byteLimit = positiveInt(maxBytes, MAX_INFLIGHT_BODY_BYTES);
+  const queueLimit = positiveInt(maxQueued, MAX_QUEUED_REQUESTS);
+  const timeoutMs = positiveInt(waitTimeoutMs, REQUEST_QUEUE_TIMEOUT_MS);
+  const queue = [];
+  let activeBytes = 0;
+
+  const remove = (entry) => {
+    const index = queue.indexOf(entry);
+    if (index >= 0) queue.splice(index, 1);
+  };
+
+  const activate = (entry) => {
+    entry.cleanup();
+    activeBytes += entry.weight;
+    let released = false;
+    entry.resolve(() => {
+      if (released) return;
+      released = true;
+      activeBytes = Math.max(0, activeBytes - entry.weight);
+      drain();
+    });
+  };
+
+  const drain = () => {
+    for (let index = 0; index < queue.length;) {
+      const entry = queue[index];
+      if (entry.cancelled) {
+        queue.splice(index, 1);
+        continue;
+      }
+      if (activeBytes + entry.weight > byteLimit) {
+        index += 1;
+        continue;
+      }
+      queue.splice(index, 1);
+      activate(entry);
+    }
+  };
+
+  const acquire = (req, { signal } = {}) => {
+    if (signal?.aborted) return Promise.reject(admissionAbortError(signal));
+    const weight = requestAdmissionWeight(req, byteLimit);
+    if (queue.length >= queueLimit && activeBytes + weight > byteLimit) {
+      return Promise.reject(httpError(`Request queue is full (${queueLimit} waiting)`, 503));
+    }
+
+    return new Promise((resolve, reject) => {
+      let timer;
+      const entry = {
+        cancelled: false,
+        weight,
+        resolve,
+        cleanup: () => {
+          if (timer) clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
+        },
+      };
+      const cancel = (error) => {
+        if (entry.cancelled) return;
+        entry.cancelled = true;
+        entry.cleanup();
+        remove(entry);
+        reject(error);
+        drain();
+      };
+      const onAbort = () => cancel(admissionAbortError(signal));
+      signal?.addEventListener("abort", onAbort, { once: true });
+      timer = setTimeout(() => {
+        cancel(httpError(`Request admission timed out after ${timeoutMs}ms`, 503));
+      }, timeoutMs);
+      timer.unref?.();
+      queue.push(entry);
+      if (signal?.aborted) onAbort();
+      else drain();
+    });
+  };
+
+  acquire.stats = () => ({ activeBytes, queued: queue.length, maxBytes: byteLimit });
+  return acquire;
 }
 
 async function readRequestBuffer(req, maxBytes) {

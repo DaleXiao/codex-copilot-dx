@@ -72,6 +72,13 @@ OPENAI_API_KEY = "dummy"
   assert.equal(content, before);
 });
 
+test("computeUpdatedCodexConfig: uses a bracketed IPv6 loopback URL", () => {
+  const { content, changed } = computeUpdatedCodexConfig("model = \"gpt-5.5\"\n", 2026, "::1");
+
+  assert.equal(changed, true);
+  assert.match(content, /^openai_base_url = "http:\/\/\[::1\]:2026\/v1"$/m);
+});
+
 test("ensureCodexConfig: leaves an already-current file untouched", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-codex-config-"));
   const filePath = path.join(dir, "config.toml");

@@ -10,6 +10,7 @@ import { recordAnthropicUsage, recordResponsesUsage } from "./usage.mjs";
 import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 import {
   abortErrorStatusCode,
+  createRequestAdmission,
   createRequestAbort,
   httpError,
   isAbortLikeError,
@@ -29,6 +30,7 @@ import {
 
 export {
   abortErrorStatusCode,
+  createRequestAdmission,
   createRequestAbort,
   isAbortLikeError,
   readJsonBody,
@@ -371,7 +373,12 @@ async function endStreamWithError(res, protocol, error, abort) {
 }
 
 async function proxyCopilotResponses(reqContext, req, res, upstream = copilotResponses, options = {}) {
-  const opened = await openCopilotResponse(reqContext, upstream, options);
+  let opened;
+  try {
+    opened = await openCopilotResponse(reqContext, upstream, options);
+  } finally {
+    options.releaseRequest?.();
+  }
   const { resp, errorText } = opened;
   reqContext = opened.reqContext;
   if (errorText !== undefined) {
@@ -547,10 +554,14 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   let resp;
   try {
     const chatCompletionsFn = options.chatCompletionsFn || chatCompletions;
-    resp = await chatCompletionsFn({
-      ...chatReq,
-      stream: true,
-    }, { signal: options.signal });
+    try {
+      resp = await chatCompletionsFn({
+        ...chatReq,
+        stream: true,
+      }, { signal: options.signal });
+    } finally {
+      options.releaseRequest?.();
+    }
   } catch (e) {
     const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(options.abort?.reason) : 502;
     await onError(statusCode, e.message);
@@ -723,6 +734,7 @@ export function createAdapterHandler(options = {}) {
   const upstreamTimeoutMs = positiveInt(options.upstreamTimeoutMs, UPSTREAM_TIMEOUT_MS);
   const streamHandshakeTimeoutMs = positiveInt(options.streamHandshakeTimeoutMs, STREAM_HANDSHAKE_TIMEOUT_MS);
   const streamIdleTimeoutMs = positiveInt(options.streamIdleTimeoutMs, STREAM_IDLE_TIMEOUT_MS);
+  const acquireRequest = options.acquireRequest || createRequestAdmission();
   const claudeDesktopModelOptions = () => {
     const modelDefs = options.modelRegistry?.modelDefs || options.claudeDesktopModelDefs;
     return Array.isArray(modelDefs) ? { modelDefs } : {};
@@ -740,7 +752,9 @@ export function createAdapterHandler(options = {}) {
     if (req.method === "POST" && pathname === "/v1/responses") {
       return (async () => {
         const abort = createRequestAbort(req, res);
+        let releaseRequest = () => {};
         try {
+          releaseRequest = await acquireRequest(req, { signal: abort.signal });
           const parsed = await readJsonBody(req);
           abort.setTimeout(
             parsed.stream ? streamHandshakeTimeoutMs : upstreamTimeoutMs,
@@ -757,6 +771,7 @@ export function createAdapterHandler(options = {}) {
             await proxyCopilotResponses(prepared, req, res, responsesFn, {
               signal: abort.signal,
               abort,
+              releaseRequest,
               streamIdleTimeoutMs,
             });
           } else {
@@ -781,12 +796,14 @@ export function createAdapterHandler(options = {}) {
                 abort,
                 streamIdleTimeoutMs,
                 chatCompletionsFn,
+                releaseRequest,
               });
             } else {
               chatReq.stream = false;
               delete chatReq.max_tokens;
               try {
                 const upstream = await chatCompletionsFn({ ...chatReq, stream: false }, { signal: abort.signal });
+                releaseRequest();
                 const data = await upstream.text();
                 if (!upstream.ok) {
                   sendUpstreamError(res, upstream, data);
@@ -807,6 +824,7 @@ export function createAdapterHandler(options = {}) {
           logRequestFailure("Responses", e, abort);
           sendJsonError(res, e, 502);
         } finally {
+          releaseRequest();
           abort.cleanup();
         }
       })();
@@ -815,7 +833,9 @@ export function createAdapterHandler(options = {}) {
     if (req.method === "POST" && pathname === "/v1/responses/compact") {
       (async () => {
         const abort = createRequestAbort(req, res);
+        let releaseRequest = () => {};
         try {
+          releaseRequest = await acquireRequest(req, { signal: abort.signal });
           const parsed = await readJsonBody(req);
           abort.setTimeout(
             parsed.stream ? streamHandshakeTimeoutMs : upstreamTimeoutMs,
@@ -831,12 +851,14 @@ export function createAdapterHandler(options = {}) {
           await proxyCopilotResponses(prepared, req, res, responsesCompactFn, {
             signal: abort.signal,
             abort,
+            releaseRequest,
             streamIdleTimeoutMs,
           });
         } catch (e) {
           logRequestFailure("Responses compact", e, abort);
           sendJsonError(res, e, 502);
         } finally {
+          releaseRequest();
           abort.cleanup();
         }
       })();
@@ -887,13 +909,18 @@ export function createAdapterHandler(options = {}) {
     if (req.method === "POST" && pathname === "/v1/messages/count_tokens") {
       (async () => {
         const abort = createRequestAbort(req, res);
+        let releaseRequest = () => {};
         try {
+          releaseRequest = await acquireRequest(req, { signal: abort.signal });
           const parsed = await readJsonBody(req);
+          const result = await countTokens(parsed);
+          releaseRequest();
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(await countTokens(parsed)));
+          res.end(JSON.stringify(result));
         } catch (e) {
           sendJsonError(res, e);
         } finally {
+          releaseRequest();
           abort.cleanup();
         }
       })();
@@ -903,7 +930,9 @@ export function createAdapterHandler(options = {}) {
     if (req.method === "POST" && pathname === "/v1/messages") {
       (async () => {
         const abort = createRequestAbort(req, res);
+        let releaseRequest = () => {};
         try {
+          releaseRequest = await acquireRequest(req, { signal: abort.signal });
           const parsed = await readJsonBody(req);
           abort.setTimeout(
             parsed.stream ? streamHandshakeTimeoutMs : upstreamTimeoutMs,
@@ -916,6 +945,7 @@ export function createAdapterHandler(options = {}) {
           const forceRequestedModel = upstreamModel !== requestedModel;
           if (parsed.stream) {
             const upstream = await chatCompletionsFn({ ...chatReq, stream: true }, { signal: abort.signal });
+            releaseRequest();
             if (!upstream.ok) {
               if (!res.headersSent) res.writeHead(upstream.status);
               res.end(await upstream.text());
@@ -947,6 +977,7 @@ export function createAdapterHandler(options = {}) {
             if (!res.writableEnded) res.end();
           } else {
             const upstream = await chatCompletionsFn({ ...chatReq, stream: false }, { signal: abort.signal });
+            releaseRequest();
             const data = await upstream.text();
             if (!upstream.ok) {
               sendUpstreamError(res, upstream, data);
@@ -961,6 +992,7 @@ export function createAdapterHandler(options = {}) {
           logRequestFailure("Messages", e, abort);
           sendJsonError(res, e, 502);
         } finally {
+          releaseRequest();
           abort.cleanup();
         }
       })();

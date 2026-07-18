@@ -6,7 +6,8 @@ import { githubTokenPath, readGithubTokenMetadata, validateGithubToken } from ".
 import { claudeDesktopPaths } from "./claude-desktop-config.mjs";
 import { status } from "./status.mjs";
 import { buildHeaders, DEFAULT_API_BASE, FALLBACK_VSCODE_VERSION } from "./copilot.mjs";
-import { checkRunningAdapter } from "./running-adapter.mjs";
+import { adapterBaseUrl, checkRunningAdapter } from "./running-adapter.mjs";
+import { CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
 
 function localGatewayBaseUrl(host, port) {
   const safeHost = String(host || "127.0.0.1");
@@ -146,6 +147,15 @@ export async function inspectAdapterCompatibility({
     return checks;
   }
 
+  await runCompatibilityCheck(checks, "Codex Auto-review", async () => {
+    const text = await compatibilityRequest(fetchImpl, `${baseUrl}/v1/responses`, {
+      model: CODEX_AUTO_REVIEW_MODEL,
+      stream: false,
+      input: "Reply with OK only.",
+    }, timeoutMs);
+    parseResponseObject(text);
+  });
+
   const firstResponse = await runCompatibilityCheck(checks, `Native Responses (${responsesModel})`, async () => {
     const text = await compatibilityRequest(fetchImpl, `${baseUrl}/v1/responses`, {
       model: responsesModel,
@@ -259,10 +269,10 @@ export async function inspectGitHubTokenOnline({
   }
 }
 
-export function inspectCodexConfig({ home = os.homedir(), port = 2026 } = {}) {
+export function inspectCodexConfig({ home = os.homedir(), host = "127.0.0.1", port = 2026 } = {}) {
   const filePath = path.join(home, ".codex", "config.toml");
-  const expectedBaseUrl = `http://127.0.0.1:${port}/v1`;
-  const expectedAnthropicBaseUrl = `http://127.0.0.1:${port}`;
+  const expectedAnthropicBaseUrl = adapterBaseUrl(host, port);
+  const expectedBaseUrl = `${expectedAnthropicBaseUrl}/v1`;
   const config = readText(filePath);
   if (!config.ok) {
     return [{ kind: "warn", message: `Codex config not found at ${displayPath(home, filePath)}` }];
@@ -285,9 +295,9 @@ export function inspectCodexConfig({ home = os.homedir(), port = 2026 } = {}) {
   return checks;
 }
 
-export function inspectClaudeCodeConfig({ home = os.homedir(), port = 2026 } = {}) {
+export function inspectClaudeCodeConfig({ home = os.homedir(), host = "127.0.0.1", port = 2026 } = {}) {
   const filePath = path.join(home, ".claude", "settings.json");
-  const expectedBaseUrl = `http://127.0.0.1:${port}`;
+  const expectedBaseUrl = adapterBaseUrl(host, port);
   const settings = readJson(filePath);
   if (!settings.ok) {
     const reason = settings.parseError ? `could not parse: ${settings.error.message}` : `not found at ${displayPath(home, filePath)}`;
@@ -391,8 +401,8 @@ export async function collectDoctorChecks({
 } = {}) {
   const checks = [
     ...inspectGitHubToken({ home }),
-    ...inspectCodexConfig({ home, port }),
-    ...inspectClaudeCodeConfig({ home, port }),
+    ...inspectCodexConfig({ home, host, port }),
+    ...inspectClaudeCodeConfig({ home, host, port }),
     ...inspectClaudeAppConfig({ home, platform, env, host, port }),
   ];
 

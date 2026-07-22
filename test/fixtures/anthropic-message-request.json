@@ -1,0 +1,46 @@
+{
+  "model": "claude-sonnet-4.6",
+  "system": [
+    { "type": "text", "text": "Be concise." },
+    { "type": "text", "text": "Use tools carefully." }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "What is shown?" },
+        {
+          "type": "image",
+          "source": { "type": "base64", "media_type": "image/png", "data": "aW1hZ2U=" }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        { "type": "text", "text": "I will inspect it." },
+        { "type": "tool_use", "id": "tool_1", "name": "inspect_image", "input": { "detail": "high" } }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        { "type": "tool_result", "tool_use_id": "tool_1", "content": [{ "type": "text", "text": "A terminal window" }] }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "inspect_image",
+      "description": "Inspect an image",
+      "input_schema": {
+        "type": "object",
+        "properties": { "detail": { "type": "string" } }
+      }
+    }
+  ],
+  "tool_choice": { "type": "tool", "name": "inspect_image" },
+  "max_tokens": 2048,
+  "temperature": 0,
+  "stop_sequences": ["END"]
+}

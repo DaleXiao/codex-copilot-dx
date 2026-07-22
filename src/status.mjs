@@ -1,3 +1,5 @@
+import { currentRequestContext } from "./request-context.mjs";
+
 const LABELS = {
   info: "[INFO]",
   ok: "[OK]",
@@ -8,5 +10,7 @@ const LABELS = {
 };
 
 export function status(kind, message) {
-  return `${LABELS[kind] || LABELS.info} ${message}`;
+  const requestId = currentRequestContext()?.requestId;
+  const context = requestId ? ` request_id=${requestId}` : "";
+  return `${LABELS[kind] || LABELS.info}${context} ${message}`;
 }

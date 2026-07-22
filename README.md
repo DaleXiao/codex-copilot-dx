@@ -72,6 +72,14 @@ codex-copilot-dx doctor --compat
 
 The compatibility doctor sends a few minimal Copilot requests to check Codex Auto-review, native Responses, streaming history, compaction, image tool namespace handling, and Anthropic streaming. It consumes a small amount of Copilot usage, never starts the adapter or device flow, and does not change client configuration. Combine it with `--online` when both the saved-token entitlement check and the adapter protocol checks are needed.
 
+For live runtime diagnostics, query the running adapter from the same machine:
+
+```bash
+curl -s http://127.0.0.1:2026/_ccdx/status | jq
+```
+
+The status endpoint is restricted to the socket's real loopback address, even when LAN binding is explicitly enabled. It reports fixed-size request counters, latency totals, admission pressure, memory use, response-history size, image queue state, model cache counts, and token expiry state. It never includes prompts, completions, tool arguments, image content, account names, or token values. API responses and related log lines include the same safe `X-Request-Id`/`request_id` for correlation.
+
 When the saved token is missing, `codex-copilot-dx` first looks for compatible local Copilot GitHub tokens, validates them with GitHub and Copilot, and imports a valid one before starting device login. It checks explicit token sources (`CCDX_GITHUB_TOKEN`, `CCDX_GITHUB_TOKEN_PATH`, `CCDX_GITHUB_TOKEN_PATHS`) plus common local `auth.json` layouts under application config directories. It does not rely on a specific app name. Generic discovery refuses to choose silently when valid tokens for multiple GitHub accounts are found. After an account is selected, automatic `401`/`403` recovery and in-process token rotation accept only the same GitHub account. Concurrent callers share token refresh work without sharing cancellation, and a still-valid Copilot token may be used briefly after a transient refresh failure. Explicit token variables remain the intentional way to switch accounts.
 
 If Copilot token refresh still fails with `401` or `403`, the saved GitHub token may be expired, revoked, or missing Copilot access. Delete the saved token and start the tool again to trigger GitHub device login:

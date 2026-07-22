@@ -1,12 +1,8 @@
 import { httpError } from "./http-transport.mjs";
+import { loadRuntimeConfig, parsePositiveInteger, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
 
-const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
-const DEFAULT_MAX_ENTRIES = 4096;
-
-function positiveInt(value, fallback) {
-  const n = Number.parseInt(value, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+const DEFAULT_MAX_BYTES = RUNTIME_DEFAULTS.responseHistoryMaxBytes;
+const DEFAULT_MAX_ENTRIES = RUNTIME_DEFAULTS.responseHistoryMaxEntries;
 
 function cloneJson(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -76,8 +72,9 @@ const childrenById = new Map();
 const treeLru = new Map();
 const evictedIds = new Set();
 let totalBytes = 0;
-let maxBytes = positiveInt(process.env.CCDX_RESPONSE_HISTORY_MAX_BYTES, DEFAULT_MAX_BYTES);
-let maxEntries = positiveInt(process.env.CCDX_RESPONSE_HISTORY_MAX_ENTRIES, DEFAULT_MAX_ENTRIES);
+const HISTORY_RUNTIME_CONFIG = loadRuntimeConfig();
+let maxBytes = HISTORY_RUNTIME_CONFIG.responseHistoryMaxBytes;
+let maxEntries = HISTORY_RUNTIME_CONFIG.responseHistoryMaxEntries;
 
 function rememberEvictedId(id) {
   evictedIds.add(id);
@@ -169,8 +166,8 @@ export function clearResponseHistoryForTests() {
 }
 
 export function configureResponseHistoryForTests({ maxBytes: nextMaxBytes, maxEntries: nextMaxEntries } = {}) {
-  if (nextMaxBytes !== undefined) maxBytes = positiveInt(nextMaxBytes, DEFAULT_MAX_BYTES);
-  if (nextMaxEntries !== undefined) maxEntries = positiveInt(nextMaxEntries, DEFAULT_MAX_ENTRIES);
+  if (nextMaxBytes !== undefined) maxBytes = parsePositiveInteger(nextMaxBytes, DEFAULT_MAX_BYTES);
+  if (nextMaxEntries !== undefined) maxEntries = parsePositiveInteger(nextMaxEntries, DEFAULT_MAX_ENTRIES);
 }
 
 export function responseHistoryStats() {

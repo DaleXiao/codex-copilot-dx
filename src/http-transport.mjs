@@ -1,28 +1,20 @@
 import { promisify } from "node:util";
 import * as zlib from "node:zlib";
+import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
 import { status } from "./status.mjs";
 
-const DEFAULT_MAX_BODY_BYTES = 64 * 1024 * 1024;
-const DEFAULT_MAX_DECODED_BODY_BYTES = 128 * 1024 * 1024;
-const DEFAULT_MAX_INFLIGHT_BODY_BYTES = 32 * 1024 * 1024;
-const DEFAULT_MAX_QUEUED_REQUESTS = 16;
-const DEFAULT_REQUEST_QUEUE_TIMEOUT_MS = 120 * 1000;
 const COMPRESSED_BODY_WEIGHT_MULTIPLIER = 4;
 const gunzipAsync = promisify(zlib.gunzip);
 const inflateAsync = promisify(zlib.inflate);
 const brotliDecompressAsync = promisify(zlib.brotliDecompress);
 const zstdDecompressAsync = zlib.zstdDecompress ? promisify(zlib.zstdDecompress) : null;
 
-function positiveInt(value, fallback) {
-  const n = Number.parseInt(value, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
-const MAX_BODY_BYTES = positiveInt(process.env.CCDX_MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES);
-const MAX_DECODED_BODY_BYTES = positiveInt(process.env.CCDX_MAX_DECODED_BODY_BYTES, DEFAULT_MAX_DECODED_BODY_BYTES);
-const MAX_INFLIGHT_BODY_BYTES = positiveInt(process.env.CCDX_MAX_INFLIGHT_BODY_BYTES, DEFAULT_MAX_INFLIGHT_BODY_BYTES);
-const MAX_QUEUED_REQUESTS = positiveInt(process.env.CCDX_MAX_QUEUED_REQUESTS, DEFAULT_MAX_QUEUED_REQUESTS);
-const REQUEST_QUEUE_TIMEOUT_MS = positiveInt(process.env.CCDX_REQUEST_QUEUE_TIMEOUT_MS, DEFAULT_REQUEST_QUEUE_TIMEOUT_MS);
+const HTTP_RUNTIME_CONFIG = loadRuntimeConfig();
+const MAX_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxBodyBytes;
+const MAX_DECODED_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxDecodedBodyBytes;
+const MAX_INFLIGHT_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxInflightBodyBytes;
+const MAX_QUEUED_REQUESTS = HTTP_RUNTIME_CONFIG.maxQueuedRequests;
+const REQUEST_QUEUE_TIMEOUT_MS = HTTP_RUNTIME_CONFIG.requestQueueTimeoutMs;
 
 export function httpError(message, statusCode) {
   const err = new Error(message);
@@ -59,11 +51,22 @@ export function createRequestAdmission({
   maxQueued = MAX_QUEUED_REQUESTS,
   waitTimeoutMs = REQUEST_QUEUE_TIMEOUT_MS,
 } = {}) {
-  const byteLimit = positiveInt(maxBytes, MAX_INFLIGHT_BODY_BYTES);
-  const queueLimit = positiveInt(maxQueued, MAX_QUEUED_REQUESTS);
-  const timeoutMs = positiveInt(waitTimeoutMs, REQUEST_QUEUE_TIMEOUT_MS);
+  const byteLimit = parsePositiveInteger(maxBytes, MAX_INFLIGHT_BODY_BYTES);
+  const queueLimit = parsePositiveInteger(maxQueued, MAX_QUEUED_REQUESTS);
+  const timeoutMs = parsePositiveInteger(waitTimeoutMs, REQUEST_QUEUE_TIMEOUT_MS);
   const queue = [];
   let activeBytes = 0;
+  let activeRequests = 0;
+  const counters = {
+    total: 0,
+    activated: 0,
+    queued: 0,
+    rejected: 0,
+    timedOut: 0,
+    aborted: 0,
+    waitMsTotal: 0,
+    waitMsMax: 0,
+  };
 
   const remove = (entry) => {
     const index = queue.indexOf(entry);
@@ -73,11 +76,17 @@ export function createRequestAdmission({
   const activate = (entry) => {
     entry.cleanup();
     activeBytes += entry.weight;
+    activeRequests += 1;
+    counters.activated += 1;
+    const waitMs = Math.max(0, Date.now() - entry.startedAt);
+    counters.waitMsTotal += waitMs;
+    counters.waitMsMax = Math.max(counters.waitMsMax, waitMs);
     let released = false;
     entry.resolve(() => {
       if (released) return;
       released = true;
       activeBytes = Math.max(0, activeBytes - entry.weight);
+      activeRequests = Math.max(0, activeRequests - 1);
       drain();
     });
   };
@@ -99,16 +108,23 @@ export function createRequestAdmission({
   };
 
   const acquire = (req, { signal } = {}) => {
-    if (signal?.aborted) return Promise.reject(admissionAbortError(signal));
+    counters.total += 1;
+    if (signal?.aborted) {
+      counters.aborted += 1;
+      return Promise.reject(admissionAbortError(signal));
+    }
     const weight = requestAdmissionWeight(req, byteLimit);
     if (queue.length >= queueLimit && activeBytes + weight > byteLimit) {
+      counters.rejected += 1;
       return Promise.reject(httpError(`Request queue is full (${queueLimit} waiting)`, 503));
     }
+    if (activeBytes + weight > byteLimit) counters.queued += 1;
 
     return new Promise((resolve, reject) => {
       let timer;
       const entry = {
         cancelled: false,
+        startedAt: Date.now(),
         weight,
         resolve,
         cleanup: () => {
@@ -116,18 +132,20 @@ export function createRequestAdmission({
           signal?.removeEventListener("abort", onAbort);
         },
       };
-      const cancel = (error) => {
+      const cancel = (error, reason) => {
         if (entry.cancelled) return;
         entry.cancelled = true;
+        if (reason === "aborted") counters.aborted += 1;
+        if (reason === "timed_out") counters.timedOut += 1;
         entry.cleanup();
         remove(entry);
         reject(error);
         drain();
       };
-      const onAbort = () => cancel(admissionAbortError(signal));
+      const onAbort = () => cancel(admissionAbortError(signal), "aborted");
       signal?.addEventListener("abort", onAbort, { once: true });
       timer = setTimeout(() => {
-        cancel(httpError(`Request admission timed out after ${timeoutMs}ms`, 503));
+        cancel(httpError(`Request admission timed out after ${timeoutMs}ms`, 503), "timed_out");
       }, timeoutMs);
       timer.unref?.();
       queue.push(entry);
@@ -137,6 +155,24 @@ export function createRequestAdmission({
   };
 
   acquire.stats = () => ({ activeBytes, queued: queue.length, maxBytes: byteLimit });
+  acquire.diagnostics = () => ({
+    activeBytes,
+    activeRequests,
+    queued: queue.length,
+    maxBytes: byteLimit,
+    maxQueued: queueLimit,
+    waitTimeoutMs: timeoutMs,
+    total: counters.total,
+    activated: counters.activated,
+    queuedTotal: counters.queued,
+    rejected: counters.rejected,
+    timedOut: counters.timedOut,
+    aborted: counters.aborted,
+    waitMsAvg: counters.activated > 0
+      ? Number((counters.waitMsTotal / counters.activated).toFixed(1))
+      : 0,
+    waitMsMax: counters.waitMsMax,
+  });
   return acquire;
 }
 

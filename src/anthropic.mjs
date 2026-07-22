@@ -8,7 +8,7 @@ async function tokenCounter() {
 }
 
 // Anthropic Messages API to OpenAI chat/completions translation.
-// Pure functions only; network calls stay in adapter.mjs and copilot.mjs.
+// Pure functions only; network calls stay in the protocol handler and copilot.mjs.
 
 export function mapStopReason(finishReason) {
   switch (finishReason) {

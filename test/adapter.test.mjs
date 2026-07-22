@@ -162,6 +162,10 @@ test("createRequestAdmission: shares a byte budget without blocking a fitting re
   assert.equal(secondStarted, false);
   const releaseSmall = await acquire(request(2));
   assert.deepEqual(acquire.stats(), { activeBytes: 10, queued: 1, maxBytes: 10 });
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(acquire.diagnostics()).filter(([key]) => ["activeRequests", "total", "activated", "queuedTotal"].includes(key))),
+    { activeRequests: 2, total: 3, activated: 2, queuedTotal: 1 },
+  );
 
   releaseSmall();
   releaseFirst();
@@ -180,6 +184,10 @@ test("createRequestAdmission: bounds and times out its waiting queue", async () 
   await assert.rejects(acquire(request), (error) => error.statusCode === 503 && /queue is full/.test(error.message));
   await assert.rejects(second, (error) => error.statusCode === 503 && /admission timed out/.test(error.message));
   assert.equal(acquire.stats().queued, 0);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(acquire.diagnostics()).filter(([key]) => ["rejected", "timedOut", "aborted"].includes(key))),
+    { rejected: 1, timedOut: 1, aborted: 0 },
+  );
   releaseFirst();
 });
 

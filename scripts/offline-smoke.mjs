@@ -65,11 +65,13 @@ try {
   const models = await fetch(`${baseUrl}/v1/models`).then((response) => response.json());
   assert.equal(models.data[0].id, "gpt-5.6-sol");
 
-  const direct = await fetch(`${baseUrl}/v1/responses`, {
+  const directResponse = await fetch(`${baseUrl}/v1/responses`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: "gpt-5.6-sol", input: "hello", stream: false }),
-  }).then((response) => response.json());
+  });
+  assert.match(directResponse.headers.get("x-request-id"), /^[a-f0-9-]{36}$/);
+  const direct = await directResponse.json();
   assert.equal(direct.id, "resp_direct");
   assert.equal(direct.output[0].content[0].text, "OK");
 
@@ -97,6 +99,13 @@ try {
     body: JSON.stringify({ model: "claude-sonnet-4.6", messages: [{ role: "user", content: "hello" }] }),
   }).then((response) => response.json());
   assert.ok(count.input_tokens > 0);
+
+  const runtimeStatus = await fetch(`${baseUrl}/_ccdx/status`).then((response) => response.json());
+  assert.equal(runtimeStatus.name, "codex-copilot-dx");
+  assert.equal(runtimeStatus.requests.total, 5);
+  assert.equal(runtimeStatus.requests.active, 0);
+  assert.equal(runtimeStatus.admission.activeRequests, 0);
+  assert.equal(Object.hasOwn(runtimeStatus.copilot, "token"), false);
 
   console.log("[OK] Offline HTTP smoke test passed");
 } finally {

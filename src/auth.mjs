@@ -2,7 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import {
+  githubIdentityMatchesExpected,
+  githubTokenFingerprint,
+  normalizeGithubIdentity,
+} from "./github-identity.mjs";
+import { parsePositiveInteger, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
 import { status } from "./status.mjs";
 import { withFileLock } from "./lock.mjs";
 
@@ -12,8 +17,6 @@ const GITHUB_API = "https://api.github.com";
 const COPILOT_TOKEN_URL = `${GITHUB_API}/copilot_internal/v2/token`;
 const DISABLE_TOKEN_DISCOVERY_VALUES = new Set(["1", "true", "yes"]);
 const MAX_AUTH_JSON_BYTES = 1024 * 1024;
-const DEFAULT_TOKEN_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_TOKEN_LOCK_STALE_MS = 15 * 60 * 1000;
 
 export function githubTokenPath(home = os.homedir()) {
   return path.join(home, ".local", "share", "copilot-api", "github_token");
@@ -58,15 +61,10 @@ function isTokenDiscoveryDisabled(env = process.env) {
   return DISABLE_TOKEN_DISCOVERY_VALUES.has(String(env.CCDX_DISABLE_TOKEN_DISCOVERY || "").toLowerCase());
 }
 
-function positiveInt(value, fallback) {
-  const n = Number.parseInt(value, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
 function tokenLockOptions(env = process.env) {
   return {
-    timeoutMs: positiveInt(env.CCDX_TOKEN_LOCK_TIMEOUT_MS, DEFAULT_TOKEN_LOCK_TIMEOUT_MS),
-    staleMs: positiveInt(env.CCDX_TOKEN_LOCK_STALE_MS, DEFAULT_TOKEN_LOCK_STALE_MS),
+    timeoutMs: parsePositiveInteger(env.CCDX_TOKEN_LOCK_TIMEOUT_MS, RUNTIME_DEFAULTS.tokenLockTimeoutMs),
+    staleMs: parsePositiveInteger(env.CCDX_TOKEN_LOCK_STALE_MS, RUNTIME_DEFAULTS.tokenLockStaleMs),
   };
 }
 
@@ -215,36 +213,15 @@ function readSavedGithubToken(home = os.homedir()) {
   return fs.readFileSync(filePath, "utf8").trim();
 }
 
-function normalizeGithubIdentity(identity) {
-  if (!identity || typeof identity !== "object") return null;
-  const login = typeof identity.login === "string" ? identity.login.trim() : "";
-  const id = identity.id === undefined || identity.id === null ? "" : String(identity.id).trim();
-  if (!login && !id) return null;
-  return { login, id };
-}
-
-function tokenFingerprint(token) {
-  return createHash("sha256").update(String(token || "")).digest("hex").slice(0, 24);
-}
-
 export function readGithubTokenMetadata(home = os.homedir(), token = null) {
   try {
     const parsed = JSON.parse(fs.readFileSync(githubTokenMetadataPath(home), "utf8"));
-    if (token && parsed.token_fingerprint !== tokenFingerprint(token)) return null;
+    if (token && parsed.token_fingerprint !== githubTokenFingerprint(token)) return null;
     const identity = normalizeGithubIdentity(parsed);
     return identity ? { ...identity, token_fingerprint: parsed.token_fingerprint || "" } : null;
   } catch {
     return null;
   }
-}
-
-function githubIdentityMatches(identity, expected) {
-  const actual = normalizeGithubIdentity(identity);
-  const wanted = normalizeGithubIdentity(expected);
-  if (!wanted) return true;
-  if (!actual) return false;
-  if (wanted.id && actual.id) return wanted.id === actual.id;
-  return Boolean(wanted.login && actual.login && wanted.login.toLowerCase() === actual.login.toLowerCase());
 }
 
 function expectedGithubIdentity(home, env, token) {
@@ -374,7 +351,7 @@ export async function discoverGithubToken({
       const candidate = { ok: true, token, source, validation };
       const explicitSource = source.type === "env" || source.type === "token-file";
       if (expectedIdentity && (strictExpectedIdentity || !explicitSource)) {
-        if (githubIdentityMatches(validation, expectedIdentity)) return candidate;
+        if (githubIdentityMatchesExpected(validation, expectedIdentity)) return candidate;
         failures.push({ source, validation, reason: "github_account_mismatch" });
         continue;
       }
@@ -427,7 +404,7 @@ export async function importDiscoveredGithubToken({
         return { ok: true, token: savedToken, source: { type: "saved-token" }, imported: false };
       }
       const validation = await validateGithubToken(savedToken, { fetchImpl, signal });
-      if (validation.ok && githubIdentityMatches(validation, expectedIdentity)) {
+      if (validation.ok && githubIdentityMatchesExpected(validation, expectedIdentity)) {
         writeGithubTokenMetadata(validation, home, savedToken);
         return { ok: true, token: savedToken, source: { type: "saved-token" }, validation, imported: false };
       }
@@ -561,7 +538,7 @@ export function writeGithubTokenMetadata(identity, home = os.homedir(), token = 
   fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
   fs.writeFileSync(filePath, `${JSON.stringify({
     ...normalized,
-    token_fingerprint: tokenFingerprint(token),
+    token_fingerprint: githubTokenFingerprint(token),
     updated_at: new Date().toISOString(),
   }, null, 2)}\n`, { mode: 0o600 });
   fs.chmodSync(filePath, 0o600);

@@ -1,0 +1,57 @@
+{
+  "model": "gpt-4o",
+  "instructions": "Use the available tools when needed.",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "internal_reference": "must-not-reach-upstream",
+      "content": [
+        { "type": "input_text", "text": "Inspect this image" },
+        { "type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U=", "detail": "high" }
+      ]
+    },
+    {
+      "type": "function_call",
+      "call_id": "call_weather",
+      "name": "lookup_weather",
+      "arguments": "{\"city\":\"Singapore\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_weather",
+      "output": { "temperature": 30 }
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "lookup_weather",
+      "description": "Get weather",
+      "parameters": {
+        "type": "object",
+        "properties": { "city": { "type": "string" } },
+        "required": ["city"]
+      },
+      "strict": true
+    },
+    { "type": "image_gen", "name": "image_gen" }
+  ],
+  "tool_choice": { "type": "function", "name": "lookup_weather" },
+  "parallel_tool_calls": false,
+  "max_output_tokens": 1024,
+  "temperature": 0.2,
+  "text": {
+    "format": {
+      "type": "json_schema",
+      "name": "weather_result",
+      "schema": {
+        "type": "object",
+        "properties": { "summary": { "type": "string" } },
+        "required": ["summary"]
+      },
+      "strict": true
+    }
+  },
+  "store": true
+}

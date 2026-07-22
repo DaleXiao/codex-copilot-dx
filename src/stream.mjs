@@ -1,13 +1,8 @@
 // Yield fetch Response body lines while preserving SSE semantics for callers.
 // Strip CRLF tails and release the reader if iteration stops early.
-const DEFAULT_MAX_SSE_BUFFER_BYTES = 8 * 1024 * 1024;
+import { loadRuntimeConfig } from "./runtime-config.mjs";
 
-function positiveInt(value, fallback) {
-  const n = Number.parseInt(value, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
-const MAX_SSE_BUFFER_BYTES = positiveInt(process.env.CCDX_MAX_SSE_BUFFER_BYTES, DEFAULT_MAX_SSE_BUFFER_BYTES);
+const MAX_SSE_BUFFER_BYTES = loadRuntimeConfig().maxSseBufferBytes;
 
 function assertSseBufferLimit(buffer, maxBufferBytes) {
   if (Buffer.byteLength(buffer) > maxBufferBytes) {

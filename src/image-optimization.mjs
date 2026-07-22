@@ -61,7 +61,7 @@ export function createTaskLimiter(concurrency) {
     }
   };
 
-  return async function runLimited(task, { signal } = {}) {
+  const runLimited = async function runLimited(task, { signal } = {}) {
     if (signal?.aborted) throw abortError(signal);
     await new Promise((resolve, reject) => {
       const entry = {
@@ -91,9 +91,24 @@ export function createTaskLimiter(concurrency) {
       drain();
     }
   };
+  runLimited.stats = () => ({
+    active,
+    queued: queue.reduce((count, entry) => count + (entry.cancelled ? 0 : 1), 0),
+    limit,
+  });
+  return runLimited;
 }
 
 const runGlobalImageTask = createTaskLimiter(IMG_CONCURRENCY);
+
+export function imageOptimizationStats() {
+  return {
+    ...runGlobalImageTask.stats(),
+    disabled: IMG_OPT_DISABLED,
+    cache_entries: optimizedImageDigests.size,
+    sharp_loaded: sharpImport !== null,
+  };
+}
 
 async function sharp() {
   sharpImport ||= import("sharp");

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { status } from "./status.mjs";
 import { debugLog } from "./log.mjs";
 import {
@@ -11,6 +11,12 @@ import {
   readGithubTokenMetadata,
   writeGithubTokenMetadata,
 } from "./auth.mjs";
+import {
+  githubIdentitiesEqual,
+  githubIdentityLabel,
+  githubTokenFingerprint,
+  normalizeGithubIdentity,
+} from "./github-identity.mjs";
 import { prepareResponsesPayload } from "./image-optimization.mjs";
 
 export {
@@ -292,6 +298,21 @@ let copilotTokenGithubIdentity = null;
 let copilotTokenRefreshRetryAt = 0;
 const modelListFlights = new Map();
 
+export function copilotRuntimeStatus(now = Date.now()) {
+  let upstreamHost = "unknown";
+  try { upstreamHost = new URL(apiBase).hostname; } catch {}
+  return {
+    token_cached: Boolean(copilotToken),
+    token_expires_in_ms: copilotToken ? Math.max(0, copilotTokenExpiry - now) : null,
+    token_refresh_in_flight: Boolean(copilotTokenRefresh),
+    token_refresh_backoff_ms: Math.max(0, copilotTokenRefreshRetryAt - now),
+    account_bound: Boolean(copilotTokenGithubIdentity),
+    upstream_host: upstreamHost,
+    model_endpoint_cache_entries: modelEndpointCache.size,
+    model_list_flights: modelListFlights.size,
+  };
+}
+
 function getGithubToken({ home = os.homedir() } = {}) {
   const GITHUB_TOKEN_PATH = githubTokenPath(home);
   if (!fs.existsSync(GITHUB_TOKEN_PATH)) {
@@ -309,30 +330,6 @@ function requestCopilotToken(ghToken, { fetchImpl = fetch, signal } = {}) {
   });
 }
 
-function githubTokenFingerprint(token) {
-  return createHash("sha256").update(String(token || "")).digest("hex").slice(0, 24);
-}
-
-function normalizeGithubIdentity(identity) {
-  if (!identity || typeof identity !== "object") return null;
-  const login = typeof identity.login === "string" ? identity.login.trim() : "";
-  const id = identity.id === undefined || identity.id === null ? "" : String(identity.id).trim();
-  return login || id ? { login, id } : null;
-}
-
-function githubIdentitiesMatch(first, second) {
-  const a = normalizeGithubIdentity(first);
-  const b = normalizeGithubIdentity(second);
-  if (!a || !b) return false;
-  if (a.id && b.id) return a.id === b.id;
-  return Boolean(a.login && b.login && a.login.toLowerCase() === b.login.toLowerCase());
-}
-
-function githubIdentityLabel(identity) {
-  const normalized = normalizeGithubIdentity(identity);
-  return normalized?.login || normalized?.id || "unknown";
-}
-
 function cacheCopilotTokenData(data, {
   sourceKey,
   githubToken,
@@ -344,7 +341,7 @@ function cacheCopilotTokenData(data, {
   const identity = normalizeGithubIdentity(githubIdentity);
   const tokenChanged = Boolean(copilotTokenGithubFingerprint && fingerprint !== copilotTokenGithubFingerprint);
   if (!allowAccountSwitch && copilotTokenGithubIdentity && identity
-    && !githubIdentitiesMatch(copilotTokenGithubIdentity, identity)) {
+    && !githubIdentitiesEqual(copilotTokenGithubIdentity, identity)) {
     throw new Error(`Refusing to switch GitHub Copilot account from ${githubIdentityLabel(copilotTokenGithubIdentity)} to ${githubIdentityLabel(identity)} while the adapter is running. Restart codex-copilot-dx to switch accounts intentionally.`);
   }
   if (!allowAccountSwitch && copilotTokenGithubIdentity && tokenChanged && !identity) {

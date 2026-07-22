@@ -797,6 +797,70 @@ test("getCopilotToken: shares one in-flight refresh across concurrent callers", 
   }
 });
 
+test("getCopilotToken: retries transient token responses during cold start", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-cold-retry-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  let tokenCalls = 0;
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  console.log = () => {};
+  console.warn = () => {};
+
+  try {
+    const token = await getCopilotToken({
+      home,
+      tokenRetryOptions: { retries: 2, retryDelayMs: 1 },
+      fetchImpl: async (url) => {
+        if (url.endsWith("/user")) return jsonResp(200, { login: "dale", id: 42 });
+        tokenCalls += 1;
+        if (tokenCalls === 1) return jsonResp(502, {});
+        if (tokenCalls === 2) return jsonResp(504, {});
+        return jsonResp(200, {
+          token: "copilot_after_retry",
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+        });
+      },
+    });
+
+    assert.equal(token, "copilot_after_retry");
+    assert.equal(tokenCalls, 3);
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+    resetCopilotTokenForTests();
+  }
+});
+
+test("getCopilotToken: stops a cold-start retry when its only caller aborts", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-cold-retry-abort-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  const controller = new AbortController();
+  let tokenCalls = 0;
+  const originalWarn = console.warn;
+  console.warn = () => {};
+
+  try {
+    const token = getCopilotToken({
+      home,
+      signal: controller.signal,
+      tokenRetryOptions: { retries: 2, retryDelayMs: 1000 },
+      fetchImpl: async () => {
+        tokenCalls += 1;
+        queueMicrotask(() => controller.abort());
+        return jsonResp(502, {});
+      },
+    });
+
+    await assert.rejects(token, { name: "AbortError" });
+    assert.equal(tokenCalls, 1);
+  } finally {
+    console.warn = originalWarn;
+    resetCopilotTokenForTests();
+  }
+});
+
 test("getCopilotToken: one caller abort does not cancel another refresh waiter", async () => {
   resetCopilotTokenForTests();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-waiter-abort-"));

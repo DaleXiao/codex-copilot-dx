@@ -323,11 +323,11 @@ function getGithubToken({ home = os.homedir() } = {}) {
   return token;
 }
 
-function requestCopilotToken(ghToken, { fetchImpl = fetch, signal } = {}) {
-  return fetchImpl(`${GITHUB_API}/copilot_internal/v2/token`, {
+function requestCopilotToken(ghToken, { fetchImpl = fetch, signal, retryOptions } = {}) {
+  return fetchCopilotUpstream(`${GITHUB_API}/copilot_internal/v2/token`, {
     headers: { Authorization: `token ${ghToken}`, Accept: "application/json" },
     signal,
-  });
+  }, { fetchImpl, ...retryOptions });
 }
 
 function cacheCopilotTokenData(data, {
@@ -381,12 +381,17 @@ async function refreshCopilotToken({
   home = os.homedir(),
   env = process.env,
   fetchImpl = fetch,
+  tokenRetryOptions,
 } = {}) {
   const ghToken = getGithubToken({ home });
   const sourceKey = githubTokenPath(home);
   let resp;
   try {
-    resp = await requestCopilotToken(ghToken, { fetchImpl, signal });
+    resp = await requestCopilotToken(ghToken, {
+      fetchImpl,
+      signal,
+      retryOptions: tokenRetryOptions,
+    });
   } catch (e) {
     if (!isAbortError(e, signal)) e.transient = true;
     throw e;
@@ -454,8 +459,15 @@ export function getCopilotToken(options = {}) {
 
   if (!flight) {
     const controller = new AbortController();
+    const tokenRetryOptions = options.tokenRetryOptions
+      ?? (canUseCachedToken(sourceKey, now, allowCurrentProcessToken) ? { retries: 0 } : undefined);
     flight = { key: sourceKey, controller, waiters: 0, settled: false, promise: null };
-    flight.promise = refreshCopilotToken({ ...options, home, signal: controller.signal })
+    flight.promise = refreshCopilotToken({
+      ...options,
+      home,
+      signal: controller.signal,
+      tokenRetryOptions,
+    })
       .catch((error) => {
         const fallbackNow = Date.now();
         if (error?.transient && canUseCachedToken(sourceKey, fallbackNow)) {

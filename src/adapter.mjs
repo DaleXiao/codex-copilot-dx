@@ -235,7 +235,11 @@ export function createAdapterHandler(options = {}) {
     }
 
     try {
-      const result = runWithRequestContext({ requestId, pathname }, () => dispatch(req, res, pathname));
+      const result = runWithRequestContext({
+        requestId,
+        pathname,
+        showRequestId: options.showRequestId === true,
+      }, () => dispatch(req, res, pathname));
       if (result && typeof result.then === "function") {
         return result.catch((error) => {
           complete({ statusCode: res.statusCode >= 400 ? res.statusCode : 500 });

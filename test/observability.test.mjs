@@ -61,6 +61,10 @@ test("request context generates local ids and adds them only inside the async sc
   assert.match(createRequestId(), /^[a-f0-9-]{36}$/);
   assert.equal(
     runWithRequestContext({ requestId: "req-1" }, () => status("info", "hello")),
+    "[INFO] hello",
+  );
+  assert.equal(
+    runWithRequestContext({ requestId: "req-1", showRequestId: true }, () => status("info", "hello")),
     "[INFO] request_id=req-1 hello",
   );
   assert.equal(status("info", "hello"), "[INFO] hello");

@@ -250,6 +250,7 @@ try {
     claudeDesktopApiKey,
     claudeDesktopModelDefs,
     modelRegistry: MODEL_REGISTRY,
+    showRequestId: CLI.showRequestId,
     upstreamTimeoutMs: RUNTIME.upstreamTimeoutMs,
     streamHandshakeTimeoutMs: RUNTIME.streamHandshakeTimeoutMs,
     streamIdleTimeoutMs: RUNTIME.streamIdleTimeoutMs,

@@ -10,7 +10,8 @@ const LABELS = {
 };
 
 export function status(kind, message) {
-  const requestId = currentRequestContext()?.requestId;
+  const requestContext = currentRequestContext();
+  const requestId = requestContext?.showRequestId ? requestContext.requestId : "";
   const context = requestId ? ` request_id=${requestId}` : "";
   return `${LABELS[kind] || LABELS.info}${context} ${message}`;
 }

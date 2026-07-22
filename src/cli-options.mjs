@@ -1,5 +1,6 @@
 const HELP_COMMANDS = new Set(["help", "--help", "-h"]);
 const VERSION_COMMANDS = new Set(["version", "--version", "-v"]);
+const START_OPTIONS = new Set(["--configure-claude-desktop", "--show-request-id"]);
 
 function unexpectedArgs(args) {
   throw new Error(`Unexpected argument${args.length === 1 ? "" : "s"}: ${args.join(" ")}`);
@@ -7,18 +8,18 @@ function unexpectedArgs(args) {
 
 export function parseCliArgs(args = []) {
   const [command, ...rest] = args;
-  if (!command) return { command: "start", configureClaudeDesktop: false, online: false, compat: false };
+  if (!command) return { command: "start", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
   if (HELP_COMMANDS.has(command)) {
     if (rest.length) unexpectedArgs(rest);
-    return { command: "help", configureClaudeDesktop: false, online: false, compat: false };
+    return { command: "help", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
   }
   if (VERSION_COMMANDS.has(command)) {
     if (rest.length) unexpectedArgs(rest);
-    return { command: "version", configureClaudeDesktop: false, online: false, compat: false };
+    return { command: "version", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
   }
   if (command === "usage") {
     if (rest.length) unexpectedArgs(rest);
-    return { command: "usage", configureClaudeDesktop: false, online: false, compat: false };
+    return { command: "usage", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
   }
   if (command === "doctor" || command === "--doctor") {
     const supported = new Set(["--online", "--compat"]);
@@ -30,13 +31,25 @@ export function parseCliArgs(args = []) {
     return {
       command: "doctor",
       configureClaudeDesktop: false,
+      showRequestId: false,
       online: rest.includes("--online"),
       compat: rest.includes("--compat"),
     };
   }
-  if (command === "--configure-claude-desktop") {
-    if (rest.length) unexpectedArgs(rest);
-    return { command: "start", configureClaudeDesktop: true, online: false, compat: false };
+  if (START_OPTIONS.has(command)) {
+    const options = [command, ...rest];
+    const invalid = options.filter((arg) => !START_OPTIONS.has(arg));
+    if (invalid.length) unexpectedArgs(invalid);
+    for (const option of START_OPTIONS) {
+      if (options.filter((arg) => arg === option).length > 1) unexpectedArgs([option]);
+    }
+    return {
+      command: "start",
+      configureClaudeDesktop: options.includes("--configure-claude-desktop"),
+      showRequestId: options.includes("--show-request-id"),
+      online: false,
+      compat: false,
+    };
   }
   throw new Error(`Unknown command or option: ${command}`);
 }
@@ -69,7 +82,7 @@ export function parseRuntimeOptions(env = process.env) {
 
 export function cliHelp() {
   return `Usage:
-  codex-copilot-dx [--configure-claude-desktop]
+  codex-copilot-dx [--configure-claude-desktop] [--show-request-id]
   codex-copilot-dx doctor [--online] [--compat]
   codex-copilot-dx usage
   codex-copilot-dx --version

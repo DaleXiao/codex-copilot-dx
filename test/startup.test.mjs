@@ -2,27 +2,22 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { initializeModelRegistry, runInBackground } from "../src/startup.mjs";
 
-test("initializeModelRegistry: starts immediately from cache and refreshes in background", async () => {
-  let finishRefresh;
-  let refreshStarted = false;
-  const pendingRefresh = new Promise((resolve) => { finishRefresh = resolve; });
+test("initializeModelRegistry: uses a valid cache without an eager refresh", async () => {
+  let refreshCalls = 0;
 
   const result = await initializeModelRegistry({
     loadCached: () => true,
     currentModelDefs: () => [{ id: "cached" }],
     refresh: () => {
-      refreshStarted = true;
-      return pendingRefresh;
+      refreshCalls += 1;
+      return [{ id: "live" }];
     },
   });
 
   assert.deepEqual(result.modelDefs, [{ id: "cached" }]);
   assert.equal(result.source, "cache");
-  assert.ok(result.backgroundRefresh instanceof Promise);
-  await Promise.resolve();
-  assert.equal(refreshStarted, true);
-  finishRefresh([{ id: "live" }]);
-  assert.deepEqual(await result.backgroundRefresh, [{ id: "live" }]);
+  assert.equal(result.backgroundRefresh, null);
+  assert.equal(refreshCalls, 0);
 });
 
 test("initializeModelRegistry: waits for live models when no cache exists", async () => {

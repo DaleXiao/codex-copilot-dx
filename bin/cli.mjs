@@ -132,7 +132,10 @@ async function refreshClaudeDesktopModelDefs() {
     return modelDefs;
   } catch (e) {
     const fallback = MODEL_REGISTRY.modelDefs?.length ? `${MODEL_REGISTRY.source} model list` : "built-in model list";
-    console.log(status("warn", `Could not refresh Claude models; using ${fallback} (${e.message})`));
+    const message = ctrl.signal.aborted
+      ? `Model refresh timed out after ${MODEL_REFRESH_TIMEOUT_MS}ms; using ${fallback}`
+      : `Could not refresh model list; using ${fallback} (${e.message})`;
+    console.log(status("warn", message));
     return MODEL_REGISTRY.modelDefs;
   } finally {
     clearTimeout(timer);

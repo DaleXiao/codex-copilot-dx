@@ -3,7 +3,7 @@
 import { ensureAuth, openCodex } from "../src/launcher.mjs";
 import { ensureCodexConfig } from "../src/config.mjs";
 import { ensureClaudeConfig } from "../src/claude-config.mjs";
-import { applyClaudeDesktopConfig, formatClaudeDesktopApplyResult, generatedClaudeDesktopApiKey, loadManagedClaudeDesktopApiKey } from "../src/claude-desktop-config.mjs";
+import { applyClaudeDesktopConfig, formatClaudeDesktopApplyResult, generatedClaudeDesktopApiKey, loadManagedClaudeDesktopApiKey, syncManagedClaudeDesktopModels } from "../src/claude-desktop-config.mjs";
 import { startAdapter } from "../src/adapter.mjs";
 import { cacheModelEndpoints, listModels, refreshVSCodeVersion } from "../src/copilot.mjs";
 import { claudeDesktopModelDefsFromCopilotModels, claudeDesktopModelIds, codexAutoReviewModelStatus, gptModelIdsFromCopilotModels, parseModelAliasEnv } from "../src/models.mjs";
@@ -129,6 +129,7 @@ async function refreshClaudeDesktopModelDefs() {
     } else {
       console.log(status("warn", "Copilot models response contained no Claude models; using built-in Claude models"));
     }
+    syncClaudeDesktopProfileModels(MODEL_REGISTRY.modelDefs);
     return modelDefs;
   } catch (e) {
     const fallback = MODEL_REGISTRY.modelDefs?.length ? `${MODEL_REGISTRY.source} model list` : "built-in model list";
@@ -144,6 +145,20 @@ async function refreshClaudeDesktopModelDefs() {
 
 function currentClaudeDesktopApiKey() {
   return String(process.env.CCDX_CLAUDE_DESKTOP_API_KEY || process.env.CCDX_PROXY_API_KEY || "").trim();
+}
+
+function syncClaudeDesktopProfileModels(modelDefs = MODEL_REGISTRY.modelDefs) {
+  const result = syncManagedClaudeDesktopModels({
+    port: ADAPTER_PORT,
+    host: ADAPTER_HOST,
+    modelIds: claudeDesktopModelIds(process.env, { modelDefs }),
+  });
+  if (result.updated) {
+    console.log(status("ok", `Updated Claude App profile models: ${result.modelIds.join(", ")}`));
+  } else if (result.error) {
+    console.log(status("warn", `Could not update Claude App profile models (${result.error.message})`));
+  }
+  return result;
 }
 
 async function reuseRunningAdapterIfAvailable() {
@@ -231,6 +246,7 @@ try {
     refresh: refreshClaudeDesktopModelDefs,
   });
   const claudeDesktopModelDefs = modelInitialization.modelDefs;
+  syncClaudeDesktopProfileModels(claudeDesktopModelDefs);
 
   if (!isLoopbackHost(ADAPTER_HOST)) {
     console.log(status("warn", `ADAPTER_HOST=${ADAPTER_HOST} exposes the adapter beyond loopback because CCDX_ALLOW_LAN=1 is set. Use only on trusted networks.`));

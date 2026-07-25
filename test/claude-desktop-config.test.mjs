@@ -13,6 +13,7 @@ import {
   formatClaudeDesktopApplyResult,
   generatedClaudeDesktopApiKey,
   loadManagedClaudeDesktopApiKey,
+  syncManagedClaudeDesktopModels,
   validateClaudeDesktopBaseUrl,
 } from "../src/claude-desktop-config.mjs";
 
@@ -151,6 +152,83 @@ test("loadManagedClaudeDesktopApiKey: restores only the active matching managed 
   writeJson(paths.metaPath, { appliedId: DEFAULT_CLAUDE_DESKTOP_PROFILE_ID });
   fs.writeFileSync(result.profilePath, "not json");
   assert.equal(loadManagedClaudeDesktopApiKey({ home, platform: "darwin", env: {}, port: 2026 }), "");
+});
+
+test("syncManagedClaudeDesktopModels: updates only the model allowlist and is idempotent", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-claude-desktop-model-sync-"));
+  const result = applyClaudeDesktopConfig({
+    home,
+    platform: "darwin",
+    env: {},
+    port: 2026,
+    gatewayApiKey: "dummy",
+    modelIds: ["claude-opus-4.8"],
+  });
+  const before = readJson(result.profilePath);
+
+  const synced = syncManagedClaudeDesktopModels({
+    home,
+    platform: "darwin",
+    env: {},
+    port: 2026,
+    modelIds: ["claude-opus-4.8", "claude-opus-5", "claude-opus-5", ""],
+  });
+
+  assert.equal(synced.updated, true);
+  assert.equal(synced.reason, "updated");
+  assert.deepEqual(synced.modelIds, ["claude-opus-4.8", "claude-opus-5"]);
+  const profile = readJson(result.profilePath);
+  assert.equal(profile.inferenceModels, '["claude-opus-4.8","claude-opus-5"]');
+  assert.equal(profile.inferenceGatewayApiKey, before.inferenceGatewayApiKey);
+  assert.equal(profile.inferenceGatewayBaseUrl, before.inferenceGatewayBaseUrl);
+  assert.equal(profile.inferenceProvider, before.inferenceProvider);
+
+  const unchanged = syncManagedClaudeDesktopModels({
+    home,
+    platform: "darwin",
+    env: {},
+    port: 2026,
+    modelIds: ["claude-opus-4.8", "claude-opus-5"],
+  });
+  assert.equal(unchanged.updated, false);
+  assert.equal(unchanged.reason, "unchanged");
+});
+
+test("syncManagedClaudeDesktopModels: ignores a different endpoint or active profile", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-claude-desktop-model-boundary-"));
+  const result = applyClaudeDesktopConfig({
+    home,
+    platform: "darwin",
+    env: {},
+    port: 2026,
+    gatewayApiKey: "persisted-client-key",
+    modelIds: ["claude-opus-4.8"],
+  });
+  const original = fs.readFileSync(result.profilePath, "utf8");
+
+  const wrongPort = syncManagedClaudeDesktopModels({
+    home,
+    platform: "darwin",
+    env: {},
+    port: 2027,
+    modelIds: ["claude-opus-5"],
+  });
+  assert.equal(wrongPort.updated, false);
+  assert.equal(wrongPort.reason, "not-managed");
+  assert.equal(fs.readFileSync(result.profilePath, "utf8"), original);
+
+  const paths = claudeDesktopPaths(home, "darwin", {});
+  writeJson(paths.metaPath, { appliedId: "another-profile" });
+  const inactive = syncManagedClaudeDesktopModels({
+    home,
+    platform: "darwin",
+    env: {},
+    port: 2026,
+    modelIds: ["claude-opus-5"],
+  });
+  assert.equal(inactive.updated, false);
+  assert.equal(inactive.reason, "not-managed");
+  assert.equal(fs.readFileSync(result.profilePath, "utf8"), original);
 });
 
 test("generatedClaudeDesktopApiKey: creates a local gateway key prefix", () => {

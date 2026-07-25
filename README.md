@@ -107,7 +107,7 @@ Or set:
 CCDX_CONFIGURE_CLAUDE_DESKTOP=1 npx codex-copilot-dx@latest
 ```
 
-This writes a local Claude App 3P gateway profile that points to the adapter root URL, such as `http://127.0.0.1:2026`. The profile uses a generated local bearer key unless `CCDX_CLAUDE_DESKTOP_API_KEY` is set. Later starts restore that key only from the active managed profile when its gateway URL matches the adapter. Restart Claude App after running the command.
+This writes a local Claude App 3P gateway profile that points to the adapter root URL, such as `http://127.0.0.1:2026`. The profile uses a generated local bearer key unless `CCDX_CLAUDE_DESKTOP_API_KEY` is set. Later starts restore that key only from the active managed profile when its gateway URL matches the adapter. Once that managed profile is active, successful Copilot model refreshes automatically keep its `inferenceModels` list current without changing the gateway key or other profile settings. Restart Claude App after the initial setup. Later model changes require no profile reconfiguration, although a running Claude App may need to be reopened if it has not reloaded the updated profile yet.
 
 When reusing an already-running adapter, Claude App profile updates require `CCDX_CLAUDE_DESKTOP_API_KEY` or `CCDX_PROXY_API_KEY` so the profile key matches the running process. Otherwise the existing adapter is left untouched.
 

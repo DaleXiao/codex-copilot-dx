@@ -159,6 +159,41 @@ function readActiveProfile(paths) {
   return readJsonFile(path.join(paths.configLibraryPath, `${appliedId}.json`), {});
 }
 
+function activeManagedProfile({
+  port = 2026,
+  host = "127.0.0.1",
+  home = os.homedir(),
+  platform = process.platform,
+  env = process.env,
+} = {}) {
+  const paths = claudeDesktopPaths(home, platform, env);
+  const meta = readJsonFile(paths.metaPath, {});
+  if (String(meta.appliedId || "").trim() !== DEFAULT_CLAUDE_DESKTOP_PROFILE_ID) return null;
+
+  const profilePath = path.join(paths.configLibraryPath, `${DEFAULT_CLAUDE_DESKTOP_PROFILE_ID}.json`);
+  const profile = readJsonFile(profilePath, {});
+  if (profile.inferenceProvider !== "gateway") return null;
+  if (String(profile.inferenceGatewayAuthScheme || "").trim().toLowerCase() !== "bearer") return null;
+
+  const profileBaseUrl = String(profile.inferenceGatewayBaseUrl || "").trim();
+  validateClaudeDesktopBaseUrl(profileBaseUrl);
+  if (new URL(profileBaseUrl).href !== new URL(localGatewayBaseUrl(host, port)).href) return null;
+
+  return { profilePath, profile };
+}
+
+function normalizedModelIds(modelIds) {
+  const ids = [];
+  const seen = new Set();
+  for (const value of Array.isArray(modelIds) ? modelIds : []) {
+    const id = String(value || "").trim();
+    if (!id || seen.has(id)) continue;
+    ids.push(id);
+    seen.add(id);
+  }
+  return ids;
+}
+
 export function loadManagedClaudeDesktopApiKey({
   port = 2026,
   host = "127.0.0.1",
@@ -167,23 +202,46 @@ export function loadManagedClaudeDesktopApiKey({
   env = process.env,
 } = {}) {
   try {
-    const paths = claudeDesktopPaths(home, platform, env);
-    const meta = readJsonFile(paths.metaPath, {});
-    if (String(meta.appliedId || "").trim() !== DEFAULT_CLAUDE_DESKTOP_PROFILE_ID) return "";
-
-    const profilePath = path.join(paths.configLibraryPath, `${DEFAULT_CLAUDE_DESKTOP_PROFILE_ID}.json`);
-    const profile = readJsonFile(profilePath, {});
-    if (profile.inferenceProvider !== "gateway") return "";
-    if (String(profile.inferenceGatewayAuthScheme || "").trim().toLowerCase() !== "bearer") return "";
-
-    const profileBaseUrl = String(profile.inferenceGatewayBaseUrl || "").trim();
-    validateClaudeDesktopBaseUrl(profileBaseUrl);
-    if (new URL(profileBaseUrl).href !== new URL(localGatewayBaseUrl(host, port)).href) return "";
-
-    const apiKey = String(profile.inferenceGatewayApiKey || "").trim();
+    const managed = activeManagedProfile({ port, host, home, platform, env });
+    const apiKey = String(managed?.profile.inferenceGatewayApiKey || "").trim();
     return apiKey && apiKey !== "dummy" ? apiKey : "";
   } catch {
     return "";
+  }
+}
+
+export function syncManagedClaudeDesktopModels({
+  modelIds,
+  port = 2026,
+  host = "127.0.0.1",
+  home = os.homedir(),
+  platform = process.platform,
+  env = process.env,
+} = {}) {
+  const normalizedIds = normalizedModelIds(modelIds);
+  if (!normalizedIds.length) return { updated: false, reason: "empty-model-list", modelIds: normalizedIds };
+
+  try {
+    const managed = activeManagedProfile({ port, host, home, platform, env });
+    if (!managed) return { updated: false, reason: "not-managed", modelIds: normalizedIds };
+
+    const inferenceModels = JSON.stringify(normalizedIds);
+    if (managed.profile.inferenceModels === inferenceModels) {
+      return { updated: false, reason: "unchanged", profilePath: managed.profilePath, modelIds: normalizedIds };
+    }
+
+    const updated = writeJsonFile(managed.profilePath, {
+      ...managed.profile,
+      inferenceModels,
+    });
+    return {
+      updated,
+      reason: updated ? "updated" : "unchanged",
+      profilePath: managed.profilePath,
+      modelIds: normalizedIds,
+    };
+  } catch (error) {
+    return { updated: false, reason: "error", error, modelIds: normalizedIds };
   }
 }
 

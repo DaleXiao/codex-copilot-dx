@@ -1,6 +1,8 @@
 import { responses as copilotResponses } from "./copilot.mjs";
 import { httpError } from "./http-transport.mjs";
+import { debugLog } from "./log.mjs";
 import { materializeResponseHistory, rememberResponseHistoryNode } from "./response-history.mjs";
+import { enforceResponsesImageLimit } from "./responses-image-limit.mjs";
 import { status } from "./status.mjs";
 
 function cloneJson(value) {
@@ -163,11 +165,24 @@ export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
   const body = mutate ? reqBody : cloneJson(reqBody);
   const currentInputItems = responsesInputItems(body.input, { clone: !mutate });
   const previousId = body.previous_response_id;
+  let historyItems = [];
 
   if (previousId !== undefined && previousId !== null) {
-    body.input = [...materializeResponseHistory(previousId), ...currentInputItems];
+    historyItems = materializeResponseHistory(previousId);
+    body.input = [...historyItems, ...currentInputItems];
   } else {
     body.input = currentInputItems;
+  }
+
+  let historyInputItems = currentInputItems;
+  const imageLimit = enforceResponsesImageLimit(body.input, {
+    currentInputStart: historyItems.length,
+    beforeMutate: ({ currentOmitted }) => {
+      if (currentOmitted > 0) historyInputItems = cloneJson(currentInputItems);
+    },
+  });
+  if (imageLimit.omitted > 0) {
+    debugLog(`responses image window total=${imageLimit.total} kept=${imageLimit.kept} omitted=${imageLimit.omitted} duplicates=${imageLimit.duplicates} historical=${imageLimit.historicalOmitted} current=${imageLimit.currentOmitted}`);
   }
 
   delete body.previous_response_id;
@@ -177,13 +192,13 @@ export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
     if (!body.tools.length) delete body.tools;
   }
   stripInternalResponsesInputFields(body.input);
-  stripInternalResponsesInputFields(currentInputItems);
+  stripInternalResponsesInputFields(historyInputItems);
 
   return {
     body,
     inputItems: body.input,
     historyParentId: previousId ?? null,
-    historyInputItems: currentInputItems,
+    historyInputItems,
     takeHistoryOwnership: mutate,
   };
 }

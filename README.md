@@ -179,6 +179,8 @@ Long computer-use sessions can accumulate screenshots inside the conversation hi
 
 The adapter automatically downsamples embedded screenshots to long-edge <= 2048 px and re-encodes them as WebP before forwarding `/v1/responses`. It keeps an existing in-bounds WebP unchanged, never replaces an image with a larger encoding, and applies one global concurrency limit across direct and tool-output images.
 
+When expanded Responses history exceeds Copilot's 50-image request limit, the adapter removes older duplicate image occurrences first, then keeps the 50 most recent images. This applies only to the forwarded request: local history remains complete, current images are preferred over older history, and requests at or below the limit are unchanged.
+
 Newer ChatGPT/Codex clients can advertise an `image_gen` namespace that already exists upstream. The adapter removes that exact conflicting client tool before forwarding and retries once only when Copilot explicitly reports an image namespace collision. Image inputs and screenshot optimization remain enabled.
 
 ## License

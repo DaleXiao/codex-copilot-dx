@@ -19,6 +19,8 @@ import {
 } from "./github-identity.mjs";
 import { prepareResponsesPayload, summarizeReqBody } from "./image-optimization.mjs";
 import { enforceResponsesPayloadByteBudget } from "./responses-byte-budget.mjs";
+import { withChatStreamUsage } from "./stream-contract.mjs";
+import { markUpstreamStarted } from "./stream-performance.mjs";
 
 export {
   optimizeImageDataUrl,
@@ -317,7 +319,7 @@ export function copilotRuntimeStatus(now = Date.now()) {
 function getGithubToken({ home = os.homedir() } = {}) {
   const GITHUB_TOKEN_PATH = githubTokenPath(home);
   if (!fs.existsSync(GITHUB_TOKEN_PATH)) {
-    throw new Error("GitHub token not found. Run codex-copilot-dx again to log in.");
+    throw new Error("GitHub token not found. Run ccdx again to log in.");
   }
   const token = fs.readFileSync(GITHUB_TOKEN_PATH, "utf-8").trim();
   if (!token) throw new Error(githubReauthMessage("GitHub token file is empty."));
@@ -343,7 +345,7 @@ function cacheCopilotTokenData(data, {
   const tokenChanged = Boolean(copilotTokenGithubFingerprint && fingerprint !== copilotTokenGithubFingerprint);
   if (!allowAccountSwitch && copilotTokenGithubIdentity && identity
     && !githubIdentitiesEqual(copilotTokenGithubIdentity, identity)) {
-    throw new Error(`Refusing to switch GitHub Copilot account from ${githubIdentityLabel(copilotTokenGithubIdentity)} to ${githubIdentityLabel(identity)} while the adapter is running. Restart codex-copilot-dx to switch accounts intentionally.`);
+    throw new Error(`Refusing to switch GitHub Copilot account from ${githubIdentityLabel(copilotTokenGithubIdentity)} to ${githubIdentityLabel(identity)} while the adapter is running. Restart ccdx to switch accounts intentionally.`);
   }
   if (!allowAccountSwitch && copilotTokenGithubIdentity && tokenChanged && !identity) {
     const error = new Error("The saved GitHub token changed, but its account could not be verified. Keeping the running adapter bound to the existing GitHub account.");
@@ -508,8 +510,11 @@ export async function chatCompletions(chatReq, {
   bodyText,
 } = {}) {
   const token = await getCopilotToken({ signal });
-  const messages = chatReq.messages || [];
-  const serializedBody = typeof bodyText === "string" ? bodyText : JSON.stringify(chatReq);
+  const upstreamReq = chatReq.stream === true ? withChatStreamUsage(chatReq) : chatReq;
+  const messages = upstreamReq.messages || [];
+  const serializedBody = typeof bodyText === "string" && upstreamReq === chatReq
+    ? bodyText
+    : JSON.stringify(upstreamReq);
   const headers = buildHeaders({
     token,
     version: getVSCodeVersion(),
@@ -517,6 +522,7 @@ export async function chatCompletions(chatReq, {
     vision: computeVision(messages),
   });
   headers["Content-Length"] = String(Buffer.byteLength(serializedBody));
+  if (upstreamReq.stream === true) markUpstreamStarted();
   return fetchCopilotUpstream(`${getApiBase()}/chat/completions`, {
     method: "POST",
     headers,
@@ -624,6 +630,7 @@ export async function responses(reqBody, {
   headers["Accept"] = reqBody.stream ? "text/event-stream" : "application/json";
 
   try {
+    if (reqBody.stream === true) markUpstreamStarted();
     return await fetchCopilotUpstream(`${getApiBase()}${responsesEndpointPath()}`, {
       method: "POST",
       headers,

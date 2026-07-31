@@ -113,7 +113,7 @@ test("runDoctor: prints status lines", async () => {
     log: (line) => lines.push(line),
   });
 
-  assert.equal(lines[0], "codex-copilot-dx doctor");
+  assert.equal(lines[0], "ccdx doctor");
   assert.equal(lines.some((line) => line.startsWith("[OK] GitHub token found")), true);
 });
 
@@ -175,7 +175,11 @@ test("inspectAdapterCompatibility: checks native Responses, history stream, comp
         ] }), { status: 200 });
       }
       if (url.endsWith("/v1/responses/compact")) {
-        return new Response(JSON.stringify({ id: "resp_compact", output: [] }), { status: 200 });
+        return new Response(JSON.stringify({
+          id: "resp_compact",
+          object: "response.compaction",
+          output: [{ type: "compaction", encrypted_content: "state" }],
+        }), { status: 200 });
       }
       if (url.endsWith("/v1/responses") && body?.stream) {
         return new Response("event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n", { status: 200 });
@@ -212,7 +216,11 @@ test("inspectAdapterCompatibility: reports Auto-review failure independently", a
         return new Response(JSON.stringify({ error: "model_not_supported" }), { status: 400 });
       }
       if (url.endsWith("/v1/responses/compact")) {
-        return new Response(JSON.stringify({ id: "resp_compact", output: [] }), { status: 200 });
+        return new Response(JSON.stringify({
+          id: "resp_compact",
+          object: "response.compaction",
+          output: [{ type: "compaction", encrypted_content: "state" }],
+        }), { status: 200 });
       }
       if (body?.stream) {
         return new Response("event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n", { status: 200 });

@@ -5,6 +5,7 @@ import {
 } from "./responses-byte-budget.mjs";
 import { responsesToChat } from "./responses-bridge.mjs";
 import { readResponsesImagePart, readResponsesToolOutputParts } from "./responses-content.mjs";
+import { withChatStreamUsage } from "./stream-contract.mjs";
 
 const DEFAULT_MAX_UPSTREAM_BODY_BYTES = 30 * 1024 * 1024;
 
@@ -30,7 +31,7 @@ function chatRequest(responsesBody, stream) {
   const chatReq = responsesToChat(responsesBody);
   chatReq.stream = Boolean(stream);
   delete chatReq.max_tokens;
-  return chatReq;
+  return stream ? withChatStreamUsage(chatReq) : chatReq;
 }
 
 function adjustedResponsesTarget(limit, responsesBytes, chatBytes) {

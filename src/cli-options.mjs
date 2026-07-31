@@ -82,9 +82,11 @@ export function parseRuntimeOptions(env = process.env) {
 
 export function cliHelp() {
   return `Usage:
-  codex-copilot-dx [--configure-claude-desktop] [--show-request-id]
-  codex-copilot-dx doctor [--online] [--compat]
-  codex-copilot-dx usage
-  codex-copilot-dx --version
-  codex-copilot-dx --help`;
+  ccdx [--configure-claude-desktop] [--show-request-id]
+  ccdx doctor [--online] [--compat]
+  ccdx usage
+  ccdx --version
+  ccdx --help
+
+Compatibility alias: codex-copilot-dx`;
 }

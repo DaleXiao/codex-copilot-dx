@@ -124,6 +124,15 @@ function parseResponseObject(text) {
   return response;
 }
 
+function parseCompactionResponse(text) {
+  const response = parseResponseObject(text);
+  if (response.object !== "response.compaction"
+    || !response.output.some((item) => item?.type === "compaction")) {
+    throw new Error("response body is missing valid compaction state");
+  }
+  return response;
+}
+
 export async function inspectAdapterCompatibility({
   host = "127.0.0.1",
   port = 2026,
@@ -184,7 +193,7 @@ export async function inspectAdapterCompatibility({
       stream: false,
       input: "Compact this short context.",
     }, timeoutMs);
-    parseResponseObject(text);
+    parseCompactionResponse(text);
   });
 
   if (!claudeModel) {
@@ -446,7 +455,7 @@ export async function collectDoctorChecks({
 export async function runDoctor(options = {}) {
   const log = options.log || console.log;
   const flags = [options.online ? "--online" : "", options.compat ? "--compat" : ""].filter(Boolean);
-  log(`codex-copilot-dx doctor${flags.length ? ` ${flags.join(" ")}` : ""}`);
+  log(`ccdx doctor${flags.length ? ` ${flags.join(" ")}` : ""}`);
   const checks = await collectDoctorChecks(options);
   for (const check of checks) log(status(check.kind, check.message));
   return checks;

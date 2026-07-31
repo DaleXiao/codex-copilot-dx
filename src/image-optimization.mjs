@@ -4,17 +4,19 @@ import {
   readResponsesImagePart,
   readResponsesToolOutputParts,
 } from "./responses-content.mjs";
+import { createBoundedResultCache } from "./bounded-result-cache.mjs";
 import { status } from "./status.mjs";
 
 const DEFAULT_IMG_CONCURRENCY = 2;
 const IMG_MAX_CONCURRENCY = 12;
 const DEFAULT_IMG_MAX_INPUT_PIXELS = 40 * 1000 * 1000;
+const DEFAULT_IMG_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_UPSTREAM_BODY_BYTES = 30 * 1024 * 1024;
-const MAX_OPTIMIZED_IMAGE_DIGESTS = 4096;
 const IMG_MAX_DIM = positiveInt(process.env.CCDX_IMG_MAX_DIM, 2048);
 const IMG_QUALITY = positiveInt(process.env.CCDX_IMG_QUALITY, 82, 100);
 const IMG_MIN_BYTES = nonNegativeInt(process.env.CCDX_IMG_MIN_BYTES, 100000);
 const IMG_MAX_INPUT_PIXELS = positiveInt(process.env.CCDX_IMG_MAX_INPUT_PIXELS, DEFAULT_IMG_MAX_INPUT_PIXELS);
+const IMG_CACHE_MAX_BYTES = nonNegativeInt(process.env.CCDX_IMG_CACHE_MAX_BYTES, DEFAULT_IMG_CACHE_MAX_BYTES);
 const MAX_UPSTREAM_BODY_BYTES = positiveInt(process.env.CCDX_MAX_UPSTREAM_BODY_BYTES, DEFAULT_MAX_UPSTREAM_BODY_BYTES);
 const IMG_OPT_DISABLED = process.env.CCDX_DISABLE_IMG_OPT === "1";
 const IMG_CONCURRENCY = parseImageConcurrency(process.env.CCDX_IMG_CONCURRENCY);
@@ -22,7 +24,8 @@ const OVERSIZE_IMAGE_PROFILES = [
   { maxDim: Math.min(IMG_MAX_DIM, 1600), quality: Math.min(IMG_QUALITY, 75) },
   { maxDim: Math.min(IMG_MAX_DIM, 1280), quality: Math.min(IMG_QUALITY, 65) },
 ];
-const optimizedImageDigests = new Set();
+const IMAGE_ENCODER_CONFIG = "webp:v1:effort=4:autorotate=1:fit=inside:without_enlargement=1";
+const imageResultCache = createBoundedResultCache({ maxBytes: IMG_CACHE_MAX_BYTES });
 let sharpImport = null;
 
 function positiveInt(value, fallback, max = Number.MAX_SAFE_INTEGER) {
@@ -140,12 +143,23 @@ export function createTaskLimiter(concurrency) {
 const runGlobalImageTask = createTaskLimiter(IMG_CONCURRENCY);
 
 export function imageOptimizationStats() {
+  const cache = imageResultCache.stats();
   return {
     ...runGlobalImageTask.stats(),
     disabled: IMG_OPT_DISABLED,
-    cache_entries: optimizedImageDigests.size,
+    cache_entries: cache.entries,
+    cache_bytes: cache.bytes,
+    cache_max_bytes: cache.max_bytes,
+    cache_hits: cache.hits,
+    cache_misses: cache.misses,
+    cache_evictions: cache.evictions,
+    cache_inflight: cache.inflight,
     sharp_loaded: sharpImport !== null,
   };
+}
+
+export function resetImageOptimizationCacheForTests() {
+  imageResultCache.clear();
 }
 
 async function sharp() {
@@ -154,38 +168,25 @@ async function sharp() {
   return mod.default || mod;
 }
 
-function imageDigest(raw) {
-  return createHash("sha256").update(raw).digest("base64url");
+function imageDigest(value, encoding) {
+  return createHash("sha256").update(value, encoding).digest("base64url");
 }
 
-function imageOptimizationKey(digest, constraints, quality) {
+function imageOptimizationKey(digest, mime, constraints, quality) {
   return [
     digest,
+    mime,
     constraints.maxLongEdge || "",
     constraints.maxShortEdge || "",
     constraints.maxArea || "",
     quality,
+    IMAGE_ENCODER_CONFIG,
   ].join(":");
-}
-
-function touchOptimizedImage(digest) {
-  if (!optimizedImageDigests.delete(digest)) return false;
-  optimizedImageDigests.add(digest);
-  return true;
-}
-
-function rememberOptimizedImage(digest) {
-  optimizedImageDigests.delete(digest);
-  optimizedImageDigests.add(digest);
-  if (optimizedImageDigests.size > MAX_OPTIMIZED_IMAGE_DIGESTS) {
-    optimizedImageDigests.delete(optimizedImageDigests.values().next().value);
-  }
 }
 
 export async function optimizeImageDataUrl(dataUrl, {
   maxDim = IMG_MAX_DIM,
   quality = IMG_QUALITY,
-  force = false,
   model,
   signal,
 } = {}) {
@@ -197,52 +198,60 @@ export async function optimizeImageDataUrl(dataUrl, {
   const encoded = match[2];
   const inputBytes = Buffer.byteLength(encoded, "base64");
   if (mime.includes("gif")) return dataUrl;
+  if (signal?.aborted) throw abortError(signal);
+  const constraints = imageConstraintsForModel(model, { maxDim });
+  const outputQuality = positiveInt(quality, IMG_QUALITY, 100);
+  // Hash decoded source bytes without retaining a decoded Buffer. Cache hits
+  // therefore bypass both Sharp and the global image work queue.
+  const digest = imageDigest(encoded, "base64");
+  const optimizationKey = imageOptimizationKey(digest, mime, constraints, outputQuality);
 
   try {
-    return await runGlobalImageTask(async () => {
-      const raw = Buffer.from(encoded, "base64");
-      const digest = imageDigest(raw);
-      const constraints = imageConstraintsForModel(model, { maxDim });
-      const outputQuality = positiveInt(quality, IMG_QUALITY, 100);
-      const optimizationKey = imageOptimizationKey(digest, constraints, outputQuality);
-      if (!force && touchOptimizedImage(optimizationKey)) return dataUrl;
-      const resize = await sharp();
-      const image = resize(raw, { failOn: "none", limitInputPixels: IMG_MAX_INPUT_PIXELS });
-      const metadata = await image.metadata();
-      const orientation = Number(metadata.orientation);
-      const rotated = orientation >= 5 && orientation <= 8;
-      const sourceWidth = rotated ? metadata.height : metadata.width;
-      const sourceHeight = rotated ? metadata.width : metadata.height;
-      const target = fitImageDimensions(sourceWidth, sourceHeight, constraints);
-      const resizeRequired = target
-        && (target.width < sourceWidth || target.height < sourceHeight);
-      if (raw.length < IMG_MIN_BYTES && !resizeRequired) {
-        rememberOptimizedImage(optimizationKey);
-        return dataUrl;
-      }
-      const resizeOptions = target
-        ? { ...target, fit: "inside", withoutEnlargement: true }
-        : {
-            width: constraints.maxLongEdge,
-            height: constraints.maxLongEdge,
-            fit: "inside",
-            withoutEnlargement: true,
-          };
-      const out = await image
-        .rotate()
-        .resize(resizeOptions)
-        .webp({ quality: outputQuality, effort: 4 })
-        .toBuffer();
-      if (signal?.aborted) throw abortError(signal);
-      if (out.length >= raw.length) {
-        rememberOptimizedImage(optimizationKey);
-        return dataUrl;
-      }
-      rememberOptimizedImage(imageOptimizationKey(imageDigest(out), constraints, outputQuality));
-      const ratio = ((out.length / raw.length) * 100).toFixed(1);
-      console.log(status("info", `image ${(raw.length / 1024).toFixed(0)}KB ${mime} -> ${(out.length / 1024).toFixed(0)}KB webp (${ratio}%)`));
-      return `data:image/webp;base64,${out.toString("base64")}`;
-    }, { signal });
+    return await imageResultCache.getOrCreate(optimizationKey, (sharedSignal) => (
+      runGlobalImageTask(async () => {
+        const raw = Buffer.from(encoded, "base64");
+        const resize = await sharp();
+        const image = resize(raw, { failOn: "none", limitInputPixels: IMG_MAX_INPUT_PIXELS });
+        const metadata = await image.metadata();
+        if (sharedSignal.aborted) throw abortError(sharedSignal);
+        const orientation = Number(metadata.orientation);
+        const rotated = orientation >= 5 && orientation <= 8;
+        const sourceWidth = rotated ? metadata.height : metadata.width;
+        const sourceHeight = rotated ? metadata.width : metadata.height;
+        const target = fitImageDimensions(sourceWidth, sourceHeight, constraints);
+        const resizeRequired = target
+          && (target.width < sourceWidth || target.height < sourceHeight);
+        if (raw.length < IMG_MIN_BYTES && !resizeRequired) return dataUrl;
+        const resizeOptions = target
+          ? { ...target, fit: "inside", withoutEnlargement: true }
+          : {
+              width: constraints.maxLongEdge,
+              height: constraints.maxLongEdge,
+              fit: "inside",
+              withoutEnlargement: true,
+            };
+        const out = await image
+          .rotate()
+          .resize(resizeOptions)
+          .webp({ quality: outputQuality, effort: 4 })
+          .toBuffer();
+        if (sharedSignal.aborted) throw abortError(sharedSignal);
+        if (out.length >= raw.length) return dataUrl;
+        const outputBase64 = out.toString("base64");
+        const outputDataUrl = `data:image/webp;base64,${outputBase64}`;
+        const outputKey = imageOptimizationKey(
+          imageDigest(outputBase64, "base64"),
+          "image/webp",
+          constraints,
+          outputQuality,
+        );
+        // Preserve idempotence when optimized history is submitted again.
+        imageResultCache.set(outputKey, outputDataUrl);
+        const ratio = ((out.length / raw.length) * 100).toFixed(1);
+        console.log(status("info", `image ${(raw.length / 1024).toFixed(0)}KB ${mime} -> ${(out.length / 1024).toFixed(0)}KB webp (${ratio}%)`));
+        return outputDataUrl;
+      }, { signal: sharedSignal })
+    ), { signal });
   } catch (e) {
     if (signal?.aborted || e?.name === "AbortError") throw e;
     if (inputBytes >= IMG_MIN_BYTES) {

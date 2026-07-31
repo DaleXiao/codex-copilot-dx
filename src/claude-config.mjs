@@ -41,7 +41,7 @@ export function ensureClaudeConfig(port = 2026, { filePath = SETTINGS_PATH, host
     settings = JSON.parse(raw);
   } catch (e) {
     console.log(status("warn", `Could not parse ~/.claude/settings.json: ${e.message}`));
-    console.log(status("info", "Fix the JSON file and rerun codex-copilot-dx to configure Claude Code automatically."));
+    console.log(status("info", "Fix the JSON file and rerun ccdx to configure Claude Code automatically."));
     return;
   }
 

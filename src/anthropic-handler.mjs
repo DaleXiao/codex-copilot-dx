@@ -16,6 +16,8 @@ import { resolveAnthropicModel } from "./models.mjs";
 import { status } from "./status.mjs";
 import { webStreamLines } from "./stream.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
+import { requireUpstreamEventStream, withChatStreamUsage } from "./stream-contract.mjs";
+import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordAnthropicUsage } from "./usage.mjs";
 
 export function createAnthropicCountTokensHandler(options) {
@@ -67,15 +69,19 @@ export function createAnthropicMessagesHandler(options) {
       const chatReq = anthropicToChat(parsed, { upstreamModel });
       const forceRequestedModel = upstreamModel !== requestedModel;
       if (parsed.stream) {
-        const upstream = await chatCompletionsFn({ ...chatReq, stream: true }, { signal: abort.signal });
+        const upstream = await chatCompletionsFn(withChatStreamUsage(chatReq), { signal: abort.signal });
         releaseRequest();
         if (!upstream.ok) {
-          if (!res.headersSent) res.writeHead(upstream.status);
-          res.end(await upstream.text());
+          sendUpstreamError(res, upstream, await upstream.text());
           return;
         }
+        await requireUpstreamEventStream(upstream);
         abort.setTimeout(streamIdleTimeoutMs, "stream_idle_timeout");
-        res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+        res.writeHead(200, {
+          ...safeUpstreamResponseHeaders(upstream.headers, { contentType: "text/event-stream" }),
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        });
         let messageId;
         let usage;
         try {
@@ -114,7 +120,9 @@ export function createAnthropicMessagesHandler(options) {
           responseId: anthropicMessage.id,
           usage: anthropicMessage.usage,
         });
-        res.writeHead(200, { "Content-Type": "application/json" });
+        res.writeHead(200, safeUpstreamResponseHeaders(upstream.headers, {
+          contentType: "application/json",
+        }));
         res.end(JSON.stringify(anthropicMessage));
       }
     } catch (error) {

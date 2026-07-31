@@ -70,7 +70,7 @@ test("githubReauthMessage: points users to the token file and login command", ()
   const message = githubReauthMessage("Saved token is invalid.", "/tmp/ccdx-home");
   assert.match(message, /Saved token is invalid\./);
   assert.match(message, /rm '\/tmp\/ccdx-home\/\.local\/share\/copilot-api\/github_token'/);
-  assert.match(message, /codex-copilot-dx/);
+  assert.match(message, /ccdx/);
 });
 
 test("extractGithubTokenFromAuthJson: reads Copilot auth JSON shape", () => {

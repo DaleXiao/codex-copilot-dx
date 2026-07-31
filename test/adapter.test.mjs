@@ -296,7 +296,7 @@ test("HTTP streaming responses time out when the upstream body becomes idle", as
           signal.addEventListener("abort", () => controller.error(new DOMException("This operation was aborted", "AbortError")), { once: true });
         },
       });
-      return Promise.resolve(new Response(body, { status: 200 }));
+      return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
     },
   }, {
     body: { model: "gpt-4o", stream: true, input: "hello" },
@@ -340,7 +340,7 @@ test("HTTP Messages stream emits an Anthropic SSE error after headers", async ()
           signal.addEventListener("abort", () => controller.error(new DOMException("This operation was aborted", "AbortError")), { once: true });
         },
       });
-      return Promise.resolve(new Response(body, { status: 200 }));
+      return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
     },
   }, {
     url: "/v1/messages",
@@ -361,8 +361,12 @@ test("HTTP Messages stream preserves text emitted after tool calls", async () =>
     "data: [DONE]",
     "",
   ].join("\n\n");
+  let upstreamRequest;
   const result = await invokeAdapter({
-    chatCompletionsFn: async () => new Response(body, { headers: { "Content-Type": "text/event-stream" } }),
+    chatCompletionsFn: async (request) => {
+      upstreamRequest = request;
+      return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+    },
   }, {
     url: "/v1/messages",
     body: { model: "claude-sonnet-4.6", stream: true, messages: [{ role: "user", content: "hello" }] },
@@ -375,6 +379,7 @@ test("HTTP Messages stream preserves text emitted after tool calls", async () =>
     .map((data) => JSON.parse(data));
   const starts = events.filter((event) => event.type === "content_block_start");
   assert.equal(result.status, 200);
+  assert.equal(upstreamRequest.stream_options.include_usage, true);
   assert.deepEqual(starts.map((event) => event.content_block.type), ["tool_use", "text"]);
   assert.equal(events.find((event) => event.delta?.type === "text_delta")?.delta.text, "after tool");
   assert.ok(
@@ -511,12 +516,17 @@ test("HTTP compact response replaces its parent chain with the complete replayab
     },
     { type: "compaction", id: "cmp_1", encrypted_content: "opaque-compact-state" },
   ];
+  let compactBody;
   const result = await invokeAdapter({
-    responsesCompactFn: async () => new Response(JSON.stringify({
-      id: "resp_after_compact",
-      object: "response.compaction",
-      output: compactOutput,
-    }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    responsesCompactFn: async (body) => {
+      compactBody = structuredClone(body);
+      return new Response(JSON.stringify({
+        id: "resp_after_compact",
+        object: "response",
+        status: "completed",
+        output: compactOutput,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
   }, {
     url: "/v1/responses/compact",
     body: {
@@ -527,17 +537,25 @@ test("HTTP compact response replaces its parent chain with the complete replayab
   });
 
   assert.equal(result.status, 200);
-  assert.deepEqual(
-    prepareResponsesRequest({
-      model: "gpt-5.6-sol",
-      previous_response_id: "resp_after_compact",
-      input: "continue from compact",
-    }).body.input,
-    [
-      ...compactOutput,
-      { type: "message", role: "user", content: [{ type: "input_text", text: "continue from compact" }] },
-    ],
-  );
+  assert.equal(compactBody.stream, false);
+  assert.equal(compactBody.input.filter((item) => item.type === "compaction_trigger").length, 1);
+  assert.deepEqual(compactBody.input.at(-1), { type: "compaction_trigger" });
+  const response = JSON.parse(result.text);
+  assert.equal(response.object, "response.compaction");
+  const replay = prepareResponsesRequest({
+    model: "gpt-5.6-sol",
+    previous_response_id: "resp_after_compact",
+    input: "continue from compact",
+  }).body.input;
+  assert.deepEqual(replay.map((item) => item.type), ["message", "message", "message", "compaction", "message"]);
+  assert.deepEqual(replay.slice(0, 3).map((item) => item.content[0].text), [
+    "old user context",
+    "old assistant context",
+    "compact this conversation",
+  ]);
+  assert.equal(replay.slice(0, 3).every((item) => /^msg_[a-f0-9]{32}$/.test(item.id)), true);
+  assert.deepEqual(replay[3], { type: "compaction", id: "cmp_1", encrypted_content: "opaque-compact-state" });
+  assert.equal(replay[4].content[0].text, "continue from compact");
   assert.deepEqual(
     prepareResponsesRequest({
       model: "gpt-5.6-sol",
@@ -550,7 +568,7 @@ test("HTTP compact response replaces its parent chain with the complete replayab
   clearResponseHistoryForTests();
 });
 
-test("successful compact response without a compaction item keeps normal append history", async () => {
+test("successful compact response without a compaction item fails closed and stores no history", async () => {
   clearResponseHistoryForTests();
 
   const original = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "old context" });
@@ -575,19 +593,25 @@ test("successful compact response without a compaction item keeps normal append 
     },
   });
 
-  assert.equal(result.status, 200);
-  assert.deepEqual(
-    prepareResponsesRequest({
+  assert.equal(result.status, 502);
+  assert.equal(JSON.parse(result.text).error.code, "ccdx_invalid_compaction_response");
+  assert.throws(
+    () => prepareResponsesRequest({
       model: "gpt-5.6-sol",
       previous_response_id: "resp_not_compacted",
       input: "next",
-    }).body.input.map((item) => item.id || item.content?.[0]?.text),
-    ["old context", "compact attempt", "msg_no_compaction", "next"],
+    }),
+    /previous_response_id is not available/,
+  );
+  assert.deepEqual(
+    prepareResponsesRequest({ model: "gpt-5.6-sol", previous_response_id: "resp_append_root", input: "next" })
+      .body.input.map((item) => item.content?.[0]?.text),
+    ["old context", "next"],
   );
   clearResponseHistoryForTests();
 });
 
-test("HTTP 200 non-completed compact responses cannot replace existing history", async () => {
+test("HTTP 200 non-completed compact responses fail closed and cannot replace existing history", async () => {
   for (const responseStatus of ["failed", "incomplete"]) {
     clearResponseHistoryForTests();
     const rootId = `resp_${responseStatus}_compact_root`;
@@ -611,14 +635,19 @@ test("HTTP 200 non-completed compact responses cannot replace existing history",
       },
     });
 
-    assert.equal(result.status, 200);
-    assert.deepEqual(
-      prepareResponsesRequest({
+    assert.equal(result.status, 502);
+    assert.throws(
+      () => prepareResponsesRequest({
         model: "gpt-5.6-sol",
         previous_response_id: compactId,
         input: "continue",
-      }).body.input.map((item) => item.content?.[0]?.text),
-      [`${responseStatus} preserved context`, `${responseStatus} compact attempt`, "continue"],
+      }),
+      /previous_response_id is not available/,
+    );
+    assert.deepEqual(
+      prepareResponsesRequest({ model: "gpt-5.6-sol", previous_response_id: rootId, input: "continue" })
+        .body.input.map((item) => item.content?.[0]?.text),
+      [`${responseStatus} preserved context`, "continue"],
     );
   }
   clearResponseHistoryForTests();
@@ -664,7 +693,46 @@ test("failed compact response cannot replace existing history", async () => {
   clearResponseHistoryForTests();
 });
 
-test("streaming compact response also stores its completed snapshot as a new root", async () => {
+test("compact snapshots use the sanitized body that actually succeeded upstream", async () => {
+  let attempts = 0;
+  let successfulBody;
+  const result = await invokeAdapter({
+    responsesCompactFn: async (body) => {
+      attempts += 1;
+      if (attempts === 1) {
+        return new Response(JSON.stringify({
+          error: { message: "Encrypted content could not be verified because it could not be decrypted" },
+        }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      successfulBody = structuredClone(body);
+      return new Response(JSON.stringify({
+        id: "resp_sanitized_compact",
+        status: "completed",
+        output: [{ type: "compaction", id: "cmp_sanitized", encrypted_content: "fresh-state" }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
+  }, {
+    url: "/v1/responses/compact",
+    body: {
+      model: "gpt-5.6-sol",
+      input: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "keep me", encrypted_content: "stale-secret" }],
+      }],
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(attempts, 2);
+  assert.equal(Object.hasOwn(successfulBody.input[0].content[0], "encrypted_content"), false);
+  const response = JSON.parse(result.text);
+  const retained = response.output.find((item) => item.type === "message");
+  assert.equal(Object.hasOwn(retained.content[0], "encrypted_content"), false);
+  assert.equal(retained.content[0].text, "keep me");
+});
+
+test("compact route forces a requested stream into unary mode and stores the valid snapshot", async () => {
   clearResponseHistoryForTests();
 
   const original = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "stream old context" });
@@ -678,19 +746,17 @@ test("streaming compact response also stores its completed snapshot as a new roo
     },
     { type: "compaction", id: "cmp_stream", encrypted_content: "opaque-stream-state" },
   ];
-  const completed = {
-    type: "response.completed",
-    response: {
-      id: "resp_stream_compacted",
-      status: "completed",
-      output: compactOutput,
-    },
-  };
+  let compactBody;
   const result = await invokeAdapter({
-    responsesCompactFn: async () => new Response(
-      `event: response.completed\ndata: ${JSON.stringify(completed)}\n\ndata: [DONE]\n\n`,
-      { status: 200, headers: { "Content-Type": "text/event-stream" } },
-    ),
+    responsesCompactFn: async (body) => {
+      compactBody = body;
+      return new Response(JSON.stringify({
+        id: "resp_stream_compacted",
+        object: "response",
+        status: "completed",
+        output: compactOutput,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
   }, {
     url: "/v1/responses/compact",
     body: {
@@ -702,18 +768,20 @@ test("streaming compact response also stores its completed snapshot as a new roo
   });
 
   assert.equal(result.status, 200);
-  assert.match(result.text, /response\.completed/);
-  assert.deepEqual(
-    prepareResponsesRequest({
-      model: "gpt-5.6-sol",
-      previous_response_id: "resp_stream_compacted",
-      input: "stream next",
-    }).body.input,
-    [
-      ...compactOutput,
-      { type: "message", role: "user", content: [{ type: "input_text", text: "stream next" }] },
-    ],
-  );
+  assert.equal(compactBody.stream, false);
+  assert.deepEqual(compactBody.input.at(-1), { type: "compaction_trigger" });
+  assert.equal(JSON.parse(result.text).object, "response.compaction");
+  const replay = prepareResponsesRequest({
+    model: "gpt-5.6-sol",
+    previous_response_id: "resp_stream_compacted",
+    input: "stream next",
+  }).body.input;
+  assert.deepEqual(replay.map((item) => item.type), ["message", "message", "compaction", "message"]);
+  assert.deepEqual(replay.slice(0, 2).map((item) => item.content[0].text), [
+    "stream old context",
+    "stream compact attempt",
+  ]);
+  assert.equal(replay.at(-1).content[0].text, "stream next");
   clearResponseHistoryForTests();
 });
 
@@ -756,17 +824,18 @@ test("compact snapshot remains available when normal LRU eviction removes its ol
     () => prepareResponsesRequest({ model: "gpt-5.6-sol", previous_response_id: "resp_lru_old_child", input: "evicted" }),
     /was evicted after reaching the local history limit/,
   );
-  assert.deepEqual(
-    prepareResponsesRequest({
-      model: "gpt-5.6-sol",
-      previous_response_id: "resp_lru_compact",
-      input: "continue compact",
-    }).body.input,
-    [
-      { type: "compaction", id: "cmp_lru", encrypted_content: "compact-state" },
-      { type: "message", role: "user", content: [{ type: "input_text", text: "continue compact" }] },
-    ],
-  );
+  const replay = prepareResponsesRequest({
+    model: "gpt-5.6-sol",
+    previous_response_id: "resp_lru_compact",
+    input: "continue compact",
+  }).body.input;
+  assert.deepEqual(replay.map((item) => item.type), ["message", "message", "message", "compaction", "message"]);
+  assert.deepEqual(replay.slice(0, 3).map((item) => item.content[0].text), [
+    "old root",
+    "old child",
+    "compact old branch",
+  ]);
+  assert.deepEqual(replay[3], { type: "compaction", id: "cmp_lru", encrypted_content: "compact-state" });
   clearResponseHistoryForTests();
 });
 
@@ -906,7 +975,11 @@ test("response history tree LRU preserves active image history for compaction", 
   const result = await invokeAdapter({
     responsesCompactFn: async (body) => {
       compactBody = body;
-      return new Response(JSON.stringify({ id: "resp_compacted", status: "completed", output: [] }), {
+      return new Response(JSON.stringify({
+        id: "resp_compacted",
+        status: "completed",
+        output: [{ type: "compaction", id: "cmp_image", encrypted_content: "image-state" }],
+      }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -922,6 +995,7 @@ test("response history tree LRU preserves active image history for compaction", 
 
   assert.equal(result.status, 200);
   assert.equal(compactBody.input[0].content[0].image_url, imageUrl);
+  assert.deepEqual(compactBody.input.at(-1), { type: "compaction_trigger" });
   assert.throws(
     () => prepareResponsesRequest({ model: "gpt-5.6-sol", previous_response_id: "resp_idle", input: "next" }),
     /was evicted after reaching the local history limit/,
@@ -1303,7 +1377,11 @@ test("HTTP compact route honors the Codex auto-review model override", async () 
     openAIModelEnv: { CCDX_AUTO_REVIEW_MODEL: "gpt-5.6-sol" },
     responsesCompactFn: async (body) => {
       upstreamBody = body;
-      return new Response(JSON.stringify({ id: "resp_compact", status: "completed", output: [] }), {
+      return new Response(JSON.stringify({
+        id: "resp_compact",
+        status: "completed",
+        output: [{ type: "compaction", id: "cmp_review", encrypted_content: "review-state" }],
+      }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -1315,6 +1393,8 @@ test("HTTP compact route honors the Codex auto-review model override", async () 
 
   assert.equal(response.status, 200);
   assert.equal(upstreamBody.model, "gpt-5.6-sol");
+  assert.equal(upstreamBody.stream, false);
+  assert.deepEqual(upstreamBody.input.at(-1), { type: "compaction_trigger" });
 });
 
 test("HTTP non-stream Responses conversion preserves upstream error status", async () => {
@@ -1419,6 +1499,7 @@ test("HTTP streaming Responses chat bridge reuses the exact prepared body text",
     chatCompletionsFn: async (body, { bodyText }) => {
       upstreamCalls += 1;
       assert.equal(body.stream, true);
+      assert.equal(body.stream_options.include_usage, true);
       assert.equal(bodyText, JSON.stringify(body));
       return new Response("data: [DONE]\n\n", {
         status: 200,
@@ -1906,12 +1987,15 @@ test("forwardToChat: emits stable mixed text and tool output indexes with usage"
   let releaseCalls = 0;
 
   await forwardToChat(
-    { model: "gpt-4o", messages: [{ role: "user", content: "hi" }] },
+    { model: "gpt-4o", messages: [{ role: "user", content: "hi" }], stream_options: { opaque: "keep" } },
     async (event, data) => events.push({ event, data }),
     () => { done = true; },
     (statusCode, message) => { failure = { statusCode, message }; },
     {
-      chatCompletionsFn: async () => new Response(body, { status: 200 }),
+      chatCompletionsFn: async (request) => {
+        assert.deepEqual(request.stream_options, { opaque: "keep", include_usage: true });
+        return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      },
       releaseRequest: () => { releaseCalls += 1; },
     },
   );
@@ -1953,7 +2037,7 @@ test("forwardToChat: emits a completed empty message for an empty successful str
     async (event, data) => events.push({ event, data }),
     () => {},
     () => assert.fail("empty stream should not fail"),
-    { chatCompletionsFn: async () => new Response("data: [DONE]\n\n", { status: 200 }) },
+    { chatCompletionsFn: async () => new Response("data: [DONE]\n\n", { status: 200, headers: { "Content-Type": "text/event-stream" } }) },
   );
 
   const response = events.find(({ event }) => event === "response.completed").data.response;

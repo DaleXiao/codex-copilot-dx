@@ -23,10 +23,13 @@ Codex Auto-review requests use the hidden `codex-auto-review` model ID. The adap
 ## Usage
 
 ```bash
-npx codex-copilot-dx@latest
+npm install -g codex-copilot-dx@latest
+ccdx
 ```
 
-> Tip: the `@latest` suffix forces `npx` to fetch the newest release instead of using a stale cached copy.
+The shorter `ccdx` command is the primary launcher. The existing `codex-copilot-dx`
+command remains an equivalent compatibility alias. For a one-off run without a
+global install, use `npx codex-copilot-dx@latest`.
 
 On first run, it will:
 1. Authenticate with GitHub via device flow (if needed), after first trying compatible local Copilot token sources
@@ -42,14 +45,14 @@ If an existing `codex-copilot-dx` adapter is already running on the configured h
 
 The running adapter reports its package and protocol versions. After upgrading `codex-copilot-dx`, stop the old process before starting the new version; the new CLI refuses to silently reuse an incompatible adapter.
 
-Do not set Claude Code by manually exporting `ANTHROPIC_BASE_URL` or `ANTHROPIC_AUTH_TOKEN` in your shell. Let `codex-copilot-dx` write the local config files instead. If you previously exported those variables, remove them from shell startup files and restart the terminal before launching Claude Code.
+Do not set Claude Code by manually exporting `ANTHROPIC_BASE_URL` or `ANTHROPIC_AUTH_TOKEN` in your shell. Let `ccdx` write the local config files instead. If you previously exported those variables, remove them from shell startup files and restart the terminal before launching Claude Code.
 
 ### Diagnostics
 
 Run a read-only config check without starting the adapter or changing files:
 
 ```bash
-codex-copilot-dx doctor
+ccdx doctor
 ```
 
 The command exits with status `1` when it finds an invalid configuration and `0` when checks contain only OK or warning results.
@@ -59,7 +62,7 @@ The doctor checks the GitHub token, Codex config, Claude Code settings, Claude A
 For a read-only live check of the saved GitHub token, Copilot entitlement, and models endpoint, run:
 
 ```bash
-codex-copilot-dx doctor --online
+ccdx doctor --online
 ```
 
 The online doctor never starts device flow, scans for replacement tokens, or changes the saved token.
@@ -67,7 +70,7 @@ The online doctor never starts device flow, scans for replacement tokens, or cha
 To actively verify the protocol path through an already-running adapter, run:
 
 ```bash
-codex-copilot-dx doctor --compat
+ccdx doctor --compat
 ```
 
 The compatibility doctor sends a few minimal Copilot requests to check Codex Auto-review, native Responses, streaming history, compaction, image tool namespace handling, and Anthropic streaming. It consumes a small amount of Copilot usage, never starts the adapter or device flow, and does not change client configuration. Combine it with `--online` when both the saved-token entitlement check and the adapter protocol checks are needed.
@@ -78,19 +81,19 @@ For live runtime diagnostics, query the running adapter from the same machine:
 curl -s http://127.0.0.1:2026/_ccdx/status | jq
 ```
 
-The status endpoint is restricted to the socket's real loopback address, even when LAN binding is explicitly enabled. It reports fixed-size request counters, latency totals, admission pressure, memory use, response-history size, image queue state, model cache counts, and token expiry state. It never includes prompts, completions, tool arguments, image content, account names, or token values. API responses always include a safe `X-Request-Id` for correlation. To include the same ID as `request_id` in related terminal and file log lines, start the adapter with:
+The status endpoint is restricted to the socket's real loopback address, even when LAN binding is explicitly enabled. It reports fixed-size request counters, bounded TTFT/TPOT histograms for streaming routes, admission pressure, memory use, response-history size, image queue/cache state, model cache counts, and token expiry state. It never retains metric samples or includes prompts, completions, tool arguments, image content, account names, or token values. API responses always include a safe `X-Request-Id` for correlation. To include the same ID as `request_id` in related terminal and file log lines, start the adapter with:
 
 ```bash
-codex-copilot-dx --show-request-id
+ccdx --show-request-id
 ```
 
-When the saved token is missing, `codex-copilot-dx` first looks for compatible local Copilot GitHub tokens, validates them with GitHub and Copilot, and imports a valid one before starting device login. It checks explicit token sources (`CCDX_GITHUB_TOKEN`, `CCDX_GITHUB_TOKEN_PATH`, `CCDX_GITHUB_TOKEN_PATHS`) plus common local `auth.json` layouts under application config directories. It does not rely on a specific app name. Generic discovery refuses to choose silently when valid tokens for multiple GitHub accounts are found. After an account is selected, automatic `401`/`403` recovery and in-process token rotation accept only the same GitHub account. Concurrent callers share token refresh work without sharing cancellation, and a still-valid Copilot token may be used briefly after a transient refresh failure. Explicit token variables remain the intentional way to switch accounts.
+When the saved token is missing, `ccdx` first looks for compatible local Copilot GitHub tokens, validates them with GitHub and Copilot, and imports a valid one before starting device login. It checks explicit token sources (`CCDX_GITHUB_TOKEN`, `CCDX_GITHUB_TOKEN_PATH`, `CCDX_GITHUB_TOKEN_PATHS`) plus common local `auth.json` layouts under application config directories. It does not rely on a specific app name. Generic discovery refuses to choose silently when valid tokens for multiple GitHub accounts are found. After an account is selected, automatic `401`/`403` recovery and in-process token rotation accept only the same GitHub account. Concurrent callers share token refresh work without sharing cancellation, and a still-valid Copilot token may be used briefly after a transient refresh failure. Explicit token variables remain the intentional way to switch accounts.
 
 If Copilot token refresh still fails with `401` or `403`, the saved GitHub token may be expired, revoked, or missing Copilot access. Delete the saved token and start the tool again to trigger GitHub device login:
 
 ```bash
 rm ~/.local/share/copilot-api/github_token
-codex-copilot-dx
+ccdx
 ```
 
 ### Claude App opt-in
@@ -141,6 +144,7 @@ Environment variables:
 | `CCDX_IMG_MIN_BYTES` | `100000` | In-bounds images smaller than this are left untouched; oversized images are still downscaled |
 | `CCDX_IMG_CONCURRENCY` | `2` | Global concurrent image optimization tasks; values above `12` are capped at `12` |
 | `CCDX_IMG_MAX_INPUT_PIXELS` | `40000000` | Maximum decoded pixels accepted by `sharp` for one image |
+| `CCDX_IMG_CACHE_MAX_BYTES` | `67108864` | Process-local byte ceiling for cached image optimization results; set to `0` to disable result caching |
 | `CCDX_DISABLE_IMG_OPT` | unset | Set to `1` to disable image optimization |
 | `CCDX_CONFIGURE_CLAUDE_DESKTOP` | unset | Set to `1` to write the Claude App 3P gateway profile during startup |
 | `CCDX_CLAUDE_DESKTOP_API_KEY` | managed profile or generated for opt-in setup | Explicit bearer key written into the Claude App profile and recognized by the adapter for model discovery |
@@ -170,7 +174,7 @@ The adapter records token usage metadata to `~/.local/share/codex-copilot-dx/usa
 Set `CCDX_LOG_PATH=1` to mirror terminal logs to `~/.local/share/codex-copilot-dx/debug.log`, or set `CCDX_LOG_PATH` to a custom file. Add `CCDX_LOG_LEVEL=debug` to include upstream request attempts, retry causes, status codes, and timings. Debug logs do not include prompts, completions, request bodies, or authorization tokens.
 
 ```bash
-codex-copilot-dx usage
+ccdx usage
 ```
 
 ### Image optimization
@@ -181,9 +185,13 @@ The adapter automatically downsamples embedded screenshots to model-appropriate 
 
 The final serialized UTF-8 request body is measured before forwarding. Above the configured byte limit, unique source images are processed largest-first from their originals at quality 75 / 1600 px and then quality 65 / 1280 px, stopping as soon as the body fits. If necessary, the forwarded view omits older duplicate images, historical tool images, other historical images, and finally old tool outputs while preserving current input and tool-call skeletons. A request that still cannot fit is rejected locally with a structured `413` instead of sending an oversized body upstream.
 
+Completed image transforms are reused from a byte-bounded process-local LRU cache, and concurrent requests for the same transform share one encode. The cache key includes source content, MIME type, model-aware dimensions, WebP quality, and encoder settings; failures are not cached and request cancellation remains isolated.
+
 When expanded Responses history exceeds Copilot's 50-image request limit, the adapter removes older duplicate image occurrences first, then keeps the 50 most recent images. This applies only to the forwarded request: local history remains complete, current images are preferred over older history, and requests at or below the limit are unchanged.
 
-After a successful `/v1/responses/compact` result containing a compaction item, the compact output becomes a new local history root. Later turns continue from that snapshot without re-expanding pre-compaction history; existing older response branches remain available until normal history eviction.
+For `/v1/responses/compact`, the adapter sends one terminal `compaction_trigger` in unary mode, validates that Copilot returned completed compaction state, and rebuilds a replayable snapshot from recent system, developer, user, and assistant messages plus every compaction item. Only a validated snapshot becomes a new local history root. Later turns continue from it without re-expanding pre-compaction history; existing older response branches remain available until normal history eviction.
+
+Successful streaming responses are accepted only when the upstream body is SSE and reaches its protocol terminal event. Unexpected EOF becomes a protocol-native stream error, and repeated blank tool-argument deltas are stopped per tool call. Inference responses forward safe quota, retry, model, trace, and upstream request-ID metadata; cookies, authorization, body-length, and encoding headers are not forwarded.
 
 Newer ChatGPT/Codex clients can advertise an `image_gen` namespace that already exists upstream. The adapter removes that exact conflicting client tool before forwarding and retries once only when Copilot explicitly reports an image namespace collision. Image inputs and screenshot optimization remain enabled.
 

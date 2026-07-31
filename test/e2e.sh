@@ -71,7 +71,7 @@ echo "[OK] Local previous_response_id history passed"
 COMPACT="$(curl -fsS --max-time 120 -X POST "${BASE_URL}/v1/responses/compact" \
   -H 'Content-Type: application/json' \
   -d "{\"model\":\"${RESPONSES_MODEL}\",\"stream\":false,\"input\":\"compact this short context\"}")"
-node -e 'const r=JSON.parse(process.argv[1]); if (!r.id || !Array.isArray(r.output)) process.exit(1)' "$COMPACT"
+node -e 'const r=JSON.parse(process.argv[1]); if (!r.id || r.object !== "response.compaction" || !Array.isArray(r.output) || !r.output.some((item) => item?.type === "compaction")) process.exit(1)' "$COMPACT"
 echo "[OK] Responses compaction passed"
 
 IMAGE_PAYLOAD_FILE="$(mktemp "${TMPDIR:-/tmp}/ccdx-image-e2e.XXXXXX")"

@@ -8,9 +8,17 @@ import os from "node:os";
 import path from "node:path";
 import { localPackageVersion } from "../src/version.mjs";
 import { assertSafeAdapterHost, isLanAllowed } from "../src/security.mjs";
+import packageJson from "../package.json" with { type: "json" };
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
+
+test("package exposes ccdx and keeps the legacy command on the same entrypoint", () => {
+  assert.deepEqual(packageJson.bin, {
+    ccdx: "bin/cli.mjs",
+    "codex-copilot-dx": "bin/cli.mjs",
+  });
+});
 
 test("cli --version exits without starting the adapter", async () => {
   const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, "--version"], {
@@ -29,6 +37,8 @@ test("cli --help exits without validating runtime configuration", async () => {
   });
 
   assert.match(stdout, /Usage:/);
+  assert.match(stdout, /ccdx doctor/);
+  assert.match(stdout, /Compatibility alias: codex-copilot-dx/);
   assert.match(stdout, /doctor \[--online\] \[--compat\]/);
   assert.equal(stderr, "");
 });
@@ -51,7 +61,7 @@ test("cli doctor exits without starting the adapter", async () => {
     env: { ...process.env, HOME: home, ADAPTER_PORT: "9" },
   });
 
-  assert.match(stdout, /codex-copilot-dx doctor/);
+  assert.match(stdout, /ccdx doctor/);
   assert.match(stdout, /\[WARN\] Adapter is not listening on http:\/\/127\.0\.0\.1:9/);
   assert.equal(stderr, "");
 });

@@ -2,6 +2,15 @@ import { randomUUID } from "node:crypto";
 import { chatCompletions } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
 import { abortErrorStatusCode, isAbortLikeError } from "./http-transport.mjs";
+import {
+  incompleteUpstreamStream,
+  invalidUpstreamStream,
+  requireUpstreamEventStream,
+  ToolArgumentDeltaGuard,
+  upstreamChatStreamError,
+  withChatStreamUsage,
+} from "./stream-contract.mjs";
+import { isChatOutputDelta, markFirstOutput, markOutputTokens } from "./stream-performance.mjs";
 
 function cloneJson(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -134,7 +143,7 @@ export function chatToResponses(chatResp, model) {
 
 export async function forwardToChat(chatReq, emitEvent, onDone, onError, options = {}) {
   delete chatReq.max_tokens;
-  const upstreamReq = chatReq.stream === true ? chatReq : { ...chatReq, stream: true };
+  const upstreamReq = withChatStreamUsage(chatReq);
   const bodyText = upstreamReq === chatReq ? options.bodyText : undefined;
   let resp;
   try {
@@ -150,9 +159,16 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
     return;
   }
   if (!resp.ok) {
-    await onError(resp.status, await resp.text());
+    await onError(resp.status, await resp.text(), undefined, resp);
     return;
   }
+  try {
+    await requireUpstreamEventStream(resp);
+  } catch (error) {
+    await onError(error.statusCode, error.message, error);
+    return;
+  }
+  options.onUpstreamResponse?.(resp);
   options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
   const respId = `resp_${uid()}`;
   let actualModel = chatReq.model || "unknown";
@@ -161,6 +177,13 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   let nextOutputIndex = 0;
   let usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
   const toolCalls = new Map();
+  const toolArgumentGuard = new ToolArgumentDeltaGuard();
+  let performanceOutputSeen = false;
+  const markPerformanceOutput = () => {
+    if (performanceOutputSeen) return;
+    performanceOutputSeen = true;
+    markFirstOutput();
+  };
 
   await emitEvent("response.created", { response: { id: respId, object: "response", status: "in_progress", model: actualModel, output: [] } });
 
@@ -258,7 +281,16 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
       const data = line.slice(6).trim();
       if (data === "[DONE]") { await emitCompleted(); onDone(); return; }
       let parsed;
-      try { parsed = JSON.parse(data); } catch { continue; }
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        throw invalidUpstreamStream(
+          "Upstream Chat Completions SSE event contained invalid JSON",
+          "upstream_stream_json_invalid",
+        );
+      }
+      const upstreamError = upstreamChatStreamError(parsed);
+      if (upstreamError) throw upstreamError;
       if (parsed.model) actualModel = parsed.model;
       if (parsed.usage) {
         usage = {
@@ -268,9 +300,11 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
         };
         const cached = parsed.usage.prompt_tokens_details?.cached_tokens;
         if (cached) usage.input_tokens_details = { cached_tokens: cached };
+        markOutputTokens(usage.output_tokens);
       }
       const delta = parsed.choices?.[0]?.delta;
       if (!delta) continue;
+      if (isChatOutputDelta(delta)) markPerformanceOutput();
       if (delta.content) {
         const message = await ensureMessageItem();
         fullText += delta.content;
@@ -281,22 +315,24 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
           const { tool, created } = await ensureToolCall(tc);
           if (tc.id) tool.callId = tc.id;
           if (!created && tc.function?.name) tool.name += tc.function.name;
-          if (tc.function?.arguments) {
-            tool.arguments += tc.function.arguments;
+          const argumentDelta = tc.function?.arguments;
+          toolArgumentGuard.observe(tool.outputIndex, argumentDelta);
+          if (argumentDelta) {
+            tool.arguments += argumentDelta;
             await emitEvent("response.function_call_arguments.delta", {
               output_index: tool.outputIndex,
               item_id: tool.id,
-              delta: tc.function.arguments,
+              delta: argumentDelta,
             });
           }
         }
       }
     }
   } catch (e) {
-    const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(options.abort?.reason) : 502;
-    await onError(statusCode, e?.message || "upstream stream error");
+    const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(options.abort?.reason) : (e?.statusCode || 502);
+    await onError(statusCode, e?.message || "upstream stream error", e);
     return;
   }
-  await emitCompleted();
-  onDone();
+  const error = incompleteUpstreamStream("[DONE]");
+  await onError(error.statusCode, error.message, error);
 }

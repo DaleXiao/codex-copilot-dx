@@ -118,7 +118,7 @@ function modelRegistryStatus(modelRegistry) {
   };
 }
 
-export function runtimeStatusPayload({ metrics, admission, modelRegistry } = {}) {
+export function runtimeStatusPayload({ metrics, streamPerformance, admission, modelRegistry } = {}) {
   const memory = process.memoryUsage();
   return {
     ...adapterHealthPayload(),
@@ -131,6 +131,7 @@ export function runtimeStatusPayload({ metrics, admission, modelRegistry } = {})
       array_buffers_bytes: memory.arrayBuffers,
     },
     requests: metrics?.snapshot?.() || createRequestMetrics().snapshot(),
+    stream_performance: streamPerformance?.snapshot?.() || null,
     admission: admission?.diagnostics?.() || admission?.stats?.() || null,
     response_history: responseHistoryStats(),
     image_optimization: imageOptimizationStats(),

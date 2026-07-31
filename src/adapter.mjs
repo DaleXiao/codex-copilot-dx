@@ -11,6 +11,7 @@ import {
   runtimeStatusPayload,
 } from "./observability.mjs";
 import { createRequestId, runWithRequestContext } from "./request-context.mjs";
+import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { status } from "./status.mjs";
 import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
@@ -98,6 +99,7 @@ export function createAdapterHandler(options = {}) {
   const streamIdleTimeoutMs = parsePositiveInteger(options.streamIdleTimeoutMs, ADAPTER_RUNTIME_CONFIG.streamIdleTimeoutMs);
   const acquireRequest = options.acquireRequest || createRequestAdmission();
   const requestMetrics = options.requestMetrics || createRequestMetrics();
+  const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics();
   const claudeDesktopModelOptions = () => {
     const modelDefs = options.modelRegistry?.modelDefs || options.claudeDesktopModelDefs;
     return Array.isArray(modelDefs) ? { modelDefs } : {};
@@ -141,6 +143,7 @@ export function createAdapterHandler(options = {}) {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(JSON.stringify(runtimeStatusPayload({
         metrics: requestMetrics,
+        streamPerformance: streamPerformanceMetrics,
         admission: acquireRequest,
         modelRegistry: options.modelRegistry,
       })));
@@ -224,12 +227,16 @@ export function createAdapterHandler(options = {}) {
     }
 
     const trackRequest = pathname !== ADAPTER_HEALTH_PATH && pathname !== ADAPTER_STATUS_PATH;
-    const complete = trackRequest
-      ? requestMetrics.begin(classifyAdapterRoute(req.method, pathname))
-      : () => {};
+    const routeName = classifyAdapterRoute(req.method, pathname);
+    const complete = trackRequest ? requestMetrics.begin(routeName) : () => {};
+    const streamPerformance = trackRequest ? streamPerformanceMetrics.begin(routeName) : null;
+    const finishRequest = ({ statusCode = 0, aborted = false } = {}) => {
+      complete({ statusCode, aborted });
+      streamPerformance?.finish({ failed: aborted || statusCode >= 400 });
+    };
     if (trackRequest && typeof res.once === "function") {
-      res.once("finish", () => complete({ statusCode: res.statusCode }));
-      res.once("close", () => complete({
+      res.once("finish", () => finishRequest({ statusCode: res.statusCode }));
+      res.once("close", () => finishRequest({
         statusCode: res.statusCode,
         aborted: !res.writableFinished && !res.writableEnded,
       }));
@@ -240,16 +247,17 @@ export function createAdapterHandler(options = {}) {
         requestId,
         pathname,
         showRequestId: options.showRequestId === true,
+        streamPerformance,
       }, () => dispatch(req, res, pathname));
       if (result && typeof result.then === "function") {
         return result.catch((error) => {
-          complete({ statusCode: res.statusCode >= 400 ? res.statusCode : 500 });
+          finishRequest({ statusCode: res.statusCode >= 400 ? res.statusCode : 500 });
           throw error;
         });
       }
       return result;
     } catch (error) {
-      complete({ statusCode: res.statusCode >= 400 ? res.statusCode : 500 });
+      finishRequest({ statusCode: res.statusCode >= 400 ? res.statusCode : 500 });
       throw error;
     }
   };
@@ -273,7 +281,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
   return new Promise((resolve, reject) => {
     const onListenError = (e) => {
       if (e?.code === "EADDRINUSE") {
-        reject(new Error(`Adapter address http://${host}:${port} is already in use. Stop the existing codex-copilot-dx process or set ADAPTER_PORT to another port.`));
+        reject(new Error(`Adapter address http://${host}:${port} is already in use. Stop the existing ccdx process or set ADAPTER_PORT to another port.`));
         return;
       }
       reject(e);

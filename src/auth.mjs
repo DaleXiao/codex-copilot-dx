@@ -33,9 +33,9 @@ export function githubTokenMetadataPath(home = os.homedir()) {
 export function githubReauthMessage(reason, home = os.homedir()) {
   const tokenPath = githubTokenPath(home);
   return `${reason}
-Delete the saved GitHub token, then run codex-copilot-dx again to log in:
+Delete the saved GitHub token, then run ccdx again to log in:
   rm '${tokenPath}'
-  codex-copilot-dx`;
+  ccdx`;
 }
 
 // Map GitHub polling responses to a small local state machine.

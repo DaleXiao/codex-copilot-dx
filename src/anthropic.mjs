@@ -1,4 +1,11 @@
 import { randomUUID } from "node:crypto";
+import {
+  incompleteUpstreamStream,
+  invalidUpstreamStream,
+  ToolArgumentDeltaGuard,
+  upstreamChatStreamError,
+} from "./stream-contract.mjs";
+import { isChatOutputDelta, markFirstOutput, markOutputTokens } from "./stream-performance.mjs";
 
 let tokenizerModulePromise = null;
 
@@ -169,6 +176,14 @@ export async function streamAnthropicFromLines(lineIterator, emit, model, option
   let sawToolUse = false;
   const trailingTextChunks = [];
   let outputTokens = 0;
+  let sawDone = false;
+  const toolArgumentGuard = new ToolArgumentDeltaGuard();
+  let performanceOutputSeen = false;
+  const markPerformanceOutput = () => {
+    if (performanceOutputSeen) return;
+    performanceOutputSeen = true;
+    markFirstOutput();
+  };
 
   const ensureStart = async () => {
     if (started) return;
@@ -196,14 +211,30 @@ export async function streamAnthropicFromLines(lineIterator, emit, model, option
   for await (const line of lineIterator) {
     if (!line.startsWith("data: ")) continue;
     const data = line.slice(6).trim();
-    if (data === "[DONE]") break;
+    if (data === "[DONE]") {
+      sawDone = true;
+      break;
+    }
     let parsed;
-    try { parsed = JSON.parse(data); } catch { continue; }
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      throw invalidUpstreamStream(
+        "Upstream Chat Completions SSE event contained invalid JSON",
+        "upstream_stream_json_invalid",
+      );
+    }
+    const upstreamError = upstreamChatStreamError(parsed);
+    if (upstreamError) throw upstreamError;
     if (!options.forceModel && parsed.model) actualModel = parsed.model;
-    if (parsed.usage?.completion_tokens != null) outputTokens = parsed.usage.completion_tokens;
+    if (parsed.usage?.completion_tokens != null) {
+      outputTokens = parsed.usage.completion_tokens;
+      markOutputTokens(outputTokens);
+    }
     const choice = parsed.choices?.[0];
     if (!choice) continue;
     const delta = choice.delta || {};
+    if (isChatOutputDelta(delta)) markPerformanceOutput();
     await ensureStart();
 
     if (delta.content) {
@@ -227,15 +258,19 @@ export async function streamAnthropicFromLines(lineIterator, emit, model, option
           await emit("content_block_start", { type: "content_block_start", index: blockIndex,
             content_block: { type: "tool_use", id: tc.id || `tu_${uid()}`, name: tc.function?.name || "", input: {} } });
         }
-        if (tc.function?.arguments) {
+        const argumentDelta = tc.function?.arguments;
+        toolArgumentGuard.observe(oi, argumentDelta);
+        if (argumentDelta) {
           await emit("content_block_delta", { type: "content_block_delta", index: toolBlocks[oi].anthropicIndex,
-            delta: { type: "input_json_delta", partial_json: tc.function.arguments } });
+            delta: { type: "input_json_delta", partial_json: argumentDelta } });
         }
       }
     }
 
     if (choice.finish_reason) finishReason = choice.finish_reason;
   }
+
+  if (!sawDone) throw incompleteUpstreamStream("[DONE]");
 
   await ensureStart();
   if (textOpen) await closeText();

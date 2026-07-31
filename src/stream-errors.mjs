@@ -1,7 +1,8 @@
 import { writeOrDrain } from "./http-transport.mjs";
+import { markStreamFailure } from "./stream-performance.mjs";
 
 function streamErrorData(protocol, error, abort) {
-  const code = abort?.reason || "upstream_stream_error";
+  const code = abort?.reason || error?.code || "upstream_stream_error";
   const message = `${code}: ${error?.message || "Upstream stream failed"}`;
   if (protocol === "anthropic") {
     return { type: "error", error: { type: "api_error", message } };
@@ -10,6 +11,7 @@ function streamErrorData(protocol, error, abort) {
 }
 
 export async function endStreamWithError(res, protocol, error, abort) {
+  markStreamFailure();
   if (res.destroyed || res.writableEnded) return;
   const data = streamErrorData(protocol, error, abort);
   await writeOrDrain(res, `event: error\ndata: ${JSON.stringify(data)}\n\n`).catch(() => false);

@@ -2,6 +2,7 @@ import { promisify } from "node:util";
 import * as zlib from "node:zlib";
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
 import { status } from "./status.mjs";
+import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 
 const COMPRESSED_BODY_WEIGHT_MULTIPLIER = 4;
 const gunzipAsync = promisify(zlib.gunzip);
@@ -296,7 +297,9 @@ export function sendJsonError(res, err, fallbackStatus = 400) {
 
 export function sendUpstreamError(res, response, text) {
   if (!res.headersSent) {
-    res.writeHead(response.status || 502, { "Content-Type": response.headers?.get("content-type") || "application/json" });
+    res.writeHead(response.status || 502, safeUpstreamResponseHeaders(response.headers, {
+      defaultContentType: "application/json",
+    }));
   }
   res.end(text || JSON.stringify({ error: "Upstream request failed" }));
 }

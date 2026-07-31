@@ -15,10 +15,12 @@ import {
 } from "./models.mjs";
 import { chatToResponses, forwardToChat, responsesBodyUsesCustomTools } from "./responses-bridge.mjs";
 import { prepareResponsesChatPayload } from "./responses-chat-payload.mjs";
+import { prepareResponsesCompactionRequest } from "./responses-compaction.mjs";
 import { proxyCopilotResponses } from "./responses-proxy.mjs";
 import { prepareResponsesRequest, rememberResponseHistory } from "./responses-request.mjs";
 import { status } from "./status.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
+import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordResponsesUsage } from "./usage.mjs";
 
 const RESPONSES_ONLY_FALLBACK = new Set([
@@ -113,20 +115,29 @@ export function createResponsesHandler(options) {
         });
         const { chatReq, bodyText } = chatPayload;
         if (parsed.stream) {
+          let streamResponseHeaders = null;
           await forwardToChat(chatReq, async (event, data) => {
-            if (!res.headersSent) res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+            if (!res.headersSent) res.writeHead(200, {
+              ...streamResponseHeaders,
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            });
             await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
             if (event === "response.completed") {
               rememberResponseHistory(prepared, data.response);
               recordResponsesUsage({ surface: prepared.surface, mode: "stream", model, response: data.response, event: data });
             }
-          }, () => { if (!res.writableEnded) res.end(); }, async (statusCode, errMsg) => {
+          }, () => { if (!res.writableEnded) res.end(); }, async (statusCode, errMsg, error, upstreamResponse) => {
             if (!res.headersSent) {
-              res.writeHead(statusCode || 500, { "Content-Type": "text/plain; charset=utf-8" });
-              res.end(errMsg);
+              if (upstreamResponse) {
+                sendUpstreamError(res, upstreamResponse, errMsg);
+                return;
+              }
+              const responseError = error || Object.assign(new Error(errMsg), { statusCode });
+              sendJsonError(res, responseError, statusCode || 500);
               return;
             }
-            await endStreamWithError(res, "responses", new Error(errMsg), abort);
+            await endStreamWithError(res, "responses", error || new Error(errMsg), abort);
           }, {
             signal: abort.signal,
             abort,
@@ -134,6 +145,11 @@ export function createResponsesHandler(options) {
             chatCompletionsFn,
             releaseRequest,
             bodyText,
+            onUpstreamResponse: (upstreamResponse) => {
+              streamResponseHeaders = safeUpstreamResponseHeaders(upstreamResponse.headers, {
+                contentType: "text/event-stream",
+              });
+            },
           });
         } else {
           try {
@@ -147,7 +163,9 @@ export function createResponsesHandler(options) {
             const response = chatToResponses(JSON.parse(data), model);
             rememberResponseHistory(prepared, response);
             recordResponsesUsage({ surface: prepared.surface, mode: "json", model, response, event: response });
-            res.writeHead(200, { "Content-Type": "application/json" });
+            res.writeHead(200, safeUpstreamResponseHeaders(upstream.headers, {
+              contentType: "application/json",
+            }));
             res.end(JSON.stringify(response));
           } catch (error) {
             logRequestFailure("Responses", error, abort);
@@ -170,8 +188,6 @@ export function createResponsesCompactHandler(options) {
     acquireRequest,
     openAIModelEnv,
     responsesCompactFn,
-    streamHandshakeTimeoutMs,
-    streamIdleTimeoutMs,
     upstreamTimeoutMs,
   } = options;
 
@@ -181,22 +197,20 @@ export function createResponsesCompactHandler(options) {
     try {
       releaseRequest = await acquireRequest(req, { signal: abort.signal });
       const parsed = await readJsonBody(req);
-      abort.setTimeout(
-        parsed.stream ? streamHandshakeTimeoutMs : upstreamTimeoutMs,
-        parsed.stream ? "stream_handshake_timeout" : "upstream_timeout",
+      abort.setTimeout(upstreamTimeoutMs, "upstream_timeout");
+      const prepared = prepareResponsesCompactionRequest(
+        prepareResponsesRequest(parsed, { mutate: true }),
       );
-      const prepared = prepareResponsesRequest(parsed, { mutate: true });
       prepared.surface = "responses_compact";
       const model = parsed.model || "unknown";
       const { requestedModel, upstreamModel } = resolveOpenAIModel(model, openAIModelEnv);
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
-      console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=${!!parsed.stream}`));
+      console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=false`));
       await proxyCopilotResponses(prepared, req, res, responsesCompactFn, {
         signal: abort.signal,
         abort,
         releaseRequest,
-        streamIdleTimeoutMs,
       });
     } catch (error) {
       logRequestFailure("Responses compact", error, abort);

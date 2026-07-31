@@ -27,7 +27,7 @@ try {
   CLI = parseCliArgs(process.argv.slice(2));
 } catch (e) {
   console.error(e.message);
-  console.error("Run codex-copilot-dx --help for usage.");
+  console.error("Run ccdx --help for usage.");
   process.exit(2);
 }
 
@@ -107,7 +107,7 @@ async function refreshClaudeDesktopModelDefs() {
     const models = JSON.parse(body);
     const autoReview = codexAutoReviewModelStatus(models);
     if (!autoReview.available) {
-      console.log(status("warn", `Auto-review target ${autoReview.upstreamModel} is unavailable: ${autoReview.reason}. Run codex-copilot-dx doctor --compat to verify the live path.`));
+      console.log(status("warn", `Auto-review target ${autoReview.upstreamModel} is unavailable: ${autoReview.reason}. Run ccdx doctor --compat to verify the live path.`));
     }
     const gptModelIds = gptModelIdsFromCopilotModels(models);
     if (gptModelIds.length) {
@@ -169,7 +169,7 @@ async function reuseRunningAdapterIfAvailable() {
   });
   if (running.incompatible) {
     const found = running.data?.version || "unknown";
-    throw new Error(`Adapter ${found} is already running at ${running.baseUrl}, but this CLI is ${LOCAL_VERSION}. Stop the existing process and run codex-copilot-dx again.`);
+    throw new Error(`Adapter ${found} is already running at ${running.baseUrl}, but this CLI is ${LOCAL_VERSION}. Stop the existing process and run ccdx again.`);
   }
   if (!running.ok) return false;
 
@@ -197,7 +197,7 @@ async function reuseRunningAdapterIfAvailable() {
 
   await openCodex();
   console.log(`
-  ${status("ok", "Ready, using the existing codex-copilot-dx adapter")}
+  ${status("ok", "Ready, using the existing ccdx adapter")}
 
   Adapter: ${running.baseUrl}
 `);

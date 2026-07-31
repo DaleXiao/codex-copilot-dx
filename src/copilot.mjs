@@ -17,7 +17,8 @@ import {
   githubTokenFingerprint,
   normalizeGithubIdentity,
 } from "./github-identity.mjs";
-import { prepareResponsesPayload } from "./image-optimization.mjs";
+import { prepareResponsesPayload, summarizeReqBody } from "./image-optimization.mjs";
+import { enforceResponsesPayloadByteBudget } from "./responses-byte-budget.mjs";
 
 export {
   optimizeImageDataUrl,
@@ -500,19 +501,26 @@ export function resetCopilotTokenForTests() {
 }
 
 // chatReq is already converted by the adapter. The caller parses the raw Response.
-export async function chatCompletions(chatReq, { signal, fetchImpl, retryOptions } = {}) {
+export async function chatCompletions(chatReq, {
+  signal,
+  fetchImpl,
+  retryOptions,
+  bodyText,
+} = {}) {
   const token = await getCopilotToken({ signal });
   const messages = chatReq.messages || [];
+  const serializedBody = typeof bodyText === "string" ? bodyText : JSON.stringify(chatReq);
   const headers = buildHeaders({
     token,
     version: getVSCodeVersion(),
     initiator: computeInitiator(messages),
     vision: computeVision(messages),
   });
+  headers["Content-Length"] = String(Buffer.byteLength(serializedBody));
   return fetchCopilotUpstream(`${getApiBase()}/chat/completions`, {
     method: "POST",
     headers,
-    body: JSON.stringify(chatReq),
+    body: serializedBody,
     signal,
   }, { fetchImpl, ...retryOptions });
 }
@@ -582,10 +590,29 @@ export function resetModelListSingleflightForTests() {
 }
 
 // Responses-only models go directly to Copilot's /responses endpoint.
-export async function responses(reqBody, { signal, fetchImpl, retryOptions } = {}) {
+export async function responses(reqBody, {
+  signal,
+  fetchImpl,
+  retryOptions,
+  currentInputStart = 0,
+  payloadPrepared = false,
+  payloadOptions = {},
+} = {}) {
   const token = await getCopilotToken({ signal });
-  const { bodyText, bodyBytes, summary } = await prepareResponsesPayload(reqBody, { signal });
+  const preparedPayload = await prepareResponsesPayload(reqBody, {
+    ...payloadOptions,
+    currentInputStart,
+    profiles: payloadPrepared ? [] : payloadOptions.profiles,
+    skipInitialOptimization: payloadPrepared || payloadOptions.skipInitialOptimization,
+    signal,
+  });
+  const finalizedPayload = enforceResponsesPayloadByteBudget(reqBody, preparedPayload);
+  const { bodyText, bodyBytes, stage, adapted } = finalizedPayload;
+  const summary = finalizedPayload.stage === preparedPayload.stage
+    ? preparedPayload.summary
+    : summarizeReqBody(reqBody);
   console.log(status("info", `responses payload bytes=${bodyBytes} input_items=${summary.items} images=${summary.images}`));
+  if (adapted) debugLog(`responses payload adapted stage=${stage} bytes=${bodyBytes}/${preparedPayload.targetBytes}`);
   const headers = buildHeaders({
     token,
     version: getVSCodeVersion(),

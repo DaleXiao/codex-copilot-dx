@@ -125,7 +125,7 @@ Environment variables:
 | `CCDX_MAX_INFLIGHT_BODY_BYTES` | `33554432` | Shared byte budget for admitted request bodies; a larger single request runs exclusively |
 | `CCDX_MAX_QUEUED_REQUESTS` | `16` | Maximum body requests waiting for the shared byte budget |
 | `CCDX_REQUEST_QUEUE_TIMEOUT_MS` | `120000` | Maximum wait for request-body admission before returning `503` |
-| `CCDX_MAX_UPSTREAM_BODY_BYTES` | `31457280` | Responses body target; larger image payloads are compressed more aggressively before forwarding |
+| `CCDX_MAX_UPSTREAM_BODY_BYTES` | `31457280` | Strict maximum forwarded Responses body size; larger payloads are adapted locally or rejected with `413` |
 | `CCDX_MAX_SSE_BUFFER_BYTES` | `8388608` | Maximum buffered bytes for one unterminated upstream SSE line/event |
 | `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Timeout for non-streaming upstream Copilot requests |
 | `CCDX_STREAM_HANDSHAKE_TIMEOUT_MS` | `120000` | Timeout while waiting for upstream streaming response headers |
@@ -137,8 +137,8 @@ Environment variables:
 | `CCDX_LOG_LEVEL` | `info` | Set to `debug` to include upstream request attempts, status codes, retry causes, and timings |
 | `CCDX_LOG_MAX_BYTES` | `16777216` | Rotate the debug log at this size, retaining one `.1` backup; set to `0` to disable rotation |
 | `CCDX_IMG_MAX_DIM` | `2048` | Max long edge in pixels for image downscaling |
-| `CCDX_IMG_QUALITY` | `85` | WebP quality used when re-encoding images |
-| `CCDX_IMG_MIN_BYTES` | `100000` | Images smaller than this are left untouched |
+| `CCDX_IMG_QUALITY` | `82` | Initial WebP quality used when re-encoding images |
+| `CCDX_IMG_MIN_BYTES` | `100000` | In-bounds images smaller than this are left untouched; oversized images are still downscaled |
 | `CCDX_IMG_CONCURRENCY` | `2` | Global concurrent image optimization tasks; values above `12` are capped at `12` |
 | `CCDX_IMG_MAX_INPUT_PIXELS` | `40000000` | Maximum decoded pixels accepted by `sharp` for one image |
 | `CCDX_DISABLE_IMG_OPT` | unset | Set to `1` to disable image optimization |
@@ -175,11 +175,15 @@ codex-copilot-dx usage
 
 ### Image optimization
 
-Long computer-use sessions can accumulate screenshots inside the conversation history. Each screenshot is shipped on later turns, and GitHub Copilot's `/responses` endpoint can reject oversized requests with `413 Payload Too Large`.
+Long computer-use sessions can accumulate screenshots inside the conversation history. Each screenshot is shipped on later turns, and GitHub Copilot's `/responses` endpoint can reject oversized requests with `408 Request Timeout` while reading the body or `413 Payload Too Large`.
 
-The adapter automatically downsamples embedded screenshots to long-edge <= 2048 px and re-encodes them as WebP before forwarding `/v1/responses`. It keeps an existing in-bounds WebP unchanged, never replaces an image with a larger encoding, and applies one global concurrency limit across direct and tool-output images.
+The adapter automatically downsamples embedded screenshots to model-appropriate pixel bounds (with a conservative 2048 px long-edge fallback) and initially re-encodes them as WebP quality 82 before forwarding `/v1/responses`. It never replaces an image with a larger encoding and applies one global concurrency limit across direct, function-tool, and custom-tool output images.
+
+The final serialized UTF-8 request body is measured before forwarding. Above the configured byte limit, unique source images are processed largest-first from their originals at quality 75 / 1600 px and then quality 65 / 1280 px, stopping as soon as the body fits. If necessary, the forwarded view omits older duplicate images, historical tool images, other historical images, and finally old tool outputs while preserving current input and tool-call skeletons. A request that still cannot fit is rejected locally with a structured `413` instead of sending an oversized body upstream.
 
 When expanded Responses history exceeds Copilot's 50-image request limit, the adapter removes older duplicate image occurrences first, then keeps the 50 most recent images. This applies only to the forwarded request: local history remains complete, current images are preferred over older history, and requests at or below the limit are unchanged.
+
+After a successful `/v1/responses/compact` result containing a compaction item, the compact output becomes a new local history root. Later turns continue from that snapshot without re-expanding pre-compaction history; existing older response branches remain available until normal history eviction.
 
 Newer ChatGPT/Codex clients can advertise an `image_gen` namespace that already exists upstream. The adapter removes that exact conflicting client tool before forwarding and retries once only when Copilot explicitly reports an image namespace collision. Image inputs and screenshot optimization remain enabled.
 

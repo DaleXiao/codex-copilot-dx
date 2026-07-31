@@ -22,7 +22,7 @@ function countImages(inputItems) {
     if (item?.type === "message" && Array.isArray(item.content)) {
       count += item.content.filter((part) => ["input_image", "image", "image_url"].includes(part?.type)).length;
     }
-    if (item?.type === "function_call_output") {
+    if (["function_call_output", "custom_tool_call_output"].includes(item?.type)) {
       const output = Array.isArray(item.output) ? item.output : JSON.parse(item.output);
       count += output.filter((part) => ["input_image", "image", "image_url"].includes(part?.type)).length;
     }
@@ -92,6 +92,38 @@ test("image limit keeps recent duplicate images instead of older history", () =>
   assert.equal(input[5].content[0].type, "input_image");
 });
 
+test("image limit deduplicates inline images across all supported wrappers", () => {
+  const duplicateData = Buffer.from("same-image").toString("base64");
+  const duplicateUrl = `data:image/png;base64,${duplicateData}`;
+  const input = [
+    imageMessage("unique"),
+    { type: "message", role: "user", content: [{ type: "input_image", image_url: duplicateUrl }] },
+    {
+      type: "custom_tool_call_output",
+      call_id: "custom_url",
+      output: [{ type: "image_url", image_url: { url: duplicateUrl } }],
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "custom_anthropic",
+      output: [{
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: duplicateData },
+      }],
+    },
+  ];
+
+  const result = enforceResponsesImageLimit(input, { maxImages: 2, currentInputStart: 3 });
+
+  assert.equal(result.duplicates, 2);
+  assert.equal(result.historicalOmitted, 2);
+  assert.equal(result.currentOmitted, 0);
+  assert.equal(input[0].content[0].type, "input_image");
+  assert.equal(input[1].content[0].type, "input_text");
+  assert.equal(input[2].output[0].type, "input_text");
+  assert.equal(input[3].output[0].type, "image");
+});
+
 test("image limit keeps the most recent images and prefers current input", () => {
   const input = Array.from({ length: 6 }, (_, index) => imageMessage(`image-${index}`));
 
@@ -121,6 +153,31 @@ test("image limit handles stringified tool output images", () => {
     "data:image/png;base64,tool-2",
     "data:image/png;base64,tool-3",
     "data:image/png;base64,tool-4",
+  ]);
+});
+
+test("image limit handles array and stringified custom tool output images", () => {
+  const input = [
+    {
+      type: "custom_tool_call_output",
+      call_id: "custom_array",
+      output: [imagePart("array-0"), imagePart("array-1")],
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "custom_string",
+      output: JSON.stringify([imagePart("string-0"), imagePart("string-1")]),
+    },
+  ];
+
+  const result = enforceResponsesImageLimit(input, { maxImages: 2 });
+
+  assert.equal(result.omitted, 2);
+  assert.equal(countImages(input), 2);
+  assert.equal(input[0].output[0].type, "input_text");
+  assert.deepEqual(JSON.parse(input[1].output).map((part) => part.image_url), [
+    "data:image/png;base64,string-0",
+    "data:image/png;base64,string-1",
   ]);
 });
 

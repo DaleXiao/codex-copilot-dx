@@ -13,7 +13,8 @@ import {
   modelSupportsChatCompletions,
   resolveOpenAIModel,
 } from "./models.mjs";
-import { chatToResponses, forwardToChat, responsesToChat } from "./responses-bridge.mjs";
+import { chatToResponses, forwardToChat, responsesBodyUsesCustomTools } from "./responses-bridge.mjs";
+import { prepareResponsesChatPayload } from "./responses-chat-payload.mjs";
 import { proxyCopilotResponses } from "./responses-proxy.mjs";
 import { prepareResponsesRequest, rememberResponseHistory } from "./responses-request.mjs";
 import { status } from "./status.mjs";
@@ -41,11 +42,34 @@ function isResponsesOnlyModel(model) {
   return RESPONSES_ONLY_FALLBACK.has(model);
 }
 
+function cachedModelSupportsResponses(model) {
+  const endpoints = getCachedModelEndpoints(model);
+  return Array.isArray(endpoints)
+    && (endpoints.includes("/responses") || endpoints.includes("/v1/responses"));
+}
+
+function unsupportedCustomToolsError(model) {
+  const message = `Model ${model} has custom tool items that cannot be represented by Chat Completions, and cached endpoint metadata does not confirm Responses support`;
+  const error = new Error(message);
+  error.statusCode = 400;
+  error.code = "ccdx_custom_tools_require_responses";
+  error.jsonBody = {
+    error: {
+      message,
+      type: "invalid_request_error",
+      code: error.code,
+      model,
+    },
+  };
+  return error;
+}
+
 export function createResponsesHandler(options) {
   const {
     acquireRequest,
     chatCompletionsFn,
     openAIModelEnv,
+    responsesPayloadOptions,
     responsesFn,
     streamHandshakeTimeoutMs,
     streamIdleTimeoutMs,
@@ -69,7 +93,12 @@ export function createResponsesHandler(options) {
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${!!parsed.stream}`));
-      if (requestedModel === CODEX_AUTO_REVIEW_MODEL || isResponsesOnlyModel(upstreamModel)) {
+      const usesCustomTools = responsesBodyUsesCustomTools(prepared.body);
+      const useNativeResponses = requestedModel === CODEX_AUTO_REVIEW_MODEL
+        || isResponsesOnlyModel(upstreamModel)
+        || (usesCustomTools && cachedModelSupportsResponses(upstreamModel));
+      if (usesCustomTools && !useNativeResponses) throw unsupportedCustomToolsError(upstreamModel);
+      if (useNativeResponses) {
         await proxyCopilotResponses(prepared, req, res, responsesFn, {
           signal: abort.signal,
           abort,
@@ -77,7 +106,12 @@ export function createResponsesHandler(options) {
           streamIdleTimeoutMs,
         });
       } else {
-        const chatReq = responsesToChat(prepared.body);
+        const chatPayload = await prepareResponsesChatPayload(prepared, {
+          payloadOptions: responsesPayloadOptions,
+          signal: abort.signal,
+          stream: parsed.stream,
+        });
+        const { chatReq, bodyText } = chatPayload;
         if (parsed.stream) {
           await forwardToChat(chatReq, async (event, data) => {
             if (!res.headersSent) res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
@@ -99,12 +133,11 @@ export function createResponsesHandler(options) {
             streamIdleTimeoutMs,
             chatCompletionsFn,
             releaseRequest,
+            bodyText,
           });
         } else {
-          chatReq.stream = false;
-          delete chatReq.max_tokens;
           try {
-            const upstream = await chatCompletionsFn({ ...chatReq, stream: false }, { signal: abort.signal });
+            const upstream = await chatCompletionsFn(chatReq, { signal: abort.signal, bodyText });
             releaseRequest();
             const data = await upstream.text();
             if (!upstream.ok) {

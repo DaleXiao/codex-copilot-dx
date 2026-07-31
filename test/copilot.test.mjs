@@ -5,7 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { githubTokenPath } from "../src/auth.mjs";
-import { cacheModelEndpoints, computeInitiator, computeVision, buildHeaders, getCachedModelEndpoints, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, prepareResponsesPayload, summarizeReqBody, createTaskLimiter, parseImageConcurrency, parseUpstreamRetries, parseUpstreamRetryDelayMs, resetModelEndpointCacheForTests, runWithConcurrency, fetchCopilotUpstream, responses, listModels, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
+import { cacheModelEndpoints, chatCompletions, computeInitiator, computeVision, buildHeaders, getCachedModelEndpoints, parseVSCodeVersion, FALLBACK_VSCODE_VERSION, responsesEndpointPath, optimizeImageDataUrl, optimizeImagesInBody, prepareResponsesPayload, summarizeReqBody, createTaskLimiter, parseImageConcurrency, parseUpstreamRetries, parseUpstreamRetryDelayMs, resetModelEndpointCacheForTests, runWithConcurrency, fetchCopilotUpstream, responses, listModels, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
+import { fitImageDimensions, imageConstraintsForModel } from "../src/image-optimization.mjs";
+import { canonicalInlineImageIdentity, readResponsesImagePart } from "../src/responses-content.mjs";
 
 function jsonResp(status, body) {
   return {
@@ -148,6 +150,26 @@ test("parseImageConcurrency: defaults and caps image optimization concurrency", 
   assert.equal(parseImageConcurrency("99"), 12);
 });
 
+test("imageConstraintsForModel: applies known model pixel limits conservatively", () => {
+  assert.deepEqual(imageConstraintsForModel("gpt-4o"), { maxLongEdge: 2048, maxShortEdge: 768 });
+  assert.deepEqual(imageConstraintsForModel("gpt-4.1-2025-04-14"), { maxLongEdge: 2048, maxShortEdge: 768 });
+  assert.deepEqual(imageConstraintsForModel("gpt-4o-mini"), { maxLongEdge: 2048 });
+  assert.deepEqual(imageConstraintsForModel("gpt-5-mini"), { maxLongEdge: 2048, maxShortEdge: 768 });
+  assert.deepEqual(imageConstraintsForModel("gpt-5.6-sol"), { maxLongEdge: 2048, maxArea: 2_560_000 });
+  assert.deepEqual(imageConstraintsForModel("gemini-2.5-pro", { maxDim: 1600 }), { maxLongEdge: 1600 });
+  assert.deepEqual(imageConstraintsForModel("future-model", { maxDim: 1280 }), { maxLongEdge: 1280 });
+});
+
+test("fitImageDimensions: preserves aspect ratio within short-edge and area budgets", () => {
+  assert.deepEqual(
+    fitImageDimensions(2600, 1800, { maxLongEdge: 2048, maxShortEdge: 768 }),
+    { width: 1109, height: 768 },
+  );
+  const square = fitImageDimensions(2400, 2400, { maxLongEdge: 2048, maxArea: 2_560_000 });
+  assert.deepEqual(square, { width: 1600, height: 1600 });
+  assert.equal(square.width * square.height <= 2_560_000, true);
+});
+
 test("parseUpstreamRetries: defaults and caps upstream retries", () => {
   assert.equal(parseUpstreamRetries(undefined), 2);
   assert.equal(parseUpstreamRetries("bad"), 2);
@@ -258,6 +280,10 @@ test("optimizeImagesInBody: deduplicates identical images within one pass", asyn
         { type: "input_image", image_url: original },
         { type: "input_image", image_url: original },
       ]) },
+      { type: "custom_tool_call_output", output: [
+        { type: "input_image", image_url: original },
+      ] },
+      { type: "input_image", image_url: original },
     ],
   };
   let calls = 0;
@@ -273,6 +299,39 @@ test("optimizeImagesInBody: deduplicates identical images within one pass", asyn
   assert.equal(calls, 1);
   assert.deepEqual(reqBody.input[0].content.map((part) => part.image_url), [optimized, optimized]);
   assert.deepEqual(JSON.parse(reqBody.input[1].output).map((part) => part.image_url), [optimized, optimized]);
+  assert.equal(reqBody.input[2].output[0].image_url, optimized);
+  assert.equal(reqBody.input[3].image_url, optimized);
+});
+
+test("optimizeImagesInBody: shares one inline identity across Responses, object URL, and Anthropic image parts", async () => {
+  const original = "data:image/PNG;base64,QUJDRA==";
+  const optimized = "data:image/webp;base64,RUZHSA==";
+  const objectUrl = { url: original, detail: "high" };
+  const parts = [
+    { type: "input_image", image_url: original },
+    { type: "input_image", image_url: objectUrl },
+    { type: "image_url", image_url: { url: original, detail: "low" } },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJDRA==" } },
+  ];
+  const reqBody = { input: [{ type: "message", content: parts }] };
+  let calls = 0;
+
+  assert.equal(canonicalInlineImageIdentity(original), "data:image/png;base64,QUJDRA==");
+  assert.equal(readResponsesImagePart(parts[3]).identity, "data:image/png;base64,QUJDRA==");
+  await optimizeImagesInBody(reqBody, {
+    optimizeImage: async () => {
+      calls += 1;
+      return optimized;
+    },
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(parts[0].image_url, optimized);
+  assert.equal(parts[1].image_url.url, optimized);
+  assert.equal(parts[1].image_url.detail, "high");
+  assert.equal(parts[2].image_url.url, optimized);
+  assert.equal(parts[2].image_url.detail, "low");
+  assert.deepEqual(parts[3].source, { type: "base64", media_type: "image/webp", data: "RUZHSA==" });
 });
 
 test("summarizeReqBody: counts direct and stringified tool images", () => {
@@ -280,11 +339,13 @@ test("summarizeReqBody: counts direct and stringified tool images", () => {
     input: [
       { type: "message", content: [{ type: "input_text", text: "hi" }, { type: "input_image", image_url: "data:image/png;base64,AAAA" }] },
       { type: "function_call_output", output: JSON.stringify([{ type: "input_image", image_url: "data:image/png;base64,BBBB" }]) },
+      { type: "custom_tool_call_output", output: [{ type: "input_image", image_url: "data:image/png;base64,CCCC" }] },
+      { type: "input_image", image_url: "data:image/png;base64,DDDD" },
     ],
   };
   const summary = summarizeReqBody(reqBody);
-  assert.equal(summary.items, 2);
-  assert.equal(summary.images, 2);
+  assert.equal(summary.items, 4);
+  assert.equal(summary.images, 4);
 });
 
 test("optimizeImagesInBody: preserves small images and rewrites parsed tool output", async () => {
@@ -297,20 +358,44 @@ test("optimizeImagesInBody: preserves small images and rewrites parsed tool outp
   assert.equal(reqBody.input[0].output, JSON.stringify([{ type: "input_image", image_url: "data:image/png;base64,AAAA" }]));
 });
 
-test("optimizeImageDataUrl: downscales large images to webp", async () => {
+test("optimizeImageDataUrl: applies the model-aware size cap and converts to webp", async () => {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="2600" height="1800"><rect width="2600" height="1800" fill="white"/><text x="40" y="80">large screenshot</text><!-- ${"padding ".repeat(15000)} --></svg>`;
   const input = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
   const log = console.log;
   console.log = () => {};
   let output;
   try {
-    output = await optimizeImageDataUrl(input);
+    output = await optimizeImageDataUrl(input, { model: "gpt-4o" });
   } finally {
     console.log = log;
   }
 
   assert.match(output, /^data:image\/webp;base64,/);
   assert.ok(Buffer.byteLength(output) < Buffer.byteLength(input));
+  const metadata = await sharp(Buffer.from(output.split(",", 2)[1], "base64")).metadata();
+  assert.ok(Math.max(metadata.width, metadata.height) <= 2048);
+  assert.ok(Math.min(metadata.width, metadata.height) <= 768);
+});
+
+test("optimizeImageDataUrl: inspects a sub-100KB image and resizes it when dimensions exceed the model cap", async () => {
+  const png = await sharp({
+    create: { width: 4096, height: 4096, channels: 3, background: "white" },
+  }).png().toBuffer();
+  assert.ok(png.length < 100000);
+  const input = `data:image/png;base64,${png.toString("base64")}`;
+  const originalLog = console.log;
+  console.log = () => {};
+  let output;
+  try {
+    output = await optimizeImageDataUrl(input, { model: "gpt-4o" });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.match(output, /^data:image\/webp;base64,/);
+  const metadata = await sharp(Buffer.from(output.split(",", 2)[1], "base64")).metadata();
+  assert.ok(Math.max(metadata.width, metadata.height) <= 2048);
+  assert.ok(Math.min(metadata.width, metadata.height) <= 768);
 });
 
 test("optimizeImageDataUrl: rejects an aborted queued image operation", async () => {
@@ -349,6 +434,234 @@ test("optimizeImageDataUrl: compresses an unknown webp once and remembers the re
   assert.notEqual(output, input);
   assert.ok(Buffer.byteLength(output) < Buffer.byteLength(input));
   assert.equal(repeated, output);
+});
+
+function sizedImageDataUrl(size, byte) {
+  return `data:image/png;base64,${Buffer.alloc(size, byte).toString("base64")}`;
+}
+
+function budgetTestBody() {
+  const small = sizedImageDataUrl(1000, 1);
+  const large = sizedImageDataUrl(3000, 2);
+  const medium = sizedImageDataUrl(2000, 3);
+  return {
+    model: "gpt-5.6-sol",
+    input: [{
+      type: "message",
+      content: [small, large, medium, large].map((image_url) => ({ type: "input_image", image_url })),
+    }],
+  };
+}
+
+function budgetTestOptimizer(calls) {
+  return async (dataUrl, options) => {
+    const raw = Buffer.from(dataUrl.split(",", 2)[1], "base64");
+    calls.push({ inputBytes: raw.length, ...options });
+    const ratio = options.quality === 82 ? 0.8 : options.quality === 75 ? 0.6 : 0.1;
+    const output = Buffer.alloc(Math.max(1, Math.floor(raw.length * ratio)), raw[0]);
+    return `data:image/webp;base64,${output.toString("base64")}`;
+  };
+}
+
+function requestImageBytes(reqBody) {
+  return reqBody.input[0].content.map((part) => Buffer.byteLength(part.image_url.split(",", 2)[1], "base64"));
+}
+
+test("prepareResponsesPayload: defaults to q82 then lowers the largest unique original to q75", async () => {
+  const baselineCalls = [];
+  const baseline = await prepareResponsesPayload(budgetTestBody(), {
+    maxBytes: 1,
+    optimizeImage: budgetTestOptimizer(baselineCalls),
+    profiles: [],
+  });
+  assert.equal(baseline.stage, "q82");
+  assert.equal(baseline.overBudget, true);
+  assert.deepEqual(baselineCalls.map((call) => call.quality), [82, 82, 82]);
+
+  const reqBody = budgetTestBody();
+  const calls = [];
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  let payload;
+  try {
+    payload = await prepareResponsesPayload(reqBody, {
+      maxBytes: baseline.bodyBytes - 500,
+      optimizeImage: budgetTestOptimizer(calls),
+      profiles: [{ maxDim: 1600, quality: 75 }],
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(payload.stage, "q75");
+  assert.equal(payload.overBudget, false);
+  assert.equal(payload.adapted, true);
+  assert.equal(payload.bodyBytes, Buffer.byteLength(payload.bodyText));
+  assert.equal(calls.find((call) => call.force)?.inputBytes, 3000);
+  assert.deepEqual(requestImageBytes(reqBody), [800, 1800, 1600, 1800]);
+});
+
+test("prepareResponsesPayload: retries originals at q65 and stops once within budget", async () => {
+  const q75Body = budgetTestBody();
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  let q75Only;
+  try {
+    q75Only = await prepareResponsesPayload(q75Body, {
+      maxBytes: 1,
+      optimizeImage: budgetTestOptimizer([]),
+      profiles: [{ maxDim: 1600, quality: 75 }],
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  const reqBody = budgetTestBody();
+  const calls = [];
+  console.warn = () => {};
+  let payload;
+  try {
+    payload = await prepareResponsesPayload(reqBody, {
+      maxBytes: q75Only.bodyBytes - 1000,
+      optimizeImage: budgetTestOptimizer(calls),
+      profiles: [
+        { maxDim: 1600, quality: 75 },
+        { maxDim: 1280, quality: 65 },
+      ],
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(payload.stage, "q65");
+  assert.equal(payload.overBudget, false);
+  assert.deepEqual(calls.filter((call) => call.quality === 75).map((call) => call.inputBytes), [3000, 2000, 1000]);
+  assert.equal(calls.find((call) => call.quality === 65)?.inputBytes, 3000);
+  assert.deepEqual(requestImageBytes(reqBody), [600, 300, 1200, 300]);
+});
+
+test("prepareResponsesPayload: orders oversize work by current repeated wire contribution", async () => {
+  const largeOriginal = sizedImageDataUrl(3000, 1);
+  const repeatedOriginal = sizedImageDataUrl(1000, 2);
+  const makeBody = () => ({
+    model: "gpt-5.6-sol",
+    input: [{
+      type: "message",
+      content: [largeOriginal, repeatedOriginal, repeatedOriginal, repeatedOriginal]
+        .map((image_url) => ({ type: "input_image", image_url })),
+    }],
+  });
+  const calls = [];
+  const optimizer = async (dataUrl, options) => {
+    const raw = Buffer.from(dataUrl.split(",", 2)[1], "base64");
+    calls.push({ inputBytes: raw.length, ...options });
+    const outputBytes = options.quality === 82
+      ? (raw[0] === 1 ? 100 : 900)
+      : (raw[0] === 1 ? 50 : 100);
+    return sizedImageDataUrl(outputBytes, raw[0]).replace("image/png", "image/webp");
+  };
+  const baseline = await prepareResponsesPayload(makeBody(), {
+    maxBytes: 1,
+    optimizeImage: optimizer,
+    profiles: [],
+  });
+  calls.length = 0;
+  const reqBody = makeBody();
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  let payload;
+  try {
+    payload = await prepareResponsesPayload(reqBody, {
+      maxBytes: baseline.bodyBytes - 500,
+      optimizeImage: optimizer,
+      profiles: [{ maxDim: 1600, quality: 75 }],
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(payload.overBudget, false);
+  assert.equal(calls.find((call) => call.force)?.inputBytes, 1000);
+  assert.deepEqual(requestImageBytes(reqBody), [100, 100, 100, 100]);
+});
+
+test("prepareResponsesPayload: commits each stringified tool container once per image profile", async () => {
+  const imageCount = 8;
+  let output = JSON.stringify(Array.from({ length: imageCount }, (_, index) => ({
+    type: "input_image",
+    image_url: sizedImageDataUrl(1000 + index, index + 1),
+  })));
+  let commits = 0;
+  const toolOutput = { type: "custom_tool_call_output", call_id: "custom_many_images" };
+  Object.defineProperty(toolOutput, "output", {
+    configurable: true,
+    enumerable: true,
+    get: () => output,
+    set: (value) => {
+      commits += 1;
+      output = value;
+    },
+  });
+  const reqBody = { model: "gpt-5.6-sol", input: [toolOutput] };
+  const calls = [];
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  let payload;
+  try {
+    payload = await prepareResponsesPayload(reqBody, {
+      maxBytes: 1,
+      optimizeImage: budgetTestOptimizer(calls),
+      profiles: [
+        { maxDim: 1600, quality: 75 },
+        { maxDim: 1280, quality: 65 },
+      ],
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(commits, 3);
+  assert.equal(calls.length, imageCount * 3);
+  assert.equal(JSON.parse(toolOutput.output).length, imageCount);
+  assert.equal(payload.bodyBytes, Buffer.byteLength(payload.bodyText));
+  assert.equal(payload.bodyBytes, Buffer.byteLength(JSON.stringify(reqBody)));
+});
+
+test("prepareResponsesPayload: skipInitialOptimization bypasses all image profiles without rewriting input", async () => {
+  const reqBody = budgetTestBody();
+  const before = JSON.stringify(reqBody);
+  let calls = 0;
+  const payload = await prepareResponsesPayload(reqBody, {
+    maxBytes: 1,
+    optimizeImage: async (dataUrl) => {
+      calls += 1;
+      return dataUrl;
+    },
+    skipInitialOptimization: true,
+  });
+
+  assert.equal(calls, 0);
+  assert.equal(payload.stage, "preoptimized");
+  assert.equal(payload.overBudget, true);
+  assert.equal(payload.bodyText, before);
+  assert.equal(payload.bodyBytes, Buffer.byteLength(before));
+  assert.equal(JSON.stringify(reqBody), before);
+});
+
+test("prepareResponsesPayload: reports an explicit over-budget result without dropping current input", async () => {
+  const payload = await prepareResponsesPayload({
+    input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "x".repeat(200) }] }],
+  }, {
+    currentInputStart: 99,
+    maxBytes: 64,
+    profiles: [],
+  });
+
+  assert.equal(payload.overBudget, true);
+  assert.equal(payload.targetBytes, 64);
+  assert.equal(payload.stage, "q82");
+  assert.equal(payload.currentInputStart, 1);
+  assert.equal(payload.bodyBytes, Buffer.byteLength(payload.bodyText));
 });
 
 test("prepareResponsesPayload: applies stronger image compression only above the payload budget", async () => {
@@ -576,6 +889,76 @@ test("responses: retries a Copilot connect timeout before returning upstream res
   } finally {
     console.log = originalLog;
     console.warn = originalWarn;
+    resetCopilotTokenForTests();
+  }
+});
+
+test("chatCompletions: reuses prepared body text with the exact UTF-8 content length", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-chat-length-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  try {
+    await getCopilotToken({
+      home,
+      fetchImpl: async () => jsonResp(200, {
+        token: "copilot_chat_length",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        endpoints: { api: "https://api.enterprise.githubcopilot.com" },
+      }),
+    });
+
+    const request = { model: "gpt-4o", messages: [{ role: "user", content: "你好" }], stream: false };
+    const bodyText = JSON.stringify(request, null, 2);
+    const response = await chatCompletions(request, {
+      bodyText,
+      fetchImpl: async (url, options) => {
+        assert.equal(url, "https://api.enterprise.githubcopilot.com/chat/completions");
+        assert.equal(options.body, bodyText);
+        assert.equal(options.headers["Content-Length"], String(Buffer.byteLength(options.body)));
+        assert.deepEqual(JSON.parse(options.body), request);
+        return new Response("{}", { status: 200 });
+      },
+    });
+
+    assert.equal(response.status, 200);
+  } finally {
+    resetCopilotTokenForTests();
+  }
+});
+
+test("responses: rejects an irreducible oversized body locally before upstream fetch", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-response-budget-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  try {
+    await getCopilotToken({
+      home,
+      fetchImpl: async () => jsonResp(200, {
+        token: "copilot_budget",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    });
+
+    let upstreamCalls = 0;
+    await assert.rejects(responses({
+      model: "gpt-5.6-sol",
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "x".repeat(1000) }] }],
+    }, {
+      currentInputStart: 0,
+      payloadOptions: { maxBytes: 128, profiles: [] },
+      fetchImpl: async () => {
+        upstreamCalls += 1;
+        return new Response("{}", { status: 200 });
+      },
+    }), (error) => {
+      assert.equal(error.statusCode, 413);
+      assert.equal(error.code, "ccdx_request_body_too_large");
+      assert.equal(error.jsonBody.error.limit_bytes, 128);
+      assert.equal(error.jsonBody.error.stage, "q82");
+      return true;
+    });
+    assert.equal(upstreamCalls, 0);
+  } finally {
     resetCopilotTokenForTests();
   }
 });

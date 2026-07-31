@@ -7,6 +7,28 @@ function cloneJson(value) {
   return value === undefined ? undefined : structuredClone(value);
 }
 
+function chatImagePart(part) {
+  if (!part || typeof part !== "object") return null;
+  let imageUrl = null;
+  if (part.type === "input_image" || part.type === "image_url") {
+    const raw = part.image_url ?? part.url;
+    imageUrl = typeof raw === "string"
+      ? { url: raw }
+      : raw && typeof raw === "object" ? cloneJson(raw) : null;
+  } else if (part.type === "image" && part.source?.type === "base64" && typeof part.source.data === "string") {
+    imageUrl = { url: `data:${part.source.media_type || "image/png"};base64,${part.source.data}` };
+  }
+  if (imageUrl && part.detail !== undefined && imageUrl.detail === undefined) imageUrl.detail = part.detail;
+  return imageUrl?.url ? { type: "image_url", image_url: imageUrl } : null;
+}
+
+export function responsesBodyUsesCustomTools(body) {
+  if (body?.tool_choice?.type === "custom") return true;
+  if (Array.isArray(body?.tools) && body.tools.some((tool) => tool?.type === "custom")) return true;
+  return Array.isArray(body?.input)
+    && body.input.some((item) => item?.type === "custom_tool_call" || item?.type === "custom_tool_call_output");
+}
+
 export function responsesToChat(body) {
   const messages = [];
   if (body.instructions) messages.push({ role: "system", content: body.instructions });
@@ -19,13 +41,10 @@ export function responsesToChat(body) {
       if (!part || typeof part !== "object") continue;
       if (["input_text", "output_text", "text"].includes(part.type)) {
         parts.push({ type: "text", text: String(part.text || "") });
-      } else if (part.type === "input_image" || part.type === "image_url") {
-        const raw = part.image_url ?? part.url;
-        const imageUrl = typeof raw === "string"
-          ? { url: raw }
-          : raw && typeof raw === "object" ? cloneJson(raw) : null;
-        if (imageUrl && part.detail !== undefined && imageUrl.detail === undefined) imageUrl.detail = part.detail;
-        if (imageUrl?.url) parts.push({ type: "image_url", image_url: imageUrl });
+      } else if (["input_image", "image_url", "image"].includes(part.type)) {
+        const imagePart = chatImagePart(part);
+        if (imagePart) parts.push(imagePart);
+        else parts.push({ type: "text", text: JSON.stringify(part) });
       } else {
         parts.push({ type: "text", text: JSON.stringify(part) });
       }
@@ -40,6 +59,8 @@ export function responsesToChat(body) {
     for (const item of body.input) {
       if (item.type === "message") {
         messages.push({ role: item.role, content: messageContent(item.content) });
+      } else if (["input_image", "image_url", "image"].includes(item.type)) {
+        messages.push({ role: "user", content: messageContent([item]) });
       } else if (item.type === "function_call") {
         messages.push({
           role: "assistant",
@@ -113,14 +134,13 @@ export function chatToResponses(chatResp, model) {
 
 export async function forwardToChat(chatReq, emitEvent, onDone, onError, options = {}) {
   delete chatReq.max_tokens;
+  const upstreamReq = chatReq.stream === true ? chatReq : { ...chatReq, stream: true };
+  const bodyText = upstreamReq === chatReq ? options.bodyText : undefined;
   let resp;
   try {
     const chatCompletionsFn = options.chatCompletionsFn || chatCompletions;
     try {
-      resp = await chatCompletionsFn({
-        ...chatReq,
-        stream: true,
-      }, { signal: options.signal });
+      resp = await chatCompletionsFn(upstreamReq, { signal: options.signal, bodyText });
     } finally {
       options.releaseRequest?.();
     }

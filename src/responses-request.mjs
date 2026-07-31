@@ -31,7 +31,24 @@ export function stripInternalResponsesInputFields(inputItems) {
 
 function responsesOutputItems(output) {
   if (!Array.isArray(output)) return [];
-  return output.filter((item) => item?.type === "message" || item?.type === "function_call");
+  return output.filter((item) => ["message", "function_call", "custom_tool_call"].includes(item?.type));
+}
+
+function isCompactedResponsesOutput(output) {
+  return Array.isArray(output) && output.some((item) => item?.type === "compaction");
+}
+
+function isSuccessfulCompactionResponse(response) {
+  if (!isCompactedResponsesOutput(response?.output)) return false;
+  if (Object.prototype.hasOwnProperty.call(response, "status") && response.status !== "completed") {
+    return false;
+  }
+  return response.object === "response.compaction" || response.status === "completed";
+}
+
+function replayableResponsesOutputItems(output) {
+  if (!Array.isArray(output)) return [];
+  return output.filter((item) => item && typeof item === "object");
 }
 
 function stripEncryptedReasoningValue(value, state) {
@@ -62,16 +79,21 @@ function isEncryptedReasoningInputItem(item) {
 export function sanitizeEncryptedReasoningRequest(reqContext) {
   const state = { changed: false };
   let body = cloneJson(reqContext.body);
+  let currentInputStart = reqContext.currentInputStart;
   if (Array.isArray(body.input)) {
     const input = [];
-    for (const item of body.input) {
+    let retainedBeforeCurrent = 0;
+    for (let index = 0; index < body.input.length; index += 1) {
+      const item = body.input[index];
       if (isEncryptedReasoningInputItem(item)) {
         state.changed = true;
         continue;
       }
       input.push(stripEncryptedReasoningValue(item, state));
+      if (Number.isFinite(currentInputStart) && index < currentInputStart) retainedBeforeCurrent += 1;
     }
     body.input = input;
+    if (Number.isFinite(currentInputStart)) currentInputStart = retainedBeforeCurrent;
   } else {
     body = stripEncryptedReasoningValue(body, state);
   }
@@ -84,6 +106,7 @@ export function sanitizeEncryptedReasoningRequest(reqContext) {
   return {
     ...reqContext,
     body,
+    currentInputStart,
     inputItems: Array.isArray(body.input) ? body.input : reqContext.inputItems,
     historyInputItems,
   };
@@ -129,8 +152,14 @@ export function sanitizeImageNamespaceCollisionRequest(reqContext) {
 export async function openCopilotResponse(reqContext, upstream = copilotResponses, options = {}) {
   let encryptedRetried = false;
   let imageNamespaceRetried = false;
+  let payloadPrepared = false;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const resp = await upstream(reqContext.body, { signal: options.signal });
+    const resp = await upstream(reqContext.body, {
+      signal: options.signal,
+      currentInputStart: reqContext.currentInputStart,
+      payloadPrepared,
+    });
+    payloadPrepared = true;
     if (resp.ok) return { resp, reqContext };
 
     const errorText = await resp.text();
@@ -164,6 +193,9 @@ function isBuiltinImageTool(tool) {
 export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
   const body = mutate ? reqBody : cloneJson(reqBody);
   const currentInputItems = responsesInputItems(body.input, { clone: !mutate });
+  const currentInputRefs = new Set(
+    currentInputItems.filter((item) => item && typeof item === "object"),
+  );
   const previousId = body.previous_response_id;
   let historyItems = [];
 
@@ -193,10 +225,12 @@ export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
   }
   stripInternalResponsesInputFields(body.input);
   stripInternalResponsesInputFields(historyInputItems);
+  const retainedCurrentInputStart = body.input.findIndex((item) => currentInputRefs.has(item));
 
   return {
     body,
     inputItems: body.input,
+    currentInputStart: retainedCurrentInputStart < 0 ? body.input.length : retainedCurrentInputStart,
     historyParentId: previousId ?? null,
     historyInputItems,
     takeHistoryOwnership: mutate,
@@ -205,11 +239,14 @@ export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
 
 export function rememberResponseHistory(reqContext, responseJson) {
   if (!responseJson?.id || !Array.isArray(reqContext?.historyInputItems || reqContext?.inputItems)) return;
-  const sourceInputItems = reqContext.historyInputItems || reqContext.inputItems;
-  const sourceOutputItems = responsesOutputItems(responseJson.output);
+  const compacted = isSuccessfulCompactionResponse(responseJson);
+  const sourceInputItems = compacted ? [] : reqContext.historyInputItems || reqContext.inputItems;
+  const sourceOutputItems = compacted
+    ? replayableResponsesOutputItems(responseJson.output)
+    : responsesOutputItems(responseJson.output);
   rememberResponseHistoryNode({
     id: responseJson.id,
-    parentId: reqContext.historyParentId,
+    parentId: compacted ? null : reqContext.historyParentId,
     inputItems: sourceInputItems,
     outputItems: sourceOutputItems,
     takeOwnership: reqContext.takeHistoryOwnership,

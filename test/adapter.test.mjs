@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 import { Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import * as zlib from "node:zlib";
+import { cacheModelEndpoints, resetModelEndpointCacheForTests } from "../src/copilot.mjs";
+import { prepareResponsesChatPayload } from "../src/responses-chat-payload.mjs";
 import {
   abortErrorStatusCode,
   clearResponseHistoryForTests,
@@ -180,15 +182,20 @@ test("createRequestAdmission: bounds and times out its waiting queue", async () 
   const acquire = createRequestAdmission({ maxBytes: 10, maxQueued: 1, waitTimeoutMs: 10 });
   const releaseFirst = await acquire(request);
   const second = acquire(request);
+  const keepAlive = setTimeout(() => {}, 1000);
 
-  await assert.rejects(acquire(request), (error) => error.statusCode === 503 && /queue is full/.test(error.message));
-  await assert.rejects(second, (error) => error.statusCode === 503 && /admission timed out/.test(error.message));
-  assert.equal(acquire.stats().queued, 0);
-  assert.deepEqual(
-    Object.fromEntries(Object.entries(acquire.diagnostics()).filter(([key]) => ["rejected", "timedOut", "aborted"].includes(key))),
-    { rejected: 1, timedOut: 1, aborted: 0 },
-  );
-  releaseFirst();
+  try {
+    await assert.rejects(acquire(request), (error) => error.statusCode === 503 && /queue is full/.test(error.message));
+    await assert.rejects(second, (error) => error.statusCode === 503 && /admission timed out/.test(error.message));
+    assert.equal(acquire.stats().queued, 0);
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(acquire.diagnostics()).filter(([key]) => ["rejected", "timedOut", "aborted"].includes(key))),
+      { rejected: 1, timedOut: 1, aborted: 0 },
+    );
+  } finally {
+    clearTimeout(keepAlive);
+    releaseFirst();
+  }
 });
 
 test("createRequestAdmission: weights compressed bodies and treats unknown bodies as exclusive", async () => {
@@ -412,6 +419,355 @@ test("prepareResponsesRequest: expands previous response history locally", () =>
     { type: "message", id: "msg_1", role: "assistant", content: [{ type: "output_text", text: "STORED" }] },
     { type: "message", role: "user", content: [{ type: "input_text", text: "What marker?" }] },
   ]);
+});
+
+test("prepareResponsesRequest preserves custom tool call pairing across local history", () => {
+  clearResponseHistoryForTests();
+
+  const first = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "Run the custom tool." });
+  rememberResponseHistory(first, {
+    id: "resp_custom_call",
+    status: "completed",
+    output: [{
+      type: "custom_tool_call",
+      id: "custom_call_1",
+      call_id: "call_custom_1",
+      name: "shell",
+      input: "pwd",
+    }],
+  });
+
+  const second = prepareResponsesRequest({
+    model: "gpt-5.6-sol",
+    previous_response_id: "resp_custom_call",
+    input: [{
+      type: "custom_tool_call_output",
+      call_id: "call_custom_1",
+      output: "/tmp",
+    }],
+  });
+
+  assert.deepEqual(second.body.input, [
+    { type: "message", role: "user", content: [{ type: "input_text", text: "Run the custom tool." }] },
+    {
+      type: "custom_tool_call",
+      id: "custom_call_1",
+      call_id: "call_custom_1",
+      name: "shell",
+      input: "pwd",
+    },
+    { type: "custom_tool_call_output", call_id: "call_custom_1", output: "/tmp" },
+  ]);
+  clearResponseHistoryForTests();
+});
+
+test("prepareResponsesRequest reports the current input start after top-level history images are pruned", () => {
+  clearResponseHistoryForTests();
+
+  const historyImages = Array.from({ length: 50 }, (_, index) => ({
+    type: "input_image",
+    image_url: `data:image/png;base64,aGlzdG9yeS0${index}`,
+  }));
+  const original = prepareResponsesRequest({ model: "gpt-5.6-sol", input: historyImages });
+  rememberResponseHistory(original, { id: "resp_image_boundary", output: [] });
+
+  const prepared = prepareResponsesRequest({
+    model: "gpt-5.6-sol",
+    previous_response_id: "resp_image_boundary",
+    input: [{
+      type: "message",
+      role: "user",
+      content: [{ type: "input_image", image_url: "data:image/png;base64,Y3VycmVudA==" }],
+    }],
+  });
+
+  assert.equal(prepared.body.input.length, 50);
+  assert.equal(prepared.currentInputStart, 49);
+  assert.equal(prepared.body.input[prepared.currentInputStart].type, "message");
+  clearResponseHistoryForTests();
+});
+
+test("HTTP compact response replaces its parent chain with the complete replayable snapshot", async () => {
+  clearResponseHistoryForTests();
+
+  const original = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "old user context" });
+  rememberResponseHistory(original, {
+    id: "resp_before_compact",
+    output: [{
+      type: "message",
+      id: "msg_old",
+      role: "assistant",
+      content: [{ type: "output_text", text: "old assistant context" }],
+    }],
+  });
+
+  const compactOutput = [
+    { type: "reasoning", id: "rs_compact", summary: [{ type: "summary_text", text: "retained summary" }] },
+    {
+      type: "message",
+      id: "msg_retained",
+      role: "assistant",
+      content: [{ type: "output_text", text: "retained compact context" }],
+    },
+    { type: "compaction", id: "cmp_1", encrypted_content: "opaque-compact-state" },
+  ];
+  const result = await invokeAdapter({
+    responsesCompactFn: async () => new Response(JSON.stringify({
+      id: "resp_after_compact",
+      object: "response.compaction",
+      output: compactOutput,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }),
+  }, {
+    url: "/v1/responses/compact",
+    body: {
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_before_compact",
+      input: "compact this conversation",
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(
+    prepareResponsesRequest({
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_after_compact",
+      input: "continue from compact",
+    }).body.input,
+    [
+      ...compactOutput,
+      { type: "message", role: "user", content: [{ type: "input_text", text: "continue from compact" }] },
+    ],
+  );
+  assert.deepEqual(
+    prepareResponsesRequest({
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_before_compact",
+      input: "continue old branch",
+    }).body.input.map((item) => item.id || item.content?.[0]?.text),
+    ["old user context", "msg_old", "continue old branch"],
+  );
+  assert.equal(responseHistoryStats().entries, 2);
+  clearResponseHistoryForTests();
+});
+
+test("successful compact response without a compaction item keeps normal append history", async () => {
+  clearResponseHistoryForTests();
+
+  const original = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "old context" });
+  rememberResponseHistory(original, { id: "resp_append_root", output: [] });
+  const result = await invokeAdapter({
+    responsesCompactFn: async () => new Response(JSON.stringify({
+      id: "resp_not_compacted",
+      status: "completed",
+      output: [{
+        type: "message",
+        id: "msg_no_compaction",
+        role: "assistant",
+        content: [{ type: "output_text", text: "not compacted" }],
+      }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }),
+  }, {
+    url: "/v1/responses/compact",
+    body: {
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_append_root",
+      input: "compact attempt",
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(
+    prepareResponsesRequest({
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_not_compacted",
+      input: "next",
+    }).body.input.map((item) => item.id || item.content?.[0]?.text),
+    ["old context", "compact attempt", "msg_no_compaction", "next"],
+  );
+  clearResponseHistoryForTests();
+});
+
+test("HTTP 200 non-completed compact responses cannot replace existing history", async () => {
+  for (const responseStatus of ["failed", "incomplete"]) {
+    clearResponseHistoryForTests();
+    const rootId = `resp_${responseStatus}_compact_root`;
+    const compactId = `resp_${responseStatus}_compact`;
+    const original = prepareResponsesRequest({ model: "gpt-5.6-sol", input: `${responseStatus} preserved context` });
+    rememberResponseHistory(original, { id: rootId, status: "completed", output: [] });
+
+    const result = await invokeAdapter({
+      responsesCompactFn: async () => new Response(JSON.stringify({
+        id: compactId,
+        object: "response.compaction",
+        status: responseStatus,
+        output: [{ type: "compaction", id: `cmp_${responseStatus}`, encrypted_content: "partial-state" }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    }, {
+      url: "/v1/responses/compact",
+      body: {
+        model: "gpt-5.6-sol",
+        previous_response_id: rootId,
+        input: `${responseStatus} compact attempt`,
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.deepEqual(
+      prepareResponsesRequest({
+        model: "gpt-5.6-sol",
+        previous_response_id: compactId,
+        input: "continue",
+      }).body.input.map((item) => item.content?.[0]?.text),
+      [`${responseStatus} preserved context`, `${responseStatus} compact attempt`, "continue"],
+    );
+  }
+  clearResponseHistoryForTests();
+});
+
+test("failed compact response cannot replace existing history", async () => {
+  clearResponseHistoryForTests();
+
+  const original = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "preserved context" });
+  rememberResponseHistory(original, { id: "resp_failed_compact_root", output: [] });
+  const result = await invokeAdapter({
+    responsesCompactFn: async () => new Response(JSON.stringify({
+      id: "resp_failed_compact",
+      status: "failed",
+      output: [{ type: "compaction", id: "cmp_failed", encrypted_content: "must-not-store" }],
+    }), { status: 500, headers: { "Content-Type": "application/json" } }),
+  }, {
+    url: "/v1/responses/compact",
+    body: {
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_failed_compact_root",
+      input: "failed compact attempt",
+    },
+  });
+
+  assert.equal(result.status, 500);
+  assert.throws(
+    () => prepareResponsesRequest({
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_failed_compact",
+      input: "must be unavailable",
+    }),
+    /previous_response_id is not available/,
+  );
+  assert.deepEqual(
+    prepareResponsesRequest({
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_failed_compact_root",
+      input: "old branch still works",
+    }).body.input.map((item) => item.content?.[0]?.text),
+    ["preserved context", "old branch still works"],
+  );
+  clearResponseHistoryForTests();
+});
+
+test("streaming compact response also stores its completed snapshot as a new root", async () => {
+  clearResponseHistoryForTests();
+
+  const original = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "stream old context" });
+  rememberResponseHistory(original, { id: "resp_stream_root", output: [] });
+  const compactOutput = [
+    {
+      type: "message",
+      id: "msg_stream_retained",
+      role: "assistant",
+      content: [{ type: "output_text", text: "stream retained context" }],
+    },
+    { type: "compaction", id: "cmp_stream", encrypted_content: "opaque-stream-state" },
+  ];
+  const completed = {
+    type: "response.completed",
+    response: {
+      id: "resp_stream_compacted",
+      status: "completed",
+      output: compactOutput,
+    },
+  };
+  const result = await invokeAdapter({
+    responsesCompactFn: async () => new Response(
+      `event: response.completed\ndata: ${JSON.stringify(completed)}\n\ndata: [DONE]\n\n`,
+      { status: 200, headers: { "Content-Type": "text/event-stream" } },
+    ),
+  }, {
+    url: "/v1/responses/compact",
+    body: {
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_stream_root",
+      input: "stream compact attempt",
+      stream: true,
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.match(result.text, /response\.completed/);
+  assert.deepEqual(
+    prepareResponsesRequest({
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_stream_compacted",
+      input: "stream next",
+    }).body.input,
+    [
+      ...compactOutput,
+      { type: "message", role: "user", content: [{ type: "input_text", text: "stream next" }] },
+    ],
+  );
+  clearResponseHistoryForTests();
+});
+
+test("compact snapshot remains available when normal LRU eviction removes its older branch", async () => {
+  clearResponseHistoryForTests();
+  configureResponseHistoryForTests({ maxBytes: 1_000_000, maxEntries: 3 });
+
+  const root = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "old root" });
+  rememberResponseHistory(root, { id: "resp_lru_old_root", status: "completed", output: [] });
+  const child = prepareResponsesRequest({
+    model: "gpt-5.6-sol",
+    previous_response_id: "resp_lru_old_root",
+    input: "old child",
+  });
+  rememberResponseHistory(child, { id: "resp_lru_old_child", status: "completed", output: [] });
+
+  const result = await invokeAdapter({
+    responsesCompactFn: async () => new Response(JSON.stringify({
+      id: "resp_lru_compact",
+      status: "completed",
+      output: [{ type: "compaction", id: "cmp_lru", encrypted_content: "compact-state" }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }),
+  }, {
+    url: "/v1/responses/compact",
+    body: {
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_lru_old_child",
+      input: "compact old branch",
+    },
+  });
+  assert.equal(result.status, 200);
+  assert.equal(responseHistoryStats().entries, 3);
+
+  rememberResponseHistory(
+    prepareResponsesRequest({ model: "gpt-5.6-sol", input: "new independent root" }),
+    { id: "resp_lru_new_root", status: "completed", output: [] },
+  );
+
+  assert.throws(
+    () => prepareResponsesRequest({ model: "gpt-5.6-sol", previous_response_id: "resp_lru_old_child", input: "evicted" }),
+    /was evicted after reaching the local history limit/,
+  );
+  assert.deepEqual(
+    prepareResponsesRequest({
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_lru_compact",
+      input: "continue compact",
+    }).body.input,
+    [
+      { type: "compaction", id: "cmp_lru", encrypted_content: "compact-state" },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "continue compact" }] },
+    ],
+  );
+  clearResponseHistoryForTests();
 });
 
 test("response history stores incremental nodes and enforces a byte budget", () => {
@@ -708,6 +1064,85 @@ test("responsesToChat: preserves image detail and unsupported content as text", 
   ]);
 });
 
+test("responsesToChat: preserves top-level and Anthropic base64 images as user image messages", () => {
+  const converted = responsesToChat({
+    model: "gpt-4o",
+    input: [
+      { type: "input_image", image_url: "data:image/png;base64,YQ==", detail: "high" },
+      { type: "image_url", image_url: { url: "https://example.test/image.webp", detail: "low" } },
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "Yg==" } },
+    ],
+  });
+
+  assert.deepEqual(converted.messages, [
+    { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,YQ==", detail: "high" } }] },
+    { role: "user", content: [{ type: "image_url", image_url: { url: "https://example.test/image.webp", detail: "low" } }] },
+    { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/jpeg;base64,Yg==" } }] },
+  ]);
+});
+
+test("prepareResponsesChatPayload fast-path serializes a 20MiB text Chat body only once", async () => {
+  const largeText = "x".repeat(20 * 1024 * 1024);
+  const body = {
+    model: "gpt-4o",
+    input: [{ type: "message", role: "user", content: [{ type: "input_text", text: largeText }] }],
+  };
+  const originalStringify = JSON.stringify;
+  let largeChatSerializations = 0;
+  let responsesSerializations = 0;
+  JSON.stringify = function countedStringify(value, ...args) {
+    if (value?.messages?.[0]?.content === largeText) largeChatSerializations += 1;
+    if (value?.input === body.input) responsesSerializations += 1;
+    return originalStringify.call(this, value, ...args);
+  };
+
+  let payload;
+  try {
+    payload = await prepareResponsesChatPayload({ body, currentInputStart: 0 }, {
+      payloadOptions: { maxBytes: 30 * 1024 * 1024 },
+      stream: false,
+    });
+  } finally {
+    JSON.stringify = originalStringify;
+  }
+
+  assert.equal(largeChatSerializations, 1);
+  assert.equal(responsesSerializations, 0);
+  assert.equal(payload.bodyText, originalStringify(payload.chatReq));
+});
+
+test("prepareResponsesChatPayload keeps trimming positive-saving history until the final Chat body fits", async () => {
+  const historyImage = (digit) => ({
+    type: "input_image",
+    image_url: `data:image/png;base64,${String(digit).repeat(2000)}`,
+  });
+  const body = {
+    model: "gpt-4o",
+    input: [
+      historyImage(1),
+      historyImage(2),
+      historyImage(3),
+      { type: "function_call_output", call_id: "call_large", output: "x".repeat(2000) },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
+    ],
+  };
+
+  const payload = await prepareResponsesChatPayload({ body, currentInputStart: 4 }, {
+    payloadOptions: {
+      maxBytes: 550,
+      profiles: [],
+      optimizeImage: async (dataUrl) => dataUrl,
+    },
+    stream: false,
+  });
+
+  assert.equal(payload.bodyBytes, Buffer.byteLength(payload.bodyText));
+  assert.ok(payload.bodyBytes <= 550);
+  assert.equal(body.input[4].content[0].text, "continue");
+  assert.ok(body.input.slice(0, 3).every((item) => item.type === "message"));
+  assert.match(body.input[3].output, /earlier tool output omitted/);
+});
+
 test("HTTP responses route preserves 0.4.23 image_gen compatibility", async () => {
   let upstreamBody;
   const response = await invokeAdapter({
@@ -773,6 +1208,93 @@ test("HTTP responses route maps Codex auto-review directly to Responses", async 
     { type: "function", name: "approve", parameters: { type: "object" } },
   ]);
   assert.equal(upstreamBody.text.format.name, "review");
+});
+
+test("HTTP Responses routes custom tool protocol to native Responses when endpoint metadata allows it", async () => {
+  resetModelEndpointCacheForTests();
+  cacheModelEndpoints({
+    data: [{ id: "gpt-dual-custom", supported_endpoints: ["/responses", "/chat/completions"] }],
+  });
+  let upstreamBody;
+  let chatCalls = 0;
+  let response;
+  try {
+    response = await invokeAdapter({
+      responsesFn: async (body) => {
+        upstreamBody = body;
+        return new Response(JSON.stringify({ id: "resp_custom_native", status: "completed", output: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+      chatCompletionsFn: async () => {
+        chatCalls += 1;
+        throw new Error("custom tools must not use Chat Completions");
+      },
+    }, {
+      body: {
+        model: "gpt-dual-custom",
+        stream: false,
+        tools: [{ type: "custom", name: "shell", description: "Run shell input" }],
+        input: [
+          { type: "custom_tool_call", call_id: "call_custom", name: "shell", input: "pwd" },
+          ...Array.from({ length: 3 }, (_, index) => ({
+            type: "custom_tool_call_output",
+            call_id: `call_custom_${index}`,
+            output: "x".repeat(2000),
+          })),
+          { type: "function_call_output", call_id: "call_function", output: "y".repeat(2000) },
+        ],
+      },
+    });
+  } finally {
+    resetModelEndpointCacheForTests();
+  }
+
+  assert.equal(response.status, 200);
+  assert.equal(chatCalls, 0);
+  assert.deepEqual(upstreamBody.input.map((item) => item.type), [
+    "custom_tool_call",
+    "custom_tool_call_output",
+    "custom_tool_call_output",
+    "custom_tool_call_output",
+    "function_call_output",
+  ]);
+  assert.equal(upstreamBody.tools[0].type, "custom");
+});
+
+test("HTTP Responses rejects custom tool protocol before upstream when Responses support is unconfirmed", async () => {
+  resetModelEndpointCacheForTests();
+  cacheModelEndpoints({
+    data: [{ id: "gpt-chat-custom", supported_endpoints: ["/chat/completions"] }],
+  });
+  let upstreamCalls = 0;
+  let response;
+  try {
+    response = await invokeAdapter({
+      responsesFn: async () => {
+        upstreamCalls += 1;
+        return new Response("{}", { status: 200 });
+      },
+      chatCompletionsFn: async () => {
+        upstreamCalls += 1;
+        return new Response("{}", { status: 200 });
+      },
+    }, {
+      body: {
+        model: "gpt-chat-custom",
+        input: [{ type: "custom_tool_call_output", call_id: "call_custom", output: "/tmp" }],
+      },
+    });
+  } finally {
+    resetModelEndpointCacheForTests();
+  }
+
+  const error = JSON.parse(response.text).error;
+  assert.equal(response.status, 400);
+  assert.equal(error.code, "ccdx_custom_tools_require_responses");
+  assert.equal(error.model, "gpt-chat-custom");
+  assert.equal(upstreamCalls, 0);
 });
 
 test("HTTP compact route honors the Codex auto-review model override", async () => {
@@ -844,6 +1366,142 @@ test("HTTP non-stream Responses conversion returns text, tools, and usage", asyn
   assert.equal(upstreamBody.stream, false);
   assert.deepEqual(data.output.map((item) => item.type), ["message", "function_call"]);
   assert.deepEqual(data.usage, { input_tokens: 11, output_tokens: 7, total_tokens: 18 });
+});
+
+test("HTTP Responses chat bridge applies q82, q75, and q65 before forwarding", async () => {
+  const original = `data:image/png;base64,${Buffer.alloc(3000, 7).toString("base64")}`;
+  const qualities = [];
+  let upstreamBody;
+  const response = await invokeAdapter({
+    responsesPayloadOptions: {
+      maxBytes: 1000,
+      profiles: [
+        { maxDim: 1600, quality: 75 },
+        { maxDim: 1280, quality: 65 },
+      ],
+      optimizeImage: async (dataUrl, options) => {
+        qualities.push(options.quality);
+        const raw = Buffer.from(dataUrl.split(",", 2)[1], "base64");
+        const ratio = options.quality === 82 ? 0.8 : options.quality === 75 ? 0.6 : 0.1;
+        return `data:image/webp;base64,${Buffer.alloc(Math.floor(raw.length * ratio), 8).toString("base64")}`;
+      },
+    },
+    chatCompletionsFn: async (body, { bodyText }) => {
+      upstreamBody = body;
+      assert.equal(bodyText, JSON.stringify(body));
+      return new Response(JSON.stringify({
+        id: "chatcmpl_budget_ok",
+        model: "gpt-4o",
+        choices: [{ message: { role: "assistant", content: "done" } }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
+  }, {
+    body: {
+      model: "gpt-4o",
+      stream: false,
+      input: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_image", image_url: original }],
+      }],
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(qualities, [82, 75, 65]);
+  assert.ok(Buffer.byteLength(JSON.stringify(upstreamBody)) <= 1000);
+  assert.match(upstreamBody.messages[0].content[0].image_url.url, /^data:image\/webp;base64,/);
+});
+
+test("HTTP streaming Responses chat bridge reuses the exact prepared body text", async () => {
+  let upstreamCalls = 0;
+  const response = await invokeAdapter({
+    chatCompletionsFn: async (body, { bodyText }) => {
+      upstreamCalls += 1;
+      assert.equal(body.stream, true);
+      assert.equal(bodyText, JSON.stringify(body));
+      return new Response("data: [DONE]\n\n", {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    },
+  }, {
+    body: { model: "gpt-4o", stream: true, input: "hello stream" },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(upstreamCalls, 1);
+  assert.match(response.text, /response\.completed/);
+});
+
+test("HTTP Responses chat bridge trims historical tool output before forwarding", async () => {
+  clearResponseHistoryForTests();
+  const history = prepareResponsesRequest({
+    model: "gpt-4o",
+    input: [
+      { type: "function_call", call_id: "call_large", name: "lookup", arguments: "{}" },
+      { type: "function_call_output", call_id: "call_large", output: "x".repeat(4000) },
+    ],
+  });
+  rememberResponseHistory(history, { id: "resp_chat_budget_history", status: "completed", output: [] });
+
+  let upstreamBody;
+  const response = await invokeAdapter({
+    responsesPayloadOptions: { maxBytes: 700, profiles: [] },
+    chatCompletionsFn: async (body) => {
+      upstreamBody = body;
+      return new Response(JSON.stringify({
+        id: "chatcmpl_trimmed_history",
+        model: "gpt-4o",
+        choices: [{ message: { role: "assistant", content: "done" } }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
+  }, {
+    body: {
+      model: "gpt-4o",
+      stream: false,
+      previous_response_id: "resp_chat_budget_history",
+      input: "continue",
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.ok(Buffer.byteLength(JSON.stringify(upstreamBody)) <= 700);
+  assert.match(upstreamBody.messages.find((message) => message.role === "tool").content, /earlier tool output omitted/);
+  clearResponseHistoryForTests();
+});
+
+async function assertChatBridgeRejectsOversizedCurrentInput(stream) {
+  let upstreamCalls = 0;
+  const response = await invokeAdapter({
+    responsesPayloadOptions: { maxBytes: 128, profiles: [] },
+    chatCompletionsFn: async () => {
+      upstreamCalls += 1;
+      return new Response("{}", { status: 200 });
+    },
+  }, {
+    body: {
+      model: "gpt-4o",
+      stream,
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "x".repeat(1000) }] }],
+    },
+  });
+
+  const error = JSON.parse(response.text).error;
+  assert.equal(response.status, 413);
+  assert.match(response.headers["Content-Type"], /^application\/json/);
+  assert.equal(error.code, "ccdx_request_body_too_large");
+  assert.equal(error.limit_bytes, 128);
+  assert.ok(error.actual_bytes > error.limit_bytes);
+  assert.equal(upstreamCalls, 0);
+}
+
+test("HTTP non-stream Responses chat bridge rejects an irreducible oversized body locally", async () => {
+  await assertChatBridgeRejectsOversizedCurrentInput(false);
+});
+
+test("HTTP streaming Responses chat bridge rejects an irreducible oversized body locally", async () => {
+  await assertChatBridgeRejectsOversizedCurrentInput(true);
 });
 
 test("HTTP non-stream Messages route preserves upstream error status", async () => {
@@ -1072,6 +1730,7 @@ test("openCopilotResponse: retries encrypted reasoning failures with sanitized i
     },
   });
   const calls = [];
+  const payloadPrepared = [];
   const ctx = {
     body: {
       model: "gpt-5.5",
@@ -1083,8 +1742,9 @@ test("openCopilotResponse: retries encrypted reasoning failures with sanitized i
     },
     inputItems: [],
   };
-  const upstream = async (body) => {
+  const upstream = async (body, requestOptions) => {
     calls.push(body);
+    payloadPrepared.push(requestOptions.payloadPrepared);
     if (calls.length === 1) {
       return new Response(encryptedError, { status: 400, headers: { "Content-Type": "application/json" } });
     }
@@ -1094,6 +1754,7 @@ test("openCopilotResponse: retries encrypted reasoning failures with sanitized i
   const opened = await openCopilotResponse(ctx, upstream);
 
   assert.equal(calls.length, 2);
+  assert.deepEqual(payloadPrepared, [false, true]);
   assert.equal(opened.resp.ok, true);
   assert.deepEqual(calls[1].input, [
     { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] },
@@ -1131,6 +1792,7 @@ test("openCopilotResponse: retries an explicit image_gen namespace collision onc
     error: { message: "User-defined namespace 'image_gen' collides with an existing tool namespace." },
   });
   const calls = [];
+  const payloadPrepared = [];
   const ctx = {
     body: {
       model: "gpt-5.6-sol",
@@ -1143,8 +1805,9 @@ test("openCopilotResponse: retries an explicit image_gen namespace collision onc
     },
     inputItems: [],
   };
-  const upstream = async (body) => {
+  const upstream = async (body, requestOptions) => {
     calls.push(body);
+    payloadPrepared.push(requestOptions.payloadPrepared);
     if (calls.length === 1) return new Response(collision, { status: 400 });
     return new Response(JSON.stringify({ id: "resp_ok", output: [] }), { status: 200 });
   };
@@ -1154,6 +1817,7 @@ test("openCopilotResponse: retries an explicit image_gen namespace collision onc
   assert.equal(isImageNamespaceCollisionError(400, collision), true);
   assert.equal(opened.resp.ok, true);
   assert.equal(calls.length, 2);
+  assert.deepEqual(payloadPrepared, [false, true]);
   assert.deepEqual(calls[1].tools, [{ type: "function", name: "lookup" }]);
   assert.deepEqual(sanitizeImageNamespaceCollisionRequest(ctx).body.tools, [{ type: "function", name: "lookup" }]);
 });

@@ -291,7 +291,7 @@ export function sendJsonError(res, err, fallbackStatus = 400) {
     return;
   }
   res.writeHead(err?.statusCode || fallbackStatus, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ error: err?.message || "Request failed" }));
+  res.end(JSON.stringify(err?.jsonBody || { error: err?.message || "Request failed" }));
 }
 
 export function sendUpstreamError(res, response, text) {

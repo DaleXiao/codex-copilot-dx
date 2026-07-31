@@ -106,6 +106,7 @@ export function createAdapterHandler(options = {}) {
     acquireRequest,
     chatCompletionsFn,
     openAIModelEnv,
+    responsesPayloadOptions: options.responsesPayloadOptions,
     responsesFn,
     streamHandshakeTimeoutMs,
     streamIdleTimeoutMs,

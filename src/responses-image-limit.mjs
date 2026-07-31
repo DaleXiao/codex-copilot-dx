@@ -1,3 +1,5 @@
+import { readResponsesImagePart, readResponsesToolOutputParts } from "./responses-content.mjs";
+
 export const MAX_UPSTREAM_IMAGES = 50;
 
 function isImagePart(part) {
@@ -8,13 +10,13 @@ function isImagePart(part) {
 function imageIdentity(part) {
   if (!isImagePart(part)) return null;
 
+  const inlineIdentity = readResponsesImagePart(part)?.identity;
+  if (inlineIdentity) return { kind: "inline:data", value: inlineIdentity };
+
   if (part.type === "image") {
     const source = part.source;
-    if (typeof source?.data === "string") {
-      return { kind: `image:${source.type || "base64"}:${source.media_type || ""}`, value: source.data };
-    }
     if (typeof source?.url === "string") {
-      return { kind: `image:url:${part.detail || ""}`, value: source.url };
+      return { kind: `url:${part.detail || ""}`, value: source.url };
     }
   }
 
@@ -22,10 +24,10 @@ function imageIdentity(part) {
   const url = typeof raw === "string" ? raw : raw?.url;
   if (typeof url === "string") {
     const detail = part.detail ?? raw?.detail ?? "";
-    return { kind: `${part.type}:url:${detail}`, value: url };
+    return { kind: `url:${detail}`, value: url };
   }
   if (typeof part.file_id === "string") {
-    return { kind: `${part.type}:file`, value: part.file_id };
+    return { kind: "file", value: part.file_id };
   }
   return null;
 }
@@ -100,26 +102,13 @@ function collectImages(inputItems) {
       });
     }
 
-    if (item.type !== "function_call_output") continue;
-    if (Array.isArray(item.output)) {
-      addPartContainer(records, refs, item.output, {
-        kind: "tool-output",
-        itemIndex,
-      });
-      continue;
-    }
-    if (typeof item.output !== "string" || !item.output.trim().startsWith("[")) continue;
-    try {
-      const parsed = JSON.parse(item.output);
-      if (!Array.isArray(parsed)) continue;
-      addPartContainer(records, refs, parsed, {
-        kind: "tool-output",
-        itemIndex,
-        commit: () => { item.output = JSON.stringify(parsed); },
-      });
-    } catch {
-      // Preserve non-JSON tool output unchanged.
-    }
+    const toolOutput = readResponsesToolOutputParts(item);
+    if (!toolOutput) continue;
+    addPartContainer(records, refs, toolOutput.parts, {
+      kind: "tool-output",
+      itemIndex,
+      commit: toolOutput.commit,
+    });
   }
 
   if (hasTopLevelImages) records.push(topLevelRecord);

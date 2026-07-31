@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { localPackageVersion } from "./version.mjs";
 
 export const ADAPTER_HEALTH_PATH = "/_ccdx/health";
+export const ADAPTER_STATUS_PATH = "/_ccdx/status";
 export const ADAPTER_PROTOCOL_VERSION = 2;
 export const ADAPTER_VERSION = localPackageVersion();
 const ADAPTER_INSTANCE_ID = randomUUID();

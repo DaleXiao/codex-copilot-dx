@@ -455,7 +455,7 @@ export async function collectDoctorChecks({
 export async function runDoctor(options = {}) {
   const log = options.log || console.log;
   const flags = [options.online ? "--online" : "", options.compat ? "--compat" : ""].filter(Boolean);
-  log(`ccdx doctor${flags.length ? ` ${flags.join(" ")}` : ""}`);
+  log(`${options.commandName || "ccdx"} doctor${flags.length ? ` ${flags.join(" ")}` : ""}`);
   const checks = await collectDoctorChecks(options);
   for (const check of checks) log(status(check.kind, check.message));
   return checks;

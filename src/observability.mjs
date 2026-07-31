@@ -1,11 +1,11 @@
 import { isIP } from "node:net";
-import { adapterHealthPayload } from "./running-adapter.mjs";
+import { ADAPTER_STATUS_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 import { copilotRuntimeStatus } from "./copilot.mjs";
 import { imageOptimizationStats } from "./image-optimization.mjs";
 import { responseHistoryStats } from "./response-history.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
 
-export const ADAPTER_STATUS_PATH = "/_ccdx/status";
+export { ADAPTER_STATUS_PATH };
 const OBSERVABILITY_RUNTIME_CONFIG = loadRuntimeConfig();
 
 const ROUTE_NAMES = Object.freeze([

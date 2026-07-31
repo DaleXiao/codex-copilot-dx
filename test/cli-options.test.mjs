@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cliHelp, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
+import {
+  cliCommandName,
+  cliHelp,
+  parseAdapterProbeOptions,
+  parseCliArgs,
+  parseRuntimeOptions,
+} from "../src/cli-options.mjs";
 
 test("parseCliArgs: accepts supported commands and options", () => {
   assert.deepEqual(parseCliArgs([]), { command: "start", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false });
@@ -12,18 +18,32 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.deepEqual(parseCliArgs(["doctor", "--compat", "--online"]), { command: "doctor", configureClaudeDesktop: false, showRequestId: false, online: true, compat: true });
   assert.equal(parseCliArgs(["--help"]).command, "help");
   assert.equal(parseCliArgs(["-v"]).command, "version");
+  assert.equal(parseCliArgs(["status"]).command, "status");
+  assert.equal(parseCliArgs(["--status"]).command, "status");
   assert.equal(parseCliArgs(["usage"]).command, "usage");
+  assert.match(cliHelp(), /ccdx status/);
   assert.match(cliHelp(), /doctor \[--online\] \[--compat\]/);
   assert.match(cliHelp(), /--show-request-id/);
+  assert.match(cliHelp("codex-copilot-dx"), /codex-copilot-dx status/);
+  assert.match(cliHelp("codex-copilot-dx"), /Equivalent command: ccdx/);
 });
 
 test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
   assert.throws(() => parseCliArgs(["serve"]), /Unknown command or option: serve/);
   assert.throws(() => parseCliArgs(["usage", "extra"]), /Unexpected argument: extra/);
+  assert.throws(() => parseCliArgs(["status", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["doctor", "--write"]), /Unexpected argument: --write/);
   assert.throws(() => parseCliArgs(["doctor", "--online", "--online"]), /Unexpected argument: --online/);
   assert.throws(() => parseCliArgs(["doctor", "--compat", "--compat"]), /Unexpected argument: --compat/);
   assert.throws(() => parseCliArgs(["--show-request-id", "--show-request-id"]), /Unexpected argument: --show-request-id/);
+});
+
+test("cliCommandName: recognizes both installed entrypoints and defaults to ccdx", () => {
+  assert.equal(cliCommandName("/usr/local/bin/ccdx"), "ccdx");
+  assert.equal(cliCommandName("C:\\Users\\Dale\\bin\\codex-copilot-dx"), "codex-copilot-dx");
+  assert.equal(cliCommandName("/usr/local/lib/bin/codex-copilot-dx.mjs"), "codex-copilot-dx");
+  assert.equal(cliCommandName("/workspace/bin/cli.mjs"), "ccdx");
+  assert.equal(cliCommandName(), "ccdx");
 });
 
 test("parseRuntimeOptions: validates ports and startup timeouts", () => {
@@ -48,4 +68,23 @@ test("parseRuntimeOptions: validates ports and startup timeouts", () => {
   assert.throws(() => parseRuntimeOptions({ CCDX_UPSTREAM_TIMEOUT_MS: "0" }), /CCDX_UPSTREAM_TIMEOUT_MS/);
   assert.throws(() => parseRuntimeOptions({ CCDX_STREAM_HANDSHAKE_TIMEOUT_MS: "nope" }), /CCDX_STREAM_HANDSHAKE_TIMEOUT_MS/);
   assert.throws(() => parseRuntimeOptions({ CCDX_STREAM_IDLE_TIMEOUT_MS: "-1" }), /CCDX_STREAM_IDLE_TIMEOUT_MS/);
+});
+
+test("parseAdapterProbeOptions: validates only status probe settings", () => {
+  assert.deepEqual(parseAdapterProbeOptions({ CCDX_UPSTREAM_TIMEOUT_MS: "invalid" }), {
+    adapterPort: 2026,
+    adapterHost: "127.0.0.1",
+    existingAdapterTimeoutMs: 500,
+  });
+  assert.deepEqual(parseAdapterProbeOptions({
+    ADAPTER_PORT: "3456",
+    ADAPTER_HOST: "::1",
+    CCDX_EXISTING_ADAPTER_TIMEOUT_MS: "750",
+  }), {
+    adapterPort: 3456,
+    adapterHost: "::1",
+    existingAdapterTimeoutMs: 750,
+  });
+  assert.throws(() => parseAdapterProbeOptions({ ADAPTER_PORT: "0" }), /ADAPTER_PORT/);
+  assert.throws(() => parseAdapterProbeOptions({ CCDX_EXISTING_ADAPTER_TIMEOUT_MS: "0" }), /CCDX_EXISTING_ADAPTER_TIMEOUT_MS/);
 });

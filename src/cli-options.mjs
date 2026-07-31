@@ -1,6 +1,7 @@
 const HELP_COMMANDS = new Set(["help", "--help", "-h"]);
 const VERSION_COMMANDS = new Set(["version", "--version", "-v"]);
 const START_OPTIONS = new Set(["--configure-claude-desktop", "--show-request-id"]);
+const CLI_COMMANDS = new Set(["ccdx", "codex-copilot-dx"]);
 
 function unexpectedArgs(args) {
   throw new Error(`Unexpected argument${args.length === 1 ? "" : "s"}: ${args.join(" ")}`);
@@ -16,6 +17,10 @@ export function parseCliArgs(args = []) {
   if (VERSION_COMMANDS.has(command)) {
     if (rest.length) unexpectedArgs(rest);
     return { command: "version", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
+  }
+  if (command === "status" || command === "--status") {
+    if (rest.length) unexpectedArgs(rest);
+    return { command: "status", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
   }
   if (command === "usage") {
     if (rest.length) unexpectedArgs(rest);
@@ -80,13 +85,30 @@ export function parseRuntimeOptions(env = process.env) {
   };
 }
 
-export function cliHelp() {
-  return `Usage:
-  ccdx [--configure-claude-desktop] [--show-request-id]
-  ccdx doctor [--online] [--compat]
-  ccdx usage
-  ccdx --version
-  ccdx --help
+export function parseAdapterProbeOptions(env = process.env) {
+  return {
+    adapterPort: integerEnv(env, "ADAPTER_PORT", 2026, { min: 1, max: 65535 }),
+    adapterHost: String(env.ADAPTER_HOST || "127.0.0.1").trim() || "127.0.0.1",
+    existingAdapterTimeoutMs: integerEnv(env, "CCDX_EXISTING_ADAPTER_TIMEOUT_MS", 500, { min: 1 }),
+  };
+}
 
-Compatibility alias: codex-copilot-dx`;
+export function cliCommandName(executable = process.argv[1]) {
+  const name = String(executable || "").split(/[\\/]/).pop();
+  if (name === "codex-copilot-dx.mjs") return "codex-copilot-dx";
+  return CLI_COMMANDS.has(name) ? name : "ccdx";
+}
+
+export function cliHelp(commandName = "ccdx") {
+  const name = CLI_COMMANDS.has(commandName) ? commandName : "ccdx";
+  const alias = name === "ccdx" ? "codex-copilot-dx" : "ccdx";
+  return `Usage:
+  ${name} [--configure-claude-desktop] [--show-request-id]
+  ${name} doctor [--online] [--compat]
+  ${name} status
+  ${name} usage
+  ${name} --version
+  ${name} --help
+
+Equivalent command: ${alias}`;
 }

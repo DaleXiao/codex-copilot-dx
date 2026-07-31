@@ -30,6 +30,8 @@ ccdx
 The shorter `ccdx` command is the primary launcher. The existing `codex-copilot-dx`
 command remains an equivalent compatibility alias. For a one-off run without a
 global install, use `npx codex-copilot-dx@latest`.
+Both installed commands expose the same options and subcommands; help, version,
+doctor, status, and argument-error output use the command name that was invoked.
 
 On first run, it will:
 1. Authenticate with GitHub via device flow (if needed), after first trying compatible local Copilot token sources
@@ -75,7 +77,15 @@ ccdx doctor --compat
 
 The compatibility doctor sends a few minimal Copilot requests to check Codex Auto-review, native Responses, streaming history, compaction, image tool namespace handling, and Anthropic streaming. It consumes a small amount of Copilot usage, never starts the adapter or device flow, and does not change client configuration. Combine it with `--online` when both the saved-token entitlement check and the adapter protocol checks are needed.
 
-For live runtime diagnostics, query the running adapter from the same machine:
+For a read-only summary of the running adapter, use:
+
+```bash
+ccdx status
+```
+
+The compatibility alias supports the same command as
+`codex-copilot-dx status`. For the complete machine-readable payload, query the
+loopback endpoint directly:
 
 ```bash
 curl -s http://127.0.0.1:2026/_ccdx/status | jq

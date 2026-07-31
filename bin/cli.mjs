@@ -16,23 +16,25 @@ import { adapterBaseUrl, checkRunningAdapter } from "../src/running-adapter.mjs"
 import { assertSafeAdapterHost, isLoopbackHost } from "../src/security.mjs";
 import { isValidModelList, loadModelCache, saveModelCache } from "../src/model-cache.mjs";
 import { initializeModelRegistry, runInBackground } from "../src/startup.mjs";
-import { cliHelp, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
+import { cliCommandName, cliHelp, parseAdapterProbeOptions, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
+import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
-const CLI_BANNER = `codex-copilot-dx v${LOCAL_VERSION} by Dale Xiao`;
+const CLI_NAME = cliCommandName();
+const CLI_BANNER = `${CLI_NAME} v${LOCAL_VERSION} by Dale Xiao`;
 
 let CLI;
 try {
   CLI = parseCliArgs(process.argv.slice(2));
 } catch (e) {
   console.error(e.message);
-  console.error("Run ccdx --help for usage.");
+  console.error(`Run ${CLI_NAME} --help for usage.`);
   process.exit(2);
 }
 
 if (CLI.command === "help") {
-  console.log(cliHelp());
+  console.log(cliHelp(CLI_NAME));
   process.exit(0);
 }
 if (CLI.command === "version") {
@@ -42,6 +44,27 @@ if (CLI.command === "version") {
 if (CLI.command === "usage") {
   await printUsageSummary();
   process.exit(0);
+}
+if (CLI.command === "status") {
+  let probe;
+  try {
+    probe = parseAdapterProbeOptions(process.env);
+  } catch (e) {
+    console.error(e.message);
+    process.exit(2);
+  }
+  try {
+    const snapshot = await readAdapterStatus({
+      host: probe.adapterHost,
+      port: probe.adapterPort,
+      timeoutMs: probe.existingAdapterTimeoutMs,
+    });
+    console.log(formatAdapterStatus(snapshot, { commandName: CLI_NAME, cliVersion: LOCAL_VERSION }));
+    process.exit(0);
+  } catch (e) {
+    console.error(status("err", e.message));
+    process.exit(1);
+  }
 }
 
 let RUNTIME;
@@ -107,7 +130,7 @@ async function refreshClaudeDesktopModelDefs() {
     const models = JSON.parse(body);
     const autoReview = codexAutoReviewModelStatus(models);
     if (!autoReview.available) {
-      console.log(status("warn", `Auto-review target ${autoReview.upstreamModel} is unavailable: ${autoReview.reason}. Run ccdx doctor --compat to verify the live path.`));
+      console.log(status("warn", `Auto-review target ${autoReview.upstreamModel} is unavailable: ${autoReview.reason}. Run ${CLI_NAME} doctor --compat to verify the live path.`));
     }
     const gptModelIds = gptModelIdsFromCopilotModels(models);
     if (gptModelIds.length) {
@@ -169,7 +192,7 @@ async function reuseRunningAdapterIfAvailable() {
   });
   if (running.incompatible) {
     const found = running.data?.version || "unknown";
-    throw new Error(`Adapter ${found} is already running at ${running.baseUrl}, but this CLI is ${LOCAL_VERSION}. Stop the existing process and run ccdx again.`);
+    throw new Error(`Adapter ${found} is already running at ${running.baseUrl}, but this CLI is ${LOCAL_VERSION}. Stop the existing process and run ${CLI_NAME} again.`);
   }
   if (!running.ok) return false;
 
@@ -206,6 +229,7 @@ async function reuseRunningAdapterIfAvailable() {
 
 if (CLI.command === "doctor") {
   const checks = await runDoctor({
+    commandName: CLI_NAME,
     port: ADAPTER_PORT,
     host: ADAPTER_HOST,
     online: CLI.online,

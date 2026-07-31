@@ -12,16 +12,27 @@ import packageJson from "../package.json" with { type: "json" };
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
+const legacyCliPath = fileURLToPath(new URL("../bin/codex-copilot-dx.mjs", import.meta.url));
 
-test("package exposes ccdx and keeps the legacy command on the same entrypoint", () => {
+test("package exposes ccdx and keeps the legacy command on the shared CLI implementation", () => {
   assert.deepEqual(packageJson.bin, {
     ccdx: "bin/cli.mjs",
-    "codex-copilot-dx": "bin/cli.mjs",
+    "codex-copilot-dx": "bin/codex-copilot-dx.mjs",
   });
 });
 
 test("cli --version exits without starting the adapter", async () => {
   const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, "--version"], {
+    timeout: 2000,
+    env: { ...process.env, ADAPTER_PORT: "0" },
+  });
+
+  assert.equal(stdout.trim(), `ccdx v${localPackageVersion()} by Dale Xiao`);
+  assert.equal(stderr, "");
+});
+
+test("legacy cli --version keeps its invoked command name", async () => {
+  const { stdout, stderr } = await execFileAsync(process.execPath, [legacyCliPath, "--version"], {
     timeout: 2000,
     env: { ...process.env, ADAPTER_PORT: "0" },
   });
@@ -38,7 +49,8 @@ test("cli --help exits without validating runtime configuration", async () => {
 
   assert.match(stdout, /Usage:/);
   assert.match(stdout, /ccdx doctor/);
-  assert.match(stdout, /Compatibility alias: codex-copilot-dx/);
+  assert.match(stdout, /Equivalent command: codex-copilot-dx/);
+  assert.match(stdout, /ccdx status/);
   assert.match(stdout, /doctor \[--online\] \[--compat\]/);
   assert.equal(stderr, "");
 });
@@ -49,6 +61,26 @@ test("cli rejects unknown commands without starting the adapter", async () => {
     (error) => {
       assert.equal(error.code, 2);
       assert.match(error.stderr, /Unknown command or option: serve/);
+      assert.match(error.stderr, /Run ccdx --help for usage/);
+      return true;
+    },
+  );
+});
+
+test("legacy cli help and argument errors use the legacy command name", async () => {
+  const { stdout } = await execFileAsync(process.execPath, [legacyCliPath, "--help"], {
+    timeout: 2000,
+    env: { ...process.env, ADAPTER_PORT: "invalid" },
+  });
+  assert.match(stdout, /codex-copilot-dx doctor/);
+  assert.match(stdout, /codex-copilot-dx status/);
+  assert.match(stdout, /Equivalent command: ccdx/);
+
+  await assert.rejects(
+    execFileAsync(process.execPath, [legacyCliPath, "serve"], { timeout: 2000, env: { ...process.env } }),
+    (error) => {
+      assert.equal(error.code, 2);
+      assert.match(error.stderr, /Run codex-copilot-dx --help for usage/);
       return true;
     },
   );
@@ -82,6 +114,43 @@ test("cli doctor returns nonzero when a configuration file is invalid", async ()
       return true;
     },
   );
+});
+
+test("legacy cli doctor heading uses the legacy command name", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-legacy-doctor-"));
+  const { stdout, stderr } = await execFileAsync(process.execPath, [legacyCliPath, "doctor"], {
+    timeout: 2000,
+    env: { ...process.env, HOME: home, ADAPTER_PORT: "9" },
+  });
+
+  assert.match(stdout, /^codex-copilot-dx doctor/m);
+  assert.equal(stderr, "");
+});
+
+test("cli status fails read-only before unrelated runtime validation or initialization", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-status-"));
+  const logPath = path.join(home, "debug.log");
+  await assert.rejects(
+    execFileAsync(process.execPath, [cliPath, "status"], {
+      timeout: 2000,
+      env: {
+        ...process.env,
+        HOME: home,
+        ADAPTER_PORT: "9",
+        CCDX_LOG_PATH: logPath,
+        CCDX_UPSTREAM_TIMEOUT_MS: "invalid",
+      },
+    }),
+    (error) => {
+      assert.equal(error.code, 1);
+      assert.match(error.stderr, /Could not read adapter status/);
+      assert.doesNotMatch(error.stderr, /CCDX_UPSTREAM_TIMEOUT_MS/);
+      return true;
+    },
+  );
+  assert.equal(fs.existsSync(logPath), false);
+  assert.equal(fs.existsSync(path.join(home, ".codex")), false);
+  assert.equal(fs.existsSync(path.join(home, ".claude")), false);
 });
 
 test("isLanAllowed: requires an explicit opt-in", () => {

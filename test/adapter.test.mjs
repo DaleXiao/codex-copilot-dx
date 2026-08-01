@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { promisify } from "node:util";
 import { Readable } from "node:stream";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import * as zlib from "node:zlib";
 import { cacheModelEndpoints, resetModelEndpointCacheForTests } from "../src/copilot.mjs";
 import { prepareResponsesChatPayload } from "../src/responses-chat-payload.mjs";
@@ -30,6 +33,7 @@ import {
   stripInternalResponsesInputFields,
   writeOrDrain,
 } from "../src/adapter.mjs";
+import { autoReviewModelPreference, writeAutoReviewModel } from "../src/user-settings.mjs";
 
 const gzipAsync = promisify(zlib.gzip);
 const zstdCompressAsync = zlib.zstdCompress ? promisify(zlib.zstdCompress) : null;
@@ -1282,6 +1286,30 @@ test("HTTP responses route maps Codex auto-review directly to Responses", async 
     { type: "function", name: "approve", parameters: { type: "object" } },
   ]);
   assert.equal(upstreamBody.text.format.name, "review");
+});
+
+test("HTTP responses route resolves saved Auto Review model on every request", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-adapter-auto-review-"));
+  const env = {};
+  writeAutoReviewModel("gpt-5.6-luna", { env, home });
+  const upstreamModels = [];
+  const options = {
+    openAIModelEnv: env,
+    autoReviewModelResolver: () => autoReviewModelPreference({ env, home }).model,
+    responsesFn: async (body) => {
+      upstreamModels.push(body.model);
+      return new Response(JSON.stringify({ id: "resp_review_dynamic", status: "completed", output: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  };
+
+  await invokeAdapter(options, { body: { model: "codex-auto-review", input: "first" } });
+  writeAutoReviewModel("gpt-5.6-terra", { env, home });
+  await invokeAdapter(options, { body: { model: "codex-auto-review", input: "second" } });
+
+  assert.deepEqual(upstreamModels, ["gpt-5.6-luna", "gpt-5.6-terra"]);
 });
 
 test("HTTP Responses routes custom tool protocol to native Responses when endpoint metadata allows it", async () => {

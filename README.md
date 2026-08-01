@@ -12,7 +12,7 @@ A single in-process adapter (port `2026`) exposes both APIs over your Copilot su
 
 Supports both HTTP SSE streaming and non-streaming.
 
-Codex Auto-review requests use the hidden `codex-auto-review` model ID. The adapter maps it to Copilot's `gpt-5.5` Responses model by default and logs both model IDs when the mapping is used.
+Codex Auto-review requests use the hidden `codex-auto-review` model ID. The adapter maps it to Copilot's `gpt-5.5` Responses model by default and logs both model IDs when the mapping is used. The target can be changed interactively without reinstalling the package.
 
 ## Prerequisites
 
@@ -32,6 +32,20 @@ command remains an equivalent compatibility alias. For a one-off run without a
 global install, use `npx codex-copilot-dx@latest`.
 Both installed commands expose the same options and subcommands; help, version,
 doctor, status, and argument-error output use the command name that was invoked.
+
+To change the model used by Codex Auto-review, run:
+
+```bash
+ccdx auto-review-model
+```
+
+The selector reads the current adapter model list, falling back to the fresh local
+model cache, and offers only enabled models that advertise a Responses endpoint.
+It saves the selection in `~/.config/codex-copilot-dx/config.json` (or under
+`XDG_CONFIG_HOME` when set); choosing `gpt-5.5` clears the override and restores
+the package default. A running 0.5.1+
+adapter reads the setting on the next Auto-review request, so it does not need to
+be restarted. `codex-copilot-dx auto-review-model` is fully equivalent.
 
 On first run, it will:
 1. Authenticate with GitHub via device flow (if needed), after first trying compatible local Copilot token sources
@@ -145,7 +159,7 @@ Environment variables:
 | `CCDX_STREAM_IDLE_TIMEOUT_MS` | `120000` | Maximum idle time between upstream streaming body chunks |
 | `CCDX_UPSTREAM_RETRIES` | `2` | Retries for safe requests and clearly pre-connect POST failures; capped at `5` |
 | `CCDX_UPSTREAM_RETRY_DELAY_MS` | `300` | Initial upstream retry backoff in milliseconds; capped at `5000` |
-| `CCDX_AUTO_REVIEW_MODEL` | `gpt-5.5` | Copilot Responses model used for Codex Auto-review requests |
+| `CCDX_AUTO_REVIEW_MODEL` | saved selection or `gpt-5.5` | Copilot Responses model used for Codex Auto-review requests; overrides the interactive selection |
 | `CCDX_LOG_PATH` | unset | Mirror terminal logs to a file; set to `1` for `~/.local/share/codex-copilot-dx/debug.log` |
 | `CCDX_LOG_LEVEL` | `info` | Set to `debug` to include upstream request attempts, status codes, retry causes, and timings |
 | `CCDX_LOG_MAX_BYTES` | `16777216` | Rotate the debug log at this size, retaining one `.1` backup; set to `0` to disable rotation |

@@ -7,6 +7,7 @@ import {
   codexAutoReviewModelStatus,
   gptModelIdsFromCopilotModels,
   parseModelAliasEnv,
+  responsesModelIdsFromCopilotModels,
   resolveAnthropicModel,
   resolveOpenAIModel,
 } from "../src/models.mjs";
@@ -65,6 +66,17 @@ test("gptModelIdsFromCopilotModels: maps enabled GPT models", () => {
   assert.deepEqual(ids, ["gpt-5.5", "gpt-5.4"]);
 });
 
+test("responsesModelIdsFromCopilotModels: exposes only selectable Responses targets", () => {
+  assert.deepEqual(responsesModelIdsFromCopilotModels({ data: [
+    { id: "gpt-5.5", supported_endpoints: ["/responses"] },
+    { id: "gpt-5.6-sol", supported_endpoints: ["/v1/responses", "/chat/completions"] },
+    { id: "gpt-chat", supported_endpoints: ["/chat/completions"] },
+    { id: "hidden", model_picker_enabled: false, supported_endpoints: ["/responses"] },
+    { id: "codex-auto-review", supported_endpoints: ["/responses"] },
+    { id: "bad\u001bmodel", supported_endpoints: ["/responses"] },
+  ] }), ["gpt-5.5", "gpt-5.6-sol"]);
+});
+
 test("claudeDesktopModelDefsFromCopilotModels: does not expose dash aliases", () => {
   const defs = claudeDesktopModelDefsFromCopilotModels({
     data: [{
@@ -110,6 +122,14 @@ test("resolveOpenAIModel: maps only the Codex auto-review model", () => {
     upstreamModel: "gpt-5.5",
   });
   assert.deepEqual(resolveOpenAIModel("codex-auto-review", { CCDX_AUTO_REVIEW_MODEL: " gpt-5.6-sol " }), {
+    requestedModel: "codex-auto-review",
+    upstreamModel: "gpt-5.6-sol",
+  });
+  assert.deepEqual(resolveOpenAIModel("codex-auto-review", {}, { autoReviewModel: "gpt-5.6-terra" }), {
+    requestedModel: "codex-auto-review",
+    upstreamModel: "gpt-5.6-terra",
+  });
+  assert.deepEqual(resolveOpenAIModel("codex-auto-review", { CCDX_AUTO_REVIEW_MODEL: "gpt-5.6-sol" }, { autoReviewModel: "gpt-5.6-terra" }), {
     requestedModel: "codex-auto-review",
     upstreamModel: "gpt-5.6-sol",
   });

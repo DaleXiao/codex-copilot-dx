@@ -158,6 +158,17 @@ export function gptModelIdsFromCopilotModels(models) {
   });
 }
 
+export function responsesModelIdsFromCopilotModels(models) {
+  return uniqueIds(copilotModelData(models), (model) => {
+    const id = String(model?.id || "").trim();
+    const endpoints = modelEndpoints(model);
+    return id !== CODEX_AUTO_REVIEW_MODEL
+      && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(id)
+      && model?.model_picker_enabled !== false
+      && (endpoints.includes("/responses") || endpoints.includes("/v1/responses"));
+  });
+}
+
 export function claudeDesktopModelDefsFromCopilotModels(models) {
   const data = copilotModelData(models);
 
@@ -212,21 +223,21 @@ export function resolveAnthropicModel(model, env = process.env, options = {}) {
   };
 }
 
-export function resolveOpenAIModel(model, env = process.env) {
+export function resolveOpenAIModel(model, env = process.env, options = {}) {
   const requestedModel = String(model || "");
   if (requestedModel !== CODEX_AUTO_REVIEW_MODEL) {
     return { requestedModel, upstreamModel: requestedModel };
   }
 
-  const configuredModel = String(env.CCDX_AUTO_REVIEW_MODEL || "").trim();
+  const configuredModel = String(env.CCDX_AUTO_REVIEW_MODEL || options.autoReviewModel || "").trim();
   return {
     requestedModel,
     upstreamModel: configuredModel || DEFAULT_CODEX_AUTO_REVIEW_MODEL,
   };
 }
 
-export function codexAutoReviewModelStatus(models, env = process.env) {
-  const { upstreamModel } = resolveOpenAIModel(CODEX_AUTO_REVIEW_MODEL, env);
+export function codexAutoReviewModelStatus(models, env = process.env, options = {}) {
+  const { upstreamModel } = resolveOpenAIModel(CODEX_AUTO_REVIEW_MODEL, env, options);
   const model = copilotModelData(models).find((entry) => String(entry?.id || "").trim() === upstreamModel);
   if (!model) return { available: false, upstreamModel, reason: "model is not advertised" };
   const endpoints = modelEndpoints(model);

@@ -19,6 +19,8 @@ import { initializeModelRegistry, runInBackground } from "../src/startup.mjs";
 import { cliCommandName, cliHelp, parseAdapterProbeOptions, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
 import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
+import { runAutoReviewModelCommand } from "../src/auto-review-model.mjs";
+import { autoReviewModelPreference } from "../src/user-settings.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
 const CLI_NAME = cliCommandName();
@@ -60,6 +62,15 @@ if (CLI.command === "status") {
       timeoutMs: probe.existingAdapterTimeoutMs,
     });
     console.log(formatAdapterStatus(snapshot, { commandName: CLI_NAME, cliVersion: LOCAL_VERSION }));
+    process.exit(0);
+  } catch (e) {
+    console.error(status("err", e.message));
+    process.exit(1);
+  }
+}
+if (CLI.command === "auto-review-model") {
+  try {
+    await runAutoReviewModelCommand({ commandName: CLI_NAME });
     process.exit(0);
   } catch (e) {
     console.error(status("err", e.message));
@@ -128,7 +139,9 @@ async function refreshClaudeDesktopModelDefs() {
       throw new Error(`Copilot models returned HTTP ${httpStatus}`);
     }
     const models = JSON.parse(body);
-    const autoReview = codexAutoReviewModelStatus(models);
+    const autoReview = codexAutoReviewModelStatus(models, process.env, {
+      autoReviewModel: autoReviewModelPreference().model,
+    });
     if (!autoReview.available) {
       console.log(status("warn", `Auto-review target ${autoReview.upstreamModel} is unavailable: ${autoReview.reason}. Run ${CLI_NAME} doctor --compat to verify the live path.`));
     }
@@ -292,6 +305,7 @@ try {
   activeServer = await startAdapter(ADAPTER_PORT, ADAPTER_HOST, {
     claudeDesktopApiKey,
     claudeDesktopModelDefs,
+    autoReviewModelResolver: () => autoReviewModelPreference().model,
     modelRegistry: MODEL_REGISTRY,
     showRequestId: CLI.showRequestId,
     upstreamTimeoutMs: RUNTIME.upstreamTimeoutMs,

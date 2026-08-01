@@ -26,6 +26,10 @@ export function parseCliArgs(args = []) {
     if (rest.length) unexpectedArgs(rest);
     return { command: "usage", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
   }
+  if (command === "auto-review-model") {
+    if (rest.length) unexpectedArgs(rest);
+    return { command: "auto-review-model", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
+  }
   if (command === "doctor" || command === "--doctor") {
     const supported = new Set(["--online", "--compat"]);
     const invalid = rest.filter((arg) => !supported.has(arg));
@@ -107,6 +111,7 @@ export function cliHelp(commandName = "ccdx") {
   ${name} doctor [--online] [--compat]
   ${name} status
   ${name} usage
+  ${name} auto-review-model
   ${name} --version
   ${name} --help
 

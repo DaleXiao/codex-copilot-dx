@@ -106,6 +106,7 @@ export function createAdapterHandler(options = {}) {
   };
   const responsesHandler = createResponsesHandler({
     acquireRequest,
+    autoReviewModelResolver: options.autoReviewModelResolver,
     chatCompletionsFn,
     openAIModelEnv,
     responsesPayloadOptions: options.responsesPayloadOptions,
@@ -116,6 +117,7 @@ export function createAdapterHandler(options = {}) {
   });
   const responsesCompactHandler = createResponsesCompactHandler({
     acquireRequest,
+    autoReviewModelResolver: options.autoReviewModelResolver,
     openAIModelEnv,
     responsesCompactFn,
     streamHandshakeTimeoutMs,

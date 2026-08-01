@@ -74,6 +74,7 @@ test("legacy cli help and argument errors use the legacy command name", async ()
   });
   assert.match(stdout, /codex-copilot-dx doctor/);
   assert.match(stdout, /codex-copilot-dx status/);
+  assert.match(stdout, /codex-copilot-dx auto-review-model/);
   assert.match(stdout, /Equivalent command: ccdx/);
 
   await assert.rejects(
@@ -84,6 +85,34 @@ test("legacy cli help and argument errors use the legacy command name", async ()
       return true;
     },
   );
+});
+
+test("both CLI entrypoints expose the same complete subcommand help", async () => {
+  const [primary, legacy] = await Promise.all([
+    execFileAsync(process.execPath, [cliPath, "--help"], { timeout: 2000 }),
+    execFileAsync(process.execPath, [legacyCliPath, "--help"], { timeout: 2000 }),
+  ]);
+
+  const normalizeCommandNames = (value) => value
+    .replaceAll("codex-copilot-dx", "<command>")
+    .replaceAll("ccdx", "<command>");
+  assert.equal(normalizeCommandNames(legacy.stdout), normalizeCommandNames(primary.stdout));
+  for (const command of ["doctor", "status", "usage", "auto-review-model"]) {
+    assert.match(primary.stdout, new RegExp(`ccdx ${command}`));
+  }
+});
+
+test("both CLI entrypoints reject non-interactive model selection consistently", async () => {
+  for (const [commandName, executable] of [["ccdx", cliPath], ["codex-copilot-dx", legacyCliPath]]) {
+    await assert.rejects(
+      execFileAsync(process.execPath, [executable, "auto-review-model"], { timeout: 2000 }),
+      (error) => {
+        assert.equal(error.code, 1);
+        assert.match(error.stderr, new RegExp(`${commandName} auto-review-model requires an interactive terminal`));
+        return true;
+      },
+    );
+  }
 });
 
 test("cli doctor exits without starting the adapter", async () => {

@@ -66,9 +66,17 @@ function unsupportedCustomToolsError(model) {
   return error;
 }
 
+function resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver) {
+  const options = model === CODEX_AUTO_REVIEW_MODEL && typeof autoReviewModelResolver === "function"
+    ? { autoReviewModel: autoReviewModelResolver() }
+    : {};
+  return resolveOpenAIModel(model, openAIModelEnv, options);
+}
+
 export function createResponsesHandler(options) {
   const {
     acquireRequest,
+    autoReviewModelResolver,
     chatCompletionsFn,
     openAIModelEnv,
     responsesPayloadOptions,
@@ -91,7 +99,7 @@ export function createResponsesHandler(options) {
       const prepared = prepareResponsesRequest(parsed, { mutate: true });
       prepared.surface = "responses";
       const model = parsed.model || "unknown";
-      const { requestedModel, upstreamModel } = resolveOpenAIModel(model, openAIModelEnv);
+      const { requestedModel, upstreamModel } = resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver);
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${!!parsed.stream}`));
@@ -186,6 +194,7 @@ export function createResponsesHandler(options) {
 export function createResponsesCompactHandler(options) {
   const {
     acquireRequest,
+    autoReviewModelResolver,
     openAIModelEnv,
     responsesCompactFn,
     upstreamTimeoutMs,
@@ -203,7 +212,7 @@ export function createResponsesCompactHandler(options) {
       );
       prepared.surface = "responses_compact";
       const model = parsed.model || "unknown";
-      const { requestedModel, upstreamModel } = resolveOpenAIModel(model, openAIModelEnv);
+      const { requestedModel, upstreamModel } = resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver);
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=false`));

@@ -185,6 +185,7 @@ Environment variables:
 | `CCDX_LOG_PATH` | unset | Mirror terminal logs to a file; set to `1` for `~/.local/share/codex-copilot-dx/debug.log` |
 | `CCDX_LOG_LEVEL` | `info` | Set to `debug` to include upstream request attempts, status codes, retry causes, and timings |
 | `CCDX_LOG_MAX_BYTES` | `16777216` | Rotate the debug log at this size, retaining one `.1` backup; set to `0` to disable rotation |
+| `CCDX_TERMINAL_ANIMATION` | auto | Show a transient comet while an interactive terminal has active requests and no new output for 800ms; set to `0` to disable |
 | `CCDX_IMG_MAX_DIM` | `2048` | Max long edge in pixels for image downscaling |
 | `CCDX_IMG_QUALITY` | `82` | Initial WebP quality used when re-encoding images |
 | `CCDX_IMG_MIN_BYTES` | `100000` | In-bounds images smaller than this are left untouched; oversized images are still downscaled |

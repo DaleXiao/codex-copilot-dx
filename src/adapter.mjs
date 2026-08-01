@@ -13,6 +13,7 @@ import {
 import { createRequestId, runWithRequestContext } from "./request-context.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { status } from "./status.mjs";
+import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
 import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
@@ -232,9 +233,20 @@ export function createAdapterHandler(options = {}) {
     const routeName = classifyAdapterRoute(req.method, pathname);
     const complete = trackRequest ? requestMetrics.begin(routeName) : () => {};
     const streamPerformance = trackRequest ? streamPerformanceMetrics.begin(routeName) : null;
+    let finishTerminalActivity = () => {};
+    if (trackRequest) {
+      try {
+        const finish = options.terminalActivity?.beginRequest?.();
+        if (typeof finish === "function") finishTerminalActivity = finish;
+      } catch {}
+    }
+    let requestFinished = false;
     const finishRequest = ({ statusCode = 0, aborted = false } = {}) => {
+      if (requestFinished) return;
+      requestFinished = true;
       complete({ statusCode, aborted });
       streamPerformance?.finish({ failed: aborted || statusCode >= 400 });
+      try { finishTerminalActivity(); } catch {}
     };
     if (trackRequest && typeof res.once === "function") {
       res.once("finish", () => finishRequest({ statusCode: res.statusCode }));
@@ -268,7 +280,13 @@ export function createAdapterHandler(options = {}) {
 // Public server entry point.
 
 export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
-  const server = http.createServer(createAdapterHandler(options));
+  const ownsTerminalActivity = !Object.hasOwn(options, "terminalActivity");
+  const terminalActivity = ownsTerminalActivity ? createTerminalActivityIndicator() : options.terminalActivity;
+  const server = http.createServer(createAdapterHandler({ ...options, terminalActivity }));
+  const cleanupTerminalActivity = () => {
+    if (ownsTerminalActivity) terminalActivity?.cleanup?.();
+  };
+  server.once("close", cleanupTerminalActivity);
 
   server.on("upgrade", (req, socket) => {
     // Codex Desktop 0.130+ negotiates a "responses_websockets" server-push
@@ -282,6 +300,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
 
   return new Promise((resolve, reject) => {
     const onListenError = (e) => {
+      cleanupTerminalActivity();
       if (e?.code === "EADDRINUSE") {
         reject(new Error(`Adapter address http://${host}:${port} is already in use. Stop the existing ccdx process or set ADAPTER_PORT to another port.`));
         return;

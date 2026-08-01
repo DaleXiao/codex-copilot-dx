@@ -96,6 +96,37 @@ test("requestPath: ignores query strings on other API routes", () => {
   assert.equal(requestPath("/v1/models?foo=bar"), "/v1/models");
 });
 
+test("createAdapterHandler: tracks terminal activity for one request lifecycle", () => {
+  let started = 0;
+  let finished = 0;
+  const terminalActivity = {
+    beginRequest() {
+      started += 1;
+      return () => { finished += 1; };
+    },
+  };
+  const req = Readable.from([]);
+  req.method = "GET";
+  req.url = "/missing";
+  req.headers = {};
+
+  const res = new EventEmitter();
+  res.statusCode = 200;
+  res.headers = {};
+  res.setHeader = (name, value) => { res.headers[name] = value; };
+  res.writeHead = (statusCode) => { res.statusCode = statusCode; };
+  res.end = () => {
+    res.writableEnded = true;
+    res.writableFinished = true;
+    res.emit("finish");
+    res.emit("close");
+  };
+
+  createAdapterHandler({ terminalActivity })(req, res);
+  assert.equal(started, 1);
+  assert.equal(finished, 1);
+});
+
 test("HTTP count_tokens route awaits the lazy tokenizer", async () => {
   const result = await invokeAdapter({}, {
     url: "/v1/messages/count_tokens",

@@ -60,6 +60,8 @@ ccdx update npm
 ccdx update github
 ```
 
+`ccdx update gh` is accepted as a shorthand for the GitHub source.
+
 The npm source installs `codex-copilot-dx@latest` through the registry already
 configured for npm, including a company mirror. The GitHub source installs the
 latest commit from `DaleXiao/codex-copilot-dx` `main` and opts in to Git fetching
@@ -68,6 +70,8 @@ for that command, as required by npm 12. It does not change npm's persistent
 interpolation. A currently running adapter keeps its loaded version until it is
 stopped and started again. The
 `codex-copilot-dx update` compatibility command behaves identically.
+If a configured npm mirror has not synchronized the current release yet, use
+the GitHub source to install the current `main` revision.
 
 On first run, it will:
 1. Authenticate with GitHub via device flow (if needed), after first trying compatible local Copilot token sources
@@ -194,7 +198,9 @@ Environment variables:
 | `CCDX_IMG_CACHE_MAX_BYTES` | `67108864` | Process-local byte ceiling for cached image optimization results; set to `0` to disable result caching |
 | `CCDX_DISABLE_IMG_OPT` | unset | Set to `1` to disable image optimization |
 | `CCDX_CONFIGURE_CLAUDE_DESKTOP` | unset | Set to `1` to write the Claude App 3P gateway profile during startup |
+| `CCDX_AUTO_LAUNCH` | enabled | Set to `0`, `false`, `no`, or `off` to start the adapter without opening Codex or ChatGPT |
 | `CCDX_CLAUDE_DESKTOP_API_KEY` | managed profile or generated for opt-in setup | Explicit bearer key written into the Claude App profile and recognized by the adapter for model discovery |
+| `CCDX_PROXY_API_KEY` | unset | Backward-compatible alias for `CCDX_CLAUDE_DESKTOP_API_KEY`; the Claude-specific variable takes precedence |
 | `CCDX_CLAUDE_MODEL_ALIASES` | built-in Claude aliases | Comma-separated Desktop-to-upstream aliases, for example `claude-sonnet-4-6=claude-sonnet-4.6` |
 | `CCDX_GITHUB_TOKEN` | unset | Explicit GitHub Copilot OAuth token to validate and import before device login |
 | `CCDX_GITHUB_TOKEN_PATH` | unset | Explicit file containing a GitHub Copilot OAuth token to validate and import before device login |
@@ -204,6 +210,7 @@ Environment variables:
 | `CCDX_TOKEN_LOCK_TIMEOUT_MS` | `600000` | Maximum time to wait for another local process to finish GitHub token login/import |
 | `CCDX_TOKEN_LOCK_STALE_MS` | `900000` | Age after which a stale GitHub token lock file can be removed |
 | `CCDX_EXISTING_ADAPTER_TIMEOUT_MS` | `500` | Timeout for detecting an already-running local adapter during startup |
+| `CCDX_MODEL_REFRESH_TIMEOUT_MS` | `5000` | Timeout for a Copilot model metadata refresh or live Auto-review model lookup |
 | `CCDX_MODEL_REFRESH_INTERVAL_MS` | `7200000` | Interval for refreshing Copilot model metadata; successful lists are cached locally as last-known-good data |
 | `CCDX_RESPONSE_HISTORY_MAX_BYTES` | `67108864` | Total in-memory byte budget for locally expanded Responses history |
 | `CCDX_RESPONSE_HISTORY_MAX_ENTRIES` | `4096` | Maximum stored incremental Responses history nodes |
@@ -216,13 +223,13 @@ Environment variables:
 
 The adapter records token usage metadata to `~/.local/share/codex-copilot-dx/usage.jsonl` when upstream responses include usage fields. It logs counts, model names, API surface, and response IDs only; it does not log prompts, completions, tool arguments, or image content.
 
-### Debug logging
-
-Set `CCDX_LOG_PATH=1` to mirror terminal logs to `~/.local/share/codex-copilot-dx/debug.log`, or set `CCDX_LOG_PATH` to a custom file. Add `CCDX_LOG_LEVEL=debug` to include upstream request attempts, retry causes, status codes, and timings. Debug logs do not include prompts, completions, request bodies, or authorization tokens.
-
 ```bash
 ccdx usage
 ```
+
+### Debug logging
+
+Set `CCDX_LOG_PATH=1` to mirror terminal logs to `~/.local/share/codex-copilot-dx/debug.log`, or set `CCDX_LOG_PATH` to a custom file. Add `CCDX_LOG_LEVEL=debug` to include upstream request attempts, retry causes, status codes, and timings. Debug logs do not include prompts, completions, request bodies, or authorization tokens.
 
 ### Image optimization
 

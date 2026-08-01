@@ -30,6 +30,21 @@ export function parseCliArgs(args = []) {
     if (rest.length) unexpectedArgs(rest);
     return { command: "auto-review-model", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
   }
+  if (command === "update") {
+    if (rest.length > 1) unexpectedArgs(rest.slice(1));
+    const source = rest[0];
+    if (source && !new Set(["npm", "github", "gh"]).has(source)) {
+      throw new Error(`Update source must be npm or github: ${source}`);
+    }
+    return {
+      command: "update",
+      configureClaudeDesktop: false,
+      showRequestId: false,
+      online: false,
+      compat: false,
+      updateSource: source === "gh" ? "github" : source,
+    };
+  }
   if (command === "doctor" || command === "--doctor") {
     const supported = new Set(["--online", "--compat"]);
     const invalid = rest.filter((arg) => !supported.has(arg));
@@ -112,6 +127,7 @@ export function cliHelp(commandName = "ccdx") {
   ${name} status
   ${name} usage
   ${name} auto-review-model
+  ${name} update [npm|github]
   ${name} --version
   ${name} --help
 

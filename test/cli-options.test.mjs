@@ -22,10 +22,15 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["--status"]).command, "status");
   assert.equal(parseCliArgs(["usage"]).command, "usage");
   assert.equal(parseCliArgs(["auto-review-model"]).command, "auto-review-model");
+  assert.equal(parseCliArgs(["update"]).command, "update");
+  assert.equal(parseCliArgs(["update", "npm"]).updateSource, "npm");
+  assert.equal(parseCliArgs(["update", "github"]).updateSource, "github");
+  assert.equal(parseCliArgs(["update", "gh"]).updateSource, "github");
   assert.match(cliHelp(), /ccdx status/);
   assert.match(cliHelp(), /doctor \[--online\] \[--compat\]/);
   assert.match(cliHelp(), /--show-request-id/);
   assert.match(cliHelp(), /ccdx auto-review-model/);
+  assert.match(cliHelp(), /ccdx update \[npm\|github\]/);
   assert.match(cliHelp("codex-copilot-dx"), /codex-copilot-dx status/);
   assert.match(cliHelp("codex-copilot-dx"), /Equivalent command: ccdx/);
 });
@@ -35,6 +40,8 @@ test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
   assert.throws(() => parseCliArgs(["usage", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["status", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["auto-review-model", "gpt-5.6-sol"]), /Unexpected argument: gpt-5.6-sol/);
+  assert.throws(() => parseCliArgs(["update", "other"]), /Update source must be npm or github/);
+  assert.throws(() => parseCliArgs(["update", "npm", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["doctor", "--write"]), /Unexpected argument: --write/);
   assert.throws(() => parseCliArgs(["doctor", "--online", "--online"]), /Unexpected argument: --online/);
   assert.throws(() => parseCliArgs(["doctor", "--compat", "--compat"]), /Unexpected argument: --compat/);

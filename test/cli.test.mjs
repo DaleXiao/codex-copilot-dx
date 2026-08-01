@@ -75,6 +75,7 @@ test("legacy cli help and argument errors use the legacy command name", async ()
   assert.match(stdout, /codex-copilot-dx doctor/);
   assert.match(stdout, /codex-copilot-dx status/);
   assert.match(stdout, /codex-copilot-dx auto-review-model/);
+  assert.match(stdout, /codex-copilot-dx update \[npm\|github\]/);
   assert.match(stdout, /Equivalent command: ccdx/);
 
   await assert.rejects(
@@ -97,8 +98,21 @@ test("both CLI entrypoints expose the same complete subcommand help", async () =
     .replaceAll("codex-copilot-dx", "<command>")
     .replaceAll("ccdx", "<command>");
   assert.equal(normalizeCommandNames(legacy.stdout), normalizeCommandNames(primary.stdout));
-  for (const command of ["doctor", "status", "usage", "auto-review-model"]) {
+  for (const command of ["doctor", "status", "usage", "auto-review-model", "update"]) {
     assert.match(primary.stdout, new RegExp(`ccdx ${command}`));
+  }
+});
+
+test("both CLI entrypoints require a source for non-interactive updates", async () => {
+  for (const [commandName, executable] of [["ccdx", cliPath], ["codex-copilot-dx", legacyCliPath]]) {
+    await assert.rejects(
+      execFileAsync(process.execPath, [executable, "update"], { timeout: 2000 }),
+      (error) => {
+        assert.equal(error.code, 1);
+        assert.match(error.stderr, new RegExp(`${commandName} update npm or ${commandName} update github`));
+        return true;
+      },
+    );
   }
 });
 

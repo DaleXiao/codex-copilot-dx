@@ -47,6 +47,26 @@ the package default. A running 0.5.1+
 adapter reads the setting on the next Auto-review request, so it does not need to
 be restarted. `codex-copilot-dx auto-review-model` is fully equivalent.
 
+To update the globally installed package, choose a source interactively:
+
+```bash
+ccdx update
+```
+
+For scripts or a direct choice, pass the source explicitly:
+
+```bash
+ccdx update npm
+ccdx update github
+```
+
+The npm source installs `codex-copilot-dx@latest` through the registry already
+configured for npm, including a company mirror. The GitHub source installs the
+latest commit from `DaleXiao/codex-copilot-dx` `main`. Both paths use npm's
+global installer without shell interpolation. A currently running adapter keeps
+its loaded version until it is stopped and started again. The
+`codex-copilot-dx update` compatibility command behaves identically.
+
 On first run, it will:
 1. Authenticate with GitHub via device flow (if needed), after first trying compatible local Copilot token sources
 2. Print the local package version and check for a newer npm release in the background

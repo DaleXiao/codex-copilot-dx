@@ -62,9 +62,11 @@ ccdx update github
 
 The npm source installs `codex-copilot-dx@latest` through the registry already
 configured for npm, including a company mirror. The GitHub source installs the
-latest commit from `DaleXiao/codex-copilot-dx` `main`. Both paths use npm's
-global installer without shell interpolation. A currently running adapter keeps
-its loaded version until it is stopped and started again. The
+latest commit from `DaleXiao/codex-copilot-dx` `main` and opts in to Git fetching
+for that command, as required by npm 12. It does not change npm's persistent
+`allow-git` setting. Both paths use npm's global installer without shell
+interpolation. A currently running adapter keeps its loaded version until it is
+stopped and started again. The
 `codex-copilot-dx update` compatibility command behaves identically.
 
 On first run, it will:

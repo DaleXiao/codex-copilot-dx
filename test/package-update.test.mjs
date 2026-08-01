@@ -33,7 +33,7 @@ test("package update: builds fixed npm and GitHub global install commands", () =
   });
   assert.deepEqual(globalUpdateCommand("github", { platform: "win32" }), {
     command: "npm.cmd",
-    args: ["install", "--global", "github:DaleXiao/codex-copilot-dx#main"],
+    args: ["install", "--global", "--allow-git=all", "github:DaleXiao/codex-copilot-dx#main"],
     source: "github",
   });
   assert.throws(() => globalUpdateCommand("other"), /must be npm or github/);
@@ -73,7 +73,12 @@ test("package update: interactive selection retries and can choose GitHub", asyn
 
   assert.equal(result.source, "github");
   assert.equal(calls[0].command, "npm.cmd");
-  assert.deepEqual(calls[0].args, ["install", "--global", "github:DaleXiao/codex-copilot-dx#main"]);
+  assert.deepEqual(calls[0].args, [
+    "install",
+    "--global",
+    "--allow-git=all",
+    "github:DaleXiao/codex-copilot-dx#main",
+  ]);
   assert.match(output.text(), /Enter 1 for npm, 2 for GitHub/);
 });
 

@@ -16,9 +16,12 @@ export function normalizeUpdateSource(value) {
 export function globalUpdateCommand(source, { platform = process.platform } = {}) {
   const normalized = normalizeUpdateSource(source);
   if (!normalized) throw new Error(`Update source must be npm or github: ${source}`);
+  const args = ["install", "--global"];
+  if (normalized === "github") args.push("--allow-git=all");
+  args.push(UPDATE_SPECS[normalized]);
   return {
     command: platform === "win32" ? "npm.cmd" : "npm",
-    args: ["install", "--global", UPDATE_SPECS[normalized]],
+    args,
     source: normalized,
   };
 }

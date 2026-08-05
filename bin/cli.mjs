@@ -21,6 +21,7 @@ import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
 import { runAutoReviewModelCommand } from "../src/auto-review-model.mjs";
 import { autoReviewModelPreference } from "../src/user-settings.mjs";
+import { fetchLiveCopilotModels, formatLiveCopilotModels } from "../src/cli-models.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
 const CLI_NAME = cliCommandName();
@@ -62,6 +63,16 @@ if (CLI.command === "status") {
       timeoutMs: probe.existingAdapterTimeoutMs,
     });
     console.log(formatAdapterStatus(snapshot, { commandName: CLI_NAME, cliVersion: LOCAL_VERSION }));
+    process.exit(0);
+  } catch (e) {
+    console.error(status("err", e.message));
+    process.exit(1);
+  }
+}
+if (CLI.command === "models") {
+  try {
+    const catalog = await fetchLiveCopilotModels();
+    console.log(formatLiveCopilotModels(catalog, { commandName: CLI_NAME }));
     process.exit(0);
   } catch (e) {
     console.error(status("err", e.message));

@@ -26,6 +26,10 @@ export function parseCliArgs(args = []) {
     if (rest.length) unexpectedArgs(rest);
     return { command: "usage", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
   }
+  if (command === "models") {
+    if (rest.length) unexpectedArgs(rest);
+    return { command: "models", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
+  }
   if (command === "auto-review-model") {
     if (rest.length) unexpectedArgs(rest);
     return { command: "auto-review-model", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
@@ -125,6 +129,7 @@ export function cliHelp(commandName = "ccdx") {
   ${name} [--configure-claude-desktop] [--show-request-id]
   ${name} doctor [--online] [--compat]
   ${name} status
+  ${name} models
   ${name} usage
   ${name} auto-review-model
   ${name} update [npm|github]

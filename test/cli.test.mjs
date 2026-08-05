@@ -51,6 +51,7 @@ test("cli --help exits without validating runtime configuration", async () => {
   assert.match(stdout, /ccdx doctor/);
   assert.match(stdout, /Equivalent command: codex-copilot-dx/);
   assert.match(stdout, /ccdx status/);
+  assert.match(stdout, /ccdx models/);
   assert.match(stdout, /doctor \[--online\] \[--compat\]/);
   assert.equal(stderr, "");
 });
@@ -74,6 +75,7 @@ test("legacy cli help and argument errors use the legacy command name", async ()
   });
   assert.match(stdout, /codex-copilot-dx doctor/);
   assert.match(stdout, /codex-copilot-dx status/);
+  assert.match(stdout, /codex-copilot-dx models/);
   assert.match(stdout, /codex-copilot-dx auto-review-model/);
   assert.match(stdout, /codex-copilot-dx update \[npm\|github\]/);
   assert.match(stdout, /Equivalent command: ccdx/);
@@ -98,8 +100,29 @@ test("both CLI entrypoints expose the same complete subcommand help", async () =
     .replaceAll("codex-copilot-dx", "<command>")
     .replaceAll("ccdx", "<command>");
   assert.equal(normalizeCommandNames(legacy.stdout), normalizeCommandNames(primary.stdout));
-  for (const command of ["doctor", "status", "usage", "auto-review-model", "update"]) {
+  for (const command of ["doctor", "status", "models", "usage", "auto-review-model", "update"]) {
     assert.match(primary.stdout, new RegExp(`ccdx ${command}`));
+  }
+});
+
+test("both CLI entrypoints fail models cleanly without a saved token or startup side effects", async () => {
+  for (const [commandName, executable] of [["ccdx", cliPath], ["codex-copilot-dx", legacyCliPath]]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-models-"));
+    const logPath = path.join(home, "debug.log");
+    await assert.rejects(
+      execFileAsync(process.execPath, [executable, "models"], {
+        timeout: 2000,
+        env: { ...process.env, HOME: home, ADAPTER_PORT: "invalid", CCDX_LOG_PATH: logPath },
+      }),
+      (error) => {
+        assert.equal(error.code, 1);
+        assert.match(error.stderr, /GitHub token not found/);
+        return true;
+      },
+    );
+    assert.equal(fs.existsSync(logPath), false, commandName);
+    assert.equal(fs.existsSync(path.join(home, ".codex")), false, commandName);
+    assert.equal(fs.existsSync(path.join(home, ".claude")), false, commandName);
   }
 });
 

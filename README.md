@@ -33,6 +33,21 @@ global install, use `npx codex-copilot-dx@latest`.
 Both installed commands expose the same options and subcommands; help, version,
 doctor, status, and argument-error output use the command name that was invoked.
 
+To query the models currently advertised as selectable for the saved Copilot
+account, run:
+
+```bash
+ccdx models
+```
+
+This performs a fresh, read-only GitHub Copilot model-directory lookup without
+starting the adapter, opening device login, reading the local model cache, or
+consuming an inference request. It lists model IDs by provider with their
+advertised API capabilities and reports the live Claude/Anthropic count. A model
+being advertised does not guarantee that a later inference request will avoid
+quota, rate-limit, or policy enforcement. `codex-copilot-dx models` is fully
+equivalent.
+
 To change the model used by Codex Auto-review, run:
 
 ```bash

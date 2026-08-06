@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { localPackageVersion } from "../src/version.mjs";
 import { assertSafeAdapterHost, isLanAllowed } from "../src/security.mjs";
+import { writeClaudeAuthProfile } from "../src/auth-profile.mjs";
 import packageJson from "../package.json" with { type: "json" };
 
 const execFileAsync = promisify(execFile);
@@ -52,6 +53,8 @@ test("cli --help exits without validating runtime configuration", async () => {
   assert.match(stdout, /Equivalent command: codex-copilot-dx/);
   assert.match(stdout, /ccdx status/);
   assert.match(stdout, /ccdx models/);
+  assert.match(stdout, /ccdx auth status/);
+  assert.match(stdout, /ccdx auth login claude/);
   assert.match(stdout, /doctor \[--online\] \[--compat\]/);
   assert.equal(stderr, "");
 });
@@ -100,8 +103,76 @@ test("both CLI entrypoints expose the same complete subcommand help", async () =
     .replaceAll("codex-copilot-dx", "<command>")
     .replaceAll("ccdx", "<command>");
   assert.equal(normalizeCommandNames(legacy.stdout), normalizeCommandNames(primary.stdout));
-  for (const command of ["doctor", "status", "models", "usage", "auto-review-model", "update"]) {
+  for (const command of ["auth", "doctor", "status", "models", "usage", "auto-review-model", "update"]) {
     assert.match(primary.stdout, new RegExp(`ccdx ${command}`));
+  }
+});
+
+test("both CLI entrypoints report auth status read-only without starting runtime initialization", async () => {
+  for (const [commandName, executable] of [["ccdx", cliPath], ["codex-copilot-dx", legacyCliPath]]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-status-"));
+    const logPath = path.join(home, "debug.log");
+    const { stdout, stderr } = await execFileAsync(process.execPath, [executable, "auth", "status"], {
+      timeout: 2000,
+      env: {
+        ...process.env,
+        HOME: home,
+        ADAPTER_PORT: "invalid",
+        CCDX_LOG_PATH: logPath,
+      },
+    });
+
+    assert.match(stdout, new RegExp(`^${commandName} auth status`, "m"));
+    assert.match(stdout, /Codex: not configured/);
+    assert.match(stdout, /Claude: inherits Codex/);
+    assert.match(stdout, /Routing: responses -> codex; messages -> codex/);
+    assert.equal(stderr, "");
+    assert.equal(fs.existsSync(logPath), false);
+    assert.equal(fs.existsSync(path.join(home, ".local")), false);
+    assert.equal(fs.existsSync(path.join(home, ".codex")), false);
+    assert.equal(fs.existsSync(path.join(home, ".claude")), false);
+  }
+});
+
+test("models --profile claude fails closed without creating or borrowing credentials", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-models-claude-"));
+  await assert.rejects(
+    execFileAsync(process.execPath, [cliPath, "models", "--profile", "claude"], {
+      timeout: 2000,
+      env: { ...process.env, HOME: home, ADAPTER_PORT: "invalid" },
+    }),
+    (error) => {
+      assert.equal(error.code, 1);
+      assert.match(error.stderr, /Claude GitHub profile is not configured/);
+      return true;
+    },
+  );
+  assert.equal(fs.existsSync(path.join(home, ".local")), false);
+});
+
+test("both CLI entrypoints handle an existing Claude login without device flow or runtime startup", async () => {
+  for (const [commandName, executable] of [["ccdx", cliPath], ["codex-copilot-dx", legacyCliPath]]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-existing-"));
+    const profile = writeClaudeAuthProfile("ghu_personal", { login: "personal", id: 2 }, { home });
+    const tokenBefore = fs.readFileSync(profile.paths.tokenPath);
+    const metadataBefore = fs.readFileSync(profile.paths.metadataPath);
+    const { stdout, stderr } = await execFileAsync(process.execPath, [
+      executable,
+      "auth",
+      "login",
+      "claude",
+      "--github-login",
+      "personal",
+    ], {
+      timeout: 2000,
+      env: { ...process.env, HOME: home, ADAPTER_PORT: "invalid" },
+    });
+
+    assert.match(stdout, /Claude profile is already configured for personal/);
+    assert.match(stdout, new RegExp(`Restart the running ${commandName} adapter`));
+    assert.equal(stderr, "");
+    assert.deepEqual(fs.readFileSync(profile.paths.tokenPath), tokenBefore);
+    assert.deepEqual(fs.readFileSync(profile.paths.metadataPath), metadataBefore);
   }
 });
 

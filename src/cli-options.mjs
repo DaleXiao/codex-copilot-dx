@@ -7,6 +7,38 @@ function unexpectedArgs(args) {
   throw new Error(`Unexpected argument${args.length === 1 ? "" : "s"}: ${args.join(" ")}`);
 }
 
+function parseOptions(args, schema) {
+  const parsed = {};
+  const seen = new Set();
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    const kind = schema.get(option);
+    if (!kind || seen.has(option)) unexpectedArgs([option]);
+    seen.add(option);
+    if (kind === "flag") {
+      parsed[option] = true;
+      continue;
+    }
+
+    const value = args[index + 1];
+    if (value === undefined || !String(value).trim() || String(value).startsWith("-")) {
+      throw new Error(`Missing value for ${option}`);
+    }
+    parsed[option] = value;
+    index += 1;
+  }
+  return parsed;
+}
+
+function checkedProfile(value, { allowAll = false } = {}) {
+  const profile = value || "codex";
+  const allowed = allowAll ? new Set(["codex", "claude", "all"]) : new Set(["codex", "claude"]);
+  if (!allowed.has(profile)) {
+    throw new Error(`Profile must be ${allowAll ? "codex, claude, or all" : "codex or claude"}: ${profile}`);
+  }
+  return profile;
+}
+
 export function parseCliArgs(args = []) {
   const [command, ...rest] = args;
   if (!command) return { command: "start", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
@@ -27,8 +59,54 @@ export function parseCliArgs(args = []) {
     return { command: "usage", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
   }
   if (command === "models") {
-    if (rest.length) unexpectedArgs(rest);
-    return { command: "models", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
+    const options = parseOptions(rest, new Map([["--profile", "value"]]));
+    return {
+      command: "models",
+      configureClaudeDesktop: false,
+      showRequestId: false,
+      online: false,
+      compat: false,
+      profile: checkedProfile(options["--profile"]),
+    };
+  }
+  if (command === "auth") {
+    const [action, ...authArgs] = rest;
+    if (!action) throw new Error("Missing auth action: expected status or login");
+    if (action === "status") {
+      const options = parseOptions(authArgs, new Map([["--online", "flag"]]));
+      return {
+        command: "auth",
+        action: "status",
+        profile: "",
+        configureClaudeDesktop: false,
+        showRequestId: false,
+        online: Boolean(options["--online"]),
+        compat: false,
+        expectedLogin: "",
+        reauth: false,
+      };
+    }
+    if (action === "login") {
+      const [profile, ...loginArgs] = authArgs;
+      if (!profile) throw new Error("Missing auth login profile: expected claude");
+      if (profile !== "claude") throw new Error(`Auth login profile must be claude: ${profile}`);
+      const options = parseOptions(loginArgs, new Map([
+        ["--github-login", "value"],
+        ["--reauth", "flag"],
+      ]));
+      return {
+        command: "auth",
+        action: "login",
+        profile: "claude",
+        configureClaudeDesktop: false,
+        showRequestId: false,
+        online: false,
+        compat: false,
+        expectedLogin: options["--github-login"] || "",
+        reauth: Boolean(options["--reauth"]),
+      };
+    }
+    throw new Error(`Unknown auth action: ${action}`);
   }
   if (command === "auto-review-model") {
     if (rest.length) unexpectedArgs(rest);
@@ -50,18 +128,18 @@ export function parseCliArgs(args = []) {
     };
   }
   if (command === "doctor" || command === "--doctor") {
-    const supported = new Set(["--online", "--compat"]);
-    const invalid = rest.filter((arg) => !supported.has(arg));
-    if (invalid.length) unexpectedArgs(invalid);
-    for (const option of supported) {
-      if (rest.filter((arg) => arg === option).length > 1) unexpectedArgs([option]);
-    }
+    const options = parseOptions(rest, new Map([
+      ["--online", "flag"],
+      ["--compat", "flag"],
+      ["--profile", "value"],
+    ]));
     return {
       command: "doctor",
       configureClaudeDesktop: false,
       showRequestId: false,
-      online: rest.includes("--online"),
-      compat: rest.includes("--compat"),
+      online: Boolean(options["--online"]),
+      compat: Boolean(options["--compat"]),
+      profile: checkedProfile(options["--profile"], { allowAll: true }),
     };
   }
   if (START_OPTIONS.has(command)) {
@@ -127,9 +205,11 @@ export function cliHelp(commandName = "ccdx") {
   const alias = name === "ccdx" ? "codex-copilot-dx" : "ccdx";
   return `Usage:
   ${name} [--configure-claude-desktop] [--show-request-id]
-  ${name} doctor [--online] [--compat]
+  ${name} auth status [--online]
+  ${name} auth login claude [--github-login <login>] [--reauth]
+  ${name} doctor [--online] [--compat] [--profile codex|claude|all]
   ${name} status
-  ${name} models
+  ${name} models [--profile codex|claude]
   ${name} usage
   ${name} auto-review-model
   ${name} update [npm|github]

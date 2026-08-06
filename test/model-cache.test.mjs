@@ -36,3 +36,34 @@ test("model cache accepts only non-empty lists with a model id", () => {
   assert.equal(saveModelCache({ data: [] }, { home }), false);
   assert.equal(saveModelCache({ data: [{ id: "gpt-test" }] }, { home }), true);
 });
+
+test("Claude model cache is isolated without moving the legacy Codex cache", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-cache-profiles-"));
+  const codex = { data: [{ id: "gpt-enterprise" }] };
+  const claude = { data: [{ id: "claude-personal" }] };
+
+  assert.equal(modelCachePath(home), path.join(home, ".local", "share", "codex-copilot-dx", "models.json"));
+  assert.equal(
+    modelCachePath(home, "claude"),
+    path.join(home, ".local", "share", "codex-copilot-dx", "profiles", "claude", "models.json"),
+  );
+
+  assert.equal(saveModelCache(codex, { home }), true);
+  assert.equal(saveModelCache(claude, {
+    home,
+    profile: "claude",
+    credentialFingerprint: "personal-fingerprint",
+  }), true);
+  assert.deepEqual(loadModelCache({ home }), codex);
+  assert.deepEqual(loadModelCache({
+    home,
+    profile: "claude",
+    credentialFingerprint: "personal-fingerprint",
+  }), claude);
+  assert.equal(loadModelCache({
+    home,
+    profile: "claude",
+    credentialFingerprint: "different-account",
+  }), null);
+  assert.throws(() => modelCachePath(home, "other"), /Unknown model cache profile/);
+});

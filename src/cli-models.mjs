@@ -1,6 +1,10 @@
-import fs from "node:fs";
 import os from "node:os";
-import { githubTokenPath, validateGithubToken } from "./auth.mjs";
+import { validateGithubToken } from "./auth.mjs";
+import {
+  AUTH_PROFILE_CLAUDE,
+  AUTH_PROFILE_CODEX,
+  readAuthProfileCredentials,
+} from "./auth-profile.mjs";
 import { buildHeaders, DEFAULT_API_BASE, FALLBACK_VSCODE_VERSION } from "./copilot.mjs";
 import { status } from "./status.mjs";
 
@@ -69,21 +73,41 @@ async function responseText(response) {
   }
 }
 
+function readModelProfile(profile, home) {
+  const requested = String(profile || AUTH_PROFILE_CODEX).trim().toLowerCase();
+  if (requested !== AUTH_PROFILE_CODEX && requested !== AUTH_PROFILE_CLAUDE) {
+    throw new Error(`Unsupported models profile: ${profile}`);
+  }
+
+  let credentials;
+  try {
+    credentials = readAuthProfileCredentials(requested, { home });
+  } catch (error) {
+    const label = requested === AUTH_PROFILE_CLAUDE ? "Claude GitHub profile" : "GitHub token";
+    throw new Error(`Could not read the ${label}: ${error.message}`);
+  }
+  if (credentials.valid) return credentials;
+
+  if (requested === AUTH_PROFILE_CLAUDE) {
+    if (!credentials.configured) {
+      throw new Error("Claude GitHub profile is not configured. Run ccdx auth login claude.");
+    }
+    throw new Error(`Claude GitHub profile is invalid (${credentials.reason || "unknown"}). Run ccdx auth login claude --reauth.`);
+  }
+  if (!credentials.configured) throw new Error("GitHub token not found. Start ccdx once to log in.");
+  if (credentials.reason === "empty_token") throw new Error("GitHub token file is empty. Start ccdx again to log in.");
+  throw new Error(`GitHub token is unavailable (${credentials.reason || "unknown"}). Start ccdx again to log in.`);
+}
+
 export async function fetchLiveCopilotModels({
   home = os.homedir(),
+  profile = AUTH_PROFILE_CODEX,
   fetchImpl = fetch,
   timeoutMs = DEFAULT_MODELS_TIMEOUT_MS,
   vscodeVersion = FALLBACK_VSCODE_VERSION,
 } = {}) {
-  const tokenPath = githubTokenPath(home);
-  let githubToken;
-  try {
-    githubToken = fs.readFileSync(tokenPath, "utf8").trim();
-  } catch (error) {
-    if (error?.code === "ENOENT") throw new Error("GitHub token not found. Start ccdx once to log in.");
-    throw new Error(`Could not read the GitHub token: ${error.message}`);
-  }
-  if (!githubToken) throw new Error("GitHub token file is empty. Start ccdx again to log in.");
+  const credentials = readModelProfile(profile, home);
+  const githubToken = credentials.token;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -123,7 +147,7 @@ export async function fetchLiveCopilotModels({
     const catalog = selectableCopilotModels(payload);
     let upstreamHost = "GitHub Copilot";
     try { upstreamHost = new URL(apiBase).hostname; } catch {}
-    return { ...catalog, upstreamHost: safeText(upstreamHost, "GitHub Copilot") };
+    return { ...catalog, profile: credentials.profile, upstreamHost: safeText(upstreamHost, "GitHub Copilot") };
   } catch (error) {
     if (controller.signal.aborted && !/timed out/.test(error?.message || "")) {
       throw new Error(`Live model lookup timed out after ${timeoutMs}ms`);
@@ -136,12 +160,13 @@ export async function fetchLiveCopilotModels({
 
 export function formatLiveCopilotModels(catalog, { commandName = "ccdx" } = {}) {
   const models = Array.isArray(catalog?.models) ? catalog.models : [];
+  const profile = catalog?.profile === AUTH_PROFILE_CLAUDE ? AUTH_PROFILE_CLAUDE : AUTH_PROFILE_CODEX;
   const responses = models.filter((model) => model.endpoints.includes("responses")).length;
   const chat = models.filter((model) => model.endpoints.includes("chat")).length;
   const claude = models.filter((model) => model.id.toLowerCase().startsWith("claude-")
     || model.vendor.toLowerCase() === "anthropic").length;
   const lines = [
-    `${commandName} models`,
+    `${commandName} models${profile === AUTH_PROFILE_CLAUDE ? " --profile claude" : ""}`,
     status("ok", `Live catalog from ${safeText(catalog?.upstreamHost, "GitHub Copilot")}: ${models.length} selectable of ${Number(catalog?.advertised) || 0} advertised`),
     status("info", `Responses: ${responses}; Chat: ${chat}; Claude/Anthropic: ${claude}`),
   ];

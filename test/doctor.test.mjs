@@ -4,12 +4,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { githubTokenPath } from "../src/auth.mjs";
+import { readAuthProfileCredentials, writeClaudeAuthProfile } from "../src/auth-profile.mjs";
 import { claudeDesktopPaths } from "../src/claude-desktop-config.mjs";
+import { saveModelCache } from "../src/model-cache.mjs";
 import {
   collectDoctorChecks,
   inspectClaudeCodeConfig,
   inspectCodexConfig,
   inspectAdapterCompatibility,
+  inspectAuthProfiles,
+  inspectAuthProfilesOnline,
   inspectGitHubTokenOnline,
   runDoctor,
   selectCompatibilityModels,
@@ -68,6 +72,8 @@ test("collectDoctorChecks: reports configured clients", async () => {
   });
 
   assert.equal(checks.every((check) => check.kind === "ok"), true);
+  assert.equal(checks.some((check) => /Codex authentication profile uses the legacy path/.test(check.message)), true);
+  assert.equal(checks.some((check) => /Claude authentication profile is not isolated and inherits Codex/.test(check.message)), true);
   assert.equal(checks.some((check) => /Claude App gateway profile points/.test(check.message)), true);
 });
 
@@ -117,6 +123,18 @@ test("runDoctor: prints status lines", async () => {
   assert.equal(lines.some((line) => line.startsWith("[OK] GitHub token found")), true);
 });
 
+test("inspectAuthProfiles: reports an isolated Claude account without exposing credentials", () => {
+  const home = configuredHome();
+  writeClaudeAuthProfile("ghu_personal_secret", { login: "personal", id: 2 }, { home });
+
+  const checks = inspectAuthProfiles({ home });
+  const output = JSON.stringify(checks);
+  assert.equal(checks.some((check) => /Claude isolated authentication profile is configured for personal/.test(check.message)), true);
+  assert.doesNotMatch(output, /ghu_personal_secret/);
+  assert.doesNotMatch(output, /token_fingerprint/);
+  assert.doesNotMatch(output, /profiles\/claude/);
+});
+
 test("inspectGitHubTokenOnline: validates Copilot access and models without changing token", async () => {
   const home = configuredHome();
   const tokenPath = githubTokenPath(home);
@@ -149,6 +167,81 @@ test("inspectGitHubTokenOnline: validates Copilot access and models without chan
   ]);
 });
 
+test("inspectAuthProfilesOnline: all validates isolated profiles independently", async () => {
+  const home = configuredHome();
+  writeClaudeAuthProfile("ghu_personal", { login: "personal", id: 2 }, { home });
+  const calls = [];
+
+  const checks = await inspectAuthProfilesOnline({
+    home,
+    profile: "all",
+    fetchImpl: async (url, options = {}) => {
+      const authorization = options.headers?.Authorization || "";
+      calls.push([url, authorization]);
+      if (url.endsWith("/user")) {
+        if (authorization.endsWith("ghu_test")) return new Response("{}", { status: 401 });
+        return new Response(JSON.stringify({ login: "personal", id: 2 }), { status: 200 });
+      }
+      if (url.endsWith("/copilot_internal/v2/token")) {
+        return new Response(JSON.stringify({
+          token: "copilot_personal",
+          endpoints: { api: "https://api.personal.githubcopilot.com" },
+        }), { status: 200 });
+      }
+      if (url === "https://api.personal.githubcopilot.com/models") {
+        return new Response(JSON.stringify({ data: [{ id: "claude-test" }] }), { status: 200 });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+
+  assert.equal(checks.some((check) => check.kind === "err" && /github_token_invalid/.test(check.message)), true);
+  assert.equal(checks.some((check) => check.kind === "ok" && /Claude profile: GitHub Copilot access verified for personal/.test(check.message)), true);
+  assert.equal(checks.some((check) => /ghu_|copilot_personal|token_fingerprint/.test(check.message)), false);
+  assert.equal(calls.some(([url]) => url.includes("/login/device")), false);
+});
+
+test("inspectAuthProfilesOnline: unconfigured Claude validates inherited Codex without writes", async () => {
+  const home = configuredHome();
+  const tokenPath = githubTokenPath(home);
+  const before = fs.readFileSync(tokenPath, "utf8");
+
+  const checks = await inspectAuthProfilesOnline({
+    home,
+    profile: "claude",
+    fetchImpl: async (url) => {
+      if (url.endsWith("/user")) return new Response(JSON.stringify({ login: "enterprise", id: 1 }), { status: 200 });
+      if (url.endsWith("/copilot_internal/v2/token")) {
+        return new Response(JSON.stringify({
+          token: "copilot_enterprise",
+          endpoints: { api: "https://api.enterprise.githubcopilot.com" },
+        }), { status: 200 });
+      }
+      if (url.endsWith("/models")) return new Response(JSON.stringify({ data: [{ id: "gpt-test" }] }), { status: 200 });
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+
+  assert.equal(checks.some((check) => /inherits Codex authentication/.test(check.message)), true);
+  assert.equal(checks.some((check) => /Claude inherited Codex: GitHub Copilot access verified/.test(check.message)), true);
+  assert.equal(fs.readFileSync(tokenPath, "utf8"), before);
+  assert.equal(fs.existsSync(path.join(home, ".local", "share", "copilot-api", "profiles", "claude")), false);
+});
+
+test("runDoctor: includes a non-default profile in the title without changing compat behavior", async () => {
+  const lines = [];
+  await runDoctor({
+    home: configuredHome(),
+    platform: "darwin",
+    env: {},
+    profile: "claude",
+    checkAdapter: false,
+    log: (line) => lines.push(line),
+  });
+
+  assert.equal(lines[0], "ccdx doctor --profile claude");
+});
+
 test("selectCompatibilityModels: prefers a Responses-only GPT model and finds Claude chat", () => {
   assert.deepEqual(selectCompatibilityModels({ data: [
     { id: "gpt-chat", supported_endpoints: ["/responses", "/chat/completions"] },
@@ -158,6 +251,15 @@ test("selectCompatibilityModels: prefers a Responses-only GPT model and finds Cl
     responsesModel: "gpt-native",
     claudeModel: "claude-test",
   });
+
+  assert.deepEqual(selectCompatibilityModels({ data: [
+    { id: "gpt-enterprise", supported_endpoints: ["/responses"] },
+  ] }, { claudeModels: { data: [
+    { id: "claude-personal", supported_endpoints: ["/chat/completions"] },
+  ] } }), {
+    responsesModel: "gpt-enterprise",
+    claudeModel: "claude-personal",
+  });
 });
 
 test("inspectAdapterCompatibility: checks native Responses, history stream, compact, and Anthropic stream", async () => {
@@ -165,13 +267,16 @@ test("inspectAdapterCompatibility: checks native Responses, history stream, comp
   const checks = await inspectAdapterCompatibility({
     port: 2026,
     timeoutMs: 1000,
+    claudeMode: "isolated",
+    claudeModels: { data: [
+      { id: "claude-personal", supported_endpoints: ["/chat/completions"] },
+    ] },
     fetchImpl: async (url, options = {}) => {
       const body = options.body ? JSON.parse(options.body) : null;
       requests.push({ url, body });
       if (url.endsWith("/v1/models")) {
         return new Response(JSON.stringify({ data: [
           { id: "gpt-native", supported_endpoints: ["/responses"] },
-          { id: "claude-test", supported_endpoints: ["/chat/completions"] },
         ] }), { status: 200 });
       }
       if (url.endsWith("/v1/responses/compact")) {
@@ -200,6 +305,39 @@ test("inspectAdapterCompatibility: checks native Responses, history stream, comp
   const historyRequest = requests.find((request) => request.body?.previous_response_id);
   assert.equal(historyRequest.body.previous_response_id, "resp_first");
   assert.deepEqual(historyRequest.body.tools, [{ type: "image_generation" }]);
+  assert.equal(requests.some((request) => request.url.endsWith("/v1/messages")
+    && request.body?.model === "claude-personal"), true);
+});
+
+test("inspectAdapterCompatibility: never borrows a Codex Claude model for an isolated profile without a catalog", async () => {
+  let messagesRequests = 0;
+  const checks = await inspectAdapterCompatibility({
+    timeoutMs: 1000,
+    claudeMode: "isolated",
+    fetchImpl: async (url, options = {}) => {
+      const body = options.body ? JSON.parse(options.body) : null;
+      if (url.endsWith("/v1/models")) {
+        return new Response(JSON.stringify({ data: [
+          { id: "gpt-native", supported_endpoints: ["/responses"] },
+          { id: "claude-enterprise", supported_endpoints: ["/chat/completions"] },
+        ] }), { status: 200 });
+      }
+      if (url.endsWith("/v1/messages")) messagesRequests += 1;
+      if (url.endsWith("/v1/responses/compact")) {
+        return Response.json({
+          id: "resp_compact",
+          object: "response.compaction",
+          output: [{ type: "compaction", encrypted_content: "state" }],
+        });
+      }
+      if (body?.stream) return new Response("event: response.completed\ndata: {}\n\n");
+      return Response.json({ id: "resp_native", output: [] });
+    },
+  });
+
+  assert.equal(messagesRequests, 0);
+  assert.equal(checks.some((check) => check.kind === "warn"
+    && /isolated Claude model cache is unavailable/.test(check.message)), true);
 });
 
 test("inspectAdapterCompatibility: reports Auto-review failure independently", async () => {
@@ -244,4 +382,35 @@ test("collectDoctorChecks: compatibility checks require a running compatible ada
   });
 
   assert.equal(checks.some((check) => check.kind === "err" && /require a running/.test(check.message)), true);
+});
+
+test("collectDoctorChecks: supplies the isolated Claude cache to compatibility checks", async () => {
+  const home = configuredHome();
+  writeClaudeAuthProfile("ghu_personal", { login: "personal", id: 2 }, { home });
+  const claudeCatalog = { data: [
+    { id: "claude-personal", supported_endpoints: ["/chat/completions"] },
+  ] };
+  const claudeCredentials = readAuthProfileCredentials("claude", { home });
+  saveModelCache(claudeCatalog, {
+    home,
+    profile: "claude",
+    credentialFingerprint: claudeCredentials.metadata.token_fingerprint,
+  });
+  let compatibilityOptions;
+
+  await collectDoctorChecks({
+    home,
+    platform: "darwin",
+    env: {},
+    checkAdapter: false,
+    compat: true,
+    checkRunningAdapterFn: async () => ({ ok: true }),
+    inspectAdapterCompatibilityFn: async (options) => {
+      compatibilityOptions = options;
+      return [];
+    },
+  });
+
+  assert.equal(compatibilityOptions.claudeMode, "isolated");
+  assert.deepEqual(compatibilityOptions.claudeModels, claudeCatalog);
 });

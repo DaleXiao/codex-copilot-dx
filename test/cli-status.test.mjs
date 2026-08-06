@@ -77,6 +77,32 @@ test("formatAdapterStatus: summarizes runtime health with invocation-aware ident
   assert.match(output, /Image cache: 5 entries, 99\.2% hits/);
   assert.match(output, /Models: 42 total, 8 Claude/);
   assert.match(output, /request body 64\.0MiB, decoded body 128\.0MiB/);
+  assert.doesNotMatch(output, /Profiles:|Routing:/);
+});
+
+test("formatAdapterStatus: summarizes dual profiles and routing when available", () => {
+  const output = formatAdapterStatus({
+    baseUrl: "http://127.0.0.1:2026",
+    data: statusPayload({
+      profiles: {
+        codex: {
+          mode: "legacy",
+          client: { token_cached: true, token_expires_in_ms: 90_000 },
+          models: { source: "live", models: 42, claude_models: 8 },
+        },
+        claude: {
+          mode: "isolated",
+          client: { token_cached: false, token_expires_in_ms: null },
+          models: { source: "cache", models: 12, claude_models: 12 },
+        },
+      },
+      routing: { responses: "codex", messages: "claude" },
+    }),
+  });
+
+  assert.match(output, /Profiles: Codex legacy: token cached \(1m 30s remaining\), 42 total\/8 Claude models \(live\)/);
+  assert.match(output, /Claude isolated: token not cached, 12 total\/12 Claude models \(cache\)/);
+  assert.match(output, /Routing: \/v1\/responses -> Codex; \/v1\/messages -> Claude/);
 });
 
 test("formatAdapterStatus: warns when the running adapter is older than the CLI", () => {

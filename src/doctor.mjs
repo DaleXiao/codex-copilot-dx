@@ -3,11 +3,17 @@ import path from "node:path";
 import os from "node:os";
 import net from "node:net";
 import { githubTokenPath, readGithubTokenMetadata, validateGithubToken } from "./auth.mjs";
+import {
+  AUTH_PROFILE_CLAUDE,
+  AUTH_PROFILE_CODEX,
+  readAuthProfileCredentials,
+} from "./auth-profile.mjs";
 import { claudeDesktopPaths } from "./claude-desktop-config.mjs";
 import { status } from "./status.mjs";
 import { buildHeaders, DEFAULT_API_BASE, FALLBACK_VSCODE_VERSION } from "./copilot.mjs";
 import { adapterBaseUrl, checkRunningAdapter } from "./running-adapter.mjs";
 import { CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
+import { loadModelCache } from "./model-cache.mjs";
 
 function localGatewayBaseUrl(host, port) {
   const safeHost = String(host || "127.0.0.1");
@@ -58,8 +64,9 @@ function modelEndpoints(model) {
   return Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];
 }
 
-export function selectCompatibilityModels(models) {
+export function selectCompatibilityModels(models, { claudeModels = models } = {}) {
   const data = copilotModelData(models).filter((model) => model?.model_picker_enabled !== false);
+  const claudeData = copilotModelData(claudeModels).filter((model) => model?.model_picker_enabled !== false);
   const responsesCandidates = data.filter((model) => {
     const id = String(model?.id || "");
     const endpoints = modelEndpoints(model);
@@ -67,7 +74,7 @@ export function selectCompatibilityModels(models) {
   });
   const responsesOnly = [...responsesCandidates].reverse()
     .find((model) => !modelEndpoints(model).includes("/chat/completions"));
-  const claude = data.find((model) => {
+  const claude = claudeData.find((model) => {
     const id = String(model?.id || "");
     const vendor = String(model?.vendor || "").toLowerCase();
     return (id.startsWith("claude-") || vendor === "anthropic")
@@ -138,6 +145,8 @@ export async function inspectAdapterCompatibility({
   port = 2026,
   fetchImpl = fetch,
   timeoutMs = 120000,
+  claudeMode = "inherited",
+  claudeModels,
 } = {}) {
   const baseUrl = localGatewayBaseUrl(connectHost(host), port);
   const checks = [];
@@ -150,7 +159,9 @@ export async function inspectAdapterCompatibility({
   });
   if (!models) return checks;
 
-  const { responsesModel, claudeModel } = selectCompatibilityModels(models);
+  const { responsesModel, claudeModel } = selectCompatibilityModels(models, {
+    claudeModels: claudeMode === "isolated" ? (claudeModels || { data: [] }) : models,
+  });
   if (!responsesModel) {
     checks.push({ kind: "err", message: "Compatibility Responses check failed: no GPT model advertises /responses" });
     return checks;
@@ -197,7 +208,10 @@ export async function inspectAdapterCompatibility({
   });
 
   if (!claudeModel) {
-    checks.push({ kind: "warn", message: "Anthropic stream compatibility skipped because no Claude chat model was advertised" });
+    const reason = claudeMode === "isolated"
+      ? "the isolated Claude model cache is unavailable or advertises no Claude chat model; restart ccdx to refresh it"
+      : "no Claude chat model was advertised";
+    checks.push({ kind: "warn", message: `Anthropic stream compatibility was not verified because ${reason}` });
     return checks;
   }
 
@@ -227,26 +241,86 @@ export function inspectGitHubToken({ home = os.homedir() } = {}) {
   return [{ kind: "ok", message: `GitHub token found${account}` }];
 }
 
+export function inspectAuthProfiles({ home = os.homedir() } = {}) {
+  const checks = [
+    ...inspectGitHubToken({ home }),
+    { kind: "ok", message: "Codex authentication profile uses the legacy path" },
+  ];
+  try {
+    const claude = readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home });
+    if (!claude.configured) {
+      checks.push({ kind: "ok", message: "Claude authentication profile is not isolated and inherits Codex" });
+    } else if (!claude.valid) {
+      checks.push({ kind: "err", message: `Claude isolated authentication profile is invalid: ${claude.reason}` });
+    } else {
+      const account = claude.identity?.login ? ` for ${claude.identity.login}` : "";
+      checks.push({ kind: "ok", message: `Claude isolated authentication profile is configured${account}` });
+    }
+  } catch {
+    checks.push({ kind: "err", message: "Claude isolated authentication profile could not be inspected" });
+  }
+  return checks;
+}
+
+function checkedDoctorProfile(profile = AUTH_PROFILE_CODEX) {
+  const value = String(profile || AUTH_PROFILE_CODEX).trim().toLowerCase();
+  if (![AUTH_PROFILE_CODEX, AUTH_PROFILE_CLAUDE, "all"].includes(value)) {
+    throw new Error(`Doctor profile must be codex, claude, or all: ${profile}`);
+  }
+  return value;
+}
+
+function onlineMessage(profile, message, inherited = false) {
+  if (profile === AUTH_PROFILE_CODEX) return message;
+  return `${inherited ? "Claude inherited Codex" : "Claude profile"}: ${message}`;
+}
+
 export async function inspectGitHubTokenOnline({
   home = os.homedir(),
+  profile = AUTH_PROFILE_CODEX,
   fetchImpl = fetch,
   timeoutMs = 10000,
 } = {}) {
-  const token = readText(githubTokenPath(home));
-  if (!token.ok || !token.text.trim()) {
-    return [{ kind: "warn", message: "Online Copilot check skipped because the GitHub token is missing" }];
+  const requestedProfile = checkedDoctorProfile(profile);
+  if (requestedProfile === "all") throw new Error("inspectGitHubTokenOnline accepts one profile at a time");
+  let inherited = false;
+  let credentials;
+  try {
+    credentials = readAuthProfileCredentials(requestedProfile, { home });
+    if (requestedProfile === AUTH_PROFILE_CLAUDE && !credentials.configured) {
+      inherited = true;
+      credentials = readAuthProfileCredentials(AUTH_PROFILE_CODEX, { home });
+    }
+  } catch {
+    return [{ kind: "warn", message: onlineMessage(requestedProfile, "Online Copilot check failed while reading the local credential", inherited) }];
+  }
+
+  const checks = [];
+  if (inherited) {
+    checks.push({ kind: "ok", message: "Claude profile is not separately configured and inherits Codex authentication" });
+  }
+  if (!credentials.valid) {
+    const reason = requestedProfile === AUTH_PROFILE_CODEX
+      ? "the GitHub token is missing"
+      : credentials.reason;
+    checks.push({ kind: "warn", message: onlineMessage(requestedProfile, `Online Copilot check skipped because ${reason}`, inherited) });
+    return checks;
   }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const validation = await validateGithubToken(token.text.trim(), {
+    const validation = await validateGithubToken(credentials.token, {
       fetchImpl,
       signal: controller.signal,
     });
     if (!validation.ok) {
       const statusText = validation.status ? ` (HTTP ${validation.status})` : "";
-      return [{ kind: validation.transient ? "warn" : "err", message: `GitHub Copilot authentication failed: ${validation.reason}${statusText}` }];
+      checks.push({
+        kind: validation.transient ? "warn" : "err",
+        message: onlineMessage(requestedProfile, `GitHub Copilot authentication failed: ${validation.reason}${statusText}`, inherited),
+      });
+      return checks;
     }
 
     const tokenData = validation.copilotTokenData;
@@ -259,23 +333,58 @@ export async function inspectGitHubTokenOnline({
     });
     const modelResp = await fetchImpl(`${apiBase}/models`, { headers, signal: controller.signal });
     if (!modelResp.ok) {
-      return [
-        { kind: "ok", message: `GitHub Copilot access verified for ${validation.login || "current account"}` },
-        { kind: "err", message: `Copilot models endpoint returned HTTP ${modelResp.status}` },
-      ];
+      checks.push(
+        { kind: "ok", message: onlineMessage(requestedProfile, `GitHub Copilot access verified for ${validation.login || "current account"}`, inherited) },
+        { kind: "err", message: onlineMessage(requestedProfile, `Copilot models endpoint returned HTTP ${modelResp.status}`, inherited) },
+      );
+      return checks;
     }
     const models = await modelResp.json();
     const data = Array.isArray(models) ? models : models?.data;
-    return [
-      { kind: "ok", message: `GitHub Copilot access verified for ${validation.login || "current account"}` },
-      { kind: "ok", message: `Copilot models endpoint returned ${Array.isArray(data) ? data.length : 0} models` },
-    ];
+    checks.push(
+      { kind: "ok", message: onlineMessage(requestedProfile, `GitHub Copilot access verified for ${validation.login || "current account"}`, inherited) },
+      { kind: "ok", message: onlineMessage(requestedProfile, `Copilot models endpoint returned ${Array.isArray(data) ? data.length : 0} models`, inherited) },
+    );
+    return checks;
   } catch (e) {
-    const reason = e?.name === "AbortError" ? `timed out after ${timeoutMs}ms` : e.message;
-    return [{ kind: "warn", message: `Online Copilot check failed: ${reason}` }];
+    const errorCode = e?.cause?.code || e?.code || "";
+    const reason = e?.name === "AbortError"
+      ? `timed out after ${timeoutMs}ms`
+      : `request failed${errorCode ? ` (${errorCode})` : ""}`;
+    checks.push({ kind: "warn", message: onlineMessage(requestedProfile, `Online Copilot check failed: ${reason}`, inherited) });
+    return checks;
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function inspectAuthProfilesOnline({
+  home = os.homedir(),
+  profile = AUTH_PROFILE_CODEX,
+  fetchImpl = fetch,
+  timeoutMs = 10000,
+} = {}) {
+  const selected = checkedDoctorProfile(profile);
+  if (selected !== "all") {
+    return inspectGitHubTokenOnline({ home, profile: selected, fetchImpl, timeoutMs });
+  }
+
+  let claudeConfigured = false;
+  let claudeReadFailed = false;
+  try {
+    claudeConfigured = readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home }).configured;
+  } catch {
+    claudeReadFailed = true;
+  }
+  const [codexChecks, claudeChecks] = await Promise.all([
+    inspectGitHubTokenOnline({ home, profile: AUTH_PROFILE_CODEX, fetchImpl, timeoutMs }),
+    claudeReadFailed
+      ? Promise.resolve([{ kind: "err", message: "Claude isolated authentication profile could not be inspected" }])
+      : claudeConfigured
+      ? inspectGitHubTokenOnline({ home, profile: AUTH_PROFILE_CLAUDE, fetchImpl, timeoutMs })
+      : Promise.resolve([{ kind: "ok", message: "Claude profile is not separately configured and inherits Codex authentication" }]),
+  ]);
+  return [...codexChecks, ...claudeChecks];
 }
 
 export function inspectCodexConfig({ home = os.homedir(), host = "127.0.0.1", port = 2026 } = {}) {
@@ -402,6 +511,7 @@ export async function collectDoctorChecks({
   checkAdapterListeningFn = checkAdapterListening,
   checkRunningAdapterFn = checkRunningAdapter,
   online = false,
+  profile = AUTH_PROFILE_CODEX,
   compat = false,
   fetchImpl = fetch,
   onlineTimeoutMs = 10000,
@@ -409,14 +519,19 @@ export async function collectDoctorChecks({
   inspectAdapterCompatibilityFn = inspectAdapterCompatibility,
 } = {}) {
   const checks = [
-    ...inspectGitHubToken({ home }),
+    ...inspectAuthProfiles({ home }),
     ...inspectCodexConfig({ home, host, port }),
     ...inspectClaudeCodeConfig({ home, host, port }),
     ...inspectClaudeAppConfig({ home, platform, env, host, port }),
   ];
 
   if (online) {
-    checks.push(...await inspectGitHubTokenOnline({ home, fetchImpl, timeoutMs: onlineTimeoutMs }));
+    checks.push(...await inspectAuthProfilesOnline({
+      home,
+      profile,
+      fetchImpl,
+      timeoutMs: onlineTimeoutMs,
+    }));
   }
 
   let running = null;
@@ -445,7 +560,33 @@ export async function collectDoctorChecks({
     if (!running?.ok) {
       checks.push({ kind: "err", message: "Compatibility checks require a running, version-compatible codex-copilot-dx adapter" });
     } else {
-      checks.push(...await inspectAdapterCompatibilityFn({ host, port, fetchImpl, timeoutMs: compatTimeoutMs }));
+      let claudeMode = "inherited";
+      let claudeModels;
+      try {
+        const claudeCredentials = readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home });
+        if (claudeCredentials.configured) {
+          claudeMode = "isolated";
+          if (claudeCredentials.valid) {
+            claudeModels = loadModelCache({
+              home,
+              profile: AUTH_PROFILE_CLAUDE,
+              credentialFingerprint: claudeCredentials.metadata?.token_fingerprint,
+            });
+          }
+        }
+      } catch {
+        // A configured-but-unreadable optional profile must not borrow the
+        // Codex catalog. Compatibility will report the Claude path unverified.
+        claudeMode = "isolated";
+      }
+      checks.push(...await inspectAdapterCompatibilityFn({
+        host,
+        port,
+        fetchImpl,
+        timeoutMs: compatTimeoutMs,
+        claudeMode,
+        claudeModels,
+      }));
     }
   }
 
@@ -454,7 +595,12 @@ export async function collectDoctorChecks({
 
 export async function runDoctor(options = {}) {
   const log = options.log || console.log;
-  const flags = [options.online ? "--online" : "", options.compat ? "--compat" : ""].filter(Boolean);
+  const profile = checkedDoctorProfile(options.profile);
+  const flags = [
+    options.online ? "--online" : "",
+    options.compat ? "--compat" : "",
+    profile !== AUTH_PROFILE_CODEX ? `--profile ${profile}` : "",
+  ].filter(Boolean);
   log(`${options.commandName || "ccdx"} doctor${flags.length ? ` ${flags.join(" ")}` : ""}`);
   const checks = await collectDoctorChecks(options);
   for (const check of checks) log(status(check.kind, check.message));

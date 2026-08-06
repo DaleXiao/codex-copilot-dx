@@ -8,6 +8,7 @@ import {
   classifyAdapterRoute,
   createRequestMetrics,
   isLoopbackAddress,
+  runtimeStatusPayload,
 } from "../src/observability.mjs";
 import { createRequestId, runWithRequestContext } from "../src/request-context.mjs";
 import { status } from "../src/status.mjs";
@@ -112,6 +113,135 @@ test("adapter route classification and loopback checks do not trust forwarded ad
   assert.equal(isLoopbackAddress(""), false);
 });
 
+test("runtime status exposes isolated profile health without credential material", () => {
+  const codexClient = {
+    runtimeStatus: () => ({
+      profile: "codex",
+      token_cached: true,
+      token_expires_in_ms: 90_000,
+      token_refresh_in_flight: false,
+      token_refresh_backoff_ms: 0,
+      account_bound: true,
+      upstream_host: "api.githubcopilot.com",
+      model_endpoint_cache_entries: 4,
+      model_list_flights: 1,
+      token: "codex-secret-token",
+      login: "enterprise-user",
+      credential_path: "/private/codex-token",
+      fingerprint: "codex-secret-fingerprint",
+    }),
+  };
+  const claudeClient = {
+    runtimeStatus: () => ({
+      profile: "claude",
+      token_cached: false,
+      token_expires_in_ms: null,
+      token_refresh_in_flight: true,
+      token_refresh_backoff_ms: 5000,
+      account_bound: false,
+      upstream_host: "api.githubcopilot.com",
+      model_endpoint_cache_entries: 2,
+      model_list_flights: 0,
+      token: "claude-secret-token",
+      login: "personal-user",
+      credential_path: "/private/claude-token",
+      fingerprint: "claude-secret-fingerprint",
+    }),
+  };
+  const payload = runtimeStatusPayload({
+    codexClient,
+    claudeClient,
+    codexModelRegistry: {
+      source: "live",
+      models: { data: [{ id: "gpt-a" }, { id: "gpt-b" }] },
+      modelDefs: [{ id: "claude-a" }],
+      cache_path: "/private/codex-models",
+    },
+    claudeModelRegistry: {
+      source: "custom-source",
+      models: { data: [{ id: "claude-a" }] },
+      modelDefs: [{ id: "claude-a" }],
+      cache_path: "/private/claude-models",
+    },
+    claudeMode: "isolated",
+  });
+
+  assert.equal(payload.profiles.codex.mode, "legacy");
+  assert.equal(payload.profiles.claude.mode, "isolated");
+  assert.deepEqual(payload.routing, { responses: "codex", messages: "claude" });
+  assert.deepEqual(payload.copilot, {
+    token_cached: true,
+    token_expires_in_ms: 90_000,
+    token_refresh_in_flight: false,
+    token_refresh_backoff_ms: 0,
+    account_bound: true,
+    upstream_host: "api.githubcopilot.com",
+    model_endpoint_cache_entries: 4,
+    model_list_flights: 1,
+  });
+  assert.deepEqual(payload.models, { source: "live", models: 2, claude_models: 1 });
+  assert.strictEqual(payload.copilot, payload.profiles.codex.client);
+  assert.strictEqual(payload.models, payload.profiles.codex.models);
+  assert.equal(payload.profiles.codex.models.source, "live");
+  assert.equal(payload.profiles.claude.models.source, "custom-source");
+  assert.equal(payload.profiles.codex.client.model_endpoint_cache_entries, 4);
+  assert.equal(payload.profiles.claude.client.token_refresh_in_flight, true);
+  assert.deepEqual(Object.keys(payload.profiles.codex.client), [
+    "token_cached",
+    "token_expires_in_ms",
+    "token_refresh_in_flight",
+    "token_refresh_backoff_ms",
+    "account_bound",
+    "upstream_host",
+    "model_endpoint_cache_entries",
+    "model_list_flights",
+  ]);
+  const serialized = JSON.stringify(payload);
+  for (const secret of [
+    "codex-secret-token",
+    "enterprise-user",
+    "/private/codex-token",
+    "codex-secret-fingerprint",
+    "claude-secret-token",
+    "personal-user",
+    "/private/claude-token",
+    "claude-secret-fingerprint",
+    "/private/codex-models",
+    "/private/claude-models",
+  ]) {
+    assert.equal(serialized.includes(secret), false);
+  }
+});
+
+test("runtime status reuses Codex health for an inherited Claude profile", () => {
+  let claudeStatusCalls = 0;
+  const codexClient = {
+    runtimeStatus: () => ({
+      token_cached: true,
+      token_expires_in_ms: 60_000,
+      upstream_host: "api.githubcopilot.com",
+    }),
+  };
+  const codexModelRegistry = {
+    source: "cache",
+    models: { data: [{ id: "gpt-a" }] },
+    modelDefs: [{ id: "claude-a" }],
+  };
+  const payload = runtimeStatusPayload({
+    codexClient,
+    claudeClient: { runtimeStatus: () => { claudeStatusCalls += 1; return {}; } },
+    codexModelRegistry,
+    claudeModelRegistry: { source: "live", models: { data: [] }, modelDefs: [] },
+    claudeMode: "inherited",
+  });
+
+  assert.equal(claudeStatusCalls, 0);
+  assert.equal(payload.profiles.claude.mode, "inherited");
+  assert.strictEqual(payload.profiles.claude.client, payload.profiles.codex.client);
+  assert.strictEqual(payload.profiles.claude.models, payload.profiles.codex.models);
+  assert.deepEqual(payload.routing, { responses: "codex", messages: "codex" });
+});
+
 test("runtime status is loopback-only and excludes its own probe from request metrics", async () => {
   const metrics = createRequestMetrics();
   const handler = createAdapterHandler({ requestMetrics: metrics });
@@ -139,6 +269,11 @@ test("runtime status is loopback-only and excludes its own probe from request me
   assert.equal(typeof payload.image_optimization.cache_inflight, "number");
   assert.equal(typeof payload.copilot.token_cached, "boolean");
   assert.equal(Object.hasOwn(payload.copilot, "token"), false);
+  assert.deepEqual(payload.copilot, payload.profiles.codex.client);
+  assert.deepEqual(payload.models, payload.profiles.codex.models);
+  assert.equal(payload.profiles.codex.mode, "legacy");
+  assert.equal(payload.profiles.claude.mode, "inherited");
+  assert.deepEqual(payload.routing, { responses: "codex", messages: "codex" });
 
   const remote = await invoke(handler, {
     url: ADAPTER_STATUS_PATH,
@@ -147,4 +282,31 @@ test("runtime status is loopback-only and excludes its own probe from request me
   });
   assert.equal(remote.statusCode, 403);
   assert.deepEqual(JSON.parse(remote.body), { error: "Runtime status is available only from loopback" });
+});
+
+test("adapter status wiring reports independently injected Codex and Claude profiles", async () => {
+  const client = (runtime) => ({
+    runtimeStatus: () => runtime,
+    chatCompletions: async () => {},
+    responses: async () => {},
+    responsesCompact: async () => {},
+    listModels: async () => ({ status: 200, body: '{"data":[]}' }),
+    getCachedModelEndpoints: () => null,
+  });
+  const handler = createAdapterHandler({
+    codexClient: client({ token_cached: true, upstream_host: "codex.example" }),
+    claudeClient: client({ token_cached: false, upstream_host: "claude.example" }),
+    codexModelRegistry: { source: "live", models: { data: [{ id: "gpt-a" }] }, modelDefs: [] },
+    claudeModelRegistry: { source: "cache", models: { data: [{ id: "claude-a" }] }, modelDefs: [{ id: "claude-a" }] },
+  });
+
+  const response = await invoke(handler, { url: ADAPTER_STATUS_PATH });
+  assert.equal(response.statusCode, 200);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.profiles.codex.client.upstream_host, "codex.example");
+  assert.equal(payload.profiles.claude.client.upstream_host, "claude.example");
+  assert.equal(payload.profiles.codex.models.models, 1);
+  assert.equal(payload.profiles.claude.models.claude_models, 1);
+  assert.equal(payload.profiles.claude.mode, "isolated");
+  assert.deepEqual(payload.routing, { responses: "codex", messages: "claude" });
 });

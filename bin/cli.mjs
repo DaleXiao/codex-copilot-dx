@@ -5,8 +5,8 @@ import { ensureCodexConfig } from "../src/config.mjs";
 import { ensureClaudeConfig } from "../src/claude-config.mjs";
 import { applyClaudeDesktopConfig, formatClaudeDesktopApplyResult, generatedClaudeDesktopApiKey, loadManagedClaudeDesktopApiKey, syncManagedClaudeDesktopModels } from "../src/claude-desktop-config.mjs";
 import { startAdapter } from "../src/adapter.mjs";
-import { cacheModelEndpoints, listModels, refreshVSCodeVersion } from "../src/copilot.mjs";
-import { claudeDesktopModelDefsFromCopilotModels, claudeDesktopModelIds, codexAutoReviewModelStatus, gptModelIdsFromCopilotModels, parseModelAliasEnv } from "../src/models.mjs";
+import { defaultCopilotClient, refreshVSCodeVersion } from "../src/copilot.mjs";
+import { claudeDesktopModelIds } from "../src/models.mjs";
 import { status } from "../src/status.mjs";
 import { configureLogging } from "../src/log.mjs";
 import { flushUsageWrites, printUsageSummary } from "../src/usage.mjs";
@@ -14,14 +14,16 @@ import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
 import { runDoctor } from "../src/doctor.mjs";
 import { adapterBaseUrl, checkRunningAdapter } from "../src/running-adapter.mjs";
 import { assertSafeAdapterHost, isLoopbackHost } from "../src/security.mjs";
-import { isValidModelList, loadModelCache, saveModelCache } from "../src/model-cache.mjs";
-import { initializeModelRegistry, runInBackground } from "../src/startup.mjs";
+import { runInBackground } from "../src/startup.mjs";
 import { cliCommandName, cliHelp, parseAdapterProbeOptions, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
 import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
 import { runAutoReviewModelCommand } from "../src/auto-review-model.mjs";
 import { autoReviewModelPreference } from "../src/user-settings.mjs";
 import { fetchLiveCopilotModels, formatLiveCopilotModels } from "../src/cli-models.mjs";
+import { runAuthCommand } from "../src/cli-auth.mjs";
+import { createProfileRuntime } from "../src/profile-runtime.mjs";
+import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
 const CLI_NAME = cliCommandName();
@@ -48,6 +50,29 @@ if (CLI.command === "usage") {
   await printUsageSummary();
   process.exit(0);
 }
+if (CLI.command === "auth") {
+  try {
+    const result = await runAuthCommand({
+      action: CLI.action,
+      profile: CLI.profile,
+      online: CLI.online,
+      reauth: CLI.reauth,
+      expectedLogin: CLI.expectedLogin,
+      commandName: CLI_NAME,
+    });
+    if (result.output) console.log(result.output);
+    if (result.action === "login") {
+      if (!result.changed) {
+        console.log(status("ok", `Claude profile is already configured for ${result.identity?.login || result.identity?.id || "the saved account"}`));
+      }
+      console.log(status("warn", `Restart the running ${CLI_NAME} adapter to activate the Claude profile`));
+    }
+    process.exit(0);
+  } catch (e) {
+    console.error(status("err", e.message));
+    process.exit(1);
+  }
+}
 if (CLI.command === "status") {
   let probe;
   try {
@@ -71,7 +96,7 @@ if (CLI.command === "status") {
 }
 if (CLI.command === "models") {
   try {
-    const catalog = await fetchLiveCopilotModels();
+    const catalog = await fetchLiveCopilotModels({ profile: CLI.profile });
     console.log(formatLiveCopilotModels(catalog, { commandName: CLI_NAME }));
     process.exit(0);
   } catch (e) {
@@ -113,7 +138,6 @@ const MODEL_REFRESH_TIMEOUT_MS = RUNTIME.modelRefreshTimeoutMs;
 const EXISTING_ADAPTER_TIMEOUT_MS = RUNTIME.existingAdapterTimeoutMs;
 const CONFIGURE_CLAUDE_DESKTOP = CLI.configureClaudeDesktop || process.env.CCDX_CONFIGURE_CLAUDE_DESKTOP === "1";
 const LOGGING = configureLogging();
-const MODEL_REGISTRY = { modelDefs: undefined, models: undefined, source: "built-in" };
 let activeServer = null;
 let modelRefreshTimer = null;
 let shuttingDown = false;
@@ -123,88 +147,11 @@ if (LOGGING.filePath) {
   if (LOGGING.level === "debug") console.log(status("debug", "Debug logging enabled"));
 }
 
-function applyModelsToRegistry(models, source, { updateClaudeModels = true } = {}) {
-  if (!isValidModelList(models)) throw new Error("Copilot models response contained no valid models");
-  const modelDefs = updateClaudeModels
-    ? claudeDesktopModelDefsFromCopilotModels(models)
-    : MODEL_REGISTRY.modelDefs;
-  cacheModelEndpoints(models);
-  MODEL_REGISTRY.models = models;
-  if (updateClaudeModels && modelDefs.length) {
-    MODEL_REGISTRY.modelDefs = modelDefs;
-    MODEL_REGISTRY.source = source;
-  }
-  return modelDefs;
-}
-
-function loadCachedModelRegistry() {
-  const cached = loadModelCache();
-  if (!cached) return false;
-  try {
-    const customAliases = parseModelAliasEnv(process.env.CCDX_CLAUDE_MODEL_ALIASES).length > 0;
-    applyModelsToRegistry(cached, "cache", { updateClaudeModels: !customAliases });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function refreshClaudeDesktopModelDefs() {
-  const customAliases = parseModelAliasEnv(process.env.CCDX_CLAUDE_MODEL_ALIASES).length > 0;
-
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), MODEL_REFRESH_TIMEOUT_MS);
-  try {
-    const { status: httpStatus, body } = await listModels({ signal: ctrl.signal });
-    if (httpStatus < 200 || httpStatus >= 300) {
-      throw new Error(`Copilot models returned HTTP ${httpStatus}`);
-    }
-    const models = JSON.parse(body);
-    const autoReview = codexAutoReviewModelStatus(models, process.env, {
-      autoReviewModel: autoReviewModelPreference().model,
-    });
-    if (!autoReview.available) {
-      console.log(status("warn", `Auto-review target ${autoReview.upstreamModel} is unavailable: ${autoReview.reason}. Run ${CLI_NAME} doctor --compat to verify the live path.`));
-    }
-    const gptModelIds = gptModelIdsFromCopilotModels(models);
-    if (gptModelIds.length) {
-      console.log(status("ok", `Refreshed GPT models from GitHub Copilot: ${gptModelIds.join(", ")}`));
-    } else {
-      console.log(status("warn", "Copilot models response contained no GPT models"));
-    }
-
-    const modelDefs = applyModelsToRegistry(models, "live", { updateClaudeModels: !customAliases });
-    try {
-      saveModelCache(models);
-    } catch (e) {
-      console.log(status("warn", `Could not persist the Copilot model cache (${e.message})`));
-    }
-    if (customAliases) {
-      console.log(status("info", "Using CCDX_CLAUDE_MODEL_ALIASES for Claude models"));
-    } else if (modelDefs?.length) {
-      console.log(status("ok", `Refreshed Claude models from GitHub Copilot: ${modelDefs.map((model) => model.id).join(", ")}`));
-    } else {
-      console.log(status("warn", "Copilot models response contained no Claude models; using built-in Claude models"));
-    }
-    syncClaudeDesktopProfileModels(MODEL_REGISTRY.modelDefs);
-    return modelDefs;
-  } catch (e) {
-    const fallback = MODEL_REGISTRY.modelDefs?.length ? `${MODEL_REGISTRY.source} model list` : "built-in model list";
-    const message = ctrl.signal.aborted
-      ? `Model refresh timed out after ${MODEL_REFRESH_TIMEOUT_MS}ms; using ${fallback}`
-      : `Could not refresh model list; using ${fallback} (${e.message})`;
-    console.log(status("warn", message));
-    return MODEL_REGISTRY.modelDefs;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function currentClaudeDesktopApiKey() {
   return String(process.env.CCDX_CLAUDE_DESKTOP_API_KEY || process.env.CCDX_PROXY_API_KEY || "").trim();
 }
 
-function syncClaudeDesktopProfileModels(modelDefs = MODEL_REGISTRY.modelDefs) {
+function syncClaudeDesktopProfileModels(modelDefs) {
   const result = syncManagedClaudeDesktopModels({
     port: ADAPTER_PORT,
     host: ADAPTER_HOST,
@@ -268,6 +215,7 @@ if (CLI.command === "doctor") {
     host: ADAPTER_HOST,
     online: CLI.online,
     compat: CLI.compat,
+    profile: CLI.profile,
   });
   process.exit(checks.some((check) => check.kind === "err") ? 1 : 0);
 }
@@ -296,14 +244,33 @@ try {
   // Ensure GitHub login, using device flow if no token exists.
   await ensureAuth();
 
+  const profileRuntime = createProfileRuntime({ codexClient: defaultCopilotClient });
+  if (profileRuntime.claudeMode === "isolated") {
+    if (profileRuntime.claudeProfile.valid) {
+      const account = profileRuntime.claudeProfile.identity?.login
+        || profileRuntime.claudeProfile.identity?.id
+        || "the saved account";
+      console.log(status("ok", `Claude requests will use the isolated GitHub account ${account}`));
+    } else {
+      console.log(status("warn", `Claude profile is configured but invalid (${profileRuntime.claudeProfile.reason}); Codex remains available, but Claude requests will fail until you run ${CLI_NAME} auth login claude --reauth and restart`));
+    }
+  }
+
+  const profileModels = createProfileModelRuntime({
+    codexClient: profileRuntime.codexClient,
+    claudeClient: profileRuntime.claudeClient,
+    claudeMode: profileRuntime.claudeMode,
+    claudeCredentialFingerprint: profileRuntime.claudeCredentialFingerprint,
+    timeoutMs: MODEL_REFRESH_TIMEOUT_MS,
+    commandName: CLI_NAME,
+    autoReviewModelResolver: () => autoReviewModelPreference().model,
+    onClaudeModelsChanged: syncClaudeDesktopProfileModels,
+  });
+
   // Refresh the VS Code version in the background; fallback is non-blocking.
   void refreshVSCodeVersion();
-  const modelInitialization = await initializeModelRegistry({
-    loadCached: loadCachedModelRegistry,
-    currentModelDefs: () => MODEL_REGISTRY.modelDefs,
-    refresh: refreshClaudeDesktopModelDefs,
-  });
-  const claudeDesktopModelDefs = modelInitialization.modelDefs;
+  const modelInitialization = await profileModels.initialize();
+  const claudeDesktopModelDefs = modelInitialization.claude.modelDefs;
   syncClaudeDesktopProfileModels(claudeDesktopModelDefs);
 
   if (!isLoopbackHost(ADAPTER_HOST)) {
@@ -327,7 +294,11 @@ try {
     claudeDesktopApiKey,
     claudeDesktopModelDefs,
     autoReviewModelResolver: () => autoReviewModelPreference().model,
-    modelRegistry: MODEL_REGISTRY,
+    codexClient: profileRuntime.codexClient,
+    claudeClient: profileRuntime.claudeClient,
+    codexModelRegistry: profileModels.codexRegistry,
+    claudeModelRegistry: profileModels.claudeRegistry,
+    claudeMode: profileRuntime.claudeMode,
     showRequestId: CLI.showRequestId,
     upstreamTimeoutMs: RUNTIME.upstreamTimeoutMs,
     streamHandshakeTimeoutMs: RUNTIME.streamHandshakeTimeoutMs,
@@ -358,7 +329,7 @@ try {
   const refreshIntervalMs = RUNTIME.modelRefreshIntervalMs;
   if (Number.isFinite(refreshIntervalMs) && refreshIntervalMs > 0) {
     modelRefreshTimer = setInterval(() => {
-      refreshClaudeDesktopModelDefs().catch(() => {});
+      profileModels.refreshAll().catch(() => {});
     }, refreshIntervalMs);
     modelRefreshTimer.unref?.();
   }

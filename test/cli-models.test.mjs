@@ -8,6 +8,12 @@ import {
   formatLiveCopilotModels,
   selectableCopilotModels,
 } from "../src/cli-models.mjs";
+import {
+  AUTH_PROFILE_CLAUDE,
+  authProfilePaths,
+  writeClaudeAuthProfile,
+} from "../src/auth-profile.mjs";
+import { githubTokenMetadataPath, githubTokenPath } from "../src/auth.mjs";
 
 function model(id, vendor, endpoints, overrides = {}) {
   return {
@@ -64,6 +70,9 @@ test("selectableCopilotModels rejects malformed responses", () => {
 
 test("fetchLiveCopilotModels validates the saved token and queries its Copilot API endpoint", async () => {
   const home = tokenHome();
+  const tokenPath = githubTokenPath(home);
+  const tokenBefore = fs.readFileSync(tokenPath);
+  const tokenMtimeBefore = fs.statSync(tokenPath).mtimeMs;
   const calls = [];
   const fetchImpl = async (url, init = {}) => {
     calls.push({ url, init });
@@ -82,6 +91,7 @@ test("fetchLiveCopilotModels validates the saved token and queries its Copilot A
   };
 
   const catalog = await fetchLiveCopilotModels({ home, fetchImpl, timeoutMs: 100 });
+  assert.equal(catalog.profile, "codex");
   assert.equal(catalog.upstreamHost, "api.enterprise.githubcopilot.com");
   assert.equal(catalog.advertised, 1);
   assert.equal(catalog.models[0].id, "gpt-5.6-sol");
@@ -89,6 +99,86 @@ test("fetchLiveCopilotModels validates the saved token and queries its Copilot A
   assert.equal(calls[2].url, "https://api.enterprise.githubcopilot.com/models");
   assert.equal(calls[2].init.redirect, "error");
   assert.equal(calls[2].init.headers.Authorization, "Bearer copilot-service-token");
+  assert.deepEqual(fs.readFileSync(tokenPath), tokenBefore);
+  assert.equal(fs.statSync(tokenPath).mtimeMs, tokenMtimeBefore);
+  assert.equal(fs.existsSync(githubTokenMetadataPath(home)), false);
+  assert.equal(fs.existsSync(path.join(home, ".local", "share", "codex-copilot-dx")), false);
+});
+
+test("fetchLiveCopilotModels reads the isolated Claude profile without falling back to Codex", async () => {
+  const home = tokenHome();
+  writeClaudeAuthProfile("saved-claude-token", { login: "personal", id: 2 }, { home });
+  const claudePaths = authProfilePaths(AUTH_PROFILE_CLAUDE, { home });
+  const claudeTokenBefore = fs.readFileSync(claudePaths.tokenPath);
+  const claudeMetadataBefore = fs.readFileSync(claudePaths.metadataPath);
+  const tokenMtimeBefore = fs.statSync(claudePaths.tokenPath).mtimeMs;
+  const metadataMtimeBefore = fs.statSync(claudePaths.metadataPath).mtimeMs;
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url, init });
+    if (url === "https://api.github.com/user") {
+      assert.equal(init.headers.Authorization, "token saved-claude-token");
+      return new Response(JSON.stringify({ login: "personal", id: 2 }), { status: 200 });
+    }
+    if (url === "https://api.github.com/copilot_internal/v2/token") {
+      assert.equal(init.headers.Authorization, "token saved-claude-token");
+      return new Response(JSON.stringify({
+        token: "claude-service-token",
+        endpoints: { api: "https://api.personal.githubcopilot.com" },
+      }), { status: 200 });
+    }
+    assert.equal(url, "https://api.personal.githubcopilot.com/models");
+    assert.equal(init.headers.Authorization, "Bearer claude-service-token");
+    return new Response(JSON.stringify({
+      data: [model("claude-sonnet-test", "Anthropic", ["/chat/completions"])],
+    }), { status: 200 });
+  };
+
+  const catalog = await fetchLiveCopilotModels({
+    home,
+    profile: "claude",
+    fetchImpl,
+    timeoutMs: 100,
+  });
+
+  assert.equal(catalog.profile, "claude");
+  assert.equal(catalog.upstreamHost, "api.personal.githubcopilot.com");
+  assert.deepEqual(catalog.models.map((entry) => entry.id), ["claude-sonnet-test"]);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(fs.readFileSync(claudePaths.tokenPath), claudeTokenBefore);
+  assert.deepEqual(fs.readFileSync(claudePaths.metadataPath), claudeMetadataBefore);
+  assert.equal(fs.statSync(claudePaths.tokenPath).mtimeMs, tokenMtimeBefore);
+  assert.equal(fs.statSync(claudePaths.metadataPath).mtimeMs, metadataMtimeBefore);
+  assert.equal(fs.existsSync(path.join(home, ".local", "share", "codex-copilot-dx")), false);
+});
+
+test("fetchLiveCopilotModels fails closed for missing or invalid Claude credentials", async (t) => {
+  await t.test("missing profile", async () => {
+    const home = tokenHome();
+    await assert.rejects(
+      fetchLiveCopilotModels({
+        home,
+        profile: "claude",
+        fetchImpl: async () => { throw new Error("must not use Codex"); },
+      }),
+      /not configured.*ccdx auth login claude/,
+    );
+  });
+
+  await t.test("fingerprint mismatch", async () => {
+    const home = tokenHome();
+    writeClaudeAuthProfile("saved-claude-token", { login: "personal", id: 2 }, { home });
+    const paths = authProfilePaths(AUTH_PROFILE_CLAUDE, { home });
+    fs.writeFileSync(paths.tokenPath, "replaced-claude-token", { mode: 0o600 });
+    await assert.rejects(
+      fetchLiveCopilotModels({
+        home,
+        profile: "claude",
+        fetchImpl: async () => { throw new Error("must not use Codex"); },
+      }),
+      /invalid \(token_metadata_mismatch\).*--reauth/,
+    );
+  });
 });
 
 test("fetchLiveCopilotModels reports missing credentials, auth failures, HTTP errors, and invalid JSON", async (t) => {
@@ -159,4 +249,23 @@ test("formatLiveCopilotModels reports live totals, capabilities, previews, and z
   assert.match(output, /Responses: 1; Chat: 1; Claude\/Anthropic: 0/);
   assert.match(output, /gemini-preview \[chat, preview\]/);
   assert.match(output, /gpt-5\.6-sol \[responses\]/);
+});
+
+test("formatLiveCopilotModels labels only the isolated Claude profile", () => {
+  const claude = formatLiveCopilotModels({
+    profile: "claude",
+    upstreamHost: "api.personal.githubcopilot.com",
+    advertised: 1,
+    models: [{ id: "claude-sonnet-test", vendor: "Anthropic", endpoints: ["chat"], preview: false }],
+  });
+  const codex = formatLiveCopilotModels({
+    profile: "codex",
+    upstreamHost: "api.enterprise.githubcopilot.com",
+    advertised: 1,
+    models: [{ id: "gpt-test", vendor: "OpenAI", endpoints: ["responses"], preview: false }],
+  });
+
+  assert.match(claude, /^ccdx models --profile claude/m);
+  assert.match(codex, /^ccdx models$/m);
+  assert.doesNotMatch(codex, /--profile codex/);
 });

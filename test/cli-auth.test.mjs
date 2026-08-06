@@ -1,0 +1,461 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  AUTH_PROFILE_CLAUDE,
+  readAuthProfileCredentials,
+  writeClaudeAuthProfile,
+} from "../src/auth-profile.mjs";
+import { githubTokenMetadataPath, githubTokenPath, writeToken } from "../src/auth.mjs";
+import {
+  authStatus,
+  authStatusOnline,
+  authorizeClaudeProfile,
+  formatAuthStatus,
+  runAuthCommand,
+  validateClaudeCandidate,
+} from "../src/cli-auth.mjs";
+import { loadModelCache } from "../src/model-cache.mjs";
+
+function jsonResponse(statusCode, body) {
+  const text = JSON.stringify(body);
+  return {
+    ok: statusCode >= 200 && statusCode < 300,
+    status: statusCode,
+    json: async () => body,
+    text: async () => text,
+  };
+}
+
+function modelResponse(models) {
+  return jsonResponse(200, { data: models });
+}
+
+function claudeModel(id = "claude-sonnet-test") {
+  return {
+    id,
+    vendor: "Anthropic",
+    model_picker_enabled: true,
+    policy: { state: "enabled" },
+    supported_endpoints: ["/chat/completions"],
+  };
+}
+
+function candidateFetch({ login = "personal", id = 2, models = [claudeModel()] } = {}) {
+  return async (url, options = {}) => {
+    if (url === "https://api.github.com/user") return jsonResponse(200, { login, id });
+    if (url === "https://api.github.com/copilot_internal/v2/token") {
+      return jsonResponse(200, {
+        token: "copilot_personal",
+        expires_at: 9999999999,
+        endpoints: { api: "https://api.personal.githubcopilot.com" },
+      });
+    }
+    if (url === "https://api.personal.githubcopilot.com/models") return modelResponse(models);
+    throw new Error(`unexpected request ${url} (${options.method || "GET"})`);
+  };
+}
+
+test("validateClaudeCandidate: accepts a distinct pinned account with Claude models", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-valid-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+
+  const result = await validateClaudeCandidate("ghu_personal", {
+    home,
+    expectedLogin: "PERSONAL",
+    fetchImpl: candidateFetch(),
+  });
+
+  assert.equal(result.identity.login, "personal");
+  assert.deepEqual(result.models.map((model) => model.id), ["claude-sonnet-test"]);
+});
+
+test("validateClaudeCandidate: rejects the wrong pinned account before writing", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-wrong-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+
+  await assert.rejects(
+    validateClaudeCandidate("ghu_other", {
+      home,
+      expectedLogin: "personal",
+      fetchImpl: candidateFetch({ login: "other", id: 3 }),
+    }),
+    /does not match requested Claude account personal/,
+  );
+  assert.equal(readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home }).configured, false);
+});
+
+test("validateClaudeCandidate: rejects the existing Codex account", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-same-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+
+  await assert.rejects(
+    validateClaudeCandidate("ghu_same", {
+      home,
+      fetchImpl: candidateFetch({ login: "enterprise", id: 1 }),
+    }),
+    /already the Codex account/,
+  );
+});
+
+test("validateClaudeCandidate: rejects Copilot accounts without enabled Claude models", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-models-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+
+  await assert.rejects(
+    validateClaudeCandidate("ghu_personal", {
+      home,
+      fetchImpl: candidateFetch({
+        models: [{
+          id: "gpt-test",
+          vendor: "OpenAI",
+          model_picker_enabled: true,
+          supported_endpoints: ["/responses"],
+        }],
+      }),
+    }),
+    /advertises no enabled Claude models/,
+  );
+});
+
+test("authorizeClaudeProfile: uses explicit device flow and leaves legacy Codex files byte-for-byte unchanged", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-device-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  const beforeToken = fs.readFileSync(githubTokenPath(home));
+  const beforeMetadata = fs.readFileSync(githubTokenMetadataPath(home));
+  const beforeTokenMtime = fs.statSync(githubTokenPath(home)).mtimeMs;
+  const beforeMetadataMtime = fs.statSync(githubTokenMetadataPath(home)).mtimeMs;
+  const urls = [];
+
+  const result = await authorizeClaudeProfile({
+    home,
+    env: { CCDX_TOKEN_LOCK_TIMEOUT_MS: "1000" },
+    expectedLogin: "personal",
+    log: () => {},
+    openAndCopyFn: () => {},
+    sleepImpl: async () => {},
+    now: () => 0,
+    fetchImpl: async (url, options = {}) => {
+      urls.push(url);
+      if (url === "https://github.com/login/device/code") {
+        return jsonResponse(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 1,
+          expires_in: 900,
+        });
+      }
+      if (url === "https://github.com/login/oauth/access_token") {
+        return jsonResponse(200, { access_token: "ghu_personal" });
+      }
+      return candidateFetch()(url, options);
+    },
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.identity.login, "personal");
+  assert.equal(result.modelCacheSaved, true);
+  assert.deepEqual(loadModelCache({ home, profile: "claude" }), result.catalog);
+  assert.equal(readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home }).token, "ghu_personal");
+  assert.deepEqual(fs.readFileSync(githubTokenPath(home)), beforeToken);
+  assert.deepEqual(fs.readFileSync(githubTokenMetadataPath(home)), beforeMetadata);
+  assert.equal(fs.statSync(githubTokenPath(home)).mtimeMs, beforeTokenMtime);
+  assert.equal(fs.statSync(githubTokenMetadataPath(home)).mtimeMs, beforeMetadataMtime);
+  assert.deepEqual(urls, [
+    "https://github.com/login/device/code",
+    "https://github.com/login/oauth/access_token",
+    "https://api.github.com/user",
+    "https://api.github.com/copilot_internal/v2/token",
+    "https://api.personal.githubcopilot.com/models",
+  ]);
+});
+
+test("authorizeClaudeProfile: failed reauth preserves the old Claude credential", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-reauth-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  writeClaudeAuthProfile("ghu_personal_old", { login: "personal", id: 2 }, { home });
+
+  await assert.rejects(
+    authorizeClaudeProfile({
+      home,
+      reauth: true,
+      log: () => {},
+      openAndCopyFn: () => {},
+      sleepImpl: async () => {},
+      now: () => 0,
+      fetchImpl: async (url, options = {}) => {
+        if (url === "https://github.com/login/device/code") {
+          return jsonResponse(200, {
+            device_code: "device",
+            user_code: "ABCD-1234",
+            verification_uri: "https://github.com/login/device",
+            interval: 1,
+          });
+        }
+        if (url === "https://github.com/login/oauth/access_token") {
+          return jsonResponse(200, { access_token: "ghu_personal_new" });
+        }
+        return candidateFetch({ login: "personal-new", id: 3, models: [] })(url, options);
+      },
+    }),
+    /advertises no enabled Claude models/,
+  );
+
+  const profile = readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home });
+  assert.equal(profile.valid, true);
+  assert.equal(profile.token, "ghu_personal_old");
+  assert.equal(profile.identity.login, "personal");
+});
+
+test("authorizeClaudeProfile: a concurrent Codex account change aborts before committing Claude", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-codex-race-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+
+  await assert.rejects(
+    authorizeClaudeProfile({
+      home,
+      env: { CCDX_TOKEN_LOCK_TIMEOUT_MS: "1000" },
+      expectedLogin: "personal",
+      log: () => {},
+      openAndCopyFn: () => {},
+      sleepImpl: async () => {},
+      now: () => 0,
+      fetchImpl: async (url, options = {}) => {
+        if (url === "https://github.com/login/device/code") {
+          return jsonResponse(200, {
+            device_code: "device",
+            user_code: "ABCD-1234",
+            verification_uri: "https://github.com/login/device",
+            interval: 1,
+            expires_in: 900,
+          });
+        }
+        if (url === "https://github.com/login/oauth/access_token") {
+          return jsonResponse(200, { access_token: "ghu_personal" });
+        }
+        if (url === "https://api.personal.githubcopilot.com/models") {
+          writeToken("ghu_personal_codex", home, { login: "personal", id: 2 });
+          return modelResponse([claudeModel()]);
+        }
+        return candidateFetch()(url, options);
+      },
+    }),
+    /Codex authentication changed while Claude was being authorized/,
+  );
+
+  const claude = readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home });
+  assert.equal(claude.configured, false);
+  assert.equal(claude.valid, false);
+});
+
+test("authorizeClaudeProfile: an existing profile cannot silently ignore a different login pin", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-pin-existing-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  writeClaudeAuthProfile("ghu_personal", { login: "personal", id: 2 }, { home });
+  const before = readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home });
+  let fetchCalls = 0;
+
+  await assert.rejects(
+    authorizeClaudeProfile({
+      home,
+      expectedLogin: "another-personal",
+      fetchImpl: async () => {
+        fetchCalls += 1;
+        throw new Error("must not fetch");
+      },
+    }),
+    /already authenticated as personal; use --reauth/,
+  );
+
+  assert.equal(fetchCalls, 0);
+  const after = readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home });
+  assert.equal(after.token, before.token);
+  assert.deepEqual(after.metadata, before.metadata);
+});
+
+test("authorizeClaudeProfile: cache failure warns without rolling back valid authentication", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-cache-failure-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  const lines = [];
+
+  const result = await authorizeClaudeProfile({
+    home,
+    log: (line) => lines.push(line),
+    openAndCopyFn: () => {},
+    sleepImpl: async () => {},
+    now: () => 0,
+    saveModelCacheFn: () => { throw new Error("disk full"); },
+    fetchImpl: async (url, options = {}) => {
+      if (url === "https://github.com/login/device/code") {
+        return jsonResponse(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 1,
+        });
+      }
+      if (url === "https://github.com/login/oauth/access_token") {
+        return jsonResponse(200, { access_token: "ghu_personal" });
+      }
+      return candidateFetch()(url, options);
+    },
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.modelCacheSaved, false);
+  assert.equal(readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home }).valid, true);
+  assert.equal(lines.some((line) => /model cache could not be saved \(disk full\)/.test(line)), true);
+});
+
+test("authorizeClaudeProfile: concurrent first-time callers share one device flow", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-concurrent-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  let deviceRequests = 0;
+  let releaseSleep;
+  let sleepStarted;
+  const sleeping = new Promise((resolve) => { sleepStarted = resolve; });
+  const fetchImpl = async (url, options = {}) => {
+    if (url === "https://github.com/login/device/code") {
+      deviceRequests += 1;
+      return jsonResponse(200, {
+        device_code: "device",
+        user_code: "ABCD-1234",
+        verification_uri: "https://github.com/login/device",
+        interval: 1,
+      });
+    }
+    if (url === "https://github.com/login/oauth/access_token") {
+      return jsonResponse(200, { access_token: "ghu_personal" });
+    }
+    return candidateFetch()(url, options);
+  };
+  const first = authorizeClaudeProfile({
+    home,
+    fetchImpl,
+    log: () => {},
+    openAndCopyFn: () => {},
+    now: () => 0,
+    sleepImpl: async () => {
+      sleepStarted();
+      await new Promise((resolve) => { releaseSleep = resolve; });
+    },
+  });
+  await sleeping;
+  const second = authorizeClaudeProfile({
+    home,
+    fetchImpl,
+    log: () => {},
+    openAndCopyFn: () => {},
+    now: () => 0,
+    sleepImpl: async () => {},
+  });
+  releaseSleep();
+
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  assert.equal(firstResult.changed, true);
+  assert.equal(secondResult.changed, false);
+  assert.equal(deviceRequests, 1);
+});
+
+test("authStatus: reports routing without exposing credentials", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-status-"));
+  writeToken("ghu_enterprise_secret", home, { login: "enterprise", id: 1 });
+  writeClaudeAuthProfile("ghu_personal_secret", { login: "personal", id: 2 }, { home });
+
+  const snapshot = authStatus({ home });
+  const output = formatAuthStatus(snapshot);
+  assert.equal(snapshot.routing.responses, "codex");
+  assert.equal(snapshot.routing.messages, "claude");
+  assert.match(output, /Codex: enterprise/);
+  assert.match(output, /Claude: personal/);
+  assert.doesNotMatch(JSON.stringify(snapshot), /ghu_/);
+  assert.doesNotMatch(output, /ghu_/);
+});
+
+test("authStatus: an unreadable Claude profile stays isolated without hiding Codex or leaking its path", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-status-unreadable-"));
+  writeToken("ghu_enterprise_secret", home, { login: "enterprise", id: 1 });
+  const claudeTokenPath = path.join(home, ".local", "share", "copilot-api", "profiles", "claude", "github_token");
+  fs.mkdirSync(claudeTokenPath, { recursive: true });
+
+  const snapshot = authStatus({ home });
+  const output = formatAuthStatus(snapshot);
+  assert.equal(snapshot.profiles.codex.valid, true);
+  assert.equal(snapshot.profiles.claude.configured, true);
+  assert.equal(snapshot.profiles.claude.valid, false);
+  assert.equal(snapshot.profiles.claude.reason, "credential_read_failed");
+  assert.equal(snapshot.routing.responses, "codex");
+  assert.equal(snapshot.routing.messages, "claude");
+  assert.match(output, /Codex: enterprise/);
+  assert.match(output, /Claude: invalid \(credential_read_failed\)/);
+  assert.doesNotMatch(output, new RegExp(home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("auth status --online validates Codex read-only and explains unconfigured Claude inheritance", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-online-inherit-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  const urls = [];
+  const result = await runAuthCommand({
+    action: "status",
+    online: true,
+    home,
+    fetchImpl: async (url) => {
+      urls.push(url);
+      if (url === "https://api.github.com/user") return jsonResponse(200, { login: "enterprise", id: 1 });
+      if (url === "https://api.github.com/copilot_internal/v2/token") {
+        return jsonResponse(200, {
+          token: "copilot_enterprise",
+          endpoints: { api: "https://api.enterprise.githubcopilot.com" },
+        });
+      }
+      if (url === "https://api.enterprise.githubcopilot.com/models") {
+        return modelResponse([{ id: "gpt-test", model_picker_enabled: true, supported_endpoints: ["/responses"] }]);
+      }
+      throw new Error(`unexpected request ${url}`);
+    },
+  });
+
+  assert.equal(result.snapshot.profiles.codex.online.ok, true);
+  assert.equal(result.snapshot.profiles.claude.online.inherited, true);
+  assert.match(result.output, /Claude: inherits Codex/);
+  assert.match(result.output, /Claude online: inherits the Codex profile/);
+  assert.equal(urls.some((url) => url.includes("/login/device")), false);
+  assert.equal(fs.existsSync(path.join(home, ".local", "share", "copilot-api", "profiles", "claude")), false);
+});
+
+test("authStatusOnline: one profile failure does not hide the other profile result", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-online-independent-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  writeClaudeAuthProfile("ghu_personal", { login: "personal", id: 2 }, { home });
+
+  const snapshot = await authStatusOnline({
+    home,
+    fetchImpl: async (url, options = {}) => {
+      const authorization = options.headers?.Authorization || "";
+      if (url === "https://api.github.com/user") {
+        if (authorization.endsWith("ghu_enterprise")) return jsonResponse(401, {});
+        return jsonResponse(200, { login: "personal", id: 2 });
+      }
+      if (url === "https://api.github.com/copilot_internal/v2/token") {
+        return jsonResponse(200, {
+          token: "copilot_personal",
+          endpoints: { api: "https://api.personal.githubcopilot.com" },
+        });
+      }
+      if (url === "https://api.personal.githubcopilot.com/models") {
+        return modelResponse([claudeModel(), { id: "gpt-test", model_picker_enabled: true, supported_endpoints: ["/responses"] }]);
+      }
+      throw new Error(`unexpected request ${url}`);
+    },
+  });
+
+  assert.equal(snapshot.profiles.codex.online.ok, false);
+  assert.equal(snapshot.profiles.codex.online.reason, "github_token_invalid");
+  assert.equal(snapshot.profiles.claude.online.ok, true);
+  assert.equal(snapshot.profiles.claude.online.login, "personal");
+  assert.equal(snapshot.profiles.claude.online.models, 2);
+  assert.equal(snapshot.profiles.claude.online.claudeModels, 1);
+});

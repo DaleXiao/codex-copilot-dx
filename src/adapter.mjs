@@ -1,6 +1,6 @@
 import http from "node:http";
 import { createAnthropicCountTokensHandler, createAnthropicMessagesHandler } from "./anthropic-handler.mjs";
-import { chatCompletions, listModels, responses as copilotResponses, responsesCompact as copilotResponsesCompact } from "./copilot.mjs";
+import { defaultCopilotClient } from "./copilot.mjs";
 import { isValidModelList } from "./model-cache.mjs";
 import { claudeDesktopModelsResponse } from "./models.mjs";
 import {
@@ -90,10 +90,46 @@ export function createAdapterHandler(options = {}) {
     || process.env.CCDX_CLAUDE_DESKTOP_API_KEY
     || process.env.CCDX_PROXY_API_KEY
     || "";
-  const chatCompletionsFn = options.chatCompletionsFn || chatCompletions;
-  const responsesFn = options.responsesFn || copilotResponses;
-  const responsesCompactFn = options.responsesCompactFn || copilotResponsesCompact;
-  const listModelsFn = options.listModelsFn || listModels;
+  const codexClient = options.codexClient || defaultCopilotClient;
+  const hasExplicitClaudeMode = Object.hasOwn(options, "claudeMode");
+  if (hasExplicitClaudeMode && !["inherited", "isolated"].includes(options.claudeMode)) {
+    throw new Error(`Unsupported Claude mode: ${options.claudeMode}`);
+  }
+  if (options.claudeMode === "isolated"
+    && (!options.claudeClient || options.claudeClient === codexClient)) {
+    throw new Error("Isolated Claude mode requires a distinct Claude client");
+  }
+  if (options.claudeMode === "inherited"
+    && options.claudeClient && options.claudeClient !== codexClient) {
+    throw new Error("Inherited Claude mode requires the Codex client");
+  }
+  const claudeClient = options.claudeClient || codexClient;
+  // chatCompletionsFn is retained as a compatibility injection and continues to
+  // override both surfaces in existing tests and embedders. New dual-profile
+  // callers should pass codexClient/claudeClient instead.
+  const codexChatCompletionsFn = options.codexChatCompletionsFn
+    || options.chatCompletionsFn
+    || codexClient.chatCompletions;
+  const claudeChatCompletionsFn = options.claudeChatCompletionsFn
+    || options.chatCompletionsFn
+    || claudeClient.chatCompletions;
+  const responsesFn = options.responsesFn || codexClient.responses;
+  const responsesCompactFn = options.responsesCompactFn || codexClient.responsesCompact;
+  const listModelsFn = options.listModelsFn || codexClient.listModels;
+  const getCachedModelEndpointsFn = options.getCachedModelEndpointsFn
+    || codexClient.getCachedModelEndpoints;
+  const claudeMode = hasExplicitClaudeMode
+    ? options.claudeMode
+    : claudeClient === codexClient ? "inherited" : "isolated";
+  if (claudeMode === "isolated" && options.chatCompletionsFn) {
+    throw new Error("Isolated Claude mode cannot use the shared chatCompletionsFn override; pass codexChatCompletionsFn or claudeChatCompletionsFn explicitly");
+  }
+  const codexModelRegistry = options.codexModelRegistry || options.modelRegistry;
+  const claudeModelRegistry = options.claudeModelRegistry || options.modelRegistry || codexModelRegistry;
+  if (claudeMode === "isolated"
+    && (!options.claudeModelRegistry || claudeModelRegistry === codexModelRegistry)) {
+    throw new Error("Isolated Claude mode requires a distinct Claude model registry");
+  }
   const openAIModelEnv = options.openAIModelEnv || process.env;
   const upstreamTimeoutMs = parsePositiveInteger(options.upstreamTimeoutMs, ADAPTER_RUNTIME_CONFIG.upstreamTimeoutMs);
   const streamHandshakeTimeoutMs = parsePositiveInteger(options.streamHandshakeTimeoutMs, ADAPTER_RUNTIME_CONFIG.streamHandshakeTimeoutMs);
@@ -102,13 +138,14 @@ export function createAdapterHandler(options = {}) {
   const requestMetrics = options.requestMetrics || createRequestMetrics();
   const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics();
   const claudeDesktopModelOptions = () => {
-    const modelDefs = options.modelRegistry?.modelDefs || options.claudeDesktopModelDefs;
+    const modelDefs = claudeModelRegistry?.modelDefs || options.claudeDesktopModelDefs;
     return Array.isArray(modelDefs) ? { modelDefs } : {};
   };
   const responsesHandler = createResponsesHandler({
     acquireRequest,
     autoReviewModelResolver: options.autoReviewModelResolver,
-    chatCompletionsFn,
+    chatCompletionsFn: codexChatCompletionsFn,
+    getCachedModelEndpointsFn,
     openAIModelEnv,
     responsesPayloadOptions: options.responsesPayloadOptions,
     responsesFn,
@@ -128,7 +165,7 @@ export function createAdapterHandler(options = {}) {
   const anthropicCountTokensHandler = createAnthropicCountTokensHandler({ acquireRequest });
   const anthropicMessagesHandler = createAnthropicMessagesHandler({
     acquireRequest,
-    chatCompletionsFn,
+    chatCompletionsFn: claudeChatCompletionsFn,
     environment: process.env,
     modelOptions: claudeDesktopModelOptions,
     streamHandshakeTimeoutMs,
@@ -148,7 +185,12 @@ export function createAdapterHandler(options = {}) {
         metrics: requestMetrics,
         streamPerformance: streamPerformanceMetrics,
         admission: acquireRequest,
-        modelRegistry: options.modelRegistry,
+        modelRegistry: codexModelRegistry,
+        codexClient,
+        claudeClient,
+        codexModelRegistry,
+        claudeModelRegistry,
+        claudeMode,
       })));
       return;
     }
@@ -181,24 +223,24 @@ export function createAdapterHandler(options = {}) {
             let models;
             try { models = JSON.parse(body); } catch {}
             if (isValidModelList(models)) {
-              if (options.modelRegistry) {
-                options.modelRegistry.models = models;
+              if (codexModelRegistry) {
+                codexModelRegistry.models = models;
               }
               res.writeHead(status, { "Content-Type": "application/json" });
               res.end(body);
               return;
             }
-            if (sendLastKnownGoodModels(res, options.modelRegistry)) return;
+            if (sendLastKnownGoodModels(res, codexModelRegistry)) return;
             sendJsonError(res, httpError("Copilot models response contained no valid models", 502), 502);
             return;
           }
-          if (modelListCanUseLastKnownGood(status) && sendLastKnownGoodModels(res, options.modelRegistry)) return;
+          if (modelListCanUseLastKnownGood(status) && sendLastKnownGoodModels(res, codexModelRegistry)) return;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(body);
         })
         .catch((e) => {
           logRequestFailure("Models", e, abort);
-          if (sendLastKnownGoodModels(res, options.modelRegistry)) return;
+          if (sendLastKnownGoodModels(res, codexModelRegistry)) return;
           if (!res.destroyed && !res.writableEnded) {
             if (!res.headersSent) res.writeHead(e?.statusCode || 502);
             res.end(JSON.stringify({ error: e.message }));

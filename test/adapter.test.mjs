@@ -1729,6 +1729,147 @@ test("HTTP models route rejects malformed live data when no last-known-good list
   assert.match(JSON.parse(result.text).error, /no valid models/);
 });
 
+test("createAdapterHandler rejects contradictory explicit Claude routing modes", () => {
+  const codexClient = {};
+  const claudeClient = {};
+
+  assert.throws(
+    () => createAdapterHandler({ codexClient, claudeMode: "isolated" }),
+    /requires a distinct Claude client/,
+  );
+  assert.throws(
+    () => createAdapterHandler({ codexClient, claudeClient: codexClient, claudeMode: "isolated" }),
+    /requires a distinct Claude client/,
+  );
+  assert.throws(
+    () => createAdapterHandler({ codexClient, claudeClient, claudeMode: "inherited" }),
+    /requires the Codex client/,
+  );
+  assert.throws(
+    () => createAdapterHandler({ codexClient, claudeClient, claudeMode: "isolated" }),
+    /requires a distinct Claude model registry/,
+  );
+  const sharedRegistry = {};
+  assert.throws(
+    () => createAdapterHandler({
+      codexClient,
+      claudeClient,
+      claudeMode: "isolated",
+      codexModelRegistry: sharedRegistry,
+      claudeModelRegistry: sharedRegistry,
+    }),
+    /requires a distinct Claude model registry/,
+  );
+  assert.throws(
+    () => createAdapterHandler({
+      codexClient,
+      claudeClient,
+      claudeMode: "isolated",
+      claudeModelRegistry: {},
+      chatCompletionsFn: async () => Response.json({}),
+    }),
+    /cannot use the shared chatCompletionsFn override/,
+  );
+  assert.throws(
+    () => createAdapterHandler({ codexClient, claudeMode: "other" }),
+    /Unsupported Claude mode/,
+  );
+  assert.doesNotThrow(() => createAdapterHandler({
+    codexClient,
+    claudeClient: codexClient,
+    claudeMode: "inherited",
+  }));
+  assert.doesNotThrow(() => createAdapterHandler({
+    codexClient,
+    claudeClient,
+    claudeModelRegistry: {},
+  }));
+});
+
+test("HTTP routes keep Codex and Claude clients isolated, including Responses fallback and model discovery", async () => {
+  const calls = [];
+  const codexClient = {
+    getCachedModelEndpoints(model) {
+      return model === "gpt-native" ? ["/responses"] : ["/chat/completions"];
+    },
+    async responses(body) {
+      calls.push(["codex.responses", body.model]);
+      return Response.json({ id: "resp_native", status: "completed", output: [] });
+    },
+    async responsesCompact(body) {
+      calls.push(["codex.compact", body.model]);
+      return Response.json({
+        id: "resp_compact",
+        status: "completed",
+        output: [{ type: "compaction", encrypted_content: "snapshot" }],
+      });
+    },
+    async chatCompletions(body) {
+      calls.push(["codex.chat", body.model]);
+      return Response.json({
+        id: "chat_codex",
+        model: body.model,
+        choices: [{ message: { role: "assistant", content: "codex" } }],
+      });
+    },
+    async listModels() {
+      calls.push(["codex.models"]);
+      return { status: 200, body: JSON.stringify({ data: [{ id: "gpt-native" }] }) };
+    },
+  };
+  const claudeClient = {
+    async chatCompletions(body) {
+      calls.push(["claude.chat", body.model]);
+      return Response.json({
+        id: "chat_claude",
+        model: body.model,
+        choices: [{ message: { role: "assistant", content: "claude" } }],
+      });
+    },
+  };
+  const options = {
+    codexClient,
+    claudeClient,
+    claudeDesktopApiKey: "claude-key",
+    codexModelRegistry: { models: { data: [{ id: "gpt-cached" }] } },
+    claudeModelRegistry: {
+      modelDefs: [{ id: "claude-personal", upstream: "claude-personal", displayName: "Claude Personal" }],
+    },
+  };
+
+  assert.equal((await invokeAdapter(options, {
+    body: { model: "gpt-native", input: "native" },
+  })).status, 200);
+  assert.equal((await invokeAdapter(options, {
+    body: { model: "gpt-chat", input: "fallback" },
+  })).status, 200);
+  assert.equal((await invokeAdapter(options, {
+    url: "/v1/responses/compact",
+    body: { model: "gpt-native", input: "compact" },
+  })).status, 200);
+  assert.equal((await invokeAdapter(options, {
+    url: "/v1/messages",
+    body: { model: "claude-personal", messages: [{ role: "user", content: "hello" }] },
+  })).status, 200);
+
+  const codexModels = await invokeAdapter(options, { method: "GET", url: "/v1/models" });
+  assert.deepEqual(JSON.parse(codexModels.text).data.map(({ id }) => id), ["gpt-native"]);
+  const claudeModels = await invokeAdapter(options, {
+    method: "GET",
+    url: "/v1/models",
+    headers: { authorization: "Bearer claude-key" },
+  });
+  assert.deepEqual(JSON.parse(claudeModels.text).data.map(({ id }) => id), ["claude-personal"]);
+
+  assert.deepEqual(calls, [
+    ["codex.responses", "gpt-native"],
+    ["codex.chat", "gpt-chat"],
+    ["codex.compact", "gpt-native"],
+    ["claude.chat", "claude-personal"],
+    ["codex.models"],
+  ]);
+});
+
 test("stripInternalResponsesInputFields: drops only top-level internal input fields", () => {
   const input = [
     {

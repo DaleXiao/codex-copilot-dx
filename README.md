@@ -4,7 +4,8 @@ Use [Codex Desktop](https://openai.com/codex), [Claude Code](https://claude.com/
 
 ## How it works
 
-A single in-process adapter (port `2026`) exposes both APIs over your Copilot subscription:
+A single in-process adapter (port `2026`) exposes both APIs over one Copilot
+account by default, or over isolated Codex and Claude accounts when configured:
 
 - **Codex** -> OpenAI Responses API (`/v1/responses`, `/v1/responses/compact`); Responses-only models and compaction proxy directly, chat models convert to Chat Completions.
 - **Claude Code** -> Anthropic Messages API (`/v1/messages`, `/v1/messages/count_tokens`), translated to/from Chat Completions.
@@ -33,8 +34,8 @@ global install, use `npx codex-copilot-dx@latest`.
 Both installed commands expose the same options and subcommands; help, version,
 doctor, status, and argument-error output use the command name that was invoked.
 
-To query the models currently advertised as selectable for the saved Copilot
-account, run:
+To query the models currently advertised as selectable for the saved Codex
+Copilot account, run:
 
 ```bash
 ccdx models
@@ -47,6 +48,54 @@ advertised API capabilities and reports the live Claude/Anthropic count. A model
 being advertised does not guarantee that a later inference request will avoid
 quota, rate-limit, or policy enforcement. `codex-copilot-dx models` is fully
 equivalent.
+
+### Separate GitHub account for Claude
+
+The default remains fully backward compatible: Codex and Claude requests share
+the existing GitHub authentication. To keep an enterprise account for Codex
+while using a different personal account that has Claude models enabled, run:
+
+```bash
+ccdx auth login claude --github-login <personal-github-login>
+```
+
+This is the only command that starts the additional Device Flow. It verifies
+the selected GitHub identity, Copilot entitlement, and an enabled Claude model
+before saving anything. It refuses the current Codex account and never changes,
+migrates, or deletes the existing Codex credential. The optional login pin is
+recommended so authorizing the wrong browser account fails before activation.
+
+The existing Codex token remains at
+`~/.local/share/copilot-api/github_token`. The isolated Claude credential is
+stored with mode `0600` under
+`~/.local/share/copilot-api/profiles/claude/github_token`, with matching account
+metadata committed last. Restart a running adapter after authentication.
+
+Once enabled, routing is fixed by API surface rather than by model name:
+
+- `/v1/responses`, `/v1/responses/compact`, their Chat fallback, and normal
+  `/v1/models` use the Codex account.
+- `/v1/messages` and Claude App model discovery use the isolated Claude account.
+- `/v1/messages/count_tokens` remains local and uses neither account.
+
+The two profiles keep separate service tokens, API bases, refresh/backoff state,
+model endpoint metadata, and model caches. If the isolated Claude profile later
+becomes invalid, Claude requests fail with a reauthentication instruction while
+Codex remains available; CCDX never silently falls back to the enterprise
+account. Reauthorize it explicitly with:
+
+```bash
+ccdx auth login claude --reauth --github-login <personal-github-login>
+```
+
+These commands are read-only and never start Device Flow:
+
+```bash
+ccdx auth status
+ccdx auth status --online
+ccdx models --profile claude
+ccdx doctor --online --profile all
+```
 
 To change the model used by Codex Auto-review, run:
 
@@ -123,6 +172,9 @@ ccdx doctor --online
 ```
 
 The online doctor never starts device flow, scans for replacement tokens, or changes the saved token.
+Use `--profile codex`, `--profile claude`, or `--profile all` to choose which
+account entitlement is checked. Without `--profile`, the legacy Codex check is
+preserved.
 
 To actively verify the protocol path through an already-running adapter, run:
 

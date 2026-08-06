@@ -118,8 +118,50 @@ function modelRegistryStatus(modelRegistry) {
   };
 }
 
-export function runtimeStatusPayload({ metrics, streamPerformance, admission, modelRegistry } = {}) {
+function finiteRuntimeNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function safeClientRuntimeStatus(client) {
+  const runtime = typeof client?.runtimeStatus === "function"
+    ? client.runtimeStatus()
+    : copilotRuntimeStatus();
+  return {
+    token_cached: runtime?.token_cached === true,
+    token_expires_in_ms: runtime?.token_expires_in_ms === null
+      ? null
+      : finiteRuntimeNumber(runtime?.token_expires_in_ms, null),
+    token_refresh_in_flight: runtime?.token_refresh_in_flight === true,
+    token_refresh_backoff_ms: finiteRuntimeNumber(runtime?.token_refresh_backoff_ms),
+    account_bound: runtime?.account_bound === true,
+    upstream_host: typeof runtime?.upstream_host === "string" ? runtime.upstream_host : "unknown",
+    model_endpoint_cache_entries: finiteRuntimeNumber(runtime?.model_endpoint_cache_entries),
+    model_list_flights: finiteRuntimeNumber(runtime?.model_list_flights),
+  };
+}
+
+export function runtimeStatusPayload({
+  metrics,
+  streamPerformance,
+  admission,
+  modelRegistry,
+  codexClient,
+  claudeClient,
+  codexModelRegistry,
+  claudeModelRegistry,
+  claudeMode = "inherited",
+} = {}) {
   const memory = process.memoryUsage();
+  const resolvedClaudeMode = claudeMode === "isolated" ? "isolated" : "inherited";
+  const codexRuntime = safeClientRuntimeStatus(codexClient);
+  const codexModels = modelRegistryStatus(codexModelRegistry || modelRegistry);
+  const claudeRuntime = resolvedClaudeMode === "isolated"
+    ? safeClientRuntimeStatus(claudeClient)
+    : codexRuntime;
+  const claudeModels = resolvedClaudeMode === "isolated"
+    ? modelRegistryStatus(claudeModelRegistry)
+    : codexModels;
   return {
     ...adapterHealthPayload(),
     uptime_ms: Math.round(process.uptime() * 1000),
@@ -135,8 +177,16 @@ export function runtimeStatusPayload({ metrics, streamPerformance, admission, mo
     admission: admission?.diagnostics?.() || admission?.stats?.() || null,
     response_history: responseHistoryStats(),
     image_optimization: imageOptimizationStats(),
-    copilot: copilotRuntimeStatus(),
-    models: modelRegistryStatus(modelRegistry),
+    copilot: codexRuntime,
+    models: codexModels,
+    profiles: {
+      codex: { mode: "legacy", client: codexRuntime, models: codexModels },
+      claude: { mode: resolvedClaudeMode, client: claudeRuntime, models: claudeModels },
+    },
+    routing: {
+      responses: "codex",
+      messages: resolvedClaudeMode === "isolated" ? "claude" : "codex",
+    },
     limits: {
       max_body_bytes: OBSERVABILITY_RUNTIME_CONFIG.maxBodyBytes,
       max_decoded_body_bytes: OBSERVABILITY_RUNTIME_CONFIG.maxDecodedBodyBytes,

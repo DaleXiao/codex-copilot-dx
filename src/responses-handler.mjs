@@ -34,8 +34,8 @@ const RESPONSES_ONLY_FALLBACK = new Set([
   "gpt-5.2-codex",
 ]);
 
-function isResponsesOnlyModel(model) {
-  const endpoints = getCachedModelEndpoints(model);
+function isResponsesOnlyModel(model, getCachedModelEndpointsFn = getCachedModelEndpoints) {
+  const endpoints = getCachedModelEndpointsFn(model);
   if (endpoints) {
     const fakeModel = { supported_endpoints: endpoints };
     if (modelSupportsChatCompletions(fakeModel)) return false;
@@ -44,8 +44,8 @@ function isResponsesOnlyModel(model) {
   return RESPONSES_ONLY_FALLBACK.has(model);
 }
 
-function cachedModelSupportsResponses(model) {
-  const endpoints = getCachedModelEndpoints(model);
+function cachedModelSupportsResponses(model, getCachedModelEndpointsFn = getCachedModelEndpoints) {
+  const endpoints = getCachedModelEndpointsFn(model);
   return Array.isArray(endpoints)
     && (endpoints.includes("/responses") || endpoints.includes("/v1/responses"));
 }
@@ -78,6 +78,7 @@ export function createResponsesHandler(options) {
     acquireRequest,
     autoReviewModelResolver,
     chatCompletionsFn,
+    getCachedModelEndpointsFn = getCachedModelEndpoints,
     openAIModelEnv,
     responsesPayloadOptions,
     responsesFn,
@@ -105,8 +106,8 @@ export function createResponsesHandler(options) {
       console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${!!parsed.stream}`));
       const usesCustomTools = responsesBodyUsesCustomTools(prepared.body);
       const useNativeResponses = requestedModel === CODEX_AUTO_REVIEW_MODEL
-        || isResponsesOnlyModel(upstreamModel)
-        || (usesCustomTools && cachedModelSupportsResponses(upstreamModel));
+        || isResponsesOnlyModel(upstreamModel, getCachedModelEndpointsFn)
+        || (usesCustomTools && cachedModelSupportsResponses(upstreamModel, getCachedModelEndpointsFn));
       if (usesCustomTools && !useNativeResponses) throw unsupportedCustomToolsError(upstreamModel);
       if (useNativeResponses) {
         await proxyCopilotResponses(prepared, req, res, responsesFn, {

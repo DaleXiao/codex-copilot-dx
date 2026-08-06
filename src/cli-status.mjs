@@ -51,6 +51,25 @@ function cacheHitRate(cache = {}) {
   return `${((hits / (hits + misses)) * 100).toFixed(1)}%`;
 }
 
+function profileSummary(label, profile = {}) {
+  const client = profile.client || {};
+  const models = profile.models || {};
+  const mode = ["legacy", "inherited", "isolated"].includes(profile.mode)
+    ? profile.mode
+    : "unknown";
+  const source = typeof models.source === "string" && models.source ? models.source : "unknown";
+  const token = client.token_cached
+    ? `token cached (${duration(client.token_expires_in_ms)} remaining)`
+    : "token not cached";
+  return `${label} ${mode}: ${token}, ${count(models.models)} total/${count(models.claude_models)} Claude models (${source})`;
+}
+
+function routingTarget(value) {
+  if (value === "codex") return "Codex";
+  if (value === "claude") return "Claude";
+  return "unknown";
+}
+
 export async function readAdapterStatus({
   host = "127.0.0.1",
   port = 2026,
@@ -107,7 +126,7 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
     ? status("ok", `Adapter ${data.version} is running at ${baseUrl} (PID ${data.pid}, uptime ${duration(data.uptime_ms)})`)
     : status("warn", `Adapter ${data.version} is running at ${baseUrl}, but this CLI is ${cliVersion}; stop the running adapter before switching versions`);
 
-  return [
+  const lines = [
     `${commandName} status`,
     adapterLine,
     status("info", `Requests: ${count(requests.completed)}/${count(requests.total)} completed, ${count(requests.active)} active, ${count(requests.status_4xx)} 4xx, ${count(requests.status_5xx)} 5xx, ${count(requests.aborted)} aborted`),
@@ -117,6 +136,13 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
     status("info", `History: ${mebibytes(history.bytes)} / ${mebibytes(limits.response_history_max_bytes)}, ${count(history.entries)} entries, ${count(history.evicted)} evicted`),
     status("info", `Image cache: ${count(images.cache_entries)} entries, ${cacheHitRate(images)} hits, ${mebibytes(images.cache_bytes)} / ${mebibytes(images.cache_max_bytes)}`),
     status("info", `Models: ${count(models.models)} total, ${count(models.claude_models)} Claude; Copilot token ${copilot.token_cached ? `cached (${duration(copilot.token_expires_in_ms)} remaining)` : "not cached"}`),
-    status("info", `Limits: request body ${mebibytes(limits.max_body_bytes)}, decoded body ${mebibytes(limits.max_decoded_body_bytes)}`),
-  ].join("\n");
+  ];
+  if (data.profiles?.codex || data.profiles?.claude) {
+    lines.push(status("info", `Profiles: ${profileSummary("Codex", data.profiles?.codex)}; ${profileSummary("Claude", data.profiles?.claude)}`));
+  }
+  if (data.routing) {
+    lines.push(status("info", `Routing: /v1/responses -> ${routingTarget(data.routing.responses)}; /v1/messages -> ${routingTarget(data.routing.messages)}`));
+  }
+  lines.push(status("info", `Limits: request body ${mebibytes(limits.max_body_bytes)}, decoded body ${mebibytes(limits.max_decoded_body_bytes)}`));
+  return lines.join("\n");
 }

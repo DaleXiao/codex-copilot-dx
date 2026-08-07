@@ -1,6 +1,6 @@
 # codex-copilot-dx
 
-Use [Codex Desktop](https://openai.com/codex), [Claude Code](https://claude.com/claude-code), and optionally Claude App with your **GitHub Copilot** subscription.
+Use [Codex Desktop](https://openai.com/codex), [Claude Code](https://claude.com/claude-code), and optionally Claude App or PM Studio with your **GitHub Copilot** subscription.
 
 ## How it works
 
@@ -10,6 +10,7 @@ account by default, or over isolated Codex and Claude accounts when configured:
 - **Codex** -> OpenAI Responses API (`/v1/responses`, `/v1/responses/compact`); Responses-only models and compaction proxy directly, chat models convert to Chat Completions.
 - **Claude Code** -> Anthropic Messages API (`/v1/messages`, `/v1/messages/count_tokens`), translated to/from Chat Completions.
 - **Claude App** -> optional Claude Desktop App gateway profile using the same local Messages API plus local model discovery for the configured gateway key.
+- **PM Studio** -> optional macOS app patch that keeps the active PM profile for GPT models while routing enabled Claude models through an isolated CCDX Claude account.
 
 Supports both HTTP SSE streaming and non-streaming.
 
@@ -19,7 +20,7 @@ Codex Auto-review requests use the hidden `codex-auto-review` model ID. The adap
 
 - GitHub Copilot subscription (Individual, Business, or Enterprise)
 - Node.js 22.15+ (required for built-in Zstandard request decompression)
-- [Codex Desktop](https://openai.com/codex), [Claude Code](https://claude.com/claude-code), and/or Claude App installed
+- [Codex Desktop](https://openai.com/codex), [Claude Code](https://claude.com/claude-code), Claude App, and/or a supported PM Studio installation
 
 ## Usage
 
@@ -96,6 +97,74 @@ ccdx auth status --online
 ccdx models --profile claude
 ccdx doctor --online --profile all
 ```
+
+### PM Studio opt-in patch
+
+CCDX can add the isolated Claude catalog to PM Studio without switching its
+active account or profile. GPT requests continue to use the bearer supplied by
+the current PM profile; exact enabled Anthropic model IDs use the isolated
+CCDX Claude profile. Neither credential is copied into the other application.
+
+The first recipe supports only an exact, unmodified PM Studio 2.9.7 bundle on
+macOS. Authorize the isolated Claude profile first, quit PM Studio and its
+updater, then run the one-time setup command:
+
+```bash
+ccdx auth login claude --reauth --github-login <personal-github-login>
+ccdx pms setup
+```
+
+`ccdx pms setup` performs only local preflight, backup, staging, integrity,
+signing, and replacement work. It never starts Device Flow, the adapter,
+Codex, or PM Studio, and it does not modify PM profiles, cached model lists, or
+saved PM tokens. Unknown versions, hashes, signatures, partial patches, a
+running PM process, insufficient space, and every pre-replacement verification
+failure leave the installed App unchanged. If the final read-only verification
+after an atomic replacement detects an exceptional filesystem drift, setup
+does not attempt a second automatic write: it preserves the verified backup,
+retains any diagnostic stage still present, and prints recovery paths. Repeating
+setup for the exact installed recipe is idempotent.
+
+The patch is App-wide: every PM profile sends its Copilot API traffic through
+the loopback-only `/pm-ccdx/*` relay. Run ordinary `ccdx` before opening PM
+Studio; if port 2026 is unavailable, PM Copilot requests cannot connect. The
+relay explicitly supports only the PM 2.9.7 Copilot paths discovered in the
+validated bundle (`GET /models` and `POST /chat/completions`, `/responses`, and
+`/embeddings`) and is not a general-purpose proxy.
+
+Patching replaces the vendor signature with an ad-hoc signature. PM Studio's
+updater is not disabled; an official update may overwrite the patch or may
+require reinstalling the official App. Setup prints the verified backup and
+manifest paths plus the version-matched restore procedure. Never restore a
+2.9.7 backup over a newer PM Studio installation.
+
+To restore, first quit PM Studio and its updater. Use the exact verified backup
+path printed by setup as `BACKUP_APP`, then confirm that both the installed App
+and backup still report version/build `2.9.7/2.9.7`:
+
+```bash
+BACKUP_APP="<verified-backup-path-from-ccdx-pms-setup>"
+/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "/Applications/PM Studio.app/Contents/Info.plist"
+/usr/bin/plutil -extract CFBundleVersion raw -o - "/Applications/PM Studio.app/Contents/Info.plist"
+/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$BACKUP_APP/Contents/Info.plist"
+/usr/bin/plutil -extract CFBundleVersion raw -o - "$BACKUP_APP/Contents/Info.plist"
+```
+
+Only when all four values match `2.9.7`, move the patched App aside, restore the
+complete vendor-signed backup, and verify it before launch:
+
+```bash
+RECOVERY_DIR="$(/usr/bin/mktemp -d '/Applications/CCDX-PM-Studio-recovery.XXXXXX')"
+PATCHED_APP="$RECOVERY_DIR/PM Studio.app"
+mv "/Applications/PM Studio.app" "$PATCHED_APP"
+/usr/bin/ditto --rsrc --extattr --acl "$BACKUP_APP" "/Applications/PM Studio.app"
+/usr/bin/codesign --verify --deep --strict --verbose=2 "/Applications/PM Studio.app"
+```
+
+If the version check, copy, or signature verification fails, do not launch the
+restored App. Keep the moved patched bundle at `$PATCHED_APP` and reinstall the official PM Studio
+instead of applying a 2.9.7 backup to unknown content. CCDX never runs these
+restore commands or `sudo` automatically.
 
 To change the model used by Codex Auto-review, run:
 

@@ -49,6 +49,7 @@ async function invokeAdapter(options, { method = "POST", url = "/v1/responses", 
   const req = jsonRequest(Buffer.from(JSON.stringify(body ?? {})), undefined, { "content-type": "application/json", ...headers });
   req.method = method;
   req.url = url;
+  req.socket = { remoteAddress: "127.0.0.1" };
 
   const res = new EventEmitter();
   res.destroyed = false;
@@ -135,6 +136,66 @@ test("HTTP count_tokens route awaits the lazy tokenizer", async () => {
 
   assert.equal(result.status, 200);
   assert.ok(JSON.parse(result.text).input_tokens > 0);
+});
+
+test("PM Studio namespace is mounted on the existing adapter with isolated identity routing", async () => {
+  const enterpriseCalls = [];
+  const claudeCalls = [];
+  const claudeModel = {
+    id: "claude-personal",
+    vendor: "Anthropic",
+    model_picker_enabled: true,
+    supported_endpoints: ["/chat/completions"],
+  };
+  const pmStudioFetchImpl = async (url, init) => {
+    enterpriseCalls.push({ url, authorization: new Headers(init.headers).get("authorization") });
+    if (url.endsWith("/models")) {
+      return Response.json({ data: [{ id: "gpt-enterprise", vendor: "OpenAI" }] });
+    }
+    return Response.json({ id: "pm-response" });
+  };
+  const codexClient = { chatCompletions: async () => Response.json({}) };
+  const claudeClient = {
+    async chatCompletions(body, { fetchImpl, signal }) {
+      claudeCalls.push(body.model);
+      return fetchImpl("https://api.githubcopilot.com/chat/completions", {
+        method: "POST",
+        headers: { Authorization: "Bearer isolated-claude" },
+        body: JSON.stringify(body),
+        signal,
+      });
+    },
+  };
+  const options = {
+    codexClient,
+    claudeClient,
+    claudeMode: "isolated",
+    claudeProfile: { valid: true },
+    codexModelRegistry: {},
+    claudeModelRegistry: { models: { data: [claudeModel] } },
+    pmStudioFetchImpl,
+  };
+
+  const models = await invokeAdapter(options, {
+    method: "GET",
+    url: "/pm-ccdx/models",
+    headers: { authorization: "Bearer pm-enterprise" },
+  });
+  assert.equal(models.status, 200);
+  assert.deepEqual(JSON.parse(models.text).data.map(({ id }) => id), ["gpt-enterprise", "claude-personal"]);
+
+  const claude = await invokeAdapter(options, {
+    url: "/pm-ccdx/chat/completions",
+    headers: { authorization: "Bearer pm-enterprise" },
+    body: { model: "claude-personal", messages: [] },
+  });
+  assert.equal(claude.status, 200);
+  assert.deepEqual(claudeCalls, ["claude-personal"]);
+  assert.deepEqual(enterpriseCalls, [
+    { url: "https://api.githubcopilot.com/models", authorization: "Bearer pm-enterprise" },
+    { url: "https://api.githubcopilot.com/models", authorization: "Bearer pm-enterprise" },
+    { url: "https://api.githubcopilot.com/chat/completions", authorization: "Bearer isolated-claude" },
+  ]);
 });
 
 test("shouldServeClaudeDesktopModels: detects only configured Desktop keys", () => {

@@ -53,6 +53,7 @@ test("cli --help exits without validating runtime configuration", async () => {
   assert.match(stdout, /Equivalent command: codex-copilot-dx/);
   assert.match(stdout, /ccdx status/);
   assert.match(stdout, /ccdx models/);
+  assert.match(stdout, /ccdx pms setup/);
   assert.match(stdout, /ccdx auth status/);
   assert.match(stdout, /ccdx auth login claude/);
   assert.match(stdout, /doctor \[--online\] \[--compat\]/);
@@ -79,6 +80,7 @@ test("legacy cli help and argument errors use the legacy command name", async ()
   assert.match(stdout, /codex-copilot-dx doctor/);
   assert.match(stdout, /codex-copilot-dx status/);
   assert.match(stdout, /codex-copilot-dx models/);
+  assert.match(stdout, /codex-copilot-dx pms setup/);
   assert.match(stdout, /codex-copilot-dx auto-review-model/);
   assert.match(stdout, /codex-copilot-dx update \[npm\|github\]/);
   assert.match(stdout, /Equivalent command: ccdx/);
@@ -103,8 +105,39 @@ test("both CLI entrypoints expose the same complete subcommand help", async () =
     .replaceAll("codex-copilot-dx", "<command>")
     .replaceAll("ccdx", "<command>");
   assert.equal(normalizeCommandNames(legacy.stdout), normalizeCommandNames(primary.stdout));
-  for (const command of ["auth", "doctor", "status", "models", "usage", "auto-review-model", "update"]) {
+  for (const command of ["auth", "doctor", "status", "models", "pms", "usage", "auto-review-model", "update"]) {
     assert.match(primary.stdout, new RegExp(`ccdx ${command}`));
+  }
+});
+
+test("both CLI entrypoints dispatch pms setup before runtime, auth, logging, or GUI startup", async () => {
+  for (const executable of [cliPath, legacyCliPath]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-pms-setup-"));
+    const logPath = path.join(home, "debug.log");
+    try {
+      await assert.rejects(
+        execFileAsync(process.execPath, [executable, "pms", "setup"], {
+          timeout: 2000,
+          env: {
+            ...process.env,
+            HOME: home,
+            ADAPTER_PORT: "invalid",
+            CCDX_LOG_PATH: logPath,
+          },
+        }),
+        (error) => {
+          assert.equal(error.code, 1);
+          assert.match(error.stderr, /Run `ccdx auth login claude --reauth --github-login <personal-login>`/);
+          assert.doesNotMatch(error.stderr, /ADAPTER_PORT/);
+          return true;
+        },
+      );
+      assert.equal(fs.existsSync(logPath), false);
+      assert.equal(fs.existsSync(path.join(home, ".codex")), false);
+      assert.equal(fs.existsSync(path.join(home, ".claude")), false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   }
 });
 

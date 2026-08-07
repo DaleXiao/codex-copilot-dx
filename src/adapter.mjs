@@ -11,6 +11,7 @@ import {
   runtimeStatusPayload,
 } from "./observability.mjs";
 import { createRequestId, runWithRequestContext } from "./request-context.mjs";
+import { createPmStudioRelayHandler, PM_STUDIO_RELAY_PREFIX } from "./pm-studio-relay.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { status } from "./status.mjs";
 import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
@@ -172,6 +173,17 @@ export function createAdapterHandler(options = {}) {
     streamIdleTimeoutMs,
     upstreamTimeoutMs,
   });
+  const pmStudioRelayHandler = createPmStudioRelayHandler({
+    acquireRequest,
+    claudeClient,
+    claudeMode,
+    claudeProfile: options.claudeProfile,
+    claudeModelRegistry,
+    fetchImpl: options.pmStudioFetchImpl,
+    streamHandshakeTimeoutMs,
+    streamIdleTimeoutMs,
+    upstreamTimeoutMs,
+  });
 
   const dispatch = (req, res, pathname) => {
     if (req.method === "GET" && pathname === ADAPTER_STATUS_PATH) {
@@ -199,6 +211,10 @@ export function createAdapterHandler(options = {}) {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(adapterHealthPayload()));
       return;
+    }
+
+    if (pathname.startsWith(`${PM_STUDIO_RELAY_PREFIX}/`)) {
+      return pmStudioRelayHandler(req, res, pathname);
     }
 
     if (req.method === "POST" && pathname === "/v1/responses") {

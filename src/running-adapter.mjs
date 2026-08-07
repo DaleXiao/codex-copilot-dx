@@ -5,6 +5,7 @@ export const ADAPTER_HEALTH_PATH = "/_ccdx/health";
 export const ADAPTER_STATUS_PATH = "/_ccdx/status";
 export const ADAPTER_PROTOCOL_VERSION = 2;
 export const ADAPTER_VERSION = localPackageVersion();
+export const ADAPTER_CAPABILITIES = Object.freeze(["pm_studio_relay_v1"]);
 const ADAPTER_INSTANCE_ID = randomUUID();
 
 export function adapterHealthPayload() {
@@ -14,6 +15,7 @@ export function adapterHealthPayload() {
     pid: process.pid,
     version: ADAPTER_VERSION,
     protocol_version: ADAPTER_PROTOCOL_VERSION,
+    capabilities: [...ADAPTER_CAPABILITIES],
     instance_id: ADAPTER_INSTANCE_ID,
   };
 }
@@ -37,6 +39,7 @@ export async function checkRunningAdapter({
   timeoutMs = 500,
   expectedVersion = ADAPTER_VERSION,
   expectedProtocolVersion = ADAPTER_PROTOCOL_VERSION,
+  requiredCapabilities = ADAPTER_CAPABILITIES,
 } = {}) {
   const baseUrl = adapterBaseUrl(host, port);
   const ctrl = new AbortController();
@@ -60,6 +63,19 @@ export async function checkRunningAdapter({
         data,
         expectedVersion,
         expectedProtocolVersion,
+      };
+    }
+    const capabilities = new Set(Array.isArray(data.capabilities) ? data.capabilities : []);
+    if (requiredCapabilities.some((capability) => !capabilities.has(capability))) {
+      return {
+        ok: false,
+        incompatible: true,
+        baseUrl,
+        status: resp.status,
+        data,
+        expectedVersion,
+        expectedProtocolVersion,
+        requiredCapabilities: [...requiredCapabilities],
       };
     }
     return { ok: true, baseUrl, data };

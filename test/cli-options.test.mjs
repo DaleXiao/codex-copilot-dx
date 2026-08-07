@@ -23,6 +23,10 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["status"]).command, "status");
   assert.equal(parseCliArgs(["--status"]).command, "status");
   assert.equal(parseCliArgs(["usage"]).command, "usage");
+  assert.deepEqual(parseCliArgs(["pms", "setup"]), {
+    command: "pms", action: "setup", configureClaudeDesktop: false, showRequestId: false,
+    online: false, compat: false,
+  });
   assert.deepEqual(parseCliArgs(["models"]), { command: "models", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false, profile: "codex" });
   assert.equal(parseCliArgs(["models", "--profile", "claude"]).profile, "claude");
   assert.deepEqual(parseCliArgs(["auth", "status"]), {
@@ -41,6 +45,7 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["update", "gh"]).updateSource, "github");
   assert.match(cliHelp(), /ccdx status/);
   assert.match(cliHelp(), /ccdx models/);
+  assert.match(cliHelp(), /ccdx pms setup/);
   assert.match(cliHelp(), /ccdx auth status \[--online\]/);
   assert.match(cliHelp(), /ccdx auth login claude \[--github-login <login>\] \[--reauth\]/);
   assert.match(cliHelp(), /models \[--profile codex\|claude\]/);
@@ -60,6 +65,9 @@ test("parseCliArgs: accepts supported commands and options", () => {
 test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
   assert.throws(() => parseCliArgs(["serve"]), /Unknown command or option: serve/);
   assert.throws(() => parseCliArgs(["usage", "extra"]), /Unexpected argument: extra/);
+  assert.throws(() => parseCliArgs(["pms"]), /Missing pms action: expected setup/);
+  assert.throws(() => parseCliArgs(["pms", "restore"]), /Unknown pms action: restore/);
+  assert.throws(() => parseCliArgs(["pms", "setup", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["status", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["models", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["models", "--profile"]), /Missing value for --profile/);

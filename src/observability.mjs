@@ -14,6 +14,10 @@ const ROUTE_NAMES = Object.freeze([
   "models",
   "messages",
   "messages_count_tokens",
+  "pm_models",
+  "pm_chat_completions",
+  "pm_responses",
+  "pm_embeddings",
   "not_found",
 ]);
 
@@ -97,6 +101,10 @@ export function classifyAdapterRoute(method, pathname) {
   if (method === "GET" && pathname === "/v1/models") return "models";
   if (method === "POST" && pathname === "/v1/messages") return "messages";
   if (method === "POST" && pathname === "/v1/messages/count_tokens") return "messages_count_tokens";
+  if (method === "GET" && pathname === "/pm-ccdx/models") return "pm_models";
+  if (method === "POST" && pathname === "/pm-ccdx/chat/completions") return "pm_chat_completions";
+  if (method === "POST" && pathname === "/pm-ccdx/responses") return "pm_responses";
+  if (method === "POST" && pathname === "/pm-ccdx/embeddings") return "pm_embeddings";
   return "not_found";
 }
 

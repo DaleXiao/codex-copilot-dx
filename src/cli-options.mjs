@@ -58,6 +58,13 @@ export function parseCliArgs(args = []) {
     if (rest.length) unexpectedArgs(rest);
     return { command: "usage", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
   }
+  if (command === "pms") {
+    const [action, ...pmsArgs] = rest;
+    if (!action) throw new Error("Missing pms action: expected setup");
+    if (action !== "setup") throw new Error(`Unknown pms action: ${action}`);
+    if (pmsArgs.length) unexpectedArgs(pmsArgs);
+    return { command: "pms", action: "setup", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
+  }
   if (command === "models") {
     const options = parseOptions(rest, new Map([["--profile", "value"]]));
     return {
@@ -210,6 +217,7 @@ export function cliHelp(commandName = "ccdx") {
   ${name} doctor [--online] [--compat] [--profile codex|claude|all]
   ${name} status
   ${name} models [--profile codex|claude]
+  ${name} pms setup
   ${name} usage
   ${name} auto-review-model
   ${name} update [npm|github]

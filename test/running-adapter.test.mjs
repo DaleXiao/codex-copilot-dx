@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ADAPTER_PROTOCOL_VERSION,
+  ADAPTER_CAPABILITIES,
   ADAPTER_HEALTH_PATH,
   ADAPTER_VERSION,
   adapterHealthPayload,
@@ -32,6 +33,7 @@ test("adapterBaseUrl: builds local probe URLs", () => {
 test("adapter health reports the version frozen for this process", () => {
   assert.equal(adapterHealthPayload().version, ADAPTER_VERSION);
   assert.equal(adapterHealthPayload().version, ADAPTER_VERSION);
+  assert.deepEqual(adapterHealthPayload().capabilities, ADAPTER_CAPABILITIES);
 });
 
 test("checkRunningAdapter: accepts only codex-copilot-dx health payloads", async () => {
@@ -67,4 +69,11 @@ test("checkRunningAdapter: rejects old or mismatched adapter versions", async ()
   });
   assert.equal(mismatched.ok, false);
   assert.equal(mismatched.incompatible, true);
+
+  const missingRelay = await checkRunningAdapter({
+    fetchImpl: async () => jsonResp(200, { ...adapterHealthPayload(), capabilities: [] }),
+  });
+  assert.equal(missingRelay.ok, false);
+  assert.equal(missingRelay.incompatible, true);
+  assert.deepEqual(missingRelay.requiredCapabilities, ADAPTER_CAPABILITIES);
 });

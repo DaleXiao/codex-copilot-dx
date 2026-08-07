@@ -26,3 +26,14 @@ jobs:
       - run: npm run test:smoke
       - run: npm run bench:check
       - run: npm run pack:check
+
+  pm-studio-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - run: node --test test/pm-studio-setup.test.mjs

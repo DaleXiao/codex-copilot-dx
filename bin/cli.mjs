@@ -123,6 +123,16 @@ if (CLI.command === "update") {
     process.exit(1);
   }
 }
+if (CLI.command === "pms") {
+  try {
+    const { runPmStudioSetup } = await import("../src/pm-studio-setup.mjs");
+    await runPmStudioSetup({ commandName: CLI_NAME });
+    process.exit(0);
+  } catch (e) {
+    console.error(status("err", e.message));
+    process.exit(1);
+  }
+}
 
 let RUNTIME;
 try {
@@ -296,6 +306,7 @@ try {
     autoReviewModelResolver: () => autoReviewModelPreference().model,
     codexClient: profileRuntime.codexClient,
     claudeClient: profileRuntime.claudeClient,
+    claudeProfile: profileRuntime.claudeProfile,
     codexModelRegistry: profileModels.codexRegistry,
     claudeModelRegistry: profileModels.claudeRegistry,
     claudeMode: profileRuntime.claudeMode,

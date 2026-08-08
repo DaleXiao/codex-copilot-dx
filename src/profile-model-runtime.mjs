@@ -33,6 +33,7 @@ export function createProfileModelRuntime({
   codexClient,
   claudeClient = codexClient,
   claudeMode = "inherited",
+  codexCredentialFingerprint = "",
   claudeCredentialFingerprint = "",
   home,
   env = process.env,
@@ -93,7 +94,7 @@ export function createProfileModelRuntime({
   function loadCached({ client, profile, registry, ownsClaudeModels }) {
     const credentialFingerprint = profile === "claude"
       ? String(claudeCredentialFingerprint || "").trim()
-      : "";
+      : String(codexCredentialFingerprint || "").trim();
     if (profile === "claude" && !credentialFingerprint) return false;
     const cached = loadModelCache({ home, profile, credentialFingerprint });
     if (!cached) return false;
@@ -133,7 +134,7 @@ export function createProfileModelRuntime({
   function persist(models, profile) {
     const credentialFingerprint = profile === "claude"
       ? String(claudeCredentialFingerprint || "").trim()
-      : "";
+      : String(codexCredentialFingerprint || "").trim();
     if (profile === "claude" && !credentialFingerprint) return;
     try {
       saveModelCache(models, { home, profile, credentialFingerprint });

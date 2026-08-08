@@ -8,6 +8,7 @@ import {
   authProfilePaths,
   writeClaudeAuthProfile,
 } from "../src/auth-profile.mjs";
+import { writeToken } from "../src/auth.mjs";
 import { createProfileRuntime } from "../src/profile-runtime.mjs";
 
 function fileSnapshot(filePath) {
@@ -47,6 +48,7 @@ test("createProfileRuntime: an unconfigured Claude profile inherits the Codex cl
 
 test("createProfileRuntime: a valid Claude profile creates an isolated client and remains read-only", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-runtime-isolated-"));
+  writeToken("github_enterprise", home, { login: "enterprise-user", id: 1 });
   writeClaudeAuthProfile("github_personal", { login: "personal-user", id: 2 }, { home });
   const paths = authProfilePaths(AUTH_PROFILE_CLAUDE, { home });
   const tokenBefore = fileSnapshot(paths.tokenPath);
@@ -73,6 +75,8 @@ test("createProfileRuntime: a valid Claude profile creates an isolated client an
   assert.notEqual(runtime.claudeClient, codexClient);
   assert.equal(runtime.claudeClient.profile, "claude");
   assert.equal(runtime.claudeMode, "isolated");
+  assert.match(runtime.codexCredentialFingerprint, /^[a-f0-9]{24}$/);
+  assert.notEqual(runtime.codexCredentialFingerprint, runtime.claudeCredentialFingerprint);
   assert.deepEqual(runtime.claudeProfile, {
     profile: "claude",
     configured: true,

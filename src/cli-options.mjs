@@ -1,7 +1,29 @@
 const HELP_COMMANDS = new Set(["help", "--help", "-h"]);
 const VERSION_COMMANDS = new Set(["version", "--version", "-v"]);
-const START_OPTIONS = new Set(["--configure-claude-desktop", "--show-request-id"]);
+const START_OPTIONS = new Map([
+  ["--configure-claude-desktop", "configure-claude-app"],
+  ["--configure-claude-app", "configure-claude-app"],
+  ["--show-request-id", "show-request-id"],
+]);
 const CLI_COMMANDS = new Set(["ccdx", "codex-copilot-dx"]);
+const PM_COMMANDS = new Set(["pms", "pm-studio"]);
+const HELP_TOPICS = new Set([
+  "",
+  "start",
+  "auth",
+  "auth status",
+  "auth login",
+  "doctor",
+  "status",
+  "models",
+  "pms",
+  "pms setup",
+  "pms status",
+  "usage",
+  "auto-review-model",
+  "update",
+  "version",
+]);
 
 function unexpectedArgs(args) {
   throw new Error(`Unexpected argument${args.length === 1 ? "" : "s"}: ${args.join(" ")}`);
@@ -39,40 +61,97 @@ function checkedProfile(value, { allowAll = false } = {}) {
   return profile;
 }
 
+function baseCommand(command, extra = {}) {
+  return {
+    command,
+    configureClaudeDesktop: false,
+    showRequestId: false,
+    online: false,
+    compat: false,
+    ...extra,
+  };
+}
+
+function checkedHelpTopic(parts = []) {
+  const normalized = parts.map((part, index) => {
+    if (index === 0 && part === "pm-studio") return "pms";
+    return part;
+  }).join(" ");
+  if (!HELP_TOPICS.has(normalized)) throw new Error(`Unknown help topic: ${parts.join(" ")}`);
+  return normalized;
+}
+
+function helpCommand(parts = []) {
+  return baseCommand("help", { helpTopic: checkedHelpTopic(parts) });
+}
+
+function nestedHelp(command, rest) {
+  if (!rest.length || !HELP_COMMANDS.has(rest.at(-1))) return null;
+  const args = rest.slice(0, -1);
+  if (PM_COMMANDS.has(command)) {
+    if (args.length > 1) unexpectedArgs(args.slice(1));
+    return helpCommand(["pms", ...args]);
+  }
+  if (command === "auth") {
+    if (args[0] === "login" && args[1] === "claude" && args.length === 2) {
+      return helpCommand(["auth", "login"]);
+    }
+    if (args.length > 1) unexpectedArgs(args.slice(1));
+    return helpCommand(["auth", ...args]);
+  }
+  if (args.length) unexpectedArgs(args);
+  return helpCommand([command]);
+}
+
+function parseStartOptions(args) {
+  const seen = new Set();
+  for (const option of args) {
+    const kind = START_OPTIONS.get(option);
+    if (!kind || seen.has(kind)) unexpectedArgs([option]);
+    seen.add(kind);
+  }
+  return baseCommand("start", {
+    configureClaudeDesktop: seen.has("configure-claude-app"),
+    showRequestId: seen.has("show-request-id"),
+  });
+}
+
 export function parseCliArgs(args = []) {
   const [command, ...rest] = args;
-  if (!command) return { command: "start", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
+  if (!command) return baseCommand("start");
   if (HELP_COMMANDS.has(command)) {
-    if (rest.length) unexpectedArgs(rest);
-    return { command: "help", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
+    const topic = rest[0] === "auth" && rest[1] === "login" && rest[2] === "claude"
+      ? ["auth", "login"]
+      : rest;
+    if (topic.length > 2) unexpectedArgs(topic.slice(2));
+    return helpCommand(topic);
   }
+  const requestedHelp = nestedHelp(command, rest);
+  if (requestedHelp) return requestedHelp;
   if (VERSION_COMMANDS.has(command)) {
     if (rest.length) unexpectedArgs(rest);
-    return { command: "version", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
+    return baseCommand("version");
   }
+  if (command === "start") return parseStartOptions(rest);
   if (command === "status" || command === "--status") {
     if (rest.length) unexpectedArgs(rest);
-    return { command: "status", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
+    return baseCommand("status");
   }
   if (command === "usage") {
     if (rest.length) unexpectedArgs(rest);
-    return { command: "usage", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
+    return baseCommand("usage");
   }
-  if (command === "pms") {
+  if (PM_COMMANDS.has(command)) {
     const [action, ...pmsArgs] = rest;
-    if (!action) throw new Error("Missing pms action: expected setup");
-    if (action !== "setup") throw new Error(`Unknown pms action: ${action}`);
+    if (!action) throw new Error("Missing pms action: expected setup or status");
+    if (!new Set(["setup", "status"]).has(action)) throw new Error(`Unknown pms action: ${action}`);
     if (pmsArgs.length) unexpectedArgs(pmsArgs);
-    return { command: "pms", action: "setup", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
+    return baseCommand("pms", { action });
   }
   if (command === "models") {
     const options = parseOptions(rest, new Map([["--profile", "value"]]));
     return {
-      command: "models",
-      configureClaudeDesktop: false,
-      showRequestId: false,
-      online: false,
-      compat: false,
+      ...baseCommand("models"),
       profile: checkedProfile(options["--profile"]),
     };
   }
@@ -82,13 +161,10 @@ export function parseCliArgs(args = []) {
     if (action === "status") {
       const options = parseOptions(authArgs, new Map([["--online", "flag"]]));
       return {
-        command: "auth",
+        ...baseCommand("auth"),
         action: "status",
         profile: "",
-        configureClaudeDesktop: false,
-        showRequestId: false,
         online: Boolean(options["--online"]),
-        compat: false,
         expectedLogin: "",
         reauth: false,
       };
@@ -102,13 +178,9 @@ export function parseCliArgs(args = []) {
         ["--reauth", "flag"],
       ]));
       return {
-        command: "auth",
+        ...baseCommand("auth"),
         action: "login",
         profile: "claude",
-        configureClaudeDesktop: false,
-        showRequestId: false,
-        online: false,
-        compat: false,
         expectedLogin: options["--github-login"] || "",
         reauth: Boolean(options["--reauth"]),
       };
@@ -117,7 +189,7 @@ export function parseCliArgs(args = []) {
   }
   if (command === "auto-review-model") {
     if (rest.length) unexpectedArgs(rest);
-    return { command: "auto-review-model", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false };
+    return baseCommand("auto-review-model");
   }
   if (command === "update") {
     if (rest.length > 1) unexpectedArgs(rest.slice(1));
@@ -126,11 +198,7 @@ export function parseCliArgs(args = []) {
       throw new Error(`Update source must be npm or github: ${source}`);
     }
     return {
-      command: "update",
-      configureClaudeDesktop: false,
-      showRequestId: false,
-      online: false,
-      compat: false,
+      ...baseCommand("update"),
       updateSource: source === "gh" ? "github" : source,
     };
   }
@@ -141,29 +209,13 @@ export function parseCliArgs(args = []) {
       ["--profile", "value"],
     ]));
     return {
-      command: "doctor",
-      configureClaudeDesktop: false,
-      showRequestId: false,
+      ...baseCommand("doctor"),
       online: Boolean(options["--online"]),
       compat: Boolean(options["--compat"]),
       profile: checkedProfile(options["--profile"], { allowAll: true }),
     };
   }
-  if (START_OPTIONS.has(command)) {
-    const options = [command, ...rest];
-    const invalid = options.filter((arg) => !START_OPTIONS.has(arg));
-    if (invalid.length) unexpectedArgs(invalid);
-    for (const option of START_OPTIONS) {
-      if (options.filter((arg) => arg === option).length > 1) unexpectedArgs([option]);
-    }
-    return {
-      command: "start",
-      configureClaudeDesktop: options.includes("--configure-claude-desktop"),
-      showRequestId: options.includes("--show-request-id"),
-      online: false,
-      compat: false,
-    };
-  }
+  if (START_OPTIONS.has(command)) return parseStartOptions([command, ...rest]);
   throw new Error(`Unknown command or option: ${command}`);
 }
 
@@ -207,22 +259,58 @@ export function cliCommandName(executable = process.argv[1]) {
   return CLI_COMMANDS.has(name) ? name : "ccdx";
 }
 
-export function cliHelp(commandName = "ccdx") {
+function topicHelp(name, topic) {
+  const sections = {
+    start: `Usage:\n  ${name} [start] [--configure-claude-app] [--show-request-id]\n\nStarts or reuses the local adapter, updates Codex and Claude Code configuration, and opens Codex.\n--configure-claude-app also creates or updates the managed Claude App gateway profile.`,
+    auth: `Usage:\n  ${name} auth status [--online]\n  ${name} auth login claude [--github-login <login>] [--reauth]\n\nShows the two account profiles or configures the isolated Claude account. Device login starts only when no reusable local Copilot credential is available or --reauth is used.`,
+    "auth status": `Usage:\n  ${name} auth status [--online]\n\nShows account routing without exposing credentials. --online also verifies both configured Copilot entitlements and model catalogs.`,
+    "auth login": `Usage:\n  ${name} auth login claude [--github-login <login>] [--reauth]\n\nReuses a compatible local Copilot credential when possible. --reauth forces GitHub Device Flow.`,
+    doctor: `Usage:\n  ${name} doctor [--online] [--compat] [--profile codex|claude|all]\n\nChecks local credentials, client configuration, PM Studio state, and the adapter. --online validates account entitlement; --compat sends minimal inference requests and consumes a small amount of Copilot usage.`,
+    status: `Usage:\n  ${name} status\n\nShows bounded runtime, routing, performance, cache, queue, and PM relay metrics from a running adapter.`,
+    models: `Usage:\n  ${name} models [--profile codex|claude]\n\nPerforms a fresh, read-only Copilot model-directory lookup for one saved profile.`,
+    pms: `Usage:\n  ${name} pms status\n  ${name} pms setup\n  ${name} pm-studio status\n  ${name} pm-studio setup\n\nInspects or installs the version-locked PM Studio loopback patch. setup modifies the installed app only after all preflight checks pass.`,
+    "pms setup": `Usage:\n  ${name} pms setup\n\nBacks up, patches, verifies, and ad-hoc signs an exactly supported PM Studio bundle. Unknown versions and drift are never modified.`,
+    "pms status": `Usage:\n  ${name} pms status\n\nRead-only inspection of the installed PM Studio version, patch integrity, Claude profile, and relay availability.`,
+    usage: `Usage:\n  ${name} usage\n\nSummarizes local token usage metadata without reading prompt or completion content.`,
+    "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nInteractively selects an enabled Responses model for Codex Auto-review.`,
+    update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or GitHub main. With no source, an interactive terminal prompts for one.`,
+    version: `Usage:\n  ${name} --version`,
+  };
+  return sections[topic];
+}
+
+export function cliHelp(commandName = "ccdx", topic = "") {
   const name = CLI_COMMANDS.has(commandName) ? commandName : "ccdx";
   const alias = name === "ccdx" ? "codex-copilot-dx" : "ccdx";
+  const normalizedTopic = checkedHelpTopic(topic ? topic.split(" ") : []);
+  if (normalizedTopic) return `${topicHelp(name, normalizedTopic)}\n\nEquivalent command: ${alias}`;
   return `Usage:
-  ${name} [--configure-claude-desktop] [--show-request-id]
+  ${name} [start] [--configure-claude-app] [--show-request-id]
   ${name} auth status [--online]
   ${name} auth login claude [--github-login <login>] [--reauth]
   ${name} doctor [--online] [--compat] [--profile codex|claude|all]
   ${name} status
   ${name} models [--profile codex|claude]
+  ${name} pms status
   ${name} pms setup
   ${name} usage
   ${name} auto-review-model
   ${name} update [npm|github]
   ${name} --version
   ${name} --help
+
+Commands:
+  start              Start or reuse the adapter and configure local clients
+  auth               Inspect or configure the Codex and Claude accounts
+  doctor             Diagnose local config; optional live and inference checks
+  status             Show runtime routing, performance, queue, and cache health
+  models             Query a saved account's live Copilot model catalog
+  pms, pm-studio     Inspect or install the PM Studio patch
+  usage              Summarize locally recorded token usage
+  auto-review-model  Select the Codex Auto-review Responses model
+  update             Update the global package from npm or GitHub
+
+Run ${name} <command> --help for command details.
 
 Equivalent command: ${alias}`;
 }

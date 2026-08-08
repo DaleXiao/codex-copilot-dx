@@ -97,12 +97,23 @@ test("formatAdapterStatus: summarizes dual profiles and routing when available",
         },
       },
       routing: { responses: "codex", messages: "claude" },
+      requests: {
+        total: 10,
+        completed: 10,
+        by_route: {
+          pm_models: { total: 2, active: 0, errors: 0 },
+          pm_chat_completions: { total: 4, active: 1, errors: 1 },
+          pm_responses: { total: 3, active: 0, errors: 0 },
+          pm_embeddings: { total: 1, active: 0, errors: 0 },
+        },
+      },
     }),
   });
 
   assert.match(output, /Profiles: Codex legacy: token cached \(1m 30s remaining\), 42 total\/8 Claude models \(live\)/);
   assert.match(output, /Claude isolated: token not cached, 12 total\/12 Claude models \(cache\)/);
   assert.match(output, /Routing: \/v1\/responses -> Codex; \/v1\/messages -> Claude/);
+  assert.match(output, /PM relay: 10 requests, 1 active, 1 errors; models 2, chat 4, responses 3, embeddings 1/);
 });
 
 test("formatAdapterStatus: warns when the running adapter is older than the CLI", () => {

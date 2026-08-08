@@ -1,8 +1,10 @@
 import os from "node:os";
 import { spawn } from "node:child_process";
 import {
+  discoverGithubToken,
   fetchGithubIdentity,
   interpretPoll,
+  sourceDescription,
   validateGithubToken,
 } from "./auth.mjs";
 import {
@@ -19,6 +21,7 @@ import {
   normalizeGithubIdentity,
 } from "./github-identity.mjs";
 import { saveModelCache } from "./model-cache.mjs";
+import { profileRouting } from "./profile-routing.mjs";
 import { status } from "./status.mjs";
 
 const CLIENT_ID = "Iv1.b507a08c87ecfe98";
@@ -267,14 +270,45 @@ export async function authorizeClaudeProfile({
       throw new Error(`Claude profile is configured but invalid (${current.reason}); run ccdx auth login claude --reauth`);
     }
 
-    const githubToken = await requestDeviceFlowToken({
-      fetchImpl,
-      signal,
-      log,
-      openAndCopyFn,
-      sleepImpl,
-      now,
-    });
+    let githubToken = "";
+    if (!reauth) {
+      const codex = readAuthProfileCredentials(AUTH_PROFILE_CODEX, { home });
+      if (!codex.valid) {
+        throw new Error("The existing Codex GitHub account is not configured; refusing to create an unbound Claude profile");
+      }
+      const existingCodex = await codexIdentity({ home, fetchImpl, signal });
+      const pinnedLogin = String(expectedLogin || "").trim();
+      const discovered = await discoverGithubToken({
+        home,
+        env,
+        fetchImpl,
+        signal,
+        excludeTokens: [codex.token],
+        excludeIdentities: [existingCodex.identity],
+        expectedIdentity: pinnedLogin ? { login: pinnedLogin } : undefined,
+        strictExpectedIdentity: Boolean(pinnedLogin),
+      });
+      if (discovered.ambiguous) {
+        const accounts = [...new Set(discovered.candidates
+          .map((candidate) => candidate.login || candidate.id || "unknown"))];
+        throw new Error(`Multiple reusable GitHub Copilot accounts were found (${accounts.join(", ")}). Use --github-login or CCDX_GITHUB_TOKEN_PATH to select the Claude account.`);
+      }
+      if (discovered.ok) {
+        githubToken = discovered.token;
+        const login = discovered.validation?.login ? ` for ${discovered.validation.login}` : "";
+        log(status("info", `Reusing a local Copilot credential from ${sourceDescription(discovered.source)}${login}`));
+      }
+    }
+    if (!githubToken) {
+      githubToken = await requestDeviceFlowToken({
+        fetchImpl,
+        signal,
+        log,
+        openAndCopyFn,
+        sleepImpl,
+        now,
+      });
+    }
     const candidate = await validateClaudeCandidate(githubToken, {
       home,
       expectedLogin,
@@ -350,10 +384,7 @@ export function authStatus({ home = os.homedir() } = {}) {
       codex: publicProfile(codex, "legacy"),
       claude: publicProfile(claude, "isolated"),
     },
-    routing: {
-      responses: AUTH_PROFILE_CODEX,
-      messages: claude.configured ? AUTH_PROFILE_CLAUDE : AUTH_PROFILE_CODEX,
-    },
+    routing: profileRouting({ claudeConfigured: claude.configured }),
   };
 }
 

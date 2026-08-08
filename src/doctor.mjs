@@ -251,7 +251,11 @@ export function inspectAuthProfiles({ home = os.homedir() } = {}) {
     if (!claude.configured) {
       checks.push({ kind: "ok", message: "Claude authentication profile is not isolated and inherits Codex" });
     } else if (!claude.valid) {
-      checks.push({ kind: "err", message: `Claude isolated authentication profile is invalid: ${claude.reason}` });
+      checks.push({
+        kind: "err",
+        message: `Claude isolated authentication profile is invalid: ${claude.reason}`,
+        fix: "ccdx auth login claude --reauth",
+      });
     } else {
       const account = claude.identity?.login ? ` for ${claude.identity.login}` : "";
       checks.push({ kind: "ok", message: `Claude isolated authentication profile is configured${account}` });
@@ -455,7 +459,11 @@ export function inspectClaudeAppConfig({
   const meta = readJson(paths.metaPath);
   const appliedId = meta.ok ? String(meta.json?.appliedId || "").trim() : "";
   if (!appliedId) {
-    checks.push({ kind: "warn", message: "Claude App gateway profile is not configured; run with --configure-claude-desktop" });
+    checks.push({
+      kind: "warn",
+      message: "Claude App gateway profile is not configured",
+      fix: "ccdx start --configure-claude-app",
+    });
     return checks;
   }
 
@@ -508,6 +516,7 @@ export async function collectDoctorChecks({
   host = "127.0.0.1",
   port = 2026,
   checkAdapter = true,
+  checkPmStudio = checkAdapter,
   checkAdapterListeningFn = checkAdapterListening,
   checkRunningAdapterFn = checkRunningAdapter,
   online = false,
@@ -517,6 +526,7 @@ export async function collectDoctorChecks({
   onlineTimeoutMs = 10000,
   compatTimeoutMs = 120000,
   inspectAdapterCompatibilityFn = inspectAdapterCompatibility,
+  inspectPmStudioHealthFn,
 } = {}) {
   const checks = [
     ...inspectAuthProfiles({ home }),
@@ -552,7 +562,43 @@ export async function collectDoctorChecks({
       const listening = await checkAdapterListeningFn({ host, port });
       checks.push(listening
         ? { kind: "warn", message: `A service is listening on ${localGatewayBaseUrl(host, port)}, but it is not a compatible codex-copilot-dx adapter` }
-        : { kind: "warn", message: `Adapter is not listening on ${localGatewayBaseUrl(host, port)}` });
+        : {
+          kind: "warn",
+          message: `Adapter is not listening on ${localGatewayBaseUrl(host, port)}`,
+          fix: "ccdx start",
+        });
+    }
+  }
+
+  if (checkPmStudio && platform === "darwin") {
+    const inspect = inspectPmStudioHealthFn || (async (options) => {
+      const module = await import("./pm-studio-status.mjs");
+      return module.inspectPmStudioStatus(options);
+    });
+    const pm = await inspect({ home });
+    const version = pm.app.metadata ? `${pm.app.metadata.version} build ${pm.app.metadata.build}` : "";
+    if (pm.app.state === "patched") {
+      checks.push({ kind: "ok", message: `PM Studio ${version} patch is verified` });
+      if (!pm.claude.valid) {
+        checks.push({
+          kind: "warn",
+          message: "PM Studio Claude routing requires a valid isolated Claude profile",
+          fix: "ccdx auth login claude --reauth",
+        });
+      }
+      if (!pm.adapter?.ok) {
+        checks.push({ kind: "warn", message: "PM Studio relay is not currently available", fix: "ccdx start" });
+      }
+    } else if (pm.app.state === "clean") {
+      checks.push({
+        kind: "warn",
+        message: `PM Studio ${version} is supported but not patched`,
+        fix: "ccdx pms setup",
+      });
+    } else if (pm.app.state === "unsupported") {
+      checks.push({ kind: "warn", message: `PM Studio ${version} has no exact patch recipe; no files will be changed` });
+    } else if (pm.app.state === "drift" || pm.app.state === "error") {
+      checks.push({ kind: "err", message: `PM Studio integrity check failed: ${pm.app.issues.join("; ")}` });
     }
   }
 
@@ -604,5 +650,12 @@ export async function runDoctor(options = {}) {
   log(`${options.commandName || "ccdx"} doctor${flags.length ? ` ${flags.join(" ")}` : ""}`);
   const checks = await collectDoctorChecks(options);
   for (const check of checks) log(status(check.kind, check.message));
+  const totals = { ok: 0, warn: 0, err: 0 };
+  for (const check of checks) totals[check.kind] = (totals[check.kind] || 0) + 1;
+  log(status(totals.err ? "err" : totals.warn ? "warn" : "ok",
+    `Summary: ${totals.ok} passed, ${totals.warn} warning(s), ${totals.err} error(s)`));
+  for (const fix of new Set(checks.map((check) => check.fix).filter(Boolean))) {
+    log(status("info", `Next step: ${fix}`));
+  }
   return checks;
 }

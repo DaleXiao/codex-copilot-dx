@@ -34,6 +34,8 @@ command remains an equivalent compatibility alias. For a one-off run without a
 global install, use `npx codex-copilot-dx@latest`.
 Both installed commands expose the same options and subcommands; help, version,
 doctor, status, and argument-error output use the command name that was invoked.
+Run `ccdx <command> --help` (including `auth login claude --help` and
+`pms status --help`) for command-specific behavior and side-effect details.
 
 To query the models currently advertised as selectable for the saved Codex
 Copilot account, run:
@@ -60,11 +62,14 @@ while using a different personal account that has Claude models enabled, run:
 ccdx auth login claude --github-login <personal-github-login>
 ```
 
-This is the only command that starts the additional Device Flow. It verifies
+This is the only command that may start the additional Device Flow. Before
+opening a browser, it checks compatible local Copilot credentials, excludes the
+current Codex identity, and reuses an unambiguous valid account. It then verifies
 the selected GitHub identity, Copilot entitlement, and an enabled Claude model
 before saving anything. It refuses the current Codex account and never changes,
 migrates, or deletes the existing Codex credential. The optional login pin is
-recommended so authorizing the wrong browser account fails before activation.
+recommended so a machine with multiple accounts selects only the requested
+identity. Use `--reauth` to bypass local discovery and force Device Flow.
 
 The existing Codex token remains at
 `~/.local/share/copilot-api/github_token`. The isolated Claude credential is
@@ -80,7 +85,8 @@ Once enabled, routing is fixed by API surface rather than by model name:
 - `/v1/messages/count_tokens` remains local and uses neither account.
 
 The two profiles keep separate service tokens, API bases, refresh/backoff state,
-model endpoint metadata, and model caches. If the isolated Claude profile later
+model endpoint metadata, and credential-bound model caches. Switching either
+GitHub account invalidates that profile's old cache instead of borrowing it. If the isolated Claude profile later
 becomes invalid, Claude requests fail with a reauthentication instruction while
 Codex remains available; CCDX never silently falls back to the enterprise
 account. Reauthorize it explicitly with:
@@ -113,6 +119,15 @@ updater, then run the one-time setup command:
 ccdx auth login claude --reauth --github-login <personal-github-login>
 ccdx pms setup
 ```
+
+Inspect the installed version, exact patch integrity, isolated Claude profile,
+and relay without changing files:
+
+```bash
+ccdx pms status
+```
+
+`pm-studio status` and `pm-studio setup` are equivalent long-form aliases.
 
 `ccdx pms setup` performs only local preflight, backup, staging, integrity,
 signing, and replacement work. It never starts Device Flow, the adapter,
@@ -232,7 +247,11 @@ ccdx doctor
 
 The command exits with status `1` when it finds an invalid configuration and `0` when checks contain only OK or warning results.
 
-The doctor checks the GitHub token, Codex config, Claude Code settings, Claude App gateway profile, and whether the local adapter port is listening.
+The doctor checks the GitHub token, Codex config, Claude Code settings, Claude
+App gateway profile, adapter availability, and an installed PM Studio bundle.
+It ends with passed/warning/error totals and deduplicated next-step commands.
+An absent PM Studio installation is ignored; unsupported versions are reported
+without modification, while integrity drift remains an error.
 
 For a read-only live check of the saved GitHub token, Copilot entitlement, and models endpoint, run:
 
@@ -267,7 +286,7 @@ loopback endpoint directly:
 curl -s http://127.0.0.1:2026/_ccdx/status | jq
 ```
 
-The status endpoint is restricted to the socket's real loopback address, even when LAN binding is explicitly enabled. It reports fixed-size request counters, bounded TTFT/TPOT histograms for streaming routes, admission pressure, memory use, response-history size, image queue/cache state, model cache counts, and token expiry state. It never retains metric samples or includes prompts, completions, tool arguments, image content, account names, or token values. API responses always include a safe `X-Request-Id` for correlation. To include the same ID as `request_id` in related terminal and file log lines, start the adapter with:
+The status endpoint is restricted to the socket's real loopback address, even when LAN binding is explicitly enabled. It reports fixed-size request counters, bounded TTFT/TPOT histograms for streaming routes, admission pressure, memory use, response-history size, image queue/cache state, profile model cache counts, PM relay route totals, and token expiry state. It never retains metric samples or includes prompts, completions, tool arguments, image content, account names, or token values. API responses always include a safe `X-Request-Id` for correlation. If the adapter is not running, the CLI prints the exact start-and-retry command. To include the same ID as `request_id` in related terminal and file log lines, start the adapter with:
 
 ```bash
 ccdx --show-request-id
@@ -287,8 +306,12 @@ ccdx
 Claude App support is opt-in so the default Codex Desktop and Claude Code setup stays unchanged:
 
 ```bash
-npx codex-copilot-dx@latest --configure-claude-desktop
+npx codex-copilot-dx@latest start --configure-claude-app
 ```
+
+The previous `--configure-claude-desktop` spelling remains a compatibility
+alias. Startup reports Claude App as ready only when a matching managed gateway
+key is restored or the profile is configured in that run.
 
 Or set:
 

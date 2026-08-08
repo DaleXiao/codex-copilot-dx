@@ -326,6 +326,7 @@ export async function discoverGithubToken({
   fetchImpl = fetch,
   signal,
   excludeTokens = [],
+  excludeIdentities = [],
   expectedIdentity,
   strictExpectedIdentity = false,
 } = {}) {
@@ -348,6 +349,10 @@ export async function discoverGithubToken({
 
     const validation = await validateGithubToken(token, { fetchImpl, signal });
     if (validation.ok) {
+      if (excludeIdentities.some((identity) => githubIdentityMatchesExpected(validation, identity))) {
+        failures.push({ source, validation, reason: "github_account_excluded" });
+        continue;
+      }
       const candidate = { ok: true, token, source, validation };
       const explicitSource = source.type === "env" || source.type === "token-file";
       if (expectedIdentity && (strictExpectedIdentity || !explicitSource)) {

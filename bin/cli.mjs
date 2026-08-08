@@ -39,7 +39,7 @@ try {
 }
 
 if (CLI.command === "help") {
-  console.log(cliHelp(CLI_NAME));
+  console.log(cliHelp(CLI_NAME, CLI.helpTopic));
   process.exit(0);
 }
 if (CLI.command === "version") {
@@ -125,6 +125,11 @@ if (CLI.command === "update") {
 }
 if (CLI.command === "pms") {
   try {
+    if (CLI.action === "status") {
+      const { runPmStudioStatus } = await import("../src/pm-studio-status.mjs");
+      const result = await runPmStudioStatus({ commandName: CLI_NAME });
+      process.exit(result.ok ? 0 : 1);
+    }
     const { runPmStudioSetup } = await import("../src/pm-studio-setup.mjs");
     await runPmStudioSetup({ commandName: CLI_NAME });
     process.exit(0);
@@ -206,7 +211,7 @@ async function reuseRunningAdapterIfAvailable() {
       console.log(status("warn", "Existing adapter is running; skip Claude App profile update unless CCDX_CLAUDE_DESKTOP_API_KEY or CCDX_PROXY_API_KEY is set"));
     }
   } else {
-    console.log(status("ok", "Claude App support available with --configure-claude-desktop"));
+    console.log(status("ok", "Claude App support available with --configure-claude-app"));
   }
 
   await openCodex();
@@ -270,6 +275,7 @@ try {
     codexClient: profileRuntime.codexClient,
     claudeClient: profileRuntime.claudeClient,
     claudeMode: profileRuntime.claudeMode,
+    codexCredentialFingerprint: profileRuntime.codexCredentialFingerprint,
     claudeCredentialFingerprint: profileRuntime.claudeCredentialFingerprint,
     timeoutMs: MODEL_REFRESH_TIMEOUT_MS,
     commandName: CLI_NAME,
@@ -329,7 +335,7 @@ try {
     console.log(status("ok", `Configured Claude App gateway profile at ${result.baseUrl}`));
     console.log(formatClaudeDesktopApplyResult(result));
   } else {
-    console.log(status("ok", "Claude App support available with --configure-claude-desktop"));
+    console.log(status("ok", "Claude App support available with --configure-claude-app"));
   }
 
   // Launch Codex when available.
@@ -345,8 +351,10 @@ try {
     modelRefreshTimer.unref?.();
   }
 
+  const readyClients = ["Codex App", "Claude Code"];
+  if (claudeDesktopApiKey) readyClients.splice(1, 0, "Claude App");
   console.log(`
-  ${status("ok", "Ready, Claude Code, Claude App and Codex App are now ready to use")}
+  ${status("ok", `Ready, ${readyClients.join(", ")} ${readyClients.length === 1 ? "is" : "are"} ready to use`)}
 
   Adapter: ${adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT)}
 

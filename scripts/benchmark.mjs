@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { optimizeImagesInBody, prepareResponsesPayload } from "../src/image-optimization.mjs";
+import { createPmStudioModelRouter } from "../src/profile-routing.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 
@@ -235,6 +236,34 @@ const duplicateImages = {
   optimizer_calls: duplicateCalls,
 };
 
+const routingCatalog = {
+  data: Array.from({ length: 1000 }, (_, index) => index % 5 === 0
+    ? {
+        id: `claude-benchmark-${index}`,
+        vendor: "Anthropic",
+        model_picker_enabled: true,
+        supported_endpoints: ["/chat/completions"],
+      }
+    : { id: `gpt-benchmark-${index}`, vendor: "OpenAI", supported_endpoints: ["/responses"] }),
+};
+const modelRouter = createPmStudioModelRouter({
+  getCatalog: () => routingCatalog,
+  isClaudeEnabled: () => true,
+});
+const routingIterations = 100000;
+const routingStarted = performance.now();
+let claudeClassifications = 0;
+for (let index = 0; index < routingIterations; index += 1) {
+  if (modelRouter.classify("claude-benchmark-0") === "claude") claudeClassifications += 1;
+}
+const pmModelRouting = {
+  catalog_models: routingCatalog.data.length,
+  iterations: routingIterations,
+  elapsed_ms: +(performance.now() - routingStarted).toFixed(1),
+  claude_classifications: claudeClassifications,
+  availability_rebuilds: modelRouter.diagnostics().rebuilds,
+};
+
 const pixels = deterministicPixels(1024 * 1024 * 3, 0x87654321);
 const webp = await sharp(pixels, { raw: { width: 1024, height: 1024, channels: 3 } })
   .webp({ quality: 100 })
@@ -281,6 +310,7 @@ const report = {
   adapter_import: adapterImport,
   token_count_100kb: tokenCount,
   duplicate_images: duplicateImages,
+  pm_model_routing: pmModelRouting,
   oversized_payload: oversizedPayload,
 };
 
@@ -308,6 +338,10 @@ console.log(JSON.stringify(report, null, 2));
 
 if (checkMode) {
   const failures = [];
+  if (report.pm_model_routing.availability_rebuilds !== 1
+    || report.pm_model_routing.claude_classifications !== report.pm_model_routing.iterations) {
+    failures.push("PM Studio model routing did not reuse the memoized catalog classification");
+  }
   const proxy = report.large_token_count.proxy;
   const array = report.large_token_count.materialized_array;
   if (proxy.tokens !== array.tokens) failures.push(`token counts differ: proxy=${proxy.tokens} array=${array.tokens}`);

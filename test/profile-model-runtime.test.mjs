@@ -11,6 +11,7 @@ import {
 import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
 
 const CLAUDE_CREDENTIAL_FINGERPRINT = "personal-fingerprint";
+const CODEX_CREDENTIAL_FINGERPRINT = "enterprise-fingerprint";
 
 function modelResult(models) {
   return { status: 200, body: JSON.stringify(models) };
@@ -230,4 +231,38 @@ test("profile model runtime: isolated Claude ignores a cache from another creden
     profile: "claude",
     credentialFingerprint: "new-account-fingerprint",
   }), newClaude);
+});
+
+test("profile model runtime: Codex ignores a cache from another credential", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-runtime-codex-account-cache-"));
+  const oldCatalog = { data: [gptModel("gpt-old-account")] };
+  const newCatalog = { data: [gptModel("gpt-new-account")] };
+  saveModelCache(oldCatalog, {
+    home,
+    profile: "codex",
+    credentialFingerprint: "old-enterprise-fingerprint",
+  });
+  let calls = 0;
+  const client = clientWithList(async () => {
+    calls += 1;
+    return modelResult(newCatalog);
+  });
+  const runtime = createProfileModelRuntime({
+    codexClient: client,
+    codexCredentialFingerprint: CODEX_CREDENTIAL_FINGERPRINT,
+    home,
+    env: {},
+    log: () => {},
+  });
+
+  await runtime.initialize();
+
+  assert.equal(calls, 1);
+  assert.equal(runtime.codexRegistry.source, "live");
+  assert.deepEqual(runtime.codexRegistry.models, newCatalog);
+  assert.deepEqual(loadModelCache({
+    home,
+    profile: "codex",
+    credentialFingerprint: CODEX_CREDENTIAL_FINGERPRINT,
+  }), newCatalog);
 });

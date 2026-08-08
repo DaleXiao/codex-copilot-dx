@@ -70,6 +70,33 @@ function routingTarget(value) {
   return "unknown";
 }
 
+function pmRouteSummary(requests = {}) {
+  const routes = requests.by_route;
+  if (!routes || typeof routes !== "object") return null;
+  const names = ["pm_models", "pm_chat_completions", "pm_responses", "pm_embeddings"];
+  const totals = names.reduce((summary, name) => {
+    const route = routes[name] || {};
+    summary.total += finiteNumber(route.total) || 0;
+    summary.active += finiteNumber(route.active) || 0;
+    summary.errors += finiteNumber(route.errors) || 0;
+    return summary;
+  }, { total: 0, active: 0, errors: 0 });
+  return `PM relay: ${count(totals.total)} requests, ${count(totals.active)} active, ${count(totals.errors)} errors; models ${count(routes.pm_models?.total)}, chat ${count(routes.pm_chat_completions?.total)}, responses ${count(routes.pm_responses?.total)}, embeddings ${count(routes.pm_embeddings?.total)}`;
+}
+
+function errorCode(error) {
+  const seen = new Set();
+  const pending = [error];
+  while (pending.length) {
+    const current = pending.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    if (typeof current.code === "string") return current.code;
+    pending.push(current.cause, ...(Array.isArray(current.errors) ? current.errors : []));
+  }
+  return "";
+}
+
 export async function readAdapterStatus({
   host = "127.0.0.1",
   port = 2026,
@@ -101,12 +128,16 @@ export async function readAdapterStatus({
     }
     return { baseUrl, data };
   } catch (error) {
+    const code = errorCode(error);
     const reason = ctrl.signal.aborted
       ? `timed out after ${timeoutMs}ms`
-      : error?.cause?.code === "ECONNREFUSED"
+      : code === "ECONNREFUSED" || code === "ENETUNREACH"
         ? "adapter is not running"
         : error?.message || String(error);
-    throw new Error(`Could not read adapter status at ${baseUrl}: ${reason}`);
+    const nextStep = reason === "adapter is not running"
+      ? `. Run ccdx start, then retry ccdx status`
+      : "";
+    throw new Error(`Could not read adapter status at ${baseUrl}: ${reason}${nextStep}`);
   } finally {
     clearTimeout(timer);
   }
@@ -143,6 +174,8 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
   if (data.routing) {
     lines.push(status("info", `Routing: /v1/responses -> ${routingTarget(data.routing.responses)}; /v1/messages -> ${routingTarget(data.routing.messages)}`));
   }
+  const pmSummary = pmRouteSummary(requests);
+  if (pmSummary) lines.push(status("info", pmSummary));
   lines.push(status("info", `Limits: request body ${mebibytes(limits.max_body_bytes)}, decoded body ${mebibytes(limits.max_decoded_body_bytes)}`));
   return lines.join("\n");
 }

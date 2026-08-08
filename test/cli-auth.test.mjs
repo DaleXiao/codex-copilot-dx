@@ -43,6 +43,15 @@ function claudeModel(id = "claude-sonnet-test") {
   };
 }
 
+function writeLocalCopilotAuth(home, appName, token) {
+  const filePath = path.join(home, "Library", "Application Support", appName, "auth.json");
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify({
+    ghcAuth: { gitHubTokens: { access_token: token } },
+  }));
+  return filePath;
+}
+
 function candidateFetch({ login = "personal", id = 2, models = [claudeModel()] } = {}) {
   return async (url, options = {}) => {
     if (url === "https://api.github.com/user") return jsonResponse(200, { login, id });
@@ -173,10 +182,64 @@ test("authorizeClaudeProfile: uses explicit device flow and leaves legacy Codex 
   ]);
 });
 
+test("authorizeClaudeProfile: reuses a distinct local Copilot credential before Device Flow", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-reuse-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  writeLocalCopilotAuth(home, "Personal Copilot", "ghu_personal");
+  const urls = [];
+  const lines = [];
+
+  const result = await authorizeClaudeProfile({
+    home,
+    expectedLogin: "personal",
+    log: (line) => lines.push(line),
+    fetchImpl: async (url, options = {}) => {
+      urls.push(url);
+      return candidateFetch()(url, options);
+    },
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.identity.login, "personal");
+  assert.equal(readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home }).token, "ghu_personal");
+  assert.equal(urls.includes("https://github.com/login/device/code"), false);
+  assert.equal(urls.filter((url) => url === "https://api.github.com/user").length, 2);
+  assert.equal(lines.some((line) => /Reusing a local Copilot credential/.test(line)), true);
+});
+
+test("authorizeClaudeProfile: ambiguous local Copilot accounts require an explicit selector", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-ambiguous-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  writeLocalCopilotAuth(home, "Personal One", "ghu_personal_one");
+  writeLocalCopilotAuth(home, "Personal Two", "ghu_personal_two");
+  let deviceRequests = 0;
+
+  await assert.rejects(authorizeClaudeProfile({
+    home,
+    log: () => {},
+    fetchImpl: async (url, options = {}) => {
+      if (url === "https://github.com/login/device/code") deviceRequests += 1;
+      const token = new Headers(options.headers).get("authorization")?.replace(/^token\s+/i, "");
+      if (url === "https://api.github.com/user") {
+        const suffix = token === "ghu_personal_one" ? "one" : "two";
+        return jsonResponse(200, { login: `personal-${suffix}`, id: suffix === "one" ? 2 : 3 });
+      }
+      if (url === "https://api.github.com/copilot_internal/v2/token") {
+        return jsonResponse(200, { token: "copilot", endpoints: { api: "https://api.personal.githubcopilot.com" } });
+      }
+      throw new Error(`unexpected request ${url}`);
+    },
+  }), /Multiple reusable GitHub Copilot accounts were found.*--github-login/);
+
+  assert.equal(deviceRequests, 0);
+  assert.equal(readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home }).configured, false);
+});
+
 test("authorizeClaudeProfile: failed reauth preserves the old Claude credential", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-reauth-"));
   writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
   writeClaudeAuthProfile("ghu_personal_old", { login: "personal", id: 2 }, { home });
+  writeLocalCopilotAuth(home, "Reusable Personal", "ghu_should_be_ignored");
 
   await assert.rejects(
     authorizeClaudeProfile({

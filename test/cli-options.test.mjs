@@ -11,6 +11,7 @@ import {
 test("parseCliArgs: accepts supported commands and options", () => {
   assert.deepEqual(parseCliArgs([]), { command: "start", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false });
   assert.deepEqual(parseCliArgs(["--configure-claude-desktop"]), { command: "start", configureClaudeDesktop: true, showRequestId: false, online: false, compat: false });
+  assert.deepEqual(parseCliArgs(["start", "--configure-claude-app"]), { command: "start", configureClaudeDesktop: true, showRequestId: false, online: false, compat: false });
   assert.deepEqual(parseCliArgs(["--show-request-id"]), { command: "start", configureClaudeDesktop: false, showRequestId: true, online: false, compat: false });
   assert.deepEqual(parseCliArgs(["--show-request-id", "--configure-claude-desktop"]), { command: "start", configureClaudeDesktop: true, showRequestId: true, online: false, compat: false });
   assert.deepEqual(parseCliArgs(["doctor", "--online"]), { command: "doctor", configureClaudeDesktop: false, showRequestId: false, online: true, compat: false, profile: "codex" });
@@ -27,6 +28,9 @@ test("parseCliArgs: accepts supported commands and options", () => {
     command: "pms", action: "setup", configureClaudeDesktop: false, showRequestId: false,
     online: false, compat: false,
   });
+  assert.equal(parseCliArgs(["pms", "status"]).action, "status");
+  assert.equal(parseCliArgs(["pm-studio", "setup"]).action, "setup");
+  assert.equal(parseCliArgs(["pm-studio", "status"]).action, "status");
   assert.deepEqual(parseCliArgs(["models"]), { command: "models", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false, profile: "codex" });
   assert.equal(parseCliArgs(["models", "--profile", "claude"]).profile, "claude");
   assert.deepEqual(parseCliArgs(["auth", "status"]), {
@@ -45,6 +49,7 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["update", "gh"]).updateSource, "github");
   assert.match(cliHelp(), /ccdx status/);
   assert.match(cliHelp(), /ccdx models/);
+  assert.match(cliHelp(), /ccdx pms status/);
   assert.match(cliHelp(), /ccdx pms setup/);
   assert.match(cliHelp(), /ccdx auth status \[--online\]/);
   assert.match(cliHelp(), /ccdx auth login claude \[--github-login <login>\] \[--reauth\]/);
@@ -56,6 +61,11 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.match(cliHelp(), /ccdx update \[npm\|github\]/);
   assert.match(cliHelp("codex-copilot-dx"), /codex-copilot-dx status/);
   assert.match(cliHelp("codex-copilot-dx"), /Equivalent command: ccdx/);
+  assert.equal(parseCliArgs(["doctor", "--help"]).helpTopic, "doctor");
+  assert.equal(parseCliArgs(["auth", "login", "claude", "--help"]).helpTopic, "auth login");
+  assert.equal(parseCliArgs(["pms", "status", "--help"]).helpTopic, "pms status");
+  assert.equal(parseCliArgs(["help", "pm-studio", "setup"]).helpTopic, "pms setup");
+  assert.match(cliHelp("ccdx", "doctor"), /consumes a small amount of Copilot usage/);
   const normalizeCommandNames = (value) => value
     .replaceAll("codex-copilot-dx", "<command>")
     .replaceAll("ccdx", "<command>");
@@ -65,7 +75,7 @@ test("parseCliArgs: accepts supported commands and options", () => {
 test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
   assert.throws(() => parseCliArgs(["serve"]), /Unknown command or option: serve/);
   assert.throws(() => parseCliArgs(["usage", "extra"]), /Unexpected argument: extra/);
-  assert.throws(() => parseCliArgs(["pms"]), /Missing pms action: expected setup/);
+  assert.throws(() => parseCliArgs(["pms"]), /Missing pms action: expected setup or status/);
   assert.throws(() => parseCliArgs(["pms", "restore"]), /Unknown pms action: restore/);
   assert.throws(() => parseCliArgs(["pms", "setup", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["status", "extra"]), /Unexpected argument: extra/);

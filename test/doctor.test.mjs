@@ -121,6 +121,36 @@ test("runDoctor: prints status lines", async () => {
 
   assert.equal(lines[0], "ccdx doctor");
   assert.equal(lines.some((line) => line.startsWith("[OK] GitHub token found")), true);
+  assert.equal(lines.at(-1).startsWith("[OK] Summary:"), true);
+});
+
+test("collectDoctorChecks: includes PM Studio health only when installed", async () => {
+  const base = {
+    home: configuredHome(),
+    platform: "darwin",
+    env: {},
+    checkAdapter: false,
+    checkPmStudio: true,
+  };
+  const missing = await collectDoctorChecks({
+    ...base,
+    inspectPmStudioHealthFn: async () => ({ app: { state: "not_installed", metadata: null, issues: [] } }),
+  });
+  assert.equal(missing.some((check) => /PM Studio/.test(check.message)), false);
+
+  const clean = await collectDoctorChecks({
+    ...base,
+    inspectPmStudioHealthFn: async () => ({
+      app: {
+        state: "clean",
+        metadata: { version: "2.9.7", build: "2090700" },
+        issues: [],
+      },
+      claude: { valid: true },
+      adapter: { ok: true },
+    }),
+  });
+  assert.equal(clean.some((check) => check.fix === "ccdx pms setup"), true);
 });
 
 test("inspectAuthProfiles: reports an isolated Claude account without exposing credentials", () => {

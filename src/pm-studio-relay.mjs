@@ -10,6 +10,7 @@ import {
   writeOrDrain,
 } from "./http-transport.mjs";
 import { isLoopbackAddress } from "./observability.mjs";
+import { createPmStudioModelRouter } from "./profile-routing.mjs";
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
 import { requireUpstreamEventStream } from "./stream-contract.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
@@ -147,48 +148,6 @@ function catalogData(catalog) {
   return Array.isArray(catalog?.data) ? catalog.data : null;
 }
 
-function originalClaudeModels(registry) {
-  return catalogData(registry?.models) || [];
-}
-
-function isClaudeCatalogEntry(model) {
-  const id = String(model?.id || "").trim();
-  const vendor = String(model?.vendor || "").trim().toLowerCase();
-  return Boolean(id) && (vendor === "anthropic" || id.toLowerCase().startsWith("claude-"));
-}
-
-function isAllowedClaudeModel(model) {
-  return isClaudeCatalogEntry(model)
-    && String(model?.vendor || "").trim().toLowerCase() === "anthropic"
-    && model?.model_picker_enabled !== false
-    && Array.isArray(model?.supported_endpoints)
-    && model.supported_endpoints.includes("/chat/completions");
-}
-
-function claudeAvailability(options) {
-  const enabled = options.claudeMode === "isolated"
-    && options.claudeProfile?.valid === true
-    && typeof options.claudeClient?.chatCompletions === "function";
-  const catalog = originalClaudeModels(options.claudeModelRegistry);
-  const allowed = new Map();
-  const known = new Set();
-  for (const model of catalog) {
-    const id = String(model?.id || "").trim();
-    if (!id || !isClaudeCatalogEntry(model)) continue;
-    known.add(id);
-    if (enabled && isAllowedClaudeModel(model) && !allowed.has(id)) allowed.set(id, model);
-  }
-  return { allowed, known };
-}
-
-function classifyModel(modelId, options) {
-  const id = String(modelId || "").trim();
-  const { allowed, known } = claudeAvailability(options);
-  if (allowed.has(id)) return "claude";
-  if (known.has(id) || id.toLowerCase().startsWith("claude-")) return "unsupported_claude";
-  return "enterprise";
-}
-
 async function responseSnapshot(response) {
   return {
     status: response.status,
@@ -218,10 +177,10 @@ function rejectUpstreamRedirect(response) {
   return response;
 }
 
-function mergeModelCatalog(snapshot, options) {
+function mergeModelCatalog(snapshot, modelRouter) {
   if (!snapshot.ok) return null;
-  const { allowed } = claudeAvailability(options);
-  if (!allowed.size) return null;
+  const allowed = modelRouter.allowedModels();
+  if (!allowed.length) return null;
   let enterprise;
   try {
     enterprise = JSON.parse(snapshot.body.toString("utf8"));
@@ -232,7 +191,8 @@ function mergeModelCatalog(snapshot, options) {
   if (!data) return null;
   const seen = new Set(data.map((model) => String(model?.id || "").trim()).filter(Boolean));
   const additions = [];
-  for (const [id, model] of allowed) {
+  for (const model of allowed) {
+    const id = String(model?.id || "").trim();
     if (seen.has(id)) continue;
     seen.add(id);
     additions.push(model);
@@ -332,6 +292,12 @@ export function createPmStudioRelayHandler(options = {}) {
   const validated = new Map();
   const validationFlights = new Map();
   let activeModelRequests = 0;
+  const modelRouter = createPmStudioModelRouter({
+    getCatalog: () => options.claudeModelRegistry?.models,
+    isClaudeEnabled: () => options.claudeMode === "isolated"
+      && options.claudeProfile?.valid === true
+      && typeof options.claudeClient?.chatCompletions === "function",
+  });
 
   function isValidated(fingerprint) {
     const expiresAt = validated.get(fingerprint);
@@ -452,7 +418,7 @@ export function createPmStudioRelayHandler(options = {}) {
       sendSnapshot(res, snapshot);
       return;
     }
-    const merged = mergeModelCatalog(snapshot, options);
+    const merged = mergeModelCatalog(snapshot, modelRouter);
     if (!merged) {
       sendSnapshot(res, snapshot);
       return;
@@ -480,7 +446,7 @@ export function createPmStudioRelayHandler(options = {}) {
       }
       abort.setTimeout(requestTimeoutMs, timeoutReason);
 
-      const modelType = classifyModel(body?.model, options);
+      const modelType = modelRouter.classify(body?.model);
       if (modelType === "unsupported_claude" || (modelType === "claude" && pathname !== "/chat/completions")) {
         throw localError(400, "model_not_supported", "The requested Claude model is not available for this endpoint");
       }

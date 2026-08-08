@@ -4,6 +4,7 @@ import { copilotRuntimeStatus } from "./copilot.mjs";
 import { imageOptimizationStats } from "./image-optimization.mjs";
 import { responseHistoryStats } from "./response-history.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
+import { profileRouting } from "./profile-routing.mjs";
 
 export { ADAPTER_STATUS_PATH };
 const OBSERVABILITY_RUNTIME_CONFIG = loadRuntimeConfig();
@@ -191,10 +192,7 @@ export function runtimeStatusPayload({
       codex: { mode: "legacy", client: codexRuntime, models: codexModels },
       claude: { mode: resolvedClaudeMode, client: claudeRuntime, models: claudeModels },
     },
-    routing: {
-      responses: "codex",
-      messages: resolvedClaudeMode === "isolated" ? "claude" : "codex",
-    },
+    routing: profileRouting({ claudeMode: resolvedClaudeMode }),
     limits: {
       max_body_bytes: OBSERVABILITY_RUNTIME_CONFIG.maxBodyBytes,
       max_decoded_body_bytes: OBSERVABILITY_RUNTIME_CONFIG.maxDecodedBodyBytes,

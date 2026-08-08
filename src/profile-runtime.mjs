@@ -1,5 +1,6 @@
 import {
   AUTH_PROFILE_CLAUDE,
+  AUTH_PROFILE_CODEX,
   authProfilePaths,
   profileReauthMessage,
   readAuthProfileCredentials,
@@ -45,6 +46,16 @@ export function createProfileRuntime({
   };
   const credentials = readCredentials();
   const claudeProfile = safeProfileStatus(credentials);
+  let codexCredentialFingerprint = "";
+  try {
+    const codexCredentials = readAuthProfileCredentials(AUTH_PROFILE_CODEX, { home });
+    if (codexCredentials.valid) {
+      codexCredentialFingerprint = githubTokenFingerprint(codexCredentials.token);
+    }
+  } catch {
+    // The Codex client remains authoritative if its optional metadata cannot
+    // be inspected; only credential-bound cache reuse is disabled.
+  }
 
   if (!credentials.configured) {
     return Object.freeze({
@@ -52,6 +63,7 @@ export function createProfileRuntime({
       claudeClient: codexClient,
       claudeMode: "inherited",
       claudeProfile,
+      codexCredentialFingerprint,
       claudeCredentialFingerprint: "",
     });
   }
@@ -73,6 +85,7 @@ export function createProfileRuntime({
     claudeClient,
     claudeMode: "isolated",
     claudeProfile,
+    codexCredentialFingerprint,
     claudeCredentialFingerprint: credentials.valid
       ? githubTokenFingerprint(credentials.token)
       : "",

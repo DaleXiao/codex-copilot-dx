@@ -149,24 +149,29 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   try {
     const chatCompletionsFn = options.chatCompletionsFn || chatCompletions;
     try {
-      resp = await chatCompletionsFn(upstreamReq, { signal: options.signal, bodyText });
+      options.onUpstreamStart?.();
+      resp = await chatCompletionsFn(upstreamReq, {
+        signal: options.signal,
+        bodyText,
+        onUpstreamStart: options.onUpstreamStart,
+      });
     } finally {
       options.releaseRequest?.();
     }
   } catch (e) {
     const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(options.abort?.reason) : 502;
     await onError(statusCode, e.message);
-    return;
+    return false;
   }
   if (!resp.ok) {
     await onError(resp.status, await resp.text(), undefined, resp);
-    return;
+    return false;
   }
   try {
     await requireUpstreamEventStream(resp);
   } catch (error) {
     await onError(error.statusCode, error.message, error);
-    return;
+    return false;
   }
   options.onUpstreamResponse?.(resp);
   options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
@@ -279,7 +284,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
     })) {
       if (!line.startsWith("data: ")) continue;
       const data = line.slice(6).trim();
-      if (data === "[DONE]") { await emitCompleted(); onDone(); return; }
+      if (data === "[DONE]") { await emitCompleted(); onDone(); return true; }
       let parsed;
       try {
         parsed = JSON.parse(data);
@@ -331,8 +336,9 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   } catch (e) {
     const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(options.abort?.reason) : (e?.statusCode || 502);
     await onError(statusCode, e?.message || "upstream stream error", e);
-    return;
+    return false;
   }
   const error = incompleteUpstreamStream("[DONE]");
   await onError(error.statusCode, error.message, error);
+  return false;
 }

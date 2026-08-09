@@ -149,6 +149,7 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
   const admission = data.admission || {};
   const history = data.response_history || {};
   const images = data.image_optimization || {};
+  const imageHistory = data.image_history_pressure;
   const models = data.models || {};
   const copilot = data.copilot || {};
   const limits = data.limits || {};
@@ -166,8 +167,11 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
     status("info", `Memory: RSS ${mebibytes(processStats.rss_bytes)}, heap ${mebibytes(processStats.heap_used_bytes)}`),
     status("info", `History: ${mebibytes(history.bytes)} / ${mebibytes(limits.response_history_max_bytes)}, ${count(history.entries)} entries, ${count(history.evicted)} evicted`),
     status("info", `Image cache: ${count(images.cache_entries)} entries, ${cacheHitRate(images)} hits, ${mebibytes(images.cache_bytes)} / ${mebibytes(images.cache_max_bytes)}`),
-    status("info", `Models: ${count(models.models)} total, ${count(models.claude_models)} Claude; Copilot token ${copilot.token_cached ? `cached (${duration(copilot.token_expires_in_ms)} remaining)` : "not cached"}`),
   ];
+  if (imageHistory && typeof imageHistory === "object") {
+    lines.push(status("info", `Visual history: ${count(imageHistory.active_recovery_trees)} recovery trees, ${count(imageHistory.adapted_requests)} adapted requests, ${count(imageHistory.historical_images_omitted)} older images omitted, ${count(imageHistory.timeouts_recorded)} timeouts`));
+  }
+  lines.push(status("info", `Models: ${count(models.models)} total, ${count(models.claude_models)} Claude; Copilot token ${copilot.token_cached ? `cached (${duration(copilot.token_expires_in_ms)} remaining)` : "not cached"}`));
   if (data.profiles?.codex || data.profiles?.claude) {
     lines.push(status("info", `Profiles: ${profileSummary("Codex", data.profiles?.codex)}; ${profileSummary("Claude", data.profiles?.claude)}`));
   }

@@ -14,8 +14,14 @@ import packageJson from "../package.json" with { type: "json" };
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
 const legacyCliPath = fileURLToPath(new URL("../bin/codex-copilot-dx.mjs", import.meta.url));
+const legacyWarning = /codex-copilot-dx is deprecated; use ccdx instead/;
 
-test("package exposes ccdx and keeps the legacy command on the shared CLI implementation", () => {
+function assertCompatibilityWarning(stderr, executable) {
+  if (executable === legacyCliPath) assert.match(stderr, legacyWarning);
+  else assert.equal(stderr, "");
+}
+
+test("package exposes ccdx and keeps the deprecated command as a compatibility shim", () => {
   assert.deepEqual(packageJson.bin, {
     ccdx: "bin/cli.mjs",
     "codex-copilot-dx": "bin/codex-copilot-dx.mjs",
@@ -32,14 +38,14 @@ test("cli --version exits without starting the adapter", async () => {
   assert.equal(stderr, "");
 });
 
-test("legacy cli --version keeps its invoked command name", async () => {
+test("deprecated cli --version points users at the canonical command", async () => {
   const { stdout, stderr } = await execFileAsync(process.execPath, [legacyCliPath, "--version"], {
     timeout: 2000,
     env: { ...process.env, ADAPTER_PORT: "0" },
   });
 
-  assert.equal(stdout.trim(), `codex-copilot-dx v${localPackageVersion()} by Dale Xiao`);
-  assert.equal(stderr, "");
+  assert.equal(stdout.trim(), `ccdx v${localPackageVersion()} by Dale Xiao`);
+  assert.match(stderr, legacyWarning);
 });
 
 test("cli --help exits without validating runtime configuration", async () => {
@@ -50,7 +56,7 @@ test("cli --help exits without validating runtime configuration", async () => {
 
   assert.match(stdout, /Usage:/);
   assert.match(stdout, /ccdx doctor/);
-  assert.match(stdout, /Equivalent command: codex-copilot-dx/);
+  assert.doesNotMatch(stdout, /Equivalent command/);
   assert.match(stdout, /ccdx status/);
   assert.match(stdout, /ccdx models/);
   assert.match(stdout, /ccdx pms setup/);
@@ -72,24 +78,25 @@ test("cli rejects unknown commands without starting the adapter", async () => {
   );
 });
 
-test("legacy cli help and argument errors use the legacy command name", async () => {
-  const { stdout } = await execFileAsync(process.execPath, [legacyCliPath, "--help"], {
+test("deprecated cli help and argument errors use the canonical command name", async () => {
+  const { stdout, stderr } = await execFileAsync(process.execPath, [legacyCliPath, "--help"], {
     timeout: 2000,
     env: { ...process.env, ADAPTER_PORT: "invalid" },
   });
-  assert.match(stdout, /codex-copilot-dx doctor/);
-  assert.match(stdout, /codex-copilot-dx status/);
-  assert.match(stdout, /codex-copilot-dx models/);
-  assert.match(stdout, /codex-copilot-dx pms setup/);
-  assert.match(stdout, /codex-copilot-dx auto-review-model/);
-  assert.match(stdout, /codex-copilot-dx update \[npm\|github\]/);
-  assert.match(stdout, /Equivalent command: ccdx/);
+  assert.match(stdout, /ccdx doctor/);
+  assert.match(stdout, /ccdx status/);
+  assert.match(stdout, /ccdx models/);
+  assert.match(stdout, /ccdx pms setup/);
+  assert.match(stdout, /ccdx auto-review-model/);
+  assert.match(stdout, /ccdx update \[npm\|github\]/);
+  assert.match(stderr, legacyWarning);
 
   await assert.rejects(
     execFileAsync(process.execPath, [legacyCliPath, "serve"], { timeout: 2000, env: { ...process.env } }),
     (error) => {
       assert.equal(error.code, 2);
-      assert.match(error.stderr, /Run codex-copilot-dx --help for usage/);
+      assert.match(error.stderr, legacyWarning);
+      assert.match(error.stderr, /Run ccdx --help for usage/);
       return true;
     },
   );
@@ -101,10 +108,8 @@ test("both CLI entrypoints expose the same complete subcommand help", async () =
     execFileAsync(process.execPath, [legacyCliPath, "--help"], { timeout: 2000 }),
   ]);
 
-  const normalizeCommandNames = (value) => value
-    .replaceAll("codex-copilot-dx", "<command>")
-    .replaceAll("ccdx", "<command>");
-  assert.equal(normalizeCommandNames(legacy.stdout), normalizeCommandNames(primary.stdout));
+  assert.equal(legacy.stdout, primary.stdout);
+  assert.match(legacy.stderr, legacyWarning);
   for (const command of ["auth", "doctor", "status", "models", "pms", "usage", "auto-review-model", "update"]) {
     assert.match(primary.stdout, new RegExp(`ccdx ${command}`));
   }
@@ -141,8 +146,8 @@ test("both CLI entrypoints dispatch pms setup before runtime, auth, logging, or 
   }
 });
 
-test("both CLI entrypoints report auth status read-only without starting runtime initialization", async () => {
-  for (const [commandName, executable] of [["ccdx", cliPath], ["codex-copilot-dx", legacyCliPath]]) {
+test("both CLI entrypoints report auth status through the canonical command", async () => {
+  for (const executable of [cliPath, legacyCliPath]) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-status-"));
     const logPath = path.join(home, "debug.log");
     const { stdout, stderr } = await execFileAsync(process.execPath, [executable, "auth", "status"], {
@@ -155,11 +160,11 @@ test("both CLI entrypoints report auth status read-only without starting runtime
       },
     });
 
-    assert.match(stdout, new RegExp(`^${commandName} auth status`, "m"));
+    assert.match(stdout, /^ccdx auth status/m);
     assert.match(stdout, /Codex: not configured/);
     assert.match(stdout, /Claude: inherits Codex/);
     assert.match(stdout, /Routing: responses -> codex; messages -> codex/);
-    assert.equal(stderr, "");
+    assertCompatibilityWarning(stderr, executable);
     assert.equal(fs.existsSync(logPath), false);
     assert.equal(fs.existsSync(path.join(home, ".local")), false);
     assert.equal(fs.existsSync(path.join(home, ".codex")), false);
@@ -184,7 +189,7 @@ test("models --profile claude fails closed without creating or borrowing credent
 });
 
 test("both CLI entrypoints handle an existing Claude login without device flow or runtime startup", async () => {
-  for (const [commandName, executable] of [["ccdx", cliPath], ["codex-copilot-dx", legacyCliPath]]) {
+  for (const executable of [cliPath, legacyCliPath]) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-existing-"));
     const profile = writeClaudeAuthProfile("ghu_personal", { login: "personal", id: 2 }, { home });
     const tokenBefore = fs.readFileSync(profile.paths.tokenPath);
@@ -202,15 +207,15 @@ test("both CLI entrypoints handle an existing Claude login without device flow o
     });
 
     assert.match(stdout, /Claude profile is already configured for personal/);
-    assert.match(stdout, new RegExp(`Restart the running ${commandName} adapter`));
-    assert.equal(stderr, "");
+    assert.match(stdout, /Restart the running ccdx adapter/);
+    assertCompatibilityWarning(stderr, executable);
     assert.deepEqual(fs.readFileSync(profile.paths.tokenPath), tokenBefore);
     assert.deepEqual(fs.readFileSync(profile.paths.metadataPath), metadataBefore);
   }
 });
 
 test("both CLI entrypoints fail models cleanly without a saved token or startup side effects", async () => {
-  for (const [commandName, executable] of [["ccdx", cliPath], ["codex-copilot-dx", legacyCliPath]]) {
+  for (const executable of [cliPath, legacyCliPath]) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-models-"));
     const logPath = path.join(home, "debug.log");
     await assert.rejects(
@@ -224,19 +229,19 @@ test("both CLI entrypoints fail models cleanly without a saved token or startup 
         return true;
       },
     );
-    assert.equal(fs.existsSync(logPath), false, commandName);
-    assert.equal(fs.existsSync(path.join(home, ".codex")), false, commandName);
-    assert.equal(fs.existsSync(path.join(home, ".claude")), false, commandName);
+    assert.equal(fs.existsSync(logPath), false, executable);
+    assert.equal(fs.existsSync(path.join(home, ".codex")), false, executable);
+    assert.equal(fs.existsSync(path.join(home, ".claude")), false, executable);
   }
 });
 
 test("both CLI entrypoints require a source for non-interactive updates", async () => {
-  for (const [commandName, executable] of [["ccdx", cliPath], ["codex-copilot-dx", legacyCliPath]]) {
+  for (const executable of [cliPath, legacyCliPath]) {
     await assert.rejects(
       execFileAsync(process.execPath, [executable, "update"], { timeout: 2000 }),
       (error) => {
         assert.equal(error.code, 1);
-        assert.match(error.stderr, new RegExp(`${commandName} update npm or ${commandName} update github`));
+        assert.match(error.stderr, /ccdx update npm or ccdx update github/);
         return true;
       },
     );
@@ -244,12 +249,12 @@ test("both CLI entrypoints require a source for non-interactive updates", async 
 });
 
 test("both CLI entrypoints reject non-interactive model selection consistently", async () => {
-  for (const [commandName, executable] of [["ccdx", cliPath], ["codex-copilot-dx", legacyCliPath]]) {
+  for (const executable of [cliPath, legacyCliPath]) {
     await assert.rejects(
       execFileAsync(process.execPath, [executable, "auto-review-model"], { timeout: 2000 }),
       (error) => {
         assert.equal(error.code, 1);
-        assert.match(error.stderr, new RegExp(`${commandName} auto-review-model requires an interactive terminal`));
+        assert.match(error.stderr, /ccdx auto-review-model requires an interactive terminal/);
         return true;
       },
     );
@@ -286,15 +291,15 @@ test("cli doctor returns nonzero when a configuration file is invalid", async ()
   );
 });
 
-test("legacy cli doctor heading uses the legacy command name", async () => {
+test("deprecated cli doctor heading uses the canonical command name", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-legacy-doctor-"));
   const { stdout, stderr } = await execFileAsync(process.execPath, [legacyCliPath, "doctor"], {
     timeout: 2000,
     env: { ...process.env, HOME: home, ADAPTER_PORT: "9" },
   });
 
-  assert.match(stdout, /^codex-copilot-dx doctor/m);
-  assert.equal(stderr, "");
+  assert.match(stdout, /^ccdx doctor/m);
+  assert.match(stderr, legacyWarning);
 });
 
 test("cli status fails read-only before unrelated runtime validation or initialization", async () => {

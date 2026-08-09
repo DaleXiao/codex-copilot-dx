@@ -273,6 +273,7 @@ test("runtime status is loopback-only and excludes its own probe from request me
   assert.equal(typeof payload.image_optimization.cache_entries, "number");
   assert.equal(typeof payload.image_optimization.cache_bytes, "number");
   assert.equal(typeof payload.image_optimization.cache_inflight, "number");
+  assert.equal(typeof payload.image_history_pressure.active_recovery_trees, "number");
   assert.equal(typeof payload.copilot.token_cached, "boolean");
   assert.equal(Object.hasOwn(payload.copilot, "token"), false);
   assert.deepEqual(payload.copilot, payload.profiles.codex.client);

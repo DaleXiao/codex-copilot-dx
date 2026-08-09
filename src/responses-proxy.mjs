@@ -126,7 +126,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
   reqContext = opened.reqContext;
   if (errorText !== undefined) {
     sendUpstreamError(res, resp, errorText);
-    return;
+    return { successful: false, compacted: false };
   }
 
   if (reqContext.body.stream) {
@@ -158,7 +158,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
           if (!streamState.sawTerminal) throw incompleteUpstreamStream("a terminal Responses event");
           storeCompletedResponse(reqContext, streamState.completed);
           res.end();
-          return;
+          return { successful: Boolean(streamState.completed), compacted: false };
         }
         options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
         buffer += decoder.decode(value, { stream: true });
@@ -170,12 +170,13 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
         if (streamState.sawTerminal) {
           storeCompletedResponse(reqContext, streamState.completed);
           res.end();
-          return;
+          return { successful: Boolean(streamState.completed), compacted: false };
         }
       }
     } catch (e) {
       logRequestFailure("Responses", e, options.abort);
       await endStreamWithError(res, "responses", e, options.abort);
+      return { successful: false, compacted: false };
     } finally {
       await reader.cancel().catch(() => {});
       reader.releaseLock();
@@ -199,7 +200,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
         contentType: "application/json",
       }));
       res.end(JSON.stringify(response));
-      return;
+      return { successful: true, compacted: true };
     }
     res.writeHead(resp.status, safeUpstreamResponseHeaders(resp.headers, {
       contentType: "application/json",
@@ -216,7 +217,9 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
           response,
           event: response,
         });
+        return { successful: true, compacted: false };
       } catch {}
     }
+    return { successful: false, compacted: false };
   }
 }

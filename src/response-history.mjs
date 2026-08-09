@@ -174,6 +174,10 @@ export function responseHistoryStats() {
   return { entries: histories.size, bytes: totalBytes, evicted: evictedIds.size };
 }
 
+export function responseHistoryRootId(responseId) {
+  return histories.get(responseId)?.rootId || null;
+}
+
 export function materializeResponseHistory(responseId) {
   const chain = [];
   const seen = new Set();

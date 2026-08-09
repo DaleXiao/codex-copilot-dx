@@ -1,7 +1,11 @@
 import { responses as copilotResponses } from "./copilot.mjs";
 import { httpError } from "./http-transport.mjs";
 import { debugLog } from "./log.mjs";
-import { materializeResponseHistory, rememberResponseHistoryNode } from "./response-history.mjs";
+import {
+  materializeResponseHistory,
+  rememberResponseHistoryNode,
+  responseHistoryRootId,
+} from "./response-history.mjs";
 import { enforceResponsesImageLimit } from "./responses-image-limit.mjs";
 import { status } from "./status.mjs";
 
@@ -157,6 +161,7 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
     const resp = await upstream(reqContext.body, {
       signal: options.signal,
       currentInputStart: reqContext.currentInputStart,
+      onUpstreamStart: options.onUpstreamStart,
       payloadPrepared,
     });
     payloadPrepared = true;
@@ -198,9 +203,11 @@ export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
   );
   const previousId = body.previous_response_id;
   let historyItems = [];
+  let historyRootId = null;
 
   if (previousId !== undefined && previousId !== null) {
     historyItems = materializeResponseHistory(previousId);
+    historyRootId = responseHistoryRootId(previousId);
     body.input = [...historyItems, ...currentInputItems];
   } else {
     body.input = currentInputItems;
@@ -232,6 +239,7 @@ export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
     inputItems: body.input,
     currentInputStart: retainedCurrentInputStart < 0 ? body.input.length : retainedCurrentInputStart,
     historyParentId: previousId ?? null,
+    historyRootId,
     historyInputItems,
     takeHistoryOwnership: mutate,
   };

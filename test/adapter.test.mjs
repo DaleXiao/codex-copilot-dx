@@ -34,6 +34,8 @@ import {
   writeOrDrain,
 } from "../src/adapter.mjs";
 import { autoReviewModelPreference, writeAutoReviewModel } from "../src/user-settings.mjs";
+import { responsesHistoricalImageStats } from "../src/responses-byte-budget.mjs";
+import { createResponsesImagePressureController } from "../src/responses-image-pressure.mjs";
 
 const gzipAsync = promisify(zlib.gzip);
 const zstdCompressAsync = zlib.zstdCompress ? promisify(zlib.zstdCompress) : null;
@@ -1338,6 +1340,118 @@ test("HTTP responses route preserves 0.4.23 image_gen compatibility", async () =
   assert.deepEqual(upstreamBody.tools, [
     { type: "function", name: "lookup", parameters: { type: "object" } },
   ]);
+});
+
+test("HTTP responses route retries large visual history in recovery mode without replaying the timed-out POST", async () => {
+  clearResponseHistoryForTests();
+  const history = prepareResponsesRequest({
+    model: "gpt-5.6-sol",
+    input: Array.from({ length: 36 }, (_, index) => ({
+      type: "message",
+      role: "user",
+      content: [{
+        type: "input_image",
+        image_url: `data:image/png;base64,${Buffer.alloc(128, index + 1).toString("base64")}`,
+      }],
+    })),
+  });
+  rememberResponseHistory(history, { id: "resp_visual_root", status: "completed", output: [] });
+
+  const imagePressure = createResponsesImagePressureController();
+  const upstreamImageCounts = [];
+  let upstreamCalls = 0;
+  const responsesFn = async (body, { currentInputStart, onUpstreamStart, signal }) => {
+    upstreamCalls += 1;
+    upstreamImageCounts.push(responsesHistoricalImageStats(body.input, currentInputStart).historicalImages);
+    onUpstreamStart();
+    if (upstreamCalls === 1) {
+      await new Promise((resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+        signal.addEventListener("abort", onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      });
+    }
+    const event = {
+      type: "response.completed",
+      response: {
+        id: `resp_visual_${upstreamCalls}`,
+        object: "response",
+        status: "completed",
+        model: body.model,
+        output: [],
+      },
+    };
+    return new Response(`event: response.completed\ndata: ${JSON.stringify(event)}\n\n`, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  };
+  const options = {
+    imagePressure,
+    responsesFn,
+    streamHandshakeTimeoutMs: 5,
+    streamIdleTimeoutMs: 1000,
+    upstreamTimeoutMs: 1000,
+  };
+
+  const first = await invokeAdapter(options, {
+    body: {
+      model: "gpt-5.6-sol",
+      stream: true,
+      previous_response_id: "resp_visual_root",
+      input: "continue",
+    },
+  });
+  assert.equal(first.status, 504);
+  assert.equal(JSON.parse(first.text).error.code, "ccdx_visual_history_timeout");
+  assert.equal(upstreamCalls, 1);
+  assert.deepEqual(upstreamImageCounts, [16]);
+
+  const second = await invokeAdapter(options, {
+    body: {
+      model: "gpt-5.6-sol",
+      stream: true,
+      previous_response_id: "resp_visual_root",
+      input: "continue",
+    },
+  });
+  assert.equal(second.status, 200);
+  assert.equal(upstreamCalls, 2);
+  assert.deepEqual(upstreamImageCounts, [16, 8]);
+  assert.equal(imagePressure.snapshot().active_recovery_trees, 1);
+  clearResponseHistoryForTests();
+});
+
+test("successful compaction clears visual-history recovery for the compacted tree", async () => {
+  clearResponseHistoryForTests();
+  const history = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "before compaction" });
+  rememberResponseHistory(history, { id: "resp_pressure_compact_root", status: "completed", output: [] });
+  const imagePressure = createResponsesImagePressureController();
+  imagePressure.markTimeout("resp_pressure_compact_root", { eligible: true });
+
+  const result = await invokeAdapter({
+    imagePressure,
+    responsesCompactFn: async (_body, { onUpstreamStart }) => {
+      onUpstreamStart();
+      return Response.json({
+        id: "resp_pressure_compacted",
+        object: "response.compaction",
+        status: "completed",
+        output: [{ type: "compaction", id: "cmp_pressure", encrypted_content: "state" }],
+      });
+    },
+  }, {
+    url: "/v1/responses/compact",
+    body: {
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_pressure_compact_root",
+      input: "compact",
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(imagePressure.snapshot().active_recovery_trees, 0);
+  clearResponseHistoryForTests();
 });
 
 test("HTTP responses route maps Codex auto-review directly to Responses", async () => {

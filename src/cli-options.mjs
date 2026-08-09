@@ -5,7 +5,6 @@ const START_OPTIONS = new Map([
   ["--configure-claude-app", "configure-claude-app"],
   ["--show-request-id", "show-request-id"],
 ]);
-const CLI_COMMANDS = new Set(["ccdx", "codex-copilot-dx"]);
 const PM_COMMANDS = new Set(["pms", "pm-studio"]);
 const HELP_TOPICS = new Set([
   "",
@@ -253,10 +252,8 @@ export function parseAdapterProbeOptions(env = process.env) {
   };
 }
 
-export function cliCommandName(executable = process.argv[1]) {
-  const name = String(executable || "").split(/[\\/]/).pop();
-  if (name === "codex-copilot-dx.mjs") return "codex-copilot-dx";
-  return CLI_COMMANDS.has(name) ? name : "ccdx";
+export function cliCommandName() {
+  return "ccdx";
 }
 
 function topicHelp(name, topic) {
@@ -280,10 +277,9 @@ function topicHelp(name, topic) {
 }
 
 export function cliHelp(commandName = "ccdx", topic = "") {
-  const name = CLI_COMMANDS.has(commandName) ? commandName : "ccdx";
-  const alias = name === "ccdx" ? "codex-copilot-dx" : "ccdx";
+  const name = "ccdx";
   const normalizedTopic = checkedHelpTopic(topic ? topic.split(" ") : []);
-  if (normalizedTopic) return `${topicHelp(name, normalizedTopic)}\n\nEquivalent command: ${alias}`;
+  if (normalizedTopic) return topicHelp(name, normalizedTopic);
   return `Usage:
   ${name} [start] [--configure-claude-app] [--show-request-id]
   ${name} auth status [--online]
@@ -310,7 +306,5 @@ Commands:
   auto-review-model  Select the Codex Auto-review Responses model
   update             Update the global package from npm or GitHub
 
-Run ${name} <command> --help for command details.
-
-Equivalent command: ${alias}`;
+Run ${name} <command> --help for command details.`;
 }

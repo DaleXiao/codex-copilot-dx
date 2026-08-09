@@ -141,6 +141,36 @@ test("createCopilotClient: request fetch injection never receives the long-lived
   ]);
 });
 
+test("createCopilotClient: starts the upstream phase only after token and payload preparation", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-client-upstream-phase-"));
+  const tokenPath = writeToken(home, "codex", "github_enterprise");
+  const sequence = [];
+  const client = createCopilotClient({
+    profile: "codex",
+    tokenPath,
+    tokenFetchImpl: async () => {
+      sequence.push("token");
+      return Response.json({
+        token: "service_enterprise",
+        expires_at: Math.floor(Date.now() / 1000) + 1800,
+        endpoints: { api: "https://enterprise.example" },
+      });
+    },
+    allowTokenDiscovery: false,
+    readGithubIdentity: () => ({ login: "enterprise-user", id: 1 }),
+  });
+
+  await client.responses({ model: "gpt-test", stream: false, input: "hello" }, {
+    fetchImpl: async () => {
+      sequence.push("fetch");
+      return Response.json({ id: "resp_phase", status: "completed", output: [] });
+    },
+    onUpstreamStart: () => sequence.push("upstream"),
+  });
+
+  assert.deepEqual(sequence, ["token", "upstream", "fetch"]);
+});
+
 test("createCopilotClient: non-Codex profiles require an isolated credential source", () => {
   assert.throws(
     () => createCopilotClient({ profile: "claude" }),

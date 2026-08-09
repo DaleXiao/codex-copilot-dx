@@ -177,6 +177,60 @@ function largeTokenCountProbe(mode) {
   `);
 }
 
+function visualHistoryPressureProbe() {
+  return runProbe(`
+    import { applyResponsesImagePressure } from "./src/responses-image-pressure.mjs";
+
+    const concurrency = 4;
+    const historicalImages = 36;
+    const imageBytes = 256 * 1024;
+    const dataUrls = Array.from({ length: historicalImages }, (_, index) => (
+      \`data:image/png;base64,\${Buffer.alloc(imageBytes, index + 1).toString("base64")}\`
+    ));
+    const contexts = Array.from({ length: concurrency }, (_, requestIndex) => ({
+      historyRootId: \`resp_benchmark_\${requestIndex}\`,
+      currentInputStart: historicalImages,
+      body: {
+        model: "gpt-5.6-sol",
+        stream: true,
+        input: [
+          ...dataUrls.map((imageUrl) => ({
+            type: "message",
+            role: "user",
+            content: [{ type: "input_image", image_url: imageUrl }],
+          })),
+          { type: "message", role: "user", content: "continue" },
+        ],
+      },
+    }));
+    globalThis.gc?.();
+    const before = process.memoryUsage();
+    let peakRss = before.rss;
+    let peakHeap = before.heapUsed;
+    const started = performance.now();
+    const results = await Promise.all(contexts.map(async (context) => {
+      await Promise.resolve();
+      const result = applyResponsesImagePressure(context);
+      const memory = process.memoryUsage();
+      peakRss = Math.max(peakRss, memory.rss);
+      peakHeap = Math.max(peakHeap, memory.heapUsed);
+      return result;
+    }));
+    const mib = (bytes) => +(bytes / 1048576).toFixed(1);
+    process.stdout.write(JSON.stringify({
+      concurrency,
+      historical_images_per_request: historicalImages,
+      elapsed_ms: +(performance.now() - started).toFixed(1),
+      omitted_images: results.map((result) => result.imagesOmitted),
+      retained_historical_images: results.map((result) => result.historicalImages),
+      input_body_mib: results.map((result) => mib(result.initialBodyBytes)),
+      output_body_mib: results.map((result) => mib(result.bodyBytes)),
+      rss_peak_delta_mib: mib(peakRss - before.rss),
+      heap_peak_delta_mib: mib(peakHeap - before.heapUsed),
+    }));
+  `);
+}
+
 const adapterImport = runProbe(`
   const started = performance.now();
   await import("./src/adapter.mjs");
@@ -324,6 +378,7 @@ if (checkMode) {
     largePayloadProbe(30, 1),
     largePayloadProbe(30, 2),
   ];
+  report.visual_history_pressure_36x4 = visualHistoryPressureProbe();
 } else if (process.argv.includes("--large-payload")) {
   report.large_payload_peak = [
     largePayloadProbe(5, 1),
@@ -358,6 +413,12 @@ if (checkMode) {
     if (payload.admission_max_active_mib > payload.admission_budget_mib) {
       failures.push(`request admission exceeded its budget at ${payload.target_request_mib}MiB x${payload.concurrency}`);
     }
+  }
+  const visualHistory = report.visual_history_pressure_36x4;
+  if (!visualHistory.omitted_images.every((count) => count === 20)
+    || !visualHistory.retained_historical_images.every((count) => count === 16)
+    || !visualHistory.output_body_mib.every((size, index) => size < visualHistory.input_body_mib[index])) {
+    failures.push("36-image x4 visual history pressure did not preserve the expected 16-image upstream window");
   }
   if (failures.length) {
     for (const failure of failures) console.error(`[FAIL] ${failure}`);

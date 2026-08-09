@@ -29,11 +29,11 @@ npm install -g codex-copilot-dx@latest
 ccdx
 ```
 
-The shorter `ccdx` command is the primary launcher. The existing `codex-copilot-dx`
-command remains an equivalent compatibility alias. For a one-off run without a
-global install, use `npx codex-copilot-dx@latest`.
-Both installed commands expose the same options and subcommands; help, version,
-doctor, status, and argument-error output use the command name that was invoked.
+`ccdx` is the only documented command and primary launcher. The old
+`codex-copilot-dx` executable remains temporarily as a compatibility shim: it
+prints a deprecation warning and runs `ccdx`, and will be removed in a future
+breaking release. For a one-off run without a global install, use
+`npm exec --yes --package=codex-copilot-dx@latest -- ccdx`.
 Run `ccdx <command> --help` (including `auth login claude --help` and
 `pms status --help`) for command-specific behavior and side-effect details.
 
@@ -49,8 +49,7 @@ starting the adapter, opening device login, reading the local model cache, or
 consuming an inference request. It lists model IDs by provider with their
 advertised API capabilities and reports the live Claude/Anthropic count. A model
 being advertised does not guarantee that a later inference request will avoid
-quota, rate-limit, or policy enforcement. `codex-copilot-dx models` is fully
-equivalent.
+quota, rate-limit, or policy enforcement.
 
 ### Separate GitHub account for Claude
 
@@ -193,7 +192,7 @@ It saves the selection in `~/.config/codex-copilot-dx/config.json` (or under
 `XDG_CONFIG_HOME` when set); choosing `gpt-5.5` clears the override and restores
 the package default. A running 0.5.1+
 adapter reads the setting on the next Auto-review request, so it does not need to
-be restarted. `codex-copilot-dx auto-review-model` is fully equivalent.
+be restarted.
 
 To update the globally installed package, choose a source interactively:
 
@@ -216,8 +215,7 @@ latest commit from `DaleXiao/codex-copilot-dx` `main` and opts in to Git fetchin
 for that command, as required by npm 12. It does not change npm's persistent
 `allow-git` setting. Both paths use npm's global installer without shell
 interpolation. A currently running adapter keeps its loaded version until it is
-stopped and started again. The
-`codex-copilot-dx update` compatibility command behaves identically.
+stopped and started again.
 If a configured npm mirror has not synchronized the current release yet, use
 the GitHub source to install the current `main` revision.
 
@@ -278,15 +276,13 @@ For a read-only summary of the running adapter, use:
 ccdx status
 ```
 
-The compatibility alias supports the same command as
-`codex-copilot-dx status`. For the complete machine-readable payload, query the
-loopback endpoint directly:
+For the complete machine-readable payload, query the loopback endpoint directly:
 
 ```bash
 curl -s http://127.0.0.1:2026/_ccdx/status | jq
 ```
 
-The status endpoint is restricted to the socket's real loopback address, even when LAN binding is explicitly enabled. It reports fixed-size request counters, bounded TTFT/TPOT histograms for streaming routes, admission pressure, memory use, response-history size, image queue/cache state, profile model cache counts, PM relay route totals, and token expiry state. It never retains metric samples or includes prompts, completions, tool arguments, image content, account names, or token values. API responses always include a safe `X-Request-Id` for correlation. If the adapter is not running, the CLI prints the exact start-and-retry command. To include the same ID as `request_id` in related terminal and file log lines, start the adapter with:
+The status endpoint is restricted to the socket's real loopback address, even when LAN binding is explicitly enabled. It reports fixed-size request counters, bounded TTFT/TPOT histograms for streaming routes, admission pressure, memory use, response-history size, image queue/cache and adaptive-history state, profile model cache counts, PM relay route totals, and token expiry state. It never retains metric samples or includes prompts, completions, tool arguments, image content, account names, or token values. API responses always include a safe `X-Request-Id` for correlation. If the adapter is not running, the CLI prints the exact start-and-retry command. To include the same ID as `request_id` in related terminal and file log lines, start the adapter with:
 
 ```bash
 ccdx --show-request-id
@@ -306,7 +302,7 @@ ccdx
 Claude App support is opt-in so the default Codex Desktop and Claude Code setup stays unchanged:
 
 ```bash
-npx codex-copilot-dx@latest start --configure-claude-app
+npm exec --yes --package=codex-copilot-dx@latest -- ccdx start --configure-claude-app
 ```
 
 The previous `--configure-claude-desktop` spelling remains a compatibility
@@ -316,7 +312,7 @@ key is restored or the profile is configured in that run.
 Or set:
 
 ```bash
-CCDX_CONFIGURE_CLAUDE_DESKTOP=1 npx codex-copilot-dx@latest
+CCDX_CONFIGURE_CLAUDE_DESKTOP=1 npm exec --yes --package=codex-copilot-dx@latest -- ccdx
 ```
 
 This writes a local Claude App 3P gateway profile that points to the adapter root URL, such as `http://127.0.0.1:2026`. The profile uses a generated local bearer key unless `CCDX_CLAUDE_DESKTOP_API_KEY` is set. Later starts restore that key only from the active managed profile when its gateway URL matches the adapter. Once that managed profile is active, successful Copilot model refreshes automatically keep its `inferenceModels` list current without changing the gateway key or other profile settings. Restart Claude App after the initial setup. Later model changes require no profile reconfiguration, although a running Claude App may need to be reopened if it has not reloaded the updated profile yet.
@@ -392,13 +388,15 @@ Set `CCDX_LOG_PATH=1` to mirror terminal logs to `~/.local/share/codex-copilot-d
 
 ### Image optimization
 
-Long computer-use sessions can accumulate screenshots inside the conversation history. Each screenshot is shipped on later turns, and GitHub Copilot's `/responses` endpoint can reject oversized requests with `408 Request Timeout` while reading the body or `413 Payload Too Large`.
+Long computer-use sessions can accumulate screenshots inside the conversation history. Each screenshot is shipped on later turns, which can increase local preparation time, upstream handshake latency, and the chance of a `413 Payload Too Large` response.
 
 The adapter automatically downsamples embedded screenshots to model-appropriate pixel bounds (with a conservative 2048 px long-edge fallback) and initially re-encodes them as WebP quality 82 before forwarding `/v1/responses`. It never replaces an image with a larger encoding and applies one global concurrency limit across direct, function-tool, and custom-tool output images.
 
 The final serialized UTF-8 request body is measured before forwarding. Above the configured byte limit, unique source images are processed largest-first from their originals at quality 75 / 1600 px and then quality 65 / 1280 px, stopping as soon as the body fits. If necessary, the forwarded view omits older duplicate images, historical tool images, other historical images, and finally old tool outputs while preserving current input and tool-call skeletons. A request that still cannot fit is rejected locally with a structured `413` instead of sending an oversized body upstream.
 
 Completed image transforms are reused from a byte-bounded process-local LRU cache, and concurrent requests for the same transform share one encode. The cache key includes source content, MIME type, model-aware dimensions, WebP quality, and encoder settings; failures are not cached and request cancellation remains isolated.
+
+Before image encoding, CCDX leaves ordinary visual history byte-for-byte unchanged while it has at most 24 historical images and the expanded body is at most 18 MiB. Above either threshold, the temporary upstream view keeps every current-turn image and at most 16 recent historical images, targeting 16 MiB. If that history tree then times out during local preparation or upstream handshake, the next retry automatically uses an 8-image, 10 MiB recovery window for ten minutes. Two successful requests or a successful compaction clear recovery mode. CCDX never transparently repeats the ambiguous timed-out POST, and no local history is deleted; retrying does not require restarting the service.
 
 When expanded Responses history exceeds Copilot's 50-image request limit, the adapter removes older duplicate image occurrences first, then keeps the 50 most recent images. This applies only to the forwarded request: local history remains complete, current images are preferred over older history, and requests at or below the limit are unchanged.
 

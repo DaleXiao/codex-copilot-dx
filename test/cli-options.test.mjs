@@ -59,17 +59,14 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.match(cliHelp(), /--show-request-id/);
   assert.match(cliHelp(), /ccdx auto-review-model/);
   assert.match(cliHelp(), /ccdx update \[npm\|github\]/);
-  assert.match(cliHelp("codex-copilot-dx"), /codex-copilot-dx status/);
-  assert.match(cliHelp("codex-copilot-dx"), /Equivalent command: ccdx/);
+  assert.match(cliHelp("codex-copilot-dx"), /ccdx status/);
+  assert.doesNotMatch(cliHelp("codex-copilot-dx"), /Equivalent command/);
   assert.equal(parseCliArgs(["doctor", "--help"]).helpTopic, "doctor");
   assert.equal(parseCliArgs(["auth", "login", "claude", "--help"]).helpTopic, "auth login");
   assert.equal(parseCliArgs(["pms", "status", "--help"]).helpTopic, "pms status");
   assert.equal(parseCliArgs(["help", "pm-studio", "setup"]).helpTopic, "pms setup");
   assert.match(cliHelp("ccdx", "doctor"), /consumes a small amount of Copilot usage/);
-  const normalizeCommandNames = (value) => value
-    .replaceAll("codex-copilot-dx", "<command>")
-    .replaceAll("ccdx", "<command>");
-  assert.equal(normalizeCommandNames(cliHelp("ccdx")), normalizeCommandNames(cliHelp("codex-copilot-dx")));
+  assert.equal(cliHelp("ccdx"), cliHelp("codex-copilot-dx"));
 });
 
 test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
@@ -104,10 +101,10 @@ test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
   assert.throws(() => parseCliArgs(["--show-request-id", "--show-request-id"]), /Unexpected argument: --show-request-id/);
 });
 
-test("cliCommandName: recognizes both installed entrypoints and defaults to ccdx", () => {
+test("cliCommandName: always presents the canonical ccdx command", () => {
   assert.equal(cliCommandName("/usr/local/bin/ccdx"), "ccdx");
-  assert.equal(cliCommandName("C:\\Users\\Dale\\bin\\codex-copilot-dx"), "codex-copilot-dx");
-  assert.equal(cliCommandName("/usr/local/lib/bin/codex-copilot-dx.mjs"), "codex-copilot-dx");
+  assert.equal(cliCommandName("C:\\Users\\Dale\\bin\\codex-copilot-dx"), "ccdx");
+  assert.equal(cliCommandName("/usr/local/lib/bin/codex-copilot-dx.mjs"), "ccdx");
   assert.equal(cliCommandName("/workspace/bin/cli.mjs"), "ccdx");
   assert.equal(cliCommandName(), "ccdx");
 });

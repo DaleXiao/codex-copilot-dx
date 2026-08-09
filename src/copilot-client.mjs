@@ -85,6 +85,7 @@ export function createCopilotClientRuntime({
     fetchImpl,
     retryOptions,
     bodyText,
+    onUpstreamStart,
   } = {}) {
     const token = await tokenSession.getToken({ signal });
     const upstreamReq = chatReq.stream === true ? withChatStreamUsage(chatReq) : chatReq;
@@ -99,6 +100,7 @@ export function createCopilotClientRuntime({
       vision: computeVision(messages),
     });
     headers["Content-Length"] = String(Buffer.byteLength(serializedBody));
+    onUpstreamStart?.();
     if (upstreamReq.stream === true) markUpstreamStarted();
     return fetchCopilotUpstream(`${tokenSession.getApiBase()}/chat/completions`, {
       method: "POST",
@@ -152,6 +154,7 @@ export function createCopilotClientRuntime({
     fetchImpl,
     retryOptions,
     currentInputStart = 0,
+    onUpstreamStart,
     payloadPrepared = false,
     payloadOptions = {},
   } = {}) {
@@ -175,6 +178,7 @@ export function createCopilotClientRuntime({
     headers["Content-Length"] = String(bodyBytes);
     headers.Accept = reqBody.stream ? "text/event-stream" : "application/json";
     try {
+      onUpstreamStart?.();
       if (reqBody.stream === true) markUpstreamStarted();
       return await fetchCopilotUpstream(`${tokenSession.getApiBase()}${responsesEndpointPath()}`, {
         method: "POST",
@@ -183,6 +187,7 @@ export function createCopilotClientRuntime({
         signal,
       }, { fetchImpl, ...retryOptions });
     } catch (error) {
+      if (signal?.aborted) throw abortError(signal);
       const cause = error?.cause;
       const causeText = cause ? ` (${[cause.code, cause.message].filter(Boolean).join(": ")})` : "";
       throw new Error(`Copilot responses fetch failed: ${error.message}${causeText}`);

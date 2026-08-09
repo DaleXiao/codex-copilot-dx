@@ -28,6 +28,12 @@ function statusPayload(overrides = {}) {
       cache_hits: 476,
       cache_misses: 4,
     },
+    image_history_pressure: {
+      active_recovery_trees: 1,
+      adapted_requests: 7,
+      historical_images_omitted: 42,
+      timeouts_recorded: 2,
+    },
     copilot: { token_cached: true, token_expires_in_ms: 90000 },
     models: { models: 42, claude_models: 8 },
     limits: {
@@ -75,6 +81,7 @@ test("formatAdapterStatus: summarizes runtime health with invocation-aware ident
   assert.match(output, /TTFT avg 1\.61s \(12 samples\), TPOT avg 5\.62ms\/token/);
   assert.match(output, /History: 64\.0MiB \/ 64\.0MiB, 116 entries, 89 evicted/);
   assert.match(output, /Image cache: 5 entries, 99\.2% hits/);
+  assert.match(output, /Visual history: 1 recovery trees, 7 adapted requests, 42 older images omitted, 2 timeouts/);
   assert.match(output, /Models: 42 total, 8 Claude/);
   assert.match(output, /request body 64\.0MiB, decoded body 128\.0MiB/);
   assert.doesNotMatch(output, /Profiles:|Routing:/);
@@ -135,6 +142,7 @@ test("formatAdapterStatus: tolerates absent optional metrics", () => {
       admission: undefined,
       response_history: undefined,
       image_optimization: undefined,
+      image_history_pressure: undefined,
       copilot: undefined,
       models: undefined,
       limits: undefined,

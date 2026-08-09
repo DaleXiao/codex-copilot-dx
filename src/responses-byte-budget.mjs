@@ -159,12 +159,14 @@ function recordBytesAfterDrop(record, state, partIndex) {
   return state.baseBytes + remainingElementBytes + remainingCount - 1;
 }
 
-function selectImageDrops(refs, bodyBytes, targetBytes) {
+function selectImageDrops(refs, bodyBytes, targetBytes, maxHistoricalImages = Number.POSITIVE_INFINITY) {
   const candidates = orderedHistoricalImageCandidates(refs);
   const selected = new Set();
   const byRecord = new Map();
   let projectedBytes = bodyBytes;
+  let historicalImages = refs.reduce((count, ref) => count + (ref.historical ? 1 : 0), 0);
   for (const index of candidates) {
+    if (projectedBytes <= targetBytes && historicalImages <= maxHistoricalImages) break;
     const ref = refs[index];
     let state = byRecord.get(ref.record);
     if (!state) {
@@ -173,7 +175,7 @@ function selectImageDrops(refs, bodyBytes, targetBytes) {
     }
     const afterBytes = recordBytesAfterDrop(ref.record, state, ref.partIndex);
     const savings = state.currentBytes - afterBytes;
-    if (savings <= 0) continue;
+    if (savings <= 0 && historicalImages <= maxHistoricalImages) continue;
     state.currentBytes = afterBytes;
     if (ref.record.kind !== "top-level") {
       state.remainingCount -= 1;
@@ -181,9 +183,9 @@ function selectImageDrops(refs, bodyBytes, targetBytes) {
     }
     selected.add(index);
     projectedBytes -= savings;
-    if (projectedBytes <= targetBytes) break;
+    historicalImages -= 1;
   }
-  return selected;
+  return { selected, historicalImages, projectedBytes };
 }
 
 function applyImageDrops(records, refs, selected) {
@@ -253,7 +255,7 @@ export function trimResponsesHistoryToByteBudget(reqBody, {
   while (bodyBytes > limit) {
     const { records, refs } = collectResponseImages(inputItems, currentInputStart);
     if (!refs.length) break;
-    const selected = selectImageDrops(refs, bodyBytes, limit);
+    const { selected } = selectImageDrops(refs, bodyBytes, limit);
     if (!selected.size) break;
     applyImageDrops(records, refs, selected);
     imagesOmitted += selected.size;
@@ -275,6 +277,62 @@ export function trimResponsesHistoryToByteBudget(reqBody, {
     imagesOmitted,
     toolOutputsOmitted,
     adapted: imagesOmitted > 0 || toolOutputsOmitted > 0,
+  };
+}
+
+export function responsesHistoricalImageStats(inputItems, currentInputStart = 0) {
+  const items = Array.isArray(inputItems) ? inputItems : [];
+  const { refs } = collectResponseImages(items, currentInputStart);
+  const historicalImages = refs.reduce((count, ref) => count + (ref.historical ? 1 : 0), 0);
+  return {
+    totalImages: refs.length,
+    historicalImages,
+    currentImages: refs.length - historicalImages,
+  };
+}
+
+export function trimResponsesHistoricalImages(reqBody, {
+  currentInputStart = 0,
+  maxHistoricalImages = Number.POSITIVE_INFINITY,
+  targetBytes = Number.POSITIVE_INFINITY,
+  initialBodyText,
+  initialBodyBytes,
+} = {}) {
+  let bodyText = initialBodyText ?? JSON.stringify(reqBody);
+  let bodyBytes = initialBodyBytes ?? Buffer.byteLength(bodyText);
+  const byteLimit = Number.isFinite(targetBytes) && targetBytes > 0
+    ? Math.floor(targetBytes)
+    : Number.POSITIVE_INFINITY;
+  const imageLimit = Number.isFinite(maxHistoricalImages) && maxHistoricalImages >= 0
+    ? Math.floor(maxHistoricalImages)
+    : Number.POSITIVE_INFINITY;
+  const inputItems = Array.isArray(reqBody?.input) ? reqBody.input : [];
+  let imagesOmitted = 0;
+
+  while (true) {
+    const { records, refs } = collectResponseImages(inputItems, currentInputStart);
+    const historicalImages = refs.reduce((count, ref) => count + (ref.historical ? 1 : 0), 0);
+    if (bodyBytes <= byteLimit && historicalImages <= imageLimit) break;
+    if (!historicalImages) break;
+    const { selected } = selectImageDrops(refs, bodyBytes, byteLimit, imageLimit);
+    if (!selected.size) break;
+    applyImageDrops(records, refs, selected);
+    imagesOmitted += selected.size;
+    ({ bodyText, bodyBytes } = bodyPayload(reqBody));
+  }
+
+  const stats = responsesHistoricalImageStats(inputItems, currentInputStart);
+  return {
+    bodyText,
+    bodyBytes,
+    targetBytes: byteLimit,
+    maxHistoricalImages: imageLimit,
+    historicalImages: stats.historicalImages,
+    currentImages: stats.currentImages,
+    imagesOmitted,
+    overBudget: bodyBytes > byteLimit,
+    overImageBudget: stats.historicalImages > imageLimit,
+    adapted: imagesOmitted > 0,
   };
 }
 

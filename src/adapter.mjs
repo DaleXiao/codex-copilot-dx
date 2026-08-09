@@ -17,6 +17,7 @@ import { status } from "./status.mjs";
 import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
 import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
+import { createResponsesImagePressureController } from "./responses-image-pressure.mjs";
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
 import {
   createRequestAdmission,
@@ -138,6 +139,7 @@ export function createAdapterHandler(options = {}) {
   const acquireRequest = options.acquireRequest || createRequestAdmission();
   const requestMetrics = options.requestMetrics || createRequestMetrics();
   const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics();
+  const imagePressure = options.imagePressure || createResponsesImagePressureController();
   const claudeDesktopModelOptions = () => {
     const modelDefs = claudeModelRegistry?.modelDefs || options.claudeDesktopModelDefs;
     return Array.isArray(modelDefs) ? { modelDefs } : {};
@@ -147,6 +149,7 @@ export function createAdapterHandler(options = {}) {
     autoReviewModelResolver: options.autoReviewModelResolver,
     chatCompletionsFn: codexChatCompletionsFn,
     getCachedModelEndpointsFn,
+    imagePressure,
     openAIModelEnv,
     responsesPayloadOptions: options.responsesPayloadOptions,
     responsesFn,
@@ -157,6 +160,7 @@ export function createAdapterHandler(options = {}) {
   const responsesCompactHandler = createResponsesCompactHandler({
     acquireRequest,
     autoReviewModelResolver: options.autoReviewModelResolver,
+    imagePressure,
     openAIModelEnv,
     responsesCompactFn,
     streamHandshakeTimeoutMs,
@@ -197,6 +201,7 @@ export function createAdapterHandler(options = {}) {
         metrics: requestMetrics,
         streamPerformance: streamPerformanceMetrics,
         admission: acquireRequest,
+        imagePressure,
         modelRegistry: codexModelRegistry,
         codexClient,
         claudeClient,

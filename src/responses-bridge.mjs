@@ -143,23 +143,38 @@ export function chatToResponses(chatResp, model) {
 
 export async function forwardToChat(chatReq, emitEvent, onDone, onError, options = {}) {
   delete chatReq.max_tokens;
-  const upstreamReq = withChatStreamUsage(chatReq);
-  const bodyText = upstreamReq === chatReq ? options.bodyText : undefined;
+  const requestModel = chatReq.model || "unknown";
+  let upstreamReq = withChatStreamUsage(chatReq);
+  let {
+    abort,
+    bodyText,
+    chatCompletionsFn: configuredChatCompletionsFn,
+    onUpstreamResponse,
+    onUpstreamStart,
+    releaseRequest,
+    signal,
+    streamIdleTimeoutMs,
+  } = options;
+  options = undefined;
+  if (upstreamReq !== chatReq) bodyText = undefined;
   let resp;
   try {
-    const chatCompletionsFn = options.chatCompletionsFn || chatCompletions;
+    const chatCompletionsFn = configuredChatCompletionsFn || chatCompletions;
     try {
-      options.onUpstreamStart?.();
+      onUpstreamStart?.();
       resp = await chatCompletionsFn(upstreamReq, {
-        signal: options.signal,
+        signal,
         bodyText,
-        onUpstreamStart: options.onUpstreamStart,
+        onUpstreamStart,
       });
     } finally {
-      options.releaseRequest?.();
+      bodyText = undefined;
+      chatReq = undefined;
+      upstreamReq = undefined;
+      releaseRequest?.();
     }
   } catch (e) {
-    const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(options.abort?.reason) : 502;
+    const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(abort?.reason) : 502;
     await onError(statusCode, e.message);
     return false;
   }
@@ -173,10 +188,10 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
     await onError(error.statusCode, error.message, error);
     return false;
   }
-  options.onUpstreamResponse?.(resp);
-  options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
+  onUpstreamResponse?.(resp);
+  abort?.setTimeout(streamIdleTimeoutMs, "stream_idle_timeout");
   const respId = `resp_${uid()}`;
-  let actualModel = chatReq.model || "unknown";
+  let actualModel = requestModel;
   let fullText = "";
   let messageItem = null;
   let nextOutputIndex = 0;
@@ -280,7 +295,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
 
   try {
     for await (const line of webStreamLines(resp, {
-      onChunk: () => options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout"),
+      onChunk: () => abort?.setTimeout(streamIdleTimeoutMs, "stream_idle_timeout"),
     })) {
       if (!line.startsWith("data: ")) continue;
       const data = line.slice(6).trim();
@@ -334,7 +349,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
       }
     }
   } catch (e) {
-    const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(options.abort?.reason) : (e?.statusCode || 502);
+    const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(abort?.reason) : (e?.statusCode || 502);
     await onError(statusCode, e?.message || "upstream stream error", e);
     return false;
   }

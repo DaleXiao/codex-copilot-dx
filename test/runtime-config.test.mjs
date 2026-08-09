@@ -19,12 +19,14 @@ test("parsePositiveInteger: preserves established positive integer semantics", (
 test("loadRuntimeConfig: centralizes limits without mutating the environment", () => {
   const env = {
     CCDX_UPSTREAM_TIMEOUT_MS: "9000",
+    CCDX_REQUEST_BODY_TIMEOUT_MS: "8000",
     CCDX_MAX_BODY_BYTES: "1234",
     CCDX_MAX_QUEUED_REQUESTS: "3",
     CCDX_RESPONSE_HISTORY_MAX_ENTRIES: "99",
   };
   const config = loadRuntimeConfig(env);
   assert.equal(config.upstreamTimeoutMs, 9000);
+  assert.equal(config.requestBodyTimeoutMs, 8000);
   assert.equal(config.maxBodyBytes, 1234);
   assert.equal(config.maxQueuedRequests, 3);
   assert.equal(config.responseHistoryMaxEntries, 99);

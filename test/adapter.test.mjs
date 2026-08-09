@@ -47,12 +47,7 @@ function jsonRequest(body, contentEncoding, headers = {}) {
   return req;
 }
 
-async function invokeAdapter(options, { method = "POST", url = "/v1/responses", body, headers = {} } = {}) {
-  const req = jsonRequest(Buffer.from(JSON.stringify(body ?? {})), undefined, { "content-type": "application/json", ...headers });
-  req.method = method;
-  req.url = url;
-  req.socket = { remoteAddress: "127.0.0.1" };
-
+async function invokeAdapterRequest(options, req) {
   const res = new EventEmitter();
   res.destroyed = false;
   res.writableEnded = false;
@@ -88,6 +83,14 @@ async function invokeAdapter(options, { method = "POST", url = "/v1/responses", 
   };
 }
 
+async function invokeAdapter(options, { method = "POST", url = "/v1/responses", body, headers = {} } = {}) {
+  const req = jsonRequest(Buffer.from(JSON.stringify(body ?? {})), undefined, { "content-type": "application/json", ...headers });
+  req.method = method;
+  req.url = url;
+  req.socket = { remoteAddress: "127.0.0.1" };
+  return invokeAdapterRequest(options, req);
+}
+
 test("requestPath: ignores Claude Code beta query on messages route", () => {
   assert.equal(requestPath("/v1/messages?beta=true"), "/v1/messages");
 });
@@ -97,6 +100,14 @@ test("requestPath: ignores query strings on other API routes", () => {
   assert.equal(requestPath("/v1/responses?stream=true"), "/v1/responses");
   assert.equal(requestPath("/v1/responses/compact?stream=true"), "/v1/responses/compact");
   assert.equal(requestPath("/v1/models?foo=bar"), "/v1/models");
+});
+
+test("createAdapterHandler rejects a malformed request target without throwing", async () => {
+  const response = await invokeAdapter({}, { method: "GET", url: "http://[" });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.Connection, "close");
+  assert.deepEqual(JSON.parse(response.text), { error: "Invalid request target" });
 });
 
 test("createAdapterHandler: tracks terminal activity for one request lifecycle", () => {
@@ -316,15 +327,100 @@ test("createRequestAdmission: weights compressed bodies and treats unknown bodie
   releaseUnknown();
 });
 
+test("readJsonBody reserves actual decoded bytes until the request admission is released", async () => {
+  const raw = Buffer.from(JSON.stringify({ input: "x".repeat(2048) }));
+  const compressed = await gzipAsync(raw);
+  const req = jsonRequest(compressed, "gzip", { "content-length": String(compressed.length) });
+  const acquire = createRequestAdmission({ maxBytes: 4096, maxQueued: 2, waitTimeoutMs: 1000 });
+  const admission = await acquire(req);
+
+  const parsed = await readJsonBody(req, { admission });
+
+  assert.equal(parsed.input.length, 2048);
+  assert.equal(acquire.diagnostics().decompressionsActive, 0);
+  assert.equal(acquire.diagnostics().decodedBodyBytes, raw.length);
+  admission();
+  assert.equal(acquire.diagnostics().decodedBodyBytes, 0);
+});
+
+test("request admission accounts for response history separately from the small inbound body", async () => {
+  const acquire = createRequestAdmission({ maxBytes: 4096, maxQueued: 2, waitTimeoutMs: 1000 });
+  const admission = await acquire({ headers: { "content-length": "64" } });
+
+  await admission.reserveResponseHistory(2048);
+
+  assert.equal(acquire.diagnostics().activeBytes, 64);
+  assert.equal(acquire.diagnostics().responseHistoryBytes, 2048);
+  admission();
+  assert.equal(acquire.diagnostics().responseHistoryBytes, 0);
+});
+
+test("supplemental admission lets a fitting history reservation bypass a larger waiter", async () => {
+  const acquire = createRequestAdmission({ maxBytes: 10, maxQueued: 2, waitTimeoutMs: 1000 });
+  const first = await acquire({ headers: { "content-length": "1" } });
+  const second = await acquire({ headers: { "content-length": "1" } });
+  const third = await acquire({ headers: { "content-length": "1" } });
+  await first.reserveResponseHistory(6);
+  const waiting = second.reserveResponseHistory(6);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  await third.reserveResponseHistory(4);
+
+  assert.equal(acquire.diagnostics().responseHistoryBytes, 10);
+  assert.equal(acquire.diagnostics().responseHistoriesQueued, 1);
+  third();
+  first();
+  await waiting;
+  second();
+  assert.equal(acquire.diagnostics().responseHistoryBytes, 0);
+});
+
 test("abort helpers classify expected abort errors", () => {
   assert.equal(isAbortLikeError(new DOMException("This operation was aborted", "AbortError")), true);
   assert.equal(isAbortLikeError(new Error("This operation was aborted")), true);
   assert.equal(isAbortLikeError(new Error("socket hang up")), false);
   assert.equal(abortErrorStatusCode("upstream_timeout"), 504);
   assert.equal(abortErrorStatusCode("stream_handshake_timeout"), 504);
+  assert.equal(abortErrorStatusCode("request_body_timeout"), 408);
   assert.equal(abortErrorStatusCode("stream_idle_timeout"), 504);
   assert.equal(abortErrorStatusCode("client_closed"), 499);
   assert.equal(abortErrorStatusCode(), 502);
+});
+
+test("HTTP responses body timeout aborts a stalled read and releases admission", async () => {
+  const body = Buffer.from(JSON.stringify({ model: "gpt-5.6-sol", input: "hello" }));
+  const req = Readable.from((async function* slowBody() {
+    yield body.subarray(0, 1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    yield body.subarray(1);
+  })());
+  req.headers = { "content-length": String(body.length), "content-type": "application/json" };
+  req.method = "POST";
+  req.url = "/v1/responses";
+  req.socket = { remoteAddress: "127.0.0.1" };
+  const destroyRequest = req.destroy.bind(req);
+  let requestDestroyed = false;
+  req.destroy = (...args) => {
+    requestDestroyed = true;
+    return destroyRequest(...args);
+  };
+  const admission = createRequestAdmission({ maxBytes: 1024, maxQueued: 2, waitTimeoutMs: 1000 });
+  let upstreamCalled = false;
+
+  const response = await invokeAdapterRequest({
+    acquireRequest: admission,
+    requestBodyTimeoutMs: 5,
+    responsesFn: async () => {
+      upstreamCalled = true;
+      return Response.json({ id: "unexpected", output: [] });
+    },
+  }, req);
+
+  assert.equal(response.status, 408);
+  assert.equal(response.headers.Connection, "close");
+  assert.equal(upstreamCalled, false);
+  assert.equal(requestDestroyed, false);
+  assert.equal(admission.diagnostics().activeRequests, 0);
 });
 
 test("HTTP proxy routes classify upstream network failures as Bad Gateway", async () => {
@@ -343,7 +439,11 @@ test("HTTP proxy routes classify upstream network failures as Bad Gateway", asyn
 });
 
 test("HTTP native Responses releases request admission after upstream opens", async () => {
+  clearResponseHistoryForTests();
+  const history = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "earlier context" });
+  rememberResponseHistory(history, { id: "resp_release_root", status: "completed", output: [] });
   let released = false;
+  let observedContext;
   const result = await invokeAdapter({
     acquireRequest: async () => {
       let done = false;
@@ -353,21 +453,75 @@ test("HTTP native Responses releases request admission after upstream opens", as
         released = true;
       };
     },
+    imagePressure: {
+      apply(context) {
+        observedContext = context;
+        return { adapted: false, pressureEligible: false };
+      },
+    },
     responsesFn: async () => ({
       ok: true,
       status: 200,
       headers: { get: () => "application/json" },
       text: async () => {
         assert.equal(released, true);
+        assert.equal(observedContext.body.input.length, 1);
+        assert.equal(observedContext.currentInputStart, 0);
         return JSON.stringify({ id: "resp_release", output: [] });
       },
     }),
   }, {
-    body: { model: "gpt-5.6-sol", stream: false, input: "hello" },
+    body: {
+      model: "gpt-5.6-sol",
+      stream: false,
+      previous_response_id: "resp_release_root",
+      input: "hello",
+    },
   });
 
   assert.equal(result.status, 200);
   assert.equal(released, true);
+  clearResponseHistoryForTests();
+});
+
+test("HTTP Responses does not start upstream after synchronous prepare work exceeds its deadline", async () => {
+  clearResponseHistoryForTests();
+  const history = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "visual history" });
+  rememberResponseHistory(history, { id: "resp_prepare_deadline", status: "completed", output: [] });
+  let clock = 0;
+  let upstreamCalled = false;
+  let timeoutMarked = false;
+
+  const result = await invokeAdapter({
+    now: () => clock,
+    upstreamTimeoutMs: 100,
+    imagePressure: {
+      apply() {
+        clock = 101;
+        return { adapted: false, pressureEligible: true };
+      },
+      markTimeout(_rootId, { eligible }) {
+        timeoutMarked = eligible;
+        return eligible;
+      },
+    },
+    responsesFn: async () => {
+      upstreamCalled = true;
+      return Response.json({ id: "unexpected", output: [] });
+    },
+  }, {
+    body: {
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_prepare_deadline",
+      input: "continue",
+    },
+  });
+
+  assert.equal(result.status, 504);
+  assert.equal(JSON.parse(result.text).error.code, "ccdx_visual_history_timeout");
+  assert.equal(upstreamCalled, false);
+  assert.equal(timeoutMarked, true);
+  clearResponseHistoryForTests();
 });
 
 test("HTTP streaming responses time out while waiting for upstream headers", async () => {
@@ -1419,6 +1573,65 @@ test("HTTP responses route retries large visual history in recovery mode without
   assert.equal(upstreamCalls, 2);
   assert.deepEqual(upstreamImageCounts, [16, 8]);
   assert.equal(imagePressure.snapshot().active_recovery_trees, 1);
+  clearResponseHistoryForTests();
+});
+
+test("HTTP Responses activates stricter visual-history recovery after an upstream 408", async () => {
+  clearResponseHistoryForTests();
+  const history = prepareResponsesRequest({
+    model: "gpt-5.6-sol",
+    input: Array.from({ length: 36 }, (_, index) => ({
+      type: "message",
+      role: "user",
+      content: [{
+        type: "input_image",
+        image_url: `data:image/png;base64,${Buffer.alloc(128, index + 1).toString("base64")}`,
+      }],
+    })),
+  });
+  rememberResponseHistory(history, { id: "resp_http_408_root", status: "completed", output: [] });
+
+  const imagePressure = createResponsesImagePressureController();
+  const upstreamImageCounts = [];
+  let upstreamCalls = 0;
+  const responsesFn = async (body, { currentInputStart, onUpstreamStart }) => {
+    upstreamCalls += 1;
+    upstreamImageCounts.push(responsesHistoricalImageStats(body.input, currentInputStart).historicalImages);
+    onUpstreamStart();
+    if (upstreamCalls === 1) {
+      return Response.json({ error: { message: "request timed out" } }, { status: 408 });
+    }
+    return Response.json({
+      id: "resp_http_408_recovered",
+      object: "response",
+      status: "completed",
+      model: body.model,
+      output: [],
+    });
+  };
+  const options = { imagePressure, responsesFn };
+
+  const first = await invokeAdapter(options, {
+    body: {
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_http_408_root",
+      input: "continue",
+    },
+  });
+  assert.equal(first.status, 408);
+  assert.deepEqual(upstreamImageCounts, [16]);
+  assert.equal(imagePressure.snapshot().active_recovery_trees, 1);
+
+  const second = await invokeAdapter(options, {
+    body: {
+      model: "gpt-5.6-sol",
+      previous_response_id: "resp_http_408_root",
+      input: "continue",
+    },
+  });
+  assert.equal(second.status, 200);
+  assert.equal(upstreamCalls, 2);
+  assert.deepEqual(upstreamImageCounts, [16, 8]);
   clearResponseHistoryForTests();
 });
 

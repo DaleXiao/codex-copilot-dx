@@ -32,6 +32,26 @@ function requestContext(historicalImages, current = [{ type: "message", role: "u
   };
 }
 
+test("adaptive image history skips serialization when no historical images exist", () => {
+  const context = requestContext(0);
+  const serializable = context.body;
+  let serializations = 0;
+  context.body = {
+    ...serializable,
+    toJSON() {
+      serializations += 1;
+      return serializable;
+    },
+  };
+
+  const result = applyResponsesImagePressure(context);
+
+  assert.equal(serializations, 0);
+  assert.equal(result.adapted, false);
+  assert.equal(result.initialBodyBytes, null);
+  assert.equal(result.bodyBytes, null);
+});
+
 test("adaptive image history leaves the normal 24-image window byte-for-byte unchanged", () => {
   const context = requestContext(24);
   const before = JSON.stringify(context.body);
@@ -53,6 +73,7 @@ test("adaptive image history keeps current images and at most 16 recent historic
 
   assert.equal(result.mode, "pressure");
   assert.equal(result.imagesOmitted, 9);
+  assert.equal(Object.hasOwn(result, "bodyText"), false);
   assert.equal(stats.historicalImages, 16);
   assert.equal(stats.currentImages, 1);
   assert.equal(context.body.input.at(-2).content[0].image_url, currentImage);

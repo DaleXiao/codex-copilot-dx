@@ -120,13 +120,13 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
   try {
     opened = await openCopilotResponse(reqContext, upstream, options);
   } finally {
-    options.releaseRequest?.();
+    options.releaseRequest?.(opened?.reqContext);
   }
   const { resp, errorText } = opened;
   reqContext = opened.reqContext;
   if (errorText !== undefined) {
     sendUpstreamError(res, resp, errorText);
-    return { successful: false, compacted: false };
+    return { successful: false, compacted: false, upstreamStatus: resp.status };
   }
 
   if (reqContext.body.stream) {

@@ -47,6 +47,83 @@ function admissionAbortError(signal) {
   return error;
 }
 
+function createSupplementalAdmission({ maxWeight, maxQueued, waitTimeoutMs, label }) {
+  const queue = [];
+  let activeWeight = 0;
+  let activeRequests = 0;
+
+  const activate = (entry) => {
+    entry.cleanup();
+    activeWeight += entry.weight;
+    activeRequests += 1;
+    let released = false;
+    entry.resolve(() => {
+      if (released) return;
+      released = true;
+      activeWeight = Math.max(0, activeWeight - entry.weight);
+      activeRequests = Math.max(0, activeRequests - 1);
+      drain();
+    });
+  };
+
+  const drain = () => {
+    for (let index = 0; index < queue.length;) {
+      const entry = queue[index];
+      if (activeWeight + entry.weight > maxWeight) {
+        index += 1;
+        continue;
+      }
+      queue.splice(index, 1);
+      activate(entry);
+    }
+  };
+
+  const acquire = (requestedWeight, { signal } = {}) => {
+    if (signal?.aborted) return Promise.reject(admissionAbortError(signal));
+    const parsedWeight = Number.isFinite(requestedWeight) && requestedWeight > 0
+      ? Math.ceil(requestedWeight)
+      : maxWeight;
+    const weight = Math.max(1, Math.min(parsedWeight, maxWeight));
+    if (queue.length >= maxQueued && activeWeight + weight > maxWeight) {
+      return Promise.reject(httpError(`${label} queue is full (${maxQueued} waiting)`, 503));
+    }
+
+    return new Promise((resolve, reject) => {
+      let timer;
+      const entry = {
+        weight,
+        resolve,
+        cleanup: () => {
+          if (timer) clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
+        },
+      };
+      const remove = () => {
+        const index = queue.indexOf(entry);
+        if (index >= 0) queue.splice(index, 1);
+      };
+      const fail = (error) => {
+        entry.cleanup();
+        remove();
+        reject(error);
+        drain();
+      };
+      const onAbort = () => fail(admissionAbortError(signal));
+      signal?.addEventListener("abort", onAbort, { once: true });
+      timer = setTimeout(() => {
+        fail(httpError(`${label} admission timed out after ${waitTimeoutMs}ms`, 503));
+      }, waitTimeoutMs);
+      timer.unref?.();
+      queue.push(entry);
+      if (signal?.aborted) onAbort();
+      else drain();
+    });
+  };
+
+  acquire.stats = () => ({ activeWeight, activeRequests, queued: queue.length, maxWeight });
+  return acquire;
+}
+
 export function createRequestAdmission({
   maxBytes = MAX_INFLIGHT_BODY_BYTES,
   maxQueued = MAX_QUEUED_REQUESTS,
@@ -55,6 +132,24 @@ export function createRequestAdmission({
   const byteLimit = parsePositiveInteger(maxBytes, MAX_INFLIGHT_BODY_BYTES);
   const queueLimit = parsePositiveInteger(maxQueued, MAX_QUEUED_REQUESTS);
   const timeoutMs = parsePositiveInteger(waitTimeoutMs, REQUEST_QUEUE_TIMEOUT_MS);
+  const acquireDecompression = createSupplementalAdmission({
+    maxWeight: 1,
+    maxQueued: queueLimit,
+    waitTimeoutMs: timeoutMs,
+    label: "Request decompression",
+  });
+  const acquireDecodedBody = createSupplementalAdmission({
+    maxWeight: byteLimit,
+    maxQueued: queueLimit,
+    waitTimeoutMs: timeoutMs,
+    label: "Decoded request body",
+  });
+  const acquireResponseHistory = createSupplementalAdmission({
+    maxWeight: byteLimit,
+    maxQueued: queueLimit,
+    waitTimeoutMs: timeoutMs,
+    label: "Response history",
+  });
   const queue = [];
   let activeBytes = 0;
   let activeRequests = 0;
@@ -83,13 +178,28 @@ export function createRequestAdmission({
     counters.waitMsTotal += waitMs;
     counters.waitMsMax = Math.max(counters.waitMsMax, waitMs);
     let released = false;
-    entry.resolve(() => {
+    const supplementalReleases = new Set();
+    const release = () => {
       if (released) return;
       released = true;
+      for (const releaseSupplemental of supplementalReleases) releaseSupplemental();
+      supplementalReleases.clear();
       activeBytes = Math.max(0, activeBytes - entry.weight);
       activeRequests = Math.max(0, activeRequests - 1);
       drain();
-    });
+    };
+    const reserve = async (gate, weight, options) => {
+      const releaseSupplemental = await gate(weight, options);
+      if (released) {
+        releaseSupplemental();
+        throw admissionAbortError(options?.signal);
+      }
+      supplementalReleases.add(releaseSupplemental);
+    };
+    release.acquireDecompression = (options) => acquireDecompression(1, options);
+    release.reserveDecodedBody = (bytes, options) => reserve(acquireDecodedBody, bytes, options);
+    release.reserveResponseHistory = (bytes, options) => reserve(acquireResponseHistory, bytes, options);
+    entry.resolve(release);
   };
 
   const drain = () => {
@@ -173,11 +283,64 @@ export function createRequestAdmission({
       ? Number((counters.waitMsTotal / counters.activated).toFixed(1))
       : 0,
     waitMsMax: counters.waitMsMax,
+    decompressionsActive: acquireDecompression.stats().activeRequests,
+    decompressionsQueued: acquireDecompression.stats().queued,
+    decodedBodyBytes: acquireDecodedBody.stats().activeWeight,
+    decodedBodiesActive: acquireDecodedBody.stats().activeRequests,
+    decodedBodiesQueued: acquireDecodedBody.stats().queued,
+    responseHistoryBytes: acquireResponseHistory.stats().activeWeight,
+    responseHistoriesActive: acquireResponseHistory.stats().activeRequests,
+    responseHistoriesQueued: acquireResponseHistory.stats().queued,
   });
   return acquire;
 }
 
-async function readRequestBuffer(req, maxBytes) {
+function consumeRequestChunks(req, { signal, onChunk }) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      req.off("data", handleData);
+      req.off("end", handleEnd);
+      req.off("error", handleError);
+      req.off("aborted", handleAborted);
+      signal?.removeEventListener("abort", handleSignalAbort);
+    };
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const stopReading = (error) => {
+      req.pause?.();
+      finish(error);
+    };
+    const handleData = (chunk) => {
+      try {
+        onChunk(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      } catch (error) {
+        stopReading(error);
+      }
+    };
+    const handleEnd = () => finish();
+    const handleError = (error) => finish(error);
+    const handleAborted = () => finish(admissionAbortError(signal));
+    const handleSignalAbort = () => stopReading(admissionAbortError(signal));
+
+    req.once("end", handleEnd);
+    req.once("error", handleError);
+    req.once("aborted", handleAborted);
+    signal?.addEventListener("abort", handleSignalAbort, { once: true });
+    if (signal?.aborted) handleSignalAbort();
+    else {
+      req.on("data", handleData);
+      req.resume?.();
+    }
+  });
+}
+
+async function readRequestBuffer(req, maxBytes, signal) {
   const contentLength = requestContentLength(req);
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
     throw payloadTooLarge("Raw", maxBytes);
@@ -185,16 +348,18 @@ async function readRequestBuffer(req, maxBytes) {
 
   const chunks = [];
   let total = 0;
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    total += buffer.length;
-    if (total > maxBytes) throw payloadTooLarge("Raw", maxBytes);
-    chunks.push(buffer);
-  }
+  await consumeRequestChunks(req, {
+    signal,
+    onChunk(buffer) {
+      total += buffer.length;
+      if (total > maxBytes) throw payloadTooLarge("Raw", maxBytes);
+      chunks.push(buffer);
+    },
+  });
   return Buffer.concat(chunks);
 }
 
-async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes) {
+async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal) {
   const contentLength = requestContentLength(req);
   if (Number.isFinite(contentLength) && contentLength > maxBodyBytes) {
     throw payloadTooLarge("Raw", maxBodyBytes);
@@ -206,13 +371,15 @@ async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes) {
   const decoder = new TextDecoder();
   let text = "";
   let total = 0;
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    total += buffer.length;
-    if (total > maxBodyBytes) throw payloadTooLarge("Raw", maxBodyBytes);
-    if (total > maxDecodedBodyBytes) throw payloadTooLarge("Decoded", maxDecodedBodyBytes);
-    text += decoder.decode(buffer, { stream: true });
-  }
+  await consumeRequestChunks(req, {
+    signal,
+    onChunk(buffer) {
+      total += buffer.length;
+      if (total > maxBodyBytes) throw payloadTooLarge("Raw", maxBodyBytes);
+      if (total > maxDecodedBodyBytes) throw payloadTooLarge("Decoded", maxDecodedBodyBytes);
+      text += decoder.decode(buffer, { stream: true });
+    },
+  });
   return text + decoder.decode();
 }
 
@@ -267,22 +434,34 @@ function parseRequestJson(text) {
 }
 
 export async function readJsonBody(req, {
+  admission,
   maxBodyBytes = MAX_BODY_BYTES,
   maxDecodedBodyBytes = MAX_DECODED_BODY_BYTES,
+  signal,
 } = {}) {
+  if (signal?.aborted) throw admissionAbortError(signal);
   const encodings = contentEncodings(req.headers?.["content-encoding"]);
   if (encodings.every((encoding) => encoding === "identity")) {
-    return parseRequestJson(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes));
+    return parseRequestJson(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal));
   }
-  const buffer = await readRequestBuffer(req, maxBodyBytes);
-  let decoded;
+  const buffer = await readRequestBuffer(req, maxBodyBytes, signal);
+  const releaseDecompression = await admission?.acquireDecompression?.({ signal }) || (() => {});
   try {
-    decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"], maxDecodedBodyBytes);
-  } catch (e) {
-    if (e?.statusCode) throw e;
-    throw httpError(`Invalid compressed request body: ${e.message}`, 400);
+    let decoded;
+    try {
+      decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"], maxDecodedBodyBytes);
+    } catch (e) {
+      if (e?.statusCode) throw e;
+      throw httpError(`Invalid compressed request body: ${e.message}`, 400);
+    }
+    if (signal?.aborted) throw admissionAbortError(signal);
+    if (decoded.length > 0) {
+      await admission?.reserveDecodedBody?.(decoded.length, { signal });
+    }
+    return parseRequestJson(decoded.toString("utf8"));
+  } finally {
+    releaseDecompression();
   }
-  return parseRequestJson(decoded.toString("utf8"));
 }
 
 export function sendJsonError(res, err, fallbackStatus = 400) {
@@ -291,7 +470,10 @@ export function sendJsonError(res, err, fallbackStatus = 400) {
     res.end();
     return;
   }
-  res.writeHead(err?.statusCode || fallbackStatus, { "Content-Type": "application/json" });
+  const statusCode = err?.statusCode || fallbackStatus;
+  const headers = { "Content-Type": "application/json" };
+  if (statusCode === 408 || statusCode === 413) headers.Connection = "close";
+  res.writeHead(statusCode, headers);
   res.end(JSON.stringify(err?.jsonBody || { error: err?.message || "Request failed" }));
 }
 
@@ -327,6 +509,7 @@ export function isAbortLikeError(err) {
 }
 
 export function abortErrorStatusCode(reason) {
+  if (reason === "request_body_timeout") return 408;
   if (["responses_prepare_timeout", "upstream_timeout", "stream_handshake_timeout", "stream_idle_timeout"].includes(reason)) return 504;
   if (reason === "client_aborted" || reason === "client_closed") return 499;
   return 502;
@@ -352,6 +535,7 @@ export function createRequestAbort(req, res) {
   return {
     signal: controller.signal,
     get reason() { return reason; },
+    abort,
     setTimeout(ms, nextReason = "upstream_timeout") {
       if (timer) clearTimeout(timer);
       timer = null;

@@ -21,20 +21,22 @@ import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordAnthropicUsage } from "./usage.mjs";
 
 export function createAnthropicCountTokensHandler(options) {
-  const { acquireRequest } = options;
+  const { acquireRequest, requestBodyTimeoutMs } = options;
 
   return async function handleAnthropicCountTokens(req, res) {
     const abort = createRequestAbort(req, res);
     let releaseRequest = () => {};
     try {
       releaseRequest = await acquireRequest(req, { signal: abort.signal });
-      const parsed = await readJsonBody(req);
+      abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
+      const parsed = await readJsonBody(req, { admission: releaseRequest, signal: abort.signal });
+      abort.clearTimeout();
       const result = await countTokens(parsed);
       releaseRequest();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(result));
     } catch (error) {
-      sendJsonError(res, error);
+      sendJsonError(res, error, abort.reason === "request_body_timeout" ? 408 : 400);
     } finally {
       releaseRequest();
       abort.cleanup();
@@ -48,6 +50,7 @@ export function createAnthropicMessagesHandler(options) {
     chatCompletionsFn,
     environment,
     modelOptions,
+    requestBodyTimeoutMs,
     streamHandshakeTimeoutMs,
     streamIdleTimeoutMs,
     upstreamTimeoutMs,
@@ -58,7 +61,8 @@ export function createAnthropicMessagesHandler(options) {
     let releaseRequest = () => {};
     try {
       releaseRequest = await acquireRequest(req, { signal: abort.signal });
-      const parsed = await readJsonBody(req);
+      abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
+      const parsed = await readJsonBody(req, { admission: releaseRequest, signal: abort.signal });
       abort.setTimeout(
         parsed.stream ? streamHandshakeTimeoutMs : upstreamTimeoutMs,
         parsed.stream ? "stream_handshake_timeout" : "upstream_timeout",

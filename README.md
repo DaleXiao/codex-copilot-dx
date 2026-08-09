@@ -31,7 +31,8 @@ ccdx
 
 `ccdx` is the only documented command and primary launcher. The old
 `codex-copilot-dx` executable remains temporarily as a compatibility shim: it
-prints a deprecation warning and runs `ccdx`, and will be removed in a future
+prints a deprecation warning at most once every 7 days in interactive terminals,
+runs `ccdx`, and remains silent in scripts. It will be removed in a future
 breaking release. For a one-off run without a global install, use
 `npm exec --yes --package=codex-copilot-dx@latest -- ccdx`.
 Run `ccdx <command> --help` (including `auth login claude --help` and
@@ -330,9 +331,10 @@ Environment variables:
 | `CCDX_ALLOW_LAN` | unset | Set to `1` to allow non-loopback `ADAPTER_HOST` values such as `0.0.0.0`; exposes your Copilot-backed adapter beyond this machine |
 | `CCDX_MAX_BODY_BYTES` | `67108864` | Maximum compressed/raw request body size |
 | `CCDX_MAX_DECODED_BODY_BYTES` | `134217728` | Maximum decoded request body size after decompression |
-| `CCDX_MAX_INFLIGHT_BODY_BYTES` | `33554432` | Shared byte budget for admitted request bodies; a larger single request runs exclusively |
+| `CCDX_MAX_INFLIGHT_BODY_BYTES` | `33554432` | Per-pool byte budget for raw bodies, decoded bodies, and materialized response history; a larger item runs exclusively in its pool |
 | `CCDX_MAX_QUEUED_REQUESTS` | `16` | Maximum body requests waiting for the shared byte budget |
 | `CCDX_REQUEST_QUEUE_TIMEOUT_MS` | `120000` | Maximum wait for request-body admission before returning `503` |
+| `CCDX_REQUEST_BODY_TIMEOUT_MS` | `120000` | Maximum time to receive and decode one request body before returning `408` |
 | `CCDX_MAX_UPSTREAM_BODY_BYTES` | `31457280` | Strict maximum forwarded Responses body size; larger payloads are adapted locally or rejected with `413` |
 | `CCDX_MAX_SSE_BUFFER_BYTES` | `8388608` | Maximum buffered bytes for one unterminated upstream SSE line/event |
 | `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Timeout for non-streaming upstream Copilot requests |

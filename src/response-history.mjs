@@ -178,7 +178,7 @@ export function responseHistoryRootId(responseId) {
   return histories.get(responseId)?.rootId || null;
 }
 
-export function materializeResponseHistory(responseId) {
+function responseHistoryChain(responseId) {
   const chain = [];
   const seen = new Set();
   let currentId = responseId;
@@ -193,7 +193,16 @@ export function materializeResponseHistory(responseId) {
     chain.push(entry);
     currentId = entry.parentId;
   }
-  const rootId = chain[0]?.rootId;
+  return { chain, rootId: chain[0]?.rootId };
+}
+
+export function responseHistoryMaterializedBytes(responseId) {
+  const { chain } = responseHistoryChain(responseId);
+  return chain.reduce((bytes, entry) => bytes + entry.bytes, 0);
+}
+
+export function materializeResponseHistory(responseId) {
+  const { chain, rootId } = responseHistoryChain(responseId);
   const items = [];
   for (const entry of chain.reverse()) items.push(...entry.inputItems, ...entry.outputItems);
   const materialized = cloneJson(items);

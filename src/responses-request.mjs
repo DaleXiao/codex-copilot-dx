@@ -245,6 +245,14 @@ export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
   };
 }
 
+export function dropMaterializedResponseHistory(reqContext) {
+  if (!reqContext?.historyParentId || !Array.isArray(reqContext.historyInputItems)) return false;
+  reqContext.body = { ...reqContext.body, input: reqContext.historyInputItems };
+  reqContext.inputItems = reqContext.historyInputItems;
+  reqContext.currentInputStart = 0;
+  return true;
+}
+
 export function rememberResponseHistory(reqContext, responseJson) {
   if (!responseJson?.id || !Array.isArray(reqContext?.historyInputItems || reqContext?.inputItems)) return;
   const compacted = isSuccessfulCompactionResponse(responseJson);

@@ -17,7 +17,12 @@ import { chatToResponses, forwardToChat, responsesBodyUsesCustomTools } from "./
 import { prepareResponsesChatPayload } from "./responses-chat-payload.mjs";
 import { prepareResponsesCompactionRequest } from "./responses-compaction.mjs";
 import { proxyCopilotResponses } from "./responses-proxy.mjs";
-import { prepareResponsesRequest, rememberResponseHistory } from "./responses-request.mjs";
+import { responseHistoryMaterializedBytes } from "./response-history.mjs";
+import {
+  dropMaterializedResponseHistory,
+  prepareResponsesRequest,
+  rememberResponseHistory,
+} from "./responses-request.mjs";
 import { status } from "./status.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
@@ -81,12 +86,14 @@ export function createResponsesHandler(options) {
     getCachedModelEndpointsFn = getCachedModelEndpoints,
     imagePressure,
     openAIModelEnv,
+    requestBodyTimeoutMs,
     responsesPayloadOptions,
     responsesFn,
     streamHandshakeTimeoutMs,
     streamIdleTimeoutMs,
     upstreamTimeoutMs,
   } = options;
+  const now = options.now || Date.now;
 
   return async function handleResponses(req, res) {
     const abort = createRequestAbort(req, res);
@@ -94,10 +101,26 @@ export function createResponsesHandler(options) {
     let prepared = null;
     let imagePressureResult = null;
     let parsed = null;
-    const startUpstreamTimeout = () => abort.setTimeout(
-      parsed?.stream ? streamHandshakeTimeoutMs : upstreamTimeoutMs,
-      parsed?.stream ? "stream_handshake_timeout" : "upstream_timeout",
-    );
+    let upstreamPayloadReleased = false;
+    let prepareDeadline = Number.POSITIVE_INFINITY;
+    let upstreamStarted = false;
+    const assertPrepareActive = () => {
+      if (abort.signal.aborted) throw abort.signal.reason;
+      if (now() < prepareDeadline) return;
+      abort.abort("responses_prepare_timeout");
+      throw abort.signal.reason;
+    };
+    const startUpstreamTimeout = () => {
+      if (!upstreamStarted) {
+        assertPrepareActive();
+        upstreamStarted = true;
+      }
+      const streaming = prepared?.body?.stream === true;
+      abort.setTimeout(
+        streaming ? streamHandshakeTimeoutMs : upstreamTimeoutMs,
+        streaming ? "stream_handshake_timeout" : "upstream_timeout",
+      );
+    };
     const applyAdaptiveTimeout = (error) => {
       if (!["responses_prepare_timeout", "stream_handshake_timeout", "upstream_timeout"].includes(abort.reason)) {
         return error;
@@ -118,21 +141,47 @@ export function createResponsesHandler(options) {
       };
       return error;
     };
+    const markAdaptiveHttpTimeout = (statusCode) => {
+      if (statusCode !== 408) return false;
+      return imagePressure?.markTimeout?.(prepared?.historyRootId, {
+        eligible: imagePressureResult?.pressureEligible === true,
+      }) || false;
+    };
+    const releaseUpstreamPayload = (finalContext) => {
+      if (upstreamPayloadReleased) return;
+      upstreamPayloadReleased = true;
+      if (finalContext && finalContext !== prepared) dropMaterializedResponseHistory(finalContext);
+      dropMaterializedResponseHistory(prepared);
+      releaseRequest();
+    };
     try {
       releaseRequest = await acquireRequest(req, { signal: abort.signal });
-      parsed = await readJsonBody(req);
+      abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
+      parsed = await readJsonBody(req, { admission: releaseRequest, signal: abort.signal });
+      prepareDeadline = now() + upstreamTimeoutMs;
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
+      if (parsed.previous_response_id !== undefined && parsed.previous_response_id !== null) {
+        const historyBytes = responseHistoryMaterializedBytes(parsed.previous_response_id);
+        if (historyBytes > 0) {
+          await releaseRequest.reserveResponseHistory?.(historyBytes, { signal: abort.signal });
+        }
+        assertPrepareActive();
+      }
       prepared = prepareResponsesRequest(parsed, { mutate: true });
+      parsed = null;
+      assertPrepareActive();
       imagePressureResult = imagePressure?.apply?.(prepared) || null;
+      assertPrepareActive();
       if (imagePressureResult?.adapted) {
         console.warn(status("warn", `responses visual history mode=${imagePressureResult.mode} historical_images=${imagePressureResult.initialHistoricalImages}->${imagePressureResult.historicalImages} omitted=${imagePressureResult.imagesOmitted} bytes=${imagePressureResult.initialBodyBytes}->${imagePressureResult.bodyBytes}`));
       }
       prepared.surface = "responses";
-      const model = parsed.model || "unknown";
+      const model = prepared.body.model || "unknown";
+      const streaming = prepared.body.stream === true;
       const { requestedModel, upstreamModel } = resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver);
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
-      console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${!!parsed.stream}`));
+      console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${streaming}`));
       const usesCustomTools = responsesBodyUsesCustomTools(prepared.body);
       const useNativeResponses = requestedModel === CODEX_AUTO_REVIEW_MODEL
         || isResponsesOnlyModel(upstreamModel, getCachedModelEndpointsFn)
@@ -143,18 +192,23 @@ export function createResponsesHandler(options) {
           signal: abort.signal,
           abort,
           onUpstreamStart: startUpstreamTimeout,
-          releaseRequest,
+          releaseRequest: releaseUpstreamPayload,
           streamIdleTimeoutMs,
         });
         if (result?.successful) imagePressure?.markSuccess?.(prepared.historyRootId);
+        else markAdaptiveHttpTimeout(result?.upstreamStatus);
       } else {
-        const chatPayload = await prepareResponsesChatPayload(prepared, {
+        let { chatReq, bodyText } = await prepareResponsesChatPayload(prepared, {
           payloadOptions: responsesPayloadOptions,
           signal: abort.signal,
-          stream: parsed.stream,
+          stream: streaming,
         });
-        const { chatReq, bodyText } = chatPayload;
-        if (parsed.stream) {
+        const releaseChatPayload = () => {
+          chatReq = undefined;
+          bodyText = undefined;
+          releaseUpstreamPayload();
+        };
+        if (streaming) {
           let streamResponseHeaders = null;
           const successful = await forwardToChat(chatReq, async (event, data) => {
             if (!res.headersSent) res.writeHead(200, {
@@ -170,6 +224,7 @@ export function createResponsesHandler(options) {
           }, () => { if (!res.writableEnded) res.end(); }, async (statusCode, errMsg, error, upstreamResponse) => {
             if (!res.headersSent) {
               if (upstreamResponse) {
+                markAdaptiveHttpTimeout(upstreamResponse.status);
                 sendUpstreamError(res, upstreamResponse, errMsg);
                 return;
               }
@@ -184,7 +239,7 @@ export function createResponsesHandler(options) {
             onUpstreamStart: startUpstreamTimeout,
             streamIdleTimeoutMs,
             chatCompletionsFn,
-            releaseRequest,
+            releaseRequest: releaseChatPayload,
             bodyText,
             onUpstreamResponse: (upstreamResponse) => {
               streamResponseHeaders = safeUpstreamResponseHeaders(upstreamResponse.headers, {
@@ -201,9 +256,10 @@ export function createResponsesHandler(options) {
               bodyText,
               onUpstreamStart: startUpstreamTimeout,
             });
-            releaseRequest();
+            releaseChatPayload();
             const data = await upstream.text();
             if (!upstream.ok) {
+              markAdaptiveHttpTimeout(upstream.status);
               sendUpstreamError(res, upstream, data);
               return;
             }
@@ -227,7 +283,7 @@ export function createResponsesHandler(options) {
       logRequestFailure("Responses", responseError, abort);
       sendJsonError(res, responseError, 502);
     } finally {
-      releaseRequest();
+      releaseUpstreamPayload();
       abort.cleanup();
     }
   };
@@ -239,20 +295,46 @@ export function createResponsesCompactHandler(options) {
     autoReviewModelResolver,
     imagePressure,
     openAIModelEnv,
+    requestBodyTimeoutMs,
     responsesCompactFn,
     upstreamTimeoutMs,
   } = options;
+  const now = options.now || Date.now;
 
   return async function handleResponsesCompact(req, res) {
     const abort = createRequestAbort(req, res);
     let releaseRequest = () => {};
     try {
       releaseRequest = await acquireRequest(req, { signal: abort.signal });
-      const parsed = await readJsonBody(req);
+      abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
+      const parsed = await readJsonBody(req, { admission: releaseRequest, signal: abort.signal });
+      const prepareDeadline = now() + upstreamTimeoutMs;
+      const assertPrepareActive = () => {
+        if (abort.signal.aborted) throw abort.signal.reason;
+        if (now() < prepareDeadline) return;
+        abort.abort("responses_prepare_timeout");
+        throw abort.signal.reason;
+      };
+      let upstreamStarted = false;
+      const startUpstreamTimeout = () => {
+        if (!upstreamStarted) {
+          assertPrepareActive();
+          upstreamStarted = true;
+        }
+        abort.setTimeout(upstreamTimeoutMs, "upstream_timeout");
+      };
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
+      if (parsed.previous_response_id !== undefined && parsed.previous_response_id !== null) {
+        const historyBytes = responseHistoryMaterializedBytes(parsed.previous_response_id);
+        if (historyBytes > 0) {
+          await releaseRequest.reserveResponseHistory?.(historyBytes, { signal: abort.signal });
+        }
+        assertPrepareActive();
+      }
       const prepared = prepareResponsesCompactionRequest(
         prepareResponsesRequest(parsed, { mutate: true }),
       );
+      assertPrepareActive();
       prepared.surface = "responses_compact";
       const model = parsed.model || "unknown";
       const { requestedModel, upstreamModel } = resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver);
@@ -262,7 +344,7 @@ export function createResponsesCompactHandler(options) {
       const result = await proxyCopilotResponses(prepared, req, res, responsesCompactFn, {
         signal: abort.signal,
         abort,
-        onUpstreamStart: () => abort.setTimeout(upstreamTimeoutMs, "upstream_timeout"),
+        onUpstreamStart: startUpstreamTimeout,
         releaseRequest,
       });
       if (result?.compacted) imagePressure?.clear?.(prepared.historyRootId);

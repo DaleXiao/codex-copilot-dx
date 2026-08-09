@@ -32,8 +32,24 @@ export function applyResponsesImagePressure(reqContext, {
   const currentInputStart = Number.isFinite(reqContext?.currentInputStart)
     ? reqContext.currentInputStart
     : 0;
-  const initial = bodyPayload(body);
   const initialImages = responsesHistoricalImageStats(body?.input, currentInputStart);
+  if (initialImages.historicalImages === 0) {
+    return {
+      mode: "normal",
+      pressureEligible: false,
+      adapted: false,
+      imagesOmitted: 0,
+      initialBodyBytes: null,
+      bodyBytes: null,
+      initialHistoricalImages: 0,
+      historicalImages: 0,
+      currentImages: initialImages.currentImages,
+      overBudget: false,
+      overImageBudget: false,
+    };
+  }
+
+  const initial = bodyPayload(body);
   const pressureEligible = initialImages.historicalImages > 0 && (
     initialImages.historicalImages > policy.triggerHistoricalImages
       || initial.bodyBytes > policy.triggerBodyBytes
@@ -70,12 +86,13 @@ export function applyResponsesImagePressure(reqContext, {
     initialBodyText: initial.bodyText,
     initialBodyBytes: initial.bodyBytes,
   });
+  const { bodyText: _bodyText, ...trimmedResult } = trimmed;
   return {
     mode: recovery ? "recovery" : "pressure",
     pressureEligible: pressureEligible || recovery,
     initialBodyBytes: initial.bodyBytes,
     initialHistoricalImages: initialImages.historicalImages,
-    ...trimmed,
+    ...trimmedResult,
   };
 }
 

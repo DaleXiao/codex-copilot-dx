@@ -252,6 +252,9 @@ async function relayUpstreamResponse(response, reqBody, res, abort, streamIdleTi
 function safeFailure(error, abort) {
   if (error?.statusCode && !isAbortLikeError(error)) return error;
   if (abort?.signal.aborted || isAbortLikeError(error)) {
+    if (abort?.reason === "request_body_timeout") {
+      return localError(408, "request_timeout", "PM Studio relay request body timed out");
+    }
     return localError(
       abortErrorStatusCode(abort?.reason),
       "upstream_timeout",
@@ -277,6 +280,7 @@ export function createPmStudioRelayHandler(options = {}) {
   const upstreamTimeoutMs = parsePositiveInteger(options.upstreamTimeoutMs, runtime.upstreamTimeoutMs);
   const streamHandshakeTimeoutMs = parsePositiveInteger(options.streamHandshakeTimeoutMs, runtime.streamHandshakeTimeoutMs);
   const streamIdleTimeoutMs = parsePositiveInteger(options.streamIdleTimeoutMs, runtime.streamIdleTimeoutMs);
+  const requestBodyTimeoutMs = parsePositiveInteger(options.requestBodyTimeoutMs, runtime.requestBodyTimeoutMs);
   const validationTtlMs = parsePositiveInteger(options.validationTtlMs, DEFAULT_VALIDATION_TTL_MS);
   const validationCacheSize = parsePositiveInteger(options.validationCacheSize, DEFAULT_VALIDATION_CACHE_SIZE, 4096);
   const validationConcurrency = parsePositiveInteger(
@@ -430,8 +434,10 @@ export function createPmStudioRelayHandler(options = {}) {
   async function handlePost(req, res, pathname, token, abort) {
     let releaseRequest = releaseOnce();
     try {
-      releaseRequest = releaseOnce(await acquireRequest(req, { signal: abort.signal }));
-      const body = await readJsonBody(req);
+      const admission = await acquireRequest(req, { signal: abort.signal });
+      releaseRequest = releaseOnce(admission);
+      abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
+      const body = await readJsonBody(req, { admission, signal: abort.signal });
       const supportsStream = pathname === "/chat/completions" || pathname === "/responses";
       const streaming = supportsStream && body?.stream === true;
       const requestTimeoutMs = streaming ? streamHandshakeTimeoutMs : upstreamTimeoutMs;

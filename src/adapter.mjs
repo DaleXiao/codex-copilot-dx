@@ -136,6 +136,7 @@ export function createAdapterHandler(options = {}) {
   const upstreamTimeoutMs = parsePositiveInteger(options.upstreamTimeoutMs, ADAPTER_RUNTIME_CONFIG.upstreamTimeoutMs);
   const streamHandshakeTimeoutMs = parsePositiveInteger(options.streamHandshakeTimeoutMs, ADAPTER_RUNTIME_CONFIG.streamHandshakeTimeoutMs);
   const streamIdleTimeoutMs = parsePositiveInteger(options.streamIdleTimeoutMs, ADAPTER_RUNTIME_CONFIG.streamIdleTimeoutMs);
+  const requestBodyTimeoutMs = parsePositiveInteger(options.requestBodyTimeoutMs, ADAPTER_RUNTIME_CONFIG.requestBodyTimeoutMs);
   const acquireRequest = options.acquireRequest || createRequestAdmission();
   const requestMetrics = options.requestMetrics || createRequestMetrics();
   const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics();
@@ -150,9 +151,11 @@ export function createAdapterHandler(options = {}) {
     chatCompletionsFn: codexChatCompletionsFn,
     getCachedModelEndpointsFn,
     imagePressure,
+    now: options.now,
     openAIModelEnv,
     responsesPayloadOptions: options.responsesPayloadOptions,
     responsesFn,
+    requestBodyTimeoutMs,
     streamHandshakeTimeoutMs,
     streamIdleTimeoutMs,
     upstreamTimeoutMs,
@@ -161,18 +164,21 @@ export function createAdapterHandler(options = {}) {
     acquireRequest,
     autoReviewModelResolver: options.autoReviewModelResolver,
     imagePressure,
+    now: options.now,
     openAIModelEnv,
+    requestBodyTimeoutMs,
     responsesCompactFn,
     streamHandshakeTimeoutMs,
     streamIdleTimeoutMs,
     upstreamTimeoutMs,
   });
-  const anthropicCountTokensHandler = createAnthropicCountTokensHandler({ acquireRequest });
+  const anthropicCountTokensHandler = createAnthropicCountTokensHandler({ acquireRequest, requestBodyTimeoutMs });
   const anthropicMessagesHandler = createAnthropicMessagesHandler({
     acquireRequest,
     chatCompletionsFn: claudeChatCompletionsFn,
     environment: process.env,
     modelOptions: claudeDesktopModelOptions,
+    requestBodyTimeoutMs,
     streamHandshakeTimeoutMs,
     streamIdleTimeoutMs,
     upstreamTimeoutMs,
@@ -184,6 +190,7 @@ export function createAdapterHandler(options = {}) {
     claudeProfile: options.claudeProfile,
     claudeModelRegistry,
     fetchImpl: options.pmStudioFetchImpl,
+    requestBodyTimeoutMs,
     streamHandshakeTimeoutMs,
     streamIdleTimeoutMs,
     upstreamTimeoutMs,
@@ -284,12 +291,19 @@ export function createAdapterHandler(options = {}) {
   };
 
   return (req, res) => {
-    const pathname = requestPath(req.url);
     const requestId = createRequestId();
     if (typeof res.setHeader === "function") {
       res.setHeader("X-Request-Id", requestId);
     } else if (res.headers && typeof res.headers === "object") {
       res.headers["X-Request-Id"] = requestId;
+    }
+    let pathname;
+    try {
+      pathname = requestPath(req.url);
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json", Connection: "close" });
+      res.end(JSON.stringify({ error: "Invalid request target" }));
+      return;
     }
 
     const trackRequest = pathname !== ADAPTER_HEALTH_PATH && pathname !== ADAPTER_STATUS_PATH;

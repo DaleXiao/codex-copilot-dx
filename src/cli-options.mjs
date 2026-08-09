@@ -258,7 +258,7 @@ export function cliCommandName() {
 
 function topicHelp(name, topic) {
   const sections = {
-    start: `Usage:\n  ${name} [start] [--configure-claude-app] [--show-request-id]\n\nStarts or reuses the local adapter, updates Codex and Claude Code configuration, and opens Codex.\n--configure-claude-app also creates or updates the managed Claude App gateway profile.`,
+    start: `Usage:\n  ${name} [start] [--configure-claude-app] [--show-request-id]\n\nStarts or reuses the local adapter, updates Codex and Claude Code configuration, and attempts to open Codex or ChatGPT when auto-launch is enabled and supported.\n--configure-claude-app also creates or updates the managed Claude App gateway profile.`,
     auth: `Usage:\n  ${name} auth status [--online]\n  ${name} auth login claude [--github-login <login>] [--reauth]\n\nShows the two account profiles or configures the isolated Claude account. Device login starts only when no reusable local Copilot credential is available or --reauth is used.`,
     "auth status": `Usage:\n  ${name} auth status [--online]\n\nShows account routing without exposing credentials. --online also verifies both configured Copilot entitlements and model catalogs.`,
     "auth login": `Usage:\n  ${name} auth login claude [--github-login <login>] [--reauth]\n\nReuses a compatible local Copilot credential when possible. --reauth forces GitHub Device Flow.`,

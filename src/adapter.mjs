@@ -366,11 +366,9 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
   server.once("close", cleanupTerminalActivity);
 
   server.on("upgrade", (req, socket) => {
-    // Codex Desktop 0.130+ negotiates a "responses_websockets" server-push
-    // protocol on WS upgrade. We don't implement that protocol; accepting the
-    // upgrade and waiting for a client request just hangs and triggers a
-    // 5-attempt reconnect storm. Refuse the upgrade so Codex falls back to
-    // plain HTTP SSE, which this adapter handles correctly.
+    // The responses_websockets upgrade expects a server-push protocol that this
+    // adapter does not implement. Refuse it so the client can fall back to the
+    // supported HTTP SSE transport instead of waiting on an unusable socket.
     socket.write("HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
     socket.destroy();
   });

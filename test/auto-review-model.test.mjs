@@ -69,7 +69,8 @@ test("auto-review selector: retries invalid input and persists a listed model", 
   assert.equal(savedAutoReviewModel({ env: {}, home }), "gpt-5.6-sol");
   assert.match(output.text(), /1\. gpt-5\.5 \[current, default\]/);
   assert.match(output.text(), /Enter a number from 1 to 2/);
-  assert.match(output.text(), /next Auto Review request/);
+  assert.match(output.text(), /The running adapter will use this model on the next Auto Review request/);
+  assert.doesNotMatch(output.text(), /0\.5\.1/);
 });
 
 test("auto-review selector: choosing the default clears a saved override", async () => {

@@ -3,9 +3,8 @@ import { status } from "./status.mjs";
 
 export { ensureAuth } from "./auth.mjs";
 
-// The Codex desktop app was folded into the ChatGPT app, but it keeps the
-// original bundle identifier. Launching by bundle id works for both the old
-// Codex.app and the new ChatGPT.app regardless of where they are installed.
+// Prefer the Codex bundle identifier, then fall back to the known app paths.
+// This supports both Codex.app and ChatGPT.app regardless of installation path.
 const CODEX_BUNDLE_ID = "com.openai.codex";
 const APP_PATH_CANDIDATES = [
   "/Applications/Codex.app",

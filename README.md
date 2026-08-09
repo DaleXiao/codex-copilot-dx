@@ -111,7 +111,7 @@ active account or profile. GPT requests continue to use the bearer supplied by
 the current PM profile; exact enabled Anthropic model IDs use the isolated
 CCDX Claude profile. Neither credential is copied into the other application.
 
-The first recipe supports only an exact, unmodified PM Studio 2.9.7 bundle on
+The current patch recipe supports only an exact, unmodified PM Studio 2.9.7 bundle on
 macOS. Authorize the isolated Claude profile first, quit PM Studio and its
 updater, then run the one-time setup command:
 
@@ -127,7 +127,7 @@ and relay without changing files:
 ccdx pms status
 ```
 
-`pm-studio status` and `pm-studio setup` are equivalent long-form aliases.
+`ccdx pm-studio status` and `ccdx pm-studio setup` are equivalent long-form aliases.
 
 `ccdx pms setup` performs only local preflight, backup, staging, integrity,
 signing, and replacement work. It never starts Device Flow, the adapter,
@@ -187,13 +187,13 @@ To change the model used by Codex Auto-review, run:
 ccdx auto-review-model
 ```
 
-The selector reads the current adapter model list, falling back to the fresh local
-model cache, and offers only enabled models that advertise a Responses endpoint.
+The selector first queries the running adapter, including its last-known-good
+model list when live refresh is unavailable, then falls back to the non-expired
+local model cache. It offers only enabled models that advertise a Responses endpoint.
 It saves the selection in `~/.config/codex-copilot-dx/config.json` (or under
 `XDG_CONFIG_HOME` when set); choosing `gpt-5.5` clears the override and restores
-the package default. A running 0.5.1+
-adapter reads the setting on the next Auto-review request, so it does not need to
-be restarted.
+the package default. A running adapter reads the setting on the next Auto-review
+request, so it does not need to be restarted.
 
 To update the globally installed package, choose a source interactively:
 
@@ -213,26 +213,26 @@ ccdx update github
 The npm source installs `codex-copilot-dx@latest` through the registry already
 configured for npm, including a company mirror. The GitHub source installs the
 latest commit from `DaleXiao/codex-copilot-dx` `main` and opts in to Git fetching
-for that command, as required by npm 12. It does not change npm's persistent
-`allow-git` setting. Both paths use npm's global installer without shell
+for that command. It does not change npm's persistent `allow-git` setting. Both
+paths use npm's global installer without shell
 interpolation. A currently running adapter keeps its loaded version until it is
 stopped and started again.
 If a configured npm mirror has not synchronized the current release yet, use
 the GitHub source to install the current `main` revision.
 
-On first run, it will:
-1. Authenticate with GitHub via device flow (if needed), after first trying compatible local Copilot token sources
-2. Print the local package version and check for a newer npm release in the background
-3. Start the adapter on loopback (`127.0.0.1:2026`)
+On a normal launch, it will:
+1. Print the local package version and check for a newer npm release in the background
+2. Reuse a compatible running adapter when available; otherwise authenticate with GitHub if needed, after first trying compatible local Copilot token sources
+3. When starting a new adapter, refresh Copilot model metadata and listen on loopback (`127.0.0.1:2026`)
 4. Configure Codex (`~/.codex/config.toml`) to use the adapter, including stale shell env base URLs if present
 5. Configure Claude Code (`~/.claude/settings.json`) to use the adapter; it creates the file when missing, otherwise backs up `settings.json.bak` before updating the local API env keys
-6. Launch Codex Desktop
+6. On macOS, attempt to launch Codex or ChatGPT unless `CCDX_AUTO_LAUNCH` disables it
 
 Claude Code picks up the new `ANTHROPIC_BASE_URL` on its next launch.
 
-If an existing `codex-copilot-dx` adapter is already running on the configured host and port, a second launch reuses it instead of starting another proxy. The second launch still refreshes Codex and Claude Code config, then exits.
+If a compatible CCDX adapter is already running on the configured host and port, a second launch reuses it instead of starting another proxy. The second launch still refreshes Codex and Claude Code config, then exits.
 
-The running adapter reports its package and protocol versions. After upgrading `codex-copilot-dx`, stop the old process before starting the new version; the new CLI refuses to silently reuse an incompatible adapter.
+The running adapter reports its package and protocol versions. After upgrading the package, stop the old process before starting the new version; the new CLI refuses to silently reuse an incompatible adapter.
 
 Do not set Claude Code by manually exporting `ANTHROPIC_BASE_URL` or `ANTHROPIC_AUTH_TOKEN` in your shell. Let `ccdx` write the local config files instead. If you previously exported those variables, remove them from shell startup files and restart the terminal before launching Claude Code.
 
@@ -337,7 +337,7 @@ Environment variables:
 | `CCDX_REQUEST_BODY_TIMEOUT_MS` | `120000` | Maximum time to receive and decode one request body before returning `408` |
 | `CCDX_MAX_UPSTREAM_BODY_BYTES` | `31457280` | Strict maximum forwarded Responses body size; larger payloads are adapted locally or rejected with `413` |
 | `CCDX_MAX_SSE_BUFFER_BYTES` | `8388608` | Maximum buffered bytes for one unterminated upstream SSE line/event |
-| `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Timeout for non-streaming upstream Copilot requests |
+| `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Per-phase timeout for Responses preparation and non-streaming upstream Copilot requests |
 | `CCDX_STREAM_HANDSHAKE_TIMEOUT_MS` | `120000` | Timeout while waiting for upstream streaming response headers |
 | `CCDX_STREAM_IDLE_TIMEOUT_MS` | `120000` | Maximum idle time between upstream streaming body chunks |
 | `CCDX_UPSTREAM_RETRIES` | `2` | Retries for safe requests and clearly pre-connect POST failures; capped at `5` |
@@ -398,7 +398,7 @@ The final serialized UTF-8 request body is measured before forwarding. Above the
 
 Completed image transforms are reused from a byte-bounded process-local LRU cache, and concurrent requests for the same transform share one encode. The cache key includes source content, MIME type, model-aware dimensions, WebP quality, and encoder settings; failures are not cached and request cancellation remains isolated.
 
-Before image encoding, CCDX leaves ordinary visual history byte-for-byte unchanged while it has at most 24 historical images and the expanded body is at most 18 MiB. Above either threshold, the temporary upstream view keeps every current-turn image and at most 16 recent historical images, targeting 16 MiB. If that history tree then times out during local preparation or upstream handshake, the next retry automatically uses an 8-image, 10 MiB recovery window for ten minutes. Two successful requests or a successful compaction clear recovery mode. CCDX never transparently repeats the ambiguous timed-out POST, and no local history is deleted; retrying does not require restarting the service.
+Before image encoding, CCDX leaves ordinary visual history byte-for-byte unchanged while it has at most 24 historical images and the expanded body is at most 18 MiB. Above either threshold, the temporary upstream view keeps every current-turn image and at most 16 recent historical images, targeting 16 MiB. If that history tree then times out during local preparation, a streaming handshake, or a non-streaming upstream request, or if the upstream returns HTTP 408, the next retry automatically uses an 8-image, 10 MiB recovery window for ten minutes. Two successful requests or a successful compaction clear recovery mode. CCDX never transparently repeats the ambiguous timed-out POST, and no local history is deleted; retrying does not require restarting the service.
 
 When expanded Responses history exceeds Copilot's 50-image request limit, the adapter removes older duplicate image occurrences first, then keeps the 50 most recent images. This applies only to the forwarded request: local history remains complete, current images are preferred over older history, and requests at or below the limit are unchanged.
 

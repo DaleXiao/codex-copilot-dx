@@ -135,7 +135,7 @@ export async function runAutoReviewModelCommand({
   if (String(env.CCDX_AUTO_REVIEW_MODEL || "").trim()) {
     output.write(`CCDX_AUTO_REVIEW_MODEL=${current.model} remains the effective override until it is unset.\n`);
   } else {
-    output.write("The running 0.5.1+ adapter will use this model on the next Auto Review request.\n");
+    output.write("The running adapter will use this model on the next Auto Review request.\n");
   }
   return { ...result, cancelled: false, model: selectedModel };
 }

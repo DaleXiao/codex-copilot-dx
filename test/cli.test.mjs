@@ -190,6 +190,57 @@ test("both CLI entrypoints report auth status through the canonical command", as
   }
 });
 
+test("both CLI entrypoints render the same explicit auth status table", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-table-"));
+  try {
+    const [primary, legacy] = await Promise.all([
+      execFileAsync(process.execPath, [cliPath, "auth", "status", "--format", "table"], {
+        timeout: 2000,
+        env: { ...process.env, HOME: home, ADAPTER_PORT: "invalid" },
+      }),
+      execFileAsync(process.execPath, [legacyCliPath, "auth", "status", "--format", "table"], {
+        timeout: 2000,
+        env: { ...process.env, HOME: home, ADAPTER_PORT: "invalid" },
+      }),
+    ]);
+    assert.equal(legacy.stdout, primary.stdout);
+    assert.match(primary.stdout, /^PROFILE\s+ACCOUNT\s+MODE\s+LOCAL\s+ONLINE\s+MODELS\s+CLAUDE$/m);
+    assert.match(primary.stdout, /Routing: responses -> codex; messages -> codex/);
+    assert.equal(primary.stderr, "");
+    assertNoCompatibilityWarning(legacy.stderr);
+    assert.equal(fs.existsSync(path.join(home, ".local")), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("usage table is explicit while non-interactive default output stays compatible", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-usage-table-"));
+  const usagePath = path.join(home, "usage.jsonl");
+  fs.writeFileSync(usagePath, [
+    JSON.stringify({ model: "gpt-test", usage: { input_tokens: 10, cached_input_tokens: 4, output_tokens: 2, total_tokens: 12 } }),
+    JSON.stringify({ model: "claude-test", usage: { cache_read_input_tokens: 5, output_tokens: 3, total_tokens: 8 } }),
+    "",
+  ].join("\n"));
+  const env = { ...process.env, HOME: home, CCDX_USAGE_PATH: usagePath, ADAPTER_PORT: "invalid" };
+  try {
+    const [primary, legacy, plain] = await Promise.all([
+      execFileAsync(process.execPath, [cliPath, "usage", "--format", "table"], { timeout: 2000, env }),
+      execFileAsync(process.execPath, [legacyCliPath, "usage", "--format", "table"], { timeout: 2000, env }),
+      execFileAsync(process.execPath, [cliPath, "usage"], { timeout: 2000, env }),
+    ]);
+    assert.equal(legacy.stdout, primary.stdout);
+    assert.match(primary.stdout, /^MODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+OUTPUT\s+TOTAL$/m);
+    assert.match(primary.stdout, /TOTAL\s+2\s+10\s+9\s+5\s+20/);
+    assert.match(plain.stdout, /^Usage log: .*\nRequests: 2\nTokens:/);
+    assert.doesNotMatch(plain.stdout, /^MODEL\s+RECORDS/m);
+    assert.equal(primary.stderr, "");
+    assertNoCompatibilityWarning(legacy.stderr);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("models --profile claude fails closed without creating or borrowing credentials", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-models-claude-"));
   await assert.rejects(

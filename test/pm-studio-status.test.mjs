@@ -258,3 +258,88 @@ test("inspectPmStudioStatus reports missing optional dependencies without throwi
   assert.match(output, /auth login claude/);
   assert.match(output, /codex-copilot-dx start/);
 });
+
+test("formatPmStudioStatus renders a component table for an interactive terminal", async () => {
+  const result = await inspectPmStudioStatus(options());
+  const output = formatPmStudioStatus(result, {
+    format: "auto",
+    output: { isTTY: true, columns: 500 },
+  });
+
+  assert.match(output, /^ccdx pms status/m);
+  assert.match(output, /COMPONENT\s+STATE\s+DETAIL/);
+  assert.match(output, /App patch\s+\[OK\]\s+2\.9\.7 build 2090700; patched and verified/);
+  assert.match(output, /Claude profile\s+\[OK\]\s+personal; isolated profile valid/);
+  assert.match(output, /PM relay\s+\[OK\]\s+verified at http:\/\/127\.0\.0\.1:2026/);
+  assert.match(output, /Routing\s+\[INFO\]\s+GPT -> PM bearer; Claude -> isolated profile/);
+  assert.doesNotMatch(output, /Details:/);
+});
+
+test("formatPmStudioStatus uses plain output when auto format is not attached to a TTY", async () => {
+  const result = await inspectPmStudioStatus(options());
+  const output = formatPmStudioStatus(result, {
+    format: "auto",
+    output: { isTTY: false, columns: 500 },
+  });
+
+  assert.match(output, /^ccdx pms status\n\[OK\] PM Studio/m);
+  assert.doesNotMatch(output, /COMPONENT\s+STATE\s+DETAIL/);
+});
+
+test("formatPmStudioStatus compact table preserves errors and recovery commands", async () => {
+  const result = await inspectPmStudioStatus(options({
+    inspectApp: () => ({
+      state: "clean",
+      metadata: patchedInspection().metadata,
+      issues: [],
+    }),
+    readClaudeCredentials: () => ({ configured: false, valid: false, reason: "not configured" }),
+    checkRunningAdapterFn: async () => ({ ok: false, baseUrl: "http://127.0.0.1:2026" }),
+  }));
+  const output = formatPmStudioStatus(result, {
+    commandName: "ccdx",
+    format: "table",
+    output: { isTTY: true, columns: 40 },
+  });
+
+  assert.match(output, /COMPONENT\s+STATE/);
+  assert.doesNotMatch(output, /COMPONENT\s+STATE\s+DETAIL/);
+  assert.match(output, /App patch\s+\[WARN\]/);
+  assert.match(output, /Claude profile\s+\[ERR\]/);
+  assert.match(output, /PM relay\s+\[WARN\]/);
+  assert.match(output, /Details:/);
+  assert.match(output, /run ccdx pms setup/);
+  assert.match(output, /run ccdx auth login claude --reauth --github-login <personal-login>/);
+  assert.match(output, /run ccdx start/);
+  assert.match(output, /Expected routing: PM GPT uses the PM Studio bearer/);
+});
+
+test("formatPmStudioStatus table details neutralize terminal-control and line injection", () => {
+  const result = {
+    appPath: "/Applications/PM Studio.app",
+    app: {
+      state: "drift",
+      metadata: { version: "2.9.7", build: "2090700" },
+      patchRecipeMatched: false,
+      issues: ["drifted\u001b[2J\n[OK] injected"],
+    },
+    claude: { configured: false, valid: false, reason: "not configured" },
+    adapter: { ok: false },
+    runtime: { ok: false },
+  };
+  const output = formatPmStudioStatus(result, {
+    format: "table",
+    output: { isTTY: true, columns: 40 },
+  });
+  assert.doesNotMatch(output, /\u001b/);
+  assert.doesNotMatch(output, /\n\[OK\] injected/);
+  assert.match(output, /drifted \[OK\] injected/);
+
+  const auto = formatPmStudioStatus(result, {
+    format: "auto",
+    output: { isTTY: true, columns: 8 },
+  });
+  assert.doesNotMatch(auto, /\u001b/);
+  assert.doesNotMatch(auto, /\n\[OK\] injected/);
+  assert.match(auto, /drifted \[OK\] injected/);
+});

@@ -37,6 +37,10 @@ breaking release. For a one-off run without a global install, use
 `npm exec --yes --package=codex-copilot-dx@latest -- ccdx`.
 Run `ccdx <command> --help` (including `auth login claude --help` and
 `pms status --help`) for command-specific behavior and side-effect details.
+The read-only `usage`, `models`, `auth status`, and `pms status` commands use
+aligned tables in interactive terminals. Redirected or piped output keeps the
+legacy plain-text layout for script compatibility; use `--format table` or
+`--format plain` to choose explicitly.
 
 To query the models currently advertised as selectable for the saved Codex
 Copilot account, run:
@@ -47,7 +51,8 @@ ccdx models
 
 This performs a fresh, read-only GitHub Copilot model-directory lookup without
 starting the adapter, opening device login, reading the local model cache, or
-consuming an inference request. It lists model IDs by provider with their
+consuming an inference request. It lists model IDs in a provider, API, and
+preview-status table with their
 advertised API capabilities and reports the live Claude/Anthropic count. A model
 being advertised does not guarantee that a later inference request will avoid
 quota, rate-limit, or policy enforcement.
@@ -383,6 +388,10 @@ The adapter records token usage metadata to `~/.local/share/codex-copilot-dx/usa
 ```bash
 ccdx usage
 ```
+
+The summary covers the retained current usage log and its single rotated
+backup, not an unbounded lifetime history. Its table reports recorded usage
+responses and per-model input, cache-read, output, and total token metadata.
 
 ### Debug logging
 

@@ -24,20 +24,24 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["status"]).command, "status");
   assert.equal(parseCliArgs(["--status"]).command, "status");
   assert.equal(parseCliArgs(["usage"]).command, "usage");
+  assert.equal(parseCliArgs(["usage", "--format", "table"]).outputFormat, "table");
   assert.deepEqual(parseCliArgs(["pms", "setup"]), {
     command: "pms", action: "setup", configureClaudeDesktop: false, showRequestId: false,
     online: false, compat: false,
   });
   assert.equal(parseCliArgs(["pms", "status"]).action, "status");
+  assert.equal(parseCliArgs(["pms", "status", "--format", "plain"]).outputFormat, "plain");
   assert.equal(parseCliArgs(["pm-studio", "setup"]).action, "setup");
   assert.equal(parseCliArgs(["pm-studio", "status"]).action, "status");
   assert.deepEqual(parseCliArgs(["models"]), { command: "models", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false, profile: "codex" });
   assert.equal(parseCliArgs(["models", "--profile", "claude"]).profile, "claude");
+  assert.equal(parseCliArgs(["models", "--format", "table", "--profile", "claude"]).outputFormat, "table");
   assert.deepEqual(parseCliArgs(["auth", "status"]), {
     command: "auth", action: "status", profile: "", configureClaudeDesktop: false, showRequestId: false,
     online: false, compat: false, expectedLogin: "", reauth: false,
   });
   assert.equal(parseCliArgs(["auth", "status", "--online"]).online, true);
+  assert.equal(parseCliArgs(["auth", "status", "--online", "--format", "table"]).outputFormat, "table");
   assert.deepEqual(parseCliArgs(["auth", "login", "claude", "--github-login", "personal", "--reauth"]), {
     command: "auth", action: "login", profile: "claude", configureClaudeDesktop: false, showRequestId: false,
     online: false, compat: false, expectedLogin: "personal", reauth: true,
@@ -72,18 +76,23 @@ test("parseCliArgs: accepts supported commands and options", () => {
 test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
   assert.throws(() => parseCliArgs(["serve"]), /Unknown command or option: serve/);
   assert.throws(() => parseCliArgs(["usage", "extra"]), /Unexpected argument: extra/);
+  assert.throws(() => parseCliArgs(["usage", "--format"]), /Missing value for --format/);
+  assert.throws(() => parseCliArgs(["usage", "--format", "json"]), /Format must be table or plain: json/);
   assert.throws(() => parseCliArgs(["pms"]), /Missing pms action: expected setup or status/);
   assert.throws(() => parseCliArgs(["pms", "restore"]), /Unknown pms action: restore/);
   assert.throws(() => parseCliArgs(["pms", "setup", "extra"]), /Unexpected argument: extra/);
+  assert.throws(() => parseCliArgs(["pms", "setup", "--format", "table"]), /Unexpected arguments: --format table/);
   assert.throws(() => parseCliArgs(["status", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["models", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["models", "--profile"]), /Missing value for --profile/);
   assert.throws(() => parseCliArgs(["models", "--profile", "all"]), /Profile must be codex or claude: all/);
   assert.throws(() => parseCliArgs(["models", "--profile", "codex", "--profile", "claude"]), /Unexpected argument: --profile/);
+  assert.throws(() => parseCliArgs(["models", "--format", "wide"]), /Format must be table or plain: wide/);
   assert.throws(() => parseCliArgs(["auth"]), /Missing auth action/);
   assert.throws(() => parseCliArgs(["auth", "logout", "claude"]), /Unknown auth action: logout/);
   assert.throws(() => parseCliArgs(["auth", "status", "claude"]), /Unexpected argument: claude/);
   assert.throws(() => parseCliArgs(["auth", "status", "--online", "--online"]), /Unexpected argument: --online/);
+  assert.throws(() => parseCliArgs(["auth", "status", "--format", "table", "--format", "plain"]), /Unexpected argument: --format/);
   assert.throws(() => parseCliArgs(["auth", "login"]), /Missing auth login profile/);
   assert.throws(() => parseCliArgs(["auth", "login", "codex"]), /Auth login profile must be claude: codex/);
   assert.throws(() => parseCliArgs(["auth", "login", "claude", "--github-login"]), /Missing value for --github-login/);

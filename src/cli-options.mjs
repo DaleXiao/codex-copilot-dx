@@ -60,6 +60,18 @@ function checkedProfile(value, { allowAll = false } = {}) {
   return profile;
 }
 
+function checkedOutputFormat(value) {
+  const format = value || "";
+  if (!new Set(["table", "plain"]).has(format)) {
+    throw new Error(`Format must be table or plain: ${value}`);
+  }
+  return format;
+}
+
+function outputFormatOption(value) {
+  return value ? { outputFormat: checkedOutputFormat(value) } : {};
+}
+
 function baseCommand(command, extra = {}) {
   return {
     command,
@@ -137,28 +149,42 @@ export function parseCliArgs(args = []) {
     return baseCommand("status");
   }
   if (command === "usage") {
-    if (rest.length) unexpectedArgs(rest);
-    return baseCommand("usage");
+    const options = parseOptions(rest, new Map([["--format", "value"]]));
+    return baseCommand("usage", outputFormatOption(options["--format"]));
   }
   if (PM_COMMANDS.has(command)) {
     const [action, ...pmsArgs] = rest;
     if (!action) throw new Error("Missing pms action: expected setup or status");
     if (!new Set(["setup", "status"]).has(action)) throw new Error(`Unknown pms action: ${action}`);
-    if (pmsArgs.length) unexpectedArgs(pmsArgs);
-    return baseCommand("pms", { action });
+    if (action === "setup") {
+      if (pmsArgs.length) unexpectedArgs(pmsArgs);
+      return baseCommand("pms", { action });
+    }
+    const options = parseOptions(pmsArgs, new Map([["--format", "value"]]));
+    return baseCommand("pms", {
+      action,
+      ...outputFormatOption(options["--format"]),
+    });
   }
   if (command === "models") {
-    const options = parseOptions(rest, new Map([["--profile", "value"]]));
+    const options = parseOptions(rest, new Map([
+      ["--profile", "value"],
+      ["--format", "value"],
+    ]));
     return {
       ...baseCommand("models"),
       profile: checkedProfile(options["--profile"]),
+      ...outputFormatOption(options["--format"]),
     };
   }
   if (command === "auth") {
     const [action, ...authArgs] = rest;
     if (!action) throw new Error("Missing auth action: expected status or login");
     if (action === "status") {
-      const options = parseOptions(authArgs, new Map([["--online", "flag"]]));
+      const options = parseOptions(authArgs, new Map([
+        ["--online", "flag"],
+        ["--format", "value"],
+      ]));
       return {
         ...baseCommand("auth"),
         action: "status",
@@ -166,6 +192,7 @@ export function parseCliArgs(args = []) {
         online: Boolean(options["--online"]),
         expectedLogin: "",
         reauth: false,
+        ...outputFormatOption(options["--format"]),
       };
     }
     if (action === "login") {
@@ -259,16 +286,16 @@ export function cliCommandName() {
 function topicHelp(name, topic) {
   const sections = {
     start: `Usage:\n  ${name} [start] [--configure-claude-app] [--show-request-id]\n\nStarts or reuses the local adapter, updates Codex and Claude Code configuration, and attempts to open Codex or ChatGPT when auto-launch is enabled and supported.\n--configure-claude-app also creates or updates the managed Claude App gateway profile.`,
-    auth: `Usage:\n  ${name} auth status [--online]\n  ${name} auth login claude [--github-login <login>] [--reauth]\n\nShows the two account profiles or configures the isolated Claude account. Device login starts only when no reusable local Copilot credential is available or --reauth is used.`,
-    "auth status": `Usage:\n  ${name} auth status [--online]\n\nShows account routing without exposing credentials. --online also verifies both configured Copilot entitlements and model catalogs.`,
+    auth: `Usage:\n  ${name} auth status [--online] [--format table|plain]\n  ${name} auth login claude [--github-login <login>] [--reauth]\n\nShows the two account profiles or configures the isolated Claude account. Device login starts only when no reusable local Copilot credential is available or --reauth is used.`,
+    "auth status": `Usage:\n  ${name} auth status [--online] [--format table|plain]\n\nShows account routing without exposing credentials. --online also verifies both configured Copilot entitlements and model catalogs. Interactive terminals use a table by default.`,
     "auth login": `Usage:\n  ${name} auth login claude [--github-login <login>] [--reauth]\n\nReuses a compatible local Copilot credential when possible. --reauth forces GitHub Device Flow.`,
     doctor: `Usage:\n  ${name} doctor [--online] [--compat] [--profile codex|claude|all]\n\nChecks local credentials, client configuration, PM Studio state, and the adapter. --online validates account entitlement; --compat sends minimal inference requests and consumes a small amount of Copilot usage.`,
     status: `Usage:\n  ${name} status\n\nShows bounded runtime, routing, performance, cache, queue, and PM relay metrics from a running adapter.`,
-    models: `Usage:\n  ${name} models [--profile codex|claude]\n\nPerforms a fresh, read-only Copilot model-directory lookup for one saved profile.`,
-    pms: `Usage:\n  ${name} pms status\n  ${name} pms setup\n  ${name} pm-studio status\n  ${name} pm-studio setup\n\nInspects or installs the version-locked PM Studio loopback patch. setup modifies the installed app only after all preflight checks pass.`,
+    models: `Usage:\n  ${name} models [--profile codex|claude] [--format table|plain]\n\nPerforms a fresh, read-only Copilot model-directory lookup for one saved profile. Interactive terminals use a table by default.`,
+    pms: `Usage:\n  ${name} pms status [--format table|plain]\n  ${name} pms setup\n  ${name} pm-studio status [--format table|plain]\n  ${name} pm-studio setup\n\nInspects or installs the version-locked PM Studio loopback patch. setup modifies the installed app only after all preflight checks pass.`,
     "pms setup": `Usage:\n  ${name} pms setup\n\nBacks up, patches, verifies, and ad-hoc signs an exactly supported PM Studio bundle. Unknown versions and drift are never modified.`,
-    "pms status": `Usage:\n  ${name} pms status\n\nRead-only inspection of the installed PM Studio version, patch integrity, Claude profile, and relay availability.`,
-    usage: `Usage:\n  ${name} usage\n\nSummarizes local token usage metadata without reading prompt or completion content.`,
+    "pms status": `Usage:\n  ${name} pms status [--format table|plain]\n\nRead-only inspection of the installed PM Studio version, patch integrity, Claude profile, and relay availability. Interactive terminals use a table by default.`,
+    usage: `Usage:\n  ${name} usage [--format table|plain]\n\nSummarizes local token usage metadata without reading prompt or completion content. Interactive terminals use a table by default.`,
     "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nInteractively selects an enabled Responses model for Codex Auto-review.`,
     update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or GitHub main. With no source, an interactive terminal prompts for one.`,
     version: `Usage:\n  ${name} --version`,
@@ -282,14 +309,14 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   if (normalizedTopic) return topicHelp(name, normalizedTopic);
   return `Usage:
   ${name} [start] [--configure-claude-app] [--show-request-id]
-  ${name} auth status [--online]
+  ${name} auth status [--online] [--format table|plain]
   ${name} auth login claude [--github-login <login>] [--reauth]
   ${name} doctor [--online] [--compat] [--profile codex|claude|all]
   ${name} status
-  ${name} models [--profile codex|claude]
-  ${name} pms status
+  ${name} models [--profile codex|claude] [--format table|plain]
+  ${name} pms status [--format table|plain]
   ${name} pms setup
-  ${name} usage
+  ${name} usage [--format table|plain]
   ${name} auto-review-model
   ${name} update [npm|github]
   ${name} --version

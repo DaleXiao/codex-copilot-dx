@@ -235,20 +235,63 @@ test("fetchLiveCopilotModels aborts a stalled live lookup", async () => {
 });
 
 test("formatLiveCopilotModels reports live totals, capabilities, previews, and zero Claude", () => {
-  const output = formatLiveCopilotModels({
+  const catalog = {
     upstreamHost: "api.enterprise.githubcopilot.com",
     advertised: 33,
     models: [
       { id: "gpt-5.6-sol", vendor: "OpenAI", endpoints: ["responses"], preview: false },
       { id: "gemini-preview", vendor: "Google", endpoints: ["chat"], preview: true },
     ],
-  }, { commandName: "codex-copilot-dx" });
+  };
+  const output = formatLiveCopilotModels(catalog, { commandName: "codex-copilot-dx" });
 
-  assert.match(output, /^codex-copilot-dx models/m);
-  assert.match(output, /Live catalog from api\.enterprise\.githubcopilot\.com: 2 selectable of 33 advertised/);
-  assert.match(output, /Responses: 1; Chat: 1; Claude\/Anthropic: 0/);
-  assert.match(output, /gemini-preview \[chat, preview\]/);
-  assert.match(output, /gpt-5\.6-sol \[responses\]/);
+  assert.equal(output, [
+    "codex-copilot-dx models",
+    "[OK] Live catalog from api.enterprise.githubcopilot.com: 2 selectable of 33 advertised",
+    "[INFO] Responses: 1; Chat: 1; Claude/Anthropic: 0",
+    "",
+    "OpenAI:",
+    "  gpt-5.6-sol [responses]",
+    "",
+    "Google:",
+    "  gemini-preview [chat, preview]",
+  ].join("\n"));
+
+  const table = formatLiveCopilotModels(catalog, {
+    commandName: "codex-copilot-dx",
+    format: "auto",
+    output: { isTTY: true, columns: 120 },
+  });
+  assert.match(table, /^VENDOR\s+MODEL\s+APIS\s+PREVIEW$/m);
+  assert.match(table, /^OpenAI\s+gpt-5\.6-sol\s+responses\s+no$/m);
+  assert.match(table, /^Google\s+gemini-preview\s+chat\s+yes$/m);
+
+  const compact = formatLiveCopilotModels(catalog, {
+    format: "table",
+    output: { isTTY: false, columns: 28 },
+  });
+  assert.match(compact, /^VENDOR\/MODEL\s+APIS\s+PREVIEW$/m);
+  assert.match(compact, /OpenAI\/gpt-5\.6-sol/);
+  assert.match(compact, /Google\/gemini-preview/);
+  assert.match(compact, /chat\s+yes/);
+
+  const narrowAuto = formatLiveCopilotModels(catalog, {
+    format: "auto",
+    output: { isTTY: true, columns: 8 },
+  });
+  assert.match(narrowAuto, /\nOpenAI:\n/);
+  assert.doesNotMatch(narrowAuto, /VENDOR\/MODEL/);
+
+  const sanitizedAuto = formatLiveCopilotModels({
+    ...catalog,
+    models: [{ id: "long-model\u001b[2J\n[OK] injected", vendor: "OpenAI", endpoints: ["responses"], preview: false }],
+  }, {
+    format: "auto",
+    output: { isTTY: true, columns: 8 },
+  });
+  assert.doesNotMatch(sanitizedAuto, /\u001b/);
+  assert.doesNotMatch(sanitizedAuto, /\n\[OK\] injected/);
+  assert.match(sanitizedAuto, /long-model \[OK\] injected/);
 });
 
 test("formatLiveCopilotModels labels only the isolated Claude profile", () => {

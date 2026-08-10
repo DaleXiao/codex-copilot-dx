@@ -18,6 +18,12 @@ import {
 import { readAdapterStatus } from "./cli-status.mjs";
 import { checkRunningAdapter } from "./running-adapter.mjs";
 import { status } from "./status.mjs";
+import {
+  cliOutputFormat,
+  cliOutputWidth,
+  formatResponsiveCliTable,
+  terminalCell,
+} from "./cli-table.mjs";
 
 const PM_RELAY_HOST = "127.0.0.1";
 const PM_RELAY_PORT = 2026;
@@ -166,54 +172,106 @@ export async function inspectPmStudioStatus({
   return { ok: operational, appPath, app, claude, adapter, runtime };
 }
 
-function appStatusLine(result, commandName) {
+function appStatusItem(result, commandName) {
   const { app } = result;
   const version = app.metadata ? `${app.metadata.version} build ${app.metadata.build}` : "";
   if (app.state === "patched" && app.patchRecord?.valid === true) {
-    return status("ok", `PM Studio ${version} is patched and verified against its installed patch record`);
+    return { kind: "ok", component: "App patch", detail: `${version}; patched and verified`, message: `PM Studio ${version} is patched and verified against its installed patch record` };
   }
   if (app.state === "patched") {
     const reason = app.patchRecord?.reason || "installed patch record is missing";
-    return status("err", `PM Studio ${version} matches the patch recipe, but its installed patch record is not verified: ${reason}`);
+    return { kind: "err", component: "App patch", detail: `${version}; patch record not verified`, message: `PM Studio ${version} matches the patch recipe, but its installed patch record is not verified: ${reason}` };
   }
-  if (app.state === "clean") return status("warn", `PM Studio ${version} is supported but not patched; run ${commandName} pms setup`);
-  if (app.state === "unsupported") return status("err", `PM Studio ${version} has no exact patch recipe; no files will be changed`);
+  if (app.state === "clean") return { kind: "warn", component: "App patch", detail: `${version}; supported, not patched`, message: `PM Studio ${version} is supported but not patched; run ${commandName} pms setup` };
+  if (app.state === "unsupported") return { kind: "err", component: "App patch", detail: `${version}; unsupported version`, message: `PM Studio ${version} has no exact patch recipe; no files will be changed` };
   if (app.state === "drift" && app.patchRecipeMatched) {
-    return status("err", `PM Studio ${version} matches the patch recipe, but its installed patch record is not verified: ${app.issues.join("; ")}`);
+    return { kind: "err", component: "App patch", detail: `${version}; patch record drift`, message: `PM Studio ${version} matches the patch recipe, but its installed patch record is not verified: ${app.issues.join("; ")}` };
   }
-  if (app.state === "drift") return status("err", `PM Studio ${version} does not match the clean or patched recipe: ${app.issues.join("; ")}`);
-  if (app.state === "not_installed") return status("warn", `PM Studio is not installed at ${result.appPath}`);
-  return status("err", `PM Studio could not be inspected: ${app.issues.join("; ")}`);
+  if (app.state === "drift") return { kind: "err", component: "App patch", detail: `${version}; integrity drift`, message: `PM Studio ${version} does not match the clean or patched recipe: ${app.issues.join("; ")}` };
+  if (app.state === "not_installed") return { kind: "warn", component: "App patch", detail: "not installed", message: `PM Studio is not installed at ${result.appPath}` };
+  return { kind: "err", component: "App patch", detail: "inspection failed", message: `PM Studio could not be inspected: ${app.issues.join("; ")}` };
 }
 
-export function formatPmStudioStatus(result, { commandName = "ccdx" } = {}) {
-  const lines = [
-    `${commandName} pms status`,
-    appStatusLine(result, commandName),
-  ];
+function pmStudioStatusItems(result, commandName) {
+  const items = [appStatusItem(result, commandName)];
   if (result.claude.valid) {
     const account = result.claude.login ? ` for ${result.claude.login}` : "";
-    lines.push(status("ok", `Isolated Claude profile is valid${account}`));
+    const detail = result.claude.login ? `${result.claude.login}; isolated profile valid` : "isolated profile valid";
+    items.push({ kind: "ok", component: "Claude profile", detail, message: `Isolated Claude profile is valid${account}` });
   } else {
     const reason = result.claude.configured && result.claude.reason ? ` (${result.claude.reason})` : "";
-    lines.push(status("err", `Isolated Claude profile is not ready${reason}; run ${PM_STUDIO_CLAUDE_AUTH_COMMAND}`));
+    items.push({ kind: "err", component: "Claude profile", detail: "not ready", message: `Isolated Claude profile is not ready${reason}; run ${PM_STUDIO_CLAUDE_AUTH_COMMAND}` });
   }
   if (result.adapter?.ok && result.runtime?.ok) {
-    lines.push(status("ok", `PM relay and isolated Claude routing are verified at ${result.adapter.baseUrl}`));
+    items.push({ kind: "ok", component: "PM relay", detail: `verified at ${result.adapter.baseUrl}`, message: `PM relay and isolated Claude routing are verified at ${result.adapter.baseUrl}` });
   } else if (result.adapter?.ok) {
     const reason = result.runtime?.issues?.join("; ") || "runtime status is unavailable";
-    lines.push(status("err", `The adapter is running at ${result.adapter.baseUrl}, but PM relay routing is not ready: ${reason}; stop it and run ${commandName} start`));
+    items.push({ kind: "err", component: "PM relay", detail: "running but routing not ready", message: `The adapter is running at ${result.adapter.baseUrl}, but PM relay routing is not ready: ${reason}; stop it and run ${commandName} start` });
   } else if (result.adapter?.incompatible) {
-    lines.push(status("err", `The adapter at ${result.adapter.baseUrl} is incompatible; stop it and run ${commandName} start`));
+    items.push({ kind: "err", component: "PM relay", detail: `incompatible at ${result.adapter.baseUrl}`, message: `The adapter at ${result.adapter.baseUrl} is incompatible; stop it and run ${commandName} start` });
   } else {
-    lines.push(status("warn", `PM relay is not running at http://${PM_RELAY_HOST}:${PM_RELAY_PORT}; run ${commandName} start`));
+    items.push({ kind: "warn", component: "PM relay", detail: `not running at ${PM_RELAY_HOST}:${PM_RELAY_PORT}`, message: `PM relay is not running at http://${PM_RELAY_HOST}:${PM_RELAY_PORT}; run ${commandName} start` });
   }
   if (result.runtime?.ok) {
-    lines.push(status("info", "Routing: PM GPT uses the PM Studio bearer; eligible Claude chat uses the isolated Claude profile"));
+    items.push({ kind: "info", component: "Routing", detail: "GPT -> PM bearer; Claude -> isolated profile", message: "Routing: PM GPT uses the PM Studio bearer; eligible Claude chat uses the isolated Claude profile" });
   } else {
-    lines.push(status("info", "Expected routing: PM GPT uses the PM Studio bearer; eligible Claude chat uses the isolated Claude profile"));
+    items.push({ kind: "info", component: "Routing", detail: "expected: GPT -> PM bearer; Claude -> isolated profile", message: "Expected routing: PM GPT uses the PM Studio bearer; eligible Claude chat uses the isolated Claude profile" });
   }
-  return lines.join("\n");
+  return items;
+}
+
+function formatPmStudioStatusPlain(result, commandName, { sanitize = false } = {}) {
+  const lines = [
+    `${commandName} pms status`,
+    ...pmStudioStatusItems(result, commandName).map((item) => status(item.kind, item.message)),
+  ];
+  return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
+}
+
+function tableState(kind) {
+  return `[${String(kind).toUpperCase()}]`;
+}
+
+function formatPmStudioStatusTable(result, { commandName, output }) {
+  const items = pmStudioStatusItems(result, commandName);
+  const rows = items.map((item) => ({
+    component: item.component,
+    state: tableState(item.kind),
+    detail: item.detail,
+  }));
+  const table = formatResponsiveCliTable({
+    columns: [
+      { key: "component", label: "COMPONENT" },
+      { key: "state", label: "STATE" },
+      { key: "detail", label: "DETAIL" },
+    ],
+    compactColumns: [
+      { key: "component", label: "COMPONENT" },
+      { key: "state", label: "STATE" },
+    ],
+    rows,
+    width: cliOutputWidth(output),
+  });
+  const lines = [`${commandName} pms status`, table.output];
+  const details = table.compact ? items : items.filter((item) => item.kind === "warn" || item.kind === "err");
+  if (details.length) {
+    lines.push("", "Details:", ...details.map((item) => terminalCell(status(item.kind, item.message), { fallback: "" })));
+  }
+  return { output: lines.join("\n"), overflow: table.overflow };
+}
+
+export function formatPmStudioStatus(result, {
+  commandName = "ccdx",
+  format = "plain",
+  output = process.stdout,
+} = {}) {
+  if (cliOutputFormat(format, output) === "plain") {
+    return formatPmStudioStatusPlain(result, commandName);
+  }
+  const table = formatPmStudioStatusTable(result, { commandName, output });
+  return format === "auto" && table.overflow
+    ? formatPmStudioStatusPlain(result, commandName, { sanitize: true })
+    : table.output;
 }
 
 export async function runPmStudioStatus(options = {}) {

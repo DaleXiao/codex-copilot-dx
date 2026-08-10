@@ -24,6 +24,12 @@ import { saveModelCache } from "./model-cache.mjs";
 import { isClaudeCopilotModel } from "./models.mjs";
 import { profileRouting } from "./profile-routing.mjs";
 import { status } from "./status.mjs";
+import {
+  cliOutputFormat,
+  cliOutputWidth,
+  formatResponsiveCliTable,
+  terminalCell,
+} from "./cli-table.mjs";
 
 const CLIENT_ID = "Iv1.b507a08c87ecfe98";
 const SCOPE = "read:user";
@@ -479,7 +485,7 @@ function onlineStatusLine(name, profile) {
   return status("ok", `${name} online: ${account}${online.models} models, ${online.claudeModels} Claude`);
 }
 
-export function formatAuthStatus(snapshot = authStatus(), { commandName = "ccdx" } = {}) {
+function authStatusPlainLines(snapshot, { commandName }) {
   const claudeLabel = snapshot.profiles.claude.configured
     ? `${accountLabel(snapshot.profiles.claude)} [isolated profile]`
     : "inherits Codex [no isolated profile]";
@@ -493,7 +499,95 @@ export function formatAuthStatus(snapshot = authStatus(), { commandName = "ccdx"
     status(claudeKind, `Claude: ${claudeLabel}`),
     onlineStatusLine("Claude", snapshot.profiles.claude),
     status("info", `Routing: responses -> ${snapshot.routing.responses}; messages -> ${snapshot.routing.messages}`),
-  ].filter(Boolean).join("\n");
+  ].filter(Boolean);
+}
+
+function authTableOnline(profile) {
+  const online = profile.online;
+  if (!online) return { state: "[INFO] not checked", models: "—", claudeModels: "—" };
+  if (online.inherited) return { state: "[INFO] inherits Codex", models: "—", claudeModels: "—" };
+  if (!online.ok) {
+    const httpStatus = online.httpStatus ? ` (HTTP ${online.httpStatus})` : "";
+    return {
+      state: `[WARN] ${online.reason || "unavailable"}${httpStatus}`,
+      models: "—",
+      claudeModels: "—",
+    };
+  }
+  return {
+    state: `[OK] verified${online.login ? ` as ${online.login}` : ""}`,
+    models: Number.isFinite(online.models) ? String(online.models) : "—",
+    claudeModels: Number.isFinite(online.claudeModels) ? String(online.claudeModels) : "—",
+  };
+}
+
+function authTableRow(name, profile, { claude = false } = {}) {
+  const inherited = claude && !profile.configured;
+  const online = authTableOnline(profile);
+  const local = inherited
+    ? "[INFO] inherits Codex"
+    : profile.valid
+      ? "[OK] ready"
+      : `[WARN] ${accountLabel(profile)}`;
+  const account = inherited ? "inherits Codex" : accountLabel(profile);
+  const mode = inherited ? "inherited" : claude ? "isolated" : "legacy path";
+  return {
+    profile: name,
+    account,
+    mode,
+    local,
+    online: online.state,
+    models: online.models,
+    claudeModels: online.claudeModels,
+  };
+}
+
+export function formatAuthStatus(snapshot = authStatus(), {
+  commandName = "ccdx",
+  format = "plain",
+  output = process.stdout,
+  width = cliOutputWidth(output),
+} = {}) {
+  const plainLines = authStatusPlainLines(snapshot, { commandName });
+  if (cliOutputFormat(format, output) === "plain") {
+    return plainLines.join("\n");
+  }
+
+  const rows = [
+    authTableRow("Codex", snapshot.profiles.codex),
+    authTableRow("Claude", snapshot.profiles.claude, { claude: true }),
+  ];
+  const table = formatResponsiveCliTable({
+    columns: [
+      { key: "profile", label: "PROFILE" },
+      { key: "account", label: "ACCOUNT" },
+      { key: "mode", label: "MODE" },
+      { key: "local", label: "LOCAL" },
+      { key: "online", label: "ONLINE" },
+      { key: "models", label: "MODELS", align: "right" },
+      { key: "claudeModels", label: "CLAUDE", align: "right" },
+    ],
+    compactColumns: [
+      { key: "profile", label: "PROFILE" },
+      { key: "local", label: "LOCAL" },
+      { key: "online", label: "ONLINE" },
+    ],
+    rows,
+    width,
+  });
+  if (format === "auto" && table.overflow) {
+    return plainLines.map((line) => terminalCell(line, { fallback: "" })).join("\n");
+  }
+  const lines = [
+    `${commandName} auth status`,
+    "",
+    table.output,
+  ];
+  if (table.compact) {
+    lines.push("", "Details:", ...plainLines.slice(1, -1).map((line) => terminalCell(line, { fallback: "" })));
+  }
+  lines.push(terminalCell(plainLines.at(-1), { fallback: "" }));
+  return lines.join("\n");
 }
 
 export async function runAuthCommand({
@@ -503,11 +597,13 @@ export async function runAuthCommand({
   reauth = false,
   expectedLogin = "",
   commandName = "ccdx",
+  format = "plain",
+  output = process.stdout,
   ...options
 } = {}) {
   if (action === "status") {
     const snapshot = online ? await authStatusOnline(options) : authStatus(options);
-    return { action, output: formatAuthStatus(snapshot, { commandName }), snapshot };
+    return { action, output: formatAuthStatus(snapshot, { commandName, format, output }), snapshot };
   }
   if (profile !== AUTH_PROFILE_CLAUDE) throw new Error("Only the isolated Claude profile can be changed by this command");
   if (action === "login") return { action, ...(await authorizeClaudeProfile({ ...options, reauth, expectedLogin })) };

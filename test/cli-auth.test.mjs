@@ -467,10 +467,24 @@ test("authStatus: reports routing without exposing credentials", () => {
   const output = formatAuthStatus(snapshot);
   assert.equal(snapshot.routing.responses, "codex");
   assert.equal(snapshot.routing.messages, "claude");
-  assert.match(output, /Codex: enterprise/);
-  assert.match(output, /Claude: personal/);
+  assert.equal(output, [
+    "ccdx auth status",
+    "[OK] Codex: enterprise [legacy path]",
+    "[OK] Claude: personal [isolated profile]",
+    "[INFO] Routing: responses -> codex; messages -> claude",
+  ].join("\n"));
   assert.doesNotMatch(JSON.stringify(snapshot), /ghu_/);
   assert.doesNotMatch(output, /ghu_/);
+
+  const table = formatAuthStatus(snapshot, {
+    format: "auto",
+    output: { isTTY: true, columns: 120 },
+  });
+  assert.match(table, /^PROFILE\s+ACCOUNT\s+MODE\s+LOCAL\s+ONLINE\s+MODELS\s+CLAUDE$/m);
+  assert.match(table, /^Codex\s+enterprise\s+legacy path\s+\[OK\] ready\s+\[INFO\] not checked/m);
+  assert.match(table, /^Claude\s+personal\s+isolated\s+\[OK\] ready\s+\[INFO\] not checked/m);
+  assert.match(table, /\[INFO\] Routing: responses -> codex; messages -> claude$/m);
+  assert.doesNotMatch(table, /ghu_/);
 });
 
 test("authStatus: an unreadable Claude profile stays isolated without hiding Codex or leaking its path", () => {
@@ -490,6 +504,46 @@ test("authStatus: an unreadable Claude profile stays isolated without hiding Cod
   assert.match(output, /Codex: enterprise/);
   assert.match(output, /Claude: invalid \(credential_read_failed\)/);
   assert.doesNotMatch(output, new RegExp(home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+  const compact = formatAuthStatus(snapshot, {
+    format: "table",
+    output: { isTTY: false, columns: 32 },
+  });
+  assert.match(compact, /^PROFILE\s+LOCAL\s+ONLINE$/m);
+  assert.match(compact, /credential_read_failed/);
+  assert.match(compact, /Details:/);
+  assert.match(compact, /Routing: responses -> codex; messages -> claude/);
+  assert.doesNotMatch(compact, new RegExp(home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("authStatus: table details neutralize terminal-control and line injection", () => {
+  const snapshot = {
+    profiles: {
+      codex: {
+        configured: true,
+        valid: true,
+        login: "enterprise",
+        online: { ok: false, reason: "blocked\u001b[2J\n[OK] injected" },
+      },
+      claude: { configured: false, valid: false, online: { inherited: true } },
+    },
+    routing: { responses: "codex", messages: "codex" },
+  };
+  const output = formatAuthStatus(snapshot, {
+    format: "table",
+    output: { isTTY: true, columns: 32 },
+  });
+  assert.doesNotMatch(output, /\u001b/);
+  assert.doesNotMatch(output, /\n\[OK\] injected/);
+  assert.match(output, /blocked \[OK\] injected/);
+
+  const auto = formatAuthStatus(snapshot, {
+    format: "auto",
+    output: { isTTY: true, columns: 8 },
+  });
+  assert.doesNotMatch(auto, /\u001b/);
+  assert.doesNotMatch(auto, /\n\[OK\] injected/);
+  assert.match(auto, /blocked \[OK\] injected/);
 });
 
 test("auth status --online validates Codex read-only and explains unconfigured Claude inheritance", async () => {
@@ -499,6 +553,8 @@ test("auth status --online validates Codex read-only and explains unconfigured C
   const result = await runAuthCommand({
     action: "status",
     online: true,
+    format: "table",
+    output: { isTTY: false, columns: 38 },
     home,
     fetchImpl: async (url) => {
       urls.push(url);
@@ -518,8 +574,12 @@ test("auth status --online validates Codex read-only and explains unconfigured C
 
   assert.equal(result.snapshot.profiles.codex.online.ok, true);
   assert.equal(result.snapshot.profiles.claude.online.inherited, true);
-  assert.match(result.output, /Claude: inherits Codex/);
+  assert.match(result.output, /^PROFILE\s+LOCAL\s+ONLINE$/m);
+  assert.match(result.output, /Claude\s+\[INFO\] inherits Codex\s+\[INFO\] inherits Codex/);
+  assert.match(result.output, /Details:/);
+  assert.match(result.output, /Claude: inherits Codex \[no isolated profile\]/);
   assert.match(result.output, /Claude online: inherits the Codex profile/);
+  assert.match(result.output, /Routing: responses -> codex; messages -> codex/);
   assert.equal(urls.some((url) => url.includes("/login/device")), false);
   assert.equal(fs.existsSync(path.join(home, ".local", "share", "copilot-api", "profiles", "claude")), false);
 });

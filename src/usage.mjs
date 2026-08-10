@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { cliOutputFormat, cliOutputWidth, formatResponsiveCliTable, terminalCell } from "./cli-table.mjs";
 import { parseByteLimit, rotateFileIfNeededSync, rotatedFilePath } from "./file-rotation.mjs";
 
 const DEFAULT_USAGE_PATH = path.join(os.homedir(), ".local", "share", "codex-copilot-dx", "usage.jsonl");
@@ -219,17 +220,111 @@ function fmt(n) {
   return Number.isFinite(n) ? n.toLocaleString("en-US") : "0";
 }
 
-export async function printUsageSummary() {
-  const summary = await summarizeUsageLogs();
-  console.log(`Usage log: ${usageLogPath()}`);
+function tableNumber(n) {
+  return Number.isFinite(n) ? n.toLocaleString("en-US") : undefined;
+}
+
+function cacheReadTokens(usage = {}) {
+  const values = [usage.cache_read_input_tokens, usage.cached_input_tokens]
+    .filter((value) => Number.isFinite(value));
+  const value = values.length > 0 ? values.reduce((total, current) => total + current, 0) : undefined;
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {
+  const lines = [`Usage log: ${filePath}`];
   if (summary.requests === 0) {
-    console.log("No usage records yet.");
-    return;
+    lines.push("No usage records yet.");
+    return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
   }
-  console.log(`Requests: ${fmt(summary.requests)}`);
-  console.log(`Tokens: input=${fmt(summary.totals.input_tokens)} cache_read=${fmt(summary.totals.cache_read_input_tokens || summary.totals.cached_input_tokens)} output=${fmt(summary.totals.output_tokens)} total=${fmt(summary.totals.total_tokens)}`);
-  console.log("\nBy model:");
+  lines.push(
+    `Requests: ${fmt(summary.requests)}`,
+    `Tokens: input=${fmt(summary.totals.input_tokens)} cache_read=${fmt(cacheReadTokens(summary.totals))} output=${fmt(summary.totals.output_tokens)} total=${fmt(summary.totals.total_tokens)}`,
+    "",
+    "By model:",
+  );
   for (const [model, row] of Object.entries(summary.byModel)) {
-    console.log(`  ${model}: requests=${fmt(row.requests)} input=${fmt(row.input_tokens)} cache_read=${fmt(row.cache_read_input_tokens || row.cached_input_tokens)} output=${fmt(row.output_tokens)} total=${fmt(row.total_tokens)}`);
+    lines.push(`  ${model}: requests=${fmt(row.requests)} input=${fmt(row.input_tokens)} cache_read=${fmt(cacheReadTokens(row))} output=${fmt(row.output_tokens)} total=${fmt(row.total_tokens)}`);
   }
+  return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
+}
+
+function compareModelUsage(left, right) {
+  const leftTotal = Number.isFinite(left.row.total_tokens) ? left.row.total_tokens : -Infinity;
+  const rightTotal = Number.isFinite(right.row.total_tokens) ? right.row.total_tokens : -Infinity;
+  if (leftTotal !== rightTotal) return rightTotal - leftTotal;
+  return left.model < right.model ? -1 : left.model > right.model ? 1 : 0;
+}
+
+function usageTableRow(model, usage) {
+  return {
+    model,
+    records: tableNumber(usage.requests),
+    input: tableNumber(usage.input_tokens),
+    cacheRead: tableNumber(cacheReadTokens(usage)),
+    output: tableNumber(usage.output_tokens),
+    total: tableNumber(usage.total_tokens),
+  };
+}
+
+function usageDetailLine(model, usage) {
+  return `${terminalCell(model)}: input=${fmt(usage.input_tokens)} cache_read=${fmt(cacheReadTokens(usage))} output=${fmt(usage.output_tokens)}`;
+}
+
+function formatTableUsageSummary(summary, filePath, output) {
+  const safePath = terminalCell(filePath, { fallback: "" });
+  if (summary.requests === 0) return { output: `Usage log: ${safePath}\nNo usage records yet.`, overflow: false };
+  const columns = [
+    { key: "model", label: "MODEL" },
+    { key: "records", label: "RECORDS", align: "right" },
+    { key: "input", label: "INPUT", align: "right" },
+    { key: "cacheRead", label: "CACHE READ", align: "right" },
+    { key: "output", label: "OUTPUT", align: "right" },
+    { key: "total", label: "TOTAL", align: "right" },
+  ];
+  const compactColumns = [columns[0], columns[1], columns[5]];
+  const modelUsage = Object.entries(summary.byModel)
+    .map(([model, row]) => ({ model, row }))
+    .sort(compareModelUsage);
+  const totalUsage = { requests: summary.requests, ...summary.totals };
+  const rows = [usageTableRow("TOTAL", totalUsage), ...modelUsage.map(({ model, row }) => usageTableRow(model, row))];
+  const table = formatResponsiveCliTable({
+    columns,
+    compactColumns,
+    rows,
+    width: cliOutputWidth(output),
+    gap: 1,
+  });
+  const lines = [`Usage log: ${safePath}`, "", table.output];
+  if (table.compact) {
+    lines.push(
+      "",
+      "Details:",
+      usageDetailLine("TOTAL", totalUsage),
+      ...modelUsage.map(({ model, row }) => usageDetailLine(model, row)),
+    );
+  }
+  return { output: lines.join("\n"), overflow: table.overflow };
+}
+
+export function formatUsageSummary(summary, {
+  filePath = usageLogPath(),
+  format = "auto",
+  output = process.stdout,
+} = {}) {
+  if (cliOutputFormat(format, output) === "plain") return formatPlainUsageSummary(summary, filePath);
+  const table = formatTableUsageSummary(summary, filePath, output);
+  return format === "auto" && table.overflow
+    ? formatPlainUsageSummary(summary, filePath, { sanitize: true })
+    : table.output;
+}
+
+export async function printUsageSummary({
+  filePath = usageLogPath(),
+  format = "auto",
+  output = process.stdout,
+  log = console.log,
+} = {}) {
+  const summary = await summarizeUsageLogs(filePath);
+  log(formatUsageSummary(summary, { filePath, format, output }));
 }

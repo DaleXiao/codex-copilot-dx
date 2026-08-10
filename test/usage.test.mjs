@@ -6,7 +6,9 @@ import path from "node:path";
 import {
   buildAnthropicUsageRecord,
   buildResponsesUsageRecord,
+  formatUsageSummary,
   flushUsageWritesForTests,
+  printUsageSummary,
   readUsageRecords,
   recordUsage,
   summarizeUsage,
@@ -123,4 +125,142 @@ test("summarizeUsage: aggregates totals and per-model rows", () => {
   assert.equal(summary.byModel.a.requests, 2);
   assert.equal(summary.byModel.a.total_tokens, 12);
   assert.equal(summary.byModel.b.requests, 1);
+});
+
+test("formatUsageSummary: plain layout remains compatible and combines cache fields", () => {
+  const summary = summarizeUsage([
+    { model: "b", usage: { input_tokens: 4, cached_input_tokens: 2, output_tokens: 1, total_tokens: 5 } },
+    { model: "a", usage: { input_tokens: 8, cache_read_input_tokens: 3, output_tokens: 2, total_tokens: 10 } },
+  ]);
+  assert.equal(formatUsageSummary(summary, {
+    filePath: "/tmp/usage.jsonl",
+    format: "plain",
+    output: { isTTY: true, columns: 120 },
+  }), [
+    "Usage log: /tmp/usage.jsonl",
+    "Requests: 2",
+    "Tokens: input=12 cache_read=5 output=3 total=15",
+    "",
+    "By model:",
+    "  b: requests=1 input=4 cache_read=2 output=1 total=5",
+    "  a: requests=1 input=8 cache_read=3 output=2 total=10",
+  ].join("\n"));
+});
+
+test("formatUsageSummary: auto uses a full table on a wide TTY and sorts models by total", () => {
+  const summary = summarizeUsage([
+    { model: "small", usage: { input_tokens: 2, cached_input_tokens: 1, output_tokens: 1, total_tokens: 3 } },
+    { model: "large-b", usage: { input_tokens: 6, cache_read_input_tokens: 2, output_tokens: 4, total_tokens: 10 } },
+    { model: "large-a", usage: { input_tokens: 7, cached_input_tokens: 3, output_tokens: 3, total_tokens: 10 } },
+  ]);
+  const output = formatUsageSummary(summary, {
+    filePath: "/tmp/usage.jsonl",
+    format: "auto",
+    output: { isTTY: true, columns: 120 },
+  });
+  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\n\nMODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+OUTPUT\s+TOTAL/m);
+  assert.ok(output.indexOf("TOTAL") < output.indexOf("large-a"));
+  assert.ok(output.indexOf("large-a") < output.indexOf("large-b"));
+  assert.ok(output.indexOf("large-b") < output.indexOf("small"));
+  assert.match(output, /TOTAL\s+3\s+15\s+6\s+8\s+23/);
+});
+
+test("formatUsageSummary: large totals still fit a standard 80-column terminal", () => {
+  const summary = summarizeUsage([{
+    model: "gpt-5.5-2026-04-23",
+    usage: {
+      input_tokens: 7_104_928_038,
+      cached_input_tokens: 6_881_800_221,
+      output_tokens: 21_566_984,
+      total_tokens: 7_126_495_022,
+    },
+  }]);
+  const output = formatUsageSummary(summary, {
+    filePath: "/tmp/usage.jsonl",
+    format: "auto",
+    output: { isTTY: true, columns: 80 },
+  });
+  assert.match(output, /MODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+OUTPUT\s+TOTAL/);
+  assert.doesNotMatch(output, /Details:/);
+});
+
+test("formatUsageSummary: both formats combine cache fields and use dashes for missing values", () => {
+  const summary = summarizeUsage([
+    { model: "mixed", usage: { cached_input_tokens: 5, total_tokens: 5 } },
+    { model: "mixed", usage: { cache_read_input_tokens: 7, total_tokens: 7 } },
+    { model: "missing", usage: { output_tokens: 2, total_tokens: 2 } },
+  ]);
+  const output = formatUsageSummary(summary, {
+    filePath: "/tmp/usage.jsonl",
+    format: "table",
+    output: { isTTY: false, columns: 120 },
+  });
+  assert.match(output, /mixed\s+2\s+—\s+12\s+—\s+12/);
+  assert.match(output, /missing\s+1\s+—\s+—\s+2\s+2/);
+  assert.match(formatUsageSummary(summary, {
+    filePath: "/tmp/usage.jsonl",
+    format: "plain",
+    output: { isTTY: true, columns: 120 },
+  }), /Tokens: input=0 cache_read=12 output=2 total=14/);
+});
+
+test("formatUsageSummary: auto keeps plain output when stdout is not a TTY", () => {
+  const summary = summarizeUsage([{ model: "m", usage: { total_tokens: 1 } }]);
+  const output = formatUsageSummary(summary, {
+    filePath: "/tmp/usage.jsonl",
+    format: "auto",
+    output: { isTTY: false, columns: 120 },
+  });
+  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\nRequests: 1\nTokens:/);
+  assert.doesNotMatch(output, /MODEL\s+RECORDS/);
+});
+
+test("formatUsageSummary: compact table preserves totals and appends omitted token details", () => {
+  const summary = summarizeUsage([
+    { model: "wide-model-name", usage: { input_tokens: 123456, cached_input_tokens: 100000, output_tokens: 789, total_tokens: 124245 } },
+  ]);
+  const output = formatUsageSummary(summary, {
+    filePath: "/tmp/usage.jsonl",
+    format: "table",
+    output: { isTTY: true, columns: 48 },
+  });
+  assert.match(output, /MODEL\s+RECORDS\s+TOTAL/);
+  assert.doesNotMatch(output, /CACHE READ/);
+  assert.match(output, /wide-model-name\s+1\s+124,245/);
+  assert.match(output, /Details:/);
+  assert.match(output, /wide-model-name: input=123,456 cache_read=100,000 output=789/);
+});
+
+test("formatUsageSummary: auto falls back to plain when even the compact table cannot fit", () => {
+  const summary = summarizeUsage([{ model: "very-long-model-name\u001b[2J\n[OK] injected", usage: { total_tokens: 1 } }]);
+  const output = formatUsageSummary(summary, {
+    filePath: "/tmp/usage.jsonl",
+    format: "auto",
+    output: { isTTY: true, columns: 8 },
+  });
+  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\nRequests: 1\nTokens:/);
+  assert.doesNotMatch(output, /MODEL\s+RECORDS/);
+  assert.doesNotMatch(output, /\u001b/);
+  assert.doesNotMatch(output, /\n\[OK\] injected/);
+  assert.match(output, /very-long-model-name \[OK\] injected/);
+});
+
+test("formatUsageSummary: empty table mode preserves the existing empty state", () => {
+  assert.equal(formatUsageSummary(summarizeUsage([]), {
+    filePath: "/tmp/usage.jsonl",
+    format: "table",
+    output: { isTTY: true, columns: 120 },
+  }), "Usage log: /tmp/usage.jsonl\nNo usage records yet.");
+});
+
+test("printUsageSummary: uses the injected output only for format selection", async () => {
+  const filePath = path.join(os.tmpdir(), `ccdx-usage-missing-${process.pid}-${Date.now()}.jsonl`);
+  let logged = "";
+  await printUsageSummary({
+    filePath,
+    format: "auto",
+    output: { isTTY: true, columns: 80 },
+    log(value) { logged = value; },
+  });
+  assert.equal(logged, `Usage log: ${filePath}\nNo usage records yet.`);
 });

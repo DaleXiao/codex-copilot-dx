@@ -47,7 +47,10 @@ if (CLI.command === "version") {
   process.exit(0);
 }
 if (CLI.command === "usage") {
-  await printUsageSummary();
+  await printUsageSummary({
+    format: CLI.outputFormat || "auto",
+    output: process.stdout,
+  });
   process.exit(0);
 }
 if (CLI.command === "auth") {
@@ -59,6 +62,8 @@ if (CLI.command === "auth") {
       reauth: CLI.reauth,
       expectedLogin: CLI.expectedLogin,
       commandName: CLI_NAME,
+      format: CLI.outputFormat || "auto",
+      output: process.stdout,
     });
     if (result.output) console.log(result.output);
     if (result.action === "login") {
@@ -97,7 +102,11 @@ if (CLI.command === "status") {
 if (CLI.command === "models") {
   try {
     const catalog = await fetchLiveCopilotModels({ profile: CLI.profile });
-    console.log(formatLiveCopilotModels(catalog, { commandName: CLI_NAME }));
+    console.log(formatLiveCopilotModels(catalog, {
+      commandName: CLI_NAME,
+      format: CLI.outputFormat || "auto",
+      output: process.stdout,
+    }));
     process.exit(0);
   } catch (e) {
     console.error(status("err", e.message));
@@ -127,7 +136,11 @@ if (CLI.command === "pms") {
   try {
     if (CLI.action === "status") {
       const { runPmStudioStatus } = await import("../src/pm-studio-status.mjs");
-      const result = await runPmStudioStatus({ commandName: CLI_NAME });
+      const result = await runPmStudioStatus({
+        commandName: CLI_NAME,
+        format: CLI.outputFormat || "auto",
+        output: process.stdout,
+      });
       process.exit(result.ok ? 0 : 1);
     }
     const { runPmStudioSetup } = await import("../src/pm-studio-setup.mjs");

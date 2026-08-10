@@ -84,7 +84,7 @@ test("claudeDesktopModelDefsFromCopilotModels: does not expose dash aliases", ()
       name: "Claude Sonnet 4.6",
       vendor: "Anthropic",
       model_picker_enabled: true,
-      supported_endpoints: ["/v1/messages"],
+      supported_endpoints: ["/chat/completions"],
       capabilities: { limits: { max_context_window_tokens: 1000000, max_output_tokens: 64000 } },
     }],
   });

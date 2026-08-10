@@ -95,11 +95,6 @@ function numericLimit(value, fallback) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-function hasMessagesEndpoint(model) {
-  const endpoints = Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];
-  return endpoints.includes("/v1/messages") || endpoints.includes("/chat/completions");
-}
-
 function hasOpenAIEndpoint(model) {
   const endpoints = Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];
   return endpoints.includes("/responses") || endpoints.includes("/v1/responses") || endpoints.includes("/chat/completions");
@@ -140,13 +135,22 @@ function uniqueIds(models, predicate) {
   return ids;
 }
 
-function isClaudeCopilotModel(model) {
+export function isClaudeCopilotCatalogEntry(model) {
   const id = String(model?.id || "").trim();
-  const vendor = String(model?.vendor || "").toLowerCase();
-  return id
-    && (id.startsWith("claude-") || vendor === "anthropic")
+  const vendor = String(model?.vendor || model?.owned_by || "").trim().toLowerCase();
+  return Boolean(id) && (id.toLowerCase().startsWith("claude-") || vendor === "anthropic");
+}
+
+export function isClaudeCopilotModel(model) {
+  const policy = String(model?.policy?.state || "").trim().toLowerCase();
+  const declaredOwners = [model?.vendor, model?.owned_by]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  return isClaudeCopilotCatalogEntry(model)
+    && declaredOwners.every((owner) => owner === "anthropic")
     && model?.model_picker_enabled !== false
-    && hasMessagesEndpoint(model);
+    && (!policy || policy === "enabled")
+    && modelSupportsChatCompletions(model);
 }
 
 export function gptModelIdsFromCopilotModels(models) {

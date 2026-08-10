@@ -35,6 +35,7 @@ import {
 } from "../src/adapter.mjs";
 import { autoReviewModelPreference, writeAutoReviewModel } from "../src/user-settings.mjs";
 import { responsesHistoricalImageStats } from "../src/responses-byte-budget.mjs";
+import { readResponsesToolOutputParts } from "../src/responses-content.mjs";
 import { createResponsesImagePressureController } from "../src/responses-image-pressure.mjs";
 
 const gzipAsync = promisify(zlib.gzip);
@@ -484,6 +485,67 @@ test("HTTP native Responses releases request admission after upstream opens", as
   clearResponseHistoryForTests();
 });
 
+test("HTTP compact releases original and compatibility-retry tool caches after upstream opens", async () => {
+  const output = JSON.stringify([{ type: "input_text", text: "cached compact output" }]);
+  const originalParse = JSON.parse;
+  let parses = 0;
+  let attempts = 0;
+  JSON.parse = function countedParse(value, ...args) {
+    if (value === output) parses += 1;
+    return originalParse.call(this, value, ...args);
+  };
+
+  try {
+    const result = await invokeAdapter({
+      responsesCompactFn: async (body) => {
+        attempts += 1;
+        if (attempts === 1) {
+          assert.equal(parses, 1);
+          return new Response(JSON.stringify({
+            error: { message: "Encrypted content could not be verified because it could not be decrypted" },
+          }), { status: 400, headers: { "Content-Type": "application/json" } });
+        }
+        const toolOutput = body.input.find((item) => item?.type === "function_call_output");
+        readResponsesToolOutputParts(toolOutput);
+        assert.equal(parses, 2);
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => "application/json" },
+          text: async () => {
+            readResponsesToolOutputParts(toolOutput);
+            assert.equal(parses, 3);
+            return JSON.stringify({
+              id: "resp_compact_cache_release",
+              status: "completed",
+              output: [{ type: "compaction", id: "cmp_cache_release", encrypted_content: "fresh-state" }],
+            });
+          },
+        };
+      },
+    }, {
+      url: "/v1/responses/compact",
+      body: {
+        model: "gpt-5.6-sol",
+        input: [
+          { type: "function_call_output", call_id: "call_cache", output },
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "keep", encrypted_content: "stale" }],
+          },
+        ],
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(attempts, 2);
+    assert.equal(parses, 3);
+  } finally {
+    JSON.parse = originalParse;
+  }
+});
+
 test("HTTP Responses does not start upstream after synchronous prepare work exceeds its deadline", async () => {
   clearResponseHistoryForTests();
   const history = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "visual history" });
@@ -491,12 +553,14 @@ test("HTTP Responses does not start upstream after synchronous prepare work exce
   let clock = 0;
   let upstreamCalled = false;
   let timeoutMarked = false;
+  let cooperativeCheckReceived = false;
 
   const result = await invokeAdapter({
     now: () => clock,
     upstreamTimeoutMs: 100,
     imagePressure: {
-      apply() {
+      apply(_context, { assertActive }) {
+        cooperativeCheckReceived = typeof assertActive === "function";
         clock = 101;
         return { adapted: false, pressureEligible: true };
       },
@@ -521,7 +585,45 @@ test("HTTP Responses does not start upstream after synchronous prepare work exce
   assert.equal(JSON.parse(result.text).error.code, "ccdx_visual_history_timeout");
   assert.equal(upstreamCalled, false);
   assert.equal(timeoutMarked, true);
+  assert.equal(cooperativeCheckReceived, true);
   clearResponseHistoryForTests();
+});
+
+test("HTTP Responses does not start a compatibility retry after the upstream wall deadline", async () => {
+  let clock = 0;
+  let attempts = 0;
+  const result = await invokeAdapter({
+    now: () => clock,
+    upstreamTimeoutMs: 100,
+    imagePressure: {
+      apply() {
+        return { adapted: false, pressureEligible: true };
+      },
+      markTimeout() {
+        return true;
+      },
+    },
+    responsesFn: async (_body, requestOptions) => {
+      attempts += 1;
+      requestOptions.onUpstreamStart();
+      if (attempts === 1) {
+        clock = 101;
+        return new Response(JSON.stringify({
+          error: { message: "Encrypted content could not be verified because it could not be decrypted" },
+        }), { status: 400, headers: { "Content-Type": "application/json" } });
+      }
+      return Response.json({ id: "unexpected_retry", status: "completed", output: [] });
+    },
+  }, {
+    body: {
+      model: "gpt-5.6-sol",
+      input: [{ type: "reasoning", encrypted_content: "stale", summary: [] }],
+    },
+  });
+
+  assert.equal(result.status, 504);
+  assert.equal(JSON.parse(result.text).error.code, "ccdx_visual_history_timeout");
+  assert.equal(attempts, 1);
 });
 
 test("HTTP streaming responses time out while waiting for upstream headers", async () => {

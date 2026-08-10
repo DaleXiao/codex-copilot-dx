@@ -215,6 +215,7 @@ export function createAdapterHandler(options = {}) {
         codexModelRegistry,
         claudeModelRegistry,
         claudeMode,
+        isClaudeProfileCurrent: options.isClaudeProfileCurrent,
       })));
       return;
     }

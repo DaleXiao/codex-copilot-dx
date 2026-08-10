@@ -316,6 +316,7 @@ try {
     codexModelRegistry: profileModels.codexRegistry,
     claudeModelRegistry: profileModels.claudeRegistry,
     claudeMode: profileRuntime.claudeMode,
+    isClaudeProfileCurrent: profileRuntime.isClaudeProfileCurrent,
     showRequestId: CLI.showRequestId,
     upstreamTimeoutMs: RUNTIME.upstreamTimeoutMs,
     streamHandshakeTimeoutMs: RUNTIME.streamHandshakeTimeoutMs,

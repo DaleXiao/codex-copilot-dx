@@ -30,8 +30,9 @@ export function shouldShowLegacyCommandWarning({
   }
   try {
     atomicWriteFileSync(filePath, `${now}\n`, { mode: 0o600 });
+    return true;
   } catch {
-    // The warning remains best effort when the cache directory is read-only.
+    // Stay silent when the throttle cannot persist, otherwise every invocation would warn.
+    return false;
   }
-  return true;
 }

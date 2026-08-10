@@ -54,6 +54,7 @@ function addPartContainer(records, refs, parts, options) {
   };
   let found = false;
   for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
+    if ((partIndex & 63) === 0) options.assertActive?.();
     const part = parts[partIndex];
     if (!isImagePart(part)) continue;
     found = true;
@@ -68,7 +69,7 @@ function addPartContainer(records, refs, parts, options) {
   if (found) records.push(record);
 }
 
-function collectImages(inputItems) {
+function collectImages(inputItems, assertActive) {
   const records = [];
   const refs = [];
   const topLevelRecord = {
@@ -81,6 +82,7 @@ function collectImages(inputItems) {
   let hasTopLevelImages = false;
 
   for (let itemIndex = 0; itemIndex < inputItems.length; itemIndex += 1) {
+    if ((itemIndex & 63) === 0) assertActive?.();
     const item = inputItems[itemIndex];
     if (!item || typeof item !== "object") continue;
 
@@ -96,6 +98,7 @@ function collectImages(inputItems) {
 
     if (item.type === "message") {
       addPartContainer(records, refs, item.content, {
+        assertActive,
         kind: "message",
         role: item.role,
         itemIndex,
@@ -105,6 +108,7 @@ function collectImages(inputItems) {
     const toolOutput = readResponsesToolOutputParts(item);
     if (!toolOutput) continue;
     addPartContainer(records, refs, toolOutput.parts, {
+      assertActive,
       kind: "tool-output",
       itemIndex,
       commit: toolOutput.commit,
@@ -138,6 +142,7 @@ function applyDrops(records, refs, dropped, maxImages) {
 }
 
 export function enforceResponsesImageLimit(inputItems, {
+  assertActive,
   currentInputStart = 0,
   maxImages = MAX_UPSTREAM_IMAGES,
   beforeMutate = () => {},
@@ -149,7 +154,8 @@ export function enforceResponsesImageLimit(inputItems, {
     return { total: 0, kept: 0, omitted: 0, duplicates: 0, historicalOmitted: 0, currentOmitted: 0 };
   }
 
-  const { records, refs } = collectImages(inputItems);
+  assertActive?.();
+  const { records, refs } = collectImages(inputItems, assertActive);
   if (refs.length <= limit) {
     return { total: refs.length, kept: refs.length, omitted: 0, duplicates: 0, historicalOmitted: 0, currentOmitted: 0 };
   }
@@ -161,6 +167,7 @@ export function enforceResponsesImageLimit(inputItems, {
   let duplicates = 0;
 
   for (let index = refs.length - 1; index >= 0; index -= 1) {
+    if ((index & 63) === 0) assertActive?.();
     const identity = refs[index].identity;
     if (!identity) continue;
     let seen = seenByKind.get(identity.kind);
@@ -177,6 +184,7 @@ export function enforceResponsesImageLimit(inputItems, {
 
   duplicateCandidates.sort((left, right) => left - right);
   for (const index of duplicateCandidates) {
+    if ((kept & 63) === 0) assertActive?.();
     if (kept <= limit) break;
     dropped.add(index);
     kept -= 1;
@@ -184,6 +192,7 @@ export function enforceResponsesImageLimit(inputItems, {
   }
 
   for (let index = 0; index < refs.length && kept > limit; index += 1) {
+    if ((index & 63) === 0) assertActive?.();
     if (dropped.has(index)) continue;
     dropped.add(index);
     kept -= 1;
@@ -191,12 +200,17 @@ export function enforceResponsesImageLimit(inputItems, {
 
   let historicalOmitted = 0;
   let currentOmitted = 0;
+  let omittedIndex = 0;
   for (const index of dropped) {
+    if ((omittedIndex & 63) === 0) assertActive?.();
+    omittedIndex += 1;
     if (refs[index].itemIndex >= currentInputStart) currentOmitted += 1;
     else historicalOmitted += 1;
   }
   beforeMutate({ historicalOmitted, currentOmitted });
+  assertActive?.();
   applyDrops(records, refs, dropped, limit);
+  assertActive?.();
 
   return {
     total: refs.length,

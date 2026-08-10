@@ -153,6 +153,30 @@ test("collectDoctorChecks: includes PM Studio health only when installed", async
   assert.equal(clean.some((check) => check.fix === "ccdx pms setup"), true);
 });
 
+test("collectDoctorChecks: reports a running PM relay whose isolated routing is not ready", async () => {
+  const checks = await collectDoctorChecks({
+    home: configuredHome(),
+    platform: "darwin",
+    env: {},
+    checkAdapter: false,
+    checkPmStudio: true,
+    inspectPmStudioHealthFn: async () => ({
+      app: {
+        state: "patched",
+        metadata: { version: "2.9.7", build: "2090700" },
+        issues: [],
+      },
+      claude: { valid: true },
+      adapter: { ok: true },
+      runtime: { ok: false, issues: ["routing mismatch"] },
+    }),
+  });
+
+  assert.equal(checks.some((check) => check.kind === "ok" && /patch is verified/.test(check.message)), true);
+  const routingWarning = checks.find((check) => check.kind === "warn" && /isolated routing is not ready/.test(check.message));
+  assert.equal(routingWarning?.fix, "stop the running adapter, then run ccdx start");
+});
+
 test("inspectAuthProfiles: reports an isolated Claude account without exposing credentials", () => {
   const home = configuredHome();
   writeClaudeAuthProfile("ghu_personal_secret", { login: "personal", id: 2 }, { home });

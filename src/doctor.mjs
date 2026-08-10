@@ -12,7 +12,7 @@ import { claudeDesktopPaths } from "./claude-desktop-config.mjs";
 import { status } from "./status.mjs";
 import { buildHeaders, DEFAULT_API_BASE, FALLBACK_VSCODE_VERSION } from "./copilot.mjs";
 import { adapterBaseUrl, checkRunningAdapter } from "./running-adapter.mjs";
-import { CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
+import { CODEX_AUTO_REVIEW_MODEL, isClaudeCopilotModel } from "./models.mjs";
 import { loadModelCache } from "./model-cache.mjs";
 
 function localGatewayBaseUrl(host, port) {
@@ -66,7 +66,7 @@ function modelEndpoints(model) {
 
 export function selectCompatibilityModels(models, { claudeModels = models } = {}) {
   const data = copilotModelData(models).filter((model) => model?.model_picker_enabled !== false);
-  const claudeData = copilotModelData(claudeModels).filter((model) => model?.model_picker_enabled !== false);
+  const claudeData = copilotModelData(claudeModels);
   const responsesCandidates = data.filter((model) => {
     const id = String(model?.id || "");
     const endpoints = modelEndpoints(model);
@@ -74,12 +74,7 @@ export function selectCompatibilityModels(models, { claudeModels = models } = {}
   });
   const responsesOnly = [...responsesCandidates].reverse()
     .find((model) => !modelEndpoints(model).includes("/chat/completions"));
-  const claude = claudeData.find((model) => {
-    const id = String(model?.id || "");
-    const vendor = String(model?.vendor || "").toLowerCase();
-    return (id.startsWith("claude-") || vendor === "anthropic")
-      && modelEndpoints(model).includes("/chat/completions");
-  });
+  const claude = claudeData.find(isClaudeCopilotModel);
   return {
     responsesModel: String((responsesOnly || responsesCandidates[0])?.id || ""),
     claudeModel: String(claude?.id || ""),
@@ -588,6 +583,12 @@ export async function collectDoctorChecks({
       }
       if (!pm.adapter?.ok) {
         checks.push({ kind: "warn", message: "PM Studio relay is not currently available", fix: "ccdx start" });
+      } else if (!pm.runtime?.ok) {
+        checks.push({
+          kind: "warn",
+          message: "PM Studio relay is running, but its isolated routing is not ready",
+          fix: "stop the running adapter, then run ccdx start",
+        });
       }
     } else if (pm.app.state === "clean") {
       checks.push({

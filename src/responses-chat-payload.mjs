@@ -22,8 +22,10 @@ function configuredBodyLimit(payloadOptions) {
   return positiveInt(payloadOptions?.maxBytes, environmentLimit);
 }
 
-function jsonPayload(value) {
+function jsonPayload(value, assertActive) {
+  assertActive?.();
   const bodyText = JSON.stringify(value);
+  assertActive?.();
   return { bodyText, bodyBytes: Buffer.byteLength(bodyText) };
 }
 
@@ -38,22 +40,29 @@ function adjustedResponsesTarget(limit, responsesBytes, chatBytes) {
   return Math.max(1, limit - (chatBytes - responsesBytes));
 }
 
-function partsHaveInlineImage(parts) {
-  return Array.isArray(parts) && parts.some((part) => Boolean(readResponsesImagePart(part)?.identity));
-}
-
-function bodyHasInlineImage(body) {
-  if (!Array.isArray(body?.input)) return false;
-  for (const item of body.input) {
-    if (readResponsesImagePart(item)?.identity) return true;
-    if (item?.type === "message" && partsHaveInlineImage(item.content)) return true;
-    const toolOutput = readResponsesToolOutputParts(item);
-    if (toolOutput && partsHaveInlineImage(toolOutput.parts)) return true;
+function partsHaveInlineImage(parts, assertActive) {
+  if (!Array.isArray(parts)) return false;
+  for (let index = 0; index < parts.length; index += 1) {
+    if ((index & 63) === 0) assertActive?.();
+    if (readResponsesImagePart(parts[index])?.identity) return true;
   }
   return false;
 }
 
-function checkedChatPayload(chatReq, payload, limit, stage, adapted) {
+function bodyHasInlineImage(body, assertActive) {
+  if (!Array.isArray(body?.input)) return false;
+  for (let index = 0; index < body.input.length; index += 1) {
+    if ((index & 63) === 0) assertActive?.();
+    const item = body.input[index];
+    if (readResponsesImagePart(item)?.identity) return true;
+    if (item?.type === "message" && partsHaveInlineImage(item.content, assertActive)) return true;
+    const toolOutput = readResponsesToolOutputParts(item);
+    if (toolOutput && partsHaveInlineImage(toolOutput.parts, assertActive)) return true;
+  }
+  return false;
+}
+
+function checkedChatPayload(chatReq, payload, limit, stage, adapted, assertActive) {
   enforceResponsesPayloadByteBudget(chatReq, {
     ...payload,
     adapted,
@@ -61,29 +70,33 @@ function checkedChatPayload(chatReq, payload, limit, stage, adapted) {
     overBudget: payload.bodyBytes > limit,
     stage: stage === "chat" ? stage : `${stage}+chat`,
     targetBytes: limit,
-  });
+  }, { assertActive });
   return { chatReq, ...payload, adapted, stage };
 }
 
 export async function prepareResponsesChatPayload(reqContext, {
+  assertActive,
   payloadOptions = {},
   signal,
   stream = false,
 } = {}) {
+  assertActive?.();
   const limit = configuredBodyLimit(payloadOptions);
   let finalChatReq = chatRequest(reqContext.body, stream);
-  let finalChat = jsonPayload(finalChatReq);
-  const hasInlineImage = bodyHasInlineImage(reqContext.body);
+  assertActive?.();
+  let finalChat = jsonPayload(finalChatReq, assertActive);
+  const hasInlineImage = bodyHasInlineImage(reqContext.body, assertActive);
   if (!hasInlineImage && (finalChat.bodyBytes <= limit || !(reqContext.currentInputStart > 0))) {
-    return checkedChatPayload(finalChatReq, finalChat, limit, "chat", false);
+    return checkedChatPayload(finalChatReq, finalChat, limit, "chat", false, assertActive);
   }
 
-  let responsesPayload = jsonPayload(reqContext.body);
+  let responsesPayload = jsonPayload(reqContext.body, assertActive);
   let adapted = false;
   let stage = "chat";
   if (hasInlineImage) {
     const prepared = await prepareResponsesPayload(reqContext.body, {
       ...payloadOptions,
+      assertActive,
       currentInputStart: reqContext.currentInputStart,
       maxBytes: adjustedResponsesTarget(limit, responsesPayload.bodyBytes, finalChat.bodyBytes),
       signal,
@@ -92,10 +105,12 @@ export async function prepareResponsesChatPayload(reqContext, {
     adapted = prepared.adapted;
     stage = prepared.stage;
     finalChatReq = chatRequest(reqContext.body, stream);
-    finalChat = jsonPayload(finalChatReq);
+    assertActive?.();
+    finalChat = jsonPayload(finalChatReq, assertActive);
   }
 
   while (finalChat.bodyBytes > limit) {
+    assertActive?.();
     if (!(reqContext.currentInputStart > 0)) break;
     const targetBytes = adjustedResponsesTarget(
       limit,
@@ -103,8 +118,10 @@ export async function prepareResponsesChatPayload(reqContext, {
       finalChat.bodyBytes,
     );
     const bodyBeforeTrim = structuredClone(reqContext.body);
+    assertActive?.();
     const responsesBeforeTrim = responsesPayload;
     const trimmed = trimResponsesHistoryToByteBudget(reqContext.body, {
+      assertActive,
       currentInputStart: reqContext.currentInputStart,
       targetBytes,
       initialBodyText: responsesPayload.bodyText,
@@ -112,7 +129,8 @@ export async function prepareResponsesChatPayload(reqContext, {
     });
     if (!trimmed.adapted) break;
     const candidateChatReq = chatRequest(reqContext.body, stream);
-    const candidateChat = jsonPayload(candidateChatReq);
+    assertActive?.();
+    const candidateChat = jsonPayload(candidateChatReq, assertActive);
     if (candidateChat.bodyBytes >= finalChat.bodyBytes) {
       reqContext.body = bodyBeforeTrim;
       responsesPayload = responsesBeforeTrim;
@@ -125,5 +143,6 @@ export async function prepareResponsesChatPayload(reqContext, {
     if (!stage.endsWith("+history")) stage += "+history";
   }
 
-  return checkedChatPayload(finalChatReq, finalChat, limit, stage, adapted);
+  assertActive?.();
+  return checkedChatPayload(finalChatReq, finalChat, limit, stage, adapted, assertActive);
 }

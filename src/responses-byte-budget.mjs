@@ -6,8 +6,10 @@ import {
 
 const IMAGE_OMISSION_TEXT = "[CCDX: earlier image omitted to fit the upstream request byte budget.]";
 
-function bodyPayload(reqBody) {
+function bodyPayload(reqBody, assertActive) {
+  assertActive?.();
   const bodyText = JSON.stringify(reqBody);
+  assertActive?.();
   return { bodyText, bodyBytes: Buffer.byteLength(bodyText) };
 }
 
@@ -26,7 +28,7 @@ function imageMarkerPart(record) {
   return { type: record.usesAnthropicParts ? "text" : "input_text", text: IMAGE_OMISSION_TEXT };
 }
 
-function collectResponseImages(inputItems, currentInputStart) {
+function collectResponseImages(inputItems, currentInputStart, assertActive) {
   const records = [];
   const refs = [];
   const addContainer = (parts, options) => {
@@ -41,6 +43,7 @@ function collectResponseImages(inputItems, currentInputStart) {
       usesAnthropicParts: false,
     };
     for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
+      if ((partIndex & 63) === 0) assertActive?.();
       const identity = inlineImageIdentity(parts[partIndex]);
       if (!identity) continue;
       if (parts[partIndex].type === "image") record.usesAnthropicParts = true;
@@ -56,6 +59,7 @@ function collectResponseImages(inputItems, currentInputStart) {
 
   const historyBoundary = Math.min(Math.max(0, currentInputStart), inputItems.length);
   for (let itemIndex = 0; itemIndex < inputItems.length; itemIndex += 1) {
+    if ((itemIndex & 63) === 0) assertActive?.();
     const item = inputItems[itemIndex];
     if (!item || typeof item !== "object") continue;
     const historical = itemIndex < historyBoundary;
@@ -90,10 +94,11 @@ function collectResponseImages(inputItems, currentInputStart) {
   return { records, refs };
 }
 
-function orderedHistoricalImageCandidates(refs) {
+function orderedHistoricalImageCandidates(refs, assertActive) {
   const seenByKind = new Map();
   const duplicates = [];
   for (let index = refs.length - 1; index >= 0; index -= 1) {
+    if ((index & 63) === 0) assertActive?.();
     const { kind, value } = refs[index].identity;
     let seen = seenByKind.get(kind);
     if (!seen) {
@@ -121,7 +126,7 @@ function serializedPartBytes(part, stringified) {
     : Buffer.byteLength(serialized);
 }
 
-function createRecordDropState(record) {
+function createRecordDropState(record, assertActive) {
   if (record.kind === "top-level") {
     const marker = {
       type: "message",
@@ -134,7 +139,11 @@ function createRecordDropState(record) {
     };
   }
 
-  const elementBytes = record.parts.map((part) => serializedPartBytes(part, record.stringified));
+  const elementBytes = new Array(record.parts.length);
+  for (let index = 0; index < record.parts.length; index += 1) {
+    if ((index & 63) === 0) assertActive?.();
+    elementBytes[index] = serializedPartBytes(record.parts[index], record.stringified);
+  }
   const remainingElementBytes = elementBytes.reduce((sum, bytes) => sum + bytes, 0);
   const remainingCount = record.parts.length;
   const baseBytes = record.stringified ? 4 : 2;
@@ -159,18 +168,20 @@ function recordBytesAfterDrop(record, state, partIndex) {
   return state.baseBytes + remainingElementBytes + remainingCount - 1;
 }
 
-function selectImageDrops(refs, bodyBytes, targetBytes, maxHistoricalImages = Number.POSITIVE_INFINITY) {
-  const candidates = orderedHistoricalImageCandidates(refs);
+function selectImageDrops(refs, bodyBytes, targetBytes, maxHistoricalImages = Number.POSITIVE_INFINITY, assertActive) {
+  const candidates = orderedHistoricalImageCandidates(refs, assertActive);
   const selected = new Set();
   const byRecord = new Map();
   let projectedBytes = bodyBytes;
   let historicalImages = refs.reduce((count, ref) => count + (ref.historical ? 1 : 0), 0);
-  for (const index of candidates) {
+  for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+    if ((candidateIndex & 63) === 0) assertActive?.();
+    const index = candidates[candidateIndex];
     if (projectedBytes <= targetBytes && historicalImages <= maxHistoricalImages) break;
     const ref = refs[index];
     let state = byRecord.get(ref.record);
     if (!state) {
-      state = createRecordDropState(ref.record);
+      state = createRecordDropState(ref.record, assertActive);
       byRecord.set(ref.record, state);
     }
     const afterBytes = recordBytesAfterDrop(ref.record, state, ref.partIndex);
@@ -188,9 +199,12 @@ function selectImageDrops(refs, bodyBytes, targetBytes, maxHistoricalImages = Nu
   return { selected, historicalImages, projectedBytes };
 }
 
-function applyImageDrops(records, refs, selected) {
+function applyImageDrops(records, refs, selected, assertActive) {
   const byRecord = new Map();
+  let selectedIndex = 0;
   for (const index of selected) {
+    if ((selectedIndex & 63) === 0) assertActive?.();
+    selectedIndex += 1;
     const ref = refs[index];
     let indexes = byRecord.get(ref.record);
     if (!indexes) {
@@ -200,7 +214,9 @@ function applyImageDrops(records, refs, selected) {
     indexes.add(ref.partIndex);
   }
 
-  for (const record of records) {
+  for (let recordIndex = 0; recordIndex < records.length; recordIndex += 1) {
+    if ((recordIndex & 63) === 0) assertActive?.();
+    const record = records[recordIndex];
     const indexes = byRecord.get(record);
     if (!indexes) continue;
     if (record.kind === "top-level") {
@@ -220,11 +236,12 @@ function applyImageDrops(records, refs, selected) {
   }
 }
 
-function omitHistoricalToolOutputs(inputItems, currentInputStart, bodyBytes, targetBytes) {
+function omitHistoricalToolOutputs(inputItems, currentInputStart, bodyBytes, targetBytes, assertActive) {
   let omitted = 0;
   let projectedBytes = bodyBytes;
   const historicalCount = Math.min(Math.max(0, currentInputStart), inputItems.length);
   for (let itemIndex = 0; itemIndex < historicalCount && projectedBytes > targetBytes; itemIndex += 1) {
+    if ((itemIndex & 63) === 0) assertActive?.();
     const item = inputItems[itemIndex];
     if (!isResponsesToolOutputItem(item) || item.output === undefined) continue;
     if (typeof item.output === "string" && item.output.startsWith("[CCDX: earlier tool output omitted")) continue;
@@ -240,12 +257,15 @@ function omitHistoricalToolOutputs(inputItems, currentInputStart, bodyBytes, tar
 }
 
 export function trimResponsesHistoryToByteBudget(reqBody, {
+  assertActive,
   currentInputStart = 0,
   targetBytes,
   initialBodyText,
   initialBodyBytes,
 } = {}) {
+  assertActive?.();
   let bodyText = initialBodyText ?? JSON.stringify(reqBody);
+  assertActive?.();
   let bodyBytes = initialBodyBytes ?? Buffer.byteLength(bodyText);
   const limit = Number.isFinite(targetBytes) && targetBytes > 0 ? Math.floor(targetBytes) : bodyBytes;
   const inputItems = Array.isArray(reqBody?.input) ? reqBody.input : [];
@@ -253,20 +273,22 @@ export function trimResponsesHistoryToByteBudget(reqBody, {
   let toolOutputsOmitted = 0;
 
   while (bodyBytes > limit) {
-    const { records, refs } = collectResponseImages(inputItems, currentInputStart);
+    assertActive?.();
+    const { records, refs } = collectResponseImages(inputItems, currentInputStart, assertActive);
     if (!refs.length) break;
-    const { selected } = selectImageDrops(refs, bodyBytes, limit);
+    const { selected } = selectImageDrops(refs, bodyBytes, limit, Number.POSITIVE_INFINITY, assertActive);
     if (!selected.size) break;
-    applyImageDrops(records, refs, selected);
+    applyImageDrops(records, refs, selected, assertActive);
     imagesOmitted += selected.size;
-    ({ bodyText, bodyBytes } = bodyPayload(reqBody));
+    ({ bodyText, bodyBytes } = bodyPayload(reqBody, assertActive));
   }
 
   while (bodyBytes > limit) {
-    const omitted = omitHistoricalToolOutputs(inputItems, currentInputStart, bodyBytes, limit);
+    assertActive?.();
+    const omitted = omitHistoricalToolOutputs(inputItems, currentInputStart, bodyBytes, limit, assertActive);
     if (omitted === 0) break;
     toolOutputsOmitted += omitted;
-    ({ bodyText, bodyBytes } = bodyPayload(reqBody));
+    ({ bodyText, bodyBytes } = bodyPayload(reqBody, assertActive));
   }
 
   return {
@@ -280,9 +302,9 @@ export function trimResponsesHistoryToByteBudget(reqBody, {
   };
 }
 
-export function responsesHistoricalImageStats(inputItems, currentInputStart = 0) {
+export function responsesHistoricalImageStats(inputItems, currentInputStart = 0, { assertActive } = {}) {
   const items = Array.isArray(inputItems) ? inputItems : [];
-  const { refs } = collectResponseImages(items, currentInputStart);
+  const { refs } = collectResponseImages(items, currentInputStart, assertActive);
   const historicalImages = refs.reduce((count, ref) => count + (ref.historical ? 1 : 0), 0);
   return {
     totalImages: refs.length,
@@ -292,13 +314,16 @@ export function responsesHistoricalImageStats(inputItems, currentInputStart = 0)
 }
 
 export function trimResponsesHistoricalImages(reqBody, {
+  assertActive,
   currentInputStart = 0,
   maxHistoricalImages = Number.POSITIVE_INFINITY,
   targetBytes = Number.POSITIVE_INFINITY,
   initialBodyText,
   initialBodyBytes,
 } = {}) {
+  assertActive?.();
   let bodyText = initialBodyText ?? JSON.stringify(reqBody);
+  assertActive?.();
   let bodyBytes = initialBodyBytes ?? Buffer.byteLength(bodyText);
   const byteLimit = Number.isFinite(targetBytes) && targetBytes > 0
     ? Math.floor(targetBytes)
@@ -310,18 +335,19 @@ export function trimResponsesHistoricalImages(reqBody, {
   let imagesOmitted = 0;
 
   while (true) {
-    const { records, refs } = collectResponseImages(inputItems, currentInputStart);
+    assertActive?.();
+    const { records, refs } = collectResponseImages(inputItems, currentInputStart, assertActive);
     const historicalImages = refs.reduce((count, ref) => count + (ref.historical ? 1 : 0), 0);
     if (bodyBytes <= byteLimit && historicalImages <= imageLimit) break;
     if (!historicalImages) break;
-    const { selected } = selectImageDrops(refs, bodyBytes, byteLimit, imageLimit);
+    const { selected } = selectImageDrops(refs, bodyBytes, byteLimit, imageLimit, assertActive);
     if (!selected.size) break;
-    applyImageDrops(records, refs, selected);
+    applyImageDrops(records, refs, selected, assertActive);
     imagesOmitted += selected.size;
-    ({ bodyText, bodyBytes } = bodyPayload(reqBody));
+    ({ bodyText, bodyBytes } = bodyPayload(reqBody, assertActive));
   }
 
-  const stats = responsesHistoricalImageStats(inputItems, currentInputStart);
+  const stats = responsesHistoricalImageStats(inputItems, currentInputStart, { assertActive });
   return {
     bodyText,
     bodyBytes,
@@ -336,10 +362,11 @@ export function trimResponsesHistoricalImages(reqBody, {
   };
 }
 
-export function enforceResponsesPayloadByteBudget(reqBody, payload) {
+export function enforceResponsesPayloadByteBudget(reqBody, payload, { assertActive } = {}) {
   let finalized = payload;
   if (payload?.overBudget) {
     const trimmed = trimResponsesHistoryToByteBudget(reqBody, {
+      assertActive,
       currentInputStart: payload.currentInputStart,
       targetBytes: payload.targetBytes,
       initialBodyText: payload.bodyText,

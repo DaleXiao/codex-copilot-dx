@@ -44,6 +44,7 @@ test("createProfileRuntime: an unconfigured Claude profile inherits the Codex cl
     identity: null,
   });
   assert.equal(fs.readdirSync(home).length, 0);
+  assert.equal(runtime.isClaudeProfileCurrent(), false);
 });
 
 test("createProfileRuntime: a valid Claude profile creates an isolated client and remains read-only", async () => {
@@ -84,6 +85,7 @@ test("createProfileRuntime: a valid Claude profile creates an isolated client an
     reason: "",
     identity: { login: "personal-user", id: "2" },
   });
+  assert.equal(runtime.isClaudeProfileCurrent(), true);
   assert.equal(token, "service_personal");
   assert.deepEqual(calls, [{
     url: "https://api.github.com/copilot_internal/v2/token",
@@ -91,6 +93,10 @@ test("createProfileRuntime: a valid Claude profile creates an isolated client an
   }]);
   assertFileUnchanged(paths.tokenPath, tokenBefore);
   assertFileUnchanged(paths.metadataPath, metadataBefore);
+  writeClaudeAuthProfile("github_other_personal", { login: "other-user", id: 3 }, { home });
+  assert.equal(runtime.isClaudeProfileCurrent(), false);
+  fs.rmSync(paths.tokenPath);
+  assert.equal(runtime.isClaudeProfileCurrent(), false);
 });
 
 test("createProfileRuntime: a token-only Claude artifact fails closed instead of borrowing Codex", async () => {

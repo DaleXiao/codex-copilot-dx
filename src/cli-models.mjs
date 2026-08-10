@@ -6,6 +6,10 @@ import {
   readAuthProfileCredentials,
 } from "./auth-profile.mjs";
 import { buildHeaders, DEFAULT_API_BASE, FALLBACK_VSCODE_VERSION } from "./copilot.mjs";
+import {
+  isClaudeCopilotCatalogEntry,
+  isClaudeCopilotModel,
+} from "./models.mjs";
 import { status } from "./status.mjs";
 
 const DEFAULT_MODELS_TIMEOUT_MS = 10000;
@@ -37,11 +41,15 @@ export function selectableCopilotModels(payload) {
   const models = [];
   const seen = new Set();
   for (const model of data) {
-    if (model?.model_picker_enabled !== true) continue;
-    const policyState = safeText(model?.policy?.state).toLowerCase();
-    if (policyState && policyState !== "enabled") continue;
-    const capabilityType = safeText(model?.capabilities?.type).toLowerCase();
-    if (capabilityType && capabilityType !== "chat") continue;
+    if (isClaudeCopilotCatalogEntry(model)) {
+      if (!isClaudeCopilotModel(model)) continue;
+    } else {
+      if (model?.model_picker_enabled !== true) continue;
+      const policyState = safeText(model?.policy?.state).toLowerCase();
+      if (policyState && policyState !== "enabled") continue;
+      const capabilityType = safeText(model?.capabilities?.type).toLowerCase();
+      if (capabilityType && capabilityType !== "chat") continue;
+    }
 
     const id = safeText(model?.id);
     const endpoints = endpointLabels(model);
@@ -163,8 +171,7 @@ export function formatLiveCopilotModels(catalog, { commandName = "ccdx" } = {}) 
   const profile = catalog?.profile === AUTH_PROFILE_CLAUDE ? AUTH_PROFILE_CLAUDE : AUTH_PROFILE_CODEX;
   const responses = models.filter((model) => model.endpoints.includes("responses")).length;
   const chat = models.filter((model) => model.endpoints.includes("chat")).length;
-  const claude = models.filter((model) => model.id.toLowerCase().startsWith("claude-")
-    || model.vendor.toLowerCase() === "anthropic").length;
+  const claude = models.filter(isClaudeCopilotCatalogEntry).length;
   const lines = [
     `${commandName} models${profile === AUTH_PROFILE_CLAUDE ? " --profile claude" : ""}`,
     status("ok", `Live catalog from ${safeText(catalog?.upstreamHost, "GitHub Copilot")}: ${models.length} selectable of ${Number(catalog?.advertised) || 0} advertised`),

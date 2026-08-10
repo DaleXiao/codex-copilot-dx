@@ -13,18 +13,28 @@ function cloneJson(value) {
   return value === undefined ? undefined : structuredClone(value);
 }
 
-function responsesInputItems(input, { clone = true } = {}) {
+function responsesInputItems(input, { assertActive, clone = true } = {}) {
   if (input === undefined || input === null) return [];
   if (typeof input === "string") {
     return [{ type: "message", role: "user", content: [{ type: "input_text", text: input }] }];
   }
-  if (Array.isArray(input)) return clone ? cloneJson(input) : input;
-  return [clone ? cloneJson(input) : input];
+  if (Array.isArray(input)) {
+    assertActive?.();
+    const items = clone ? cloneJson(input) : input;
+    assertActive?.();
+    return items;
+  }
+  assertActive?.();
+  const item = clone ? cloneJson(input) : input;
+  assertActive?.();
+  return [item];
 }
 
-export function stripInternalResponsesInputFields(inputItems) {
+export function stripInternalResponsesInputFields(inputItems, { assertActive } = {}) {
   if (!Array.isArray(inputItems)) return inputItems;
-  for (const item of inputItems) {
+  for (let index = 0; index < inputItems.length; index += 1) {
+    if ((index & 63) === 0) assertActive?.();
+    const item = inputItems[index];
     if (!item || typeof item !== "object") continue;
     for (const key of Object.keys(item)) {
       if (key.startsWith("internal_")) delete item[key];
@@ -158,16 +168,20 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
   let imageNamespaceRetried = false;
   let payloadPrepared = false;
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    options.assertPrepareActive?.();
     const resp = await upstream(reqContext.body, {
+      assertActive: options.assertPrepareActive,
       signal: options.signal,
       currentInputStart: reqContext.currentInputStart,
       onUpstreamStart: options.onUpstreamStart,
       payloadPrepared,
     });
+    options.assertPrepareActive?.();
     payloadPrepared = true;
     if (resp.ok) return { resp, reqContext };
 
     const errorText = await resp.text();
+    options.assertPrepareActive?.();
     if (!imageNamespaceRetried && isImageNamespaceCollisionError(resp.status, errorText)) {
       const retryContext = sanitizeImageNamespaceCollisionRequest(reqContext);
       if (retryContext) {
@@ -195,9 +209,11 @@ function isBuiltinImageTool(tool) {
   return isImageNamespaceTool(tool);
 }
 
-export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
+export function prepareResponsesRequest(reqBody, { assertActive, mutate = false } = {}) {
+  assertActive?.();
   const body = mutate ? reqBody : cloneJson(reqBody);
-  const currentInputItems = responsesInputItems(body.input, { clone: !mutate });
+  assertActive?.();
+  const currentInputItems = responsesInputItems(body.input, { assertActive, clone: !mutate });
   const currentInputRefs = new Set(
     currentInputItems.filter((item) => item && typeof item === "object"),
   );
@@ -206,7 +222,7 @@ export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
   let historyRootId = null;
 
   if (previousId !== undefined && previousId !== null) {
-    historyItems = materializeResponseHistory(previousId);
+    historyItems = materializeResponseHistory(previousId, { assertActive });
     historyRootId = responseHistoryRootId(previousId);
     body.input = [...historyItems, ...currentInputItems];
   } else {
@@ -215,6 +231,7 @@ export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
 
   let historyInputItems = currentInputItems;
   const imageLimit = enforceResponsesImageLimit(body.input, {
+    assertActive,
     currentInputStart: historyItems.length,
     beforeMutate: ({ currentOmitted }) => {
       if (currentOmitted > 0) historyInputItems = cloneJson(currentInputItems);
@@ -230,8 +247,9 @@ export function prepareResponsesRequest(reqBody, { mutate = false } = {}) {
     body.tools = body.tools.filter((tool) => !isBuiltinImageTool(tool));
     if (!body.tools.length) delete body.tools;
   }
-  stripInternalResponsesInputFields(body.input);
-  stripInternalResponsesInputFields(historyInputItems);
+  stripInternalResponsesInputFields(body.input, { assertActive });
+  stripInternalResponsesInputFields(historyInputItems, { assertActive });
+  assertActive?.();
   const retainedCurrentInputStart = body.input.findIndex((item) => currentInputRefs.has(item));
 
   return {

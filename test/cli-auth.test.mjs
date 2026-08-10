@@ -81,6 +81,41 @@ test("validateClaudeCandidate: accepts a distinct pinned account with Claude mod
   assert.deepEqual(result.models.map((model) => model.id), ["claude-sonnet-test"]);
 });
 
+test("validateClaudeCandidate: uses the shared Claude chat eligibility rules", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-model-matrix-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+
+  const result = await validateClaudeCandidate("ghu_personal", {
+    home,
+    fetchImpl: candidateFetch({ models: [
+      {
+        id: "claude-picker-unspecified",
+        vendor: "Anthropic",
+        supported_endpoints: ["/chat/completions"],
+      },
+      {
+        id: "claude-picker-disabled",
+        vendor: "Anthropic",
+        model_picker_enabled: false,
+        supported_endpoints: ["/chat/completions"],
+      },
+      {
+        id: "claude-policy-disabled",
+        vendor: "Anthropic",
+        policy: { state: "disabled" },
+        supported_endpoints: ["/chat/completions"],
+      },
+      {
+        id: "claude-messages-only",
+        vendor: "Anthropic",
+        supported_endpoints: ["/v1/messages"],
+      },
+    ] }),
+  });
+
+  assert.deepEqual(result.models.map((model) => model.id), ["claude-picker-unspecified"]);
+});
+
 test("validateClaudeCandidate: rejects the wrong pinned account before writing", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-wrong-"));
   writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });

@@ -1,4 +1,5 @@
 import { httpError } from "./http-transport.mjs";
+import { clearResponsesToolOutputPartsCache } from "./responses-content.mjs";
 import { loadRuntimeConfig, parsePositiveInteger, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
 
 const DEFAULT_MAX_BYTES = RUNTIME_DEFAULTS.responseHistoryMaxBytes;
@@ -201,17 +202,26 @@ export function responseHistoryMaterializedBytes(responseId) {
   return chain.reduce((bytes, entry) => bytes + entry.bytes, 0);
 }
 
-export function materializeResponseHistory(responseId) {
+export function materializeResponseHistory(responseId, { assertActive } = {}) {
+  assertActive?.();
   const { chain, rootId } = responseHistoryChain(responseId);
   const items = [];
-  for (const entry of chain.reverse()) items.push(...entry.inputItems, ...entry.outputItems);
+  for (let index = 0; index < chain.length; index += 1) {
+    if ((index & 63) === 0) assertActive?.();
+    const entry = chain[chain.length - index - 1];
+    items.push(...entry.inputItems, ...entry.outputItems);
+  }
+  assertActive?.();
   const materialized = cloneJson(items);
+  assertActive?.();
   touchTree(rootId);
   return materialized;
 }
 
 export function rememberResponseHistoryNode({ id, parentId, inputItems, outputItems, takeOwnership = false }) {
   if (!id || !Array.isArray(inputItems)) return;
+  clearResponsesToolOutputPartsCache(inputItems);
+  clearResponsesToolOutputPartsCache(outputItems);
   const bytes = jsonByteLength([inputItems, outputItems]);
   if (bytes > maxBytes) {
     if (histories.has(id)) removeSubtree(id);

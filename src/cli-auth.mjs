@@ -21,6 +21,7 @@ import {
   normalizeGithubIdentity,
 } from "./github-identity.mjs";
 import { saveModelCache } from "./model-cache.mjs";
+import { isClaudeCopilotModel } from "./models.mjs";
 import { profileRouting } from "./profile-routing.mjs";
 import { status } from "./status.mjs";
 
@@ -145,17 +146,7 @@ async function codexIdentity({ home, fetchImpl, signal }) {
 function claudeModels(payload) {
   const models = Array.isArray(payload) ? payload : payload?.data;
   if (!Array.isArray(models)) throw new Error("Claude account model catalog contained no model list");
-  return models.filter((model) => {
-    const id = String(model?.id || "").trim();
-    const vendor = String(model?.vendor || model?.owned_by || "").trim().toLowerCase();
-    const policy = String(model?.policy?.state || "").trim().toLowerCase();
-    const endpoints = Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];
-    return Boolean(id)
-      && (id.toLowerCase().startsWith("claude-") || vendor === "anthropic")
-      && model?.model_picker_enabled === true
-      && (!policy || policy === "enabled")
-      && (endpoints.includes("/chat/completions") || endpoints.includes("/v1/messages"));
-  });
+  return models.filter(isClaudeCopilotModel);
 }
 
 function catalogModels(payload) {

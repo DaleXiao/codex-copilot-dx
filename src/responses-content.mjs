@@ -3,6 +3,14 @@ export function isResponsesToolOutputItem(item) {
 }
 
 const INLINE_IMAGE_DATA_URL = /^data:(image\/[a-z+.-]+);base64,(.+)$/i;
+const toolOutputPartsCache = new WeakMap();
+
+export function clearResponsesToolOutputPartsCache(inputItems) {
+  if (!Array.isArray(inputItems)) return;
+  for (const item of inputItems) {
+    if (item && typeof item === "object") toolOutputPartsCache.delete(item);
+  }
+}
 
 export function canonicalInlineImageIdentity(dataUrl) {
   if (typeof dataUrl !== "string") return null;
@@ -71,16 +79,40 @@ export function readResponsesImagePart(part) {
 export function readResponsesToolOutputParts(item) {
   if (!isResponsesToolOutputItem(item)) return null;
   if (Array.isArray(item.output)) return { parts: item.output, commit: null };
-  if (typeof item.output !== "string" || !item.output.trim().startsWith("[")) return null;
+  const source = item.output;
+  if (typeof source !== "string" || !source.trim().startsWith("[")) return null;
+
+  const cached = toolOutputPartsCache.get(item);
+  if (cached?.source === source) {
+    if (!cached.parts) return null;
+    return {
+      parts: cached.parts,
+      commit: () => {
+        const nextSource = JSON.stringify(cached.parts);
+        item.output = nextSource;
+        cached.source = nextSource;
+      },
+    };
+  }
 
   try {
-    const parts = JSON.parse(item.output);
-    if (!Array.isArray(parts)) return null;
+    const parts = JSON.parse(source);
+    if (!Array.isArray(parts)) {
+      toolOutputPartsCache.set(item, { source, parts: null });
+      return null;
+    }
+    const entry = { source, parts };
+    toolOutputPartsCache.set(item, entry);
     return {
       parts,
-      commit: () => { item.output = JSON.stringify(parts); },
+      commit: () => {
+        const nextSource = JSON.stringify(parts);
+        item.output = nextSource;
+        entry.source = nextSource;
+      },
     };
   } catch {
+    toolOutputPartsCache.set(item, { source, parts: null });
     return null;
   }
 }

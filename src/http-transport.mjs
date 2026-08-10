@@ -47,29 +47,56 @@ function admissionAbortError(signal) {
   return error;
 }
 
-function createSupplementalAdmission({ maxWeight, maxQueued, waitTimeoutMs, label }) {
+function createSupplementalAdmission({ maxWeight, maxQueued, waitTimeoutMs, label, blockBehindExclusive = false }) {
   const queue = [];
   let activeWeight = 0;
+  let activeRequestedWeight = 0;
   let activeRequests = 0;
 
   const activate = (entry) => {
     entry.cleanup();
     activeWeight += entry.weight;
+    activeRequestedWeight += entry.requestedWeight;
     activeRequests += 1;
     let released = false;
-    entry.resolve(() => {
+    const release = () => {
       if (released) return;
       released = true;
       activeWeight = Math.max(0, activeWeight - entry.weight);
+      activeRequestedWeight = Math.max(0, activeRequestedWeight - entry.requestedWeight);
       activeRequests = Math.max(0, activeRequests - 1);
       drain();
+    };
+    release.resize = (requestedWeight) => {
+      if (released) return 0;
+      const parsedWeight = Number.isFinite(requestedWeight) && requestedWeight > 0
+        ? Math.ceil(requestedWeight)
+        : maxWeight;
+      const requested = Math.max(1, parsedWeight);
+      const weight = Math.min(requested, maxWeight);
+      if (weight > entry.weight) {
+        throw new RangeError(`${label} admission weight cannot grow`);
+      }
+      activeWeight = Math.max(0, activeWeight - (entry.weight - weight));
+      activeRequestedWeight = Math.max(0, activeRequestedWeight + requested - entry.requestedWeight);
+      entry.weight = weight;
+      entry.requestedWeight = requested;
+      drain();
+      return weight;
+    };
+    Object.defineProperties(release, {
+      weight: { get: () => released ? 0 : entry.weight },
+      requestedWeight: { get: () => released ? 0 : entry.requestedWeight },
+      maxWeight: { value: maxWeight },
     });
+    entry.resolve(release);
   };
 
   const drain = () => {
     for (let index = 0; index < queue.length;) {
       const entry = queue[index];
       if (activeWeight + entry.weight > maxWeight) {
+        if (blockBehindExclusive && entry.weight === maxWeight) break;
         index += 1;
         continue;
       }
@@ -83,8 +110,12 @@ function createSupplementalAdmission({ maxWeight, maxQueued, waitTimeoutMs, labe
     const parsedWeight = Number.isFinite(requestedWeight) && requestedWeight > 0
       ? Math.ceil(requestedWeight)
       : maxWeight;
-    const weight = Math.max(1, Math.min(parsedWeight, maxWeight));
-    if (queue.length >= maxQueued && activeWeight + weight > maxWeight) {
+    const requested = Math.max(1, parsedWeight);
+    const weight = Math.min(requested, maxWeight);
+    const blockedByExclusive = blockBehindExclusive
+      && queue.some((entry) => entry.weight === maxWeight);
+    const mustWait = blockedByExclusive || activeWeight + weight > maxWeight;
+    if (queue.length >= maxQueued && mustWait) {
       return Promise.reject(httpError(`${label} queue is full (${maxQueued} waiting)`, 503));
     }
 
@@ -92,6 +123,7 @@ function createSupplementalAdmission({ maxWeight, maxQueued, waitTimeoutMs, labe
       let timer;
       const entry = {
         weight,
+        requestedWeight: requested,
         resolve,
         cleanup: () => {
           if (timer) clearTimeout(timer);
@@ -120,7 +152,13 @@ function createSupplementalAdmission({ maxWeight, maxQueued, waitTimeoutMs, labe
     });
   };
 
-  acquire.stats = () => ({ activeWeight, activeRequests, queued: queue.length, maxWeight });
+  acquire.stats = () => ({
+    activeWeight,
+    activeRequestedWeight,
+    activeRequests,
+    queued: queue.length,
+    maxWeight,
+  });
   return acquire;
 }
 
@@ -143,6 +181,7 @@ export function createRequestAdmission({
     maxQueued: queueLimit,
     waitTimeoutMs: timeoutMs,
     label: "Decoded request body",
+    blockBehindExclusive: true,
   });
   const acquireResponseHistory = createSupplementalAdmission({
     maxWeight: byteLimit,
@@ -194,10 +233,30 @@ export function createRequestAdmission({
         releaseSupplemental();
         throw admissionAbortError(options?.signal);
       }
-      supplementalReleases.add(releaseSupplemental);
+      let supplementalReleased = false;
+      const releaseReservation = () => {
+        if (supplementalReleased) return;
+        supplementalReleased = true;
+        supplementalReleases.delete(releaseReservation);
+        releaseSupplemental();
+      };
+      releaseReservation.resize = (nextWeight) => {
+        if (supplementalReleased) return 0;
+        return releaseSupplemental.resize(nextWeight);
+      };
+      Object.defineProperties(releaseReservation, {
+        weight: { get: () => supplementalReleased ? 0 : releaseSupplemental.weight },
+        requestedWeight: {
+          get: () => supplementalReleased ? 0 : releaseSupplemental.requestedWeight,
+        },
+        maxWeight: { value: releaseSupplemental.maxWeight },
+      });
+      supplementalReleases.add(releaseReservation);
+      return releaseReservation;
     };
     release.acquireDecompression = (options) => acquireDecompression(1, options);
     release.reserveDecodedBody = (bytes, options) => reserve(acquireDecodedBody, bytes, options);
+    release.reserveDecodedBody.supportsResize = true;
     release.reserveResponseHistory = (bytes, options) => reserve(acquireResponseHistory, bytes, options);
     entry.resolve(release);
   };
@@ -285,7 +344,8 @@ export function createRequestAdmission({
     waitMsMax: counters.waitMsMax,
     decompressionsActive: acquireDecompression.stats().activeRequests,
     decompressionsQueued: acquireDecompression.stats().queued,
-    decodedBodyBytes: acquireDecodedBody.stats().activeWeight,
+    decodedBodyBytes: acquireDecodedBody.stats().activeRequestedWeight,
+    decodedBodyAdmissionBytes: acquireDecodedBody.stats().activeWeight,
     decodedBodiesActive: acquireDecodedBody.stats().activeRequests,
     decodedBodiesQueued: acquireDecodedBody.stats().queued,
     responseHistoryBytes: acquireResponseHistory.stats().activeWeight,
@@ -445,21 +505,62 @@ export async function readJsonBody(req, {
     return parseRequestJson(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal));
   }
   const buffer = await readRequestBuffer(req, maxBodyBytes, signal);
-  const releaseDecompression = await admission?.acquireDecompression?.({ signal }) || (() => {});
+  let releaseDecompression = () => {};
+  let decodedReservation;
+  let retainDecodedReservation = false;
   try {
     let decoded;
+    const supportsResizableReservation = admission?.reserveDecodedBody?.supportsResize === true;
+    // Most compressed bodies fit the existing 4x admission estimate. High-ratio bodies retry
+    // only after obtaining the pool's exclusive reservation, so a full decoded body never waits
+    // outside the decoded-body budget.
+    const estimatedDecodedBytes = Math.max(
+      1,
+      Math.min(buffer.length * COMPRESSED_BODY_WEIGHT_MULTIPLIER, maxDecodedBodyBytes),
+    );
+    if (supportsResizableReservation) {
+      decodedReservation = await admission.reserveDecodedBody(estimatedDecodedBytes, { signal });
+    }
+    releaseDecompression = await admission?.acquireDecompression?.({ signal }) || (() => {});
+    const reservedBytes = decodedReservation?.requestedWeight;
+    const reservedAdmissionBytes = decodedReservation?.weight;
+    const decodedPoolBytes = decodedReservation?.maxWeight;
+    const tentativeDecodeLimit = Number.isFinite(reservedBytes)
+      && Number.isFinite(reservedAdmissionBytes)
+      && Number.isFinite(decodedPoolBytes)
+      && reservedAdmissionBytes < decodedPoolBytes
+      ? Math.min(reservedBytes, maxDecodedBodyBytes)
+      : maxDecodedBodyBytes;
     try {
-      decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"], maxDecodedBodyBytes);
+      decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"], tentativeDecodeLimit);
     } catch (e) {
-      if (e?.statusCode) throw e;
-      throw httpError(`Invalid compressed request body: ${e.message}`, 400);
+      if (e?.statusCode === 413 && tentativeDecodeLimit < maxDecodedBodyBytes && supportsResizableReservation) {
+        releaseDecompression();
+        releaseDecompression = () => {};
+        decodedReservation();
+        decodedReservation = await admission.reserveDecodedBody(maxDecodedBodyBytes, { signal });
+        releaseDecompression = await admission.acquireDecompression?.({ signal }) || (() => {});
+        try {
+          decoded = await decodeRequestBuffer(buffer, req.headers?.["content-encoding"], maxDecodedBodyBytes);
+        } catch (retryError) {
+          if (retryError?.statusCode) throw retryError;
+          throw httpError(`Invalid compressed request body: ${retryError.message}`, 400);
+        }
+      } else {
+        if (e?.statusCode) throw e;
+        throw httpError(`Invalid compressed request body: ${e.message}`, 400);
+      }
     }
     if (signal?.aborted) throw admissionAbortError(signal);
     if (decoded.length > 0) {
-      await admission?.reserveDecodedBody?.(decoded.length, { signal });
+      if (supportsResizableReservation) decodedReservation.resize(decoded.length);
+      else decodedReservation = await admission?.reserveDecodedBody?.(decoded.length, { signal });
     }
-    return parseRequestJson(decoded.toString("utf8"));
+    const parsed = parseRequestJson(decoded.toString("utf8"));
+    retainDecodedReservation = true;
+    return parsed;
   } finally {
+    if (!retainDecodedReservation) decodedReservation?.();
     releaseDecompression();
   }
 }

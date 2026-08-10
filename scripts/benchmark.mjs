@@ -23,6 +23,14 @@ function runProbe(source) {
   return JSON.parse(result.stdout.trim());
 }
 
+function median(values) {
+  const ordered = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(ordered.length / 2);
+  return ordered.length % 2 === 0
+    ? (ordered[middle - 1] + ordered[middle]) / 2
+    : ordered[middle];
+}
+
 function deterministicPixels(byteLength, initialSeed) {
   const pixels = Buffer.alloc(byteLength);
   let seed = initialSeed;
@@ -154,7 +162,7 @@ function largePayloadProbe(targetMiB, concurrency) {
 }
 
 function largeTokenCountProbe(mode) {
-  return runProbe(`
+  const samples = Array.from({ length: 3 }, () => runProbe(`
     const text = "a ".repeat(2 * 1024 * 1024);
     const started = performance.now();
     let tokens;
@@ -173,6 +181,51 @@ function largeTokenCountProbe(mode) {
       elapsed_ms: +(performance.now() - started).toFixed(1),
       rss_mib: +(memory.rss / 1048576).toFixed(1),
       heap_used_mib: +(memory.heapUsed / 1048576).toFixed(1),
+    }));
+  `));
+  return {
+    input_mib: samples[0].input_mib,
+    tokens: samples[0].tokens,
+    elapsed_ms: +median(samples.map((sample) => sample.elapsed_ms)).toFixed(1),
+    rss_mib: +median(samples.map((sample) => sample.rss_mib)).toFixed(1),
+    heap_used_mib: +median(samples.map((sample) => sample.heap_used_mib)).toFixed(1),
+    samples: samples.length,
+  };
+}
+
+function toolOutputParseCacheProbe() {
+  return runProbe(`
+    import { enforceResponsesImageLimit } from "./src/responses-image-limit.mjs";
+    import { responsesHistoricalImageStats } from "./src/responses-byte-budget.mjs";
+    import { prepareResponsesChatPayload } from "./src/responses-chat-payload.mjs";
+
+    const item = {
+      type: "function_call_output",
+      call_id: "call_benchmark",
+      output: JSON.stringify([{ type: "input_text", text: "x".repeat(8 * 1024 * 1024) }]),
+    };
+    const source = item.output;
+    const originalParse = JSON.parse;
+    let parseCalls = 0;
+    JSON.parse = function countedParse(value, ...args) {
+      if (value === source) parseCalls += 1;
+      return originalParse.call(this, value, ...args);
+    };
+    const started = performance.now();
+    try {
+      enforceResponsesImageLimit([item]);
+      responsesHistoricalImageStats([item], 1);
+      await prepareResponsesChatPayload({
+        body: { model: "gpt-4o", input: [item] },
+        currentInputStart: 1,
+      }, { payloadOptions: { maxBytes: 30 * 1024 * 1024 } });
+    } finally {
+      JSON.parse = originalParse;
+    }
+    process.stdout.write(JSON.stringify({
+      output_mib: +(Buffer.byteLength(source) / 1048576).toFixed(1),
+      parse_calls: parseCalls,
+      elapsed_ms: +(performance.now() - started).toFixed(1),
     }));
   `);
 }
@@ -373,6 +426,7 @@ if (checkMode) {
     proxy: largeTokenCountProbe("proxy"),
     materialized_array: largeTokenCountProbe("array"),
   };
+  report.tool_output_parse_cache = toolOutputParseCacheProbe();
   report.large_payload_peak = [
     largePayloadProbe(5, 4),
     largePayloadProbe(30, 1),
@@ -408,6 +462,9 @@ if (checkMode) {
   }
   if (proxy.heap_used_mib > array.heap_used_mib * 0.75) {
     failures.push(`token counter heap regression: proxy=${proxy.heap_used_mib}MiB array=${array.heap_used_mib}MiB`);
+  }
+  if (report.tool_output_parse_cache.parse_calls !== 1) {
+    failures.push(`stringified tool output parsed ${report.tool_output_parse_cache.parse_calls} times instead of once`);
   }
   for (const payload of report.large_payload_peak) {
     if (payload.admission_max_active_mib > payload.admission_budget_mib) {

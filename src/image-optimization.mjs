@@ -273,9 +273,11 @@ export async function runWithConcurrency(taskFns, concurrency) {
   }));
 }
 
-function visitImageParts(parts, references, commit = null) {
+function visitImageParts(parts, references, commit = null, assertActive) {
   if (!Array.isArray(parts)) return;
-  for (const part of parts) {
+  for (let index = 0; index < parts.length; index += 1) {
+    if ((index & 63) === 0) assertActive?.();
+    const part = parts[index];
     const image = readResponsesImagePart(part);
     if (!image?.identity) continue;
     references.push({
@@ -286,22 +288,24 @@ function visitImageParts(parts, references, commit = null) {
   }
 }
 
-function collectImageReferences(reqBody) {
+function collectImageReferences(reqBody, assertActive) {
   const references = [];
   const dirtyCommits = new Set();
   if (!Array.isArray(reqBody?.input)) {
     return { references, markDirty() {}, commitDirty() {} };
   }
 
-  for (const item of reqBody.input) {
+  for (let index = 0; index < reqBody.input.length; index += 1) {
+    if ((index & 63) === 0) assertActive?.();
+    const item = reqBody.input[index];
     if (!item) continue;
-    visitImageParts([item], references);
+    visitImageParts([item], references, null, assertActive);
     if (item.type === "message" && Array.isArray(item.content)) {
-      visitImageParts(item.content, references);
+      visitImageParts(item.content, references, null, assertActive);
     }
     const toolOutput = readResponsesToolOutputParts(item);
     if (toolOutput) {
-      visitImageParts(toolOutput.parts, references, toolOutput.commit);
+      visitImageParts(toolOutput.parts, references, toolOutput.commit, assertActive);
     }
   }
 
@@ -320,6 +324,7 @@ function collectImageReferences(reqBody) {
 }
 
 async function optimizeImageReferences(collection, {
+  assertActive,
   concurrency,
   model,
   optimizeImage,
@@ -334,7 +339,9 @@ async function optimizeImageReferences(collection, {
     return optimizedByDataUrl.get(identity);
   };
   const tasks = collection.references.map((reference) => async () => {
+    assertActive?.();
     if (reference.set(await optimizeOnce(reference.get()))) collection.markDirty([reference]);
+    assertActive?.();
   });
   if (tasks.length) await runWithConcurrency(tasks, concurrency);
   collection.commitDirty();
@@ -346,9 +353,11 @@ function imageInputBytes(dataUrl) {
   return match ? Buffer.byteLength(match[1], "base64") : 0;
 }
 
-function uniqueOriginalImages(references) {
+function uniqueOriginalImages(references, assertActive) {
   const unique = new Map();
-  for (const reference of references) {
+  for (let index = 0; index < references.length; index += 1) {
+    if ((index & 63) === 0) assertActive?.();
+    const reference = references[index];
     const dataUrl = reference.get();
     const identity = canonicalInlineImageIdentity(dataUrl);
     if (!identity) continue;
@@ -422,6 +431,7 @@ export async function optimizeImagesInBody(reqBody, {
 }
 
 export async function prepareResponsesPayload(reqBody, {
+  assertActive,
   currentInputStart = 0,
   maxBytes = MAX_UPSTREAM_BODY_BYTES,
   optimizeImage = optimizeImageDataUrl,
@@ -429,18 +439,22 @@ export async function prepareResponsesPayload(reqBody, {
   skipInitialOptimization = false,
   signal,
 } = {}) {
+  assertActive?.();
   const shouldOptimizeImages = !IMG_OPT_DISABLED && !skipInitialOptimization;
-  const collection = shouldOptimizeImages ? collectImageReferences(reqBody) : null;
-  const originalImages = collection ? uniqueOriginalImages(collection.references) : [];
+  const collection = shouldOptimizeImages ? collectImageReferences(reqBody, assertActive) : null;
+  const originalImages = collection ? uniqueOriginalImages(collection.references, assertActive) : [];
   if (collection) {
     await optimizeImageReferences(collection, {
+      assertActive,
       concurrency: IMG_CONCURRENCY,
       model: reqBody.model,
       optimizeImage: (dataUrl, options) => optimizeImage(dataUrl, { ...options, quality: IMG_QUALITY }),
       signal,
     });
   }
+  assertActive?.();
   let bodyText = JSON.stringify(reqBody);
+  assertActive?.();
   let bodyBytes = Buffer.byteLength(bodyText);
   const summary = summarizeReqBody(reqBody);
   const targetBytes = positiveInt(maxBytes, MAX_UPSTREAM_BODY_BYTES);
@@ -450,11 +464,13 @@ export async function prepareResponsesPayload(reqBody, {
   if (collection && originalImages.length > 0 && bodyBytes > targetBytes) {
     const batchSize = Math.max(1, IMG_CONCURRENCY);
     for (const profile of Array.isArray(profiles) ? profiles : []) {
+      assertActive?.();
       const beforeBytes = bodyBytes;
       let processed = 0;
       stage = `q${positiveInt(profile.quality, IMG_QUALITY, 100)}`;
       const orderedImages = orderImagesByCurrentWireBytes(originalImages);
       for (let index = 0; index < orderedImages.length && bodyBytes > targetBytes; index += batchSize) {
+        assertActive?.();
         const batch = orderedImages.slice(index, index + batchSize);
         const candidates = await Promise.all(batch.map((image) => optimizeImage(image.dataUrl, {
           ...profile,
@@ -462,6 +478,7 @@ export async function prepareResponsesPayload(reqBody, {
           model: reqBody.model,
           signal,
         })));
+        assertActive?.();
         for (let offset = 0; offset < batch.length && bodyBytes > targetBytes; offset += 1) {
           processed += 1;
           const applied = applyImageCandidate(collection, batch[offset], candidates[offset], bodyBytes);
@@ -469,19 +486,24 @@ export async function prepareResponsesPayload(reqBody, {
           adapted ||= applied.changed;
           if (bodyBytes <= targetBytes) {
             collection.commitDirty();
+            assertActive?.();
             bodyText = JSON.stringify(reqBody);
+            assertActive?.();
             bodyBytes = Buffer.byteLength(bodyText);
           }
         }
       }
       collection.commitDirty();
+      assertActive?.();
       bodyText = JSON.stringify(reqBody);
+      assertActive?.();
       bodyBytes = Buffer.byteLength(bodyText);
       console.warn(status("warn", `responses payload ${beforeBytes}b exceeds ${targetBytes}b; image profile max_dim=${profile.maxDim} quality=${profile.quality} processed=${processed}/${orderedImages.length} -> ${bodyBytes}b`));
       if (bodyBytes <= targetBytes) break;
     }
   }
 
+  assertActive?.();
   return {
     bodyText,
     bodyBytes,

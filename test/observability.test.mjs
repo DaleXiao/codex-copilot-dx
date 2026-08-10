@@ -170,10 +170,12 @@ test("runtime status exposes isolated profile health without credential material
       cache_path: "/private/claude-models",
     },
     claudeMode: "isolated",
+    isClaudeProfileCurrent: () => true,
   });
 
   assert.equal(payload.profiles.codex.mode, "legacy");
   assert.equal(payload.profiles.claude.mode, "isolated");
+  assert.equal(payload.profiles.claude.profile_current, true);
   assert.deepEqual(payload.routing, { responses: "codex", messages: "claude" });
   assert.deepEqual(payload.copilot, {
     token_cached: true,
@@ -243,9 +245,21 @@ test("runtime status reuses Codex health for an inherited Claude profile", () =>
 
   assert.equal(claudeStatusCalls, 0);
   assert.equal(payload.profiles.claude.mode, "inherited");
+  assert.equal(payload.profiles.claude.profile_current, false);
   assert.strictEqual(payload.profiles.claude.client, payload.profiles.codex.client);
   assert.strictEqual(payload.profiles.claude.models, payload.profiles.codex.models);
   assert.deepEqual(payload.routing, { responses: "codex", messages: "codex" });
+});
+
+test("runtime status reports unprovable Claude profile freshness as false", () => {
+  const missing = runtimeStatusPayload({ claudeMode: "isolated" });
+  const failed = runtimeStatusPayload({
+    claudeMode: "isolated",
+    isClaudeProfileCurrent: () => { throw new Error("credential read failed"); },
+  });
+
+  assert.equal(missing.profiles.claude.profile_current, false);
+  assert.equal(failed.profiles.claude.profile_current, false);
 });
 
 test("runtime status is loopback-only and excludes its own probe from request metrics", async () => {
@@ -305,6 +319,7 @@ test("adapter status wiring reports independently injected Codex and Claude prof
     claudeClient: client({ token_cached: false, upstream_host: "claude.example" }),
     codexModelRegistry: { source: "live", models: { data: [{ id: "gpt-a" }] }, modelDefs: [] },
     claudeModelRegistry: { source: "cache", models: { data: [{ id: "claude-a" }] }, modelDefs: [{ id: "claude-a" }] },
+    isClaudeProfileCurrent: () => true,
   });
 
   const response = await invoke(handler, { url: ADAPTER_STATUS_PATH });
@@ -315,5 +330,6 @@ test("adapter status wiring reports independently injected Codex and Claude prof
   assert.equal(payload.profiles.codex.models.models, 1);
   assert.equal(payload.profiles.claude.models.claude_models, 1);
   assert.equal(payload.profiles.claude.mode, "isolated");
+  assert.equal(payload.profiles.claude.profile_current, true);
   assert.deepEqual(payload.routing, { responses: "codex", messages: "claude" });
 });

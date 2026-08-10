@@ -1,20 +1,11 @@
+import {
+  isClaudeCopilotCatalogEntry,
+  isClaudeCopilotModel,
+} from "./models.mjs";
+
 function catalogData(catalog) {
   if (Array.isArray(catalog)) return catalog;
   return Array.isArray(catalog?.data) ? catalog.data : [];
-}
-
-function isClaudeCatalogEntry(model) {
-  const id = String(model?.id || "").trim();
-  const vendor = String(model?.vendor || "").trim().toLowerCase();
-  return Boolean(id) && (vendor === "anthropic" || id.toLowerCase().startsWith("claude-"));
-}
-
-function isAllowedClaudeModel(model) {
-  return isClaudeCatalogEntry(model)
-    && String(model?.vendor || "").trim().toLowerCase() === "anthropic"
-    && model?.model_picker_enabled !== false
-    && Array.isArray(model?.supported_endpoints)
-    && model.supported_endpoints.includes("/chat/completions");
 }
 
 export function profileRouting({ claudeMode = "inherited", claudeConfigured = false } = {}) {
@@ -44,9 +35,9 @@ export function createPmStudioModelRouter({ getCatalog, isClaudeEnabled } = {}) 
     const known = new Set();
     for (const model of catalogData(catalog)) {
       const id = String(model?.id || "").trim();
-      if (!id || !isClaudeCatalogEntry(model)) continue;
+      if (!id || !isClaudeCopilotCatalogEntry(model)) continue;
       known.add(id);
-      if (enabled && isAllowedClaudeModel(model) && !allowed.has(id)) allowed.set(id, model);
+      if (enabled && isClaudeCopilotModel(model) && !allowed.has(id)) allowed.set(id, model);
     }
     cachedCatalog = catalog;
     cachedEnabled = enabled;

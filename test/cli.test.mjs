@@ -14,6 +14,7 @@ import packageJson from "../package.json" with { type: "json" };
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
 const legacyCliPath = fileURLToPath(new URL("../bin/codex-copilot-dx.mjs", import.meta.url));
+const nonDarwinPlatformPreload = fileURLToPath(new URL("./fixtures/non-darwin-platform.cjs", import.meta.url));
 const legacyWarning = /codex-copilot-dx is deprecated; use ccdx instead/;
 
 function assertNoCompatibilityWarning(stderr) {
@@ -112,6 +113,24 @@ test("both CLI entrypoints expose the same complete subcommand help", async () =
   for (const command of ["auth", "doctor", "status", "models", "pms", "usage", "auto-review-model", "update"]) {
     assert.match(primary.stdout, new RegExp(`ccdx ${command}`));
   }
+});
+
+test("both CLI entrypoints keep nested help and argument errors byte-for-byte equivalent", async () => {
+  const [primaryHelp, legacyHelp] = await Promise.all([
+    execFileAsync(process.execPath, [cliPath, "auth", "login", "claude", "--help"], { timeout: 2000 }),
+    execFileAsync(process.execPath, [legacyCliPath, "auth", "login", "claude", "--help"], { timeout: 2000 }),
+  ]);
+  assert.equal(legacyHelp.stdout, primaryHelp.stdout);
+  assertNoCompatibilityWarning(legacyHelp.stderr);
+
+  const [primaryError, legacyError] = await Promise.allSettled([
+    execFileAsync(process.execPath, [cliPath, "models", "--profile", "all"], { timeout: 2000 }),
+    execFileAsync(process.execPath, [legacyCliPath, "models", "--profile", "all"], { timeout: 2000 }),
+  ]);
+  assert.equal(primaryError.status, "rejected");
+  assert.equal(legacyError.status, "rejected");
+  assert.equal(legacyError.reason.code, primaryError.reason.code);
+  assert.equal(legacyError.reason.stderr, primaryError.reason.stderr);
 });
 
 test("both CLI entrypoints dispatch pms setup before runtime, auth, logging, or GUI startup", async () => {
@@ -262,7 +281,7 @@ test("both CLI entrypoints reject non-interactive model selection consistently",
 
 test("cli doctor exits without starting the adapter", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-doctor-"));
-  const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, "doctor"], {
+  const { stdout, stderr } = await execFileAsync(process.execPath, ["--require", nonDarwinPlatformPreload, cliPath, "doctor"], {
     timeout: 2000,
     env: { ...process.env, HOME: home, ADAPTER_PORT: "9" },
   });
@@ -278,7 +297,7 @@ test("cli doctor returns nonzero when a configuration file is invalid", async ()
   fs.writeFileSync(path.join(home, ".claude", "settings.json"), "{broken");
 
   await assert.rejects(
-    execFileAsync(process.execPath, [cliPath, "doctor"], {
+    execFileAsync(process.execPath, ["--require", nonDarwinPlatformPreload, cliPath, "doctor"], {
       timeout: 2000,
       env: { ...process.env, HOME: home, ADAPTER_PORT: "9" },
     }),
@@ -292,7 +311,7 @@ test("cli doctor returns nonzero when a configuration file is invalid", async ()
 
 test("deprecated cli doctor heading uses the canonical command name without warning scripts", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-legacy-doctor-"));
-  const { stdout, stderr } = await execFileAsync(process.execPath, [legacyCliPath, "doctor"], {
+  const { stdout, stderr } = await execFileAsync(process.execPath, ["--require", nonDarwinPlatformPreload, legacyCliPath, "doctor"], {
     timeout: 2000,
     env: { ...process.env, HOME: home, ADAPTER_PORT: "9" },
   });

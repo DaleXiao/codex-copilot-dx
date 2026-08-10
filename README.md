@@ -120,8 +120,8 @@ ccdx auth login claude --reauth --github-login <personal-github-login>
 ccdx pms setup
 ```
 
-Inspect the installed version, exact patch integrity, isolated Claude profile,
-and relay without changing files:
+Inspect the installed version, exact patch manifest plus executable/signing
+integrity, isolated Claude profile, and live relay routing without changing files:
 
 ```bash
 ccdx pms status

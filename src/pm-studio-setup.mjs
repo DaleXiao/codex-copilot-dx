@@ -396,6 +396,19 @@ function backupName(recipe) {
   return `${recipe.id}-${recipe.sourceAsarSha256.slice(0, 12)}`;
 }
 
+export function pmStudioBackupRoot(home = os.homedir()) {
+  return path.join(home, ".local", "share", "codex-copilot-dx", "pm-studio-backups");
+}
+
+export function pmStudioPatchManifestPath({
+  home = os.homedir(),
+  backupRoot = pmStudioBackupRoot(home),
+  recipe,
+} = {}) {
+  if (!recipe) throw new TypeError("PM Studio patch recipe is required");
+  return path.join(backupRoot, backupName(recipe), "manifest.json");
+}
+
 function backupManifest(recipe, createdAt) {
   return {
     schema_version: 1,
@@ -512,12 +525,23 @@ function writePatchedBinaryRecord({ backup, inspection, operations }) {
   backup.manifest = manifest;
 }
 
-function assertPatchedBinaryRecord({ inspection, manifestPath }) {
+export function assertPatchedBinaryRecord({ inspection, manifestPath, recipe }) {
   let manifest;
   try {
     manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   } catch {
     throw setupError("PM_STUDIO_PATCH_RECORD_INVALID", "PM Studio patched-binary record is missing or invalid");
+  }
+  if (recipe && (manifest?.schema_version !== 1
+    || manifest?.kind !== "ccdx-pm-studio-backup"
+    || manifest?.recipe_id !== recipe.id
+    || manifest?.app?.bundle_identifier !== recipe.bundleIdentifier
+    || manifest?.app?.version !== recipe.version
+    || manifest?.app?.build !== recipe.build
+    || manifest?.patched?.asar_sha256 !== recipe.patchedAsarSha256
+    || manifest?.patched?.asar_header_sha256 !== recipe.patchedHeaderSha256
+    || !integrityMatches(manifest?.patched?.electron_asar_integrity, "SHA256", recipe.patchedHeaderSha256))) {
+    throw setupError("PM_STUDIO_PATCH_RECORD_INVALID", "PM Studio patched-binary record does not match the installed patch recipe");
   }
   const binaries = manifest?.patched?.binaries;
   if (!binaries
@@ -593,7 +617,7 @@ export async function runPmStudioSetup({
   commandName = "ccdx",
   appPath = DEFAULT_PM_STUDIO_APP_PATH,
   home = os.homedir(),
-  backupRoot = path.join(home, ".local", "share", "codex-copilot-dx", "pm-studio-backups"),
+  backupRoot = pmStudioBackupRoot(home),
   recipes = PM_STUDIO_RECIPES,
   operations: operationOverrides = {},
   logger = (line) => console.log(line),
@@ -629,7 +653,7 @@ export async function runPmStudioSetup({
       throw setupError("PM_STUDIO_BACKUP_INVALID", "Patched PM Studio has no matching verified backup; no files were changed");
     }
     const backup = validateBackup({ backupDir: finalBackupDir, recipe, operations });
-    assertPatchedBinaryRecord({ inspection: source, manifestPath: backup.manifestPath });
+    assertPatchedBinaryRecord({ inspection: source, manifestPath: backup.manifestPath, recipe });
     emit(`[OK] PM Studio ${recipe.version} build ${recipe.build} is already patched; no backup or signing was repeated.`);
     emit(`[OK] Verified backup: ${backup.backupAppPath}`);
     emit(`[OK] Backup manifest: ${backup.manifestPath}`);
@@ -700,7 +724,7 @@ export async function runPmStudioSetup({
         installed.issues);
     }
     try {
-      assertPatchedBinaryRecord({ inspection: installed, manifestPath: backup.manifestPath });
+      assertPatchedBinaryRecord({ inspection: installed, manifestPath: backup.manifestPath, recipe });
     } catch (error) {
       throw setupError("PM_STUDIO_INSTALL_VERIFY_FAILED",
         `Installed PM Studio differs from the verified staging record; do not launch it. ${recoveryMessage(backup)}`,

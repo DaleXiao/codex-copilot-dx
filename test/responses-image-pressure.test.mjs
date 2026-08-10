@@ -143,3 +143,17 @@ test("image pressure recovery expires and remains bounded", () => {
   timestamp = 101;
   assert.equal(controller.snapshot().active_recovery_trees, 0);
 });
+
+test("image pressure cooperatively stops long synchronous scans", () => {
+  const context = requestContext(256);
+  const deadline = new Error("prepare deadline exceeded");
+  let checks = 0;
+
+  assert.throws(() => applyResponsesImagePressure(context, {
+    assertActive() {
+      checks += 1;
+      if (checks === 4) throw deadline;
+    },
+  }), (error) => error === deadline);
+  assert.equal(checks, 4);
+});

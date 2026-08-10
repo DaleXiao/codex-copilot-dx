@@ -16,6 +16,7 @@ import {
 import { chatToResponses, forwardToChat, responsesBodyUsesCustomTools } from "./responses-bridge.mjs";
 import { prepareResponsesChatPayload } from "./responses-chat-payload.mjs";
 import { prepareResponsesCompactionRequest } from "./responses-compaction.mjs";
+import { clearResponsesToolOutputPartsCache } from "./responses-content.mjs";
 import { proxyCopilotResponses } from "./responses-proxy.mjs";
 import { responseHistoryMaterializedBytes } from "./response-history.mjs";
 import {
@@ -102,24 +103,21 @@ export function createResponsesHandler(options) {
     let imagePressureResult = null;
     let parsed = null;
     let upstreamPayloadReleased = false;
-    let prepareDeadline = Number.POSITIVE_INFINITY;
-    let upstreamStarted = false;
+    let activeDeadline = Number.POSITIVE_INFINITY;
+    let activeTimeoutReason = "responses_prepare_timeout";
     const assertPrepareActive = () => {
       if (abort.signal.aborted) throw abort.signal.reason;
-      if (now() < prepareDeadline) return;
-      abort.abort("responses_prepare_timeout");
+      if (now() < activeDeadline) return;
+      abort.abort(activeTimeoutReason);
       throw abort.signal.reason;
     };
     const startUpstreamTimeout = () => {
-      if (!upstreamStarted) {
-        assertPrepareActive();
-        upstreamStarted = true;
-      }
+      assertPrepareActive();
       const streaming = prepared?.body?.stream === true;
-      abort.setTimeout(
-        streaming ? streamHandshakeTimeoutMs : upstreamTimeoutMs,
-        streaming ? "stream_handshake_timeout" : "upstream_timeout",
-      );
+      const timeoutMs = streaming ? streamHandshakeTimeoutMs : upstreamTimeoutMs;
+      activeTimeoutReason = streaming ? "stream_handshake_timeout" : "upstream_timeout";
+      activeDeadline = now() + timeoutMs;
+      abort.setTimeout(timeoutMs, activeTimeoutReason);
     };
     const applyAdaptiveTimeout = (error) => {
       if (!["responses_prepare_timeout", "stream_handshake_timeout", "upstream_timeout"].includes(abort.reason)) {
@@ -150,6 +148,12 @@ export function createResponsesHandler(options) {
     const releaseUpstreamPayload = (finalContext) => {
       if (upstreamPayloadReleased) return;
       upstreamPayloadReleased = true;
+      clearResponsesToolOutputPartsCache(prepared?.body?.input);
+      clearResponsesToolOutputPartsCache(prepared?.historyInputItems);
+      if (finalContext && finalContext !== prepared) {
+        clearResponsesToolOutputPartsCache(finalContext.body?.input);
+        clearResponsesToolOutputPartsCache(finalContext.historyInputItems);
+      }
       if (finalContext && finalContext !== prepared) dropMaterializedResponseHistory(finalContext);
       dropMaterializedResponseHistory(prepared);
       releaseRequest();
@@ -158,7 +162,8 @@ export function createResponsesHandler(options) {
       releaseRequest = await acquireRequest(req, { signal: abort.signal });
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       parsed = await readJsonBody(req, { admission: releaseRequest, signal: abort.signal });
-      prepareDeadline = now() + upstreamTimeoutMs;
+      activeDeadline = now() + upstreamTimeoutMs;
+      activeTimeoutReason = "responses_prepare_timeout";
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
       if (parsed.previous_response_id !== undefined && parsed.previous_response_id !== null) {
         const historyBytes = responseHistoryMaterializedBytes(parsed.previous_response_id);
@@ -167,10 +172,10 @@ export function createResponsesHandler(options) {
         }
         assertPrepareActive();
       }
-      prepared = prepareResponsesRequest(parsed, { mutate: true });
+      prepared = prepareResponsesRequest(parsed, { assertActive: assertPrepareActive, mutate: true });
       parsed = null;
       assertPrepareActive();
-      imagePressureResult = imagePressure?.apply?.(prepared) || null;
+      imagePressureResult = imagePressure?.apply?.(prepared, { assertActive: assertPrepareActive }) || null;
       assertPrepareActive();
       if (imagePressureResult?.adapted) {
         console.warn(status("warn", `responses visual history mode=${imagePressureResult.mode} historical_images=${imagePressureResult.initialHistoricalImages}->${imagePressureResult.historicalImages} omitted=${imagePressureResult.imagesOmitted} bytes=${imagePressureResult.initialBodyBytes}->${imagePressureResult.bodyBytes}`));
@@ -189,6 +194,7 @@ export function createResponsesHandler(options) {
       if (usesCustomTools && !useNativeResponses) throw unsupportedCustomToolsError(upstreamModel);
       if (useNativeResponses) {
         const result = await proxyCopilotResponses(prepared, req, res, responsesFn, {
+          assertPrepareActive,
           signal: abort.signal,
           abort,
           onUpstreamStart: startUpstreamTimeout,
@@ -199,6 +205,7 @@ export function createResponsesHandler(options) {
         else markAdaptiveHttpTimeout(result?.upstreamStatus);
       } else {
         let { chatReq, bodyText } = await prepareResponsesChatPayload(prepared, {
+          assertActive: assertPrepareActive,
           payloadOptions: responsesPayloadOptions,
           signal: abort.signal,
           stream: streaming,
@@ -304,23 +311,35 @@ export function createResponsesCompactHandler(options) {
   return async function handleResponsesCompact(req, res) {
     const abort = createRequestAbort(req, res);
     let releaseRequest = () => {};
+    let prepared = null;
+    let upstreamPayloadReleased = false;
+    const releaseUpstreamPayload = (finalContext) => {
+      if (upstreamPayloadReleased) return;
+      upstreamPayloadReleased = true;
+      clearResponsesToolOutputPartsCache(prepared?.body?.input);
+      clearResponsesToolOutputPartsCache(prepared?.historyInputItems);
+      if (finalContext && finalContext !== prepared) {
+        clearResponsesToolOutputPartsCache(finalContext.body?.input);
+        clearResponsesToolOutputPartsCache(finalContext.historyInputItems);
+      }
+      releaseRequest();
+    };
     try {
       releaseRequest = await acquireRequest(req, { signal: abort.signal });
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       const parsed = await readJsonBody(req, { admission: releaseRequest, signal: abort.signal });
-      const prepareDeadline = now() + upstreamTimeoutMs;
+      let activeDeadline = now() + upstreamTimeoutMs;
+      let activeTimeoutReason = "responses_prepare_timeout";
       const assertPrepareActive = () => {
         if (abort.signal.aborted) throw abort.signal.reason;
-        if (now() < prepareDeadline) return;
-        abort.abort("responses_prepare_timeout");
+        if (now() < activeDeadline) return;
+        abort.abort(activeTimeoutReason);
         throw abort.signal.reason;
       };
-      let upstreamStarted = false;
       const startUpstreamTimeout = () => {
-        if (!upstreamStarted) {
-          assertPrepareActive();
-          upstreamStarted = true;
-        }
+        assertPrepareActive();
+        activeDeadline = now() + upstreamTimeoutMs;
+        activeTimeoutReason = "upstream_timeout";
         abort.setTimeout(upstreamTimeoutMs, "upstream_timeout");
       };
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
@@ -331,8 +350,8 @@ export function createResponsesCompactHandler(options) {
         }
         assertPrepareActive();
       }
-      const prepared = prepareResponsesCompactionRequest(
-        prepareResponsesRequest(parsed, { mutate: true }),
+      prepared = prepareResponsesCompactionRequest(
+        prepareResponsesRequest(parsed, { assertActive: assertPrepareActive, mutate: true }),
       );
       assertPrepareActive();
       prepared.surface = "responses_compact";
@@ -342,17 +361,18 @@ export function createResponsesCompactHandler(options) {
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=false`));
       const result = await proxyCopilotResponses(prepared, req, res, responsesCompactFn, {
+        assertPrepareActive,
         signal: abort.signal,
         abort,
         onUpstreamStart: startUpstreamTimeout,
-        releaseRequest,
+        releaseRequest: releaseUpstreamPayload,
       });
       if (result?.compacted) imagePressure?.clear?.(prepared.historyRootId);
     } catch (error) {
       logRequestFailure("Responses compact", error, abort);
       sendJsonError(res, error, 502);
     } finally {
-      releaseRequest();
+      releaseUpstreamPayload();
       abort.cleanup();
     }
   };

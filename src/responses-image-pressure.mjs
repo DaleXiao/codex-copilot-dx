@@ -18,12 +18,15 @@ function normalizedPolicy(policy = {}) {
   return { ...DEFAULT_RESPONSES_IMAGE_PRESSURE_POLICY, ...policy };
 }
 
-function bodyPayload(body) {
+function bodyPayload(body, assertActive) {
+  assertActive?.();
   const bodyText = JSON.stringify(body);
+  assertActive?.();
   return { bodyText, bodyBytes: Buffer.byteLength(bodyText) };
 }
 
 export function applyResponsesImagePressure(reqContext, {
+  assertActive,
   mode = "normal",
   policy: policyOverrides,
 } = {}) {
@@ -32,7 +35,8 @@ export function applyResponsesImagePressure(reqContext, {
   const currentInputStart = Number.isFinite(reqContext?.currentInputStart)
     ? reqContext.currentInputStart
     : 0;
-  const initialImages = responsesHistoricalImageStats(body?.input, currentInputStart);
+  assertActive?.();
+  const initialImages = responsesHistoricalImageStats(body?.input, currentInputStart, { assertActive });
   if (initialImages.historicalImages === 0) {
     return {
       mode: "normal",
@@ -49,7 +53,7 @@ export function applyResponsesImagePressure(reqContext, {
     };
   }
 
-  const initial = bodyPayload(body);
+  const initial = bodyPayload(body, assertActive);
   const pressureEligible = initialImages.historicalImages > 0 && (
     initialImages.historicalImages > policy.triggerHistoricalImages
       || initial.bodyBytes > policy.triggerBodyBytes
@@ -80,6 +84,7 @@ export function applyResponsesImagePressure(reqContext, {
   }
 
   const trimmed = trimResponsesHistoricalImages(body, {
+    assertActive,
     currentInputStart,
     maxHistoricalImages,
     targetBytes,
@@ -126,8 +131,9 @@ export function createResponsesImagePressureController({
   };
 
   return Object.freeze({
-    apply(reqContext) {
+    apply(reqContext, { assertActive } = {}) {
       const result = applyResponsesImagePressure(reqContext, {
+        assertActive,
         mode: modeFor(reqContext?.historyRootId),
         policy,
       });

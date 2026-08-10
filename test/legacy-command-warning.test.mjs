@@ -46,3 +46,21 @@ test("legacy command warning honors XDG_CACHE_HOME", (t) => {
     path.join(cacheHome, "codex-copilot-dx", "legacy-command-warning"),
   );
 });
+
+test("legacy command warning stays silent when its throttle cache is unwritable", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-legacy-warning-readonly-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const blockedCache = path.join(root, "not-a-directory");
+  fs.writeFileSync(blockedCache, "blocked");
+  const env = { XDG_CACHE_HOME: blockedCache };
+  const startedAt = 1_800_000_000_000;
+
+  assert.equal(shouldShowLegacyCommandWarning({ env, home: root, interactive: true, now: startedAt }), false);
+  assert.equal(shouldShowLegacyCommandWarning({ env, home: root, interactive: true, now: startedAt + 1 }), false);
+  assert.equal(shouldShowLegacyCommandWarning({
+    env,
+    home: root,
+    interactive: true,
+    now: startedAt + LEGACY_COMMAND_WARNING_INTERVAL_MS,
+  }), false);
+});

@@ -150,6 +150,7 @@ export function createCopilotClientRuntime({
   }
 
   async function responses(reqBody, {
+    assertActive,
     signal,
     fetchImpl,
     retryOptions,
@@ -160,13 +161,14 @@ export function createCopilotClientRuntime({
   } = {}) {
     const token = await tokenSession.getToken({ signal });
     const preparedPayload = await prepareResponsesPayload(reqBody, {
+      assertActive,
       ...payloadOptions,
       currentInputStart,
       profiles: payloadPrepared ? [] : payloadOptions.profiles,
       skipInitialOptimization: payloadPrepared || payloadOptions.skipInitialOptimization,
       signal,
     });
-    const finalizedPayload = enforceResponsesPayloadByteBudget(reqBody, preparedPayload);
+    const finalizedPayload = enforceResponsesPayloadByteBudget(reqBody, preparedPayload, { assertActive });
     const { bodyText, bodyBytes, stage, adapted } = finalizedPayload;
     const summary = finalizedPayload.stage === preparedPayload.stage
       ? preparedPayload.summary

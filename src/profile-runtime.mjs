@@ -46,6 +46,15 @@ export function createProfileRuntime({
   };
   const credentials = readCredentials();
   const claudeProfile = safeProfileStatus(credentials);
+  const claudeCredentialFingerprint = credentials.valid
+    ? githubTokenFingerprint(credentials.token)
+    : "";
+  const isClaudeProfileCurrent = () => {
+    if (!claudeCredentialFingerprint) return false;
+    const current = readCredentials();
+    return current.valid === true
+      && githubTokenFingerprint(current.token) === claudeCredentialFingerprint;
+  };
   let codexCredentialFingerprint = "";
   try {
     const codexCredentials = readAuthProfileCredentials(AUTH_PROFILE_CODEX, { home });
@@ -65,6 +74,7 @@ export function createProfileRuntime({
       claudeProfile,
       codexCredentialFingerprint,
       claudeCredentialFingerprint: "",
+      isClaudeProfileCurrent,
     });
   }
 
@@ -86,8 +96,7 @@ export function createProfileRuntime({
     claudeMode: "isolated",
     claudeProfile,
     codexCredentialFingerprint,
-    claudeCredentialFingerprint: credentials.valid
-      ? githubTokenFingerprint(credentials.token)
-      : "",
+    claudeCredentialFingerprint,
+    isClaudeProfileCurrent,
   });
 }

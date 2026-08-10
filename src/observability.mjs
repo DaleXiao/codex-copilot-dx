@@ -150,6 +150,15 @@ function safeClientRuntimeStatus(client) {
   };
 }
 
+function safeProfileCurrent(checkProfileCurrent) {
+  if (typeof checkProfileCurrent !== "function") return false;
+  try {
+    return checkProfileCurrent() === true;
+  } catch {
+    return false;
+  }
+}
+
 export function runtimeStatusPayload({
   metrics,
   streamPerformance,
@@ -161,6 +170,7 @@ export function runtimeStatusPayload({
   codexModelRegistry,
   claudeModelRegistry,
   claudeMode = "inherited",
+  isClaudeProfileCurrent,
 } = {}) {
   const memory = process.memoryUsage();
   const resolvedClaudeMode = claudeMode === "isolated" ? "isolated" : "inherited";
@@ -172,6 +182,8 @@ export function runtimeStatusPayload({
   const claudeModels = resolvedClaudeMode === "isolated"
     ? modelRegistryStatus(claudeModelRegistry)
     : codexModels;
+  const claudeProfileCurrent = resolvedClaudeMode === "isolated"
+    && safeProfileCurrent(isClaudeProfileCurrent);
   return {
     ...adapterHealthPayload(),
     uptime_ms: Math.round(process.uptime() * 1000),
@@ -192,7 +204,12 @@ export function runtimeStatusPayload({
     models: codexModels,
     profiles: {
       codex: { mode: "legacy", client: codexRuntime, models: codexModels },
-      claude: { mode: resolvedClaudeMode, client: claudeRuntime, models: claudeModels },
+      claude: {
+        mode: resolvedClaudeMode,
+        profile_current: claudeProfileCurrent,
+        client: claudeRuntime,
+        models: claudeModels,
+      },
     },
     routing: profileRouting({ claudeMode: resolvedClaudeMode }),
     limits: {

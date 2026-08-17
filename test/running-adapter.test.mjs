@@ -76,4 +76,13 @@ test("checkRunningAdapter: rejects old or mismatched adapter versions", async ()
   assert.equal(missingRelay.ok, false);
   assert.equal(missingRelay.incompatible, true);
   assert.deepEqual(missingRelay.requiredCapabilities, ADAPTER_CAPABILITIES);
+
+  const legacyRelay = await checkRunningAdapter({
+    fetchImpl: async () => jsonResp(200, {
+      ...adapterHealthPayload(),
+      capabilities: ["pm_studio_relay_v1"],
+    }),
+  });
+  assert.equal(legacyRelay.ok, false);
+  assert.equal(legacyRelay.incompatible, true);
 });

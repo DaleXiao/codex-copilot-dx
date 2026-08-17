@@ -97,6 +97,24 @@ function isolatedOptions(overrides = {}) {
   };
 }
 
+function isolatedStreamingOptions(fetchImpl, overrides = {}) {
+  return isolatedOptions({
+    fetchImpl,
+    claudeClient: {
+      getApiBase: () => "https://api.githubcopilot.com",
+      async chatCompletions(body, callOptions) {
+        return callOptions.fetchImpl("https://api.githubcopilot.com/chat/completions", {
+          method: "POST",
+          headers: { Authorization: "Bearer isolated-claude-secret" },
+          body: JSON.stringify(body),
+          signal: callOptions.signal,
+        });
+      },
+    },
+    ...overrides,
+  });
+}
+
 test("PM relay requires real loopback and a bearer Authorization header", async () => {
   let upstreamCalls = 0;
   await withRelay({
@@ -112,6 +130,7 @@ test("PM relay requires real loopback and a bearer Authorization header", async 
 
     const success = await request(server, `${PM_STUDIO_RELAY_PREFIX}/models`);
     assert.equal(success.status, 200);
+    assert.equal(success.headers["x-ccdx-pm-relay"], "split-origin-v1");
     assert.equal(upstreamCalls, 1);
 
     const req = { url: `${PM_STUDIO_RELAY_PREFIX}/models`, method: "GET", headers: { authorization: "Bearer x" }, socket: { remoteAddress: "192.0.2.10" } };
@@ -145,6 +164,16 @@ test("PM relay exposes only the explicit path and method matrix and rejects upgr
     assert.equal(wrongChatMethod.status, 405);
     assert.equal(wrongChatMethod.headers.allow, "POST");
 
+    for (const path of ["/responses", "/embeddings"]) {
+      const removed = await request(server, `${PM_STUDIO_RELAY_PREFIX}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: { model: "gpt-enterprise" },
+      });
+      assert.equal(removed.status, 404, path);
+      assert.equal(JSON.parse(removed.body).error.code, "route_not_found", path);
+    }
+
     const upgrade = await request(server, `${PM_STUDIO_RELAY_PREFIX}/models`, {
       headers: { Connection: "Upgrade", Upgrade: "websocket" },
     });
@@ -177,6 +206,7 @@ test("GET /models validates once, preserves enterprise schema and appends only e
       headers: { Connection: "close" },
     });
     assert.equal(result.status, 200);
+    assert.equal(result.headers["x-ccdx-pm-relay"], "split-origin-v1");
     assert.equal(calls.length, 1, "the validation GET must also serve the first /models response");
     assert.equal(calls[0].url, "https://api.githubcopilot.com/models");
     assert.equal(calls[0].init.redirect, "manual");
@@ -208,6 +238,8 @@ test("GET /models is pure enterprise without a valid isolated profile and preser
     },
   }, async (server) => {
     const result = await request(server, `${PM_STUDIO_RELAY_PREFIX}/models`);
+    assert.equal(result.status, 200);
+    assert.equal(result.headers["x-ccdx-pm-relay"], "split-origin-v1");
     assert.equal(result.body.toString(), raw);
 
     const rejected = await request(server, `${PM_STUDIO_RELAY_PREFIX}/chat/completions`, {
@@ -234,59 +266,54 @@ test("GET /models is pure enterprise without a valid isolated profile and preser
   });
 });
 
-test("enterprise POST routes use only the inbound bearer, fixed origin and sanitized headers", async () => {
-  const calls = [];
-  const fetchImpl = async (url, init) => {
-    const body = typeof init.body === "string" ? init.body : "";
-    calls.push({ url, init, body });
-    if (url.endsWith("/models")) return successfulCatalogResponse();
-    return new Response(JSON.stringify({ ok: true, path: new URL(url).pathname }), {
-      headers: {
-        "Content-Type": "application/json",
-        "Set-Cookie": "must-not-leak=1",
-        Connection: "close",
-        "X-GitHub-Request-Id": "post-request",
-      },
+test("GET /models rejects malformed successful catalogs instead of marking their payload compatible", async () => {
+  for (const [name, raw] of [
+    ["invalid JSON", "not-json"],
+    ["missing data", JSON.stringify({ object: "list" })],
+    ["non-array data", JSON.stringify({ object: "list", data: {} })],
+    ["scalar root", "null"],
+  ]) {
+    await withRelay({
+      fetchImpl: async () => new Response(raw, {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    }, async (server) => {
+      const result = await request(server, `${PM_STUDIO_RELAY_PREFIX}/models`);
+      assert.equal(result.status, 502, name);
+      assert.equal(result.headers["x-ccdx-pm-relay"], "split-origin-v1", name);
+      assert.equal(JSON.parse(result.body).error.code, "invalid_upstream", name);
+      assert.notEqual(result.body.toString(), raw, name);
     });
-  };
+  }
+});
 
-  await withRelay({ fetchImpl }, async (server) => {
-    const payload = { model: "gpt-enterprise", input: "hello", stream: false };
-    const result = await request(server, `${PM_STUDIO_RELAY_PREFIX}/responses`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Connection: "x-remove",
-        "X-Remove": "hop-by-hop",
-        "X-PM-Metadata": "kept",
+test("local chat rejects GPT and other non-Claude models before validation or upstream work", async () => {
+  let enterpriseCalls = 0;
+  let claudeCalls = 0;
+  await withRelay(isolatedOptions({
+    fetchImpl: async () => {
+      enterpriseCalls += 1;
+      return successfulCatalogResponse();
+    },
+    claudeClient: {
+      async chatCompletions() {
+        claudeCalls += 1;
+        return Response.json({ id: "unexpected" });
       },
-      body: payload,
-    });
-    assert.equal(result.status, 200);
-    assert.equal(result.headers["set-cookie"], undefined);
-    assert.equal(result.headers["x-upstream-request-id"], "post-request");
-    assert.equal(calls.length, 2);
-    assert.deepEqual(calls.map((call) => call.url), [
-      "https://api.githubcopilot.com/models",
-      "https://api.githubcopilot.com/responses",
-    ]);
-    const forwarded = calls[1];
-    assert.equal(forwarded.init.redirect, "manual");
-    assert.equal(forwarded.init.headers.get("authorization"), `Bearer ${ENTERPRISE_TOKEN}`);
-    assert.equal(forwarded.init.headers.get("x-pm-metadata"), "kept");
-    assert.equal(forwarded.init.headers.has("connection"), false);
-    assert.equal(forwarded.init.headers.has("x-remove"), false);
-    assert.equal(forwarded.init.headers.get("content-length"), String(Buffer.byteLength(forwarded.body)));
-    assert.deepEqual(JSON.parse(forwarded.body), payload);
-
-    const embedding = await request(server, `${PM_STUDIO_RELAY_PREFIX}/embeddings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: { model: "embedding-enterprise", input: "hello" },
-    });
-    assert.equal(embedding.status, 200);
-    assert.equal(calls.length, 3, "a cached fingerprint avoids a second validation request");
-    assert.equal(calls[2].url, "https://api.githubcopilot.com/embeddings");
+    },
+  }), async (server) => {
+    for (const model of ["gpt-enterprise", "embedding-enterprise", "other-model"]) {
+      const result = await request(server, `${PM_STUDIO_RELAY_PREFIX}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: { model, messages: [] },
+      });
+      assert.equal(result.status, 400, model);
+      assert.equal(JSON.parse(result.body).error.code, "native_route_required", model);
+    }
+    assert.equal(enterpriseCalls, 0);
+    assert.equal(claudeCalls, 0);
   });
 });
 
@@ -326,6 +353,7 @@ test("eligible Claude chat uses the isolated client and never forwards inbound A
       body: { model: "claude-allowed", messages: [{ role: "user", content: "hello" }] },
     });
     assert.equal(result.status, 200);
+    assert.equal(result.headers["x-ccdx-pm-relay"], "split-origin-v1");
     assert.equal(enterpriseCalls.length, 2);
     assert.equal(enterpriseCalls[0].url, "https://api.githubcopilot.com/models");
     assert.equal(enterpriseCalls[1].url, "https://api.githubcopilot.com/chat/completions");
@@ -337,19 +365,19 @@ test("eligible Claude chat uses the isolated client and never forwards inbound A
     assert.equal(JSON.stringify(claudeCalls[0]).includes(ENTERPRISE_TOKEN), false);
     assert.ok(claudeCalls[0].callOptions.signal instanceof AbortSignal);
 
-    for (const [path, model] of [
-      ["/chat/completions", "claude-unknown"],
-      ["/chat/completions", "claude-disabled"],
-      ["/responses", "claude-allowed"],
-      ["/embeddings", "claude-allowed"],
+    for (const [path, model, expectedCode] of [
+      ["/chat/completions", "claude-unknown", "model_not_supported"],
+      ["/chat/completions", "claude-disabled", "model_not_supported"],
+      ["/responses", "claude-allowed", "route_not_found"],
+      ["/embeddings", "claude-allowed", "route_not_found"],
     ]) {
       const rejected = await request(server, `${PM_STUDIO_RELAY_PREFIX}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: { model },
       });
-      assert.equal(rejected.status, 400, `${path} ${model}`);
-      assert.equal(JSON.parse(rejected.body).error.code, "model_not_supported");
+      assert.equal(rejected.status, expectedCode === "route_not_found" ? 404 : 400, `${path} ${model}`);
+      assert.equal(JSON.parse(rejected.body).error.code, expectedCode);
     }
     assert.equal(enterpriseCalls.length, 2, "Claude-like IDs must never fall back to enterprise POST");
     assert.equal(claudeCalls.length, 1);
@@ -597,7 +625,7 @@ test("bearer validation bounds same-token waiters without amplifying upstream re
   });
 });
 
-test("bearer validation is singleflight and its TTL never exceeds a parseable token exp", async () => {
+test("Claude chat bearer validation is singleflight and its TTL never exceeds a parseable token exp", async () => {
   let now = 1_000_000;
   const token = `x.${Buffer.from(JSON.stringify({ exp: 1001 })).toString("base64url")}.y`;
   let validations = 0;
@@ -614,12 +642,15 @@ test("bearer validation is singleflight and its TTL never exceeds a parseable to
     return Response.json({ ok: true });
   };
 
-  await withRelay({ fetchImpl, now: () => now, validationTtlMs: 60_000 }, async (server) => {
-    const send = () => request(server, `${PM_STUDIO_RELAY_PREFIX}/embeddings`, {
+  await withRelay(isolatedStreamingOptions(fetchImpl, {
+    now: () => now,
+    validationTtlMs: 60_000,
+  }), async (server) => {
+    const send = () => request(server, `${PM_STUDIO_RELAY_PREFIX}/chat/completions`, {
       method: "POST",
       token,
       headers: { "Content-Type": "application/json" },
-      body: { model: "embedding-enterprise", input: "x" },
+      body: { model: "claude-personal", messages: [], stream: false },
     });
     const first = send();
     const second = send();
@@ -637,7 +668,7 @@ test("bearer validation is singleflight and its TTL never exceeds a parseable to
   });
 });
 
-test("bearer validation does not cache a token whose expiry cannot be established", async () => {
+test("Claude chat bearer validation does not cache a token whose expiry cannot be established", async () => {
   let validations = 0;
   let posts = 0;
   const fetchImpl = async (url) => {
@@ -649,12 +680,14 @@ test("bearer validation does not cache a token whose expiry cannot be establishe
     return Response.json({ ok: true });
   };
 
-  await withRelay({ fetchImpl, validationTtlMs: 60_000 }, async (server) => {
-    const send = () => request(server, `${PM_STUDIO_RELAY_PREFIX}/embeddings`, {
+  await withRelay(isolatedStreamingOptions(fetchImpl, {
+    validationTtlMs: 60_000,
+  }), async (server) => {
+    const send = () => request(server, `${PM_STUDIO_RELAY_PREFIX}/chat/completions`, {
       method: "POST",
       token: "opaque-token-without-expiry",
       headers: { "Content-Type": "application/json" },
-      body: { model: "embedding-enterprise", input: "x" },
+      body: { model: "claude-personal", messages: [], stream: false },
     });
     assert.equal((await send()).status, 200);
     assert.equal((await send()).status, 200);
@@ -675,8 +708,8 @@ test("streaming preserves bytes and backpressure through writeOrDrain", async ()
       },
     }), { headers: { "Content-Type": "text/event-stream", "X-GitHub-Request-Id": "stream-request" } });
   };
-  const handler = createPmStudioRelayHandler({ fetchImpl });
-  const body = JSON.stringify({ model: "gpt-enterprise", messages: [], stream: true });
+  const handler = createPmStudioRelayHandler(isolatedStreamingOptions(fetchImpl));
+  const body = JSON.stringify({ model: "claude-personal", messages: [], stream: true });
   const req = Readable.from([Buffer.from(body)]);
   req.url = `${PM_STUDIO_RELAY_PREFIX}/chat/completions`;
   req.method = "POST";
@@ -693,6 +726,7 @@ test("streaming preserves bytes and backpressure through writeOrDrain", async ()
   res.emit("drain");
   await pending;
   assert.equal(res.statusCode, 200);
+  assert.equal(res.headers["X-CCDX-PM-Relay"], "split-origin-v1");
   assert.equal(Buffer.concat(res.chunks).toString(), "data: first\n\ndata: [DONE]\n\n");
 });
 
@@ -709,11 +743,13 @@ test("handshake timeout and upstream failures are sanitized without leaking bear
       }, { once: true });
     });
   };
-  await withRelay({ fetchImpl, streamHandshakeTimeoutMs: 20 }, async (server) => {
-    const result = await request(server, `${PM_STUDIO_RELAY_PREFIX}/responses`, {
+  await withRelay(isolatedStreamingOptions(fetchImpl, {
+    streamHandshakeTimeoutMs: 20,
+  }), async (server) => {
+    const result = await request(server, `${PM_STUDIO_RELAY_PREFIX}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: { model: "gpt-enterprise", input: "x", stream: true },
+      body: { model: "claude-personal", messages: [], stream: true },
     });
     assert.equal(actualCalls, 1);
     assert.equal(result.status, 504);
@@ -751,13 +787,15 @@ test("stream idle timeout aborts upstream and terminates the downstream stream",
     return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
   };
 
-  await withRelay({ fetchImpl, streamIdleTimeoutMs: 20 }, async (server) => {
+  await withRelay(isolatedStreamingOptions(fetchImpl, {
+    streamIdleTimeoutMs: 20,
+  }), async (server) => {
     const address = server.address();
     const result = await new Promise((resolve, reject) => {
       const req = http.request({
         host: "127.0.0.1",
         port: address.port,
-        path: `${PM_STUDIO_RELAY_PREFIX}/responses`,
+        path: `${PM_STUDIO_RELAY_PREFIX}/chat/completions`,
         method: "POST",
         headers: { Authorization: `Bearer ${ENTERPRISE_TOKEN}`, "Content-Type": "application/json" },
       }, (res) => {
@@ -768,7 +806,7 @@ test("stream idle timeout aborts upstream and terminates the downstream stream",
         res.on("error", () => {});
       });
       req.on("error", reject);
-      req.end(JSON.stringify({ model: "gpt-enterprise", input: "x", stream: true }));
+      req.end(JSON.stringify({ model: "claude-personal", messages: [], stream: true }));
     });
     assert.equal(result.status, 200);
     assert.equal(result.body.toString(), "data: first\n\n");
@@ -795,8 +833,10 @@ test("stream idle timeout also releases a downstream backpressure wait", async (
     }, { once: true });
     return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
   };
-  const handler = createPmStudioRelayHandler({ fetchImpl, streamIdleTimeoutMs: 20 });
-  const body = JSON.stringify({ model: "gpt-enterprise", messages: [], stream: true });
+  const handler = createPmStudioRelayHandler(isolatedStreamingOptions(fetchImpl, {
+    streamIdleTimeoutMs: 20,
+  }));
+  const body = JSON.stringify({ model: "claude-personal", messages: [], stream: true });
   const req = Readable.from([Buffer.from(body)]);
   req.url = `${PM_STUDIO_RELAY_PREFIX}/chat/completions`;
   req.method = "POST";
@@ -838,7 +878,9 @@ test("client abort cancels an open upstream stream", async () => {
     return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
   };
 
-  await withRelay({ fetchImpl, streamIdleTimeoutMs: 5_000 }, async (server) => {
+  await withRelay(isolatedStreamingOptions(fetchImpl, {
+    streamIdleTimeoutMs: 5_000,
+  }), async (server) => {
     const address = server.address();
     const req = http.request({
       host: "127.0.0.1",
@@ -852,7 +894,7 @@ test("client abort cancels an open upstream stream", async () => {
       res.once("data", () => res.destroy());
       res.on("error", () => {});
     });
-    req.end(JSON.stringify({ model: "gpt-enterprise", messages: [], stream: true }));
+    req.end(JSON.stringify({ model: "claude-personal", messages: [], stream: true }));
     await Promise.race([aborted, delay(1_000).then(() => { throw new Error("upstream was not aborted"); })]);
     assert.equal(upstreamAborted, true);
   });

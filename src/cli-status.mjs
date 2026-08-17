@@ -73,7 +73,7 @@ function routingTarget(value) {
 function pmRouteSummary(requests = {}) {
   const routes = requests.by_route;
   if (!routes || typeof routes !== "object") return null;
-  const names = ["pm_models", "pm_chat_completions", "pm_responses", "pm_embeddings"];
+  const names = ["pm_models", "pm_chat_completions"];
   const totals = names.reduce((summary, name) => {
     const route = routes[name] || {};
     summary.total += finiteNumber(route.total) || 0;
@@ -81,7 +81,7 @@ function pmRouteSummary(requests = {}) {
     summary.errors += finiteNumber(route.errors) || 0;
     return summary;
   }, { total: 0, active: 0, errors: 0 });
-  return `PM relay: ${count(totals.total)} requests, ${count(totals.active)} active, ${count(totals.errors)} errors; models ${count(routes.pm_models?.total)}, chat ${count(routes.pm_chat_completions?.total)}, responses ${count(routes.pm_responses?.total)}, embeddings ${count(routes.pm_embeddings?.total)}`;
+  return `PM relay: ${count(totals.total)} requests, ${count(totals.active)} active, ${count(totals.errors)} errors; models ${count(routes.pm_models?.total)}, chat ${count(routes.pm_chat_completions?.total)}`;
 }
 
 function errorCode(error) {

@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   formatPmStudioStatus,
   inspectPmStudioStatus,
+  probePmStudioRelay,
 } from "../src/pm-studio-status.mjs";
 import { pmStudioPatchManifestPath } from "../src/pm-studio-setup.mjs";
 
@@ -50,7 +51,7 @@ const adapterHealth = Object.freeze({
   pid: 4321,
   version: "0.6.5",
   protocol_version: 2,
-  capabilities: ["pm_studio_relay_v1"],
+  capabilities: ["pm_studio_split_origin_v1"],
   instance_id: "adapter-fixture",
 });
 
@@ -63,8 +64,6 @@ function runtimeData(overrides = {}) {
       by_route: {
         pm_models: {},
         pm_chat_completions: {},
-        pm_responses: {},
-        pm_embeddings: {},
       },
     },
     ...overrides,
@@ -121,19 +120,49 @@ function options(overrides = {}) {
       baseUrl: "http://127.0.0.1:2026",
       data: runtimeData(),
     }),
+    probePmStudioRelayFn: async () => ({ status: 401, marker: "split-origin-v1" }),
     ...overrides,
   };
 }
 
+test("probePmStudioRelay performs an exact credential-free models probe", async () => {
+  const calls = [];
+  const result = await probePmStudioRelay({
+    baseUrl: "http://127.0.0.1:2026",
+    fetchImpl: async (...args) => {
+      calls.push(args);
+      return new Response(JSON.stringify({ error: { code: "invalid_authorization" } }), {
+        status: 401,
+        headers: { "X-CCDX-PM-Relay": "split-origin-v1" },
+      });
+    },
+  });
+
+  assert.deepEqual(result, { status: 401, marker: "split-origin-v1" });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "http://127.0.0.1:2026/pm-ccdx/models");
+  assert.equal(calls[0][1].method, "GET");
+  assert.equal(calls[0][1].redirect, "error");
+  assert.equal(new Headers(calls[0][1].headers).has("authorization"), false);
+});
+
 test("inspectPmStudioStatus reports a fully operational exact patch", async () => {
-  const result = await inspectPmStudioStatus(options());
+  const probeCalls = [];
+  const result = await inspectPmStudioStatus(options({
+    probePmStudioRelayFn: async (probeOptions) => {
+      probeCalls.push(probeOptions);
+      return { status: 401, marker: "split-origin-v1" };
+    },
+  }));
   assert.equal(result.ok, true);
   assert.equal(result.app.state, "patched");
   assert.equal(result.app.recipe, recipe.id);
   assert.equal(result.app.patchRecord.valid, true);
   assert.equal(result.runtime.ok, true);
+  assert.deepEqual(result.runtime.relayProbe, { status: 401, marker: "split-origin-v1" });
+  assert.deepEqual(probeCalls, [{ baseUrl: "http://127.0.0.1:2026" }]);
   assert.equal(result.claude.login, "personal");
-  assert.match(formatPmStudioStatus(result), /PM GPT uses the PM Studio bearer/);
+  assert.match(formatPmStudioStatus(result), /PM GPT uses its native official GitHub Copilot path/);
 });
 
 test("inspectPmStudioStatus selects the exact 2.9.10 recipe", async () => {
@@ -319,7 +348,16 @@ test("inspectPmStudioStatus reads the installed patch record and fails closed fo
   assert.match(formatPmStudioStatus(verified), /installed patch record/);
 });
 
-test("inspectPmStudioStatus requires isolated Claude routing and every PM relay route from the live adapter", async () => {
+test("inspectPmStudioStatus requires split-origin capability, isolated Claude routing and every local PM route", async () => {
+  const legacyRelay = await inspectPmStudioStatus(options({
+    readAdapterStatusFn: async () => ({
+      baseUrl: "http://127.0.0.1:2026",
+      data: runtimeData({ capabilities: ["pm_studio_relay_v1"] }),
+    }),
+  }));
+  assert.equal(legacyRelay.ok, false);
+  assert.match(legacyRelay.runtime.issues.join("\n"), /split-origin relay capability is missing/);
+
   const inherited = await inspectPmStudioStatus(options({
     readAdapterStatusFn: async () => ({
       baseUrl: "http://127.0.0.1:2026",
@@ -330,7 +368,7 @@ test("inspectPmStudioStatus requires isolated Claude routing and every PM relay 
   assert.match(inherited.runtime.issues.join("\n"), /not isolated/);
 
   const routes = runtimeData().requests.by_route;
-  delete routes.pm_embeddings;
+  delete routes.pm_chat_completions;
   const missingRoute = await inspectPmStudioStatus(options({
     readAdapterStatusFn: async () => ({
       baseUrl: "http://127.0.0.1:2026",
@@ -338,11 +376,11 @@ test("inspectPmStudioStatus requires isolated Claude routing and every PM relay 
     }),
   }));
   assert.equal(missingRoute.ok, false);
-  assert.match(missingRoute.runtime.issues.join("\n"), /pm_embeddings/);
+  assert.match(missingRoute.runtime.issues.join("\n"), /pm_chat_completions/);
 
   const output = formatPmStudioStatus(missingRoute);
   assert.match(output, /PM relay routing is not ready/);
-  assert.doesNotMatch(output, /PM relay and isolated Claude routing are verified/);
+  assert.doesNotMatch(output, /PM model discovery and isolated Claude routing are verified/);
 
   const staleProfile = await inspectPmStudioStatus(options({
     readAdapterStatusFn: async () => ({
@@ -352,6 +390,29 @@ test("inspectPmStudioStatus requires isolated Claude routing and every PM relay 
   }));
   assert.equal(staleProfile.ok, false);
   assert.match(staleProfile.runtime.issues.join("\n"), /do not match the current isolated profile/);
+});
+
+test("inspectPmStudioStatus requires the live relay probe to return 401 with the split-origin marker", async () => {
+  const missingMarker = await inspectPmStudioStatus(options({
+    probePmStudioRelayFn: async () => ({ status: 401, marker: "" }),
+  }));
+  assert.equal(missingMarker.ok, false);
+  assert.equal(missingMarker.runtime.ok, false);
+  assert.match(missingMarker.runtime.issues.join("\n"), /compatibility marker/);
+
+  const wrongStatus = await inspectPmStudioStatus(options({
+    probePmStudioRelayFn: async () => ({ status: 200, marker: "split-origin-v1" }),
+  }));
+  assert.equal(wrongStatus.ok, false);
+  assert.equal(wrongStatus.runtime.ok, false);
+  assert.match(wrongStatus.runtime.issues.join("\n"), /returned HTTP 200; expected 401/);
+
+  const failedProbe = await inspectPmStudioStatus(options({
+    probePmStudioRelayFn: async () => { throw new Error("probe unavailable"); },
+  }));
+  assert.equal(failedProbe.ok, false);
+  assert.equal(failedProbe.runtime.ok, false);
+  assert.match(failedProbe.runtime.issues.join("\n"), /relay probe failed: probe unavailable/);
 });
 
 test("inspectPmStudioStatus rejects stale or unreadable live runtime status", async () => {
@@ -392,6 +453,17 @@ test("inspectPmStudioStatus fails closed for unsupported versions", async () => 
   assert.match(formatPmStudioStatus(result), /no exact patch recipe/);
 });
 
+test("formatPmStudioStatus identifies a legacy global-origin patch and gives the migration command", async () => {
+  const result = await inspectPmStudioStatus(options({
+    inspectApp: () => ({ ...patchedInspection(), state: "legacy" }),
+  }));
+  const output = formatPmStudioStatus(result);
+  assert.equal(result.ok, false);
+  assert.equal(result.app.state, "legacy");
+  assert.match(output, /legacy global-origin patch; run ccdx pms setup to migrate/);
+  assert.doesNotMatch(output, /inspection failed/);
+});
+
 test("inspectPmStudioStatus reports missing optional dependencies without throwing", async () => {
   const result = await inspectPmStudioStatus(options({
     existsSync: () => false,
@@ -417,7 +489,7 @@ test("formatPmStudioStatus renders a component table for an interactive terminal
   assert.match(output, /App patch\s+\[OK\]\s+2\.9\.7 build 2090700; patched and verified/);
   assert.match(output, /Claude profile\s+\[OK\]\s+personal; isolated profile valid/);
   assert.match(output, /PM relay\s+\[OK\]\s+verified at http:\/\/127\.0\.0\.1:2026/);
-  assert.match(output, /Routing\s+\[INFO\]\s+GPT -> PM bearer; Claude -> isolated profile/);
+  assert.match(output, /Routing\s+\[INFO\]\s+GPT -> native official; models\/Claude -> local/);
   assert.doesNotMatch(output, /Details:/);
 });
 
@@ -457,7 +529,7 @@ test("formatPmStudioStatus compact table preserves errors and recovery commands"
   assert.match(output, /run ccdx pms setup/);
   assert.match(output, /run ccdx auth login claude --reauth --github-login <personal-login>/);
   assert.match(output, /run ccdx start/);
-  assert.match(output, /Expected routing: PM GPT uses the PM Studio bearer/);
+  assert.match(output, /Expected routing: PM GPT uses its native official GitHub Copilot path/);
 });
 
 test("formatPmStudioStatus table details neutralize terminal-control and line injection", () => {

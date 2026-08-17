@@ -16,6 +16,11 @@ import {
   pmStudioPatchManifestPath,
 } from "./pm-studio-setup.mjs";
 import { readAdapterStatus } from "./cli-status.mjs";
+import {
+  PM_STUDIO_RELAY_MARKER_HEADER,
+  PM_STUDIO_RELAY_MARKER_VALUE,
+  PM_STUDIO_RELAY_PREFIX,
+} from "./pm-studio-relay.mjs";
 import { checkRunningAdapter } from "./running-adapter.mjs";
 import { status } from "./status.mjs";
 import {
@@ -27,12 +32,11 @@ import {
 
 const PM_RELAY_HOST = "127.0.0.1";
 const PM_RELAY_PORT = 2026;
-const PM_RELAY_CAPABILITY = "pm_studio_relay_v1";
+const PM_RELAY_PROBE_TIMEOUT_MS = 500;
+const PM_RELAY_CAPABILITY = "pm_studio_split_origin_v1";
 const PM_RELAY_ROUTE_NAMES = Object.freeze([
   "pm_models",
   "pm_chat_completions",
-  "pm_responses",
-  "pm_embeddings",
 ]);
 
 function selectRecipe(metadata, recipes) {
@@ -43,6 +47,31 @@ function selectRecipe(metadata, recipes) {
 
 function safeMessage(error) {
   return String(error?.message || "inspection failed").replace(/\s+/g, " ").trim();
+}
+
+export async function probePmStudioRelay({
+  baseUrl,
+  fetchImpl = fetch,
+  timeoutMs = PM_RELAY_PROBE_TIMEOUT_MS,
+} = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(new URL(`${PM_STUDIO_RELAY_PREFIX}/models`, baseUrl).href, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      redirect: "error",
+      signal: controller.signal,
+    });
+    const result = {
+      status: response.status,
+      marker: response.headers.get(PM_STUDIO_RELAY_MARKER_HEADER) || "",
+    };
+    await response.body?.cancel().catch(() => {});
+    return result;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function inspectClaudeProfile(home, readCredentials) {
@@ -73,7 +102,7 @@ function inspectAdapterRuntime(adapter, runtimeStatus) {
     issues.push("health and runtime status do not describe the same adapter instance");
   }
   const capabilities = new Set(Array.isArray(data.capabilities) ? data.capabilities : []);
-  if (!capabilities.has(PM_RELAY_CAPABILITY)) issues.push("PM Studio relay capability is missing");
+  if (!capabilities.has(PM_RELAY_CAPABILITY)) issues.push("PM Studio split-origin relay capability is missing");
   if (data.profiles?.claude?.mode !== "isolated") issues.push("Claude profile mode is not isolated");
   if (data.profiles?.claude?.profile_current !== true) {
     issues.push("running Claude credentials do not match the current isolated profile");
@@ -93,6 +122,21 @@ function inspectAdapterRuntime(adapter, runtimeStatus) {
   };
 }
 
+function inspectRelayProbe(runtime, probe) {
+  const relayProbe = {
+    status: probe?.status,
+    marker: String(probe?.marker || ""),
+  };
+  const issues = [...runtime.issues];
+  if (relayProbe.status !== 401) {
+    issues.push(`PM Studio relay probe returned HTTP ${relayProbe.status ?? "unknown"}; expected 401`);
+  }
+  if (relayProbe.marker !== PM_STUDIO_RELAY_MARKER_VALUE) {
+    issues.push("PM Studio relay compatibility marker is missing or incompatible");
+  }
+  return { ...runtime, relayProbe, ok: issues.length === 0, issues };
+}
+
 export async function inspectPmStudioStatus({
   appPath = DEFAULT_PM_STUDIO_APP_PATH,
   home = os.homedir(),
@@ -105,6 +149,7 @@ export async function inspectPmStudioStatus({
   readClaudeCredentials = readAuthProfileCredentials,
   checkRunningAdapterFn = checkRunningAdapter,
   readAdapterStatusFn = readAdapterStatus,
+  probePmStudioRelayFn = probePmStudioRelay,
 } = {}) {
   const operations = createPmStudioSetupOperations(operationOverrides);
   let app;
@@ -163,6 +208,18 @@ export async function inspectPmStudioStatus({
     } catch (error) {
       runtime = { ok: false, baseUrl: adapter.baseUrl, data: null, issues: [safeMessage(error)] };
     }
+    if (runtime.data) {
+      try {
+        runtime = inspectRelayProbe(runtime, await probePmStudioRelayFn({ baseUrl: adapter.baseUrl }));
+      } catch (error) {
+        runtime = {
+          ...runtime,
+          ok: false,
+          relayProbe: null,
+          issues: [...runtime.issues, `PM Studio relay probe failed: ${safeMessage(error)}`],
+        };
+      }
+    }
   }
   const operational = app.state === "patched"
     && app.patchRecord?.valid === true
@@ -181,6 +238,9 @@ function appStatusItem(result, commandName) {
   if (app.state === "patched") {
     const reason = app.patchRecord?.reason || "installed patch record is missing";
     return { kind: "err", component: "App patch", detail: `${version}; patch record not verified`, message: `PM Studio ${version} matches the patch recipe, but its installed patch record is not verified: ${reason}` };
+  }
+  if (app.state === "legacy") {
+    return { kind: "err", component: "App patch", detail: `${version}; legacy global-origin patch`, message: `PM Studio ${version} has a legacy global-origin patch; run ${commandName} pms setup to migrate` };
   }
   if (app.state === "clean") return { kind: "warn", component: "App patch", detail: `${version}; supported, not patched`, message: `PM Studio ${version} is supported but not patched; run ${commandName} pms setup` };
   if (app.state === "unsupported") return { kind: "err", component: "App patch", detail: `${version}; unsupported version`, message: `PM Studio ${version} has no exact patch recipe; no files will be changed` };
@@ -203,7 +263,7 @@ function pmStudioStatusItems(result, commandName) {
     items.push({ kind: "err", component: "Claude profile", detail: "not ready", message: `Isolated Claude profile is not ready${reason}; run ${PM_STUDIO_CLAUDE_AUTH_COMMAND}` });
   }
   if (result.adapter?.ok && result.runtime?.ok) {
-    items.push({ kind: "ok", component: "PM relay", detail: `verified at ${result.adapter.baseUrl}`, message: `PM relay and isolated Claude routing are verified at ${result.adapter.baseUrl}` });
+    items.push({ kind: "ok", component: "PM relay", detail: `verified at ${result.adapter.baseUrl}`, message: `PM model discovery and isolated Claude routing are verified at ${result.adapter.baseUrl}` });
   } else if (result.adapter?.ok) {
     const reason = result.runtime?.issues?.join("; ") || "runtime status is unavailable";
     items.push({ kind: "err", component: "PM relay", detail: "running but routing not ready", message: `The adapter is running at ${result.adapter.baseUrl}, but PM relay routing is not ready: ${reason}; stop it and run ${commandName} start` });
@@ -213,9 +273,9 @@ function pmStudioStatusItems(result, commandName) {
     items.push({ kind: "warn", component: "PM relay", detail: `not running at ${PM_RELAY_HOST}:${PM_RELAY_PORT}`, message: `PM relay is not running at http://${PM_RELAY_HOST}:${PM_RELAY_PORT}; run ${commandName} start` });
   }
   if (result.runtime?.ok) {
-    items.push({ kind: "info", component: "Routing", detail: "GPT -> PM bearer; Claude -> isolated profile", message: "Routing: PM GPT uses the PM Studio bearer; eligible Claude chat uses the isolated Claude profile" });
+    items.push({ kind: "info", component: "Routing", detail: "GPT -> native official; models/Claude -> local", message: "Routing: PM GPT uses its native official GitHub Copilot path; model discovery and eligible Claude chat use the local CCDX relay" });
   } else {
-    items.push({ kind: "info", component: "Routing", detail: "expected: GPT -> PM bearer; Claude -> isolated profile", message: "Expected routing: PM GPT uses the PM Studio bearer; eligible Claude chat uses the isolated Claude profile" });
+    items.push({ kind: "info", component: "Routing", detail: "expected: GPT -> native official; models/Claude -> local", message: "Expected routing: PM GPT uses its native official GitHub Copilot path; model discovery and eligible Claude chat use the local CCDX relay" });
   }
   return items;
 }

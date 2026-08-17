@@ -2,7 +2,21 @@ import { createHash } from "node:crypto";
 
 export const PM_STUDIO_ORIGIN = "https://api.githubcopilot.com";
 export const CCDX_PM_STUDIO_ORIGIN = "http://127.0.0.1:2026/pm-ccdx";
+export const PM_STUDIO_SPLIT_ORIGIN_MARKER = "split-origin-v1";
 export const ELECTRON_ASAR_INTEGRITY_SENTINEL = "AGbevlPCksUGKNL8TSn7wGmJEuJsXb2A";
+
+const PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH = 2_121;
+const PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE_SHA256 = "3da6245d676015ab6cd26e4d6a0d2f54894a687c370aa419c5ad170533d086aa";
+
+function splitOriginConfigModule() {
+  const source = `47024(I,e,t){"use strict";t.d(e,{qn:()=>l});const l={CLIENT_ID:"Iv1.b507a08c87ecfe98",CLIENT_SECRET:void 0,API_ENDPOINT:"${PM_STUDIO_ORIGIN}",DEVICE_CODE_URL:"https://github.com/login/device/code",ACCESS_TOKEN_URL:"https://github.com/login/oauth/access_token",COPILOT_TOKEN_URL:"https://api.github.com/copilot_internal/v2/token",USER_AGENT:"GitHubCopilotChat/0.26.7",EDITOR_VERSION:"vscode/1.99.3",EDITOR_PLUGIN_VERSION:"copilot-chat/0.26.7",INTEGRATION_ID:"vscode-chat",STANDARD_HEADERS:{Accept:"application/json","Content-Type":"application/json","User-Agent":"GitHubCopilotChat/0.26.7","Editor-Version":"vscode/1.99.3","Editor-Plugin-Version":"copilot-chat/0.26.7","Copilot-Integration-Id":"vscode-chat","X-Request-Id":()=>\`req_\${Date.now()}_\${Math.random().toString(36).substr(2,9)}\`}};const c=fetch.bind(globalThis),n="${CCDX_PM_STUDIO_ORIGIN}",a="${PM_STUDIO_SPLIT_ORIGIN_MARKER}",h="X-CCDX-PM-Relay",d=new Set,m=I=>I.headers.get(h)===a,q=I=>AbortSignal.any([I,AbortSignal.timeout(750)].filter(Boolean)),f=(I,e=400)=>Response.json({error:{code:I}},{status:e,headers:{[h]:a}});globalThis.fetch=async(I,e)=>{const t=I.url||I+"";if(t===\`\${l.API_ENDPOINT}/models\`){try{const t=await c(\`\${n}/models\`,{...e,signal:q(e?.signal)});if(t.ok&&m(t))try{let I=await t.clone().json(),e=I.data||I;if(Array.isArray(e)){d.clear();for(const I of e)/anthropic/i.test(I.vendor||I.owned_by)&&d.add(I.id);return t}}catch{}t.body?.cancel?.()?.catch?.(()=>{})}catch(I){if(e?.signal?.aborted)throw e.signal.reason||I}return c(I,e)}const s=t.startsWith(l.API_ENDPOINT)?t.slice(l.API_ENDPOINT.length):"";if("POST"===e?.method&&["/chat/completions","/responses","/embeddings"].includes(s)){let t="";try{t=(JSON.parse(e.body).model||"").trim()}catch{}if(d.has(t)||/^claude-/i.test(t)){if("/chat/completions"!==s)return f("model_not_supported");try{const I=await c(\`\${n}/models\`,{signal:q(e?.signal)}),t=401===I.status&&m(I);await I.text();if(!t)throw 0;const l=await c(\`\${n}\${s}\`,e);if(!m(l)){await l.body?.cancel?.();throw 0}return l}catch(I){if(e?.signal?.aborted)throw e.signal.reason||I;return f("relay_incompatible",503)}}}return c(I,e)}}`;
+  if (source.length > PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH) {
+    throw new Error("PM Studio split-origin module exceeds its exact source window");
+  }
+  return `${source.slice(0, -1)}${" ".repeat(PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH - source.length)}}`;
+}
+
+export const PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE = splitOriginConfigModule();
 
 export const PM_STUDIO_2_9_7_RECIPE = Object.freeze({
   id: "pm-studio-2.9.7-build-2.9.7",
@@ -21,50 +35,43 @@ export const PM_STUDIO_2_9_7_RECIPE = Object.freeze({
   dataOffset: 3_832_764,
   sourceAsarSha256: "36fb8bf2fc9326ddf49baab5cc0b54b38751a7db041bda3c42a3b01107b54118",
   sourceHeaderSha256: "87746d92e00db2d40c03830ea06de22ec7cba112d07729801ccd02e226ffd961",
-  patchedAsarSha256: "3dd0f53cdaa35a644d2cf56e4fc2dd20f5c90dc2989b6d81a467ef00ebb620a7",
-  patchedHeaderSha256: "86ed1113a563b82ecec05de89aab87a5fd1666f35bee76e2d76e2ed5f6dcb3fa",
-  sourceSentinel: PM_STUDIO_ORIGIN,
-  patchedSentinel: CCDX_PM_STUDIO_ORIGIN,
+  patchedAsarSha256: "d520d115604225c1a3feb749dbe29ad0d2cd175c5233c010de0e1fade527fa0b",
+  patchedHeaderSha256: "83e5fba3b6751b3098d8f6901db361a9b620ab3b924e0e551d3df612ff412642",
   targets: Object.freeze([
     Object.freeze({
       path: "dist/main/main.js",
       offset: 101_621_627,
       size: 9_909_974,
-      sentinelOffset: 1_120_480,
-      absoluteSentinelOffset: 106_574_871,
-      sentinelCount: 1,
       blockSize: 4_194_304,
       sourceSha256: "58383be112886becdb8d8e7cce1b3efce07be6716190aa4940627f456eb8edb2",
-      patchedSha256: "24f1c47831c30f59e8464a66237c6bc9ed771d79f3a6889019dfdf53bc20fe42",
+      patchedSha256: "69156040fb233a835b7be2f86fbe2f653380f03379adfedf46c63ab45de9d39d",
       sourceBlocks: Object.freeze([
         "3ce05a21e8992ccf12966cf9b78fcd28b2f66e6786489b5bb0a06f1d4b2a0c1e",
         "0a4832413d8d8cdda67c8bb318c0e5c25df20c75802d637097ffd045a31cd443",
         "bcc10582d8a74717f8f81b98182d3551f1eaf23eb9cadd908d160ce5e4ef8cba",
       ]),
       patchedBlocks: Object.freeze([
-        "afc18cc7d56cce6dd6f3bade8661268a534f2de93de5ba638f6609d2638c7436",
+        "f0b5585d2ff0d403e5c4d35e9bd0b8cbfec5c41a9b9057b8cc808107e889cf46",
         "0a4832413d8d8cdda67c8bb318c0e5c25df20c75802d637097ffd045a31cd443",
         "bcc10582d8a74717f8f81b98182d3551f1eaf23eb9cadd908d160ce5e4ef8cba",
       ]),
-    }),
-    Object.freeze({
-      path: "dist/renderer/js/main.09f18d95.js",
-      offset: 137_002_230,
-      size: 2_469_533,
-      sentinelOffset: 489_935,
-      absoluteSentinelOffset: 141_324_929,
-      sentinelCount: 1,
-      blockSize: 4_194_304,
-      sourceSha256: "eb63abf35be3db101da179789e8ffdcc5b67131258ac8d7976109713ff0cc994",
-      patchedSha256: "89bbea9516a914da3fa4f32befd33d0dbb0e63b09545e4d85392bccb52adc145",
-      sourceBlocks: Object.freeze([
-        "eb63abf35be3db101da179789e8ffdcc5b67131258ac8d7976109713ff0cc994",
-      ]),
-      patchedBlocks: Object.freeze([
-        "89bbea9516a914da3fa4f32befd33d0dbb0e63b09545e4d85392bccb52adc145",
-      ]),
+      edit: Object.freeze({
+        offset: 1_120_359,
+        absoluteOffset: 106_574_750,
+        length: PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH,
+        anchor: "47024(I,e,t){",
+        anchorCount: 1,
+        sourceSha256: PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE_SHA256,
+        patchedSha256: "a5b9312ed78e8a7fc3bd38f7ea5d4ab008f21bae18ba3dd6aa2d4be6b69191db",
+        replacement: PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE,
+      }),
     }),
   ]),
+  legacy: Object.freeze({
+    kind: "global-origin-replacement",
+    asarSha256: "3dd0f53cdaa35a644d2cf56e4fc2dd20f5c90dc2989b6d81a467ef00ebb620a7",
+    headerSha256: "86ed1113a563b82ecec05de89aab87a5fd1666f35bee76e2d76e2ed5f6dcb3fa",
+  }),
 });
 
 export const PM_STUDIO_2_9_10_RECIPE = Object.freeze({
@@ -117,50 +124,43 @@ export const PM_STUDIO_2_9_10_RECIPE = Object.freeze({
   dataOffset: 3_833_292,
   sourceAsarSha256: "d243860770e8b1d8044213924f9704d1fc52f900d6c33461eff6358962330b78",
   sourceHeaderSha256: "5fc77d5b61e9647fba10fd2bd5752d0889c14da5a00b21d31bc48fdcccf74a69",
-  patchedAsarSha256: "49f72d999a6085102341c2d551577e164db6f22e4707d2112efa3fd280e7315e",
-  patchedHeaderSha256: "b264ece5b8e469cd3885a7a91f904f1902e1991f214ecbf228dfe91059ac7008",
-  sourceSentinel: PM_STUDIO_ORIGIN,
-  patchedSentinel: CCDX_PM_STUDIO_ORIGIN,
+  patchedAsarSha256: "ea28d998056b32ca4115d208a4d81ce629c83f3f5f89c6a66d50749849beb6fc",
+  patchedHeaderSha256: "348d80f5f2d1ebb92e6089195b1703b87467678f80d8946b8ab83b3ead03e5be",
   targets: Object.freeze([
     Object.freeze({
       path: "dist/main/main.js",
       offset: 101_622_115,
       size: 10_150_157,
-      sentinelOffset: 1_241_344,
-      absoluteSentinelOffset: 106_696_751,
-      sentinelCount: 1,
       blockSize: 4_194_304,
       sourceSha256: "03607bb1edc068396b99f02b9c9e0d8e10388fb658afc112e06e875c123dbc27",
-      patchedSha256: "e400300575e2d1c5ad089613f14e138612114547ff5060e94cb81e8de587a75a",
+      patchedSha256: "b5b5e37af3d06ffc603bdef620fc1e0254580f0ee325f1a77096af6c78379b79",
       sourceBlocks: Object.freeze([
         "3910a9bc5459f493956aafee7b3644e8d242027758f0dcdea97d7c10a324c6bf",
         "49fa64c68425d35b1baff0d5745d856d377e014a7a7829322cd1b39aade9532e",
         "bd7cc14a1d2e02abe66c0ec6fc4e97b263cfc1f67c4ae39e956c06d3bcc2fe67",
       ]),
       patchedBlocks: Object.freeze([
-        "74022f5ad06c7879b37875efe0a090b23ccfbcf269afd26b10b77690413dca63",
+        "63aa15d8c44614a7b2d9656ddba23109d40bab66b66b36339154953bd164da75",
         "49fa64c68425d35b1baff0d5745d856d377e014a7a7829322cd1b39aade9532e",
         "bd7cc14a1d2e02abe66c0ec6fc4e97b263cfc1f67c4ae39e956c06d3bcc2fe67",
       ]),
-    }),
-    Object.freeze({
-      path: "dist/renderer/js/main.5ad30c24.js",
-      offset: 137_266_992,
-      size: 2_520_547,
-      sentinelOffset: 528_919,
-      absoluteSentinelOffset: 141_629_203,
-      sentinelCount: 1,
-      blockSize: 4_194_304,
-      sourceSha256: "3d123f7a3eb91777f723fe2c4d412677e6722b6348373e4b4bfda41dda8b60ad",
-      patchedSha256: "dc4a9d550f4beb3a2cd7ad0fa6fc82286106762bdf789189d8f88abd0a90f619",
-      sourceBlocks: Object.freeze([
-        "3d123f7a3eb91777f723fe2c4d412677e6722b6348373e4b4bfda41dda8b60ad",
-      ]),
-      patchedBlocks: Object.freeze([
-        "dc4a9d550f4beb3a2cd7ad0fa6fc82286106762bdf789189d8f88abd0a90f619",
-      ]),
+      edit: Object.freeze({
+        offset: 1_241_223,
+        absoluteOffset: 106_696_630,
+        length: PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH,
+        anchor: "47024(I,e,t){",
+        anchorCount: 1,
+        sourceSha256: PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE_SHA256,
+        patchedSha256: "a5b9312ed78e8a7fc3bd38f7ea5d4ab008f21bae18ba3dd6aa2d4be6b69191db",
+        replacement: PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE,
+      }),
     }),
   ]),
+  legacy: Object.freeze({
+    kind: "global-origin-replacement",
+    asarSha256: "49f72d999a6085102341c2d551577e164db6f22e4707d2112efa3fd280e7315e",
+    headerSha256: "b264ece5b8e469cd3885a7a91f904f1902e1991f214ecbf228dfe91059ac7008",
+  }),
 });
 
 export const PM_STUDIO_RECIPES = Object.freeze([
@@ -334,7 +334,7 @@ function addMismatch(issues, label, actual, expected) {
   if (actual !== expected) issues.push(`${label}: expected ${expected}, got ${actual}`);
 }
 
-function inspectTarget(parsed, target, recipe) {
+function inspectTarget(parsed, target) {
   const entry = findAsarEntry(parsed.header, target.path);
   if (!entry) return { path: target.path, missing: true };
 
@@ -352,8 +352,28 @@ function inspectTarget(parsed, target, recipe) {
   }
 
   const bytes = parsed.buffer.subarray(absoluteOffset, absoluteOffset + size);
-  const sourceSentinel = Buffer.from(recipe.sourceSentinel);
-  const patchedSentinel = Buffer.from(recipe.patchedSentinel);
+  let edit = null;
+  if (target.edit) {
+    let editOffset;
+    let editLength;
+    try {
+      editOffset = integer(target.edit.offset, `${target.path} edit offset`);
+      editLength = integer(target.edit.length, `${target.path} edit length`);
+    } catch (error) {
+      return { path: target.path, offset, size, absoluteOffset, malformed: error.message };
+    }
+    if (editLength === 0 || editOffset + editLength > bytes.length) {
+      return { path: target.path, offset, size, absoluteOffset, malformed: "edit window is outside the target" };
+    }
+    const anchor = Buffer.from(target.edit.anchor || "");
+    edit = {
+      offset: editOffset,
+      absoluteOffset: absoluteOffset + editOffset,
+      length: editLength,
+      sha256: sha256Hex(bytes.subarray(editOffset, editOffset + editLength)),
+      anchorPositions: occurrencePositions(bytes, anchor),
+    };
+  }
   return {
     path: target.path,
     offset,
@@ -363,20 +383,17 @@ function inspectTarget(parsed, target, recipe) {
     blockSize: entry.integrity?.blockSize,
     blocks: blockSha256(bytes, target.blockSize),
     integrity: entry.integrity || null,
-    sourceSentinelPositions: occurrencePositions(bytes, sourceSentinel),
-    patchedSentinelPositions: occurrencePositions(bytes, patchedSentinel),
+    edit,
   };
 }
 
-function targetStateIssues(detail, target, recipe, state) {
+function targetStateIssues(detail, target, state) {
   const issues = [];
   if (detail.missing) return [`${target.path}: entry is missing`];
   if (detail.malformed) return [`${target.path}: ${detail.malformed}`];
 
   addMismatch(issues, `${target.path} offset`, detail.offset, target.offset);
   addMismatch(issues, `${target.path} size`, detail.size, target.size);
-  addMismatch(issues, `${target.path} absolute sentinel offset`,
-    detail.absoluteOffset + target.sentinelOffset, target.absoluteSentinelOffset);
   addMismatch(issues, `${target.path} integrity algorithm`,
     detail.integrity?.algorithm, "SHA256");
   addMismatch(issues, `${target.path} block size`, detail.integrity?.blockSize, target.blockSize);
@@ -384,20 +401,23 @@ function targetStateIssues(detail, target, recipe, state) {
   const patched = state === "patched";
   const expectedHash = patched ? target.patchedSha256 : target.sourceSha256;
   const expectedBlocks = patched ? target.patchedBlocks : target.sourceBlocks;
-  const expectedSentinelPositions = [target.sentinelOffset];
-  const presentPositions = patched ? detail.patchedSentinelPositions : detail.sourceSentinelPositions;
-  const absentPositions = patched ? detail.sourceSentinelPositions : detail.patchedSentinelPositions;
 
   addMismatch(issues, `${target.path} SHA-256`, detail.sha256, expectedHash);
   addMismatch(issues, `${target.path} integrity hash`, detail.integrity?.hash, expectedHash);
   if (!sameArray(detail.blocks, expectedBlocks)) issues.push(`${target.path} computed block hashes do not match ${state} recipe`);
   if (!sameArray(detail.integrity?.blocks, expectedBlocks)) issues.push(`${target.path} header block hashes do not match ${state} recipe`);
-  if (!sameArray(presentPositions, expectedSentinelPositions)) {
-    issues.push(`${target.path} ${state} sentinel position/count does not match recipe`);
-  }
-  if (absentPositions.length !== 0) issues.push(`${target.path} contains the opposite-state sentinel`);
-  if (presentPositions.length !== target.sentinelCount) {
-    issues.push(`${target.path} ${state} sentinel count is ${presentPositions.length}, expected ${target.sentinelCount}`);
+  if (target.edit) {
+    addMismatch(issues, `${target.path} edit offset`, detail.edit?.offset, target.edit.offset);
+    addMismatch(issues, `${target.path} absolute edit offset`, detail.edit?.absoluteOffset, target.edit.absoluteOffset);
+    addMismatch(issues, `${target.path} edit length`, detail.edit?.length, target.edit.length);
+    addMismatch(issues, `${target.path} edit SHA-256`, detail.edit?.sha256,
+      patched ? target.edit.patchedSha256 : target.edit.sourceSha256);
+    if (!sameArray(detail.edit?.anchorPositions, [target.edit.offset])) {
+      issues.push(`${target.path} module anchor position/count does not match recipe`);
+    }
+    if (detail.edit?.anchorPositions?.length !== target.edit.anchorCount) {
+      issues.push(`${target.path} module anchor count is ${detail.edit?.anchorPositions?.length || 0}, expected ${target.edit.anchorCount}`);
+    }
   }
   return issues;
 }
@@ -406,7 +426,7 @@ export function inspectAsarBuffer(value, recipe = PM_STUDIO_2_9_7_RECIPE) {
   const parsed = parseAsarBuffer(value);
   const asarSha256 = sha256Hex(parsed.buffer);
   const headerSha256 = sha256Hex(parsed.headerBytes);
-  const targets = recipe.targets.map((target) => inspectTarget(parsed, target, recipe));
+  const targets = recipe.targets.map((target) => inspectTarget(parsed, target));
   const commonIssues = [];
   addMismatch(commonIssues, "ASAR data offset", parsed.dataOffset, recipe.dataOffset);
 
@@ -418,14 +438,25 @@ export function inspectAsarBuffer(value, recipe = PM_STUDIO_2_9_7_RECIPE) {
     addMismatch(issues, "ASAR header SHA-256", headerSha256,
       patched ? recipe.patchedHeaderSha256 : recipe.sourceHeaderSha256);
     for (let index = 0; index < recipe.targets.length; index += 1) {
-      issues.push(...targetStateIssues(targets[index], recipe.targets[index], recipe, state));
+      issues.push(...targetStateIssues(targets[index], recipe.targets[index], state));
     }
     return issues;
   };
 
   const cleanIssues = issuesFor("clean");
   const patchedIssues = issuesFor("patched");
-  const state = cleanIssues.length === 0 ? "clean" : patchedIssues.length === 0 ? "patched" : "drift";
+  const legacyIssues = [...commonIssues];
+  if (!recipe.legacy) {
+    legacyIssues.push("recipe has no recognized legacy patch");
+  } else {
+    addMismatch(legacyIssues, "ASAR SHA-256", asarSha256, recipe.legacy.asarSha256);
+    addMismatch(legacyIssues, "ASAR header SHA-256", headerSha256, recipe.legacy.headerSha256);
+  }
+  const state = cleanIssues.length === 0
+    ? "clean"
+    : patchedIssues.length === 0
+      ? "patched"
+      : legacyIssues.length === 0 ? "legacy" : "drift";
   return {
     recipeId: recipe.id,
     state,
@@ -435,19 +466,23 @@ export function inspectAsarBuffer(value, recipe = PM_STUDIO_2_9_7_RECIPE) {
     targets,
     cleanIssues,
     patchedIssues,
+    legacyIssues,
   };
 }
 
 export function patchAsarBuffer(value, recipe = PM_STUDIO_2_9_7_RECIPE) {
-  if (Buffer.byteLength(recipe.sourceSentinel) !== Buffer.byteLength(recipe.patchedSentinel)) {
-    throw new Error("PM Studio patch requires equal-length origin sentinels");
-  }
   const before = inspectAsarBuffer(value, recipe);
   if (before.state === "patched") {
     return { changed: false, buffer: Buffer.from(value), before, after: before };
   }
+  if (before.state === "legacy") {
+    const error = new Error("Legacy PM Studio global-origin patch must be migrated from a verified clean backup");
+    error.code = "PM_STUDIO_ASAR_LEGACY";
+    error.inspection = before;
+    throw error;
+  }
   if (before.state !== "clean") {
-    const error = new Error("PM Studio ASAR does not match the clean or patched recipe");
+    const error = new Error("PM Studio ASAR does not match the clean, split-origin, or legacy recipe");
     error.code = "PM_STUDIO_ASAR_DRIFT";
     error.inspection = before;
     throw error;
@@ -455,16 +490,25 @@ export function patchAsarBuffer(value, recipe = PM_STUDIO_2_9_7_RECIPE) {
 
   const output = Buffer.from(value);
   const parsed = parseAsarBuffer(output);
-  const sourceSentinel = Buffer.from(recipe.sourceSentinel);
-  const patchedSentinel = Buffer.from(recipe.patchedSentinel);
 
   for (const target of recipe.targets) {
     const entry = findAsarEntry(parsed.header, target.path);
     const offset = entryOffset(entry.offset, `${target.path} offset`);
-    const absoluteSentinelOffset = parsed.dataOffset + offset + target.sentinelOffset;
-    const existing = output.subarray(absoluteSentinelOffset, absoluteSentinelOffset + sourceSentinel.length);
-    if (!existing.equals(sourceSentinel)) throw new Error(`${target.path} source sentinel moved before patching`);
-    patchedSentinel.copy(output, absoluteSentinelOffset);
+    const edit = target.edit;
+    if (!edit) throw new Error(`${target.path} has no split-origin edit recipe`);
+    const replacement = Buffer.from(edit.replacement);
+    if (replacement.length !== edit.length || sha256Hex(replacement) !== edit.patchedSha256) {
+      throw new Error(`${target.path} split-origin replacement does not match its recipe`);
+    }
+    const absoluteEditOffset = parsed.dataOffset + offset + edit.offset;
+    if (absoluteEditOffset !== edit.absoluteOffset) {
+      throw new Error(`${target.path} split-origin edit moved before patching`);
+    }
+    const existing = output.subarray(absoluteEditOffset, absoluteEditOffset + edit.length);
+    if (sha256Hex(existing) !== edit.sourceSha256) {
+      throw new Error(`${target.path} source edit window does not match its recipe`);
+    }
+    replacement.copy(output, absoluteEditOffset);
     entry.integrity = {
       ...entry.integrity,
       algorithm: "SHA256",

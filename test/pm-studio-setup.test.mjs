@@ -3,12 +3,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 import {
   CCDX_PM_STUDIO_ORIGIN,
   ELECTRON_ASAR_INTEGRITY_SENTINEL,
   PM_STUDIO_2_9_10_RECIPE,
   PM_STUDIO_2_9_7_RECIPE,
   PM_STUDIO_ORIGIN,
+  PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE,
+  PM_STUDIO_SPLIT_ORIGIN_MARKER,
   blockSha256,
   inspectAsarBuffer,
   inspectElectronAsarIntegritySlots,
@@ -77,57 +80,76 @@ function replaceAt(buffer, offset, before, after) {
 }
 
 function makeAsarFixture({ version = "2.9.7", build = version } = {}) {
+  const anchor = "47024(I,e,t){";
+  const sourceWindow = `${anchor}const l={API_ENDPOINT:"${PM_STUDIO_ORIGIN}"};${"s".repeat(24)}}`;
+  const replacementWindow = `${anchor}const l={API_ENDPOINT:"${PM_STUDIO_ORIGIN}"};${"p".repeat(24)}}`;
+  const editOffset = 19;
   const sourceContents = [
-    Buffer.from(`${"a".repeat(19)}${PM_STUDIO_ORIGIN}${"b".repeat(31)}`),
+    Buffer.from(`${"a".repeat(editOffset)}${sourceWindow}${"b".repeat(31)}`),
     Buffer.from(`${"x".repeat(7)}${PM_STUDIO_ORIGIN}${"y".repeat(13)}`),
   ];
-  const sentinelOffsets = [19, 7];
-  const patchedContents = sourceContents.map((content, index) =>
-    replaceAt(content, sentinelOffsets[index], PM_STUDIO_ORIGIN, CCDX_PM_STUDIO_ORIGIN));
+  const patchedContents = [
+    replaceAt(sourceContents[0], editOffset, sourceWindow, replacementWindow),
+    sourceContents[1],
+  ];
+  const legacyContents = sourceContents.map((content) => {
+    const sentinelOffset = content.indexOf(PM_STUDIO_ORIGIN);
+    return replaceAt(content, sentinelOffset, PM_STUDIO_ORIGIN, CCDX_PM_STUDIO_ORIGIN);
+  });
   const paths = ["dist/main/main.js", "dist/renderer/js/main.fixture.js"];
   const blockSize = 16;
-  const targetBase = [];
+  const entries = [];
   let entryOffset = 0;
   for (let index = 0; index < paths.length; index += 1) {
-    targetBase.push({
+    entries.push({
       path: paths[index],
       offset: entryOffset,
       size: sourceContents[index].length,
-      sentinelOffset: sentinelOffsets[index],
-      sentinelCount: 1,
-      blockSize,
-      sourceSha256: sha256Hex(sourceContents[index]),
-      patchedSha256: sha256Hex(patchedContents[index]),
-      sourceBlocks: blockSha256(sourceContents[index], blockSize),
-      patchedBlocks: blockSha256(patchedContents[index], blockSize),
     });
     entryOffset += sourceContents[index].length;
   }
 
-  const headerFor = (patched) => {
+  const headerFor = (contents) => {
     const header = { files: {} };
-    for (const target of targetBase) {
-      addHeaderEntry(header, target.path, {
-        size: target.size,
-        offset: String(target.offset),
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      addHeaderEntry(header, entry.path, {
+        size: entry.size,
+        offset: String(entry.offset),
         integrity: {
           algorithm: "SHA256",
-          hash: patched ? target.patchedSha256 : target.sourceSha256,
+          hash: sha256Hex(contents[index]),
           blockSize,
-          blocks: [...(patched ? target.patchedBlocks : target.sourceBlocks)],
+          blocks: blockSha256(contents[index], blockSize),
         },
       });
     }
     return header;
   };
 
-  const source = buildArchive(headerFor(false), sourceContents);
-  const patched = buildArchive(headerFor(true), patchedContents);
+  const source = buildArchive(headerFor(sourceContents), sourceContents);
+  const patched = buildArchive(headerFor(patchedContents), patchedContents);
+  const legacy = buildArchive(headerFor(legacyContents), legacyContents);
   assert.equal(source.dataOffset, patched.dataOffset);
-  const targets = targetBase.map((target) => ({
-    ...target,
-    absoluteSentinelOffset: source.dataOffset + target.offset + target.sentinelOffset,
-  }));
+  assert.equal(source.dataOffset, legacy.dataOffset);
+  const target = {
+    ...entries[0],
+    blockSize,
+    sourceSha256: sha256Hex(sourceContents[0]),
+    patchedSha256: sha256Hex(patchedContents[0]),
+    sourceBlocks: blockSha256(sourceContents[0], blockSize),
+    patchedBlocks: blockSha256(patchedContents[0], blockSize),
+    edit: {
+      offset: editOffset,
+      absoluteOffset: source.dataOffset + editOffset,
+      length: Buffer.byteLength(sourceWindow),
+      anchor,
+      anchorCount: 1,
+      sourceSha256: sha256Hex(sourceWindow),
+      patchedSha256: sha256Hex(replacementWindow),
+      replacement: replacementWindow,
+    },
+  };
   const recipe = {
     id: `pm-studio-fixture-${version}-${build}`,
     version,
@@ -147,28 +169,35 @@ function makeAsarFixture({ version = "2.9.7", build = version } = {}) {
     sourceHeaderSha256: source.headerSha256,
     patchedAsarSha256: sha256Hex(patched.archive),
     patchedHeaderSha256: patched.headerSha256,
-    sourceSentinel: PM_STUDIO_ORIGIN,
-    patchedSentinel: CCDX_PM_STUDIO_ORIGIN,
-    targets,
+    targets: [target],
+    legacy: {
+      kind: "global-origin-replacement",
+      asarSha256: sha256Hex(legacy.archive),
+      headerSha256: legacy.headerSha256,
+    },
   };
-  return { recipe, source: source.archive, patched: patched.archive };
+  return { recipe, source: source.archive, patched: patched.archive, legacy: legacy.archive };
 }
 
 function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function createAppFixture(root, fixture, { signature = "vendor" } = {}) {
+function createAppFixture(root, fixture, { signature = "vendor", state = "clean" } = {}) {
   const appPath = path.join(root, "PM Studio.app");
   const contents = path.join(appPath, "Contents");
   const resources = path.join(contents, "Resources");
   fs.mkdirSync(resources, { recursive: true });
-  fs.writeFileSync(path.join(resources, "app.asar"), fixture.source);
+  const asar = state === "legacy" ? fixture.legacy : state === "patched" ? fixture.patched : fixture.source;
+  const integrityHash = state === "legacy"
+    ? fixture.recipe.legacy.headerSha256
+    : state === "patched" ? fixture.recipe.patchedHeaderSha256 : fixture.recipe.sourceHeaderSha256;
+  fs.writeFileSync(path.join(resources, "app.asar"), asar);
   writeJson(path.join(contents, "Info.plist"), {
     version: fixture.recipe.version,
     build: fixture.recipe.build,
     bundleIdentifier: fixture.recipe.bundleIdentifier,
-    integrity: { algorithm: "SHA256", hash: fixture.recipe.sourceHeaderSha256 },
+    integrity: { algorithm: "SHA256", hash: integrityHash },
   });
   fs.writeFileSync(path.join(contents, ".fixture-signature"), signature);
   return appPath;
@@ -259,20 +288,25 @@ function assertSnapshot(appPath, snapshot) {
   assert.deepEqual(fs.readFileSync(path.join(appPath, "Contents/.fixture-signature")), snapshot.signature);
 }
 
-test("PM Studio 2.9.7 recipe locks exact offsets, sizes, hashes, blocks, and equal-length sentinels", () => {
+test("PM Studio 2.9.7 recipe locks one exact split-origin module edit and the legacy global patch", () => {
   assert.equal(PM_STUDIO_2_9_7_RECIPE.dataOffset, 3_832_764);
   assert.equal(PM_STUDIO_2_9_7_RECIPE.bundleIdentifier, "com.pm-studio.app");
   assert.equal(PM_STUDIO_2_9_7_RECIPE.sourceTeamIdentifier, "HL75GKK4W4");
-  assert.equal(PM_STUDIO_2_9_7_RECIPE.targets[0].sentinelOffset, 1_120_480);
-  assert.equal(PM_STUDIO_2_9_7_RECIPE.targets[0].absoluteSentinelOffset, 106_574_871);
-  assert.equal(PM_STUDIO_2_9_7_RECIPE.targets[1].sentinelOffset, 489_935);
-  assert.equal(PM_STUDIO_2_9_7_RECIPE.targets[1].absoluteSentinelOffset, 141_324_929);
+  assert.equal(PM_STUDIO_2_9_7_RECIPE.targets.length, 1);
+  assert.equal(PM_STUDIO_2_9_7_RECIPE.targets[0].edit.offset, 1_120_359);
+  assert.equal(PM_STUDIO_2_9_7_RECIPE.targets[0].edit.absoluteOffset, 106_574_750);
+  assert.equal(PM_STUDIO_2_9_7_RECIPE.targets[0].edit.length, 2_121);
+  assert.equal(PM_STUDIO_2_9_7_RECIPE.targets[0].edit.anchorCount, 1);
   assert.equal(PM_STUDIO_2_9_7_RECIPE.executable, "PM Studio");
   assert.equal(PM_STUDIO_2_9_7_RECIPE.sourceExecutableSha256,
     "6364edd0561790610ee82399865f42f160523551d8d72220e26c4b18da324017");
   assert.equal(PM_STUDIO_2_9_7_RECIPE.sourceElectronFrameworkSha256,
     "e684d310334840f7a64f2d5171052eb514822af155779d3185e4f068daee4387");
-  assert.equal(PM_STUDIO_2_9_7_RECIPE.targets.every((target) => target.sentinelCount === 1), true);
+  assert.equal(PM_STUDIO_2_9_7_RECIPE.legacy.asarSha256,
+    "3dd0f53cdaa35a644d2cf56e4fc2dd20f5c90dc2989b6d81a467ef00ebb620a7");
+  assert.equal(PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE.length, 2_121);
+  assert.equal(PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE.match(/https:\/\/api\.githubcopilot\.com/g).length, 1);
+  assert.equal(PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE.match(/http:\/\/127\.0\.0\.1:2026\/pm-ccdx/g).length, 1);
   assert.equal(Buffer.byteLength(PM_STUDIO_ORIGIN), 29);
   assert.equal(Buffer.byteLength(CCDX_PM_STUDIO_ORIGIN), 29);
 });
@@ -298,30 +332,38 @@ test("PM Studio 2.9.10 recipe locks the official bundle, ASAR, targets, and sign
   assert.equal(PM_STUDIO_2_9_10_RECIPE.sourceAsarSha256,
     "d243860770e8b1d8044213924f9704d1fc52f900d6c33461eff6358962330b78");
   assert.equal(PM_STUDIO_2_9_10_RECIPE.patchedAsarSha256,
+    "ea28d998056b32ca4115d208a4d81ce629c83f3f5f89c6a66d50749849beb6fc");
+  assert.equal(PM_STUDIO_2_9_10_RECIPE.targets.length, 1);
+  assert.equal(PM_STUDIO_2_9_10_RECIPE.targets[0].edit.absoluteOffset, 106_696_630);
+  assert.equal(PM_STUDIO_2_9_10_RECIPE.legacy.asarSha256,
     "49f72d999a6085102341c2d551577e164db6f22e4707d2112efa3fd280e7315e");
-  assert.equal(PM_STUDIO_2_9_10_RECIPE.targets[0].absoluteSentinelOffset, 106_696_751);
-  assert.equal(PM_STUDIO_2_9_10_RECIPE.targets[1].absoluteSentinelOffset, 141_629_203);
   assert.equal(PM_STUDIO_2_9_10_RECIPE.sourceCodeSignature.teamIdentifier, "HL75GKK4W4");
   assert.equal(PM_STUDIO_2_9_10_RECIPE.patchedSigningMetadata.entitlements_sha256,
     "9d4ccbda4fe0c81a70df3db93b3e61fe0500f67f14cdcbee4dea230e6512d05c");
 });
 
-test("ASAR helpers classify clean/patched/drift and update file plus header integrity exactly", () => {
+test("ASAR helpers classify clean/split-origin/legacy/drift and patch only the exact module window", () => {
   const fixture = makeAsarFixture();
   const clean = inspectAsarBuffer(fixture.source, fixture.recipe);
   assert.equal(clean.state, "clean");
-  assert.deepEqual(clean.targets.map((target) => target.sourceSentinelPositions), [[19], [7]]);
-  assert.deepEqual(clean.targets.map((target) => target.patchedSentinelPositions), [[], []]);
+  assert.deepEqual(clean.targets[0].edit.anchorPositions, [19]);
+  assert.equal(clean.targets[0].edit.sha256, fixture.recipe.targets[0].edit.sourceSha256);
 
   const result = patchAsarBuffer(fixture.source, fixture.recipe);
   assert.equal(result.changed, true);
   assert.deepEqual(result.buffer, fixture.patched);
   assert.equal(result.after.state, "patched");
-  assert.deepEqual(result.after.targets.map((target) => target.patchedSentinelPositions), [[19], [7]]);
+  assert.equal(result.after.targets[0].edit.sha256, fixture.recipe.targets[0].edit.patchedSha256);
+  assert.equal(result.buffer.toString().includes(CCDX_PM_STUDIO_ORIGIN), false);
+  assert.equal(result.buffer.toString().split(PM_STUDIO_ORIGIN).length - 1, 2);
 
   const repeated = patchAsarBuffer(result.buffer, fixture.recipe);
   assert.equal(repeated.changed, false);
   assert.deepEqual(repeated.buffer, fixture.patched);
+
+  const legacy = inspectAsarBuffer(fixture.legacy, fixture.recipe);
+  assert.equal(legacy.state, "legacy");
+  assert.throws(() => patchAsarBuffer(fixture.legacy, fixture.recipe), { code: "PM_STUDIO_ASAR_LEGACY" });
 
   const drift = Buffer.from(fixture.source);
   drift[drift.length - 1] ^= 1;
@@ -346,6 +388,291 @@ test("ASAR parser rejects malformed pickle metadata and non-zero header padding"
   badPadding[headerEnd] = 1;
   assert.throws(() => inspectAsarBuffer(badPadding, fixture.recipe), /padding is not zeroed/);
   assert.deepEqual(blockSha256(Buffer.alloc(0), 4096), [sha256Hex(Buffer.alloc(0))]);
+});
+
+function splitOriginRuntime(fetchImpl) {
+  const context = vm.createContext({
+    AbortController,
+    AbortSignal,
+    Date,
+    Headers,
+    Math,
+    Request,
+    Response,
+    clearTimeout,
+    fetch: fetchImpl,
+    setTimeout,
+  });
+  const factory = vm.runInContext(`({${PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE}})[47024]`, context);
+  const exports = {};
+  factory({}, exports, {
+    d(target, definitions) {
+      for (const [name, getter] of Object.entries(definitions)) {
+        Object.defineProperty(target, name, { enumerable: true, get: getter });
+      }
+    },
+  });
+  return { config: exports.qn, fetch: context.fetch };
+}
+
+function jsonResponse(value, { marker = false, status = 200 } = {}) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      ...(marker ? { "X-CCDX-PM-Relay": PM_STUDIO_SPLIT_ORIGIN_MARKER } : {}),
+    },
+  });
+}
+
+test("split-origin runtime keeps GPT and utility calls native while routing exact Claude chat IDs locally", async () => {
+  const calls = [];
+  const pmAuthorization = "Bearer pm-placeholder";
+  const runtime = splitOriginRuntime(async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input.url;
+    const authorization = new Headers(init.headers).get("Authorization");
+    calls.push({ url, method: init.method, body: init.body, authorization });
+    if (url === `${CCDX_PM_STUDIO_ORIGIN}/models`) {
+      if (!authorization) return jsonResponse({ error: {} }, { marker: true, status: 401 });
+      return jsonResponse({ data: [
+        { id: "gpt-native", vendor: "OpenAI" },
+        { id: "anthropic-special", vendor: "Anthropic" },
+      ] }, { marker: true });
+    }
+    if (url === `${CCDX_PM_STUDIO_ORIGIN}/chat/completions`) {
+      return jsonResponse({ url }, { marker: true });
+    }
+    return jsonResponse({ url });
+  });
+
+  assert.equal(runtime.config.API_ENDPOINT, PM_STUDIO_ORIGIN);
+  const models = await runtime.fetch(`${PM_STUDIO_ORIGIN}/models`, {
+    method: "GET",
+    headers: { Authorization: pmAuthorization },
+  });
+  assert.equal(models.headers.get("X-CCDX-PM-Relay"), PM_STUDIO_SPLIT_ORIGIN_MARKER);
+
+  for (const [pathName, model] of [
+    ["/chat/completions", "gpt-native"],
+    ["/responses", "gpt-native"],
+    ["/embeddings", "gpt-native"],
+  ]) {
+    await runtime.fetch(`${PM_STUDIO_ORIGIN}${pathName}`, {
+      method: "POST",
+      body: JSON.stringify({ model }),
+    });
+  }
+  await runtime.fetch(runtime.config.COPILOT_TOKEN_URL, { method: "GET" });
+  await runtime.fetch(`${PM_STUDIO_ORIGIN}/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: pmAuthorization },
+    body: JSON.stringify({ model: "claude-prefix" }),
+  });
+  await runtime.fetch(`${PM_STUDIO_ORIGIN}/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: pmAuthorization },
+    body: JSON.stringify({ model: "anthropic-special" }),
+  });
+  const request = new Request(`${PM_STUDIO_ORIGIN}/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: pmAuthorization },
+    body: JSON.stringify({ model: "claude-request-shape" }),
+  });
+  await runtime.fetch(request, {
+    method: request.method,
+    body: await request.clone().text(),
+    headers: request.headers,
+    signal: request.signal,
+  });
+  const callCount = calls.length;
+  const rejectedEndpoint = await runtime.fetch(`${PM_STUDIO_ORIGIN}/responses`, {
+    method: "POST",
+    body: JSON.stringify({ model: "claude-prefix" }),
+  });
+  assert.equal(rejectedEndpoint.status, 400);
+  assert.equal((await rejectedEndpoint.json()).error.code, "model_not_supported");
+  assert.equal(calls.length, callCount, "Claude /responses must not reach either inference origin");
+
+  assert.deepEqual(calls.map(({ url }) => url), [
+    `${CCDX_PM_STUDIO_ORIGIN}/models`,
+    `${PM_STUDIO_ORIGIN}/chat/completions`,
+    `${PM_STUDIO_ORIGIN}/responses`,
+    `${PM_STUDIO_ORIGIN}/embeddings`,
+    runtime.config.COPILOT_TOKEN_URL,
+    `${CCDX_PM_STUDIO_ORIGIN}/models`,
+    `${CCDX_PM_STUDIO_ORIGIN}/chat/completions`,
+    `${CCDX_PM_STUDIO_ORIGIN}/models`,
+    `${CCDX_PM_STUDIO_ORIGIN}/chat/completions`,
+    `${CCDX_PM_STUDIO_ORIGIN}/models`,
+    `${CCDX_PM_STUDIO_ORIGIN}/chat/completions`,
+  ]);
+  const localModelCalls = calls.filter(({ url }) => url === `${CCDX_PM_STUDIO_ORIGIN}/models`);
+  assert.equal(localModelCalls[0].authorization, pmAuthorization);
+  assert.equal(localModelCalls.slice(1).every(({ authorization, body }) => !authorization && body === undefined), true);
+});
+
+test("split-origin models accepts marked object/array catalogs only and otherwise falls back native", async (t) => {
+  for (const item of [
+    { name: "missing marker", local: () => jsonResponse({ data: [] }) },
+    { name: "non-ok marker", local: () => jsonResponse({ error: {} }, { marker: true, status: 503 }) },
+    {
+      name: "malformed marker body",
+      local: () => new Response("{", { headers: { "X-CCDX-PM-Relay": PM_STUDIO_SPLIT_ORIGIN_MARKER } }),
+    },
+    { name: "invalid marker shape", local: () => jsonResponse({ data: {} }, { marker: true }) },
+    { name: "network failure", local: () => { throw new Error("local unavailable"); } },
+  ]) {
+    await t.test(item.name, async () => {
+      const calls = [];
+      const runtime = splitOriginRuntime(async (input) => {
+        const url = typeof input === "string" ? input : input.url;
+        calls.push(url);
+        if (url === `${CCDX_PM_STUDIO_ORIGIN}/models`) return item.local();
+        return jsonResponse({ data: [{ id: "gpt-native" }] });
+      });
+      const response = await runtime.fetch(`${PM_STUDIO_ORIGIN}/models`, { method: "GET" });
+      assert.deepEqual(await response.json(), { data: [{ id: "gpt-native" }] });
+      assert.deepEqual(calls, [`${CCDX_PM_STUDIO_ORIGIN}/models`, `${PM_STUDIO_ORIGIN}/models`]);
+    });
+  }
+
+  await t.test("array catalog learns exact Anthropic IDs", async () => {
+    const calls = [];
+    const runtime = splitOriginRuntime(async (input, init = {}) => {
+      const url = typeof input === "string" ? input : input.url;
+      const authorization = new Headers(init.headers).get("Authorization");
+      calls.push({ url, authorization });
+      if (url === `${CCDX_PM_STUDIO_ORIGIN}/models` && !authorization) {
+        return jsonResponse({ error: {} }, { marker: true, status: 401 });
+      }
+      if (url.endsWith("/models")) {
+        return jsonResponse([{ id: "anthropic-array-id", owned_by: "Anthropic" }], { marker: true });
+      }
+      return jsonResponse({ ok: true }, { marker: true });
+    });
+    await runtime.fetch(`${PM_STUDIO_ORIGIN}/models`, {
+      method: "GET",
+      headers: { Authorization: "Bearer pm-placeholder" },
+    });
+    await runtime.fetch(`${PM_STUDIO_ORIGIN}/chat/completions`, {
+      method: "POST",
+      body: JSON.stringify({ model: "anthropic-array-id" }),
+    });
+    assert.deepEqual(calls, [
+      { url: `${CCDX_PM_STUDIO_ORIGIN}/models`, authorization: "Bearer pm-placeholder" },
+      { url: `${CCDX_PM_STUDIO_ORIGIN}/models`, authorization: null },
+      { url: `${CCDX_PM_STUDIO_ORIGIN}/chat/completions`, authorization: null },
+    ]);
+  });
+});
+
+test("split-origin Claude chat requires a credential-free compatible probe and a marked response", async (t) => {
+  await t.test("incompatible probe fails before sending the prompt or bearer", async () => {
+    const calls = [];
+    const runtime = splitOriginRuntime(async (input, init = {}) => {
+      calls.push({
+        url: typeof input === "string" ? input : input.url,
+        authorization: new Headers(init.headers).get("Authorization"),
+        body: init.body,
+      });
+      return jsonResponse({ data: [] });
+    });
+    const response = await runtime.fetch(`${PM_STUDIO_ORIGIN}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: "Bearer pm-placeholder" },
+      body: JSON.stringify({ model: " claude-prefix ", messages: [{ role: "user", content: "private" }] }),
+    });
+
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).error.code, "relay_incompatible");
+    assert.deepEqual(calls, [{
+      url: `${CCDX_PM_STUDIO_ORIGIN}/models`,
+      authorization: null,
+      body: undefined,
+    }]);
+  });
+
+  await t.test("unmarked chat response is rejected without enterprise fallback", async () => {
+    const calls = [];
+    const runtime = splitOriginRuntime(async (input, init = {}) => {
+      const url = typeof input === "string" ? input : input.url;
+      calls.push({ url, authorization: new Headers(init.headers).get("Authorization") });
+      if (url === `${CCDX_PM_STUDIO_ORIGIN}/models`) {
+        return jsonResponse({ error: {} }, { marker: true, status: 401 });
+      }
+      return jsonResponse({ source: "incompatible-local" });
+    });
+    const response = await runtime.fetch(`${PM_STUDIO_ORIGIN}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: "Bearer pm-placeholder" },
+      body: JSON.stringify({ model: "claude-prefix", messages: [] }),
+    });
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(calls, [
+      { url: `${CCDX_PM_STUDIO_ORIGIN}/models`, authorization: null },
+      { url: `${CCDX_PM_STUDIO_ORIGIN}/chat/completions`, authorization: "Bearer pm-placeholder" },
+    ]);
+  });
+
+  await t.test("compatibility probe has a bounded timeout", async () => {
+    let probeAborted = false;
+    const runtime = splitOriginRuntime(async (_input, init = {}) => new Promise((resolve, reject) => {
+      init.signal.addEventListener("abort", () => {
+        probeAborted = true;
+        reject(init.signal.reason);
+      }, { once: true });
+    }));
+    const keepAlive = setTimeout(() => {}, 1_000);
+    try {
+      const response = await runtime.fetch(`${PM_STUDIO_ORIGIN}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: "Bearer pm-placeholder" },
+        body: JSON.stringify({ model: "claude-prefix", messages: [] }),
+      });
+
+      assert.equal(response.status, 503);
+      assert.equal(probeAborted, true);
+    } finally {
+      clearTimeout(keepAlive);
+    }
+  });
+});
+
+test("split-origin models timeout falls back native but a user abort never falls through", async () => {
+  const timeoutCalls = [];
+  const timeoutRuntime = splitOriginRuntime(async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input.url;
+    timeoutCalls.push(url);
+    if (url === `${CCDX_PM_STUDIO_ORIGIN}/models`) {
+      return new Promise((resolve, reject) => {
+        init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+      });
+    }
+    return jsonResponse({ data: [{ id: "gpt-native" }] });
+  });
+  const keepAlive = setTimeout(() => {}, 1_000);
+  try {
+    await timeoutRuntime.fetch(`${PM_STUDIO_ORIGIN}/models`, { method: "GET" });
+  } finally {
+    clearTimeout(keepAlive);
+  }
+  assert.deepEqual(timeoutCalls, [`${CCDX_PM_STUDIO_ORIGIN}/models`, `${PM_STUDIO_ORIGIN}/models`]);
+
+  const abortCalls = [];
+  const abortRuntime = splitOriginRuntime(async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input.url;
+    abortCalls.push(url);
+    if (init.signal?.aborted) throw init.signal.reason;
+    return jsonResponse({ data: [] });
+  });
+  const controller = new AbortController();
+  controller.abort(new Error("user cancelled"));
+  await assert.rejects(abortRuntime.fetch(`${PM_STUDIO_ORIGIN}/models`, {
+    method: "GET",
+    signal: controller.signal,
+  }), /user cancelled/);
+  assert.deepEqual(abortCalls, [`${CCDX_PM_STUDIO_ORIGIN}/models`]);
 });
 
 test("bundle content fingerprints files, modes, symlinks, empty directories, and stable xattrs", () => {
@@ -542,7 +869,7 @@ test("setup installs from a verified fixture, keeps a complete secret-free backu
     electron_framework_sha256: "fixture-framework-source",
   });
   assert.match(messages.join("\n"), /Foundation's atomic item replacement/);
-  assert.match(messages.join("\n"), /Start ccdx before opening PM Studio/);
+  assert.match(messages.join("\n"), /Start ccdx before using Claude in PM Studio; GPT remains/);
 
   const backupEntries = fs.readdirSync(backupRoot);
   const repeated = await runPmStudioSetup({
@@ -574,6 +901,73 @@ test("setup installs from a verified fixture, keeps a complete secret-free backu
     logger: () => {},
   }), { code: "PM_STUDIO_BUNDLE_DRIFT" });
   assert.equal(signCounter.value, 1);
+});
+
+test("setup migrates the legacy global-origin patch only from its verified clean backup", async () => {
+  const root = temporaryRoot("ccdx-pms-legacy-migrate-");
+  const fixture = makeAsarFixture();
+  const appPath = createAppFixture(root, fixture);
+  const backupRoot = path.join(root, "backups");
+  const signCounter = { value: 0 };
+  const operations = fixtureOperations({ signCounter });
+  const first = await runPmStudioSetup({
+    appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+  });
+
+  const manifest = JSON.parse(fs.readFileSync(first.backup.manifestPath, "utf8"));
+  manifest.patched = {
+    ...manifest.patched,
+    asar_sha256: fixture.recipe.legacy.asarSha256,
+    asar_header_sha256: fixture.recipe.legacy.headerSha256,
+    electron_asar_integrity: { algorithm: "SHA256", hash: fixture.recipe.legacy.headerSha256 },
+  };
+  writeJson(first.backup.manifestPath, manifest);
+  fs.writeFileSync(path.join(appPath, fixture.recipe.asarPath), fixture.legacy);
+  const plistPath = path.join(appPath, fixture.recipe.infoPlistPath);
+  const plist = JSON.parse(fs.readFileSync(plistPath, "utf8"));
+  plist.integrity = { algorithm: "SHA256", hash: fixture.recipe.legacy.headerSha256 };
+  writeJson(plistPath, plist);
+  assert.equal(inspectPmStudioApp({ appPath, recipe: fixture.recipe, operations }).state, "legacy");
+
+  const copySources = [];
+  const copyBundle = operations.copyBundle;
+  operations.copyBundle = (args) => {
+    copySources.push(args.source);
+    return copyBundle(args);
+  };
+  const messages = [];
+  const migrated = await runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [fixture.recipe],
+    operations,
+    logger: (line) => messages.push(line),
+  });
+  assert.equal(migrated.status, "migrated");
+  assert.equal(signCounter.value, 2);
+  assert.deepEqual(copySources, [first.backup.backupAppPath], "legacy app itself must never seed staging");
+  assert.deepEqual(fs.readFileSync(path.join(appPath, fixture.recipe.asarPath)), fixture.patched);
+  assert.deepEqual(fs.readFileSync(path.join(first.backup.backupAppPath, fixture.recipe.asarPath)), fixture.source);
+  assert.match(messages.join("\n"), /GPT and enterprise authentication return to PM Studio's native origin/);
+
+  const migratedManifest = JSON.parse(fs.readFileSync(first.backup.manifestPath, "utf8"));
+  assert.equal(migratedManifest.patched.asar_sha256, fixture.recipe.patchedAsarSha256);
+  assert.equal(migratedManifest.legacy_patched.asar_sha256, fixture.recipe.legacy.asarSha256);
+});
+
+test("legacy global-origin patch without a verified clean backup is rejected unchanged", async () => {
+  const root = temporaryRoot("ccdx-pms-legacy-no-backup-");
+  const fixture = makeAsarFixture();
+  const appPath = createAppFixture(root, fixture, { signature: "adhoc", state: "legacy" });
+  const snapshot = sourceSnapshot(appPath);
+  const backupRoot = path.join(root, "backups");
+  const operations = fixtureOperations();
+  await assert.rejects(runPmStudioSetup({
+    appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+  }), { code: "PM_STUDIO_BACKUP_INVALID" });
+  assertSnapshot(appPath, snapshot);
+  assert.equal(fs.existsSync(backupRoot), false);
 });
 
 test("2.9.10 setup accepts only the exact official-content fallback and records the complete patched tree", async () => {

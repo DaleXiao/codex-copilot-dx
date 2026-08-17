@@ -112,9 +112,11 @@ ccdx doctor --online --profile all
 ### PM Studio opt-in patch
 
 CCDX can add the isolated Claude catalog to PM Studio without switching its
-active account or profile. GPT requests continue to use the bearer supplied by
-the current PM profile; exact enabled Anthropic model IDs use the isolated
-CCDX Claude profile. Neither credential is copied into the other application.
+active account or profile. GPT requests keep PM Studio's native official GitHub
+Copilot transport and the bearer supplied by the current PM profile. Model
+discovery tries the compatible local CCDX merge first, and only exact enabled
+Anthropic model IDs use the isolated CCDX Claude profile. Neither credential is
+copied into the other application.
 
 The current patch recipes support only the exact, unmodified PM Studio 2.9.7
 and 2.9.10 bundles on macOS. This is exact-version support, not a version range:
@@ -155,12 +157,21 @@ matches the frozen official fingerprint. The staged and installed CCDX patch
 must still pass strict ad-hoc signature verification and match the complete
 patched-tree record in the backup manifest.
 
-The patch is App-wide: every PM profile sends its Copilot API traffic through
-the loopback-only `/pm-ccdx/*` relay. Run ordinary `ccdx` before opening PM
-Studio; if port 2026 is unavailable, PM Copilot requests cannot connect. The
-relay explicitly supports only the Copilot paths discovered in the validated
-2.9.7 and 2.9.10 bundles (`GET /models` and `POST /chat/completions`, `/responses`, and
-`/embeddings`) and is not a general-purpose proxy.
+The patch uses split origins, not an App-wide proxy. GPT and other non-Claude
+inference requests remain on PM Studio's native official GitHub Copilot origin;
+they do not enter CCDX or depend on port 2026. Model discovery first tries the
+loopback-only `GET /pm-ccdx/models` merge and accepts it only when the relay
+returns the `X-CCDX-PM-Relay: split-origin-v1` compatibility marker. If the
+relay is unavailable or incompatible, model discovery safely falls back to the
+official directory and GPT remains available. Exact enabled Claude chat uses
+`POST /pm-ccdx/chat/completions` and fails closed if CCDX is unavailable; it
+never falls back to the PM enterprise account. The relay does not expose
+`/responses` or `/embeddings` and is not a general-purpose proxy.
+
+The loopback relay trusts local callers that present a valid Copilot bearer.
+CCDX uses the PM bearer only to fetch or validate official model access; it is
+never used as the credential for the isolated Claude upstream request. Keep
+port 2026 local to the machine.
 
 Patching replaces the vendor signature with an ad-hoc signature. PM Studio's
 updater is not disabled; an official update may overwrite the patch or may

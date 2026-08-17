@@ -65,9 +65,21 @@ function replayableResponsesOutputItems(output) {
   return output.filter((item) => item && typeof item === "object");
 }
 
+function isEncryptedContentPart(value) {
+  return value && typeof value === "object" && value.type === "encrypted_content";
+}
+
 function stripEncryptedReasoningValue(value, state) {
   if (Array.isArray(value)) {
-    return value.map((item) => stripEncryptedReasoningValue(item, state));
+    const out = [];
+    for (const item of value) {
+      if (isEncryptedContentPart(item)) {
+        state.changed = true;
+        continue;
+      }
+      out.push(stripEncryptedReasoningValue(item, state));
+    }
+    return out;
   }
 
   if (value && typeof value === "object") {
@@ -87,7 +99,9 @@ function stripEncryptedReasoningValue(value, state) {
 
 function isEncryptedReasoningInputItem(item) {
   return item && typeof item === "object"
-    && (item.type === "reasoning" || Object.prototype.hasOwnProperty.call(item, "encrypted_content"));
+    && (item.type === "reasoning"
+      || item.type === "encrypted_content"
+      || Object.prototype.hasOwnProperty.call(item, "encrypted_content"));
 }
 
 export function sanitizeEncryptedReasoningRequest(reqContext) {

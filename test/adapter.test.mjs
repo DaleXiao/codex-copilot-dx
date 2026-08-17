@@ -2484,6 +2484,56 @@ test("sanitizeEncryptedReasoningRequest: removes reasoning items and encrypted c
   assert.equal(ctx.body.input.length, 3);
 });
 
+test("sanitizeEncryptedReasoningRequest: drops nested encrypted_content parts without schema shells", () => {
+  const ctx = {
+    body: {
+      model: "gpt-5.5",
+      store: false,
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "first" }] },
+        { type: "reasoning", id: "rs_nested", encrypted_content: "gAAA-reasoning", summary: [] },
+        { type: "function_call", id: "call_1", name: "lookup", arguments: "{}", status: "completed" },
+        {
+          type: "message",
+          role: "assistant",
+          id: "msg_nested",
+          status: "completed",
+          content: [
+            { type: "output_text", text: "before", annotations: [] },
+            { type: "encrypted_content", encrypted_content: "gAAA-nested", id: "enc_1" },
+            { type: "output_text", text: "after", annotations: [], metadata: { keep: true } },
+          ],
+        },
+      ],
+    },
+    inputItems: [],
+  };
+
+  assert.equal(ctx.body.input[3].content[1].type, "encrypted_content");
+  const sanitized = sanitizeEncryptedReasoningRequest(ctx);
+
+  assert.deepEqual(sanitized.body.input, [
+    { type: "message", role: "user", content: [{ type: "input_text", text: "first" }] },
+    { type: "function_call", id: "call_1", name: "lookup", arguments: "{}", status: "completed" },
+    {
+      type: "message",
+      role: "assistant",
+      id: "msg_nested",
+      status: "completed",
+      content: [
+        { type: "output_text", text: "before", annotations: [] },
+        { type: "output_text", text: "after", annotations: [], metadata: { keep: true } },
+      ],
+    },
+  ]);
+  assert.equal(JSON.stringify(sanitized.body).includes('"type":"encrypted_content"'), false);
+  assert.deepEqual(ctx.body.input[3].content[1], {
+    type: "encrypted_content",
+    encrypted_content: "gAAA-nested",
+    id: "enc_1",
+  });
+});
+
 test("sanitizeEncryptedReasoningRequest: returns null when no encrypted reasoning is present", () => {
   const ctx = {
     body: { model: "gpt-5.5", input: [{ type: "message", role: "user", content: "hello" }] },
@@ -2505,10 +2555,20 @@ test("openCopilotResponse: retries encrypted reasoning failures with sanitized i
   const ctx = {
     body: {
       model: "gpt-5.5",
+      store: false,
       stream: false,
       input: [
-        { type: "reasoning", encrypted_content: "gAAA", summary: [] },
         { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] },
+        { type: "reasoning", encrypted_content: "gAAA", summary: [] },
+        { type: "function_call", id: "call_retry", name: "lookup", arguments: "{}" },
+        {
+          type: "message",
+          role: "assistant",
+          content: [
+            { type: "output_text", text: "visible", annotations: [] },
+            { type: "encrypted_content", encrypted_content: "gAAA-nested" },
+          ],
+        },
       ],
     },
     inputItems: [],
@@ -2527,11 +2587,71 @@ test("openCopilotResponse: retries encrypted reasoning failures with sanitized i
   assert.equal(calls.length, 2);
   assert.deepEqual(payloadPrepared, [false, true]);
   assert.equal(opened.resp.ok, true);
+  assert.equal(calls[0].input[3].content[1].encrypted_content, "gAAA-nested");
   assert.deepEqual(calls[1].input, [
     { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] },
+    { type: "function_call", id: "call_retry", name: "lookup", arguments: "{}" },
+    {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "visible", annotations: [] }],
+    },
   ]);
   assert.deepEqual(opened.reqContext.inputItems, calls[1].input);
   assert.deepEqual(await opened.resp.json(), { id: "resp_1", output: [] });
+});
+
+test("openCopilotResponse: returns the second upstream error after one encrypted fallback retry", async () => {
+  const encryptedError = JSON.stringify({
+    error: {
+      message: "The encrypted content gAAA... could not be verified. Reason: Encrypted content could not be decrypted or parsed.",
+      code: "invalid_request_body",
+    },
+  });
+  const secondError = JSON.stringify({
+    error: {
+      message: "Missing required parameter: 'input[3].content[1].encrypted_content'.",
+      code: "missing_required_parameter",
+    },
+  });
+  const calls = [];
+  const ctx = {
+    body: {
+      model: "gpt-5.5",
+      store: false,
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "first" }] },
+        { type: "reasoning", encrypted_content: "gAAA-reasoning", summary: [] },
+        { type: "function_call", id: "call_error", name: "lookup", arguments: "{}" },
+        {
+          type: "message",
+          role: "assistant",
+          content: [
+            { type: "output_text", text: "visible", annotations: [] },
+            { type: "encrypted_content", encrypted_content: "gAAA-nested" },
+          ],
+        },
+      ],
+    },
+    inputItems: [],
+  };
+  const upstream = async (body) => {
+    calls.push(body);
+    return new Response(calls.length === 1 ? encryptedError : secondError, {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  const opened = await openCopilotResponse(ctx, upstream);
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].input[3].content[1].encrypted_content, "gAAA-nested");
+  assert.deepEqual(calls[1].input.at(-1).content, [
+    { type: "output_text", text: "visible", annotations: [] },
+  ]);
+  assert.equal(opened.resp.status, 400);
+  assert.equal(opened.errorText, secondError);
 });
 
 test("openCopilotResponse: does not retry encrypted errors when nothing can be sanitized", async () => {

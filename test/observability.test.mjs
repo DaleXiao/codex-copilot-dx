@@ -99,8 +99,6 @@ test("request metrics use fixed route buckets and complete exactly once", () => 
     "messages_count_tokens",
     "pm_models",
     "pm_chat_completions",
-    "pm_responses",
-    "pm_embeddings",
     "not_found",
   ]);
 });
@@ -110,6 +108,8 @@ test("adapter route classification and loopback checks do not trust forwarded ad
   assert.equal(classifyAdapterRoute("GET", "/v1/models"), "models");
   assert.equal(classifyAdapterRoute("GET", "/pm-ccdx/models"), "pm_models");
   assert.equal(classifyAdapterRoute("POST", "/pm-ccdx/chat/completions"), "pm_chat_completions");
+  assert.equal(classifyAdapterRoute("POST", "/pm-ccdx/responses"), "not_found");
+  assert.equal(classifyAdapterRoute("POST", "/pm-ccdx/embeddings"), "not_found");
   assert.equal(classifyAdapterRoute("GET", "/other"), "not_found");
   assert.equal(isLoopbackAddress("127.0.0.1"), true);
   assert.equal(isLoopbackAddress("::ffff:127.0.0.1"), true);

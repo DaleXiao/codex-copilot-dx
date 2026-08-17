@@ -120,7 +120,8 @@ test("formatAdapterStatus: summarizes dual profiles and routing when available",
   assert.match(output, /Profiles: Codex legacy: token cached \(1m 30s remaining\), 42 total\/8 Claude models \(live\)/);
   assert.match(output, /Claude isolated: token not cached, 12 total\/12 Claude models \(cache\)/);
   assert.match(output, /Routing: \/v1\/responses -> Codex; \/v1\/messages -> Claude/);
-  assert.match(output, /PM relay: 10 requests, 1 active, 1 errors; models 2, chat 4, responses 3, embeddings 1/);
+  assert.match(output, /PM relay: 6 requests, 1 active, 1 errors; models 2, chat 4/);
+  assert.doesNotMatch(output, /PM relay:.*(?:responses|embeddings)/);
 });
 
 test("formatAdapterStatus: warns when the running adapter is older than the CLI", () => {

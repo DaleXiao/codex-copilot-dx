@@ -530,8 +530,12 @@ export function inspectPmStudioApp({
     && asar.state === "patched"
     && integrityMatches(plistIntegrity, "SHA256", recipe.patchedHeaderSha256)
     && patchedSignatureAccepted;
+  const legacy = issues.length === 0
+    && asar.state === "legacy"
+    && integrityMatches(plistIntegrity, "SHA256", recipe.legacy?.headerSha256)
+    && patchedSignatureAccepted;
 
-  if (!clean && !patched) {
+  if (!clean && !patched && !legacy) {
     if (asar.state === "drift") issues.push("app.asar is unknown drift");
     else if (asar.state === "clean"
       && !integrityMatches(plistIntegrity, "SHA256", recipe.sourceHeaderSha256)) {
@@ -539,6 +543,9 @@ export function inspectPmStudioApp({
     } else if (asar.state === "patched"
       && !integrityMatches(plistIntegrity, "SHA256", recipe.patchedHeaderSha256)) {
       issues.push("patched ASAR does not match ElectronAsarIntegrity");
+    } else if (asar.state === "legacy"
+      && !integrityMatches(plistIntegrity, "SHA256", recipe.legacy?.headerSha256)) {
+      issues.push("legacy ASAR does not match ElectronAsarIntegrity");
     }
     if (asar.state === "clean" && recipe.sourceBundleContent && !exactSourceBundle) {
       issues.push("bundle content does not match the exact clean recipe");
@@ -547,7 +554,9 @@ export function inspectPmStudioApp({
       issues.push("codesign verification failed");
     }
     else if (asar.state === "clean" && codeSign.adHoc) issues.push("clean bundle has an unexpected ad-hoc signature");
-    else if (asar.state === "patched" && !codeSign.adHoc) issues.push("patched bundle is not ad-hoc signed");
+    else if (["patched", "legacy"].includes(asar.state) && !codeSign.adHoc) {
+      issues.push(`${asar.state} bundle is not ad-hoc signed`);
+    }
     else if (asar.state === "clean" && codeSign.teamIdentifier !== recipe.sourceTeamIdentifier) {
       issues.push(`clean bundle TeamIdentifier is ${codeSign.teamIdentifier || "missing"}, expected ${recipe.sourceTeamIdentifier}`);
     }
@@ -559,15 +568,15 @@ export function inspectPmStudioApp({
       && executableIntegrity.frameworkSha256 !== recipe.sourceElectronFrameworkSha256) {
       issues.push("Electron Framework hash does not match the clean recipe");
     }
-    if (asar.state === "patched" && codeSign?.valid && codeSign?.adHoc
+    if (["patched", "legacy"].includes(asar.state) && codeSign?.valid && codeSign?.adHoc
       && recipe.patchedSigningMetadata
       && !patchedSignatureAccepted) {
-      issues.push("patched bundle signing metadata does not match the recipe");
+      issues.push(`${asar.state} bundle signing metadata does not match the recipe`);
     }
   }
 
   return {
-    state: clean ? "clean" : patched ? "patched" : "drift",
+    state: clean ? "clean" : patched ? "patched" : legacy ? "legacy" : "drift",
     metadata: {
       version: String(metadata.version),
       build: String(metadata.build),
@@ -676,6 +685,23 @@ function backupManifest(recipe, createdAt) {
   };
 }
 
+function patchRecordMatches(record, recipe, state) {
+  const expected = state === "legacy"
+    ? recipe.legacy
+    : { asarSha256: recipe.patchedAsarSha256, headerSha256: recipe.patchedHeaderSha256 };
+  return Boolean(expected)
+    && record?.asar_sha256 === expected.asarSha256
+    && record?.asar_header_sha256 === expected.headerSha256
+    && integrityMatches(record?.electron_asar_integrity, "SHA256", expected.headerSha256);
+}
+
+function patchRecordForState(manifest, recipe, state) {
+  if (state === "legacy" && patchRecordMatches(manifest?.legacy_patched, recipe, state)) {
+    return manifest.legacy_patched;
+  }
+  return patchRecordMatches(manifest?.patched, recipe, state) ? manifest.patched : null;
+}
+
 function validateBackup({ backupDir, recipe, operations }) {
   const manifestPath = path.join(backupDir, "manifest.json");
   const backupAppPath = path.join(backupDir, "PM Studio.app");
@@ -702,9 +728,8 @@ function validateBackup({ backupDir, recipe, operations }) {
       && JSON.stringify(manifest?.source?.bundle_content) !== JSON.stringify(recipe.sourceBundleContent))
     || (recipe.sourceArtifact
       && JSON.stringify(manifest?.source?.artifact) !== JSON.stringify(recipe.sourceArtifact))
-    || manifest?.patched?.asar_sha256 !== recipe.patchedAsarSha256
-    || manifest?.patched?.asar_header_sha256 !== recipe.patchedHeaderSha256
-    || !integrityMatches(manifest?.patched?.electron_asar_integrity, "SHA256", recipe.patchedHeaderSha256)) {
+    || (!patchRecordForState(manifest, recipe, "patched")
+      && !patchRecordForState(manifest, recipe, "legacy"))) {
     throw setupError("PM_STUDIO_BACKUP_INVALID", `Existing PM Studio backup does not match recipe ${recipe.id}`);
   }
   const inspection = inspectPmStudioApp({ appPath: backupAppPath, recipe, operations });
@@ -750,12 +775,21 @@ function ensureBackup({ appPath, backupRoot, recipe, operations }) {
 
 function writePatchedBinaryRecord({ backup, inspection, operations, recipe }) {
   const manifest = JSON.parse(fs.readFileSync(backup.manifestPath, "utf8"));
-  manifest.patched.binaries = {
-    main_executable_sha256: inspection.executableIntegrity.executableSha256,
-    electron_framework_sha256: inspection.executableIntegrity.frameworkSha256,
+  if (!patchRecordMatches(manifest.legacy_patched, recipe, "legacy")
+    && patchRecordMatches(manifest.patched, recipe, "legacy")) {
+    manifest.legacy_patched = manifest.patched;
+  }
+  manifest.patched = {
+    asar_sha256: recipe.patchedAsarSha256,
+    asar_header_sha256: recipe.patchedHeaderSha256,
+    electron_asar_integrity: { algorithm: "SHA256", hash: recipe.patchedHeaderSha256 },
+    binaries: {
+      main_executable_sha256: inspection.executableIntegrity.executableSha256,
+      electron_framework_sha256: inspection.executableIntegrity.frameworkSha256,
+    },
+    signing_metadata: signingMetadata(inspection.codeSign),
+    ...(recipe.sourceBundleContent ? { bundle_content: inspection.bundleContent } : {}),
   };
-  manifest.patched.signing_metadata = signingMetadata(inspection.codeSign);
-  if (recipe.sourceBundleContent) manifest.patched.bundle_content = inspection.bundleContent;
   const temporaryPath = `${backup.manifestPath}.${operations.uuid()}.tmp`;
   try {
     fs.writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
@@ -766,7 +800,12 @@ function writePatchedBinaryRecord({ backup, inspection, operations, recipe }) {
   backup.manifest = manifest;
 }
 
-export function assertPatchedBinaryRecord({ inspection, manifestPath, recipe }) {
+export function assertPatchedBinaryRecord({
+  inspection,
+  manifestPath,
+  recipe,
+  recordState = inspection?.state === "legacy" ? "legacy" : "patched",
+}) {
   let manifest;
   try {
     manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
@@ -790,23 +829,24 @@ export function assertPatchedBinaryRecord({ inspection, manifestPath, recipe }) 
       || JSON.stringify(manifest?.source?.bundle_content) !== JSON.stringify(recipe.sourceBundleContent)
     ))
     || (recipe.sourceArtifact
-      && JSON.stringify(manifest?.source?.artifact) !== JSON.stringify(recipe.sourceArtifact))
-    || manifest?.patched?.asar_sha256 !== recipe.patchedAsarSha256
-    || manifest?.patched?.asar_header_sha256 !== recipe.patchedHeaderSha256
-    || !integrityMatches(manifest?.patched?.electron_asar_integrity, "SHA256", recipe.patchedHeaderSha256))) {
+      && JSON.stringify(manifest?.source?.artifact) !== JSON.stringify(recipe.sourceArtifact)))) {
     throw setupError("PM_STUDIO_PATCH_RECORD_INVALID", "PM Studio patched-binary record does not match the installed patch recipe");
   }
-  const binaries = manifest?.patched?.binaries;
+  const record = patchRecordForState(manifest, recipe, recordState);
+  if (!record) {
+    throw setupError("PM_STUDIO_PATCH_RECORD_INVALID", `PM Studio ${recordState} record does not match the installed patch recipe`);
+  }
+  const binaries = record.binaries;
   if (!binaries
     || binaries.main_executable_sha256 !== inspection.executableIntegrity.executableSha256
     || binaries.electron_framework_sha256 !== inspection.executableIntegrity.frameworkSha256) {
     throw setupError("PM_STUDIO_BUNDLE_DRIFT", "PM Studio executable or Electron Framework differs from the installed patch record");
   }
-  if (JSON.stringify(manifest?.patched?.signing_metadata) !== JSON.stringify(signingMetadata(inspection.codeSign))) {
+  if (JSON.stringify(record.signing_metadata) !== JSON.stringify(signingMetadata(inspection.codeSign))) {
     throw setupError("PM_STUDIO_BUNDLE_DRIFT", "PM Studio signing metadata differs from the installed patch record");
   }
   if (recipe?.sourceBundleContent
-    && JSON.stringify(manifest?.patched?.bundle_content) !== JSON.stringify(inspection.bundleContent)) {
+    && JSON.stringify(record.bundle_content) !== JSON.stringify(inspection.bundleContent)) {
     throw setupError("PM_STUDIO_BUNDLE_DRIFT", "PM Studio bundle content differs from the installed patch record");
   }
 }
@@ -922,12 +962,13 @@ export async function runPmStudioSetup({
     emit(`[OK] PM Studio ${recipe.version} build ${recipe.build} is already patched; no backup or signing was repeated.`);
     emit(`[OK] Verified backup: ${backup.backupAppPath}`);
     emit(`[OK] Backup manifest: ${backup.manifestPath}`);
-    emit(`[INFO] Start ${commandName} before opening PM Studio.`);
+    emit(`[INFO] Start ${commandName} before using Claude in PM Studio; GPT remains on PM Studio's native GitHub Copilot path.`);
     return { status: "already_patched", changed: false, recipe: recipe.id, backup, inspection: source, messages };
   }
-  if (source.state !== "clean") {
+  const migratingLegacy = source.state === "legacy";
+  if (source.state !== "clean" && !migratingLegacy) {
     throw setupError("PM_STUDIO_BUNDLE_DRIFT",
-      `PM Studio ${recipe.version} build ${recipe.build} does not match the clean or patched recipe; no files were changed`, source.issues);
+      `PM Studio ${recipe.version} build ${recipe.build} does not match the clean, split-origin, or legacy recipe; no files were changed`, source.issues);
   }
 
   if (source.sourceVerification === "exact-bundle-content") {
@@ -935,17 +976,36 @@ export async function runPmStudioSetup({
   }
 
   const backupExists = fs.existsSync(finalBackupDir);
+  let verifiedBackup = null;
+  if (migratingLegacy) {
+    if (!backupExists) {
+      throw setupError("PM_STUDIO_BACKUP_INVALID",
+        "Legacy PM Studio global-origin patch has no matching verified clean backup; no files were changed");
+    }
+    verifiedBackup = validateBackup({ backupDir: finalBackupDir, recipe, operations });
+    assertPatchedBinaryRecord({
+      inspection: source,
+      manifestPath: verifiedBackup.manifestPath,
+      recipe,
+      recordState: "legacy",
+    });
+    emit("[WARN] Legacy global-origin patch detected; setup will rebuild from the verified clean backup so GPT and enterprise authentication return to PM Studio's native origin.");
+  }
   assertSpace({ appPath, backupRoot, backupExists, operations });
 
   emit("[WARN] PM Studio's vendor signature will be replaced with an ad-hoc signature; an official update or reinstall may overwrite this patch.");
-  const backup = ensureBackup({ appPath, backupRoot, recipe, operations });
+  const backup = verifiedBackup || ensureBackup({ appPath, backupRoot, recipe, operations });
   const stagePath = path.join(path.dirname(appPath), `.${path.basename(appPath)}.ccdx-stage-${operations.uuid()}`);
   let preserveStage = false;
   try {
-    operations.copyBundle({ source: appPath, destination: stagePath, processRunner: operations.processRunner });
+    operations.copyBundle({
+      source: migratingLegacy ? backup.backupAppPath : appPath,
+      destination: stagePath,
+      processRunner: operations.processRunner,
+    });
     const stagedSource = inspectPmStudioApp({ appPath: stagePath, recipe, operations });
     if (stagedSource.state !== "clean"
-      || (recipe.sourceBundleContent
+      || (!migratingLegacy && recipe.sourceBundleContent
         && stagedSource.bundleContent?.sha256 !== source.bundleContent?.sha256)) {
       throw setupError("PM_STUDIO_STAGE_INVALID", "PM Studio staging copy does not match the exact clean source bundle", stagedSource.issues);
     }
@@ -966,12 +1026,12 @@ export async function runPmStudioSetup({
     if (staged.state !== "patched") {
       throw setupError("PM_STUDIO_STAGE_VERIFY_FAILED", "Patched PM Studio staging bundle failed verification", staged.issues);
     }
-    assertSigningMetadataPreserved(source, staged, recipe);
+    assertSigningMetadataPreserved(stagedSource, staged, recipe);
     writePatchedBinaryRecord({ backup, inspection: staged, operations, recipe });
 
     assertNoBlockingProcesses(operations, appPath);
     const unchangedSource = inspectPmStudioApp({ appPath, recipe, operations });
-    if (unchangedSource.state !== "clean"
+    if (unchangedSource.state !== source.state
       || unchangedSource.asar.asarSha256 !== source.asar.asarSha256
       || unchangedSource.asar.headerSha256 !== source.asar.headerSha256
       || (recipe.sourceBundleContent
@@ -989,12 +1049,17 @@ export async function runPmStudioSetup({
         `PM Studio replacement final state could not be verified. Do not launch it. ${recoveryMessage(backup)}${preserveStage ? ` Verified staging retained: ${stagePath}.` : ""}`);
     }
     if (installed.state !== "patched") {
-      preserveStage = installed.state !== "clean" && fs.existsSync(stagePath);
-      const code = installed.state === "clean"
+      const originalRetained = installed.state === source.state
+        && installed.asar.asarSha256 === source.asar.asarSha256
+        && installed.asar.headerSha256 === source.asar.headerSha256
+        && (!recipe.sourceBundleContent
+          || installed.bundleContent?.sha256 === source.bundleContent?.sha256);
+      preserveStage = !originalRetained && fs.existsSync(stagePath);
+      const code = originalRetained
         ? "PM_STUDIO_REPLACE_FAILED"
         : "PM_STUDIO_INSTALL_VERIFY_FAILED";
-      const stateMessage = installed.state === "clean"
-        ? "The installed PM Studio remains the verified clean bundle"
+      const stateMessage = originalRetained
+        ? `The installed PM Studio remains the verified ${source.state} bundle`
         : "The installed PM Studio did not retain the verified patched state; do not launch it";
       throw setupError(code,
         `${stateMessage}. ${recoveryMessage(backup)}${preserveStage ? ` Verified staging retained: ${stagePath}.` : ""}`,
@@ -1011,7 +1076,9 @@ export async function runPmStudioSetup({
       emit("[WARN] Atomic replacement reported an error after the exact patched bundle became installed; the final bundle was independently verified.");
     }
 
-    emit(`[OK] Patched PM Studio ${recipe.version} build ${recipe.build}.`);
+    emit(migratingLegacy
+      ? `[OK] Migrated PM Studio ${recipe.version} build ${recipe.build} from the legacy global-origin patch to the split-origin patch.`
+      : `[OK] Patched PM Studio ${recipe.version} build ${recipe.build}.`);
     emit(`[OK] app.asar SHA-256: ${installed.asar.asarSha256}`);
     emit(`[OK] Verified backup: ${backup.backupAppPath}${backup.reused ? " (reused)" : ""}`);
     emit(`[OK] Backup manifest: ${backup.manifestPath}`);
@@ -1019,9 +1086,9 @@ export async function runPmStudioSetup({
     emit(`[INFO] Restore step 1/3: quit PM Studio and its updater.`);
     emit(`[INFO] Restore step 2/3: confirm the installed Info.plist still reports version/build ${recipe.version}/${recipe.build}; never restore this backup over another version.`);
     emit(`[INFO] Restore step 3/3: move ${appPath} aside, copy ${backup.backupAppPath} to that exact path, and verify its signature before launch.`);
-    emit(`[INFO] Start ${commandName} before opening PM Studio.`);
+    emit(`[INFO] Start ${commandName} before using Claude in PM Studio; GPT remains on PM Studio's native GitHub Copilot path.`);
     return {
-      status: "patched",
+      status: migratingLegacy ? "migrated" : "patched",
       changed: true,
       recipe: recipe.id,
       backup,

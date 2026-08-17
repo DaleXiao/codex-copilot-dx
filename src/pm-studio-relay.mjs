@@ -16,6 +16,8 @@ import { requireUpstreamEventStream } from "./stream-contract.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 
 export const PM_STUDIO_RELAY_PREFIX = "/pm-ccdx";
+export const PM_STUDIO_RELAY_MARKER_HEADER = "X-CCDX-PM-Relay";
+export const PM_STUDIO_RELAY_MARKER_VALUE = "split-origin-v1";
 const COPILOT_ORIGIN = "https://api.githubcopilot.com";
 const DEFAULT_VALIDATION_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_VALIDATION_CACHE_SIZE = 128;
@@ -32,11 +34,7 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
-const POST_PATHS = new Set([
-  "/chat/completions",
-  "/responses",
-  "/embeddings",
-]);
+const CHAT_COMPLETIONS_PATH = "/chat/completions";
 
 function localError(statusCode, code, message) {
   const error = httpError(message, statusCode);
@@ -46,7 +44,11 @@ function localError(statusCode, code, message) {
 
 function sendLocalError(res, statusCode, code, message, headers = {}) {
   if (res.destroyed || res.writableEnded) return;
-  res.writeHead(statusCode, { "Content-Type": "application/json", ...headers });
+  res.writeHead(statusCode, {
+    "Content-Type": "application/json",
+    [PM_STUDIO_RELAY_MARKER_HEADER]: PM_STUDIO_RELAY_MARKER_VALUE,
+    ...headers,
+  });
   res.end(JSON.stringify({ error: { message, type: "invalid_request_error", code } }));
 }
 
@@ -160,6 +162,7 @@ async function responseSnapshot(response) {
 function responseHeaders(headers, body, options) {
   return {
     ...safeUpstreamResponseHeaders(headers, options),
+    [PM_STUDIO_RELAY_MARKER_HEADER]: PM_STUDIO_RELAY_MARKER_VALUE,
     "Content-Length": String(body.length),
   };
 }
@@ -179,8 +182,6 @@ function rejectUpstreamRedirect(response) {
 
 function mergeModelCatalog(snapshot, modelRouter) {
   if (!snapshot.ok) return null;
-  const allowed = modelRouter.allowedModels();
-  if (!allowed.length) return null;
   let enterprise;
   try {
     enterprise = JSON.parse(snapshot.body.toString("utf8"));
@@ -189,6 +190,8 @@ function mergeModelCatalog(snapshot, modelRouter) {
   }
   const data = catalogData(enterprise);
   if (!data) return null;
+  const allowed = modelRouter.allowedModels();
+  if (!allowed.length) return snapshot.body;
   const seen = new Set(data.map((model) => String(model?.id || "").trim()).filter(Boolean));
   const additions = [];
   for (const model of allowed) {
@@ -197,7 +200,7 @@ function mergeModelCatalog(snapshot, modelRouter) {
     seen.add(id);
     additions.push(model);
   }
-  if (!additions.length) return null;
+  if (!additions.length) return snapshot.body;
   return Buffer.from(JSON.stringify(Array.isArray(enterprise)
     ? [...enterprise, ...additions]
     : { ...enterprise, data: [...data, ...additions] }));
@@ -215,6 +218,7 @@ async function relayUpstreamResponse(response, reqBody, res, abort, streamIdleTi
   abort.setTimeout(streamIdleTimeoutMs, "stream_idle_timeout");
   res.writeHead(response.status, {
     ...safeUpstreamResponseHeaders(response.headers, { contentType: "text/event-stream" }),
+    [PM_STUDIO_RELAY_MARKER_HEADER]: PM_STUDIO_RELAY_MARKER_VALUE,
     "Cache-Control": "no-cache",
   });
   const reader = response.body.getReader();
@@ -424,6 +428,9 @@ export function createPmStudioRelayHandler(options = {}) {
     }
     const merged = mergeModelCatalog(snapshot, modelRouter);
     if (!merged) {
+      throw localError(502, "invalid_upstream", "PM Studio upstream model catalog has an invalid JSON shape");
+    }
+    if (merged === snapshot.body) {
       sendSnapshot(res, snapshot);
       return;
     }
@@ -431,15 +438,26 @@ export function createPmStudioRelayHandler(options = {}) {
     res.end(merged);
   }
 
-  async function handlePost(req, res, pathname, token, abort) {
+  async function handleChatCompletions(req, res, token, abort) {
     let releaseRequest = releaseOnce();
     try {
       const admission = await acquireRequest(req, { signal: abort.signal });
       releaseRequest = releaseOnce(admission);
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       const body = await readJsonBody(req, { admission, signal: abort.signal });
-      const supportsStream = pathname === "/chat/completions" || pathname === "/responses";
-      const streaming = supportsStream && body?.stream === true;
+      const modelType = modelRouter.classify(body?.model);
+      if (modelType === "unsupported_claude") {
+        throw localError(400, "model_not_supported", "The requested Claude model is not enabled for PM Studio");
+      }
+      if (modelType !== "claude") {
+        throw localError(
+          400,
+          "native_route_required",
+          "Non-Claude PM Studio requests must use the native GitHub Copilot origin",
+        );
+      }
+
+      const streaming = body?.stream === true;
       const requestTimeoutMs = streaming ? streamHandshakeTimeoutMs : upstreamTimeoutMs;
       const timeoutReason = streaming ? "stream_handshake_timeout" : "upstream_timeout";
       abort.setTimeout(requestTimeoutMs, timeoutReason);
@@ -452,23 +470,12 @@ export function createPmStudioRelayHandler(options = {}) {
       }
       abort.setTimeout(requestTimeoutMs, timeoutReason);
 
-      const modelType = modelRouter.classify(body?.model);
-      if (modelType === "unsupported_claude" || (modelType === "claude" && pathname !== "/chat/completions")) {
-        throw localError(400, "model_not_supported", "The requested Claude model is not available for this endpoint");
-      }
-
-      let upstream;
-      if (modelType === "claude") {
-        upstream = await options.claudeClient.chatCompletions(body, {
-          signal: abort.signal,
-          fetchImpl: fetchClaudeUpstream,
-        });
-      } else {
-        const bodyText = JSON.stringify(body);
-        upstream = await fetchEnterprise(pathname, "POST", req.headers, token, bodyText, abort.signal);
-      }
+      const upstream = await options.claudeClient.chatCompletions(body, {
+        signal: abort.signal,
+        fetchImpl: fetchClaudeUpstream,
+      });
       releaseRequest();
-      await relayUpstreamResponse(upstream, supportsStream ? body : null, res, abort, streamIdleTimeoutMs);
+      await relayUpstreamResponse(upstream, body, res, abort, streamIdleTimeoutMs);
     } finally {
       releaseRequest();
     }
@@ -494,7 +501,9 @@ export function createPmStudioRelayHandler(options = {}) {
     }
 
     const upstreamPath = pathname.slice(PM_STUDIO_RELAY_PREFIX.length);
-    const allowedMethod = upstreamPath === "/models" ? "GET" : POST_PATHS.has(upstreamPath) ? "POST" : null;
+    const allowedMethod = upstreamPath === "/models"
+      ? "GET"
+      : upstreamPath === CHAT_COMPLETIONS_PATH ? "POST" : null;
     if (!allowedMethod) {
       sendLocalError(res, 404, "route_not_found", "PM Studio relay route not found");
       return true;
@@ -512,13 +521,14 @@ export function createPmStudioRelayHandler(options = {}) {
         abort.setTimeout(upstreamTimeoutMs, "upstream_timeout");
         await handleModels(req, res, token, abort);
       } else {
-        await handlePost(req, res, upstreamPath, token, abort);
+        await handleChatCompletions(req, res, token, abort);
       }
     } catch (error) {
       const safe = safeFailure(error, abort);
       if (res.headersSent) {
         if (!res.destroyed) res.destroy();
       } else {
+        res.setHeader(PM_STUDIO_RELAY_MARKER_HEADER, PM_STUDIO_RELAY_MARKER_VALUE);
         sendJsonError(res, safe, safe.statusCode || 502);
       }
     } finally {

@@ -170,10 +170,15 @@ export async function inspectPmStudioStatus({
       const recipe = selectRecipe(normalized, recipes);
       if (recipe) {
         app = { ...inspectApp({ appPath, recipe, operations }), recipe: recipe.id };
-        if (app.state === "patched") {
+        if (["patched", "predecessor"].includes(app.state)) {
           const manifestPath = pmStudioPatchManifestPath({ home, backupRoot, recipe });
           try {
-            verifyPatchRecord({ inspection: app, manifestPath, recipe });
+            verifyPatchRecord({
+              inspection: app,
+              manifestPath,
+              recipe,
+              recordState: app.state,
+            });
             app.patchRecord = { valid: true, manifestPath, reason: "" };
           } catch (error) {
             const reason = safeMessage(error);
@@ -238,6 +243,9 @@ function appStatusItem(result, commandName) {
   if (app.state === "patched") {
     const reason = app.patchRecord?.reason || "installed patch record is missing";
     return { kind: "err", component: "App patch", detail: `${version}; patch record not verified`, message: `PM Studio ${version} matches the patch recipe, but its installed patch record is not verified: ${reason}` };
+  }
+  if (app.state === "predecessor" && app.patchRecord?.valid === true) {
+    return { kind: "warn", component: "App patch", detail: `${version}; verified predecessor split patch`, message: `PM Studio ${version} has a verified predecessor split patch; run ${commandName} pms setup to migrate` };
   }
   if (app.state === "legacy") {
     return { kind: "err", component: "App patch", detail: `${version}; legacy global-origin patch`, message: `PM Studio ${version} has a legacy global-origin patch; run ${commandName} pms setup to migrate` };

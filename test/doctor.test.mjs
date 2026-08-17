@@ -153,6 +153,31 @@ test("collectDoctorChecks: includes PM Studio health only when installed", async
   assert.equal(clean.some((check) => check.fix === "ccdx pms setup"), true);
 });
 
+test("collectDoctorChecks: reports a verified predecessor PM Studio patch for migration", async () => {
+  const checks = await collectDoctorChecks({
+    home: configuredHome(),
+    platform: "darwin",
+    env: {},
+    checkAdapter: false,
+    checkPmStudio: true,
+    inspectPmStudioHealthFn: async () => ({
+      app: {
+        state: "predecessor",
+        metadata: { version: "2.9.10", build: "2.9.10" },
+        issues: [],
+      },
+      claude: { valid: true },
+      adapter: { ok: true },
+    }),
+  });
+
+  assert.deepEqual(checks.filter((check) => /PM Studio/.test(check.message)), [{
+    kind: "warn",
+    message: "PM Studio 2.9.10 build 2.9.10 has a verified predecessor split patch",
+    fix: "ccdx pms setup",
+  }]);
+});
+
 test("collectDoctorChecks: reports a running PM relay whose isolated routing is not ready", async () => {
   const checks = await collectDoctorChecks({
     home: configuredHome(),

@@ -590,6 +590,12 @@ export async function collectDoctorChecks({
           fix: "stop the running adapter, then run ccdx start",
         });
       }
+    } else if (pm.app.state === "predecessor") {
+      checks.push({
+        kind: "warn",
+        message: `PM Studio ${version} has a verified predecessor split patch`,
+        fix: "ccdx pms setup",
+      });
     } else if (pm.app.state === "clean") {
       checks.push({
         kind: "warn",

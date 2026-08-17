@@ -83,6 +83,7 @@ function makeAsarFixture({ version = "2.9.7", build = version } = {}) {
   const anchor = "47024(I,e,t){";
   const sourceWindow = `${anchor}const l={API_ENDPOINT:"${PM_STUDIO_ORIGIN}"};${"s".repeat(24)}}`;
   const replacementWindow = `${anchor}const l={API_ENDPOINT:"${PM_STUDIO_ORIGIN}"};${"p".repeat(24)}}`;
+  const predecessorWindow = `${anchor}const l={API_ENDPOINT:"${PM_STUDIO_ORIGIN}"};${"o".repeat(24)}}`;
   const editOffset = 19;
   const sourceContents = [
     Buffer.from(`${"a".repeat(editOffset)}${sourceWindow}${"b".repeat(31)}`),
@@ -90,6 +91,10 @@ function makeAsarFixture({ version = "2.9.7", build = version } = {}) {
   ];
   const patchedContents = [
     replaceAt(sourceContents[0], editOffset, sourceWindow, replacementWindow),
+    sourceContents[1],
+  ];
+  const predecessorContents = [
+    replaceAt(sourceContents[0], editOffset, sourceWindow, predecessorWindow),
     sourceContents[1],
   ];
   const legacyContents = sourceContents.map((content) => {
@@ -129,16 +134,20 @@ function makeAsarFixture({ version = "2.9.7", build = version } = {}) {
 
   const source = buildArchive(headerFor(sourceContents), sourceContents);
   const patched = buildArchive(headerFor(patchedContents), patchedContents);
+  const predecessor = buildArchive(headerFor(predecessorContents), predecessorContents);
   const legacy = buildArchive(headerFor(legacyContents), legacyContents);
   assert.equal(source.dataOffset, patched.dataOffset);
+  assert.equal(source.dataOffset, predecessor.dataOffset);
   assert.equal(source.dataOffset, legacy.dataOffset);
   const target = {
     ...entries[0],
     blockSize,
     sourceSha256: sha256Hex(sourceContents[0]),
     patchedSha256: sha256Hex(patchedContents[0]),
+    predecessorSha256: sha256Hex(predecessorContents[0]),
     sourceBlocks: blockSha256(sourceContents[0], blockSize),
     patchedBlocks: blockSha256(patchedContents[0], blockSize),
+    predecessorBlocks: blockSha256(predecessorContents[0], blockSize),
     edit: {
       offset: editOffset,
       absoluteOffset: source.dataOffset + editOffset,
@@ -147,6 +156,7 @@ function makeAsarFixture({ version = "2.9.7", build = version } = {}) {
       anchorCount: 1,
       sourceSha256: sha256Hex(sourceWindow),
       patchedSha256: sha256Hex(replacementWindow),
+      predecessorSha256: sha256Hex(predecessorWindow),
       replacement: replacementWindow,
     },
   };
@@ -169,6 +179,18 @@ function makeAsarFixture({ version = "2.9.7", build = version } = {}) {
     sourceHeaderSha256: source.headerSha256,
     patchedAsarSha256: sha256Hex(patched.archive),
     patchedHeaderSha256: patched.headerSha256,
+    predecessor: {
+      id: "split-origin-v1-model-discovery-750ms",
+      kind: "split-origin-predecessor",
+      asarSha256: sha256Hex(predecessor.archive),
+      headerSha256: predecessor.headerSha256,
+      signingMetadata: {
+        identifier: "com.pm-studio.app",
+        flags: "0x10002(adhoc,runtime)",
+        runtime_version: "15.0.0",
+        entitlements_sha256: "fixture-entitlements",
+      },
+    },
     targets: [target],
     legacy: {
       kind: "global-origin-replacement",
@@ -176,7 +198,13 @@ function makeAsarFixture({ version = "2.9.7", build = version } = {}) {
       headerSha256: legacy.headerSha256,
     },
   };
-  return { recipe, source: source.archive, patched: patched.archive, legacy: legacy.archive };
+  return {
+    recipe,
+    source: source.archive,
+    patched: patched.archive,
+    predecessor: predecessor.archive,
+    legacy: legacy.archive,
+  };
 }
 
 function writeJson(filePath, value) {
@@ -188,10 +216,14 @@ function createAppFixture(root, fixture, { signature = "vendor", state = "clean"
   const contents = path.join(appPath, "Contents");
   const resources = path.join(contents, "Resources");
   fs.mkdirSync(resources, { recursive: true });
-  const asar = state === "legacy" ? fixture.legacy : state === "patched" ? fixture.patched : fixture.source;
+  const asar = state === "legacy"
+    ? fixture.legacy
+    : state === "predecessor" ? fixture.predecessor : state === "patched" ? fixture.patched : fixture.source;
   const integrityHash = state === "legacy"
     ? fixture.recipe.legacy.headerSha256
-    : state === "patched" ? fixture.recipe.patchedHeaderSha256 : fixture.recipe.sourceHeaderSha256;
+    : state === "predecessor"
+      ? fixture.recipe.predecessor.headerSha256
+      : state === "patched" ? fixture.recipe.patchedHeaderSha256 : fixture.recipe.sourceHeaderSha256;
   fs.writeFileSync(path.join(resources, "app.asar"), asar);
   writeJson(path.join(contents, "Info.plist"), {
     version: fixture.recipe.version,
@@ -288,6 +320,68 @@ function assertSnapshot(appPath, snapshot) {
   assert.deepEqual(fs.readFileSync(path.join(appPath, "Contents/.fixture-signature")), snapshot.signature);
 }
 
+function schema2FixtureRecipe(appPath, fixture, operations) {
+  const sourceBundleContent = {
+    ...inspectBundleContent(appPath),
+    ignoredXattrs: [],
+  };
+  const inspectCodeSign = operations.inspectCodeSign;
+  operations.inspectCodeSign = (args) => {
+    const inspected = inspectCodeSign(args);
+    if (inspected.adHoc) return inspected;
+    return {
+      ...inspected,
+      valid: false,
+      verifyValid: false,
+      displayValid: true,
+      entitlementsState: "invalid",
+      cdHashFull: "fixture-vendor-cdhash",
+      notarizationTicket: "stapled",
+    };
+  };
+  operations.inspectBundleContent = ({ appPath: inspectedPath }) => inspectBundleContent(inspectedPath);
+  return {
+    ...fixture.recipe,
+    sourceBundleContent,
+    sourceCodeSignature: {
+      identifier: "com.pm-studio.app",
+      teamIdentifier: "HL75GKK4W4",
+      flags: "0x10000(runtime)",
+      runtimeVersion: "15.0.0",
+      cdHashFull: "fixture-vendor-cdhash",
+      notarizationTicket: "stapled",
+    },
+    patchedSigningMetadata: {
+      identifier: "com.pm-studio.app",
+      flags: "0x10002(adhoc,runtime)",
+      runtime_version: "15.0.0",
+      entitlements_sha256: "fixture-entitlements",
+    },
+  };
+}
+
+function installPredecessorFixture({ appPath, fixture, recipe, manifestPath }) {
+  fs.writeFileSync(path.join(appPath, recipe.asarPath), fixture.predecessor);
+  const plistPath = path.join(appPath, recipe.infoPlistPath);
+  const plist = JSON.parse(fs.readFileSync(plistPath, "utf8"));
+  plist.integrity = { algorithm: "SHA256", hash: recipe.predecessor.headerSha256 };
+  writeJson(plistPath, plist);
+
+  if (!manifestPath) return null;
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const predecessorRecord = {
+    ...manifest.patched,
+    asar_sha256: recipe.predecessor.asarSha256,
+    asar_header_sha256: recipe.predecessor.headerSha256,
+    electron_asar_integrity: { algorithm: "SHA256", hash: recipe.predecessor.headerSha256 },
+    ...(recipe.sourceBundleContent ? { bundle_content: inspectBundleContent(appPath) } : {}),
+  };
+  manifest.patched = predecessorRecord;
+  delete manifest.predecessor_patched;
+  writeJson(manifestPath, manifest);
+  return predecessorRecord;
+}
+
 test("PM Studio 2.9.7 recipe locks one exact split-origin module edit and the legacy global patch", () => {
   assert.equal(PM_STUDIO_2_9_7_RECIPE.dataOffset, 3_832_764);
   assert.equal(PM_STUDIO_2_9_7_RECIPE.bundleIdentifier, "com.pm-studio.app");
@@ -304,9 +398,14 @@ test("PM Studio 2.9.7 recipe locks one exact split-origin module edit and the le
     "e684d310334840f7a64f2d5171052eb514822af155779d3185e4f068daee4387");
   assert.equal(PM_STUDIO_2_9_7_RECIPE.legacy.asarSha256,
     "3dd0f53cdaa35a644d2cf56e4fc2dd20f5c90dc2989b6d81a467ef00ebb620a7");
+  assert.equal(PM_STUDIO_2_9_7_RECIPE.predecessor.id, "split-origin-v1-model-discovery-750ms");
+  assert.equal(PM_STUDIO_2_9_7_RECIPE.predecessor.kind, "split-origin-predecessor");
+  assert.equal(PM_STUDIO_2_9_7_RECIPE.predecessor.asarSha256,
+    "d520d115604225c1a3feb749dbe29ad0d2cd175c5233c010de0e1fade527fa0b");
   assert.equal(PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE.length, 2_121);
   assert.equal(PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE.match(/https:\/\/api\.githubcopilot\.com/g).length, 1);
   assert.equal(PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE.match(/http:\/\/127\.0\.0\.1:2026\/pm-ccdx/g).length, 1);
+  assert.equal(PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE.match(/AbortSignal\.timeout\(750\)/g).length, 1);
   assert.equal(Buffer.byteLength(PM_STUDIO_ORIGIN), 29);
   assert.equal(Buffer.byteLength(CCDX_PM_STUDIO_ORIGIN), 29);
 });
@@ -332,11 +431,13 @@ test("PM Studio 2.9.10 recipe locks the official bundle, ASAR, targets, and sign
   assert.equal(PM_STUDIO_2_9_10_RECIPE.sourceAsarSha256,
     "d243860770e8b1d8044213924f9704d1fc52f900d6c33461eff6358962330b78");
   assert.equal(PM_STUDIO_2_9_10_RECIPE.patchedAsarSha256,
-    "ea28d998056b32ca4115d208a4d81ce629c83f3f5f89c6a66d50749849beb6fc");
+    "f309fc7e86bb4edaf1fecd9061fb4ddc634357c0ba9299f1d13f8b2ff33efd90");
   assert.equal(PM_STUDIO_2_9_10_RECIPE.targets.length, 1);
   assert.equal(PM_STUDIO_2_9_10_RECIPE.targets[0].edit.absoluteOffset, 106_696_630);
   assert.equal(PM_STUDIO_2_9_10_RECIPE.legacy.asarSha256,
     "49f72d999a6085102341c2d551577e164db6f22e4707d2112efa3fd280e7315e");
+  assert.equal(PM_STUDIO_2_9_10_RECIPE.predecessor.asarSha256,
+    "ea28d998056b32ca4115d208a4d81ce629c83f3f5f89c6a66d50749849beb6fc");
   assert.equal(PM_STUDIO_2_9_10_RECIPE.sourceCodeSignature.teamIdentifier, "HL75GKK4W4");
   assert.equal(PM_STUDIO_2_9_10_RECIPE.patchedSigningMetadata.entitlements_sha256,
     "9d4ccbda4fe0c81a70df3db93b3e61fe0500f67f14cdcbee4dea230e6512d05c");
@@ -360,6 +461,13 @@ test("ASAR helpers classify clean/split-origin/legacy/drift and patch only the e
   const repeated = patchAsarBuffer(result.buffer, fixture.recipe);
   assert.equal(repeated.changed, false);
   assert.deepEqual(repeated.buffer, fixture.patched);
+
+  const predecessor = inspectAsarBuffer(fixture.predecessor, fixture.recipe);
+  assert.equal(predecessor.state, "predecessor");
+  assert.equal(predecessor.predecessorIssues.length, 0);
+  assert.throws(() => patchAsarBuffer(fixture.predecessor, fixture.recipe), {
+    code: "PM_STUDIO_ASAR_PREDECESSOR",
+  });
 
   const legacy = inspectAsarBuffer(fixture.legacy, fixture.recipe);
   assert.equal(legacy.state, "legacy");
@@ -637,42 +745,94 @@ test("split-origin Claude chat requires a credential-free compatible probe and a
       clearTimeout(keepAlive);
     }
   });
+
+  await t.test("caller abort during the compatibility probe propagates its exact reason", async () => {
+    const calls = [];
+    const runtime = splitOriginRuntime(async (input, init = {}) => {
+      calls.push({
+        url: typeof input === "string" ? input : input.url,
+        authorization: new Headers(init.headers).get("Authorization"),
+        body: init.body,
+      });
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+      });
+    });
+    const controller = new AbortController();
+    const reason = new Error("user cancelled Claude compatibility probe");
+    const request = runtime.fetch(`${PM_STUDIO_ORIGIN}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: "Bearer pm-placeholder" },
+      body: JSON.stringify({ model: "claude-prefix", messages: [{ role: "user", content: "private" }] }),
+      signal: controller.signal,
+    });
+    controller.abort(reason);
+
+    await assert.rejects(request, (error) => error === reason);
+    assert.deepEqual(calls, [{
+      url: `${CCDX_PM_STUDIO_ORIGIN}/models`,
+      authorization: null,
+      body: undefined,
+    }]);
+  });
 });
 
-test("split-origin models timeout falls back native but a user abort never falls through", async () => {
-  const timeoutCalls = [];
-  const timeoutRuntime = splitOriginRuntime(async (input, init = {}) => {
+test("split-origin accepts a marked delayed model catalog without native fallback", async () => {
+  const calls = [];
+  const caller = new AbortController();
+  const runtime = splitOriginRuntime(async (input, init = {}) => {
     const url = typeof input === "string" ? input : input.url;
-    timeoutCalls.push(url);
+    calls.push({ url, signal: init.signal });
     if (url === `${CCDX_PM_STUDIO_ORIGIN}/models`) {
       return new Promise((resolve, reject) => {
-        init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+        const timer = setTimeout(() => resolve(jsonResponse({
+          data: [{ id: "claude-delayed", vendor: "Anthropic" }],
+        }, { marker: true })), 825);
+        init.signal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(init.signal.reason);
+        }, { once: true });
       });
     }
     return jsonResponse({ data: [{ id: "gpt-native" }] });
   });
-  const keepAlive = setTimeout(() => {}, 1_000);
-  try {
-    await timeoutRuntime.fetch(`${PM_STUDIO_ORIGIN}/models`, { method: "GET" });
-  } finally {
-    clearTimeout(keepAlive);
-  }
-  assert.deepEqual(timeoutCalls, [`${CCDX_PM_STUDIO_ORIGIN}/models`, `${PM_STUDIO_ORIGIN}/models`]);
 
+  const response = await runtime.fetch(`${PM_STUDIO_ORIGIN}/models`, {
+    method: "GET",
+    headers: { Authorization: "Bearer pm-placeholder" },
+    signal: caller.signal,
+  });
+
+  assert.equal(response.headers.get("X-CCDX-PM-Relay"), PM_STUDIO_SPLIT_ORIGIN_MARKER);
+  assert.deepEqual(await response.json(), {
+    data: [{ id: "claude-delayed", vendor: "Anthropic" }],
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${CCDX_PM_STUDIO_ORIGIN}/models`);
+  assert.strictEqual(calls[0].signal, caller.signal);
+});
+
+test("split-origin models preserves a user abort without native fallback", async () => {
   const abortCalls = [];
   const abortRuntime = splitOriginRuntime(async (input, init = {}) => {
     const url = typeof input === "string" ? input : input.url;
-    abortCalls.push(url);
-    if (init.signal?.aborted) throw init.signal.reason;
-    return jsonResponse({ data: [] });
+    abortCalls.push({ url, signal: init.signal });
+    return new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    });
   });
   const controller = new AbortController();
-  controller.abort(new Error("user cancelled"));
-  await assert.rejects(abortRuntime.fetch(`${PM_STUDIO_ORIGIN}/models`, {
+  const reason = new Error("user cancelled");
+  const request = abortRuntime.fetch(`${PM_STUDIO_ORIGIN}/models`, {
     method: "GET",
     signal: controller.signal,
-  }), /user cancelled/);
-  assert.deepEqual(abortCalls, [`${CCDX_PM_STUDIO_ORIGIN}/models`]);
+  });
+  controller.abort(reason);
+  await assert.rejects(request, (error) => error === reason);
+  assert.deepEqual(abortCalls, [{
+    url: `${CCDX_PM_STUDIO_ORIGIN}/models`,
+    signal: controller.signal,
+  }]);
 });
 
 test("bundle content fingerprints files, modes, symlinks, empty directories, and stable xattrs", () => {
@@ -968,6 +1128,229 @@ test("legacy global-origin patch without a verified clean backup is rejected unc
   }), { code: "PM_STUDIO_BACKUP_INVALID" });
   assertSnapshot(appPath, snapshot);
   assert.equal(fs.existsSync(backupRoot), false);
+});
+
+test("setup migrates the exact predecessor from a verified clean backup for schema 1 and schema 2", async (t) => {
+  for (const { name, version, schema2 } of [
+    { name: "2.9.7 schema 1", version: "2.9.7", schema2: false },
+    { name: "2.9.10 schema 2", version: "2.9.10", schema2: true },
+  ]) {
+    await t.test(name, async () => {
+      const root = temporaryRoot(`ccdx-pms-predecessor-${version}-`);
+      const fixture = makeAsarFixture({ version });
+      const appPath = createAppFixture(root, fixture);
+      const backupRoot = path.join(root, "backups");
+      const signCounter = { value: 0 };
+      const operations = fixtureOperations({ signCounter });
+      const recipe = schema2 ? schema2FixtureRecipe(appPath, fixture, operations) : fixture.recipe;
+      const first = await runPmStudioSetup({
+        appPath, home: root, backupRoot, recipes: [recipe], operations, logger: () => {},
+      });
+      const backupSnapshot = sourceSnapshot(first.backup.backupAppPath);
+      const predecessorRecord = installPredecessorFixture({
+        appPath,
+        fixture,
+        recipe,
+        manifestPath: first.backup.manifestPath,
+      });
+      assert.equal(inspectPmStudioApp({ appPath, recipe, operations }).state, "predecessor");
+
+      const copySources = [];
+      const copyBundle = operations.copyBundle;
+      operations.copyBundle = (args) => {
+        copySources.push(args.source);
+        return copyBundle(args);
+      };
+      const migrated = await runPmStudioSetup({
+        appPath, home: root, backupRoot, recipes: [recipe], operations, logger: () => {},
+      });
+
+      assert.equal(migrated.status, "migrated");
+      assert.equal(signCounter.value, 2);
+      assert.deepEqual(copySources, [first.backup.backupAppPath]);
+      assert.deepEqual(fs.readFileSync(path.join(appPath, recipe.asarPath)), fixture.patched);
+      assertSnapshot(first.backup.backupAppPath, backupSnapshot);
+      const manifest = JSON.parse(fs.readFileSync(first.backup.manifestPath, "utf8"));
+      assert.deepEqual(manifest.predecessor_patched, predecessorRecord);
+      assert.equal(manifest.patched.asar_sha256, recipe.patchedAsarSha256);
+      assert.equal(manifest.patched.asar_header_sha256, recipe.patchedHeaderSha256);
+    });
+  }
+});
+
+test("predecessor without a verified backup and unknown predecessor bit drift are rejected unchanged", async (t) => {
+  await t.test("missing backup", async () => {
+    const root = temporaryRoot("ccdx-pms-predecessor-no-backup-");
+    const fixture = makeAsarFixture();
+    const appPath = createAppFixture(root, fixture, { signature: "adhoc", state: "predecessor" });
+    const snapshot = sourceSnapshot(appPath);
+    const backupRoot = path.join(root, "backups");
+    const operations = fixtureOperations();
+    assert.equal(inspectPmStudioApp({ appPath, recipe: fixture.recipe, operations }).state, "predecessor");
+    await assert.rejects(runPmStudioSetup({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    }), { code: "PM_STUDIO_BACKUP_INVALID" });
+    assertSnapshot(appPath, snapshot);
+    assert.equal(fs.existsSync(backupRoot), false);
+  });
+
+  await t.test("unknown bit drift", async () => {
+    const root = temporaryRoot("ccdx-pms-predecessor-drift-");
+    const fixture = makeAsarFixture();
+    const appPath = createAppFixture(root, fixture, { signature: "adhoc", state: "predecessor" });
+    const asarPath = path.join(appPath, fixture.recipe.asarPath);
+    const drift = fs.readFileSync(asarPath);
+    drift[drift.length - 1] ^= 1;
+    fs.writeFileSync(asarPath, drift);
+    const snapshot = sourceSnapshot(appPath);
+    const backupRoot = path.join(root, "backups");
+    const operations = fixtureOperations();
+    assert.equal(inspectPmStudioApp({ appPath, recipe: fixture.recipe, operations }).state, "drift");
+    await assert.rejects(runPmStudioSetup({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    }), { code: "PM_STUDIO_BUNDLE_DRIFT" });
+    assertSnapshot(appPath, snapshot);
+    assert.equal(fs.existsSync(backupRoot), false);
+  });
+});
+
+test("predecessor manifest record drift fails before staging or installation", async (t) => {
+  for (const { name, mutate, code } of [
+    {
+      name: "installed predecessor binary record drift",
+      mutate(manifest) {
+        manifest.patched.binaries.main_executable_sha256 = "unknown-main-drift";
+      },
+      code: "PM_STUDIO_BUNDLE_DRIFT",
+    },
+    {
+      name: "mismatched existing predecessor_patched record",
+      mutate(manifest) {
+        manifest.predecessor_patched = {
+          ...manifest.patched,
+          asar_sha256: "0".repeat(64),
+        };
+      },
+      code: "PM_STUDIO_BACKUP_INVALID",
+    },
+  ]) {
+    await t.test(name, async () => {
+      const root = temporaryRoot("ccdx-pms-predecessor-record-drift-");
+      const fixture = makeAsarFixture();
+      const appPath = createAppFixture(root, fixture);
+      const backupRoot = path.join(root, "backups");
+      const signCounter = { value: 0 };
+      const operations = fixtureOperations({ signCounter });
+      const first = await runPmStudioSetup({
+        appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+      });
+      installPredecessorFixture({
+        appPath,
+        fixture,
+        recipe: fixture.recipe,
+        manifestPath: first.backup.manifestPath,
+      });
+      const snapshot = sourceSnapshot(appPath);
+      const manifest = JSON.parse(fs.readFileSync(first.backup.manifestPath, "utf8"));
+      mutate(manifest);
+      writeJson(first.backup.manifestPath, manifest);
+      const copyBundle = operations.copyBundle;
+      let copyCount = 0;
+      operations.copyBundle = (args) => {
+        copyCount += 1;
+        return copyBundle(args);
+      };
+
+      await assert.rejects(runPmStudioSetup({
+        appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+      }), { code });
+      assertSnapshot(appPath, snapshot);
+      assert.equal(copyCount, 0);
+      assert.equal(signCounter.value, 1);
+    });
+  }
+});
+
+test("a failed predecessor replacement preserves its record and can be retried", async () => {
+  const root = temporaryRoot("ccdx-pms-predecessor-retry-");
+  const fixture = makeAsarFixture();
+  const appPath = createAppFixture(root, fixture);
+  const backupRoot = path.join(root, "backups");
+  const signCounter = { value: 0 };
+  const operations = fixtureOperations({ signCounter });
+  const first = await runPmStudioSetup({
+    appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+  });
+  const predecessorRecord = installPredecessorFixture({
+    appPath,
+    fixture,
+    recipe: fixture.recipe,
+    manifestPath: first.backup.manifestPath,
+  });
+  const predecessorSnapshot = sourceSnapshot(appPath);
+  const replaceApp = operations.replaceApp;
+  operations.replaceApp = () => {
+    throw new Error("fixture replacement failed");
+  };
+
+  await assert.rejects(runPmStudioSetup({
+    appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+  }), { code: "PM_STUDIO_REPLACE_FAILED" });
+  assertSnapshot(appPath, predecessorSnapshot);
+  const failedManifest = JSON.parse(fs.readFileSync(first.backup.manifestPath, "utf8"));
+  assert.deepEqual(failedManifest.predecessor_patched, predecessorRecord);
+  assert.equal(failedManifest.patched.asar_sha256, fixture.recipe.patchedAsarSha256);
+
+  operations.replaceApp = replaceApp;
+  const retried = await runPmStudioSetup({
+    appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+  });
+  assert.equal(retried.status, "migrated");
+  assert.equal(signCounter.value, 3);
+  assert.deepEqual(fs.readFileSync(path.join(appPath, fixture.recipe.asarPath)), fixture.patched);
+  const retriedManifest = JSON.parse(fs.readFileSync(first.backup.manifestPath, "utf8"));
+  assert.deepEqual(retriedManifest.predecessor_patched, predecessorRecord);
+});
+
+test("a late running-process preflight preserves the predecessor and can be retried", async () => {
+  const root = temporaryRoot("ccdx-pms-predecessor-late-running-");
+  const fixture = makeAsarFixture();
+  const appPath = createAppFixture(root, fixture);
+  const backupRoot = path.join(root, "backups");
+  const operations = fixtureOperations();
+  const first = await runPmStudioSetup({
+    appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+  });
+  const predecessorRecord = installPredecessorFixture({
+    appPath,
+    fixture,
+    recipe: fixture.recipe,
+    manifestPath: first.backup.manifestPath,
+  });
+  const predecessorSnapshot = sourceSnapshot(appPath);
+  let processChecks = 0;
+  operations.listBlockingProcesses = () => {
+    processChecks += 1;
+    return processChecks === 2 ? ["123 PM Studio"] : [];
+  };
+
+  await assert.rejects(runPmStudioSetup({
+    appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+  }), { code: "PM_STUDIO_RUNNING" });
+  assert.equal(processChecks, 2);
+  assertSnapshot(appPath, predecessorSnapshot);
+  const blockedManifest = JSON.parse(fs.readFileSync(first.backup.manifestPath, "utf8"));
+  assert.deepEqual(blockedManifest.predecessor_patched, predecessorRecord);
+  assert.equal(blockedManifest.patched.asar_sha256, fixture.recipe.patchedAsarSha256);
+
+  operations.listBlockingProcesses = () => [];
+  const retried = await runPmStudioSetup({
+    appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+  });
+  assert.equal(retried.status, "migrated");
+  assert.deepEqual(fs.readFileSync(path.join(appPath, fixture.recipe.asarPath)), fixture.patched);
+  const retriedManifest = JSON.parse(fs.readFileSync(first.backup.manifestPath, "utf8"));
+  assert.deepEqual(retriedManifest.predecessor_patched, predecessorRecord);
 });
 
 test("2.9.10 setup accepts only the exact official-content fallback and records the complete patched tree", async () => {

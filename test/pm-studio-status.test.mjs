@@ -464,6 +464,45 @@ test("formatPmStudioStatus identifies a legacy global-origin patch and gives the
   assert.doesNotMatch(output, /inspection failed/);
 });
 
+test("inspectPmStudioStatus verifies a predecessor record and reports a non-operational migration warning", async () => {
+  const verificationCalls = [];
+  const result = await inspectPmStudioStatus(options({
+    inspectApp: () => ({ ...patchedInspection(), state: "predecessor" }),
+    verifyPatchRecord: (args) => verificationCalls.push(args),
+  }));
+  const output = formatPmStudioStatus(result);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.app.state, "predecessor");
+  assert.equal(result.app.patchRecord.valid, true);
+  assert.equal(verificationCalls.length, 1);
+  assert.equal(verificationCalls[0].inspection.state, "predecessor");
+  assert.equal(verificationCalls[0].recipe, recipe);
+  assert.equal(verificationCalls[0].recordState, "predecessor");
+  assert.match(output, /\[WARN\].*verified predecessor split patch; run ccdx pms setup to migrate/);
+  assert.doesNotMatch(output, /integrity drift/);
+});
+
+test("inspectPmStudioStatus downgrades an unverified predecessor record to drift", async () => {
+  const result = await inspectPmStudioStatus(options({
+    inspectApp: () => ({ ...patchedInspection(), state: "predecessor" }),
+    verifyPatchRecord: ({ recordState }) => {
+      assert.equal(recordState, "predecessor");
+      throw new Error("predecessor patch record does not match");
+    },
+  }));
+  const output = formatPmStudioStatus(result);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.app.state, "drift");
+  assert.equal(result.app.patchRecord.valid, false);
+  assert.equal(result.app.patchRecipeMatched, true);
+  assert.match(result.app.patchRecord.reason, /predecessor patch record does not match/);
+  assert.match(output, /installed patch record is not verified/);
+  assert.doesNotMatch(output, /verified predecessor split patch/);
+  assert.doesNotMatch(output, /run ccdx pms setup to migrate/);
+});
+
 test("inspectPmStudioStatus reports missing optional dependencies without throwing", async () => {
   const result = await inspectPmStudioStatus(options({
     existsSync: () => false,

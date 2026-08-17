@@ -116,9 +116,11 @@ active account or profile. GPT requests continue to use the bearer supplied by
 the current PM profile; exact enabled Anthropic model IDs use the isolated
 CCDX Claude profile. Neither credential is copied into the other application.
 
-The current patch recipe supports only an exact, unmodified PM Studio 2.9.7 bundle on
-macOS. Authorize the isolated Claude profile first, quit PM Studio and its
-updater, then run the one-time setup command:
+The current patch recipes support only the exact, unmodified PM Studio 2.9.7
+and 2.9.10 bundles on macOS. This is exact-version support, not a version range:
+2.9.11 and other unknown builds remain unsupported until they receive their own
+verified recipe. Authorize the isolated Claude profile first, quit PM Studio
+and its updater, then run the one-time setup command:
 
 ```bash
 ccdx auth login claude --reauth --github-login <personal-github-login>
@@ -145,22 +147,31 @@ does not attempt a second automatic write: it preserves the verified backup,
 retains any diagnostic stage still present, and prints recovery paths. Repeating
 setup for the exact installed recipe is idempotent.
 
+The official 2.9.10 artifact can fail macOS's vendor-signature verifier even
+though its signing metadata remains readable. CCDX does not generally ignore
+that failure: the 2.9.10 exception is accepted only when the complete App tree,
+including every file, mode, symlink, and non-volatile extended attribute,
+matches the frozen official fingerprint. The staged and installed CCDX patch
+must still pass strict ad-hoc signature verification and match the complete
+patched-tree record in the backup manifest.
+
 The patch is App-wide: every PM profile sends its Copilot API traffic through
 the loopback-only `/pm-ccdx/*` relay. Run ordinary `ccdx` before opening PM
 Studio; if port 2026 is unavailable, PM Copilot requests cannot connect. The
-relay explicitly supports only the PM 2.9.7 Copilot paths discovered in the
-validated bundle (`GET /models` and `POST /chat/completions`, `/responses`, and
+relay explicitly supports only the Copilot paths discovered in the validated
+2.9.7 and 2.9.10 bundles (`GET /models` and `POST /chat/completions`, `/responses`, and
 `/embeddings`) and is not a general-purpose proxy.
 
 Patching replaces the vendor signature with an ad-hoc signature. PM Studio's
 updater is not disabled; an official update may overwrite the patch or may
 require reinstalling the official App. Setup prints the verified backup and
 manifest paths plus the version-matched restore procedure. Never restore a
-2.9.7 backup over a newer PM Studio installation.
+backup over a different PM Studio version or build.
 
 To restore, first quit PM Studio and its updater. Use the exact verified backup
 path printed by setup as `BACKUP_APP`, then confirm that both the installed App
-and backup still report version/build `2.9.7/2.9.7`:
+and backup still report the same version/build printed by setup (`2.9.7/2.9.7`
+or `2.9.10/2.9.10`):
 
 ```bash
 BACKUP_APP="<verified-backup-path-from-ccdx-pms-setup>"
@@ -170,8 +181,8 @@ BACKUP_APP="<verified-backup-path-from-ccdx-pms-setup>"
 /usr/bin/plutil -extract CFBundleVersion raw -o - "$BACKUP_APP/Contents/Info.plist"
 ```
 
-Only when all four values match `2.9.7`, move the patched App aside, restore the
-complete vendor-signed backup, and verify it before launch:
+Only when all four values match the one exact recipe, move the patched App
+aside, restore the complete vendor bundle, and verify it before launch:
 
 ```bash
 RECOVERY_DIR="$(/usr/bin/mktemp -d '/Applications/CCDX-PM-Studio-recovery.XXXXXX')"
@@ -179,12 +190,16 @@ PATCHED_APP="$RECOVERY_DIR/PM Studio.app"
 mv "/Applications/PM Studio.app" "$PATCHED_APP"
 /usr/bin/ditto --rsrc --extattr --acl "$BACKUP_APP" "/Applications/PM Studio.app"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "/Applications/PM Studio.app"
+ccdx pms status
 ```
 
-If the version check, copy, or signature verification fails, do not launch the
-restored App. Keep the moved patched bundle at `$PATCHED_APP` and reinstall the official PM Studio
-instead of applying a 2.9.7 backup to unknown content. CCDX never runs these
-restore commands or `sudo` automatically.
+For 2.9.10, the vendor `codesign` command may report the documented upstream
+signature failure; in that case the App-patch row from `ccdx pms status` must
+still classify the restored bundle as exact supported clean content rather than
+integrity drift. If the version check, copy, or both verification paths fail,
+do not launch the restored App. Keep the moved patched bundle at `$PATCHED_APP`
+and reinstall the official PM Studio instead of applying a version-mismatched
+backup. CCDX never runs these restore commands or `sudo` automatically.
 
 To change the model used by Codex Auto-review, run:
 

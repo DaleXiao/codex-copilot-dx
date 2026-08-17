@@ -18,6 +18,31 @@ const recipe = {
   patchedAsarSha256: "patched-asar-sha256",
   patchedHeaderSha256: "patched-header-sha256",
 };
+const recipe210 = {
+  ...recipe,
+  id: "pm-studio-2.9.10",
+  version: "2.9.10",
+  build: "2.9.10",
+  sourceHeaderSha256: "source-header-sha256",
+  sourceExecutableSha256: "source-main-sha256",
+  sourceElectronFrameworkSha256: "source-framework-sha256",
+  embeddedAsarIntegrity: "absent",
+  sourceBundleContent: {
+    scheme: "ccdx-bundle-content-v2",
+    sha256: "source-bundle-sha256",
+    entryCount: 10,
+    regularFileCount: 6,
+    regularBytes: 1_024,
+    symlinkCount: 1,
+    xattrCount: 2,
+    ignoredXattrs: ["com.apple.quarantine"],
+  },
+  sourceArtifact: {
+    releaseUrl: "https://example.test/releases/2.9.10",
+    asset: "PM-Studio-2.9.10-mac-arm64.zip",
+    sha256: "source-artifact-sha256",
+  },
+};
 
 const adapterHealth = Object.freeze({
   ok: true,
@@ -109,6 +134,127 @@ test("inspectPmStudioStatus reports a fully operational exact patch", async () =
   assert.equal(result.runtime.ok, true);
   assert.equal(result.claude.login, "personal");
   assert.match(formatPmStudioStatus(result), /PM GPT uses the PM Studio bearer/);
+});
+
+test("inspectPmStudioStatus selects the exact 2.9.10 recipe", async () => {
+  let selectedRecipe;
+  const result = await inspectPmStudioStatus(options({
+    recipes: [recipe, recipe210],
+    operationOverrides: {
+      readBundleMetadata: () => ({
+        version: recipe210.version,
+        build: recipe210.build,
+        bundleIdentifier: recipe210.bundleIdentifier,
+      }),
+    },
+    inspectApp: ({ recipe: selected }) => {
+      selectedRecipe = selected;
+      return {
+        ...patchedInspection(),
+        metadata: {
+          version: selected.version,
+          build: selected.build,
+          bundleIdentifier: selected.bundleIdentifier,
+        },
+      };
+    },
+  }));
+  assert.equal(selectedRecipe, recipe210);
+  assert.equal(result.app.recipe, recipe210.id);
+  assert.match(formatPmStudioStatus(result), /2\.9\.10 build 2\.9\.10/);
+});
+
+test("inspectPmStudioStatus validates complete schema 2 source evidence", async (t) => {
+  const backupRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-pms-status-schema2-"));
+  t.after(() => fs.rmSync(backupRoot, { recursive: true, force: true }));
+  const manifestPath = pmStudioPatchManifestPath({ backupRoot, recipe: recipe210 });
+  fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+  const patchedBundleContent = {
+    scheme: "ccdx-bundle-content-v2",
+    sha256: "patched-bundle-sha256",
+    entryCount: 10,
+    regularFileCount: 6,
+    regularBytes: 1_000,
+    symlinkCount: 1,
+    xattrCount: 2,
+  };
+  const source = {
+    asar_sha256: recipe210.sourceAsarSha256,
+    asar_header_sha256: recipe210.sourceHeaderSha256,
+    electron_asar_integrity: { algorithm: "SHA256", hash: recipe210.sourceHeaderSha256 },
+    binaries: {
+      main_executable_sha256: recipe210.sourceExecutableSha256,
+      electron_framework_sha256: recipe210.sourceElectronFrameworkSha256,
+      embedded_asar_integrity: recipe210.embeddedAsarIntegrity,
+    },
+    bundle_content: recipe210.sourceBundleContent,
+    artifact: recipe210.sourceArtifact,
+  };
+  const manifest = {
+    schema_version: 2,
+    kind: "ccdx-pm-studio-backup",
+    recipe_id: recipe210.id,
+    app: {
+      bundle_identifier: recipe210.bundleIdentifier,
+      version: recipe210.version,
+      build: recipe210.build,
+    },
+    source,
+    patched: {
+      asar_sha256: recipe210.patchedAsarSha256,
+      asar_header_sha256: recipe210.patchedHeaderSha256,
+      electron_asar_integrity: { algorithm: "SHA256", hash: recipe210.patchedHeaderSha256 },
+      binaries: {
+        main_executable_sha256: "patched-main-sha256",
+        electron_framework_sha256: "patched-framework-sha256",
+      },
+      signing_metadata: {
+        identifier: "com.pm-studio.app",
+        flags: "0x2(adhoc)",
+        runtime_version: "14.0.0",
+        entitlements_sha256: "entitlements-sha256",
+      },
+      bundle_content: patchedBundleContent,
+    },
+  };
+  const statusOptions = options({
+    backupRoot,
+    recipes: [recipe210],
+    verifyPatchRecord: undefined,
+    operationOverrides: {
+      readBundleMetadata: () => ({
+        version: recipe210.version,
+        build: recipe210.build,
+        bundleIdentifier: recipe210.bundleIdentifier,
+      }),
+    },
+    inspectApp: () => ({
+      ...patchedInspection(),
+      metadata: {
+        version: recipe210.version,
+        build: recipe210.build,
+        bundleIdentifier: recipe210.bundleIdentifier,
+      },
+      bundleContent: patchedBundleContent,
+    }),
+  });
+
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+  assert.equal((await inspectPmStudioStatus(statusOptions)).app.patchRecord.valid, true);
+
+  delete manifest.source;
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+  assert.equal((await inspectPmStudioStatus(statusOptions)).app.patchRecord.valid, false);
+
+  manifest.source = source;
+  manifest.source.bundle_content = { ...recipe210.sourceBundleContent, sha256: "drift" };
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+  assert.equal((await inspectPmStudioStatus(statusOptions)).app.patchRecord.valid, false);
+
+  manifest.source.bundle_content = recipe210.sourceBundleContent;
+  manifest.source.artifact = { ...recipe210.sourceArtifact, sha256: "drift" };
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+  assert.equal((await inspectPmStudioStatus(statusOptions)).app.patchRecord.valid, false);
 });
 
 test("inspectPmStudioStatus reads the installed patch record and fails closed for missing or drifted evidence", async (t) => {
@@ -230,8 +376,8 @@ test("inspectPmStudioStatus fails closed for unsupported versions", async () => 
   const result = await inspectPmStudioStatus(options({
     operationOverrides: {
       readBundleMetadata: () => ({
-        version: "3.0.0",
-        build: "3000000",
+        version: "2.9.11",
+        build: "2.9.11",
         bundleIdentifier: recipe.bundleIdentifier,
       }),
     },

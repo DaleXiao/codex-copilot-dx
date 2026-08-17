@@ -6,6 +6,20 @@ import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { adapterBaseUrl } from "./running-adapter.mjs";
 
 const CONFIG_PATH = path.join(os.homedir(), ".codex", "config.toml");
+const MODEL_CONTEXT_WINDOW = 1_000_000;
+const MODEL_AUTO_COMPACT_TOKEN_LIMIT = 900_000;
+
+function setTopLevelTomlDefault(lines, key, value) {
+  let end = lines.findIndex((line) => /^\s*\[[^\]]+\]\s*$/.test(line));
+  if (end === -1) end = lines.length;
+
+  const keyRe = new RegExp(`^\\s*${key}\\s*=`);
+  if (lines.slice(0, end).some((line) => keyRe.test(line))) return false;
+
+  while (end > 0 && lines[end - 1].trim() === "") end--;
+  lines.splice(end, 0, `${key} = ${value}`);
+  return true;
+}
 
 function setTomlKey(lines, sectionName, key, value) {
   const sectionLine = `[${sectionName}]`;
@@ -52,6 +66,8 @@ export function computeUpdatedCodexConfig(content, adapterPort = 2026, adapterHo
     changed = true;
   }
 
+  changed = setTopLevelTomlDefault(lines, "model_context_window", MODEL_CONTEXT_WINDOW) || changed;
+  changed = setTopLevelTomlDefault(lines, "model_auto_compact_token_limit", MODEL_AUTO_COMPACT_TOKEN_LIMIT) || changed;
   changed = setTomlKey(lines, "shell_environment_policy.set", "ANTHROPIC_AUTH_TOKEN", "dummy") || changed;
   changed = setTomlKey(lines, "shell_environment_policy.set", "ANTHROPIC_BASE_URL", anthropicBaseUrl) || changed;
   changed = setTomlKey(lines, "shell_environment_policy.set", "OPENAI_BASE_URL", baseUrl) || changed;
@@ -64,6 +80,8 @@ function initialCodexConfig(adapterPort, adapterHost) {
   const anthropicBaseUrl = adapterBaseUrl(adapterHost, adapterPort);
   const baseUrl = `${anthropicBaseUrl}/v1`;
   return `openai_base_url = "${baseUrl}"
+model_context_window = ${MODEL_CONTEXT_WINDOW}
+model_auto_compact_token_limit = ${MODEL_AUTO_COMPACT_TOKEN_LIMIT}
 
 [shell_environment_policy]
 inherit = "core"

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   AUTH_PROFILE_CLAUDE,
@@ -19,6 +19,7 @@ import {
 export const DEFAULT_PM_STUDIO_APP_PATH = "/Applications/PM Studio.app";
 export const PM_STUDIO_CLAUDE_AUTH_COMMAND = "ccdx auth login claude --reauth --github-login <personal-login>";
 const MIN_FREE_MARGIN_BYTES = 16 * 1024 * 1024;
+const BUNDLE_CONTENT_SCHEME = "ccdx-bundle-content-v2";
 
 function setupError(code, message, details) {
   const error = new Error(message);
@@ -31,7 +32,7 @@ function defaultProcessRunner(command, args) {
   return spawnSync(command, args, {
     encoding: "utf8",
     windowsHide: true,
-    maxBuffer: 8 * 1024 * 1024,
+    maxBuffer: 32 * 1024 * 1024,
   });
 }
 
@@ -51,6 +52,166 @@ function runChecked(processRunner, command, args, label) {
     throw setupError("PM_STUDIO_PROCESS_FAILED", `${label} failed`);
   }
   return result;
+}
+
+function hashRegularFile(filePath, expected) {
+  const hash = createHash("sha256");
+  const file = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    const before = fs.fstatSync(file, { bigint: true });
+    if (before.dev !== BigInt(expected.dev)
+      || before.ino !== BigInt(expected.ino)
+      || before.size !== BigInt(expected.size)) {
+      throw setupError("PM_STUDIO_BUNDLE_CHANGED", `PM Studio bundle changed while reading ${filePath}`);
+    }
+    for (;;) {
+      const length = fs.readSync(file, buffer, 0, buffer.length, null);
+      if (length === 0) break;
+      hash.update(buffer.subarray(0, length));
+    }
+    const after = fs.fstatSync(file, { bigint: true });
+    if (before.dev !== after.dev
+      || before.ino !== after.ino
+      || before.size !== after.size
+      || before.mtimeNs !== after.mtimeNs
+      || before.ctimeNs !== after.ctimeNs) {
+      throw setupError("PM_STUDIO_BUNDLE_CHANGED", `PM Studio bundle changed while hashing ${filePath}`);
+    }
+  } finally {
+    fs.closeSync(file);
+  }
+  return hash.digest("hex");
+}
+
+function parseXattrHex(output, root, ignoredXattrs) {
+  const records = [];
+  const ignored = new Set(ignoredXattrs);
+  const seen = new Set();
+  let current = null;
+  const flush = () => {
+    if (!current) return;
+    if (!ignored.has(current.name)) {
+      const key = `${current.path}\0${current.name}`;
+      if (seen.has(key)) throw setupError("PM_STUDIO_XATTR_INVALID", `Duplicate extended attribute ${current.name}`);
+      seen.add(key);
+      const value = Buffer.from(current.hex.join(""), "hex");
+      records.push(["xattr", current.path, current.name, value.length, sha256Hex(value)]);
+    }
+    current = null;
+  };
+
+  for (const line of String(output || "").split(/\r?\n/)) {
+    if (!line) continue;
+    const separator = line.lastIndexOf(": ");
+    if ((line === `${root}:` || line.startsWith(`${root}: `) || line.startsWith(`${root}${path.sep}`))
+      && separator >= root.length && line.endsWith(":")) {
+      flush();
+      const target = line.slice(0, separator);
+      const relative = target === root ? "." : path.relative(root, target).split(path.sep).join("/");
+      if (!relative || relative === ".." || relative.startsWith("../") || path.isAbsolute(relative)) {
+        throw setupError("PM_STUDIO_XATTR_INVALID", `Extended attribute path escapes PM Studio: ${target}`);
+      }
+      current = { path: relative, name: line.slice(separator + 2, -1), hex: [] };
+      continue;
+    }
+    if (!current) throw setupError("PM_STUDIO_XATTR_INVALID", "Could not parse PM Studio extended attributes");
+    const data = line.includes("  |") ? line.slice(0, line.indexOf("  |")) : line;
+    const tokens = data.trim().split(/\s+/);
+    if (!/^[0-9a-f]{8}$/i.test(tokens[0]) || tokens.slice(1).some((token) => !/^[0-9a-f]{2}$/i.test(token))) {
+      throw setupError("PM_STUDIO_XATTR_INVALID", "Could not parse PM Studio extended attribute bytes");
+    }
+    current.hex.push(...tokens.slice(1));
+  }
+  flush();
+  return records.sort((left, right) => Buffer.compare(
+    Buffer.from(`${left[1]}\0${left[2]}`),
+    Buffer.from(`${right[1]}\0${right[2]}`),
+  ));
+}
+
+export function inspectBundleContent(appPath, {
+  xattrOutput = "",
+  ignoredXattrs = [],
+} = {}) {
+  const root = path.resolve(appPath);
+  const rootStat = fs.lstatSync(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw setupError("PM_STUDIO_APP_INVALID", `PM Studio path is not a regular app bundle: ${appPath}`);
+  }
+  const records = [];
+  const normalizedPaths = new Map();
+  let regularFileCount = 0;
+  let regularBytes = 0;
+  let symlinkCount = 0;
+
+  const rememberPath = (relative) => {
+    const normalized = relative.normalize("NFC");
+    const existing = normalizedPaths.get(normalized);
+    if (existing && existing !== relative) {
+      throw setupError("PM_STUDIO_BUNDLE_PATH_COLLISION", `PM Studio contains colliding paths: ${existing} and ${relative}`);
+    }
+    normalizedPaths.set(normalized, relative);
+  };
+  rememberPath(".");
+  records.push(["directory", ".", rootStat.mode & 0o7777]);
+  const visit = (directory) => {
+    const names = fs.readdirSync(directory).sort((left, right) =>
+      Buffer.compare(Buffer.from(left), Buffer.from(right)));
+    for (const name of names) {
+      const fullPath = path.join(directory, name);
+      const stat = fs.lstatSync(fullPath);
+      const relative = path.relative(root, fullPath).split(path.sep).join("/");
+      const mode = stat.mode & 0o7777;
+      rememberPath(relative);
+      if (stat.isDirectory() && !stat.isSymbolicLink()) {
+        records.push(["directory", relative, mode]);
+        visit(fullPath);
+      } else if (stat.isSymbolicLink()) {
+        const target = fs.readlinkSync(fullPath);
+        const resolved = path.resolve(path.dirname(fullPath), target);
+        if (path.isAbsolute(target)
+          || (resolved !== root && !resolved.startsWith(`${root}${path.sep}`))
+          || !fs.existsSync(resolved)) {
+          throw setupError("PM_STUDIO_BUNDLE_SYMLINK_INVALID", `PM Studio contains an unsafe symlink: ${relative}`);
+        }
+        symlinkCount += 1;
+        records.push(["symlink", relative, mode, target]);
+      } else if (stat.isFile()) {
+        if (stat.nlink !== 1) {
+          throw setupError("PM_STUDIO_BUNDLE_HARDLINK_INVALID", `PM Studio contains a hard-linked file: ${relative}`);
+        }
+        regularFileCount += 1;
+        regularBytes += stat.size;
+        records.push(["file", relative, mode, stat.size, hashRegularFile(fullPath, stat)]);
+      } else {
+        throw setupError("PM_STUDIO_BUNDLE_ENTRY_INVALID", `PM Studio contains an unsupported entry: ${relative}`);
+      }
+    }
+  };
+  visit(root);
+
+  const xattrRecords = parseXattrHex(xattrOutput, root, ignoredXattrs);
+  const hash = createHash("sha256");
+  for (const record of [...records, ...xattrRecords]) hash.update(`${JSON.stringify(record)}\n`);
+  return {
+    scheme: BUNDLE_CONTENT_SCHEME,
+    sha256: hash.digest("hex"),
+    entryCount: records.length,
+    regularFileCount,
+    regularBytes,
+    symlinkCount,
+    xattrCount: xattrRecords.length,
+  };
+}
+
+function defaultInspectBundleContent({ appPath, recipe, processRunner }) {
+  const xattrs = runChecked(processRunner, "/usr/bin/xattr", ["-r", "-s", "-x", "-l", appPath],
+    "Reading PM Studio extended attributes");
+  return inspectBundleContent(appPath, {
+    xattrOutput: xattrs.stdout,
+    ignoredXattrs: recipe.sourceBundleContent?.ignoredXattrs || [],
+  });
 }
 
 function plistRead(processRunner, plistPath, key) {
@@ -91,30 +252,39 @@ function defaultInspectCodeSign({ appPath, processRunner }) {
   const verify = normalizedProcessResult(processRunner("/usr/bin/codesign", [
     "--verify", "--deep", "--strict", "--verbose=2", appPath,
   ]));
-  if (verify.error || verify.status !== 0) return { valid: false, adHoc: false };
   const display = normalizedProcessResult(processRunner("/usr/bin/codesign", [
     "--display", "--verbose=4", appPath,
   ]));
-  if (display.error || display.status !== 0) return { valid: false, adHoc: false };
   const details = `${display.stdout}\n${display.stderr}`;
   const entitlementsResult = normalizedProcessResult(processRunner("/usr/bin/codesign", [
     "--display", "--entitlements", "-", "--xml", appPath,
   ]));
-  if (entitlementsResult.error || entitlementsResult.status !== 0) return { valid: false, adHoc: false };
   const entitlementOutput = `${entitlementsResult.stdout}\n${entitlementsResult.stderr}`;
   const plistStart = entitlementOutput.indexOf("<?xml");
   const plistEnd = entitlementOutput.lastIndexOf("</plist>");
-  if (plistStart < 0 || plistEnd < plistStart) return { valid: false, adHoc: false };
-  const entitlements = entitlementOutput.slice(plistStart, plistEnd + "</plist>".length);
+  const hasEntitlements = plistStart >= 0 && plistEnd >= plistStart;
+  const entitlements = hasEntitlements
+    ? entitlementOutput.slice(plistStart, plistEnd + "</plist>".length)
+    : "";
   return {
-    valid: true,
+    valid: !verify.error && verify.status === 0
+      && !display.error && display.status === 0
+      && !entitlementsResult.error && entitlementsResult.status === 0
+      && hasEntitlements,
+    verifyValid: !verify.error && verify.status === 0,
+    displayValid: !display.error && display.status === 0,
+    entitlementsState: hasEntitlements
+      ? "xml"
+      : /invalid entitlements blob/i.test(entitlementOutput) ? "invalid" : "unavailable",
     adHoc: /(?:^|\n)Signature=adhoc(?:\n|$)/i.test(details)
       || /(?:^|\n)TeamIdentifier=not set(?:\n|$)/i.test(details),
     identifier: details.match(/(?:^|\n)Identifier=([^\n]+)/)?.[1]?.trim() || "",
     teamIdentifier: details.match(/(?:^|\n)TeamIdentifier=([^\n]+)/)?.[1]?.trim() || "",
     flags: details.match(/\bflags=([^\s]+)/)?.[1] || "",
     runtimeVersion: details.match(/(?:^|\n)Runtime Version=([^\n]+)/)?.[1]?.trim() || "",
-    entitlementsSha256: sha256Hex(entitlements),
+    cdHashFull: details.match(/(?:^|\n)CandidateCDHashFull sha256=([0-9a-f]+)/i)?.[1]?.toLowerCase() || "",
+    notarizationTicket: details.match(/(?:^|\n)Notarization Ticket=([^\n]+)/)?.[1]?.trim() || "",
+    entitlementsSha256: hasEntitlements ? sha256Hex(entitlements) : "",
   };
 }
 
@@ -240,6 +410,7 @@ export function createPmStudioSetupOperations(overrides = {}) {
     readAsarIntegrity: defaultReadAsarIntegrity,
     writeAsarIntegrity: defaultWriteAsarIntegrity,
     inspectCodeSign: defaultInspectCodeSign,
+    inspectBundleContent: defaultInspectBundleContent,
     inspectExecutableIntegrity: defaultInspectExecutableIntegrity,
     signApp: defaultSignApp,
     listBlockingProcesses: defaultListBlockingProcesses,
@@ -271,12 +442,34 @@ function integrityMatches(actual, algorithm, hash) {
   return actual?.algorithm === algorithm && actual?.hash === hash;
 }
 
+function bundleContentMatches(actual, expected) {
+  return actual?.scheme === expected?.scheme
+    && actual?.sha256 === expected?.sha256
+    && actual?.entryCount === expected?.entryCount
+    && actual?.regularFileCount === expected?.regularFileCount
+    && actual?.regularBytes === expected?.regularBytes
+    && actual?.symlinkCount === expected?.symlinkCount
+    && actual?.xattrCount === expected?.xattrCount;
+}
+
+function sourceCodeSignatureMatches(actual, expected) {
+  return actual?.adHoc === false
+    && actual?.displayValid === true
+    && actual?.identifier === expected?.identifier
+    && actual?.teamIdentifier === expected?.teamIdentifier
+    && actual?.flags === expected?.flags
+    && actual?.runtimeVersion === expected?.runtimeVersion
+    && actual?.cdHashFull === expected?.cdHashFull
+    && actual?.notarizationTicket === expected?.notarizationTicket;
+}
+
 export function inspectPmStudioApp({
   appPath,
   recipe = PM_STUDIO_2_9_7_RECIPE,
   operations = createPmStudioSetupOperations(),
 } = {}) {
   const paths = appPaths(appPath, recipe);
+  const issues = [];
   const metadata = operations.readBundleMetadata({ ...paths, recipe, processRunner: operations.processRunner });
   const asar = inspectAsarBuffer(fs.readFileSync(paths.asarPath), recipe);
   const plistIntegrity = operations.readAsarIntegrity({ ...paths, recipe, processRunner: operations.processRunner });
@@ -284,7 +477,16 @@ export function inspectPmStudioApp({
     ...paths, recipe, processRunner: operations.processRunner,
   });
   const codeSign = operations.inspectCodeSign({ ...paths, recipe, processRunner: operations.processRunner });
-  const issues = [];
+  let bundleContent = null;
+  if (recipe.sourceBundleContent) {
+    try {
+      bundleContent = operations.inspectBundleContent({
+        ...paths, recipe, processRunner: operations.processRunner,
+      });
+    } catch (error) {
+      issues.push(`bundle content inspection failed: ${error.message}`);
+    }
+  }
 
   if (String(metadata.version) !== recipe.version) {
     issues.push(`version is ${metadata.version}, expected ${recipe.version}`);
@@ -301,19 +503,33 @@ export function inspectPmStudioApp({
     issues.push("Electron Framework has an unsupported embedded ASAR integrity slot");
   }
 
+  const exactSourceBundle = !recipe.sourceBundleContent
+    || bundleContentMatches(bundleContent, recipe.sourceBundleContent);
+  const strictVendorSignature = codeSign?.valid === true
+    && codeSign?.adHoc === false
+    && codeSign?.teamIdentifier === recipe.sourceTeamIdentifier;
+  const exactInvalidVendorSignature = recipe.sourceBundleContent
+    && exactSourceBundle
+    && codeSign?.valid === false
+    && codeSign?.verifyValid === false
+    && codeSign?.entitlementsState === "invalid"
+    && sourceCodeSignatureMatches(codeSign, recipe.sourceCodeSignature);
+  const sourceSignatureAccepted = strictVendorSignature || exactInvalidVendorSignature;
+  const patchedSignatureAccepted = codeSign?.valid === true
+    && codeSign?.adHoc === true
+    && (!recipe.patchedSigningMetadata
+      || JSON.stringify(signingMetadata(codeSign)) === JSON.stringify(recipe.patchedSigningMetadata));
   const clean = issues.length === 0
     && asar.state === "clean"
     && integrityMatches(plistIntegrity, "SHA256", recipe.sourceHeaderSha256)
     && executableIntegrity.executableSha256 === recipe.sourceExecutableSha256
     && executableIntegrity.frameworkSha256 === recipe.sourceElectronFrameworkSha256
-    && codeSign?.valid === true
-    && codeSign?.adHoc === false
-    && codeSign?.teamIdentifier === recipe.sourceTeamIdentifier;
+    && exactSourceBundle
+    && sourceSignatureAccepted;
   const patched = issues.length === 0
     && asar.state === "patched"
     && integrityMatches(plistIntegrity, "SHA256", recipe.patchedHeaderSha256)
-    && codeSign?.valid === true
-    && codeSign?.adHoc === true;
+    && patchedSignatureAccepted;
 
   if (!clean && !patched) {
     if (asar.state === "drift") issues.push("app.asar is unknown drift");
@@ -324,7 +540,12 @@ export function inspectPmStudioApp({
       && !integrityMatches(plistIntegrity, "SHA256", recipe.patchedHeaderSha256)) {
       issues.push("patched ASAR does not match ElectronAsarIntegrity");
     }
-    if (!codeSign?.valid) issues.push("codesign verification failed");
+    if (asar.state === "clean" && recipe.sourceBundleContent && !exactSourceBundle) {
+      issues.push("bundle content does not match the exact clean recipe");
+    }
+    if (!codeSign?.valid && !(asar.state === "clean" && exactInvalidVendorSignature)) {
+      issues.push("codesign verification failed");
+    }
     else if (asar.state === "clean" && codeSign.adHoc) issues.push("clean bundle has an unexpected ad-hoc signature");
     else if (asar.state === "patched" && !codeSign.adHoc) issues.push("patched bundle is not ad-hoc signed");
     else if (asar.state === "clean" && codeSign.teamIdentifier !== recipe.sourceTeamIdentifier) {
@@ -337,6 +558,11 @@ export function inspectPmStudioApp({
     if (asar.state === "clean"
       && executableIntegrity.frameworkSha256 !== recipe.sourceElectronFrameworkSha256) {
       issues.push("Electron Framework hash does not match the clean recipe");
+    }
+    if (asar.state === "patched" && codeSign?.valid && codeSign?.adHoc
+      && recipe.patchedSigningMetadata
+      && !patchedSignatureAccepted) {
+      issues.push("patched bundle signing metadata does not match the recipe");
     }
   }
 
@@ -351,6 +577,10 @@ export function inspectPmStudioApp({
     plistIntegrity,
     executableIntegrity,
     codeSign,
+    bundleContent,
+    sourceVerification: clean
+      ? exactInvalidVendorSignature ? "exact-bundle-content" : "codesign"
+      : "",
     paths,
     issues,
   };
@@ -393,7 +623,8 @@ function selectRecipe(metadata, recipes) {
 }
 
 function backupName(recipe) {
-  return `${recipe.id}-${recipe.sourceAsarSha256.slice(0, 12)}`;
+  const sourceHash = recipe.sourceBundleContent?.sha256 || recipe.sourceAsarSha256;
+  return `${recipe.id}-${sourceHash.slice(0, 12)}`;
 }
 
 export function pmStudioBackupRoot(home = os.homedir()) {
@@ -411,7 +642,7 @@ export function pmStudioPatchManifestPath({
 
 function backupManifest(recipe, createdAt) {
   return {
-    schema_version: 1,
+    schema_version: recipe.sourceBundleContent ? 2 : 1,
     kind: "ccdx-pm-studio-backup",
     recipe_id: recipe.id,
     created_at: createdAt.toISOString(),
@@ -430,12 +661,15 @@ function backupManifest(recipe, createdAt) {
         electron_framework_sha256: recipe.sourceElectronFrameworkSha256,
         embedded_asar_integrity: recipe.embeddedAsarIntegrity,
       },
+      ...(recipe.sourceBundleContent ? { bundle_content: recipe.sourceBundleContent } : {}),
+      ...(recipe.sourceArtifact ? { artifact: recipe.sourceArtifact } : {}),
     },
     patched: {
       asar_sha256: recipe.patchedAsarSha256,
       asar_header_sha256: recipe.patchedHeaderSha256,
       electron_asar_integrity: { algorithm: "SHA256", hash: recipe.patchedHeaderSha256 },
       binaries: null,
+      ...(recipe.sourceBundleContent ? { bundle_content: null } : {}),
     },
     backup_bundle: "PM Studio.app",
     restore_rule: `Restore only while the installed app is PM Studio ${recipe.version} build ${recipe.build}.`,
@@ -451,7 +685,9 @@ function validateBackup({ backupDir, recipe, operations }) {
   } catch {
     throw setupError("PM_STUDIO_BACKUP_INVALID", `Existing PM Studio backup manifest is invalid: ${manifestPath}`);
   }
-  if (manifest?.kind !== "ccdx-pm-studio-backup"
+  const expectedSchema = recipe.sourceBundleContent ? 2 : 1;
+  if (manifest?.schema_version !== expectedSchema
+    || manifest?.kind !== "ccdx-pm-studio-backup"
     || manifest?.recipe_id !== recipe.id
     || manifest?.app?.bundle_identifier !== recipe.bundleIdentifier
     || manifest?.app?.version !== recipe.version
@@ -462,6 +698,10 @@ function validateBackup({ backupDir, recipe, operations }) {
     || manifest?.source?.binaries?.main_executable_sha256 !== recipe.sourceExecutableSha256
     || manifest?.source?.binaries?.electron_framework_sha256 !== recipe.sourceElectronFrameworkSha256
     || manifest?.source?.binaries?.embedded_asar_integrity !== recipe.embeddedAsarIntegrity
+    || (recipe.sourceBundleContent
+      && JSON.stringify(manifest?.source?.bundle_content) !== JSON.stringify(recipe.sourceBundleContent))
+    || (recipe.sourceArtifact
+      && JSON.stringify(manifest?.source?.artifact) !== JSON.stringify(recipe.sourceArtifact))
     || manifest?.patched?.asar_sha256 !== recipe.patchedAsarSha256
     || manifest?.patched?.asar_header_sha256 !== recipe.patchedHeaderSha256
     || !integrityMatches(manifest?.patched?.electron_asar_integrity, "SHA256", recipe.patchedHeaderSha256)) {
@@ -508,13 +748,14 @@ function ensureBackup({ appPath, backupRoot, recipe, operations }) {
   }
 }
 
-function writePatchedBinaryRecord({ backup, inspection, operations }) {
+function writePatchedBinaryRecord({ backup, inspection, operations, recipe }) {
   const manifest = JSON.parse(fs.readFileSync(backup.manifestPath, "utf8"));
   manifest.patched.binaries = {
     main_executable_sha256: inspection.executableIntegrity.executableSha256,
     electron_framework_sha256: inspection.executableIntegrity.frameworkSha256,
   };
   manifest.patched.signing_metadata = signingMetadata(inspection.codeSign);
+  if (recipe.sourceBundleContent) manifest.patched.bundle_content = inspection.bundleContent;
   const temporaryPath = `${backup.manifestPath}.${operations.uuid()}.tmp`;
   try {
     fs.writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
@@ -532,12 +773,24 @@ export function assertPatchedBinaryRecord({ inspection, manifestPath, recipe }) 
   } catch {
     throw setupError("PM_STUDIO_PATCH_RECORD_INVALID", "PM Studio patched-binary record is missing or invalid");
   }
-  if (recipe && (manifest?.schema_version !== 1
+  const expectedSchema = recipe?.sourceBundleContent ? 2 : 1;
+  if (recipe && (manifest?.schema_version !== expectedSchema
     || manifest?.kind !== "ccdx-pm-studio-backup"
     || manifest?.recipe_id !== recipe.id
     || manifest?.app?.bundle_identifier !== recipe.bundleIdentifier
     || manifest?.app?.version !== recipe.version
     || manifest?.app?.build !== recipe.build
+    || (recipe.sourceBundleContent && (
+      manifest?.source?.asar_sha256 !== recipe.sourceAsarSha256
+      || manifest?.source?.asar_header_sha256 !== recipe.sourceHeaderSha256
+      || !integrityMatches(manifest?.source?.electron_asar_integrity, "SHA256", recipe.sourceHeaderSha256)
+      || manifest?.source?.binaries?.main_executable_sha256 !== recipe.sourceExecutableSha256
+      || manifest?.source?.binaries?.electron_framework_sha256 !== recipe.sourceElectronFrameworkSha256
+      || manifest?.source?.binaries?.embedded_asar_integrity !== recipe.embeddedAsarIntegrity
+      || JSON.stringify(manifest?.source?.bundle_content) !== JSON.stringify(recipe.sourceBundleContent)
+    ))
+    || (recipe.sourceArtifact
+      && JSON.stringify(manifest?.source?.artifact) !== JSON.stringify(recipe.sourceArtifact))
     || manifest?.patched?.asar_sha256 !== recipe.patchedAsarSha256
     || manifest?.patched?.asar_header_sha256 !== recipe.patchedHeaderSha256
     || !integrityMatches(manifest?.patched?.electron_asar_integrity, "SHA256", recipe.patchedHeaderSha256))) {
@@ -551,6 +804,10 @@ export function assertPatchedBinaryRecord({ inspection, manifestPath, recipe }) 
   }
   if (JSON.stringify(manifest?.patched?.signing_metadata) !== JSON.stringify(signingMetadata(inspection.codeSign))) {
     throw setupError("PM_STUDIO_BUNDLE_DRIFT", "PM Studio signing metadata differs from the installed patch record");
+  }
+  if (recipe?.sourceBundleContent
+    && JSON.stringify(manifest?.patched?.bundle_content) !== JSON.stringify(inspection.bundleContent)) {
+    throw setupError("PM_STUDIO_BUNDLE_DRIFT", "PM Studio bundle content differs from the installed patch record");
   }
 }
 
@@ -570,7 +827,15 @@ function flagsWithoutAdHoc(value) {
   return `0x${(BigInt(`0x${match[1]}`) & ~2n).toString(16)}`;
 }
 
-function assertSigningMetadataPreserved(source, staged) {
+function assertSigningMetadataPreserved(source, staged, recipe) {
+  if (recipe.patchedSigningMetadata) {
+    if (JSON.stringify(signingMetadata(staged.codeSign))
+      !== JSON.stringify(recipe.patchedSigningMetadata)) {
+      throw setupError("PM_STUDIO_SIGNING_METADATA_CHANGED",
+        "Ad-hoc signing did not produce the exact PM Studio signing metadata required by the recipe");
+    }
+    return;
+  }
   const before = signingMetadata(source.codeSign);
   const after = signingMetadata(staged.codeSign);
   before.flags = flagsWithoutAdHoc(before.flags);
@@ -665,6 +930,10 @@ export async function runPmStudioSetup({
       `PM Studio ${recipe.version} build ${recipe.build} does not match the clean or patched recipe; no files were changed`, source.issues);
   }
 
+  if (source.sourceVerification === "exact-bundle-content") {
+    emit(`[WARN] macOS rejected the vendor signature; setup accepted only the exact PM Studio ${recipe.version} official bundle content fingerprint.`);
+  }
+
   const backupExists = fs.existsSync(finalBackupDir);
   assertSpace({ appPath, backupRoot, backupExists, operations });
 
@@ -674,6 +943,12 @@ export async function runPmStudioSetup({
   let preserveStage = false;
   try {
     operations.copyBundle({ source: appPath, destination: stagePath, processRunner: operations.processRunner });
+    const stagedSource = inspectPmStudioApp({ appPath: stagePath, recipe, operations });
+    if (stagedSource.state !== "clean"
+      || (recipe.sourceBundleContent
+        && stagedSource.bundleContent?.sha256 !== source.bundleContent?.sha256)) {
+      throw setupError("PM_STUDIO_STAGE_INVALID", "PM Studio staging copy does not match the exact clean source bundle", stagedSource.issues);
+    }
     const stageAsarPath = path.join(stagePath, recipe.asarPath);
     const patched = patchAsarBuffer(fs.readFileSync(stageAsarPath), recipe);
     if (!patched.changed) throw setupError("PM_STUDIO_STAGE_INVALID", "Staging copy was unexpectedly already patched");
@@ -691,14 +966,16 @@ export async function runPmStudioSetup({
     if (staged.state !== "patched") {
       throw setupError("PM_STUDIO_STAGE_VERIFY_FAILED", "Patched PM Studio staging bundle failed verification", staged.issues);
     }
-    assertSigningMetadataPreserved(source, staged);
-    writePatchedBinaryRecord({ backup, inspection: staged, operations });
+    assertSigningMetadataPreserved(source, staged, recipe);
+    writePatchedBinaryRecord({ backup, inspection: staged, operations, recipe });
 
     assertNoBlockingProcesses(operations, appPath);
     const unchangedSource = inspectPmStudioApp({ appPath, recipe, operations });
     if (unchangedSource.state !== "clean"
       || unchangedSource.asar.asarSha256 !== source.asar.asarSha256
-      || unchangedSource.asar.headerSha256 !== source.asar.headerSha256) {
+      || unchangedSource.asar.headerSha256 !== source.asar.headerSha256
+      || (recipe.sourceBundleContent
+        && unchangedSource.bundleContent?.sha256 !== source.bundleContent?.sha256)) {
       throw setupError("PM_STUDIO_SOURCE_CHANGED", "PM Studio changed during setup; the verified staging bundle was not installed");
     }
 

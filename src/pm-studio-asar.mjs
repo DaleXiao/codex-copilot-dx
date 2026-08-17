@@ -67,7 +67,106 @@ export const PM_STUDIO_2_9_7_RECIPE = Object.freeze({
   ]),
 });
 
-export const PM_STUDIO_RECIPES = Object.freeze([PM_STUDIO_2_9_7_RECIPE]);
+export const PM_STUDIO_2_9_10_RECIPE = Object.freeze({
+  id: "pm-studio-2.9.10-build-2.9.10",
+  version: "2.9.10",
+  build: "2.9.10",
+  bundleIdentifier: "com.pm-studio.app",
+  sourceTeamIdentifier: "HL75GKK4W4",
+  sourceArtifact: Object.freeze({
+    releaseUrl: "https://github.com/gim-home/max-studio/releases/tag/v2.9.10",
+    asset: "PM-Studio-2.9.10-mac-arm64.zip",
+    sha256: "85654e6ed173ce2565b5ef3694137de2c5f92eba1b749316c9e5b63181ccc3b0",
+  }),
+  sourceBundleContent: Object.freeze({
+    scheme: "ccdx-bundle-content-v2",
+    sha256: "478ca7f1f0826b07b7706fd1f410dee01b6dbaae21c40c63ecbdc0942eab63d9",
+    entryCount: 1_521,
+    regularFileCount: 1_013,
+    regularBytes: 494_995_602,
+    symlinkCount: 14,
+    xattrCount: 735,
+    ignoredXattrs: Object.freeze([
+      "com.apple.macl",
+      "com.apple.provenance",
+      "com.apple.quarantine",
+    ]),
+  }),
+  sourceCodeSignature: Object.freeze({
+    identifier: "com.pm-studio.app",
+    teamIdentifier: "HL75GKK4W4",
+    flags: "0x10000(runtime)",
+    runtimeVersion: "26.0.0",
+    cdHashFull: "86a4d64946123d21d20918041e88f58e8c497ce1a1f75a9f9d8cd592ce86e158",
+    notarizationTicket: "stapled",
+  }),
+  patchedSigningMetadata: Object.freeze({
+    identifier: "com.pm-studio.app",
+    flags: "0x10002(adhoc,runtime)",
+    runtime_version: "26.0.0",
+    entitlements_sha256: "9d4ccbda4fe0c81a70df3db93b3e61fe0500f67f14cdcbee4dea230e6512d05c",
+  }),
+  executable: "PM Studio",
+  sourceExecutableSha256: "a38f2054abb9770ba35d054d447be0de8e7c9d4fed6b37486bf15cf28de1e122",
+  electronFrameworkPath: "Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework",
+  sourceElectronFrameworkSha256: "a562a31f8f8d14440974466e5e611b19d93705dcf3ca2f57647578ffc002f5b4",
+  embeddedAsarIntegrity: "absent",
+  asarPath: "Contents/Resources/app.asar",
+  infoPlistPath: "Contents/Info.plist",
+  integrityKey: "ElectronAsarIntegrity.Resources/app.asar",
+  dataOffset: 3_833_292,
+  sourceAsarSha256: "d243860770e8b1d8044213924f9704d1fc52f900d6c33461eff6358962330b78",
+  sourceHeaderSha256: "5fc77d5b61e9647fba10fd2bd5752d0889c14da5a00b21d31bc48fdcccf74a69",
+  patchedAsarSha256: "49f72d999a6085102341c2d551577e164db6f22e4707d2112efa3fd280e7315e",
+  patchedHeaderSha256: "b264ece5b8e469cd3885a7a91f904f1902e1991f214ecbf228dfe91059ac7008",
+  sourceSentinel: PM_STUDIO_ORIGIN,
+  patchedSentinel: CCDX_PM_STUDIO_ORIGIN,
+  targets: Object.freeze([
+    Object.freeze({
+      path: "dist/main/main.js",
+      offset: 101_622_115,
+      size: 10_150_157,
+      sentinelOffset: 1_241_344,
+      absoluteSentinelOffset: 106_696_751,
+      sentinelCount: 1,
+      blockSize: 4_194_304,
+      sourceSha256: "03607bb1edc068396b99f02b9c9e0d8e10388fb658afc112e06e875c123dbc27",
+      patchedSha256: "e400300575e2d1c5ad089613f14e138612114547ff5060e94cb81e8de587a75a",
+      sourceBlocks: Object.freeze([
+        "3910a9bc5459f493956aafee7b3644e8d242027758f0dcdea97d7c10a324c6bf",
+        "49fa64c68425d35b1baff0d5745d856d377e014a7a7829322cd1b39aade9532e",
+        "bd7cc14a1d2e02abe66c0ec6fc4e97b263cfc1f67c4ae39e956c06d3bcc2fe67",
+      ]),
+      patchedBlocks: Object.freeze([
+        "74022f5ad06c7879b37875efe0a090b23ccfbcf269afd26b10b77690413dca63",
+        "49fa64c68425d35b1baff0d5745d856d377e014a7a7829322cd1b39aade9532e",
+        "bd7cc14a1d2e02abe66c0ec6fc4e97b263cfc1f67c4ae39e956c06d3bcc2fe67",
+      ]),
+    }),
+    Object.freeze({
+      path: "dist/renderer/js/main.5ad30c24.js",
+      offset: 137_266_992,
+      size: 2_520_547,
+      sentinelOffset: 528_919,
+      absoluteSentinelOffset: 141_629_203,
+      sentinelCount: 1,
+      blockSize: 4_194_304,
+      sourceSha256: "3d123f7a3eb91777f723fe2c4d412677e6722b6348373e4b4bfda41dda8b60ad",
+      patchedSha256: "dc4a9d550f4beb3a2cd7ad0fa6fc82286106762bdf789189d8f88abd0a90f619",
+      sourceBlocks: Object.freeze([
+        "3d123f7a3eb91777f723fe2c4d412677e6722b6348373e4b4bfda41dda8b60ad",
+      ]),
+      patchedBlocks: Object.freeze([
+        "dc4a9d550f4beb3a2cd7ad0fa6fc82286106762bdf789189d8f88abd0a90f619",
+      ]),
+    }),
+  ]),
+});
+
+export const PM_STUDIO_RECIPES = Object.freeze([
+  PM_STUDIO_2_9_7_RECIPE,
+  PM_STUDIO_2_9_10_RECIPE,
+]);
 
 export function sha256Hex(value) {
   return createHash("sha256").update(value).digest("hex");

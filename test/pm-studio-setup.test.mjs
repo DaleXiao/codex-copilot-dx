@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   CCDX_PM_STUDIO_ORIGIN,
   ELECTRON_ASAR_INTEGRITY_SENTINEL,
+  PM_STUDIO_2_9_10_RECIPE,
   PM_STUDIO_2_9_7_RECIPE,
   PM_STUDIO_ORIGIN,
   blockSha256,
@@ -17,6 +18,8 @@ import {
 import {
   PM_STUDIO_CLAUDE_AUTH_COMMAND,
   createPmStudioSetupOperations,
+  inspectBundleContent,
+  inspectPmStudioApp,
   runPmStudioSetup,
 } from "../src/pm-studio-setup.mjs";
 
@@ -73,7 +76,7 @@ function replaceAt(buffer, offset, before, after) {
   return output;
 }
 
-function makeAsarFixture() {
+function makeAsarFixture({ version = "2.9.7", build = version } = {}) {
   const sourceContents = [
     Buffer.from(`${"a".repeat(19)}${PM_STUDIO_ORIGIN}${"b".repeat(31)}`),
     Buffer.from(`${"x".repeat(7)}${PM_STUDIO_ORIGIN}${"y".repeat(13)}`),
@@ -126,9 +129,9 @@ function makeAsarFixture() {
     absoluteSentinelOffset: source.dataOffset + target.offset + target.sentinelOffset,
   }));
   const recipe = {
-    id: "pm-studio-fixture-2.9.7",
-    version: "2.9.7",
-    build: "2.9.7",
+    id: `pm-studio-fixture-${version}-${build}`,
+    version,
+    build,
     bundleIdentifier: "com.pm-studio.app",
     sourceTeamIdentifier: "HL75GKK4W4",
     executable: "PM Studio",
@@ -274,6 +277,35 @@ test("PM Studio 2.9.7 recipe locks exact offsets, sizes, hashes, blocks, and equ
   assert.equal(Buffer.byteLength(CCDX_PM_STUDIO_ORIGIN), 29);
 });
 
+test("PM Studio 2.9.10 recipe locks the official bundle, ASAR, targets, and signing policy", () => {
+  assert.equal(PM_STUDIO_2_9_10_RECIPE.id, "pm-studio-2.9.10-build-2.9.10");
+  assert.equal(PM_STUDIO_2_9_10_RECIPE.bundleIdentifier, "com.pm-studio.app");
+  assert.deepEqual(PM_STUDIO_2_9_10_RECIPE.sourceArtifact, {
+    releaseUrl: "https://github.com/gim-home/max-studio/releases/tag/v2.9.10",
+    asset: "PM-Studio-2.9.10-mac-arm64.zip",
+    sha256: "85654e6ed173ce2565b5ef3694137de2c5f92eba1b749316c9e5b63181ccc3b0",
+  });
+  assert.deepEqual(PM_STUDIO_2_9_10_RECIPE.sourceBundleContent, {
+    scheme: "ccdx-bundle-content-v2",
+    sha256: "478ca7f1f0826b07b7706fd1f410dee01b6dbaae21c40c63ecbdc0942eab63d9",
+    entryCount: 1_521,
+    regularFileCount: 1_013,
+    regularBytes: 494_995_602,
+    symlinkCount: 14,
+    xattrCount: 735,
+    ignoredXattrs: ["com.apple.macl", "com.apple.provenance", "com.apple.quarantine"],
+  });
+  assert.equal(PM_STUDIO_2_9_10_RECIPE.sourceAsarSha256,
+    "d243860770e8b1d8044213924f9704d1fc52f900d6c33461eff6358962330b78");
+  assert.equal(PM_STUDIO_2_9_10_RECIPE.patchedAsarSha256,
+    "49f72d999a6085102341c2d551577e164db6f22e4707d2112efa3fd280e7315e");
+  assert.equal(PM_STUDIO_2_9_10_RECIPE.targets[0].absoluteSentinelOffset, 106_696_751);
+  assert.equal(PM_STUDIO_2_9_10_RECIPE.targets[1].absoluteSentinelOffset, 141_629_203);
+  assert.equal(PM_STUDIO_2_9_10_RECIPE.sourceCodeSignature.teamIdentifier, "HL75GKK4W4");
+  assert.equal(PM_STUDIO_2_9_10_RECIPE.patchedSigningMetadata.entitlements_sha256,
+    "9d4ccbda4fe0c81a70df3db93b3e61fe0500f67f14cdcbee4dea230e6512d05c");
+});
+
 test("ASAR helpers classify clean/patched/drift and update file plus header integrity exactly", () => {
   const fixture = makeAsarFixture();
   const clean = inspectAsarBuffer(fixture.source, fixture.recipe);
@@ -314,6 +346,49 @@ test("ASAR parser rejects malformed pickle metadata and non-zero header padding"
   badPadding[headerEnd] = 1;
   assert.throws(() => inspectAsarBuffer(badPadding, fixture.recipe), /padding is not zeroed/);
   assert.deepEqual(blockSha256(Buffer.alloc(0), 4096), [sha256Hex(Buffer.alloc(0))]);
+});
+
+test("bundle content fingerprints files, modes, symlinks, empty directories, and stable xattrs", () => {
+  const first = temporaryRoot("ccdx-pms-tree-a-");
+  const second = temporaryRoot("ccdx-pms-tree-b-");
+  for (const root of [first, second]) {
+    fs.chmodSync(root, 0o755);
+    fs.mkdirSync(path.join(root, "empty"));
+  }
+  fs.writeFileSync(path.join(first, "a.txt"), "alpha");
+  fs.writeFileSync(path.join(first, "b.txt"), "beta");
+  fs.symlinkSync("a.txt", path.join(first, "current"));
+  fs.writeFileSync(path.join(second, "b.txt"), "beta");
+  fs.symlinkSync("a.txt", path.join(second, "current"));
+  fs.writeFileSync(path.join(second, "a.txt"), "alpha");
+
+  const baseline = inspectBundleContent(first);
+  assert.deepEqual(inspectBundleContent(second), baseline);
+
+  fs.chmodSync(second, 0o700);
+  assert.notEqual(inspectBundleContent(second).sha256, baseline.sha256);
+  fs.chmodSync(second, 0o755);
+  fs.writeFileSync(path.join(second, "a.txt"), "changed");
+  assert.notEqual(inspectBundleContent(second).sha256, baseline.sha256);
+  fs.writeFileSync(path.join(second, "a.txt"), "alpha");
+  fs.unlinkSync(path.join(second, "current"));
+  fs.symlinkSync("b.txt", path.join(second, "current"));
+  assert.notEqual(inspectBundleContent(second).sha256, baseline.sha256);
+  fs.unlinkSync(path.join(second, "current"));
+  fs.symlinkSync("a.txt", path.join(second, "current"));
+  fs.mkdirSync(path.join(second, "another-empty"));
+  assert.notEqual(inspectBundleContent(second).sha256, baseline.sha256);
+
+  const stableXattr = inspectBundleContent(first, {
+    xattrOutput: `${path.join(first, "a.txt")}: com.apple.cs.CodeDirectory:\n00000000  01 02  |..|\n00000002\n`,
+  });
+  assert.equal(stableXattr.xattrCount, 1);
+  assert.notEqual(stableXattr.sha256, baseline.sha256);
+  const volatileXattr = inspectBundleContent(first, {
+    xattrOutput: `${path.join(first, "a.txt")}: com.apple.quarantine:\n00000000  01 02  |..|\n00000002\n`,
+    ignoredXattrs: ["com.apple.quarantine"],
+  });
+  assert.deepEqual(volatileXattr, baseline);
 });
 
 test("embedded Electron ASAR integrity slot inspection fails closed for active, malformed, or multiple slots", () => {
@@ -357,20 +432,47 @@ test("default codesign command preserves identifiers, entitlements, flags, and r
   assert.ok(calls[0].args.includes("--timestamp=none"));
 });
 
+test("default bundle inspection reads symlink xattrs without following their targets", () => {
+  const root = temporaryRoot("ccdx-pms-xattr-");
+  const calls = [];
+  const operations = createPmStudioSetupOperations({
+    processRunner: (command, args) => {
+      calls.push({ command, args });
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+  operations.inspectBundleContent({
+    appPath: root,
+    recipe: { sourceBundleContent: { ignoredXattrs: [] } },
+    processRunner: operations.processRunner,
+  });
+  assert.deepEqual(calls, [{
+    command: "/usr/bin/xattr",
+    args: ["-r", "-s", "-x", "-l", root],
+  }]);
+});
+
 test("codesign inspection exports XML entitlements and fails closed when they are unavailable", () => {
   const calls = [];
   const operations = createPmStudioSetupOperations({
     processRunner: (command, args) => {
       calls.push({ command, args });
-      if (args.includes("--verify")) return { status: 0, stdout: "", stderr: "" };
+      if (args.includes("--verify")) return { status: 1, stdout: "", stderr: "invalid signature" };
       if (args.includes("--verbose=4")) {
         return {
           status: 0,
           stdout: "",
-          stderr: "Identifier=com.pm-studio.app\nTeamIdentifier=HL75GKK4W4\nflags=0x10000(runtime)\n",
+          stderr: [
+            "Identifier=com.pm-studio.app",
+            "TeamIdentifier=HL75GKK4W4",
+            "flags=0x10000(runtime)",
+            "Runtime Version=26.0.0",
+            `CandidateCDHashFull sha256=${"a".repeat(64)}`,
+            "Notarization Ticket=stapled",
+          ].join("\n"),
         };
       }
-      return { status: 0, stdout: "", stderr: "Executable=/tmp/Fixture.app\n" };
+      return { status: 0, stdout: "", stderr: "warning: binary contains an invalid entitlements blob\n" };
     },
   });
   const inspected = operations.inspectCodeSign({
@@ -378,6 +480,15 @@ test("codesign inspection exports XML entitlements and fails closed when they ar
     processRunner: operations.processRunner,
   });
   assert.equal(inspected.valid, false);
+  assert.equal(inspected.verifyValid, false);
+  assert.equal(inspected.displayValid, true);
+  assert.equal(inspected.entitlementsState, "invalid");
+  assert.equal(inspected.identifier, "com.pm-studio.app");
+  assert.equal(inspected.teamIdentifier, "HL75GKK4W4");
+  assert.equal(inspected.flags, "0x10000(runtime)");
+  assert.equal(inspected.runtimeVersion, "26.0.0");
+  assert.equal(inspected.cdHashFull, "a".repeat(64));
+  assert.equal(inspected.notarizationTicket, "stapled");
   const entitlementCall = calls.find(({ args }) => args.includes("--entitlements"));
   assert.deepEqual(entitlementCall.args.slice(0, 5), ["--display", "--entitlements", "-", "--xml", "/tmp/Fixture.app"]);
 });
@@ -463,6 +574,154 @@ test("setup installs from a verified fixture, keeps a complete secret-free backu
     logger: () => {},
   }), { code: "PM_STUDIO_BUNDLE_DRIFT" });
   assert.equal(signCounter.value, 1);
+});
+
+test("2.9.10 setup accepts only the exact official-content fallback and records the complete patched tree", async () => {
+  const root = temporaryRoot("ccdx-pms-2-9-10-");
+  const fixture = makeAsarFixture({ version: "2.9.10" });
+  const appPath = createAppFixture(root, fixture);
+  const sourceBundleContent = {
+    ...inspectBundleContent(appPath),
+    ignoredXattrs: [],
+  };
+  const recipe = {
+    ...fixture.recipe,
+    sourceBundleContent,
+    sourceCodeSignature: {
+      identifier: "com.pm-studio.app",
+      teamIdentifier: "HL75GKK4W4",
+      flags: "0x10000(runtime)",
+      runtimeVersion: "15.0.0",
+      cdHashFull: "fixture-vendor-cdhash",
+      notarizationTicket: "stapled",
+    },
+    patchedSigningMetadata: {
+      identifier: "com.pm-studio.app",
+      flags: "0x10002(adhoc,runtime)",
+      runtime_version: "15.0.0",
+      entitlements_sha256: "fixture-entitlements",
+    },
+  };
+  const signCounter = { value: 0 };
+  const operations = fixtureOperations({ signCounter });
+  const inspectCodeSign = operations.inspectCodeSign;
+  operations.inspectCodeSign = (args) => {
+    const inspected = inspectCodeSign(args);
+    if (inspected.adHoc) return inspected;
+    return {
+      ...inspected,
+      valid: false,
+      verifyValid: false,
+      displayValid: true,
+      entitlementsState: "invalid",
+      cdHashFull: "fixture-vendor-cdhash",
+      notarizationTicket: "stapled",
+    };
+  };
+  operations.inspectBundleContent = ({ appPath: inspectedPath }) => inspectBundleContent(inspectedPath);
+
+  const clean = inspectPmStudioApp({ appPath, recipe, operations });
+  assert.equal(clean.state, "clean");
+  assert.equal(clean.sourceVerification, "exact-bundle-content");
+  assert.equal(inspectPmStudioApp({ appPath, recipe: fixture.recipe, operations }).state, "drift");
+
+  const exactInspectCodeSign = operations.inspectCodeSign;
+  for (const [field, value] of [
+    ["verifyValid", true],
+    ["displayValid", false],
+    ["entitlementsState", "unavailable"],
+    ["identifier", "com.example.drift"],
+    ["teamIdentifier", "DRIFT"],
+    ["flags", "0x0(none)"],
+    ["runtimeVersion", "0.0.0"],
+    ["cdHashFull", "drift"],
+    ["notarizationTicket", "missing"],
+  ]) {
+    operations.inspectCodeSign = (args) => ({ ...exactInspectCodeSign(args), [field]: value });
+    assert.equal(inspectPmStudioApp({ appPath, recipe, operations }).state, "drift", field);
+  }
+  operations.inspectCodeSign = exactInspectCodeSign;
+
+  const exactInspectBundleContent = operations.inspectBundleContent;
+  for (const field of [
+    "sha256",
+    "entryCount",
+    "regularFileCount",
+    "regularBytes",
+    "symlinkCount",
+    "xattrCount",
+  ]) {
+    operations.inspectBundleContent = () => ({
+      ...sourceBundleContent,
+      [field]: field === "sha256" ? "drift" : sourceBundleContent[field] + 1,
+    });
+    assert.equal(inspectPmStudioApp({ appPath, recipe, operations }).state, "drift", field);
+  }
+  operations.inspectBundleContent = exactInspectBundleContent;
+
+  const backupRoot = path.join(root, "backups");
+  const messages = [];
+  const installed = await runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [makeAsarFixture().recipe, recipe],
+    operations,
+    logger: (line) => messages.push(line),
+  });
+  assert.equal(installed.status, "patched");
+  assert.equal(installed.recipe, recipe.id);
+  assert.equal(signCounter.value, 1);
+  assert.match(messages.join("\n"), /accepted only the exact PM Studio 2\.9\.10 official bundle content fingerprint/);
+  const manifest = JSON.parse(fs.readFileSync(installed.backup.manifestPath, "utf8"));
+  assert.equal(manifest.schema_version, 2);
+  assert.deepEqual(manifest.source.bundle_content, sourceBundleContent);
+  assert.deepEqual(manifest.patched.bundle_content, installed.inspection.bundleContent);
+
+  const repeated = await runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [makeAsarFixture().recipe, recipe],
+    operations,
+    logger: () => {},
+  });
+  assert.equal(repeated.status, "already_patched");
+  assert.equal(signCounter.value, 1);
+
+  fs.writeFileSync(path.join(appPath, "Contents/unrecorded-helper"), "drift");
+  await assert.rejects(runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [recipe],
+    operations,
+    logger: () => {},
+  }), { code: "PM_STUDIO_BUNDLE_DRIFT" });
+});
+
+test("unknown PM Studio 2.9.11 is rejected before backup, staging, or signing", async () => {
+  const root = temporaryRoot("ccdx-pms-2-9-11-");
+  const installedFixture = makeAsarFixture({ version: "2.9.11" });
+  const supportedFixture = makeAsarFixture({ version: "2.9.10" });
+  const appPath = createAppFixture(root, installedFixture);
+  const snapshot = sourceSnapshot(appPath);
+  const backupRoot = path.join(root, "backups");
+  const signCounter = { value: 0 };
+  const operations = fixtureOperations({ signCounter });
+
+  await assert.rejects(runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: () => {},
+  }), (error) => error.code === "PM_STUDIO_UNSUPPORTED_VERSION"
+    && /2\.9\.11 build 2\.9\.11 is not supported; no files were changed/.test(error.message));
+  assertSnapshot(appPath, snapshot);
+  assert.equal(fs.existsSync(backupRoot), false);
+  assert.equal(signCounter.value, 0);
 });
 
 test("setup requires an isolated Claude profile before creating backup or staging data", async () => {

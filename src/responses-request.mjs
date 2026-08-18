@@ -6,6 +6,7 @@ import {
   rememberResponseHistoryNode,
   responseHistoryRootId,
 } from "./response-history.mjs";
+import { isResponsesToolOutputItem, readResponsesToolOutputParts } from "./responses-content.mjs";
 import { enforceResponsesImageLimit } from "./responses-image-limit.mjs";
 import { status } from "./status.mjs";
 
@@ -69,27 +70,39 @@ function isEncryptedContentPart(value) {
   return value && typeof value === "object" && value.type === "encrypted_content";
 }
 
+const OMIT_ENCRYPTED_CONTENT = Symbol("omit-encrypted-content");
+const ENCRYPTED_HISTORY_REBASE = Symbol("encrypted-history-rebase");
+const ENCRYPTED_TOOL_OUTPUT_MARKER = "[CCDX: encrypted tool output omitted because upstream could not decrypt it.]";
+
 function stripEncryptedReasoningValue(value, state) {
+  if (isEncryptedContentPart(value)) {
+    state.changed = true;
+    return OMIT_ENCRYPTED_CONTENT;
+  }
+
   if (Array.isArray(value)) {
     const out = [];
     for (const item of value) {
-      if (isEncryptedContentPart(item)) {
-        state.changed = true;
-        continue;
-      }
-      out.push(stripEncryptedReasoningValue(item, state));
+      const stripped = stripEncryptedReasoningValue(item, state);
+      if (stripped !== OMIT_ENCRYPTED_CONTENT) out.push(stripped);
     }
     return out;
   }
 
   if (value && typeof value === "object") {
+    const keys = Object.keys(value);
+    if (keys.length === 1 && keys[0] === "encrypted_content") {
+      state.changed = true;
+      return OMIT_ENCRYPTED_CONTENT;
+    }
     const out = {};
     for (const [key, child] of Object.entries(value)) {
       if (key === "encrypted_content") {
         state.changed = true;
         continue;
       }
-      out[key] = stripEncryptedReasoningValue(child, state);
+      const stripped = stripEncryptedReasoningValue(child, state);
+      if (stripped !== OMIT_ENCRYPTED_CONTENT) out[key] = stripped;
     }
     return out;
   }
@@ -97,28 +110,82 @@ function stripEncryptedReasoningValue(value, state) {
   return value;
 }
 
+function stripEncryptedReasoningInputValue(item, state) {
+  if (!isResponsesToolOutputItem(item)) {
+    const out = stripEncryptedReasoningValue(item, state);
+    if (item?.type === "message"
+      && Array.isArray(item.content)
+      && item.content.length > 0
+      && Array.isArray(out?.content)
+      && out.content.length === 0) {
+      return OMIT_ENCRYPTED_CONTENT;
+    }
+    return out;
+  }
+  const hasOutput = Object.prototype.hasOwnProperty.call(item, "output");
+  const withoutOutput = { ...item };
+  delete withoutOutput.output;
+  const out = stripEncryptedReasoningValue(withoutOutput, state);
+  if (!hasOutput) return out;
+  if (isEncryptedContentPart(item.output)) {
+    state.changed = true;
+    out.output = ENCRYPTED_TOOL_OUTPUT_MARKER;
+    return out;
+  }
+  out.output = typeof item.output === "string" ? item.output : cloneJson(item.output);
+  if (typeof item.output === "string" && !item.output.includes("encrypted_content")) return out;
+  const parsed = readResponsesToolOutputParts(out);
+  if (parsed) {
+    const outputState = { changed: false };
+    const parts = stripEncryptedReasoningValue(parsed.parts, outputState);
+    if (!outputState.changed) return out;
+    state.changed = true;
+    if (!parts.length) {
+      out.output = ENCRYPTED_TOOL_OUTPUT_MARKER;
+      return out;
+    }
+    parsed.parts.splice(0, parsed.parts.length, ...parts);
+    parsed.commit?.();
+    return out;
+  }
+  const output = stripEncryptedReasoningValue(out.output, state);
+  out.output = output === OMIT_ENCRYPTED_CONTENT ? ENCRYPTED_TOOL_OUTPUT_MARKER : output;
+  return out;
+}
+
 function isEncryptedReasoningInputItem(item) {
-  return item && typeof item === "object"
-    && (item.type === "reasoning"
-      || item.type === "encrypted_content"
-      || Object.prototype.hasOwnProperty.call(item, "encrypted_content"));
+  if (!item || typeof item !== "object") return false;
+  if (["reasoning", "encrypted_content", "compaction"].includes(item.type)) return true;
+  const keys = Object.keys(item);
+  return keys.length === 1 && keys[0] === "encrypted_content";
 }
 
 export function sanitizeEncryptedReasoningRequest(reqContext) {
   const state = { changed: false };
   let body = cloneJson(reqContext.body);
   let currentInputStart = reqContext.currentInputStart;
+  let historicalInputChanged = false;
   if (Array.isArray(body.input)) {
     const input = [];
     let retainedBeforeCurrent = 0;
     for (let index = 0; index < body.input.length; index += 1) {
       const item = body.input[index];
+      const historical = Number.isFinite(currentInputStart) && index < currentInputStart;
       if (isEncryptedReasoningInputItem(item)) {
         state.changed = true;
+        if (historical) historicalInputChanged = true;
         continue;
       }
-      input.push(stripEncryptedReasoningValue(item, state));
-      if (Number.isFinite(currentInputStart) && index < currentInputStart) retainedBeforeCurrent += 1;
+      const itemState = { changed: false };
+      const stripped = stripEncryptedReasoningInputValue(item, itemState);
+      if (stripped !== OMIT_ENCRYPTED_CONTENT) input.push(stripped);
+      if (itemState.changed) {
+        state.changed = true;
+        if (historical) historicalInputChanged = true;
+      }
+      if (stripped !== OMIT_ENCRYPTED_CONTENT
+        && Number.isFinite(currentInputStart)
+        && index < currentInputStart) retainedBeforeCurrent += 1;
     }
     body.input = input;
     if (Number.isFinite(currentInputStart)) currentInputStart = retainedBeforeCurrent;
@@ -127,12 +194,19 @@ export function sanitizeEncryptedReasoningRequest(reqContext) {
   }
   if (!state.changed) return null;
   const historyInputItems = Array.isArray(reqContext.historyInputItems)
-    ? reqContext.historyInputItems
-      .filter((item) => !isEncryptedReasoningInputItem(item))
-      .map((item) => stripEncryptedReasoningValue(item, { changed: false }))
+    ? reqContext.historyInputItems.flatMap((item) => {
+      if (isEncryptedReasoningInputItem(item)) return [];
+      const stripped = stripEncryptedReasoningInputValue(item, { changed: false });
+      return stripped === OMIT_ENCRYPTED_CONTENT ? [] : [stripped];
+    })
     : reqContext.historyInputItems;
+  const shouldRebaseHistory = historicalInputChanged
+    && Number.isFinite(reqContext.currentInputStart)
+    && reqContext.historyParentId !== undefined
+    && reqContext.historyParentId !== null;
   return {
     ...reqContext,
+    ...(shouldRebaseHistory ? { [ENCRYPTED_HISTORY_REBASE]: true } : {}),
     body,
     currentInputStart,
     inputItems: Array.isArray(body.input) ? body.input : reqContext.inputItems,
@@ -140,12 +214,30 @@ export function sanitizeEncryptedReasoningRequest(reqContext) {
   };
 }
 
+function finalizeEncryptedHistoryRebase(reqContext) {
+  if (!reqContext[ENCRYPTED_HISTORY_REBASE]) return reqContext;
+  const finalized = {
+    ...reqContext,
+    historyParentId: null,
+    historyRootId: null,
+    historyInputItems: reqContext.body.input,
+    inputItems: reqContext.body.input,
+  };
+  delete finalized[ENCRYPTED_HISTORY_REBASE];
+  return finalized;
+}
+
 export function isEncryptedContentVerificationError(statusCode, text) {
   if (statusCode < 400 || !text) return false;
   const lower = String(text).toLowerCase();
-  return lower.includes("encrypted content")
+  const reasoningFailure = lower.includes("encrypted content")
     && lower.includes("could not be verified")
     && (lower.includes("could not be decrypted") || lower.includes("could not be parsed"));
+  const functionOutputFailure = lower.includes("encrypted function output content")
+    && lower.includes("could not be decrypted or decoded");
+  const missingEncryptedContent = statusCode < 500
+    && /missing required parameter:\s*(['"]?)input\[\d+\](?:\.[a-z0-9_]+|\[\d+\])*\.encrypted_content\1(?=\.?(?:\s|$|["},\]]))/.test(lower);
+  return reasoningFailure || functionOutputFailure || missingEncryptedContent;
 }
 
 export function isImageNamespaceCollisionError(statusCode, text) {
@@ -192,7 +284,10 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
     });
     options.assertPrepareActive?.();
     payloadPrepared = true;
-    if (resp.ok) return { resp, reqContext };
+    if (resp.ok) {
+      reqContext = finalizeEncryptedHistoryRebase(reqContext);
+      return { resp, reqContext };
+    }
 
     const errorText = await resp.text();
     options.assertPrepareActive?.();
@@ -210,7 +305,7 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
       if (retryContext) {
         encryptedRetried = true;
         reqContext = retryContext;
-        console.warn(status("warn", "encrypted reasoning rejected by upstream; retrying without encrypted reasoning"));
+        console.warn(status("warn", "encrypted replay content rejected by upstream; retrying without unavailable encrypted content"));
         continue;
       }
     }

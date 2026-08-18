@@ -35,7 +35,7 @@ import {
 } from "../src/adapter.mjs";
 import { autoReviewModelPreference, writeAutoReviewModel } from "../src/user-settings.mjs";
 import { responsesHistoricalImageStats } from "../src/responses-byte-budget.mjs";
-import { readResponsesToolOutputParts } from "../src/responses-content.mjs";
+import { isResponsesToolOutputItem, readResponsesToolOutputParts } from "../src/responses-content.mjs";
 import { createResponsesImagePressureController } from "../src/responses-image-pressure.mjs";
 
 const gzipAsync = promisify(zlib.gzip);
@@ -2455,9 +2455,29 @@ test("isEncryptedContentVerificationError: detects upstream encrypted reasoning 
       code: "invalid_request_body",
     },
   });
+  const functionOutputText = JSON.stringify({
+    error: {
+      message: "Encrypted function output content could not be decrypted or decoded.",
+      code: "invalid_request_body",
+    },
+  });
+  const missingEncryptedContentText = JSON.stringify({
+    error: {
+      message: "Missing required parameter: 'input[3].content[1].encrypted_content'.",
+      code: "missing_required_parameter",
+    },
+  });
 
   assert.equal(isEncryptedContentVerificationError(400, text), true);
+  assert.equal(isEncryptedContentVerificationError(400, functionOutputText), true);
+  assert.equal(isEncryptedContentVerificationError(400, missingEncryptedContentText), true);
+  assert.equal(isEncryptedContentVerificationError(422, missingEncryptedContentText), true);
   assert.equal(isEncryptedContentVerificationError(200, text), false);
+  assert.equal(isEncryptedContentVerificationError(200, functionOutputText), false);
+  assert.equal(isEncryptedContentVerificationError(500, missingEncryptedContentText), false);
+  assert.equal(isEncryptedContentVerificationError(400, "Missing required parameter: 'input[3].content[1].text'."), false);
+  assert.equal(isEncryptedContentVerificationError(400, "Missing required parameter: 'input[3].content[1].encrypted_content_backup'."), false);
+  assert.equal(isEncryptedContentVerificationError(400, "Missing required parameter: 'input[3].content[1].encrypted_content.extra'."), false);
   assert.equal(isEncryptedContentVerificationError(400, "Raw request body exceeds 1 bytes"), false);
 });
 
@@ -2534,6 +2554,308 @@ test("sanitizeEncryptedReasoningRequest: drops nested encrypted_content parts wi
   });
 });
 
+test("sanitizeEncryptedReasoningRequest: omits encrypted-only messages while preserving empty and visible messages", () => {
+  const preexistingEmpty = { type: "message", role: "assistant", content: [] };
+  const encryptedOnly = {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "encrypted_content", encrypted_content: "history-only-cipher" }],
+  };
+  const untypedEncryptedOnly = {
+    type: "message",
+    role: "assistant",
+    content: [{ encrypted_content: "history-untyped-cipher" }],
+  };
+  const mixed = {
+    type: "message",
+    role: "assistant",
+    content: [
+      { type: "output_text", text: "visible", encrypted_content: "visible-field-cipher" },
+      { type: "encrypted_content", encrypted_content: "current-cipher" },
+    ],
+  };
+  const historyInputItems = [preexistingEmpty, encryptedOnly, untypedEncryptedOnly, mixed];
+  const ctx = {
+    body: { model: "gpt-5.5", input: historyInputItems },
+    inputItems: [],
+    currentInputStart: 3,
+    historyParentId: "resp_parent",
+    historyRootId: "resp_root",
+    historyInputItems,
+  };
+  const original = structuredClone(ctx);
+
+  const sanitized = sanitizeEncryptedReasoningRequest(ctx);
+
+  const expected = [
+    preexistingEmpty,
+    { type: "message", role: "assistant", content: [{ type: "output_text", text: "visible" }] },
+  ];
+  assert.deepEqual(sanitized.body.input, expected);
+  assert.deepEqual(sanitized.historyInputItems, expected);
+  assert.equal(sanitized.currentInputStart, 1);
+  assert.equal(sanitized.body.input.some((item) => typeof item === "symbol"), false);
+  assert.equal(sanitized.historyInputItems.some((item) => typeof item === "symbol"), false);
+  assert.equal(JSON.stringify(sanitized).includes("encrypted_content"), false);
+  assert.deepEqual(ctx, original);
+
+  const emptyOnly = {
+    body: { model: "gpt-5.5", input: [preexistingEmpty] },
+    inputItems: [],
+  };
+  assert.equal(sanitizeEncryptedReasoningRequest(emptyOnly), null);
+});
+
+const ENCRYPTED_TOOL_OUTPUT_MARKER = "[CCDX: encrypted tool output omitted because upstream could not decrypt it.]";
+
+test("sanitizeEncryptedReasoningRequest: cleans array and stringified function outputs without breaking pairs", () => {
+  const cases = [
+    { callType: "function_call", outputType: "function_call_output", callId: "function_array", stringified: false },
+    { callType: "function_call", outputType: "function_call_output", callId: "function_string", stringified: true },
+    { callType: "custom_tool_call", outputType: "custom_tool_call_output", callId: "custom_array", stringified: false },
+    { callType: "custom_tool_call", outputType: "custom_tool_call_output", callId: "custom_string", stringified: true },
+  ];
+  const input = cases.flatMap(({ callType, outputType, callId, stringified }) => {
+    const call = callType === "function_call"
+      ? { type: callType, id: `id_${callId}`, call_id: callId, name: "lookup", arguments: "{}" }
+      : { type: callType, id: `id_${callId}`, call_id: callId, name: "shell", input: "pwd" };
+    const parts = [
+      { type: "input_text", text: `${callId} visible`, metadata: { keep: true }, encrypted_content: `${callId}-field` },
+      { type: "encrypted_content", encrypted_content: `${callId}-part` },
+    ];
+    return [call, {
+      type: outputType,
+      call_id: callId,
+      output: stringified ? JSON.stringify(parts) : parts,
+    }];
+  });
+  const ctx = {
+    body: {
+      model: "gpt-5.5",
+      store: false,
+      input,
+    },
+    inputItems: [],
+  };
+  const original = structuredClone(ctx.body);
+
+  const sanitized = sanitizeEncryptedReasoningRequest(ctx);
+
+  const expected = cases.flatMap(({ callType, outputType, callId, stringified }) => {
+    const call = callType === "function_call"
+      ? { type: callType, id: `id_${callId}`, call_id: callId, name: "lookup", arguments: "{}" }
+      : { type: callType, id: `id_${callId}`, call_id: callId, name: "shell", input: "pwd" };
+    const visible = [{ type: "input_text", text: `${callId} visible`, metadata: { keep: true } }];
+    return [call, {
+      type: outputType,
+      call_id: callId,
+      output: stringified ? JSON.stringify(visible) : visible,
+    }];
+  });
+  assert.deepEqual(sanitized.body.input, expected);
+  assert.deepEqual(ctx.body, original);
+  assert.equal(JSON.stringify(sanitized.body).includes("encrypted_content"), false);
+  assert.deepEqual(sanitized.body.input.map((item) => item.type), expected.map((item) => item.type));
+  assert.deepEqual(sanitized.body.input.map((item) => item.call_id), expected.map((item) => item.call_id));
+});
+
+test("sanitizeEncryptedReasoningRequest: replaces direct encrypted function and custom outputs with omission markers", () => {
+  const cases = [
+    { callType: "function_call", outputType: "function_call_output", callId: "function_direct" },
+    { callType: "custom_tool_call", outputType: "custom_tool_call_output", callId: "custom_direct" },
+  ];
+  const input = cases.flatMap(({ callType, outputType, callId }) => [
+    callType === "function_call"
+      ? { type: callType, call_id: callId, name: "lookup", arguments: "{}" }
+      : { type: callType, call_id: callId, name: "shell", input: "pwd" },
+    {
+      type: outputType,
+      call_id: callId,
+      output: { type: "encrypted_content", encrypted_content: `${callId}-part` },
+      metadata: { keep: true },
+    },
+  ]);
+  const ctx = { body: { model: "gpt-5.5", input }, inputItems: [] };
+  const original = structuredClone(ctx.body);
+
+  const sanitized = sanitizeEncryptedReasoningRequest(ctx);
+
+  assert.deepEqual(sanitized.body.input.map((item) => item.type), input.map((item) => item.type));
+  assert.deepEqual(sanitized.body.input.map((item) => item.call_id), input.map((item) => item.call_id));
+  assert.deepEqual(sanitized.body.input.filter(isResponsesToolOutputItem).map((item) => item.output), [
+    ENCRYPTED_TOOL_OUTPUT_MARKER,
+    ENCRYPTED_TOOL_OUTPUT_MARKER,
+  ]);
+  assert.deepEqual(sanitized.body.input.filter(isResponsesToolOutputItem).map((item) => item.metadata), [
+    { keep: true },
+    { keep: true },
+  ]);
+  assert.equal(JSON.stringify(sanitized.body).includes("encrypted_content"), false);
+  assert.deepEqual(ctx.body, original);
+});
+
+test("sanitizeEncryptedReasoningRequest: replaces encrypted-only array and stringified tool outputs with omission markers", () => {
+  const cases = [
+    { callType: "function_call", outputType: "function_call_output", callId: "function_array", stringified: false },
+    { callType: "function_call", outputType: "function_call_output", callId: "function_string", stringified: true },
+    { callType: "custom_tool_call", outputType: "custom_tool_call_output", callId: "custom_array", stringified: false },
+    { callType: "custom_tool_call", outputType: "custom_tool_call_output", callId: "custom_string", stringified: true },
+  ];
+  const input = cases.flatMap(({ callType, outputType, callId, stringified }) => {
+    const parts = [{ type: "encrypted_content", encrypted_content: `${callId}-part` }];
+    return [
+      callType === "function_call"
+        ? { type: callType, call_id: callId, name: "lookup", arguments: "{}" }
+        : { type: callType, call_id: callId, name: "shell", input: "pwd" },
+      { type: outputType, call_id: callId, output: stringified ? JSON.stringify(parts) : parts },
+    ];
+  });
+  const ctx = { body: { model: "gpt-5.5", input }, inputItems: [] };
+  const original = structuredClone(ctx.body);
+
+  const sanitized = sanitizeEncryptedReasoningRequest(ctx);
+
+  assert.deepEqual(sanitized.body.input.map((item) => item.type), input.map((item) => item.type));
+  assert.deepEqual(sanitized.body.input.map((item) => item.call_id), input.map((item) => item.call_id));
+  assert.deepEqual(sanitized.body.input.filter(isResponsesToolOutputItem).map((item) => item.output), [
+    ENCRYPTED_TOOL_OUTPUT_MARKER,
+    ENCRYPTED_TOOL_OUTPUT_MARKER,
+    ENCRYPTED_TOOL_OUTPUT_MARKER,
+    ENCRYPTED_TOOL_OUTPUT_MARKER,
+  ]);
+  assert.equal(JSON.stringify(sanitized.body).includes("encrypted_content"), false);
+  assert.deepEqual(ctx.body, original);
+});
+
+test("sanitizeEncryptedReasoningRequest: cleans history tool outputs without mutating source history", () => {
+  const historyInputItems = [
+    {
+      type: "function_call_output",
+      call_id: "history_function",
+      output: [
+        { type: "input_text", text: "visible history" },
+        { type: "encrypted_content", encrypted_content: "history-function-part" },
+      ],
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "history_custom",
+      output: [{ type: "encrypted_content", encrypted_content: "history-custom-part" }],
+    },
+  ];
+  const ctx = {
+    body: {
+      model: "gpt-5.5",
+      input: [{
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "visible", encrypted_content: "body-part" }],
+      }],
+    },
+    inputItems: [],
+    historyInputItems,
+  };
+  const originalHistory = structuredClone(historyInputItems);
+
+  const sanitized = sanitizeEncryptedReasoningRequest(ctx);
+
+  assert.deepEqual(historyInputItems, originalHistory);
+  assert.deepEqual(sanitized.historyInputItems, [
+    {
+      type: "function_call_output",
+      call_id: "history_function",
+      output: [{ type: "input_text", text: "visible history" }],
+    },
+    { type: "custom_tool_call_output", call_id: "history_custom", output: ENCRYPTED_TOOL_OUTPUT_MARKER },
+  ]);
+  assert.equal(JSON.stringify(sanitized.historyInputItems).includes("encrypted_content"), false);
+});
+
+test("sanitizeEncryptedReasoningRequest: preserves function call pairing when removing an encrypted field", () => {
+  const ctx = {
+    body: {
+      model: "gpt-5.5",
+      input: [
+        {
+          type: "function_call",
+          id: "fc_pair",
+          call_id: "call_pair",
+          name: "lookup",
+          arguments: "{}",
+          encrypted_content: "call-part",
+          metadata: { keep: true },
+        },
+        { type: "function_call_output", call_id: "call_pair", output: "visible output" },
+      ],
+    },
+    inputItems: [],
+  };
+
+  const sanitized = sanitizeEncryptedReasoningRequest(ctx);
+
+  assert.deepEqual(sanitized.body.input, [
+    {
+      type: "function_call",
+      id: "fc_pair",
+      call_id: "call_pair",
+      name: "lookup",
+      arguments: "{}",
+      metadata: { keep: true },
+    },
+    { type: "function_call_output", call_id: "call_pair", output: "visible output" },
+  ]);
+});
+
+test("sanitizeEncryptedReasoningRequest: removes compaction items as complete encrypted state", () => {
+  const ctx = {
+    body: {
+      model: "gpt-5.5",
+      input: [
+        { type: "message", role: "user", content: "continue" },
+        { type: "compaction", id: "cmp_encrypted", encrypted_content: "compaction-part" },
+      ],
+    },
+    inputItems: [],
+  };
+
+  const sanitized = sanitizeEncryptedReasoningRequest(ctx);
+
+  assert.deepEqual(sanitized.body.input, [{ type: "message", role: "user", content: "continue" }]);
+});
+
+test("sanitizeEncryptedReasoningRequest: keeps history parent when current input is sanitized", () => {
+  const currentInput = {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "visible", encrypted_content: "current-part" }],
+  };
+  const ctx = {
+    body: {
+      model: "gpt-5.5",
+      input: [
+        { type: "message", role: "user", content: "historical" },
+        currentInput,
+      ],
+    },
+    inputItems: [],
+    currentInputStart: 1,
+    historyParentId: "resp_parent",
+    historyRootId: "resp_root",
+    historyInputItems: [currentInput],
+  };
+
+  const sanitized = sanitizeEncryptedReasoningRequest(ctx);
+
+  assert.equal(sanitized.historyParentId, "resp_parent");
+  assert.equal(sanitized.historyRootId, "resp_root");
+  assert.deepEqual(sanitized.historyInputItems, [{
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "visible" }],
+  }]);
+  assert.notStrictEqual(sanitized.historyInputItems, sanitized.body.input);
+});
+
 test("sanitizeEncryptedReasoningRequest: returns null when no encrypted reasoning is present", () => {
   const ctx = {
     body: { model: "gpt-5.5", input: [{ type: "message", role: "user", content: "hello" }] },
@@ -2599,6 +2921,461 @@ test("openCopilotResponse: retries encrypted reasoning failures with sanitized i
   ]);
   assert.deepEqual(opened.reqContext.inputItems, calls[1].input);
   assert.deepEqual(await opened.resp.json(), { id: "resp_1", output: [] });
+});
+
+test("openCopilotResponse: retries exact encrypted function output failures with intact first payload", async () => {
+  const encryptedError = JSON.stringify({
+    error: {
+      message: "Encrypted function output content could not be decrypted or decoded.",
+      code: "invalid_request_body",
+    },
+  });
+  const ctx = {
+    body: {
+      model: "gpt-5.5",
+      store: false,
+      input: [
+        { type: "function_call", call_id: "call_function", name: "lookup", arguments: "{}" },
+        {
+          type: "function_call_output",
+          call_id: "call_function",
+          output: [
+            { type: "input_text", text: "function visible" },
+            { type: "encrypted_content", encrypted_content: "function-part" },
+          ],
+        },
+        { type: "custom_tool_call", call_id: "call_custom", name: "shell", input: "pwd" },
+        {
+          type: "custom_tool_call_output",
+          call_id: "call_custom",
+          output: JSON.stringify([
+            { type: "input_text", text: "custom visible" },
+            { type: "encrypted_content", encrypted_content: "custom-part" },
+          ]),
+        },
+      ],
+    },
+    inputItems: [],
+  };
+  const original = structuredClone(ctx.body);
+  const calls = [];
+  const upstream = async (body) => {
+    calls.push(structuredClone(body));
+    return calls.length === 1
+      ? new Response(encryptedError, { status: 400, headers: { "Content-Type": "application/json" } })
+      : Response.json({ id: "resp_function_output", output: [] });
+  };
+
+  const opened = await openCopilotResponse(ctx, upstream);
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0], original);
+  assert.deepEqual(calls[1].input.map((item) => item.type), [
+    "function_call",
+    "function_call_output",
+    "custom_tool_call",
+    "custom_tool_call_output",
+  ]);
+  assert.deepEqual(calls[1].input[1].output, [{ type: "input_text", text: "function visible" }]);
+  assert.deepEqual(JSON.parse(calls[1].input[3].output), [{ type: "input_text", text: "custom visible" }]);
+  assert.equal(JSON.stringify(calls[1]).includes("encrypted_content"), false);
+  assert.equal(opened.resp.ok, true);
+});
+
+test("openCopilotResponse: exact function output fallback retries once and unrelated errors do not retry", async () => {
+  const encryptedError = JSON.stringify({
+    error: { message: "Encrypted function output content could not be decrypted or decoded." },
+  });
+  const ctx = {
+    body: {
+      model: "gpt-5.5",
+      input: [{
+        type: "custom_tool_call_output",
+        call_id: "call_once",
+        output: JSON.stringify([
+          { type: "encrypted_content", encrypted_content: "custom-part" },
+          { type: "input_text", text: "visible" },
+        ]),
+      }],
+    },
+    inputItems: [],
+  };
+  let encryptedCalls = 0;
+  const failed = await openCopilotResponse(ctx, async () => {
+    encryptedCalls += 1;
+    return new Response(encryptedError, { status: 400 });
+  });
+  assert.equal(encryptedCalls, 2);
+  assert.equal(failed.errorText, encryptedError);
+
+  const unrelatedError = JSON.stringify({ error: { message: "Function output is invalid." } });
+  let unrelatedCalls = 0;
+  const unrelated = await openCopilotResponse(ctx, async () => {
+    unrelatedCalls += 1;
+    return new Response(unrelatedError, { status: 400 });
+  });
+  assert.equal(unrelatedCalls, 1);
+  assert.equal(unrelated.errorText, unrelatedError);
+});
+
+test("openCopilotResponse: missing encrypted_content retries once only when sanitization changes input", async () => {
+  const missingEncryptedContentError = JSON.stringify({
+    error: {
+      message: "Missing required parameter: 'input[3].content[1].encrypted_content'.",
+      code: "missing_required_parameter",
+    },
+  });
+  const encryptedCtx = {
+    body: {
+      model: "gpt-5.5",
+      input: [{
+        type: "message",
+        role: "assistant",
+        content: [
+          { type: "output_text", text: "visible" },
+          { type: "encrypted_content", encrypted_content: "nested-part" },
+        ],
+      }],
+    },
+    inputItems: [],
+  };
+  const encryptedCalls = [];
+  const failed = await openCopilotResponse(encryptedCtx, async (body) => {
+    encryptedCalls.push(structuredClone(body));
+    return new Response(missingEncryptedContentError, { status: 400 });
+  });
+
+  assert.equal(encryptedCalls.length, 2);
+  assert.equal(encryptedCalls[0].input[0].content[1].encrypted_content, "nested-part");
+  assert.deepEqual(encryptedCalls[1].input[0].content, [{ type: "output_text", text: "visible" }]);
+  assert.equal(failed.errorText, missingEncryptedContentError);
+
+  const cleanCtx = {
+    body: { model: "gpt-5.5", input: [{ type: "message", role: "user", content: "hello" }] },
+    inputItems: [],
+  };
+  let cleanCalls = 0;
+  const cleanFailed = await openCopilotResponse(cleanCtx, async () => {
+    cleanCalls += 1;
+    return new Response(missingEncryptedContentError, { status: 400 });
+  });
+
+  assert.equal(cleanCalls, 1);
+  assert.equal(cleanFailed.errorText, missingEncryptedContentError);
+});
+
+test("openCopilotResponse: exact missing encrypted message retry omits the message and rebases history", async () => {
+  const missingEncryptedContentError = JSON.stringify({
+    error: {
+      message: "Missing required parameter: 'input[0].content[0].encrypted_content'.",
+      code: "missing_required_parameter",
+    },
+  });
+  const encryptedOnly = {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "encrypted_content", encrypted_content: "history-message-cipher" }],
+  };
+  const current = {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: "continue" }],
+  };
+  const ctx = {
+    body: { model: "gpt-5.5", input: [encryptedOnly, current] },
+    inputItems: [current],
+    currentInputStart: 1,
+    historyParentId: "resp_encrypted_message_parent",
+    historyRootId: "resp_encrypted_message_root",
+    historyInputItems: [current],
+  };
+  const originalBody = structuredClone(ctx.body);
+  const calls = [];
+  const currentInputStarts = [];
+
+  const opened = await openCopilotResponse(ctx, async (body, options) => {
+    calls.push(structuredClone(body));
+    currentInputStarts.push(options.currentInputStart);
+    return calls.length === 1
+      ? new Response(missingEncryptedContentError, { status: 400 })
+      : Response.json({ id: "resp_clean_message", status: "completed", output: [] });
+  });
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0], originalBody);
+  assert.deepEqual(calls[1].input, [current]);
+  assert.deepEqual(currentInputStarts, [1, 0]);
+  assert.equal(calls[1].input.some((item) => typeof item === "symbol"), false);
+  assert.equal(calls[1].input.some((item) => Array.isArray(item?.content) && item.content.length === 0), false);
+  assert.equal(opened.reqContext.historyParentId, null);
+  assert.equal(opened.reqContext.historyRootId, null);
+  assert.equal(opened.reqContext.currentInputStart, 0);
+  assert.strictEqual(opened.reqContext.historyInputItems, opened.reqContext.body.input);
+  assert.deepEqual(opened.reqContext.historyInputItems, [current]);
+});
+
+test("encrypted history retry rebases the successful branch without rewriting the old response branch", async () => {
+  clearResponseHistoryForTests();
+  try {
+    const root = prepareResponsesRequest({
+      model: "gpt-5.5",
+      input: [{ type: "message", role: "user", content: "start" }],
+    });
+    rememberResponseHistory(root, {
+      id: "resp_cipher_root",
+      status: "completed",
+      output: [
+        {
+          type: "function_call",
+          id: "fc_history",
+          call_id: "call_function",
+          name: "lookup",
+          arguments: "{}",
+          encrypted_content: "root-function-cipher",
+        },
+        {
+          type: "custom_tool_call",
+          id: "ct_history",
+          call_id: "call_custom",
+          name: "shell",
+          input: "pwd",
+          encrypted_content: "root-custom-cipher",
+        },
+      ],
+    });
+
+    const second = prepareResponsesRequest({
+      model: "gpt-5.5",
+      previous_response_id: "resp_cipher_root",
+      input: [
+        { type: "function_call_output", call_id: "call_function", output: "function visible" },
+        { type: "custom_tool_call_output", call_id: "call_custom", output: "custom visible" },
+      ],
+    });
+    const originalSecondBody = structuredClone(second.body);
+    const exactError = JSON.stringify({
+      error: { message: "Encrypted function output content could not be decrypted or decoded." },
+    });
+    const secondCalls = [];
+    const opened = await openCopilotResponse(second, async (body) => {
+      secondCalls.push(structuredClone(body));
+      return secondCalls.length === 1
+        ? new Response(exactError, { status: 400 })
+        : Response.json({
+          id: "resp_clean_child",
+          status: "completed",
+          output: [{
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "done" }],
+          }],
+        });
+    });
+
+    assert.equal(secondCalls.length, 2);
+    assert.deepEqual(secondCalls[0], originalSecondBody);
+    assert.deepEqual(secondCalls[1].input.map((item) => item.type), [
+      "message",
+      "function_call",
+      "custom_tool_call",
+      "function_call_output",
+      "custom_tool_call_output",
+    ]);
+    assert.deepEqual(secondCalls[1].input.map((item) => item.call_id), [
+      undefined,
+      "call_function",
+      "call_custom",
+      "call_function",
+      "call_custom",
+    ]);
+    assert.equal(JSON.stringify(secondCalls[1]).includes("encrypted_content"), false);
+    assert.equal(opened.reqContext.historyParentId, null);
+    assert.equal(opened.reqContext.historyRootId, null);
+    assert.strictEqual(opened.reqContext.historyInputItems, opened.reqContext.body.input);
+
+    rememberResponseHistory(opened.reqContext, await opened.resp.json());
+    const third = prepareResponsesRequest({
+      model: "gpt-5.5",
+      previous_response_id: "resp_clean_child",
+      input: "next",
+    });
+    const thirdCalls = [];
+    await openCopilotResponse(third, async (body) => {
+      thirdCalls.push(structuredClone(body));
+      return Response.json({ id: "resp_third", status: "completed", output: [] });
+    });
+
+    assert.equal(thirdCalls.length, 1);
+    assert.equal(JSON.stringify(thirdCalls[0]).includes("root-function-cipher"), false);
+    assert.equal(JSON.stringify(thirdCalls[0]).includes("root-custom-cipher"), false);
+    assert.deepEqual(
+      thirdCalls[0].input
+        .filter((item) => ["function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output"].includes(item.type))
+        .map((item) => [item.type, item.call_id]),
+      [
+        ["function_call", "call_function"],
+        ["custom_tool_call", "call_custom"],
+        ["function_call_output", "call_function"],
+        ["custom_tool_call_output", "call_custom"],
+      ],
+    );
+
+    const oldBranch = prepareResponsesRequest({
+      model: "gpt-5.5",
+      previous_response_id: "resp_cipher_root",
+      input: "old branch",
+    });
+    assert.equal(JSON.stringify(oldBranch.body).includes("root-function-cipher"), true);
+    assert.equal(JSON.stringify(oldBranch.body).includes("root-custom-cipher"), true);
+  } finally {
+    clearResponseHistoryForTests();
+  }
+});
+
+test("openCopilotResponse: history rebase waits for the final payload after an image retry", async () => {
+  const currentOutput = { type: "function_call_output", call_id: "call_history", output: "visible" };
+  const ctx = {
+    body: {
+      model: "gpt-5.5",
+      tools: [{ type: "image_gen" }],
+      input: [
+        { type: "reasoning", encrypted_content: "history-reasoning-cipher", summary: [] },
+        {
+          type: "function_call",
+          call_id: "call_history",
+          name: "lookup",
+          arguments: "{}",
+          encrypted_content: "history-cipher",
+        },
+        currentOutput,
+      ],
+    },
+    inputItems: [],
+    currentInputStart: 2,
+    historyParentId: "resp_history_parent",
+    historyRootId: "resp_history_root",
+    historyInputItems: [currentOutput],
+  };
+  const encryptedError = JSON.stringify({
+    error: { message: "Encrypted function output content could not be decrypted or decoded." },
+  });
+  const imageError = JSON.stringify({
+    error: { message: "Namespace image_gen collided with an upstream tool namespace." },
+  });
+  const calls = [];
+  const currentInputStarts = [];
+
+  const opened = await openCopilotResponse(ctx, async (body, options) => {
+    calls.push(structuredClone(body));
+    currentInputStarts.push(options.currentInputStart);
+    if (calls.length === 1) return new Response(encryptedError, { status: 400 });
+    if (calls.length === 2) return new Response(imageError, { status: 400 });
+    return Response.json({ id: "resp_final_payload", status: "completed", output: [] });
+  });
+
+  assert.equal(calls.length, 3);
+  assert.deepEqual(currentInputStarts, [2, 1, 1]);
+  assert.equal(JSON.stringify(calls[0]).includes("history-cipher"), true);
+  assert.equal(JSON.stringify(calls[1]).includes("history-cipher"), false);
+  assert.deepEqual(calls[1].tools, [{ type: "image_gen" }]);
+  assert.equal(Object.prototype.hasOwnProperty.call(calls[2], "tools"), false);
+  assert.deepEqual(opened.reqContext.body, calls[2]);
+  assert.equal(opened.reqContext.historyParentId, null);
+  assert.equal(opened.reqContext.historyRootId, null);
+  assert.equal(opened.reqContext.currentInputStart, 1);
+  assert.strictEqual(opened.reqContext.historyInputItems, opened.reqContext.body.input);
+  assert.strictEqual(opened.reqContext.inputItems, opened.reqContext.body.input);
+});
+
+test("openCopilotResponse: mixed historical and current encrypted content still rebases history", async () => {
+  const ctx = {
+    body: {
+      model: "gpt-5.5",
+      input: [
+        {
+          type: "function_call",
+          call_id: "call_mixed",
+          name: "lookup",
+          arguments: "{}",
+          encrypted_content: "historical-cipher",
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_mixed",
+          output: { type: "encrypted_content", encrypted_content: "current-cipher" },
+        },
+      ],
+    },
+    inputItems: [],
+    currentInputStart: 1,
+    historyParentId: "resp_mixed_parent",
+    historyRootId: "resp_mixed_root",
+    historyInputItems: [{
+      type: "function_call_output",
+      call_id: "call_mixed",
+      output: { type: "encrypted_content", encrypted_content: "current-cipher" },
+    }],
+  };
+  const exactError = JSON.stringify({
+    error: { message: "Encrypted function output content could not be decrypted or decoded." },
+  });
+  const calls = [];
+
+  const opened = await openCopilotResponse(ctx, async (body) => {
+    calls.push(structuredClone(body));
+    return calls.length === 1
+      ? new Response(exactError, { status: 400 })
+      : Response.json({ id: "resp_mixed_clean", status: "completed", output: [] });
+  });
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].input.map((item) => [item.type, item.call_id]), [
+    ["function_call", "call_mixed"],
+    ["function_call_output", "call_mixed"],
+  ]);
+  assert.equal(calls[1].input[1].output, ENCRYPTED_TOOL_OUTPUT_MARKER);
+  assert.equal(JSON.stringify(calls[1]).includes("encrypted_content"), false);
+  assert.equal(opened.reqContext.historyParentId, null);
+  assert.equal(opened.reqContext.historyRootId, null);
+  assert.strictEqual(opened.reqContext.historyInputItems, opened.reqContext.body.input);
+});
+
+test("openCopilotResponse: a failed encrypted retry does not rebase history", async () => {
+  const currentOutput = { type: "custom_tool_call_output", call_id: "call_history", output: "visible" };
+  const ctx = {
+    body: {
+      model: "gpt-5.5",
+      input: [
+        {
+          type: "custom_tool_call",
+          call_id: "call_history",
+          name: "shell",
+          input: "pwd",
+          encrypted_content: "history-cipher",
+        },
+        currentOutput,
+      ],
+    },
+    inputItems: [],
+    currentInputStart: 1,
+    historyParentId: "resp_history_parent",
+    historyRootId: "resp_history_root",
+    historyInputItems: [currentOutput],
+  };
+  const encryptedError = JSON.stringify({
+    error: { message: "Encrypted function output content could not be decrypted or decoded." },
+  });
+  let calls = 0;
+
+  const opened = await openCopilotResponse(ctx, async () => {
+    calls += 1;
+    return new Response(encryptedError, { status: 400 });
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(opened.reqContext.historyParentId, "resp_history_parent");
+  assert.equal(opened.reqContext.historyRootId, "resp_history_root");
+  assert.notStrictEqual(opened.reqContext.historyInputItems, opened.reqContext.body.input);
 });
 
 test("openCopilotResponse: returns the second upstream error after one encrypted fallback retry", async () => {

@@ -549,28 +549,36 @@ test("bearer validation bounds concurrent model requests from distinct untrusted
   let active = 0;
   let maximum = 0;
   let release;
+  let saturated;
   const gate = new Promise((resolve) => { release = resolve; });
+  const saturation = new Promise((resolve) => { saturated = resolve; });
   await withRelay({
     validationConcurrency: 2,
     validationMaxFlights: 3,
     fetchImpl: async () => {
       active += 1;
       maximum = Math.max(maximum, active);
+      if (active === 2) saturated();
       await gate;
       active -= 1;
       return successfulCatalogResponse();
     },
   }, async (server) => {
-    const pending = Array.from({ length: 10 }, (_, index) => request(
+    const admitted = Array.from({ length: 2 }, (_, index) => request(
       server, `${PM_STUDIO_RELAY_PREFIX}/models`, { token: `random-token-${index}` },
     ));
-    await delay(20);
+    await saturation;
+    const rejected = await Promise.all(Array.from({ length: 8 }, (_, index) => request(
+      server, `${PM_STUDIO_RELAY_PREFIX}/models`, { token: `random-token-${index + 2}` },
+    )));
+    assert.equal(rejected.every(({ status }) => status === 503), true);
     release();
-    const results = await Promise.all(pending);
+    const results = await Promise.all(admitted);
     assert.equal(maximum, 2);
     assert.equal(results.filter(({ status }) => status === 200).length, 2);
-    assert.equal(results.filter(({ status }) => status === 503).length, 8);
-    assert.equal(results.every(({ body }) => !body.includes("random-token-")), true);
+    assert.equal([...results, ...rejected].every(
+      ({ body }) => !body.includes("random-token-"),
+    ), true);
   });
 });
 

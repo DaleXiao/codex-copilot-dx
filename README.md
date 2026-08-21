@@ -118,15 +118,15 @@ discovery tries the compatible local CCDX merge first, and only exact enabled
 Anthropic model IDs use the isolated CCDX Claude profile. Neither credential is
 copied into the other application.
 
-CCDX keeps exact built-in recipes for PM Studio 2.9.7 and 2.9.10, and can also
-derive a source-bound recipe for a newer macOS build when its signed App layout,
-ASAR integrity metadata, and one exact Copilot configuration module remain
-structurally compatible. This is best-effort semantic compatibility, not a
-promise that every future PM Studio architecture can be patched. A missing or
-ambiguous module, changed request transport, unsupported integrity policy, or
-unverifiable source is rejected without modifying the App. Authorize the
-isolated Claude profile first, quit PM Studio and its updater, then run the
-one-time setup command:
+CCDX treats the local PM Studio App selected for setup as the source of truth.
+Its version and build label backup and recovery records; neither they nor the
+installation source or original signature are compatibility admission gates.
+Setup derives a source-bound recipe whenever the local ASAR integrity metadata
+and exactly one compatible Copilot configuration module can be verified. A
+missing or ambiguous module, changed request transport, or unsupported
+integrity policy is rejected without modifying the App. Authorize the isolated
+Claude profile first, quit PM Studio and its updater, then run the one-time
+setup command:
 
 ```bash
 ccdx auth login claude --reauth --github-login <personal-github-login>
@@ -142,29 +142,20 @@ ccdx pms status
 
 `ccdx pm-studio status` and `ccdx pm-studio setup` are equivalent long-form aliases.
 
-`ccdx pms setup` performs preflight, source verification, backup, staging,
-integrity, signing, and replacement work. It never starts Device Flow, the
-adapter, Codex, or PM Studio, and it does not modify PM profiles, cached model
-lists, or saved PM tokens. A structurally compatible unknown version with an
-intact vendor signature is verified locally. If the upstream release has the
-known invalid-signature shape, setup downloads only the exact stable asset from
-the fixed official GitHub repository, enforces its API-provided SHA-256 and
-size, extracts it privately, and requires the installed App to match that tree
-(apart from strictly scoped locale pruning) before any backup or staging write.
-Network, hash, tree, structure, partial-patch, running-process, space, and every
-other pre-replacement failure leave the installed App unchanged. If final
+`ccdx pms setup` performs local preflight, structural verification, backup,
+staging, integrity, signing, and replacement work. It does not access a PM
+Studio repository, release asset, PAT, or source-signing service. It never
+starts Device Flow, the adapter, Codex, or PM Studio, and it does not modify PM
+profiles, cached model lists, or saved PM tokens. Local fingerprints bind the
+recipe, backup, staged App, and installed App without deciding whether the
+original package is trusted. Structure, partial-patch, running-process, space,
+and every other pre-replacement failure leave the installed App unchanged. If final
 read-only verification after an atomic replacement detects exceptional
 filesystem drift, setup does not attempt a second automatic write: it preserves
 the verified backup, retains any diagnostic stage still present, and prints
 recovery paths. Repeating setup reuses the version/source-bound verified backup
-and is idempotent; status and repeated setup do not redownload the release.
-
-Some official PM Studio artifacts can fail macOS's vendor-signature verifier
-even though their signing metadata remains readable. CCDX does not generally
-ignore that failure: exact built-in recipes require their frozen official
-fingerprint, while compatible unknown versions require the verified official
-GitHub asset and tree comparison described above. The staged and installed
-CCDX patch must still pass strict ad-hoc signature verification and match the
+and is idempotent. The staged and installed CCDX patch must still pass strict
+ad-hoc signature verification, use the App's bundle identifier, and match the
 complete patched-tree record in the backup manifest.
 
 The patch uses split origins, not an App-wide proxy. GPT and other non-Claude
@@ -183,9 +174,9 @@ CCDX uses the PM bearer only to fetch or validate official model access; it is
 never used as the credential for the isolated Claude upstream request. Keep
 port 2026 local to the machine.
 
-Patching replaces the vendor signature with an ad-hoc signature. PM Studio's
+Patching applies an ad-hoc signature to the staged App. PM Studio's
 updater is not disabled; an official update may overwrite the patch or may
-require reinstalling the official App. Setup prints the verified backup and
+require reinstalling PM Studio. Setup prints the verified backup and
 manifest paths plus the version-matched restore procedure. Never restore a
 backup over a different PM Studio version or build.
 
@@ -202,7 +193,7 @@ BACKUP_APP="<verified-backup-path-from-ccdx-pms-setup>"
 ```
 
 Only when all four values match each other and the version/build recorded in the
-source-bound manifest, move the patched App aside, restore the complete vendor
+source-bound manifest, move the patched App aside, restore the complete local
 bundle, and verify it before launch:
 
 ```bash
@@ -214,12 +205,11 @@ mv "/Applications/PM Studio.app" "$PATCHED_APP"
 ccdx pms status
 ```
 
-For an official artifact with the documented upstream signature failure, the
-App-patch row from `ccdx pms status` must still classify the restored bundle as
-verified clean content rather than integrity drift. If the version check, copy,
-or both verification paths fail,
+The App-patch row from `ccdx pms status` must classify the restored bundle as
+the recorded clean local content rather than integrity drift. If the version
+check, copy, or either verification path fails,
 do not launch the restored App. Keep the moved patched bundle at `$PATCHED_APP`
-and reinstall the official PM Studio instead of applying a version-mismatched
+and reinstall PM Studio instead of applying a version-mismatched
 backup. CCDX never runs these restore commands or `sudo` automatically.
 
 To change the model used by Codex Auto-review, run:

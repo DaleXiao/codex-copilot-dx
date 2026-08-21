@@ -99,8 +99,9 @@ function makeAsarFixture({
     ? `${anchor}${"o".repeat(Buffer.byteLength(sourceWindow) - Buffer.byteLength(anchor))}`
     : `${anchor}const l={API_ENDPOINT:"${PM_STUDIO_ORIGIN}"};${"o".repeat(24)}}`;
   const editOffset = 19;
+  const modulePrefix = compatible ? `${"a".repeat(editOffset - 1)},` : "a".repeat(editOffset);
   const sourceContents = [
-    Buffer.from(`${"a".repeat(editOffset)}${sourceWindow}${"b".repeat(31)}${duplicateAnchor ? sourceWindow : ""}`),
+    Buffer.from(`${modulePrefix}${sourceWindow}${compatible ? "," : ""}${"b".repeat(31)}${duplicateAnchor ? `${compatible ? "," : ""}${sourceWindow}` : ""}`),
     Buffer.from(`${"x".repeat(7)}${PM_STUDIO_ORIGIN}${"y".repeat(13)}`),
   ];
   const patchedContents = [
@@ -267,16 +268,21 @@ function fixtureOperations({
       plist.integrity = { algorithm: "SHA256", hash };
       writeJson(infoPlistPath, plist);
     },
-    inspectCodeSign: ({ appPath }) => {
+    inspectCodeSign: ({ appPath, infoPlistPath = path.join(appPath, "Contents/Info.plist") }) => {
       const state = fs.readFileSync(path.join(appPath, "Contents/.fixture-signature"), "utf8");
+      const unsigned = state === "unsigned";
+      const bundleIdentifier = JSON.parse(fs.readFileSync(infoPlistPath, "utf8")).bundleIdentifier;
       return {
-        valid: state !== "invalid",
+        valid: !["invalid", "unsigned"].includes(state),
+        verifyValid: !["invalid", "unsigned"].includes(state),
+        displayValid: !unsigned,
+        entitlementsState: unsigned ? "unavailable" : "xml",
         adHoc: state === "adhoc",
-        identifier: "com.pm-studio.app",
-        teamIdentifier: state === "adhoc" ? "not set" : "HL75GKK4W4",
-        flags: state === "adhoc" ? "0x10002(adhoc,runtime)" : "0x10000(runtime)",
-        runtimeVersion: "15.0.0",
-        entitlementsSha256: "fixture-entitlements",
+        identifier: unsigned ? "" : bundleIdentifier,
+        teamIdentifier: state === "adhoc" ? "not set" : unsigned ? "" : "HL75GKK4W4",
+        flags: state === "adhoc" ? "0x10002(adhoc,runtime)" : unsigned ? "" : "0x10000(runtime)",
+        runtimeVersion: unsigned ? "" : "15.0.0",
+        entitlementsSha256: unsigned ? "" : "fixture-entitlements",
       };
     },
     inspectExecutableIntegrity: () => ({
@@ -286,12 +292,6 @@ function fixtureOperations({
       embeddedIntegrity: { state: "absent", supported: true, executable: { slots: [] }, framework: { slots: [] } },
       matchesRecipeName: true,
     }),
-    readAppArchitecture: () => "arm64",
-    verifyOfficialProvenance: async () => {
-      const error = new Error("fixture has no official release proof");
-      error.code = "PM_STUDIO_PROVENANCE_UNAVAILABLE";
-      throw error;
-    },
     inspectBundleContent: ({ appPath }) => inspectBundleContent(appPath),
     signApp: ({ appPath }) => {
       signCounter.value += 1;
@@ -430,7 +430,7 @@ test("PM Studio 2.9.7 recipe locks one exact split-origin module edit and the le
   assert.equal(Buffer.byteLength(CCDX_PM_STUDIO_ORIGIN), 29);
 });
 
-test("PM Studio 2.9.10 recipe locks the official bundle, ASAR, targets, and signing policy", () => {
+test("PM Studio 2.9.10 recipe retains legacy provenance while locking ASAR targets and patched signing", () => {
   assert.equal(PM_STUDIO_2_9_10_RECIPE.id, "pm-studio-2.9.10-build-2.9.10");
   assert.equal(PM_STUDIO_2_9_10_RECIPE.bundleIdentifier, "com.pm-studio.app");
   assert.deepEqual(PM_STUDIO_2_9_10_RECIPE.sourceArtifact, {
@@ -463,12 +463,13 @@ test("PM Studio 2.9.10 recipe locks the official bundle, ASAR, targets, and sign
     "9d4ccbda4fe0c81a70df3db93b3e61fe0500f67f14cdcbee4dea230e6512d05c");
 });
 
-test("compatible recipe resolution preserves exact recipes without discovery", () => {
+test("compatible recipe resolution keeps an inspected exact-patch fallback for old manifests", () => {
   const operations = new Proxy({}, {
     get() {
       throw new Error("exact recipes must not inspect compatible sources or backups");
     },
   });
+  let inspections = 0;
   assert.equal(resolvePmStudioCompatibleRecipe({
     appPath: "/Applications/PM Studio.app",
     backupRoot: "/unused",
@@ -479,7 +480,12 @@ test("compatible recipe resolution preserves exact recipes without discovery", (
     },
     recipes: [PM_STUDIO_2_9_7_RECIPE, PM_STUDIO_2_9_10_RECIPE],
     operations,
+    inspectApp: () => {
+      inspections += 1;
+      return { state: "patched" };
+    },
   }), PM_STUDIO_2_9_10_RECIPE);
+  assert.equal(inspections, 1);
 });
 
 test("ASAR helpers classify clean/split-origin/legacy/drift and patch only the exact module window", () => {
@@ -943,7 +949,7 @@ test("embedded Electron ASAR integrity slot inspection fails closed for active, 
   assert.equal(inspectElectronAsarIntegritySlots(truncated).state, "drift");
 });
 
-test("default codesign command preserves identifiers, entitlements, flags, and runtime metadata", () => {
+test("default codesign preserves available runtime metadata without assuming a source signature", () => {
   const calls = [];
   const operations = createPmStudioSetupOperations({
     processRunner: (command, args) => {
@@ -951,11 +957,42 @@ test("default codesign command preserves identifiers, entitlements, flags, and r
       return { status: 0, stdout: "", stderr: "" };
     },
   });
-  operations.signApp({ appPath: "/tmp/Fixture.app", processRunner: operations.processRunner });
-  assert.equal(calls.length, 1);
+  operations.signApp({
+    appPath: "/tmp/Fixture.app",
+    source: {
+      codeSign: {
+        displayValid: true,
+        entitlementsState: "xml",
+        flags: "0x10000(runtime)",
+        runtimeVersion: "26.0.0",
+      },
+    },
+    processRunner: operations.processRunner,
+  });
+  operations.signApp({
+    appPath: "/tmp/Unsigned.app",
+    source: { codeSign: { displayValid: false, entitlementsState: "unavailable" } },
+    processRunner: operations.processRunner,
+  });
+  operations.signApp({
+    appPath: "/tmp/Invalid.app",
+    source: {
+      codeSign: {
+        displayValid: true,
+        entitlementsState: "invalid",
+        flags: "0x10000(runtime)",
+        runtimeVersion: "26.0.0",
+      },
+    },
+    processRunner: operations.processRunner,
+  });
+  assert.equal(calls.length, 3);
   assert.equal(calls[0].command, "/usr/bin/codesign");
-  assert.ok(calls[0].args.includes("--preserve-metadata=identifier,entitlements,flags,runtime"));
+  assert.ok(calls[0].args.includes("--preserve-metadata=entitlements,flags,runtime"));
+  assert.equal(calls[0].args.some((arg) => arg.includes("identifier")), false);
   assert.ok(calls[0].args.includes("--timestamp=none"));
+  assert.equal(calls[1].args.some((arg) => arg.startsWith("--preserve-metadata=")), false);
+  assert.ok(calls[2].args.includes("--preserve-metadata=flags,runtime"));
 });
 
 test("default bundle inspection reads symlink xattrs without following their targets", () => {
@@ -978,7 +1015,7 @@ test("default bundle inspection reads symlink xattrs without following their tar
   }]);
 });
 
-test("codesign inspection exports XML entitlements and fails closed when they are unavailable", () => {
+test("codesign inspection exports XML entitlements without making them a validity prerequisite", () => {
   const calls = [];
   const operations = createPmStudioSetupOperations({
     processRunner: (command, args) => {
@@ -1017,6 +1054,22 @@ test("codesign inspection exports XML entitlements and fails closed when they ar
   assert.equal(inspected.notarizationTicket, "stapled");
   const entitlementCall = calls.find(({ args }) => args.includes("--entitlements"));
   assert.deepEqual(entitlementCall.args.slice(0, 5), ["--display", "--entitlements", "-", "--xml", "/tmp/Fixture.app"]);
+
+  const unsignedEntitlements = createPmStudioSetupOperations({
+    processRunner: (_command, args) => {
+      if (args.includes("--entitlements")) return { status: 1, stdout: "", stderr: "code has no entitlements" };
+      return args.includes("--verbose=4")
+        ? { status: 0, stdout: "", stderr: "Identifier=com.example.fixture\nSignature=adhoc\nTeamIdentifier=not set\n" }
+        : { status: 0, stdout: "", stderr: "" };
+    },
+  });
+  const unsignedInspection = unsignedEntitlements.inspectCodeSign({
+    appPath: "/tmp/Fixture.app",
+    processRunner: unsignedEntitlements.processRunner,
+  });
+  assert.equal(unsignedInspection.valid, true);
+  assert.equal(unsignedInspection.adHoc, true);
+  assert.equal(unsignedInspection.entitlementsState, "unavailable");
 });
 
 test("process preflight matches PM Studio paths and identifiers without blocking unrelated ShipIt updaters", () => {
@@ -1182,9 +1235,25 @@ test("setup migrates the exact predecessor from a verified clean backup for sche
       const signCounter = { value: 0 };
       const operations = fixtureOperations({ signCounter });
       const recipe = schema2 ? schema2FixtureRecipe(appPath, fixture, operations) : fixture.recipe;
+      if (schema2) {
+        // Seed the migration with the readable signing metadata required by the
+        // legacy static recipe. Unreadable clean signatures are covered by the
+        // independent dynamic-compatibility tests.
+        const inspectSchema2CodeSign = operations.inspectCodeSign;
+        operations.inspectCodeSign = (args) => {
+          const inspected = inspectSchema2CodeSign(args);
+          return inspected.adHoc ? inspected : { ...inspected, entitlementsState: "xml" };
+        };
+      }
       const first = await runPmStudioSetup({
         appPath, home: root, backupRoot, recipes: [recipe], operations, logger: () => {},
       });
+      if (schema2) {
+        const legacyManifest = JSON.parse(fs.readFileSync(first.backup.manifestPath, "utf8"));
+        legacyManifest.source.artifact = { legacy: true };
+        legacyManifest.source.code_signature = { legacy: true };
+        writeJson(first.backup.manifestPath, legacyManifest);
+      }
       const backupSnapshot = sourceSnapshot(first.backup.backupAppPath);
       const predecessorRecord = installPredecessorFixture({
         appPath,
@@ -1392,9 +1461,9 @@ test("a late running-process preflight preserves the predecessor and can be retr
   assert.deepEqual(retriedManifest.predecessor_patched, predecessorRecord);
 });
 
-test("2.9.10 setup accepts only the exact official-content fallback and records the complete patched tree", async () => {
+test("2.9.10 setup treats source signing as informational and records the complete local tree", async () => {
   const root = temporaryRoot("ccdx-pms-2-9-10-");
-  const fixture = makeAsarFixture({ version: "2.9.10" });
+  const fixture = makeAsarFixture({ version: "2.9.10", compatible: true });
   const appPath = createAppFixture(root, fixture);
   const sourceBundleContent = {
     ...inspectBundleContent(appPath),
@@ -1438,8 +1507,8 @@ test("2.9.10 setup accepts only the exact official-content fallback and records 
 
   const clean = inspectPmStudioApp({ appPath, recipe, operations });
   assert.equal(clean.state, "clean");
-  assert.equal(clean.sourceVerification, "exact-bundle-content");
-  assert.equal(inspectPmStudioApp({ appPath, recipe: fixture.recipe, operations }).state, "drift");
+  assert.equal(clean.sourceVerification, "local-content");
+  assert.equal(inspectPmStudioApp({ appPath, recipe: fixture.recipe, operations }).state, "clean");
 
   const exactInspectCodeSign = operations.inspectCodeSign;
   for (const [field, value] of [
@@ -1454,7 +1523,7 @@ test("2.9.10 setup accepts only the exact official-content fallback and records 
     ["notarizationTicket", "missing"],
   ]) {
     operations.inspectCodeSign = (args) => ({ ...exactInspectCodeSign(args), [field]: value });
-    assert.equal(inspectPmStudioApp({ appPath, recipe, operations }).state, "drift", field);
+    assert.equal(inspectPmStudioApp({ appPath, recipe, operations }).state, "clean", field);
   }
   operations.inspectCodeSign = exactInspectCodeSign;
 
@@ -1486,12 +1555,15 @@ test("2.9.10 setup accepts only the exact official-content fallback and records 
     logger: (line) => messages.push(line),
   });
   assert.equal(installed.status, "patched");
-  assert.equal(installed.recipe, recipe.id);
+  assert.match(installed.recipe, /^pm-studio-compatible-/);
   assert.equal(signCounter.value, 1);
-  assert.match(messages.join("\n"), /accepted only the exact PM Studio 2\.9\.10 official bundle content fingerprint/);
+  assert.doesNotMatch(messages.join("\n"), /official bundle|vendor signature|GitHub release/i);
   const manifest = JSON.parse(fs.readFileSync(installed.backup.manifestPath, "utf8"));
   assert.equal(manifest.schema_version, 2);
-  assert.deepEqual(manifest.source.bundle_content, sourceBundleContent);
+  assert.deepEqual(manifest.source.bundle_content, {
+    ...sourceBundleContent,
+    ignoredXattrs: PM_STUDIO_2_9_10_RECIPE.sourceBundleContent.ignoredXattrs,
+  });
   assert.deepEqual(manifest.patched.bundle_content, installed.inspection.bundleContent);
 
   const repeated = await runPmStudioSetup({
@@ -1534,20 +1606,21 @@ test("unknown PM Studio 2.9.11 is rejected before backup, staging, or signing", 
     operations,
     logger: () => {},
   }), (error) => error.code === "PM_STUDIO_UNSUPPORTED_VERSION"
-    && /2\.9\.11 build 2\.9\.11 could not be safely verified.*no files were changed/.test(error.message));
+    && /2\.9\.11 build 2\.9\.11 is not structurally compatible.*no files were changed/.test(error.message));
   assertSnapshot(appPath, snapshot);
   assert.equal(fs.existsSync(backupRoot), false);
   assert.equal(signCounter.value, 0);
 });
 
-test("a future PM Studio with the unique compatible module is patched from a trusted source and remains idempotent", async () => {
+test("a future PM Studio with the unique compatible module is patched offline regardless of source signature", async () => {
   const root = temporaryRoot("ccdx-pms-compatible-2-9-12-");
   const installedFixture = makeAsarFixture({ version: "2.9.12", compatible: true });
   const supportedFixture = makeAsarFixture({ version: "2.9.10" });
-  const appPath = createAppFixture(root, installedFixture);
+  const appPath = createAppFixture(root, installedFixture, { signature: "unsigned" });
   const backupRoot = path.join(root, "backups");
   const signCounter = { value: 0 };
   const operations = fixtureOperations({ signCounter });
+  operations.verifyOfficialProvenance = async () => assert.fail("local PM Studio setup must not access GitHub provenance");
 
   const installed = await runPmStudioSetup({
     appPath,
@@ -1566,6 +1639,8 @@ test("a future PM Studio with the unique compatible module is patched from a tru
   assert.equal(manifest.compatibility, "exact-copilot-config-module-v1");
   assert.equal(manifest.app.version, "2.9.12");
   assert.equal(manifest.source.asar_sha256, installedFixture.recipe.sourceAsarSha256);
+  assert.equal(Object.hasOwn(manifest.source, "artifact"), false);
+  assert.equal(Object.hasOwn(manifest.source, "code_signature"), false);
 
   const repeated = await runPmStudioSetup({
     appPath,
@@ -1608,11 +1683,15 @@ test("a future PM Studio with the unique compatible module is patched from a tru
   assert.equal(signCounter.value, 1);
 });
 
-test("an invalid-signed compatible PM Studio is patched only after exact official release verification", async () => {
-  const root = temporaryRoot("ccdx-pms-compatible-official-");
+test("an invalid-signed compatible PM Studio is patched without release verification", async () => {
+  const root = temporaryRoot("ccdx-pms-compatible-invalid-signature-");
   const installedFixture = makeAsarFixture({ version: "2.9.12", compatible: true });
   const supportedFixture = makeAsarFixture({ version: "2.9.10" });
   const appPath = createAppFixture(root, installedFixture, { signature: "invalid" });
+  const infoPlistPath = path.join(appPath, "Contents/Info.plist");
+  const info = JSON.parse(fs.readFileSync(infoPlistPath, "utf8"));
+  info.bundleIdentifier = "com.internal.pm-studio";
+  writeJson(infoPlistPath, info);
   const backupRoot = path.join(root, "backups");
   const signCounter = { value: 0 };
   const operations = fixtureOperations({ signCounter });
@@ -1633,24 +1712,7 @@ test("an invalid-signed compatible PM Studio is patched only after exact officia
       notarizationTicket: "stapled",
     };
   };
-  const provenanceCalls = [];
-  operations.verifyOfficialProvenance = async (options) => {
-    provenanceCalls.push(options);
-    return {
-      verified: true,
-      repository: "gim-home/max-studio",
-      version: "2.9.12",
-      tag: "v2.9.12",
-      arch: "arm64",
-      releaseUrl: "https://github.com/gim-home/max-studio/releases/tag/v2.9.12",
-      asset: {
-        name: "PM-Studio-2.9.12-mac-arm64.zip",
-        size: 182_488_443,
-        sha256: "b".repeat(64),
-      },
-      comparison: { matched: true, comparedEntries: 1_062, ignoredMissing: [] },
-    };
-  };
+  operations.verifyOfficialProvenance = async () => assert.fail("invalid source signatures must not trigger network provenance");
   const messages = [];
 
   const installed = await runPmStudioSetup({
@@ -1664,26 +1726,15 @@ test("an invalid-signed compatible PM Studio is patched only after exact officia
 
   assert.equal(installed.status, "patched");
   assert.equal(signCounter.value, 1);
-  assert.equal(provenanceCalls.length, 1);
-  assert.equal(provenanceCalls[0].installedAppPath, appPath);
-  assert.equal(provenanceCalls[0].version, "2.9.12");
-  assert.equal(provenanceCalls[0].arch, "arm64");
-  assert.match(messages.join("\n"), /matched the SHA-256-verified official GitHub release/);
+  assert.equal(installed.inspection.codeSign.identifier, "com.internal.pm-studio");
+  assert.doesNotMatch(messages.join("\n"), /official release|vendor signature/i);
   const manifest = JSON.parse(fs.readFileSync(installed.backup.manifestPath, "utf8"));
-  assert.deepEqual(manifest.source.artifact, {
-    repository: "gim-home/max-studio",
-    tag: "v2.9.12",
-    arch: "arm64",
-    releaseUrl: "https://github.com/gim-home/max-studio/releases/tag/v2.9.12",
-    asset: {
-      name: "PM-Studio-2.9.12-mac-arm64.zip",
-      size: 182_488_443,
-      sha256: "b".repeat(64),
-    },
-  });
-  assert.equal(manifest.source.code_signature.cdHashFull, "a".repeat(64));
+  assert.equal(Object.hasOwn(manifest.source, "artifact"), false);
+  assert.equal(Object.hasOwn(manifest.source, "code_signature"), false);
+  manifest.source.artifact = { legacy_provenance: true };
+  manifest.source.code_signature = { legacy_provenance: true };
+  writeJson(installed.backup.manifestPath, manifest);
 
-  operations.verifyOfficialProvenance = async () => assert.fail("verified backup must avoid another download");
   const repeated = await runPmStudioSetup({
     appPath,
     home: root,
@@ -1694,17 +1745,6 @@ test("an invalid-signed compatible PM Studio is patched only after exact officia
   });
   assert.equal(repeated.status, "already_patched");
   assert.equal(signCounter.value, 1);
-
-  delete manifest.source.code_signature;
-  writeJson(installed.backup.manifestPath, manifest);
-  await assert.rejects(runPmStudioSetup({
-    appPath,
-    home: root,
-    backupRoot,
-    recipes: [supportedFixture.recipe],
-    operations,
-    logger: () => {},
-  }), { code: "PM_STUDIO_BACKUP_INVALID" });
 });
 
 test("compatible backup resolution selects the exact patched bundle among same-version source variants", async () => {
@@ -1756,80 +1796,45 @@ test("compatible backup resolution selects the exact patched bundle among same-v
   assert.equal(signCounter.value, 2);
 });
 
-test("official release mismatch leaves an invalid-signed compatible PM Studio unchanged", async () => {
-  const root = temporaryRoot("ccdx-pms-compatible-official-reject-");
+test("same-version stale built-in metadata falls back to the local structural recipe", async () => {
+  const root = temporaryRoot("ccdx-pms-compatible-stale-recipe-");
   const installedFixture = makeAsarFixture({ version: "2.9.12", compatible: true });
-  const appPath = createAppFixture(root, installedFixture, { signature: "invalid" });
-  const snapshot = sourceSnapshot(appPath);
+  const staleFixture = makeAsarFixture({ version: "2.9.12" });
+  const appPath = createAppFixture(root, installedFixture, { signature: "unsigned" });
   const backupRoot = path.join(root, "backups");
   const signCounter = { value: 0 };
   const operations = fixtureOperations({ signCounter });
-  const inspectCodeSign = operations.inspectCodeSign;
-  operations.inspectCodeSign = (args) => ({
-    ...inspectCodeSign(args),
-    valid: false,
-    verifyValid: false,
-    displayValid: true,
-    entitlementsState: "invalid",
-    cdHashFull: "a".repeat(64),
-    notarizationTicket: "stapled",
-  });
-  let provenanceCalls = 0;
-  operations.verifyOfficialProvenance = async () => {
-    provenanceCalls += 1;
-    const error = new Error("official artifact tree differs");
-    error.code = "PM_STUDIO_PROVENANCE_TREE_MISMATCH";
-    throw error;
-  };
+  operations.verifyOfficialProvenance = async () => assert.fail("stale metadata must not trigger source verification");
 
-  await assert.rejects(runPmStudioSetup({
+  const installed = await runPmStudioSetup({
     appPath,
     home: root,
     backupRoot,
-    recipes: [makeAsarFixture({ version: "2.9.10" }).recipe],
+    recipes: [staleFixture.recipe],
     operations,
     logger: () => {},
-  }), (error) => error.code === "PM_STUDIO_UNSUPPORTED_VERSION"
-    && /could not be safely verified/.test(error.message));
-  assert.equal(provenanceCalls, 1);
-  assert.equal(signCounter.value, 0);
-  assert.equal(fs.existsSync(backupRoot), false);
-  assertSnapshot(appPath, snapshot);
+  });
+  assert.equal(installed.status, "patched");
+  assert.match(installed.recipe, /^pm-studio-compatible-/);
+  assert.notEqual(installed.recipe, staleFixture.recipe.id);
+  assert.equal(signCounter.value, 1);
 });
 
-test("official verification cannot absorb a post-fingerprint app change into the compatible recipe", async () => {
-  const root = temporaryRoot("ccdx-pms-compatible-official-race-");
+test("local fingerprint cannot absorb a post-snapshot app change into the compatible recipe", async () => {
+  const root = temporaryRoot("ccdx-pms-compatible-local-race-");
   const installedFixture = makeAsarFixture({ version: "2.9.12", compatible: true });
   const appPath = createAppFixture(root, installedFixture, { signature: "invalid" });
   const backupRoot = path.join(root, "backups");
   const signCounter = { value: 0 };
   const operations = fixtureOperations({ signCounter });
-  const inspectCodeSign = operations.inspectCodeSign;
-  operations.inspectCodeSign = (args) => ({
-    ...inspectCodeSign(args),
-    valid: false,
-    verifyValid: false,
-    displayValid: true,
-    entitlementsState: "invalid",
-    cdHashFull: "a".repeat(64),
-    notarizationTicket: "stapled",
-  });
-  operations.verifyOfficialProvenance = async () => {
-    fs.writeFileSync(path.join(appPath, "Contents/Resources/post-verify.js"), "changed");
-    return {
-      verified: true,
-      repository: "gim-home/max-studio",
-      version: "2.9.12",
-      tag: "v2.9.12",
-      arch: "arm64",
-      releaseUrl: "https://github.com/gim-home/max-studio/releases/tag/v2.9.12",
-      asset: {
-        name: "PM-Studio-2.9.12-mac-arm64.zip",
-        size: 182_488_443,
-        sha256: "b".repeat(64),
-      },
-      comparison: { matched: true, comparedEntries: 1_062, ignoredMissing: [] },
-    };
+  let fingerprintCalls = 0;
+  operations.inspectBundleContent = ({ appPath: inspectedPath }) => {
+    const fingerprint = inspectBundleContent(inspectedPath);
+    fingerprintCalls += 1;
+    if (fingerprintCalls === 1) {
+      fs.writeFileSync(path.join(appPath, "Contents/Resources/post-snapshot.js"), "changed");
+    }
+    return fingerprint;
   };
 
   await assert.rejects(runPmStudioSetup({
@@ -1840,6 +1845,7 @@ test("official verification cannot absorb a post-fingerprint app change into the
     operations,
     logger: () => {},
   }), { code: "PM_STUDIO_BUNDLE_DRIFT" });
+  assert.equal(fingerprintCalls, 2);
   assert.equal(signCounter.value, 0);
   assert.equal(fs.existsSync(backupRoot), false);
 });
@@ -1872,9 +1878,8 @@ test("setup enters the app-scoped exclusive lock before any preflight", async ()
   ]);
 });
 
-test("compatible-version discovery rejects untrusted or ambiguous sources without writes", async (t) => {
+test("compatible-version discovery rejects ambiguous or structurally invalid sources without writes", async (t) => {
   for (const [name, fixtureOptions, signature, mutate] of [
-    ["invalid vendor signature", { version: "2.9.12", compatible: true }, "invalid", null],
     ["duplicate module anchor", { version: "2.9.12", compatible: true, duplicateAnchor: true }, "vendor", null],
     ["unsafe integrity block geometry", { version: "2.9.12", compatible: true, blockSize: 1 }, "vendor", null],
     ["plist integrity mismatch", { version: "2.9.12", compatible: true }, "vendor", ({ appPath: target }) => {
@@ -1953,7 +1958,7 @@ test("an existing backup with incomplete source evidence is rejected without cha
   assertSnapshot(appPath, snapshot);
 });
 
-test("running PM Studio, insufficient space, signature/ASAR drift, and embedded integrity all fail before source mutation", async (t) => {
+test("running PM Studio, insufficient space, ASAR drift, and embedded integrity all fail before source mutation", async (t) => {
   const cases = [
     {
       name: "running",
@@ -1980,26 +1985,6 @@ test("running PM Studio, insufficient space, signature/ASAR drift, and embedded 
         return operations;
       })(),
       code: "PM_STUDIO_PERMISSION_DENIED",
-    },
-    {
-      name: "signature",
-      mutate: (appPath) => fs.writeFileSync(path.join(appPath, "Contents/.fixture-signature"), "invalid"),
-      operations: fixtureOperations(),
-      code: "PM_STUDIO_BUNDLE_DRIFT",
-    },
-    {
-      name: "team-identifier",
-      mutate: () => {},
-      operations: (() => {
-        const operations = fixtureOperations();
-        const inspectCodeSign = operations.inspectCodeSign;
-        operations.inspectCodeSign = (args) => ({
-          ...inspectCodeSign(args),
-          teamIdentifier: "UNKNOWNTEAM",
-        });
-        return operations;
-      })(),
-      code: "PM_STUDIO_BUNDLE_DRIFT",
     },
     {
       name: "asar",
@@ -2218,6 +2203,13 @@ test("default ad-hoc codesign adapter signs and verifies only a temporary app fi
 
   const operations = createPmStudioSetupOperations();
   const infoPlistPath = path.join(appPath, "Contents/Info.plist");
+  const unsigned = operations.inspectCodeSign({ appPath, processRunner: operations.processRunner });
+  assert.equal(unsigned.valid, false);
+  operations.signApp({ appPath, source: { codeSign: unsigned }, processRunner: operations.processRunner });
+  const signedFromUnsigned = operations.inspectCodeSign({ appPath, processRunner: operations.processRunner });
+  assert.equal(signedFromUnsigned.valid, true);
+  assert.equal(signedFromUnsigned.adHoc, true);
+  assert.equal(signedFromUnsigned.identifier, "test.ccdx.pm-studio.fixture");
   assert.deepEqual(operations.readAsarIntegrity({
     infoPlistPath,
     recipe: PM_STUDIO_2_9_7_RECIPE,
@@ -2262,7 +2254,11 @@ test("default ad-hoc codesign adapter signs and verifies only a temporary app fi
   assert.equal(helperBefore.valid, true);
   assert.notEqual(before.entitlementsSha256, sha256Hex(""));
   assert.notEqual(helperBefore.entitlementsSha256, before.entitlementsSha256);
-  operations.signApp({ appPath, processRunner: operations.processRunner });
+  fs.writeFileSync(path.join(appPath, "Contents/invalidates-signature"), "local fixture drift");
+  const invalid = operations.inspectCodeSign({ appPath, processRunner: operations.processRunner });
+  assert.equal(invalid.valid, false);
+  assert.equal(invalid.displayValid, true);
+  operations.signApp({ appPath, source: { codeSign: invalid }, processRunner: operations.processRunner });
   const signed = operations.inspectCodeSign({ appPath, processRunner: operations.processRunner });
   const helperSigned = operations.inspectCodeSign({ appPath: helperAppPath, processRunner: operations.processRunner });
   assert.equal(signed.valid, true);

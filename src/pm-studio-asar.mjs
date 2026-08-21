@@ -8,17 +8,42 @@ export const ELECTRON_ASAR_INTEGRITY_SENTINEL = "AGbevlPCksUGKNL8TSn7wGmJEuJsXb2
 const PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH = 2_121;
 const PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE_SHA256 = "3da6245d676015ab6cd26e4d6a0d2f54894a687c370aa419c5ad170533d086aa";
 const PM_STUDIO_COPILOT_CONFIG_MODULE_ANCHOR = "47024(I,e,t){";
+const PM_STUDIO_COPILOT_CONFIG_MODULE_SENTINEL = `API_ENDPOINT:"${PM_STUDIO_ORIGIN}"`;
 const PM_STUDIO_COPILOT_CONFIG_MODULE_PATH = "dist/main/main.js";
 const PM_STUDIO_COMPATIBILITY_ID = "exact-copilot-config-module-v1";
 const PM_STUDIO_COMPATIBLE_TARGET_MAX_BYTES = 128 * 1024 * 1024;
 const PM_STUDIO_COMPATIBLE_BLOCK_MAX_COUNT = 16_384;
+const PM_STUDIO_COMPATIBLE_MODULE_PREFIX_MAX_BYTES = 512;
+const PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE = '47024(I,e,t){"use strict";t.d(e,{qn:()=>l});const l={CLIENT_ID:"Iv1.b507a08c87ecfe98",CLIENT_SECRET:void 0,API_ENDPOINT:"https://api.githubcopilot.com",DEVICE_CODE_URL:"https://github.com/login/device/code",ACCESS_TOKEN_URL:"https://github.com/login/oauth/access_token",COPILOT_TOKEN_URL:"https://api.github.com/copilot_internal/v2/token",USER_AGENT:"GitHubCopilotChat/0.26.7",EDITOR_VERSION:"vscode/1.99.3",EDITOR_PLUGIN_VERSION:"copilot-chat/0.26.7",INTEGRATION_ID:"vscode-chat",STANDARD_HEADERS:{Accept:"application/json","Content-Type":"application/json","User-Agent":"GitHubCopilotChat/0.26.7","Editor-Version":"vscode/1.99.3","Editor-Plugin-Version":"copilot-chat/0.26.7","Copilot-Integration-Id":"vscode-chat","X-Request-Id":()=>`req_${Date.now()}_${Math.random().toString(36).substr(2,9)}`}};class c{constructor(){this.config={...l}}static getInstance(){return c.instance||(c.instance=new c),c.instance}getConfig(){return{...this.config}}updateConfig(I){this.config={...this.config,...I}}resetConfig(){this.config={...l}}validateConfig(){return function(){const I=[];return l.CLIENT_ID||I.push("GitHub Copilot Client ID is required"),l.API_ENDPOINT||I.push("GitHub Copilot API endpoint is required"),{valid:0===I.length,errors:I}}()}getStandardHeaders(I){return function(I){const e={Accept:l.STANDARD_HEADERS.Accept,"Content-Type":l.STANDARD_HEADERS["Content-Type"],"User-Agent":l.STANDARD_HEADERS["User-Agent"],"Editor-Version":l.STANDARD_HEADERS["Editor-Version"],"Editor-Plugin-Version":l.STANDARD_HEADERS["Editor-Plugin-Version"],"Copilot-Integration-Id":l.STANDARD_HEADERS["Copilot-Integration-Id"],"X-Request-Id":"function"==typeof l.STANDARD_HEADERS["X-Request-Id"]?l.STANDARD_HEADERS["X-Request-Id"]():l.STANDARD_HEADERS["X-Request-Id"]};return I&&(e.Authorization=`Bearer ${I}`),e}(I)}getCopilotTokenHeaders(I){return function(I){return{Authorization:`Bearer ${I}`,Accept:"application/json","User-Agent":l.USER_AGENT,"Editor-Version":l.EDITOR_VERSION,"Editor-Plugin-Version":l.EDITOR_PLUGIN_VERSION}}(I)}getDeviceCodeHeaders(){return{Accept:"application/json","User-Agent":l.USER_AGENT}}}c.getInstance()}';
 
-function splitOriginConfigModule() {
-  const source = `47024(I,e,t){"use strict";t.d(e,{qn:()=>l});const l={CLIENT_ID:"Iv1.b507a08c87ecfe98",CLIENT_SECRET:void 0,API_ENDPOINT:"${PM_STUDIO_ORIGIN}",DEVICE_CODE_URL:"https://github.com/login/device/code",ACCESS_TOKEN_URL:"https://github.com/login/oauth/access_token",COPILOT_TOKEN_URL:"https://api.github.com/copilot_internal/v2/token",USER_AGENT:"GitHubCopilotChat/0.26.7",EDITOR_VERSION:"vscode/1.99.3",EDITOR_PLUGIN_VERSION:"copilot-chat/0.26.7",INTEGRATION_ID:"vscode-chat",STANDARD_HEADERS:{Accept:"application/json","Content-Type":"application/json","User-Agent":"GitHubCopilotChat/0.26.7","Editor-Version":"vscode/1.99.3","Editor-Plugin-Version":"copilot-chat/0.26.7","Copilot-Integration-Id":"vscode-chat","X-Request-Id":()=>\`req_\${Date.now()}_\${Math.random().toString(36).substr(2,9)}\`}};const c=fetch.bind(globalThis),n="${CCDX_PM_STUDIO_ORIGIN}",a="${PM_STUDIO_SPLIT_ORIGIN_MARKER}",h="X-CCDX-PM-Relay",d=new Set,m=I=>I.headers.get(h)===a,q=I=>AbortSignal.any([I,AbortSignal.timeout(750)].filter(Boolean)),f=(I,e=400)=>Response.json({error:{code:I}},{status:e,headers:{[h]:a}});globalThis.fetch=async(I,e)=>{const t=I.url||I+"";if(t===\`\${l.API_ENDPOINT}/models\`){try{const t=await c(\`\${n}/models\`,e);if(t.ok&&m(t))try{let I=await t.clone().json(),e=I.data||I;if(Array.isArray(e)){d.clear();for(const I of e)/anthropic/i.test(I.vendor||I.owned_by)&&d.add(I.id);return t}}catch{}t.body?.cancel?.()?.catch?.(()=>{})}catch(I){if(e?.signal?.aborted)throw e.signal.reason||I}return c(I,e)}const s=t.startsWith(l.API_ENDPOINT)?t.slice(l.API_ENDPOINT.length):"";if("POST"===e?.method&&["/chat/completions","/responses","/embeddings"].includes(s)){let t="";try{t=(JSON.parse(e.body).model||"").trim()}catch{}if(d.has(t)||/^claude-/i.test(t)){if("/chat/completions"!==s)return f("model_not_supported");try{const I=await c(\`\${n}/models\`,{signal:q(e?.signal)}),t=401===I.status&&m(I);await I.text();if(!t)throw 0;const l=await c(\`\${n}\${s}\`,e);if(!m(l)){await l.body?.cancel?.();throw 0}return l}catch(I){if(e?.signal?.aborted)throw e.signal.reason||I;return f("relay_incompatible",503)}}}return c(I,e)}}`;
-  if (source.length > PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH) {
+function copilotConfigAlphaTemplate() {
+  // This is a reviewed byte template, not a generic JavaScript normalizer:
+  // only the five minifier bindings vary; every other byte remains exact.
+  const parts = [];
+  const moduleIdEnd = PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE.indexOf("(");
+  const pattern = /(?<![$\w])(?:I|e|t|l|c)(?![$\w])/g;
+  pattern.lastIndex = moduleIdEnd;
+  let offset = moduleIdEnd;
+  for (let match = pattern.exec(PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE); match; match = pattern.exec(PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE)) {
+    parts.push(PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE.slice(offset, match.index));
+    parts.push(Object.freeze({ identifier: match[0] }));
+    offset = match.index + match[0].length;
+  }
+  parts.push(PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE.slice(offset));
+  return Object.freeze(parts);
+}
+
+const PM_STUDIO_COPILOT_CONFIG_ALPHA_TEMPLATE = copilotConfigAlphaTemplate();
+
+function splitOriginConfigModule(
+  moduleId = "47024",
+  windowLength = PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH,
+) {
+  const source = `${moduleId}(I,e,t){"use strict";t.d(e,{qn:()=>l});const l={CLIENT_ID:"Iv1.b507a08c87ecfe98",CLIENT_SECRET:void 0,API_ENDPOINT:"${PM_STUDIO_ORIGIN}",DEVICE_CODE_URL:"https://github.com/login/device/code",ACCESS_TOKEN_URL:"https://github.com/login/oauth/access_token",COPILOT_TOKEN_URL:"https://api.github.com/copilot_internal/v2/token",USER_AGENT:"GitHubCopilotChat/0.26.7",EDITOR_VERSION:"vscode/1.99.3",EDITOR_PLUGIN_VERSION:"copilot-chat/0.26.7",INTEGRATION_ID:"vscode-chat",STANDARD_HEADERS:{Accept:"application/json","Content-Type":"application/json","User-Agent":"GitHubCopilotChat/0.26.7","Editor-Version":"vscode/1.99.3","Editor-Plugin-Version":"copilot-chat/0.26.7","Copilot-Integration-Id":"vscode-chat","X-Request-Id":()=>\`req_\${Date.now()}_\${Math.random().toString(36).substr(2,9)}\`}};const c=fetch.bind(globalThis),n="${CCDX_PM_STUDIO_ORIGIN}",a="${PM_STUDIO_SPLIT_ORIGIN_MARKER}",h="X-CCDX-PM-Relay",d=new Set,m=I=>I.headers.get(h)===a,q=I=>AbortSignal.any([I,AbortSignal.timeout(750)].filter(Boolean)),f=(I,e=400)=>Response.json({error:{code:I}},{status:e,headers:{[h]:a}});globalThis.fetch=async(I,e)=>{const t=I.url||I+"";if(t===\`\${l.API_ENDPOINT}/models\`){try{const t=await c(\`\${n}/models\`,e);if(t.ok&&m(t))try{let I=await t.clone().json(),e=I.data||I;if(Array.isArray(e)){d.clear();for(const I of e)/anthropic/i.test(I.vendor||I.owned_by)&&d.add(I.id);return t}}catch{}t.body?.cancel?.()?.catch?.(()=>{})}catch(I){if(e?.signal?.aborted)throw e.signal.reason||I}return c(I,e)}const s=t.startsWith(l.API_ENDPOINT)?t.slice(l.API_ENDPOINT.length):"";if("POST"===e?.method&&["/chat/completions","/responses","/embeddings"].includes(s)){let t="";try{t=(JSON.parse(e.body).model||"").trim()}catch{}if(d.has(t)||/^claude-/i.test(t)){if("/chat/completions"!==s)return f("model_not_supported");try{const I=await c(\`\${n}/models\`,{signal:q(e?.signal)}),t=401===I.status&&m(I);await I.text();if(!t)throw 0;const l=await c(\`\${n}\${s}\`,e);if(!m(l)){await l.body?.cancel?.();throw 0}return l}catch(I){if(e?.signal?.aborted)throw e.signal.reason||I;return f("relay_incompatible",503)}}}return c(I,e)}}`;
+  if (source.length > windowLength) {
     throw new Error("PM Studio split-origin module exceeds its exact source window");
   }
-  return `${source.slice(0, -1)}${" ".repeat(PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH - source.length)}}`;
+  return `${source.slice(0, -1)}${" ".repeat(windowLength - source.length)}}`;
 }
 
 export const PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE = splitOriginConfigModule();
@@ -320,6 +345,93 @@ function occurrencePositions(haystack, needle) {
   return positions;
 }
 
+function asciiDigit(byte) {
+  return byte >= 48 && byte <= 57;
+}
+
+function asciiIdentifierStart(byte) {
+  return byte === 36
+    || byte === 95
+    || (byte >= 65 && byte <= 90)
+    || (byte >= 97 && byte <= 122);
+}
+
+function matchCopilotConfigAlphaTemplate(source, offset) {
+  let moduleIdEnd = offset;
+  while (moduleIdEnd < source.length && asciiDigit(source[moduleIdEnd])) moduleIdEnd += 1;
+  const moduleIdLength = moduleIdEnd - offset;
+  if (moduleIdLength === 0
+    || moduleIdLength > 10
+    || (moduleIdLength > 1 && source[offset] === 48)) return null;
+  const moduleId = source.subarray(offset, moduleIdEnd).toString("ascii");
+  if (!Number.isSafeInteger(Number(moduleId))) return null;
+
+  let cursor = moduleIdEnd;
+  const identifiers = new Map();
+  const reverseIdentifiers = new Map();
+  for (const part of PM_STUDIO_COPILOT_CONFIG_ALPHA_TEMPLATE) {
+    if (typeof part === "string") {
+      const literal = Buffer.from(part);
+      if (cursor + literal.length > source.length
+        || !source.subarray(cursor, cursor + literal.length).equals(literal)) return null;
+      cursor += literal.length;
+      continue;
+    }
+
+    if (!asciiIdentifierStart(source[cursor])
+      || asciiIdentifierStart(source[cursor + 1])
+      || asciiDigit(source[cursor + 1])) return null;
+    const candidate = String.fromCharCode(source[cursor]);
+    // The audited module uses single-byte minifier names. Keeping that bound
+    // rejects capture-prone "semantic" guesses while allowing permutations.
+    const mapped = identifiers.get(part.identifier);
+    const reverse = reverseIdentifiers.get(candidate);
+    if ((mapped && mapped !== candidate) || (reverse && reverse !== part.identifier)) return null;
+    identifiers.set(part.identifier, candidate);
+    reverseIdentifiers.set(candidate, part.identifier);
+    cursor += 1;
+  }
+
+  if (cursor < source.length && source[cursor] !== 44 && source[cursor] !== 125) return null;
+  return {
+    offset,
+    end: cursor,
+    length: cursor - offset,
+    moduleId,
+    anchor: `${moduleId}(`,
+  };
+}
+
+function locateCompatibleCopilotConfigModule(source) {
+  const sentinel = Buffer.from(PM_STUDIO_COPILOT_CONFIG_MODULE_SENTINEL);
+  const matches = new Map();
+  let sentinelCount = 0;
+  let searchOffset = 0;
+  while (searchOffset <= source.length - sentinel.length) {
+    const sentinelOffset = source.indexOf(sentinel, searchOffset);
+    if (sentinelOffset < 0) break;
+    sentinelCount += 1;
+    searchOffset = sentinelOffset + sentinel.length;
+
+    const lowerBound = Math.max(0, sentinelOffset - PM_STUDIO_COMPATIBLE_MODULE_PREFIX_MAX_BYTES);
+    for (let offset = lowerBound; offset <= sentinelOffset; offset += 1) {
+      if (!asciiDigit(source[offset]) || (offset > 0 && asciiDigit(source[offset - 1]))) continue;
+      if (offset > 0 && source[offset - 1] !== 44 && source[offset - 1] !== 123) continue;
+      const match = matchCopilotConfigAlphaTemplate(source, offset);
+      if (match && sentinelOffset >= match.offset && sentinelOffset < match.end) {
+        matches.set(match.offset, match);
+      }
+    }
+  }
+  if (sentinelCount === 0) {
+    throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} has no compatible Copilot configuration sentinel`);
+  }
+  if (matches.size !== 1) {
+    throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} has ${matches.size} alpha-compatible Copilot configuration modules, expected exactly one`);
+  }
+  return matches.values().next().value;
+}
+
 export function blockSha256(buffer, blockSize) {
   const size = integer(blockSize, "block size");
   if (size === 0) throw new Error("Invalid ASAR block size: 0");
@@ -385,22 +497,24 @@ export function createCompatiblePmStudioRecipe(value, options = {}) {
     throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} integrity metadata does not match its bytes`);
   }
 
-  const anchorPositions = occurrencePositions(
-    sourceTarget,
-    Buffer.from(PM_STUDIO_COPILOT_CONFIG_MODULE_ANCHOR),
-  );
-  if (anchorPositions.length !== 1) {
-    throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} has ${anchorPositions.length} compatible module anchors, expected exactly one`);
+  const compatibleModule = locateCompatibleCopilotConfigModule(sourceTarget);
+  const editOffset = compatibleModule.offset;
+  const editEnd = compatibleModule.end;
+  const sourceEdit = sourceTarget.subarray(editOffset, editEnd);
+  const anchorPositions = occurrencePositions(sourceTarget, Buffer.from(compatibleModule.anchor));
+  if (anchorPositions.length !== 1 || anchorPositions[0] !== editOffset) {
+    throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} compatible module header is not unique`);
   }
-  const editOffset = anchorPositions[0];
-  const editEnd = editOffset + PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH;
-  if (editEnd > sourceTarget.length
-    || sha256Hex(sourceTarget.subarray(editOffset, editEnd))
-      !== PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE_SHA256) {
-    throw incompatibleAsar("PM Studio Copilot configuration module is not the exact compatible source window");
+  let replacementSource;
+  try {
+    replacementSource = splitOriginConfigModule(compatibleModule.moduleId, compatibleModule.length);
+  } catch (error) {
+    throw incompatibleAsar(error.message);
   }
-
-  const replacement = Buffer.from(PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE);
+  const replacement = Buffer.from(replacementSource);
+  if (replacement.length !== compatibleModule.length) {
+    throw incompatibleAsar("PM Studio split-origin replacement does not preserve the compatible module size");
+  }
   const patchedTarget = Buffer.from(sourceTarget);
   replacement.copy(patchedTarget, editOffset);
   const patchedTargetSha256 = sha256Hex(patchedTarget);
@@ -436,12 +550,12 @@ export function createCompatiblePmStudioRecipe(value, options = {}) {
   const edit = Object.freeze({
     offset: editOffset,
     absoluteOffset: absoluteOffset + editOffset,
-    length: PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH,
-    anchor: PM_STUDIO_COPILOT_CONFIG_MODULE_ANCHOR,
+    length: compatibleModule.length,
+    anchor: compatibleModule.anchor,
     anchorCount: 1,
-    sourceSha256: PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE_SHA256,
+    sourceSha256: sha256Hex(sourceEdit),
     patchedSha256: sha256Hex(replacement),
-    replacement: PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE,
+    replacement: replacementSource,
   });
   const target = Object.freeze({
     path: PM_STUDIO_COPILOT_CONFIG_MODULE_PATH,

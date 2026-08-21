@@ -199,12 +199,12 @@ test("collectDoctorChecks: offers setup for a clean structurally compatible PM S
 
   assert.deepEqual(checks.filter((check) => /PM Studio/.test(check.message)), [{
     kind: "warn",
-    message: "PM Studio 2.9.12 build 2.9.12 is supported but not patched",
+    message: "PM Studio 2.9.12 build 2.9.12 has a compatible local patch structure but is not patched",
     fix: "ccdx pms setup",
   }]);
 });
 
-test("collectDoctorChecks: fails closed when PM Studio compatibility cannot be safely verified", async () => {
+test("collectDoctorChecks: fails closed when PM Studio has no unique compatible structure", async () => {
   const checks = await collectDoctorChecks({
     home: configuredHome(),
     platform: "darwin",
@@ -224,7 +224,7 @@ test("collectDoctorChecks: fails closed when PM Studio compatibility cannot be s
 
   assert.deepEqual(checks.filter((check) => /PM Studio/.test(check.message)), [{
     kind: "warn",
-    message: "PM Studio 2.9.13 build 2.9.13 compatibility cannot be safely verified; no files will be changed",
+    message: "PM Studio 2.9.13 build 2.9.13 does not expose one uniquely compatible patch structure; no files will be changed",
   }]);
 });
 

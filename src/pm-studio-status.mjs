@@ -40,12 +40,6 @@ const PM_RELAY_ROUTE_NAMES = Object.freeze([
   "pm_chat_completions",
 ]);
 
-function selectRecipe(metadata, recipes) {
-  return recipes.find((recipe) => recipe.version === String(metadata.version)
-    && recipe.build === String(metadata.build)
-    && recipe.bundleIdentifier === String(metadata.bundleIdentifier));
-}
-
 function safeMessage(error) {
   return String(error?.message || "inspection failed").replace(/\s+/g, " ").trim();
 }
@@ -169,21 +163,20 @@ export async function inspectPmStudioStatus({
         build: String(metadata.build),
         bundleIdentifier: String(metadata.bundleIdentifier),
       };
-      let recipe = selectRecipe(normalized, recipes);
+      let recipe = null;
       let compatibilityError = null;
-      if (!recipe) {
-        try {
-          recipe = resolveCompatibleRecipe({
-            appPath,
-            home,
-            backupRoot,
-            metadata: normalized,
-            recipes,
-            operations,
-          });
-        } catch (error) {
-          compatibilityError = error;
-        }
+      try {
+        recipe = resolveCompatibleRecipe({
+          appPath,
+          home,
+          backupRoot,
+          metadata: normalized,
+          recipes,
+          operations,
+          inspectApp,
+        });
+      } catch (error) {
+        compatibilityError = error;
       }
       if (recipe) {
         app = { ...inspectApp({ appPath, recipe, operations }), recipe: recipe.id };
@@ -272,8 +265,8 @@ function appStatusItem(result, commandName) {
   if (app.state === "legacy") {
     return { kind: "err", component: "App patch", detail: `${version}; legacy global-origin patch`, message: `PM Studio ${version} has a legacy global-origin patch; run ${commandName} pms setup to migrate` };
   }
-  if (app.state === "clean") return { kind: "warn", component: "App patch", detail: `${version}; supported, not patched`, message: `PM Studio ${version} is supported but not patched; run ${commandName} pms setup` };
-  if (app.state === "unsupported") return { kind: "err", component: "App patch", detail: `${version}; compatibility unverified`, message: `PM Studio ${version} compatibility cannot be safely verified; no files will be changed` };
+  if (app.state === "clean") return { kind: "warn", component: "App patch", detail: `${version}; compatible structure, not patched`, message: `PM Studio ${version} has a compatible local patch structure but is not patched; run ${commandName} pms setup` };
+  if (app.state === "unsupported") return { kind: "err", component: "App patch", detail: `${version}; structure incompatible`, message: `PM Studio ${version} does not expose one uniquely compatible patch structure; no files will be changed` };
   if (app.state === "drift" && app.patchRecipeMatched) {
     return { kind: "err", component: "App patch", detail: `${version}; patch record drift`, message: `PM Studio ${version} matches the patch recipe, but its installed patch record is not verified: ${app.issues.join("; ")}` };
   }

@@ -599,11 +599,11 @@ export async function collectDoctorChecks({
     } else if (pm.app.state === "clean") {
       checks.push({
         kind: "warn",
-        message: `PM Studio ${version} is supported but not patched`,
+        message: `PM Studio ${version} has a compatible local patch structure but is not patched`,
         fix: "ccdx pms setup",
       });
     } else if (pm.app.state === "unsupported") {
-      checks.push({ kind: "warn", message: `PM Studio ${version} compatibility cannot be safely verified; no files will be changed` });
+      checks.push({ kind: "warn", message: `PM Studio ${version} does not expose one uniquely compatible patch structure; no files will be changed` });
     } else if (pm.app.state === "drift" || pm.app.state === "error") {
       checks.push({ kind: "err", message: `PM Studio integrity check failed: ${pm.app.issues.join("; ")}` });
     }

@@ -70,6 +70,8 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["pms", "status", "--help"]).helpTopic, "pms status");
   assert.equal(parseCliArgs(["help", "pm-studio", "setup"]).helpTopic, "pms setup");
   assert.match(cliHelp("ccdx", "doctor"), /consumes a small amount of Copilot usage/);
+  assert.match(cliHelp("ccdx", "pms setup"), /exact or structurally compatible PM Studio bundle/);
+  assert.doesNotMatch(cliHelp("ccdx", "pms setup"), /exactly supported/);
   assert.equal(cliHelp("ccdx"), cliHelp("codex-copilot-dx"));
 });
 

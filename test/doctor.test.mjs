@@ -178,6 +178,56 @@ test("collectDoctorChecks: reports a verified predecessor PM Studio patch for mi
   }]);
 });
 
+test("collectDoctorChecks: offers setup for a clean structurally compatible PM Studio version", async () => {
+  const checks = await collectDoctorChecks({
+    home: configuredHome(),
+    platform: "darwin",
+    env: {},
+    checkAdapter: false,
+    checkPmStudio: true,
+    inspectPmStudioHealthFn: async () => ({
+      app: {
+        state: "clean",
+        recipe: "pm-studio-compatible-status-fixture",
+        metadata: { version: "2.9.12", build: "2.9.12" },
+        issues: [],
+      },
+      claude: { valid: true },
+      adapter: { ok: true },
+    }),
+  });
+
+  assert.deepEqual(checks.filter((check) => /PM Studio/.test(check.message)), [{
+    kind: "warn",
+    message: "PM Studio 2.9.12 build 2.9.12 is supported but not patched",
+    fix: "ccdx pms setup",
+  }]);
+});
+
+test("collectDoctorChecks: fails closed when PM Studio compatibility cannot be safely verified", async () => {
+  const checks = await collectDoctorChecks({
+    home: configuredHome(),
+    platform: "darwin",
+    env: {},
+    checkAdapter: false,
+    checkPmStudio: true,
+    inspectPmStudioHealthFn: async () => ({
+      app: {
+        state: "unsupported",
+        metadata: { version: "2.9.13", build: "2.9.13" },
+        issues: ["multiple compatible backup manifests matched"],
+      },
+      claude: { valid: true },
+      adapter: { ok: true },
+    }),
+  });
+
+  assert.deepEqual(checks.filter((check) => /PM Studio/.test(check.message)), [{
+    kind: "warn",
+    message: "PM Studio 2.9.13 build 2.9.13 compatibility cannot be safely verified; no files will be changed",
+  }]);
+});
+
 test("collectDoctorChecks: reports a running PM relay whose isolated routing is not ready", async () => {
   const checks = await collectDoctorChecks({
     home: configuredHome(),

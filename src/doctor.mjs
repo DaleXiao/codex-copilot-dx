@@ -603,7 +603,7 @@ export async function collectDoctorChecks({
         fix: "ccdx pms setup",
       });
     } else if (pm.app.state === "unsupported") {
-      checks.push({ kind: "warn", message: `PM Studio ${version} has no exact patch recipe; no files will be changed` });
+      checks.push({ kind: "warn", message: `PM Studio ${version} compatibility cannot be safely verified; no files will be changed` });
     } else if (pm.app.state === "drift" || pm.app.state === "error") {
       checks.push({ kind: "err", message: `PM Studio integrity check failed: ${pm.app.issues.join("; ")}` });
     }

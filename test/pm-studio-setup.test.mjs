@@ -23,10 +23,12 @@ import {
   createPmStudioSetupOperations,
   inspectBundleContent,
   inspectPmStudioApp,
+  resolvePmStudioCompatibleRecipe,
   runPmStudioSetup,
 } from "../src/pm-studio-setup.mjs";
 
 const temporaryRoots = new Set();
+const COMPATIBLE_PM_STUDIO_CONFIG_MODULE = '47024(I,e,t){"use strict";t.d(e,{qn:()=>l});const l={CLIENT_ID:"Iv1.b507a08c87ecfe98",CLIENT_SECRET:void 0,API_ENDPOINT:"https://api.githubcopilot.com",DEVICE_CODE_URL:"https://github.com/login/device/code",ACCESS_TOKEN_URL:"https://github.com/login/oauth/access_token",COPILOT_TOKEN_URL:"https://api.github.com/copilot_internal/v2/token",USER_AGENT:"GitHubCopilotChat/0.26.7",EDITOR_VERSION:"vscode/1.99.3",EDITOR_PLUGIN_VERSION:"copilot-chat/0.26.7",INTEGRATION_ID:"vscode-chat",STANDARD_HEADERS:{Accept:"application/json","Content-Type":"application/json","User-Agent":"GitHubCopilotChat/0.26.7","Editor-Version":"vscode/1.99.3","Editor-Plugin-Version":"copilot-chat/0.26.7","Copilot-Integration-Id":"vscode-chat","X-Request-Id":()=>`req_${Date.now()}_${Math.random().toString(36).substr(2,9)}`}};class c{constructor(){this.config={...l}}static getInstance(){return c.instance||(c.instance=new c),c.instance}getConfig(){return{...this.config}}updateConfig(I){this.config={...this.config,...I}}resetConfig(){this.config={...l}}validateConfig(){return function(){const I=[];return l.CLIENT_ID||I.push("GitHub Copilot Client ID is required"),l.API_ENDPOINT||I.push("GitHub Copilot API endpoint is required"),{valid:0===I.length,errors:I}}()}getStandardHeaders(I){return function(I){const e={Accept:l.STANDARD_HEADERS.Accept,"Content-Type":l.STANDARD_HEADERS["Content-Type"],"User-Agent":l.STANDARD_HEADERS["User-Agent"],"Editor-Version":l.STANDARD_HEADERS["Editor-Version"],"Editor-Plugin-Version":l.STANDARD_HEADERS["Editor-Plugin-Version"],"Copilot-Integration-Id":l.STANDARD_HEADERS["Copilot-Integration-Id"],"X-Request-Id":"function"==typeof l.STANDARD_HEADERS["X-Request-Id"]?l.STANDARD_HEADERS["X-Request-Id"]():l.STANDARD_HEADERS["X-Request-Id"]};return I&&(e.Authorization=`Bearer ${I}`),e}(I)}getCopilotTokenHeaders(I){return function(I){return{Authorization:`Bearer ${I}`,Accept:"application/json","User-Agent":l.USER_AGENT,"Editor-Version":l.EDITOR_VERSION,"Editor-Plugin-Version":l.EDITOR_PLUGIN_VERSION}}(I)}getDeviceCodeHeaders(){return{Accept:"application/json","User-Agent":l.USER_AGENT}}}c.getInstance()}';
 
 function temporaryRoot(prefix) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -79,14 +81,26 @@ function replaceAt(buffer, offset, before, after) {
   return output;
 }
 
-function makeAsarFixture({ version = "2.9.7", build = version } = {}) {
+function makeAsarFixture({
+  version = "2.9.7",
+  build = version,
+  compatible = false,
+  duplicateAnchor = false,
+  blockSize = 16,
+} = {}) {
   const anchor = "47024(I,e,t){";
-  const sourceWindow = `${anchor}const l={API_ENDPOINT:"${PM_STUDIO_ORIGIN}"};${"s".repeat(24)}}`;
-  const replacementWindow = `${anchor}const l={API_ENDPOINT:"${PM_STUDIO_ORIGIN}"};${"p".repeat(24)}}`;
-  const predecessorWindow = `${anchor}const l={API_ENDPOINT:"${PM_STUDIO_ORIGIN}"};${"o".repeat(24)}}`;
+  const sourceWindow = compatible
+    ? COMPATIBLE_PM_STUDIO_CONFIG_MODULE
+    : `${anchor}const l={API_ENDPOINT:"${PM_STUDIO_ORIGIN}"};${"s".repeat(24)}}`;
+  const replacementWindow = compatible
+    ? PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE
+    : `${anchor}const l={API_ENDPOINT:"${PM_STUDIO_ORIGIN}"};${"p".repeat(24)}}`;
+  const predecessorWindow = compatible
+    ? `${anchor}${"o".repeat(Buffer.byteLength(sourceWindow) - Buffer.byteLength(anchor))}`
+    : `${anchor}const l={API_ENDPOINT:"${PM_STUDIO_ORIGIN}"};${"o".repeat(24)}}`;
   const editOffset = 19;
   const sourceContents = [
-    Buffer.from(`${"a".repeat(editOffset)}${sourceWindow}${"b".repeat(31)}`),
+    Buffer.from(`${"a".repeat(editOffset)}${sourceWindow}${"b".repeat(31)}${duplicateAnchor ? sourceWindow : ""}`),
     Buffer.from(`${"x".repeat(7)}${PM_STUDIO_ORIGIN}${"y".repeat(13)}`),
   ];
   const patchedContents = [
@@ -102,7 +116,6 @@ function makeAsarFixture({ version = "2.9.7", build = version } = {}) {
     return replaceAt(content, sentinelOffset, PM_STUDIO_ORIGIN, CCDX_PM_STUDIO_ORIGIN);
   });
   const paths = ["dist/main/main.js", "dist/renderer/js/main.fixture.js"];
-  const blockSize = 16;
   const entries = [];
   let entryOffset = 0;
   for (let index = 0; index < paths.length; index += 1) {
@@ -273,6 +286,13 @@ function fixtureOperations({
       embeddedIntegrity: { state: "absent", supported: true, executable: { slots: [] }, framework: { slots: [] } },
       matchesRecipeName: true,
     }),
+    readAppArchitecture: () => "arm64",
+    verifyOfficialProvenance: async () => {
+      const error = new Error("fixture has no official release proof");
+      error.code = "PM_STUDIO_PROVENANCE_UNAVAILABLE";
+      throw error;
+    },
+    inspectBundleContent: ({ appPath }) => inspectBundleContent(appPath),
     signApp: ({ appPath }) => {
       signCounter.value += 1;
       if (signatureFailure) throw new Error("fixture sign failed");
@@ -441,6 +461,25 @@ test("PM Studio 2.9.10 recipe locks the official bundle, ASAR, targets, and sign
   assert.equal(PM_STUDIO_2_9_10_RECIPE.sourceCodeSignature.teamIdentifier, "HL75GKK4W4");
   assert.equal(PM_STUDIO_2_9_10_RECIPE.patchedSigningMetadata.entitlements_sha256,
     "9d4ccbda4fe0c81a70df3db93b3e61fe0500f67f14cdcbee4dea230e6512d05c");
+});
+
+test("compatible recipe resolution preserves exact recipes without discovery", () => {
+  const operations = new Proxy({}, {
+    get() {
+      throw new Error("exact recipes must not inspect compatible sources or backups");
+    },
+  });
+  assert.equal(resolvePmStudioCompatibleRecipe({
+    appPath: "/Applications/PM Studio.app",
+    backupRoot: "/unused",
+    metadata: {
+      version: PM_STUDIO_2_9_10_RECIPE.version,
+      build: PM_STUDIO_2_9_10_RECIPE.build,
+      bundleIdentifier: PM_STUDIO_2_9_10_RECIPE.bundleIdentifier,
+    },
+    recipes: [PM_STUDIO_2_9_7_RECIPE, PM_STUDIO_2_9_10_RECIPE],
+    operations,
+  }), PM_STUDIO_2_9_10_RECIPE);
 });
 
 test("ASAR helpers classify clean/split-origin/legacy/drift and patch only the exact module window", () => {
@@ -1495,10 +1534,386 @@ test("unknown PM Studio 2.9.11 is rejected before backup, staging, or signing", 
     operations,
     logger: () => {},
   }), (error) => error.code === "PM_STUDIO_UNSUPPORTED_VERSION"
-    && /2\.9\.11 build 2\.9\.11 is not supported; no files were changed/.test(error.message));
+    && /2\.9\.11 build 2\.9\.11 could not be safely verified.*no files were changed/.test(error.message));
   assertSnapshot(appPath, snapshot);
   assert.equal(fs.existsSync(backupRoot), false);
   assert.equal(signCounter.value, 0);
+});
+
+test("a future PM Studio with the unique compatible module is patched from a trusted source and remains idempotent", async () => {
+  const root = temporaryRoot("ccdx-pms-compatible-2-9-12-");
+  const installedFixture = makeAsarFixture({ version: "2.9.12", compatible: true });
+  const supportedFixture = makeAsarFixture({ version: "2.9.10" });
+  const appPath = createAppFixture(root, installedFixture);
+  const backupRoot = path.join(root, "backups");
+  const signCounter = { value: 0 };
+  const operations = fixtureOperations({ signCounter });
+
+  const installed = await runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: () => {},
+  });
+  assert.equal(installed.status, "patched");
+  assert.match(installed.recipe, /^pm-studio-compatible-/);
+  assert.deepEqual(fs.readFileSync(path.join(appPath, installedFixture.recipe.asarPath)), installedFixture.patched);
+  assert.equal(signCounter.value, 1);
+  const manifest = JSON.parse(fs.readFileSync(installed.backup.manifestPath, "utf8"));
+  assert.equal(manifest.schema_version, 2);
+  assert.equal(manifest.compatibility, "exact-copilot-config-module-v1");
+  assert.equal(manifest.app.version, "2.9.12");
+  assert.equal(manifest.source.asar_sha256, installedFixture.recipe.sourceAsarSha256);
+
+  const repeated = await runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: () => {},
+  });
+  assert.equal(repeated.status, "already_patched");
+  assert.equal(repeated.recipe, installed.recipe);
+  assert.equal(signCounter.value, 1);
+
+  const patchedSnapshot = sourceSnapshot(appPath);
+  delete manifest.compatibility;
+  writeJson(installed.backup.manifestPath, manifest);
+  await assert.rejects(runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: () => {},
+  }), { code: "PM_STUDIO_BACKUP_INVALID" });
+  assertSnapshot(appPath, patchedSnapshot);
+  assert.equal(signCounter.value, 1);
+
+  manifest.compatibility = "exact-copilot-config-module-v1";
+  manifest.source.asar_sha256 = "drift";
+  writeJson(installed.backup.manifestPath, manifest);
+  await assert.rejects(runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: () => {},
+  }), { code: "PM_STUDIO_BACKUP_INVALID" });
+  assertSnapshot(appPath, patchedSnapshot);
+  assert.equal(signCounter.value, 1);
+});
+
+test("an invalid-signed compatible PM Studio is patched only after exact official release verification", async () => {
+  const root = temporaryRoot("ccdx-pms-compatible-official-");
+  const installedFixture = makeAsarFixture({ version: "2.9.12", compatible: true });
+  const supportedFixture = makeAsarFixture({ version: "2.9.10" });
+  const appPath = createAppFixture(root, installedFixture, { signature: "invalid" });
+  const backupRoot = path.join(root, "backups");
+  const signCounter = { value: 0 };
+  const operations = fixtureOperations({ signCounter });
+  const inspectCodeSign = operations.inspectCodeSign;
+  operations.inspectCodeSign = (args) => {
+    const inspected = inspectCodeSign(args);
+    if (inspected.adHoc) {
+      return { ...inspected, entitlementsState: "xml", entitlementsSha256: "c".repeat(64) };
+    }
+    return {
+      ...inspected,
+      valid: false,
+      verifyValid: false,
+      displayValid: true,
+      entitlementsState: "invalid",
+      entitlementsSha256: "",
+      cdHashFull: "a".repeat(64),
+      notarizationTicket: "stapled",
+    };
+  };
+  const provenanceCalls = [];
+  operations.verifyOfficialProvenance = async (options) => {
+    provenanceCalls.push(options);
+    return {
+      verified: true,
+      repository: "gim-home/max-studio",
+      version: "2.9.12",
+      tag: "v2.9.12",
+      arch: "arm64",
+      releaseUrl: "https://github.com/gim-home/max-studio/releases/tag/v2.9.12",
+      asset: {
+        name: "PM-Studio-2.9.12-mac-arm64.zip",
+        size: 182_488_443,
+        sha256: "b".repeat(64),
+      },
+      comparison: { matched: true, comparedEntries: 1_062, ignoredMissing: [] },
+    };
+  };
+  const messages = [];
+
+  const installed = await runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: (line) => messages.push(line),
+  });
+
+  assert.equal(installed.status, "patched");
+  assert.equal(signCounter.value, 1);
+  assert.equal(provenanceCalls.length, 1);
+  assert.equal(provenanceCalls[0].installedAppPath, appPath);
+  assert.equal(provenanceCalls[0].version, "2.9.12");
+  assert.equal(provenanceCalls[0].arch, "arm64");
+  assert.match(messages.join("\n"), /matched the SHA-256-verified official GitHub release/);
+  const manifest = JSON.parse(fs.readFileSync(installed.backup.manifestPath, "utf8"));
+  assert.deepEqual(manifest.source.artifact, {
+    repository: "gim-home/max-studio",
+    tag: "v2.9.12",
+    arch: "arm64",
+    releaseUrl: "https://github.com/gim-home/max-studio/releases/tag/v2.9.12",
+    asset: {
+      name: "PM-Studio-2.9.12-mac-arm64.zip",
+      size: 182_488_443,
+      sha256: "b".repeat(64),
+    },
+  });
+  assert.equal(manifest.source.code_signature.cdHashFull, "a".repeat(64));
+
+  operations.verifyOfficialProvenance = async () => assert.fail("verified backup must avoid another download");
+  const repeated = await runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: () => {},
+  });
+  assert.equal(repeated.status, "already_patched");
+  assert.equal(signCounter.value, 1);
+
+  delete manifest.source.code_signature;
+  writeJson(installed.backup.manifestPath, manifest);
+  await assert.rejects(runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: () => {},
+  }), { code: "PM_STUDIO_BACKUP_INVALID" });
+});
+
+test("compatible backup resolution selects the exact patched bundle among same-version source variants", async () => {
+  const root = temporaryRoot("ccdx-pms-compatible-variants-");
+  const installedFixture = makeAsarFixture({ version: "2.9.12", compatible: true });
+  const supportedFixture = makeAsarFixture({ version: "2.9.10" });
+  const appPath = createAppFixture(root, installedFixture);
+  const backupRoot = path.join(root, "backups");
+  const signCounter = { value: 0 };
+  const operations = fixtureOperations({ signCounter });
+
+  const first = await runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: () => {},
+  });
+  fs.rmSync(appPath, { recursive: true, force: true });
+  fs.cpSync(first.backup.backupAppPath, appPath, {
+    recursive: true,
+    dereference: false,
+    preserveTimestamps: true,
+  });
+  fs.writeFileSync(path.join(appPath, "Contents/Resources/variant-locale.txt"), "variant");
+
+  const second = await runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: () => {},
+  });
+  assert.notEqual(second.backup.backupDir, first.backup.backupDir);
+  assert.equal(fs.readdirSync(backupRoot).length, 2);
+
+  const repeated = await runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: () => {},
+  });
+  assert.equal(repeated.status, "already_patched");
+  assert.equal(repeated.backup.backupDir, second.backup.backupDir);
+  assert.equal(signCounter.value, 2);
+});
+
+test("official release mismatch leaves an invalid-signed compatible PM Studio unchanged", async () => {
+  const root = temporaryRoot("ccdx-pms-compatible-official-reject-");
+  const installedFixture = makeAsarFixture({ version: "2.9.12", compatible: true });
+  const appPath = createAppFixture(root, installedFixture, { signature: "invalid" });
+  const snapshot = sourceSnapshot(appPath);
+  const backupRoot = path.join(root, "backups");
+  const signCounter = { value: 0 };
+  const operations = fixtureOperations({ signCounter });
+  const inspectCodeSign = operations.inspectCodeSign;
+  operations.inspectCodeSign = (args) => ({
+    ...inspectCodeSign(args),
+    valid: false,
+    verifyValid: false,
+    displayValid: true,
+    entitlementsState: "invalid",
+    cdHashFull: "a".repeat(64),
+    notarizationTicket: "stapled",
+  });
+  let provenanceCalls = 0;
+  operations.verifyOfficialProvenance = async () => {
+    provenanceCalls += 1;
+    const error = new Error("official artifact tree differs");
+    error.code = "PM_STUDIO_PROVENANCE_TREE_MISMATCH";
+    throw error;
+  };
+
+  await assert.rejects(runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [makeAsarFixture({ version: "2.9.10" }).recipe],
+    operations,
+    logger: () => {},
+  }), (error) => error.code === "PM_STUDIO_UNSUPPORTED_VERSION"
+    && /could not be safely verified/.test(error.message));
+  assert.equal(provenanceCalls, 1);
+  assert.equal(signCounter.value, 0);
+  assert.equal(fs.existsSync(backupRoot), false);
+  assertSnapshot(appPath, snapshot);
+});
+
+test("official verification cannot absorb a post-fingerprint app change into the compatible recipe", async () => {
+  const root = temporaryRoot("ccdx-pms-compatible-official-race-");
+  const installedFixture = makeAsarFixture({ version: "2.9.12", compatible: true });
+  const appPath = createAppFixture(root, installedFixture, { signature: "invalid" });
+  const backupRoot = path.join(root, "backups");
+  const signCounter = { value: 0 };
+  const operations = fixtureOperations({ signCounter });
+  const inspectCodeSign = operations.inspectCodeSign;
+  operations.inspectCodeSign = (args) => ({
+    ...inspectCodeSign(args),
+    valid: false,
+    verifyValid: false,
+    displayValid: true,
+    entitlementsState: "invalid",
+    cdHashFull: "a".repeat(64),
+    notarizationTicket: "stapled",
+  });
+  operations.verifyOfficialProvenance = async () => {
+    fs.writeFileSync(path.join(appPath, "Contents/Resources/post-verify.js"), "changed");
+    return {
+      verified: true,
+      repository: "gim-home/max-studio",
+      version: "2.9.12",
+      tag: "v2.9.12",
+      arch: "arm64",
+      releaseUrl: "https://github.com/gim-home/max-studio/releases/tag/v2.9.12",
+      asset: {
+        name: "PM-Studio-2.9.12-mac-arm64.zip",
+        size: 182_488_443,
+        sha256: "b".repeat(64),
+      },
+      comparison: { matched: true, comparedEntries: 1_062, ignoredMissing: [] },
+    };
+  };
+
+  await assert.rejects(runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [makeAsarFixture({ version: "2.9.10" }).recipe],
+    operations,
+    logger: () => {},
+  }), { code: "PM_STUDIO_BUNDLE_DRIFT" });
+  assert.equal(signCounter.value, 0);
+  assert.equal(fs.existsSync(backupRoot), false);
+});
+
+test("setup enters the app-scoped exclusive lock before any preflight", async () => {
+  const root = temporaryRoot("ccdx-pms-lock-wiring-");
+  const fixture = makeAsarFixture();
+  const appPath = createAppFixture(root, fixture);
+  const operations = fixtureOperations();
+  const calls = [];
+  operations.withSetupLock = async (options, fn) => {
+    calls.push({ appPath: options.appPath, beforeCallback: true });
+    const result = await fn();
+    calls.push({ appPath: options.appPath, afterCallback: true });
+    return result;
+  };
+
+  const result = await runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot: path.join(root, "backups"),
+    recipes: [fixture.recipe],
+    operations,
+    logger: () => {},
+  });
+  assert.equal(result.status, "patched");
+  assert.deepEqual(calls, [
+    { appPath, beforeCallback: true },
+    { appPath, afterCallback: true },
+  ]);
+});
+
+test("compatible-version discovery rejects untrusted or ambiguous sources without writes", async (t) => {
+  for (const [name, fixtureOptions, signature, mutate] of [
+    ["invalid vendor signature", { version: "2.9.12", compatible: true }, "invalid", null],
+    ["duplicate module anchor", { version: "2.9.12", compatible: true, duplicateAnchor: true }, "vendor", null],
+    ["unsafe integrity block geometry", { version: "2.9.12", compatible: true, blockSize: 1 }, "vendor", null],
+    ["plist integrity mismatch", { version: "2.9.12", compatible: true }, "vendor", ({ appPath: target }) => {
+      const plistPath = path.join(target, "Contents/Info.plist");
+      const plist = JSON.parse(fs.readFileSync(plistPath, "utf8"));
+      plist.integrity.hash = "drift";
+      writeJson(plistPath, plist);
+    }],
+    ["target integrity mismatch", { version: "2.9.12", compatible: true }, "vendor", ({ appPath: target, fixture }) => {
+      const asarPath = path.join(target, fixture.recipe.asarPath);
+      const bytes = fs.readFileSync(asarPath);
+      bytes[fixture.recipe.targets[0].edit.absoluteOffset + fixture.recipe.targets[0].edit.length + 1] ^= 1;
+      fs.writeFileSync(asarPath, bytes);
+    }],
+  ]) {
+    await t.test(name, async () => {
+      const root = temporaryRoot("ccdx-pms-compatible-reject-");
+      const installedFixture = makeAsarFixture(fixtureOptions);
+      const supportedFixture = makeAsarFixture({ version: "2.9.10" });
+      const appPath = createAppFixture(root, installedFixture, { signature });
+      mutate?.({ appPath, fixture: installedFixture });
+      const snapshot = sourceSnapshot(appPath);
+      const backupRoot = path.join(root, "backups");
+      const signCounter = { value: 0 };
+      const operations = fixtureOperations({ signCounter });
+
+      await assert.rejects(runPmStudioSetup({
+        appPath,
+        home: root,
+        backupRoot,
+        recipes: [supportedFixture.recipe],
+        operations,
+        logger: () => {},
+      }), { code: "PM_STUDIO_UNSUPPORTED_VERSION" });
+      assertSnapshot(appPath, snapshot);
+      assert.equal(fs.existsSync(backupRoot), false);
+      assert.equal(signCounter.value, 0);
+    });
+  }
 });
 
 test("setup requires an isolated Claude profile before creating backup or staging data", async () => {

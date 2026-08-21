@@ -44,6 +44,21 @@ const recipe210 = {
     sha256: "source-artifact-sha256",
   },
 };
+const compatibleRecipe = {
+  ...recipe210,
+  id: "pm-studio-compatible-status-fixture",
+  compatibility: "exact-copilot-config-module-v1",
+  version: "2.9.12",
+  build: "2.9.12",
+  sourceAsarSha256: "compatible-source-asar-sha256",
+  sourceHeaderSha256: "compatible-source-header-sha256",
+  patchedAsarSha256: "compatible-patched-asar-sha256",
+  patchedHeaderSha256: "compatible-patched-header-sha256",
+  sourceBundleContent: {
+    ...recipe210.sourceBundleContent,
+    sha256: "compatible-source-bundle-sha256",
+  },
+};
 
 const adapterHealth = Object.freeze({
   ok: true,
@@ -169,6 +184,9 @@ test("inspectPmStudioStatus selects the exact 2.9.10 recipe", async () => {
   let selectedRecipe;
   const result = await inspectPmStudioStatus(options({
     recipes: [recipe, recipe210],
+    resolveCompatibleRecipe: () => {
+      throw new Error("exact recipes must not use compatible discovery");
+    },
     operationOverrides: {
       readBundleMetadata: () => ({
         version: recipe210.version,
@@ -191,6 +209,103 @@ test("inspectPmStudioStatus selects the exact 2.9.10 recipe", async () => {
   assert.equal(selectedRecipe, recipe210);
   assert.equal(result.app.recipe, recipe210.id);
   assert.match(formatPmStudioStatus(result), /2\.9\.10 build 2\.9\.10/);
+});
+
+test("inspectPmStudioStatus reconstructs a compatible patched recipe and verifies its patch record", async () => {
+  const resolverCalls = [];
+  const verificationCalls = [];
+  let inspectedRecipe;
+  const result = await inspectPmStudioStatus(options({
+    operationOverrides: {
+      readBundleMetadata: () => ({
+        version: compatibleRecipe.version,
+        build: compatibleRecipe.build,
+        bundleIdentifier: compatibleRecipe.bundleIdentifier,
+      }),
+    },
+    resolveCompatibleRecipe: (resolverOptions) => {
+      resolverCalls.push(resolverOptions);
+      return compatibleRecipe;
+    },
+    inspectApp: ({ recipe: selected }) => {
+      inspectedRecipe = selected;
+      return {
+        ...patchedInspection(),
+        metadata: {
+          version: selected.version,
+          build: selected.build,
+          bundleIdentifier: selected.bundleIdentifier,
+        },
+      };
+    },
+    verifyPatchRecord: (verification) => verificationCalls.push(verification),
+  }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.app.state, "patched");
+  assert.equal(result.app.recipe, compatibleRecipe.id);
+  assert.equal(result.app.patchRecord.valid, true);
+  assert.equal(inspectedRecipe, compatibleRecipe);
+  assert.equal(resolverCalls.length, 1);
+  assert.equal(resolverCalls[0].metadata.version, compatibleRecipe.version);
+  assert.equal(verificationCalls.length, 1);
+  assert.equal(verificationCalls[0].recipe, compatibleRecipe);
+  assert.match(verificationCalls[0].manifestPath, /pm-studio-compatible-status-fixture/);
+});
+
+test("inspectPmStudioStatus reports a trusted clean compatible version as ready for setup", async () => {
+  const result = await inspectPmStudioStatus(options({
+    operationOverrides: {
+      readBundleMetadata: () => ({
+        version: compatibleRecipe.version,
+        build: compatibleRecipe.build,
+        bundleIdentifier: compatibleRecipe.bundleIdentifier,
+      }),
+    },
+    resolveCompatibleRecipe: () => compatibleRecipe,
+    inspectApp: ({ recipe: selected }) => ({
+      state: "clean",
+      metadata: {
+        version: selected.version,
+        build: selected.build,
+        bundleIdentifier: selected.bundleIdentifier,
+      },
+      sourceVerification: "codesign",
+      issues: [],
+    }),
+  }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.app.state, "clean");
+  assert.equal(result.app.recipe, compatibleRecipe.id);
+  assert.match(formatPmStudioStatus(result), /supported but not patched; run ccdx pms setup/);
+});
+
+test("inspectPmStudioStatus downgrades an unverified compatible patch record to drift", async () => {
+  const result = await inspectPmStudioStatus(options({
+    operationOverrides: {
+      readBundleMetadata: () => ({
+        version: compatibleRecipe.version,
+        build: compatibleRecipe.build,
+        bundleIdentifier: compatibleRecipe.bundleIdentifier,
+      }),
+    },
+    resolveCompatibleRecipe: () => compatibleRecipe,
+    inspectApp: () => ({
+      ...patchedInspection(),
+      metadata: {
+        version: compatibleRecipe.version,
+        build: compatibleRecipe.build,
+        bundleIdentifier: compatibleRecipe.bundleIdentifier,
+      },
+    }),
+    verifyPatchRecord: () => { throw new Error("compatible manifest patch record is corrupt"); },
+  }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.app.state, "drift");
+  assert.equal(result.app.patchRecipeMatched, true);
+  assert.match(result.app.patchRecord.reason, /compatible manifest patch record is corrupt/);
 });
 
 test("inspectPmStudioStatus validates complete schema 2 source evidence", async (t) => {
@@ -446,11 +561,39 @@ test("inspectPmStudioStatus fails closed for unsupported versions", async () => 
       inspected = true;
       return {};
     },
+    resolveCompatibleRecipe: () => {
+      const error = new Error("fixture version is not structurally compatible");
+      error.code = "PM_STUDIO_UNSUPPORTED_VERSION";
+      throw error;
+    },
   }));
   assert.equal(inspected, false);
   assert.equal(result.ok, false);
   assert.equal(result.app.state, "unsupported");
-  assert.match(formatPmStudioStatus(result), /no exact patch recipe/);
+  assert.match(formatPmStudioStatus(result), /compatibility cannot be safely verified/);
+});
+
+test("inspectPmStudioStatus treats corrupt or ambiguous compatible manifests as unsupported", async () => {
+  const result = await inspectPmStudioStatus(options({
+    operationOverrides: {
+      readBundleMetadata: () => ({
+        version: compatibleRecipe.version,
+        build: compatibleRecipe.build,
+        bundleIdentifier: compatibleRecipe.bundleIdentifier,
+      }),
+    },
+    resolveCompatibleRecipe: () => {
+      const error = new Error("multiple compatible backup manifests matched");
+      error.code = "PM_STUDIO_UNSUPPORTED_VERSION";
+      throw error;
+    },
+  }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.app.state, "unsupported");
+  assert.match(result.app.issues.join("\n"), /multiple compatible backup manifests matched/);
+  assert.match(formatPmStudioStatus(result), /compatibility cannot be safely verified/);
+  assert.doesNotMatch(formatPmStudioStatus(result), /inspection failed/);
 });
 
 test("formatPmStudioStatus identifies a legacy global-origin patch and gives the migration command", async () => {

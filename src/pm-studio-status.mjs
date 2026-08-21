@@ -14,6 +14,7 @@ import {
   PM_STUDIO_CLAUDE_AUTH_COMMAND,
   pmStudioBackupRoot,
   pmStudioPatchManifestPath,
+  resolvePmStudioCompatibleRecipe,
 } from "./pm-studio-setup.mjs";
 import { readAdapterStatus } from "./cli-status.mjs";
 import {
@@ -146,6 +147,7 @@ export async function inspectPmStudioStatus({
   existsSync = fs.existsSync,
   inspectApp = inspectPmStudioApp,
   verifyPatchRecord = assertPatchedBinaryRecord,
+  resolveCompatibleRecipe = resolvePmStudioCompatibleRecipe,
   readClaudeCredentials = readAuthProfileCredentials,
   checkRunningAdapterFn = checkRunningAdapter,
   readAdapterStatusFn = readAdapterStatus,
@@ -167,7 +169,22 @@ export async function inspectPmStudioStatus({
         build: String(metadata.build),
         bundleIdentifier: String(metadata.bundleIdentifier),
       };
-      const recipe = selectRecipe(normalized, recipes);
+      let recipe = selectRecipe(normalized, recipes);
+      let compatibilityError = null;
+      if (!recipe) {
+        try {
+          recipe = resolveCompatibleRecipe({
+            appPath,
+            home,
+            backupRoot,
+            metadata: normalized,
+            recipes,
+            operations,
+          });
+        } catch (error) {
+          compatibilityError = error;
+        }
+      }
       if (recipe) {
         app = { ...inspectApp({ appPath, recipe, operations }), recipe: recipe.id };
         if (["patched", "predecessor"].includes(app.state)) {
@@ -189,7 +206,12 @@ export async function inspectPmStudioStatus({
           }
         }
       } else {
-        app = { state: "unsupported", metadata: normalized, issues: [], recipe: "" };
+        app = {
+          state: "unsupported",
+          metadata: normalized,
+          issues: compatibilityError ? [safeMessage(compatibilityError)] : [],
+          recipe: "",
+        };
       }
     } catch (error) {
       app = { state: "error", metadata: null, issues: [safeMessage(error)], recipe: "" };
@@ -251,7 +273,7 @@ function appStatusItem(result, commandName) {
     return { kind: "err", component: "App patch", detail: `${version}; legacy global-origin patch`, message: `PM Studio ${version} has a legacy global-origin patch; run ${commandName} pms setup to migrate` };
   }
   if (app.state === "clean") return { kind: "warn", component: "App patch", detail: `${version}; supported, not patched`, message: `PM Studio ${version} is supported but not patched; run ${commandName} pms setup` };
-  if (app.state === "unsupported") return { kind: "err", component: "App patch", detail: `${version}; unsupported version`, message: `PM Studio ${version} has no exact patch recipe; no files will be changed` };
+  if (app.state === "unsupported") return { kind: "err", component: "App patch", detail: `${version}; compatibility unverified`, message: `PM Studio ${version} compatibility cannot be safely verified; no files will be changed` };
   if (app.state === "drift" && app.patchRecipeMatched) {
     return { kind: "err", component: "App patch", detail: `${version}; patch record drift`, message: `PM Studio ${version} matches the patch recipe, but its installed patch record is not verified: ${app.issues.join("; ")}` };
   }

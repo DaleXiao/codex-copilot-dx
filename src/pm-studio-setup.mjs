@@ -9,12 +9,19 @@ import {
 } from "./auth-profile.mjs";
 import {
   PM_STUDIO_2_9_7_RECIPE,
+  PM_STUDIO_2_9_10_RECIPE,
   PM_STUDIO_RECIPES,
+  createCompatiblePmStudioRecipe,
   inspectElectronAsarIntegritySlots,
   inspectAsarBuffer,
   patchAsarBuffer,
   sha256Hex,
 } from "./pm-studio-asar.mjs";
+import {
+  PM_STUDIO_OFFICIAL_REPOSITORY,
+  verifyOfficialPmStudioProvenance,
+} from "./pm-studio-provenance.mjs";
+import { withPmStudioSetupLock } from "./pm-studio-setup-lock.mjs";
 
 export const DEFAULT_PM_STUDIO_APP_PATH = "/Applications/PM Studio.app";
 export const PM_STUDIO_CLAUDE_AUTH_COMMAND = "ccdx auth login claude --reauth --github-login <personal-login>";
@@ -315,6 +322,27 @@ function defaultInspectExecutableIntegrity({ appPath, infoPlistPath, recipe, pro
   };
 }
 
+function defaultReadAppArchitecture({ executablePath, processRunner }) {
+  const output = runChecked(processRunner, "/usr/bin/lipo", ["-archs", executablePath],
+    "Reading PM Studio executable architecture").stdout.trim();
+  const architectures = output.split(/\s+/).filter(Boolean);
+  if (architectures.length !== 1 || !["arm64", "x86_64"].includes(architectures[0])) {
+    throw setupError("PM_STUDIO_ARCHITECTURE_UNSUPPORTED",
+      "PM Studio must contain exactly one supported macOS architecture");
+  }
+  return architectures[0] === "x86_64" ? "x64" : architectures[0];
+}
+
+async function defaultVerifyOfficialProvenance(options) {
+  return verifyOfficialPmStudioProvenance({
+    ...options,
+    extractor: async ({ archivePath, destination }) => {
+      runChecked(options.processRunner, "/usr/bin/ditto", ["-x", "-k", archivePath, destination],
+        "Extracting official PM Studio release");
+    },
+  });
+}
+
 function defaultSignApp({ appPath, processRunner }) {
   runChecked(processRunner, "/usr/bin/codesign", [
     "--force", "--deep", "--sign", "-", "--timestamp=none",
@@ -412,6 +440,9 @@ export function createPmStudioSetupOperations(overrides = {}) {
     inspectCodeSign: defaultInspectCodeSign,
     inspectBundleContent: defaultInspectBundleContent,
     inspectExecutableIntegrity: defaultInspectExecutableIntegrity,
+    readAppArchitecture: defaultReadAppArchitecture,
+    verifyOfficialProvenance: defaultVerifyOfficialProvenance,
+    withSetupLock: ({ appPath }, fn) => withPmStudioSetupLock({ appPath }, fn),
     signApp: defaultSignApp,
     listBlockingProcesses: defaultListBlockingProcesses,
     copyBundle: defaultCopyBundle,
@@ -507,6 +538,7 @@ export function inspectPmStudioApp({
     || bundleContentMatches(bundleContent, recipe.sourceBundleContent);
   const strictVendorSignature = codeSign?.valid === true
     && codeSign?.adHoc === false
+    && codeSign?.identifier === recipe.bundleIdentifier
     && codeSign?.teamIdentifier === recipe.sourceTeamIdentifier;
   const exactInvalidVendorSignature = recipe.sourceBundleContent
     && exactSourceBundle
@@ -648,6 +680,385 @@ function selectRecipe(metadata, recipes) {
     && recipe.bundleIdentifier === String(metadata.bundleIdentifier));
 }
 
+function compatibleStaticOptions(metadata) {
+  return {
+    version: String(metadata.version),
+    build: String(metadata.build),
+    bundleIdentifier: String(metadata.bundleIdentifier),
+    sourceTeamIdentifier: PM_STUDIO_2_9_10_RECIPE.sourceTeamIdentifier,
+    executable: PM_STUDIO_2_9_10_RECIPE.executable,
+    electronFrameworkPath: PM_STUDIO_2_9_10_RECIPE.electronFrameworkPath,
+    embeddedAsarIntegrity: PM_STUDIO_2_9_10_RECIPE.embeddedAsarIntegrity,
+    asarPath: PM_STUDIO_2_9_10_RECIPE.asarPath,
+    infoPlistPath: PM_STUDIO_2_9_10_RECIPE.infoPlistPath,
+    integrityKey: PM_STUDIO_2_9_10_RECIPE.integrityKey,
+  };
+}
+
+function compatibleSourceBundleContent({ appPath, operations }) {
+  const ignoredXattrs = PM_STUDIO_2_9_10_RECIPE.sourceBundleContent.ignoredXattrs;
+  const inspected = operations.inspectBundleContent({
+    ...appPaths(appPath, PM_STUDIO_2_9_10_RECIPE),
+    recipe: PM_STUDIO_2_9_10_RECIPE,
+    processRunner: operations.processRunner,
+  });
+  return {
+    ...inspected,
+    ignoredXattrs: [...ignoredXattrs],
+  };
+}
+
+function compatibleSourceStructure({ appPath, metadata, operations }) {
+  const paths = appPaths(appPath, PM_STUDIO_2_9_10_RECIPE);
+  if (String(metadata.bundleIdentifier) !== PM_STUDIO_2_9_10_RECIPE.bundleIdentifier) {
+    throw setupError("PM_STUDIO_COMPATIBLE_SOURCE_UNTRUSTED",
+      "PM Studio compatible-version discovery found an unexpected bundle identifier");
+  }
+  const executableIntegrity = operations.inspectExecutableIntegrity({
+    ...paths,
+    recipe: PM_STUDIO_2_9_10_RECIPE,
+    processRunner: operations.processRunner,
+  });
+  if (!executableIntegrity?.matchesRecipeName
+    || !executableIntegrity?.embeddedIntegrity?.supported
+    || executableIntegrity.embeddedIntegrity.state !== PM_STUDIO_2_9_10_RECIPE.embeddedAsarIntegrity) {
+    throw setupError("PM_STUDIO_COMPATIBLE_SOURCE_UNTRUSTED",
+      "PM Studio compatible-version discovery found an unsupported executable or embedded ASAR integrity policy");
+  }
+  const compatibleRecipe = createCompatiblePmStudioRecipe(fs.readFileSync(paths.asarPath), {
+    ...compatibleStaticOptions(metadata),
+    sourceExecutableSha256: executableIntegrity.executableSha256,
+    sourceElectronFrameworkSha256: executableIntegrity.frameworkSha256,
+  });
+  const plistIntegrity = operations.readAsarIntegrity({
+    ...paths,
+    recipe: compatibleRecipe,
+    processRunner: operations.processRunner,
+  });
+  if (!integrityMatches(plistIntegrity, "SHA256", compatibleRecipe.sourceHeaderSha256)) {
+    throw setupError("PM_STUDIO_COMPATIBLE_SOURCE_UNTRUSTED",
+      "PM Studio compatible-version discovery found mismatched ElectronAsarIntegrity metadata");
+  }
+  return { paths, executableIntegrity, compatibleRecipe };
+}
+
+function frozenBundleContent(value) {
+  return Object.freeze({
+    ...value,
+    ignoredXattrs: Object.freeze([...(value.ignoredXattrs || [])]),
+  });
+}
+
+function sourceCodeSignature(codeSign) {
+  return Object.freeze({
+    identifier: codeSign.identifier,
+    teamIdentifier: codeSign.teamIdentifier,
+    flags: codeSign.flags,
+    runtimeVersion: codeSign.runtimeVersion,
+    cdHashFull: codeSign.cdHashFull,
+    notarizationTicket: codeSign.notarizationTicket,
+  });
+}
+
+function createCompatibleSourceRecipe({ appPath, metadata, operations }) {
+  const { paths, compatibleRecipe } = compatibleSourceStructure({ appPath, metadata, operations });
+  const codeSign = operations.inspectCodeSign({
+    ...paths,
+    recipe: PM_STUDIO_2_9_10_RECIPE,
+    processRunner: operations.processRunner,
+  });
+  if (codeSign?.valid !== true
+    || codeSign?.adHoc !== false
+    || codeSign?.identifier !== PM_STUDIO_2_9_10_RECIPE.bundleIdentifier
+    || codeSign?.teamIdentifier !== PM_STUDIO_2_9_10_RECIPE.sourceTeamIdentifier) {
+    throw setupError("PM_STUDIO_COMPATIBLE_SOURCE_UNTRUSTED",
+      "PM Studio compatible-version discovery requires an intact vendor signature");
+  }
+  const sourceBundleContent = compatibleSourceBundleContent({ appPath, operations });
+  return Object.freeze({
+    ...compatibleRecipe,
+    sourceBundleContent: frozenBundleContent(sourceBundleContent),
+  });
+}
+
+function exactInvalidVendorSignature(codeSign) {
+  return codeSign?.valid === false
+    && codeSign?.verifyValid === false
+    && codeSign?.displayValid === true
+    && codeSign?.entitlementsState === "invalid"
+    && codeSign?.adHoc === false
+    && codeSign?.identifier === PM_STUDIO_2_9_10_RECIPE.bundleIdentifier
+    && codeSign?.teamIdentifier === PM_STUDIO_2_9_10_RECIPE.sourceTeamIdentifier
+    && typeof codeSign?.flags === "string" && codeSign.flags.length > 0
+    && typeof codeSign?.runtimeVersion === "string" && codeSign.runtimeVersion.length > 0
+    && /^[0-9a-f]{64}$/.test(codeSign?.cdHashFull || "")
+    && codeSign?.notarizationTicket === "stapled";
+}
+
+function officialArtifact(provenance, metadata, architecture) {
+  if (provenance?.verified !== true
+    || provenance.repository !== PM_STUDIO_OFFICIAL_REPOSITORY
+    || provenance.version !== String(metadata.version)
+    || provenance.tag !== `v${metadata.version}`
+    || provenance.arch !== architecture
+    || provenance.comparison?.matched !== true
+    || typeof provenance.releaseUrl !== "string"
+    || typeof provenance.asset?.name !== "string"
+    || !Number.isSafeInteger(provenance.asset?.size)
+    || provenance.asset.size <= 0
+    || !/^[0-9a-f]{64}$/.test(provenance.asset?.sha256 || "")) {
+    throw setupError("PM_STUDIO_COMPATIBLE_SOURCE_UNTRUSTED",
+      "Official PM Studio release verification returned incomplete evidence");
+  }
+  return Object.freeze({
+    repository: provenance.repository,
+    tag: provenance.tag,
+    arch: provenance.arch,
+    releaseUrl: provenance.releaseUrl,
+    asset: Object.freeze({
+      name: provenance.asset.name,
+      size: provenance.asset.size,
+      sha256: provenance.asset.sha256,
+    }),
+  });
+}
+
+async function createOfficialCompatibleSourceRecipe({ appPath, metadata, operations }) {
+  const { paths, executableIntegrity, compatibleRecipe } = compatibleSourceStructure({
+    appPath, metadata, operations,
+  });
+  const codeSign = operations.inspectCodeSign({
+    ...paths,
+    recipe: PM_STUDIO_2_9_10_RECIPE,
+    processRunner: operations.processRunner,
+  });
+  if (!exactInvalidVendorSignature(codeSign)) {
+    throw setupError("PM_STUDIO_COMPATIBLE_SOURCE_UNTRUSTED",
+      "PM Studio has neither an intact vendor signature nor the exact invalid-signature shape accepted for official artifact verification");
+  }
+  const architecture = operations.readAppArchitecture({
+    ...paths,
+    executablePath: executableIntegrity.executablePath,
+    processRunner: operations.processRunner,
+  });
+  const sourceBundleContent = compatibleSourceBundleContent({ appPath, operations });
+  const provenance = await operations.verifyOfficialProvenance({
+    installedAppPath: appPath,
+    version: String(metadata.version),
+    arch: architecture,
+    processRunner: operations.processRunner,
+  });
+  return Object.freeze({
+    ...compatibleRecipe,
+    sourceBundleContent: frozenBundleContent(sourceBundleContent),
+    sourceArtifact: officialArtifact(provenance, metadata, architecture),
+    sourceCodeSignature: sourceCodeSignature(codeSign),
+  });
+}
+
+function sameIgnoredXattrs(value) {
+  return JSON.stringify(value)
+    === JSON.stringify(PM_STUDIO_2_9_10_RECIPE.sourceBundleContent.ignoredXattrs);
+}
+
+function storedOfficialArtifact(value, metadata) {
+  const version = String(metadata.version);
+  const arch = value?.arch;
+  const assetName = `PM-Studio-${version}-mac-${arch}.zip`;
+  if (!value || Array.isArray(value)
+    || JSON.stringify(Object.keys(value).sort())
+      !== JSON.stringify(["arch", "asset", "releaseUrl", "repository", "tag"])
+    || value.repository !== PM_STUDIO_OFFICIAL_REPOSITORY
+    || value.tag !== `v${version}`
+    || !["arm64", "x64"].includes(arch)
+    || value.releaseUrl !== `https://github.com/${PM_STUDIO_OFFICIAL_REPOSITORY}/releases/tag/v${version}`
+    || !value.asset || Array.isArray(value.asset)
+    || JSON.stringify(Object.keys(value.asset).sort())
+      !== JSON.stringify(["name", "sha256", "size"])
+    || value.asset.name !== assetName
+    || !Number.isSafeInteger(value.asset.size)
+    || value.asset.size <= 0
+    || !/^[0-9a-f]{64}$/.test(value.asset.sha256 || "")) {
+    throw setupError("PM_STUDIO_BACKUP_INVALID",
+      "Compatible PM Studio backup has invalid official release evidence");
+  }
+  return Object.freeze({
+    ...value,
+    asset: Object.freeze({ ...value.asset }),
+  });
+}
+
+function storedSourceCodeSignature(value) {
+  if (!value || Array.isArray(value)
+    || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([
+      "cdHashFull",
+      "flags",
+      "identifier",
+      "notarizationTicket",
+      "runtimeVersion",
+      "teamIdentifier",
+    ])
+    || value.identifier !== PM_STUDIO_2_9_10_RECIPE.bundleIdentifier
+    || value.teamIdentifier !== PM_STUDIO_2_9_10_RECIPE.sourceTeamIdentifier
+    || typeof value.flags !== "string" || value.flags.length === 0
+    || typeof value.runtimeVersion !== "string" || value.runtimeVersion.length === 0
+    || !/^[0-9a-f]{64}$/.test(value.cdHashFull || "")
+    || value.notarizationTicket !== "stapled") {
+    throw setupError("PM_STUDIO_BACKUP_INVALID",
+      "Compatible PM Studio backup has invalid source signing evidence");
+  }
+  return Object.freeze({ ...value });
+}
+
+function compatibleRecipeFromManifest({ backupDir, manifest, metadata, operations }) {
+  if (manifest?.schema_version !== 2
+    || manifest?.kind !== "ccdx-pm-studio-backup"
+    || !String(manifest?.recipe_id || "").startsWith("pm-studio-compatible-")
+    || manifest?.app?.bundle_identifier !== String(metadata.bundleIdentifier)
+    || manifest?.app?.version !== String(metadata.version)
+    || manifest?.app?.build !== String(metadata.build)
+    || !sameIgnoredXattrs(manifest?.source?.bundle_content?.ignoredXattrs)) {
+    return null;
+  }
+  const backupAppPath = path.join(backupDir, "PM Studio.app");
+  assertInstalledAppPath(backupAppPath);
+  const sourceAsarPath = path.join(backupAppPath, PM_STUDIO_2_9_10_RECIPE.asarPath);
+  const compatibleRecipe = createCompatiblePmStudioRecipe(fs.readFileSync(sourceAsarPath), {
+    ...compatibleStaticOptions(metadata),
+    sourceExecutableSha256: manifest?.source?.binaries?.main_executable_sha256,
+    sourceElectronFrameworkSha256: manifest?.source?.binaries?.electron_framework_sha256,
+  });
+  const hasOfficialArtifact = manifest?.source?.artifact !== undefined;
+  const hasSourceCodeSignature = manifest?.source?.code_signature !== undefined;
+  if (hasOfficialArtifact !== hasSourceCodeSignature) {
+    throw setupError("PM_STUDIO_BACKUP_INVALID",
+      "Compatible PM Studio backup has incomplete official source evidence");
+  }
+  const recipe = Object.freeze({
+    ...compatibleRecipe,
+    sourceBundleContent: frozenBundleContent(manifest.source.bundle_content),
+    ...(hasOfficialArtifact ? {
+      sourceArtifact: storedOfficialArtifact(manifest.source.artifact, metadata),
+      sourceCodeSignature: storedSourceCodeSignature(manifest.source.code_signature),
+    } : {}),
+  });
+  if (manifest.compatibility !== recipe.compatibility
+    || manifest.recipe_id !== recipe.id
+    || manifest?.source?.asar_sha256 !== recipe.sourceAsarSha256
+    || manifest?.source?.asar_header_sha256 !== recipe.sourceHeaderSha256
+    || manifest?.patched?.asar_sha256 !== recipe.patchedAsarSha256
+    || manifest?.patched?.asar_header_sha256 !== recipe.patchedHeaderSha256) {
+    throw setupError("PM_STUDIO_BACKUP_INVALID",
+      `Compatible PM Studio backup does not match its reconstructed recipe: ${backupDir}`);
+  }
+  const inspection = inspectPmStudioApp({ appPath: backupAppPath, recipe, operations });
+  const expectedVerification = hasOfficialArtifact ? "exact-bundle-content" : "codesign";
+  if (inspection.state !== "clean" || inspection.sourceVerification !== expectedVerification) {
+    throw setupError("PM_STUDIO_BACKUP_INVALID",
+      `Compatible PM Studio backup source verification failed: ${backupDir}`,
+      inspection.issues);
+  }
+  return recipe;
+}
+
+function compatibleRecipeFromBackup({ appPath, backupRoot, metadata, operations }) {
+  if (!fs.existsSync(backupRoot)) return null;
+  const installedAsar = fs.readFileSync(path.join(appPath, PM_STUDIO_2_9_10_RECIPE.asarPath));
+  let candidates = [];
+  const invalidCandidates = [];
+  for (const entry of fs.readdirSync(backupRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    const backupDir = path.join(backupRoot, entry.name);
+    const manifestPath = path.join(backupDir, "manifest.json");
+    if (!fs.existsSync(manifestPath)) continue;
+    let manifest;
+    try {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    } catch {
+      continue;
+    }
+    let recipe;
+    try {
+      recipe = compatibleRecipeFromManifest({ backupDir, manifest, metadata, operations });
+    } catch (error) {
+      invalidCandidates.push(error);
+      continue;
+    }
+    if (!recipe) continue;
+    const asarState = inspectAsarBuffer(installedAsar, recipe).state;
+    if (asarState === "drift") continue;
+    candidates.push({ recipe, manifest, asarState });
+  }
+  if (candidates.length > 1) {
+    let installedBundleContent;
+    try {
+      const recipe = candidates[0].recipe;
+      installedBundleContent = operations.inspectBundleContent({
+        ...appPaths(appPath, recipe),
+        recipe,
+        processRunner: operations.processRunner,
+      });
+    } catch (error) {
+      throw setupError("PM_STUDIO_BACKUP_INVALID",
+        "PM Studio compatible backup candidates could not be distinguished safely",
+        [error.message]);
+    }
+    candidates = candidates.filter(({ recipe, manifest, asarState }) => bundleContentMatches(
+      installedBundleContent,
+      asarState === "clean" ? recipe.sourceBundleContent : manifest?.patched?.bundle_content,
+    ));
+  }
+  if (candidates.length > 1) {
+    throw setupError("PM_STUDIO_UNSUPPORTED_VERSION",
+      `PM Studio ${metadata.version} build ${metadata.build} matches multiple compatible backups; no files were changed`);
+  }
+  if (candidates.length === 1) return candidates[0].recipe;
+  if (invalidCandidates.length > 0) {
+    throw setupError("PM_STUDIO_BACKUP_INVALID",
+      `PM Studio ${metadata.version} build ${metadata.build} has no matching verified compatible backup`,
+      invalidCandidates.map((error) => error?.message || String(error)));
+  }
+  return null;
+}
+
+function selectCompatibleRecipe({ appPath, backupRoot, metadata, operations }) {
+  let sourceError = null;
+  try {
+    return createCompatibleSourceRecipe({ appPath, metadata, operations });
+  } catch (error) {
+    sourceError = error;
+  }
+  try {
+    const backupRecipe = compatibleRecipeFromBackup({ appPath, backupRoot, metadata, operations });
+    if (backupRecipe) return backupRecipe;
+  } catch (error) {
+    if (error?.code === "PM_STUDIO_BACKUP_INVALID") throw error;
+    sourceError = error;
+  }
+  throw setupError("PM_STUDIO_UNSUPPORTED_VERSION",
+    `PM Studio ${metadata.version} build ${metadata.build} is not structurally compatible with the safe patch; no files were changed`,
+    sourceError?.message ? [sourceError.message] : undefined);
+}
+
+export function resolvePmStudioCompatibleRecipe({
+  appPath = DEFAULT_PM_STUDIO_APP_PATH,
+  home = os.homedir(),
+  backupRoot = pmStudioBackupRoot(home),
+  metadata,
+  recipes = PM_STUDIO_RECIPES,
+  operations = createPmStudioSetupOperations(),
+} = {}) {
+  if (!metadata || typeof metadata !== "object") {
+    throw new TypeError("PM Studio bundle metadata is required");
+  }
+  return selectRecipe(metadata, recipes) || selectCompatibleRecipe({
+    appPath,
+    backupRoot,
+    metadata,
+    operations,
+  });
+}
+
 function backupName(recipe) {
   const sourceHash = recipe.sourceBundleContent?.sha256 || recipe.sourceAsarSha256;
   return `${recipe.id}-${sourceHash.slice(0, 12)}`;
@@ -671,6 +1082,7 @@ function backupManifest(recipe, createdAt) {
     schema_version: recipe.sourceBundleContent ? 2 : 1,
     kind: "ccdx-pm-studio-backup",
     recipe_id: recipe.id,
+    ...(recipe.compatibility ? { compatibility: recipe.compatibility } : {}),
     created_at: createdAt.toISOString(),
     app: {
       name: "PM Studio",
@@ -689,6 +1101,7 @@ function backupManifest(recipe, createdAt) {
       },
       ...(recipe.sourceBundleContent ? { bundle_content: recipe.sourceBundleContent } : {}),
       ...(recipe.sourceArtifact ? { artifact: recipe.sourceArtifact } : {}),
+      ...(recipe.sourceCodeSignature ? { code_signature: recipe.sourceCodeSignature } : {}),
     },
     patched: {
       asar_sha256: recipe.patchedAsarSha256,
@@ -737,6 +1150,7 @@ function validateBackup({ backupDir, recipe, operations }) {
   if (manifest?.schema_version !== expectedSchema
     || manifest?.kind !== "ccdx-pm-studio-backup"
     || manifest?.recipe_id !== recipe.id
+    || (recipe.compatibility && manifest?.compatibility !== recipe.compatibility)
     || manifest?.app?.bundle_identifier !== recipe.bundleIdentifier
     || manifest?.app?.version !== recipe.version
     || manifest?.app?.build !== recipe.build
@@ -750,6 +1164,8 @@ function validateBackup({ backupDir, recipe, operations }) {
       && JSON.stringify(manifest?.source?.bundle_content) !== JSON.stringify(recipe.sourceBundleContent))
     || (recipe.sourceArtifact
       && JSON.stringify(manifest?.source?.artifact) !== JSON.stringify(recipe.sourceArtifact))
+    || (recipe.compatibility && recipe.sourceCodeSignature
+      && JSON.stringify(manifest?.source?.code_signature) !== JSON.stringify(recipe.sourceCodeSignature))
     || (manifest?.predecessor_patched !== undefined
       && !patchRecordMatches(manifest.predecessor_patched, recipe, "predecessor"))
     || (!patchRecordForState(manifest, recipe, "patched")
@@ -851,6 +1267,7 @@ export function assertPatchedBinaryRecord({
   if (recipe && (manifest?.schema_version !== expectedSchema
     || manifest?.kind !== "ccdx-pm-studio-backup"
     || manifest?.recipe_id !== recipe.id
+    || (recipe.compatibility && manifest?.compatibility !== recipe.compatibility)
     || manifest?.app?.bundle_identifier !== recipe.bundleIdentifier
     || manifest?.app?.version !== recipe.version
     || manifest?.app?.build !== recipe.build
@@ -864,7 +1281,9 @@ export function assertPatchedBinaryRecord({
       || JSON.stringify(manifest?.source?.bundle_content) !== JSON.stringify(recipe.sourceBundleContent)
     ))
     || (recipe.sourceArtifact
-      && JSON.stringify(manifest?.source?.artifact) !== JSON.stringify(recipe.sourceArtifact)))) {
+      && JSON.stringify(manifest?.source?.artifact) !== JSON.stringify(recipe.sourceArtifact))
+    || (recipe.compatibility && recipe.sourceCodeSignature
+      && JSON.stringify(manifest?.source?.code_signature) !== JSON.stringify(recipe.sourceCodeSignature)))) {
     throw setupError("PM_STUDIO_PATCH_RECORD_INVALID", "PM Studio patched-binary record does not match the installed patch recipe");
   }
   const record = patchRecordForState(manifest, recipe, recordState);
@@ -915,6 +1334,17 @@ function assertSigningMetadataPreserved(source, staged, recipe) {
   const after = signingMetadata(staged.codeSign);
   before.flags = flagsWithoutAdHoc(before.flags);
   after.flags = flagsWithoutAdHoc(after.flags);
+  if (recipe.compatibility
+    && recipe.sourceArtifact
+    && source.sourceVerification === "exact-bundle-content"
+    && source.codeSign?.entitlementsState === "invalid") {
+    if (staged.codeSign?.entitlementsState !== "xml"
+      || !/^[0-9a-f]{64}$/.test(after.entitlements_sha256)) {
+      throw setupError("PM_STUDIO_SIGNING_METADATA_CHANGED",
+        "Ad-hoc signing did not produce verifiable PM Studio entitlements from the official source bundle");
+    }
+    before.entitlements_sha256 = after.entitlements_sha256;
+  }
   if (JSON.stringify(before) !== JSON.stringify(after)) {
     throw setupError("PM_STUDIO_SIGNING_METADATA_CHANGED",
       "Ad-hoc signing did not preserve PM Studio identifier, entitlements, flags, and runtime metadata");
@@ -963,6 +1393,7 @@ export async function runPmStudioSetup({
   logger = (line) => console.log(line),
 } = {}) {
   const operations = createPmStudioSetupOperations(operationOverrides);
+  return operations.withSetupLock({ appPath }, async () => {
   const messages = [];
   const emit = (message) => {
     messages.push(message);
@@ -980,10 +1411,27 @@ export async function runPmStudioSetup({
     processRunner: operations.processRunner,
   };
   const metadata = operations.readBundleMetadata(genericPaths);
-  const recipe = selectRecipe(metadata, recipes);
+  let recipe = selectRecipe(metadata, recipes);
   if (!recipe) {
-    throw setupError("PM_STUDIO_UNSUPPORTED_VERSION",
-      `PM Studio ${metadata.version} build ${metadata.build} is not supported; no files were changed`);
+    try {
+      recipe = resolvePmStudioCompatibleRecipe({
+        appPath,
+        backupRoot,
+        metadata,
+        recipes,
+        operations,
+      });
+    } catch (error) {
+      if (error?.code !== "PM_STUDIO_UNSUPPORTED_VERSION") throw error;
+      emit(`[INFO] Verifying PM Studio ${metadata.version} build ${metadata.build} against its official GitHub release before patching.`);
+      try {
+        recipe = await createOfficialCompatibleSourceRecipe({ appPath, metadata, operations });
+      } catch (sourceError) {
+        throw setupError("PM_STUDIO_UNSUPPORTED_VERSION",
+          `PM Studio ${metadata.version} build ${metadata.build} could not be safely verified as a structurally compatible official release; no files were changed`,
+          sourceError?.message ? [sourceError.message] : undefined);
+      }
+    }
   }
 
   const source = inspectPmStudioApp({ appPath, recipe, operations });
@@ -1009,7 +1457,9 @@ export async function runPmStudioSetup({
   }
 
   if (source.sourceVerification === "exact-bundle-content") {
-    emit(`[WARN] macOS rejected the vendor signature; setup accepted only the exact PM Studio ${recipe.version} official bundle content fingerprint.`);
+    emit(recipe.sourceArtifact
+      ? `[WARN] macOS rejected the vendor signature; setup accepted PM Studio ${recipe.version} only after its files matched the SHA-256-verified official GitHub release.`
+      : `[WARN] macOS rejected the vendor signature; setup accepted only the exact PM Studio ${recipe.version} official bundle content fingerprint.`);
   }
 
   const backupExists = fs.existsSync(finalBackupDir);
@@ -1140,4 +1590,5 @@ export async function runPmStudioSetup({
   } finally {
     if (!preserveStage && fs.existsSync(stagePath)) operations.removePath({ target: stagePath });
   }
+  });
 }

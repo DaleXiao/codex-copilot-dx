@@ -7,6 +7,11 @@ export const ELECTRON_ASAR_INTEGRITY_SENTINEL = "AGbevlPCksUGKNL8TSn7wGmJEuJsXb2
 
 const PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH = 2_121;
 const PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE_SHA256 = "3da6245d676015ab6cd26e4d6a0d2f54894a687c370aa419c5ad170533d086aa";
+const PM_STUDIO_COPILOT_CONFIG_MODULE_ANCHOR = "47024(I,e,t){";
+const PM_STUDIO_COPILOT_CONFIG_MODULE_PATH = "dist/main/main.js";
+const PM_STUDIO_COMPATIBILITY_ID = "exact-copilot-config-module-v1";
+const PM_STUDIO_COMPATIBLE_TARGET_MAX_BYTES = 128 * 1024 * 1024;
+const PM_STUDIO_COMPATIBLE_BLOCK_MAX_COUNT = 16_384;
 
 function splitOriginConfigModule() {
   const source = `47024(I,e,t){"use strict";t.d(e,{qn:()=>l});const l={CLIENT_ID:"Iv1.b507a08c87ecfe98",CLIENT_SECRET:void 0,API_ENDPOINT:"${PM_STUDIO_ORIGIN}",DEVICE_CODE_URL:"https://github.com/login/device/code",ACCESS_TOKEN_URL:"https://github.com/login/oauth/access_token",COPILOT_TOKEN_URL:"https://api.github.com/copilot_internal/v2/token",USER_AGENT:"GitHubCopilotChat/0.26.7",EDITOR_VERSION:"vscode/1.99.3",EDITOR_PLUGIN_VERSION:"copilot-chat/0.26.7",INTEGRATION_ID:"vscode-chat",STANDARD_HEADERS:{Accept:"application/json","Content-Type":"application/json","User-Agent":"GitHubCopilotChat/0.26.7","Editor-Version":"vscode/1.99.3","Editor-Plugin-Version":"copilot-chat/0.26.7","Copilot-Integration-Id":"vscode-chat","X-Request-Id":()=>\`req_\${Date.now()}_\${Math.random().toString(36).substr(2,9)}\`}};const c=fetch.bind(globalThis),n="${CCDX_PM_STUDIO_ORIGIN}",a="${PM_STUDIO_SPLIT_ORIGIN_MARKER}",h="X-CCDX-PM-Relay",d=new Set,m=I=>I.headers.get(h)===a,q=I=>AbortSignal.any([I,AbortSignal.timeout(750)].filter(Boolean)),f=(I,e=400)=>Response.json({error:{code:I}},{status:e,headers:{[h]:a}});globalThis.fetch=async(I,e)=>{const t=I.url||I+"";if(t===\`\${l.API_ENDPOINT}/models\`){try{const t=await c(\`\${n}/models\`,e);if(t.ok&&m(t))try{let I=await t.clone().json(),e=I.data||I;if(Array.isArray(e)){d.clear();for(const I of e)/anthropic/i.test(I.vendor||I.owned_by)&&d.add(I.id);return t}}catch{}t.body?.cancel?.()?.catch?.(()=>{})}catch(I){if(e?.signal?.aborted)throw e.signal.reason||I}return c(I,e)}const s=t.startsWith(l.API_ENDPOINT)?t.slice(l.API_ENDPOINT.length):"";if("POST"===e?.method&&["/chat/completions","/responses","/embeddings"].includes(s)){let t="";try{t=(JSON.parse(e.body).model||"").trim()}catch{}if(d.has(t)||/^claude-/i.test(t)){if("/chat/completions"!==s)return f("model_not_supported");try{const I=await c(\`\${n}/models\`,{signal:q(e?.signal)}),t=401===I.status&&m(I);await I.text();if(!t)throw 0;const l=await c(\`\${n}\${s}\`,e);if(!m(l)){await l.body?.cancel?.();throw 0}return l}catch(I){if(e?.signal?.aborted)throw e.signal.reason||I;return f("relay_incompatible",503)}}}return c(I,e)}}`;
@@ -324,6 +329,157 @@ export function blockSha256(buffer, blockSize) {
     hashes.push(sha256Hex(buffer.subarray(offset, Math.min(offset + size, buffer.length))));
   }
   return hashes;
+}
+
+function incompatibleAsar(message) {
+  const error = new Error(message);
+  error.code = "PM_STUDIO_ASAR_INCOMPATIBLE";
+  return error;
+}
+
+function requiredRecipeString(value, name) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw incompatibleAsar(`PM Studio compatible recipe has no ${name}`);
+  }
+  return value;
+}
+
+export function createCompatiblePmStudioRecipe(value, options = {}) {
+  const parsed = parseAsarBuffer(value);
+  const entry = findAsarEntry(parsed.header, PM_STUDIO_COPILOT_CONFIG_MODULE_PATH);
+  if (!entry) throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} is missing`);
+
+  let targetOffset;
+  let targetSize;
+  let blockSize;
+  try {
+    targetOffset = entryOffset(entry.offset, `${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} offset`);
+    targetSize = entrySize(entry.size, `${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} size`);
+    blockSize = integer(entry.integrity?.blockSize,
+      `${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} block size`);
+  } catch (error) {
+    throw incompatibleAsar(error.message);
+  }
+  const absoluteOffset = parsed.dataOffset + targetOffset;
+  if (entry.unpacked || entry.link || absoluteOffset + targetSize > parsed.buffer.length) {
+    throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} is not one packed regular ASAR entry`);
+  }
+  if (blockSize === 0
+    || entry.integrity?.algorithm !== "SHA256"
+    || !sameArray(Object.keys(entry.integrity || {}).sort(), ["algorithm", "blockSize", "blocks", "hash"])) {
+    throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} has unsupported integrity metadata`);
+  }
+  const expectedBlockCount = Math.ceil(targetSize / blockSize);
+  if (targetSize > PM_STUDIO_COMPATIBLE_TARGET_MAX_BYTES
+    || blockSize < 16
+    || expectedBlockCount > PM_STUDIO_COMPATIBLE_BLOCK_MAX_COUNT
+    || entry.integrity.blocks.length !== expectedBlockCount) {
+    throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} has unsafe integrity block geometry`);
+  }
+
+  const sourceTarget = parsed.buffer.subarray(absoluteOffset, absoluteOffset + targetSize);
+  const sourceTargetSha256 = sha256Hex(sourceTarget);
+  const sourceBlocks = blockSha256(sourceTarget, blockSize);
+  if (entry.integrity.hash !== sourceTargetSha256
+    || !sameArray(entry.integrity.blocks, sourceBlocks)) {
+    throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} integrity metadata does not match its bytes`);
+  }
+
+  const anchorPositions = occurrencePositions(
+    sourceTarget,
+    Buffer.from(PM_STUDIO_COPILOT_CONFIG_MODULE_ANCHOR),
+  );
+  if (anchorPositions.length !== 1) {
+    throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} has ${anchorPositions.length} compatible module anchors, expected exactly one`);
+  }
+  const editOffset = anchorPositions[0];
+  const editEnd = editOffset + PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH;
+  if (editEnd > sourceTarget.length
+    || sha256Hex(sourceTarget.subarray(editOffset, editEnd))
+      !== PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE_SHA256) {
+    throw incompatibleAsar("PM Studio Copilot configuration module is not the exact compatible source window");
+  }
+
+  const replacement = Buffer.from(PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE);
+  const patchedTarget = Buffer.from(sourceTarget);
+  replacement.copy(patchedTarget, editOffset);
+  const patchedTargetSha256 = sha256Hex(patchedTarget);
+  const patchedBlocks = blockSha256(patchedTarget, blockSize);
+  const patchedAsar = Buffer.from(parsed.buffer);
+  replacement.copy(patchedAsar, absoluteOffset + editOffset);
+  const patchedParsed = parseAsarBuffer(patchedAsar);
+  const patchedEntry = findAsarEntry(patchedParsed.header, PM_STUDIO_COPILOT_CONFIG_MODULE_PATH);
+  patchedEntry.integrity = {
+    ...patchedEntry.integrity,
+    algorithm: "SHA256",
+    hash: patchedTargetSha256,
+    blockSize,
+    blocks: [...patchedBlocks],
+  };
+  const patchedHeaderBytes = Buffer.from(JSON.stringify(patchedParsed.header));
+  if (patchedHeaderBytes.length !== patchedParsed.headerLength) {
+    throw incompatibleAsar(`Compatible ASAR header changed size (${patchedParsed.headerLength} -> ${patchedHeaderBytes.length})`);
+  }
+  patchedHeaderBytes.copy(patchedAsar, patchedParsed.headerStart);
+
+  const version = requiredRecipeString(String(options.version || ""), "version");
+  const build = requiredRecipeString(String(options.build || ""), "build");
+  const bundleIdentifier = requiredRecipeString(options.bundleIdentifier, "bundle identifier");
+  const sourceAsarSha256 = sha256Hex(parsed.buffer);
+  const identity = sha256Hex(`${PM_STUDIO_COMPATIBILITY_ID}\0${bundleIdentifier}\0${version}\0${build}\0${sourceAsarSha256}`).slice(0, 24);
+  const sourceBundleContent = options.sourceBundleContent
+    ? Object.freeze({
+      ...options.sourceBundleContent,
+      ignoredXattrs: Object.freeze([...(options.sourceBundleContent.ignoredXattrs || [])]),
+    })
+    : undefined;
+  const edit = Object.freeze({
+    offset: editOffset,
+    absoluteOffset: absoluteOffset + editOffset,
+    length: PM_STUDIO_COPILOT_CONFIG_MODULE_LENGTH,
+    anchor: PM_STUDIO_COPILOT_CONFIG_MODULE_ANCHOR,
+    anchorCount: 1,
+    sourceSha256: PM_STUDIO_COPILOT_CONFIG_MODULE_SOURCE_SHA256,
+    patchedSha256: sha256Hex(replacement),
+    replacement: PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE,
+  });
+  const target = Object.freeze({
+    path: PM_STUDIO_COPILOT_CONFIG_MODULE_PATH,
+    offset: targetOffset,
+    size: targetSize,
+    blockSize,
+    sourceSha256: sourceTargetSha256,
+    patchedSha256: patchedTargetSha256,
+    sourceBlocks: Object.freeze([...sourceBlocks]),
+    patchedBlocks: Object.freeze([...patchedBlocks]),
+    edit,
+  });
+  return Object.freeze({
+    id: `pm-studio-compatible-${identity}`,
+    compatibility: PM_STUDIO_COMPATIBILITY_ID,
+    version,
+    build,
+    bundleIdentifier,
+    sourceTeamIdentifier: requiredRecipeString(options.sourceTeamIdentifier, "source TeamIdentifier"),
+    executable: requiredRecipeString(options.executable, "executable"),
+    sourceExecutableSha256: requiredRecipeString(options.sourceExecutableSha256, "source executable SHA-256"),
+    electronFrameworkPath: requiredRecipeString(options.electronFrameworkPath, "Electron Framework path"),
+    sourceElectronFrameworkSha256: requiredRecipeString(
+      options.sourceElectronFrameworkSha256,
+      "source Electron Framework SHA-256",
+    ),
+    embeddedAsarIntegrity: requiredRecipeString(options.embeddedAsarIntegrity, "embedded ASAR integrity state"),
+    asarPath: requiredRecipeString(options.asarPath, "ASAR path"),
+    infoPlistPath: requiredRecipeString(options.infoPlistPath, "Info.plist path"),
+    integrityKey: requiredRecipeString(options.integrityKey, "ASAR integrity key"),
+    dataOffset: parsed.dataOffset,
+    sourceAsarSha256,
+    sourceHeaderSha256: sha256Hex(parsed.headerBytes),
+    patchedAsarSha256: sha256Hex(patchedAsar),
+    patchedHeaderSha256: sha256Hex(patchedHeaderBytes),
+    ...(sourceBundleContent ? { sourceBundleContent } : {}),
+    targets: Object.freeze([target]),
+  });
 }
 
 export function inspectElectronAsarIntegritySlots(value) {

@@ -162,8 +162,16 @@ function reclaimStaleLock(lockPath, snapshot, io, uid) {
 
   let moved;
   try {
-    moved = io.lstatSync(quarantinePath, { bigint: false });
-    if (!isOwnedRegularFile(moved, uid) || !sameFile(moved, snapshot.stat)) {
+    moved = readLockSnapshot(
+      quarantinePath,
+      snapshot.record.app_path_sha256,
+      io,
+      uid,
+    );
+    if (!moved) return false;
+    if (!moved.safe
+      || !sameFile(moved.stat, snapshot.stat)
+      || JSON.stringify(moved.record) !== JSON.stringify(snapshot.record)) {
       try {
         io.linkSync(quarantinePath, lockPath);
       } catch (error) {

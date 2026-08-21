@@ -225,7 +225,7 @@ test("finally leaves a replacement lock with a different nonce untouched", async
   assert.deepEqual(JSON.parse(fs.readFileSync(lockPath, "utf8")), replacement);
 });
 
-test("stale reclamation never displaces a concurrently published live lock", async () => {
+test("stale reclamation never removes a lock record changed after inspection", async () => {
   const root = temporaryRoot();
   const appPath = path.join(root, "PM Studio.app");
   const lockPath = pmStudioSetupLockPath({ appPath, temporaryRoot: root });
@@ -239,10 +239,7 @@ test("stale reclamation never displaces a concurrently published live lock", asy
       return (source, destination) => {
         if (!injected && source === lockPath && destination.includes(".stale-")) {
           injected = true;
-          const displacedStale = path.join(root, "displaced-stale");
-          target.renameSync(source, displacedStale);
-          target.unlinkSync(displacedStale);
-          writeLock(lockPath, replacement);
+          target.writeFileSync(source, JSON.stringify(replacement), { mode: 0o600 });
         }
         return target[property](source, destination);
       };

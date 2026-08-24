@@ -38,6 +38,23 @@ export function responsesBodyUsesCustomTools(body) {
     && body.input.some((item) => item?.type === "custom_tool_call" || item?.type === "custom_tool_call_output");
 }
 
+function chatCompatibilityError(kind, itemType) {
+  const type = typeof itemType === "string" && itemType ? itemType : "unknown";
+  const message = `Responses ${kind} type "${type}" cannot be represented by Chat Completions`;
+  const error = new Error(message);
+  error.statusCode = 400;
+  error.code = "ccdx_responses_chat_incompatible";
+  error.jsonBody = {
+    error: {
+      message,
+      type: "invalid_request_error",
+      code: error.code,
+      item_type: type,
+    },
+  };
+  return error;
+}
+
 export function responsesToChat(body) {
   const messages = [];
   if (body.instructions) messages.push({ role: "system", content: body.instructions });
@@ -65,19 +82,36 @@ export function responsesToChat(body) {
   if (typeof body.input === "string") {
     messages.push({ role: "user", content: body.input });
   } else if (Array.isArray(body.input)) {
-    for (const item of body.input) {
-      if (item.type === "message") {
+    for (let index = 0; index < body.input.length; index += 1) {
+      const item = body.input[index];
+      const isEasyMessage = item?.type === undefined
+        && ["user", "assistant", "system", "developer"].includes(item?.role)
+        && Object.prototype.hasOwnProperty.call(item, "content");
+      if (item?.type === "message" || isEasyMessage) {
         messages.push({ role: item.role, content: messageContent(item.content) });
-      } else if (["input_image", "image_url", "image"].includes(item.type)) {
+      } else if (["input_image", "image_url", "image"].includes(item?.type)) {
         messages.push({ role: "user", content: messageContent([item]) });
-      } else if (item.type === "function_call") {
+      } else if (item?.type === "function_call") {
+        const toolCalls = [];
+        while (index < body.input.length && body.input[index]?.type === "function_call") {
+          const call = body.input[index];
+          toolCalls.push({
+            id: call.call_id || randomUUID(),
+            type: "function",
+            function: { name: call.name, arguments: call.arguments },
+          });
+          index += 1;
+        }
+        index -= 1;
         messages.push({
           role: "assistant",
           content: null,
-          tool_calls: [{ id: item.call_id || randomUUID(), type: "function", function: { name: item.name, arguments: item.arguments } }],
+          tool_calls: toolCalls,
         });
-      } else if (item.type === "function_call_output") {
+      } else if (item?.type === "function_call_output") {
         messages.push({ role: "tool", tool_call_id: item.call_id, content: typeof item.output === "string" ? item.output : JSON.stringify(item.output) });
+      } else {
+        throw chatCompatibilityError("input item", item?.type);
       }
     }
   }
@@ -90,9 +124,10 @@ export function responsesToChat(body) {
   if (maxTok !== undefined) chatReq.max_completion_tokens = maxTok;
 
   if (body.tools?.length) {
+    const unsupportedTool = body.tools.find((tool) => tool?.type !== "function");
+    if (unsupportedTool) throw chatCompatibilityError("tool", unsupportedTool?.type);
     chatReq.tools = body.tools
       .map((tool) => {
-        if (tool?.type !== "function") return null;
         if (tool.function?.name) return cloneJson(tool);
         const fn = {
           name: tool.name,
@@ -112,6 +147,8 @@ export function responsesToChat(body) {
       chatReq.tool_choice = body.tool_choice;
     } else if (body.tool_choice?.type === "function" && body.tool_choice.name) {
       chatReq.tool_choice = { type: "function", function: { name: body.tool_choice.name } };
+    } else {
+      throw chatCompatibilityError("tool choice", body.tool_choice?.type);
     }
   }
   if (body.parallel_tool_calls !== undefined) chatReq.parallel_tool_calls = body.parallel_tool_calls;

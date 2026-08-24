@@ -1,10 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { httpError } from "./http-transport.mjs";
 
 const COMPACTION_TRIGGER_TYPE = "compaction_trigger";
-const RETAINED_MESSAGE_ROLES = new Set(["user", "assistant", "developer", "system"]);
-const RETAINED_MESSAGE_TOKEN_BUDGET = 64_000;
-const APPROX_BYTES_PER_TOKEN = 4;
 
 function compactionError(message) {
   const error = httpError(message, 502);
@@ -17,47 +13,6 @@ function compactionError(message) {
     },
   };
   return error;
-}
-
-function normalizeMessageContent(content) {
-  if (typeof content === "string") return [{ type: "input_text", text: content }];
-  if (!Array.isArray(content)) return [];
-  return content.map((part) => {
-    if (!part || typeof part !== "object") return part;
-    return part.type === "output_text"
-      ? { ...part, type: "input_text" }
-      : structuredClone(part);
-  });
-}
-
-function approximateTextTokens(content) {
-  return content.reduce((total, part) => {
-    if (part?.type !== "input_text" || typeof part.text !== "string") return total;
-    return total + Math.ceil(Buffer.byteLength(part.text) / APPROX_BYTES_PER_TOKEN);
-  }, 0);
-}
-
-function retainedMessages(inputItems) {
-  const kept = [];
-  let usedTokens = 0;
-  for (let index = inputItems.length - 1; index >= 0; index -= 1) {
-    const item = inputItems[index];
-    if (item?.type !== "message" || !RETAINED_MESSAGE_ROLES.has(item.role)) continue;
-
-    const content = normalizeMessageContent(item.content);
-    usedTokens += Math.max(approximateTextTokens(content), 1);
-    if (usedTokens > RETAINED_MESSAGE_TOKEN_BUDGET && kept.length > 0) break;
-
-    kept.push({
-      type: "message",
-      id: `msg_${randomUUID().replaceAll("-", "")}`,
-      status: item.status ?? "completed",
-      role: item.role,
-      content,
-      ...(item.phase !== undefined ? { phase: structuredClone(item.phase) } : {}),
-    });
-  }
-  return kept.reverse();
 }
 
 export function prepareResponsesCompactionRequest(reqContext) {
@@ -74,7 +29,7 @@ export function compactionInputWithoutTrigger(input) {
     : [];
 }
 
-export function createResponsesCompactionResult(inputItems, generated) {
+export function createResponsesCompactionResult(_inputItems, generated) {
   if (!generated || typeof generated !== "object" || !generated.id || !Array.isArray(generated.output)) {
     throw compactionError("Copilot compaction returned an invalid response envelope");
   }
@@ -95,10 +50,6 @@ export function createResponsesCompactionResult(inputItems, generated) {
   return {
     ...generated,
     object: "response.compaction",
-    output: [
-      ...retainedMessages(Array.isArray(inputItems) ? inputItems : []),
-      ...compactionItems,
-    ],
   };
 }
 

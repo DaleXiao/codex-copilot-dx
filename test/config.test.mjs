@@ -90,6 +90,51 @@ model_auto_compact_token_limit = 200000
   assert.equal(content, before);
 });
 
+test("computeUpdatedCodexConfig: does not treat a section key as top-level openai_base_url", () => {
+  const before = `model = "gpt-5.5"
+
+[projects."/tmp/example"]
+openai_base_url = "https://project.example/v1"
+trust_level = "trusted"
+`;
+
+  const { content, changed } = computeUpdatedCodexConfig(before, 2026);
+  assert.equal(changed, true);
+  assert.match(content, /^openai_base_url = "http:\/\/127\.0\.0\.1:2026\/v1"$/m);
+  assert.match(content, /^openai_base_url = "https:\/\/project\.example\/v1"$/m);
+});
+
+test("computeUpdatedCodexConfig: updates only the top-level openai_base_url", () => {
+  const before = `openai_base_url = "http://localhost:4142/v1"
+
+[projects."/tmp/example"]
+openai_base_url = "https://project.example/v1"
+`;
+
+  const { content, changed } = computeUpdatedCodexConfig(before, 2026);
+  assert.equal(changed, true);
+  assert.match(content, /^openai_base_url = "http:\/\/127\.0\.0\.1:2026\/v1"$/m);
+  assert.match(content, /^openai_base_url = "https:\/\/project\.example\/v1"$/m);
+});
+
+test("computeUpdatedCodexConfig: does not mistake top-level multiline array values for tables", () => {
+  const before = `fallbacks = [
+  ["gpt-5.5", "gpt-5.6-sol"],
+]
+openai_base_url = "http://localhost:4142/v1"
+
+[projects."/tmp/example"] # retained project settings
+trust_level = "trusted"
+`;
+
+  const { content, changed } = computeUpdatedCodexConfig(before, 2026);
+  assert.equal(changed, true);
+  assert.equal(content.match(/^openai_base_url\s*=/gm)?.length, 1);
+  assert.match(content, /^openai_base_url = "http:\/\/127\.0\.0\.1:2026\/v1"$/m);
+  assert.ok(content.indexOf("model_auto_compact_token_limit") < content.indexOf("[projects."));
+  assert.match(content, /^  \["gpt-5\.5", "gpt-5\.6-sol"\],$/m);
+});
+
 test("computeUpdatedCodexConfig: uses a bracketed IPv6 loopback URL", () => {
   const { content, changed } = computeUpdatedCodexConfig("model = \"gpt-5.5\"\n", 2026, "::1");
 

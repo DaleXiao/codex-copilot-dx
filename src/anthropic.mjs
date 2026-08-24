@@ -130,6 +130,14 @@ export function anthropicToChat(body, options = {}) {
 
 function uid() { return randomUUID().replace(/-/g, ""); }
 
+function invalidToolArguments(toolName) {
+  const name = String(toolName || "unknown").slice(0, 100);
+  return invalidUpstreamStream(
+    `Upstream Chat Completions tool "${name}" did not return valid JSON object arguments`,
+    "upstream_tool_arguments_json_invalid",
+  );
+}
+
 export function chatToAnthropic(openaiResp, model, options = {}) {
   const choice = openaiResp.choices?.[0];
   const msg = choice?.message || {};
@@ -138,8 +146,20 @@ export function chatToAnthropic(openaiResp, model, options = {}) {
   if (msg.content) content.push({ type: "text", text: msg.content });
   if (Array.isArray(msg.tool_calls)) {
     for (const tc of msg.tool_calls) {
-      let input = {};
-      try { input = JSON.parse(tc.function.arguments || "{}"); } catch { input = {}; }
+      const rawArguments = tc.function?.arguments;
+      let input;
+      if (rawArguments === undefined || rawArguments === null || rawArguments === "") {
+        input = {};
+      } else {
+        try {
+          input = JSON.parse(rawArguments);
+        } catch {
+          throw invalidToolArguments(tc.function?.name);
+        }
+        if (!input || typeof input !== "object" || Array.isArray(input)) {
+          throw invalidToolArguments(tc.function?.name);
+        }
+      }
       content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
     }
   }

@@ -37,6 +37,7 @@ import { autoReviewModelPreference, writeAutoReviewModel } from "../src/user-set
 import { responsesHistoricalImageStats } from "../src/responses-byte-budget.mjs";
 import { isResponsesToolOutputItem, readResponsesToolOutputParts } from "../src/responses-content.mjs";
 import { createResponsesImagePressureController } from "../src/responses-image-pressure.mjs";
+import { RUNTIME_DEFAULTS } from "../src/runtime-config.mjs";
 
 const gzipAsync = promisify(zlib.gzip);
 const zstdCompressAsync = zlib.zstdCompress ? promisify(zlib.zstdCompress) : null;
@@ -684,6 +685,151 @@ test("HTTP native Responses stream emits a valid SSE error after headers", async
   assert.match(result.text, /stream_idle_timeout/);
 });
 
+test("HTTP native Responses stream stops at a terminal event within the same upstream chunk", async () => {
+  const completed = {
+    type: "response.completed",
+    response: { id: "resp_terminal", status: "completed", output: [] },
+  };
+  const trailing = {
+    type: "response.output_text.delta",
+    delta: "must-not-leak",
+  };
+  const upstreamBody = [
+    `event: response.completed\ndata: ${JSON.stringify(completed)}\n\n`,
+    `event: response.output_text.delta\ndata: ${JSON.stringify(trailing)}\n\n`,
+  ].join("");
+
+  const result = await invokeAdapter({
+    responsesFn: async () => new Response(upstreamBody, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }),
+  }, {
+    body: { model: "gpt-5.6-sol", stream: true, input: "hello" },
+  });
+
+  assert.equal(result.status, 200);
+  assert.match(result.text, /response\.completed/);
+  assert.doesNotMatch(result.text, /must-not-leak/);
+  assert.doesNotMatch(result.text, /response\.output_text\.delta/);
+});
+
+test("HTTP native Responses stream scans an 8 MiB fragmented event linearly across CRLF boundaries", async () => {
+  const maxEventBytes = RUNTIME_DEFAULTS.maxSseBufferBytes;
+  const eventPrefix = Buffer.from('event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"');
+  const eventSuffix = Buffer.from('"}');
+  const eventBody = Buffer.concat([
+    eventPrefix,
+    Buffer.alloc(maxEventBytes - eventPrefix.byteLength - eventSuffix.byteLength, 0x78),
+    eventSuffix,
+  ]);
+  const event = Buffer.concat([eventBody, Buffer.from("\r\n\r\n")]);
+  const completed = JSON.stringify({
+    type: "response.completed",
+    response: { id: "resp_fragmented", status: "completed", output: [] },
+  });
+  const terminalPrefix = Buffer.from(`event: response.completed\r\ndata: ${completed}\r\n\r`);
+  const terminalSuffix = Buffer.from("\nevent: response.output_text.delta\ndata: must-not-leak\n\n");
+  const chunks = [];
+  for (let offset = 0; offset < event.byteLength; offset += 16 * 1024) {
+    chunks.push(event.subarray(offset, Math.min(offset + 16 * 1024, event.byteLength)));
+  }
+  chunks.push(terminalPrefix, terminalSuffix);
+  let chunkIndex = 0;
+  const upstreamBody = new ReadableStream({
+    pull(controller) {
+      if (chunkIndex >= chunks.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(chunks[chunkIndex]);
+      chunkIndex += 1;
+    },
+  }, { highWaterMark: 0 });
+
+  const originalByteLength = Buffer.byteLength;
+  let scannedBytes = 0;
+  Buffer.byteLength = function trackedByteLength(value, ...args) {
+    const bytes = originalByteLength(value, ...args);
+    scannedBytes += bytes;
+    return bytes;
+  };
+  let result;
+  try {
+    result = await invokeAdapter({
+      responsesFn: async () => new Response(upstreamBody, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    }, {
+      body: { model: "gpt-5.6-sol", stream: true, input: "hello" },
+    });
+  } finally {
+    Buffer.byteLength = originalByteLength;
+  }
+
+  assert.equal(result.status, 200);
+  assert.equal(eventBody.byteLength, maxEventBytes);
+  assert.ok(scannedBytes < maxEventBytes * 2, `rescanned ${scannedBytes} bytes`);
+  assert.match(result.text, /response\.completed/);
+  assert.doesNotMatch(result.text, /must-not-leak/);
+});
+
+test("HTTP native Responses stream rejects an event above the configured byte limit", async () => {
+  const oversized = Buffer.concat([
+    Buffer.alloc(RUNTIME_DEFAULTS.maxSseBufferBytes + 1, 0x78),
+    Buffer.from("\n\n"),
+  ]);
+  const result = await invokeAdapter({
+    responsesFn: async () => new Response(oversized, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }),
+  }, {
+    body: { model: "gpt-5.6-sol", stream: true, input: "hello" },
+  });
+
+  assert.equal(result.status, 200);
+  assert.match(result.text, /SSE buffer exceeds 8388608 bytes/);
+  assert.match(result.text, /event: error/);
+});
+
+test("HTTP native unary Responses validates a successful envelope before forwarding", async () => {
+  for (const upstreamBody of ["not-json", JSON.stringify({ output: [] })]) {
+    const result = await invokeAdapter({
+      responsesFn: async () => new Response(upstreamBody, {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    }, {
+      body: { model: "gpt-5.6-sol", input: "hello" },
+    });
+
+    assert.equal(result.status, 502);
+    assert.equal(JSON.parse(result.text).error.code, "ccdx_invalid_responses_response");
+    assert.doesNotMatch(result.text, /not-json/);
+  }
+});
+
+test("HTTP native unary Responses preserves valid HTTP 200 incomplete and failed resources", async () => {
+  for (const status of ["incomplete", "failed"]) {
+    const upstream = {
+      id: `resp_${status}`,
+      object: "response",
+      status,
+      output: [],
+    };
+    const result = await invokeAdapter({
+      responsesFn: async () => Response.json(upstream),
+    }, {
+      body: { model: "gpt-5.6-sol", input: "hello" },
+    });
+
+    assert.equal(result.status, 200);
+    assert.deepEqual(JSON.parse(result.text), upstream);
+  }
+});
+
 test("HTTP Messages stream emits an Anthropic SSE error after headers", async () => {
   const result = await invokeAdapter({
     streamIdleTimeoutMs: 5,
@@ -759,8 +905,9 @@ test("prepareResponsesRequest: expands previous response history locally", () =>
   rememberResponseHistory(first, {
     id: "resp_1",
     output: [
-      { type: "reasoning", id: "rs_1", summary: [] },
+      { type: "reasoning", id: "rs_1", encrypted_content: "opaque-reasoning", summary: [] },
       { type: "message", id: "msg_1", role: "assistant", content: [{ type: "output_text", text: "STORED" }] },
+      { type: "future_output_item", id: "future_1", state: { opaque: true } },
     ],
   });
 
@@ -775,7 +922,9 @@ test("prepareResponsesRequest: expands previous response history locally", () =>
   assert.equal(second.body.store, undefined);
   assert.deepEqual(second.body.input, [
     { type: "message", role: "user", content: [{ type: "input_text", text: "Remember marker alpha." }] },
+    { type: "reasoning", id: "rs_1", encrypted_content: "opaque-reasoning", summary: [] },
     { type: "message", id: "msg_1", role: "assistant", content: [{ type: "output_text", text: "STORED" }] },
+    { type: "future_output_item", id: "future_1", state: { opaque: true } },
     { type: "message", role: "user", content: [{ type: "input_text", text: "What marker?" }] },
   ]);
 });
@@ -846,7 +995,7 @@ test("prepareResponsesRequest reports the current input start after top-level hi
   clearResponseHistoryForTests();
 });
 
-test("HTTP compact response replaces its parent chain with the complete replayable snapshot", async () => {
+test("HTTP compact response stores the upstream canonical output as a new replay root", async () => {
   clearResponseHistoryForTests();
 
   const original = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "old user context" });
@@ -896,20 +1045,14 @@ test("HTTP compact response replaces its parent chain with the complete replayab
   assert.deepEqual(compactBody.input.at(-1), { type: "compaction_trigger" });
   const response = JSON.parse(result.text);
   assert.equal(response.object, "response.compaction");
+  assert.deepEqual(response.output, compactOutput);
   const replay = prepareResponsesRequest({
     model: "gpt-5.6-sol",
     previous_response_id: "resp_after_compact",
     input: "continue from compact",
   }).body.input;
-  assert.deepEqual(replay.map((item) => item.type), ["message", "message", "message", "compaction", "message"]);
-  assert.deepEqual(replay.slice(0, 3).map((item) => item.content[0].text), [
-    "old user context",
-    "old assistant context",
-    "compact this conversation",
-  ]);
-  assert.equal(replay.slice(0, 3).every((item) => /^msg_[a-f0-9]{32}$/.test(item.id)), true);
-  assert.deepEqual(replay[3], { type: "compaction", id: "cmp_1", encrypted_content: "opaque-compact-state" });
-  assert.equal(replay[4].content[0].text, "continue from compact");
+  assert.deepEqual(replay.slice(0, -1), compactOutput);
+  assert.equal(replay.at(-1).content[0].text, "continue from compact");
   assert.deepEqual(
     prepareResponsesRequest({
       model: "gpt-5.6-sol",
@@ -1081,9 +1224,9 @@ test("compact snapshots use the sanitized body that actually succeeded upstream"
   assert.equal(attempts, 2);
   assert.equal(Object.hasOwn(successfulBody.input[0].content[0], "encrypted_content"), false);
   const response = JSON.parse(result.text);
-  const retained = response.output.find((item) => item.type === "message");
-  assert.equal(Object.hasOwn(retained.content[0], "encrypted_content"), false);
-  assert.equal(retained.content[0].text, "keep me");
+  assert.deepEqual(response.output, [
+    { type: "compaction", id: "cmp_sanitized", encrypted_content: "fresh-state" },
+  ]);
 });
 
 test("compact route forces a requested stream into unary mode and stores the valid snapshot", async () => {
@@ -1130,11 +1273,8 @@ test("compact route forces a requested stream into unary mode and stores the val
     previous_response_id: "resp_stream_compacted",
     input: "stream next",
   }).body.input;
-  assert.deepEqual(replay.map((item) => item.type), ["message", "message", "compaction", "message"]);
-  assert.deepEqual(replay.slice(0, 2).map((item) => item.content[0].text), [
-    "stream old context",
-    "stream compact attempt",
-  ]);
+  assert.deepEqual(replay.map((item) => item.type), ["message", "compaction", "message"]);
+  assert.deepEqual(replay.slice(0, 2), compactOutput);
   assert.equal(replay.at(-1).content[0].text, "stream next");
   clearResponseHistoryForTests();
 });
@@ -1183,13 +1323,8 @@ test("compact snapshot remains available when normal LRU eviction removes its ol
     previous_response_id: "resp_lru_compact",
     input: "continue compact",
   }).body.input;
-  assert.deepEqual(replay.map((item) => item.type), ["message", "message", "message", "compaction", "message"]);
-  assert.deepEqual(replay.slice(0, 3).map((item) => item.content[0].text), [
-    "old root",
-    "old child",
-    "compact old branch",
-  ]);
-  assert.deepEqual(replay[3], { type: "compaction", id: "cmp_lru", encrypted_content: "compact-state" });
+  assert.deepEqual(replay.map((item) => item.type), ["compaction", "message"]);
+  assert.deepEqual(replay[0], { type: "compaction", id: "cmp_lru", encrypted_content: "compact-state" });
   clearResponseHistoryForTests();
 });
 
@@ -3126,6 +3261,12 @@ test("encrypted history retry rebases the successful branch without rewriting th
       status: "completed",
       output: [
         {
+          type: "reasoning",
+          id: "rs_history",
+          encrypted_content: "root-reasoning-cipher",
+          summary: [],
+        },
+        {
           type: "function_call",
           id: "fc_history",
           call_id: "call_function",
@@ -3174,6 +3315,7 @@ test("encrypted history retry rebases the successful branch without rewriting th
 
     assert.equal(secondCalls.length, 2);
     assert.deepEqual(secondCalls[0], originalSecondBody);
+    assert.equal(JSON.stringify(secondCalls[0]).includes("root-reasoning-cipher"), true);
     assert.deepEqual(secondCalls[1].input.map((item) => item.type), [
       "message",
       "function_call",
@@ -3206,6 +3348,7 @@ test("encrypted history retry rebases the successful branch without rewriting th
     });
 
     assert.equal(thirdCalls.length, 1);
+    assert.equal(JSON.stringify(thirdCalls[0]).includes("root-reasoning-cipher"), false);
     assert.equal(JSON.stringify(thirdCalls[0]).includes("root-function-cipher"), false);
     assert.equal(JSON.stringify(thirdCalls[0]).includes("root-custom-cipher"), false);
     assert.deepEqual(

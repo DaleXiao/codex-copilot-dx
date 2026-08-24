@@ -31,6 +31,65 @@ function median(values) {
     : ordered[middle];
 }
 
+function sseLinearityProbe() {
+  return runProbe(`
+    import { webStreamLines } from "./src/stream.mjs";
+
+    const chunkBytes = 16 * 1024;
+    const maxBufferBytes = 8 * 1024 * 1024;
+    const chunk = new TextEncoder().encode("x".repeat(chunkBytes));
+    const results = [];
+    for (const inputMiB of [1, 2, 4, 8]) {
+      const inputBytes = inputMiB * 1024 * 1024;
+      let remaining = inputBytes;
+      const response = {
+        body: new ReadableStream({
+          pull(controller) {
+            if (remaining === 0) {
+              controller.close();
+              return;
+            }
+            const nextBytes = Math.min(chunk.byteLength, remaining);
+            controller.enqueue(nextBytes === chunk.byteLength ? chunk : chunk.subarray(0, nextBytes));
+            remaining -= nextBytes;
+          },
+        }, { highWaterMark: 0 }),
+      };
+      const originalByteLength = Buffer.byteLength;
+      let byteLengthCalls = 0;
+      let scannedBytes = 0;
+      Buffer.byteLength = function trackedByteLength(value, ...args) {
+        const bytes = originalByteLength(value, ...args);
+        byteLengthCalls += 1;
+        scannedBytes += bytes;
+        return bytes;
+      };
+      let lines = 0;
+      let outputBytes = 0;
+      const started = performance.now();
+      try {
+        for await (const line of webStreamLines(response, { maxBufferBytes })) {
+          lines += 1;
+          outputBytes += originalByteLength(line);
+        }
+      } finally {
+        Buffer.byteLength = originalByteLength;
+      }
+      results.push({
+        input_mib: inputMiB,
+        chunks: Math.ceil(inputBytes / chunkBytes),
+        lines,
+        output_bytes: outputBytes,
+        byte_length_calls: byteLengthCalls,
+        scanned_bytes: scannedBytes,
+        scan_ratio: +(scannedBytes / inputBytes).toFixed(3),
+        elapsed_ms: +(performance.now() - started).toFixed(1),
+      });
+    }
+    process.stdout.write(JSON.stringify({ chunk_kib: chunkBytes / 1024, max_buffer_mib: 8, results }));
+  `);
+}
+
 function deterministicPixels(byteLength, initialSeed) {
   const pixels = Buffer.alloc(byteLength);
   let seed = initialSeed;
@@ -422,6 +481,7 @@ const report = {
 };
 
 if (checkMode) {
+  report.sse_linearity = sseLinearityProbe();
   report.large_token_count = {
     proxy: largeTokenCountProbe("proxy"),
     materialized_array: largeTokenCountProbe("array"),
@@ -465,6 +525,20 @@ if (checkMode) {
   }
   if (report.tool_output_parse_cache.parse_calls !== 1) {
     failures.push(`stringified tool output parsed ${report.tool_output_parse_cache.parse_calls} times instead of once`);
+  }
+  const expectedSseSizes = [1, 2, 4, 8];
+  if (report.sse_linearity.results.length !== expectedSseSizes.length
+    || report.sse_linearity.results.some((sample, index) => sample.input_mib !== expectedSseSizes[index])) {
+    failures.push("SSE linearity probe did not cover 1/2/4/8 MiB inputs");
+  }
+  for (const sample of report.sse_linearity.results) {
+    const inputBytes = sample.input_mib * 1024 * 1024;
+    if (sample.lines !== 1 || sample.output_bytes !== inputBytes) {
+      failures.push(`SSE parser changed the ${sample.input_mib}MiB fragmented line`);
+    }
+    if (sample.scanned_bytes > inputBytes * 1.01 || sample.byte_length_calls > sample.chunks + 1) {
+      failures.push(`SSE parser scan complexity is not linear at ${sample.input_mib}MiB`);
+    }
   }
   for (const payload of report.large_payload_peak) {
     if (payload.admission_max_active_mib > payload.admission_budget_mib) {

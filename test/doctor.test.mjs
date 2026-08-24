@@ -433,7 +433,9 @@ test("inspectAdapterCompatibility: checks native Responses, history stream, comp
   assert.equal(requests.some((request) => request.body?.model === "codex-auto-review"), true);
   const historyRequest = requests.find((request) => request.body?.previous_response_id);
   assert.equal(historyRequest.body.previous_response_id, "resp_first");
-  assert.deepEqual(historyRequest.body.tools, [{ type: "image_generation" }]);
+  assert.equal(historyRequest.body.tools, undefined);
+  assert.equal(checks.some((check) => /image tool compatibility/i.test(check.message)), false);
+  assert.equal(checks.some((check) => /Responses stream and history compatibility/.test(check.message)), true);
   assert.equal(requests.some((request) => request.url.endsWith("/v1/messages")
     && request.body?.model === "claude-personal"), true);
 });

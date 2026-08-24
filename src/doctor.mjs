@@ -181,13 +181,12 @@ export async function inspectAdapterCompatibility({
   });
 
   if (firstResponse) {
-    await runCompatibilityCheck(checks, "Responses stream, history, and image tool compatibility", async () => {
+    await runCompatibilityCheck(checks, "Responses stream and history compatibility", async () => {
       const text = await compatibilityRequest(fetchImpl, `${baseUrl}/v1/responses`, {
         model: responsesModel,
         stream: true,
         previous_response_id: firstResponse.id,
         input: "Reply with OK again.",
-        tools: [{ type: "image_generation" }],
       }, timeoutMs);
       if (!/^event:\s*response\.completed\s*$/m.test(text)) throw new Error("stream did not contain response.completed");
     });

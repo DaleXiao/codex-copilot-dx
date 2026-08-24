@@ -7,7 +7,7 @@ Use [Codex Desktop](https://openai.com/codex), [Claude Code](https://claude.com/
 A single in-process adapter (port `2026`) exposes both APIs over one Copilot
 account by default, or over isolated Codex and Claude accounts when configured:
 
-- **Codex** -> OpenAI Responses API (`/v1/responses`, `/v1/responses/compact`); Responses-only models and compaction proxy directly, chat models convert to Chat Completions.
+- **Codex** -> OpenAI Responses API (`/v1/responses`, `/v1/responses/compact`); Responses-only models and compaction proxy directly, while chat models convert the text, image, and function-tool subset and explicitly reject incompatible top-level items, tools, and tool choices.
 - **Claude Code** -> Anthropic Messages API (`/v1/messages`, `/v1/messages/count_tokens`), translated to/from Chat Completions.
 - **Claude App** -> optional Claude Desktop App gateway profile using the same local Messages API plus local model discovery for the configured gateway key.
 - **PM Studio** -> optional macOS app patch that keeps the active PM profile for GPT models while routing enabled Claude models through an isolated CCDX Claude account.
@@ -301,7 +301,7 @@ To actively verify the protocol path through an already-running adapter, run:
 ccdx doctor --compat
 ```
 
-The compatibility doctor sends a few minimal Copilot requests to check Codex Auto-review, native Responses, streaming history, compaction, image tool namespace handling, and Anthropic streaming. It consumes a small amount of Copilot usage, never starts the adapter or device flow, and does not change client configuration. Combine it with `--online` when both the saved-token entitlement check and the adapter protocol checks are needed.
+The compatibility doctor sends a few minimal Copilot requests to check Codex Auto-review, native Responses, streaming history, compaction, and Anthropic streaming. It consumes a small amount of Copilot usage, never starts the adapter or device flow, and does not change client configuration. Combine it with `--online` when both the saved-token entitlement check and the adapter protocol checks are needed.
 
 For a read-only summary of the running adapter, use:
 
@@ -438,9 +438,9 @@ Before image encoding, CCDX leaves ordinary visual history byte-for-byte unchang
 
 When expanded Responses history exceeds Copilot's 50-image request limit, the adapter removes older duplicate image occurrences first, then keeps the 50 most recent images. This applies only to the forwarded request: local history remains complete, current images are preferred over older history, and requests at or below the limit are unchanged.
 
-For `/v1/responses/compact`, the adapter sends one terminal `compaction_trigger` in unary mode, validates that Copilot returned completed compaction state, and rebuilds a replayable snapshot from recent system, developer, user, and assistant messages plus every compaction item. Only a validated snapshot becomes a new local history root. Later turns continue from it without re-expanding pre-compaction history; existing older response branches remain available until normal history eviction.
+For `/v1/responses/compact`, the adapter sends one terminal `compaction_trigger` in unary mode, validates that Copilot returned completed compaction state, and preserves the complete upstream compacted window as the canonical next context. Only a validated window becomes a new local history root. Later turns continue from it without re-expanding pre-compaction history; existing older response branches remain available until normal history eviction.
 
-Successful streaming responses are accepted only when the upstream body is SSE and reaches its protocol terminal event. Unexpected EOF becomes a protocol-native stream error, and repeated blank tool-argument deltas are stopped per tool call. Inference responses forward safe quota, retry, model, trace, and upstream request-ID metadata; cookies, authorization, body-length, and encoding headers are not forwarded.
+Successful streaming responses are accepted only when the upstream body is SSE and reaches its protocol terminal event; bytes after that terminal are not forwarded. Unexpected EOF becomes a protocol-native stream error, and repeated blank tool-argument deltas are stopped per tool call. Inference responses forward safe quota, retry, model, trace, and upstream request-ID metadata; cookies, authorization, body-length, and encoding headers are not forwarded.
 
 Newer ChatGPT/Codex clients can advertise an `image_gen` namespace that already exists upstream. The adapter removes that exact conflicting client tool before forwarding and retries once only when Copilot explicitly reports an image namespace collision. Image inputs and screenshot optimization remain enabled.
 
@@ -456,4 +456,4 @@ npm run verify
 npm run bench:payload
 ```
 
-`npm test` runs the unit and handler-level suite. `npm run test:smoke` starts a real local HTTP adapter with fully injected offline upstreams. `npm run bench:check` enforces relative token-counting performance and request-admission resource limits. `npm run pack:check` verifies the npm tarball contents without publishing. `npm run bench:payload` remains a report-only, isolated-process benchmark for 5-60 MiB image payloads and does not contact Copilot. The CI workflow runs the verification checks on supported Node.js release lines.
+`npm test` runs the unit and handler-level suite. `npm run test:smoke` starts a real local HTTP adapter with fully injected offline upstreams. `npm run bench:check` enforces relative token-counting performance, linear SSE scanning, and request-admission resource limits. `npm run pack:check` verifies the npm tarball contents without publishing. `npm run bench:payload` remains a report-only, isolated-process benchmark for 5-60 MiB image payloads and does not contact Copilot. The CI workflow runs the verification checks on supported Node.js release lines.

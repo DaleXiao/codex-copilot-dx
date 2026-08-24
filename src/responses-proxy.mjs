@@ -81,15 +81,38 @@ function inspectResponseSseEvent(state, eventName, data) {
   state.completed = { response, event };
 }
 
-function readSseEvents(buffer, onEvent) {
-  while (true) {
-    const match = buffer.match(/\r?\n\r?\n/);
-    if (!match) return buffer;
-    const chunk = buffer.slice(0, match.index);
-    if (Buffer.byteLength(chunk) > MAX_SSE_BUFFER_BYTES) {
+function createResponseSseInspector(state) {
+  let eventBuffer = Buffer.allocUnsafe(Math.min(4096, MAX_SSE_BUFFER_BYTES + 4));
+  let eventLength = 0;
+  let previous1 = -1;
+  let previous2 = -1;
+  let previous3 = -1;
+
+  const ensureCapacity = (required) => {
+    if (required > MAX_SSE_BUFFER_BYTES + 4) {
       throw httpError(`Upstream SSE buffer exceeds ${MAX_SSE_BUFFER_BYTES} bytes`, 502);
     }
-    buffer = buffer.slice(match.index + match[0].length);
+    if (required <= eventBuffer.length) return;
+    let capacity = eventBuffer.length;
+    while (capacity < required) capacity = Math.min(MAX_SSE_BUFFER_BYTES + 4, Math.max(capacity * 2, required));
+    const next = Buffer.allocUnsafe(capacity);
+    eventBuffer.copy(next, 0, 0, eventLength);
+    eventBuffer = next;
+  };
+
+  const append = (bytes) => {
+    if (!bytes.byteLength) return;
+    ensureCapacity(eventLength + bytes.byteLength);
+    eventBuffer.set(bytes, eventLength);
+    eventLength += bytes.byteLength;
+  };
+
+  const inspectEvent = (delimiterLength) => {
+    const contentLength = eventLength - delimiterLength;
+    if (contentLength > MAX_SSE_BUFFER_BYTES) {
+      throw httpError(`Upstream SSE buffer exceeds ${MAX_SSE_BUFFER_BYTES} bytes`, 502);
+    }
+    const chunk = eventBuffer.subarray(0, contentLength).toString("utf8");
     const lines = chunk.split(/\r?\n/);
     const eventName = lines
       .find((line) => line.startsWith("event:"))
@@ -99,8 +122,73 @@ function readSseEvents(buffer, onEvent) {
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trimStart())
       .join("\n");
-    if (data) onEvent(eventName, data);
+    if (data) inspectResponseSseEvent(state, eventName, data);
+    eventLength = 0;
+    previous1 = -1;
+    previous2 = -1;
+    previous3 = -1;
+  };
+
+  return {
+    push(value) {
+      let segmentStart = 0;
+      for (let index = 0; index < value.byteLength; index += 1) {
+        const byte = value[index];
+        let delimiterLength = 0;
+        if (byte === 0x0a && previous1 === 0x0a) {
+          delimiterLength = previous2 === 0x0d ? 3 : 2;
+        } else if (byte === 0x0a && previous1 === 0x0d && previous2 === 0x0a) {
+          delimiterLength = previous3 === 0x0d ? 4 : 3;
+        }
+        if (delimiterLength) {
+          append(value.subarray(segmentStart, index + 1));
+          inspectEvent(delimiterLength);
+          segmentStart = index + 1;
+          if (state.sawTerminal) return index + 1;
+          continue;
+        }
+        previous3 = previous2;
+        previous2 = previous1;
+        previous1 = byte;
+      }
+      append(value.subarray(segmentStart));
+      if (eventLength > MAX_SSE_BUFFER_BYTES + 3) {
+        throw httpError(`Upstream SSE buffer exceeds ${MAX_SSE_BUFFER_BYTES} bytes`, 502);
+      }
+      return null;
+    },
+  };
+}
+
+function invalidResponsesResponse(message) {
+  const error = httpError(message, 502);
+  error.code = "ccdx_invalid_responses_response";
+  error.jsonBody = {
+    error: {
+      message,
+      type: "upstream_error",
+      code: error.code,
+    },
+  };
+  return error;
+}
+
+function parseSuccessfulResponsesResult(text) {
+  let response;
+  try {
+    response = JSON.parse(text);
+  } catch {
+    throw invalidResponsesResponse("Copilot Responses returned invalid JSON");
   }
+  if (!response
+    || typeof response !== "object"
+    || Array.isArray(response)
+    || typeof response.id !== "string"
+    || response.id.length === 0
+    || !Array.isArray(response.output)) {
+    throw invalidResponsesResponse("Copilot Responses returned an invalid response envelope");
+  }
+  return response;
 }
 
 function storeCompletedResponse(reqContext, completed) {
@@ -138,35 +226,26 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
       Connection: "keep-alive",
     });
     const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     const streamState = {
       completed: null,
       sawTerminal: false,
       sawOutput: false,
       toolArgumentGuard: new ToolArgumentDeltaGuard(),
     };
+    const inspector = createResponseSseInspector(streamState);
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          buffer += decoder.decode();
-          if (Buffer.byteLength(buffer) > MAX_SSE_BUFFER_BYTES) {
-            throw httpError(`Upstream SSE buffer exceeds ${MAX_SSE_BUFFER_BYTES} bytes`, 502);
-          }
-          readSseEvents(buffer, (eventName, data) => inspectResponseSseEvent(streamState, eventName, data));
           if (!streamState.sawTerminal) throw incompleteUpstreamStream("a terminal Responses event");
           storeCompletedResponse(reqContext, streamState.completed);
           res.end();
           return { successful: Boolean(streamState.completed), compacted: false };
         }
         options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
-        buffer += decoder.decode(value, { stream: true });
-        buffer = readSseEvents(buffer, (eventName, data) => inspectResponseSseEvent(streamState, eventName, data));
-        if (Buffer.byteLength(buffer) > MAX_SSE_BUFFER_BYTES) {
-          throw httpError(`Upstream SSE buffer exceeds ${MAX_SSE_BUFFER_BYTES} bytes`, 502);
-        }
-        if (!await writeOrDrain(res, value)) return;
+        const terminalOffset = inspector.push(value);
+        const forwarded = terminalOffset === null ? value : value.subarray(0, terminalOffset);
+        if (forwarded.byteLength > 0 && !await writeOrDrain(res, forwarded)) return;
         if (streamState.sawTerminal) {
           storeCompletedResponse(reqContext, streamState.completed);
           res.end();
@@ -202,24 +281,26 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
       res.end(JSON.stringify(response));
       return { successful: true, compacted: true };
     }
+    if (resp.ok) {
+      const response = parseSuccessfulResponsesResult(data);
+      rememberResponseHistory(reqContext, response);
+      recordResponsesUsage({
+        surface: reqContext.surface,
+        mode: "json",
+        model: reqContext.body?.model,
+        response,
+        event: response,
+      });
+      res.writeHead(resp.status, safeUpstreamResponseHeaders(resp.headers, {
+        contentType: "application/json",
+      }));
+      res.end(data);
+      return { successful: true, compacted: false };
+    }
     res.writeHead(resp.status, safeUpstreamResponseHeaders(resp.headers, {
       contentType: "application/json",
     }));
     res.end(data);
-    if (resp.ok) {
-      try {
-        const response = JSON.parse(data);
-        rememberResponseHistory(reqContext, response);
-        recordResponsesUsage({
-          surface: reqContext.surface,
-          mode: "json",
-          model: reqContext.body?.model,
-          response,
-          event: response,
-        });
-        return { successful: true, compacted: false };
-      } catch {}
-    }
     return { successful: false, compacted: false };
   }
 }

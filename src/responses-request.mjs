@@ -46,7 +46,7 @@ export function stripInternalResponsesInputFields(inputItems, { assertActive } =
 
 function responsesOutputItems(output) {
   if (!Array.isArray(output)) return [];
-  return output.filter((item) => ["message", "function_call", "custom_tool_call"].includes(item?.type));
+  return output.filter((item) => item && typeof item === "object");
 }
 
 function isCompactedResponsesOutput(output) {
@@ -62,8 +62,7 @@ function isSuccessfulCompactionResponse(response) {
 }
 
 function replayableResponsesOutputItems(output) {
-  if (!Array.isArray(output)) return [];
-  return output.filter((item) => item && typeof item === "object");
+  return responsesOutputItems(output);
 }
 
 function isEncryptedContentPart(value) {

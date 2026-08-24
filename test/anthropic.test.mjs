@@ -128,6 +128,30 @@ test("chatToAnthropic: tool_use response", () => {
   assert.equal(a.stop_reason, "tool_use");
 });
 
+test("chatToAnthropic: rejects non-empty invalid tool arguments instead of executing an empty object", () => {
+  for (const argumentsValue of ["{", "null", "[]", "1", '"text"']) {
+    const openai = { choices: [{ message: { content: null, tool_calls: [
+      { id: "tu_bad", function: { name: "dangerous_tool", arguments: argumentsValue } },
+    ] }, finish_reason: "tool_calls" }] };
+
+    assert.throws(
+      () => chatToAnthropic(openai, "m"),
+      (error) => error.statusCode === 502
+        && error.code === "upstream_tool_arguments_json_invalid"
+        && /dangerous_tool/.test(error.message),
+    );
+  }
+});
+
+test("chatToAnthropic: preserves the established empty tool arguments fallback", () => {
+  const openai = { choices: [{ message: { content: null, tool_calls: [
+    { id: "tu_empty", function: { name: "no_args", arguments: "" } },
+  ] }, finish_reason: "tool_calls" }] };
+
+  const result = chatToAnthropic(openai, "m");
+  assert.deepEqual(result.content[0].input, {});
+});
+
 test("chatToAnthropic: mixed text and tools", () => {
   const openai = { choices: [{ message: { content: "let me check", tool_calls: [
     { id: "tu_2", function: { name: "f", arguments: "{}" } },

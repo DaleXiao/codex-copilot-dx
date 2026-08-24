@@ -9,8 +9,39 @@ const CONFIG_PATH = path.join(os.homedir(), ".codex", "config.toml");
 const MODEL_CONTEXT_WINDOW = 1_000_000;
 const MODEL_AUTO_COMPACT_TOKEN_LIMIT = 900_000;
 
+function isTomlTableHeader(line) {
+  const source = line.trimStart();
+  const openingBrackets = source.startsWith("[[") ? 2 : source.startsWith("[") ? 1 : 0;
+  if (!openingBrackets) return false;
+
+  let quote = "";
+  let escaped = false;
+  for (let index = openingBrackets; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      if (quote === '"' && char === "\\" && !escaped) {
+        escaped = true;
+        continue;
+      }
+      if (char === quote && !escaped) quote = "";
+      escaped = false;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char !== "]" || (openingBrackets === 2 && source[index + 1] !== "]")) continue;
+
+    if (!source.slice(openingBrackets, index).trim()) return false;
+    const tail = source.slice(index + openingBrackets).trim();
+    return tail === "" || tail.startsWith("#");
+  }
+  return false;
+}
+
 function setTopLevelTomlDefault(lines, key, value) {
-  let end = lines.findIndex((line) => /^\s*\[[^\]]+\]\s*$/.test(line));
+  let end = lines.findIndex(isTomlTableHeader);
   if (end === -1) end = lines.length;
 
   const keyRe = new RegExp(`^\\s*${key}\\s*=`);
@@ -28,7 +59,7 @@ function setTomlKey(lines, sectionName, key, value) {
 
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^\s*\[[^\]]+\]\s*$/.test(lines[i])) {
+    if (isTomlTableHeader(lines[i])) {
       end = i;
       break;
     }
@@ -57,7 +88,11 @@ export function computeUpdatedCodexConfig(content, adapterPort = 2026, adapterHo
 
   let changed = false;
   const openaiLine = `openai_base_url = "${baseUrl}"`;
-  const openaiIndex = lines.findIndex((line) => /^openai_base_url\s*=/.test(line));
+  const firstSection = lines.findIndex(isTomlTableHeader);
+  const topLevelEnd = firstSection === -1 ? lines.length : firstSection;
+  const openaiIndex = lines.findIndex((line, index) => (
+    index < topLevelEnd && /^\s*openai_base_url\s*=/.test(line)
+  ));
   if (openaiIndex === -1) {
     lines.unshift(openaiLine);
     changed = true;

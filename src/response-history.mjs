@@ -202,13 +202,17 @@ export function responseHistoryMaterializedBytes(responseId) {
   return chain.reduce((bytes, entry) => bytes + entry.bytes, 0);
 }
 
-export function materializeResponseHistory(responseId, { assertActive } = {}) {
+export function materializeResponseHistory(responseId, { assertActive, routeMetadata } = {}) {
   assertActive?.();
   const { chain, rootId } = responseHistoryChain(responseId);
   const items = [];
   for (let index = 0; index < chain.length; index += 1) {
     if ((index & 63) === 0) assertActive?.();
     const entry = chain[chain.length - index - 1];
+    routeMetadata?.push({
+      affinity: entry.routeAffinity || null,
+      hasOpaque: entry.hasOpaque === true,
+    });
     items.push(...entry.inputItems, ...entry.outputItems);
   }
   assertActive?.();
@@ -218,11 +222,22 @@ export function materializeResponseHistory(responseId, { assertActive } = {}) {
   return materialized;
 }
 
-export function rememberResponseHistoryNode({ id, parentId, inputItems, outputItems, takeOwnership = false }) {
+export function rememberResponseHistoryNode({
+  id,
+  parentId,
+  inputItems,
+  outputItems,
+  hasOpaque = false,
+  routeAffinity = null,
+  takeOwnership = false,
+}) {
   if (!id || !Array.isArray(inputItems)) return;
   clearResponsesToolOutputPartsCache(inputItems);
   clearResponsesToolOutputPartsCache(outputItems);
-  const bytes = jsonByteLength([inputItems, outputItems]);
+  const historyValue = routeAffinity
+    ? [inputItems, outputItems, { routeAffinity, hasOpaque: hasOpaque === true }]
+    : [inputItems, outputItems];
+  const bytes = jsonByteLength(historyValue);
   if (bytes > maxBytes) {
     if (histories.has(id)) removeSubtree(id);
     rememberEvictedId(id);
@@ -236,6 +251,8 @@ export function rememberResponseHistoryNode({ id, parentId, inputItems, outputIt
     rootId,
     inputItems: takeOwnership ? inputItems : cloneJson(inputItems),
     outputItems: takeOwnership ? outputItems : cloneJson(outputItems),
+    hasOpaque: hasOpaque === true,
+    routeAffinity: routeAffinity ? cloneJson(routeAffinity) : null,
     bytes,
   };
   const oldRootId = existing?.rootId;

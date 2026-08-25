@@ -4,10 +4,11 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import { createAdapterHandler } from "../src/adapter.mjs";
 
-async function invokeMessages(chatCompletionsFn) {
+async function invokeMessages(chatCompletionsFn, { stream = false } = {}) {
   const req = Readable.from([Buffer.from(JSON.stringify({
     model: "claude-sonnet-4.6",
     max_tokens: 64,
+    stream,
     messages: [{ role: "user", content: "use the tool" }],
   }))]);
   req.headers = { "content-type": "application/json" };
@@ -20,9 +21,11 @@ async function invokeMessages(chatCompletionsFn) {
   res.writableEnded = false;
   res.headersSent = false;
   res.statusCode = 200;
+  res.headers = {};
   const chunks = [];
-  res.writeHead = (statusCode) => {
+  res.writeHead = (statusCode, headers = {}) => {
     res.statusCode = statusCode;
+    res.headers = { ...res.headers, ...headers };
     res.headersSent = true;
     return res;
   };
@@ -41,7 +44,7 @@ async function invokeMessages(chatCompletionsFn) {
 
   const pending = createAdapterHandler({ chatCompletionsFn })(req, res);
   await Promise.all([pending, finished]);
-  return { status: res.statusCode, text: Buffer.concat(chunks).toString("utf8") };
+  return { status: res.statusCode, headers: res.headers, text: Buffer.concat(chunks).toString("utf8") };
 }
 
 test("HTTP Messages rejects malformed and non-object upstream tool arguments without leaking them", async () => {
@@ -75,4 +78,53 @@ test("HTTP Messages rejects malformed and non-object upstream tool arguments wit
     assert.doesNotMatch(result.text, /raw-(?:invalid|scalar)-secret/);
     assert.equal(result.text.includes(rawArguments), false);
   }
+});
+
+test("HTTP Messages rewrites explicit context-window failures for Anthropic clients", async () => {
+  const upstreamBodies = [
+    { error: { code: "model_max_prompt_tokens_exceeded", message: "prompt token count exceeds the limit" } },
+    { error: { message: "Your input exceeds the context window of this model. Please adjust your input." } },
+  ];
+
+  for (const [index, upstreamBody] of upstreamBodies.entries()) {
+    const upstreamStatus = index === 0 ? 413 : 400;
+    const result = await invokeMessages(async () => new Response(JSON.stringify(upstreamBody), {
+      status: upstreamStatus,
+      headers: {
+        "content-type": "text/plain",
+        "retry-after": "2",
+        "x-request-id": `context-${index}`,
+      },
+    }), { stream: index === 1 });
+
+    assert.equal(result.status, upstreamStatus);
+    assert.equal(result.headers["Content-Type"], "application/json");
+    assert.equal(result.headers["Retry-After"], "2");
+    assert.equal(result.headers["X-Upstream-Request-Id"], `context-${index}`);
+    assert.deepEqual(JSON.parse(result.text), {
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: "prompt is too long: your prompt is too long. Please reduce the number of messages or use a model with a larger context window.",
+      },
+    });
+  }
+});
+
+test("HTTP Messages preserves unrelated upstream failures", async () => {
+  const upstreamText = JSON.stringify({ error: { code: "rate_limit_exceeded", message: "context service busy" } });
+  const result = await invokeMessages(async () => new Response(upstreamText, {
+    status: 429,
+    headers: {
+      "content-type": "application/problem+json",
+      "retry-after": "7",
+      "x-request-id": "rate-limit-1",
+    },
+  }));
+
+  assert.equal(result.status, 429);
+  assert.equal(result.text, upstreamText);
+  assert.equal(result.headers["Content-Type"], "application/problem+json");
+  assert.equal(result.headers["Retry-After"], "7");
+  assert.equal(result.headers["X-Upstream-Request-Id"], "rate-limit-1");
 });

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   loadModelCache,
+  MODEL_CACHE_SOFT_TTL_MS,
   modelCachePath,
   saveModelCache,
 } from "../src/model-cache.mjs";
@@ -93,6 +94,76 @@ test("profile model runtime: inherited mode shares registry/client work and refr
   assert.equal(refreshed.codex, refreshed.claude);
   assert.equal(listCalls, 2);
   assert.deepEqual(client.endpointCatalogs, [catalog, catalog]);
+  assert.equal(changes.length, 1);
+});
+
+test("profile model runtime: stale cache starts immediately and refreshes in the background", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-runtime-swr-"));
+  const staleCatalog = { data: [gptModel("gpt-cached"), claudeModel("claude-cached")] };
+  const liveCatalog = { data: [gptModel("gpt-live"), claudeModel("claude-live")] };
+  saveModelCache(staleCatalog, {
+    home,
+    now: () => Date.now() - MODEL_CACHE_SOFT_TTL_MS - 1000,
+  });
+  const pending = deferred();
+  let listCalls = 0;
+  const client = clientWithList(() => {
+    listCalls += 1;
+    return pending.promise;
+  });
+  const runtime = createProfileModelRuntime({
+    codexClient: client,
+    home,
+    env: {},
+    log: () => {},
+  });
+
+  const initialized = await runtime.initialize();
+
+  assert.equal(listCalls, 1);
+  assert.equal(runtime.codexRegistry.source, "cache");
+  assert.equal(runtime.codexRegistry.cacheState, "stale");
+  assert.equal(runtime.codexRegistry.refreshInFlight, true);
+  assert.deepEqual(runtime.codexRegistry.models, staleCatalog);
+  assert.equal(initialized.codex.backgroundRefresh instanceof Promise, true);
+  pending.resolve(modelResult(liveCatalog));
+  await initialized.codex.backgroundRefresh;
+  assert.equal(runtime.codexRegistry.source, "live");
+  assert.equal(runtime.codexRegistry.cacheState, "fresh");
+  assert.equal(runtime.codexRegistry.refreshInFlight, false);
+  assert.deepEqual(runtime.codexRegistry.models, liveCatalog);
+});
+
+test("profile model runtime: concurrent refreshes singleflight apply and notification", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-runtime-singleflight-"));
+  const catalog = { data: [gptModel(), claudeModel("claude-once")] };
+  const pending = deferred();
+  let listCalls = 0;
+  const client = clientWithList(() => {
+    listCalls += 1;
+    return pending.promise;
+  });
+  const changes = [];
+  const runtime = createProfileModelRuntime({
+    codexClient: client,
+    home,
+    env: {},
+    log: () => {},
+    onClaudeModelsChanged: (models) => changes.push(models),
+  });
+
+  const first = runtime.refreshCodex();
+  const second = runtime.refreshClaude();
+  const all = runtime.refreshAll();
+  assert.equal(listCalls, 1);
+  assert.equal(runtime.codexRegistry.generation, 1);
+  pending.resolve(modelResult(catalog));
+  await Promise.all([first, second, all]);
+
+  assert.equal(listCalls, 1);
+  assert.deepEqual(client.endpointCatalogs, [catalog]);
+  assert.equal(changes.length, 1);
+  assert.equal(runtime.codexRegistry.refreshInFlight, false);
 });
 
 test("profile model runtime: isolated initialization fetches concurrently into separate caches", async () => {
@@ -163,7 +234,7 @@ test("profile model runtime: isolated refresh failure preserves one profile with
   let claudeCalls = 0;
   const codexClient = clientWithList(async () => {
     codexCalls += 1;
-    throw new Error("codex offline");
+    throw new Error("codex offline Bearer ghp_must_not_leak");
   });
   const claudeClient = clientWithList(async () => {
     claudeCalls += 1;
@@ -194,6 +265,10 @@ test("profile model runtime: isolated refresh failure preserves one profile with
   assert.deepEqual(loadModelCache({ home, profile: "claude" }), newClaude);
   assert.deepEqual(codexClient.endpointCatalogs, [oldCodex]);
   assert.deepEqual(claudeClient.endpointCatalogs, [oldClaude, newClaude]);
+  assert.match(runtime.codexRegistry.lastError, /codex offline Bearer <redacted>/);
+  assert.doesNotMatch(runtime.codexRegistry.lastError, /ghp_must_not_leak/);
+  assert.equal(Number.isFinite(runtime.codexRegistry.lastErrorAtMs), true);
+  assert.equal(runtime.claudeRegistry.lastError, null);
 });
 
 test("profile model runtime: isolated Claude ignores a cache from another credential", async () => {

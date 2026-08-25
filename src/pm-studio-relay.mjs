@@ -445,11 +445,14 @@ export function createPmStudioRelayHandler(options = {}) {
       releaseRequest = releaseOnce(admission);
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       const body = await readJsonBody(req, { admission, signal: abort.signal });
-      const modelType = modelRouter.classify(body?.model);
-      if (modelType === "unsupported_claude") {
+      const routePlan = modelRouter.plan(body?.model);
+      if (routePlan.disposition === "reject") {
         throw localError(400, "model_not_supported", "The requested Claude model is not enabled for PM Studio");
       }
-      if (modelType !== "claude") {
+      if (routePlan.disposition !== "relay"
+        || routePlan.origin !== "ccdx"
+        || routePlan.profile !== "claude"
+        || routePlan.protocol !== "openai-chat-completions") {
         throw localError(
           400,
           "native_route_required",

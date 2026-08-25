@@ -116,11 +116,23 @@ function modelRegistryStatus(modelRegistry) {
   const modelData = Array.isArray(modelRegistry?.models)
     ? modelRegistry.models
     : modelRegistry?.models?.data;
-  return {
+  const result = {
     source: String(modelRegistry?.source || "built-in"),
     models: Array.isArray(modelData) ? modelData.length : 0,
     claude_models: Array.isArray(modelRegistry?.modelDefs) ? modelRegistry.modelDefs.length : 0,
   };
+  if (typeof modelRegistry?.cacheState === "string") {
+    const savedAtMs = Number(modelRegistry.cacheSavedAtMs);
+    result.cache_state = modelRegistry.cacheState;
+    result.cache_age_ms = Number.isFinite(savedAtMs) ? Math.max(0, Date.now() - savedAtMs) : null;
+    result.refresh_in_flight = modelRegistry.refreshInFlight === true;
+    result.generation = finiteRuntimeNumber(modelRegistry.generation);
+    result.last_error = typeof modelRegistry.lastError === "string" ? modelRegistry.lastError : null;
+    result.last_error_at_ms = Number.isFinite(modelRegistry.lastErrorAtMs)
+      ? modelRegistry.lastErrorAtMs
+      : null;
+  }
+  return result;
 }
 
 function finiteRuntimeNumber(value, fallback = 0) {

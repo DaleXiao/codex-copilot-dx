@@ -91,7 +91,10 @@ Once enabled, routing is fixed by API surface rather than by model name:
 
 The two profiles keep separate service tokens, API bases, refresh/backoff state,
 model endpoint metadata, and credential-bound model caches. Switching either
-GitHub account invalidates that profile's old cache instead of borrowing it. If the isolated Claude profile later
+GitHub account invalidates that profile's old cache instead of borrowing it.
+Cached catalogs are fresh for two hours; older catalogs remain immediately
+available for up to seven days while CCDX refreshes them in the background.
+If the isolated Claude profile later
 becomes invalid, Claude requests fail with a reauthentication instruction while
 Codex remains available; CCDX never silently falls back to the enterprise
 account. Reauthorize it explicitly with:

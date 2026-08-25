@@ -251,6 +251,30 @@ test("runtime status reuses Codex health for an inherited Claude profile", () =>
   assert.deepEqual(payload.routing, { responses: "codex", messages: "codex" });
 });
 
+test("runtime status exposes bounded model-cache refresh diagnostics", () => {
+  const savedAtMs = Date.now() - 5000;
+  const payload = runtimeStatusPayload({
+    codexModelRegistry: {
+      source: "cache",
+      models: { data: [{ id: "gpt-a" }] },
+      modelDefs: [],
+      cacheState: "stale",
+      cacheSavedAtMs: savedAtMs,
+      refreshInFlight: true,
+      generation: 3,
+      lastError: "Copilot models returned HTTP 503",
+      lastErrorAtMs: savedAtMs + 1000,
+    },
+  });
+
+  assert.equal(payload.models.cache_state, "stale");
+  assert.equal(payload.models.cache_age_ms >= 5000, true);
+  assert.equal(payload.models.refresh_in_flight, true);
+  assert.equal(payload.models.generation, 3);
+  assert.equal(payload.models.last_error, "Copilot models returned HTTP 503");
+  assert.equal(payload.models.last_error_at_ms, savedAtMs + 1000);
+});
+
 test("runtime status reports unprovable Claude profile freshness as false", () => {
   const missing = runtimeStatusPayload({ claudeMode: "isolated" });
   const failed = runtimeStatusPayload({

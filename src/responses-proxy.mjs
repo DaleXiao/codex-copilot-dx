@@ -5,7 +5,8 @@ import {
   sendUpstreamError,
   writeOrDrain,
 } from "./http-transport.mjs";
-import { openCopilotResponse, rememberResponseHistory } from "./responses-request.mjs";
+import { openCopilotResponse } from "./copilot-responses-compat.mjs";
+import { rememberResponseHistory } from "./responses-request.mjs";
 import {
   compactionInputWithoutTrigger,
   parseResponsesCompactionResult,

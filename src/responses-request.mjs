@@ -1,5 +1,4 @@
-import { responses as copilotResponses } from "./copilot.mjs";
-import { httpError } from "./http-transport.mjs";
+import { applyCopilotResponsesRequestPolicies } from "./copilot-responses-policy.mjs";
 import { debugLog } from "./log.mjs";
 import {
   materializeResponseHistory,
@@ -8,7 +7,20 @@ import {
 } from "./response-history.mjs";
 import { isResponsesToolOutputItem, readResponsesToolOutputParts } from "./responses-content.mjs";
 import { enforceResponsesImageLimit } from "./responses-image-limit.mjs";
-import { status } from "./status.mjs";
+import { routePlanAffinity, sameRoutePlanAffinity } from "./route-plan.mjs";
+
+export {
+  isEncryptedContentVerificationError,
+  isImageNamespaceCollisionError,
+  sanitizeImageNamespaceCollisionRequest,
+} from "./copilot-responses-policy.mjs";
+
+// Compatibility export for consumers that imported this helper before the
+// Copilot retry boundary moved into its provider-owned module.
+export async function openCopilotResponse(...args) {
+  const compatibility = await import("./copilot-responses-compat.mjs");
+  return compatibility.openCopilotResponse(...args);
+}
 
 function cloneJson(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -71,6 +83,8 @@ function isEncryptedContentPart(value) {
 
 const OMIT_ENCRYPTED_CONTENT = Symbol("omit-encrypted-content");
 const ENCRYPTED_HISTORY_REBASE = Symbol("encrypted-history-rebase");
+const RELEASE_HISTORY_INPUT = Symbol("release-history-input");
+const HISTORY_PRESSURE_ROOT = Symbol("history-pressure-root");
 const ENCRYPTED_TOOL_OUTPUT_MARKER = "[CCDX: encrypted tool output omitted because upstream could not decrypt it.]";
 
 function stripEncryptedReasoningValue(value, state) {
@@ -159,7 +173,21 @@ function isEncryptedReasoningInputItem(item) {
   return keys.length === 1 && keys[0] === "encrypted_content";
 }
 
-export function sanitizeEncryptedReasoningRequest(reqContext) {
+function responseValueHasOpaqueState(value) {
+  if (Array.isArray(value)) return value.some(responseValueHasOpaqueState);
+  if (!value || typeof value !== "object") return false;
+  if (isEncryptedReasoningInputItem(value)
+    || Object.prototype.hasOwnProperty.call(value, "encrypted_content")) {
+    return true;
+  }
+  if (isResponsesToolOutputItem(value) && typeof value.output === "string") {
+    const parsed = readResponsesToolOutputParts(value);
+    if (parsed?.parts.some(responseValueHasOpaqueState)) return true;
+  }
+  return Object.values(value).some(responseValueHasOpaqueState);
+}
+
+export function sanitizeEncryptedReasoningRequest(reqContext, { historicalOnly = false } = {}) {
   const state = { changed: false };
   let body = cloneJson(reqContext.body);
   let currentInputStart = reqContext.currentInputStart;
@@ -170,6 +198,10 @@ export function sanitizeEncryptedReasoningRequest(reqContext) {
     for (let index = 0; index < body.input.length; index += 1) {
       const item = body.input[index];
       const historical = Number.isFinite(currentInputStart) && index < currentInputStart;
+      if (historicalOnly && !historical) {
+        input.push(item);
+        continue;
+      }
       if (isEncryptedReasoningInputItem(item)) {
         state.changed = true;
         if (historical) historicalInputChanged = true;
@@ -188,11 +220,13 @@ export function sanitizeEncryptedReasoningRequest(reqContext) {
     }
     body.input = input;
     if (Number.isFinite(currentInputStart)) currentInputStart = retainedBeforeCurrent;
-  } else {
+  } else if (!historicalOnly) {
     body = stripEncryptedReasoningValue(body, state);
   }
   if (!state.changed) return null;
-  const historyInputItems = Array.isArray(reqContext.historyInputItems)
+  const historyInputItems = historicalOnly
+    ? reqContext.historyInputItems
+    : Array.isArray(reqContext.historyInputItems)
     ? reqContext.historyInputItems.flatMap((item) => {
       if (isEncryptedReasoningInputItem(item)) return [];
       const stripped = stripEncryptedReasoningInputValue(item, { changed: false });
@@ -210,10 +244,13 @@ export function sanitizeEncryptedReasoningRequest(reqContext) {
     currentInputStart,
     inputItems: Array.isArray(body.input) ? body.input : reqContext.inputItems,
     historyInputItems,
+    [RELEASE_HISTORY_INPUT]: historicalOnly
+      ? reqContext[RELEASE_HISTORY_INPUT]
+      : historyInputItems,
   };
 }
 
-function finalizeEncryptedHistoryRebase(reqContext) {
+export function finalizeEncryptedHistoryRebase(reqContext) {
   if (!reqContext[ENCRYPTED_HISTORY_REBASE]) return reqContext;
   const finalized = {
     ...reqContext,
@@ -226,98 +263,43 @@ function finalizeEncryptedHistoryRebase(reqContext) {
   return finalized;
 }
 
-export function isEncryptedContentVerificationError(statusCode, text) {
-  if (statusCode < 400 || !text) return false;
-  const lower = String(text).toLowerCase();
-  const reasoningFailure = lower.includes("encrypted content")
-    && lower.includes("could not be verified")
-    && (lower.includes("could not be decrypted") || lower.includes("could not be parsed"));
-  const functionOutputFailure = lower.includes("encrypted function output content")
-    && lower.includes("could not be decrypted or decoded");
-  const missingEncryptedContent = statusCode < 500
-    && /missing required parameter:\s*(['"]?)input\[\d+\](?:\.[a-z0-9_]+|\[\d+\])*\.encrypted_content\1(?=\.?(?:\s|$|["},\]]))/.test(lower);
-  return reasoningFailure || functionOutputFailure || missingEncryptedContent;
-}
-
-export function isImageNamespaceCollisionError(statusCode, text) {
-  if (statusCode < 400 || !text) return false;
-  const lower = String(text).toLowerCase();
-  return lower.includes("namespace")
-    && lower.includes("image_gen")
-    && lower.includes("collid");
-}
-
-function isImageNamespaceTool(tool, { collisionFallback = false } = {}) {
-  if (!tool || typeof tool !== "object") return false;
-  const type = String(tool.type || "").toLowerCase();
-  const name = String(tool.name || tool.function?.name || "").toLowerCase();
-  const namespace = String(tool.namespace || "").toLowerCase();
-  if (["image_gen", "image_generation"].includes(type)) return true;
-  if (["image_gen", "image_generation"].includes(name)) return true;
-  if (namespace === "image_gen" || namespace === "image_generation") return true;
-  return collisionFallback && [type, name, namespace].some((value) => value.startsWith("image_gen"));
-}
-
-export function sanitizeImageNamespaceCollisionRequest(reqContext) {
-  if (!Array.isArray(reqContext?.body?.tools)) return null;
-  const body = cloneJson(reqContext.body);
-  const filtered = body.tools.filter((tool) => !isImageNamespaceTool(tool, { collisionFallback: true }));
-  if (filtered.length === body.tools.length) return null;
-  if (filtered.length) body.tools = filtered;
-  else delete body.tools;
-  return { ...reqContext, body };
-}
-
-export async function openCopilotResponse(reqContext, upstream = copilotResponses, options = {}) {
-  let encryptedRetried = false;
-  let imageNamespaceRetried = false;
-  let payloadPrepared = false;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    options.assertPrepareActive?.();
-    const resp = await upstream(reqContext.body, {
-      assertActive: options.assertPrepareActive,
-      signal: options.signal,
-      currentInputStart: reqContext.currentInputStart,
-      onUpstreamStart: options.onUpstreamStart,
-      payloadPrepared,
-    });
-    options.assertPrepareActive?.();
-    payloadPrepared = true;
-    if (resp.ok) {
-      reqContext = finalizeEncryptedHistoryRebase(reqContext);
-      return { resp, reqContext };
-    }
-
-    const errorText = await resp.text();
-    options.assertPrepareActive?.();
-    if (!imageNamespaceRetried && isImageNamespaceCollisionError(resp.status, errorText)) {
-      const retryContext = sanitizeImageNamespaceCollisionRequest(reqContext);
-      if (retryContext) {
-        imageNamespaceRetried = true;
-        reqContext = retryContext;
-        console.warn(status("warn", "image_gen namespace rejected by upstream; retrying without the conflicting image tool"));
-        continue;
-      }
-    }
-    if (!encryptedRetried && isEncryptedContentVerificationError(resp.status, errorText)) {
-      const retryContext = sanitizeEncryptedReasoningRequest(reqContext);
-      if (retryContext) {
-        encryptedRetried = true;
-        reqContext = retryContext;
-        console.warn(status("warn", "encrypted replay content rejected by upstream; retrying without unavailable encrypted content"));
-        continue;
-      }
-    }
-    return { resp, reqContext, errorText };
+export function applyResponseHistoryRoutePlan(reqContext, routePlan) {
+  const next = reqContext;
+  next.routePlan = routePlan;
+  if (!next.historyParentId) return next;
+  const currentAffinity = routePlanAffinity(routePlan);
+  const historyMetadata = next.historyRouteMetadata;
+  if (!currentAffinity
+    || !Array.isArray(historyMetadata)
+    || historyMetadata.length === 0
+    || historyMetadata.some((metadata) => metadata.affinity === null)) {
+    return next;
   }
-  throw httpError("Responses compatibility retry limit exceeded", 502);
+  const hasMismatchedOpaqueState = historyMetadata.some((metadata) => (
+    metadata.hasOpaque && !sameRoutePlanAffinity(metadata.affinity, currentAffinity)
+  ));
+  if (!hasMismatchedOpaqueState) {
+    return next;
+  }
+
+  const sanitized = sanitizeEncryptedReasoningRequest(next, { historicalOnly: true });
+  if (!sanitized) return next;
+  sanitized.routePlan = routePlan;
+  const historyRootId = next.historyRootId;
+  const rebased = finalizeEncryptedHistoryRebase(sanitized);
+  if (historyRootId) rebased[HISTORY_PRESSURE_ROOT] = historyRootId;
+  return rebased;
 }
 
-function isBuiltinImageTool(tool) {
-  return isImageNamespaceTool(tool);
+export function responseHistoryPressureRootId(reqContext) {
+  return reqContext?.[HISTORY_PRESSURE_ROOT] || reqContext?.historyRootId || null;
 }
 
-export function prepareResponsesRequest(reqBody, { assertActive, mutate = false } = {}) {
+export function prepareResponsesRequest(reqBody, {
+  assertActive,
+  copilotBoundary = true,
+  mutate = false,
+} = {}) {
   assertActive?.();
   const body = mutate ? reqBody : cloneJson(reqBody);
   assertActive?.();
@@ -328,9 +310,13 @@ export function prepareResponsesRequest(reqBody, { assertActive, mutate = false 
   const previousId = body.previous_response_id;
   let historyItems = [];
   let historyRootId = null;
+  const historyRouteMetadata = [];
 
   if (previousId !== undefined && previousId !== null) {
-    historyItems = materializeResponseHistory(previousId, { assertActive });
+    historyItems = materializeResponseHistory(previousId, {
+      assertActive,
+      routeMetadata: historyRouteMetadata,
+    });
     historyRootId = responseHistoryRootId(previousId);
     body.input = [...historyItems, ...currentInputItems];
   } else {
@@ -351,10 +337,10 @@ export function prepareResponsesRequest(reqBody, { assertActive, mutate = false 
 
   delete body.previous_response_id;
   delete body.store;
-  if (Array.isArray(body.tools)) {
-    body.tools = body.tools.filter((tool) => !isBuiltinImageTool(tool));
-    if (!body.tools.length) delete body.tools;
-  }
+  // Preserve the historical helper contract for embedders. Runtime handlers
+  // pass copilotBoundary:false and apply the policy only after selecting a
+  // concrete Copilot RoutePlan.
+  if (copilotBoundary) applyCopilotResponsesRequestPolicies(body);
   stripInternalResponsesInputFields(body.input, { assertActive });
   stripInternalResponsesInputFields(historyInputItems, { assertActive });
   assertActive?.();
@@ -366,15 +352,21 @@ export function prepareResponsesRequest(reqBody, { assertActive, mutate = false 
     currentInputStart: retainedCurrentInputStart < 0 ? body.input.length : retainedCurrentInputStart,
     historyParentId: previousId ?? null,
     historyRootId,
+    historyRouteMetadata,
     historyInputItems,
+    ...(previousId !== undefined && previousId !== null
+      ? { [RELEASE_HISTORY_INPUT]: historyInputItems }
+      : {}),
     takeHistoryOwnership: mutate,
   };
 }
 
 export function dropMaterializedResponseHistory(reqContext) {
-  if (!reqContext?.historyParentId || !Array.isArray(reqContext.historyInputItems)) return false;
-  reqContext.body = { ...reqContext.body, input: reqContext.historyInputItems };
-  reqContext.inputItems = reqContext.historyInputItems;
+  const releaseInput = reqContext?.[RELEASE_HISTORY_INPUT];
+  if (!Array.isArray(releaseInput)) return false;
+  reqContext.body = { ...reqContext.body, input: releaseInput };
+  reqContext.inputItems = releaseInput;
+  delete reqContext[RELEASE_HISTORY_INPUT];
   reqContext.currentInputStart = 0;
   return true;
 }
@@ -391,6 +383,8 @@ export function rememberResponseHistory(reqContext, responseJson) {
     parentId: compacted ? null : reqContext.historyParentId,
     inputItems: sourceInputItems,
     outputItems: sourceOutputItems,
+    hasOpaque: responseValueHasOpaqueState([sourceInputItems, sourceOutputItems]),
+    routeAffinity: routePlanAffinity(reqContext.routePlan),
     takeOwnership: reqContext.takeHistoryOwnership,
   });
 }

@@ -42,6 +42,28 @@ test("initializeModelRegistry: waits for live models when no cache exists", asyn
   assert.equal(result.backgroundRefresh, null);
 });
 
+test("initializeModelRegistry: serves stale cache while refresh runs in the background", async () => {
+  let finishRefresh;
+  let refreshCalls = 0;
+  const pendingRefresh = new Promise((resolve) => { finishRefresh = resolve; });
+
+  const result = await initializeModelRegistry({
+    loadCached: () => ({ loaded: true, stale: true }),
+    currentModelDefs: () => [{ id: "stale" }],
+    refresh: () => {
+      refreshCalls += 1;
+      return pendingRefresh;
+    },
+  });
+
+  assert.deepEqual(result.modelDefs, [{ id: "stale" }]);
+  assert.equal(result.source, "cache");
+  assert.equal(refreshCalls, 1);
+  assert.equal(result.backgroundRefresh instanceof Promise, true);
+  finishRefresh([{ id: "live" }]);
+  assert.deepEqual(await result.backgroundRefresh, [{ id: "live" }]);
+});
+
 test("runInBackground: isolates task failures", async () => {
   let error;
   await runInBackground(() => { throw new Error("offline"); }, (value) => { error = value; });

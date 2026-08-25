@@ -71,6 +71,22 @@ test("anthropicToChat: tool_result block becomes tool message", () => {
   assert.equal(m.content, "42");
 });
 
+test("anthropicToChat: preserves text and tool_result block order", () => {
+  const r = anthropicToChat({ model: "m", messages: [
+    { role: "user", content: [
+      { type: "text", text: "before" },
+      { type: "tool_result", tool_use_id: "tu_1", content: "42" },
+      { type: "text", text: "after" },
+    ] },
+  ] });
+
+  assert.deepEqual(r.messages, [
+    { role: "user", content: "before" },
+    { role: "tool", tool_call_id: "tu_1", content: "42" },
+    { role: "user", content: "after" },
+  ]);
+});
+
 test("anthropicToChat: tools input_schema becomes function.parameters", () => {
   const r = anthropicToChat({ model: "m", messages: [{ role: "user", content: "hi" }],
     tools: [{ name: "get_x", description: "d", input_schema: { type: "object", properties: { a: { type: "string" } } } }] });
@@ -78,6 +94,23 @@ test("anthropicToChat: tools input_schema becomes function.parameters", () => {
   assert.equal(r.tools[0].function.name, "get_x");
   assert.equal(r.tools[0].function.description, "d");
   assert.deepEqual(r.tools[0].function.parameters, { type: "object", properties: { a: { type: "string" } } });
+});
+
+test("anthropicToChat: completes only the bare object tool schema", () => {
+  const bareSchema = { type: "object" };
+  const constrainedSchema = { type: "object", additionalProperties: false };
+  const r = anthropicToChat({
+    model: "m",
+    messages: [],
+    tools: [
+      { name: "bare", input_schema: bareSchema },
+      { name: "constrained", input_schema: constrainedSchema },
+    ],
+  });
+
+  assert.deepEqual(r.tools[0].function.parameters, { type: "object", properties: {} });
+  assert.deepEqual(r.tools[1].function.parameters, constrainedSchema);
+  assert.deepEqual(bareSchema, { type: "object" });
 });
 
 test("anthropicToChat: maps tool_choice", () => {

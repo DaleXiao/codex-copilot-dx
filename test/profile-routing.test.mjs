@@ -50,3 +50,32 @@ test("PM Studio model router memoizes catalog classification and invalidates on 
   assert.equal(router.classify("claude-personal"), "unsupported_claude");
   assert.equal(router.diagnostics().rebuilds, 3);
 });
+
+test("PM Studio route plans keep enterprise native and relay only enabled Claude models", () => {
+  const router = createPmStudioModelRouter({
+    getCatalog: () => ({ data: [claudeModel()] }),
+    isClaudeEnabled: () => true,
+  });
+
+  assert.deepEqual(router.plan("gpt-enterprise"), {
+    disposition: "native",
+    origin: "pm-studio-native",
+    profile: "enterprise",
+    protocol: "openai-chat-completions",
+    model: "gpt-enterprise",
+    surface: "pm-studio",
+  });
+  assert.deepEqual(router.plan("claude-personal"), {
+    disposition: "relay",
+    origin: "ccdx",
+    profile: "claude",
+    protocol: "openai-chat-completions",
+    model: "claude-personal",
+    surface: "pm-studio",
+  });
+  assert.equal(Object.isFrozen(router.plan("claude-personal")), true);
+  assert.equal(
+    router.plan("claude-personal", { protocol: "openai-responses" }).protocol,
+    "openai-chat-completions",
+  );
+});

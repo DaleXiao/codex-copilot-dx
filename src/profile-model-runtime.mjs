@@ -1,6 +1,6 @@
 import {
   isValidModelList,
-  loadModelCache,
+  loadModelCacheEntry,
   saveModelCache,
 } from "./model-cache.mjs";
 import {
@@ -22,11 +22,46 @@ function parsedCatalog(result) {
   if (result?.status < 200 || result?.status >= 300) {
     throw new Error(`Copilot models returned HTTP ${result?.status}`);
   }
-  const models = JSON.parse(result.body);
+  let models;
+  try {
+    models = JSON.parse(result.body);
+  } catch {
+    throw new Error("Copilot models response was not valid JSON");
+  }
   if (!isValidModelList(models)) {
     throw new Error("Copilot models response contained no valid models");
   }
   return models;
+}
+
+function createModelRegistry() {
+  return {
+    modelDefs: undefined,
+    models: undefined,
+    source: "built-in",
+    cacheState: "none",
+    cacheSavedAtMs: null,
+    lastError: null,
+    lastErrorAtMs: null,
+    refreshInFlight: false,
+    generation: 0,
+  };
+}
+
+function sameModelDefs(left, right) {
+  if (left === right) return true;
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function safeRefreshError(error, { timedOut = false, timeoutMs } = {}) {
+  if (timedOut) return `Model refresh timed out after ${timeoutMs}ms`;
+  const raw = String(error?.message || error?.name || "Model refresh failed")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\b(?:github_pat_|gh[pousr]_|copilot_)[A-Za-z0-9._-]+\b/gi, "<redacted>")
+    .replace(/\bBearer\s+\S+/gi, "Bearer <redacted>")
+    .trim();
+  return (raw || "Model refresh failed").slice(0, 240);
 }
 
 export function createProfileModelRuntime({
@@ -51,11 +86,13 @@ export function createProfileModelRuntime({
     throw new Error("Isolated Claude models require an isolated Claude client");
   }
 
-  const codexRegistry = { modelDefs: undefined, models: undefined, source: "built-in" };
+  const codexRegistry = createModelRegistry();
   const claudeRegistry = claudeMode === "inherited"
     ? codexRegistry
-    : { modelDefs: undefined, models: undefined, source: "built-in" };
+    : createModelRegistry();
   const customClaudeDefs = parseModelAliasEnv(env.CCDX_CLAUDE_MODEL_ALIASES);
+  const refreshFlights = new Map();
+  const refreshGenerations = new Map();
   const refreshTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
     ? timeoutMs
     : DEFAULT_TIMEOUT_MS;
@@ -85,8 +122,9 @@ export function createProfileModelRuntime({
       ? customClaudeDefs.map((model) => ({ ...model }))
       : claudeDesktopModelDefsFromCopilotModels(models);
     if (discovered.length) {
+      const changed = !sameModelDefs(registry.modelDefs, discovered);
       registry.modelDefs = discovered;
-      notifyClaudeModels(discovered);
+      if (changed) notifyClaudeModels(discovered);
     }
     return registry.modelDefs;
   }
@@ -96,11 +134,13 @@ export function createProfileModelRuntime({
       ? String(claudeCredentialFingerprint || "").trim()
       : String(codexCredentialFingerprint || "").trim();
     if (profile === "claude" && !credentialFingerprint) return false;
-    const cached = loadModelCache({ home, profile, credentialFingerprint });
+    const cached = loadModelCacheEntry({ home, profile, credentialFingerprint });
     if (!cached) return false;
     try {
-      applyCatalog({ client, models: cached, registry, source: "cache", ownsClaudeModels });
-      return true;
+      applyCatalog({ client, models: cached.models, registry, source: "cache", ownsClaudeModels });
+      registry.cacheState = cached.state;
+      registry.cacheSavedAtMs = cached.savedAtMs;
+      return { loaded: true, stale: cached.state === "stale" };
     } catch {
       return false;
     }
@@ -131,13 +171,22 @@ export function createProfileModelRuntime({
     }
   }
 
-  function persist(models, profile) {
+  function persist(models, profile, registry, generation) {
     const credentialFingerprint = profile === "claude"
       ? String(claudeCredentialFingerprint || "").trim()
       : String(codexCredentialFingerprint || "").trim();
     if (profile === "claude" && !credentialFingerprint) return;
     try {
-      saveModelCache(models, { home, profile, credentialFingerprint });
+      const saved = saveModelCache(models, {
+        home,
+        profile,
+        credentialFingerprint,
+        isCurrent: () => refreshGenerations.get(profile) === generation,
+      });
+      if (saved) {
+        registry.cacheState = "fresh";
+        registry.cacheSavedAtMs = Date.now();
+      }
     } catch (error) {
       const label = profile === "codex" ? "Copilot" : "Claude Copilot";
       emit("warn", `Could not persist the ${label} model cache (${error.message})`);
@@ -162,12 +211,13 @@ export function createProfileModelRuntime({
     return profile === "claude" ? "built-in model list" : "no cached model list";
   }
 
-  async function refreshProfile({ client, profile, registry, ownsClaudeModels, checksCodex }) {
+  async function performRefresh({ client, profile, registry, ownsClaudeModels, checksCodex }, generation) {
     const controllerLabel = claudeMode === "inherited"
       ? ""
       : `${profile === "codex" ? "Codex" : "Claude"} `;
     try {
       const models = await requestCatalog(client);
+      if (refreshGenerations.get(profile) !== generation) return registry.modelDefs;
       if (checksCodex) checkCodexCatalog(models);
       const modelDefs = applyCatalog({
         client,
@@ -176,18 +226,42 @@ export function createProfileModelRuntime({
         source: "live",
         ownsClaudeModels,
       });
-      persist(models, profile);
+      persist(models, profile, registry, generation);
+      registry.lastError = null;
+      registry.lastErrorAtMs = null;
       if (ownsClaudeModels) logClaudeCatalog(modelDefs);
       return modelDefs;
     } catch (error) {
+      if (refreshGenerations.get(profile) !== generation) return registry.modelDefs;
       const fallback = fallbackLabel(registry, profile);
       const timedOut = error?.name === "AbortError" || error?.code === "ABORT_ERR";
+      const diagnostic = safeRefreshError(error, { timedOut, timeoutMs: refreshTimeoutMs });
+      registry.lastError = diagnostic;
+      registry.lastErrorAtMs = Date.now();
       const message = timedOut
         ? `${controllerLabel}model refresh timed out after ${refreshTimeoutMs}ms; using ${fallback}`
-        : `Could not refresh ${controllerLabel.toLowerCase()}model list; using ${fallback} (${error.message})`;
+        : `Could not refresh ${controllerLabel.toLowerCase()}model list; using ${fallback} (${diagnostic})`;
       emit("warn", message[0].toUpperCase() + message.slice(1));
       return registry.modelDefs;
     }
+  }
+
+  function refreshProfile(options) {
+    const { profile, registry } = options;
+    const existing = refreshFlights.get(profile);
+    if (existing) return existing.promise;
+
+    const generation = (refreshGenerations.get(profile) || 0) + 1;
+    refreshGenerations.set(profile, generation);
+    registry.generation = generation;
+    registry.refreshInFlight = true;
+    const flight = { generation, promise: null };
+    refreshFlights.set(profile, flight);
+    flight.promise = performRefresh(options, generation).finally(() => {
+      if (refreshFlights.get(profile) === flight) refreshFlights.delete(profile);
+      if (refreshGenerations.get(profile) === generation) registry.refreshInFlight = false;
+    });
+    return flight.promise;
   }
 
   function refreshCodex() {

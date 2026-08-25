@@ -44,26 +44,10 @@ function toolResultContent(content) {
 }
 
 // Convert one Anthropic message into zero or more OpenAI messages.
-function convertMessage(msg) {
-  const out = [];
-  const role = msg.role; // "user" | "assistant"
-
-  if (typeof msg.content === "string") {
-    out.push({ role, content: msg.content });
-    return out;
-  }
-  if (!Array.isArray(msg.content)) return out;
-
-  // tool_result blocks must become independent role:"tool" messages.
-  const toolResults = msg.content.filter((b) => b.type === "tool_result");
-  for (const tr of toolResults) {
-    out.push({ role: "tool", tool_call_id: tr.tool_use_id, content: toolResultContent(tr.content) });
-  }
-
-  // Convert remaining text, image, and tool_use blocks.
+function convertContentBlocks(role, blocks) {
   const textImageParts = [];
   const toolCalls = [];
-  for (const b of msg.content) {
+  for (const b of blocks) {
     if (b.type === "text") {
       textImageParts.push({ type: "text", text: b.text });
     } else if (b.type === "image") {
@@ -80,15 +64,64 @@ function convertMessage(msg) {
     const m = { role, content: null, tool_calls: toolCalls };
     if (textImageParts.length === 1 && textImageParts[0].type === "text") m.content = textImageParts[0].text;
     else if (textImageParts.length > 0) m.content = textImageParts;
-    out.push(m);
+    return m;
   } else if (textImageParts.length > 0) {
     if (textImageParts.length === 1 && textImageParts[0].type === "text") {
-      out.push({ role, content: textImageParts[0].text });
+      return { role, content: textImageParts[0].text };
     } else {
-      out.push({ role, content: textImageParts });
+      return { role, content: textImageParts };
     }
   }
+  return null;
+}
+
+function convertMessage(msg) {
+  const out = [];
+  const role = msg.role; // "user" | "assistant"
+
+  if (typeof msg.content === "string") {
+    out.push({ role, content: msg.content });
+    return out;
+  }
+  if (!Array.isArray(msg.content)) return out;
+
+  if (!msg.content.some((block) => block.type === "tool_result")) {
+    const converted = convertContentBlocks(role, msg.content);
+    if (converted) out.push(converted);
+    return out;
+  }
+
+  let contentBlocks = [];
+  const flushContent = () => {
+    const converted = convertContentBlocks(role, contentBlocks);
+    if (converted) out.push(converted);
+    contentBlocks = [];
+  };
+  for (const block of msg.content) {
+    if (block.type !== "tool_result") {
+      contentBlocks.push(block);
+      continue;
+    }
+    flushContent();
+    out.push({
+      role: "tool",
+      tool_call_id: block.tool_use_id,
+      content: toolResultContent(block.content),
+    });
+  }
+  flushContent();
   return out;
+}
+
+function toolInputSchema(inputSchema) {
+  if (inputSchema
+    && typeof inputSchema === "object"
+    && !Array.isArray(inputSchema)
+    && inputSchema.type === "object"
+    && Object.keys(inputSchema).length === 1) {
+    return { type: "object", properties: {} };
+  }
+  return inputSchema;
 }
 
 function mapToolChoice(tc) {
@@ -119,7 +152,7 @@ export function anthropicToChat(body, options = {}) {
   if (Array.isArray(body.tools) && body.tools.length) {
     chatReq.tools = body.tools.map((t) => ({
       type: "function",
-      function: { name: t.name, description: t.description, parameters: t.input_schema },
+      function: { name: t.name, description: t.description, parameters: toolInputSchema(t.input_schema) },
     }));
   }
   const tc = mapToolChoice(body.tool_choice);

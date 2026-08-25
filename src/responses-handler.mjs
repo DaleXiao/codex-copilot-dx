@@ -1,4 +1,5 @@
 import { getCachedModelEndpoints } from "./copilot.mjs";
+import { applyCopilotResponsesRequestPolicies } from "./copilot-responses-policy.mjs";
 import {
   createRequestAbort,
   logRequestFailure,
@@ -20,10 +21,13 @@ import { clearResponsesToolOutputPartsCache } from "./responses-content.mjs";
 import { proxyCopilotResponses } from "./responses-proxy.mjs";
 import { responseHistoryMaterializedBytes } from "./response-history.mjs";
 import {
+  applyResponseHistoryRoutePlan,
   dropMaterializedResponseHistory,
   prepareResponsesRequest,
   rememberResponseHistory,
+  responseHistoryPressureRootId,
 } from "./responses-request.mjs";
+import { createRoutePlan } from "./route-plan.mjs";
 import { status } from "./status.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
@@ -141,7 +145,7 @@ export function createResponsesHandler(options) {
     };
     const markAdaptiveHttpTimeout = (statusCode) => {
       if (statusCode !== 408) return false;
-      return imagePressure?.markTimeout?.(prepared?.historyRootId, {
+      return imagePressure?.markTimeout?.(responseHistoryPressureRootId(prepared), {
         eligible: imagePressureResult?.pressureEligible === true,
       }) || false;
     };
@@ -172,7 +176,11 @@ export function createResponsesHandler(options) {
         }
         assertPrepareActive();
       }
-      prepared = prepareResponsesRequest(parsed, { assertActive: assertPrepareActive, mutate: true });
+      prepared = prepareResponsesRequest(parsed, {
+        assertActive: assertPrepareActive,
+        copilotBoundary: false,
+        mutate: true,
+      });
       parsed = null;
       assertPrepareActive();
       imagePressureResult = imagePressure?.apply?.(prepared, { assertActive: assertPrepareActive }) || null;
@@ -192,7 +200,17 @@ export function createResponsesHandler(options) {
         || isResponsesOnlyModel(upstreamModel, getCachedModelEndpointsFn)
         || (usesCustomTools && cachedModelSupportsResponses(upstreamModel, getCachedModelEndpointsFn));
       if (usesCustomTools && !useNativeResponses) throw unsupportedCustomToolsError(upstreamModel);
-      if (useNativeResponses) {
+      const routePlan = createRoutePlan({
+        disposition: "relay",
+        origin: "ccdx",
+        profile: "codex",
+        protocol: useNativeResponses ? "openai-responses" : "openai-chat-completions",
+        model: upstreamModel,
+        surface: "responses",
+      });
+      prepared = applyResponseHistoryRoutePlan(prepared, routePlan);
+      applyCopilotResponsesRequestPolicies(prepared.body);
+      if (routePlan.protocol === "openai-responses") {
         const result = await proxyCopilotResponses(prepared, req, res, responsesFn, {
           assertPrepareActive,
           signal: abort.signal,
@@ -201,9 +219,9 @@ export function createResponsesHandler(options) {
           releaseRequest: releaseUpstreamPayload,
           streamIdleTimeoutMs,
         });
-        if (result?.successful) imagePressure?.markSuccess?.(prepared.historyRootId);
+        if (result?.successful) imagePressure?.markSuccess?.(responseHistoryPressureRootId(prepared));
         else markAdaptiveHttpTimeout(result?.upstreamStatus);
-      } else {
+      } else if (routePlan.protocol === "openai-chat-completions") {
         let { chatReq, bodyText } = await prepareResponsesChatPayload(prepared, {
           assertActive: assertPrepareActive,
           payloadOptions: responsesPayloadOptions,
@@ -254,7 +272,7 @@ export function createResponsesHandler(options) {
               });
             },
           });
-          if (successful) imagePressure?.markSuccess?.(prepared.historyRootId);
+          if (successful) imagePressure?.markSuccess?.(responseHistoryPressureRootId(prepared));
         } else {
           try {
             startUpstreamTimeout();
@@ -272,7 +290,7 @@ export function createResponsesHandler(options) {
             }
             const response = chatToResponses(JSON.parse(data), model);
             rememberResponseHistory(prepared, response);
-            imagePressure?.markSuccess?.(prepared.historyRootId);
+            imagePressure?.markSuccess?.(responseHistoryPressureRootId(prepared));
             recordResponsesUsage({ surface: prepared.surface, mode: "json", model, response, event: response });
             res.writeHead(200, safeUpstreamResponseHeaders(upstream.headers, {
               contentType: "application/json",
@@ -284,6 +302,8 @@ export function createResponsesHandler(options) {
             sendJsonError(res, responseError, 502);
           }
         }
+      } else {
+        throw new Error(`Unsupported Responses target protocol: ${routePlan.protocol}`);
       }
     } catch (error) {
       const responseError = applyAdaptiveTimeout(error);
@@ -351,7 +371,11 @@ export function createResponsesCompactHandler(options) {
         assertPrepareActive();
       }
       prepared = prepareResponsesCompactionRequest(
-        prepareResponsesRequest(parsed, { assertActive: assertPrepareActive, mutate: true }),
+        prepareResponsesRequest(parsed, {
+          assertActive: assertPrepareActive,
+          copilotBoundary: false,
+          mutate: true,
+        }),
       );
       assertPrepareActive();
       prepared.surface = "responses_compact";
@@ -360,6 +384,15 @@ export function createResponsesCompactHandler(options) {
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=false`));
+      prepared = applyResponseHistoryRoutePlan(prepared, createRoutePlan({
+        disposition: "relay",
+        origin: "ccdx",
+        profile: "codex",
+        protocol: "openai-responses",
+        model: upstreamModel,
+        surface: "responses-compact",
+      }));
+      applyCopilotResponsesRequestPolicies(prepared.body);
       const result = await proxyCopilotResponses(prepared, req, res, responsesCompactFn, {
         assertPrepareActive,
         signal: abort.signal,
@@ -367,7 +400,7 @@ export function createResponsesCompactHandler(options) {
         onUpstreamStart: startUpstreamTimeout,
         releaseRequest: releaseUpstreamPayload,
       });
-      if (result?.compacted) imagePressure?.clear?.(prepared.historyRootId);
+      if (result?.compacted) imagePressure?.clear?.(responseHistoryPressureRootId(prepared));
     } catch (error) {
       logRequestFailure("Responses compact", error, abort);
       sendJsonError(res, error, 502);

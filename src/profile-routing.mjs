@@ -2,6 +2,7 @@ import {
   isClaudeCopilotCatalogEntry,
   isClaudeCopilotModel,
 } from "./models.mjs";
+import { createRoutePlan } from "./route-plan.mjs";
 
 function catalogData(catalog) {
   if (Array.isArray(catalog)) return catalog;
@@ -47,14 +48,51 @@ export function createPmStudioModelRouter({ getCatalog, isClaudeEnabled } = {}) 
     return { allowed, known };
   }
 
+  function classify(modelId) {
+    const id = String(modelId || "").trim();
+    const { allowed, known } = availability();
+    if (allowed.has(id)) return "claude";
+    if (known.has(id) || id.toLowerCase().startsWith("claude-")) return "unsupported_claude";
+    return "enterprise";
+  }
+
+  function plan(modelId) {
+    const id = String(modelId || "").trim();
+    const modelType = classify(id);
+    const protocol = "openai-chat-completions";
+    if (modelType === "claude") {
+      return createRoutePlan({
+        disposition: "relay",
+        origin: "ccdx",
+        profile: "claude",
+        protocol,
+        model: id,
+        surface: "pm-studio",
+      });
+    }
+    if (modelType === "unsupported_claude") {
+      return createRoutePlan({
+        disposition: "reject",
+        origin: "ccdx",
+        profile: "claude",
+        protocol,
+        model: id || "unknown",
+        surface: "pm-studio",
+      });
+    }
+    return createRoutePlan({
+      disposition: "native",
+      origin: "pm-studio-native",
+      profile: "enterprise",
+      protocol,
+      model: id || "unknown",
+      surface: "pm-studio",
+    });
+  }
+
   return Object.freeze({
-    classify(modelId) {
-      const id = String(modelId || "").trim();
-      const { allowed, known } = availability();
-      if (allowed.has(id)) return "claude";
-      if (known.has(id) || id.toLowerCase().startsWith("claude-")) return "unsupported_claude";
-      return "enterprise";
-    },
+    plan,
+    classify,
     allowedModels() {
       return [...availability().allowed.values()];
     },

@@ -1580,6 +1580,38 @@ test("prepareResponsesRequest: drops unsupported image generation tools", () => 
   assert.deepEqual(similarlyNamedFunction.body.tools, [
     { type: "function", name: "image_generation_status", parameters: { type: "object" } },
   ]);
+
+  const forcedUnsupported = prepareResponsesRequest({
+    model: "gpt-5.5",
+    input: "hello",
+    tools: [
+      { type: "image_generation" },
+      { type: "function", name: "lookup" },
+    ],
+    tool_choice: { type: "image_generation" },
+  });
+  assert.deepEqual(forcedUnsupported.body.tools, [{ type: "function", name: "lookup" }]);
+  assert.equal(forcedUnsupported.body.tool_choice, undefined);
+
+  const requiredWithoutTools = prepareResponsesRequest({
+    model: "gpt-5.5",
+    input: "hello",
+    tools: [{ type: "image_generation" }],
+    tool_choice: "required",
+  });
+  assert.equal(requiredWithoutTools.body.tools, undefined);
+  assert.equal(requiredWithoutTools.body.tool_choice, undefined);
+
+  const requiredWithSurvivingTool = prepareResponsesRequest({
+    model: "gpt-5.5",
+    input: "hello",
+    tools: [
+      { type: "image_generation" },
+      { type: "function", name: "lookup" },
+    ],
+    tool_choice: "required",
+  });
+  assert.equal(requiredWithSurvivingTool.body.tool_choice, "required");
 });
 
 test("responsesToChat: preserves flat Responses function tools", () => {
@@ -2234,6 +2266,57 @@ test("HTTP Responses chat bridge trims historical tool output before forwarding"
   assert.ok(Buffer.byteLength(JSON.stringify(upstreamBody)) <= 700);
   assert.match(upstreamBody.messages.find((message) => message.role === "tool").content, /earlier tool output omitted/);
   clearResponseHistoryForTests();
+});
+
+test("HTTP Responses strips target-bound encrypted history before a streaming Chat route change", async () => {
+  clearResponseHistoryForTests();
+  try {
+    const root = await invokeAdapter({
+      responsesFn: async () => Response.json({
+        id: "resp_http_affinity_root",
+        status: "completed",
+        output: [
+          { type: "reasoning", id: "rs_http", encrypted_content: "http-cipher", summary: [] },
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "visible history" }],
+          },
+        ],
+      }),
+    }, {
+      body: { model: "gpt-5.6-sol", input: "start" },
+    });
+    assert.equal(root.status, 200);
+
+    let chatRequest;
+    const continuation = await invokeAdapter({
+      chatCompletionsFn: async (body) => {
+        chatRequest = structuredClone(body);
+        return new Response([
+          'data: {"model":"gpt-4o","choices":[{"delta":{"content":"continued"}}]}',
+          "",
+          "data: [DONE]",
+          "",
+        ].join("\n"), { headers: { "Content-Type": "text/event-stream" } });
+      },
+    }, {
+      body: {
+        model: "gpt-4o",
+        stream: true,
+        previous_response_id: "resp_http_affinity_root",
+        input: "continue",
+      },
+    });
+
+    assert.equal(continuation.status, 200);
+    assert.match(continuation.text, /response\.completed/);
+    assert.equal(JSON.stringify(chatRequest).includes("encrypted_content"), false);
+    assert.equal(JSON.stringify(chatRequest).includes("visible history"), true);
+    assert.equal(JSON.stringify(chatRequest).includes("continue"), true);
+  } finally {
+    clearResponseHistoryForTests();
+  }
 });
 
 async function assertChatBridgeRejectsOversizedCurrentInput(stream) {
@@ -3613,6 +3696,7 @@ test("openCopilotResponse: retries an explicit image_gen namespace collision onc
         { type: "image_gen_future", name: "future_render" },
         { type: "function", name: "lookup" },
       ],
+      tool_choice: { type: "function", namespace: "image_gen.v2", name: "render" },
     },
     inputItems: [],
   };
@@ -3630,7 +3714,10 @@ test("openCopilotResponse: retries an explicit image_gen namespace collision onc
   assert.equal(calls.length, 2);
   assert.deepEqual(payloadPrepared, [false, true]);
   assert.deepEqual(calls[1].tools, [{ type: "function", name: "lookup" }]);
-  assert.deepEqual(sanitizeImageNamespaceCollisionRequest(ctx).body.tools, [{ type: "function", name: "lookup" }]);
+  assert.equal(calls[1].tool_choice, undefined);
+  const sanitized = sanitizeImageNamespaceCollisionRequest(ctx);
+  assert.deepEqual(sanitized.body.tools, [{ type: "function", name: "lookup" }]);
+  assert.equal(sanitized.body.tool_choice, undefined);
 });
 
 test("readJsonBody: parses gzip-compressed JSON request bodies", async () => {

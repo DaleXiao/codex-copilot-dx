@@ -20,6 +20,42 @@ import { requireUpstreamEventStream, withChatStreamUsage } from "./stream-contra
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordAnthropicUsage } from "./usage.mjs";
 
+const PROMPT_TOO_LONG_MESSAGE = "prompt is too long: your prompt is too long. Please reduce the number of messages or use a model with a larger context window.";
+
+function contextWindowErrorBody(text) {
+  let error;
+  try {
+    const parsed = JSON.parse(text);
+    error = parsed && typeof parsed === "object" ? parsed.error : null;
+  } catch {
+    error = { message: text };
+  }
+  if (!error || typeof error !== "object") return null;
+  const code = error.code;
+  const message = typeof error.message === "string" ? error.message.toLowerCase() : "";
+  const matches = code === "context_length_exceeded"
+    || code === "model_max_prompt_tokens_exceeded"
+    || message.includes("exceeds the context window of this model")
+    || message.includes("maximum context length is")
+    || message.includes("request body is too large for model context window");
+  if (!matches) return null;
+  return JSON.stringify({
+    type: "error",
+    error: { type: "invalid_request_error", message: PROMPT_TOO_LONG_MESSAGE },
+  });
+}
+
+function sendAnthropicUpstreamError(res, response, text) {
+  const rewritten = contextWindowErrorBody(text);
+  if (!rewritten) {
+    sendUpstreamError(res, response, text);
+    return;
+  }
+  const headers = new Headers(response.headers);
+  headers.set("content-type", "application/json");
+  sendUpstreamError(res, { status: response.status, headers }, rewritten);
+}
+
 export function createAnthropicCountTokensHandler(options) {
   const { acquireRequest, requestBodyTimeoutMs } = options;
 
@@ -76,7 +112,7 @@ export function createAnthropicMessagesHandler(options) {
         const upstream = await chatCompletionsFn(withChatStreamUsage(chatReq), { signal: abort.signal });
         releaseRequest();
         if (!upstream.ok) {
-          sendUpstreamError(res, upstream, await upstream.text());
+          sendAnthropicUpstreamError(res, upstream, await upstream.text());
           return;
         }
         await requireUpstreamEventStream(upstream);
@@ -113,7 +149,7 @@ export function createAnthropicMessagesHandler(options) {
         releaseRequest();
         const data = await upstream.text();
         if (!upstream.ok) {
-          sendUpstreamError(res, upstream, data);
+          sendAnthropicUpstreamError(res, upstream, data);
           return;
         }
         const anthropicMessage = chatToAnthropic(JSON.parse(data), requestedModel, { forceModel: forceRequestedModel });

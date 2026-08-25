@@ -42,13 +42,17 @@ export {
 } from "./response-history.mjs";
 export { forwardToChat, responsesToChat } from "./responses-bridge.mjs";
 export {
+  openCopilotResponse,
+} from "./copilot-responses-compat.mjs";
+export {
   isEncryptedContentVerificationError,
   isImageNamespaceCollisionError,
-  openCopilotResponse,
+  sanitizeImageNamespaceCollisionRequest,
+} from "./copilot-responses-policy.mjs";
+export {
   prepareResponsesRequest,
   rememberResponseHistory,
   sanitizeEncryptedReasoningRequest,
-  sanitizeImageNamespaceCollisionRequest,
   stripInternalResponsesInputFields,
 } from "./responses-request.mjs";
 

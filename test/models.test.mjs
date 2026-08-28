@@ -9,6 +9,7 @@ import {
   parseModelAliasEnv,
   responsesModelIdsFromCopilotModels,
   resolveAnthropicModel,
+  resolveCopilotPriorityTierModel,
   resolveOpenAIModel,
 } from "../src/models.mjs";
 
@@ -75,6 +76,31 @@ test("responsesModelIdsFromCopilotModels: exposes only selectable Responses targ
     { id: "codex-auto-review", supported_endpoints: ["/responses"] },
     { id: "bad\u001bmodel", supported_endpoints: ["/responses"] },
   ] }), ["gpt-5.5", "gpt-5.6-sol"]);
+});
+
+test("resolveCopilotPriorityTierModel: maps only an explicitly enabled OpenAI Responses fast model", () => {
+  const eligible = {
+    id: "gpt-5.6-sol-fast",
+    vendor: "OpenAI",
+    policy: { state: "enabled" },
+    model_picker_enabled: true,
+    supported_endpoints: ["/responses", "ws:/responses"],
+  };
+  assert.equal(resolveCopilotPriorityTierModel("gpt-5.6-sol", "priority", { data: [eligible] }), "gpt-5.6-sol-fast");
+  assert.equal(resolveCopilotPriorityTierModel("gpt-5.6-sol", "default", { data: [eligible] }), null);
+  assert.equal(resolveCopilotPriorityTierModel("gpt-5.6-sol", "ultrafast", { data: [eligible] }), null);
+  assert.equal(resolveCopilotPriorityTierModel("gpt-5.6-sol-fast", "priority", { data: [eligible] }), null);
+  assert.equal(resolveCopilotPriorityTierModel("gpt-future", "priority", { data: [{ ...eligible, id: "gpt-future-fast" }] }), null);
+  assert.equal(resolveCopilotPriorityTierModel("gpt-5.6-sol", "priority", { data: [] }), null);
+
+  for (const ineligible of [
+    { ...eligible, vendor: "Azure OpenAI" },
+    { ...eligible, policy: { state: "disabled" } },
+    { ...eligible, model_picker_enabled: false },
+    { ...eligible, supported_endpoints: ["/responses", "/chat/completions"] },
+  ]) {
+    assert.equal(resolveCopilotPriorityTierModel("gpt-5.6-sol", "priority", [ineligible]), null);
+  }
 });
 
 test("claudeDesktopModelDefsFromCopilotModels: does not expose dash aliases", () => {

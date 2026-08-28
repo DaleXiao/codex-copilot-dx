@@ -12,6 +12,7 @@ import {
   CODEX_AUTO_REVIEW_MODEL,
   modelIsResponsesOnly,
   modelSupportsChatCompletions,
+  resolveCopilotPriorityTierModel,
   resolveOpenAIModel,
 } from "./models.mjs";
 import { chatToResponses, forwardToChat, responsesBodyUsesCustomTools } from "./responses-bridge.mjs";
@@ -90,6 +91,7 @@ export function createResponsesHandler(options) {
     chatCompletionsFn,
     getCachedModelEndpointsFn = getCachedModelEndpoints,
     imagePressure,
+    modelRegistry,
     openAIModelEnv,
     requestBodyTimeoutMs,
     responsesPayloadOptions,
@@ -191,12 +193,22 @@ export function createResponsesHandler(options) {
       prepared.surface = "responses";
       const model = prepared.body.model || "unknown";
       const streaming = prepared.body.stream === true;
-      const { requestedModel, upstreamModel } = resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver);
+      const resolvedModel = resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver);
+      const { requestedModel } = resolvedModel;
+      let { upstreamModel } = resolvedModel;
+      const priorityTierModel = requestedModel === upstreamModel
+        ? resolveCopilotPriorityTierModel(upstreamModel, prepared.body.service_tier, modelRegistry?.models)
+        : null;
+      if (priorityTierModel) {
+        upstreamModel = priorityTierModel;
+        delete prepared.body.service_tier;
+      }
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${streaming}`));
       const usesCustomTools = responsesBodyUsesCustomTools(prepared.body);
-      const useNativeResponses = requestedModel === CODEX_AUTO_REVIEW_MODEL
+      const useNativeResponses = Boolean(priorityTierModel)
+        || requestedModel === CODEX_AUTO_REVIEW_MODEL
         || isResponsesOnlyModel(upstreamModel, getCachedModelEndpointsFn)
         || (usesCustomTools && cachedModelSupportsResponses(upstreamModel, getCachedModelEndpointsFn));
       if (usesCustomTools && !useNativeResponses) throw unsupportedCustomToolsError(upstreamModel);
@@ -321,6 +333,7 @@ export function createResponsesCompactHandler(options) {
     acquireRequest,
     autoReviewModelResolver,
     imagePressure,
+    modelRegistry,
     openAIModelEnv,
     requestBodyTimeoutMs,
     responsesCompactFn,
@@ -380,7 +393,16 @@ export function createResponsesCompactHandler(options) {
       assertPrepareActive();
       prepared.surface = "responses_compact";
       const model = parsed.model || "unknown";
-      const { requestedModel, upstreamModel } = resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver);
+      const resolvedModel = resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver);
+      const { requestedModel } = resolvedModel;
+      let { upstreamModel } = resolvedModel;
+      const priorityTierModel = requestedModel === upstreamModel
+        ? resolveCopilotPriorityTierModel(upstreamModel, prepared.body.service_tier, modelRegistry?.models)
+        : null;
+      if (priorityTierModel) {
+        upstreamModel = priorityTierModel;
+        delete prepared.body.service_tier;
+      }
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=false`));

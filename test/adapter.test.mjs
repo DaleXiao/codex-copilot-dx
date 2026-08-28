@@ -1976,6 +1976,245 @@ test("HTTP responses route maps Codex auto-review directly to Responses", async 
   assert.equal(upstreamBody.text.format.name, "review");
 });
 
+test("HTTP Responses maps Codex App priority tier to a catalog-approved fast model for JSON and SSE", async () => {
+  const codexModelRegistry = { models: { data: [{
+    id: "gpt-5.6-sol-fast",
+    vendor: "OpenAI",
+    policy: { state: "enabled" },
+    model_picker_enabled: true,
+    supported_endpoints: ["/responses", "ws:/responses"],
+  }] } };
+
+  for (const stream of [false, true]) {
+    let upstreamBody;
+    const response = await invokeAdapter({
+      codexModelRegistry,
+      responsesFn: async (body) => {
+        upstreamBody = structuredClone(body);
+        const completed = {
+          id: `resp_fast_${stream}`,
+          object: "response",
+          status: "completed",
+          model: "gpt-5.6-sol",
+          output: [],
+        };
+        if (!stream) return Response.json(completed);
+        const event = { type: "response.completed", response: completed };
+        return new Response(`event: response.completed\ndata: ${JSON.stringify(event)}\n\n`, {
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      },
+    }, {
+      body: { model: "gpt-5.6-sol", service_tier: "priority", stream, input: "hello" },
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(upstreamBody.model, "gpt-5.6-sol-fast");
+    assert.equal(Object.hasOwn(upstreamBody, "service_tier"), false);
+  }
+});
+
+test("HTTP Responses preserves service tiers when a fast mapping is not explicitly eligible", async () => {
+  for (const { serviceTier, modelRegistry } of [
+    { serviceTier: "default", modelRegistry: { models: { data: [] } } },
+    { serviceTier: "ultrafast", modelRegistry: { models: { data: [] } } },
+    { serviceTier: "priority", modelRegistry: { models: { data: [] } } },
+  ]) {
+    let upstreamBody;
+    const response = await invokeAdapter({
+      codexModelRegistry: modelRegistry,
+      responsesFn: async (body) => {
+        upstreamBody = structuredClone(body);
+        return Response.json({ id: `resp_${serviceTier}`, status: "completed", output: [] });
+      },
+    }, {
+      body: { model: "gpt-5.6-sol", service_tier: serviceTier, input: "hello" },
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(upstreamBody.model, "gpt-5.6-sol");
+    assert.equal(upstreamBody.service_tier, serviceTier);
+  }
+});
+
+test("direct fast and Auto Review requests are not rewritten by the priority-tier resolver", async () => {
+  const eligibleRegistry = { models: { data: [{
+    id: "gpt-5.6-sol-fast",
+    vendor: "OpenAI",
+    policy: { state: "enabled" },
+    model_picker_enabled: true,
+    supported_endpoints: ["/responses", "ws:/responses"],
+  }] } };
+  for (const { model, expectedModel } of [
+    { model: "gpt-5.6-sol-fast", expectedModel: "gpt-5.6-sol-fast" },
+    { model: "codex-auto-review", expectedModel: "gpt-5.5" },
+  ]) {
+    let upstreamBody;
+    const response = await invokeAdapter({
+      codexModelRegistry: eligibleRegistry,
+      getCachedModelEndpointsFn: () => ["/responses"],
+      responsesFn: async (body) => {
+        upstreamBody = structuredClone(body);
+        return Response.json({ id: `resp_direct_${model}`, status: "completed", output: [] });
+      },
+    }, {
+      body: { model, service_tier: "priority", input: "hello" },
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(upstreamBody.model, expectedModel);
+    assert.equal(upstreamBody.service_tier, "priority");
+  }
+});
+
+test("HTTP compact maps a catalog-approved priority tier before the upstream request", async () => {
+  let upstreamBody;
+  const response = await invokeAdapter({
+    codexModelRegistry: { models: { data: [{
+      id: "gpt-5.6-sol-fast",
+      vendor: "OpenAI",
+      policy: { state: "enabled" },
+      model_picker_enabled: true,
+      supported_endpoints: ["/responses", "ws:/responses"],
+    }] } },
+    responsesCompactFn: async (body) => {
+      upstreamBody = structuredClone(body);
+      return Response.json({
+        id: "resp_fast_compact",
+        object: "response.compaction",
+        status: "completed",
+        output: [{ type: "compaction", id: "cmp_fast", encrypted_content: "fast-state" }],
+      });
+    },
+  }, {
+    url: "/v1/responses/compact",
+    body: { model: "gpt-5.6-sol", service_tier: "priority", input: "compact" },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(upstreamBody.model, "gpt-5.6-sol-fast");
+  assert.equal(Object.hasOwn(upstreamBody, "service_tier"), false);
+});
+
+test("priority-tier model mapping sanitizes encrypted history across the effective model boundary", async () => {
+  clearResponseHistoryForTests();
+  const codexModelRegistry = { models: { data: [{
+    id: "gpt-5.6-sol-fast",
+    vendor: "OpenAI",
+    policy: { state: "enabled" },
+    model_picker_enabled: true,
+    supported_endpoints: ["/responses", "ws:/responses"],
+  }] } };
+  try {
+    const root = await invokeAdapter({
+      codexModelRegistry,
+      responsesFn: async () => Response.json({
+        id: "resp_fast_affinity_root",
+        status: "completed",
+        output: [
+          { type: "reasoning", id: "rs_fast", encrypted_content: "standard-cipher", summary: [] },
+          { type: "message", role: "assistant", content: [{ type: "output_text", text: "visible standard history" }] },
+        ],
+      }),
+    }, {
+      body: { model: "gpt-5.6-sol", input: "start" },
+    });
+    assert.equal(root.status, 200);
+
+    let upstreamBody;
+    const continuation = await invokeAdapter({
+      codexModelRegistry,
+      responsesFn: async (body) => {
+        upstreamBody = structuredClone(body);
+        return Response.json({ id: "resp_fast_affinity_child", status: "completed", output: [] });
+      },
+    }, {
+      body: {
+        model: "gpt-5.6-sol",
+        service_tier: "priority",
+        previous_response_id: "resp_fast_affinity_root",
+        input: "continue fast",
+      },
+    });
+
+    assert.equal(continuation.status, 200);
+    assert.equal(upstreamBody.model, "gpt-5.6-sol-fast");
+    assert.equal(JSON.stringify(upstreamBody).includes("encrypted_content"), false);
+    assert.equal(JSON.stringify(upstreamBody).includes("visible standard history"), true);
+    assert.equal(JSON.stringify(upstreamBody).includes("continue fast"), true);
+  } finally {
+    clearResponseHistoryForTests();
+  }
+});
+
+test("same priority tier preserves fast encrypted history while switching back to default sanitizes it", async () => {
+  clearResponseHistoryForTests();
+  const codexModelRegistry = { models: { data: [{
+    id: "gpt-5.6-sol-fast",
+    vendor: "OpenAI",
+    policy: { state: "enabled" },
+    model_picker_enabled: true,
+    supported_endpoints: ["/responses", "ws:/responses"],
+  }] } };
+  try {
+    const root = await invokeAdapter({
+      codexModelRegistry,
+      responsesFn: async () => Response.json({
+        id: "resp_fast_same_root",
+        status: "completed",
+        model: "gpt-5.6-sol",
+        output: [
+          { type: "reasoning", id: "rs_fast_same", encrypted_content: "fast-cipher", summary: [] },
+          { type: "message", role: "assistant", content: [{ type: "output_text", text: "visible fast history" }] },
+        ],
+      }),
+    }, {
+      body: { model: "gpt-5.6-sol", service_tier: "priority", input: "start fast" },
+    });
+    assert.equal(root.status, 200);
+
+    let sameTierBody;
+    const sameTier = await invokeAdapter({
+      codexModelRegistry,
+      responsesFn: async (body) => {
+        sameTierBody = structuredClone(body);
+        return Response.json({ id: "resp_fast_same_child", status: "completed", output: [] });
+      },
+    }, {
+      body: {
+        model: "gpt-5.6-sol",
+        service_tier: "priority",
+        previous_response_id: "resp_fast_same_root",
+        input: "continue fast",
+      },
+    });
+    assert.equal(sameTier.status, 200);
+    assert.equal(JSON.stringify(sameTierBody).includes("fast-cipher"), true);
+
+    let defaultTierBody;
+    const defaultTier = await invokeAdapter({
+      codexModelRegistry,
+      responsesFn: async (body) => {
+        defaultTierBody = structuredClone(body);
+        return Response.json({ id: "resp_fast_default_child", status: "completed", output: [] });
+      },
+    }, {
+      body: {
+        model: "gpt-5.6-sol",
+        service_tier: "default",
+        previous_response_id: "resp_fast_same_root",
+        input: "continue default",
+      },
+    });
+    assert.equal(defaultTier.status, 200);
+    assert.equal(JSON.stringify(defaultTierBody).includes("encrypted_content"), false);
+    assert.equal(JSON.stringify(defaultTierBody).includes("visible fast history"), true);
+    assert.equal(JSON.stringify(defaultTierBody).includes("continue default"), true);
+  } finally {
+    clearResponseHistoryForTests();
+  }
+});
+
 test("HTTP responses route resolves saved Auto Review model on every request", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-adapter-auto-review-"));
   const env = {};

@@ -117,6 +117,23 @@ export function modelIsResponsesOnly(model) {
   return hasResponses && !endpoints.includes("/chat/completions");
 }
 
+export function resolveCopilotPriorityTierModel(model, serviceTier, models) {
+  const baseModel = String(model || "").trim();
+  if (baseModel !== "gpt-5.6-sol" || serviceTier !== "priority") return null;
+  const fastModelId = "gpt-5.6-sol-fast";
+  const fastModel = copilotModelData(models)
+    .find((entry) => String(entry?.id || "").trim() === fastModelId);
+  const vendor = String(fastModel?.vendor || fastModel?.owned_by || "").trim().toLowerCase();
+  const policy = String(fastModel?.policy?.state || "").trim().toLowerCase();
+  if (vendor !== "openai"
+    || policy !== "enabled"
+    || fastModel?.model_picker_enabled !== true
+    || !modelIsResponsesOnly(fastModel)) {
+    return null;
+  }
+  return fastModelId;
+}
+
 function copilotModelData(models) {
   const data = Array.isArray(models) ? models : models?.data;
   return Array.isArray(data) ? data : [];

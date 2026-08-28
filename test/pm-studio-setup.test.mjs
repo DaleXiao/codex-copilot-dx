@@ -1308,6 +1308,9 @@ test("setup installs from a verified fixture, keeps a complete secret-free backu
     electron_framework_sha256: "fixture-framework-source",
   });
   assert.match(messages.join("\n"), /Foundation's atomic item replacement/);
+  assert.match(messages.join("\n"), /quit PM Studio and its updater, then run ccdx pms restore/);
+  assert.match(messages.join("\n"), /exact source-content verification; the original source signature is inspected and reported but is not an admission gate/);
+  assert.doesNotMatch(messages.join("\n"), /Restore step|move .* aside|verify its signature before launch/);
   assert.match(messages.join("\n"), /Start ccdx before using Claude in PM Studio; GPT remains/);
 
   const backupEntries = fs.readdirSync(backupRoot);

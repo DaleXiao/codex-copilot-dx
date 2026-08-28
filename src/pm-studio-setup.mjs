@@ -1521,9 +1521,8 @@ export async function runPmStudioSetup({
     emit(`[OK] Verified backup: ${backup.backupAppPath}${backup.reused ? " (reused)" : ""}`);
     emit(`[OK] Backup manifest: ${backup.manifestPath}`);
     emit("[INFO] The verified staging bundle was installed with Foundation's atomic item replacement.");
-    emit(`[INFO] Restore step 1/3: quit PM Studio and its updater.`);
-    emit(`[INFO] Restore step 2/3: confirm the installed Info.plist still reports version/build ${recipe.version}/${recipe.build}; never restore this backup over another version.`);
-    emit(`[INFO] Restore step 3/3: move ${appPath} aside, copy ${backup.backupAppPath} to that exact path, and verify its signature before launch.`);
+    emit(`[INFO] To restore, quit PM Studio and its updater, then run ${commandName} pms restore.`);
+    emit("[INFO] Restore uses exact source-content verification; the original source signature is inspected and reported but is not an admission gate.");
     emit(`[INFO] Start ${commandName} before using Claude in PM Studio; GPT remains on PM Studio's native GitHub Copilot path.`);
     return {
       status: migratingExistingPatch ? "migrated" : "patched",

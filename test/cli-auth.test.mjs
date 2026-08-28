@@ -118,11 +118,13 @@ test("requestDeviceFlowToken: drains transient polling bodies and keeps slow_dow
       }
       polls += 1;
       if (polls === 1) {
-        return {
-          ok: false,
-          status: 503,
-          text: async () => { bodyReads += 1; return "retry"; },
-        };
+        return new Response(new ReadableStream({
+          pull(controller) {
+            bodyReads += 1;
+            controller.enqueue(Buffer.from("retry"));
+            controller.close();
+          },
+        }), { status: 503 });
       }
       if (polls === 2) return jsonResponse(200, { error: "slow_down" });
       return jsonResponse(200, { access_token: "ghu_claude" });
@@ -163,15 +165,47 @@ test("requestDeviceFlowToken: preserves abort reason and code-request HTTP copy"
   }), reason);
   assert.equal(polls, 0);
 
-  let bodyReads = 0;
+  let oversizedCancelled = false;
   await assert.rejects(requestDeviceFlowToken({
-    fetchImpl: async () => ({
-      ok: false,
-      status: 500,
-      text: async () => { bodyReads += 1; return "failed"; },
-    }),
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.alloc(40 * 1024));
+        controller.enqueue(Buffer.alloc(40 * 1024));
+      },
+      cancel() { oversizedCancelled = true; },
+    }), { status: 500 }),
   }), /Device code request failed with HTTP 500/);
-  assert.equal(bodyReads, 1);
+  assert.equal(oversizedCancelled, true);
+});
+
+test("requestDeviceFlowToken: preserves caller abort during device-code body handling", async () => {
+  const controller = new AbortController();
+  const reason = new Error("cancel pending device code");
+  let bodyCancelled = false;
+  let bodyStarted;
+  const bodyIsStarted = new Promise((resolve) => { bodyStarted = resolve; });
+  const body = {
+    cancel: async () => { bodyCancelled = true; },
+  };
+  const pending = requestDeviceFlowToken({
+    signal: controller.signal,
+    deviceCodeTimeoutMs: 1000,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body,
+      json: async () => {
+        bodyStarted();
+        return new Promise(() => {});
+      },
+    }),
+  });
+  await bodyIsStarted;
+  controller.abort(reason);
+
+  await assert.rejects(pending, reason);
+  assert.equal(bodyCancelled, true);
 });
 
 test("validateClaudeCandidate: accepts a distinct pinned account with Claude models", async () => {

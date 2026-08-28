@@ -4,6 +4,7 @@ import {
   discoverGithubToken,
   fetchGithubIdentity,
   pollGithubDeviceFlow,
+  requestGithubDeviceCode,
   sourceDescription,
   validateGithubToken,
 } from "./auth.mjs";
@@ -31,10 +32,6 @@ import {
   terminalCell,
 } from "./cli-table.mjs";
 
-const CLIENT_ID = "Iv1.b507a08c87ecfe98";
-const SCOPE = "read:user";
-const DEVICE_CODE_URL = "https://github.com/login/device/code";
-
 function openAndCopy(userCode, verificationUri) {
   if (process.platform !== "darwin") return;
   try {
@@ -53,16 +50,12 @@ function responseDetail(value) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, 240);
 }
 
-async function jsonResponse(response, label) {
+async function jsonResponse({ response, data, jsonError }, label) {
   if (!response.ok) {
-    try { await response.text(); } catch {}
     throw new Error(`${label} failed with HTTP ${response.status}`);
   }
-  try {
-    return await response.json();
-  } catch {
-    throw new Error(`${label} returned invalid JSON`);
-  }
+  if (jsonError) throw new Error(`${label} returned invalid JSON`);
+  return data;
 }
 
 export async function requestDeviceFlowToken({
@@ -70,16 +63,16 @@ export async function requestDeviceFlowToken({
   signal,
   log = console.log,
   openAndCopyFn = openAndCopy,
+  deviceCodeTimeoutMs,
   sleepImpl,
   now = Date.now,
 } = {}) {
-  const codeResponse = await fetchImpl(DEVICE_CODE_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ client_id: CLIENT_ID, scope: SCOPE }),
+  const codeResult = await requestGithubDeviceCode({
+    fetchImpl,
     signal,
+    timeoutMs: deviceCodeTimeoutMs,
   });
-  const code = await jsonResponse(codeResponse, "Device code request");
+  const code = await jsonResponse(codeResult, "Device code request");
   if (!code.device_code || !code.user_code || !code.verification_uri) {
     throw new Error("Device code response is missing required fields");
   }
@@ -211,6 +204,7 @@ export async function authorizeClaudeProfile({
   signal,
   log = console.log,
   openAndCopyFn = openAndCopy,
+  deviceCodeTimeoutMs,
   sleepImpl,
   now = Date.now,
   saveModelCacheFn = saveModelCache,
@@ -264,6 +258,7 @@ export async function authorizeClaudeProfile({
         signal,
         log,
         openAndCopyFn,
+        deviceCodeTimeoutMs,
         sleepImpl,
         now,
       });

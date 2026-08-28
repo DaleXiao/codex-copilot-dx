@@ -293,6 +293,139 @@ test("ensureAuth: aborts a pending Device Flow poll at its internal deadline", a
   assert.equal(fs.existsSync(githubTokenPath(home)), false);
 });
 
+test("ensureAuth: bounds a nonterminating non-OK poll body by the Device Flow deadline", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-poll-body-deadline-"));
+  let bodyCancelled = false;
+  const body = {
+    getReader() {
+      return {
+        read: async () => new Promise(() => {}),
+        cancel: async () => { bodyCancelled = true; },
+        releaseLock() {},
+      };
+    },
+    cancel: async () => { bodyCancelled = true; },
+  };
+
+  await assert.rejects(ensureAuth({
+    home,
+    env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+    log: () => {},
+    openAndCopyFn: () => {},
+    sleepImpl: async () => {},
+    fetchImpl: async (url) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResp(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 0.001,
+          expires_in: 0.02,
+        });
+      }
+      if (url.endsWith("/login/oauth/access_token")) {
+        return { ok: false, status: 503, headers: new Headers(), body };
+      }
+      throw new Error(`unexpected request ${url}`);
+    },
+  }), /Login failed: device code expired/);
+
+  assert.equal(bodyCancelled, true);
+  assert.equal(fs.existsSync(githubTokenPath(home)), false);
+});
+
+test("ensureAuth: bounds a nonterminating successful poll body by the Device Flow deadline", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-success-body-deadline-"));
+  let bodyCancelled = false;
+  const body = {
+    getReader() {
+      return {
+        read: async () => new Promise(() => {}),
+        cancel: async () => { bodyCancelled = true; },
+        releaseLock() {},
+      };
+    },
+    cancel: async () => { bodyCancelled = true; },
+  };
+
+  await assert.rejects(ensureAuth({
+    home,
+    env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+    log: () => {},
+    openAndCopyFn: () => {},
+    sleepImpl: async () => {},
+    fetchImpl: async (url) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResp(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 0.001,
+          expires_in: 0.02,
+        });
+      }
+      if (url.endsWith("/login/oauth/access_token")) {
+        return { ok: true, status: 200, headers: new Headers(), body };
+      }
+      throw new Error(`unexpected request ${url}`);
+    },
+  }), /Login failed: device code expired/);
+
+  assert.equal(bodyCancelled, true);
+  assert.equal(fs.existsSync(githubTokenPath(home)), false);
+});
+
+test("ensureAuth: preserves caller abort during a successful poll body", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-poll-abort-"));
+  const controller = new AbortController();
+  const reason = new Error("cancel poll body");
+  let bodyCancelled = false;
+  let bodyStarted;
+  const bodyIsStarted = new Promise((resolve) => { bodyStarted = resolve; });
+  const body = {
+    getReader() {
+      return {
+        read: async () => {
+          bodyStarted();
+          return new Promise(() => {});
+        },
+        cancel: async () => { bodyCancelled = true; },
+        releaseLock() {},
+      };
+    },
+    cancel: async () => { bodyCancelled = true; },
+  };
+  const pending = ensureAuth({
+    home,
+    env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+    signal: controller.signal,
+    log: () => {},
+    openAndCopyFn: () => {},
+    sleepImpl: async () => {},
+    fetchImpl: async (url) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResp(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 0.001,
+          expires_in: 60,
+        });
+      }
+      if (url.endsWith("/login/oauth/access_token")) {
+        return { ok: true, status: 200, headers: new Headers(), body };
+      }
+      throw new Error(`unexpected request ${url}`);
+    },
+  });
+  await bodyIsStarted;
+  controller.abort(reason);
+
+  await assert.rejects(pending, reason);
+  assert.equal(bodyCancelled, true);
+  assert.equal(fs.existsSync(githubTokenPath(home)), false);
+});
+
 test("ensureAuth: slow_down increases all later Device Flow polling intervals", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-slow-"));
   const waits = [];
@@ -390,11 +523,13 @@ test("ensureAuth: consumes non-2xx Device Flow bodies and preserves retry and er
       if (url.endsWith("/login/oauth/access_token")) {
         polls += 1;
         if (polls === 1) {
-          return {
-            ok: false,
-            status: 503,
-            text: async () => { retryBodyReads += 1; return "retry"; },
-          };
+          return new Response(new ReadableStream({
+            pull(controller) {
+              retryBodyReads += 1;
+              controller.enqueue(Buffer.from("retry"));
+              controller.close();
+            },
+          }), { status: 503 });
         }
         return jsonResp(200, { access_token: "ghu_after_retry" });
       }
@@ -407,18 +542,105 @@ test("ensureAuth: consumes non-2xx Device Flow bodies and preserves retry and er
   assert.equal(fs.readFileSync(githubTokenPath(retryHome), "utf8"), "ghu_after_retry");
 
   const errorHome = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-code-drain-"));
-  let errorBodyReads = 0;
+  let oversizedCancelled = false;
   await assert.rejects(ensureAuth({
     home: errorHome,
     env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
     log: () => {},
-    fetchImpl: async () => ({
-      ok: false,
-      status: 500,
-      text: async () => { errorBodyReads += 1; return "failed"; },
-    }),
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.alloc(40 * 1024));
+        controller.enqueue(Buffer.alloc(40 * 1024));
+      },
+      cancel() { oversizedCancelled = true; },
+    }), { status: 500 }),
   }), /device code request failed: 500/);
-  assert.equal(errorBodyReads, 1);
+  assert.equal(oversizedCancelled, true);
+});
+
+test("ensureAuth: bounds a nonterminating device-code response with an internal deadline", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-code-timeout-"));
+  let bodyCancelled = false;
+  const body = {
+    getReader() {
+      return {
+        read: async () => new Promise(() => {}),
+        cancel: async () => { bodyCancelled = true; },
+        releaseLock() {},
+      };
+    },
+    cancel: async () => { bodyCancelled = true; },
+  };
+
+  await assert.rejects(ensureAuth({
+    home,
+    env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+    log: () => {},
+    deviceCodeTimeoutMs: 20,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body,
+      json: async () => new Promise(() => {}),
+    }),
+  }), (error) => error.code === "CCDX_DEVICE_CODE_TIMEOUT");
+
+  assert.equal(bodyCancelled, true);
+  assert.equal(fs.existsSync(githubTokenPath(home)), false);
+});
+
+test("ensureAuth: rejects oversized successful device-code and poll JSON bodies", async (t) => {
+  const oversizedResponse = (onCancel) => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(Buffer.from('{"padding":"'));
+      controller.enqueue(Buffer.alloc(70 * 1024, 0x61));
+      controller.enqueue(Buffer.from('"}'));
+    },
+    cancel: onCancel,
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
+
+  await t.test("device code", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-code-oversized-"));
+    let cancelled = false;
+    await assert.rejects(ensureAuth({
+      home,
+      env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+      log: () => {},
+      fetchImpl: async () => oversizedResponse(() => { cancelled = true; }),
+    }), (error) => error.code === "ccdx_upstream_response_too_large");
+    assert.equal(cancelled, true);
+    assert.equal(fs.existsSync(githubTokenPath(home)), false);
+  });
+
+  await t.test("poll", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-poll-oversized-"));
+    let cancelled = false;
+    await assert.rejects(ensureAuth({
+      home,
+      env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+      log: () => {},
+      openAndCopyFn: () => {},
+      sleepImpl: async () => {},
+      fetchImpl: async (url) => {
+        if (url.endsWith("/login/device/code")) {
+          return jsonResp(200, {
+            device_code: "device",
+            user_code: "ABCD-1234",
+            verification_uri: "https://github.com/login/device",
+            interval: 1,
+            expires_in: 900,
+          });
+        }
+        if (url.endsWith("/login/oauth/access_token")) {
+          return oversizedResponse(() => { cancelled = true; });
+        }
+        throw new Error(`unexpected request ${url}`);
+      },
+    }), (error) => error.code === "ccdx_upstream_response_too_large");
+    assert.equal(cancelled, true);
+    assert.equal(fs.existsSync(githubTokenPath(home)), false);
+  });
 });
 
 test("discoverGithubToken: rejects ambiguous generic accounts", async () => {

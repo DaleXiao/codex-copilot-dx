@@ -19,6 +19,8 @@ const COPILOT_TOKEN_URL = `${GITHUB_API}/copilot_internal/v2/token`;
 const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const DEFAULT_DEVICE_INTERVAL_SECONDS = 5;
 const DEFAULT_DEVICE_EXPIRES_SECONDS = 900;
+const DEFAULT_DEVICE_CODE_TIMEOUT_MS = 30 * 1000;
+const MAX_DEVICE_FLOW_JSON_BYTES = 64 * 1024;
 const DISABLE_TOKEN_DISCOVERY_VALUES = new Set(["1", "true", "yes"]);
 const MAX_AUTH_JSON_BYTES = 1024 * 1024;
 
@@ -76,10 +78,91 @@ function sleep(ms, { signal } = {}) {
   });
 }
 
-async function consumeResponseBody(response) {
+function awaitWithSignal(operation, signal) {
+  if (signal?.aborted) return Promise.reject(abortError(signal));
+  return new Promise((resolve, reject) => {
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const finish = (callback, value) => {
+      cleanup();
+      callback(value);
+    };
+    const onAbort = () => finish(reject, abortError(signal));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve()
+      .then(operation)
+      .then((value) => finish(resolve, value), (error) => finish(reject, error));
+  });
+}
+
+async function discardBoundedResponseBody(response) {
+  const transport = await import("./http-transport.mjs");
+  return transport.discardBoundedResponseBody(response);
+}
+
+async function readDeviceFlowJson(response, signal, label) {
+  if (typeof response?.body?.getReader === "function") {
+    const transport = await import("./http-transport.mjs");
+    const text = await awaitWithSignal(() => transport.readBoundedResponseText(response, {
+      maxBytes: MAX_DEVICE_FLOW_JSON_BYTES,
+      label,
+    }), signal);
+    return JSON.parse(text);
+  }
+  return awaitWithSignal(() => response.json(), signal);
+}
+
+function cancelResponseBody(response) {
+  try { Promise.resolve(response?.body?.cancel?.()).catch(() => {}); } catch {}
+}
+
+function deviceCodeTimeoutError(timeoutMs) {
+  const error = new Error(`Device code request timed out after ${timeoutMs}ms`);
+  error.code = "CCDX_DEVICE_CODE_TIMEOUT";
+  return error;
+}
+
+export async function requestGithubDeviceCode({
+  fetchImpl = fetch,
+  signal,
+  timeoutMs = DEFAULT_DEVICE_CODE_TIMEOUT_MS,
+} = {}) {
+  const parsedTimeout = Number(timeoutMs);
+  const deadlineMs = Number.isFinite(parsedTimeout) && parsedTimeout > 0
+    ? parsedTimeout
+    : DEFAULT_DEVICE_CODE_TIMEOUT_MS;
+  const controller = new AbortController();
+  let response;
+  const onCallerAbort = () => controller.abort(signal.reason);
+  signal?.addEventListener("abort", onCallerAbort, { once: true });
+  if (signal?.aborted) onCallerAbort();
+  const timer = setTimeout(() => controller.abort(deviceCodeTimeoutError(deadlineMs)), deadlineMs);
   try {
-    await response.text();
-  } catch {}
+    response = await awaitWithSignal(() => fetchImpl("https://github.com/login/device/code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ client_id: CLIENT_ID, scope: SCOPE }),
+      signal: controller.signal,
+    }), controller.signal);
+    if (!response.ok) {
+      await awaitWithSignal(() => discardBoundedResponseBody(response), controller.signal);
+      return { response, data: null, jsonError: null };
+    }
+    try {
+      const data = await readDeviceFlowJson(response, controller.signal, "Device code response");
+      return { response, data, jsonError: null };
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+      return { response, data: null, jsonError: error };
+    }
+  } catch (error) {
+    cancelResponseBody(response);
+    if (signal?.aborted) throw abortError(signal);
+    if (controller.signal.aborted) throw abortError(controller.signal);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onCallerAbort);
+  }
 }
 
 export async function pollGithubDeviceFlow({
@@ -118,8 +201,9 @@ export async function pollGithubDeviceFlow({
       pollController.abort();
     }, Math.max(1, deadline - now()));
     let result;
+    let pollResponse;
     try {
-      const pollResponse = await fetchImpl(ACCESS_TOKEN_URL, {
+      pollResponse = await fetchImpl(ACCESS_TOKEN_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
@@ -130,17 +214,22 @@ export async function pollGithubDeviceFlow({
         signal: pollController.signal,
       });
       if (now() >= deadline) {
-        await consumeResponseBody(pollResponse);
+        await awaitWithSignal(() => discardBoundedResponseBody(pollResponse), pollController.signal);
         return { state: "expired" };
       }
       if (!pollResponse.ok) {
-        await consumeResponseBody(pollResponse);
+        await awaitWithSignal(() => discardBoundedResponseBody(pollResponse), pollController.signal);
         if (now() >= deadline) return { state: "expired" };
         continue;
       }
-      result = interpretPoll(await pollResponse.json());
+      result = interpretPoll(await readDeviceFlowJson(
+        pollResponse,
+        pollController.signal,
+        "Device Flow poll response",
+      ));
       if (now() >= deadline) return { state: "expired" };
     } catch (error) {
+      cancelResponseBody(pollResponse);
       if (signal?.aborted) throw abortError(signal);
       if (deadlineExpired || now() >= deadline) return { state: "expired" };
       throw error;
@@ -571,6 +660,7 @@ export async function ensureAuth({
   signal,
   log = console.log,
   openAndCopyFn = openAndCopy,
+  deviceCodeTimeoutMs = DEFAULT_DEVICE_CODE_TIMEOUT_MS,
   sleepImpl = sleep,
   now = Date.now,
 } = {}) {
@@ -598,23 +688,23 @@ export async function ensureAuth({
 
     // Request a device code while holding the auth lock so concurrent starts do not
     // trigger multiple browser/device-flow sessions for the same local token.
-    const codeResp = await fetchImpl("https://github.com/login/device/code", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ client_id: CLIENT_ID, scope: SCOPE }),
+    const codeResult = await requestGithubDeviceCode({
+      fetchImpl,
       signal,
+      timeoutMs: deviceCodeTimeoutMs,
     });
+    const codeResp = codeResult.response;
     if (!codeResp.ok) {
-      await consumeResponseBody(codeResp);
       throw new Error(`device code request failed: ${codeResp.status}`);
     }
+    if (codeResult.jsonError) throw codeResult.jsonError;
     const {
       device_code,
       user_code,
       verification_uri,
       interval,
       expires_in,
-    } = await codeResp.json();
+    } = codeResult.data;
 
     // Prompt the user.
     log(`\n${status("info", `Open ${verification_uri}`)}\n${status("info", `Enter code: ${user_code}`)}\n`);

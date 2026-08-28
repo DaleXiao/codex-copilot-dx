@@ -1119,21 +1119,28 @@ test("file-backed cache rejects changes while repopulating released target bytes
   }), /changed while reading/);
 });
 
-test("streaming executable inspection stays below a bounded child-process RSS guard", () => {
+test("streaming executable inspection uses materially less RSS than whole-file buffering", () => {
   const root = temporaryRoot("ccdx-file-rss-");
   const filePath = path.join(root, "Electron Framework");
   fs.writeFileSync(filePath, "");
   fs.truncateSync(filePath, 128 * 1024 * 1024);
   const moduleUrl = new URL("../src/pm-studio-asar.mjs", import.meta.url).href;
-  const script = `const { inspectElectronAsarIntegrityFile } = await import(${JSON.stringify(moduleUrl)}); inspectElectronAsarIntegrityFile(process.argv[1]); console.log(process.resourceUsage().maxRSS);`;
-  const child = spawnSync(process.execPath, ["--input-type=module", "-e", script, filePath], {
-    encoding: "utf8",
-    timeout: 10_000,
-  });
-  assert.equal(child.status, 0, child.stderr);
-  const rawMaxRss = Number(child.stdout.trim());
-  const maxRssBytes = rawMaxRss > 1024 * 1024 ? rawMaxRss : rawMaxRss * 1024;
-  assert.ok(maxRssBytes < 96 * 1024 * 1024, `maxRSS was ${maxRssBytes} bytes`);
+  const runRssProbe = (script) => {
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", script, filePath], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    assert.equal(child.status, 0, child.stderr);
+    return JSON.parse(child.stdout);
+  };
+  const normalizeMaxRss = ({ maxRSS, rss }) => maxRSS <= rss / 16 ? maxRSS * 1024 : maxRSS;
+  const streaming = runRssProbe(`const { inspectElectronAsarIntegrityFile } = await import(${JSON.stringify(moduleUrl)}); globalThis.result = inspectElectronAsarIntegrityFile(process.argv[1]); console.log(JSON.stringify({ maxRSS: process.resourceUsage().maxRSS, rss: process.memoryUsage().rss }));`);
+  const buffered = runRssProbe(`await import(${JSON.stringify(moduleUrl)}); const fs = await import('node:fs'); globalThis.bytes = fs.readFileSync(process.argv[1]); console.log(JSON.stringify({ maxRSS: process.resourceUsage().maxRSS, rss: process.memoryUsage().rss, length: globalThis.bytes.length }));`);
+  assert.equal(buffered.length, 128 * 1024 * 1024);
+  const streamingRss = normalizeMaxRss(streaming);
+  const bufferedRss = normalizeMaxRss(buffered);
+  assert.ok(bufferedRss - streamingRss >= 64 * 1024 * 1024,
+    `streaming=${streamingRss} buffered=${bufferedRss}`);
 });
 
 test("default codesign preserves available runtime metadata without assuming a source signature", () => {

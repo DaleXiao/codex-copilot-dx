@@ -14,6 +14,7 @@ import {
   authStatusOnline,
   authorizeClaudeProfile,
   formatAuthStatus,
+  requestDeviceFlowToken,
   runAuthCommand,
   validateClaudeCandidate,
 } from "../src/cli-auth.mjs";
@@ -66,6 +67,112 @@ function candidateFetch({ login = "personal", id = 2, models = [claudeModel()] }
     throw new Error(`unexpected request ${url} (${options.method || "GET"})`);
   };
 }
+
+test("requestDeviceFlowToken: expires after sleep without one extra poll", async () => {
+  let clock = 0;
+  let polls = 0;
+
+  await assert.rejects(requestDeviceFlowToken({
+    log: () => {},
+    openAndCopyFn: () => {},
+    now: () => clock,
+    sleepImpl: async (ms) => { clock += ms; },
+    fetchImpl: async (url) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResponse(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 5,
+          expires_in: 2,
+        });
+      }
+      polls += 1;
+      throw new Error(`unexpected request ${url}`);
+    },
+  }), /Claude login failed: device code expired/);
+
+  assert.equal(clock, 2000);
+  assert.equal(polls, 0);
+});
+
+test("requestDeviceFlowToken: drains transient polling bodies and keeps slow_down timing", async () => {
+  const waits = [];
+  let bodyReads = 0;
+  let polls = 0;
+
+  const token = await requestDeviceFlowToken({
+    log: () => {},
+    openAndCopyFn: () => {},
+    now: () => 0,
+    sleepImpl: async (ms) => { waits.push(ms); },
+    fetchImpl: async (url) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResponse(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 1,
+          expires_in: 900,
+        });
+      }
+      polls += 1;
+      if (polls === 1) {
+        return {
+          ok: false,
+          status: 503,
+          text: async () => { bodyReads += 1; return "retry"; },
+        };
+      }
+      if (polls === 2) return jsonResponse(200, { error: "slow_down" });
+      return jsonResponse(200, { access_token: "ghu_claude" });
+    },
+  });
+
+  assert.equal(token, "ghu_claude");
+  assert.equal(bodyReads, 1);
+  assert.deepEqual(waits, [1000, 1000, 6000]);
+});
+
+test("requestDeviceFlowToken: preserves abort reason and code-request HTTP copy", async () => {
+  const controller = new AbortController();
+  const reason = new Error("cancel Claude login");
+  let polls = 0;
+  await assert.rejects(requestDeviceFlowToken({
+    signal: controller.signal,
+    log: () => {},
+    openAndCopyFn: () => {},
+    now: () => 0,
+    sleepImpl: async (_ms, { signal } = {}) => {
+      controller.abort(reason);
+      assert.equal(signal.reason, reason);
+    },
+    fetchImpl: async (url) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResponse(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 1,
+          expires_in: 900,
+        });
+      }
+      polls += 1;
+      throw new Error(`unexpected request ${url}`);
+    },
+  }), reason);
+  assert.equal(polls, 0);
+
+  let bodyReads = 0;
+  await assert.rejects(requestDeviceFlowToken({
+    fetchImpl: async () => ({
+      ok: false,
+      status: 500,
+      text: async () => { bodyReads += 1; return "failed"; },
+    }),
+  }), /Device code request failed with HTTP 500/);
+  assert.equal(bodyReads, 1);
+});
 
 test("validateClaudeCandidate: accepts a distinct pinned account with Claude models", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-valid-"));

@@ -87,3 +87,136 @@ test("withFileLock: reclaims a stale lock whose process is gone", async () => {
   assert.equal(entered, true);
   assert.equal(fs.existsSync(lockPath), false);
 });
+
+test("withFileLock: stale reclaim restores a lock replaced before quarantine", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-stale-replaced-"));
+  const lockPath = path.join(dir, "state.lock");
+  const replacement = JSON.stringify({ pid: process.pid, owner: "replacement" });
+  fs.writeFileSync(lockPath, JSON.stringify({ pid: 2147483647, owner: "dead" }), { mode: 0o600 });
+  const old = new Date(Date.now() - 60000);
+  fs.utimesSync(lockPath, old, old);
+  let injected = false;
+  const fsImpl = new Proxy(fs, {
+    get(target, property) {
+      if (property !== "renameSync") return Reflect.get(target, property);
+      return (source, destination) => {
+        if (!injected && source === lockPath && destination.includes(".stale-")) {
+          injected = true;
+          target.writeFileSync(source, replacement, { mode: 0o600 });
+        }
+        return target.renameSync(source, destination);
+      };
+    },
+  });
+  let entered = false;
+
+  await assert.rejects(withFileLock(lockPath, async () => { entered = true; }, {
+    timeoutMs: 20,
+    staleMs: 10,
+    pollMs: 2,
+    fsImpl,
+  }), /Timed out waiting for lock/);
+
+  assert.equal(injected, true);
+  assert.equal(entered, false);
+  assert.equal(fs.readFileSync(lockPath, "utf8"), replacement);
+  assert.deepEqual(fs.readdirSync(dir), ["state.lock"]);
+});
+
+test("withFileLock: stale reclaim does not remove a new canonical lock", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-stale-new-"));
+  const lockPath = path.join(dir, "state.lock");
+  const replacement = JSON.stringify({ pid: process.pid, owner: "replacement" });
+  fs.writeFileSync(lockPath, JSON.stringify({ pid: 2147483647, owner: "dead" }), { mode: 0o600 });
+  const old = new Date(Date.now() - 60000);
+  fs.utimesSync(lockPath, old, old);
+  let injected = false;
+  const fsImpl = new Proxy(fs, {
+    get(target, property) {
+      if (property !== "renameSync") return Reflect.get(target, property);
+      return (source, destination) => {
+        const result = target.renameSync(source, destination);
+        if (!injected && source === lockPath && destination.includes(".stale-")) {
+          injected = true;
+          target.writeFileSync(source, replacement, { mode: 0o600 });
+        }
+        return result;
+      };
+    },
+  });
+  let entered = false;
+
+  await assert.rejects(withFileLock(lockPath, async () => { entered = true; }, {
+    timeoutMs: 20,
+    staleMs: 10,
+    pollMs: 2,
+    fsImpl,
+  }), /Timed out waiting for lock/);
+
+  assert.equal(injected, true);
+  assert.equal(entered, false);
+  assert.equal(fs.readFileSync(lockPath, "utf8"), replacement);
+  assert.deepEqual(fs.readdirSync(dir), ["state.lock"]);
+});
+
+test("withFileLock: reclaims a malformed legacy stale regular file", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-stale-malformed-"));
+  const lockPath = path.join(dir, "state.lock");
+  fs.writeFileSync(lockPath, "{", { mode: 0o600 });
+  const old = new Date(Date.now() - 60000);
+  fs.utimesSync(lockPath, old, old);
+  let entered = false;
+
+  await withFileLock(lockPath, async () => { entered = true; }, {
+    timeoutMs: 100,
+    staleMs: 10,
+    pollMs: 2,
+  });
+
+  assert.equal(entered, true);
+  assert.deepEqual(fs.readdirSync(dir), []);
+});
+
+test("withFileLock: a cooperating acquirer cannot enter during stale quarantine", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-reclaim-guard-"));
+  const lockPath = path.join(dir, "state.lock");
+  fs.writeFileSync(lockPath, JSON.stringify({ pid: 2147483647, owner: "dead" }), { mode: 0o600 });
+  const old = new Date(Date.now() - 60000);
+  fs.utimesSync(lockPath, old, old);
+  const events = [];
+  let contender;
+  let releaseFirst;
+  let firstEntered;
+  const firstIsEntered = new Promise((resolve) => { firstEntered = resolve; });
+  const fsImpl = new Proxy(fs, {
+    get(target, property) {
+      if (property !== "renameSync") return Reflect.get(target, property);
+      return (source, destination) => {
+        const result = target.renameSync(source, destination);
+        if (!contender && source === lockPath && destination.includes(".stale-")) {
+          contender = withFileLock(lockPath, async () => { events.push("contender"); }, {
+            timeoutMs: 1000,
+            staleMs: 10,
+            pollMs: 2,
+          });
+        }
+        return result;
+      };
+    },
+  });
+
+  const first = withFileLock(lockPath, async () => {
+    events.push("first:start");
+    firstEntered();
+    await new Promise((resolve) => { releaseFirst = resolve; });
+    events.push("first:end");
+  }, { timeoutMs: 1000, staleMs: 10, pollMs: 2, fsImpl });
+
+  await firstIsEntered;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(events, ["first:start"]);
+  releaseFirst();
+  await Promise.all([first, contender]);
+  assert.deepEqual(events, ["first:start", "first:end", "contender"]);
+  assert.deepEqual(fs.readdirSync(dir), []);
+});

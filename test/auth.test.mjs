@@ -17,6 +17,7 @@ import {
   readGithubTokenMetadata,
   writeToken,
 } from "../src/auth.mjs";
+import { atomicWriteFileSync } from "../src/atomic-file.mjs";
 import { withFileLock } from "../src/lock.mjs";
 
 function jsonResp(status, body) {
@@ -187,6 +188,239 @@ test("ensureAuth: rechecks the saved token after waiting for the auth lock", asy
   assert.equal(lines.some((line) => /\[OK\] GitHub token found/.test(line)), true);
 });
 
+test("ensureAuth: expires Device Flow without polling or writing after its deadline", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-expiry-"));
+  let clock = 0;
+  let pollCalls = 0;
+
+  await assert.rejects(ensureAuth({
+    home,
+    env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+    log: () => {},
+    openAndCopyFn: () => {},
+    now: () => clock,
+    sleepImpl: async (ms, { signal } = {}) => {
+      assert.equal(signal, undefined);
+      clock += ms;
+    },
+    fetchImpl: async (url) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResp(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 5,
+          expires_in: 2,
+        });
+      }
+      if (url.endsWith("/login/oauth/access_token")) pollCalls += 1;
+      throw new Error(`unexpected request ${url}`);
+    },
+  }), /Login failed: device code expired/);
+
+  assert.equal(clock, 2000);
+  assert.equal(pollCalls, 0);
+  assert.equal(fs.existsSync(githubTokenPath(home)), false);
+});
+
+test("ensureAuth: rejects a token that arrives after the Device Flow deadline", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-late-token-"));
+  let clock = 0;
+
+  await assert.rejects(ensureAuth({
+    home,
+    env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+    log: () => {},
+    openAndCopyFn: () => {},
+    now: () => clock,
+    sleepImpl: async (ms) => { clock += ms; },
+    fetchImpl: async (url) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResp(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 1,
+          expires_in: 2,
+        });
+      }
+      if (url.endsWith("/login/oauth/access_token")) {
+        clock = 2500;
+        return jsonResp(200, { access_token: "ghu_too_late" });
+      }
+      throw new Error(`unexpected request ${url}`);
+    },
+  }), /Login failed: device code expired/);
+
+  assert.equal(fs.existsSync(githubTokenPath(home)), false);
+});
+
+test("ensureAuth: aborts a pending Device Flow poll at its internal deadline", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-pending-deadline-"));
+  let pollAborted = false;
+
+  await assert.rejects(ensureAuth({
+    home,
+    env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+    log: () => {},
+    openAndCopyFn: () => {},
+    sleepImpl: async () => {},
+    fetchImpl: async (url, options = {}) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResp(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 0.001,
+          expires_in: 0.02,
+        });
+      }
+      if (url.endsWith("/login/oauth/access_token")) {
+        return new Promise((resolve, reject) => {
+          const onAbort = () => {
+            pollAborted = true;
+            reject(options.signal.reason || new DOMException("Aborted", "AbortError"));
+          };
+          options.signal.addEventListener("abort", onAbort, { once: true });
+          if (options.signal.aborted) onAbort();
+        });
+      }
+      throw new Error(`unexpected request ${url}`);
+    },
+  }), /Login failed: device code expired/);
+
+  assert.equal(pollAborted, true);
+  assert.equal(fs.existsSync(githubTokenPath(home)), false);
+});
+
+test("ensureAuth: slow_down increases all later Device Flow polling intervals", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-slow-"));
+  const waits = [];
+  const pollResults = [
+    { error: "slow_down" },
+    { error: "authorization_pending" },
+    { access_token: "ghu_device" },
+  ];
+
+  await ensureAuth({
+    home,
+    env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+    log: () => {},
+    openAndCopyFn: () => {},
+    now: () => 0,
+    sleepImpl: async (ms) => { waits.push(ms); },
+    fetchImpl: async (url) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResp(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 1,
+          expires_in: 900,
+        });
+      }
+      if (url.endsWith("/login/oauth/access_token")) return jsonResp(200, pollResults.shift());
+      if (url.endsWith("/user")) return jsonResp(200, { login: "device-user", id: 1 });
+      throw new Error(`unexpected request ${url}`);
+    },
+  });
+
+  assert.deepEqual(waits, [1000, 6000, 6000]);
+  assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_device");
+});
+
+test("ensureAuth: aborting Device Flow sleep stops before polling or writing", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-abort-"));
+  const controller = new AbortController();
+  const reason = new Error("stop login");
+  let pollCalls = 0;
+
+  await assert.rejects(ensureAuth({
+    home,
+    env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+    signal: controller.signal,
+    log: () => {},
+    openAndCopyFn: () => {},
+    now: () => 0,
+    sleepImpl: async (_ms, { signal } = {}) => {
+      controller.abort(reason);
+      assert.equal(signal.reason, reason);
+    },
+    fetchImpl: async (url) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResp(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 1,
+          expires_in: 900,
+        });
+      }
+      if (url.endsWith("/login/oauth/access_token")) pollCalls += 1;
+      throw new Error(`unexpected request ${url}`);
+    },
+  }), reason);
+
+  assert.equal(pollCalls, 0);
+  assert.equal(fs.existsSync(githubTokenPath(home)), false);
+});
+
+test("ensureAuth: consumes non-2xx Device Flow bodies and preserves retry and error copy", async () => {
+  const retryHome = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-drain-"));
+  let retryBodyReads = 0;
+  let polls = 0;
+
+  await ensureAuth({
+    home: retryHome,
+    env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+    log: () => {},
+    openAndCopyFn: () => {},
+    now: () => 0,
+    sleepImpl: async () => {},
+    fetchImpl: async (url) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResp(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 1,
+          expires_in: 900,
+        });
+      }
+      if (url.endsWith("/login/oauth/access_token")) {
+        polls += 1;
+        if (polls === 1) {
+          return {
+            ok: false,
+            status: 503,
+            text: async () => { retryBodyReads += 1; return "retry"; },
+          };
+        }
+        return jsonResp(200, { access_token: "ghu_after_retry" });
+      }
+      if (url.endsWith("/user")) return jsonResp(200, { login: "retry-user", id: 2 });
+      throw new Error(`unexpected request ${url}`);
+    },
+  });
+
+  assert.equal(retryBodyReads, 1);
+  assert.equal(fs.readFileSync(githubTokenPath(retryHome), "utf8"), "ghu_after_retry");
+
+  const errorHome = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-device-code-drain-"));
+  let errorBodyReads = 0;
+  await assert.rejects(ensureAuth({
+    home: errorHome,
+    env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+    log: () => {},
+    fetchImpl: async () => ({
+      ok: false,
+      status: 500,
+      text: async () => { errorBodyReads += 1; return "failed"; },
+    }),
+  }), /device code request failed: 500/);
+  assert.equal(errorBodyReads, 1);
+});
+
 test("discoverGithubToken: rejects ambiguous generic accounts", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-ambiguous-"));
   writeLocalCopilotAuth(home, "client-a", "profile", "ghu_alice");
@@ -268,4 +502,57 @@ test("explicit token sources can intentionally switch the bound account", async 
   assert.equal(imported.token, "ghu_bob");
   assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_bob");
   assert.equal(readGithubTokenMetadata(home, "ghu_bob").login, "bob");
+});
+
+test("writeToken: commits metadata last as a 0600 pair", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-pair-order-"));
+  const writes = [];
+
+  writeToken("ghu_pair", home, { login: "pair-user", id: 3 }, {
+    now: () => new Date("2026-08-28T00:00:00.000Z"),
+    writeFile: (filePath, data, options) => {
+      writes.push(filePath);
+      atomicWriteFileSync(filePath, data, options);
+    },
+  });
+
+  assert.deepEqual(writes, [githubTokenPath(home), githubTokenMetadataPath(home)]);
+  assert.equal(fs.statSync(githubTokenPath(home)).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(githubTokenMetadataPath(home)).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.dirname(githubTokenPath(home))).mode & 0o777, 0o700);
+  assert.equal(readGithubTokenMetadata(home, "ghu_pair").login, "pair-user");
+});
+
+test("writeToken: metadata failure restores previous bytes, existence, and modes", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-pair-rollback-"));
+  writeToken("ghu_old", home, { login: "old-user", id: 4 });
+  fs.chmodSync(githubTokenPath(home), 0o640);
+  fs.chmodSync(githubTokenMetadataPath(home), 0o604);
+  const oldToken = fs.readFileSync(githubTokenPath(home));
+  const oldMetadata = fs.readFileSync(githubTokenMetadataPath(home));
+  let writes = 0;
+
+  assert.throws(() => writeToken("ghu_new", home, { login: "new-user", id: 5 }, {
+    writeFile: (filePath, data, options) => {
+      writes += 1;
+      if (writes === 2) throw new Error("simulated Codex metadata failure");
+      atomicWriteFileSync(filePath, data, options);
+    },
+  }), /simulated Codex metadata failure/);
+
+  assert.deepEqual(fs.readFileSync(githubTokenPath(home)), oldToken);
+  assert.deepEqual(fs.readFileSync(githubTokenMetadataPath(home)), oldMetadata);
+  assert.equal(fs.statSync(githubTokenPath(home)).mode & 0o777, 0o640);
+  assert.equal(fs.statSync(githubTokenMetadataPath(home)).mode & 0o777, 0o604);
+});
+
+test("writeToken: a token without identity removes stale metadata last", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-pair-unbound-"));
+  writeToken("ghu_bound", home, { login: "bound-user", id: 6 });
+
+  writeToken("ghu_unbound", home);
+
+  assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_unbound");
+  assert.equal(fs.existsSync(githubTokenMetadataPath(home)), false);
+  assert.equal(fs.statSync(githubTokenPath(home)).mode & 0o777, 0o600);
 });

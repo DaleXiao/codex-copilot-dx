@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
+import { atomicWriteFilePairSync, atomicWriteFileSync } from "./atomic-file.mjs";
 import {
   githubIdentityMatchesExpected,
   githubTokenFingerprint,
@@ -15,6 +16,9 @@ const CLIENT_ID = "Iv1.b507a08c87ecfe98"; // Public GitHub Copilot client ID.
 const SCOPE = "read:user";
 const GITHUB_API = "https://api.github.com";
 const COPILOT_TOKEN_URL = `${GITHUB_API}/copilot_internal/v2/token`;
+const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
+const DEFAULT_DEVICE_INTERVAL_SECONDS = 5;
+const DEFAULT_DEVICE_EXPIRES_SECONDS = 900;
 const DISABLE_TOKEN_DISCOVERY_VALUES = new Set(["1", "true", "yes"]);
 const MAX_AUTH_JSON_BYTES = 1024 * 1024;
 
@@ -48,7 +52,109 @@ export function interpretPoll(data) {
   }
 }
 
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+function abortError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error("The operation was aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function sleep(ms, { signal } = {}) {
+  if (signal?.aborted) return Promise.reject(abortError(signal));
+  return new Promise((resolve, reject) => {
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      clearTimeout(timer);
+      cleanup();
+      reject(abortError(signal));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function consumeResponseBody(response) {
+  try {
+    await response.text();
+  } catch {}
+}
+
+export async function pollGithubDeviceFlow({
+  deviceCode,
+  interval,
+  expiresIn,
+  fetchImpl = fetch,
+  signal,
+  sleepImpl = sleep,
+  now = Date.now,
+} = {}) {
+  const parsedInterval = Number(interval);
+  const parsedExpires = Number(expiresIn);
+  let waitMs = (Number.isFinite(parsedInterval) && parsedInterval > 0
+    ? parsedInterval
+    : DEFAULT_DEVICE_INTERVAL_SECONDS) * 1000;
+  const expiresMs = (Number.isFinite(parsedExpires) && parsedExpires > 0
+    ? parsedExpires
+    : DEFAULT_DEVICE_EXPIRES_SECONDS) * 1000;
+  const deadline = now() + expiresMs;
+
+  while (true) {
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) return { state: "expired" };
+    await sleepImpl(Math.min(waitMs, remainingMs), { signal });
+    if (signal?.aborted) throw abortError(signal);
+    if (now() >= deadline) return { state: "expired" };
+
+    const pollController = new AbortController();
+    let deadlineExpired = false;
+    const onCallerAbort = () => pollController.abort(signal.reason);
+    signal?.addEventListener("abort", onCallerAbort, { once: true });
+    if (signal?.aborted) onCallerAbort();
+    const deadlineTimer = setTimeout(() => {
+      deadlineExpired = true;
+      pollController.abort();
+    }, Math.max(1, deadline - now()));
+    let result;
+    try {
+      const pollResponse = await fetchImpl(ACCESS_TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          client_id: CLIENT_ID,
+          device_code: deviceCode,
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        }),
+        signal: pollController.signal,
+      });
+      if (now() >= deadline) {
+        await consumeResponseBody(pollResponse);
+        return { state: "expired" };
+      }
+      if (!pollResponse.ok) {
+        await consumeResponseBody(pollResponse);
+        if (now() >= deadline) return { state: "expired" };
+        continue;
+      }
+      result = interpretPoll(await pollResponse.json());
+      if (now() >= deadline) return { state: "expired" };
+    } catch (error) {
+      if (signal?.aborted) throw abortError(signal);
+      if (deadlineExpired || now() >= deadline) return { state: "expired" };
+      throw error;
+    } finally {
+      clearTimeout(deadlineTimer);
+      signal?.removeEventListener("abort", onCallerAbort);
+    }
+    if (result.state === "slow") {
+      waitMs += 5000;
+      continue;
+    }
+    if (result.state !== "wait") return result;
+  }
+}
 
 function expandHome(filePath, home = os.homedir()) {
   if (!filePath) return "";
@@ -465,6 +571,8 @@ export async function ensureAuth({
   signal,
   log = console.log,
   openAndCopyFn = openAndCopy,
+  sleepImpl = sleep,
+  now = Date.now,
 } = {}) {
   const GITHUB_TOKEN_PATH = githubTokenPath(home);
   if (fs.existsSync(GITHUB_TOKEN_PATH)) {
@@ -496,68 +604,83 @@ export async function ensureAuth({
       body: JSON.stringify({ client_id: CLIENT_ID, scope: SCOPE }),
       signal,
     });
-    if (!codeResp.ok) throw new Error(`device code request failed: ${codeResp.status}`);
-    const { device_code, user_code, verification_uri, interval } = await codeResp.json();
+    if (!codeResp.ok) {
+      await consumeResponseBody(codeResp);
+      throw new Error(`device code request failed: ${codeResp.status}`);
+    }
+    const {
+      device_code,
+      user_code,
+      verification_uri,
+      interval,
+      expires_in,
+    } = await codeResp.json();
 
     // Prompt the user.
     log(`\n${status("info", `Open ${verification_uri}`)}\n${status("info", `Enter code: ${user_code}`)}\n`);
     openAndCopyFn(user_code, verification_uri);
 
-    // Poll until GitHub completes the device flow.
-    let waitMs = (interval || 5) * 1000;
-    while (true) {
-      await sleep(waitMs);
-      const pollResp = await fetchImpl("https://github.com/login/oauth/access_token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
-          client_id: CLIENT_ID,
-          device_code,
-          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        }),
-        signal,
-      });
-      if (!pollResp.ok) {
-        // Treat transient network/server errors as pending and retry.
-        continue;
-      }
-      const data = await pollResp.json();
-      const r = interpretPoll(data);
-      if (r.state === "done") {
-        const identity = await fetchGithubIdentity(r.token, { fetchImpl, signal });
-        writeToken(r.token, home, identity.ok ? identity : null);
-        log(status("ok", "Login successful"));
-        return;
-      }
-      if (r.state === "slow") { waitMs += 5000; continue; }
-      if (r.state === "fail") throw new Error(`Login failed: ${r.error}`);
-      // wait: continue polling.
+    const result = await pollGithubDeviceFlow({
+      deviceCode: device_code,
+      interval,
+      expiresIn: expires_in,
+      fetchImpl,
+      signal,
+      sleepImpl,
+      now,
+    });
+    if (result.state === "done") {
+      const identity = await fetchGithubIdentity(result.token, { fetchImpl, signal });
+      writeToken(result.token, home, identity.ok ? identity : null);
+      log(status("ok", "Login successful"));
+      return;
     }
+    if (result.state === "expired") throw new Error("Login failed: device code expired");
+    throw new Error(`Login failed: ${result.error}`);
   }, tokenLockOptions(env));
 }
 
-export function writeGithubTokenMetadata(identity, home = os.homedir(), token = "") {
+function githubTokenMetadataData(identity, token, now = () => new Date()) {
   const normalized = normalizeGithubIdentity(identity);
-  if (!normalized) return false;
-  const filePath = githubTokenMetadataPath(home);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(filePath, `${JSON.stringify({
+  if (!normalized) return null;
+  const timestamp = now();
+  const updatedAt = timestamp instanceof Date ? timestamp.toISOString() : new Date(timestamp).toISOString();
+  return `${JSON.stringify({
     ...normalized,
     token_fingerprint: githubTokenFingerprint(token),
-    updated_at: new Date().toISOString(),
-  }, null, 2)}\n`, { mode: 0o600 });
+    updated_at: updatedAt,
+  }, null, 2)}\n`;
+}
+
+export function writeGithubTokenMetadata(identity, home = os.homedir(), token = "", {
+  now = () => new Date(),
+  writeFile = atomicWriteFileSync,
+} = {}) {
+  const metadata = githubTokenMetadataData(identity, token, now);
+  if (metadata === null) return false;
+  const filePath = githubTokenMetadataPath(home);
+  const directory = path.dirname(filePath);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  fs.chmodSync(directory, 0o700);
+  writeFile(filePath, metadata, { mode: 0o600, preserveMode: false });
   fs.chmodSync(filePath, 0o600);
   return true;
 }
 
-export function writeToken(token, home = os.homedir(), identity = null) {
+export function writeToken(token, home = os.homedir(), identity = null, {
+  now = () => new Date(),
+  writeFile = atomicWriteFileSync,
+  unlinkFile = fs.unlinkSync,
+} = {}) {
   const GITHUB_TOKEN_PATH = githubTokenPath(home);
-  fs.mkdirSync(path.dirname(GITHUB_TOKEN_PATH), { recursive: true });
-  fs.writeFileSync(GITHUB_TOKEN_PATH, token, { mode: 0o600 });
-  fs.chmodSync(GITHUB_TOKEN_PATH, 0o600);
-  if (normalizeGithubIdentity(identity)) {
-    writeGithubTokenMetadata(identity, home, token);
-  } else {
-    try { fs.unlinkSync(githubTokenMetadataPath(home)); } catch (e) { if (e?.code !== "ENOENT") throw e; }
-  }
+  const directory = path.dirname(GITHUB_TOKEN_PATH);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  fs.chmodSync(directory, 0o700);
+  atomicWriteFilePairSync(
+    GITHUB_TOKEN_PATH,
+    token,
+    githubTokenMetadataPath(home),
+    githubTokenMetadataData(identity, token, now),
+    { mode: 0o600, writeFile, unlinkFile },
+  );
 }

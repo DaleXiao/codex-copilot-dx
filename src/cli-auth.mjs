@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import {
   discoverGithubToken,
   fetchGithubIdentity,
-  interpretPoll,
+  pollGithubDeviceFlow,
   sourceDescription,
   validateGithubToken,
 } from "./auth.mjs";
@@ -34,33 +34,6 @@ import {
 const CLIENT_ID = "Iv1.b507a08c87ecfe98";
 const SCOPE = "read:user";
 const DEVICE_CODE_URL = "https://github.com/login/device/code";
-const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
-const DEFAULT_DEVICE_INTERVAL_SECONDS = 5;
-const DEFAULT_DEVICE_EXPIRES_SECONDS = 900;
-
-function abortError(signal) {
-  if (signal?.reason instanceof Error) return signal.reason;
-  const error = new Error("The operation was aborted");
-  error.name = "AbortError";
-  return error;
-}
-
-function sleep(ms, { signal } = {}) {
-  if (signal?.aborted) return Promise.reject(abortError(signal));
-  return new Promise((resolve, reject) => {
-    const cleanup = () => signal?.removeEventListener("abort", onAbort);
-    const onAbort = () => {
-      clearTimeout(timer);
-      cleanup();
-      reject(abortError(signal));
-    };
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, ms);
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
 
 function openAndCopy(userCode, verificationUri) {
   if (process.platform !== "darwin") return;
@@ -81,7 +54,10 @@ function responseDetail(value) {
 }
 
 async function jsonResponse(response, label) {
-  if (!response.ok) throw new Error(`${label} failed with HTTP ${response.status}`);
+  if (!response.ok) {
+    try { await response.text(); } catch {}
+    throw new Error(`${label} failed with HTTP ${response.status}`);
+  }
   try {
     return await response.json();
   } catch {
@@ -94,7 +70,7 @@ export async function requestDeviceFlowToken({
   signal,
   log = console.log,
   openAndCopyFn = openAndCopy,
-  sleepImpl = sleep,
+  sleepImpl,
   now = Date.now,
 } = {}) {
   const codeResponse = await fetchImpl(DEVICE_CODE_URL, {
@@ -111,32 +87,18 @@ export async function requestDeviceFlowToken({
   log(`\n${status("info", `Open ${code.verification_uri}`)}\n${status("info", `Enter Claude account code: ${code.user_code}`)}\n`);
   openAndCopyFn(code.user_code, code.verification_uri);
 
-  let waitMs = (Number(code.interval) || DEFAULT_DEVICE_INTERVAL_SECONDS) * 1000;
-  const expiresMs = (Number(code.expires_in) || DEFAULT_DEVICE_EXPIRES_SECONDS) * 1000;
-  const deadline = now() + expiresMs;
-
-  while (now() < deadline) {
-    await sleepImpl(waitMs, { signal });
-    const pollResponse = await fetchImpl(ACCESS_TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        client_id: CLIENT_ID,
-        device_code: code.device_code,
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-      }),
-      signal,
-    });
-    if (!pollResponse.ok) continue;
-    const result = interpretPoll(await pollResponse.json());
-    if (result.state === "done") return result.token;
-    if (result.state === "slow") {
-      waitMs += 5000;
-      continue;
-    }
-    if (result.state === "fail") throw new Error(`Claude login failed: ${result.error}`);
-  }
-  throw new Error("Claude login failed: device code expired");
+  const result = await pollGithubDeviceFlow({
+    deviceCode: code.device_code,
+    interval: code.interval,
+    expiresIn: code.expires_in,
+    fetchImpl,
+    signal,
+    sleepImpl,
+    now,
+  });
+  if (result.state === "done") return result.token;
+  if (result.state === "expired") throw new Error("Claude login failed: device code expired");
+  throw new Error(`Claude login failed: ${result.error}`);
 }
 
 async function codexIdentity({ home, fetchImpl, signal }) {
@@ -249,7 +211,7 @@ export async function authorizeClaudeProfile({
   signal,
   log = console.log,
   openAndCopyFn = openAndCopy,
-  sleepImpl = sleep,
+  sleepImpl,
   now = Date.now,
   saveModelCacheFn = saveModelCache,
 } = {}) {

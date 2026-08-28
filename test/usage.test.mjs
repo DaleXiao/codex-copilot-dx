@@ -75,6 +75,50 @@ test("recordUsage: rotates at the configured size and streaming summary includes
   }
 });
 
+test("readUsageRecords: skips invalid lines, preserves valid records, and warns once safely", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-usage-invalid-"));
+  const filePath = path.join(dir, "usage\nlog\u009b\u202e.jsonl");
+  const warnings = [];
+  await fs.writeFile(filePath, [
+    JSON.stringify({ model: "first", usage: { total_tokens: 1 } }),
+    "{broken\u001b[2J\nforged warning",
+    "null",
+    "[]",
+    JSON.stringify({ model: "later", usage: { total_tokens: 2 } }),
+    "",
+  ].join("\n"));
+
+  const records = await readUsageRecords(filePath, { warn: (message) => warnings.push(message) });
+
+  assert.deepEqual(records.map((record) => record.model), ["first", "later"]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /ignored 4 invalid records/);
+  assert.doesNotMatch(warnings[0], /broken|forged warning|\u001b/);
+  assert.doesNotMatch(warnings[0], /\u009b|\u202e/);
+  assert.ok(warnings[0].includes("usage\\nlog"));
+});
+
+test("summarizeUsageLogs: invalid rotated lines do not hide valid totals from either file", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-usage-invalid-rotate-"));
+  const filePath = path.join(dir, "usage.jsonl");
+  const warnings = [];
+  await fs.writeFile(`${filePath}.1`, [
+    JSON.stringify({ model: "rotated", usage: { total_tokens: 3 } }),
+    "{truncated",
+  ].join("\n"));
+  await fs.writeFile(filePath, `${JSON.stringify({ model: "current", usage: { total_tokens: 5 } })}\n`);
+
+  const summary = await summarizeUsageLogs(filePath, { warn: (message) => warnings.push(message) });
+
+  assert.equal(summary.requests, 2);
+  assert.equal(summary.totals.total_tokens, 8);
+  assert.equal(summary.byModel.rotated.requests, 1);
+  assert.equal(summary.byModel.current.requests, 1);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /ignored 1 invalid record/);
+  assert.ok(warnings[0].includes(JSON.stringify(`${filePath}.1`)));
+});
+
 test("buildResponsesUsageRecord: skips empty usage", () => {
   const record = buildResponsesUsageRecord({
     response: { id: "resp_1", model: "gpt-5.5", usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } },

@@ -150,7 +150,7 @@ export async function flushUsageWrites() {
   await writeQueue;
 }
 
-async function* iterateUsageRecords(filePath) {
+async function* iterateUsageRecords(filePath, { warn = console.error } = {}) {
   let input;
   try {
     input = fs.createReadStream(filePath, { encoding: "utf8" });
@@ -165,14 +165,31 @@ async function* iterateUsageRecords(filePath) {
   }
 
   const lines = readline.createInterface({ input, crlfDelay: Infinity });
+  let invalidRecords = 0;
   for await (const line of lines) {
-    if (line) yield JSON.parse(line);
+    if (!line) continue;
+    try {
+      const record = JSON.parse(line);
+      if (!record || typeof record !== "object" || Array.isArray(record)) {
+        invalidRecords += 1;
+        continue;
+      }
+      yield record;
+    } catch {
+      invalidRecords += 1;
+    }
+  }
+  if (invalidRecords > 0) {
+    try {
+      const safePath = terminalCell(JSON.stringify(filePath));
+      warn(`codex-copilot-dx usage log ignored ${invalidRecords} invalid record${invalidRecords === 1 ? "" : "s"} in ${safePath}`);
+    } catch {}
   }
 }
 
-export async function readUsageRecords(filePath = usageLogPath()) {
+export async function readUsageRecords(filePath = usageLogPath(), { warn = console.error } = {}) {
   const records = [];
-  for await (const record of iterateUsageRecords(filePath)) records.push(record);
+  for await (const record of iterateUsageRecords(filePath, { warn })) records.push(record);
   return records;
 }
 
@@ -200,10 +217,10 @@ export function summarizeUsage(records) {
   return summary;
 }
 
-export async function summarizeUsageLogs(filePath = usageLogPath()) {
+export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error } = {}) {
   const summary = { requests: 0, totals: {}, byModel: {} };
   for (const candidate of [rotatedFilePath(filePath), filePath]) {
-    for await (const record of iterateUsageRecords(candidate)) {
+    for await (const record of iterateUsageRecords(candidate, { warn })) {
       const one = summarizeUsage([record]);
       summary.requests += one.requests;
       addUsageTotals(summary.totals, one.totals);
@@ -324,7 +341,8 @@ export async function printUsageSummary({
   format = "auto",
   output = process.stdout,
   log = console.log,
+  warn = console.error,
 } = {}) {
-  const summary = await summarizeUsageLogs(filePath);
+  const summary = await summarizeUsageLogs(filePath, { warn });
   log(formatUsageSummary(summary, { filePath, format, output }));
 }

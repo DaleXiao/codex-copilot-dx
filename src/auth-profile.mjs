@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { atomicWriteFileSync } from "./atomic-file.mjs";
+import { atomicWriteFilePairSync, atomicWriteFileSync } from "./atomic-file.mjs";
 import {
   githubTokenLockPath,
   githubTokenMetadataPath,
@@ -131,27 +131,11 @@ export function withAuthProfileLock(profile, fn, {
   return withFileLock(lockPath, fn, { ...lockOptions(env), ...options });
 }
 
-function writeSecret(filePath, data, writeFile) {
-  writeFile(filePath, data, { mode: 0o600 });
-  fs.chmodSync(filePath, 0o600);
-}
-
-function restoreSnapshot(filePath, snapshot, writeFile) {
-  if (snapshot.exists) {
-    writeSecret(filePath, snapshot.data, writeFile);
-    return;
-  }
-  try {
-    fs.unlinkSync(filePath);
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
-}
-
 export function writeClaudeAuthProfile(token, identity, {
   home = os.homedir(),
   now = () => new Date(),
   writeFile = atomicWriteFileSync,
+  unlinkFile = fs.unlinkSync,
 } = {}) {
   const cleanToken = String(token || "").trim();
   const normalizedIdentity = normalizeGithubIdentity(identity);
@@ -163,8 +147,6 @@ export function writeClaudeAuthProfile(token, identity, {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   fs.chmodSync(directory, 0o700);
 
-  const previousToken = readOptionalFile(paths.tokenPath);
-  const previousMetadata = readOptionalFile(paths.metadataPath);
   const timestamp = now();
   const updatedAt = timestamp instanceof Date ? timestamp.toISOString() : new Date(timestamp).toISOString();
   const metadata = `${JSON.stringify({
@@ -174,20 +156,15 @@ export function writeClaudeAuthProfile(token, identity, {
     updated_at: updatedAt,
   }, null, 2)}\n`;
 
-  try {
-    writeSecret(paths.tokenPath, cleanToken, writeFile);
-    // Commit the activation marker last. Readers never observe a configured
-    // Claude profile unless the token and its fingerprint agree.
-    writeSecret(paths.metadataPath, metadata, writeFile);
-  } catch (error) {
-    try {
-      restoreSnapshot(paths.tokenPath, previousToken, writeFile);
-      restoreSnapshot(paths.metadataPath, previousMetadata, writeFile);
-    } catch (rollbackError) {
-      error.rollbackError = rollbackError;
-    }
-    throw error;
-  }
+  // Commit the activation marker last. Readers never observe a configured
+  // Claude profile unless the token and its fingerprint agree.
+  atomicWriteFilePairSync(
+    paths.tokenPath,
+    cleanToken,
+    paths.metadataPath,
+    metadata,
+    { mode: 0o600, writeFile, unlinkFile },
+  );
 
   return {
     profile: AUTH_PROFILE_CLAUDE,

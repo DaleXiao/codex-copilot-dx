@@ -91,6 +91,8 @@ test("writeClaudeAuthProfile: failed reauth restores the previous credential pai
   writeClaudeAuthProfile("ghu_old", { login: "personal", id: 2 }, { home });
   const before = readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home });
   const beforeMetadata = fs.readFileSync(before.paths.metadataPath, "utf8");
+  fs.chmodSync(before.paths.tokenPath, 0o640);
+  fs.chmodSync(before.paths.metadataPath, 0o604);
   let writes = 0;
   const failMetadataOnce = (filePath, data, options) => {
     writes += 1;
@@ -111,6 +113,23 @@ test("writeClaudeAuthProfile: failed reauth restores the previous credential pai
   assert.equal(after.token, "ghu_old");
   assert.equal(after.identity.login, "personal");
   assert.equal(fs.readFileSync(after.paths.metadataPath, "utf8"), beforeMetadata);
+  assert.equal(fs.statSync(after.paths.tokenPath).mode & 0o777, 0o640);
+  assert.equal(fs.statSync(after.paths.metadataPath).mode & 0o777, 0o604);
+});
+
+test("writeClaudeAuthProfile: commits token before metadata", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-profile-order-"));
+  const writes = [];
+
+  const result = writeClaudeAuthProfile("ghu_personal", { login: "personal", id: 2 }, {
+    home,
+    writeFile: (filePath, data, options) => {
+      writes.push(filePath);
+      atomicWriteFileSync(filePath, data, options);
+    },
+  });
+
+  assert.deepEqual(writes, [result.paths.tokenPath, result.paths.metadataPath]);
 });
 
 test("Claude activation fails closed for partial credentials and never changes Codex files", () => {

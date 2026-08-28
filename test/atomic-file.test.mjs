@@ -17,6 +17,17 @@ test("atomicWriteFileSync: replaces content, preserves mode, and removes temp fi
   assert.deepEqual(fs.readdirSync(dir), ["config.json"]);
 });
 
+test("atomicWriteFileSync: can explicitly replace an existing mode", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-atomic-mode-"));
+  const filePath = path.join(dir, "secret");
+  fs.writeFileSync(filePath, "before", { mode: 0o640 });
+
+  atomicWriteFileSync(filePath, "after", { mode: 0o600, preserveMode: false });
+
+  assert.equal(fs.readFileSync(filePath, "utf8"), "after");
+  assert.equal(fs.statSync(filePath).mode & 0o777, 0o600);
+});
+
 test("atomicWriteFileIfChangedSync: does not replace identical content", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-atomic-same-"));
   const filePath = path.join(dir, "config.toml");

@@ -8,6 +8,7 @@ import {
 import { PM_STUDIO_RECIPES } from "./pm-studio-asar.mjs";
 import {
   assertPatchedBinaryRecord,
+  createPmStudioStatusOperationOverrides,
   createPmStudioSetupOperations,
   DEFAULT_PM_STUDIO_APP_PATH,
   inspectPmStudioApp,
@@ -147,7 +148,10 @@ export async function inspectPmStudioStatus({
   readAdapterStatusFn = readAdapterStatus,
   probePmStudioRelayFn = probePmStudioRelay,
 } = {}) {
-  const operations = createPmStudioSetupOperations(operationOverrides);
+  const operations = createPmStudioSetupOperations({
+    ...createPmStudioStatusOperationOverrides(),
+    ...operationOverrides,
+  });
   let app;
   if (!existsSync(appPath)) {
     app = { state: "not_installed", metadata: null, issues: [] };

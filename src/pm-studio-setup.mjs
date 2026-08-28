@@ -12,7 +12,10 @@ import {
   PM_STUDIO_2_9_10_RECIPE,
   PM_STUDIO_RECIPES,
   createCompatiblePmStudioRecipe,
+  createCompatiblePmStudioRecipeFromFile,
+  inspectAsarFile,
   inspectElectronAsarIntegritySlots,
+  inspectElectronAsarIntegrityFile,
   inspectAsarBuffer,
   patchAsarBuffer,
   sha256Hex,
@@ -57,10 +60,10 @@ function runChecked(processRunner, command, args, label) {
   return result;
 }
 
-function hashRegularFile(filePath, expected) {
+function hashRegularFile(filePath, expected, readBuffer) {
   const hash = createHash("sha256");
   const file = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  const buffer = readBuffer || Buffer.allocUnsafe(1024 * 1024);
   try {
     const before = fs.fstatSync(file, { bigint: true });
     if (before.dev !== BigInt(expected.dev)
@@ -136,6 +139,7 @@ function parseXattrHex(output, root, ignoredXattrs) {
 export function inspectBundleContent(appPath, {
   xattrOutput = "",
   ignoredXattrs = [],
+  readBuffer,
 } = {}) {
   const root = path.resolve(appPath);
   const rootStat = fs.lstatSync(root);
@@ -186,7 +190,7 @@ export function inspectBundleContent(appPath, {
         }
         regularFileCount += 1;
         regularBytes += stat.size;
-        records.push(["file", relative, mode, stat.size, hashRegularFile(fullPath, stat)]);
+        records.push(["file", relative, mode, stat.size, hashRegularFile(fullPath, stat, readBuffer)]);
       } else {
         throw setupError("PM_STUDIO_BUNDLE_ENTRY_INVALID", `PM Studio contains an unsupported entry: ${relative}`);
       }
@@ -208,12 +212,13 @@ export function inspectBundleContent(appPath, {
   };
 }
 
-function defaultInspectBundleContent({ appPath, recipe, processRunner }) {
+function defaultInspectBundleContent({ appPath, recipe, processRunner, readBuffer }) {
   const xattrs = runChecked(processRunner, "/usr/bin/xattr", ["-r", "-s", "-x", "-l", appPath],
     "Reading PM Studio extended attributes");
   return inspectBundleContent(appPath, {
     xattrOutput: xattrs.stdout,
     ignoredXattrs: recipe.sourceBundleContent?.ignoredXattrs || [],
+    readBuffer,
   });
 }
 
@@ -313,6 +318,55 @@ function defaultInspectExecutableIntegrity({ appPath, infoPlistPath, recipe, pro
       framework: frameworkSlots,
     },
     matchesRecipeName: executableName === recipe.executable,
+  };
+}
+
+function statusInspectExecutableIntegrity({ appPath, infoPlistPath, recipe, processRunner, evidenceCache }) {
+  const executableName = plistRead(processRunner, infoPlistPath, "CFBundleExecutable");
+  if (!executableName || path.basename(executableName) !== executableName) {
+    throw setupError("PM_STUDIO_EXECUTABLE_INVALID", "PM Studio CFBundleExecutable is invalid");
+  }
+  const executablePath = path.join(appPath, "Contents", "MacOS", executableName);
+  const frameworkPath = path.join(appPath, recipe.electronFrameworkPath);
+  const executable = inspectElectronAsarIntegrityFile(executablePath, { cache: evidenceCache });
+  const framework = inspectElectronAsarIntegrityFile(frameworkPath, { cache: evidenceCache });
+  return {
+    executableName,
+    executablePath,
+    executableSha256: executable.sha256,
+    frameworkPath,
+    frameworkSha256: framework.sha256,
+    embeddedIntegrity: {
+      state: executable.integrity.slots.length === 0 && framework.integrity.slots.length === 0 ? "absent" : "present",
+      supported: executable.integrity.slots.length === 0 && framework.integrity.slots.length === 0,
+      executable: executable.integrity,
+      framework: framework.integrity,
+    },
+    matchesRecipeName: executableName === recipe.executable,
+  };
+}
+
+export function createPmStudioStatusOperationOverrides() {
+  const evidenceCache = new Map();
+  const bundleReadBuffer = Buffer.allocUnsafe(1024 * 1024);
+  return {
+    inspectExecutableIntegrity: (args) => statusInspectExecutableIntegrity({
+      ...args,
+      evidenceCache,
+    }),
+    inspectAsarFile: ({ asarPath, recipe }) => inspectAsarFile(asarPath, recipe, {
+      cache: evidenceCache,
+      releaseTargets: true,
+    }),
+    createCompatibleRecipeFromFile: ({ asarPath, options }) => createCompatiblePmStudioRecipeFromFile(
+      asarPath,
+      options,
+      { cache: evidenceCache, releaseTargets: true },
+    ),
+    inspectBundleContent: (args) => defaultInspectBundleContent({
+      ...args,
+      readBuffer: bundleReadBuffer,
+    }),
   };
 }
 
@@ -482,7 +536,9 @@ export function inspectPmStudioApp({
   const paths = appPaths(appPath, recipe);
   const issues = [];
   const metadata = operations.readBundleMetadata({ ...paths, recipe, processRunner: operations.processRunner });
-  const asar = inspectAsarBuffer(fs.readFileSync(paths.asarPath), recipe);
+  const asar = operations.inspectAsarFile
+    ? operations.inspectAsarFile({ ...paths, recipe, processRunner: operations.processRunner })
+    : inspectAsarBuffer(fs.readFileSync(paths.asarPath), recipe);
   const plistIntegrity = operations.readAsarIntegrity({ ...paths, recipe, processRunner: operations.processRunner });
   const executableIntegrity = operations.inspectExecutableIntegrity({
     ...paths, recipe, processRunner: operations.processRunner,
@@ -691,11 +747,14 @@ function compatibleSourceStructure({ appPath, metadata, operations }) {
     throw setupError("PM_STUDIO_ASAR_INCOMPATIBLE",
       "PM Studio compatible-version discovery found an unsupported executable or embedded ASAR integrity policy");
   }
-  const compatibleRecipe = createCompatiblePmStudioRecipe(fs.readFileSync(paths.asarPath), {
+  const recipeOptions = {
     ...compatibleStaticOptions(metadata, executableIntegrity.executableName),
     sourceExecutableSha256: executableIntegrity.executableSha256,
     sourceElectronFrameworkSha256: executableIntegrity.frameworkSha256,
-  });
+  };
+  const compatibleRecipe = operations.createCompatibleRecipeFromFile
+    ? operations.createCompatibleRecipeFromFile({ asarPath: paths.asarPath, options: recipeOptions })
+    : createCompatiblePmStudioRecipe(fs.readFileSync(paths.asarPath), recipeOptions);
   const plistIntegrity = operations.readAsarIntegrity({
     ...paths,
     recipe: compatibleRecipe,
@@ -749,11 +808,14 @@ function compatibleRecipeFromManifest({ backupDir, manifest, metadata, operation
     recipe: PM_STUDIO_2_9_10_RECIPE,
     processRunner: operations.processRunner,
   });
-  const compatibleRecipe = createCompatiblePmStudioRecipe(fs.readFileSync(sourceAsarPath), {
+  const recipeOptions = {
     ...compatibleStaticOptions(metadata, executableIntegrity.executableName),
     sourceExecutableSha256: manifest?.source?.binaries?.main_executable_sha256,
     sourceElectronFrameworkSha256: manifest?.source?.binaries?.electron_framework_sha256,
-  });
+  };
+  const compatibleRecipe = operations.createCompatibleRecipeFromFile
+    ? operations.createCompatibleRecipeFromFile({ asarPath: sourceAsarPath, options: recipeOptions })
+    : createCompatiblePmStudioRecipe(fs.readFileSync(sourceAsarPath), recipeOptions);
   const recipe = Object.freeze({
     ...compatibleRecipe,
     sourceBundleContent: frozenBundleContent(manifest.source.bundle_content),
@@ -778,7 +840,8 @@ function compatibleRecipeFromManifest({ backupDir, manifest, metadata, operation
 
 function compatibleRecipeFromBackup({ appPath, backupRoot, metadata, operations }) {
   if (!fs.existsSync(backupRoot)) return null;
-  const installedAsar = fs.readFileSync(path.join(appPath, PM_STUDIO_2_9_10_RECIPE.asarPath));
+  const installedAsarPath = path.join(appPath, PM_STUDIO_2_9_10_RECIPE.asarPath);
+  const installedAsar = operations.inspectAsarFile ? null : fs.readFileSync(installedAsarPath);
   let candidates = [];
   const invalidCandidates = [];
   for (const entry of fs.readdirSync(backupRoot, { withFileTypes: true })) {
@@ -800,7 +863,9 @@ function compatibleRecipeFromBackup({ appPath, backupRoot, metadata, operations 
       continue;
     }
     if (!recipe) continue;
-    const asarState = inspectAsarBuffer(installedAsar, recipe).state;
+    const asarState = operations.inspectAsarFile
+      ? operations.inspectAsarFile({ asarPath: installedAsarPath, recipe }).state
+      : inspectAsarBuffer(installedAsar, recipe).state;
     if (asarState === "drift") continue;
     candidates.push({ recipe, manifest, asarState });
   }

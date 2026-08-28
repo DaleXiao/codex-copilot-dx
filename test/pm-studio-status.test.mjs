@@ -181,6 +181,21 @@ test("inspectPmStudioStatus reports a fully operational exact patch", async () =
   assert.match(formatPmStudioStatus(result), /PM GPT uses its native official GitHub Copilot path/);
 });
 
+test("inspectPmStudioStatus enables bounded file evidence without changing its result or format", async () => {
+  let boundedOperations = null;
+  const result = await inspectPmStudioStatus(options({
+    inspectApp: ({ operations }) => {
+      boundedOperations = operations;
+      return patchedInspection();
+    },
+  }));
+  assert.equal(typeof boundedOperations.inspectAsarFile, "function");
+  assert.equal(typeof boundedOperations.createCompatibleRecipeFromFile, "function");
+  assert.match(formatPmStudioStatus(result), /^ccdx pms status\n\[OK\] PM Studio 2\.9\.7 build 2090700 is patched and verified/m);
+  assert.equal(result.ok, true);
+  assert.equal(result.app.patchRecord.valid, true);
+});
+
 test("inspectPmStudioStatus selects the exact 2.9.10 recipe", async () => {
   let selectedRecipe;
   let resolverCalls = 0;

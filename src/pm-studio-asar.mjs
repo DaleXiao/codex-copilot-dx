@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 
 export const PM_STUDIO_ORIGIN = "https://api.githubcopilot.com";
 export const CCDX_PM_STUDIO_ORIGIN = "http://127.0.0.1:2026/pm-ccdx";
@@ -272,6 +273,187 @@ function aligned4(value) {
   return (value + 3) & ~3;
 }
 
+const FILE_READ_CHUNK_BYTES = 1024 * 1024;
+const PM_STUDIO_ASAR_HEADER_MAX_BYTES = 64 * 1024 * 1024;
+
+function fileIdentity(filePath, stat) {
+  return [
+    filePath,
+    stat.dev,
+    stat.ino,
+    stat.size,
+    stat.mtimeNs,
+    stat.ctimeNs,
+  ].join("\0");
+}
+
+function readExact(file, buffer, position, io) {
+  let offset = 0;
+  while (offset < buffer.length) {
+    const length = io.readSync(file, buffer, offset, buffer.length - offset, position + offset);
+    if (length === 0) throw new Error("Invalid ASAR: header is truncated");
+    offset += length;
+  }
+}
+
+function sameFileSnapshot(left, right) {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
+
+function withVerifiedFile(filePath, {
+  expectedIdentity = "",
+  io = fs,
+  label,
+} = {}, read) {
+  const realPath = io.realpathSync(filePath);
+  const pathBefore = io.statSync(realPath, { bigint: true });
+  const file = io.openSync(realPath, io.constants.O_RDONLY | (io.constants.O_NOFOLLOW || 0));
+  try {
+    const before = io.fstatSync(file, { bigint: true });
+    const identity = fileIdentity(realPath, before);
+    if (!sameFileSnapshot(pathBefore, before) || (expectedIdentity && expectedIdentity !== identity)) {
+      throw new Error(`PM Studio ${label} changed before it could be read: ${filePath}`);
+    }
+    const result = read({ file, before, realPath });
+    const after = io.fstatSync(file, { bigint: true });
+    const pathAfter = io.statSync(realPath, { bigint: true });
+    if (!sameFileSnapshot(before, after) || !sameFileSnapshot(after, pathAfter)) {
+      throw new Error(`PM Studio ${label} changed while reading: ${filePath}`);
+    }
+    return {
+      result,
+      realPath,
+      identity: fileIdentity(realPath, after),
+    };
+  } finally {
+    io.closeSync(file);
+  }
+}
+
+function populateAsarTargetBytes(evidence, targetPaths, io) {
+  const missing = targetPaths.filter((targetPath) => !evidence.parsed.targetBytes.has(targetPath));
+  withVerifiedFile(evidence.realPath, {
+    expectedIdentity: evidence.identity,
+    io,
+    label: "ASAR",
+  }, ({ file, before }) => {
+    for (const targetPath of missing) {
+      const entry = findAsarEntry(evidence.parsed.header, targetPath);
+      if (!entry || entry.unpacked) continue;
+      let offset;
+      let size;
+      try {
+        offset = entryOffset(entry.offset, `${targetPath} offset`);
+        size = entrySize(entry.size, `${targetPath} size`);
+      } catch {
+        continue;
+      }
+      if (size > PM_STUDIO_COMPATIBLE_TARGET_MAX_BYTES) {
+        throw new Error(`Invalid ASAR: ${targetPath} exceeds the safe inspection limit`);
+      }
+      const absoluteOffset = evidence.parsed.dataOffset + offset;
+      if (absoluteOffset + size > Number(before.size)) continue;
+      const bytes = Buffer.allocUnsafe(size);
+      readExact(file, bytes, absoluteOffset, io);
+      evidence.parsed.targetBytes.set(targetPath, bytes);
+    }
+  });
+}
+
+function readAsarFileEvidence(filePath, targetPaths, { cache, io = fs } = {}) {
+  const realPath = io.realpathSync(filePath);
+  const pathStat = io.statSync(realPath, { bigint: true });
+  const paths = [...new Set(targetPaths)].sort();
+  const cacheKey = `${fileIdentity(realPath, pathStat)}\0${paths.join("\0")}`;
+  if (cache?.has(cacheKey)) {
+    const evidence = cache.get(cacheKey);
+    populateAsarTargetBytes(evidence, paths, io);
+    return evidence;
+  }
+
+  const opened = withVerifiedFile(realPath, {
+    expectedIdentity: fileIdentity(realPath, pathStat),
+    io,
+    label: "ASAR",
+  }, ({ file, before }) => {
+    const prefix = Buffer.allocUnsafe(16);
+    readExact(file, prefix, 0, io);
+    const headerPickleSize = checkedUInt32(prefix, 4, "header pickle size");
+    const dataOffset = 8 + headerPickleSize;
+    if (dataOffset > PM_STUDIO_ASAR_HEADER_MAX_BYTES) {
+      throw new Error("Invalid ASAR: header exceeds the safe inspection limit");
+    }
+    if (dataOffset > Number(before.size)) {
+      throw new Error("Invalid ASAR: header extends outside the archive");
+    }
+    const headerRegion = Buffer.allocUnsafe(dataOffset);
+    readExact(file, headerRegion, 0, io);
+    const parsedHeader = parseAsarBuffer(headerRegion);
+    const targetRanges = new Map();
+    for (const targetPath of paths) {
+      const entry = findAsarEntry(parsedHeader.header, targetPath);
+      if (!entry || entry.unpacked) continue;
+      let offset;
+      let size;
+      try {
+        offset = entryOffset(entry.offset, `${targetPath} offset`);
+        size = entrySize(entry.size, `${targetPath} size`);
+      } catch {
+        continue;
+      }
+      if (size > PM_STUDIO_COMPATIBLE_TARGET_MAX_BYTES) {
+        throw new Error(`Invalid ASAR: ${targetPath} exceeds the safe inspection limit`);
+      }
+      const absoluteOffset = parsedHeader.dataOffset + offset;
+      if (absoluteOffset + size <= Number(before.size)) {
+        targetRanges.set(targetPath, { start: absoluteOffset, end: absoluteOffset + size, bytes: Buffer.allocUnsafe(size) });
+      }
+    }
+
+    const hash = createHash("sha256");
+    const chunk = Buffer.allocUnsafe(FILE_READ_CHUNK_BYTES);
+    let position = 0;
+    for (;;) {
+      const length = io.readSync(file, chunk, 0, chunk.length, position);
+      if (length === 0) break;
+      const bytes = chunk.subarray(0, length);
+      hash.update(bytes);
+      const chunkEnd = position + length;
+      for (const range of targetRanges.values()) {
+        const start = Math.max(position, range.start);
+        const end = Math.min(chunkEnd, range.end);
+        if (start < end) bytes.copy(range.bytes, start - range.start, start - position, end - position);
+      }
+      position = chunkEnd;
+    }
+    if (position !== Number(before.size)) {
+      throw new Error(`PM Studio ASAR changed while reading: ${filePath}`);
+    }
+    return {
+      parsed: {
+        ...parsedHeader,
+        buffer: null,
+        headerBytes: null,
+        headerSha256: sha256Hex(parsedHeader.headerBytes),
+        archiveLength: Number(before.size),
+        targetBytes: new Map([...targetRanges].map(([name, range]) => [name, range.bytes])),
+      },
+      asarSha256: hash.digest("hex"),
+    };
+  });
+  const evidence = {
+    ...opened.result,
+    realPath: opened.realPath,
+    identity: opened.identity,
+  };
+  cache?.set(cacheKey, evidence);
+  return evidence;
+}
+
 export function parseAsarBuffer(value) {
   const buffer = checkedBuffer(value);
   if (buffer.length < 16) throw new Error("Invalid ASAR: header is truncated");
@@ -456,8 +638,7 @@ function requiredRecipeString(value, name) {
   return value;
 }
 
-export function createCompatiblePmStudioRecipe(value, options = {}) {
-  const parsed = parseAsarBuffer(value);
+function compatibleRecipeFromEvidence(parsed, sourceTarget, sourceAsarSha256, patchedAsarSha256For, options) {
   const entry = findAsarEntry(parsed.header, PM_STUDIO_COPILOT_CONFIG_MODULE_PATH);
   if (!entry) throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} is missing`);
 
@@ -473,7 +654,8 @@ export function createCompatiblePmStudioRecipe(value, options = {}) {
     throw incompatibleAsar(error.message);
   }
   const absoluteOffset = parsed.dataOffset + targetOffset;
-  if (entry.unpacked || entry.link || absoluteOffset + targetSize > parsed.buffer.length) {
+  const archiveLength = parsed.archiveLength ?? parsed.buffer.length;
+  if (entry.unpacked || entry.link || absoluteOffset + targetSize > archiveLength) {
     throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} is not one packed regular ASAR entry`);
   }
   if (blockSize === 0
@@ -488,8 +670,9 @@ export function createCompatiblePmStudioRecipe(value, options = {}) {
     || entry.integrity.blocks.length !== expectedBlockCount) {
     throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} has unsafe integrity block geometry`);
   }
-
-  const sourceTarget = parsed.buffer.subarray(absoluteOffset, absoluteOffset + targetSize);
+  if (!sourceTarget || sourceTarget.length !== targetSize) {
+    throw incompatibleAsar(`${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} is not one packed regular ASAR entry`);
+  }
   const sourceTargetSha256 = sha256Hex(sourceTarget);
   const sourceBlocks = blockSha256(sourceTarget, blockSize);
   if (entry.integrity.hash !== sourceTargetSha256
@@ -519,10 +702,8 @@ export function createCompatiblePmStudioRecipe(value, options = {}) {
   replacement.copy(patchedTarget, editOffset);
   const patchedTargetSha256 = sha256Hex(patchedTarget);
   const patchedBlocks = blockSha256(patchedTarget, blockSize);
-  const patchedAsar = Buffer.from(parsed.buffer);
-  replacement.copy(patchedAsar, absoluteOffset + editOffset);
-  const patchedParsed = parseAsarBuffer(patchedAsar);
-  const patchedEntry = findAsarEntry(patchedParsed.header, PM_STUDIO_COPILOT_CONFIG_MODULE_PATH);
+  const patchedHeader = JSON.parse(JSON.stringify(parsed.header));
+  const patchedEntry = findAsarEntry(patchedHeader, PM_STUDIO_COPILOT_CONFIG_MODULE_PATH);
   patchedEntry.integrity = {
     ...patchedEntry.integrity,
     algorithm: "SHA256",
@@ -530,16 +711,19 @@ export function createCompatiblePmStudioRecipe(value, options = {}) {
     blockSize,
     blocks: [...patchedBlocks],
   };
-  const patchedHeaderBytes = Buffer.from(JSON.stringify(patchedParsed.header));
-  if (patchedHeaderBytes.length !== patchedParsed.headerLength) {
-    throw incompatibleAsar(`Compatible ASAR header changed size (${patchedParsed.headerLength} -> ${patchedHeaderBytes.length})`);
+  const patchedHeaderBytes = Buffer.from(JSON.stringify(patchedHeader));
+  if (patchedHeaderBytes.length !== parsed.headerLength) {
+    throw incompatibleAsar(`Compatible ASAR header changed size (${parsed.headerLength} -> ${patchedHeaderBytes.length})`);
   }
-  patchedHeaderBytes.copy(patchedAsar, patchedParsed.headerStart);
+  const patchedAsarSha256 = patchedAsarSha256For({
+    absoluteEditOffset: absoluteOffset + editOffset,
+    patchedHeaderBytes,
+    replacement,
+  });
 
   const version = requiredRecipeString(String(options.version || ""), "version");
   const build = requiredRecipeString(String(options.build || ""), "build");
   const bundleIdentifier = requiredRecipeString(options.bundleIdentifier, "bundle identifier");
-  const sourceAsarSha256 = sha256Hex(parsed.buffer);
   const identity = sha256Hex(`${PM_STUDIO_COMPATIBILITY_ID}\0${bundleIdentifier}\0${version}\0${build}\0${sourceAsarSha256}`).slice(0, 24);
   const sourceBundleContent = options.sourceBundleContent
     ? Object.freeze({
@@ -588,12 +772,109 @@ export function createCompatiblePmStudioRecipe(value, options = {}) {
     integrityKey: requiredRecipeString(options.integrityKey, "ASAR integrity key"),
     dataOffset: parsed.dataOffset,
     sourceAsarSha256,
-    sourceHeaderSha256: sha256Hex(parsed.headerBytes),
-    patchedAsarSha256: sha256Hex(patchedAsar),
+    sourceHeaderSha256: parsed.headerSha256 || sha256Hex(parsed.headerBytes),
+    patchedAsarSha256,
     patchedHeaderSha256: sha256Hex(patchedHeaderBytes),
     ...(sourceBundleContent ? { sourceBundleContent } : {}),
     targets: Object.freeze([target]),
   });
+}
+
+export function createCompatiblePmStudioRecipe(value, options = {}) {
+  const parsed = parseAsarBuffer(value);
+  const entry = findAsarEntry(parsed.header, PM_STUDIO_COPILOT_CONFIG_MODULE_PATH);
+  let sourceTarget = null;
+  try {
+    const absoluteOffset = parsed.dataOffset
+      + entryOffset(entry?.offset, `${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} offset`);
+    const targetSize = entrySize(entry?.size, `${PM_STUDIO_COPILOT_CONFIG_MODULE_PATH} size`);
+    if (entry && !entry.unpacked && absoluteOffset + targetSize <= parsed.buffer.length) {
+      sourceTarget = parsed.buffer.subarray(absoluteOffset, absoluteOffset + targetSize);
+    }
+  } catch {
+    // The shared validator below preserves the existing classified error.
+  }
+  return compatibleRecipeFromEvidence(
+    parsed,
+    sourceTarget,
+    sha256Hex(parsed.buffer),
+    ({ absoluteEditOffset, patchedHeaderBytes, replacement }) => {
+      const patchedAsar = Buffer.from(parsed.buffer);
+      replacement.copy(patchedAsar, absoluteEditOffset);
+      patchedHeaderBytes.copy(patchedAsar, parsed.headerStart);
+      return sha256Hex(patchedAsar);
+    },
+    options,
+  );
+}
+
+function hashFileWithReplacements(filePath, expectedIdentity, replacements, io = fs) {
+  return withVerifiedFile(filePath, {
+    expectedIdentity,
+    io,
+    label: "ASAR",
+  }, ({ file, before }) => {
+    const ordered = [...replacements].sort((left, right) => left.start - right.start);
+    let cursor = 0;
+    for (const item of ordered) {
+      if (item.start < cursor || item.end < item.start || item.end > Number(before.size)
+        || item.bytes.length !== item.end - item.start) {
+        throw new Error("Invalid patched ASAR hash replacement range");
+      }
+      cursor = item.end;
+    }
+    const hash = createHash("sha256");
+    const chunk = Buffer.allocUnsafe(FILE_READ_CHUNK_BYTES);
+    const hashRange = (start, end) => {
+      let position = start;
+      while (position < end) {
+        const requested = Math.min(chunk.length, end - position);
+        const length = io.readSync(file, chunk, 0, requested, position);
+        if (length === 0) throw new Error(`PM Studio ASAR changed while reading: ${filePath}`);
+        hash.update(chunk.subarray(0, length));
+        position += length;
+      }
+    };
+    cursor = 0;
+    for (const item of ordered) {
+      hashRange(cursor, item.start);
+      hash.update(item.bytes);
+      cursor = item.end;
+    }
+    hashRange(cursor, Number(before.size));
+    return hash.digest("hex");
+  }).result;
+}
+
+export function createCompatiblePmStudioRecipeFromFile(filePath, options = {}, fileOptions = {}) {
+  const evidence = readAsarFileEvidence(filePath, [PM_STUDIO_COPILOT_CONFIG_MODULE_PATH], fileOptions);
+  try {
+    return compatibleRecipeFromEvidence(
+      evidence.parsed,
+      evidence.parsed.targetBytes.get(PM_STUDIO_COPILOT_CONFIG_MODULE_PATH),
+      evidence.asarSha256,
+      ({ absoluteEditOffset, patchedHeaderBytes, replacement }) => hashFileWithReplacements(
+        evidence.realPath,
+        evidence.identity,
+        [
+          {
+            start: evidence.parsed.headerStart,
+            end: evidence.parsed.headerEnd,
+            bytes: patchedHeaderBytes,
+          },
+          {
+            start: absoluteEditOffset,
+            end: absoluteEditOffset + replacement.length,
+            bytes: replacement,
+          },
+        ],
+        fileOptions.io || fs,
+      ),
+      options,
+    );
+  } finally {
+    if (fileOptions.releaseTargets) evidence.parsed.targetBytes.clear();
+  }
 }
 
 export function inspectElectronAsarIntegritySlots(value) {
@@ -619,6 +900,10 @@ export function inspectElectronAsarIntegritySlots(value) {
     });
     searchOffset = offset + sentinel.length;
   }
+  return electronSlotResult(slots, truncated);
+}
+
+function electronSlotResult(slots, truncated) {
   const malformed = truncated
     || slots.length > 1
     || slots.some((slot) => ![0, 1].includes(slot.used) || (slot.used === 1 && slot.version !== 1));
@@ -629,6 +914,86 @@ export function inspectElectronAsarIntegritySlots(value) {
     supported: !malformed && !active,
     slots,
   };
+}
+
+export function inspectElectronAsarIntegrityFile(filePath, {
+  cache,
+  io = fs,
+  chunkSize = FILE_READ_CHUNK_BYTES,
+} = {}) {
+  if (!Number.isSafeInteger(chunkSize) || chunkSize < 66) {
+    throw new TypeError("Electron integrity file chunk size must be at least 66 bytes");
+  }
+  const realPath = io.realpathSync(filePath);
+  const pathStat = io.statSync(realPath, { bigint: true });
+  const cacheKey = `electron\0${fileIdentity(realPath, pathStat)}`;
+  if (cache?.has(cacheKey)) {
+    withVerifiedFile(realPath, {
+      expectedIdentity: fileIdentity(realPath, pathStat),
+      io,
+      label: "executable",
+    }, () => {});
+    return cache.get(cacheKey);
+  }
+  const opened = withVerifiedFile(realPath, {
+    expectedIdentity: fileIdentity(realPath, pathStat),
+    io,
+    label: "executable",
+  }, ({ file, before }) => {
+    const sentinel = Buffer.from(ELECTRON_ASAR_INTEGRITY_SENTINEL);
+    const hash = createHash("sha256");
+    const chunk = Buffer.allocUnsafe(chunkSize);
+    const slots = [];
+    let tail = Buffer.alloc(0);
+    let position = 0;
+    let nextSearchOffset = 0;
+    for (;;) {
+      const length = io.readSync(file, chunk, 0, chunk.length, position);
+      if (length === 0) break;
+      const bytes = chunk.subarray(0, length);
+      hash.update(bytes);
+      const scan = tail.length ? Buffer.concat([tail, bytes]) : bytes;
+      const scanOffset = position - tail.length;
+      let localOffset = Math.max(0, nextSearchOffset - scanOffset);
+      while (localOffset <= scan.length - sentinel.length) {
+        const found = scan.indexOf(sentinel, localOffset);
+        if (found < 0) break;
+        const absoluteOffset = scanOffset + found;
+        if (found + 66 > scan.length) break;
+        slots.push({
+          offset: absoluteOffset,
+          used: scan[found + 32],
+          version: scan[found + 33],
+          digest: scan.subarray(found + 34, found + 66).toString("hex"),
+        });
+        nextSearchOffset = absoluteOffset + sentinel.length;
+        localOffset = nextSearchOffset - scanOffset;
+      }
+      tail = Buffer.from(scan.subarray(Math.max(0, scan.length - 65)));
+      position += length;
+    }
+    if (position !== Number(before.size)) {
+      throw new Error(`PM Studio executable changed while reading: ${filePath}`);
+    }
+    let truncated = false;
+    const tailOffset = position - tail.length;
+    let localOffset = Math.max(0, nextSearchOffset - tailOffset);
+    while (localOffset <= tail.length - sentinel.length) {
+      const found = tail.indexOf(sentinel, localOffset);
+      if (found < 0) break;
+      if (found + 66 > tail.length) {
+        truncated = true;
+        break;
+      }
+      localOffset = found + sentinel.length;
+    }
+    return {
+      sha256: hash.digest("hex"),
+      integrity: electronSlotResult(slots, truncated),
+    };
+  });
+  cache?.set(cacheKey, opened.result);
+  return opened.result;
 }
 
 function sameArray(actual, expected) {
@@ -655,11 +1020,13 @@ function inspectTarget(parsed, target) {
     return { path: target.path, malformed: error.message };
   }
   const absoluteOffset = parsed.dataOffset + offset;
-  if (entry.unpacked || absoluteOffset + size > parsed.buffer.length) {
+  const archiveLength = parsed.archiveLength ?? parsed.buffer.length;
+  if (entry.unpacked || absoluteOffset + size > archiveLength) {
     return { path: target.path, offset, size, absoluteOffset, malformed: "entry data is outside the packed archive" };
   }
 
-  const bytes = parsed.buffer.subarray(absoluteOffset, absoluteOffset + size);
+  const bytes = parsed.targetBytes?.get(target.path)
+    || parsed.buffer.subarray(absoluteOffset, absoluteOffset + size);
   let edit = null;
   if (target.edit) {
     let editOffset;
@@ -740,7 +1107,11 @@ function targetStateIssues(detail, target, state) {
 export function inspectAsarBuffer(value, recipe = PM_STUDIO_2_9_7_RECIPE) {
   const parsed = parseAsarBuffer(value);
   const asarSha256 = sha256Hex(parsed.buffer);
-  const headerSha256 = sha256Hex(parsed.headerBytes);
+  return inspectParsedAsar(parsed, asarSha256, recipe);
+}
+
+function inspectParsedAsar(parsed, asarSha256, recipe) {
+  const headerSha256 = parsed.headerSha256 || sha256Hex(parsed.headerBytes);
   const targets = recipe.targets.map((target) => inspectTarget(parsed, target));
   const commonIssues = [];
   addMismatch(commonIssues, "ASAR data offset", parsed.dataOffset, recipe.dataOffset);
@@ -791,6 +1162,15 @@ export function inspectAsarBuffer(value, recipe = PM_STUDIO_2_9_7_RECIPE) {
     predecessorIssues,
     legacyIssues,
   };
+}
+
+export function inspectAsarFile(filePath, recipe = PM_STUDIO_2_9_7_RECIPE, options = {}) {
+  const evidence = readAsarFileEvidence(filePath, recipe.targets.map((target) => target.path), options);
+  try {
+    return inspectParsedAsar(evidence.parsed, evidence.asarSha256, recipe);
+  } finally {
+    if (options.releaseTargets) evidence.parsed.targetBytes.clear();
+  }
 }
 
 export function patchAsarBuffer(value, recipe = PM_STUDIO_2_9_7_RECIPE) {

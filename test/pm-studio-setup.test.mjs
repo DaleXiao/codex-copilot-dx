@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
+import { spawnSync } from "node:child_process";
 import {
   CCDX_PM_STUDIO_ORIGIN,
   ELECTRON_ASAR_INTEGRITY_SENTINEL,
@@ -13,7 +14,9 @@ import {
   PM_STUDIO_SPLIT_ORIGIN_CONFIG_MODULE,
   PM_STUDIO_SPLIT_ORIGIN_MARKER,
   blockSha256,
+  inspectAsarFile,
   inspectAsarBuffer,
+  inspectElectronAsarIntegrityFile,
   inspectElectronAsarIntegritySlots,
   patchAsarBuffer,
   sha256Hex,
@@ -525,6 +528,18 @@ test("ASAR helpers classify clean/split-origin/legacy/drift and patch only the e
   assert.throws(() => patchAsarBuffer(drift, fixture.recipe), { code: "PM_STUDIO_ASAR_DRIFT" });
 });
 
+test("file-backed ASAR inspection exactly matches Buffer classification and diagnostics", () => {
+  const root = temporaryRoot("ccdx-asar-inspection-parity-");
+  const fixture = makeAsarFixture();
+  const filePath = path.join(root, "app.asar");
+  const drift = Buffer.from(fixture.source);
+  drift[drift.length - 1] ^= 1;
+  for (const value of [fixture.source, fixture.patched, fixture.predecessor, fixture.legacy, drift]) {
+    fs.writeFileSync(filePath, value);
+    assert.deepEqual(inspectAsarFile(filePath, fixture.recipe), inspectAsarBuffer(value, fixture.recipe));
+  }
+});
+
 test("ASAR parser rejects malformed pickle metadata and non-zero header padding", () => {
   const fixture = makeAsarFixture();
   for (const mutate of [
@@ -948,6 +963,177 @@ test("embedded Electron ASAR integrity slot inspection fails closed for active, 
   const truncated = Buffer.alloc(40);
   sentinel.copy(truncated, 8);
   assert.equal(inspectElectronAsarIntegritySlots(truncated).state, "drift");
+});
+
+test("file-backed Electron integrity inspection matches Buffer parsing across chunk boundaries", (t) => {
+  const root = temporaryRoot("ccdx-electron-file-");
+  const filePath = path.join(root, "Electron Framework");
+  const sentinel = Buffer.from(ELECTRON_ASAR_INTEGRITY_SENTINEL);
+  const slot = Buffer.concat([sentinel, Buffer.from([1, 1]), Buffer.alloc(32, 7)]);
+  const values = [
+    Buffer.from("ordinary Mach-O bytes"),
+    Buffer.concat([Buffer.alloc(63, 1), slot, Buffer.alloc(9, 2), slot]),
+    Buffer.concat([Buffer.alloc(65, 3), sentinel, Buffer.from([1])]),
+  ];
+  for (const value of values) {
+    fs.writeFileSync(filePath, value);
+    const actual = inspectElectronAsarIntegrityFile(filePath, { chunkSize: 66 });
+    assert.equal(actual.sha256, sha256Hex(value));
+    assert.deepEqual(actual.integrity, inspectElectronAsarIntegritySlots(value));
+  }
+});
+
+test("file-backed inspectors reject a file identity change during reading", () => {
+  const root = temporaryRoot("ccdx-file-change-");
+  const fixture = makeAsarFixture();
+  const filePath = path.join(root, "app.asar");
+  fs.writeFileSync(filePath, fixture.source);
+  let fstatCalls = 0;
+  const io = {
+    ...fs,
+    constants: fs.constants,
+    fstatSync(file, options) {
+      const stat = fs.fstatSync(file, options);
+      fstatCalls += 1;
+      return fstatCalls > 1 ? { ...stat, ctimeNs: stat.ctimeNs + 1n } : stat;
+    },
+  };
+  assert.throws(() => inspectAsarFile(filePath, fixture.recipe, { io }), /changed while reading/);
+});
+
+test("file-backed ASAR inspection rejects oversized declared header and target before allocation", () => {
+  const root = temporaryRoot("ccdx-file-bounds-");
+  const filePath = path.join(root, "app.asar");
+  const fixture = makeAsarFixture();
+  const oversizedHeader = Buffer.alloc(16);
+  oversizedHeader.writeUInt32LE(4, 0);
+  oversizedHeader.writeUInt32LE((64 * 1024 * 1024) + 4, 4);
+  fs.writeFileSync(filePath, oversizedHeader);
+  assert.throws(() => inspectAsarFile(filePath, fixture.recipe), /header exceeds the safe inspection limit/);
+
+  const header = { files: {} };
+  addHeaderEntry(header, "dist/main/main.js", {
+    size: (128 * 1024 * 1024) + 1,
+    offset: "0",
+    integrity: { algorithm: "SHA256", hash: "", blockSize: 16, blocks: [] },
+  });
+  const oversizedTarget = buildArchive(header, []);
+  fs.writeFileSync(filePath, oversizedTarget.archive);
+  fs.truncateSync(filePath, oversizedTarget.dataOffset + (128 * 1024 * 1024) + 1);
+  assert.throws(() => inspectAsarFile(filePath, fixture.recipe), /main\.js exceeds the safe inspection limit/);
+});
+
+test("file-backed evidence cache revalidates path and descriptor identity on every hit", () => {
+  const root = temporaryRoot("ccdx-file-cache-race-");
+  const fixture = makeAsarFixture();
+  const filePath = path.join(root, "app.asar");
+  const replacementPath = path.join(root, "replacement.asar");
+  const cache = new Map();
+  fs.writeFileSync(filePath, fixture.source);
+  fs.writeFileSync(replacementPath, fixture.patched);
+  inspectAsarFile(filePath, fixture.recipe, { cache });
+  let firstStat = true;
+  const io = {
+    ...fs,
+    constants: fs.constants,
+    statSync(target, options) {
+      if (firstStat) {
+        firstStat = false;
+        const stale = fs.statSync(target, options);
+        fs.renameSync(replacementPath, filePath);
+        return stale;
+      }
+      return fs.statSync(target, options);
+    },
+  };
+  assert.throws(() => inspectAsarFile(filePath, fixture.recipe, { cache, io }), /changed before it could be read/);
+
+  const electronPath = path.join(root, "Electron Framework");
+  const electronCache = new Map();
+  fs.writeFileSync(electronPath, "first executable bytes");
+  inspectElectronAsarIntegrityFile(electronPath, { cache: electronCache });
+  const stale = fs.statSync(electronPath, { bigint: true });
+  let electronStat = true;
+  const electronIo = {
+    ...fs,
+    constants: fs.constants,
+    statSync(target, options) {
+      if (electronStat) {
+        electronStat = false;
+        fs.writeFileSync(electronPath, "other executable bytes");
+        return stale;
+      }
+      return fs.statSync(target, options);
+    },
+  };
+  assert.throws(() => inspectElectronAsarIntegrityFile(electronPath, {
+    cache: electronCache,
+    io: electronIo,
+  }), /changed before it could be read/);
+});
+
+test("file-backed cache misses same-path rewrites and inode replacements", () => {
+  const root = temporaryRoot("ccdx-file-cache-miss-");
+  const fixture = makeAsarFixture();
+  const filePath = path.join(root, "app.asar");
+  const nextPath = path.join(root, "next.asar");
+  const cache = new Map();
+  fs.writeFileSync(filePath, fixture.source);
+  const clean = inspectAsarFile(filePath, fixture.recipe, { cache });
+  const drift = Buffer.from(fixture.source);
+  drift[drift.length - 1] ^= 1;
+  fs.writeFileSync(filePath, drift);
+  const rewritten = inspectAsarFile(filePath, fixture.recipe, { cache });
+  assert.notEqual(rewritten.asarSha256, clean.asarSha256);
+  fs.writeFileSync(nextPath, fixture.source);
+  fs.renameSync(nextPath, filePath);
+  assert.deepEqual(inspectAsarFile(filePath, fixture.recipe, { cache }), clean);
+});
+
+test("file-backed cache rejects changes while repopulating released target bytes", () => {
+  const root = temporaryRoot("ccdx-file-populate-race-");
+  const fixture = makeAsarFixture();
+  const filePath = path.join(root, "app.asar");
+  const cache = new Map();
+  fs.writeFileSync(filePath, fixture.source);
+  inspectAsarFile(filePath, fixture.recipe, { cache, releaseTargets: true });
+  let changed = false;
+  const io = {
+    ...fs,
+    constants: fs.constants,
+    readSync(file, buffer, offset, length, position) {
+      const read = fs.readSync(file, buffer, offset, length, position);
+      if (!changed && position >= fixture.recipe.dataOffset) {
+        changed = true;
+        const bytes = fs.readFileSync(filePath);
+        bytes[bytes.length - 1] ^= 1;
+        fs.writeFileSync(filePath, bytes);
+      }
+      return read;
+    },
+  };
+  assert.throws(() => inspectAsarFile(filePath, fixture.recipe, {
+    cache,
+    io,
+    releaseTargets: true,
+  }), /changed while reading/);
+});
+
+test("streaming executable inspection stays below a bounded child-process RSS guard", () => {
+  const root = temporaryRoot("ccdx-file-rss-");
+  const filePath = path.join(root, "Electron Framework");
+  fs.writeFileSync(filePath, "");
+  fs.truncateSync(filePath, 128 * 1024 * 1024);
+  const moduleUrl = new URL("../src/pm-studio-asar.mjs", import.meta.url).href;
+  const script = `const { inspectElectronAsarIntegrityFile } = await import(${JSON.stringify(moduleUrl)}); inspectElectronAsarIntegrityFile(process.argv[1]); console.log(process.resourceUsage().maxRSS);`;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", script, filePath], {
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const rawMaxRss = Number(child.stdout.trim());
+  const maxRssBytes = rawMaxRss > 1024 * 1024 ? rawMaxRss : rawMaxRss * 1024;
+  assert.ok(maxRssBytes < 96 * 1024 * 1024, `maxRSS was ${maxRssBytes} bytes`);
 });
 
 test("default codesign preserves available runtime metadata without assuming a source signature", () => {

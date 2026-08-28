@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   CCDX_PM_STUDIO_ORIGIN,
@@ -7,7 +10,10 @@ import {
   PM_STUDIO_SPLIT_ORIGIN_MARKER,
   blockSha256,
   createCompatiblePmStudioRecipe,
+  createCompatiblePmStudioRecipeFromFile,
   findAsarEntry,
+  inspectAsarBuffer,
+  inspectAsarFile,
   parseAsarBuffer,
   patchAsarBuffer,
   sha256Hex,
@@ -127,6 +133,22 @@ test("semantic locator accepts the PM Studio 2.9.14 alpha-renaming and a differe
   assert.deepEqual(after.bytes.subarray(edit.offset + edit.length), beforeTarget.subarray(edit.offset + edit.length));
   assert.equal(after.entry.integrity.hash, sha256Hex(after.bytes));
   assert.deepEqual(after.entry.integrity.blocks, blockSha256(after.bytes, after.entry.integrity.blockSize));
+});
+
+test("file-backed compatible recipes and ASAR inspection are byte-identical to Buffer results", (t) => {
+  const fixture = archiveWithMain(replaceModuleId(swapIAndE(SOURCE_MODULE), "91234"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-asar-file-parity-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, "app.asar");
+  fs.writeFileSync(filePath, fixture.archive);
+  const expected = createCompatiblePmStudioRecipe(fixture.archive, recipeOptions());
+  const actual = createCompatiblePmStudioRecipeFromFile(filePath, recipeOptions());
+  assert.deepEqual(actual, expected);
+  assert.deepEqual(inspectAsarFile(filePath, actual), inspectAsarBuffer(fixture.archive, expected));
+
+  const patched = patchAsarBuffer(fixture.archive, expected).buffer;
+  fs.writeFileSync(filePath, patched);
+  assert.deepEqual(inspectAsarFile(filePath, actual), inspectAsarBuffer(patched, expected));
 });
 
 test("semantic replacement remains exactly source-sized for a one-digit module id", () => {

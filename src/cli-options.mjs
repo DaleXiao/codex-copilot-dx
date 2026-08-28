@@ -18,6 +18,7 @@ const HELP_TOPICS = new Set([
   "pms",
   "pms setup",
   "pms status",
+  "pms restore",
   "usage",
   "auto-review-model",
   "update",
@@ -154,9 +155,9 @@ export function parseCliArgs(args = []) {
   }
   if (PM_COMMANDS.has(command)) {
     const [action, ...pmsArgs] = rest;
-    if (!action) throw new Error("Missing pms action: expected setup or status");
-    if (!new Set(["setup", "status"]).has(action)) throw new Error(`Unknown pms action: ${action}`);
-    if (action === "setup") {
+    if (!action) throw new Error("Missing pms action: expected setup, status, or restore");
+    if (!new Set(["setup", "status", "restore"]).has(action)) throw new Error(`Unknown pms action: ${action}`);
+    if (action === "setup" || action === "restore") {
       if (pmsArgs.length) unexpectedArgs(pmsArgs);
       return baseCommand("pms", { action });
     }
@@ -292,9 +293,10 @@ function topicHelp(name, topic) {
     doctor: `Usage:\n  ${name} doctor [--online] [--compat] [--profile codex|claude|all]\n\nChecks local credentials, client configuration, PM Studio state, and the adapter. --online validates account entitlement; --compat sends minimal inference requests and consumes a small amount of Copilot usage.`,
     status: `Usage:\n  ${name} status\n\nShows bounded runtime, routing, performance, cache, queue, and PM relay metrics from a running adapter.`,
     models: `Usage:\n  ${name} models [--profile codex|claude] [--format table|plain]\n\nPerforms a fresh, read-only Copilot model-directory lookup for one saved profile. Interactive terminals use a table by default.`,
-    pms: `Usage:\n  ${name} pms status [--format table|plain]\n  ${name} pms setup\n  ${name} pm-studio status [--format table|plain]\n  ${name} pm-studio setup\n\nInspects or installs the fail-closed PM Studio split-origin patch. setup modifies the installed app only after exact or semantic compatibility and source checks pass.`,
+    pms: `Usage:\n  ${name} pms status [--format table|plain]\n  ${name} pms setup\n  ${name} pms restore\n  ${name} pm-studio status [--format table|plain]\n  ${name} pm-studio setup\n  ${name} pm-studio restore\n\nInspects, installs, or restores the fail-closed PM Studio split-origin patch. setup and restore modify the installed app only after source-bound compatibility and backup checks pass.`,
     "pms setup": `Usage:\n  ${name} pms setup\n\nBacks up, patches, verifies, and ad-hoc signs an exact or structurally compatible PM Studio bundle. Unverifiable versions and drift are never modified.`,
     "pms status": `Usage:\n  ${name} pms status [--format table|plain]\n\nRead-only inspection of the installed PM Studio version, patch integrity, Claude profile, and relay availability. Interactive terminals use a table by default.`,
+    "pms restore": `Usage:\n  ${name} pms restore\n\nRestores the installed PM Studio bundle from its exact source-bound verified backup. The explicit command authorizes the change; no confirmation prompt is shown. Missing, ambiguous, version-mismatched, or drifted records are never restored.`,
     usage: `Usage:\n  ${name} usage [--format table|plain]\n\nSummarizes local token usage metadata without reading prompt or completion content. Interactive terminals use a table by default.`,
     "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nInteractively selects an enabled Responses model for Codex Auto-review.`,
     update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or GitHub main. With no source, an interactive terminal prompts for one.`,
@@ -316,6 +318,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} models [--profile codex|claude] [--format table|plain]
   ${name} pms status [--format table|plain]
   ${name} pms setup
+  ${name} pms restore
   ${name} usage [--format table|plain]
   ${name} auto-review-model
   ${name} update [npm|github]
@@ -328,7 +331,7 @@ Commands:
   doctor             Diagnose local config; optional live and inference checks
   status             Show runtime routing, performance, queue, and cache health
   models             Query a saved account's live Copilot model catalog
-  pms, pm-studio     Inspect or install the PM Studio patch
+  pms, pm-studio     Inspect, install, or restore the PM Studio patch
   usage              Summarize locally recorded token usage
   auto-review-model  Select the Codex Auto-review Responses model
   update             Update the global package from npm or GitHub

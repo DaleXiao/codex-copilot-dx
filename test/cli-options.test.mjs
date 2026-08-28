@@ -31,8 +31,10 @@ test("parseCliArgs: accepts supported commands and options", () => {
   });
   assert.equal(parseCliArgs(["pms", "status"]).action, "status");
   assert.equal(parseCliArgs(["pms", "status", "--format", "plain"]).outputFormat, "plain");
+  assert.equal(parseCliArgs(["pms", "restore"]).action, "restore");
   assert.equal(parseCliArgs(["pm-studio", "setup"]).action, "setup");
   assert.equal(parseCliArgs(["pm-studio", "status"]).action, "status");
+  assert.equal(parseCliArgs(["pm-studio", "restore"]).action, "restore");
   assert.deepEqual(parseCliArgs(["models"]), { command: "models", configureClaudeDesktop: false, showRequestId: false, online: false, compat: false, profile: "codex" });
   assert.equal(parseCliArgs(["models", "--profile", "claude"]).profile, "claude");
   assert.equal(parseCliArgs(["models", "--format", "table", "--profile", "claude"]).outputFormat, "table");
@@ -55,6 +57,7 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.match(cliHelp(), /ccdx models/);
   assert.match(cliHelp(), /ccdx pms status/);
   assert.match(cliHelp(), /ccdx pms setup/);
+  assert.match(cliHelp(), /ccdx pms restore/);
   assert.match(cliHelp(), /ccdx auth status \[--online\]/);
   assert.match(cliHelp(), /ccdx auth login claude \[--github-login <login>\] \[--reauth\]/);
   assert.match(cliHelp(), /models \[--profile codex\|claude\]/);
@@ -69,9 +72,13 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["auth", "login", "claude", "--help"]).helpTopic, "auth login");
   assert.equal(parseCliArgs(["pms", "status", "--help"]).helpTopic, "pms status");
   assert.equal(parseCliArgs(["help", "pm-studio", "setup"]).helpTopic, "pms setup");
+  assert.equal(parseCliArgs(["pm-studio", "restore", "--help"]).helpTopic, "pms restore");
   assert.match(cliHelp("ccdx", "doctor"), /consumes a small amount of Copilot usage/);
   assert.match(cliHelp("ccdx", "pms setup"), /exact or structurally compatible PM Studio bundle/);
   assert.doesNotMatch(cliHelp("ccdx", "pms setup"), /exactly supported/);
+  assert.match(cliHelp("ccdx", "pms restore"), /exact source-bound verified backup/);
+  assert.match(cliHelp("ccdx", "pms restore"), /no confirmation prompt/);
+  assert.doesNotMatch(cliHelp("ccdx", "pms restore"), /--app|--yes|--format/);
   assert.equal(cliHelp("ccdx"), cliHelp("codex-copilot-dx"));
 });
 
@@ -80,10 +87,12 @@ test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
   assert.throws(() => parseCliArgs(["usage", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["usage", "--format"]), /Missing value for --format/);
   assert.throws(() => parseCliArgs(["usage", "--format", "json"]), /Format must be table or plain: json/);
-  assert.throws(() => parseCliArgs(["pms"]), /Missing pms action: expected setup or status/);
-  assert.throws(() => parseCliArgs(["pms", "restore"]), /Unknown pms action: restore/);
+  assert.throws(() => parseCliArgs(["pms"]), /Missing pms action: expected setup, status, or restore/);
   assert.throws(() => parseCliArgs(["pms", "setup", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["pms", "setup", "--format", "table"]), /Unexpected arguments: --format table/);
+  assert.throws(() => parseCliArgs(["pms", "restore", "--yes"]), /Unexpected argument: --yes/);
+  assert.throws(() => parseCliArgs(["pms", "restore", "--app", "\/tmp\/PM Studio.app"]), /Unexpected arguments: --app \/tmp\/PM Studio.app/);
+  assert.throws(() => parseCliArgs(["pms", "restore", "--format", "table"]), /Unexpected arguments: --format table/);
   assert.throws(() => parseCliArgs(["status", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["models", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["models", "--profile"]), /Missing value for --profile/);

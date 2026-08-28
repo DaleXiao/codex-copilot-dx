@@ -60,6 +60,7 @@ test("cli --help exits without validating runtime configuration", async () => {
   assert.match(stdout, /ccdx status/);
   assert.match(stdout, /ccdx models/);
   assert.match(stdout, /ccdx pms setup/);
+  assert.match(stdout, /ccdx pms restore/);
   assert.match(stdout, /ccdx auth status/);
   assert.match(stdout, /ccdx auth login claude/);
   assert.match(stdout, /doctor \[--online\] \[--compat\]/);
@@ -87,6 +88,7 @@ test("deprecated cli help and argument errors use the canonical command name wit
   assert.match(stdout, /ccdx status/);
   assert.match(stdout, /ccdx models/);
   assert.match(stdout, /ccdx pms setup/);
+  assert.match(stdout, /ccdx pms restore/);
   assert.match(stdout, /ccdx auto-review-model/);
   assert.match(stdout, /ccdx update \[npm\|github\]/);
   assertNoCompatibilityWarning(stderr);
@@ -123,6 +125,15 @@ test("both CLI entrypoints keep nested help and argument errors byte-for-byte eq
   assert.equal(legacyHelp.stdout, primaryHelp.stdout);
   assertNoCompatibilityWarning(legacyHelp.stderr);
 
+  const [primaryRestoreHelp, legacyRestoreHelp] = await Promise.all([
+    execFileAsync(process.execPath, [cliPath, "pms", "restore", "--help"], { timeout: 2000 }),
+    execFileAsync(process.execPath, [legacyCliPath, "pm-studio", "restore", "--help"], { timeout: 2000 }),
+  ]);
+  assert.equal(legacyRestoreHelp.stdout, primaryRestoreHelp.stdout);
+  assert.match(primaryRestoreHelp.stdout, /exact source-bound verified backup/);
+  assert.match(primaryRestoreHelp.stdout, /no confirmation prompt/);
+  assertNoCompatibilityWarning(legacyRestoreHelp.stderr);
+
   const [primaryError, legacyError] = await Promise.allSettled([
     execFileAsync(process.execPath, [cliPath, "models", "--profile", "all"], { timeout: 2000 }),
     execFileAsync(process.execPath, [legacyCliPath, "models", "--profile", "all"], { timeout: 2000 }),
@@ -156,6 +167,44 @@ test("both CLI entrypoints dispatch pms setup before runtime, auth, logging, or 
         },
       );
       assert.equal(fs.existsSync(logPath), false);
+      assert.equal(fs.existsSync(path.join(home, ".codex")), false);
+      assert.equal(fs.existsSync(path.join(home, ".claude")), false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  }
+});
+
+test("both CLI entrypoints dispatch pms restore before runtime, auth, logging, or GUI startup", async () => {
+  for (const [executable, command] of [
+    [cliPath, "pms"],
+    [legacyCliPath, "pm-studio"],
+  ]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-pms-restore-"));
+    const logPath = path.join(home, "debug.log");
+    try {
+      let result;
+      try {
+        result = await execFileAsync(process.execPath, [executable, command, "restore"], {
+          timeout: 30000,
+          env: {
+            ...process.env,
+            HOME: home,
+            ADAPTER_PORT: "invalid",
+            CCDX_LOG_PATH: logPath,
+            CCDX_CONFIGURE_CLAUDE_DESKTOP: "1",
+            CCDX_AUTO_LAUNCH: "1",
+          },
+        });
+      } catch (error) {
+        assert.equal(error.code, 1);
+        result = error;
+      }
+      const output = `${result.stdout || ""}${result.stderr || ""}`;
+      assert.match(output, /PM Studio/);
+      assert.doesNotMatch(output, /ADAPTER_PORT/);
+      assert.equal(fs.existsSync(logPath), false);
+      assert.equal(fs.existsSync(path.join(home, ".local")), false);
       assert.equal(fs.existsSync(path.join(home, ".codex")), false);
       assert.equal(fs.existsSync(path.join(home, ".claude")), false);
     } finally {

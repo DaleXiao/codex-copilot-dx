@@ -24,6 +24,7 @@ import {
   inspectBundleContent,
   inspectPmStudioApp,
   resolvePmStudioCompatibleRecipe,
+  runPmStudioRestore,
   runPmStudioSetup,
 } from "../src/pm-studio-setup.mjs";
 
@@ -1153,6 +1154,317 @@ test("setup installs from a verified fixture, keeps a complete secret-free backu
     logger: () => {},
   }), { code: "PM_STUDIO_BUNDLE_DRIFT" });
   assert.equal(signCounter.value, 1);
+});
+
+test("restore installs the exact verified clean backup, retains recovery data, and is idempotent", async () => {
+  const root = temporaryRoot("ccdx-pms-restore-");
+  const fixture = makeAsarFixture();
+  const appPath = createAppFixture(root, fixture);
+  const cleanSnapshot = sourceSnapshot(appPath);
+  const backupRoot = path.join(root, "backups");
+  const signCounter = { value: 0 };
+  const operations = fixtureOperations({ signCounter });
+  const installed = await runPmStudioSetup({
+    appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+  });
+  const backupSnapshot = sourceSnapshot(installed.backup.backupAppPath);
+  const manifestSnapshot = fs.readFileSync(installed.backup.manifestPath);
+  operations.readClaudeCredentials = () => assert.fail("restore must not read the Claude profile");
+
+  const messages = [];
+  const restored = await runPmStudioRestore({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [fixture.recipe],
+    operations,
+    logger: (line) => messages.push(line),
+  });
+  assert.equal(restored.status, "restored");
+  assert.equal(restored.changed, true);
+  assert.equal(restored.replacementMode, "foundation-atomic-replace");
+  assertSnapshot(appPath, cleanSnapshot);
+  assertSnapshot(installed.backup.backupAppPath, backupSnapshot);
+  assert.deepEqual(fs.readFileSync(installed.backup.manifestPath), manifestSnapshot);
+  assert.equal(signCounter.value, 1, "restore must not re-sign the clean source bundle");
+  assert.match(messages.join("\n"), /exact verified clean backup/);
+  assert.equal(fs.readdirSync(root).some((name) => name.includes("ccdx-restore-stage")), false);
+
+  fs.rmSync(backupRoot, { recursive: true, force: true });
+  const repeated = await runPmStudioRestore({
+    appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+  });
+  assert.equal(repeated.status, "already_clean");
+  assert.equal(repeated.changed, false);
+  assertSnapshot(appPath, cleanSnapshot);
+});
+
+test("restore preserves an invalid original signature while enforcing exact compatible source content", async () => {
+  const root = temporaryRoot("ccdx-pms-restore-compatible-");
+  const fixture = makeAsarFixture({ version: "2.9.12", compatible: true });
+  const supportedFixture = makeAsarFixture({ version: "2.9.10" });
+  const appPath = createAppFixture(root, fixture, { signature: "invalid" });
+  const cleanSnapshot = sourceSnapshot(appPath);
+  const backupRoot = path.join(root, "backups");
+  const operations = fixtureOperations();
+  const installed = await runPmStudioSetup({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: () => {},
+  });
+  assert.equal(JSON.parse(fs.readFileSync(installed.backup.manifestPath, "utf8")).schema_version, 2);
+  const messages = [];
+
+  const restored = await runPmStudioRestore({
+    appPath,
+    home: root,
+    backupRoot,
+    recipes: [supportedFixture.recipe],
+    operations,
+    logger: (line) => messages.push(line),
+  });
+  assert.equal(restored.status, "restored");
+  assert.equal(restored.inspection.codeSign.valid, false);
+  assertSnapshot(appPath, cleanSnapshot);
+  assert.match(messages.join("\n"), /original signature does not currently verify/);
+});
+
+test("restore rejects patch-record or backup changes before atomic replacement", async (t) => {
+  await t.test("installed patch record drift", async () => {
+    const root = temporaryRoot("ccdx-pms-restore-record-");
+    const fixture = makeAsarFixture();
+    const appPath = createAppFixture(root, fixture);
+    const backupRoot = path.join(root, "backups");
+    const operations = fixtureOperations();
+    const installed = await runPmStudioSetup({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    });
+    const patchedSnapshot = sourceSnapshot(appPath);
+    const manifest = JSON.parse(fs.readFileSync(installed.backup.manifestPath, "utf8"));
+    manifest.patched.signing_metadata.flags = "drift";
+    writeJson(installed.backup.manifestPath, manifest);
+    let copied = false;
+    operations.copyBundle = () => { copied = true; };
+
+    await assert.rejects(runPmStudioRestore({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    }), { code: "PM_STUDIO_BUNDLE_DRIFT" });
+    assert.equal(copied, false);
+    assertSnapshot(appPath, patchedSnapshot);
+  });
+
+  await t.test("manifest changes during staging", async () => {
+    const root = temporaryRoot("ccdx-pms-restore-manifest-race-");
+    const fixture = makeAsarFixture();
+    const appPath = createAppFixture(root, fixture);
+    const backupRoot = path.join(root, "backups");
+    const operations = fixtureOperations();
+    const installed = await runPmStudioSetup({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    });
+    const patchedSnapshot = sourceSnapshot(appPath);
+    const copyBundle = operations.copyBundle;
+    operations.copyBundle = (args) => {
+      copyBundle(args);
+      if (args.destination.includes("ccdx-restore-stage")) {
+        const manifest = JSON.parse(fs.readFileSync(installed.backup.manifestPath, "utf8"));
+        manifest.created_at = "2026-08-28T00:00:00.000Z";
+        writeJson(installed.backup.manifestPath, manifest);
+      }
+    };
+
+    await assert.rejects(runPmStudioRestore({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    }), { code: "PM_STUDIO_BACKUP_CHANGED" });
+    assertSnapshot(appPath, patchedSnapshot);
+    assert.equal(fs.readdirSync(root).some((name) => name.includes("ccdx-restore-stage")), false);
+  });
+
+  await t.test("staging copy differs from the exact backup", async () => {
+    const root = temporaryRoot("ccdx-pms-restore-stage-drift-");
+    const fixture = makeAsarFixture();
+    const appPath = createAppFixture(root, fixture);
+    const backupRoot = path.join(root, "backups");
+    const operations = fixtureOperations();
+    await runPmStudioSetup({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    });
+    const patchedSnapshot = sourceSnapshot(appPath);
+    const copyBundle = operations.copyBundle;
+    operations.copyBundle = (args) => {
+      copyBundle(args);
+      if (args.destination.includes("ccdx-restore-stage")) {
+        fs.writeFileSync(path.join(args.destination, "Contents/unrecorded-helper"), "drift");
+      }
+    };
+
+    await assert.rejects(runPmStudioRestore({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    }), { code: "PM_STUDIO_RESTORE_STAGE_INVALID" });
+    assertSnapshot(appPath, patchedSnapshot);
+    assert.equal(fs.readdirSync(root).some((name) => name.includes("ccdx-restore-stage")), false);
+  });
+
+  await t.test("staging copy changed during final source verification is never installed", async () => {
+    const root = temporaryRoot("ccdx-pms-restore-stage-race-");
+    const fixture = makeAsarFixture();
+    const appPath = createAppFixture(root, fixture);
+    const backupRoot = path.join(root, "backups");
+    const operations = fixtureOperations();
+    await runPmStudioSetup({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    });
+    const patchedSnapshot = sourceSnapshot(appPath);
+    const copyBundle = operations.copyBundle;
+    const inspectBundle = operations.inspectBundleContent;
+    let stagePath = "";
+    let replaced = false;
+    operations.copyBundle = (args) => {
+      copyBundle(args);
+      if (args.destination.includes("ccdx-restore-stage")) stagePath = args.destination;
+    };
+    operations.inspectBundleContent = (args) => {
+      const result = inspectBundle(args);
+      if (stagePath && args.appPath === appPath) {
+        fs.writeFileSync(path.join(stagePath, "Contents/late-drift"), "drift");
+        stagePath = "";
+      }
+      return result;
+    };
+    operations.replaceApp = () => { replaced = true; };
+
+    await assert.rejects(runPmStudioRestore({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    }), { code: "PM_STUDIO_RESTORE_STAGE_INVALID" });
+    assert.equal(replaced, false);
+    assertSnapshot(appPath, patchedSnapshot);
+    assert.equal(fs.readdirSync(root).some((name) => name.includes("ccdx-restore-stage")), false);
+  });
+
+  await t.test("a process appearing after final source verification blocks replacement", async () => {
+    const root = temporaryRoot("ccdx-pms-restore-process-race-");
+    const fixture = makeAsarFixture();
+    const appPath = createAppFixture(root, fixture);
+    const backupRoot = path.join(root, "backups");
+    const operations = fixtureOperations();
+    await runPmStudioSetup({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    });
+    const patchedSnapshot = sourceSnapshot(appPath);
+    const copyBundle = operations.copyBundle;
+    const inspectBundle = operations.inspectBundleContent;
+    let staged = false;
+    let sourceVerified = false;
+    let replaced = false;
+    operations.copyBundle = (args) => {
+      copyBundle(args);
+      if (args.destination.includes("ccdx-restore-stage")) staged = true;
+    };
+    operations.inspectBundleContent = (args) => {
+      const result = inspectBundle(args);
+      if (staged && args.appPath === appPath) sourceVerified = true;
+      return result;
+    };
+    operations.listBlockingProcesses = () => sourceVerified
+      ? ["123 PM Studio.app/Contents/MacOS/PM Studio"]
+      : [];
+    operations.replaceApp = () => { replaced = true; };
+
+    await assert.rejects(runPmStudioRestore({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    }), { code: "PM_STUDIO_RUNNING" });
+    assert.equal(replaced, false);
+    assertSnapshot(appPath, patchedSnapshot);
+    assert.equal(fs.readdirSync(root).some((name) => name.includes("ccdx-restore-stage")), false);
+  });
+});
+
+test("restore accepts only independently verified atomic replacement outcomes", async (t) => {
+  await t.test("replacement failure retains the exact recorded patch", async () => {
+    const root = temporaryRoot("ccdx-pms-restore-replace-fail-");
+    const fixture = makeAsarFixture();
+    const appPath = createAppFixture(root, fixture);
+    const backupRoot = path.join(root, "backups");
+    const operations = fixtureOperations();
+    await runPmStudioSetup({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    });
+    const patchedSnapshot = sourceSnapshot(appPath);
+    operations.replaceApp = () => { throw new Error("fixture restore replacement failed"); };
+
+    await assert.rejects(runPmStudioRestore({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    }), { code: "PM_STUDIO_RESTORE_REPLACE_FAILED" });
+    assertSnapshot(appPath, patchedSnapshot);
+    assert.equal(fs.readdirSync(root).some((name) => name.includes("ccdx-restore-stage")), false);
+  });
+
+  await t.test("late replacement error is accepted only after exact clean verification", async () => {
+    const root = temporaryRoot("ccdx-pms-restore-replace-late-");
+    const fixture = makeAsarFixture();
+    const appPath = createAppFixture(root, fixture);
+    const cleanSnapshot = sourceSnapshot(appPath);
+    const backupRoot = path.join(root, "backups");
+    const operations = fixtureOperations();
+    await runPmStudioSetup({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    });
+    const replaceApp = operations.replaceApp;
+    operations.replaceApp = (args) => {
+      replaceApp(args);
+      throw new Error("fixture restore replacement reported a late error");
+    };
+    const messages = [];
+
+    const restored = await runPmStudioRestore({
+      appPath,
+      home: root,
+      backupRoot,
+      recipes: [fixture.recipe],
+      operations,
+      logger: (line) => messages.push(line),
+    });
+    assert.equal(restored.status, "restored");
+    assertSnapshot(appPath, cleanSnapshot);
+    assert.match(messages.join("\n"), /reported an error after the exact clean bundle became installed/);
+  });
+
+  await t.test("unknown replacement state retains the verified clean stage for diagnosis", async () => {
+    const root = temporaryRoot("ccdx-pms-restore-replace-unknown-");
+    const fixture = makeAsarFixture();
+    const appPath = createAppFixture(root, fixture);
+    const backupRoot = path.join(root, "backups");
+    const operations = fixtureOperations();
+    const installed = await runPmStudioSetup({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    });
+    operations.replaceApp = ({ appPath: installedPath }) => {
+      const asarPath = path.join(installedPath, fixture.recipe.asarPath);
+      const bytes = fs.readFileSync(asarPath);
+      bytes[bytes.length - 1] ^= 1;
+      fs.writeFileSync(asarPath, bytes);
+      throw new Error("fixture restore replacement state unknown");
+    };
+    let retainedStage = "";
+
+    await assert.rejects(runPmStudioRestore({
+      appPath, home: root, backupRoot, recipes: [fixture.recipe], operations, logger: () => {},
+    }), (error) => {
+      assert.equal(error.code, "PM_STUDIO_RESTORE_INSTALL_VERIFY_FAILED");
+      retainedStage = error.message.match(/Verified staging retained: (.+)\.$/)?.[1] || "";
+      assert.ok(retainedStage);
+      return true;
+    });
+    assert.equal(fs.existsSync(retainedStage), true);
+    assert.equal(inspectAsarBuffer(
+      fs.readFileSync(path.join(retainedStage, fixture.recipe.asarPath)),
+      fixture.recipe,
+    ).state, "clean");
+    assert.equal(fs.existsSync(installed.backup.backupAppPath), true);
+  });
 });
 
 test("setup migrates the legacy global-origin patch only from its verified clean backup", async () => {

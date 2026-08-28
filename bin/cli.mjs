@@ -143,6 +143,11 @@ if (CLI.command === "pms") {
       });
       process.exit(result.ok ? 0 : 1);
     }
+    if (CLI.action === "restore") {
+      const { runPmStudioRestore } = await import("../src/pm-studio-setup.mjs");
+      await runPmStudioRestore({ commandName: CLI_NAME });
+      process.exit(0);
+    }
     const { runPmStudioSetup } = await import("../src/pm-studio-setup.mjs");
     await runPmStudioSetup({ commandName: CLI_NAME });
     process.exit(0);

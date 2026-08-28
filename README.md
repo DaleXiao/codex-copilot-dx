@@ -143,7 +143,8 @@ integrity, isolated Claude profile, and live relay routing without changing file
 ccdx pms status
 ```
 
-`ccdx pm-studio status` and `ccdx pm-studio setup` are equivalent long-form aliases.
+`ccdx pm-studio status`, `ccdx pm-studio setup`, and `ccdx pm-studio restore`
+are equivalent long-form aliases.
 
 `ccdx pms setup` performs local preflight, structural verification, backup,
 staging, integrity, signing, and replacement work. It does not access a PM
@@ -183,37 +184,47 @@ require reinstalling PM Studio. Setup prints the verified backup and
 manifest paths plus the version-matched restore procedure. Never restore a
 backup over a different PM Studio version or build.
 
-To restore, first quit PM Studio and its updater. Use the exact verified backup
-path printed by setup as `BACKUP_APP`, then confirm that both the installed App
-and backup still report the same version/build printed by setup:
+To restore the original local bundle, first quit PM Studio and its updater,
+then run:
 
 ```bash
-BACKUP_APP="<verified-backup-path-from-ccdx-pms-setup>"
-/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "/Applications/PM Studio.app/Contents/Info.plist"
-/usr/bin/plutil -extract CFBundleVersion raw -o - "/Applications/PM Studio.app/Contents/Info.plist"
-/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$BACKUP_APP/Contents/Info.plist"
-/usr/bin/plutil -extract CFBundleVersion raw -o - "$BACKUP_APP/Contents/Info.plist"
+ccdx pms restore
 ```
 
-Only when all four values match each other and the version/build recorded in the
-source-bound manifest, move the patched App aside, restore the complete local
-bundle, and verify it before launch:
+The explicit command authorizes the local App replacement and does not show an
+additional confirmation prompt. Restore neither needs the Claude profile nor
+starts the adapter, Device Flow, Codex, or PM Studio. It selects the unique
+source-bound backup itself, verifies the installed patch record and the exact
+clean backup, stages and verifies the complete bundle, confirms that the
+installed App did not change during staging, and then performs an atomic
+replacement. It never restores a missing, ambiguous, drifted, or
+version/build-mismatched record. The original local signature is inspected and
+reported, but is not an admission gate: the exact source-bound content recorded
+when setup created the backup is authoritative. The verified backup and manifest
+remain available after a successful restore. Repeating restore on the same
+recorded clean App is safe and does not replace it again.
+
+If automatic restore reports that the replacement state cannot be verified, do
+not launch PM Studio. Keep the recovery path printed by the command and reinstall
+PM Studio. The following manual procedure is only an exceptional recovery path;
+use the exact backup and manifest paths printed by setup or restore, and first
+confirm that the installed App and backup still match the manifest version/build:
 
 ```bash
+BACKUP_APP="<exact-verified-backup-path>"
 RECOVERY_DIR="$(/usr/bin/mktemp -d '/Applications/CCDX-PM-Studio-recovery.XXXXXX')"
 PATCHED_APP="$RECOVERY_DIR/PM Studio.app"
 mv "/Applications/PM Studio.app" "$PATCHED_APP"
 /usr/bin/ditto --rsrc --extattr --acl "$BACKUP_APP" "/Applications/PM Studio.app"
-/usr/bin/codesign --verify --deep --strict --verbose=2 "/Applications/PM Studio.app"
 ccdx pms status
 ```
 
 The App-patch row from `ccdx pms status` must classify the restored bundle as
 the recorded clean local content rather than integrity drift. If the version
-check, copy, or either verification path fails,
+check, copy, or content verification fails,
 do not launch the restored App. Keep the moved patched bundle at `$PATCHED_APP`
 and reinstall PM Studio instead of applying a version-mismatched
-backup. CCDX never runs these restore commands or `sudo` automatically.
+backup. CCDX never uses `sudo` automatically.
 
 To change the model used by Codex Auto-review, run:
 

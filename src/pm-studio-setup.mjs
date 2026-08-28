@@ -411,6 +411,17 @@ function defaultAssertPermissions({ appPath, backupRoot }) {
   }
 }
 
+function defaultAssertRestorePermissions({ appPath, backupAppPath }) {
+  try {
+    fs.accessSync(appPath, fs.constants.R_OK | fs.constants.X_OK);
+    fs.accessSync(path.dirname(appPath), fs.constants.W_OK | fs.constants.X_OK);
+    fs.accessSync(backupAppPath, fs.constants.R_OK | fs.constants.X_OK);
+  } catch {
+    throw setupError("PM_STUDIO_PERMISSION_DENIED",
+      "PM Studio or its verified backup is not accessible to the current user; restore will not use sudo");
+  }
+}
+
 export function createPmStudioSetupOperations(overrides = {}) {
   const processRunner = overrides.processRunner || defaultProcessRunner;
   return {
@@ -432,6 +443,7 @@ export function createPmStudioSetupOperations(overrides = {}) {
     availableBytes: defaultAvailableBytes,
     volumeId: defaultVolumeId,
     assertPermissions: defaultAssertPermissions,
+    assertRestorePermissions: defaultAssertRestorePermissions,
     readClaudeCredentials: ({ home }) => readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home }),
     now: () => new Date(),
     uuid: () => randomUUID(),
@@ -1188,6 +1200,74 @@ function assertSpace({ appPath, backupRoot, backupExists, operations }) {
   }
 }
 
+function assertRestoreSpace({ appPath, backupAppPath, operations }) {
+  const bundleBytes = operations.bundleSize(backupAppPath);
+  if (!Number.isFinite(bundleBytes) || bundleBytes <= 0) {
+    throw setupError("PM_STUDIO_SIZE_INVALID", "Could not determine verified PM Studio backup size");
+  }
+  if (operations.availableBytes(path.dirname(appPath)) < bundleBytes + MIN_FREE_MARGIN_BYTES) {
+    throw setupError("PM_STUDIO_SPACE_INSUFFICIENT", "Not enough free space for PM Studio restore staging");
+  }
+}
+
+function codeSignFingerprint(codeSign) {
+  return {
+    valid: codeSign?.valid === true,
+    verifyValid: codeSign?.verifyValid === true,
+    displayValid: codeSign?.displayValid === true,
+    entitlementsState: codeSign?.entitlementsState || "",
+    adHoc: codeSign?.adHoc === true,
+    identifier: codeSign?.identifier || "",
+    teamIdentifier: codeSign?.teamIdentifier || "",
+    flags: codeSign?.flags || "",
+    runtimeVersion: codeSign?.runtimeVersion || "",
+    cdHashFull: codeSign?.cdHashFull || "",
+    notarizationTicket: codeSign?.notarizationTicket || "",
+    entitlementsSha256: codeSign?.entitlementsSha256 || "",
+  };
+}
+
+function restoreStateFingerprint(inspection, bundleContent) {
+  return JSON.stringify({
+    state: inspection.state,
+    metadata: inspection.metadata,
+    asar: {
+      state: inspection.asar?.state,
+      asarSha256: inspection.asar?.asarSha256,
+      headerSha256: inspection.asar?.headerSha256,
+    },
+    plistIntegrity: inspection.plistIntegrity,
+    executableIntegrity: {
+      executableName: inspection.executableIntegrity?.executableName,
+      executableSha256: inspection.executableIntegrity?.executableSha256,
+      frameworkSha256: inspection.executableIntegrity?.frameworkSha256,
+      embeddedIntegrity: inspection.executableIntegrity?.embeddedIntegrity,
+      matchesRecipeName: inspection.executableIntegrity?.matchesRecipeName,
+    },
+    codeSign: codeSignFingerprint(inspection.codeSign),
+    bundleContent,
+  });
+}
+
+function inspectRestoreState({ appPath, recipe, operations }) {
+  const inspection = inspectPmStudioApp({ appPath, recipe, operations });
+  const bundleContent = inspection.bundleContent || operations.inspectBundleContent({
+    ...appPaths(appPath, recipe),
+    recipe,
+    processRunner: operations.processRunner,
+  });
+  return {
+    inspection,
+    fingerprint: restoreStateFingerprint(inspection, bundleContent),
+  };
+}
+
+function assertRestoreStateMatches(actual, expected, code, message) {
+  if (actual.fingerprint !== expected.fingerprint) {
+    throw setupError(code, message, actual.inspection.issues);
+  }
+}
+
 function replaceVerifiedStage({ appPath, stagePath, operations }) {
   try {
     operations.replaceApp({ appPath, stagePath, processRunner: operations.processRunner });
@@ -1392,5 +1472,166 @@ export async function runPmStudioSetup({
   } finally {
     if (!preserveStage && fs.existsSync(stagePath)) operations.removePath({ target: stagePath });
   }
+  });
+}
+
+export async function runPmStudioRestore({
+  commandName = "ccdx",
+  appPath = DEFAULT_PM_STUDIO_APP_PATH,
+  home = os.homedir(),
+  backupRoot = pmStudioBackupRoot(home),
+  recipes = PM_STUDIO_RECIPES,
+  operations: operationOverrides = {},
+  logger = (line) => console.log(line),
+} = {}) {
+  const operations = createPmStudioSetupOperations(operationOverrides);
+  return operations.withSetupLock({ appPath }, async () => {
+    const messages = [];
+    const emit = (message) => {
+      messages.push(message);
+      logger(message);
+    };
+
+    assertInstalledAppPath(appPath);
+    assertNoBlockingProcesses(operations, appPath);
+    const metadata = operations.readBundleMetadata({
+      appPath,
+      infoPlistPath: path.join(appPath, "Contents/Info.plist"),
+      processRunner: operations.processRunner,
+    });
+    const recipe = resolvePmStudioCompatibleRecipe({
+      appPath,
+      home,
+      backupRoot,
+      metadata,
+      recipes,
+      operations,
+    });
+    const source = inspectRestoreState({ appPath, recipe, operations });
+    if (source.inspection.state === "clean") {
+      emit(`[OK] PM Studio ${recipe.version} build ${recipe.build} is already the exact clean local bundle; no files were changed.`);
+      return {
+        status: "already_clean",
+        changed: false,
+        recipe: recipe.id,
+        inspection: source.inspection,
+        messages,
+      };
+    }
+    if (!["patched", "predecessor", "legacy"].includes(source.inspection.state)) {
+      throw setupError("PM_STUDIO_BUNDLE_DRIFT",
+        `PM Studio ${recipe.version} build ${recipe.build} does not match a recorded patch state; no files were changed`,
+        source.inspection.issues);
+    }
+
+    const manifestPath = pmStudioPatchManifestPath({ home, backupRoot, recipe });
+    const backupDir = path.dirname(manifestPath);
+    const backup = validateBackup({ backupDir, recipe, operations });
+    assertPatchedBinaryRecord({
+      inspection: source.inspection,
+      manifestPath: backup.manifestPath,
+      recipe,
+      recordState: source.inspection.state,
+    });
+    operations.assertRestorePermissions({
+      appPath,
+      backupAppPath: backup.backupAppPath,
+      processRunner: operations.processRunner,
+    });
+    assertRestoreSpace({ appPath, backupAppPath: backup.backupAppPath, operations });
+    const manifestSnapshot = fs.readFileSync(backup.manifestPath);
+    const backupSource = inspectRestoreState({ appPath: backup.backupAppPath, recipe, operations });
+    if (backupSource.inspection.state !== "clean") {
+      throw setupError("PM_STUDIO_BACKUP_INVALID", "Verified PM Studio backup is not an exact clean bundle",
+        backupSource.inspection.issues);
+    }
+
+    const stagePath = path.join(path.dirname(appPath),
+      `.${path.basename(appPath)}.ccdx-restore-stage-${operations.uuid()}`);
+    let preserveStage = false;
+    try {
+      operations.copyBundle({
+        source: backup.backupAppPath,
+        destination: stagePath,
+        processRunner: operations.processRunner,
+      });
+      if (!fs.readFileSync(backup.manifestPath).equals(manifestSnapshot)) {
+        throw setupError("PM_STUDIO_BACKUP_CHANGED",
+          "PM Studio backup manifest changed during restore; the verified staging bundle was not installed");
+      }
+      const currentBackup = validateBackup({ backupDir, recipe, operations });
+      const unchangedBackup = inspectRestoreState({
+        appPath: currentBackup.backupAppPath,
+        recipe,
+        operations,
+      });
+      assertRestoreStateMatches(unchangedBackup, backupSource, "PM_STUDIO_BACKUP_CHANGED",
+        "PM Studio backup changed during restore; the verified staging bundle was not installed");
+      const unchangedSource = inspectRestoreState({ appPath, recipe, operations });
+      assertRestoreStateMatches(unchangedSource, source, "PM_STUDIO_SOURCE_CHANGED",
+        "PM Studio changed during restore; the verified staging bundle was not installed");
+      assertPatchedBinaryRecord({
+        inspection: unchangedSource.inspection,
+        manifestPath: backup.manifestPath,
+        recipe,
+        recordState: source.inspection.state,
+      });
+
+      const staged = inspectRestoreState({ appPath: stagePath, recipe, operations });
+      if (staged.inspection.state !== "clean") {
+        throw setupError("PM_STUDIO_RESTORE_STAGE_INVALID",
+          "PM Studio restore staging copy is not an exact clean bundle", staged.inspection.issues);
+      }
+      assertRestoreStateMatches(staged, backupSource, "PM_STUDIO_RESTORE_STAGE_INVALID",
+        "PM Studio restore staging copy differs from the verified clean backup");
+      assertNoBlockingProcesses(operations, appPath);
+
+      const replacementError = replaceVerifiedStage({ appPath, stagePath, operations });
+      let installed;
+      try {
+        installed = inspectRestoreState({ appPath, recipe, operations });
+      } catch {
+        preserveStage = fs.existsSync(stagePath);
+        throw setupError("PM_STUDIO_RESTORE_STATE_UNKNOWN",
+          `PM Studio restore final state could not be verified. Do not launch it. ${recoveryMessage(backup)}${preserveStage ? ` Verified staging retained: ${stagePath}.` : ""}`);
+      }
+      if (installed.inspection.state !== "clean" || installed.fingerprint !== staged.fingerprint) {
+        const originalRetained = installed.fingerprint === source.fingerprint;
+        preserveStage = !originalRetained && fs.existsSync(stagePath);
+        const code = originalRetained
+          ? "PM_STUDIO_RESTORE_REPLACE_FAILED"
+          : "PM_STUDIO_RESTORE_INSTALL_VERIFY_FAILED";
+        const stateMessage = originalRetained
+          ? `The installed PM Studio remains the verified ${source.inspection.state} bundle`
+          : "The installed PM Studio does not match the verified clean backup; do not launch it";
+        throw setupError(code,
+          `${stateMessage}. ${recoveryMessage(backup)}${preserveStage ? ` Verified staging retained: ${stagePath}.` : ""}`,
+          installed.inspection.issues);
+      }
+      if (replacementError) {
+        emit("[WARN] Atomic replacement reported an error after the exact clean bundle became installed; the final bundle was independently verified.");
+      }
+      emit(`[OK] Restored PM Studio ${recipe.version} build ${recipe.build} from the exact verified clean backup.`);
+      emit(`[OK] Verified backup retained: ${backup.backupAppPath}`);
+      emit(`[OK] Backup manifest retained: ${backup.manifestPath}`);
+      emit("[INFO] The verified clean staging bundle was installed with Foundation's atomic item replacement.");
+      if (installed.inspection.codeSign?.valid === true) {
+        emit("[OK] The restored source bundle's original signature verifies successfully.");
+      } else {
+        emit("[WARN] The restored bundle exactly matches its recorded local source, whose original signature does not currently verify; reinstall PM Studio if a vendor-valid signature is required.");
+      }
+      emit(`[INFO] Run ${commandName} pms setup to apply the split-origin patch again.`);
+      return {
+        status: "restored",
+        changed: true,
+        recipe: recipe.id,
+        backup,
+        inspection: installed.inspection,
+        replacementMode: "foundation-atomic-replace",
+        messages,
+      };
+    } finally {
+      if (!preserveStage && fs.existsSync(stagePath)) operations.removePath({ target: stagePath });
+    }
   });
 }

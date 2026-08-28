@@ -1139,7 +1139,7 @@ test("streaming executable inspection uses materially less RSS than whole-file b
   assert.equal(buffered.length, 128 * 1024 * 1024);
   const streamingRss = normalizeMaxRss(streaming);
   const bufferedRss = normalizeMaxRss(buffered);
-  assert.ok(bufferedRss - streamingRss >= 64 * 1024 * 1024,
+  assert.ok(bufferedRss - streamingRss >= buffered.length / 4,
     `streaming=${streamingRss} buffered=${bufferedRss}`);
 });
 

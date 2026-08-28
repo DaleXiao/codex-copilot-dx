@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { chatCompletions } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
-import { abortErrorStatusCode, isAbortLikeError } from "./http-transport.mjs";
+import {
+  abortErrorStatusCode,
+  isAbortLikeError,
+  MAX_UPSTREAM_ERROR_BODY_BYTES,
+  readBoundedResponseText,
+} from "./http-transport.mjs";
 import {
   incompleteUpstreamStream,
   invalidUpstreamStream,
@@ -216,7 +221,10 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
     return false;
   }
   if (!resp.ok) {
-    await onError(resp.status, await resp.text(), undefined, resp);
+    await onError(resp.status, await readBoundedResponseText(resp, {
+      maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
+      label: "Copilot Chat error body",
+    }), undefined, resp);
     return false;
   }
   try {
@@ -235,14 +243,19 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   let usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
   const toolCalls = new Map();
   const toolArgumentGuard = new ToolArgumentDeltaGuard();
+  const downstreamClosed = Symbol("downstream-closed");
+  const configuredEmitEvent = emitEvent;
+  emitEvent = async (...args) => {
+    const written = await configuredEmitEvent(...args);
+    if (written === false) throw downstreamClosed;
+    return written;
+  };
   let performanceOutputSeen = false;
   const markPerformanceOutput = () => {
     if (performanceOutputSeen) return;
     performanceOutputSeen = true;
     markFirstOutput();
   };
-
-  await emitEvent("response.created", { response: { id: respId, object: "response", status: "in_progress", model: actualModel, output: [] } });
 
   const ensureMessageItem = async () => {
     if (messageItem) return messageItem;
@@ -331,6 +344,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   };
 
   try {
+    await emitEvent("response.created", { response: { id: respId, object: "response", status: "in_progress", model: actualModel, output: [] } });
     for await (const line of webStreamLines(resp, {
       onChunk: () => abort?.setTimeout(streamIdleTimeoutMs, "stream_idle_timeout"),
     })) {
@@ -386,6 +400,10 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
       }
     }
   } catch (e) {
+    if (e === downstreamClosed) {
+      await resp.body?.cancel?.().catch?.(() => {});
+      return false;
+    }
     const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(abort?.reason) : (e?.statusCode || 502);
     await onError(statusCode, e?.message || "upstream stream error", e);
     return false;

@@ -4,7 +4,11 @@ import {
   isImageNamespaceCollisionError,
   sanitizeImageNamespaceCollisionRequest,
 } from "./copilot-responses-policy.mjs";
-import { httpError } from "./http-transport.mjs";
+import {
+  httpError,
+  MAX_UPSTREAM_ERROR_BODY_BYTES,
+  readBoundedResponseText,
+} from "./http-transport.mjs";
 import {
   finalizeEncryptedHistoryRebase,
   sanitizeEncryptedReasoningRequest,
@@ -48,7 +52,10 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
       return { resp, reqContext };
     }
 
-    const errorText = await resp.text();
+    const errorText = await readBoundedResponseText(resp, {
+      maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
+      label: "Copilot Responses error body",
+    });
     options.assertPrepareActive?.();
     let retryPolicy = null;
     let retryContext = null;

@@ -71,6 +71,7 @@ function jsonByteLength(value, seen = new Set()) {
 const histories = new Map();
 const childrenById = new Map();
 const treeLru = new Map();
+const pinnedTrees = new Map();
 const evictedIds = new Set();
 let totalBytes = 0;
 const HISTORY_RUNTIME_CONFIG = loadRuntimeConfig();
@@ -86,6 +87,21 @@ function touchTree(rootId) {
   if (!rootId) return;
   treeLru.delete(rootId);
   treeLru.set(rootId, true);
+}
+
+function pinTree(rootId) {
+  if (!rootId) return;
+  pinnedTrees.set(rootId, (pinnedTrees.get(rootId) || 0) + 1);
+}
+
+function unpinTree(rootId) {
+  const count = pinnedTrees.get(rootId) || 0;
+  if (count <= 1) pinnedTrees.delete(rootId);
+  else pinnedTrees.set(rootId, count - 1);
+}
+
+function treeIsPinned(rootId) {
+  return (pinnedTrees.get(rootId) || 0) > 0;
 }
 
 function linkChild(parentId, id) {
@@ -148,18 +164,50 @@ function assignSubtreeRoot(id, rootId) {
   }
 }
 
-function enforceLimits() {
-  while (histories.size > maxEntries || totalBytes > maxBytes) {
-    const oldestRootId = treeLru.keys().next().value;
-    if (!oldestRootId) break;
-    removeSubtree(oldestRootId);
+function subtreeUsage(rootId) {
+  const pending = [rootId];
+  const seen = new Set();
+  let bytes = 0;
+  let entries = 0;
+  while (pending.length) {
+    const id = pending.pop();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const entry = histories.get(id);
+    if (entry) {
+      entries += 1;
+      bytes += entry.bytes;
+    }
+    const children = childrenById.get(id);
+    if (children) pending.push(...children);
   }
+  return { bytes, entries };
+}
+
+function makeRoomFor({ additionalBytes, additionalEntries, protectedRoots }) {
+  let projectedBytes = totalBytes + additionalBytes;
+  let projectedEntries = histories.size + additionalEntries;
+  if (projectedEntries <= maxEntries && projectedBytes <= maxBytes) return true;
+
+  const candidates = [];
+  for (const rootId of treeLru.keys()) {
+    if (protectedRoots.has(rootId) || treeIsPinned(rootId)) continue;
+    const usage = subtreeUsage(rootId);
+    candidates.push(rootId);
+    projectedBytes -= usage.bytes;
+    projectedEntries -= usage.entries;
+    if (projectedEntries <= maxEntries && projectedBytes <= maxBytes) break;
+  }
+  if (projectedEntries > maxEntries || projectedBytes > maxBytes) return false;
+  for (const rootId of candidates) removeSubtree(rootId);
+  return true;
 }
 
 export function clearResponseHistoryForTests() {
   histories.clear();
   childrenById.clear();
   treeLru.clear();
+  pinnedTrees.clear();
   evictedIds.clear();
   totalBytes = 0;
   maxBytes = DEFAULT_MAX_BYTES;
@@ -202,6 +250,50 @@ export function responseHistoryMaterializedBytes(responseId) {
   return chain.reduce((bytes, entry) => bytes + entry.bytes, 0);
 }
 
+export function acquireResponseHistorySnapshot(responseId, { assertActive, signal } = {}) {
+  assertActive?.();
+  if (signal?.aborted) throw signal.reason || new DOMException("The operation was aborted", "AbortError");
+  const { chain, rootId } = responseHistoryChain(responseId);
+  const entries = chain.slice().reverse();
+  const bytes = chain.reduce((total, entry) => total + entry.bytes, 0);
+  pinTree(rootId);
+
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    signal?.removeEventListener("abort", release);
+    unpinTree(rootId);
+  };
+  signal?.addEventListener("abort", release, { once: true });
+
+  return Object.freeze({
+    responseId,
+    rootId,
+    bytes,
+    materialize({ assertActive: assertSnapshotActive, routeMetadata } = {}) {
+      assertSnapshotActive?.();
+      if (released) throw new Error("Response history snapshot has been released");
+      const items = [];
+      for (let index = 0; index < entries.length; index += 1) {
+        if ((index & 63) === 0) assertSnapshotActive?.();
+        const entry = entries[index];
+        routeMetadata?.push({
+          affinity: entry.routeAffinity || null,
+          hasOpaque: entry.hasOpaque === true,
+        });
+        items.push(...entry.inputItems, ...entry.outputItems);
+      }
+      assertSnapshotActive?.();
+      const materialized = cloneJson(items);
+      assertSnapshotActive?.();
+      touchTree(rootId);
+      return materialized;
+    },
+    release,
+  });
+}
+
 export function materializeResponseHistory(responseId, { assertActive, routeMetadata } = {}) {
   assertActive?.();
   const { chain, rootId } = responseHistoryChain(responseId);
@@ -231,7 +323,13 @@ export function rememberResponseHistoryNode({
   routeAffinity = null,
   takeOwnership = false,
 }) {
-  if (!id || !Array.isArray(inputItems)) return;
+  if (!id || !Array.isArray(inputItems)) return false;
+  const existing = histories.get(id);
+  const parentEntry = parentId ? histories.get(parentId) : null;
+  if (parentId && !parentEntry) {
+    if (!existing) rememberEvictedId(id);
+    return false;
+  }
   clearResponsesToolOutputPartsCache(inputItems);
   clearResponsesToolOutputPartsCache(outputItems);
   const historyValue = routeAffinity
@@ -239,13 +337,11 @@ export function rememberResponseHistoryNode({
     : [inputItems, outputItems];
   const bytes = jsonByteLength(historyValue);
   if (bytes > maxBytes) {
-    if (histories.has(id)) removeSubtree(id);
-    rememberEvictedId(id);
-    return;
+    if (!existing) rememberEvictedId(id);
+    else if (!treeIsPinned(existing.rootId)) removeSubtree(id);
+    return false;
   }
-  const existing = histories.get(id);
-  const parentEntry = parentId ? histories.get(parentId) : null;
-  const rootId = parentEntry?.rootId || (parentId ? existing?.rootId : id) || id;
+  const rootId = parentEntry?.rootId || id;
   const entry = {
     parentId: parentId || null,
     rootId,
@@ -256,6 +352,19 @@ export function rememberResponseHistoryNode({
     bytes,
   };
   const oldRootId = existing?.rootId;
+  const protectedRoots = new Set([rootId]);
+  if (oldRootId) protectedRoots.add(oldRootId);
+  if (!makeRoomFor({
+    additionalBytes: bytes - (existing?.bytes || 0),
+    additionalEntries: existing ? 0 : 1,
+    protectedRoots,
+  })) {
+    if (!existing) {
+      if (parentEntry && !treeIsPinned(rootId)) removeSubtree(rootId);
+      rememberEvictedId(id);
+    }
+    return false;
+  }
   if (existing) {
     totalBytes -= existing.bytes;
     unlinkChild(existing.parentId, id);
@@ -270,5 +379,5 @@ export function rememberResponseHistoryNode({
   totalBytes += entry.bytes;
   evictedIds.delete(id);
   touchTree(rootId);
-  enforceLimits();
+  return true;
 }

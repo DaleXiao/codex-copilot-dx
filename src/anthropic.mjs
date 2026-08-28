@@ -163,6 +163,10 @@ export function anthropicToChat(body, options = {}) {
 
 function uid() { return randomUUID().replace(/-/g, ""); }
 
+function nonNegativeTokenCount(value) {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
 function invalidToolArguments(toolName) {
   const name = String(toolName || "unknown").slice(0, 100);
   return invalidUpstreamStream(
@@ -198,10 +202,11 @@ export function chatToAnthropic(openaiResp, model, options = {}) {
   }
 
   const u = openaiResp.usage || {};
-  const cached = u.prompt_tokens_details?.cached_tokens ?? 0;
+  const prompt = nonNegativeTokenCount(u.prompt_tokens);
+  const cached = Math.min(prompt, nonNegativeTokenCount(u.prompt_tokens_details?.cached_tokens));
   const usage = {
-    input_tokens: (u.prompt_tokens ?? 0) - cached,
-    output_tokens: u.completion_tokens ?? 0,
+    input_tokens: prompt - cached,
+    output_tokens: nonNegativeTokenCount(u.completion_tokens),
   };
   if (cached > 0) usage.cache_read_input_tokens = cached;
 
@@ -281,7 +286,7 @@ export async function streamAnthropicFromLines(lineIterator, emit, model, option
     if (upstreamError) throw upstreamError;
     if (!options.forceModel && parsed.model) actualModel = parsed.model;
     if (parsed.usage?.completion_tokens != null) {
-      outputTokens = parsed.usage.completion_tokens;
+      outputTokens = nonNegativeTokenCount(parsed.usage.completion_tokens);
       markOutputTokens(outputTokens);
     }
     const choice = parsed.choices?.[0];

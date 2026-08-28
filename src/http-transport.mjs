@@ -17,10 +17,101 @@ const MAX_INFLIGHT_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxInflightBodyBytes;
 const MAX_QUEUED_REQUESTS = HTTP_RUNTIME_CONFIG.maxQueuedRequests;
 const REQUEST_QUEUE_TIMEOUT_MS = HTTP_RUNTIME_CONFIG.requestQueueTimeoutMs;
 
+export const MAX_UPSTREAM_ERROR_BODY_BYTES = 1024 * 1024;
+export const MAX_UPSTREAM_MODEL_CATALOG_BYTES = 8 * 1024 * 1024;
+export const MAX_UPSTREAM_RETRY_DRAIN_BYTES = 64 * 1024;
+
 export function httpError(message, statusCode) {
   const err = new Error(message);
   err.statusCode = statusCode;
   return err;
+}
+
+function upstreamBodyTooLarge(label, maxBytes) {
+  const error = httpError(`${label} exceeds ${maxBytes} bytes`, 502);
+  error.code = "ccdx_upstream_response_too_large";
+  error.jsonBody = {
+    error: {
+      message: error.message,
+      type: "upstream_error",
+      code: error.code,
+    },
+  };
+  return error;
+}
+
+function unreadableUpstreamBody(label) {
+  const error = httpError(`${label} is not a readable web stream`, 502);
+  error.code = "ccdx_upstream_response_unreadable";
+  error.jsonBody = {
+    error: {
+      message: error.message,
+      type: "upstream_error",
+      code: error.code,
+    },
+  };
+  return error;
+}
+
+async function cancelResponseBody(response) {
+  try { await response?.body?.cancel?.(); } catch {}
+}
+
+function responseContentLength(response) {
+  const raw = response?.headers?.get?.("content-length")
+    ?? response?.headers?.["content-length"]
+    ?? response?.headers?.["Content-Length"];
+  const parsed = Number.parseInt(raw || "", 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+export async function readBoundedResponseBuffer(response, {
+  maxBytes,
+  label = "Upstream response body",
+} = {}) {
+  const limit = Number.isFinite(maxBytes) && maxBytes >= 0 ? Math.floor(maxBytes) : 0;
+  if (responseContentLength(response) > limit) {
+    await cancelResponseBody(response);
+    throw upstreamBodyTooLarge(label, limit);
+  }
+  if (!response?.body) {
+    if ((responseContentLength(response) || 0) > 0) throw unreadableUpstreamBody(label);
+    return Buffer.alloc(0);
+  }
+  const reader = response?.body?.getReader?.();
+  if (!reader) throw unreadableUpstreamBody(label);
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      total += chunk.length;
+      if (total > limit) {
+        await reader.cancel().catch(() => {});
+        throw upstreamBodyTooLarge(label, limit);
+      }
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks, total);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export async function readBoundedResponseText(response, options) {
+  return new TextDecoder().decode(await readBoundedResponseBuffer(response, options));
+}
+
+export async function discardBoundedResponseBody(response, maxBytes = MAX_UPSTREAM_RETRY_DRAIN_BYTES) {
+  try {
+    await readBoundedResponseBuffer(response, { maxBytes, label: "Upstream retry response body" });
+    return true;
+  } catch {
+    await cancelResponseBody(response);
+    return false;
+  }
 }
 
 function payloadTooLarge(kind, maxBytes) {

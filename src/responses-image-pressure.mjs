@@ -25,6 +25,20 @@ function bodyPayload(body, assertActive) {
   return { bodyText, bodyBytes: Buffer.byteLength(bodyText) };
 }
 
+export function responsesImagePressureEligible(reqContext, {
+  assertActive,
+  policy: policyOverrides,
+} = {}) {
+  const policy = normalizedPolicy(policyOverrides);
+  const currentInputStart = Number.isFinite(reqContext?.currentInputStart)
+    ? reqContext.currentInputStart
+    : 0;
+  const images = responsesHistoricalImageStats(reqContext?.body?.input, currentInputStart, { assertActive });
+  if (images.historicalImages === 0) return false;
+  if (images.historicalImages > policy.triggerHistoricalImages) return true;
+  return bodyPayload(reqContext?.body, assertActive).bodyBytes > policy.triggerBodyBytes;
+}
+
 export function applyResponsesImagePressure(reqContext, {
   assertActive,
   mode = "normal",
@@ -135,6 +149,22 @@ export function createResponsesImagePressureController({
       const result = applyResponsesImagePressure(reqContext, {
         assertActive,
         mode: modeFor(reqContext?.historyRootId),
+        policy,
+      });
+      if (result.adapted) {
+        counters.adaptedRequests += 1;
+        counters.imagesOmitted += result.imagesOmitted;
+      }
+      return result;
+    },
+    isEligible(reqContext, { assertActive } = {}) {
+      return responsesImagePressureEligible(reqContext, { assertActive, policy });
+    },
+    applyRecovery(reqContext, { assertActive } = {}) {
+      if (modeFor(reqContext?.historyRootId) !== "recovery") return null;
+      const result = applyResponsesImagePressure(reqContext, {
+        assertActive,
+        mode: "recovery",
         policy,
       });
       if (result.adapted) {

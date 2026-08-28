@@ -298,6 +298,7 @@ export function responseHistoryPressureRootId(reqContext) {
 export function prepareResponsesRequest(reqBody, {
   assertActive,
   copilotBoundary = true,
+  historySnapshot,
   mutate = false,
 } = {}) {
   assertActive?.();
@@ -313,11 +314,22 @@ export function prepareResponsesRequest(reqBody, {
   const historyRouteMetadata = [];
 
   if (previousId !== undefined && previousId !== null) {
-    historyItems = materializeResponseHistory(previousId, {
-      assertActive,
-      routeMetadata: historyRouteMetadata,
-    });
-    historyRootId = responseHistoryRootId(previousId);
+    if (historySnapshot) {
+      if (historySnapshot.responseId !== previousId) {
+        throw new TypeError("Response history snapshot does not match previous_response_id");
+      }
+      historyItems = historySnapshot.materialize({
+        assertActive,
+        routeMetadata: historyRouteMetadata,
+      });
+      historyRootId = historySnapshot.rootId;
+    } else {
+      historyItems = materializeResponseHistory(previousId, {
+        assertActive,
+        routeMetadata: historyRouteMetadata,
+      });
+      historyRootId = responseHistoryRootId(previousId);
+    }
     body.input = [...historyItems, ...currentInputItems];
   } else {
     body.input = currentInputItems;

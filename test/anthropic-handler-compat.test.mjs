@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import { createAdapterHandler } from "../src/adapter.mjs";
 
-async function invokeMessages(chatCompletionsFn, { stream = false } = {}) {
+async function invokeMessages(chatCompletionsFn, { closeOnFirstWrite = false, stream = false } = {}) {
   const req = Readable.from([Buffer.from(JSON.stringify({
     model: "claude-sonnet-4.6",
     max_tokens: 64,
@@ -23,6 +23,7 @@ async function invokeMessages(chatCompletionsFn, { stream = false } = {}) {
   res.statusCode = 200;
   res.headers = {};
   const chunks = [];
+  let writes = 0;
   res.writeHead = (statusCode, headers = {}) => {
     res.statusCode = statusCode;
     res.headers = { ...res.headers, ...headers };
@@ -30,7 +31,16 @@ async function invokeMessages(chatCompletionsFn, { stream = false } = {}) {
     return res;
   };
   res.write = (chunk) => {
+    writes += 1;
     chunks.push(Buffer.from(chunk));
+    if (closeOnFirstWrite && writes === 1) {
+      queueMicrotask(() => {
+        res.destroyed = true;
+        res.emit("close");
+        finish();
+      });
+      return false;
+    }
     return true;
   };
   let finish;
@@ -127,4 +137,24 @@ test("HTTP Messages preserves unrelated upstream failures", async () => {
   assert.equal(result.headers["Content-Type"], "application/problem+json");
   assert.equal(result.headers["Retry-After"], "7");
   assert.equal(result.headers["X-Upstream-Request-Id"], "rate-limit-1");
+});
+
+test("HTTP Messages cancels its upstream stream quietly when the downstream closes", async () => {
+  let cancelled = false;
+  const upstream = new Response(new ReadableStream({
+    pull(controller) {
+      controller.enqueue(Buffer.from([
+        'data: {"choices":[{"delta":{"content":"first"}}]}',
+        'data: {"choices":[{"delta":{"content":"second"}}]}',
+        "data: [DONE]",
+        "",
+      ].join("\n\n")));
+    },
+    cancel() { cancelled = true; },
+  }), { headers: { "Content-Type": "text/event-stream" } });
+
+  const result = await invokeMessages(async () => upstream, { stream: true, closeOnFirstWrite: true });
+
+  assert.equal(cancelled, true);
+  assert.equal(result.text.includes("message_stop"), false);
 });

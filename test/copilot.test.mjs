@@ -831,6 +831,24 @@ test("fetchCopilotUpstream: retries transient safe-method statuses only", async 
     assert.equal(getResp.status, 200);
     assert.equal(getCalls, 2);
 
+    let oversizedCalls = 0;
+    let oversizedCancelled = false;
+    const oversizedResp = await fetchCopilotUpstream("https://api.enterprise.githubcopilot.com/models", {}, {
+      retries: 1,
+      retryDelayMs: 1,
+      fetchImpl: async () => {
+        oversizedCalls += 1;
+        if (oversizedCalls > 1) return new Response("{}", { status: 200 });
+        return new Response(new ReadableStream({
+          start(controller) { controller.enqueue(Buffer.alloc((64 * 1024) + 1)); },
+          cancel() { oversizedCancelled = true; },
+        }), { status: 503 });
+      },
+    });
+    assert.equal(oversizedResp.status, 200);
+    assert.equal(oversizedCalls, 2);
+    assert.equal(oversizedCancelled, true);
+
     let postCalls = 0;
     const postResp = await fetchCopilotUpstream("https://api.enterprise.githubcopilot.com/responses", { method: "POST" }, {
       retries: 1,

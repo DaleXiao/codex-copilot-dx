@@ -143,6 +143,38 @@ test("createAdapterHandler: tracks terminal activity for one request lifecycle",
   assert.equal(finished, 1);
 });
 
+test("createAdapterHandler contains unexpected synchronous and asynchronous dispatch failures", async () => {
+  for (const dispatchRequestForTests of [
+    () => { throw new Error("secret synchronous detail"); },
+    async () => { throw new Error("secret asynchronous detail"); },
+  ]) {
+    const response = await invokeAdapter({ dispatchRequestForTests }, { body: { input: "hello" } });
+    assert.equal(response.status, 500);
+    assert.deepEqual(JSON.parse(response.text), {
+      error: {
+        message: "Internal adapter error",
+        type: "server_error",
+        code: "ccdx_internal_error",
+      },
+    });
+    assert.equal(response.text.includes("secret"), false);
+  }
+});
+
+test("createAdapterHandler contains non-Error rejection and metric completion failures", async () => {
+  for (const rejection of [null, "secret rejection value"]) {
+    const response = await invokeAdapter({
+      dispatchRequestForTests: () => Promise.reject(rejection),
+      requestMetrics: {
+        begin() { return () => { throw new Error("metrics failure"); }; },
+      },
+    }, { body: { input: "hello" } });
+    assert.equal(response.status, 500);
+    assert.equal(JSON.parse(response.text).error.code, "ccdx_internal_error");
+    assert.equal(response.text.includes("secret"), false);
+  }
+});
+
 test("HTTP count_tokens route awaits the lazy tokenizer", async () => {
   const result = await invokeAdapter({}, {
     url: "/v1/messages/count_tokens",
@@ -830,6 +862,47 @@ test("HTTP native unary Responses preserves valid HTTP 200 incomplete and failed
   }
 });
 
+test("HTTP native unary Responses keeps successful bodies above the error-body limit byte-equivalent", async () => {
+  const upstreamText = JSON.stringify({
+    id: "resp_large_success",
+    status: "completed",
+    output: [{
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "x".repeat((1024 * 1024) + 1) }],
+    }],
+  });
+  const response = await invokeAdapter({
+    responsesFn: async () => new Response(upstreamText, {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  }, {
+    body: { model: "gpt-5.6-sol", input: "large success" },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.text, upstreamText);
+});
+
+test("HTTP native unary Responses cancels an oversized upstream error body", async () => {
+  let cancelled = false;
+  const response = await invokeAdapter({
+    responsesFn: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.alloc((1024 * 1024) + 1, 0x78));
+      },
+      cancel() { cancelled = true; },
+    }), { status: 500 }),
+  }, {
+    body: { model: "gpt-5.6-sol", input: "oversized error" },
+  });
+
+  assert.equal(response.status, 502);
+  assert.equal(JSON.parse(response.text).error.code, "ccdx_upstream_response_too_large");
+  assert.equal(cancelled, true);
+});
+
 test("HTTP Messages stream emits an Anthropic SSE error after headers", async () => {
   const result = await invokeAdapter({
     streamIdleTimeoutMs: 5,
@@ -1328,6 +1401,46 @@ test("compact snapshot remains available when normal LRU eviction removes its ol
   clearResponseHistoryForTests();
 });
 
+test("compact can replace a full pinned history pool with its replayable new root", async () => {
+  clearResponseHistoryForTests();
+  configureResponseHistoryForTests({ maxBytes: 1024 * 1024, maxEntries: 1 });
+  try {
+    const root = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "old root" });
+    rememberResponseHistory(root, { id: "resp_compact_full_root", status: "completed", output: [] });
+
+    const compact = await invokeAdapter({
+      responsesCompactFn: async () => Response.json({
+        id: "resp_compact_full_new",
+        object: "response.compaction",
+        status: "completed",
+        output: [{ type: "compaction", id: "cmp_full", encrypted_content: "compact-state" }],
+      }),
+    }, {
+      url: "/v1/responses/compact",
+      body: {
+        model: "gpt-5.6-sol",
+        previous_response_id: "resp_compact_full_root",
+        input: "compact",
+      },
+    });
+    assert.equal(compact.status, 200);
+    assert.equal(responseHistoryStats().entries, 1);
+
+    const replay = await invokeAdapter({
+      responsesFn: async () => Response.json({ id: "resp_compact_full_replay", status: "completed", output: [] }),
+    }, {
+      body: {
+        model: "gpt-5.6-sol",
+        previous_response_id: "resp_compact_full_new",
+        input: "continue",
+      },
+    });
+    assert.equal(replay.status, 200);
+  } finally {
+    clearResponseHistoryForTests();
+  }
+});
+
 test("response history stores incremental nodes and enforces a byte budget", () => {
   clearResponseHistoryForTests();
   configureResponseHistoryForTests({ maxBytes: 500, maxEntries: 100 });
@@ -1542,6 +1655,73 @@ test("response history tree LRU keeps hard limits for a single oversized tree", 
     /was evicted after reaching the local history limit/,
   );
   clearResponseHistoryForTests();
+});
+
+test("HTTP response history remains replayable when unrelated roots arrive during admission", async () => {
+  clearResponseHistoryForTests();
+  configureResponseHistoryForTests({ maxBytes: 1024 * 1024, maxEntries: 2 });
+  try {
+    const rootContext = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "root input" });
+    rememberResponseHistory(rootContext, {
+      id: "resp_admission_pinned_root",
+      status: "completed",
+      output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "root output" }] }],
+    });
+
+    let injected = false;
+    const acquireRequest = async () => {
+      const release = () => {};
+      release.reserveResponseHistory = async () => {
+        if (injected) return () => {};
+        injected = true;
+        for (const id of ["resp_unrelated_a", "resp_unrelated_b"]) {
+          const context = prepareResponsesRequest({ model: "gpt-5.6-sol", input: id });
+          rememberResponseHistory(context, { id, status: "completed", output: [] });
+        }
+        return () => {};
+      };
+      return release;
+    };
+
+    const child = await invokeAdapter({
+      acquireRequest,
+      responsesFn: async () => Response.json({
+        id: "resp_admission_pinned_child",
+        status: "completed",
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "child output" }] }],
+      }),
+    }, {
+      body: {
+        model: "gpt-5.6-sol",
+        previous_response_id: "resp_admission_pinned_root",
+        input: "child input",
+      },
+    });
+    assert.equal(child.status, 200);
+
+    let replayBody;
+    const replay = await invokeAdapter({
+      acquireRequest,
+      responsesFn: async (body) => {
+        replayBody = structuredClone(body);
+        return Response.json({ id: "resp_admission_replayed", status: "completed", output: [] });
+      },
+    }, {
+      body: {
+        model: "gpt-5.6-sol",
+        previous_response_id: "resp_admission_pinned_child",
+        input: "continue",
+      },
+    });
+
+    assert.equal(replay.status, 200);
+    const serialized = JSON.stringify(replayBody);
+    assert.equal(serialized.includes("root output"), true);
+    assert.equal(serialized.includes("child output"), true);
+    assert.equal(serialized.includes("continue"), true);
+  } finally {
+    clearResponseHistoryForTests();
+  }
 });
 
 test("prepareResponsesRequest: rejects missing local previous response history", () => {
@@ -1936,6 +2116,127 @@ test("successful compaction clears visual-history recovery for the compacted tre
   clearResponseHistoryForTests();
 });
 
+test("compact preserves its first visual request and applies recovery only after timeout", async () => {
+  clearResponseHistoryForTests();
+  try {
+    const history = prepareResponsesRequest({
+      model: "gpt-5.6-sol",
+      input: Array.from({ length: 36 }, (_, index) => ({
+        type: "message",
+        role: "user",
+        content: [{
+          type: "input_image",
+          image_url: `data:image/png;base64,${Buffer.alloc(128, index + 1).toString("base64")}`,
+        }],
+      })),
+    });
+    rememberResponseHistory(history, { id: "resp_compact_pressure_root", status: "completed", output: [] });
+    const imagePressure = createResponsesImagePressureController();
+    const historicalCounts = [];
+    let upstreamCalls = 0;
+    const responsesCompactFn = async (body, { currentInputStart, onUpstreamStart, signal }) => {
+      upstreamCalls += 1;
+      historicalCounts.push(responsesHistoricalImageStats(body.input, currentInputStart).historicalImages);
+      onUpstreamStart();
+      if (upstreamCalls === 1) {
+        await new Promise((resolve, reject) => {
+          const onAbort = () => reject(signal.reason);
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signal.aborted) onAbort();
+        });
+      }
+      return Response.json({
+        id: "resp_compact_pressure_recovered",
+        object: "response.compaction",
+        status: "completed",
+        output: [{ type: "compaction", id: "cmp_pressure_recovered", encrypted_content: "state" }],
+      });
+    };
+    const options = {
+      imagePressure,
+      responsesCompactFn,
+      upstreamTimeoutMs: 5,
+    };
+    const request = {
+      url: "/v1/responses/compact",
+      body: {
+        model: "gpt-5.6-sol",
+        previous_response_id: "resp_compact_pressure_root",
+        input: "compact",
+      },
+    };
+
+    const first = await invokeAdapter(options, request);
+    assert.equal(first.status, 504);
+    assert.equal(upstreamCalls, 1);
+    assert.equal(imagePressure.snapshot().active_recovery_trees, 1);
+
+    const second = await invokeAdapter({ ...options, upstreamTimeoutMs: 1000 }, request);
+    assert.equal(second.status, 200);
+    assert.deepEqual(historicalCounts, [36, 8]);
+    assert.equal(imagePressure.snapshot().active_recovery_trees, 0);
+  } finally {
+    clearResponseHistoryForTests();
+  }
+});
+
+test("compact preserves an upstream 408 and applies visual recovery on the next request", async () => {
+  clearResponseHistoryForTests();
+  try {
+    const history = prepareResponsesRequest({
+      model: "gpt-5.6-sol",
+      input: Array.from({ length: 36 }, (_, index) => ({
+        type: "message",
+        role: "user",
+        content: [{
+          type: "input_image",
+          image_url: `data:image/png;base64,${Buffer.alloc(128, index + 1).toString("base64")}`,
+        }],
+      })),
+    });
+    rememberResponseHistory(history, { id: "resp_compact_408_root", status: "completed", output: [] });
+    const imagePressure = createResponsesImagePressureController();
+    const historicalCounts = [];
+    let upstreamCalls = 0;
+    const responsesCompactFn = async (body, { currentInputStart }) => {
+      upstreamCalls += 1;
+      historicalCounts.push(responsesHistoricalImageStats(body.input, currentInputStart).historicalImages);
+      if (upstreamCalls === 1) {
+        return new Response(JSON.stringify({ error: { code: "user_request_timeout" } }), {
+          status: 408,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return Response.json({
+        id: "resp_compact_408_recovered",
+        object: "response.compaction",
+        status: "completed",
+        output: [{ type: "compaction", id: "cmp_408_recovered", encrypted_content: "state" }],
+      });
+    };
+    const options = { imagePressure, responsesCompactFn };
+    const request = {
+      url: "/v1/responses/compact",
+      body: {
+        model: "gpt-5.6-sol",
+        previous_response_id: "resp_compact_408_root",
+        input: "compact",
+      },
+    };
+
+    const first = await invokeAdapter(options, request);
+    assert.equal(first.status, 408);
+    assert.deepEqual(JSON.parse(first.text), { error: { code: "user_request_timeout" } });
+    assert.equal(imagePressure.snapshot().active_recovery_trees, 1);
+
+    const second = await invokeAdapter(options, request);
+    assert.equal(second.status, 200);
+    assert.deepEqual(historicalCounts, [36, 8]);
+  } finally {
+    clearResponseHistoryForTests();
+  }
+});
+
 test("HTTP responses route maps Codex auto-review directly to Responses", async () => {
   let upstreamBody;
   let chatCalled = false;
@@ -2098,6 +2399,7 @@ test("HTTP compact maps a catalog-approved priority tier before the upstream req
 
 test("priority-tier model mapping sanitizes encrypted history across the effective model boundary", async () => {
   clearResponseHistoryForTests();
+  configureResponseHistoryForTests({ maxBytes: 1024 * 1024, maxEntries: 1 });
   const codexModelRegistry = { models: { data: [{
     id: "gpt-5.6-sol-fast",
     vendor: "OpenAI",
@@ -2142,6 +2444,20 @@ test("priority-tier model mapping sanitizes encrypted history across the effecti
     assert.equal(JSON.stringify(upstreamBody).includes("encrypted_content"), false);
     assert.equal(JSON.stringify(upstreamBody).includes("visible standard history"), true);
     assert.equal(JSON.stringify(upstreamBody).includes("continue fast"), true);
+    assert.equal(responseHistoryStats().entries, 1);
+
+    const replay = await invokeAdapter({
+      codexModelRegistry,
+      responsesFn: async () => Response.json({ id: "resp_fast_affinity_replay", status: "completed", output: [] }),
+    }, {
+      body: {
+        model: "gpt-5.6-sol",
+        service_tier: "priority",
+        previous_response_id: "resp_fast_affinity_child",
+        input: "replay fast",
+      },
+    });
+    assert.equal(replay.status, 200);
   } finally {
     clearResponseHistoryForTests();
   }
@@ -4084,6 +4400,31 @@ test("forwardToChat: preserves streaming upstream errors", async () => {
     { chatCompletionsFn: async () => new Response("rate limited", { status: 429 }) },
   );
   assert.deepEqual(failure, { statusCode: 429, message: "rate limited" });
+});
+
+test("forwardToChat cancels upstream without an error event when downstream closes", async () => {
+  let cancelled = false;
+  let done = false;
+  let failure = null;
+  const upstream = new Response(new ReadableStream({
+    pull(controller) {
+      controller.enqueue(Buffer.from('data: {"choices":[{"delta":{"content":"unused"}}]}\n\n'));
+    },
+    cancel() { cancelled = true; },
+  }), { headers: { "Content-Type": "text/event-stream" } });
+
+  const result = await forwardToChat(
+    { model: "gpt-4o", messages: [] },
+    async () => false,
+    () => { done = true; },
+    (statusCode, message) => { failure = { statusCode, message }; },
+    { chatCompletionsFn: async () => upstream },
+  );
+
+  assert.equal(result, false);
+  assert.equal(cancelled, true);
+  assert.equal(done, false);
+  assert.equal(failure, null);
 });
 
 test("forwardToChat: emits a completed empty message for an empty successful stream", async () => {

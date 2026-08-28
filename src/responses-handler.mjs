@@ -3,7 +3,9 @@ import { applyCopilotResponsesRequestPolicies } from "./copilot-responses-policy
 import {
   createRequestAbort,
   logRequestFailure,
+  MAX_UPSTREAM_ERROR_BODY_BYTES,
   readJsonBody,
+  readBoundedResponseText,
   sendJsonError,
   sendUpstreamError,
   writeOrDrain,
@@ -20,7 +22,7 @@ import { prepareResponsesChatPayload } from "./responses-chat-payload.mjs";
 import { prepareResponsesCompactionRequest } from "./responses-compaction.mjs";
 import { clearResponsesToolOutputPartsCache } from "./responses-content.mjs";
 import { proxyCopilotResponses } from "./responses-proxy.mjs";
-import { responseHistoryMaterializedBytes } from "./response-history.mjs";
+import { acquireResponseHistorySnapshot } from "./response-history.mjs";
 import {
   applyResponseHistoryRoutePlan,
   dropMaterializedResponseHistory,
@@ -107,10 +109,15 @@ export function createResponsesHandler(options) {
     let releaseRequest = () => {};
     let prepared = null;
     let imagePressureResult = null;
+    let historySnapshot = null;
     let parsed = null;
     let upstreamPayloadReleased = false;
     let activeDeadline = Number.POSITIVE_INFINITY;
     let activeTimeoutReason = "responses_prepare_timeout";
+    const releaseHistorySnapshot = () => {
+      historySnapshot?.release();
+      historySnapshot = null;
+    };
     const assertPrepareActive = () => {
       if (abort.signal.aborted) throw abort.signal.reason;
       if (now() < activeDeadline) return;
@@ -154,6 +161,7 @@ export function createResponsesHandler(options) {
     const releaseUpstreamPayload = (finalContext) => {
       if (upstreamPayloadReleased) return;
       upstreamPayloadReleased = true;
+      if (finalContext?.historyParentId === null) releaseHistorySnapshot();
       clearResponsesToolOutputPartsCache(prepared?.body?.input);
       clearResponsesToolOutputPartsCache(prepared?.historyInputItems);
       if (finalContext && finalContext !== prepared) {
@@ -172,15 +180,19 @@ export function createResponsesHandler(options) {
       activeTimeoutReason = "responses_prepare_timeout";
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
       if (parsed.previous_response_id !== undefined && parsed.previous_response_id !== null) {
-        const historyBytes = responseHistoryMaterializedBytes(parsed.previous_response_id);
-        if (historyBytes > 0) {
-          await releaseRequest.reserveResponseHistory?.(historyBytes, { signal: abort.signal });
+        historySnapshot = acquireResponseHistorySnapshot(parsed.previous_response_id, {
+          assertActive: assertPrepareActive,
+          signal: abort.signal,
+        });
+        if (historySnapshot.bytes > 0) {
+          await releaseRequest.reserveResponseHistory?.(historySnapshot.bytes, { signal: abort.signal });
         }
         assertPrepareActive();
       }
       prepared = prepareResponsesRequest(parsed, {
         assertActive: assertPrepareActive,
         copilotBoundary: false,
+        historySnapshot,
         mutate: true,
       });
       parsed = null;
@@ -221,6 +233,7 @@ export function createResponsesHandler(options) {
         surface: "responses",
       });
       prepared = applyResponseHistoryRoutePlan(prepared, routePlan);
+      if (prepared.historyParentId === null) releaseHistorySnapshot();
       applyCopilotResponsesRequestPolicies(prepared.body);
       if (routePlan.protocol === "openai-responses") {
         const result = await proxyCopilotResponses(prepared, req, res, responsesFn, {
@@ -253,11 +266,13 @@ export function createResponsesHandler(options) {
               "Cache-Control": "no-cache",
               Connection: "keep-alive",
             });
-            await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+            const written = await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+            if (!written) return false;
             if (event === "response.completed") {
               rememberResponseHistory(prepared, data.response);
               recordResponsesUsage({ surface: prepared.surface, mode: "stream", model, response: data.response, event: data });
             }
+            return true;
           }, () => { if (!res.writableEnded) res.end(); }, async (statusCode, errMsg, error, upstreamResponse) => {
             if (!res.headersSent) {
               if (upstreamResponse) {
@@ -294,7 +309,12 @@ export function createResponsesHandler(options) {
               onUpstreamStart: startUpstreamTimeout,
             });
             releaseChatPayload();
-            const data = await upstream.text();
+            const data = upstream.ok
+              ? await upstream.text()
+              : await readBoundedResponseText(upstream, {
+                maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
+                label: "Copilot Chat error body",
+              });
             if (!upstream.ok) {
               markAdaptiveHttpTimeout(upstream.status);
               sendUpstreamError(res, upstream, data);
@@ -323,6 +343,7 @@ export function createResponsesHandler(options) {
       sendJsonError(res, responseError, 502);
     } finally {
       releaseUpstreamPayload();
+      releaseHistorySnapshot();
       abort.cleanup();
     }
   };
@@ -345,7 +366,47 @@ export function createResponsesCompactHandler(options) {
     const abort = createRequestAbort(req, res);
     let releaseRequest = () => {};
     let prepared = null;
+    let imagePressureResult = null;
+    let historySnapshot = null;
     let upstreamPayloadReleased = false;
+    let activeDeadline = Number.POSITIVE_INFINITY;
+    let activeTimeoutReason = "responses_prepare_timeout";
+    const releaseHistorySnapshot = () => {
+      historySnapshot?.release();
+      historySnapshot = null;
+    };
+    const assertPrepareActive = () => {
+      if (abort.signal.aborted) throw abort.signal.reason;
+      if (now() < activeDeadline) return;
+      abort.abort(activeTimeoutReason);
+      throw abort.signal.reason;
+    };
+    const startUpstreamTimeout = () => {
+      assertPrepareActive();
+      activeDeadline = now() + upstreamTimeoutMs;
+      activeTimeoutReason = "upstream_timeout";
+      abort.setTimeout(upstreamTimeoutMs, "upstream_timeout");
+    };
+    const pressureRootId = () => responseHistoryPressureRootId(prepared);
+    const markCompactTimeout = () => {
+      const eligible = imagePressure?.isEligible?.(prepared) === true;
+      return imagePressure?.markTimeout?.(pressureRootId(), { eligible }) || false;
+    };
+    const applyAdaptiveTimeout = (error) => {
+      if (!["responses_prepare_timeout", "upstream_timeout"].includes(abort.reason)) return error;
+      if (!markCompactTimeout()) return error;
+      const message = "Responses compact timed out while processing a large visual history. Retry the request; ccdx will keep fewer earlier images automatically. Restart is not required.";
+      error.statusCode = 504;
+      error.jsonBody = {
+        error: {
+          message,
+          type: "timeout_error",
+          code: "ccdx_visual_history_timeout",
+          retryable: true,
+        },
+      };
+      return error;
+    };
     const releaseUpstreamPayload = (finalContext) => {
       if (upstreamPayloadReleased) return;
       upstreamPayloadReleased = true;
@@ -361,35 +422,30 @@ export function createResponsesCompactHandler(options) {
       releaseRequest = await acquireRequest(req, { signal: abort.signal });
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       const parsed = await readJsonBody(req, { admission: releaseRequest, signal: abort.signal });
-      let activeDeadline = now() + upstreamTimeoutMs;
-      let activeTimeoutReason = "responses_prepare_timeout";
-      const assertPrepareActive = () => {
-        if (abort.signal.aborted) throw abort.signal.reason;
-        if (now() < activeDeadline) return;
-        abort.abort(activeTimeoutReason);
-        throw abort.signal.reason;
-      };
-      const startUpstreamTimeout = () => {
-        assertPrepareActive();
-        activeDeadline = now() + upstreamTimeoutMs;
-        activeTimeoutReason = "upstream_timeout";
-        abort.setTimeout(upstreamTimeoutMs, "upstream_timeout");
-      };
+      activeDeadline = now() + upstreamTimeoutMs;
+      activeTimeoutReason = "responses_prepare_timeout";
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
       if (parsed.previous_response_id !== undefined && parsed.previous_response_id !== null) {
-        const historyBytes = responseHistoryMaterializedBytes(parsed.previous_response_id);
-        if (historyBytes > 0) {
-          await releaseRequest.reserveResponseHistory?.(historyBytes, { signal: abort.signal });
+        historySnapshot = acquireResponseHistorySnapshot(parsed.previous_response_id, {
+          assertActive: assertPrepareActive,
+          signal: abort.signal,
+        });
+        if (historySnapshot.bytes > 0) {
+          await releaseRequest.reserveResponseHistory?.(historySnapshot.bytes, { signal: abort.signal });
         }
         assertPrepareActive();
       }
-      prepared = prepareResponsesCompactionRequest(
-        prepareResponsesRequest(parsed, {
-          assertActive: assertPrepareActive,
-          copilotBoundary: false,
-          mutate: true,
-        }),
-      );
+      prepared = prepareResponsesRequest(parsed, {
+        assertActive: assertPrepareActive,
+        copilotBoundary: false,
+        historySnapshot,
+        mutate: true,
+      });
+      imagePressureResult = imagePressure?.applyRecovery?.(prepared, { assertActive: assertPrepareActive }) || null;
+      if (imagePressureResult?.adapted) {
+        console.warn(status("warn", `responses compact visual history mode=recovery historical_images=${imagePressureResult.initialHistoricalImages}->${imagePressureResult.historicalImages} omitted=${imagePressureResult.imagesOmitted} bytes=${imagePressureResult.initialBodyBytes}->${imagePressureResult.bodyBytes}`));
+      }
+      prepared = prepareResponsesCompactionRequest(prepared);
       assertPrepareActive();
       prepared.surface = "responses_compact";
       const model = parsed.model || "unknown";
@@ -414,6 +470,7 @@ export function createResponsesCompactHandler(options) {
         model: upstreamModel,
         surface: "responses-compact",
       }));
+      releaseHistorySnapshot();
       applyCopilotResponsesRequestPolicies(prepared.body);
       const result = await proxyCopilotResponses(prepared, req, res, responsesCompactFn, {
         assertPrepareActive,
@@ -423,11 +480,14 @@ export function createResponsesCompactHandler(options) {
         releaseRequest: releaseUpstreamPayload,
       });
       if (result?.compacted) imagePressure?.clear?.(responseHistoryPressureRootId(prepared));
+      else if (result?.upstreamStatus === 408) markCompactTimeout();
     } catch (error) {
-      logRequestFailure("Responses compact", error, abort);
-      sendJsonError(res, error, 502);
+      const responseError = applyAdaptiveTimeout(error);
+      logRequestFailure("Responses compact", responseError, abort);
+      sendJsonError(res, responseError, 502);
     } finally {
       releaseUpstreamPayload();
+      releaseHistorySnapshot();
       abort.cleanup();
     }
   };

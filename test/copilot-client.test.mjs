@@ -10,6 +10,7 @@ import {
   listModels,
   resetCopilotTokenForTests,
 } from "../src/copilot.mjs";
+import { MAX_UPSTREAM_MODEL_CATALOG_BYTES } from "../src/http-transport.mjs";
 
 function writeToken(home, name, token) {
   const filePath = path.join(home, name, "github_token");
@@ -169,6 +170,34 @@ test("createCopilotClient: starts the upstream phase only after token and payloa
   });
 
   assert.deepEqual(sequence, ["token", "upstream", "fetch"]);
+});
+
+test("createCopilotClient: bounds model catalogs before parsing or caching them", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-client-model-limit-"));
+  const tokenPath = writeToken(home, "codex", "github_enterprise");
+  let cancelled = false;
+  const client = createCopilotClient({
+    profile: "codex",
+    tokenPath,
+    tokenFetchImpl: async () => Response.json({
+      token: "service_enterprise",
+      expires_at: Math.floor(Date.now() / 1000) + 1800,
+      endpoints: { api: "https://enterprise.example" },
+    }),
+    allowTokenDiscovery: false,
+    readGithubIdentity: () => ({ login: "enterprise-user", id: 1 }),
+  });
+
+  await assert.rejects(client.listModels({
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.alloc(MAX_UPSTREAM_MODEL_CATALOG_BYTES + 1, 0x78));
+      },
+      cancel() { cancelled = true; },
+    }), { status: 200 }),
+  }), (error) => error.statusCode === 502 && error.code === "ccdx_upstream_response_too_large");
+  assert.equal(cancelled, true);
+  assert.equal(client.getCachedModelEndpoints("gpt-test"), null);
 });
 
 test("createCopilotClient: non-Codex profiles require an isolated credential source", () => {

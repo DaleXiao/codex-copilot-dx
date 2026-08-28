@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { status } from "./status.mjs";
 import { debugLog } from "./log.mjs";
 import { createCopilotClientRuntime } from "./copilot-client.mjs";
+import { discardBoundedResponseBody } from "./http-transport.mjs";
 
 export {
   optimizeImageDataUrl,
@@ -156,7 +157,7 @@ export async function fetchCopilotUpstream(
       const resp = await fetchImpl(url, init);
       debugLog(`upstream ${method} ${target} status=${resp.status} attempt=${attempt + 1}/${retryCount + 1} attempt_ms=${Date.now() - attemptStart} total_ms=${Date.now() - totalStart}`);
       if (attempt < retryCount && isRetryableUpstreamStatus(resp.status, method)) {
-        await resp.arrayBuffer?.().catch(() => {});
+        await discardBoundedResponseBody(resp);
         const delay = upstreamRetryDelay(attempt, baseDelay);
         console.warn(status("warn", `upstream ${target} returned ${resp.status}; retry ${attempt + 1}/${retryCount} in ${delay}ms`));
         await sleep(delay, { signal });

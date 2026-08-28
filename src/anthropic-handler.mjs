@@ -7,7 +7,9 @@ import {
 import {
   createRequestAbort,
   logRequestFailure,
+  MAX_UPSTREAM_ERROR_BODY_BYTES,
   readJsonBody,
+  readBoundedResponseText,
   sendJsonError,
   sendUpstreamError,
   writeOrDrain,
@@ -21,6 +23,7 @@ import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordAnthropicUsage } from "./usage.mjs";
 
 const PROMPT_TOO_LONG_MESSAGE = "prompt is too long: your prompt is too long. Please reduce the number of messages or use a model with a larger context window.";
+const DOWNSTREAM_CLOSED = Symbol("downstream-closed");
 
 function contextWindowErrorBody(text) {
   let error;
@@ -112,7 +115,10 @@ export function createAnthropicMessagesHandler(options) {
         const upstream = await chatCompletionsFn(withChatStreamUsage(chatReq), { signal: abort.signal });
         releaseRequest();
         if (!upstream.ok) {
-          sendAnthropicUpstreamError(res, upstream, await upstream.text());
+          sendAnthropicUpstreamError(res, upstream, await readBoundedResponseText(upstream, {
+            maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
+            label: "Copilot Chat error body",
+          }));
           return;
         }
         await requireUpstreamEventStream(upstream);
@@ -132,12 +138,15 @@ export function createAnthropicMessagesHandler(options) {
             async (event, data) => {
               if (event === "message_start") messageId = data.message?.id;
               if (event === "message_delta") usage = data.usage;
-              await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+              if (!await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)) {
+                throw DOWNSTREAM_CLOSED;
+              }
             },
             requestedModel,
             { forceModel: forceRequestedModel },
           );
         } catch (error) {
+          if (error === DOWNSTREAM_CLOSED) return;
           logRequestFailure("Messages", error, abort);
           await endStreamWithError(res, "anthropic", error, abort);
           return;
@@ -147,7 +156,12 @@ export function createAnthropicMessagesHandler(options) {
       } else {
         const upstream = await chatCompletionsFn({ ...chatReq, stream: false }, { signal: abort.signal });
         releaseRequest();
-        const data = await upstream.text();
+        const data = upstream.ok
+          ? await upstream.text()
+          : await readBoundedResponseText(upstream, {
+            maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
+            label: "Copilot Chat error body",
+          });
         if (!upstream.ok) {
           sendAnthropicUpstreamError(res, upstream, data);
           return;

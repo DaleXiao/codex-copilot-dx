@@ -203,6 +203,24 @@ test("chatToAnthropic: cached_tokens becomes cache_read_input_tokens", () => {
   assert.equal(a.usage.cache_read_input_tokens, 30);
 });
 
+test("chatToAnthropic: clamps malformed and contradictory usage to non-negative counts", () => {
+  const excessiveCache = chatToAnthropic({
+    choices: [{ message: { content: "ok" } }],
+    usage: { prompt_tokens: 3, completion_tokens: -2, prompt_tokens_details: { cached_tokens: 5 } },
+  }, "m");
+  assert.deepEqual(excessiveCache.usage, {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_input_tokens: 3,
+  });
+
+  const invalid = chatToAnthropic({
+    choices: [{ message: { content: "ok" } }],
+    usage: { prompt_tokens: Number.NaN, completion_tokens: Number.POSITIVE_INFINITY, prompt_tokens_details: { cached_tokens: -1 } },
+  }, "m");
+  assert.deepEqual(invalid.usage, { input_tokens: 0, output_tokens: 0 });
+});
+
 test("chatToAnthropic: forceModel preserves the requested Claude Desktop alias", () => {
   const openai = { model: "claude-sonnet-4.6", choices: [{ message: { content: "x" }, finish_reason: "stop" }] };
   const a = chatToAnthropic(openai, "claude-sonnet-4-6", { forceModel: true });
@@ -265,6 +283,18 @@ test("streamAnthropicFromLines: uses stream_options usage chunks", async () => {
   const ev = await collect(lines);
   const md = ev.find((e) => e[0] === "message_delta");
   assert.equal(md[1].usage.output_tokens, 7);
+});
+
+test("streamAnthropicFromLines: clamps negative completion usage", async () => {
+  const lines = [
+    'data: {"choices":[{"delta":{"content":"ok"}}]}',
+    'data: {"choices":[],"usage":{"completion_tokens":-7}}',
+    "data: [DONE]",
+  ];
+  const events = [];
+  await streamAnthropicFromLines(lines, async (event, data) => events.push([event, data]), "m");
+  const delta = events.find(([event]) => event === "message_delta");
+  assert.equal(delta[1].usage.output_tokens, 0);
 });
 
 test("streamAnthropicFromLines: forceModel preserves the requested Claude Desktop alias", async () => {

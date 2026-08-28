@@ -2,6 +2,8 @@ import { responses as copilotResponses } from "./copilot.mjs";
 import {
   httpError,
   logRequestFailure,
+  MAX_UPSTREAM_ERROR_BODY_BYTES,
+  readBoundedResponseText,
   sendUpstreamError,
   writeOrDrain,
 } from "./http-transport.mjs";
@@ -262,7 +264,12 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
       reader.releaseLock();
     }
   } else {
-    const data = await resp.text();
+    const data = resp.ok
+      ? await resp.text()
+      : await readBoundedResponseText(resp, {
+        maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
+        label: "Copilot Responses error body",
+      });
     if (resp.ok && reqContext.surface === "responses_compact") {
       const response = parseResponsesCompactionResult(
         compactionInputWithoutTrigger(reqContext.body.input),

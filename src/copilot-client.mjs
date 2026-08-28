@@ -1,4 +1,5 @@
 import { createCopilotTokenSession } from "./copilot-token-session.mjs";
+import { MAX_UPSTREAM_MODEL_CATALOG_BYTES, readBoundedResponseText } from "./http-transport.mjs";
 import { prepareResponsesPayload, summarizeReqBody } from "./image-optimization.mjs";
 import { debugLog } from "./log.mjs";
 import { enforceResponsesPayloadByteBudget } from "./responses-byte-budget.mjs";
@@ -117,7 +118,10 @@ export function createCopilotClientRuntime({
       headers,
       signal,
     }, { fetchImpl, ...retryOptions });
-    const body = await response.text();
+    const body = await readBoundedResponseText(response, {
+      maxBytes: MAX_UPSTREAM_MODEL_CATALOG_BYTES,
+      label: "Copilot model catalog",
+    });
     if (response.ok) {
       try { cacheModelEndpoints(JSON.parse(body)); } catch {}
     }

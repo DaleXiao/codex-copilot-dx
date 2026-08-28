@@ -296,6 +296,9 @@ export function createAdapterHandler(options = {}) {
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
   };
+  const dispatchRequest = typeof options.dispatchRequestForTests === "function"
+    ? options.dispatchRequestForTests
+    : dispatch;
 
   return (req, res) => {
     const requestId = createRequestId();
@@ -328,9 +331,27 @@ export function createAdapterHandler(options = {}) {
     const finishRequest = ({ statusCode = 0, aborted = false } = {}) => {
       if (requestFinished) return;
       requestFinished = true;
-      complete({ statusCode, aborted });
-      streamPerformance?.finish({ failed: aborted || statusCode >= 400 });
+      try { complete({ statusCode, aborted }); } catch {}
+      try { streamPerformance?.finish({ failed: aborted || statusCode >= 400 }); } catch {}
       try { finishTerminalActivity(); } catch {}
+    };
+    const containUnexpectedError = (error) => {
+      try { finishRequest({ statusCode: res.statusCode >= 400 ? res.statusCode : 500 }); } catch {}
+      const safeCause = error instanceof Error ? error : new Error("Unexpected adapter failure");
+      try { logRequestFailure("Adapter", safeCause); } catch {}
+      try {
+        const safeError = httpError("Internal adapter error", 500);
+        safeError.jsonBody = {
+          error: {
+            message: safeError.message,
+            type: "server_error",
+            code: "ccdx_internal_error",
+          },
+        };
+        sendJsonError(res, safeError, 500);
+      } catch {
+        try { res.destroy?.(); } catch {}
+      }
     };
     if (trackRequest && typeof res.once === "function") {
       res.once("finish", () => finishRequest({ statusCode: res.statusCode }));
@@ -346,17 +367,15 @@ export function createAdapterHandler(options = {}) {
         pathname,
         showRequestId: options.showRequestId === true,
         streamPerformance,
-      }, () => dispatch(req, res, pathname));
+      }, () => dispatchRequest(req, res, pathname));
       if (result && typeof result.then === "function") {
         return result.catch((error) => {
-          finishRequest({ statusCode: res.statusCode >= 400 ? res.statusCode : 500 });
-          throw error;
+          containUnexpectedError(error);
         });
       }
       return result;
     } catch (error) {
-      finishRequest({ statusCode: res.statusCode >= 400 ? res.statusCode : 500 });
-      throw error;
+      containUnexpectedError(error);
     }
   };
 }

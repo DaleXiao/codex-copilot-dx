@@ -4,6 +4,7 @@ import { responsesHistoricalImageStats } from "../src/responses-byte-budget.mjs"
 import {
   applyResponsesImagePressure,
   createResponsesImagePressureController,
+  responsesImagePressureEligible,
 } from "../src/responses-image-pressure.mjs";
 
 function imageMessage(index, size = 128) {
@@ -109,6 +110,22 @@ test("adaptive image history can trigger on body bytes without dropping current 
   assert.ok(result.imagesOmitted > 0);
   assert.equal(responsesHistoricalImageStats(context.body.input, context.currentInputStart).currentImages, 1);
   assert.equal(context.body.input.at(-1).content[0].image_url, currentImage);
+});
+
+test("image pressure eligibility is read-only and recovery-only application is a no-op before timeout", () => {
+  const context = requestContext(25);
+  const before = JSON.stringify(context.body);
+  const controller = createResponsesImagePressureController();
+
+  assert.equal(responsesImagePressureEligible(context), true);
+  assert.equal(controller.isEligible(context), true);
+  assert.equal(controller.applyRecovery(context), null);
+  assert.equal(JSON.stringify(context.body), before);
+
+  controller.markTimeout(context.historyRootId, { eligible: true });
+  const recovery = controller.applyRecovery(context);
+  assert.equal(recovery.mode, "recovery");
+  assert.equal(recovery.historicalImages, 8);
 });
 
 test("image pressure recovery is isolated per history tree and clears after two successes", () => {

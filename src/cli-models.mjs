@@ -5,7 +5,7 @@ import {
   AUTH_PROFILE_CODEX,
   readAuthProfileCredentials,
 } from "./auth-profile.mjs";
-import { buildHeaders, DEFAULT_API_BASE, FALLBACK_VSCODE_VERSION } from "./copilot.mjs";
+import { buildHeaders, FALLBACK_VSCODE_VERSION, parseApiBase } from "./copilot.mjs";
 import {
   isClaudeCopilotCatalogEntry,
   isClaudeCopilotModel,
@@ -134,7 +134,7 @@ export async function fetchLiveCopilotModels({
     if (!validation.ok) throw new Error(validationFailure(validation));
 
     const tokenData = validation.copilotTokenData;
-    const apiBase = tokenData.endpoints?.api || DEFAULT_API_BASE;
+    const apiBase = parseApiBase(tokenData);
     const headers = buildHeaders({
       token: tokenData.token,
       version: vscodeVersion,

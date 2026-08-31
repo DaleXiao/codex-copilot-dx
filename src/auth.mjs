@@ -8,7 +8,7 @@ import {
   githubTokenFingerprint,
   normalizeGithubIdentity,
 } from "./github-identity.mjs";
-import { parsePositiveInteger, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
+import { parseSafePositiveInteger, parseTimerMs, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
 import { status } from "./status.mjs";
 import { withFileLock } from "./lock.mjs";
 
@@ -20,6 +20,7 @@ const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const DEFAULT_DEVICE_INTERVAL_SECONDS = 5;
 const DEFAULT_DEVICE_EXPIRES_SECONDS = 900;
 const DEFAULT_DEVICE_CODE_TIMEOUT_MS = 30 * 1000;
+const DEFAULT_GITHUB_IDENTITY_TIMEOUT_MS = 30 * 1000;
 const MAX_DEVICE_FLOW_JSON_BYTES = 64 * 1024;
 const DISABLE_TOKEN_DISCOVERY_VALUES = new Set(["1", "true", "yes"]);
 const MAX_AUTH_JSON_BYTES = 1024 * 1024;
@@ -258,8 +259,8 @@ function isTokenDiscoveryDisabled(env = process.env) {
 
 function tokenLockOptions(env = process.env) {
   return {
-    timeoutMs: parsePositiveInteger(env.CCDX_TOKEN_LOCK_TIMEOUT_MS, RUNTIME_DEFAULTS.tokenLockTimeoutMs),
-    staleMs: parsePositiveInteger(env.CCDX_TOKEN_LOCK_STALE_MS, RUNTIME_DEFAULTS.tokenLockStaleMs),
+    timeoutMs: parseSafePositiveInteger(env.CCDX_TOKEN_LOCK_TIMEOUT_MS, RUNTIME_DEFAULTS.tokenLockTimeoutMs),
+    staleMs: parseSafePositiveInteger(env.CCDX_TOKEN_LOCK_STALE_MS, RUNTIME_DEFAULTS.tokenLockStaleMs),
   };
 }
 
@@ -425,19 +426,47 @@ function expectedGithubIdentity(home, env, token) {
   return token ? readGithubTokenMetadata(home, token) : null;
 }
 
-export async function fetchGithubIdentity(token, { fetchImpl = fetch, signal } = {}) {
+function githubIdentityTimeoutError(timeoutMs) {
+  const error = new Error(`GitHub identity request timed out after ${timeoutMs}ms`);
+  error.code = "CCDX_GITHUB_IDENTITY_TIMEOUT";
+  return error;
+}
+
+export async function fetchGithubIdentity(token, {
+  fetchImpl = fetch,
+  signal,
+  timeoutMs = DEFAULT_GITHUB_IDENTITY_TIMEOUT_MS,
+} = {}) {
   if (typeof token !== "string" || !token.trim()) return { ok: false, reason: "empty_token" };
+  const deadlineMs = parseTimerMs(timeoutMs, DEFAULT_GITHUB_IDENTITY_TIMEOUT_MS);
+  const controller = new AbortController();
+  const onCallerAbort = () => controller.abort(signal?.reason);
+  signal?.addEventListener("abort", onCallerAbort, { once: true });
+  if (signal?.aborted) onCallerAbort();
+  const timer = setTimeout(() => controller.abort(githubIdentityTimeoutError(deadlineMs)), deadlineMs);
+  let resp;
   try {
-    const resp = await fetchImpl(`${GITHUB_API}/user`, {
+    resp = await awaitWithSignal(() => fetchImpl(`${GITHUB_API}/user`, {
       headers: { Authorization: `token ${token.trim()}`, Accept: "application/json" },
-      signal,
-    });
+      signal: controller.signal,
+    }), controller.signal);
     if (!resp.ok) return { ok: false, status: resp.status, reason: "github_user_failed" };
-    const data = await resp.json();
+    const data = await awaitWithSignal(() => resp.json(), controller.signal);
     const identity = normalizeGithubIdentity(data);
     return identity ? { ok: true, ...identity } : { ok: false, reason: "github_identity_missing" };
   } catch (error) {
-    return { ok: false, transient: true, reason: "github_user_request_failed", error };
+    cancelResponseBody(resp);
+    const timedOut = controller.signal.aborted && !signal?.aborted
+      && controller.signal.reason?.code === "CCDX_GITHUB_IDENTITY_TIMEOUT";
+    return {
+      ok: false,
+      transient: true,
+      reason: timedOut ? "github_user_timeout" : "github_user_request_failed",
+      error,
+    };
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onCallerAbort);
   }
 }
 
@@ -661,6 +690,7 @@ export async function ensureAuth({
   log = console.log,
   openAndCopyFn = openAndCopy,
   deviceCodeTimeoutMs = DEFAULT_DEVICE_CODE_TIMEOUT_MS,
+  githubIdentityTimeoutMs = DEFAULT_GITHUB_IDENTITY_TIMEOUT_MS,
   sleepImpl = sleep,
   now = Date.now,
 } = {}) {
@@ -720,7 +750,11 @@ export async function ensureAuth({
       now,
     });
     if (result.state === "done") {
-      const identity = await fetchGithubIdentity(result.token, { fetchImpl, signal });
+      const identity = await fetchGithubIdentity(result.token, {
+        fetchImpl,
+        signal,
+        timeoutMs: githubIdentityTimeoutMs,
+      });
       writeToken(result.token, home, identity.ok ? identity : null);
       log(status("ok", "Login successful"));
       return;

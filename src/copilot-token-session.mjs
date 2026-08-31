@@ -60,6 +60,20 @@ function refreshError(message, { statusCode, transient = false } = {}) {
   return error;
 }
 
+function transientRefreshError(error) {
+  let message = "Copilot token request failed";
+  try {
+    if (typeof error?.message === "string" && error.message) message = error.message;
+  } catch {}
+  const wrapped = new Error(message, { cause: error });
+  try {
+    if (typeof error?.code === "string") wrapped.code = error.code;
+    if (Number.isInteger(error?.statusCode)) wrapped.statusCode = error.statusCode;
+  } catch {}
+  wrapped.transient = true;
+  return wrapped;
+}
+
 function copilotProfileLabel(profile) {
   if (profile === "codex") return "Copilot";
   const name = String(profile || "profile");
@@ -189,6 +203,7 @@ export function createCopilotTokenSession({
     allowAccountSwitch = false,
   }) {
     if (!data.token) throw new Error("Copilot token response missing token field");
+    const nextApiBase = parseApiBase(data);
     const fingerprint = githubTokenFingerprint(githubToken);
     const normalizedIdentity = normalizeGithubIdentity(identity);
     const tokenChanged = Boolean(githubFingerprint && fingerprint !== githubFingerprint);
@@ -204,7 +219,7 @@ export function createCopilotTokenSession({
       throw error;
     }
     copilotToken = data.token;
-    apiBase = parseApiBase(data);
+    apiBase = nextApiBase;
     copilotTokenExpiry = typeof data.expires_at === "number"
       ? data.expires_at * 1000
       : Date.now() + 25 * 60 * 1000;
@@ -232,7 +247,7 @@ export function createCopilotTokenSession({
         signal,
       }, { fetchImpl, ...tokenRetryOptions });
     } catch (error) {
-      if (!isAbortError(error, signal)) error.transient = true;
+      if (!isAbortError(error, signal)) throw transientRefreshError(error);
       throw error;
     }
     if (!response.ok) {

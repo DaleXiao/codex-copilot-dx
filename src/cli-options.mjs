@@ -1,3 +1,5 @@
+import { MAX_TIMER_DELAY_MS } from "./runtime-config.mjs";
+
 const HELP_COMMANDS = new Set(["help", "--help", "-h"]);
 const VERSION_COMMANDS = new Set(["version", "--version", "-v"]);
 const START_OPTIONS = new Map([
@@ -262,13 +264,13 @@ export function parseRuntimeOptions(env = process.env) {
   return {
     adapterPort: integerEnv(env, "ADAPTER_PORT", 2026, { min: 1, max: 65535 }),
     adapterHost: String(env.ADAPTER_HOST || "127.0.0.1").trim() || "127.0.0.1",
-    modelRefreshTimeoutMs: integerEnv(env, "CCDX_MODEL_REFRESH_TIMEOUT_MS", 5000, { min: 1 }),
-    existingAdapterTimeoutMs: integerEnv(env, "CCDX_EXISTING_ADAPTER_TIMEOUT_MS", 500, { min: 1 }),
-    modelRefreshIntervalMs: integerEnv(env, "CCDX_MODEL_REFRESH_INTERVAL_MS", 2 * 60 * 60 * 1000, { min: 0 }),
-    upstreamTimeoutMs: integerEnv(env, "CCDX_UPSTREAM_TIMEOUT_MS", 120000, { min: 1 }),
-    streamHandshakeTimeoutMs: integerEnv(env, "CCDX_STREAM_HANDSHAKE_TIMEOUT_MS", 120000, { min: 1 }),
-    streamIdleTimeoutMs: integerEnv(env, "CCDX_STREAM_IDLE_TIMEOUT_MS", 120000, { min: 1 }),
-    shutdownTimeoutMs: integerEnv(env, "CCDX_SHUTDOWN_TIMEOUT_MS", 5000, { min: 1 }),
+    modelRefreshTimeoutMs: integerEnv(env, "CCDX_MODEL_REFRESH_TIMEOUT_MS", 5000, { min: 1, max: MAX_TIMER_DELAY_MS }),
+    existingAdapterTimeoutMs: integerEnv(env, "CCDX_EXISTING_ADAPTER_TIMEOUT_MS", 500, { min: 1, max: MAX_TIMER_DELAY_MS }),
+    modelRefreshIntervalMs: integerEnv(env, "CCDX_MODEL_REFRESH_INTERVAL_MS", 2 * 60 * 60 * 1000, { min: 0, max: MAX_TIMER_DELAY_MS }),
+    upstreamTimeoutMs: integerEnv(env, "CCDX_UPSTREAM_TIMEOUT_MS", 120000, { min: 1, max: MAX_TIMER_DELAY_MS }),
+    streamHandshakeTimeoutMs: integerEnv(env, "CCDX_STREAM_HANDSHAKE_TIMEOUT_MS", 120000, { min: 1, max: MAX_TIMER_DELAY_MS }),
+    streamIdleTimeoutMs: integerEnv(env, "CCDX_STREAM_IDLE_TIMEOUT_MS", 120000, { min: 1, max: MAX_TIMER_DELAY_MS }),
+    shutdownTimeoutMs: integerEnv(env, "CCDX_SHUTDOWN_TIMEOUT_MS", 5000, { min: 1, max: MAX_TIMER_DELAY_MS }),
   };
 }
 
@@ -276,7 +278,7 @@ export function parseAdapterProbeOptions(env = process.env) {
   return {
     adapterPort: integerEnv(env, "ADAPTER_PORT", 2026, { min: 1, max: 65535 }),
     adapterHost: String(env.ADAPTER_HOST || "127.0.0.1").trim() || "127.0.0.1",
-    existingAdapterTimeoutMs: integerEnv(env, "CCDX_EXISTING_ADAPTER_TIMEOUT_MS", 500, { min: 1 }),
+    existingAdapterTimeoutMs: integerEnv(env, "CCDX_EXISTING_ADAPTER_TIMEOUT_MS", 500, { min: 1, max: MAX_TIMER_DELAY_MS }),
   };
 }
 

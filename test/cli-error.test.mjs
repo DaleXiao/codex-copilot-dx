@@ -25,3 +25,11 @@ test("formatCliError bounds and sanitizes top-level messages and structured deta
   assert.doesNotMatch(output, /\u001b|\u202e|\n\[OK\]/);
   assert.doesNotMatch(output, /bearer_test_value|github_pat_|sk-fake-secret-value/);
 });
+
+test("formatCliError tolerates hostile message and details getters", () => {
+  const output = formatCliError({
+    get message() { throw new Error("message getter failed"); },
+    get details() { throw new Error("details getter failed"); },
+  });
+  assert.equal(output, "[ERR] Command failed");
+});

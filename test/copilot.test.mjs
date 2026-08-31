@@ -108,6 +108,27 @@ test("parseApiBase: reads endpoints.api", () => {
     "https://api.enterprise.githubcopilot.com");
 });
 
+test("parseApiBase: preserves enterprise paths and removes trailing slashes", () => {
+  assert.equal(parseApiBase({ endpoints: { api: "https://copilot.example.test/custom/api///" } }),
+    "https://copilot.example.test/custom/api");
+});
+
+test("parseApiBase: rejects unsafe or ambiguous endpoint structures", () => {
+  for (const api of [
+    "http://api.githubcopilot.com",
+    "https://user:secret@api.githubcopilot.com",
+    "https://api.githubcopilot.com?target=other",
+    "https://api.githubcopilot.com#fragment",
+    "not a URL",
+  ]) {
+    assert.throws(
+      () => parseApiBase({ endpoints: { api } }),
+      (error) => error.code === "CCDX_INVALID_COPILOT_API_ENDPOINT"
+        && error.message === "Copilot API endpoint is invalid",
+    );
+  }
+});
+
 test("parseApiBase: missing endpoints falls back", () => {
   assert.equal(parseApiBase({}), DEFAULT_API_BASE);
 });
@@ -1229,6 +1250,32 @@ test("getCopilotToken: retries transient token responses during cold start", asy
   } finally {
     console.log = originalLog;
     console.warn = originalWarn;
+    resetCopilotTokenForTests();
+  }
+});
+
+test("getCopilotToken: wraps frozen transport errors without mutating them", async () => {
+  resetCopilotTokenForTests();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-copilot-frozen-error-"));
+  writeText(githubTokenPath(home), "ghu_saved");
+  const frozen = Object.freeze(Object.assign(new Error("frozen network error"), {
+    code: "ECONNRESET",
+  }));
+
+  try {
+    await assert.rejects(
+      getCopilotToken({
+        home,
+        tokenRetryOptions: { retries: 0 },
+        fetchImpl: async () => { throw frozen; },
+      }),
+      (error) => error !== frozen
+        && error.cause === frozen
+        && error.transient === true
+        && error.code === "ECONNRESET"
+        && error.message === "frozen network error",
+    );
+  } finally {
     resetCopilotTokenForTests();
   }
 });

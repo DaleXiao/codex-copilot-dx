@@ -394,6 +394,59 @@ test("createRequestAdmission: weights compressed bodies and treats unknown bodie
   releaseUnknown();
 });
 
+test("createRequestAdmission: a waiting unknown body blocks later arrivals without starving", async () => {
+  const acquire = createRequestAdmission({ maxBytes: 10, maxQueued: 2, waitTimeoutMs: 1000 });
+  const releaseActive = await acquire({ headers: { "content-length": "6" } });
+  let exclusiveStarted = false;
+  let laterStarted = false;
+  const exclusive = acquire({ headers: {} }).then((release) => {
+    exclusiveStarted = true;
+    return release;
+  });
+  const later = acquire({ headers: { "content-length": "4" } }).then((release) => {
+    laterStarted = true;
+    return release;
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(exclusiveStarted, false);
+  assert.equal(laterStarted, false);
+  assert.deepEqual(acquire.stats(), { activeBytes: 6, queued: 2, maxBytes: 10 });
+
+  releaseActive();
+  const releaseExclusive = await exclusive;
+  assert.equal(exclusiveStarted, true);
+  assert.equal(laterStarted, false);
+  releaseExclusive();
+  const releaseLater = await later;
+  assert.equal(laterStarted, true);
+  releaseLater();
+  assert.deepEqual(acquire.stats(), { activeBytes: 0, queued: 0, maxBytes: 10 });
+});
+
+test("createRequestAdmission: aborting an exclusive waiter immediately removes its fairness barrier", async () => {
+  const acquire = createRequestAdmission({ maxBytes: 10, maxQueued: 1, waitTimeoutMs: 1000 });
+  const releaseActive = await acquire({ headers: { "content-length": "6" } });
+  const controller = new AbortController();
+  const exclusive = acquire({ headers: {} }, { signal: controller.signal });
+
+  await assert.rejects(
+    acquire({ headers: { "content-length": "4" } }),
+    (error) => error.statusCode === 503 && /queue is full/.test(error.message),
+  );
+
+  controller.abort();
+  await assert.rejects(exclusive, (error) => error.name === "AbortError");
+  const releaseLater = await acquire({ headers: { "content-length": "4" } });
+  assert.equal(acquire.stats().activeBytes, 10);
+  releaseLater();
+  releaseActive();
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(acquire.diagnostics()).filter(([key]) => ["rejected", "aborted"].includes(key))),
+    { rejected: 1, aborted: 1 },
+  );
+});
+
 test("readJsonBody reserves actual decoded bytes until the request admission is released", async () => {
   const raw = Buffer.from(JSON.stringify({ input: "x".repeat(2048) }));
   const compressed = await gzipAsync(raw);

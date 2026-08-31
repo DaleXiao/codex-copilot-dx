@@ -3,7 +3,10 @@ import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { countTokens } from "../src/anthropic.mjs";
-import { createTokenCounterService } from "../src/token-counter-service.mjs";
+import {
+  createTokenCounterService,
+  tokenCounterWorkerDiagnostic,
+} from "../src/token-counter-service.mjs";
 
 class FakeWorker extends EventEmitter {
   messages = [];
@@ -15,6 +18,28 @@ class FakeWorker extends EventEmitter {
     this.emit("message", { id: this.messages[index].id, result });
   }
 }
+
+test("token counter worker diagnostics are bounded and exclude raw messages", () => {
+  const diagnostic = tokenCounterWorkerDiagnostic("worker", {
+    name: "Error",
+    code: "ERR_MODULE_NOT_FOUND",
+    message: "Authorization: Bearer secret-token /private/user/path",
+  });
+  assert.equal(diagnostic, "Token counter worker failure: phase=worker name=Error code=ERR_MODULE_NOT_FOUND");
+  assert.doesNotMatch(diagnostic, /secret-token|private\/user|Authorization/);
+
+  const hostile = tokenCounterWorkerDiagnostic("secret phase", {
+    name: "BearerSecret",
+    code: "github_pat_FAKE_SECRET_VALUE",
+  });
+  assert.equal(hostile, "Token counter worker failure: phase=unknown name=Error code=unknown");
+
+  const hostileGetters = tokenCounterWorkerDiagnostic("worker", {
+    get name() { throw new Error("secret name getter"); },
+    get code() { throw new Error("secret code getter"); },
+  });
+  assert.equal(hostileGetters, "Token counter worker failure: phase=worker name=Error code=unknown");
+});
 
 test("token counter worker preserves the established count and keeps the event loop responsive", async (t) => {
   const service = createTokenCounterService();

@@ -4,11 +4,17 @@ import path from "node:path";
 import readline from "node:readline";
 import { cliOutputFormat, cliOutputWidth, formatResponsiveCliTable, terminalCell } from "./cli-table.mjs";
 import { parseByteLimit, rotateFileIfNeededSync, rotatedFilePath } from "./file-rotation.mjs";
+import { withFileLock } from "./lock.mjs";
 
 const DEFAULT_USAGE_PATH = path.join(os.homedir(), ".local", "share", "codex-copilot-dx", "usage.jsonl");
 const DEFAULT_USAGE_MAX_BYTES = 32 * 1024 * 1024;
+const USAGE_WRITE_LOCK_TIMEOUT_MS = 1_000;
+const USAGE_WRITE_LOCK_STALE_MS = 1_000;
+const USAGE_WRITE_LOCK_POLL_MS = 5;
+const USAGE_FLUSH_TIMEOUT_MS = 1_500;
 
-let writeQueue = Promise.resolve();
+const pendingWrites = [];
+let writeDrain = null;
 
 export function usageLogPath() {
   return process.env.CCDX_USAGE_PATH || DEFAULT_USAGE_PATH;
@@ -119,19 +125,63 @@ export function buildAnthropicUsageRecord({ surface = "messages", mode, model, r
   });
 }
 
+function takePendingWrites(filePath, maxBytes) {
+  const batch = [];
+  let retained = 0;
+  for (const entry of pendingWrites) {
+    if (entry.filePath === filePath && entry.maxBytes === maxBytes) batch.push(entry);
+    else pendingWrites[retained++] = entry;
+  }
+  pendingWrites.length = retained;
+  return batch;
+}
+
+async function writeUsageBatch(batch) {
+  const { filePath, maxBytes } = batch[0];
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  await withFileLock(`${path.resolve(filePath)}.lock`, async () => {
+    batch.push(...takePendingWrites(filePath, maxBytes));
+    for (const { line } of batch) {
+      rotateFileIfNeededSync(filePath, Buffer.byteLength(line), maxBytes);
+      await fs.promises.appendFile(filePath, line, { encoding: "utf8", mode: 0o600 });
+    }
+  }, {
+    timeoutMs: USAGE_WRITE_LOCK_TIMEOUT_MS,
+    staleMs: USAGE_WRITE_LOCK_STALE_MS,
+    pollMs: USAGE_WRITE_LOCK_POLL_MS,
+  });
+}
+
+function scheduleUsageWriteDrain() {
+  if (writeDrain) return;
+  writeDrain = Promise.resolve().then(async () => {
+    while (pendingWrites.length > 0) {
+      const first = pendingWrites.shift();
+      const batch = [first, ...takePendingWrites(first.filePath, first.maxBytes)];
+      try {
+        await writeUsageBatch(batch);
+      } catch (error) {
+        batch.push(...takePendingWrites(first.filePath, first.maxBytes));
+        console.error(`codex-copilot-dx usage log write failed: ${error.message}`);
+      } finally {
+        for (const entry of batch) entry.resolve();
+      }
+    }
+  }).finally(() => {
+    writeDrain = null;
+    if (pendingWrites.length > 0) scheduleUsageWriteDrain();
+  });
+}
+
 export function recordUsage(record) {
   if (!record || process.env.CCDX_DISABLE_USAGE === "1") return Promise.resolve();
   const filePath = usageLogPath();
   const line = `${JSON.stringify(record)}\n`;
-  writeQueue = writeQueue
-    .catch(() => {})
-    .then(async () => {
-      await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-      rotateFileIfNeededSync(filePath, Buffer.byteLength(line), usageLogMaxBytes());
-      await fs.promises.appendFile(filePath, line, { encoding: "utf8", mode: 0o600 });
-    })
-    .catch((e) => console.error(`codex-copilot-dx usage log write failed: ${e.message}`));
-  return writeQueue;
+  const completed = new Promise((resolve) => {
+    pendingWrites.push({ filePath, line, maxBytes: usageLogMaxBytes(), resolve });
+  });
+  scheduleUsageWriteDrain();
+  return completed;
 }
 
 export function recordResponsesUsage(args) {
@@ -143,11 +193,28 @@ export function recordAnthropicUsage(args) {
 }
 
 export async function flushUsageWritesForTests() {
-  await writeQueue;
+  while (writeDrain || pendingWrites.length > 0) {
+    if (writeDrain) await writeDrain;
+    else scheduleUsageWriteDrain();
+  }
 }
 
-export async function flushUsageWrites() {
-  await writeQueue;
+export async function flushUsageWrites({
+  timeoutMs = USAGE_FLUSH_TIMEOUT_MS,
+  warn = console.error,
+} = {}) {
+  const timeout = Number.isFinite(timeoutMs) && timeoutMs >= 0
+    ? Math.floor(timeoutMs)
+    : USAGE_FLUSH_TIMEOUT_MS;
+  let timer;
+  const completed = await Promise.race([
+    flushUsageWritesForTests().then(() => true),
+    new Promise((resolve) => { timer = setTimeout(() => resolve(false), timeout); }),
+  ]);
+  if (timer) clearTimeout(timer);
+  if (!completed) {
+    try { warn(`codex-copilot-dx usage log flush timed out after ${timeout}ms`); } catch {}
+  }
 }
 
 async function* iterateUsageRecords(filePath, { warn = console.error } = {}) {

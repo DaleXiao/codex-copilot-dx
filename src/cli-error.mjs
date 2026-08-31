@@ -22,7 +22,13 @@ function boundedTerminalText(value, fallback, maxCharacters) {
 }
 
 export function formatCliError(error) {
-  const message = boundedTerminalText(error?.message, "Command failed", MAX_MESSAGE_CHARACTERS);
+  let rawMessage;
+  try {
+    rawMessage = error?.message;
+  } catch {
+    rawMessage = undefined;
+  }
+  const message = boundedTerminalText(rawMessage, "Command failed", MAX_MESSAGE_CHARACTERS);
   let details;
   try {
     details = error?.details;

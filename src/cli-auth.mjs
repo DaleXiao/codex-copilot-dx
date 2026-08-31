@@ -15,7 +15,7 @@ import {
   withAuthProfileLock,
   writeClaudeAuthProfile,
 } from "./auth-profile.mjs";
-import { buildHeaders, DEFAULT_API_BASE, FALLBACK_VSCODE_VERSION } from "./copilot.mjs";
+import { buildHeaders, FALLBACK_VSCODE_VERSION, parseApiBase } from "./copilot.mjs";
 import {
   githubIdentitiesEqual,
   githubTokenFingerprint,
@@ -178,7 +178,7 @@ async function fetchCopilotCatalog(tokenData, {
   const timer = setTimeout(() => controller.abort(catalogTimeoutError(label, deadlineMs)), deadlineMs);
   let modelResponse;
   try {
-    const apiBase = tokenData?.endpoints?.api || DEFAULT_API_BASE;
+    const apiBase = parseApiBase(tokenData);
     const headers = buildHeaders({
       token: tokenData.token,
       version: vscodeVersion,

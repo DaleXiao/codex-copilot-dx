@@ -82,7 +82,7 @@ test("fetchLiveCopilotModels validates the saved token and queries its Copilot A
     if (url === "https://api.github.com/copilot_internal/v2/token") {
       return new Response(JSON.stringify({
         token: "copilot-service-token",
-        endpoints: { api: "https://api.enterprise.githubcopilot.com" },
+        endpoints: { api: "https://api.enterprise.githubcopilot.com/regions/eu/" },
       }), { status: 200 });
     }
     return new Response(JSON.stringify({
@@ -96,13 +96,33 @@ test("fetchLiveCopilotModels validates the saved token and queries its Copilot A
   assert.equal(catalog.advertised, 1);
   assert.equal(catalog.models[0].id, "gpt-5.6-sol");
   assert.equal(calls.length, 3);
-  assert.equal(calls[2].url, "https://api.enterprise.githubcopilot.com/models");
+  assert.equal(calls[2].url, "https://api.enterprise.githubcopilot.com/regions/eu/models");
   assert.equal(calls[2].init.redirect, "error");
   assert.equal(calls[2].init.headers.Authorization, "Bearer copilot-service-token");
   assert.deepEqual(fs.readFileSync(tokenPath), tokenBefore);
   assert.equal(fs.statSync(tokenPath).mtimeMs, tokenMtimeBefore);
   assert.equal(fs.existsSync(githubTokenMetadataPath(home)), false);
   assert.equal(fs.existsSync(path.join(home, ".local", "share", "codex-copilot-dx")), false);
+});
+
+test("fetchLiveCopilotModels rejects an unsafe API endpoint before catalog access", async () => {
+  const home = tokenHome();
+  const calls = [];
+  await assert.rejects(fetchLiveCopilotModels({
+    home,
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (url.endsWith("/user")) return Response.json({ login: "octocat", id: 1 });
+      if (url.endsWith("/copilot_internal/v2/token")) {
+        return Response.json({
+          token: "copilot-service-token",
+          endpoints: { api: "http://unsafe.example.test?token=leak" },
+        });
+      }
+      throw new Error(`catalog request must not start: ${url}`);
+    },
+  }), (error) => error.code === "CCDX_INVALID_COPILOT_API_ENDPOINT");
+  assert.equal(calls.length, 2);
 });
 
 test("fetchLiveCopilotModels reads the isolated Claude profile without falling back to Codex", async () => {

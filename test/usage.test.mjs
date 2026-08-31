@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fork } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import {
   buildAnthropicUsageRecord,
   buildResponsesUsageRecord,
   formatUsageSummary,
+  flushUsageWrites,
   flushUsageWritesForTests,
   printUsageSummary,
   readUsageRecords,
@@ -14,6 +17,44 @@ import {
   summarizeUsage,
   summarizeUsageLogs,
 } from "../src/usage.mjs";
+
+const usageWriterFixture = fileURLToPath(new URL("./fixtures/usage-writer.mjs", import.meta.url));
+
+function waitForChildMessage(child, expected) {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      child.off("message", onMessage);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    };
+    const onMessage = (message) => {
+      if (message !== expected) return;
+      cleanup();
+      resolve();
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onExit = (code, signal) => {
+      cleanup();
+      reject(new Error(`usage writer exited before ${expected}: code=${code} signal=${signal}`));
+    };
+    child.on("message", onMessage);
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
+}
+
+function waitForChildExit(child) {
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`usage writer failed: code=${code} signal=${signal}`));
+    });
+  });
+}
 
 test("buildResponsesUsageRecord: captures response and Copilot token usage", () => {
   const record = buildResponsesUsageRecord({
@@ -58,10 +99,15 @@ test("recordUsage: rotates at the configured size and streaming summary includes
   process.env.CCDX_USAGE_PATH = filePath;
   process.env.CCDX_USAGE_MAX_BYTES = "180";
   try {
-    await recordUsage({ ts: "2026-01-01T00:00:00.000Z", model: "a", usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 } });
-    await recordUsage({ ts: "2026-01-01T00:00:01.000Z", model: "b", usage: { input_tokens: 4, output_tokens: 5, total_tokens: 9 } });
+    const first = recordUsage({ ts: "2026-01-01T00:00:00.000Z", model: "a", usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 } });
+    const second = recordUsage({ ts: "2026-01-01T00:00:01.000Z", model: "b", usage: { input_tokens: 4, output_tokens: 5, total_tokens: 9 } });
+    await Promise.all([first, second]);
     await flushUsageWritesForTests();
     assert.equal(await fs.stat(`${filePath}.1`).then(() => true), true);
+    assert.deepEqual([
+      ...(await readUsageRecords(`${filePath}.1`)),
+      ...(await readUsageRecords(filePath)),
+    ].map((record) => record.model), ["a", "b"]);
     const summary = await summarizeUsageLogs(filePath);
     assert.equal(summary.requests, 2);
     assert.equal(summary.totals.total_tokens, 12);
@@ -73,6 +119,112 @@ test("recordUsage: rotates at the configured size and streaming summary includes
     if (oldMax === undefined) delete process.env.CCDX_USAGE_MAX_BYTES;
     else process.env.CCDX_USAGE_MAX_BYTES = oldMax;
   }
+});
+
+test("recordUsage: a live cross-process lock fails one pending batch within one lock timeout", async () => {
+  const oldPath = process.env.CCDX_USAGE_PATH;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-usage-live-lock-"));
+  const filePath = path.join(dir, "usage.jsonl");
+  const lockPath = `${path.resolve(filePath)}.lock`;
+  const originalError = console.error;
+  const errors = [];
+  process.env.CCDX_USAGE_PATH = filePath;
+  await fs.writeFile(lockPath, JSON.stringify({
+    pid: process.pid,
+    owner: "live-usage-writer",
+    created_at: new Date().toISOString(),
+  }));
+  console.error = (message) => errors.push(message);
+  const startedAt = Date.now();
+  try {
+    await Promise.all([
+      recordUsage({ model: "blocked-a", usage: { total_tokens: 1 } }),
+      recordUsage({ model: "blocked-b", usage: { total_tokens: 1 } }),
+    ]);
+    const elapsedMs = Date.now() - startedAt;
+    assert.ok(elapsedMs >= 900, `lock wait ended too early: ${elapsedMs}ms`);
+    assert.ok(elapsedMs < 2_000, `pending records waited more than one lock timeout: ${elapsedMs}ms`);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /usage log write failed: Timed out waiting for lock/);
+    await assert.rejects(fs.stat(filePath), (error) => error.code === "ENOENT");
+  } finally {
+    console.error = originalError;
+    await fs.rm(lockPath, { force: true });
+    if (oldPath === undefined) delete process.env.CCDX_USAGE_PATH;
+    else process.env.CCDX_USAGE_PATH = oldPath;
+  }
+});
+
+test("flushUsageWrites: production flush has a total deadline while a live lock is pending", async () => {
+  const oldPath = process.env.CCDX_USAGE_PATH;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-usage-flush-timeout-"));
+  const filePath = path.join(dir, "usage.jsonl");
+  const lockPath = `${path.resolve(filePath)}.lock`;
+  const warnings = [];
+  process.env.CCDX_USAGE_PATH = filePath;
+  await fs.writeFile(lockPath, JSON.stringify({
+    pid: process.pid,
+    owner: "live-usage-writer",
+    created_at: new Date().toISOString(),
+  }));
+  const pending = recordUsage({ model: "delayed", usage: { total_tokens: 1 } });
+  const startedAt = Date.now();
+  try {
+    await flushUsageWrites({ timeoutMs: 25, warn: (message) => warnings.push(message) });
+    assert.ok(Date.now() - startedAt < 250);
+    assert.deepEqual(warnings, ["codex-copilot-dx usage log flush timed out after 25ms"]);
+    await fs.rm(lockPath, { force: true });
+    await pending;
+    assert.deepEqual((await readUsageRecords(filePath)).map((record) => record.model), ["delayed"]);
+  } finally {
+    await fs.rm(lockPath, { force: true });
+    if (oldPath === undefined) delete process.env.CCDX_USAGE_PATH;
+    else process.env.CCDX_USAGE_PATH = oldPath;
+  }
+});
+
+test("recordUsage: serializes rotation and append across processes", async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-usage-processes-"));
+  const filePath = path.join(dir, "usage.jsonl");
+  const initial = {
+    ts: "2026-01-01T00:00:00.000Z",
+    model: `initial-${"x".repeat(1_900)}`,
+    usage: { total_tokens: 1 },
+  };
+  const initialLine = `${JSON.stringify(initial)}\n`;
+  await fs.writeFile(filePath, initialLine);
+
+  const models = Array.from({ length: 12 }, (_, index) => `writer-${String(index).padStart(2, "0")}`);
+  const writers = models.map((model) => {
+    const child = fork(usageWriterFixture, [model], {
+      env: {
+        ...process.env,
+        CCDX_USAGE_PATH: filePath,
+        CCDX_USAGE_MAX_BYTES: String(Buffer.byteLength(initialLine) + 1),
+      },
+    });
+    return { child, ready: waitForChildMessage(child, "ready") };
+  });
+  const children = writers.map(({ child }) => child);
+  t.after(() => {
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+    }
+  });
+
+  await Promise.all(writers.map(({ ready }) => ready));
+  const completed = children.map((child) => waitForChildMessage(child, "done"));
+  const exited = children.map(waitForChildExit);
+  for (const child of children) child.send("write");
+  await Promise.all(completed);
+  await Promise.all(exited);
+
+  const rotated = await readUsageRecords(`${filePath}.1`);
+  const current = await readUsageRecords(filePath);
+  assert.equal(rotated.length, 1);
+  assert.equal(rotated[0].model, initial.model);
+  assert.deepEqual(current.map((record) => record.model).sort(), models);
+  assert.deepEqual((await fs.readdir(dir)).sort(), ["usage.jsonl", "usage.jsonl.1"]);
 });
 
 test("readUsageRecords: skips invalid lines, preserves valid records, and warns once safely", async () => {

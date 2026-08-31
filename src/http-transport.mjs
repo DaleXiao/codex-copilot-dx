@@ -407,6 +407,9 @@ export function createRequestAdmission({
         continue;
       }
       if (activeBytes + entry.weight > byteLimit) {
+        // Unknown-length requests reserve the whole budget. Once one is waiting,
+        // do not let later arrivals keep extending its wait indefinitely.
+        if (entry.weight === byteLimit) break;
         index += 1;
         continue;
       }
@@ -422,11 +425,13 @@ export function createRequestAdmission({
       return Promise.reject(admissionAbortError(signal));
     }
     const weight = requestAdmissionWeight(req, byteLimit);
-    if (queue.length >= queueLimit && activeBytes + weight > byteLimit) {
+    const blockedByExclusive = queue.some((entry) => !entry.cancelled && entry.weight === byteLimit);
+    const mustWait = blockedByExclusive || activeBytes + weight > byteLimit;
+    if (queue.length >= queueLimit && mustWait) {
       counters.rejected += 1;
       return Promise.reject(httpError(`Request queue is full (${queueLimit} waiting)`, 503));
     }
-    if (activeBytes + weight > byteLimit) counters.queued += 1;
+    if (mustWait) counters.queued += 1;
 
     return new Promise((resolve, reject) => {
       let timer;

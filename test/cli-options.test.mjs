@@ -151,6 +151,8 @@ test("parseRuntimeOptions: validates ports and startup timeouts", () => {
   assert.throws(() => parseRuntimeOptions({ CCDX_UPSTREAM_TIMEOUT_MS: "0" }), /CCDX_UPSTREAM_TIMEOUT_MS/);
   assert.throws(() => parseRuntimeOptions({ CCDX_STREAM_HANDSHAKE_TIMEOUT_MS: "nope" }), /CCDX_STREAM_HANDSHAKE_TIMEOUT_MS/);
   assert.throws(() => parseRuntimeOptions({ CCDX_STREAM_IDLE_TIMEOUT_MS: "-1" }), /CCDX_STREAM_IDLE_TIMEOUT_MS/);
+  assert.throws(() => parseRuntimeOptions({ CCDX_UPSTREAM_TIMEOUT_MS: "2147483648" }), /CCDX_UPSTREAM_TIMEOUT_MS/);
+  assert.throws(() => parseRuntimeOptions({ CCDX_MODEL_REFRESH_INTERVAL_MS: "9007199254740992" }), /CCDX_MODEL_REFRESH_INTERVAL_MS/);
 });
 
 test("parseAdapterProbeOptions: validates only status probe settings", () => {

@@ -12,7 +12,7 @@ import {
   normalizeGithubIdentity,
 } from "./github-identity.mjs";
 import { withFileLock } from "./lock.mjs";
-import { parsePositiveInteger, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
+import { parseSafePositiveInteger, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
 
 export const AUTH_PROFILE_CODEX = "codex";
 export const AUTH_PROFILE_CLAUDE = "claude";
@@ -117,8 +117,8 @@ export function readAuthProfileCredentials(profile, { home = os.homedir() } = {}
 
 function lockOptions(env = process.env) {
   return {
-    timeoutMs: parsePositiveInteger(env.CCDX_TOKEN_LOCK_TIMEOUT_MS, RUNTIME_DEFAULTS.tokenLockTimeoutMs),
-    staleMs: parsePositiveInteger(env.CCDX_TOKEN_LOCK_STALE_MS, RUNTIME_DEFAULTS.tokenLockStaleMs),
+    timeoutMs: parseSafePositiveInteger(env.CCDX_TOKEN_LOCK_TIMEOUT_MS, RUNTIME_DEFAULTS.tokenLockTimeoutMs),
+    staleMs: parseSafePositiveInteger(env.CCDX_TOKEN_LOCK_STALE_MS, RUNTIME_DEFAULTS.tokenLockStaleMs),
   };
 }
 

@@ -12,12 +12,12 @@ import {
   readUserSettings,
   writeAutoReviewModel,
 } from "./user-settings.mjs";
+import { parseTimerMs } from "./runtime-config.mjs";
 
 const DEFAULT_MODEL_FETCH_TIMEOUT_MS = 5000;
 
 function modelFetchTimeout(env) {
-  const value = Number(env.CCDX_MODEL_REFRESH_TIMEOUT_MS);
-  return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_MODEL_FETCH_TIMEOUT_MS;
+  return parseTimerMs(env.CCDX_MODEL_REFRESH_TIMEOUT_MS, DEFAULT_MODEL_FETCH_TIMEOUT_MS);
 }
 
 function sortedModelIds(modelIds, currentModel) {

@@ -278,7 +278,7 @@ test("inspectGitHubTokenOnline: validates Copilot access and models without chan
       if (url.endsWith("/copilot_internal/v2/token")) {
         return new Response(JSON.stringify({
           token: "copilot_short",
-          endpoints: { api: "https://api.enterprise.githubcopilot.com" },
+          endpoints: { api: "https://api.enterprise.githubcopilot.com/regions/eu/" },
         }), { status: 200 });
       }
       if (url.endsWith("/models")) return new Response(JSON.stringify({ data: [{ id: "gpt-5.6-sol" }] }), { status: 200 });
@@ -292,8 +292,31 @@ test("inspectGitHubTokenOnline: validates Copilot access and models without chan
   assert.deepEqual(calls.map(([url]) => url), [
     "https://api.github.com/user",
     "https://api.github.com/copilot_internal/v2/token",
-    "https://api.enterprise.githubcopilot.com/models",
+    "https://api.enterprise.githubcopilot.com/regions/eu/models",
   ]);
+});
+
+test("inspectGitHubTokenOnline: rejects an unsafe API endpoint before catalog access", async () => {
+  const home = configuredHome();
+  const calls = [];
+  const checks = await inspectGitHubTokenOnline({
+    home,
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (url.endsWith("/user")) return Response.json({ login: "dingxiao", id: 42 });
+      if (url.endsWith("/copilot_internal/v2/token")) {
+        return Response.json({
+          token: "copilot_short",
+          endpoints: { api: "https://user:secret@unsafe.example.test" },
+        });
+      }
+      throw new Error(`catalog request must not start: ${url}`);
+    },
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(checks.some((check) => check.kind === "warn"
+    && /CCDX_INVALID_COPILOT_API_ENDPOINT/.test(check.message)), true);
 });
 
 test("inspectAuthProfilesOnline: all validates isolated profiles independently", async () => {

@@ -33,9 +33,28 @@ export function parseUpstreamRetryDelayMs(value) {
 }
 
 export function parseApiBase(data) {
-  return (data && data.endpoints && typeof data.endpoints.api === "string" && data.endpoints.api)
-    ? data.endpoints.api
-    : DEFAULT_API_BASE;
+  const configured = data?.endpoints?.api;
+  if (typeof configured !== "string" || !configured.trim()) return DEFAULT_API_BASE;
+  let parsed;
+  try {
+    parsed = new URL(configured.trim());
+  } catch {
+    throw Object.assign(new Error("Copilot API endpoint is invalid"), {
+      code: "CCDX_INVALID_COPILOT_API_ENDPOINT",
+    });
+  }
+  if (parsed.protocol !== "https:"
+    || !parsed.hostname
+    || parsed.username
+    || parsed.password
+    || parsed.search
+    || parsed.hash) {
+    throw Object.assign(new Error("Copilot API endpoint is invalid"), {
+      code: "CCDX_INVALID_COPILOT_API_ENDPOINT",
+    });
+  }
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+  return `${parsed.origin}${pathname && pathname !== "/" ? pathname : ""}`;
 }
 
 export function responsesEndpointPath() {

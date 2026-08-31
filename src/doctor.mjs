@@ -10,7 +10,7 @@ import {
 } from "./auth-profile.mjs";
 import { claudeDesktopPaths } from "./claude-desktop-config.mjs";
 import { status } from "./status.mjs";
-import { buildHeaders, DEFAULT_API_BASE, FALLBACK_VSCODE_VERSION } from "./copilot.mjs";
+import { buildHeaders, FALLBACK_VSCODE_VERSION, parseApiBase } from "./copilot.mjs";
 import { adapterBaseUrl, checkRunningAdapter } from "./running-adapter.mjs";
 import { CODEX_AUTO_REVIEW_MODEL, isClaudeCopilotModel } from "./models.mjs";
 import { loadModelCache } from "./model-cache.mjs";
@@ -322,7 +322,7 @@ export async function inspectGitHubTokenOnline({
     }
 
     const tokenData = validation.copilotTokenData;
-    const apiBase = tokenData.endpoints?.api || DEFAULT_API_BASE;
+    const apiBase = parseApiBase(tokenData);
     const headers = buildHeaders({
       token: tokenData.token,
       version: FALLBACK_VSCODE_VERSION,

@@ -7,6 +7,7 @@ import {
   discoverGithubToken,
   ensureAuth,
   extractGithubTokenFromAuthJson,
+  fetchGithubIdentity,
   githubReauthMessage,
   githubTokenLockPath,
   githubTokenMetadataPath,
@@ -72,6 +73,25 @@ test("githubReauthMessage: points users to the token file and login command", ()
   assert.match(message, /Saved token is invalid\./);
   assert.match(message, /rm '\/tmp\/ccdx-home\/\.local\/share\/copilot-api\/github_token'/);
   assert.match(message, /ccdx/);
+});
+
+test("fetchGithubIdentity: bounds a stalled response body with an independent deadline", async () => {
+  let bodyCancelled = false;
+  const result = await fetchGithubIdentity("ghu_new", {
+    timeoutMs: 10,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      body: { cancel: async () => { bodyCancelled = true; } },
+      json: async () => new Promise(() => {}),
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.transient, true);
+  assert.equal(result.reason, "github_user_timeout");
+  assert.equal(result.error.code, "CCDX_GITHUB_IDENTITY_TIMEOUT");
+  assert.equal(bodyCancelled, true);
 });
 
 test("extractGithubTokenFromAuthJson: reads Copilot auth JSON shape", () => {
@@ -460,6 +480,42 @@ test("ensureAuth: slow_down increases all later Device Flow polling intervals", 
 
   assert.deepEqual(waits, [1000, 6000, 6000]);
   assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_device");
+});
+
+test("ensureAuth: an identity timeout never binds old metadata to a new token", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-auth-identity-timeout-"));
+  writeToken("ghu_old", home, { login: "old-user", id: 1 });
+  fs.writeFileSync(githubTokenPath(home), "");
+
+  await ensureAuth({
+    home,
+    env: { CCDX_DISABLE_TOKEN_DISCOVERY: "1" },
+    log: () => {},
+    openAndCopyFn: () => {},
+    now: () => 0,
+    sleepImpl: async () => {},
+    githubIdentityTimeoutMs: 10,
+    fetchImpl: async (url) => {
+      if (url.endsWith("/login/device/code")) {
+        return jsonResp(200, {
+          device_code: "device",
+          user_code: "ABCD-1234",
+          verification_uri: "https://github.com/login/device",
+          interval: 1,
+          expires_in: 900,
+        });
+      }
+      if (url.endsWith("/login/oauth/access_token")) {
+        return jsonResp(200, { access_token: "ghu_new" });
+      }
+      if (url.endsWith("/user")) return new Promise(() => {});
+      throw new Error(`unexpected request ${url}`);
+    },
+  });
+
+  assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_new");
+  assert.equal(fs.existsSync(githubTokenMetadataPath(home)), false);
+  assert.equal(readGithubTokenMetadata(home, "ghu_new"), null);
 });
 
 test("ensureAuth: aborting Device Flow sleep stops before polling or writing", async () => {

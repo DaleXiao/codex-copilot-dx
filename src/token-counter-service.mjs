@@ -1,11 +1,29 @@
 import { Worker } from "node:worker_threads";
 import { anthropicTokenText } from "./anthropic.mjs";
+import { debugLog } from "./log.mjs";
 
 export const DEFAULT_TOKEN_COUNTER_TIMEOUT_MS = 120 * 1000;
 export const DEFAULT_TOKEN_COUNTER_MAX_QUEUED = 16;
 
 function serviceError(message, statusCode) {
   return Object.assign(new Error(message), { statusCode });
+}
+
+const DIAGNOSTIC_PHASES = new Set(["create", "worker", "error", "exit", "postMessage"]);
+const DIAGNOSTIC_ERROR_NAMES = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "WorkerExit"]);
+
+export function tokenCounterWorkerDiagnostic(phase, error) {
+  const safePhase = DIAGNOSTIC_PHASES.has(phase) ? phase : "unknown";
+  let rawName;
+  let rawCode;
+  try { rawName = error?.name; } catch {}
+  try { rawCode = error?.code; } catch {}
+  const safeName = DIAGNOSTIC_ERROR_NAMES.has(rawName) ? rawName : "Error";
+  if (typeof rawCode === "number") rawCode = String(rawCode);
+  const safeCode = typeof rawCode === "string" && /^(?:\d+|[A-Z][A-Z0-9_]{0,63})$/.test(rawCode)
+    ? rawCode
+    : "unknown";
+  return `Token counter worker failure: phase=${safePhase} name=${safeName} code=${safeCode}`;
 }
 
 function positiveInteger(value, fallback) {
@@ -74,7 +92,8 @@ export function createTokenCounterService({
     if (!worker) {
       try {
         worker = workerFactory();
-      } catch {
+      } catch (error) {
+        debugLog(tokenCounterWorkerDiagnostic("create", error));
         const job = queue.shift();
         if (job) finish(job, job.reject, serviceError("Token counter worker failed", 500));
         queueMicrotask(pump);
@@ -85,6 +104,7 @@ export function createTokenCounterService({
         const job = active;
         active = null;
         if (message.error) {
+          debugLog(tokenCounterWorkerDiagnostic("worker", message.error));
           retireWorker();
           finish(job, job.reject, serviceError("Token counter worker failed", 500));
         } else {
@@ -92,14 +112,16 @@ export function createTokenCounterService({
         }
         pump();
       });
-      worker.on("error", () => {
+      worker.on("error", (error) => {
+        debugLog(tokenCounterWorkerDiagnostic("error", error));
         const job = active;
         active = null;
         retireWorker();
         if (job) finish(job, job.reject, serviceError("Token counter worker failed", 500));
         pump();
       });
-      worker.on("exit", () => {
+      worker.on("exit", (code) => {
+        if (active) debugLog(tokenCounterWorkerDiagnostic("exit", { name: "WorkerExit", code }));
         const job = active;
         active = null;
         worker = null;
@@ -114,7 +136,8 @@ export function createTokenCounterService({
     try {
       worker.postMessage({ id: job.id, text: job.text });
       job.text = null;
-    } catch {
+    } catch (error) {
+      debugLog(tokenCounterWorkerDiagnostic("postMessage", error));
       active = null;
       retireWorker();
       finish(job, job.reject, serviceError("Token counter worker failed", 500));

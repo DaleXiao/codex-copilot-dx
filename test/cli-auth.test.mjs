@@ -222,6 +222,29 @@ test("validateClaudeCandidate: accepts a distinct pinned account with Claude mod
   assert.deepEqual(result.models.map((model) => model.id), ["claude-sonnet-test"]);
 });
 
+test("validateClaudeCandidate: rejects an unsafe advertised Copilot API endpoint before catalog access", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-api-base-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  let catalogCalls = 0;
+
+  await assert.rejects(validateClaudeCandidate("ghu_personal", {
+    home,
+    fetchImpl: async (url) => {
+      if (url === "https://api.github.com/user") return jsonResponse(200, { login: "personal", id: 2 });
+      if (url === "https://api.github.com/copilot_internal/v2/token") {
+        return jsonResponse(200, {
+          token: "copilot_personal",
+          endpoints: { api: "http://unsafe.example.test?token=leak" },
+        });
+      }
+      catalogCalls += 1;
+      throw new Error(`unexpected request ${url}`);
+    },
+  }), (error) => error.code === "CCDX_INVALID_COPILOT_API_ENDPOINT");
+
+  assert.equal(catalogCalls, 0);
+});
+
 test("validateClaudeCandidate: bounds the Claude model catalog and cancels advertised overflow", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-catalog-limit-"));
   writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });

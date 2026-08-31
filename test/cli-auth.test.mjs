@@ -31,7 +31,7 @@ function jsonResponse(statusCode, body) {
 }
 
 function modelResponse(models) {
-  return jsonResponse(200, { data: models });
+  return Response.json({ data: models });
 }
 
 function claudeModel(id = "claude-sonnet-test") {
@@ -220,6 +220,91 @@ test("validateClaudeCandidate: accepts a distinct pinned account with Claude mod
 
   assert.equal(result.identity.login, "personal");
   assert.deepEqual(result.models.map((model) => model.id), ["claude-sonnet-test"]);
+});
+
+test("validateClaudeCandidate: bounds the Claude model catalog and cancels advertised overflow", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-catalog-limit-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  let cancelled = false;
+
+  await assert.rejects(validateClaudeCandidate("ghu_personal", {
+    home,
+    fetchImpl: async (url, options = {}) => {
+      if (url === "https://api.personal.githubcopilot.com/models") {
+        return new Response(new ReadableStream({
+          pull() {},
+          cancel() { cancelled = true; },
+        }), { headers: { "Content-Length": String((8 * 1024 * 1024) + 1) } });
+      }
+      return candidateFetch()(url, options);
+    },
+  }), (error) => error.code === "ccdx_upstream_response_too_large"
+    && /Claude account model catalog exceeds 8388608 bytes/.test(error.message));
+
+  assert.equal(cancelled, true);
+});
+
+test("validateClaudeCandidate: applies an internal deadline to a pending Claude catalog fetch", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-catalog-timeout-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  let catalogSignal;
+
+  await assert.rejects(validateClaudeCandidate("ghu_personal", {
+    home,
+    catalogTimeoutMs: 10,
+    fetchImpl: async (url, options = {}) => {
+      if (url === "https://api.personal.githubcopilot.com/models") {
+        catalogSignal = options.signal;
+        return new Promise(() => {});
+      }
+      return candidateFetch()(url, options);
+    },
+  }), (error) => error.code === "CCDX_COPILOT_CATALOG_TIMEOUT"
+    && /Claude account model catalog timed out after 10ms/.test(error.message));
+
+  assert.equal(catalogSignal.aborted, true);
+  assert.equal(catalogSignal.reason.code, "CCDX_COPILOT_CATALOG_TIMEOUT");
+});
+
+test("validateClaudeCandidate: applies the catalog deadline while reading the response body", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-catalog-body-timeout-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+
+  await assert.rejects(validateClaudeCandidate("ghu_personal", {
+    home,
+    catalogTimeoutMs: 10,
+    fetchImpl: async (url, options = {}) => {
+      if (url === "https://api.personal.githubcopilot.com/models") {
+        return new Response(new ReadableStream({
+          pull() {},
+        }));
+      }
+      return candidateFetch()(url, options);
+    },
+  }), (error) => error.code === "CCDX_COPILOT_CATALOG_TIMEOUT"
+    && /Claude account model catalog timed out after 10ms/.test(error.message));
+});
+
+test("validateClaudeCandidate: preserves caller abort reason during Claude catalog fetch", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-catalog-abort-"));
+  writeToken("ghu_enterprise", home, { login: "enterprise", id: 1 });
+  const controller = new AbortController();
+  const reason = new Error("cancel Claude catalog validation");
+
+  const pending = validateClaudeCandidate("ghu_personal", {
+    home,
+    catalogTimeoutMs: 1000,
+    signal: controller.signal,
+    fetchImpl: async (url, options = {}) => {
+      if (url === "https://api.personal.githubcopilot.com/models") {
+        queueMicrotask(() => controller.abort(reason));
+        return new Promise(() => {});
+      }
+      return candidateFetch()(url, options);
+    },
+  });
+
+  await assert.rejects(pending, (error) => error === reason);
 });
 
 test("validateClaudeCandidate: uses the shared Claude chat eligibility rules", async () => {

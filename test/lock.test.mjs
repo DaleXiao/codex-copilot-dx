@@ -220,3 +220,152 @@ test("withFileLock: a cooperating acquirer cannot enter during stale quarantine"
   assert.deepEqual(events, ["first:start", "first:end", "contender"]);
   assert.deepEqual(fs.readdirSync(dir), []);
 });
+
+test("withFileLock: retries stale reclaim after a transient quarantine unlink failure", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-stale-unlink-"));
+  const lockPath = path.join(dir, "state.lock");
+  fs.writeFileSync(lockPath, JSON.stringify({ pid: 2147483647, owner: "dead" }), { mode: 0o600 });
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(lockPath, old, old);
+  let failed = false;
+  const fsImpl = new Proxy(fs, {
+    get(target, property) {
+      if (property !== "unlinkSync") return Reflect.get(target, property);
+      return (targetPath) => {
+        if (!failed && targetPath.startsWith(`${lockPath}.stale-`)) {
+          failed = true;
+          const error = new Error("transient unlink failure");
+          error.code = "EIO";
+          throw error;
+        }
+        return target.unlinkSync(targetPath);
+      };
+    },
+  });
+  let entered = false;
+
+  await withFileLock(lockPath, async () => { entered = true; }, {
+    timeoutMs: 100,
+    staleMs: 10,
+    pollMs: 2,
+    fsImpl,
+    processAlive: () => false,
+  });
+
+  assert.equal(failed, true);
+  assert.equal(entered, true);
+  assert.deepEqual(fs.readdirSync(dir), []);
+});
+
+test("withFileLock: retries abandoned guard cleanup after a transient quarantine unlink failure", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-guard-unlink-"));
+  const lockPath = path.join(dir, "state.lock");
+  const guardPath = `${lockPath}.reclaim`;
+  fs.writeFileSync(guardPath, JSON.stringify({ pid: 2147483647, owner: "dead" }), { mode: 0o600 });
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(guardPath, old, old);
+  let failed = false;
+  const fsImpl = new Proxy(fs, {
+    get(target, property) {
+      if (property !== "unlinkSync") return Reflect.get(target, property);
+      return (targetPath) => {
+        if (!failed && targetPath.startsWith(`${guardPath}.stale-`)) {
+          failed = true;
+          const error = new Error("transient unlink failure");
+          error.code = "EIO";
+          throw error;
+        }
+        return target.unlinkSync(targetPath);
+      };
+    },
+  });
+
+  await withFileLock(lockPath, async () => {}, {
+    timeoutMs: 100,
+    staleMs: 10,
+    pollMs: 2,
+    fsImpl,
+    processAlive: () => false,
+  });
+
+  assert.equal(failed, true);
+  assert.deepEqual(fs.readdirSync(dir), []);
+});
+
+test("withFileLock: a persistent quarantine unlink failure stays available without amplifying leftovers", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-persistent-unlink-"));
+  const lockPath = path.join(dir, "state.lock");
+  fs.writeFileSync(lockPath, JSON.stringify({ pid: 2147483647, owner: "dead" }), { mode: 0o600 });
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(lockPath, old, old);
+  let failures = 0;
+  const fsImpl = new Proxy(fs, {
+    get(target, property) {
+      if (property !== "unlinkSync") return Reflect.get(target, property);
+      return (targetPath) => {
+        if (targetPath.startsWith(`${lockPath}.stale-`)) {
+          failures += 1;
+          const error = new Error("persistent unlink failure");
+          error.code = "EIO";
+          throw error;
+        }
+        return target.unlinkSync(targetPath);
+      };
+    },
+  });
+  let entered = false;
+
+  await withFileLock(lockPath, async () => { entered = true; }, {
+    timeoutMs: 100,
+    staleMs: 10,
+    pollMs: 2,
+    fsImpl,
+    processAlive: () => false,
+  });
+
+  assert.equal(entered, true);
+  assert.equal(failures, 2, "one failed removal plus one best-effort recovery attempt");
+  assert.equal(fs.existsSync(lockPath), false);
+  assert.equal(fs.readdirSync(dir).filter((name) => name.startsWith("state.lock.stale-")).length, 1);
+});
+
+test("withFileLock: quarantine recovery never overwrites a concurrent canonical owner", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-stale-owner-race-"));
+  const lockPath = path.join(dir, "state.lock");
+  const stale = JSON.stringify({ pid: 2147483647, owner: "dead" });
+  const replacement = JSON.stringify({ pid: process.pid, owner: "replacement" });
+  fs.writeFileSync(lockPath, stale, { mode: 0o600 });
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(lockPath, old, old);
+  let injected = false;
+  const fsImpl = new Proxy(fs, {
+    get(target, property) {
+      if (property !== "unlinkSync") return Reflect.get(target, property);
+      return (targetPath) => {
+        if (!injected && targetPath.startsWith(`${lockPath}.stale-`)) {
+          injected = true;
+          target.writeFileSync(lockPath, replacement, { mode: 0o600 });
+          const error = new Error("transient unlink failure");
+          error.code = "EIO";
+          throw error;
+        }
+        return target.unlinkSync(targetPath);
+      };
+    },
+  });
+  let entered = false;
+
+  await assert.rejects(withFileLock(lockPath, async () => { entered = true; }, {
+    timeoutMs: 20,
+    staleMs: 10,
+    pollMs: 2,
+    fsImpl,
+  }), /Timed out waiting for lock/);
+
+  assert.equal(injected, true);
+  assert.equal(entered, false);
+  assert.equal(fs.readFileSync(lockPath, "utf8"), replacement);
+  const quarantine = fs.readdirSync(dir).filter((name) => name.startsWith("state.lock.stale-"));
+  assert.equal(quarantine.length, 1);
+  assert.equal(fs.readFileSync(path.join(dir, quarantine[0]), "utf8"), stale);
+});

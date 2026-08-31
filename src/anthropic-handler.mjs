@@ -7,6 +7,7 @@ import {
 import {
   createRequestAbort,
   logRequestFailure,
+  MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES,
   MAX_UPSTREAM_ERROR_BODY_BYTES,
   readJsonBody,
   readBoundedResponseText,
@@ -60,7 +61,7 @@ function sendAnthropicUpstreamError(res, response, text) {
 }
 
 export function createAnthropicCountTokensHandler(options) {
-  const { acquireRequest, requestBodyTimeoutMs } = options;
+  const { acquireRequest, requestBodyTimeoutMs, countTokensFn = countTokens } = options;
 
   return async function handleAnthropicCountTokens(req, res) {
     const abort = createRequestAbort(req, res);
@@ -70,12 +71,12 @@ export function createAnthropicCountTokensHandler(options) {
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       const parsed = await readJsonBody(req, { admission: releaseRequest, signal: abort.signal });
       abort.clearTimeout();
-      const result = await countTokens(parsed);
+      const result = await countTokensFn(parsed, { signal: abort.signal });
       releaseRequest();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(result));
     } catch (error) {
-      sendJsonError(res, error, abort.reason === "request_body_timeout" ? 408 : 400);
+      sendJsonError(res, error, abort.reason === "request_body_timeout" ? 408 : 500);
     } finally {
       releaseRequest();
       abort.cleanup();
@@ -157,7 +158,11 @@ export function createAnthropicMessagesHandler(options) {
         const upstream = await chatCompletionsFn({ ...chatReq, stream: false }, { signal: abort.signal });
         releaseRequest();
         const data = upstream.ok
-          ? await upstream.text()
+          ? await readBoundedResponseText(upstream, {
+            maxBytes: MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES,
+            label: "Copilot Chat success body",
+            signal: abort.signal,
+          })
           : await readBoundedResponseText(upstream, {
             maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
             label: "Copilot Chat error body",

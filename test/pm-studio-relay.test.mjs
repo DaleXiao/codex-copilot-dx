@@ -9,6 +9,10 @@ import {
   PM_STUDIO_RELAY_PREFIX,
 } from "../src/pm-studio-relay.mjs";
 import { createCopilotClient } from "../src/copilot.mjs";
+import {
+  MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES,
+  MAX_UPSTREAM_MODEL_CATALOG_BYTES,
+} from "../src/http-transport.mjs";
 
 const ENTERPRISE_TOKEN = "tid=fake-enterprise;exp=4102444800;sig=enterprise-bearer-secret";
 
@@ -75,6 +79,23 @@ async function withRelay(options, run) {
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+}
+
+async function invokeRelayHandler(options, pathname, { method = "GET", body } = {}) {
+  const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
+  req.headers = {
+    Authorization: `Bearer ${ENTERPRISE_TOKEN}`,
+    ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+  };
+  req.method = method;
+  req.url = pathname;
+  req.socket = { remoteAddress: "127.0.0.1" };
+  const res = new FakeResponse();
+  await createPmStudioRelayHandler(options)(req, res, pathname);
+  return {
+    status: res.statusCode,
+    body: Buffer.concat(res.chunks),
+  };
 }
 
 function successfulCatalogResponse(models, extra) {
@@ -264,6 +285,32 @@ test("GET /models is pure enterprise without a valid isolated profile and preser
     assert.equal(result.body.toString(), upstreamError);
     assert.equal(result.headers["x-upstream-request-id"], "auth-request");
   });
+});
+
+test("PM relay applies route-specific bounds to model catalogs and unary Claude responses", async () => {
+  const models = await invokeRelayHandler({
+    fetchImpl: async () => new Response(JSON.stringify(enterpriseCatalog()), {
+      headers: { "Content-Length": String(MAX_UPSTREAM_MODEL_CATALOG_BYTES + 1) },
+    }),
+  }, `${PM_STUDIO_RELAY_PREFIX}/models`);
+  assert.equal(models.status, 502);
+  assert.equal(JSON.parse(models.body).error.code, "ccdx_upstream_response_too_large");
+
+  const chat = await invokeRelayHandler(isolatedOptions({
+    fetchImpl: async () => successfulCatalogResponse(),
+    claudeClient: {
+      async chatCompletions() {
+        return new Response(JSON.stringify({ choices: [] }), {
+          headers: { "Content-Length": String(MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES + 1) },
+        });
+      },
+    },
+  }), `${PM_STUDIO_RELAY_PREFIX}/chat/completions`, {
+    method: "POST",
+    body: { model: "claude-personal", messages: [] },
+  });
+  assert.equal(chat.status, 502);
+  assert.equal(JSON.parse(chat.body).error.code, "ccdx_upstream_response_too_large");
 });
 
 test("GET /models rejects malformed successful catalogs instead of marking their payload compatible", async () => {

@@ -378,6 +378,8 @@ Environment variables:
 | `CCDX_MAX_BODY_BYTES` | `67108864` | Maximum compressed/raw request body size |
 | `CCDX_MAX_DECODED_BODY_BYTES` | `134217728` | Maximum decoded request body size after decompression |
 | `CCDX_MAX_INFLIGHT_BODY_BYTES` | `33554432` | Per-pool byte budget for raw bodies, decoded bodies, and materialized response history; a larger item runs exclusively in its pool |
+| `CCDX_MAX_UPSTREAM_CHAT_RESPONSE_BYTES` | `67108864` | Maximum buffered successful Chat Completions response used by Responses, Anthropic, and PM Studio conversion paths |
+| `CCDX_MAX_UPSTREAM_RESPONSES_RESPONSE_BYTES` | `268435456` | Maximum buffered successful native Responses or compact response; streaming Responses are forwarded with bounded backpressure instead |
 | `CCDX_MAX_QUEUED_REQUESTS` | `16` | Maximum body requests waiting for the shared byte budget |
 | `CCDX_REQUEST_QUEUE_TIMEOUT_MS` | `120000` | Maximum wait for request-body admission before returning `503` |
 | `CCDX_REQUEST_BODY_TIMEOUT_MS` | `120000` | Maximum time to receive and decode one request body before returning `408` |

@@ -17,6 +17,7 @@ import { assertSafeAdapterHost, isLoopbackHost } from "../src/security.mjs";
 import { runInBackground } from "../src/startup.mjs";
 import { cliCommandName, cliHelp, parseAdapterProbeOptions, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
 import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
+import { formatCliError } from "../src/cli-error.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
 import { runAutoReviewModelCommand } from "../src/auto-review-model.mjs";
 import { autoReviewModelPreference } from "../src/user-settings.mjs";
@@ -152,7 +153,7 @@ if (CLI.command === "pms") {
     await runPmStudioSetup({ commandName: CLI_NAME });
     process.exit(0);
   } catch (e) {
-    console.error(status("err", e.message));
+    console.error(formatCliError(e));
     process.exit(1);
   }
 }

@@ -7,6 +7,8 @@ export const RUNTIME_DEFAULTS = Object.freeze({
   maxBodyBytes: 64 * 1024 * 1024,
   maxDecodedBodyBytes: 128 * 1024 * 1024,
   maxInflightBodyBytes: 32 * 1024 * 1024,
+  maxUpstreamChatResponseBytes: 64 * 1024 * 1024,
+  maxUpstreamResponsesResponseBytes: 256 * 1024 * 1024,
   maxQueuedRequests: 16,
   requestQueueTimeoutMs: 120 * 1000,
   responseHistoryMaxBytes: 64 * 1024 * 1024,
@@ -30,6 +32,14 @@ export function loadRuntimeConfig(env = process.env) {
     maxBodyBytes: parsePositiveInteger(env.CCDX_MAX_BODY_BYTES, RUNTIME_DEFAULTS.maxBodyBytes),
     maxDecodedBodyBytes: parsePositiveInteger(env.CCDX_MAX_DECODED_BODY_BYTES, RUNTIME_DEFAULTS.maxDecodedBodyBytes),
     maxInflightBodyBytes: parsePositiveInteger(env.CCDX_MAX_INFLIGHT_BODY_BYTES, RUNTIME_DEFAULTS.maxInflightBodyBytes),
+    maxUpstreamChatResponseBytes: parsePositiveInteger(
+      env.CCDX_MAX_UPSTREAM_CHAT_RESPONSE_BYTES,
+      RUNTIME_DEFAULTS.maxUpstreamChatResponseBytes,
+    ),
+    maxUpstreamResponsesResponseBytes: parsePositiveInteger(
+      env.CCDX_MAX_UPSTREAM_RESPONSES_RESPONSE_BYTES,
+      RUNTIME_DEFAULTS.maxUpstreamResponsesResponseBytes,
+    ),
     maxQueuedRequests: parsePositiveInteger(env.CCDX_MAX_QUEUED_REQUESTS, RUNTIME_DEFAULTS.maxQueuedRequests),
     requestQueueTimeoutMs: parsePositiveInteger(env.CCDX_REQUEST_QUEUE_TIMEOUT_MS, RUNTIME_DEFAULTS.requestQueueTimeoutMs),
     responseHistoryMaxBytes: parsePositiveInteger(env.CCDX_RESPONSE_HISTORY_MAX_BYTES, RUNTIME_DEFAULTS.responseHistoryMaxBytes),

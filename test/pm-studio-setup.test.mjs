@@ -1365,6 +1365,12 @@ test("restore installs the exact verified clean backup, retains recovery data, a
   });
   const backupSnapshot = sourceSnapshot(installed.backup.backupAppPath);
   const manifestSnapshot = fs.readFileSync(installed.backup.manifestPath);
+  const inspectExecutableIntegrity = operations.inspectExecutableIntegrity;
+  const inspectedPaths = [];
+  operations.inspectExecutableIntegrity = (args) => {
+    inspectedPaths.push(args.appPath);
+    return inspectExecutableIntegrity(args);
+  };
   operations.readClaudeCredentials = () => assert.fail("restore must not read the Claude profile");
 
   const messages = [];
@@ -1383,6 +1389,8 @@ test("restore installs the exact verified clean backup, retains recovery data, a
   assertSnapshot(installed.backup.backupAppPath, backupSnapshot);
   assert.deepEqual(fs.readFileSync(installed.backup.manifestPath), manifestSnapshot);
   assert.equal(signCounter.value, 1, "restore must not re-sign the clean source bundle");
+  assert.equal(inspectedPaths.filter((inspectedPath) => inspectedPath === installed.backup.backupAppPath).length, 2,
+    "restore keeps two separated backup checkpoints without immediately inspecting either one twice");
   assert.match(messages.join("\n"), /exact verified clean backup/);
   assert.equal(fs.readdirSync(root).some((name) => name.includes("ccdx-restore-stage")), false);
 

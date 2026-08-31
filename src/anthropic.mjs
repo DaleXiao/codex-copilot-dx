@@ -350,8 +350,7 @@ export async function streamAnthropicFromLines(lineIterator, emit, model, option
   await emit("message_stop", { type: "message_stop" });
 }
 
-// Copilot has no count_tokens endpoint; estimate locally with gpt-tokenizer.
-export async function countTokens(body) {
+export function anthropicTokenText(body) {
   const parts = [];
   const sys = systemToText(body.system);
   if (sys) parts.push(sys);
@@ -374,7 +373,15 @@ export async function countTokens(body) {
     }
   }
 
-  const text = parts.join("\n");
+  return parts.join("\n");
+}
+
+export async function countTokenText(text) {
   const count = await tokenCounter();
   return { input_tokens: count(text) };
+}
+
+// Copilot has no count_tokens endpoint; estimate locally with gpt-tokenizer.
+export async function countTokens(body) {
+  return countTokenText(anthropicTokenText(body));
 }

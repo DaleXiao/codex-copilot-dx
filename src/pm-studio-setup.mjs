@@ -346,7 +346,7 @@ function statusInspectExecutableIntegrity({ appPath, infoPlistPath, recipe, proc
   };
 }
 
-export function createPmStudioStatusOperationOverrides() {
+function createPmStudioFileInspectionOperationOverrides() {
   const evidenceCache = new Map();
   const bundleReadBuffer = Buffer.allocUnsafe(1024 * 1024);
   return {
@@ -368,6 +368,10 @@ export function createPmStudioStatusOperationOverrides() {
       readBuffer: bundleReadBuffer,
     }),
   };
+}
+
+export function createPmStudioStatusOperationOverrides() {
+  return createPmStudioFileInspectionOperationOverrides();
 }
 
 function defaultSignApp({ appPath, source, processRunner }) {
@@ -1043,7 +1047,7 @@ function patchRecordForState(manifest, recipe, state) {
   return patchRecordMatches(manifest?.patched, recipe, state) ? manifest.patched : null;
 }
 
-function validateBackup({ backupDir, recipe, operations }) {
+function validateBackup({ backupDir, recipe, operations, evidence }) {
   const manifestPath = path.join(backupDir, "manifest.json");
   const backupAppPath = path.join(backupDir, "PM Studio.app");
   let manifest;
@@ -1078,6 +1082,9 @@ function validateBackup({ backupDir, recipe, operations }) {
   const inspection = inspectPmStudioApp({ appPath: backupAppPath, recipe, operations });
   if (inspection.state !== "clean") {
     throw setupError("PM_STUDIO_BACKUP_INVALID", "Existing PM Studio backup is not an exact clean bundle", inspection.issues);
+  }
+  if (evidence) {
+    evidence.inspection = inspection;
   }
   return { backupDir, backupAppPath, manifestPath, manifest, reused: true };
 }
@@ -1316,6 +1323,10 @@ function restoreStateFingerprint(inspection, bundleContent) {
 
 function inspectRestoreState({ appPath, recipe, operations }) {
   const inspection = inspectPmStudioApp({ appPath, recipe, operations });
+  return restoreStateFromInspection({ appPath, inspection, recipe, operations });
+}
+
+function restoreStateFromInspection({ appPath, inspection, recipe, operations }) {
   const bundleContent = inspection.bundleContent || operations.inspectBundleContent({
     ...appPaths(appPath, recipe),
     recipe,
@@ -1355,7 +1366,10 @@ export async function runPmStudioSetup({
   operations: operationOverrides = {},
   logger = (line) => console.log(line),
 } = {}) {
-  const operations = createPmStudioSetupOperations(operationOverrides);
+  const operations = createPmStudioSetupOperations({
+    ...createPmStudioFileInspectionOperationOverrides(),
+    ...operationOverrides,
+  });
   return operations.withSetupLock({ appPath }, async () => {
   const messages = [];
   const emit = (message) => {
@@ -1548,7 +1562,10 @@ export async function runPmStudioRestore({
   operations: operationOverrides = {},
   logger = (line) => console.log(line),
 } = {}) {
-  const operations = createPmStudioSetupOperations(operationOverrides);
+  const operations = createPmStudioSetupOperations({
+    ...createPmStudioFileInspectionOperationOverrides(),
+    ...operationOverrides,
+  });
   return operations.withSetupLock({ appPath }, async () => {
     const messages = [];
     const emit = (message) => {
@@ -1590,7 +1607,8 @@ export async function runPmStudioRestore({
 
     const manifestPath = pmStudioPatchManifestPath({ home, backupRoot, recipe });
     const backupDir = path.dirname(manifestPath);
-    const backup = validateBackup({ backupDir, recipe, operations });
+    const backupEvidence = {};
+    const backup = validateBackup({ backupDir, recipe, operations, evidence: backupEvidence });
     assertPatchedBinaryRecord({
       inspection: source.inspection,
       manifestPath: backup.manifestPath,
@@ -1604,7 +1622,12 @@ export async function runPmStudioRestore({
     });
     assertRestoreSpace({ appPath, backupAppPath: backup.backupAppPath, operations });
     const manifestSnapshot = fs.readFileSync(backup.manifestPath);
-    const backupSource = inspectRestoreState({ appPath: backup.backupAppPath, recipe, operations });
+    const backupSource = restoreStateFromInspection({
+      appPath: backup.backupAppPath,
+      inspection: backupEvidence.inspection,
+      recipe,
+      operations,
+    });
     if (backupSource.inspection.state !== "clean") {
       throw setupError("PM_STUDIO_BACKUP_INVALID", "Verified PM Studio backup is not an exact clean bundle",
         backupSource.inspection.issues);
@@ -1623,9 +1646,16 @@ export async function runPmStudioRestore({
         throw setupError("PM_STUDIO_BACKUP_CHANGED",
           "PM Studio backup manifest changed during restore; the verified staging bundle was not installed");
       }
-      const currentBackup = validateBackup({ backupDir, recipe, operations });
-      const unchangedBackup = inspectRestoreState({
+      const currentBackupEvidence = {};
+      const currentBackup = validateBackup({
+        backupDir,
+        recipe,
+        operations,
+        evidence: currentBackupEvidence,
+      });
+      const unchangedBackup = restoreStateFromInspection({
         appPath: currentBackup.backupAppPath,
+        inspection: currentBackupEvidence.inspection,
         recipe,
         operations,
       });

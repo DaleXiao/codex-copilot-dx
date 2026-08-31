@@ -20,6 +20,8 @@ const REQUEST_QUEUE_TIMEOUT_MS = HTTP_RUNTIME_CONFIG.requestQueueTimeoutMs;
 export const MAX_UPSTREAM_ERROR_BODY_BYTES = 1024 * 1024;
 export const MAX_UPSTREAM_MODEL_CATALOG_BYTES = 8 * 1024 * 1024;
 export const MAX_UPSTREAM_RETRY_DRAIN_BYTES = 64 * 1024;
+export const MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxUpstreamChatResponseBytes;
+export const MAX_UPSTREAM_RESPONSES_SUCCESS_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxUpstreamResponsesResponseBytes;
 
 export function httpError(message, statusCode) {
   const err = new Error(message);
@@ -57,6 +59,37 @@ async function cancelResponseBody(response) {
   try { await response?.body?.cancel?.(); } catch {}
 }
 
+function responseAbortError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error("The operation was aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function readResponseChunk(reader, signal) {
+  if (!signal) return reader.read();
+  if (signal.aborted) return Promise.reject(responseAbortError(signal));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback(value);
+    };
+    const onAbort = () => {
+      const error = responseAbortError(signal);
+      try { Promise.resolve(reader.cancel(error)).catch(() => {}); } catch {}
+      finish(reject, error);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    reader.read().then(
+      (value) => finish(resolve, value),
+      (error) => finish(reject, error),
+    );
+  });
+}
+
 function responseContentLength(response) {
   const raw = response?.headers?.get?.("content-length")
     ?? response?.headers?.["content-length"]
@@ -68,13 +101,23 @@ function responseContentLength(response) {
 export async function readBoundedResponseBuffer(response, {
   maxBytes,
   label = "Upstream response body",
+  signal,
 } = {}) {
   const limit = Number.isFinite(maxBytes) && maxBytes >= 0 ? Math.floor(maxBytes) : 0;
+  if (signal?.aborted) {
+    cancelResponseBody(response);
+    throw responseAbortError(signal);
+  }
   if (responseContentLength(response) > limit) {
     await cancelResponseBody(response);
     throw upstreamBodyTooLarge(label, limit);
   }
   if (!response?.body) {
+    if (typeof response?.text === "function") {
+      const buffer = Buffer.from(await response.text());
+      if (buffer.length > limit) throw upstreamBodyTooLarge(label, limit);
+      return buffer;
+    }
     if ((responseContentLength(response) || 0) > 0) throw unreadableUpstreamBody(label);
     return Buffer.alloc(0);
   }
@@ -84,7 +127,7 @@ export async function readBoundedResponseBuffer(response, {
   let total = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readResponseChunk(reader, signal);
       if (done) break;
       const chunk = Buffer.from(value);
       total += chunk.length;
@@ -96,7 +139,11 @@ export async function readBoundedResponseBuffer(response, {
     }
     return Buffer.concat(chunks, total);
   } finally {
-    reader.releaseLock();
+    try {
+      reader.releaseLock();
+    } catch (error) {
+      if (!signal?.aborted) throw error;
+    }
   }
 }
 

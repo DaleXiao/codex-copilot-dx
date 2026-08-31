@@ -15,6 +15,7 @@ import { createPmStudioRelayHandler, PM_STUDIO_RELAY_PREFIX } from "./pm-studio-
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { status } from "./status.mjs";
 import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
+import { createTokenCounterService } from "./token-counter-service.mjs";
 import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
 import { createResponsesImagePressureController } from "./responses-image-pressure.mjs";
@@ -145,6 +146,11 @@ export function createAdapterHandler(options = {}) {
   const requestMetrics = options.requestMetrics || createRequestMetrics();
   const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics();
   const imagePressure = options.imagePressure || createResponsesImagePressureController();
+  const ownsTokenCounterService = !options.tokenCounterService;
+  const tokenCounterService = options.tokenCounterService || createTokenCounterService({
+    timeoutMs: options.countTokensTimeoutMs,
+    maxQueued: options.countTokensMaxQueued,
+  });
   const claudeDesktopModelOptions = () => {
     const modelDefs = claudeModelRegistry?.modelDefs || options.claudeDesktopModelDefs;
     return Array.isArray(modelDefs) ? { modelDefs } : {};
@@ -178,7 +184,11 @@ export function createAdapterHandler(options = {}) {
     streamIdleTimeoutMs,
     upstreamTimeoutMs,
   });
-  const anthropicCountTokensHandler = createAnthropicCountTokensHandler({ acquireRequest, requestBodyTimeoutMs });
+  const anthropicCountTokensHandler = createAnthropicCountTokensHandler({
+    acquireRequest,
+    requestBodyTimeoutMs,
+    countTokensFn: (body, countOptions) => tokenCounterService.count(body, countOptions),
+  });
   const anthropicMessagesHandler = createAnthropicMessagesHandler({
     acquireRequest,
     chatCompletionsFn: claudeChatCompletionsFn,
@@ -300,7 +310,7 @@ export function createAdapterHandler(options = {}) {
     ? options.dispatchRequestForTests
     : dispatch;
 
-  return (req, res) => {
+  const handler = (req, res) => {
     const requestId = createRequestId();
     if (typeof res.setHeader === "function") {
       res.setHeader("X-Request-Id", requestId);
@@ -378,6 +388,10 @@ export function createAdapterHandler(options = {}) {
       containUnexpectedError(error);
     }
   };
+  handler.cleanup = () => {
+    if (ownsTokenCounterService) tokenCounterService.close();
+  };
+  return handler;
 }
 
 // Public server entry point.
@@ -385,9 +399,11 @@ export function createAdapterHandler(options = {}) {
 export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
   const ownsTerminalActivity = !Object.hasOwn(options, "terminalActivity");
   const terminalActivity = ownsTerminalActivity ? createTerminalActivityIndicator() : options.terminalActivity;
-  const server = http.createServer(createAdapterHandler({ ...options, terminalActivity }));
+  const handler = createAdapterHandler({ ...options, terminalActivity });
+  const server = http.createServer(handler);
   const cleanupTerminalActivity = () => {
     if (ownsTerminalActivity) terminalActivity?.cleanup?.();
+    handler.cleanup?.();
   };
   server.once("close", cleanupTerminalActivity);
 

@@ -3,6 +3,7 @@ import {
   httpError,
   logRequestFailure,
   MAX_UPSTREAM_ERROR_BODY_BYTES,
+  MAX_UPSTREAM_RESPONSES_SUCCESS_BODY_BYTES,
   readBoundedResponseText,
   sendUpstreamError,
   writeOrDrain,
@@ -265,7 +266,11 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
     }
   } else {
     const data = resp.ok
-      ? await resp.text()
+      ? await readBoundedResponseText(resp, {
+        maxBytes: MAX_UPSTREAM_RESPONSES_SUCCESS_BODY_BYTES,
+        label: "Copilot Responses success body",
+        signal: options.signal,
+      })
       : await readBoundedResponseText(resp, {
         maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
         label: "Copilot Responses error body",

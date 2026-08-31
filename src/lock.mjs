@@ -149,8 +149,12 @@ function maybeRemoveAbandonedGuard(guardPath, staleMs, nowMs, io, processAlive) 
       restoreQuarantinedLock(guardPath, quarantinePath, io);
       return false;
     }
-    io.unlinkSync(quarantinePath);
-    return true;
+    try {
+      io.unlinkSync(quarantinePath);
+      return true;
+    } catch {
+      return recoverQuarantineUnlinkFailure(guardPath, quarantinePath, snapshot, io);
+    }
   } catch (error) {
     return error?.code === "ENOENT";
   }
@@ -165,6 +169,18 @@ function restoreQuarantinedLock(lockPath, quarantinePath, io) {
   try {
     io.unlinkSync(quarantinePath);
   } catch {}
+}
+
+function recoverQuarantineUnlinkFailure(lockPath, quarantinePath, snapshot, io) {
+  restoreQuarantinedLock(lockPath, quarantinePath, io);
+  try {
+    const restored = readStaleLockSnapshot(lockPath, io);
+    if (!restored.safe || !sameLock(snapshot, restored)) return false;
+    io.unlinkSync(lockPath);
+    return true;
+  } catch (error) {
+    return error?.code === "ENOENT";
+  }
 }
 
 function maybeRemoveStaleLock(lockPath, staleMs, nowMs, io, processAlive) {
@@ -192,8 +208,12 @@ function maybeRemoveStaleLock(lockPath, staleMs, nowMs, io, processAlive) {
         restoreQuarantinedLock(lockPath, quarantinePath, io);
         return false;
       }
-      io.unlinkSync(quarantinePath);
-      return true;
+      try {
+        io.unlinkSync(quarantinePath);
+        return true;
+      } catch {
+        return recoverQuarantineUnlinkFailure(lockPath, quarantinePath, current, io);
+      }
     } finally {
       removeOwnedLock(guard.guardPath, guard.owner, io);
     }

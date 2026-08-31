@@ -37,6 +37,10 @@ import { autoReviewModelPreference, writeAutoReviewModel } from "../src/user-set
 import { responsesHistoricalImageStats } from "../src/responses-byte-budget.mjs";
 import { isResponsesToolOutputItem, readResponsesToolOutputParts } from "../src/responses-content.mjs";
 import { createResponsesImagePressureController } from "../src/responses-image-pressure.mjs";
+import {
+  MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES,
+  MAX_UPSTREAM_RESPONSES_SUCCESS_BODY_BYTES,
+} from "../src/http-transport.mjs";
 import { RUNTIME_DEFAULTS } from "../src/runtime-config.mjs";
 
 const gzipAsync = promisify(zlib.gzip);
@@ -76,13 +80,18 @@ async function invokeAdapterRequest(options, req) {
     return res;
   };
 
-  const pending = createAdapterHandler(options)(req, res);
-  await Promise.all([pending, finished]);
-  return {
-    status: res.statusCode,
-    headers: res.headers,
-    text: Buffer.concat(chunks).toString("utf8"),
-  };
+  const handler = createAdapterHandler(options);
+  try {
+    const pending = handler(req, res);
+    await Promise.all([pending, finished]);
+    return {
+      status: res.statusCode,
+      headers: res.headers,
+      text: Buffer.concat(chunks).toString("utf8"),
+    };
+  } finally {
+    handler.cleanup?.();
+  }
 }
 
 async function invokeAdapter(options, { method = "POST", url = "/v1/responses", body, headers = {} } = {}) {
@@ -183,6 +192,30 @@ test("HTTP count_tokens route awaits the lazy tokenizer", async () => {
 
   assert.equal(result.status, 200);
   assert.ok(JSON.parse(result.text).input_tokens > 0);
+});
+
+test("HTTP count_tokens preserves client errors and classifies service failures", async () => {
+  const malformed = jsonRequest(Buffer.from("{"), undefined, { "content-type": "application/json" });
+  malformed.url = "/v1/messages/count_tokens";
+  malformed.method = "POST";
+  assert.equal((await invokeAdapterRequest({}, malformed)).status, 400);
+
+  const invalidStructure = jsonRequest(Buffer.from("null"), undefined, { "content-type": "application/json" });
+  invalidStructure.url = "/v1/messages/count_tokens";
+  invalidStructure.method = "POST";
+  assert.equal((await invokeAdapterRequest({}, invalidStructure)).status, 400);
+
+  for (const statusCode of [503, 504, 500]) {
+    const result = await invokeAdapter({
+      tokenCounterService: {
+        count: async () => { throw Object.assign(new Error("token counter unavailable"), { statusCode }); },
+      },
+    }, {
+      url: "/v1/messages/count_tokens",
+      body: { model: "m", messages: [] },
+    });
+    assert.equal(result.status, statusCode);
+  }
 });
 
 test("PM Studio namespace is mounted on the existing adapter with isolated identity routing", async () => {
@@ -622,6 +655,58 @@ test("HTTP Responses does not start upstream after synchronous prepare work exce
   clearResponseHistoryForTests();
 });
 
+test("HTTP Responses records visual timeout against the original root after an encrypted route rebase", async () => {
+  clearResponseHistoryForTests();
+  try {
+    const imagePressure = createResponsesImagePressureController();
+    const historicalInput = Array.from({ length: 36 }, (_, index) => ({
+      type: "message",
+      role: "user",
+      content: [{
+        type: "input_image",
+        image_url: `data:image/png;base64,${Buffer.alloc(128, index + 1).toString("base64")}`,
+      }],
+    }));
+    let upstreamCalls = 0;
+    const responsesFn = async (_body, { onUpstreamStart, signal }) => {
+      upstreamCalls += 1;
+      onUpstreamStart();
+      if (upstreamCalls === 1) {
+        return Response.json({
+          id: "resp_rebase_timeout_root",
+          status: "completed",
+          output: [{ type: "reasoning", encrypted_content: "route-bound-state", summary: [] }],
+        });
+      }
+      return new Promise((resolve, reject) => {
+        const onAbort = () => reject(signal.reason || new DOMException("This operation was aborted", "AbortError"));
+        signal.addEventListener("abort", onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      });
+    };
+    const options = { imagePressure, responsesFn, upstreamTimeoutMs: 5 };
+
+    const root = await invokeAdapter(options, {
+      body: { model: "gpt-5.5", input: historicalInput },
+    });
+    assert.equal(root.status, 200);
+
+    const rebased = await invokeAdapter(options, {
+      body: {
+        model: "gpt-5.6-sol",
+        previous_response_id: "resp_rebase_timeout_root",
+        input: "continue on the new route",
+      },
+    });
+    assert.equal(rebased.status, 504);
+    assert.equal(JSON.parse(rebased.text).error.code, "ccdx_visual_history_timeout");
+    assert.equal(imagePressure.snapshot().timeouts_recorded, 1);
+    assert.equal(imagePressure.snapshot().active_recovery_trees, 1);
+  } finally {
+    clearResponseHistoryForTests();
+  }
+});
+
 test("HTTP Responses does not start a compatibility retry after the upstream wall deadline", async () => {
   let clock = 0;
   let attempts = 0;
@@ -883,6 +968,28 @@ test("HTTP native unary Responses keeps successful bodies above the error-body l
 
   assert.equal(response.status, 200);
   assert.equal(response.text, upstreamText);
+});
+
+test("HTTP unary Responses applies separate high success-body budgets to native and Chat routes", async () => {
+  const native = await invokeAdapter({
+    responsesFn: async () => new Response(JSON.stringify({ id: "resp_native_limit", output: [] }), {
+      headers: { "Content-Length": String(MAX_UPSTREAM_RESPONSES_SUCCESS_BODY_BYTES + 1) },
+    }),
+  }, {
+    body: { model: "gpt-5.6-sol", input: "native limit" },
+  });
+  assert.equal(native.status, 502);
+  assert.equal(JSON.parse(native.text).error.code, "ccdx_upstream_response_too_large");
+
+  const chat = await invokeAdapter({
+    chatCompletionsFn: async () => new Response(JSON.stringify({ choices: [] }), {
+      headers: { "Content-Length": String(MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES + 1) },
+    }),
+  }, {
+    body: { model: "gpt-4o", input: "chat limit" },
+  });
+  assert.equal(chat.status, 502);
+  assert.equal(JSON.parse(chat.text).error.code, "ccdx_upstream_response_too_large");
 });
 
 test("HTTP native unary Responses cancels an oversized upstream error body", async () => {

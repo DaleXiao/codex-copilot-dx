@@ -21,6 +21,10 @@ import {
   githubTokenFingerprint,
   normalizeGithubIdentity,
 } from "./github-identity.mjs";
+import {
+  MAX_UPSTREAM_MODEL_CATALOG_BYTES,
+  readBoundedResponseText,
+} from "./http-transport.mjs";
 import { saveModelCache } from "./model-cache.mjs";
 import { isClaudeCopilotModel } from "./models.mjs";
 import { profileRouting } from "./profile-routing.mjs";
@@ -31,6 +35,8 @@ import {
   formatResponsiveCliTable,
   terminalCell,
 } from "./cli-table.mjs";
+
+const DEFAULT_COPILOT_CATALOG_TIMEOUT_MS = 30 * 1000;
 
 function openAndCopy(userCode, verificationUri) {
   if (process.platform !== "darwin") return;
@@ -48,6 +54,44 @@ function openAndCopy(userCode, verificationUri) {
 
 function responseDetail(value) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function abortError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error("The operation was aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function cancelResponseBody(response) {
+  try { Promise.resolve(response?.body?.cancel?.()).catch(() => {}); } catch {}
+}
+
+function fetchWithSignal(operation, signal) {
+  if (signal?.aborted) return Promise.reject(abortError(signal));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return false;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      callback(value);
+      return true;
+    };
+    const onAbort = () => finish(reject, abortError(signal));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve()
+      .then(operation)
+      .then((response) => {
+        if (!finish(resolve, response)) cancelResponseBody(response);
+      }, (error) => finish(reject, error));
+  });
+}
+
+function catalogTimeoutError(label, timeoutMs) {
+  const error = new Error(`${label} model catalog timed out after ${timeoutMs}ms`);
+  error.code = "CCDX_COPILOT_CATALOG_TIMEOUT";
+  return error;
 }
 
 async function jsonResponse({ response, data, jsonError }, label) {
@@ -121,33 +165,58 @@ async function fetchCopilotCatalog(tokenData, {
   signal,
   vscodeVersion = FALLBACK_VSCODE_VERSION,
   label = "Copilot",
+  timeoutMs = DEFAULT_COPILOT_CATALOG_TIMEOUT_MS,
 } = {}) {
-  const apiBase = tokenData?.endpoints?.api || DEFAULT_API_BASE;
-  const headers = buildHeaders({
-    token: tokenData.token,
-    version: vscodeVersion,
-    initiator: "user",
-    vision: false,
-  });
-  const modelResponse = await fetchImpl(`${apiBase}/models`, {
-    headers,
-    redirect: "error",
-    signal,
-  });
-  const modelText = await modelResponse.text();
-  if (!modelResponse.ok) {
-    const detail = responseDetail(modelText);
-    throw new Error(`${label} model catalog failed with HTTP ${modelResponse.status}${detail ? `: ${detail}` : ""}`);
-  }
-
-  let catalog;
+  const parsedTimeout = Number(timeoutMs);
+  const deadlineMs = Number.isFinite(parsedTimeout) && parsedTimeout > 0
+    ? parsedTimeout
+    : DEFAULT_COPILOT_CATALOG_TIMEOUT_MS;
+  const controller = new AbortController();
+  const onCallerAbort = () => controller.abort(signal?.reason);
+  signal?.addEventListener("abort", onCallerAbort, { once: true });
+  if (signal?.aborted) onCallerAbort();
+  const timer = setTimeout(() => controller.abort(catalogTimeoutError(label, deadlineMs)), deadlineMs);
+  let modelResponse;
   try {
-    catalog = JSON.parse(modelText);
-  } catch {
-    throw new Error(`${label} model catalog returned invalid JSON`);
+    const apiBase = tokenData?.endpoints?.api || DEFAULT_API_BASE;
+    const headers = buildHeaders({
+      token: tokenData.token,
+      version: vscodeVersion,
+      initiator: "user",
+      vision: false,
+    });
+    modelResponse = await fetchWithSignal(() => fetchImpl(`${apiBase}/models`, {
+      headers,
+      redirect: "error",
+      signal: controller.signal,
+    }), controller.signal);
+    const modelText = await readBoundedResponseText(modelResponse, {
+      maxBytes: MAX_UPSTREAM_MODEL_CATALOG_BYTES,
+      label: `${label} model catalog`,
+      signal: controller.signal,
+    });
+    if (!modelResponse.ok) {
+      const detail = responseDetail(modelText);
+      throw new Error(`${label} model catalog failed with HTTP ${modelResponse.status}${detail ? `: ${detail}` : ""}`);
+    }
+
+    let catalog;
+    try {
+      catalog = JSON.parse(modelText);
+    } catch {
+      throw new Error(`${label} model catalog returned invalid JSON`);
+    }
+    catalogModels(catalog);
+    return { catalog, apiBase };
+  } catch (error) {
+    if (signal?.aborted) throw abortError(signal);
+    if (controller.signal.aborted) throw abortError(controller.signal);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onCallerAbort);
+    if (controller.signal.aborted) cancelResponseBody(modelResponse);
   }
-  catalogModels(catalog);
-  return { catalog, apiBase };
 }
 
 export async function validateClaudeCandidate(githubToken, {
@@ -156,6 +225,7 @@ export async function validateClaudeCandidate(githubToken, {
   fetchImpl = fetch,
   signal,
   vscodeVersion = FALLBACK_VSCODE_VERSION,
+  catalogTimeoutMs,
 } = {}) {
   const validation = await validateGithubToken(githubToken, { fetchImpl, signal });
   if (!validation.ok) {
@@ -180,6 +250,7 @@ export async function validateClaudeCandidate(githubToken, {
     signal,
     vscodeVersion,
     label: "Claude account",
+    timeoutMs: catalogTimeoutMs,
   });
   const models = claudeModels(catalog);
   if (!models.length) {
@@ -205,6 +276,7 @@ export async function authorizeClaudeProfile({
   log = console.log,
   openAndCopyFn = openAndCopy,
   deviceCodeTimeoutMs,
+  catalogTimeoutMs,
   sleepImpl,
   now = Date.now,
   saveModelCacheFn = saveModelCache,
@@ -268,6 +340,7 @@ export async function authorizeClaudeProfile({
       expectedLogin,
       fetchImpl,
       signal,
+      catalogTimeoutMs,
     });
     await withAuthProfileLock(AUTH_PROFILE_CODEX, () => {
       const currentCodex = readAuthProfileCredentials(AUTH_PROFILE_CODEX, { home });

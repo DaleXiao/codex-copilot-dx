@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import { createAdapterHandler } from "../src/adapter.mjs";
+import { MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES } from "../src/http-transport.mjs";
 
 async function invokeMessages(chatCompletionsFn, { closeOnFirstWrite = false, stream = false } = {}) {
   const req = Readable.from([Buffer.from(JSON.stringify({
@@ -137,6 +138,15 @@ test("HTTP Messages preserves unrelated upstream failures", async () => {
   assert.equal(result.headers["Content-Type"], "application/problem+json");
   assert.equal(result.headers["Retry-After"], "7");
   assert.equal(result.headers["X-Upstream-Request-Id"], "rate-limit-1");
+});
+
+test("HTTP Messages bounds successful unary Chat bodies independently from error bodies", async () => {
+  const result = await invokeMessages(async () => new Response(JSON.stringify({ choices: [] }), {
+    headers: { "Content-Length": String(MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES + 1) },
+  }));
+
+  assert.equal(result.status, 502);
+  assert.equal(JSON.parse(result.text).error.code, "ccdx_upstream_response_too_large");
 });
 
 test("HTTP Messages cancels its upstream stream quietly when the downstream closes", async () => {

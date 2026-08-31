@@ -86,3 +86,32 @@ test("bounded upstream reads never fall back to an unbounded response-like array
   );
   assert.equal(arrayBufferCalls, 0);
 });
+
+test("bounded upstream reads retain text-only compatibility injections with a post-read limit", async () => {
+  assert.equal(await readBoundedResponseText({
+    headers: new Headers(),
+    text: async () => "fixture",
+  }, { maxBytes: 7 }), "fixture");
+  await assert.rejects(readBoundedResponseText({
+    headers: new Headers(),
+    text: async () => "oversized",
+  }, { maxBytes: 8 }), (error) => error.code === "ccdx_upstream_response_too_large");
+});
+
+test("bounded upstream reads preserve abort reasons and cancel a pending body", async () => {
+  const controller = new AbortController();
+  const reason = new Error("catalog deadline reached");
+  let cancelled = false;
+  const response = new Response(new ReadableStream({
+    pull() {},
+    cancel() { cancelled = true; },
+  }));
+  const pending = readBoundedResponseText(response, {
+    maxBytes: 8 * 1024 * 1024,
+    signal: controller.signal,
+  });
+
+  queueMicrotask(() => controller.abort(reason));
+  await assert.rejects(pending, (error) => error === reason);
+  assert.equal(cancelled, true);
+});

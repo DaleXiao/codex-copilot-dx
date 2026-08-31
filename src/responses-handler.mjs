@@ -3,6 +3,7 @@ import { applyCopilotResponsesRequestPolicies } from "./copilot-responses-policy
 import {
   createRequestAbort,
   logRequestFailure,
+  MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES,
   MAX_UPSTREAM_ERROR_BODY_BYTES,
   readJsonBody,
   readBoundedResponseText,
@@ -136,7 +137,7 @@ export function createResponsesHandler(options) {
       if (!["responses_prepare_timeout", "stream_handshake_timeout", "upstream_timeout"].includes(abort.reason)) {
         return error;
       }
-      const activated = imagePressure?.markTimeout?.(prepared?.historyRootId, {
+      const activated = imagePressure?.markTimeout?.(responseHistoryPressureRootId(prepared), {
         eligible: imagePressureResult?.pressureEligible === true,
       });
       if (!activated) return error;
@@ -310,7 +311,11 @@ export function createResponsesHandler(options) {
             });
             releaseChatPayload();
             const data = upstream.ok
-              ? await upstream.text()
+              ? await readBoundedResponseText(upstream, {
+                maxBytes: MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES,
+                label: "Copilot Chat success body",
+                signal: abort.signal,
+              })
               : await readBoundedResponseText(upstream, {
                 maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
                 label: "Copilot Chat error body",

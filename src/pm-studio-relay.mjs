@@ -5,6 +5,10 @@ import {
   createRequestAdmission,
   httpError,
   isAbortLikeError,
+  MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES,
+  MAX_UPSTREAM_ERROR_BODY_BYTES,
+  MAX_UPSTREAM_MODEL_CATALOG_BYTES,
+  readBoundedResponseBuffer,
   readJsonBody,
   sendJsonError,
   writeOrDrain,
@@ -150,12 +154,12 @@ function catalogData(catalog) {
   return Array.isArray(catalog?.data) ? catalog.data : null;
 }
 
-async function responseSnapshot(response) {
+async function responseSnapshot(response, { maxBytes, label, signal }) {
   return {
     status: response.status,
     ok: response.ok,
     headers: new Headers(response.headers),
-    body: Buffer.from(await response.arrayBuffer()),
+    body: await readBoundedResponseBuffer(response, { maxBytes, label, signal }),
   };
 }
 
@@ -209,7 +213,15 @@ function mergeModelCatalog(snapshot, modelRouter) {
 async function relayUpstreamResponse(response, reqBody, res, abort, streamIdleTimeoutMs) {
   const stream = reqBody?.stream === true;
   if (!stream || !response.ok) {
-    const snapshot = await responseSnapshot(response);
+    const snapshot = await responseSnapshot(response, response.ok ? {
+      maxBytes: MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES,
+      label: "PM Studio Claude success body",
+      signal: abort.signal,
+    } : {
+      maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
+      label: "PM Studio Claude error body",
+      signal: abort.signal,
+    });
     sendSnapshot(res, snapshot);
     return;
   }
@@ -345,9 +357,18 @@ export function createPmStudioRelayHandler(options = {}) {
     }
     activeModelRequests += 1;
     try {
-      return await fetchEnterprise(
+      const response = await fetchEnterprise(
         "/models", "GET", inboundHeaders, token, undefined, signal,
-      ).then(responseSnapshot);
+      );
+      return await responseSnapshot(response, response.ok ? {
+        maxBytes: MAX_UPSTREAM_MODEL_CATALOG_BYTES,
+        label: "PM Studio model catalog",
+        signal,
+      } : {
+        maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
+        label: "PM Studio model catalog error body",
+        signal,
+      });
     } finally {
       activeModelRequests -= 1;
     }

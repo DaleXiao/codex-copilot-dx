@@ -33,12 +33,16 @@ export function tokenCounterWorkerExecArgv(execArgv = process.execArgv) {
   return filtered;
 }
 
+function createTokenCounterWorker() {
+  const execArgv = tokenCounterWorkerExecArgv();
+  const options = execArgv.length === process.execArgv.length ? undefined : { execArgv };
+  return new Worker(new URL("./token-counter-worker.mjs", import.meta.url), options);
+}
+
 export function createTokenCounterService({
   timeoutMs = DEFAULT_TOKEN_COUNTER_TIMEOUT_MS,
   maxQueued = DEFAULT_TOKEN_COUNTER_MAX_QUEUED,
-  workerFactory = () => new Worker(new URL("./token-counter-worker.mjs", import.meta.url), {
-    execArgv: tokenCounterWorkerExecArgv(),
-  }),
+  workerFactory = createTokenCounterWorker,
 } = {}) {
   timeoutMs = positiveInteger(timeoutMs, DEFAULT_TOKEN_COUNTER_TIMEOUT_MS);
   maxQueued = positiveInteger(maxQueued, DEFAULT_TOKEN_COUNTER_MAX_QUEUED);

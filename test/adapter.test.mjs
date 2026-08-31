@@ -2498,7 +2498,7 @@ test("HTTP Responses preserves service tiers when a fast mapping is not explicit
   }
 });
 
-test("direct fast and Auto Review requests are not rewritten by the priority-tier resolver", async () => {
+test("direct fast requests are not rewritten by the priority-tier resolver", async () => {
   const eligibleRegistry = { models: { data: [{
     id: "gpt-5.6-sol-fast",
     vendor: "OpenAI",
@@ -2506,25 +2506,77 @@ test("direct fast and Auto Review requests are not rewritten by the priority-tie
     model_picker_enabled: true,
     supported_endpoints: ["/responses", "ws:/responses"],
   }] } };
-  for (const { model, expectedModel } of [
-    { model: "gpt-5.6-sol-fast", expectedModel: "gpt-5.6-sol-fast" },
-    { model: "codex-auto-review", expectedModel: "gpt-5.5" },
-  ]) {
-    let upstreamBody;
-    const response = await invokeAdapter({
-      codexModelRegistry: eligibleRegistry,
-      getCachedModelEndpointsFn: () => ["/responses"],
-      responsesFn: async (body) => {
-        upstreamBody = structuredClone(body);
-        return Response.json({ id: `resp_direct_${model}`, status: "completed", output: [] });
-      },
-    }, {
-      body: { model, service_tier: "priority", input: "hello" },
-    });
+  let upstreamBody;
+  const response = await invokeAdapter({
+    codexModelRegistry: eligibleRegistry,
+    getCachedModelEndpointsFn: () => ["/responses"],
+    responsesFn: async (body) => {
+      upstreamBody = structuredClone(body);
+      return Response.json({ id: "resp_direct_fast", status: "completed", output: [] });
+    },
+  }, {
+    body: { model: "gpt-5.6-sol-fast", service_tier: "priority", input: "hello" },
+  });
 
-    assert.equal(response.status, 200);
-    assert.equal(upstreamBody.model, expectedModel);
-    assert.equal(upstreamBody.service_tier, "priority");
+  assert.equal(response.status, 200);
+  assert.equal(upstreamBody.model, "gpt-5.6-sol-fast");
+  assert.equal(upstreamBody.service_tier, "priority");
+});
+
+test("Auto Review drops inherited priority tiers without applying the Fast model mapping", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-adapter-auto-review-tier-"));
+  const savedEnv = {};
+  writeAutoReviewModel("gpt-5.6-sol", { env: savedEnv, home });
+  const eligibleRegistry = { models: { data: [{
+    id: "gpt-5.6-sol-fast",
+    vendor: "OpenAI",
+    policy: { state: "enabled" },
+    model_picker_enabled: true,
+    supported_endpoints: ["/responses", "ws:/responses"],
+  }] } };
+  const modelCases = [
+    { name: "default", options: { openAIModelEnv: {} }, expectedModel: "gpt-5.5" },
+    {
+      name: "saved",
+      options: {
+        openAIModelEnv: savedEnv,
+        autoReviewModelResolver: () => autoReviewModelPreference({ env: savedEnv, home }).model,
+      },
+      expectedModel: "gpt-5.6-sol",
+    },
+    {
+      name: "environment",
+      options: { openAIModelEnv: { CCDX_AUTO_REVIEW_MODEL: "gpt-5.6-sol" } },
+      expectedModel: "gpt-5.6-sol",
+    },
+  ];
+
+  for (const { name, options, expectedModel } of modelCases) {
+    for (const compact of [false, true]) {
+      let upstreamBody;
+      const upstream = async (body) => {
+        upstreamBody = structuredClone(body);
+        if (!compact) return Response.json({ id: `resp_review_${name}`, status: "completed", output: [] });
+        return Response.json({
+          id: `resp_review_${name}_compact`,
+          object: "response.compaction",
+          status: "completed",
+          output: [{ type: "compaction", id: `cmp_review_${name}`, encrypted_content: "review-state" }],
+        });
+      };
+      const response = await invokeAdapter({
+        ...options,
+        codexModelRegistry: eligibleRegistry,
+        ...(compact ? { responsesCompactFn: upstream } : { responsesFn: upstream }),
+      }, {
+        url: compact ? "/v1/responses/compact" : "/v1/responses",
+        body: { model: "codex-auto-review", service_tier: "priority", input: "review" },
+      });
+
+      assert.equal(response.status, 200, `${name} ${compact ? "compact" : "responses"}`);
+      assert.equal(upstreamBody.model, expectedModel, `${name} ${compact ? "compact" : "responses"}`);
+      assert.equal(Object.hasOwn(upstreamBody, "service_tier"), false, `${name} ${compact ? "compact" : "responses"}`);
+    }
   }
 });
 

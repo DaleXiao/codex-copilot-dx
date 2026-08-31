@@ -216,6 +216,7 @@ export function createResponsesHandler(options) {
         upstreamModel = priorityTierModel;
         delete prepared.body.service_tier;
       }
+      if (requestedModel === CODEX_AUTO_REVIEW_MODEL) delete prepared.body.service_tier;
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${streaming}`));
@@ -464,6 +465,7 @@ export function createResponsesCompactHandler(options) {
         upstreamModel = priorityTierModel;
         delete prepared.body.service_tier;
       }
+      if (requestedModel === CODEX_AUTO_REVIEW_MODEL) delete prepared.body.service_tier;
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=false`));

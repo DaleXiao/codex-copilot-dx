@@ -678,7 +678,9 @@ test("HTTP Responses records visual timeout against the original root after an e
         if (signal.aborted) onAbort();
       });
     };
-    const options = { imagePressure, responsesFn, upstreamTimeoutMs: 5 };
+    // Keep the wall deadline above CI scheduling jitter so this exercises the
+    // upstream-timeout rebase path instead of expiring during preparation.
+    const options = { imagePressure, responsesFn, upstreamTimeoutMs: 100 };
 
     const root = await invokeAdapter(options, {
       body: { model: "gpt-5.5", input: historicalInput },

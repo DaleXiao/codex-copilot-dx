@@ -59,6 +59,7 @@ test("cli --help exits without validating runtime configuration", async () => {
   assert.match(stdout, /ccdx status/);
   assert.match(stdout, /ccdx models/);
   assert.match(stdout, /ccdx auth status/);
+  assert.match(stdout, /ccdx animation/);
   assert.match(stdout, /doctor \[--online\] \[--compat\]/);
   assert.doesNotMatch(stdout, /Claude|Anthropic|pms|pm-studio/i);
   assert.equal(stderr, "");
@@ -85,6 +86,7 @@ test("deprecated cli help and argument errors use the canonical command name wit
   assert.match(stdout, /ccdx status/);
   assert.match(stdout, /ccdx models/);
   assert.match(stdout, /ccdx auto-review-model/);
+  assert.match(stdout, /ccdx animation/);
   assert.match(stdout, /ccdx update \[npm\|github\]/);
   assert.doesNotMatch(stdout, /Claude|Anthropic|pms|pm-studio/i);
   assertNoCompatibilityWarning(stderr);
@@ -108,7 +110,7 @@ test("both CLI entrypoints expose the same complete subcommand help", async () =
 
   assert.equal(legacy.stdout, primary.stdout);
   assertNoCompatibilityWarning(legacy.stderr);
-  for (const command of ["auth", "doctor", "status", "models", "usage", "auto-review-model", "update"]) {
+  for (const command of ["auth", "doctor", "status", "models", "usage", "animation", "auto-review-model", "update"]) {
     assert.match(primary.stdout, new RegExp(`ccdx ${command}`));
   }
   assert.doesNotMatch(primary.stdout, /Claude|Anthropic|pms|pm-studio/i);
@@ -122,6 +124,21 @@ test("both CLI entrypoints keep nested help and argument errors byte-for-byte eq
   assert.equal(legacyHelp.stdout, primaryHelp.stdout);
   assert.match(primaryHelp.stdout, /Shows the saved GitHub Copilot account/);
   assertNoCompatibilityWarning(legacyHelp.stderr);
+
+  const [primaryAnimationHelp, legacyAnimationHelp] = await Promise.all([
+    execFileAsync(process.execPath, [cliPath, "animation", "--help"], {
+      timeout: 2000,
+      env: { ...process.env, ADAPTER_PORT: "invalid" },
+    }),
+    execFileAsync(process.execPath, [legacyCliPath, "animation", "--help"], {
+      timeout: 2000,
+      env: { ...process.env, ADAPTER_PORT: "invalid" },
+    }),
+  ]);
+  assert.equal(legacyAnimationHelp.stdout, primaryAnimationHelp.stdout);
+  assert.match(primaryAnimationHelp.stdout, /next time the adapter starts/);
+  assert.equal(primaryAnimationHelp.stderr, "");
+  assertNoCompatibilityWarning(legacyAnimationHelp.stderr);
 
   const [primaryError, legacyError] = await Promise.allSettled([
     execFileAsync(process.execPath, [cliPath, "models", "--profile", "all"], { timeout: 2000 }),
@@ -296,6 +313,40 @@ test("both CLI entrypoints reject non-interactive model selection consistently",
         return true;
       },
     );
+  }
+});
+
+test("both CLI entrypoints reject non-interactive animation selection before startup side effects", async () => {
+  for (const executable of [cliPath, legacyCliPath]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-animation-"));
+    const logPath = path.join(home, "debug.log");
+    try {
+      await assert.rejects(
+        execFileAsync(process.execPath, [executable, "animation"], {
+          timeout: 2000,
+          env: {
+            ...process.env,
+            HOME: home,
+            XDG_CONFIG_HOME: path.join(home, ".config"),
+            ADAPTER_PORT: "invalid",
+            CCDX_LOG_PATH: logPath,
+            CCDX_AUTO_LAUNCH: "1",
+          },
+        }),
+        (error) => {
+          assert.equal(error.code, 1);
+          assert.match(error.stderr, /ccdx animation requires an interactive terminal/);
+          assert.doesNotMatch(error.stderr, /ADAPTER_PORT/);
+          return true;
+        },
+      );
+      assert.equal(fs.existsSync(logPath), false);
+      assert.equal(fs.existsSync(path.join(home, ".local")), false);
+      assert.equal(fs.existsSync(path.join(home, ".codex")), false);
+      assert.equal(fs.existsSync(path.join(home, ".config")), false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   }
 });
 

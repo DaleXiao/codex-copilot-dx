@@ -16,7 +16,7 @@ import { cliCommandName, cliHelp, parseAdapterProbeOptions, parseCliArgs, parseR
 import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
 import { runAutoReviewModelCommand } from "../src/auto-review-model.mjs";
-import { autoReviewModelPreference } from "../src/user-settings.mjs";
+import { autoReviewModelPreference, terminalAnimationPreference } from "../src/user-settings.mjs";
 import { fetchLiveCopilotModels, formatLiveCopilotModels } from "../src/cli-models.mjs";
 import { runAuthCommand } from "../src/cli-auth.mjs";
 import { createProfileRuntime } from "../src/profile-runtime.mjs";
@@ -42,6 +42,16 @@ if (CLI.command === "help") {
 if (CLI.command === "version") {
   console.log(CLI_BANNER);
   process.exit(0);
+}
+if (CLI.command === "animation") {
+  try {
+    const { runAnimationCommand } = await import("../src/cli-animation.mjs");
+    await runAnimationCommand({ commandName: CLI_NAME });
+    process.exit(0);
+  } catch (e) {
+    console.error(status("err", e.message));
+    process.exit(1);
+  }
 }
 if (CLI.command === "usage") {
   await printUsageSummary({
@@ -231,6 +241,7 @@ try {
   }
 
   // Start the in-process adapter.
+  const terminalAnimationTheme = terminalAnimationPreference().theme;
   activeServer = await startAdapter(ADAPTER_PORT, ADAPTER_HOST, {
     autoReviewModelResolver: () => autoReviewModelPreference().model,
     codexClient: profileRuntime.codexClient,
@@ -239,6 +250,7 @@ try {
     upstreamTimeoutMs: RUNTIME.upstreamTimeoutMs,
     streamHandshakeTimeoutMs: RUNTIME.streamHandshakeTimeoutMs,
     streamIdleTimeoutMs: RUNTIME.streamIdleTimeoutMs,
+    terminalAnimationTheme,
   });
 
   // Point Codex and compatible ChatGPT App builds at the adapter.

@@ -311,7 +311,9 @@ export function createAdapterHandler(options = {}) {
 
 export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
   const ownsTerminalActivity = !Object.hasOwn(options, "terminalActivity");
-  const terminalActivity = ownsTerminalActivity ? createTerminalActivityIndicator() : options.terminalActivity;
+  const terminalActivity = ownsTerminalActivity
+    ? createTerminalActivityIndicator({ theme: options.terminalAnimationTheme })
+    : options.terminalActivity;
   const handler = createAdapterHandler({ ...options, terminalActivity });
   const server = http.createServer(handler);
   const cleanupTerminalActivity = () => {

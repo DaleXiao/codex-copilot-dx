@@ -1,14 +1,21 @@
+import {
+  DEFAULT_TERMINAL_ANIMATION_THEME,
+  TERMINAL_ANIMATION_THEMES,
+  TERMINAL_ANIMATION_TRACK_WIDTH,
+  getTerminalAnimationCycleLength,
+  getTerminalAnimationFrameDelay,
+  isTerminalAnimationTheme,
+  renderTerminalAnimationFrame,
+} from "./terminal-animation.mjs";
+
+export { renderCometFrame } from "./terminal-animation.mjs";
+
 const ESC = "\u001b";
 const ERASE_LINE = `\r${ESC}[2K`;
 const HIDE_CURSOR = `${ESC}[?25l`;
 const SHOW_CURSOR = `${ESC}[?25h`;
 
-const TRACK_WIDTH = 20;
-const TAIL_LENGTH = 7;
 const IDLE_DELAY_MS = 800;
-const FRAME_DELAY_MS = 45;
-const LOOP_PAUSE_MS = 200;
-const TAIL_COLORS = [159, 123, 87, 51, 45, 39, 33];
 
 function envFlagEnabled(value) {
   const normalized = String(value || "").trim().toLowerCase();
@@ -21,22 +28,7 @@ function terminalActivityEnabled({ env, output, errorOutput }) {
   if (envFlagEnabled(env.CI) || String(env.TERM || "").toLowerCase() === "dumb") return false;
   if (output?.isTTY !== true || errorOutput?.isTTY !== true) return false;
   const columns = Number(output.columns);
-  return !Number.isFinite(columns) || columns <= 0 || columns >= TRACK_WIDTH + 2;
-}
-
-export function renderCometFrame(position) {
-  let track = "";
-  for (let column = 0; column < TRACK_WIDTH; column += 1) {
-    const distance = position - column;
-    if (distance === 0) {
-      track += `${ESC}[97m:${ESC}[0m`;
-    } else if (distance > 0 && distance <= TAIL_LENGTH) {
-      track += `${ESC}[38;5;${TAIL_COLORS[distance - 1]}m:${ESC}[0m`;
-    } else {
-      track += " ";
-    }
-  }
-  return `[${track}]`;
+  return !Number.isFinite(columns) || columns <= 0 || columns >= TERMINAL_ANIMATION_TRACK_WIDTH + 2;
 }
 
 function disabledIndicator() {
@@ -53,8 +45,13 @@ export function createTerminalActivityIndicator({
   errorOutput = process.stderr,
   consoleObj = console,
   timers = { setTimeout, clearTimeout },
+  theme = DEFAULT_TERMINAL_ANIMATION_THEME,
 } = {}) {
   if (!terminalActivityEnabled({ env, output, errorOutput })) return disabledIndicator();
+  if (!isTerminalAnimationTheme(theme)) throw new TypeError(`Unknown terminal animation theme: ${String(theme)}`);
+
+  const themeMetadata = TERMINAL_ANIMATION_THEMES.find(({ id }) => id === theme);
+  const cycleLength = getTerminalAnimationCycleLength(theme);
 
   const methods = ["log", "warn", "error", "debug"];
   const originals = Object.fromEntries(methods.map((method) => [method, consoleObj[method]]));
@@ -81,9 +78,12 @@ export function createTerminalActivityIndicator({
     clearTimer(frameTimer);
     frameTimer = null;
     framePosition = 0;
-    if (cursorHidden || frameVisible) output.write(`${ERASE_LINE}${SHOW_CURSOR}`);
-    cursorHidden = false;
-    frameVisible = false;
+    try {
+      if (cursorHidden || frameVisible) output.write(`${ERASE_LINE}${SHOW_CURSOR}`);
+    } finally {
+      cursorHidden = false;
+      frameVisible = false;
+    }
   };
 
   const cancelPendingOutput = () => {
@@ -98,20 +98,23 @@ export function createTerminalActivityIndicator({
       clearAnimation();
       return;
     }
-    if (framePosition >= TRACK_WIDTH + TAIL_LENGTH) {
-      output.write(ERASE_LINE);
-      frameVisible = false;
+    if (framePosition >= cycleLength) {
       framePosition = 0;
-      frameTimer = schedule(drawNextFrame, LOOP_PAUSE_MS);
-      return;
+      if (themeMetadata.loopPauseMs > 0) {
+        output.write(ERASE_LINE);
+        frameVisible = false;
+        frameTimer = schedule(drawNextFrame, themeMetadata.loopPauseMs);
+        return;
+      }
     }
 
+    const frameIndex = themeMetadata.startFrame + framePosition;
     const prefix = cursorHidden ? "" : HIDE_CURSOR;
     cursorHidden = true;
     frameVisible = true;
-    output.write(`${prefix}${ERASE_LINE}${renderCometFrame(framePosition)}`);
+    output.write(`${prefix}${ERASE_LINE}${renderTerminalAnimationFrame(theme, frameIndex)}`);
     framePosition += 1;
-    frameTimer = schedule(drawNextFrame, FRAME_DELAY_MS);
+    frameTimer = schedule(drawNextFrame, getTerminalAnimationFrameDelay(theme, frameIndex));
   };
 
   const scheduleAfterIdle = () => {
@@ -161,9 +164,12 @@ export function createTerminalActivityIndicator({
       activeRequests = 0;
       clearTimer(idleTimer);
       idleTimer = null;
-      clearAnimation();
-      for (const method of methods) {
-        if (consoleObj[method] === wrappers[method]) consoleObj[method] = originals[method];
+      try {
+        clearAnimation();
+      } finally {
+        for (const method of methods) {
+          if (consoleObj[method] === wrappers[method]) consoleObj[method] = originals[method];
+        }
       }
     },
   };

@@ -4,6 +4,10 @@ import {
   createTerminalActivityIndicator,
   renderCometFrame,
 } from "../src/terminal-activity.mjs";
+import {
+  TERMINAL_ANIMATION_THEMES,
+  renderTerminalAnimationFrame,
+} from "../src/terminal-animation.mjs";
 
 const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 
@@ -44,10 +48,10 @@ function fakeConsole(events) {
   ]));
 }
 
-function fakeStream(events, { isTTY = true, name = "output" } = {}) {
+function fakeStream(events, { isTTY = true, name = "output", columns = 80 } = {}) {
   return {
     isTTY,
-    columns: 80,
+    columns,
     write(chunk) {
       events.push({ type: name, text: String(chunk) });
       return true;
@@ -84,8 +88,15 @@ test("terminal activity: stays disabled outside an interactive terminal", () => 
   assert.deepEqual(events, []);
 });
 
-test("terminal activity: honors explicit opt-out and CI environments", () => {
-  for (const env of [{ CCDX_TERMINAL_ANIMATION: "0" }, { CCDX_TERMINAL_ANIMATION: "off" }, { CI: "true" }]) {
+test("terminal activity: honors explicit opt-out and non-interactive environments", () => {
+  for (const env of [
+    { CCDX_TERMINAL_ANIMATION: "0" },
+    { CCDX_TERMINAL_ANIMATION: "false" },
+    { CCDX_TERMINAL_ANIMATION: "no" },
+    { CCDX_TERMINAL_ANIMATION: "off" },
+    { CI: "true" },
+    { TERM: "dumb" },
+  ]) {
     const events = [];
     const indicator = createTerminalActivityIndicator({
       env,
@@ -96,6 +107,117 @@ test("terminal activity: honors explicit opt-out and CI environments", () => {
     });
     assert.equal(indicator.enabled, false);
   }
+
+  const events = [];
+  assert.equal(createTerminalActivityIndicator({
+    env: {},
+    output: fakeStream(events, { columns: 21 }),
+    errorOutput: fakeStream(events, { name: "error-output" }),
+    consoleObj: fakeConsole(events),
+    timers: fakeTimers(),
+  }).enabled, false);
+});
+
+test("terminal activity: default Comet write sequence and timing stay byte-compatible", () => {
+  const events = [];
+  const timers = fakeTimers();
+  const consoleObj = fakeConsole(events);
+  const indicator = createTerminalActivityIndicator({
+    env: {},
+    output: fakeStream(events),
+    errorOutput: fakeStream(events, { name: "error-output" }),
+    consoleObj,
+    timers,
+  });
+
+  const finish = indicator.beginRequest();
+  timers.advance(800);
+  assert.equal(events.at(-1).text, `\u001b[?25l\r\u001b[2K${renderCometFrame(0)}`);
+  for (let position = 1; position < 27; position += 1) {
+    timers.advance(45);
+    assert.equal(events.at(-1).text, `\r\u001b[2K${renderCometFrame(position)}`);
+  }
+
+  timers.advance(45);
+  assert.equal(events.at(-1).text, "\r\u001b[2K");
+  const eventCountDuringPause = events.length;
+  timers.advance(199);
+  assert.equal(events.length, eventCountDuringPause);
+  timers.advance(1);
+  assert.equal(events.at(-1).text, `\r\u001b[2K${renderCometFrame(0)}`);
+
+  finish();
+  assert.equal(events.at(-1).text, "\r\u001b[2K\u001b[?25h");
+  indicator.cleanup();
+});
+
+test("terminal activity: every injected theme starts after idle and cleanup restores state", () => {
+  for (const theme of TERMINAL_ANIMATION_THEMES) {
+    const events = [];
+    const timers = fakeTimers();
+    const consoleObj = fakeConsole(events);
+    const originals = { ...consoleObj };
+    const indicator = createTerminalActivityIndicator({
+      env: {},
+      output: fakeStream(events),
+      errorOutput: fakeStream(events, { name: "error-output" }),
+      consoleObj,
+      timers,
+      theme: theme.id,
+    });
+
+    indicator.beginRequest();
+    timers.advance(799);
+    assert.deepEqual(events, []);
+    timers.advance(1);
+    assert.equal(
+      events.at(-1).text,
+      `\u001b[?25l\r\u001b[2K${renderTerminalAnimationFrame(theme.id, theme.startFrame)}`,
+    );
+
+    indicator.cleanup();
+    assert.equal(events.at(-1).text, "\r\u001b[2K\u001b[?25h");
+    for (const method of ["log", "warn", "error", "debug"]) {
+      assert.equal(consoleObj[method], originals[method]);
+    }
+    const countAfterCleanup = events.length;
+    timers.advance(5000);
+    indicator.cleanup();
+    assert.equal(events.length, countAfterCleanup);
+  }
+});
+
+test("terminal activity: cleanup restores console methods even when terminal cleanup fails", () => {
+  const events = [];
+  const timers = fakeTimers();
+  const consoleObj = fakeConsole(events);
+  const originals = { ...consoleObj };
+  let writeCount = 0;
+  const output = fakeStream(events);
+  output.write = (chunk) => {
+    writeCount += 1;
+    events.push({ type: "output", text: String(chunk) });
+    if (writeCount === 2) throw new Error("terminal cleanup failed");
+    return true;
+  };
+  const indicator = createTerminalActivityIndicator({
+    env: {},
+    output,
+    errorOutput: fakeStream(events, { name: "error-output" }),
+    consoleObj,
+    timers,
+  });
+
+  indicator.beginRequest();
+  timers.advance(800);
+  assert.throws(() => indicator.cleanup(), /terminal cleanup failed/);
+  for (const method of ["log", "warn", "error", "debug"]) {
+    assert.equal(consoleObj[method], originals[method]);
+  }
+  assert.doesNotThrow(() => indicator.cleanup());
+  const countAfterCleanup = events.length;
+  timers.advance(5000);
+  assert.equal(events.length, countAfterCleanup);
 });
 
 test("terminal activity: starts after idle, loops, and yields immediately to real output", () => {

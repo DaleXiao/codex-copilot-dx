@@ -87,6 +87,28 @@ The selector first queries the running adapter, including its last-known-good mo
 
 The selection is saved in `~/.config/codex-copilot-dx/config.json`, or under `XDG_CONFIG_HOME` when set. Choosing `gpt-5.5` clears the override and restores the package default. A running adapter reads the setting on the next Auto-review request.
 
+### Terminal animation
+
+Choose the terminal activity animation interactively:
+
+```bash
+ccdx animation
+```
+
+The selector is ordered numerically:
+
+1. Comet (default)
+2. Twin
+3. Shuttle
+4. Chase
+5. Mirror
+6. Pulse
+7. Braille
+
+Enter the corresponding number to select an animation. The Comet row includes a static preview, and after a selection CCDX plays one cycle of the chosen animation as confirmation when terminal animation is enabled. The setting is saved in `~/.config/codex-copilot-dx/config.json`, or under `XDG_CONFIG_HOME` when set.
+
+The selected theme is loaded once when a new adapter starts, so changing it does not restart or alter an adapter that is already running. Stop and start CCDX to apply the new theme. `CCDX_TERMINAL_ANIMATION=0` (also `false`, `no`, or `off`) remains the boolean gate that disables terminal animation regardless of the selected theme.
+
 ### Update
 
 Choose a source interactively:
@@ -197,7 +219,7 @@ ccdx
 | `CCDX_LOG_PATH` | unset | Mirror terminal logs to a file; set to `1` for `~/.local/share/codex-copilot-dx/debug.log` |
 | `CCDX_LOG_LEVEL` | `info` | Set to `debug` for upstream attempts, status codes, retry causes, and timings |
 | `CCDX_LOG_MAX_BYTES` | `16777216` | Rotate the debug log at this size and retain one `.1` backup; set to `0` to disable rotation |
-| `CCDX_TERMINAL_ANIMATION` | auto | Show a transient comet while an interactive terminal has active requests and no output for 800 ms; set to `0` to disable |
+| `CCDX_TERMINAL_ANIMATION` | auto | Show the selected transient animation while an interactive terminal has active requests and no output for 800 ms; set to `0`, `false`, `no`, or `off` to disable |
 | `CCDX_IMG_MAX_DIM` | `2048` | Maximum long edge in pixels for image downscaling |
 | `CCDX_IMG_QUALITY` | `82` | Initial WebP quality for image re-encoding |
 | `CCDX_IMG_MIN_BYTES` | `100000` | In-bounds images smaller than this remain unchanged; oversized images are still downscaled |

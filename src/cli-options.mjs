@@ -19,6 +19,7 @@ const HELP_TOPICS = new Set([
   "status",
   "models",
   "usage",
+  "animation",
   "auto-review-model",
   "update",
   "version",
@@ -189,6 +190,10 @@ export function parseCliArgs(args = []) {
     }
     throw new Error(`Unknown auth action: ${action}`);
   }
+  if (command === "animation") {
+    if (rest.length) unexpectedArgs(rest);
+    return baseCommand("animation");
+  }
   if (command === "auto-review-model") {
     if (rest.length) unexpectedArgs(rest);
     return baseCommand("auto-review-model");
@@ -275,6 +280,7 @@ function topicHelp(name, topic) {
     status: `Usage:\n  ${name} status\n\nShows bounded runtime, routing, performance, queue, and cache metrics from a running adapter.`,
     models: `Usage:\n  ${name} models [--format table|plain]\n\nPerforms a fresh, read-only Copilot model-directory lookup for the saved account. Interactive terminals use a table by default.`,
     usage: `Usage:\n  ${name} usage [--format table|plain]\n\nSummarizes local token usage metadata without reading prompt or completion content. Interactive terminals use a table by default.`,
+    animation: `Usage:\n  ${name} animation\n\nInteractively selects the terminal activity animation used the next time the adapter starts.`,
     "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nInteractively selects an enabled Responses model for Codex Auto-review.`,
     update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or GitHub main. With no source, an interactive terminal prompts for one.`,
     version: `Usage:\n  ${name} --version`,
@@ -293,6 +299,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} status
   ${name} models [--format table|plain]
   ${name} usage [--format table|plain]
+  ${name} animation
   ${name} auto-review-model
   ${name} update [npm|github]
   ${name} --version
@@ -305,6 +312,7 @@ Commands:
   status             Show runtime routing, performance, queue, and cache health
   models             Query a saved account's live Copilot model catalog
   usage              Summarize locally recorded token usage
+  animation          Select the terminal activity animation
   auto-review-model  Select the Codex Auto-review Responses model
   update             Update the global package from npm or GitHub
 

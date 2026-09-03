@@ -3,8 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { DEFAULT_CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
+import {
+  DEFAULT_TERMINAL_ANIMATION_THEME,
+  isTerminalAnimationTheme,
+  TERMINAL_ANIMATION_THEMES,
+} from "./terminal-animation.mjs";
 
 const AUTO_REVIEW_MODEL_KEY = "auto_review_model";
+const TERMINAL_ANIMATION_KEY = "terminal_animation";
 
 export function userSettingsPath({ env = process.env, home = os.homedir() } = {}) {
   const xdgConfigHome = String(env.XDG_CONFIG_HOME || "").trim();
@@ -27,6 +33,16 @@ export function readUserSettings({ env = process.env, home = os.homedir(), stric
       const value = parsed[AUTO_REVIEW_MODEL_KEY];
       if (typeof value !== "string" || !value.trim()) {
         throw invalidSettings(filePath, `${AUTO_REVIEW_MODEL_KEY} must be a non-empty string`);
+      }
+    }
+    if (Object.hasOwn(parsed, TERMINAL_ANIMATION_KEY)) {
+      const value = parsed[TERMINAL_ANIMATION_KEY];
+      if (!isTerminalAnimationTheme(value)) {
+        const choices = TERMINAL_ANIMATION_THEMES.map(({ id }) => id).join(", ");
+        if (strict) {
+          throw invalidSettings(filePath, `${TERMINAL_ANIMATION_KEY} must be one of: ${choices}`);
+        }
+        delete parsed[TERMINAL_ANIMATION_KEY];
       }
     }
     return parsed;
@@ -54,6 +70,18 @@ export function autoReviewModelPreference({ env = process.env, home = os.homedir
   return { model: DEFAULT_CODEX_AUTO_REVIEW_MODEL, source: "default" };
 }
 
+export function savedTerminalAnimationTheme(options = {}) {
+  const settings = readUserSettings(options);
+  const theme = settings[TERMINAL_ANIMATION_KEY];
+  return isTerminalAnimationTheme(theme) ? theme : "";
+}
+
+export function terminalAnimationPreference({ env = process.env, home = os.homedir() } = {}) {
+  const savedTheme = savedTerminalAnimationTheme({ env, home });
+  if (savedTheme) return { theme: savedTheme, source: "settings" };
+  return { theme: DEFAULT_TERMINAL_ANIMATION_THEME, source: "default" };
+}
+
 export function writeAutoReviewModel(model, { env = process.env, home = os.homedir() } = {}) {
   const filePath = userSettingsPath({ env, home });
   const settings = readUserSettings({ env, home, strict: true });
@@ -64,4 +92,26 @@ export function writeAutoReviewModel(model, { env = process.env, home = os.homed
 
   const changed = atomicWriteFileIfChangedSync(filePath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
   return { changed, filePath, model: value || DEFAULT_CODEX_AUTO_REVIEW_MODEL };
+}
+
+export function writeTerminalAnimationTheme(theme, { env = process.env, home = os.homedir() } = {}) {
+  if (!isTerminalAnimationTheme(theme)) {
+    const choices = TERMINAL_ANIMATION_THEMES.map(({ id }) => id).join(", ");
+    throw new Error(`Terminal animation must be one of: ${choices}`);
+  }
+
+  const filePath = userSettingsPath({ env, home });
+  const settings = readUserSettings({ env, home, strict: true });
+  const next = { ...settings };
+  if (theme === DEFAULT_TERMINAL_ANIMATION_THEME) {
+    if (!Object.hasOwn(next, TERMINAL_ANIMATION_KEY)) {
+      return { changed: false, filePath, theme };
+    }
+    delete next[TERMINAL_ANIMATION_KEY];
+  } else {
+    next[TERMINAL_ANIMATION_KEY] = theme;
+  }
+
+  const changed = atomicWriteFileIfChangedSync(filePath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  return { changed, filePath, theme };
 }

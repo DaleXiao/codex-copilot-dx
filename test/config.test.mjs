@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { computeUpdatedCodexConfig, ensureCodexConfig } from "../src/config.mjs";
 
-test("computeUpdatedCodexConfig: updates stale Codex and shell env URLs", () => {
+test("computeUpdatedCodexConfig: updates stale Codex URLs without touching legacy Anthropic keys", () => {
   const before = `model = "gpt-5.5"
 openai_base_url = "http://localhost:4142/v1"
 
@@ -30,14 +30,14 @@ trust_level = "trusted"
   assert.match(content, /^model_auto_compact_token_limit = 900000$/m);
   assert.ok(content.indexOf("model_auto_compact_token_limit") < content.indexOf("[shell_environment_policy]"));
   assert.match(content, /^ANTHROPIC_AUTH_TOKEN = "dummy"$/m);
-  assert.match(content, /^ANTHROPIC_BASE_URL = "http:\/\/127\.0\.0\.1:2026"$/m);
+  assert.match(content, /^ANTHROPIC_BASE_URL = "http:\/\/localhost:4141"$/m);
   assert.match(content, /^ANTHROPIC_DEFAULT_SONNET_MODEL = "claude-custom"$/m);
   assert.match(content, /^OPENAI_BASE_URL = "http:\/\/127\.0\.0\.1:2026\/v1"$/m);
   assert.match(content, /^OPENAI_API_KEY = "dummy"$/m);
   assert.match(content, /^\[projects."\/tmp\/example"\]$/m);
 });
 
-test("computeUpdatedCodexConfig: adds missing env URLs when shell env section exists", () => {
+test("computeUpdatedCodexConfig: adds only missing OpenAI env URLs when shell env section exists", () => {
   const before = `[shell_environment_policy.set]
 ANTHROPIC_AUTH_TOKEN = "dummy"
 `;
@@ -46,7 +46,7 @@ ANTHROPIC_AUTH_TOKEN = "dummy"
   assert.equal(changed, true);
   assert.match(content, /^openai_base_url = "http:\/\/127\.0\.0\.1:2026\/v1"$/m);
   assert.match(content, /^ANTHROPIC_AUTH_TOKEN = "dummy"$/m);
-  assert.match(content, /^ANTHROPIC_BASE_URL = "http:\/\/127\.0\.0\.1:2026"$/m);
+  assert.doesNotMatch(content, /ANTHROPIC_BASE_URL/);
   assert.match(content, /^OPENAI_BASE_URL = "http:\/\/127\.0\.0\.1:2026\/v1"$/m);
   assert.match(content, /^OPENAI_API_KEY = "dummy"$/m);
 });
@@ -173,6 +173,7 @@ test("ensureCodexConfig: creates a new file with model defaults", () => {
   const content = fs.readFileSync(filePath, "utf8");
   assert.match(content, /^model_context_window = 1000000$/m);
   assert.match(content, /^model_auto_compact_token_limit = 900000$/m);
+  assert.doesNotMatch(content, /ANTHROPIC/);
   assert.doesNotMatch(content, /ANTHROPIC_DEFAULT_(?:SONNET|OPUS|HAIKU)_MODEL/);
   assert.doesNotMatch(content, /CLAUDE_CODE_SUBAGENT_MODEL/);
 });

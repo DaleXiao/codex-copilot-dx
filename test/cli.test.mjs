@@ -8,7 +8,6 @@ import os from "node:os";
 import path from "node:path";
 import { localPackageVersion } from "../src/version.mjs";
 import { assertSafeAdapterHost, isLanAllowed } from "../src/security.mjs";
-import { writeClaudeAuthProfile } from "../src/auth-profile.mjs";
 import packageJson from "../package.json" with { type: "json" };
 
 const execFileAsync = promisify(execFile);
@@ -59,11 +58,9 @@ test("cli --help exits without validating runtime configuration", async () => {
   assert.doesNotMatch(stdout, /Equivalent command/);
   assert.match(stdout, /ccdx status/);
   assert.match(stdout, /ccdx models/);
-  assert.match(stdout, /ccdx pms setup/);
-  assert.match(stdout, /ccdx pms restore/);
   assert.match(stdout, /ccdx auth status/);
-  assert.match(stdout, /ccdx auth login claude/);
   assert.match(stdout, /doctor \[--online\] \[--compat\]/);
+  assert.doesNotMatch(stdout, /Claude|Anthropic|pms|pm-studio/i);
   assert.equal(stderr, "");
 });
 
@@ -87,10 +84,9 @@ test("deprecated cli help and argument errors use the canonical command name wit
   assert.match(stdout, /ccdx doctor/);
   assert.match(stdout, /ccdx status/);
   assert.match(stdout, /ccdx models/);
-  assert.match(stdout, /ccdx pms setup/);
-  assert.match(stdout, /ccdx pms restore/);
   assert.match(stdout, /ccdx auto-review-model/);
   assert.match(stdout, /ccdx update \[npm\|github\]/);
+  assert.doesNotMatch(stdout, /Claude|Anthropic|pms|pm-studio/i);
   assertNoCompatibilityWarning(stderr);
 
   await assert.rejects(
@@ -112,27 +108,20 @@ test("both CLI entrypoints expose the same complete subcommand help", async () =
 
   assert.equal(legacy.stdout, primary.stdout);
   assertNoCompatibilityWarning(legacy.stderr);
-  for (const command of ["auth", "doctor", "status", "models", "pms", "usage", "auto-review-model", "update"]) {
+  for (const command of ["auth", "doctor", "status", "models", "usage", "auto-review-model", "update"]) {
     assert.match(primary.stdout, new RegExp(`ccdx ${command}`));
   }
+  assert.doesNotMatch(primary.stdout, /Claude|Anthropic|pms|pm-studio/i);
 });
 
 test("both CLI entrypoints keep nested help and argument errors byte-for-byte equivalent", async () => {
   const [primaryHelp, legacyHelp] = await Promise.all([
-    execFileAsync(process.execPath, [cliPath, "auth", "login", "claude", "--help"], { timeout: 2000 }),
-    execFileAsync(process.execPath, [legacyCliPath, "auth", "login", "claude", "--help"], { timeout: 2000 }),
+    execFileAsync(process.execPath, [cliPath, "auth", "status", "--help"], { timeout: 2000 }),
+    execFileAsync(process.execPath, [legacyCliPath, "auth", "status", "--help"], { timeout: 2000 }),
   ]);
   assert.equal(legacyHelp.stdout, primaryHelp.stdout);
+  assert.match(primaryHelp.stdout, /Shows the saved GitHub Copilot account/);
   assertNoCompatibilityWarning(legacyHelp.stderr);
-
-  const [primaryRestoreHelp, legacyRestoreHelp] = await Promise.all([
-    execFileAsync(process.execPath, [cliPath, "pms", "restore", "--help"], { timeout: 2000 }),
-    execFileAsync(process.execPath, [legacyCliPath, "pm-studio", "restore", "--help"], { timeout: 2000 }),
-  ]);
-  assert.equal(legacyRestoreHelp.stdout, primaryRestoreHelp.stdout);
-  assert.match(primaryRestoreHelp.stdout, /exact source-bound verified backup/);
-  assert.match(primaryRestoreHelp.stdout, /no confirmation prompt/);
-  assertNoCompatibilityWarning(legacyRestoreHelp.stderr);
 
   const [primaryError, legacyError] = await Promise.allSettled([
     execFileAsync(process.execPath, [cliPath, "models", "--profile", "all"], { timeout: 2000 }),
@@ -144,48 +133,20 @@ test("both CLI entrypoints keep nested help and argument errors byte-for-byte eq
   assert.equal(legacyError.reason.stderr, primaryError.reason.stderr);
 });
 
-test("both CLI entrypoints dispatch pms setup before runtime, auth, logging, or GUI startup", async () => {
-  for (const executable of [cliPath, legacyCliPath]) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-pms-setup-"));
+test("both CLI entrypoints retire legacy integrations before runtime, auth, logging, or GUI startup", async () => {
+  for (const [executable, args, integration] of [
+    [cliPath, ["pms", "setup"], "PM Studio"],
+    [legacyCliPath, ["pm-studio", "restore"], "PM Studio"],
+    [cliPath, ["--configure-claude-desktop"], "Claude App and Claude Code"],
+    [legacyCliPath, ["auth", "login", "claude", "--reauth"], "Claude App and Claude Code"],
+    [cliPath, ["models", "--profile", "claude"], "Claude App and Claude Code"],
+    [legacyCliPath, ["doctor", "--profile", "all"], "Claude App and Claude Code"],
+  ]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-retired-"));
     const logPath = path.join(home, "debug.log");
     try {
       await assert.rejects(
-        execFileAsync(process.execPath, [executable, "pms", "setup"], {
-          timeout: 2000,
-          env: {
-            ...process.env,
-            HOME: home,
-            ADAPTER_PORT: "invalid",
-            CCDX_LOG_PATH: logPath,
-          },
-        }),
-        (error) => {
-          assert.equal(error.code, 1);
-          assert.match(error.stderr, /Run `ccdx auth login claude --reauth --github-login <personal-login>`/);
-          assert.doesNotMatch(error.stderr, /ADAPTER_PORT/);
-          return true;
-        },
-      );
-      assert.equal(fs.existsSync(logPath), false);
-      assert.equal(fs.existsSync(path.join(home, ".codex")), false);
-      assert.equal(fs.existsSync(path.join(home, ".claude")), false);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  }
-});
-
-test("both CLI entrypoints dispatch pms restore before runtime, auth, logging, or GUI startup", async () => {
-  for (const [executable, command] of [
-    [cliPath, "pms"],
-    [legacyCliPath, "pm-studio"],
-  ]) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-pms-restore-"));
-    const logPath = path.join(home, "debug.log");
-    try {
-      let result;
-      try {
-        result = await execFileAsync(process.execPath, [executable, command, "restore"], {
+        execFileAsync(process.execPath, [executable, ...args], {
           timeout: 30000,
           env: {
             ...process.env,
@@ -195,14 +156,14 @@ test("both CLI entrypoints dispatch pms restore before runtime, auth, logging, o
             CCDX_CONFIGURE_CLAUDE_DESKTOP: "1",
             CCDX_AUTO_LAUNCH: "1",
           },
-        });
-      } catch (error) {
-        assert.equal(error.code, 1);
-        result = error;
-      }
-      const output = `${result.stdout || ""}${result.stderr || ""}`;
-      assert.match(output, /PM Studio/);
-      assert.doesNotMatch(output, /ADAPTER_PORT/);
+        }),
+        (error) => {
+          assert.equal(error.code, 1);
+          assert.match(error.stderr, new RegExp(`${integration} integration was retired in ccdx 0\\.7\\.0`));
+          assert.doesNotMatch(error.stderr, /ADAPTER_PORT/);
+          return true;
+        },
+      );
       assert.equal(fs.existsSync(logPath), false);
       assert.equal(fs.existsSync(path.join(home, ".local")), false);
       assert.equal(fs.existsSync(path.join(home, ".codex")), false);
@@ -229,8 +190,8 @@ test("both CLI entrypoints report auth status through the canonical command", as
 
     assert.match(stdout, /^ccdx auth status/m);
     assert.match(stdout, /Codex: not configured/);
-    assert.match(stdout, /Claude: inherits Codex/);
-    assert.match(stdout, /Routing: responses -> codex; messages -> codex/);
+    assert.match(stdout, /Routing: responses -> codex/);
+    assert.doesNotMatch(stdout, /Claude|Anthropic|messages ->/i);
     assertNoCompatibilityWarning(stderr);
     assert.equal(fs.existsSync(logPath), false);
     assert.equal(fs.existsSync(path.join(home, ".local")), false);
@@ -253,8 +214,9 @@ test("both CLI entrypoints render the same explicit auth status table", async ()
       }),
     ]);
     assert.equal(legacy.stdout, primary.stdout);
-    assert.match(primary.stdout, /^PROFILE\s+ACCOUNT\s+MODE\s+LOCAL\s+ONLINE\s+MODELS\s+CLAUDE$/m);
-    assert.match(primary.stdout, /Routing: responses -> codex; messages -> codex/);
+    assert.match(primary.stdout, /^PROFILE\s+ACCOUNT\s+LOCAL\s+ONLINE\s+MODELS$/m);
+    assert.match(primary.stdout, /Routing: responses -> codex/);
+    assert.doesNotMatch(primary.stdout, /Claude|Anthropic|messages ->/i);
     assert.equal(primary.stderr, "");
     assertNoCompatibilityWarning(legacy.stderr);
     assert.equal(fs.existsSync(path.join(home, ".local")), false);
@@ -268,7 +230,7 @@ test("usage table is explicit while non-interactive default output stays compati
   const usagePath = path.join(home, "usage.jsonl");
   fs.writeFileSync(usagePath, [
     JSON.stringify({ model: "gpt-test", usage: { input_tokens: 10, cached_input_tokens: 4, output_tokens: 2, total_tokens: 12 } }),
-    JSON.stringify({ model: "claude-test", usage: { cache_read_input_tokens: 5, output_tokens: 3, total_tokens: 8 } }),
+    JSON.stringify({ model: "gpt-fast-test", usage: { cache_read_input_tokens: 5, output_tokens: 3, total_tokens: 8 } }),
     "",
   ].join("\n"));
   const env = { ...process.env, HOME: home, CCDX_USAGE_PATH: usagePath, ADAPTER_PORT: "invalid" };
@@ -287,48 +249,6 @@ test("usage table is explicit while non-interactive default output stays compati
     assertNoCompatibilityWarning(legacy.stderr);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test("models --profile claude fails closed without creating or borrowing credentials", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-models-claude-"));
-  await assert.rejects(
-    execFileAsync(process.execPath, [cliPath, "models", "--profile", "claude"], {
-      timeout: 2000,
-      env: { ...process.env, HOME: home, ADAPTER_PORT: "invalid" },
-    }),
-    (error) => {
-      assert.equal(error.code, 1);
-      assert.match(error.stderr, /Claude GitHub profile is not configured/);
-      return true;
-    },
-  );
-  assert.equal(fs.existsSync(path.join(home, ".local")), false);
-});
-
-test("both CLI entrypoints handle an existing Claude login without device flow or runtime startup", async () => {
-  for (const executable of [cliPath, legacyCliPath]) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-existing-"));
-    const profile = writeClaudeAuthProfile("ghu_personal", { login: "personal", id: 2 }, { home });
-    const tokenBefore = fs.readFileSync(profile.paths.tokenPath);
-    const metadataBefore = fs.readFileSync(profile.paths.metadataPath);
-    const { stdout, stderr } = await execFileAsync(process.execPath, [
-      executable,
-      "auth",
-      "login",
-      "claude",
-      "--github-login",
-      "personal",
-    ], {
-      timeout: 2000,
-      env: { ...process.env, HOME: home, ADAPTER_PORT: "invalid" },
-    });
-
-    assert.match(stdout, /Claude profile is already configured for personal/);
-    assert.match(stdout, /Restart the running ccdx adapter/);
-    assertNoCompatibilityWarning(stderr);
-    assert.deepEqual(fs.readFileSync(profile.paths.tokenPath), tokenBefore);
-    assert.deepEqual(fs.readFileSync(profile.paths.metadataPath), metadataBefore);
   }
 });
 
@@ -391,22 +311,19 @@ test("cli doctor exits without starting the adapter", async () => {
   assert.equal(stderr, "");
 });
 
-test("cli doctor returns nonzero when a configuration file is invalid", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-doctor-invalid-"));
+test("cli doctor ignores retired Claude settings and remains Codex-only", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-doctor-retired-"));
   fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
   fs.writeFileSync(path.join(home, ".claude", "settings.json"), "{broken");
 
-  await assert.rejects(
-    execFileAsync(process.execPath, ["--require", nonDarwinPlatformPreload, cliPath, "doctor"], {
-      timeout: 2000,
-      env: { ...process.env, HOME: home, ADAPTER_PORT: "9" },
-    }),
-    (error) => {
-      assert.equal(error.code, 1);
-      assert.match(error.stdout, /\[ERR\] Claude Code settings could not parse/);
-      return true;
-    },
-  );
+  const { stdout, stderr } = await execFileAsync(process.execPath, ["--require", nonDarwinPlatformPreload, cliPath, "doctor"], {
+    timeout: 2000,
+    env: { ...process.env, HOME: home, ADAPTER_PORT: "9" },
+  });
+
+  assert.match(stdout, /^ccdx doctor/m);
+  assert.doesNotMatch(stdout, /Claude|Anthropic/i);
+  assert.equal(stderr, "");
 });
 
 test("deprecated cli doctor heading uses the canonical command name without warning scripts", async () => {

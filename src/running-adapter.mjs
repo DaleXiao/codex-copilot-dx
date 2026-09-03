@@ -3,11 +3,9 @@ import { localPackageVersion } from "./version.mjs";
 
 export const ADAPTER_HEALTH_PATH = "/_ccdx/health";
 export const ADAPTER_STATUS_PATH = "/_ccdx/status";
-export const ADAPTER_PROTOCOL_VERSION = 2;
+export const ADAPTER_PROTOCOL_VERSION = 3;
 export const ADAPTER_VERSION = localPackageVersion();
-export const ADAPTER_CAPABILITIES = Object.freeze([
-  "pm_studio_split_origin_v1",
-]);
+export const ADAPTER_CAPABILITIES = Object.freeze([]);
 const ADAPTER_INSTANCE_ID = randomUUID();
 
 export function adapterHealthPayload() {

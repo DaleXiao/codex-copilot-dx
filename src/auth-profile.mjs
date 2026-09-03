@@ -1,7 +1,5 @@
 import fs from "node:fs";
 import os from "node:os";
-import path from "node:path";
-import { atomicWriteFilePairSync, atomicWriteFileSync } from "./atomic-file.mjs";
 import {
   githubTokenLockPath,
   githubTokenMetadataPath,
@@ -11,172 +9,62 @@ import {
   githubTokenFingerprint,
   normalizeGithubIdentity,
 } from "./github-identity.mjs";
-import { withFileLock } from "./lock.mjs";
-import { parseSafePositiveInteger, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
 
 export const AUTH_PROFILE_CODEX = "codex";
-export const AUTH_PROFILE_CLAUDE = "claude";
-
-const AUTH_PROFILES = new Set([AUTH_PROFILE_CODEX, AUTH_PROFILE_CLAUDE]);
 
 function checkedProfile(profile) {
   const value = String(profile || "").trim().toLowerCase();
-  if (!AUTH_PROFILES.has(value)) throw new Error(`Unsupported authentication profile: ${profile}`);
+  if (value !== AUTH_PROFILE_CODEX) {
+    throw new Error(`Unsupported authentication profile: ${profile}`);
+  }
   return value;
 }
 
 export function authProfilePaths(profile, { home = os.homedir() } = {}) {
   const name = checkedProfile(profile);
-  if (name === AUTH_PROFILE_CODEX) {
-    return {
-      profile: name,
-      tokenPath: githubTokenPath(home),
-      metadataPath: githubTokenMetadataPath(home),
-      lockPath: githubTokenLockPath(home),
-    };
-  }
-
-  const directory = path.join(home, ".local", "share", "copilot-api", "profiles", AUTH_PROFILE_CLAUDE);
-  const tokenPath = path.join(directory, "github_token");
   return {
     profile: name,
-    tokenPath,
-    metadataPath: `${tokenPath}.account.json`,
-    lockPath: `${tokenPath}.lock`,
+    tokenPath: githubTokenPath(home),
+    metadataPath: githubTokenMetadataPath(home),
+    lockPath: githubTokenLockPath(home),
   };
 }
 
 function readOptionalFile(filePath) {
   try {
-    return { exists: true, data: fs.readFileSync(filePath), mode: fs.statSync(filePath).mode & 0o777 };
+    return { exists: true, data: fs.readFileSync(filePath) };
   } catch (error) {
-    if (error?.code === "ENOENT") return { exists: false, data: null, mode: 0o600 };
+    if (error?.code === "ENOENT") return { exists: false, data: null };
     throw error;
   }
 }
 
 function parsedMetadata(snapshot) {
-  if (!snapshot.exists) return { value: null, malformed: false };
+  if (!snapshot.exists) return null;
   try {
-    return { value: JSON.parse(snapshot.data.toString("utf8")), malformed: false };
+    return JSON.parse(snapshot.data.toString("utf8"));
   } catch {
-    return { value: null, malformed: true };
+    return null;
   }
 }
 
 export function readAuthProfileCredentials(profile, { home = os.homedir() } = {}) {
   const paths = authProfilePaths(profile, { home });
   const tokenSnapshot = readOptionalFile(paths.tokenPath);
-  const metadataSnapshot = readOptionalFile(paths.metadataPath);
   const token = tokenSnapshot.exists ? tokenSnapshot.data.toString("utf8").trim() : "";
-  const metadataResult = parsedMetadata(metadataSnapshot);
-  const metadataFingerprint = metadataResult.value?.token_fingerprint;
+  const metadata = parsedMetadata(readOptionalFile(paths.metadataPath));
   const metadataMatchesToken = Boolean(token)
-    && Boolean(metadataFingerprint)
-    && metadataFingerprint === githubTokenFingerprint(token);
-  const metadataIdentity = normalizeGithubIdentity(metadataResult.value);
-  const identity = metadataMatchesToken ? metadataIdentity : null;
-
-  if (paths.profile === AUTH_PROFILE_CODEX) {
-    const configured = tokenSnapshot.exists;
-    return {
-      profile: paths.profile,
-      configured,
-      valid: configured && Boolean(token),
-      reason: !configured ? "unconfigured" : token ? "" : "empty_token",
-      token,
-      identity,
-      metadata: metadataResult.value,
-      paths,
-    };
-  }
-
-  // Metadata is written last, but any credential artifact reserves the Claude
-  // profile. A partial write must fail closed instead of borrowing Codex.
-  const configured = metadataSnapshot.exists || tokenSnapshot.exists;
-  let reason = "";
-  if (!configured) reason = "unconfigured";
-  else if (!metadataSnapshot.exists) reason = "missing_metadata";
-  else if (metadataResult.malformed) reason = "metadata_malformed";
-  else if (!tokenSnapshot.exists) reason = "missing_token";
-  else if (!token) reason = "empty_token";
-  else if (!metadataIdentity) reason = "metadata_identity_missing";
-  else if (!metadataFingerprint || metadataFingerprint !== githubTokenFingerprint(token)) reason = "token_metadata_mismatch";
+    && Boolean(metadata?.token_fingerprint)
+    && metadata.token_fingerprint === githubTokenFingerprint(token);
 
   return {
     profile: paths.profile,
-    configured,
-    valid: configured && !reason,
-    reason,
+    configured: tokenSnapshot.exists,
+    valid: tokenSnapshot.exists && Boolean(token),
+    reason: !tokenSnapshot.exists ? "unconfigured" : token ? "" : "empty_token",
     token,
-    identity,
-    metadata: metadataResult.value,
-    paths,
-  };
-}
-
-function lockOptions(env = process.env) {
-  return {
-    timeoutMs: parseSafePositiveInteger(env.CCDX_TOKEN_LOCK_TIMEOUT_MS, RUNTIME_DEFAULTS.tokenLockTimeoutMs),
-    staleMs: parseSafePositiveInteger(env.CCDX_TOKEN_LOCK_STALE_MS, RUNTIME_DEFAULTS.tokenLockStaleMs),
-  };
-}
-
-export function withAuthProfileLock(profile, fn, {
-  home = os.homedir(),
-  env = process.env,
-  ...options
-} = {}) {
-  const { lockPath } = authProfilePaths(profile, { home });
-  return withFileLock(lockPath, fn, { ...lockOptions(env), ...options });
-}
-
-export function writeClaudeAuthProfile(token, identity, {
-  home = os.homedir(),
-  now = () => new Date(),
-  writeFile = atomicWriteFileSync,
-  unlinkFile = fs.unlinkSync,
-} = {}) {
-  const cleanToken = String(token || "").trim();
-  const normalizedIdentity = normalizeGithubIdentity(identity);
-  if (!cleanToken) throw new Error("Claude GitHub token is empty");
-  if (!normalizedIdentity) throw new Error("Claude GitHub account identity is missing");
-
-  const paths = authProfilePaths(AUTH_PROFILE_CLAUDE, { home });
-  const directory = path.dirname(paths.tokenPath);
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  fs.chmodSync(directory, 0o700);
-
-  const timestamp = now();
-  const updatedAt = timestamp instanceof Date ? timestamp.toISOString() : new Date(timestamp).toISOString();
-  const metadata = `${JSON.stringify({
-    profile: AUTH_PROFILE_CLAUDE,
-    ...normalizedIdentity,
-    token_fingerprint: githubTokenFingerprint(cleanToken),
-    updated_at: updatedAt,
-  }, null, 2)}\n`;
-
-  // Commit the activation marker last. Readers never observe a configured
-  // Claude profile unless the token and its fingerprint agree.
-  atomicWriteFilePairSync(
-    paths.tokenPath,
-    cleanToken,
-    paths.metadataPath,
+    identity: metadataMatchesToken ? normalizeGithubIdentity(metadata) : null,
     metadata,
-    { mode: 0o600, writeFile, unlinkFile },
-  );
-
-  return {
-    profile: AUTH_PROFILE_CLAUDE,
-    identity: normalizedIdentity,
     paths,
   };
-}
-
-export function profileReauthMessage(profile, { home = os.homedir() } = {}) {
-  const name = checkedProfile(profile);
-  if (name === AUTH_PROFILE_CLAUDE) {
-    return "Claude authentication is unavailable. Run `ccdx auth login claude --reauth`, then restart ccdx.";
-  }
-  return `Codex authentication is unavailable at ${authProfilePaths(name, { home }).tokenPath}. Run ccdx again to log in.`;
 }

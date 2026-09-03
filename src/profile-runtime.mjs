@@ -1,11 +1,8 @@
 import {
-  AUTH_PROFILE_CLAUDE,
   AUTH_PROFILE_CODEX,
-  authProfilePaths,
-  profileReauthMessage,
   readAuthProfileCredentials,
 } from "./auth-profile.mjs";
-import { createCopilotClient, defaultCopilotClient } from "./copilot.mjs";
+import { defaultCopilotClient } from "./copilot.mjs";
 import { githubTokenFingerprint } from "./github-identity.mjs";
 
 function safeProfileStatus(credentials) {
@@ -28,75 +25,25 @@ export function createProfileRuntime({
   home,
   codexClient = defaultCopilotClient,
 } = {}) {
-  const unreadableCredentials = () => ({
-    profile: AUTH_PROFILE_CLAUDE,
-    configured: true,
-    valid: false,
-    reason: "credential_read_failed",
-    token: "",
-    identity: null,
-    paths: authProfilePaths(AUTH_PROFILE_CLAUDE, { home }),
-  });
-  const readCredentials = () => {
-    try {
-      return readAuthProfileCredentials(AUTH_PROFILE_CLAUDE, { home });
-    } catch {
-      return unreadableCredentials();
-    }
-  };
-  const credentials = readCredentials();
-  const claudeProfile = safeProfileStatus(credentials);
-  const claudeCredentialFingerprint = credentials.valid
-    ? githubTokenFingerprint(credentials.token)
-    : "";
-  const isClaudeProfileCurrent = () => {
-    if (!claudeCredentialFingerprint) return false;
-    const current = readCredentials();
-    return current.valid === true
-      && githubTokenFingerprint(current.token) === claudeCredentialFingerprint;
-  };
-  let codexCredentialFingerprint = "";
+  let credentials;
   try {
-    const codexCredentials = readAuthProfileCredentials(AUTH_PROFILE_CODEX, { home });
-    if (codexCredentials.valid) {
-      codexCredentialFingerprint = githubTokenFingerprint(codexCredentials.token);
-    }
+    credentials = readAuthProfileCredentials(AUTH_PROFILE_CODEX, { home });
   } catch {
-    // The Codex client remains authoritative if its optional metadata cannot
-    // be inspected; only credential-bound cache reuse is disabled.
+    credentials = {
+      profile: AUTH_PROFILE_CODEX,
+      configured: true,
+      valid: false,
+      reason: "credential_read_failed",
+      token: "",
+      identity: null,
+    };
   }
-
-  if (!credentials.configured) {
-    return Object.freeze({
-      codexClient,
-      claudeClient: codexClient,
-      claudeMode: "inherited",
-      claudeProfile,
-      codexCredentialFingerprint,
-      claudeCredentialFingerprint: "",
-      isClaudeProfileCurrent,
-    });
-  }
-
-  const readRuntimeCredentials = credentials.reason === "credential_read_failed"
-    ? () => credentials
-    : readCredentials;
-  const claudeClient = createCopilotClient({
-    profile: AUTH_PROFILE_CLAUDE,
-    home,
-    tokenPath: credentials.paths.tokenPath,
-    allowTokenDiscovery: false,
-    readGithubCredentials: readRuntimeCredentials,
-    reauthMessage: (reason) => `${reason}\n${profileReauthMessage(AUTH_PROFILE_CLAUDE, { home })}`,
-  });
 
   return Object.freeze({
     codexClient,
-    claudeClient,
-    claudeMode: "isolated",
-    claudeProfile,
-    codexCredentialFingerprint,
-    claudeCredentialFingerprint,
-    isClaudeProfileCurrent,
+    codexProfile: safeProfileStatus(credentials),
+    codexCredentialFingerprint: credentials.valid
+      ? githubTokenFingerprint(credentials.token)
+      : "",
   });
 }

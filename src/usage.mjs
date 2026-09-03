@@ -56,20 +56,6 @@ function normalizeResponsesUsage(usage) {
   return hasPositiveTokenValue(out) ? out : undefined;
 }
 
-function normalizeAnthropicUsage(usage) {
-  if (!usage || typeof usage !== "object") return undefined;
-  const out = compactObject({
-    input_tokens: positiveNumber(usage.input_tokens),
-    cache_read_input_tokens: positiveNumber(usage.cache_read_input_tokens),
-    cache_creation_input_tokens: positiveNumber(usage.cache_creation_input_tokens),
-    output_tokens: positiveNumber(usage.output_tokens),
-  });
-  if (out.input_tokens !== undefined || out.cache_read_input_tokens !== undefined || out.cache_creation_input_tokens !== undefined || out.output_tokens !== undefined) {
-    out.total_tokens = (out.input_tokens || 0) + (out.cache_read_input_tokens || 0) + (out.cache_creation_input_tokens || 0) + (out.output_tokens || 0);
-  }
-  return hasPositiveTokenValue(out) ? out : undefined;
-}
-
 function normalizeCopilotUsage(copilotUsage) {
   if (!copilotUsage || typeof copilotUsage !== "object") return undefined;
   const out = {};
@@ -109,19 +95,6 @@ export function buildResponsesUsageRecord({ surface = "responses", mode, model, 
     response_id: responseObj?.id,
     usage,
     copilot_usage: copilotUsage,
-  });
-}
-
-export function buildAnthropicUsageRecord({ surface = "messages", mode, model, responseId, usage } = {}) {
-  const normalized = normalizeAnthropicUsage(usage);
-  if (!normalized) return null;
-  return compactObject({
-    ts: new Date().toISOString(),
-    surface,
-    mode,
-    model,
-    response_id: responseId,
-    usage: normalized,
   });
 }
 
@@ -186,10 +159,6 @@ export function recordUsage(record) {
 
 export function recordResponsesUsage(args) {
   return recordUsage(buildResponsesUsageRecord(args));
-}
-
-export function recordAnthropicUsage(args) {
-  return recordUsage(buildAnthropicUsageRecord(args));
 }
 
 export async function flushUsageWritesForTests() {

@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { currentRequestContext } from "./request-context.mjs";
 
-const PERFORMANCE_ROUTES = Object.freeze(["responses", "responses_compact", "messages"]);
+const PERFORMANCE_ROUTES = Object.freeze(["responses", "responses_compact"]);
 const TTFT_EDGES_MS = Object.freeze([
   100, 200, 300, 500, 700, 1_000, 1_400, 2_000, 2_800, 4_000,
   5_500, 8_000, 12_000, 16_000, 24_000, 36_000, 60_000, 120_000, 300_000,

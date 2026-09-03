@@ -51,8 +51,7 @@ MODELS="$(curl -fsS --max-time 30 "${BASE_URL}/v1/models")"
 RESPONSES_MODEL="$(node -e 'const d=JSON.parse(process.argv[1]).data||[]; const m=d.find(x => String(x.id||"").startsWith("gpt-") && (x.supported_endpoints||[]).some(e => e === "/responses" || e === "/v1/responses")); if (!m) process.exit(1); process.stdout.write(m.id)' "$MODELS")"
 IMAGE_MODEL="$(node -e 'const d=JSON.parse(process.argv[1]).data||[]; const m=d.find(x => String(x.id||"").startsWith("gpt-") && x.capabilities?.supports?.vision === true && (x.supported_endpoints||[]).some(e => e === "/responses" || e === "/v1/responses")); if (!m) process.exit(1); process.stdout.write(m.id)' "$MODELS")"
 CHAT_MODEL="$(node -e 'const d=JSON.parse(process.argv[1]).data||[]; const m=d.find(x => String(x.id||"").startsWith("gpt-") && (x.supported_endpoints||[]).includes("/chat/completions")); if (!m) process.exit(1); process.stdout.write(m.id)' "$MODELS")"
-CLAUDE_MODEL="$(node -e 'const d=JSON.parse(process.argv[1]).data||[]; const m=d.find(x => String(x.id||"").startsWith("claude-") && (x.supported_endpoints||[]).includes("/chat/completions")); if (!m) process.exit(1); process.stdout.write(m.id)' "$MODELS")"
-echo "[OK] Models: responses=${RESPONSES_MODEL} image=${IMAGE_MODEL} chat=${CHAT_MODEL} claude=${CLAUDE_MODEL}"
+echo "[OK] Models: responses=${RESPONSES_MODEL} image=${IMAGE_MODEL} chat=${CHAT_MODEL}"
 
 DIRECT="$(curl -fsS --max-time 120 -X POST "${BASE_URL}/v1/responses" \
   -H 'Content-Type: application/json' \
@@ -105,23 +104,5 @@ RESPONSE_STREAM="$(curl -fsS -N --max-time 120 -X POST "${BASE_URL}/v1/responses
   -d "{\"model\":\"${CHAT_MODEL}\",\"stream\":true,\"input\":\"reply with OK\"}")"
 grep -q '^event: response.completed' <<<"$RESPONSE_STREAM"
 echo "[OK] Converted Responses stream passed"
-
-MESSAGE="$(curl -fsS --max-time 120 -X POST "${BASE_URL}/v1/messages" \
-  -H 'Content-Type: application/json' \
-  -d "{\"model\":\"${CLAUDE_MODEL}\",\"max_tokens\":16,\"messages\":[{\"role\":\"user\",\"content\":\"reply with OK\"}]}")"
-node -e 'const r=JSON.parse(process.argv[1]); if (r.type !== "message" || !Array.isArray(r.content)) process.exit(1)' "$MESSAGE"
-echo "[OK] Non-streaming Messages request passed"
-
-MESSAGE_STREAM="$(curl -fsS -N --max-time 120 -X POST "${BASE_URL}/v1/messages" \
-  -H 'Content-Type: application/json' \
-  -d "{\"model\":\"${CLAUDE_MODEL}\",\"max_tokens\":16,\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"reply with OK\"}]}")"
-grep -q '^event: message_stop' <<<"$MESSAGE_STREAM"
-echo "[OK] Streaming Messages request passed"
-
-COUNT="$(curl -fsS --max-time 30 -X POST "${BASE_URL}/v1/messages/count_tokens" \
-  -H 'Content-Type: application/json' \
-  -d "{\"model\":\"${CLAUDE_MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"hello world\"}]}")"
-node -e 'const r=JSON.parse(process.argv[1]); if (!(r.input_tokens > 0)) process.exit(1)' "$COUNT"
-echo "[OK] Token counting passed"
 
 echo "[OK] End-to-end smoke test passed"

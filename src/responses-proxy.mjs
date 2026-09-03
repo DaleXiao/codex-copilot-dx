@@ -258,7 +258,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
       }
     } catch (e) {
       logRequestFailure("Responses", e, options.abort);
-      await endStreamWithError(res, "responses", e, options.abort);
+      await endStreamWithError(res, e, options.abort);
       return { successful: false, compacted: false };
     } finally {
       await reader.cancel().catch(() => {});

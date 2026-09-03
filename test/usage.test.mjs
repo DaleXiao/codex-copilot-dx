@@ -6,7 +6,6 @@ import path from "node:path";
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
-  buildAnthropicUsageRecord,
   buildResponsesUsageRecord,
   formatUsageSummary,
   flushUsageWrites,
@@ -276,19 +275,6 @@ test("buildResponsesUsageRecord: skips empty usage", () => {
     response: { id: "resp_1", model: "gpt-5.5", usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } },
   });
   assert.equal(record, null);
-});
-
-test("buildAnthropicUsageRecord: totals Anthropic usage fields", () => {
-  const record = buildAnthropicUsageRecord({
-    mode: "json",
-    model: "claude-sonnet-4.5",
-    responseId: "msg_1",
-    usage: { input_tokens: 7, cache_read_input_tokens: 30, output_tokens: 4 },
-  });
-  assert.equal(record.usage.input_tokens, 7);
-  assert.equal(record.usage.cache_read_input_tokens, 30);
-  assert.equal(record.usage.output_tokens, 4);
-  assert.equal(record.usage.total_tokens, 41);
 });
 
 test("recordUsage: appends JSONL records to CCDX_USAGE_PATH", async () => {

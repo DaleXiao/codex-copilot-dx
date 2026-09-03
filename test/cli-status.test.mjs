@@ -35,7 +35,7 @@ function statusPayload(overrides = {}) {
       timeouts_recorded: 2,
     },
     copilot: { token_cached: true, token_expires_in_ms: 90000 },
-    models: { models: 42, claude_models: 8 },
+    models: { models: 42 },
     limits: {
       max_body_bytes: 64 * 1024 * 1024,
       max_decoded_body_bytes: 128 * 1024 * 1024,
@@ -82,12 +82,12 @@ test("formatAdapterStatus: summarizes runtime health with invocation-aware ident
   assert.match(output, /History: 64\.0MiB \/ 64\.0MiB, 116 entries, 89 evicted/);
   assert.match(output, /Image cache: 5 entries, 99\.2% hits/);
   assert.match(output, /Visual history: 1 recovery trees, 7 adapted requests, 42 older images omitted, 2 timeouts/);
-  assert.match(output, /Models: 42 total, 8 Claude/);
+  assert.match(output, /Models: 42 total; Copilot token cached/);
   assert.match(output, /request body 64\.0MiB, decoded body 128\.0MiB/);
   assert.doesNotMatch(output, /Profiles:|Routing:/);
 });
 
-test("formatAdapterStatus: summarizes dual profiles and routing when available", () => {
+test("formatAdapterStatus: summarizes the Codex profile and Responses routing when available", () => {
   const output = formatAdapterStatus({
     baseUrl: "http://127.0.0.1:2026",
     data: statusPayload({
@@ -95,12 +95,12 @@ test("formatAdapterStatus: summarizes dual profiles and routing when available",
         codex: {
           mode: "legacy",
           client: { token_cached: true, token_expires_in_ms: 90_000 },
-          models: { source: "live", models: 42, claude_models: 8 },
+          models: { source: "live", models: 42 },
         },
         claude: {
           mode: "isolated",
-          client: { token_cached: false, token_expires_in_ms: null },
-          models: { source: "cache", models: 12, claude_models: 12 },
+          client: { token_cached: true, token_expires_in_ms: 90_000 },
+          models: { source: "legacy", models: 8 },
         },
       },
       routing: { responses: "codex", messages: "claude" },
@@ -108,20 +108,17 @@ test("formatAdapterStatus: summarizes dual profiles and routing when available",
         total: 10,
         completed: 10,
         by_route: {
+          responses: { total: 4, active: 1, errors: 1 },
           pm_models: { total: 2, active: 0, errors: 0 },
           pm_chat_completions: { total: 4, active: 1, errors: 1 },
-          pm_responses: { total: 3, active: 0, errors: 0 },
-          pm_embeddings: { total: 1, active: 0, errors: 0 },
         },
       },
     }),
   });
 
-  assert.match(output, /Profiles: Codex legacy: token cached \(1m 30s remaining\), 42 total\/8 Claude models \(live\)/);
-  assert.match(output, /Claude isolated: token not cached, 12 total\/12 Claude models \(cache\)/);
-  assert.match(output, /Routing: \/v1\/responses -> Codex; \/v1\/messages -> Claude/);
-  assert.match(output, /PM relay: 6 requests, 1 active, 1 errors; models 2, chat 4/);
-  assert.doesNotMatch(output, /PM relay:.*(?:responses|embeddings)/);
+  assert.match(output, /Profile: Codex legacy: token cached \(1m 30s remaining\), 42 models \(live\)/);
+  assert.match(output, /Routing: \/v1\/responses -> Codex/);
+  assert.doesNotMatch(output, /Claude|\/v1\/messages|PM relay/);
 });
 
 test("formatAdapterStatus: warns when the running adapter is older than the CLI", () => {

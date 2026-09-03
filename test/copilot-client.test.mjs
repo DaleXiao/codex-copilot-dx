@@ -23,10 +23,10 @@ function authHeader(options) {
   return new Headers(options?.headers).get("authorization");
 }
 
-test("createCopilotClient: isolates credentials, API bases, refreshes, and model metadata", async () => {
+test("createCopilotClient: isolated clients keep credentials, API bases, refreshes, and model metadata separate", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-clients-"));
-  const codexPath = writeToken(home, "codex", "github_enterprise");
-  const claudePath = writeToken(home, "claude", "github_personal");
+  const primaryPath = writeToken(home, "primary", "github_enterprise");
+  const secondaryPath = writeToken(home, "secondary", "github_secondary");
   const calls = [];
   const fetchImpl = async (url, options = {}) => {
     const target = String(url);
@@ -35,9 +35,9 @@ test("createCopilotClient: isolates credentials, API bases, refreshes, and model
     if (target === "https://api.github.com/copilot_internal/v2/token") {
       const enterprise = authorization === "token github_enterprise";
       return Response.json({
-        token: enterprise ? "service_enterprise" : "service_personal",
+        token: enterprise ? "service_enterprise" : "service_secondary",
         expires_at: Math.floor(Date.now() / 1000) + 1800,
-        endpoints: { api: enterprise ? "https://enterprise.example" : "https://personal.example" },
+        endpoints: { api: enterprise ? "https://enterprise.example" : "https://secondary.example" },
       });
     }
     if (target.endsWith("/models")) {
@@ -55,42 +55,42 @@ test("createCopilotClient: isolates credentials, API bases, refreshes, and model
     throw new Error(`Unexpected fetch: ${target}`);
   };
 
-  const codex = createCopilotClient({
+  const primary = createCopilotClient({
     profile: "codex",
-    tokenPath: codexPath,
+    tokenPath: primaryPath,
     tokenFetchImpl: fetchImpl,
     allowTokenDiscovery: false,
     readGithubIdentity: () => ({ login: "enterprise-user", id: 1 }),
   });
-  const claude = createCopilotClient({
-    profile: "claude",
-    tokenPath: claudePath,
+  const secondary = createCopilotClient({
+    profile: "secondary",
+    tokenPath: secondaryPath,
     tokenFetchImpl: fetchImpl,
     allowTokenDiscovery: false,
-    readGithubIdentity: () => ({ login: "personal-user", id: 2 }),
+    readGithubIdentity: () => ({ login: "secondary-user", id: 2 }),
   });
 
   await Promise.all([
-    codex.listModels({ fetchImpl }),
-    claude.listModels({ fetchImpl }),
+    primary.listModels({ fetchImpl }),
+    secondary.listModels({ fetchImpl }),
   ]);
 
-  assert.equal(codex.getApiBase(), "https://enterprise.example");
-  assert.equal(claude.getApiBase(), "https://personal.example");
-  assert.deepEqual(codex.getCachedModelEndpoints("shared-model"), ["/responses"]);
-  assert.deepEqual(claude.getCachedModelEndpoints("shared-model"), ["/chat/completions"]);
-  assert.equal(codex.runtimeStatus().profile, "codex");
-  assert.equal(claude.runtimeStatus().profile, "claude");
+  assert.equal(primary.getApiBase(), "https://enterprise.example");
+  assert.equal(secondary.getApiBase(), "https://secondary.example");
+  assert.deepEqual(primary.getCachedModelEndpoints("shared-model"), ["/responses"]);
+  assert.deepEqual(secondary.getCachedModelEndpoints("shared-model"), ["/chat/completions"]);
+  assert.equal(primary.runtimeStatus().profile, "codex");
+  assert.equal(secondary.runtimeStatus().profile, "secondary");
 
   await Promise.all([
-    codex.chatCompletions({ model: "shared-model", messages: [] }, { fetchImpl }),
-    claude.chatCompletions({ model: "shared-model", messages: [] }, { fetchImpl }),
+    primary.chatCompletions({ model: "shared-model", messages: [] }, { fetchImpl }),
+    secondary.chatCompletions({ model: "shared-model", messages: [] }, { fetchImpl }),
   ]);
 
   const chatCalls = calls.filter(({ target }) => target.endsWith("/chat/completions"));
   assert.deepEqual(chatCalls, [
     { target: "https://enterprise.example/chat/completions", authorization: "Bearer service_enterprise" },
-    { target: "https://personal.example/chat/completions", authorization: "Bearer service_personal" },
+    { target: "https://secondary.example/chat/completions", authorization: "Bearer service_secondary" },
   ]);
   assert.equal(calls.filter(({ target }) => target === "https://api.github.com/copilot_internal/v2/token").length, 2);
 });
@@ -202,42 +202,42 @@ test("createCopilotClient: bounds model catalogs before parsing or caching them"
 
 test("createCopilotClient: non-Codex profiles require an isolated credential source", () => {
   assert.throws(
-    () => createCopilotClient({ profile: "claude" }),
+    () => createCopilotClient({ profile: "secondary" }),
     /requires an isolated tokenPath or readGithubCredentials loader/,
   );
   assert.throws(
-    () => createCopilotClient({ profile: "claude", tokenPath: "" }),
+    () => createCopilotClient({ profile: "secondary", tokenPath: "" }),
     /requires an isolated tokenPath or readGithubCredentials loader/,
   );
   assert.throws(
     () => createCopilotClient({
-      profile: "claude",
-      tokenPath: "/profiles/claude/github_token",
+      profile: "secondary",
+      tokenPath: "/profiles/secondary/github_token",
       allowTokenDiscovery: true,
     }),
     /cannot enable legacy token discovery/,
   );
 });
 
-test("createCopilotClient: a fail-closed Claude refresh does not disturb Codex", async () => {
+test("createCopilotClient: a fail-closed isolated refresh does not disturb the primary client", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-client-failure-"));
-  const codexPath = writeToken(home, "codex", "github_enterprise");
-  const claudePath = writeToken(home, "claude", "github_personal_expired");
-  let codexTokenCalls = 0;
-  let claudeTokenCalls = 0;
+  const primaryPath = writeToken(home, "primary", "github_enterprise");
+  const secondaryPath = writeToken(home, "secondary", "github_secondary_expired");
+  let primaryTokenCalls = 0;
+  let secondaryTokenCalls = 0;
   const fetchImpl = async (url, options = {}) => {
     const target = String(url);
     const authorization = authHeader(options);
     if (target === "https://api.github.com/copilot_internal/v2/token") {
       if (authorization === "token github_enterprise") {
-        codexTokenCalls += 1;
+        primaryTokenCalls += 1;
         return Response.json({
           token: "service_enterprise",
           expires_at: Math.floor(Date.now() / 1000) + 1800,
           endpoints: { api: "https://enterprise.example" },
         });
       }
-      claudeTokenCalls += 1;
+      secondaryTokenCalls += 1;
       return new Response("denied", { status: 401 });
     }
     if (target === "https://enterprise.example/chat/completions") {
@@ -245,40 +245,40 @@ test("createCopilotClient: a fail-closed Claude refresh does not disturb Codex",
     }
     throw new Error(`Unexpected fetch: ${target}`);
   };
-  const codex = createCopilotClient({
+  const primary = createCopilotClient({
     profile: "codex",
-    tokenPath: codexPath,
+    tokenPath: primaryPath,
     tokenFetchImpl: fetchImpl,
     allowTokenDiscovery: false,
     readGithubIdentity: () => ({ login: "enterprise-user", id: 1 }),
   });
-  const claude = createCopilotClient({
-    profile: "claude",
-    tokenPath: claudePath,
+  const secondary = createCopilotClient({
+    profile: "secondary",
+    tokenPath: secondaryPath,
     tokenFetchImpl: fetchImpl,
     allowTokenDiscovery: false,
-    readGithubIdentity: () => ({ login: "personal-user", id: 2 }),
-    reauthMessage: (reason) => `${reason} Reauthorize only the Claude profile.`,
+    readGithubIdentity: () => ({ login: "secondary-user", id: 2 }),
+    reauthMessage: (reason) => `${reason} Reauthorize only the secondary profile.`,
   });
 
-  await codex.chatCompletions({ model: "gpt", messages: [] }, { fetchImpl });
+  await primary.chatCompletions({ model: "gpt", messages: [] }, { fetchImpl });
   await assert.rejects(
-    claude.chatCompletions({ model: "claude", messages: [] }, { fetchImpl }),
-    (error) => error.statusCode === 401 && /only the Claude profile/.test(error.message),
+    secondary.chatCompletions({ model: "alternate", messages: [] }, { fetchImpl }),
+    (error) => error.statusCode === 401 && /only the secondary profile/.test(error.message),
   );
-  await codex.chatCompletions({ model: "gpt", messages: [] }, { fetchImpl });
+  await primary.chatCompletions({ model: "gpt", messages: [] }, { fetchImpl });
 
-  assert.equal(codexTokenCalls, 1);
-  assert.equal(claudeTokenCalls, 1);
-  assert.equal(codex.runtimeStatus().token_cached, true);
-  assert.equal(claude.runtimeStatus().token_cached, false);
+  assert.equal(primaryTokenCalls, 1);
+  assert.equal(secondaryTokenCalls, 1);
+  assert.equal(primary.runtimeStatus().token_cached, true);
+  assert.equal(secondary.runtimeStatus().token_cached, false);
 });
 
-test("createCopilotClient: rejects an inactive Claude credential snapshot before token exchange", async () => {
+test("createCopilotClient: rejects an inactive isolated credential snapshot before token exchange", async () => {
   let fetchCalls = 0;
-  const claude = createCopilotClient({
-    profile: "claude",
-    tokenPath: "/profiles/claude/github_token",
+  const secondary = createCopilotClient({
+    profile: "secondary",
+    tokenPath: "/profiles/secondary/github_token",
     allowTokenDiscovery: false,
     readGithubCredentials: () => ({
       configured: true,
@@ -289,10 +289,10 @@ test("createCopilotClient: rejects an inactive Claude credential snapshot before
   });
 
   await assert.rejects(
-    claude.getCopilotToken({ fetchImpl: async () => { fetchCalls += 1; } }),
+    secondary.getCopilotToken({ fetchImpl: async () => { fetchCalls += 1; } }),
     (error) => error.statusCode === 401
       && /token_metadata_mismatch/.test(error.message)
-      && /ccdx auth login claude --reauth/.test(error.message),
+      && /ccdx auth login secondary --reauth/.test(error.message),
   );
   assert.equal(fetchCalls, 0);
 });

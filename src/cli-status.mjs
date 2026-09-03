@@ -61,27 +61,12 @@ function profileSummary(label, profile = {}) {
   const token = client.token_cached
     ? `token cached (${duration(client.token_expires_in_ms)} remaining)`
     : "token not cached";
-  return `${label} ${mode}: ${token}, ${count(models.models)} total/${count(models.claude_models)} Claude models (${source})`;
+  return `${label} ${mode}: ${token}, ${count(models.models)} models (${source})`;
 }
 
 function routingTarget(value) {
   if (value === "codex") return "Codex";
-  if (value === "claude") return "Claude";
   return "unknown";
-}
-
-function pmRouteSummary(requests = {}) {
-  const routes = requests.by_route;
-  if (!routes || typeof routes !== "object") return null;
-  const names = ["pm_models", "pm_chat_completions"];
-  const totals = names.reduce((summary, name) => {
-    const route = routes[name] || {};
-    summary.total += finiteNumber(route.total) || 0;
-    summary.active += finiteNumber(route.active) || 0;
-    summary.errors += finiteNumber(route.errors) || 0;
-    return summary;
-  }, { total: 0, active: 0, errors: 0 });
-  return `PM relay: ${count(totals.total)} requests, ${count(totals.active)} active, ${count(totals.errors)} errors; models ${count(routes.pm_models?.total)}, chat ${count(routes.pm_chat_completions?.total)}`;
 }
 
 function errorCode(error) {
@@ -171,15 +156,13 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
   if (imageHistory && typeof imageHistory === "object") {
     lines.push(status("info", `Visual history: ${count(imageHistory.active_recovery_trees)} recovery trees, ${count(imageHistory.adapted_requests)} adapted requests, ${count(imageHistory.historical_images_omitted)} older images omitted, ${count(imageHistory.timeouts_recorded)} timeouts`));
   }
-  lines.push(status("info", `Models: ${count(models.models)} total, ${count(models.claude_models)} Claude; Copilot token ${copilot.token_cached ? `cached (${duration(copilot.token_expires_in_ms)} remaining)` : "not cached"}`));
-  if (data.profiles?.codex || data.profiles?.claude) {
-    lines.push(status("info", `Profiles: ${profileSummary("Codex", data.profiles?.codex)}; ${profileSummary("Claude", data.profiles?.claude)}`));
+  lines.push(status("info", `Models: ${count(models.models)} total; Copilot token ${copilot.token_cached ? `cached (${duration(copilot.token_expires_in_ms)} remaining)` : "not cached"}`));
+  if (data.profiles?.codex) {
+    lines.push(status("info", `Profile: ${profileSummary("Codex", data.profiles.codex)}`));
   }
-  if (data.routing) {
-    lines.push(status("info", `Routing: /v1/responses -> ${routingTarget(data.routing.responses)}; /v1/messages -> ${routingTarget(data.routing.messages)}`));
+  if (data.routing?.responses) {
+    lines.push(status("info", `Routing: /v1/responses -> ${routingTarget(data.routing.responses)}`));
   }
-  const pmSummary = pmRouteSummary(requests);
-  if (pmSummary) lines.push(status("info", pmSummary));
   lines.push(status("info", `Limits: request body ${mebibytes(limits.max_body_bytes)}, decoded body ${mebibytes(limits.max_decoded_body_bytes)}`));
   return lines.join("\n");
 }

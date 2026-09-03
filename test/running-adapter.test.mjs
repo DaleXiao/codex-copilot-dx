@@ -32,7 +32,8 @@ test("adapterBaseUrl: builds local probe URLs", () => {
 
 test("adapter health reports the version frozen for this process", () => {
   assert.equal(adapterHealthPayload().version, ADAPTER_VERSION);
-  assert.equal(adapterHealthPayload().version, ADAPTER_VERSION);
+  assert.equal(adapterHealthPayload().protocol_version, 3);
+  assert.deepEqual(ADAPTER_CAPABILITIES, []);
   assert.deepEqual(adapterHealthPayload().capabilities, ADAPTER_CAPABILITIES);
 });
 
@@ -55,7 +56,7 @@ test("checkRunningAdapter: accepts only codex-copilot-dx health payloads", async
   assert.equal(other.ok, false);
 });
 
-test("checkRunningAdapter: rejects old or mismatched adapter versions", async () => {
+test("checkRunningAdapter: rejects old protocols or mismatched adapter versions", async () => {
   const legacy = await checkRunningAdapter({
     fetchImpl: async () => jsonResp(200, { ok: true, name: "codex-copilot-dx", pid: 123 }),
   });
@@ -70,19 +71,17 @@ test("checkRunningAdapter: rejects old or mismatched adapter versions", async ()
   assert.equal(mismatched.ok, false);
   assert.equal(mismatched.incompatible, true);
 
-  const missingRelay = await checkRunningAdapter({
-    fetchImpl: async () => jsonResp(200, { ...adapterHealthPayload(), capabilities: [] }),
+  const oldProtocol = await checkRunningAdapter({
+    fetchImpl: async () => jsonResp(200, { ...adapterHealthPayload(), protocol_version: 2 }),
   });
-  assert.equal(missingRelay.ok, false);
-  assert.equal(missingRelay.incompatible, true);
-  assert.deepEqual(missingRelay.requiredCapabilities, ADAPTER_CAPABILITIES);
+  assert.equal(oldProtocol.ok, false);
+  assert.equal(oldProtocol.incompatible, true);
 
-  const legacyRelay = await checkRunningAdapter({
+  const legacyCapabilityIsIrrelevant = await checkRunningAdapter({
     fetchImpl: async () => jsonResp(200, {
       ...adapterHealthPayload(),
       capabilities: ["pm_studio_relay_v1"],
     }),
   });
-  assert.equal(legacyRelay.ok, false);
-  assert.equal(legacyRelay.incompatible, true);
+  assert.equal(legacyCapabilityIsIrrelevant.ok, true);
 });

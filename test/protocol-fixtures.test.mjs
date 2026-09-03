@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { anthropicToChat } from "../src/anthropic.mjs";
 import { responsesToChat } from "../src/responses-bridge.mjs";
 import { prepareResponsesRequest } from "../src/responses-request.mjs";
 
@@ -40,31 +39,4 @@ test("Responses fixture preserves images, tools, and structured output across th
   assert.deepEqual(chat.tool_choice, { type: "function", function: { name: "lookup_weather" } });
   assert.equal(chat.max_completion_tokens, 1024);
   assert.equal(chat.response_format.json_schema.name, "weather_result");
-});
-
-test("Anthropic fixture preserves images, tool calls, tool results, and controls", () => {
-  const request = fixture("anthropic-message-request.json");
-  const chat = anthropicToChat(request, { upstreamModel: "claude-sonnet-4.6-upstream" });
-
-  assert.deepEqual(chat.messages[0], { role: "system", content: "Be concise.\nUse tools carefully." });
-  assert.deepEqual(chat.messages[1].content[1], {
-    type: "image_url",
-    image_url: { url: "data:image/png;base64,aW1hZ2U=" },
-  });
-  assert.equal(chat.messages[2].content, "I will inspect it.");
-  assert.deepEqual(chat.messages[2].tool_calls[0], {
-    id: "tool_1",
-    type: "function",
-    function: { name: "inspect_image", arguments: "{\"detail\":\"high\"}" },
-  });
-  assert.deepEqual(chat.messages[3], {
-    role: "tool",
-    tool_call_id: "tool_1",
-    content: "A terminal window",
-  });
-  assert.equal(chat.model, "claude-sonnet-4.6-upstream");
-  assert.equal(chat.tools[0].function.name, "inspect_image");
-  assert.deepEqual(chat.tool_choice, { type: "function", function: { name: "inspect_image" } });
-  assert.equal(chat.max_tokens, 2048);
-  assert.deepEqual(chat.stop, ["END"]);
 });

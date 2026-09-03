@@ -13,10 +13,6 @@ const ROUTE_NAMES = Object.freeze([
   "responses",
   "responses_compact",
   "models",
-  "messages",
-  "messages_count_tokens",
-  "pm_models",
-  "pm_chat_completions",
   "not_found",
 ]);
 
@@ -98,10 +94,6 @@ export function classifyAdapterRoute(method, pathname) {
   if (method === "POST" && pathname === "/v1/responses") return "responses";
   if (method === "POST" && pathname === "/v1/responses/compact") return "responses_compact";
   if (method === "GET" && pathname === "/v1/models") return "models";
-  if (method === "POST" && pathname === "/v1/messages") return "messages";
-  if (method === "POST" && pathname === "/v1/messages/count_tokens") return "messages_count_tokens";
-  if (method === "GET" && pathname === "/pm-ccdx/models") return "pm_models";
-  if (method === "POST" && pathname === "/pm-ccdx/chat/completions") return "pm_chat_completions";
   return "not_found";
 }
 
@@ -119,7 +111,6 @@ function modelRegistryStatus(modelRegistry) {
   const result = {
     source: String(modelRegistry?.source || "built-in"),
     models: Array.isArray(modelData) ? modelData.length : 0,
-    claude_models: Array.isArray(modelRegistry?.modelDefs) ? modelRegistry.modelDefs.length : 0,
   };
   if (typeof modelRegistry?.cacheState === "string") {
     const savedAtMs = Number(modelRegistry.cacheSavedAtMs);
@@ -158,15 +149,6 @@ function safeClientRuntimeStatus(client) {
   };
 }
 
-function safeProfileCurrent(checkProfileCurrent) {
-  if (typeof checkProfileCurrent !== "function") return false;
-  try {
-    return checkProfileCurrent() === true;
-  } catch {
-    return false;
-  }
-}
-
 export function runtimeStatusPayload({
   metrics,
   streamPerformance,
@@ -174,24 +156,11 @@ export function runtimeStatusPayload({
   imagePressure,
   modelRegistry,
   codexClient,
-  claudeClient,
   codexModelRegistry,
-  claudeModelRegistry,
-  claudeMode = "inherited",
-  isClaudeProfileCurrent,
 } = {}) {
   const memory = process.memoryUsage();
-  const resolvedClaudeMode = claudeMode === "isolated" ? "isolated" : "inherited";
   const codexRuntime = safeClientRuntimeStatus(codexClient);
   const codexModels = modelRegistryStatus(codexModelRegistry || modelRegistry);
-  const claudeRuntime = resolvedClaudeMode === "isolated"
-    ? safeClientRuntimeStatus(claudeClient)
-    : codexRuntime;
-  const claudeModels = resolvedClaudeMode === "isolated"
-    ? modelRegistryStatus(claudeModelRegistry)
-    : codexModels;
-  const claudeProfileCurrent = resolvedClaudeMode === "isolated"
-    && safeProfileCurrent(isClaudeProfileCurrent);
   return {
     ...adapterHealthPayload(),
     uptime_ms: Math.round(process.uptime() * 1000),
@@ -212,14 +181,8 @@ export function runtimeStatusPayload({
     models: codexModels,
     profiles: {
       codex: { mode: "legacy", client: codexRuntime, models: codexModels },
-      claude: {
-        mode: resolvedClaudeMode,
-        profile_current: claudeProfileCurrent,
-        client: claudeRuntime,
-        models: claudeModels,
-      },
     },
-    routing: profileRouting({ claudeMode: resolvedClaudeMode }),
+    routing: profileRouting(),
     limits: {
       max_body_bytes: OBSERVABILITY_RUNTIME_CONFIG.maxBodyBytes,
       max_decoded_body_bytes: OBSERVABILITY_RUNTIME_CONFIG.maxDecodedBodyBytes,

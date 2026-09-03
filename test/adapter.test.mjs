@@ -29,7 +29,6 @@ import {
   responsesToChat,
   sanitizeImageNamespaceCollisionRequest,
   sanitizeEncryptedReasoningRequest,
-  shouldServeClaudeDesktopModels,
   stripInternalResponsesInputFields,
   writeOrDrain,
 } from "../src/adapter.mjs";
@@ -102,12 +101,7 @@ async function invokeAdapter(options, { method = "POST", url = "/v1/responses", 
   return invokeAdapterRequest(options, req);
 }
 
-test("requestPath: ignores Claude Code beta query on messages route", () => {
-  assert.equal(requestPath("/v1/messages?beta=true"), "/v1/messages");
-});
-
-test("requestPath: ignores query strings on other API routes", () => {
-  assert.equal(requestPath("/v1/messages/count_tokens?beta=true"), "/v1/messages/count_tokens");
+test("requestPath: ignores query strings on API routes", () => {
   assert.equal(requestPath("/v1/responses?stream=true"), "/v1/responses");
   assert.equal(requestPath("/v1/responses/compact?stream=true"), "/v1/responses/compact");
   assert.equal(requestPath("/v1/models?foo=bar"), "/v1/models");
@@ -184,106 +178,54 @@ test("createAdapterHandler contains non-Error rejection and metric completion fa
   }
 });
 
-test("HTTP count_tokens route awaits the lazy tokenizer", async () => {
-  const result = await invokeAdapter({}, {
-    url: "/v1/messages/count_tokens",
-    body: { model: "m", messages: [{ role: "user", content: "hello world" }] },
-  });
-
-  assert.equal(result.status, 200);
-  assert.ok(JSON.parse(result.text).input_tokens > 0);
-});
-
-test("HTTP count_tokens preserves client errors and classifies service failures", async () => {
-  const malformed = jsonRequest(Buffer.from("{"), undefined, { "content-type": "application/json" });
-  malformed.url = "/v1/messages/count_tokens";
-  malformed.method = "POST";
-  assert.equal((await invokeAdapterRequest({}, malformed)).status, 400);
-
-  const invalidStructure = jsonRequest(Buffer.from("null"), undefined, { "content-type": "application/json" });
-  invalidStructure.url = "/v1/messages/count_tokens";
-  invalidStructure.method = "POST";
-  assert.equal((await invokeAdapterRequest({}, invalidStructure)).status, 400);
-
-  for (const statusCode of [503, 504, 500]) {
-    const result = await invokeAdapter({
-      tokenCounterService: {
-        count: async () => { throw Object.assign(new Error("token counter unavailable"), { statusCode }); },
-      },
-    }, {
-      url: "/v1/messages/count_tokens",
-      body: { model: "m", messages: [] },
-    });
-    assert.equal(result.status, statusCode);
-  }
-});
-
-test("PM Studio namespace is mounted on the existing adapter with isolated identity routing", async () => {
-  const enterpriseCalls = [];
-  const claudeCalls = [];
-  const claudeModel = {
-    id: "claude-personal",
-    vendor: "Anthropic",
-    model_picker_enabled: true,
-    supported_endpoints: ["/chat/completions"],
-  };
-  const pmStudioFetchImpl = async (url, init) => {
-    enterpriseCalls.push({ url, authorization: new Headers(init.headers).get("authorization") });
-    if (url.endsWith("/models")) {
-      return Response.json({ data: [{ id: "gpt-enterprise", vendor: "OpenAI" }] });
-    }
-    return Response.json({ id: "pm-response" });
-  };
-  const codexClient = { chatCompletions: async () => Response.json({}) };
-  const claudeClient = {
-    async chatCompletions(body, { fetchImpl, signal }) {
-      claudeCalls.push(body.model);
-      return fetchImpl("https://api.githubcopilot.com/chat/completions", {
-        method: "POST",
-        headers: { Authorization: "Bearer isolated-claude" },
-        body: JSON.stringify(body),
-        signal,
-      });
-    },
+test("HTTP retired Claude routes return 410 without reading the body or contacting upstream", async () => {
+  const upstreamCalls = [];
+  const unexpectedCall = (name) => () => {
+    upstreamCalls.push(name);
+    throw new Error(`${name} should not be called`);
   };
   const options = {
-    codexClient,
-    claudeClient,
-    claudeMode: "isolated",
-    claudeProfile: { valid: true },
-    codexModelRegistry: {},
-    claudeModelRegistry: { models: { data: [claudeModel] } },
-    pmStudioFetchImpl,
+    acquireRequest: unexpectedCall("request admission"),
+    chatCompletionsFn: unexpectedCall("Chat Completions"),
+    responsesFn: unexpectedCall("Responses"),
+    responsesCompactFn: unexpectedCall("Responses compact"),
+    listModelsFn: unexpectedCall("models"),
   };
 
-  const models = await invokeAdapter(options, {
-    method: "GET",
-    url: "/pm-ccdx/models",
-    headers: { authorization: "Bearer pm-enterprise" },
-  });
-  assert.equal(models.status, 200);
-  assert.deepEqual(JSON.parse(models.text).data.map(({ id }) => id), ["gpt-enterprise", "claude-personal"]);
+  for (const url of ["/v1/messages?beta=true", "/v1/messages/count_tokens?beta=true"]) {
+    let bodyRead = false;
+    const req = new Readable({
+      read() {
+        bodyRead = true;
+        this.push(Buffer.from("{not valid json"));
+        this.push(null);
+      },
+    });
+    req.method = "POST";
+    req.url = url;
+    req.headers = { "content-type": "application/json" };
+    req.socket = { remoteAddress: "127.0.0.1" };
 
-  const claude = await invokeAdapter(options, {
-    url: "/pm-ccdx/chat/completions",
-    headers: { authorization: "Bearer pm-enterprise" },
-    body: { model: "claude-personal", messages: [] },
-  });
-  assert.equal(claude.status, 200);
-  assert.deepEqual(claudeCalls, ["claude-personal"]);
-  assert.deepEqual(enterpriseCalls, [
-    { url: "https://api.githubcopilot.com/models", authorization: "Bearer pm-enterprise" },
-    { url: "https://api.githubcopilot.com/models", authorization: "Bearer pm-enterprise" },
-    { url: "https://api.githubcopilot.com/chat/completions", authorization: "Bearer isolated-claude" },
-  ]);
+    const result = await invokeAdapterRequest(options, req);
+    assert.equal(result.status, 410);
+    assert.equal(result.headers["Cache-Control"], "no-store");
+    assert.equal(JSON.parse(result.text).error.code, "ccdx_claude_retired");
+    assert.equal(bodyRead, false);
+  }
+  assert.deepEqual(upstreamCalls, []);
 });
 
-test("shouldServeClaudeDesktopModels: detects only configured Desktop keys", () => {
-  assert.equal(shouldServeClaudeDesktopModels({ headers: { "anthropic-version": "2023-06-01" } }, ""), false);
-  assert.equal(shouldServeClaudeDesktopModels({ headers: { authorization: "Bearer ccdx_secret" } }, "ccdx_secret"), true);
-  assert.equal(shouldServeClaudeDesktopModels({ headers: { "x-api-key": "ccdx_secret" } }, "ccdx_secret"), true);
-  assert.equal(shouldServeClaudeDesktopModels({ headers: { authorization: "Bearer dummy" } }, "dummy"), false);
-  assert.equal(shouldServeClaudeDesktopModels({ headers: { authorization: "Bearer other" } }, "ccdx_secret"), false);
+test("HTTP PM Studio namespace is not mounted", async () => {
+  for (const [method, url] of [
+    ["GET", "/pm-ccdx/models"],
+    ["POST", "/pm-ccdx/chat/completions"],
+    ["POST", "/pm-ccdx/responses"],
+    ["POST", "/pm-ccdx/embeddings"],
+  ]) {
+    const result = await invokeAdapter({}, { method, url, body: { model: "gpt-5.6-sol" } });
+    assert.equal(result.status, 404);
+    assert.deepEqual(JSON.parse(result.text), { error: "Not found" });
+  }
 });
 
 test("createRequestAbort: records client close reason", () => {
@@ -548,7 +490,6 @@ test("HTTP proxy routes classify upstream network failures as Bad Gateway", asyn
   const cases = [
     [{ responsesFn: failure }, { body: { model: "gpt-5.6-sol", input: "hello" } }],
     [{ responsesCompactFn: failure }, { url: "/v1/responses/compact", body: { model: "gpt-5.6-sol", input: "hello" } }],
-    [{ chatCompletionsFn: failure }, { url: "/v1/messages", body: { model: "claude-sonnet-4.6", messages: [{ role: "user", content: "hello" }] } }],
   ];
 
   for (const [options, request] of cases) {
@@ -1061,65 +1002,6 @@ test("HTTP native unary Responses cancels an oversized upstream error body", asy
   assert.equal(response.status, 502);
   assert.equal(JSON.parse(response.text).error.code, "ccdx_upstream_response_too_large");
   assert.equal(cancelled, true);
-});
-
-test("HTTP Messages stream emits an Anthropic SSE error after headers", async () => {
-  const result = await invokeAdapter({
-    streamIdleTimeoutMs: 5,
-    chatCompletionsFn: (_body, { signal }) => {
-      const body = new ReadableStream({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"));
-          signal.addEventListener("abort", () => controller.error(new DOMException("This operation was aborted", "AbortError")), { once: true });
-        },
-      });
-      return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
-    },
-  }, {
-    url: "/v1/messages",
-    body: { model: "claude-sonnet-4.6", stream: true, messages: [{ role: "user", content: "hello" }] },
-  });
-
-  assert.equal(result.status, 200);
-  assert.match(result.text, /event: content_block_delta/);
-  assert.match(result.text, /event: error\ndata: \{"type":"error","error":\{"type":"api_error"/);
-  assert.match(result.text, /stream_idle_timeout/);
-});
-
-test("HTTP Messages stream preserves text emitted after tool calls", async () => {
-  const body = [
-    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tu_1","function":{"name":"lookup","arguments":"{}"}}]}}]}',
-    'data: {"choices":[{"delta":{"content":"after tool"}}]}',
-    'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
-    "data: [DONE]",
-    "",
-  ].join("\n\n");
-  let upstreamRequest;
-  const result = await invokeAdapter({
-    chatCompletionsFn: async (request) => {
-      upstreamRequest = request;
-      return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
-    },
-  }, {
-    url: "/v1/messages",
-    body: { model: "claude-sonnet-4.6", stream: true, messages: [{ role: "user", content: "hello" }] },
-  });
-
-  const events = result.text
-    .split(/\n\n/)
-    .map((block) => block.split("\n").find((line) => line.startsWith("data: "))?.slice(6))
-    .filter(Boolean)
-    .map((data) => JSON.parse(data));
-  const starts = events.filter((event) => event.type === "content_block_start");
-  assert.equal(result.status, 200);
-  assert.equal(upstreamRequest.stream_options.include_usage, true);
-  assert.deepEqual(starts.map((event) => event.content_block.type), ["tool_use", "text"]);
-  assert.equal(events.find((event) => event.delta?.type === "text_delta")?.delta.text, "after tool");
-  assert.ok(
-    events.findIndex((event) => event.type === "content_block_stop" && event.index === 0)
-      < events.findIndex((event) => event.type === "content_block_start" && event.index === 1),
-  );
-  assert.equal(events.at(-1).type, "message_stop");
 });
 
 test("prepareResponsesRequest: expands previous response history locally", () => {
@@ -3119,40 +3001,6 @@ test("HTTP streaming Responses chat bridge rejects an irreducible oversized body
   await assertChatBridgeRejectsOversizedCurrentInput(true);
 });
 
-test("HTTP non-stream Messages route preserves upstream error status", async () => {
-  const response = await invokeAdapter({
-    chatCompletionsFn: async () => new Response(JSON.stringify({ error: { message: "rate limited" } }), {
-      status: 429,
-      headers: { "Content-Type": "application/json" },
-    }),
-  }, {
-    url: "/v1/messages",
-    body: { model: "claude-sonnet-4.6", messages: [{ role: "user", content: "hello" }], stream: false },
-  });
-
-  assert.equal(response.status, 429);
-  assert.deepEqual(JSON.parse(response.text), { error: { message: "rate limited" } });
-});
-
-test("HTTP models route reads the live model registry on every request", async () => {
-  const modelRegistry = {
-    modelDefs: [{ id: "claude-a", upstream: "claude-a", displayName: "Claude A" }],
-  };
-  const options = { claudeDesktopApiKey: "ccdx_test", modelRegistry };
-  const request = {
-    method: "GET",
-    url: "/v1/models",
-    headers: { authorization: "Bearer ccdx_test" },
-  };
-
-  const first = await invokeAdapter(options, request);
-  assert.deepEqual(JSON.parse(first.text).data.map((model) => model.id), ["claude-a"]);
-
-  modelRegistry.modelDefs = [{ id: "claude-b", upstream: "claude-b", displayName: "Claude B" }];
-  const second = await invokeAdapter(options, request);
-  assert.deepEqual(JSON.parse(second.text).data.map((model) => model.id), ["claude-b"]);
-});
-
 test("HTTP models route updates and falls back to last-known-good model metadata", async () => {
   const cached = { data: [{ id: "gpt-cached", supported_endpoints: ["/responses"] }] };
   const live = { data: [{ id: "gpt-live", supported_endpoints: ["/responses"] }] };
@@ -3204,64 +3052,7 @@ test("HTTP models route rejects malformed live data when no last-known-good list
   assert.match(JSON.parse(result.text).error, /no valid models/);
 });
 
-test("createAdapterHandler rejects contradictory explicit Claude routing modes", () => {
-  const codexClient = {};
-  const claudeClient = {};
-
-  assert.throws(
-    () => createAdapterHandler({ codexClient, claudeMode: "isolated" }),
-    /requires a distinct Claude client/,
-  );
-  assert.throws(
-    () => createAdapterHandler({ codexClient, claudeClient: codexClient, claudeMode: "isolated" }),
-    /requires a distinct Claude client/,
-  );
-  assert.throws(
-    () => createAdapterHandler({ codexClient, claudeClient, claudeMode: "inherited" }),
-    /requires the Codex client/,
-  );
-  assert.throws(
-    () => createAdapterHandler({ codexClient, claudeClient, claudeMode: "isolated" }),
-    /requires a distinct Claude model registry/,
-  );
-  const sharedRegistry = {};
-  assert.throws(
-    () => createAdapterHandler({
-      codexClient,
-      claudeClient,
-      claudeMode: "isolated",
-      codexModelRegistry: sharedRegistry,
-      claudeModelRegistry: sharedRegistry,
-    }),
-    /requires a distinct Claude model registry/,
-  );
-  assert.throws(
-    () => createAdapterHandler({
-      codexClient,
-      claudeClient,
-      claudeMode: "isolated",
-      claudeModelRegistry: {},
-      chatCompletionsFn: async () => Response.json({}),
-    }),
-    /cannot use the shared chatCompletionsFn override/,
-  );
-  assert.throws(
-    () => createAdapterHandler({ codexClient, claudeMode: "other" }),
-    /Unsupported Claude mode/,
-  );
-  assert.doesNotThrow(() => createAdapterHandler({
-    codexClient,
-    claudeClient: codexClient,
-    claudeMode: "inherited",
-  }));
-  assert.doesNotThrow(() => createAdapterHandler({
-    codexClient,
-    claudeClient,
-    claudeModelRegistry: {},
-  }));
-});
-
-test("HTTP routes keep Codex and Claude clients isolated, including Responses fallback and model discovery", async () => {
+test("HTTP Codex routes preserve Responses fallback, compact, and model discovery", async () => {
   const calls = [];
   const codexClient = {
     getCachedModelEndpoints(model) {
@@ -3292,24 +3083,9 @@ test("HTTP routes keep Codex and Claude clients isolated, including Responses fa
       return { status: 200, body: JSON.stringify({ data: [{ id: "gpt-native" }] }) };
     },
   };
-  const claudeClient = {
-    async chatCompletions(body) {
-      calls.push(["claude.chat", body.model]);
-      return Response.json({
-        id: "chat_claude",
-        model: body.model,
-        choices: [{ message: { role: "assistant", content: "claude" } }],
-      });
-    },
-  };
   const options = {
     codexClient,
-    claudeClient,
-    claudeDesktopApiKey: "claude-key",
     codexModelRegistry: { models: { data: [{ id: "gpt-cached" }] } },
-    claudeModelRegistry: {
-      modelDefs: [{ id: "claude-personal", upstream: "claude-personal", displayName: "Claude Personal" }],
-    },
   };
 
   assert.equal((await invokeAdapter(options, {
@@ -3322,25 +3098,14 @@ test("HTTP routes keep Codex and Claude clients isolated, including Responses fa
     url: "/v1/responses/compact",
     body: { model: "gpt-native", input: "compact" },
   })).status, 200);
-  assert.equal((await invokeAdapter(options, {
-    url: "/v1/messages",
-    body: { model: "claude-personal", messages: [{ role: "user", content: "hello" }] },
-  })).status, 200);
 
   const codexModels = await invokeAdapter(options, { method: "GET", url: "/v1/models" });
   assert.deepEqual(JSON.parse(codexModels.text).data.map(({ id }) => id), ["gpt-native"]);
-  const claudeModels = await invokeAdapter(options, {
-    method: "GET",
-    url: "/v1/models",
-    headers: { authorization: "Bearer claude-key" },
-  });
-  assert.deepEqual(JSON.parse(claudeModels.text).data.map(({ id }) => id), ["claude-personal"]);
 
   assert.deepEqual(calls, [
     ["codex.responses", "gpt-native"],
     ["codex.chat", "gpt-chat"],
     ["codex.compact", "gpt-native"],
-    ["claude.chat", "claude-personal"],
     ["codex.models"],
   ]);
 });

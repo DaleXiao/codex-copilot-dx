@@ -80,8 +80,7 @@ function setTomlKey(lines, sectionName, key, value) {
 }
 
 export function computeUpdatedCodexConfig(content, adapterPort = 2026, adapterHost = "127.0.0.1") {
-  const anthropicBaseUrl = adapterBaseUrl(adapterHost, adapterPort);
-  const baseUrl = `${anthropicBaseUrl}/v1`;
+  const baseUrl = `${adapterBaseUrl(adapterHost, adapterPort)}/v1`;
   const hadTrailingNewline = content.endsWith("\n");
   const lines = content.split("\n");
   if (hadTrailingNewline) lines.pop();
@@ -103,8 +102,6 @@ export function computeUpdatedCodexConfig(content, adapterPort = 2026, adapterHo
 
   changed = setTopLevelTomlDefault(lines, "model_context_window", MODEL_CONTEXT_WINDOW) || changed;
   changed = setTopLevelTomlDefault(lines, "model_auto_compact_token_limit", MODEL_AUTO_COMPACT_TOKEN_LIMIT) || changed;
-  changed = setTomlKey(lines, "shell_environment_policy.set", "ANTHROPIC_AUTH_TOKEN", "dummy") || changed;
-  changed = setTomlKey(lines, "shell_environment_policy.set", "ANTHROPIC_BASE_URL", anthropicBaseUrl) || changed;
   changed = setTomlKey(lines, "shell_environment_policy.set", "OPENAI_BASE_URL", baseUrl) || changed;
   changed = setTomlKey(lines, "shell_environment_policy.set", "OPENAI_API_KEY", "dummy") || changed;
 
@@ -112,8 +109,7 @@ export function computeUpdatedCodexConfig(content, adapterPort = 2026, adapterHo
 }
 
 function initialCodexConfig(adapterPort, adapterHost) {
-  const anthropicBaseUrl = adapterBaseUrl(adapterHost, adapterPort);
-  const baseUrl = `${anthropicBaseUrl}/v1`;
+  const baseUrl = `${adapterBaseUrl(adapterHost, adapterPort)}/v1`;
   return `openai_base_url = "${baseUrl}"
 model_context_window = ${MODEL_CONTEXT_WINDOW}
 model_auto_compact_token_limit = ${MODEL_AUTO_COMPACT_TOKEN_LIMIT}
@@ -122,8 +118,6 @@ model_auto_compact_token_limit = ${MODEL_AUTO_COMPACT_TOKEN_LIMIT}
 inherit = "core"
 
 [shell_environment_policy.set]
-ANTHROPIC_AUTH_TOKEN = "dummy"
-ANTHROPIC_BASE_URL = "${anthropicBaseUrl}"
 OPENAI_BASE_URL = "${baseUrl}"
 OPENAI_API_KEY = "dummy"
 `;

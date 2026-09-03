@@ -8,7 +8,6 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { optimizeImagesInBody, prepareResponsesPayload } from "../src/image-optimization.mjs";
-import { createPmStudioModelRouter } from "../src/profile-routing.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 
@@ -21,14 +20,6 @@ function runProbe(source) {
     throw new Error(result.stderr.trim() || `benchmark probe exited with ${result.status}`);
   }
   return JSON.parse(result.stdout.trim());
-}
-
-function median(values) {
-  const ordered = [...values].sort((left, right) => left - right);
-  const middle = Math.floor(ordered.length / 2);
-  return ordered.length % 2 === 0
-    ? (ordered[middle - 1] + ordered[middle]) / 2
-    : ordered[middle];
 }
 
 function sseLinearityProbe() {
@@ -220,38 +211,6 @@ function largePayloadProbe(targetMiB, concurrency) {
   }
 }
 
-function largeTokenCountProbe(mode) {
-  const samples = Array.from({ length: 3 }, () => runProbe(`
-    const text = "a ".repeat(2 * 1024 * 1024);
-    const started = performance.now();
-    let tokens;
-    if (${JSON.stringify(mode)} === "proxy") {
-      const { countTokens } = await import("./src/anthropic.mjs");
-      tokens = (await countTokens({ messages: [{ role: "user", content: text }] })).input_tokens;
-    } else {
-      const { encode } = await import("gpt-tokenizer");
-      const encoded = encode(text);
-      tokens = encoded.length;
-    }
-    const memory = process.memoryUsage();
-    process.stdout.write(JSON.stringify({
-      input_mib: +(Buffer.byteLength(text) / 1048576).toFixed(1),
-      tokens,
-      elapsed_ms: +(performance.now() - started).toFixed(1),
-      rss_mib: +(memory.rss / 1048576).toFixed(1),
-      heap_used_mib: +(memory.heapUsed / 1048576).toFixed(1),
-    }));
-  `));
-  return {
-    input_mib: samples[0].input_mib,
-    tokens: samples[0].tokens,
-    elapsed_ms: +median(samples.map((sample) => sample.elapsed_ms)).toFixed(1),
-    rss_mib: +median(samples.map((sample) => sample.rss_mib)).toFixed(1),
-    heap_used_mib: +median(samples.map((sample) => sample.heap_used_mib)).toFixed(1),
-    samples: samples.length,
-  };
-}
-
 function toolOutputParseCacheProbe() {
   return runProbe(`
     import { enforceResponsesImageLimit } from "./src/responses-image-limit.mjs";
@@ -355,29 +314,6 @@ const adapterImport = runProbe(`
   }));
 `);
 
-const tokenCount = runProbe(`
-  const importStarted = performance.now();
-  const { countTokens } = await import("./src/anthropic.mjs");
-  const importMs = performance.now() - importStarted;
-  const body = { messages: [{ role: "user", content: "a ".repeat(50000) }] };
-  const firstStarted = performance.now();
-  const first = await countTokens(body);
-  const firstMs = performance.now() - firstStarted;
-  const warmStarted = performance.now();
-  const warm = await countTokens(body);
-  const warmMs = performance.now() - warmStarted;
-  globalThis.gc?.();
-  const memory = process.memoryUsage();
-  console.log(JSON.stringify({
-    module_import_ms: +importMs.toFixed(1),
-    first_call_ms: +firstMs.toFixed(1),
-    warm_call_ms: +warmMs.toFixed(1),
-    input_tokens: first.input_tokens,
-    deterministic: first.input_tokens === warm.input_tokens,
-    rss_mib: +(memory.rss / 1048576).toFixed(1),
-  }));
-`);
-
 const repeatedImage = "data:image/png;base64,QUJDRA==";
 const duplicateBody = {
   input: [{
@@ -400,34 +336,6 @@ const duplicateImages = {
   elapsed_ms: +(performance.now() - duplicateStarted).toFixed(1),
   image_occurrences: 8,
   optimizer_calls: duplicateCalls,
-};
-
-const routingCatalog = {
-  data: Array.from({ length: 1000 }, (_, index) => index % 5 === 0
-    ? {
-        id: `claude-benchmark-${index}`,
-        vendor: "Anthropic",
-        model_picker_enabled: true,
-        supported_endpoints: ["/chat/completions"],
-      }
-    : { id: `gpt-benchmark-${index}`, vendor: "OpenAI", supported_endpoints: ["/responses"] }),
-};
-const modelRouter = createPmStudioModelRouter({
-  getCatalog: () => routingCatalog,
-  isClaudeEnabled: () => true,
-});
-const routingIterations = 100000;
-const routingStarted = performance.now();
-let claudeClassifications = 0;
-for (let index = 0; index < routingIterations; index += 1) {
-  if (modelRouter.classify("claude-benchmark-0") === "claude") claudeClassifications += 1;
-}
-const pmModelRouting = {
-  catalog_models: routingCatalog.data.length,
-  iterations: routingIterations,
-  elapsed_ms: +(performance.now() - routingStarted).toFixed(1),
-  claude_classifications: claudeClassifications,
-  availability_rebuilds: modelRouter.diagnostics().rebuilds,
 };
 
 const pixels = deterministicPixels(1024 * 1024 * 3, 0x87654321);
@@ -474,18 +382,12 @@ const report = {
     ? "Relative performance and resource checks; absolute timings vary by machine."
     : "Report-only benchmark; timings vary by machine and are not pass/fail thresholds.",
   adapter_import: adapterImport,
-  token_count_100kb: tokenCount,
   duplicate_images: duplicateImages,
-  pm_model_routing: pmModelRouting,
   oversized_payload: oversizedPayload,
 };
 
 if (checkMode) {
   report.sse_linearity = sseLinearityProbe();
-  report.large_token_count = {
-    proxy: largeTokenCountProbe("proxy"),
-    materialized_array: largeTokenCountProbe("array"),
-  };
   report.tool_output_parse_cache = toolOutputParseCacheProbe();
   report.large_payload_peak = [
     largePayloadProbe(5, 4),
@@ -507,22 +409,6 @@ console.log(JSON.stringify(report, null, 2));
 
 if (checkMode) {
   const failures = [];
-  if (report.pm_model_routing.availability_rebuilds !== 1
-    || report.pm_model_routing.claude_classifications !== report.pm_model_routing.iterations) {
-    failures.push("PM Studio model routing did not reuse the memoized catalog classification");
-  }
-  const proxy = report.large_token_count.proxy;
-  const array = report.large_token_count.materialized_array;
-  if (proxy.tokens !== array.tokens) failures.push(`token counts differ: proxy=${proxy.tokens} array=${array.tokens}`);
-  if (proxy.elapsed_ms > array.elapsed_ms * 1.25) {
-    failures.push(`token counter is materially slower: proxy=${proxy.elapsed_ms}ms array=${array.elapsed_ms}ms`);
-  }
-  if (proxy.rss_mib > array.rss_mib * 0.9) {
-    failures.push(`token counter RSS regression: proxy=${proxy.rss_mib}MiB array=${array.rss_mib}MiB`);
-  }
-  if (proxy.heap_used_mib > array.heap_used_mib * 0.75) {
-    failures.push(`token counter heap regression: proxy=${proxy.heap_used_mib}MiB array=${array.heap_used_mib}MiB`);
-  }
   if (report.tool_output_parse_cache.parse_calls !== 1) {
     failures.push(`stringified tool output parsed ${report.tool_output_parse_cache.parse_calls} times instead of once`);
   }

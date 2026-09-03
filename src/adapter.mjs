@@ -1,8 +1,6 @@
 import http from "node:http";
-import { createAnthropicCountTokensHandler, createAnthropicMessagesHandler } from "./anthropic-handler.mjs";
 import { defaultCopilotClient } from "./copilot.mjs";
 import { isValidModelList } from "./model-cache.mjs";
-import { claudeDesktopModelsResponse } from "./models.mjs";
 import {
   ADAPTER_STATUS_PATH,
   classifyAdapterRoute,
@@ -11,11 +9,9 @@ import {
   runtimeStatusPayload,
 } from "./observability.mjs";
 import { createRequestId, runWithRequestContext } from "./request-context.mjs";
-import { createPmStudioRelayHandler, PM_STUDIO_RELAY_PREFIX } from "./pm-studio-relay.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { status } from "./status.mjs";
 import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
-import { createTokenCounterService } from "./token-counter-service.mjs";
 import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
 import { createResponsesImagePressureController } from "./responses-image-pressure.mjs";
@@ -63,17 +59,19 @@ export function requestPath(reqUrl) {
   return new URL(reqUrl || "/", "http://localhost").pathname;
 }
 
-function bearerToken(headers = {}) {
-  const value = headers.authorization || headers.Authorization || "";
-  const match = /^Bearer\s+(.+)$/i.exec(String(value));
-  return match?.[1]?.trim() || "";
-}
-
-export function shouldServeClaudeDesktopModels(req, claudeDesktopApiKey) {
-  if (!claudeDesktopApiKey || claudeDesktopApiKey === "dummy") return false;
-  const token = bearerToken(req.headers);
-  const xApiKey = req.headers?.["x-api-key"] || req.headers?.["X-Api-Key"] || req.headers?.["X-API-Key"] || "";
-  return token === claudeDesktopApiKey || xApiKey === claudeDesktopApiKey;
+function sendRetiredClaudeSurface(res) {
+  res.writeHead(410, {
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+  });
+  res.end(JSON.stringify({
+    type: "error",
+    error: {
+      type: "not_found_error",
+      code: "ccdx_claude_retired",
+      message: "Claude App and Claude Code support was retired in ccdx 0.7.0.",
+    },
+  }));
 }
 
 function modelListCanUseLastKnownGood(statusCode) {
@@ -93,50 +91,18 @@ function sendLastKnownGoodModels(res, modelRegistry) {
 // Shared request handler. Keeping this separate from the listener makes the
 // complete HTTP routing layer testable without opening a local port.
 export function createAdapterHandler(options = {}) {
-  const claudeDesktopApiKey = options.claudeDesktopApiKey
-    || process.env.CCDX_CLAUDE_DESKTOP_API_KEY
-    || process.env.CCDX_PROXY_API_KEY
-    || "";
   const codexClient = options.codexClient || defaultCopilotClient;
-  const hasExplicitClaudeMode = Object.hasOwn(options, "claudeMode");
-  if (hasExplicitClaudeMode && !["inherited", "isolated"].includes(options.claudeMode)) {
-    throw new Error(`Unsupported Claude mode: ${options.claudeMode}`);
-  }
-  if (options.claudeMode === "isolated"
-    && (!options.claudeClient || options.claudeClient === codexClient)) {
-    throw new Error("Isolated Claude mode requires a distinct Claude client");
-  }
-  if (options.claudeMode === "inherited"
-    && options.claudeClient && options.claudeClient !== codexClient) {
-    throw new Error("Inherited Claude mode requires the Codex client");
-  }
-  const claudeClient = options.claudeClient || codexClient;
-  // chatCompletionsFn is retained as a compatibility injection and continues to
-  // override both surfaces in existing tests and embedders. New dual-profile
-  // callers should pass codexClient/claudeClient instead.
-  const codexChatCompletionsFn = options.codexChatCompletionsFn
+  // Keep the established injection names because Responses may still use the
+  // internal Chat Completions compatibility path for upstream models that need it.
+  const chatCompletionsFn = options.codexChatCompletionsFn
     || options.chatCompletionsFn
     || codexClient.chatCompletions;
-  const claudeChatCompletionsFn = options.claudeChatCompletionsFn
-    || options.chatCompletionsFn
-    || claudeClient.chatCompletions;
   const responsesFn = options.responsesFn || codexClient.responses;
   const responsesCompactFn = options.responsesCompactFn || codexClient.responsesCompact;
   const listModelsFn = options.listModelsFn || codexClient.listModels;
   const getCachedModelEndpointsFn = options.getCachedModelEndpointsFn
     || codexClient.getCachedModelEndpoints;
-  const claudeMode = hasExplicitClaudeMode
-    ? options.claudeMode
-    : claudeClient === codexClient ? "inherited" : "isolated";
-  if (claudeMode === "isolated" && options.chatCompletionsFn) {
-    throw new Error("Isolated Claude mode cannot use the shared chatCompletionsFn override; pass codexChatCompletionsFn or claudeChatCompletionsFn explicitly");
-  }
   const codexModelRegistry = options.codexModelRegistry || options.modelRegistry;
-  const claudeModelRegistry = options.claudeModelRegistry || options.modelRegistry || codexModelRegistry;
-  if (claudeMode === "isolated"
-    && (!options.claudeModelRegistry || claudeModelRegistry === codexModelRegistry)) {
-    throw new Error("Isolated Claude mode requires a distinct Claude model registry");
-  }
   const openAIModelEnv = options.openAIModelEnv || process.env;
   const upstreamTimeoutMs = parsePositiveInteger(options.upstreamTimeoutMs, ADAPTER_RUNTIME_CONFIG.upstreamTimeoutMs);
   const streamHandshakeTimeoutMs = parsePositiveInteger(options.streamHandshakeTimeoutMs, ADAPTER_RUNTIME_CONFIG.streamHandshakeTimeoutMs);
@@ -146,19 +112,10 @@ export function createAdapterHandler(options = {}) {
   const requestMetrics = options.requestMetrics || createRequestMetrics();
   const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics();
   const imagePressure = options.imagePressure || createResponsesImagePressureController();
-  const ownsTokenCounterService = !options.tokenCounterService;
-  const tokenCounterService = options.tokenCounterService || createTokenCounterService({
-    timeoutMs: options.countTokensTimeoutMs,
-    maxQueued: options.countTokensMaxQueued,
-  });
-  const claudeDesktopModelOptions = () => {
-    const modelDefs = claudeModelRegistry?.modelDefs || options.claudeDesktopModelDefs;
-    return Array.isArray(modelDefs) ? { modelDefs } : {};
-  };
   const responsesHandler = createResponsesHandler({
     acquireRequest,
     autoReviewModelResolver: options.autoReviewModelResolver,
-    chatCompletionsFn: codexChatCompletionsFn,
+    chatCompletionsFn,
     getCachedModelEndpointsFn,
     imagePressure,
     modelRegistry: codexModelRegistry,
@@ -184,34 +141,6 @@ export function createAdapterHandler(options = {}) {
     streamIdleTimeoutMs,
     upstreamTimeoutMs,
   });
-  const anthropicCountTokensHandler = createAnthropicCountTokensHandler({
-    acquireRequest,
-    requestBodyTimeoutMs,
-    countTokensFn: (body, countOptions) => tokenCounterService.count(body, countOptions),
-  });
-  const anthropicMessagesHandler = createAnthropicMessagesHandler({
-    acquireRequest,
-    chatCompletionsFn: claudeChatCompletionsFn,
-    environment: process.env,
-    modelOptions: claudeDesktopModelOptions,
-    requestBodyTimeoutMs,
-    streamHandshakeTimeoutMs,
-    streamIdleTimeoutMs,
-    upstreamTimeoutMs,
-  });
-  const pmStudioRelayHandler = createPmStudioRelayHandler({
-    acquireRequest,
-    claudeClient,
-    claudeMode,
-    claudeProfile: options.claudeProfile,
-    claudeModelRegistry,
-    fetchImpl: options.pmStudioFetchImpl,
-    requestBodyTimeoutMs,
-    streamHandshakeTimeoutMs,
-    streamIdleTimeoutMs,
-    upstreamTimeoutMs,
-  });
-
   const dispatch = (req, res, pathname) => {
     if (req.method === "GET" && pathname === ADAPTER_STATUS_PATH) {
       if (!isLoopbackAddress(req.socket?.remoteAddress)) {
@@ -227,11 +156,7 @@ export function createAdapterHandler(options = {}) {
         imagePressure,
         modelRegistry: codexModelRegistry,
         codexClient,
-        claudeClient,
         codexModelRegistry,
-        claudeModelRegistry,
-        claudeMode,
-        isClaudeProfileCurrent: options.isClaudeProfileCurrent,
       })));
       return;
     }
@@ -240,10 +165,6 @@ export function createAdapterHandler(options = {}) {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(adapterHealthPayload()));
       return;
-    }
-
-    if (pathname.startsWith(`${PM_STUDIO_RELAY_PREFIX}/`)) {
-      return pmStudioRelayHandler(req, res, pathname);
     }
 
     if (req.method === "POST" && pathname === "/v1/responses") {
@@ -255,11 +176,6 @@ export function createAdapterHandler(options = {}) {
     }
 
     if (req.method === "GET" && pathname === "/v1/models") {
-      if (shouldServeClaudeDesktopModels(req, claudeDesktopApiKey)) {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(claudeDesktopModelsResponse(process.env, claudeDesktopModelOptions())));
-        return;
-      }
       const abort = createRequestAbort(req, res);
       abort.setTimeout(upstreamTimeoutMs);
       listModelsFn({ signal: abort.signal })
@@ -296,11 +212,11 @@ export function createAdapterHandler(options = {}) {
     }
 
     if (req.method === "POST" && pathname === "/v1/messages/count_tokens") {
-      return anthropicCountTokensHandler(req, res);
+      return sendRetiredClaudeSurface(res);
     }
 
     if (req.method === "POST" && pathname === "/v1/messages") {
-      return anthropicMessagesHandler(req, res);
+      return sendRetiredClaudeSurface(res);
     }
 
     res.writeHead(404, { "Content-Type": "application/json" });
@@ -387,9 +303,6 @@ export function createAdapterHandler(options = {}) {
     } catch (error) {
       containUnexpectedError(error);
     }
-  };
-  handler.cleanup = () => {
-    if (ownsTokenCounterService) tokenCounterService.close();
   };
   return handler;
 }

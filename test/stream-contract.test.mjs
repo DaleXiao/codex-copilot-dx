@@ -60,7 +60,7 @@ function sseResponse(body) {
   return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream; charset=utf-8" } });
 }
 
-test("stream preflight rejects non-SSE 2xx bodies without leaking them", async () => {
+test("stream preflight rejects non-SSE 2xx bodies for native Responses and Chat fallback without leaking them", async () => {
   const secret = "must-not-leak-upstream-body";
   const cases = [
     {
@@ -71,10 +71,6 @@ test("stream preflight rejects non-SSE 2xx bodies without leaking them", async (
       options: { chatCompletionsFn: async () => new Response(secret, { status: 200, headers: { "Content-Type": "text/plain" } }) },
       request: { body: { model: "gpt-4o", stream: true, input: "hello" } },
     },
-    {
-      options: { chatCompletionsFn: async () => new Response(secret, { status: 200, headers: { "Content-Type": "application/json" } }) },
-      request: { url: "/v1/messages", body: { model: "claude-sonnet-4.6", stream: true, messages: [{ role: "user", content: "hello" }] } },
-    },
   ];
 
   for (const { options, request } of cases) {
@@ -82,7 +78,7 @@ test("stream preflight rejects non-SSE 2xx bodies without leaking them", async (
     assert.equal(result.status, 502);
     assert.equal(JSON.parse(result.text).error.code, "upstream_stream_content_type_invalid");
     assert.doesNotMatch(result.text, new RegExp(secret));
-    assert.doesNotMatch(result.text, /response\.created|message_start/);
+    assert.doesNotMatch(result.text, /response\.created/);
   }
 });
 
@@ -97,7 +93,7 @@ test("stream preflight rejects a successful response without a body", async () =
   assert.equal(JSON.parse(result.text).error.code, "upstream_stream_body_missing");
 });
 
-test("unexpected EOF is a protocol-native error on Responses, Chat, and Anthropic streams", async () => {
+test("unexpected EOF is a protocol-native error on Responses and Chat streams", async () => {
   clearResponseHistoryForTests();
   const cases = [
     {
@@ -109,11 +105,6 @@ test("unexpected EOF is a protocol-native error on Responses, Chat, and Anthropi
       options: { chatCompletionsFn: async () => sseResponse('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n') },
       request: { body: { model: "gpt-4o", stream: true, input: "hello" } },
       forbidden: /event: response\.completed/,
-    },
-    {
-      options: { chatCompletionsFn: async () => sseResponse('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n') },
-      request: { url: "/v1/messages", body: { model: "claude-sonnet-4.6", stream: true, messages: [{ role: "user", content: "hello" }] } },
-      forbidden: /event: message_stop/,
     },
   ];
 
@@ -128,7 +119,7 @@ test("unexpected EOF is a protocol-native error on Responses, Chat, and Anthropi
   clearResponseHistoryForTests();
 });
 
-test("embedded Chat SSE errors cannot be converted into successful terminal events", async () => {
+test("embedded Chat SSE errors cannot be converted into successful Responses terminal events", async () => {
   const stream = [
     `data: ${JSON.stringify({ error: { type: "server_error", message: "upstream failed" } })}`,
     "data: [DONE]",
@@ -140,11 +131,6 @@ test("embedded Chat SSE errors cannot be converted into successful terminal even
       request: { body: { model: "gpt-4o", stream: true, input: "hello" } },
       forbidden: /response\.completed/,
     },
-    {
-      options: { chatCompletionsFn: async () => sseResponse(stream) },
-      request: { url: "/v1/messages", body: { model: "claude-sonnet-4.6", stream: true, messages: [{ role: "user", content: "hello" }] } },
-      forbidden: /event: message_stop/,
-    },
   ];
 
   for (const { options, request, forbidden } of cases) {
@@ -155,18 +141,13 @@ test("embedded Chat SSE errors cannot be converted into successful terminal even
   }
 });
 
-test("malformed Chat SSE JSON fails closed on Responses and Anthropic conversions", async () => {
+test("malformed Chat SSE JSON fails closed on Responses conversion", async () => {
   const stream = "data: {not-json}\n\ndata: [DONE]\n\n";
   const cases = [
     {
       options: { chatCompletionsFn: async () => sseResponse(stream) },
       request: { body: { model: "gpt-4o", stream: true, input: "hello" } },
       forbidden: /response\.completed/,
-    },
-    {
-      options: { chatCompletionsFn: async () => sseResponse(stream) },
-      request: { url: "/v1/messages", body: { model: "claude-sonnet-4.6", stream: true, messages: [{ role: "user", content: "hello" }] } },
-      forbidden: /event: message_stop/,
     },
   ];
 
@@ -194,10 +175,6 @@ test("unexpected EOF does not persist partial stream usage", async () => {
       {
         options: { chatCompletionsFn: async () => sseResponse(partial) },
         request: { body: { model: "gpt-4o", stream: true, input: "hello" } },
-      },
-      {
-        options: { chatCompletionsFn: async () => sseResponse(partial) },
-        request: { url: "/v1/messages", body: { model: "claude-sonnet-4.6", stream: true, messages: [{ role: "user", content: "hello" }] } },
       },
     ];
     for (const { options, request } of cases) await invokeAdapter(options, request);
@@ -389,12 +366,10 @@ test("blank ordinary text deltas do not activate the tool argument fuse", async 
   assert.doesNotMatch(result.text, /upstream_tool_arguments_stalled/);
 });
 
-test("native Responses function/custom inputs and Anthropic arguments use the same blank-delta fuse", async () => {
+test("native Responses function and custom tool inputs use the same blank-delta fuse", async () => {
   const responseEvent = (type) => `event: ${type}\ndata: ${JSON.stringify({ type, output_index: 0, delta: "\n" })}\n\n`;
-  const chatEvent = `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: "\n" } }] } }] })}\n\n`;
   const responseEvents = Array.from({ length: 21 }, () => responseEvent("response.function_call_arguments.delta")).join("");
   const customEvents = Array.from({ length: 21 }, () => responseEvent("response.custom_tool_call_input.delta")).join("");
-  const chatEvents = Array.from({ length: 21 }, () => chatEvent).join("");
   const cases = [
     {
       options: { responsesFn: async () => sseResponse(responseEvents) },
@@ -404,10 +379,6 @@ test("native Responses function/custom inputs and Anthropic arguments use the sa
       options: { responsesFn: async () => sseResponse(customEvents) },
       request: { body: { model: "gpt-5.6-sol", stream: true, input: "hello" } },
     },
-    {
-      options: { chatCompletionsFn: async () => sseResponse(chatEvents) },
-      request: { url: "/v1/messages", body: { model: "claude-sonnet-4.6", stream: true, messages: [{ role: "user", content: "hello" }] } },
-    },
   ];
 
   for (const { options, request } of cases) {
@@ -415,6 +386,6 @@ test("native Responses function/custom inputs and Anthropic arguments use the sa
     assert.equal(result.status, 200);
     assert.match(result.text, /event: error/);
     assert.match(result.text, /upstream_tool_arguments_stalled/);
-    assert.doesNotMatch(result.text, /response\.completed|event: message_stop/);
+    assert.doesNotMatch(result.text, /response\.completed/);
   }
 });

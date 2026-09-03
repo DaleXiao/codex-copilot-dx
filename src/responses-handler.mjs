@@ -286,7 +286,7 @@ export function createResponsesHandler(options) {
               sendJsonError(res, responseError, statusCode || 500);
               return;
             }
-            await endStreamWithError(res, "responses", error || new Error(errMsg), abort);
+            await endStreamWithError(res, error || new Error(errMsg), abort);
           }, {
             signal: abort.signal,
             abort,

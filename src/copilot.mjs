@@ -259,9 +259,9 @@ export async function refreshVSCodeVersion() {
   return cachedVersion;
 }
 
-// Stateful Copilot data lives inside per-profile clients. These module-level
+// Stateful Copilot data lives inside client instances. These module-level
 // wrappers preserve every existing export as the default Codex compatibility
-// layer while allowing the adapter to use isolated Codex and Claude clients.
+// layer while retaining isolated client injection for internal callers.
 export function createCopilotClient(options = {}) {
   return createCopilotClientRuntime({
     ...options,

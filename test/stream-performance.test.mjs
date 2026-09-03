@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { streamAnthropicFromLines } from "../src/anthropic.mjs";
 import { githubTokenPath } from "../src/auth.mjs";
 import { chatCompletions, getCopilotToken, resetCopilotTokenForTests } from "../src/copilot.mjs";
 import { forwardToChat } from "../src/responses-bridge.mjs";
@@ -125,7 +124,7 @@ test("Copilot transport starts TTFT immediately before a streaming upstream requ
   }
 });
 
-test("all stream adapters record first output once and capture final output tokens", async () => {
+test("Chat fallback and native Responses streams record first output once and capture final output tokens", async () => {
   const chat = trackerSpy();
   const chatBody = [
     'data: {"choices":[{"delta":{"content":"a"}}]}',
@@ -143,19 +142,6 @@ test("all stream adapters record first output once and capture final output toke
   ));
   assert.equal(chat.calls.firstOutput, 1);
   assert.deepEqual(chat.calls.outputTokens, [4]);
-
-  const anthropic = trackerSpy();
-  async function* anthropicLines() {
-    yield 'data: {"choices":[{"delta":{"content":"a"}}]}';
-    yield 'data: {"choices":[{"delta":{"content":"b"}}]}';
-    yield 'data: {"choices":[],"usage":{"completion_tokens":5}}';
-    yield "data: [DONE]";
-  }
-  await runWithRequestContext({ streamPerformance: anthropic.tracker }, () => (
-    streamAnthropicFromLines(anthropicLines(), async () => {}, "claude-test")
-  ));
-  assert.equal(anthropic.calls.firstOutput, 1);
-  assert.deepEqual(anthropic.calls.outputTokens, [5]);
 
   const native = trackerSpy();
   const nativeBody = [

@@ -105,7 +105,7 @@ test("sendUpstreamError preserves safe retry metadata without forwarding secrets
   assert.equal(result.body, "rate limited");
 });
 
-test("successful native, converted Responses, and Anthropic replies propagate only safe metadata", async () => {
+test("successful native and converted Responses replies propagate only safe metadata", async () => {
   const cases = [
     {
       requestId: "native-upstream",
@@ -116,11 +116,6 @@ test("successful native, converted Responses, and Anthropic replies propagate on
       requestId: "chat-upstream",
       options: { chatCompletionsFn: async () => upstreamResponse({ id: "chat_1", choices: [{ message: { role: "assistant", content: "ok" } }] }, "chat-upstream") },
       request: { body: { model: "gpt-4o", stream: false, input: "hello" } },
-    },
-    {
-      requestId: "anthropic-upstream",
-      options: { chatCompletionsFn: async () => upstreamResponse({ id: "chat_2", choices: [{ message: { role: "assistant", content: "ok" } }] }, "anthropic-upstream") },
-      request: { url: "/v1/messages", body: { model: "claude-sonnet-4.6", stream: false, messages: [{ role: "user", content: "hello" }] } },
     },
   ];
 

@@ -13,10 +13,11 @@ import {
   saveModelCache,
 } from "../src/model-cache.mjs";
 
-test("model cache round-trips a valid last-known-good model list", () => {
+test("Codex model cache round-trips a valid last-known-good model list at the legacy path", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-cache-"));
   const models = { data: [{ id: "gpt-5.6-sol", supported_endpoints: ["/responses"] }] };
 
+  assert.equal(modelCachePath(home), path.join(home, ".local", "share", "codex-copilot-dx", "models.json"));
   assert.equal(saveModelCache(models, { home }), true);
   assert.deepEqual(loadModelCache({ home }), models);
   assert.equal(fs.statSync(modelCachePath(home)).mode & 0o777, 0o600);
@@ -96,35 +97,4 @@ test("model cache accepts only non-empty lists with a model id", () => {
   assert.equal(isValidModelList({ data: [{}] }), false);
   assert.equal(saveModelCache({ data: [] }, { home }), false);
   assert.equal(saveModelCache({ data: [{ id: "gpt-test" }] }, { home }), true);
-});
-
-test("Claude model cache is isolated without moving the legacy Codex cache", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-cache-profiles-"));
-  const codex = { data: [{ id: "gpt-enterprise" }] };
-  const claude = { data: [{ id: "claude-personal" }] };
-
-  assert.equal(modelCachePath(home), path.join(home, ".local", "share", "codex-copilot-dx", "models.json"));
-  assert.equal(
-    modelCachePath(home, "claude"),
-    path.join(home, ".local", "share", "codex-copilot-dx", "profiles", "claude", "models.json"),
-  );
-
-  assert.equal(saveModelCache(codex, { home }), true);
-  assert.equal(saveModelCache(claude, {
-    home,
-    profile: "claude",
-    credentialFingerprint: "personal-fingerprint",
-  }), true);
-  assert.deepEqual(loadModelCache({ home }), codex);
-  assert.deepEqual(loadModelCache({
-    home,
-    profile: "claude",
-    credentialFingerprint: "personal-fingerprint",
-  }), claude);
-  assert.equal(loadModelCache({
-    home,
-    profile: "claude",
-    credentialFingerprint: "different-account",
-  }), null);
-  assert.throws(() => modelCachePath(home, "other"), /Unknown model cache profile/);
 });

@@ -30,6 +30,7 @@ function streamingChatResponse() {
   });
 }
 
+let chatCalls = 0;
 const options = {
   listModelsFn: async () => ({
     status: 200,
@@ -43,6 +44,7 @@ const options = {
     output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "OK" }] }],
   }),
   chatCompletionsFn: async (body) => {
+    chatCalls += 1;
     if (body.stream) return streamingChatResponse();
     return jsonResponse({
       id: "chat_json",
@@ -85,20 +87,24 @@ try {
   assert.match(streamText, /event: response\.output_text\.delta/);
   assert.match(streamText, /event: response\.completed/);
 
-  const messages = await fetch(`${baseUrl}/v1/messages`, {
+  const messagesResponse = await fetch(`${baseUrl}/v1/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: "claude-sonnet-4.6", max_tokens: 16, messages: [{ role: "user", content: "hello" }] }),
-  }).then((response) => response.json());
-  assert.equal(messages.type, "message");
-  assert.equal(messages.content[0].text, "OK");
+  });
+  assert.equal(messagesResponse.status, 410);
+  const messages = await messagesResponse.json();
+  assert.equal(messages.error.code, "ccdx_claude_retired");
 
-  const count = await fetch(`${baseUrl}/v1/messages/count_tokens`, {
+  const countResponse = await fetch(`${baseUrl}/v1/messages/count_tokens`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: "claude-sonnet-4.6", messages: [{ role: "user", content: "hello" }] }),
-  }).then((response) => response.json());
-  assert.ok(count.input_tokens > 0);
+  });
+  assert.equal(countResponse.status, 410);
+  const count = await countResponse.json();
+  assert.equal(count.error.code, "ccdx_claude_retired");
+  assert.equal(chatCalls, 1);
 
   const runtimeStatus = await fetch(`${baseUrl}/_ccdx/status`).then((response) => response.json());
   assert.equal(runtimeStatus.name, "codex-copilot-dx");

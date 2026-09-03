@@ -4,14 +4,9 @@ import path from "node:path";
 
 export const MODEL_CACHE_SOFT_TTL_MS = 2 * 60 * 60 * 1000;
 export const MODEL_CACHE_HARD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const MODEL_CACHE_PROFILES = new Set(["codex", "claude"]);
 
-export function modelCachePath(home = os.homedir(), profile = "codex") {
-  if (!MODEL_CACHE_PROFILES.has(profile)) throw new Error(`Unknown model cache profile: ${profile}`);
-  const root = path.join(home, ".local", "share", "codex-copilot-dx");
-  return profile === "codex"
-    ? path.join(root, "models.json")
-    : path.join(root, "profiles", profile, "models.json");
+export function modelCachePath(home = os.homedir()) {
+  return path.join(home, ".local", "share", "codex-copilot-dx", "models.json");
 }
 
 function modelData(models) {
@@ -30,7 +25,6 @@ function normalizedTtl(value, fallback) {
 
 export function loadModelCacheEntry({
   home = os.homedir(),
-  profile = "codex",
   credentialFingerprint = "",
   softTtlMs = MODEL_CACHE_SOFT_TTL_MS,
   hardTtlMs,
@@ -38,7 +32,7 @@ export function loadModelCacheEntry({
   now = Date.now,
 } = {}) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(modelCachePath(home, profile), "utf8"));
+    const parsed = JSON.parse(fs.readFileSync(modelCachePath(home), "utf8"));
     const savedAt = Date.parse(parsed.saved_at);
     if (!Number.isFinite(savedAt)) return null;
     const expectedFingerprint = String(credentialFingerprint || "").trim();
@@ -71,14 +65,13 @@ export function loadModelCache(options = {}) {
 
 export function saveModelCache(models, {
   home = os.homedir(),
-  profile = "codex",
   credentialFingerprint = "",
   isCurrent = () => true,
   now = Date.now,
 } = {}) {
   if (!isValidModelList(models)) return false;
   if (typeof isCurrent === "function" && !isCurrent()) return false;
-  const filePath = modelCachePath(home, profile);
+  const filePath = modelCachePath(home);
   const tempPath = `${filePath}.${process.pid}.tmp`;
   const payload = { saved_at: new Date(now()).toISOString(), models };
   const fingerprint = String(credentialFingerprint || "").trim();

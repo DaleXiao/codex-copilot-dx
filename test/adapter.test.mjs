@@ -2382,6 +2382,55 @@ test("HTTP Responses preserves service tiers when a fast mapping is not explicit
   }
 });
 
+test("GPT-6 drops unsupported inherited priority tiers without changing other requests", async () => {
+  for (const { compact, stream } of [
+    { compact: false, stream: false },
+    { compact: false, stream: true },
+    { compact: true, stream: false },
+  ]) {
+    let upstreamBody;
+    const upstream = async (body) => {
+      upstreamBody = structuredClone(body);
+      if (compact) {
+        return Response.json({
+          id: "resp_gpt6_compact",
+          object: "response.compaction",
+          status: "completed",
+          output: [{ type: "compaction", id: "cmp_gpt6", encrypted_content: "gpt6-state" }],
+        });
+      }
+      const completed = { id: "resp_gpt6", object: "response", status: "completed", output: [] };
+      if (!stream) return Response.json(completed);
+      return new Response(`event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: completed })}\n\n`, {
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    };
+    const response = await invokeAdapter({
+      getCachedModelEndpointsFn: () => ["/responses"],
+      ...(compact ? { responsesCompactFn: upstream } : { responsesFn: upstream }),
+    }, {
+      url: compact ? "/v1/responses/compact" : "/v1/responses",
+      body: { model: "gpt-6-astra", service_tier: "priority", stream, input: "hello" },
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(upstreamBody.model, "gpt-6-astra");
+    assert.equal(Object.hasOwn(upstreamBody, "service_tier"), false);
+  }
+
+  let defaultTierBody;
+  await invokeAdapter({
+    getCachedModelEndpointsFn: () => ["/responses"],
+    responsesFn: async (body) => {
+      defaultTierBody = structuredClone(body);
+      return Response.json({ id: "resp_gpt6_default", status: "completed", output: [] });
+    },
+  }, {
+    body: { model: "gpt-6-astra", service_tier: "default", input: "hello" },
+  });
+  assert.equal(defaultTierBody.service_tier, "default");
+});
+
 test("direct fast requests are not rewritten by the priority-tier resolver", async () => {
   const eligibleRegistry = { models: { data: [{
     id: "gpt-5.6-sol-fast",
@@ -3032,16 +3081,115 @@ test("HTTP models route updates and falls back to last-known-good model metadata
   assert.deepEqual(JSON.parse(transientFallback.text), live);
 });
 
+test("HTTP models route adds the complete Codex catalog only for versioned Codex clients", async () => {
+  const live = { object: "list", data: [{
+    id: "gpt-6-astra",
+    vendor: "OpenAI",
+    policy: { state: "enabled" },
+    model_picker_enabled: true,
+    supported_endpoints: ["/responses", "ws:/responses"],
+  }] };
+  const bundled = { models: [
+    { slug: "gpt-5.6-sol", visibility: "list", future_field: { preserved: true } },
+    {
+      slug: "gpt-6-astra",
+      visibility: "hide",
+      additional_speed_tiers: ["fast"],
+      service_tiers: [{ id: "priority", name: "Fast" }],
+      default_service_tier: null,
+      supported_reasoning_levels: [{ effort: "ultra" }],
+    },
+  ] };
+  const loads = [];
+  const codexModelCatalog = {
+    async load(options) {
+      loads.push(options);
+      return bundled;
+    },
+  };
+
+  const raw = await invokeAdapter({
+    codexModelCatalog,
+    listModelsFn: async () => ({ status: 200, body: JSON.stringify(live) }),
+  }, { method: "GET", url: "/v1/models" });
+  assert.deepEqual(JSON.parse(raw.text), live);
+  assert.deepEqual(loads, []);
+
+  const codex = await invokeAdapter({
+    codexModelCatalog,
+    listModelsFn: async () => ({ status: 200, body: JSON.stringify(live) }),
+  }, { method: "GET", url: "/v1/models?client_version=0.153.1" });
+  const body = JSON.parse(codex.text);
+  assert.deepEqual(loads, [{ clientVersion: "0.153.1" }]);
+  assert.deepEqual(body.data, live.data);
+  assert.deepEqual(body.models[0], bundled.models[0]);
+  assert.deepEqual(body.models[1], {
+    slug: "gpt-6-astra",
+    visibility: "list",
+    additional_speed_tiers: [],
+    service_tiers: [],
+    supported_reasoning_levels: [{ effort: "ultra" }],
+  });
+});
+
+test("versioned Codex model discovery preserves dual shape for last-known-good fallback", async () => {
+  const cached = { object: "list", data: [{
+    id: "gpt-6-astra",
+    vendor: "OpenAI",
+    policy: { state: "enabled" },
+    model_picker_enabled: true,
+    supported_endpoints: ["/responses"],
+  }] };
+  const codexModelCatalog = {
+    async load() {
+      return { models: [{ slug: "gpt-6-astra", visibility: "hide" }] };
+    },
+  };
+
+  for (const listModelsFn of [
+    async () => ({ status: 503, body: "unavailable" }),
+    async () => { throw new Error("offline"); },
+  ]) {
+    const response = await invokeAdapter({
+      codexModelCatalog,
+      modelRegistry: { models: cached },
+      listModelsFn,
+    }, { method: "GET", url: "/v1/models?client_version=0.153.1" });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers["X-CCDX-Model-Source"], "last-known-good");
+    const body = JSON.parse(response.text);
+    assert.deepEqual(body.data, cached.data);
+    assert.equal(body.models[0].visibility, "list");
+  }
+});
+
+test("versioned Codex model discovery fails closed when the local catalog is unavailable", async () => {
+  const live = { object: "list", data: [{ id: "gpt-live" }] };
+  for (const load of [async () => null, async () => { throw new Error("catalog failed"); }]) {
+    const response = await invokeAdapter({
+      codexModelCatalog: { load },
+      listModelsFn: async () => ({ status: 200, body: JSON.stringify(live) }),
+    }, { method: "GET", url: "/v1/models?client_version=0.153.1" });
+
+    assert.equal(response.status, 503);
+    assert.equal(response.headers["Retry-After"], "5");
+    assert.equal(JSON.parse(response.text).error.code, "ccdx_codex_model_catalog_unavailable");
+  }
+});
+
 test("HTTP models route does not hide authentication failures with last-known-good data", async () => {
   const body = JSON.stringify({ error: "expired" });
+  let catalogLoads = 0;
   const result = await invokeAdapter({
+    codexModelCatalog: { load: async () => { catalogLoads += 1; return { models: [] }; } },
     modelRegistry: { models: { data: [{ id: "gpt-cached" }] } },
     listModelsFn: async () => ({ status: 401, body }),
-  }, { method: "GET", url: "/v1/models" });
+  }, { method: "GET", url: "/v1/models?client_version=0.153.1" });
 
   assert.equal(result.status, 401);
   assert.equal(result.text, body);
   assert.equal(result.headers["X-CCDX-Model-Source"], undefined);
+  assert.equal(catalogLoads, 0);
 });
 
 test("HTTP models route rejects malformed live data when no last-known-good list exists", async () => {

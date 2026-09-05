@@ -273,7 +273,7 @@ export function cliCommandName() {
 
 function topicHelp(name, topic) {
   const sections = {
-    start: `Usage:\n  ${name} [start] [--show-request-id]\n\nStarts or reuses the local adapter, updates Codex configuration, and attempts to open Codex or ChatGPT when auto-launch is enabled and supported.`,
+    start: `Usage:\n  ${name} [start] [--show-request-id]\n\nStarts or reuses the local adapter, updates Codex configuration, and attempts to open Codex App when auto-launch is enabled and supported.`,
     auth: `Usage:\n  ${name} auth status [--online] [--format table|plain]\n\nShows the saved GitHub Copilot account without exposing credentials. --online also verifies its entitlement and model catalog.`,
     "auth status": `Usage:\n  ${name} auth status [--online] [--format table|plain]\n\nShows the saved GitHub Copilot account without exposing credentials. --online also verifies its entitlement and model catalog. Interactive terminals use a table by default.`,
     doctor: `Usage:\n  ${name} doctor [--online] [--compat]\n\nChecks the local credential, Codex configuration, and adapter. --online validates account entitlement; --compat sends minimal inference requests and consumes a small amount of Copilot usage.`,

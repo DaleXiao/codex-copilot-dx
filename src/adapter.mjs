@@ -1,5 +1,6 @@
 import http from "node:http";
 import { defaultCopilotClient } from "./copilot.mjs";
+import { buildCodexModelResponse } from "./codex-model-catalog.mjs";
 import { isValidModelList } from "./model-cache.mjs";
 import {
   ADAPTER_STATUS_PATH,
@@ -78,13 +79,58 @@ function modelListCanUseLastKnownGood(statusCode) {
   return [408, 425, 429].includes(statusCode) || statusCode >= 500;
 }
 
-function sendLastKnownGoodModels(res, modelRegistry) {
+function modelClientVersion(reqUrl) {
+  try {
+    return String(new URL(reqUrl || "/", "http://localhost").searchParams.get("client_version") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+async function sendModelList(res, models, {
+  codexModelCatalog,
+  clientVersion = "",
+  headers = {},
+  rawBody,
+  statusCode = 200,
+} = {}) {
+  let body = rawBody || JSON.stringify(models);
+  if (clientVersion && typeof codexModelCatalog?.load === "function") {
+    let response = null;
+    try {
+      const codexCatalog = await codexModelCatalog.load({ clientVersion });
+      response = buildCodexModelResponse({ copilotModels: models, codexCatalog });
+    } catch {}
+    if (!response) {
+      if (res.destroyed || res.writableEnded) return false;
+      res.writeHead(503, {
+        "Content-Type": "application/json",
+        "Retry-After": "5",
+        ...headers,
+      });
+      res.end(JSON.stringify({
+        error: {
+          message: "The Codex App model catalog is temporarily unavailable",
+          type: "server_error",
+          code: "ccdx_codex_model_catalog_unavailable",
+        },
+      }));
+      return true;
+    }
+    body = JSON.stringify(response);
+  }
+  if (res.destroyed || res.writableEnded) return false;
+  res.writeHead(statusCode, { "Content-Type": "application/json", ...headers });
+  res.end(body);
+  return true;
+}
+
+async function sendLastKnownGoodModels(res, modelRegistry, options = {}) {
   if (!isValidModelList(modelRegistry?.models) || res.destroyed || res.writableEnded) return false;
-  res.writeHead(200, {
-    "Content-Type": "application/json",
-    "X-CCDX-Model-Source": "last-known-good",
+  await sendModelList(res, modelRegistry.models, {
+    ...options,
+    headers: { "X-CCDX-Model-Source": "last-known-good" },
   });
-  res.end(JSON.stringify(modelRegistry.models));
   return true;
 }
 
@@ -100,6 +146,7 @@ export function createAdapterHandler(options = {}) {
   const responsesFn = options.responsesFn || codexClient.responses;
   const responsesCompactFn = options.responsesCompactFn || codexClient.responsesCompact;
   const listModelsFn = options.listModelsFn || codexClient.listModels;
+  const codexModelCatalog = options.codexModelCatalog;
   const getCachedModelEndpointsFn = options.getCachedModelEndpointsFn
     || codexClient.getCachedModelEndpoints;
   const codexModelRegistry = options.codexModelRegistry || options.modelRegistry;
@@ -176,10 +223,12 @@ export function createAdapterHandler(options = {}) {
     }
 
     if (req.method === "GET" && pathname === "/v1/models") {
+      const clientVersion = modelClientVersion(req.url);
       const abort = createRequestAbort(req, res);
       abort.setTimeout(upstreamTimeoutMs);
       listModelsFn({ signal: abort.signal })
-        .then(({ status, body }) => {
+        .then(async ({ status, body }) => {
+          abort.clearTimeout();
           if (status >= 200 && status < 300) {
             let models;
             try { models = JSON.parse(body); } catch {}
@@ -187,21 +236,26 @@ export function createAdapterHandler(options = {}) {
               if (codexModelRegistry) {
                 codexModelRegistry.models = models;
               }
-              res.writeHead(status, { "Content-Type": "application/json" });
-              res.end(body);
+              await sendModelList(res, models, {
+                codexModelCatalog,
+                clientVersion,
+                rawBody: body,
+                statusCode: status,
+              });
               return;
             }
-            if (sendLastKnownGoodModels(res, codexModelRegistry)) return;
+            if (await sendLastKnownGoodModels(res, codexModelRegistry, { codexModelCatalog, clientVersion })) return;
             sendJsonError(res, httpError("Copilot models response contained no valid models", 502), 502);
             return;
           }
-          if (modelListCanUseLastKnownGood(status) && sendLastKnownGoodModels(res, codexModelRegistry)) return;
+          if (modelListCanUseLastKnownGood(status)
+            && await sendLastKnownGoodModels(res, codexModelRegistry, { codexModelCatalog, clientVersion })) return;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(body);
         })
-        .catch((e) => {
+        .catch(async (e) => {
           logRequestFailure("Models", e, abort);
-          if (sendLastKnownGoodModels(res, codexModelRegistry)) return;
+          if (await sendLastKnownGoodModels(res, codexModelRegistry, { codexModelCatalog, clientVersion })) return;
           if (!res.destroyed && !res.writableEnded) {
             if (!res.headersSent) res.writeHead(e?.statusCode || 502);
             res.end(JSON.stringify({ error: e.message }));

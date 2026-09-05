@@ -21,6 +21,7 @@ import { fetchLiveCopilotModels, formatLiveCopilotModels } from "../src/cli-mode
 import { runAuthCommand } from "../src/cli-auth.mjs";
 import { createProfileRuntime } from "../src/profile-runtime.mjs";
 import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
+import { createCodexModelCatalog } from "../src/codex-model-catalog.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
 const CLI_NAME = cliCommandName();
@@ -201,7 +202,7 @@ if (CLI.command === "doctor") {
 
 console.log(`
   ${CLI_BANNER}
-  Use Codex Desktop and ChatGPT App with GitHub Copilot
+  Use Codex App with GitHub Copilot
 `);
 
 async function printUpdateNotice() {
@@ -242,9 +243,11 @@ try {
 
   // Start the in-process adapter.
   const terminalAnimationTheme = terminalAnimationPreference().theme;
+  const codexModelCatalog = createCodexModelCatalog();
   activeServer = await startAdapter(ADAPTER_PORT, ADAPTER_HOST, {
     autoReviewModelResolver: () => autoReviewModelPreference().model,
     codexClient: profileRuntime.codexClient,
+    codexModelCatalog,
     codexModelRegistry: profileModels.codexRegistry,
     showRequestId: CLI.showRequestId,
     upstreamTimeoutMs: RUNTIME.upstreamTimeoutMs,
@@ -253,7 +256,7 @@ try {
     terminalAnimationTheme,
   });
 
-  // Point Codex and compatible ChatGPT App builds at the adapter.
+  // Point Codex App at the adapter.
   ensureCodexConfig(ADAPTER_PORT, { host: ADAPTER_HOST });
 
   // Launch Codex when available.
@@ -270,7 +273,7 @@ try {
   }
 
   console.log(`
-  ${status("ok", "Ready, Codex App and ChatGPT App are ready to use")}
+  ${status("ok", "Ready, Codex App is ready to use")}
 
   Adapter: ${adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT)}
 

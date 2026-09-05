@@ -1,7 +1,7 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.7.1",
-  "description": "Use Codex Desktop and ChatGPT App with GitHub Copilot",
+  "version": "0.7.2",
+  "description": "Use Codex App with GitHub Copilot",
   "author": "Dale Xiao",
   "type": "module",
   "bin": {

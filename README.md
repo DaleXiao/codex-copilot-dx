@@ -1,8 +1,8 @@
 # codex-copilot-dx
 
-Use Codex Desktop or the ChatGPT app with GPT models provided by your **GitHub Copilot** subscription.
+Use Codex App with GPT models provided by your **GitHub Copilot** subscription.
 
-CCDX is a local compatibility adapter. It configures Codex-compatible desktop clients to use an OpenAI Responses API on loopback while GitHub authentication, model discovery, and inference stay backed by GitHub Copilot.
+CCDX is a local compatibility adapter for Codex App. It configures Codex to use an OpenAI Responses API on loopback while GitHub authentication, model discovery, and inference stay backed by GitHub Copilot.
 
 ## How it works
 
@@ -14,7 +14,7 @@ One in-process adapter listens on `127.0.0.1:2026` by default and exposes:
 
 Responses-only models and compaction use Copilot's Responses transport directly. For GPT models that advertise only Chat Completions, CCDX converts the supported text, image, and function-tool subset and rejects incompatible request shapes explicitly. Both streaming SSE and non-streaming responses are supported.
 
-The adapter preserves Codex and ChatGPT app behavior around response history, encrypted reasoning state, function/custom tools, images, compaction, cancellation, retries, and usage metadata. Model routing follows the live Copilot catalog instead of a hard-coded GPT model list.
+The adapter preserves Codex App behavior around response history, encrypted reasoning state, function/custom tools, images, compaction, cancellation, retries, and usage metadata. Model routing follows the live Copilot catalog instead of a hard-coded GPT model list.
 
 ### Fast and Standard modes
 
@@ -22,11 +22,17 @@ Codex can select Standard or Fast without changing CCDX configuration. When the 
 
 Codex Auto-review uses the hidden `codex-auto-review` model ID. CCDX maps it to Copilot's `gpt-5.5` Responses model by default, independently of the interactive Fast/Standard selection, and logs both model IDs when the mapping is used. The review target can be changed interactively without reinstalling or restarting CCDX.
 
+### GPT-6 model catalog
+
+Codex App requests a versioned, capability-rich model catalog that is different from Copilot's raw model list. CCDX reads the complete catalog bundled with the installed Codex App and preserves every other model entry and capability. It makes `gpt-6-astra` visible only when the live Copilot catalog advertises that exact model as enabled, selectable, OpenAI-owned, and Responses-capable.
+
+CCDX 0.7.2 exposes only the verified GPT-6 Standard path and removes its unverified speed-tier metadata. Codex Ultra remains available because the client maps it to the model's supported multi-agent reasoning effort. GPT-5.6 Sol Fast remains unchanged. The bundled catalog is matched to the Codex client version, cached by application binary identity, and reloaded automatically after an App update.
+
 ## Prerequisites
 
 - GitHub Copilot subscription (Individual, Business, or Enterprise)
 - Node.js 22.15 or newer, for built-in Zstandard request decompression
-- Codex Desktop or the ChatGPT app on macOS
+- Codex App on macOS
 
 ## Install and start
 
@@ -49,7 +55,7 @@ On a normal launch, CCDX:
 2. Reuses a compatible running adapter when available; otherwise it reuses a compatible local Copilot credential or starts GitHub Device Flow when authentication is required.
 3. Refreshes Copilot model metadata and listens on the configured loopback address.
 4. Updates `~/.codex/config.toml` to use the local `/v1` endpoint while preserving unrelated Codex settings.
-5. Attempts to open Codex Desktop or the ChatGPT app on macOS unless `CCDX_AUTO_LAUNCH` disables it.
+5. Attempts to open Codex App on macOS unless `CCDX_AUTO_LAUNCH` disables it.
 
 The `OPENAI_API_KEY=dummy` value written into the Codex shell environment is only a client-side placeholder. It is not a GitHub credential. CCDX exchanges the saved GitHub OAuth credential for short-lived Copilot service tokens internally.
 
@@ -227,7 +233,7 @@ ccdx
 | `CCDX_IMG_MAX_INPUT_PIXELS` | `40000000` | Maximum decoded pixels accepted for one image |
 | `CCDX_IMG_CACHE_MAX_BYTES` | `67108864` | Process-local byte ceiling for cached image transforms; set to `0` to disable the cache |
 | `CCDX_DISABLE_IMG_OPT` | unset | Set to `1` to disable image optimization |
-| `CCDX_AUTO_LAUNCH` | enabled | Set to `0`, `false`, `no`, or `off` to start without opening Codex or ChatGPT |
+| `CCDX_AUTO_LAUNCH` | enabled | Set to `0`, `false`, `no`, or `off` to start without opening Codex App |
 | `CCDX_GITHUB_TOKEN` | unset | Explicit GitHub Copilot OAuth token to validate and import before Device Flow |
 | `CCDX_GITHUB_TOKEN_PATH` | unset | Explicit file containing a GitHub Copilot OAuth token |
 | `CCDX_GITHUB_TOKEN_PATHS` | unset | Multiple token files separated by the platform path delimiter (`:` on macOS/Linux, `;` on Windows) |
@@ -277,7 +283,7 @@ For `/v1/responses/compact`, CCDX sends one terminal `compaction_trigger`, valid
 
 Successful streaming responses are accepted only when the upstream body is SSE and reaches its protocol terminal event. Unexpected EOF becomes a protocol-native stream error, and repeated blank tool-argument deltas are stopped per tool call. Safe quota, retry, model, trace, and upstream request-ID metadata are forwarded; cookies, authorization, body-length, and encoding headers are not.
 
-Newer Codex and ChatGPT clients can advertise an `image_gen` namespace that already exists upstream. CCDX removes that exact conflicting client tool before forwarding and retries once only when Copilot explicitly reports an image namespace collision. Image input and screenshot optimization remain enabled.
+Newer Codex App builds can advertise an `image_gen` namespace that already exists upstream. CCDX removes that exact conflicting client tool before forwarding and retries once only when Copilot explicitly reports an image namespace collision. Image input and screenshot optimization remain enabled.
 
 ## Development
 

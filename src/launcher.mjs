@@ -3,8 +3,7 @@ import { status } from "./status.mjs";
 
 export { ensureAuth } from "./auth.mjs";
 
-// Prefer the Codex bundle identifier, then fall back to the known app paths.
-// This supports both Codex.app and ChatGPT.app regardless of installation path.
+// Prefer the Codex bundle identifier, then fall back to its known app paths.
 const CODEX_BUNDLE_ID = "com.openai.codex";
 const APP_PATH_CANDIDATES = [
   "/Applications/Codex.app",
@@ -40,12 +39,12 @@ export function launchAttempts() {
 export async function openCodex({ env = process.env, spawnImpl = spawn, platform = process.platform } = {}) {
   if (platform !== "darwin") {
     console.log(status("warn", "Auto-launch is only supported on macOS"));
-    console.log(status("info", "Open Codex or the ChatGPT app manually; it will connect to the adapter."));
+    console.log(status("info", "Open Codex App manually; it will connect to the adapter."));
     return false;
   }
 
   if (!autoLaunchEnabled(env)) {
-    console.log(status("info", "Auto-launch disabled (CCDX_AUTO_LAUNCH=0); open Codex or the ChatGPT app manually."));
+    console.log(status("info", "Auto-launch disabled (CCDX_AUTO_LAUNCH=0); open Codex App manually."));
     return false;
   }
 
@@ -57,7 +56,7 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
   }
 
   console.log(status("warn", "Could not launch the Codex app (checked com.openai.codex, Codex.app, ChatGPT.app)"));
-  console.log(status("info", "Open Codex or the ChatGPT app manually; it will connect to the adapter."));
+  console.log(status("info", "Open Codex App manually; it will connect to the adapter."));
   console.log(status("info", "Download it from https://openai.com/codex"));
   return false;
 }

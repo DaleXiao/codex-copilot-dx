@@ -1,5 +1,6 @@
 export const CODEX_AUTO_REVIEW_MODEL = "codex-auto-review";
 export const DEFAULT_CODEX_AUTO_REVIEW_MODEL = "gpt-5.5";
+export const CODEX_GPT6_MODEL = "gpt-6-astra";
 
 function hasOpenAIEndpoint(model) {
   const endpoints = Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];

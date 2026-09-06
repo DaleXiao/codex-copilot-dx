@@ -59,6 +59,8 @@ On a normal launch, CCDX:
 
 The `OPENAI_API_KEY=dummy` value written into the Codex shell environment is only a client-side placeholder. It is not a GitHub credential. CCDX exchanges the saved GitHub OAuth credential for short-lived Copilot service tokens internally.
 
+On startup, CCDX also adds `context_management = true` under `[features]` when the key is missing, creating the section if needed. Existing values, including `false`, are preserved. Existing inline or dotted `features` declarations and nested context-management settings are left intact to avoid conflicting TOML definitions. This enables Codex's development-stage context-management feature by default for users who have not configured it. A configuration that already matches is not rewritten.
+
 If a compatible adapter is already running, a later launch reuses it and refreshes the local Codex configuration. After updating the package, stop the old adapter before starting the new version; the CLI refuses to silently reuse an incompatible protocol version.
 
 ## Version 0.7.0 migration

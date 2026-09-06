@@ -135,7 +135,7 @@ export function computeUpdatedCodexConfig(content, adapterPort = 2026, adapterHo
   return { content: lines.join("\n") + (hadTrailingNewline ? "\n" : ""), changed };
 }
 
-function initialCodexConfig(adapterPort, adapterHost) {
+export function initialCodexConfig(adapterPort, adapterHost) {
   const baseUrl = `${adapterBaseUrl(adapterHost, adapterPort)}/v1`;
   return `openai_base_url = "${baseUrl}"
 model_context_window = ${MODEL_CONTEXT_WINDOW}

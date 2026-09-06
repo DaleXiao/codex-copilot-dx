@@ -25,6 +25,8 @@ function configuredHome(host = "127.0.0.1") {
   writeFile(githubTokenPath(home), "ghu_test\n");
   const urlHost = host.includes(":") ? `[${host}]` : host;
   writeFile(path.join(home, ".codex", "config.toml"), `openai_base_url = "http://${urlHost}:2026/v1"
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
 
 [shell_environment_policy]
 inherit = "core"
@@ -32,6 +34,9 @@ inherit = "core"
 [shell_environment_policy.set]
 OPENAI_BASE_URL = "http://${urlHost}:2026/v1"
 OPENAI_API_KEY = "dummy"
+
+[features]
+context_management = true
 `);
   return home;
 }
@@ -51,13 +56,13 @@ test("collectDoctorChecks reports only configured Codex surfaces", async () => {
 test("doctor config checks report missing data and honor IPv6 loopback", async () => {
   const missing = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-doctor-missing-"));
   const checks = await collectDoctorChecks({ home: missing, checkAdapter: false });
-  assert.equal(checks.filter((check) => check.kind === "warn").length, 2);
+  assert.equal(checks.filter((check) => check.kind === "warn").length, 3);
 
   const home = configuredHome("::1");
-  assert.deepEqual(inspectCodexConfig({ home, host: "::1", port: 2026 }), [
-    { kind: "ok", message: "Codex base URL points to http://[::1]:2026/v1" },
-    { kind: "ok", message: "Codex shell env local API keys are configured" },
-  ]);
+  const configChecks = inspectCodexConfig({ home, host: "::1", port: 2026 });
+  assert.equal(configChecks.every((check) => check.kind === "ok"), true);
+  assert.equal(configChecks.some((check) => check.message === "Codex base URL points to http://[::1]:2026/v1"), true);
+  assert.equal(configChecks.some((check) => check.message === "Codex shell OPENAI_API_KEY uses the dummy placeholder"), true);
 });
 
 test("inspectAuthProfiles never exposes credential material", () => {
@@ -227,6 +232,6 @@ test("runDoctor prints a bounded Codex-only summary", async () => {
 
   assert.equal(checks.every((check) => check.kind === "ok"), true);
   assert.equal(lines[0], "ccdx doctor");
-  assert.match(lines.at(-1), /Summary: 4 passed, 0 warning\(s\), 0 error\(s\)/);
+  assert.match(lines.at(-1), /Summary: 10 passed, 0 warning\(s\), 0 error\(s\)/);
   assert.equal(lines.some((line) => /Claude|PM Studio/.test(line)), false);
 });

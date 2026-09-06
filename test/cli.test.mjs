@@ -37,6 +37,63 @@ test("cli --version exits without starting the adapter", async () => {
   assert.equal(stderr, "");
 });
 
+test("doctor config CLI stays offline and read-only even with startup and logging settings", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-doctor-config-cli-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const configPath = path.join(home, ".codex", "config.toml");
+  fs.mkdirSync(path.dirname(configPath));
+  const content = `openai_base_url = "http://127.0.0.1:2026/v1"
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
+[features]
+context_management = false
+`;
+  fs.writeFileSync(configPath, content);
+  const before = fs.statSync(configPath);
+  const guard = path.join(home, "guard.cjs");
+  fs.writeFileSync(guard, `
+    Object.defineProperty(process.stderr, "isTTY", { value: true });
+    const deny = () => { process.exit(99); };
+    globalThis.fetch = deny;
+    require("node:net").createConnection = deny;
+    require("node:net").Server.prototype.listen = deny;
+    require("node:child_process").spawn = deny;
+    const fs = require("node:fs");
+    for (const key of ["writeFileSync", "appendFileSync", "mkdirSync", "renameSync"]) fs[key] = deny;
+    require("node:module").syncBuiltinESMExports();
+  `);
+  const env = {
+    ...process.env, HOME: home, ADAPTER_HOST: "127.0.0.1", ADAPTER_PORT: "2026",
+    CCDX_UPSTREAM_TIMEOUT_MS: "invalid", CCDX_EXISTING_ADAPTER_TIMEOUT_MS: "invalid",
+    CCDX_LOG_PATH: path.join(home, "logs", "must-not-exist.log"),
+    XDG_CACHE_HOME: path.join(home, "cache"),
+  };
+  for (const executable of [cliPath, legacyCliPath]) {
+    const { stdout, stderr } = await execFileAsync(process.execPath, ["--require", guard, executable, "doctor", "config"], { env, timeout: 5000 });
+    assert.match(stdout, /^ccdx doctor config/m);
+    assert.match(stdout, /explicitly disabled; retained/);
+    assert.match(stdout, /0 error\(s\)/);
+    assert.equal(stderr, "");
+  }
+  assert.equal(fs.readFileSync(configPath, "utf8"), content);
+  assert.equal(fs.statSync(configPath).mtimeMs, before.mtimeMs);
+  assert.equal(fs.existsSync(path.join(home, "logs")), false);
+  assert.equal(fs.existsSync(path.join(home, ".local")), false);
+  assert.equal(fs.existsSync(path.join(home, "cache")), false);
+
+  fs.writeFileSync(configPath, 'key = "do-not-echo-this-secret\n');
+  await assert.rejects(execFileAsync(process.execPath, [cliPath, "doctor", "config"], { env, timeout: 5000 }), (error) => {
+    assert.equal(error.code, 1);
+    assert.match(error.stdout, /Invalid TOML.*line \d+, column \d+/);
+    assert.doesNotMatch(error.stdout + error.stderr, /do-not-echo-this-secret/);
+    return true;
+  });
+  fs.unlinkSync(configPath);
+  const missing = await execFileAsync(process.execPath, [cliPath, "doctor", "config"], { env, timeout: 5000 });
+  assert.match(missing.stdout, /Next startup would create/);
+  assert.equal(fs.existsSync(configPath), false);
+});
+
 test("deprecated cli --version stays silent outside an interactive terminal", async () => {
   const { stdout, stderr } = await execFileAsync(process.execPath, [legacyCliPath, "--version"], {
     timeout: 2000,

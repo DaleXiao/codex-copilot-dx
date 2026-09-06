@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-if (process.stderr.isTTY === true) {
+const configDoctor = ["doctor", "--doctor"].includes(process.argv[2]) && process.argv[3] === "config";
+if (process.stderr.isTTY === true && !configDoctor) {
   const {
     LEGACY_COMMAND_WARNING,
     shouldShowLegacyCommandWarning,

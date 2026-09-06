@@ -12,7 +12,7 @@ import { runDoctor } from "../src/doctor.mjs";
 import { adapterBaseUrl, checkRunningAdapter } from "../src/running-adapter.mjs";
 import { assertSafeAdapterHost, isLoopbackHost } from "../src/security.mjs";
 import { runInBackground } from "../src/startup.mjs";
-import { cliCommandName, cliHelp, parseAdapterProbeOptions, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
+import { cliCommandName, cliHelp, parseAdapterAddressOptions, parseAdapterProbeOptions, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
 import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
 import { runAutoReviewModelCommand } from "../src/auto-review-model.mjs";
@@ -143,6 +143,23 @@ if (CLI.command === "update") {
     process.exit(1);
   }
 }
+if (CLI.command === "doctor" && CLI.configOnly) {
+  let probe;
+  try {
+    probe = parseAdapterAddressOptions(process.env);
+  } catch (e) {
+    console.error(e.message);
+    process.exit(2);
+  }
+  const checks = await runDoctor({
+    commandName: CLI_NAME,
+    configOnly: true,
+    host: probe.adapterHost,
+    port: probe.adapterPort,
+  });
+  process.exit(checks.some((check) => check.kind === "err") ? 1 : 0);
+}
+
 let RUNTIME;
 try {
   RUNTIME = parseRuntimeOptions(process.env);

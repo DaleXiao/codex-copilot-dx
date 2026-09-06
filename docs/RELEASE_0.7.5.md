@@ -2,6 +2,8 @@
 
 Date: 2026-09-06. Baseline: `5965b58` (0.7.4).
 
+Historical verification for 0.7.5. See [current guidance](../README.md) for current behavior and configuration.
+
 Normal startup and reuse of an existing adapter now add
 `context_management = true` to the `[features]` table when missing. A missing
 table is created, and fresh configuration files include the setting.

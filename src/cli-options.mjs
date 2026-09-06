@@ -16,6 +16,7 @@ const HELP_TOPICS = new Set([
   "auth",
   "auth status",
   "doctor",
+  "doctor config",
   "status",
   "models",
   "usage",
@@ -126,10 +127,15 @@ export function parseCliArgs(args = []) {
     || (command === "start" && rest.some((option) => RETIRED_CLAUDE_OPTIONS.has(option)))
     || (command === "auth" && rest[0] === "login" && rest[1] === "claude")
     || (command === "models" && requestedProfile === "claude")
-    || (command === "doctor" && ["claude", "all"].includes(requestedProfile));
+    || (command === "doctor" && rest[0] !== "config" && ["claude", "all"].includes(requestedProfile));
   if (PM_COMMANDS.has(command)) return baseCommand("retired", { integration: "PM Studio" });
   if (retiredClaudeInvocation) {
     return baseCommand("retired", { integration: "Claude App and Claude Code" });
+  }
+  if ((command === "doctor" || command === "--doctor") && rest[0] === "config") {
+    if (rest.length === 2 && HELP_COMMANDS.has(rest[1])) return helpCommand(["doctor", "config"]);
+    if (rest.length > 1) unexpectedArgs(rest.slice(1));
+    return baseCommand("doctor", { configOnly: true });
   }
   const requestedHelp = nestedHelp(command, rest);
   if (requestedHelp) return requestedHelp;
@@ -245,10 +251,16 @@ function integerEnv(env, name, fallback, { min, max = Number.MAX_SAFE_INTEGER })
   return value;
 }
 
-export function parseRuntimeOptions(env = process.env) {
+export function parseAdapterAddressOptions(env = process.env) {
   return {
     adapterPort: integerEnv(env, "ADAPTER_PORT", 2026, { min: 1, max: 65535 }),
     adapterHost: String(env.ADAPTER_HOST || "127.0.0.1").trim() || "127.0.0.1",
+  };
+}
+
+export function parseRuntimeOptions(env = process.env) {
+  return {
+    ...parseAdapterAddressOptions(env),
     modelRefreshTimeoutMs: integerEnv(env, "CCDX_MODEL_REFRESH_TIMEOUT_MS", 5000, { min: 1, max: MAX_TIMER_DELAY_MS }),
     existingAdapterTimeoutMs: integerEnv(env, "CCDX_EXISTING_ADAPTER_TIMEOUT_MS", 500, { min: 1, max: MAX_TIMER_DELAY_MS }),
     modelRefreshIntervalMs: integerEnv(env, "CCDX_MODEL_REFRESH_INTERVAL_MS", 2 * 60 * 60 * 1000, { min: 0, max: MAX_TIMER_DELAY_MS }),
@@ -261,8 +273,7 @@ export function parseRuntimeOptions(env = process.env) {
 
 export function parseAdapterProbeOptions(env = process.env) {
   return {
-    adapterPort: integerEnv(env, "ADAPTER_PORT", 2026, { min: 1, max: 65535 }),
-    adapterHost: String(env.ADAPTER_HOST || "127.0.0.1").trim() || "127.0.0.1",
+    ...parseAdapterAddressOptions(env),
     existingAdapterTimeoutMs: integerEnv(env, "CCDX_EXISTING_ADAPTER_TIMEOUT_MS", 500, { min: 1, max: MAX_TIMER_DELAY_MS }),
   };
 }
@@ -276,12 +287,13 @@ function topicHelp(name, topic) {
     start: `Usage:\n  ${name} [start] [--show-request-id]\n\nStarts or reuses the local adapter, updates Codex configuration, and attempts to open Codex App when auto-launch is enabled and supported.`,
     auth: `Usage:\n  ${name} auth status [--online] [--format table|plain]\n\nShows the saved GitHub Copilot account without exposing credentials. --online also verifies its entitlement and model catalog.`,
     "auth status": `Usage:\n  ${name} auth status [--online] [--format table|plain]\n\nShows the saved GitHub Copilot account without exposing credentials. --online also verifies its entitlement and model catalog. Interactive terminals use a table by default.`,
-    doctor: `Usage:\n  ${name} doctor [--online] [--compat]\n\nChecks the local credential, Codex configuration, and adapter. --online validates account entitlement; --compat sends minimal inference requests and consumes a small amount of Copilot usage.`,
+    doctor: `Usage:\n  ${name} doctor [--online] [--compat]\n  ${name} doctor config\n\nChecks the local credential, Codex configuration, and adapter. --online validates account entitlement; --compat sends minimal inference requests and consumes a small amount of Copilot usage. The config subcommand checks only the local file and previews startup changes, without network, authentication, or file writes.`,
+    "doctor config": `Usage:\n  ${name} doctor config\n\nReads ~/.codex/config.toml, checks TOML syntax and CCDX-managed settings, and previews the existing startup writer's changes. Does not merge Codex profiles or validate the complete installed Codex schema. No authentication, network requests, file writes, or adapter/GUI startup. Existing context_management=false is valid. Exit 1 for errors, 0 for OK/warnings; unsupported arguments exit 2.`,
     status: `Usage:\n  ${name} status\n\nShows bounded runtime, routing, performance, queue, and cache metrics from a running adapter.`,
     models: `Usage:\n  ${name} models [--format table|plain]\n\nPerforms a fresh, read-only Copilot model-directory lookup for the saved account. Interactive terminals use a table by default.`,
     usage: `Usage:\n  ${name} usage [--format table|plain]\n\nSummarizes local token usage metadata without reading prompt or completion content. Interactive terminals use a table by default.`,
     animation: `Usage:\n  ${name} animation\n\nInteractively selects the terminal activity animation used the next time the adapter starts.`,
-    "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nInteractively selects an enabled Responses model for Codex Auto-review.`,
+    "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nInteractively selects an advertised Responses model for Codex Auto-review.`,
     update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or GitHub main. With no source, an interactive terminal prompts for one.`,
     version: `Usage:\n  ${name} --version`,
   };
@@ -296,6 +308,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} [start] [--show-request-id]
   ${name} auth status [--online] [--format table|plain]
   ${name} doctor [--online] [--compat]
+  ${name} doctor config
   ${name} status
   ${name} models [--format table|plain]
   ${name} usage [--format table|plain]

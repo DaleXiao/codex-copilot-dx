@@ -55,6 +55,23 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(cliHelp("ccdx"), cliHelp("codex-copilot-dx"));
 });
 
+test("doctor config has a dedicated read-only grammar and help topic", () => {
+  assert.deepEqual(parseCliArgs(["doctor", "config"]), {
+    command: "doctor", showRequestId: false, online: false, compat: false, configOnly: true,
+  });
+  for (const args of [["doctor", "config", "--help"], ["help", "doctor", "config"], ["--doctor", "config", "-h"]]) {
+    assert.equal(parseCliArgs(args).helpTopic, "doctor config");
+  }
+  for (const extra of ["--online", "--compat", "--write", "--profile", "extra"]) {
+    assert.throws(() => parseCliArgs(["doctor", "config", extra]), /Unexpected argument/);
+  }
+  for (const profile of ["codex", "claude", "all"]) {
+    assert.throws(() => parseCliArgs(["doctor", "config", "--profile", profile]), /Unexpected argument/);
+  }
+  assert.match(cliHelp(), /ccdx doctor config/);
+  assert.match(cliHelp("ccdx", "doctor config"), /No authentication, network requests, file writes/);
+});
+
 test("parseCliArgs: maps retired Claude and PM Studio integrations to a side-effect-free result", () => {
   for (const args of [
     ["--configure-claude-desktop"],

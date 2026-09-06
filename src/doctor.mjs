@@ -11,6 +11,9 @@ import { status } from "./status.mjs";
 import { buildHeaders, FALLBACK_VSCODE_VERSION, parseApiBase } from "./copilot.mjs";
 import { adapterBaseUrl, checkRunningAdapter } from "./running-adapter.mjs";
 import { CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
+import { inspectCodexConfig } from "./codex-config-doctor.mjs";
+
+export { inspectCodexConfig };
 
 function localGatewayBaseUrl(host, port) {
   const safeHost = String(host || "127.0.0.1");
@@ -26,20 +29,10 @@ function readText(filePath) {
   }
 }
 
-function tomlString(content, key) {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`^\\s*${escaped}\\s*=\\s*"([^"]*)"`, "m").exec(content);
-  return match?.[1] || "";
-}
-
 function displayPath(home, filePath) {
   const rel = path.relative(home, filePath);
   if (!rel.startsWith("..") && !path.isAbsolute(rel)) return `~/${rel}`;
   return filePath;
-}
-
-function valueLabel(value) {
-  return value ? `"${value}"` : "missing";
 }
 
 function copilotModelData(models) {
@@ -282,29 +275,6 @@ export async function inspectAuthProfilesOnline(options = {}) {
   return inspectGitHubTokenOnline(options);
 }
 
-export function inspectCodexConfig({ home = os.homedir(), host = "127.0.0.1", port = 2026 } = {}) {
-  const filePath = path.join(home, ".codex", "config.toml");
-  const expectedBaseUrl = `${adapterBaseUrl(host, port)}/v1`;
-  const config = readText(filePath);
-  if (!config.ok) {
-    return [{ kind: "warn", message: `Codex config not found at ${displayPath(home, filePath)}` }];
-  }
-
-  const checks = [];
-  const baseUrl = tomlString(config.text, "openai_base_url");
-  checks.push(baseUrl === expectedBaseUrl
-    ? { kind: "ok", message: `Codex base URL points to ${expectedBaseUrl}` }
-    : { kind: "warn", message: `Codex base URL is ${valueLabel(baseUrl)}; expected "${expectedBaseUrl}"` });
-
-  const missing = [];
-  if (tomlString(config.text, "OPENAI_BASE_URL") !== expectedBaseUrl) missing.push("OPENAI_BASE_URL");
-  if (tomlString(config.text, "OPENAI_API_KEY") !== "dummy") missing.push("OPENAI_API_KEY");
-  checks.push(missing.length === 0
-    ? { kind: "ok", message: "Codex shell env local API keys are configured" }
-    : { kind: "warn", message: `Codex shell env local API keys need update: ${missing.join(", ")}` });
-  return checks;
-}
-
 function connectHost(host) {
   const normalized = String(host || "127.0.0.1").replace(/^\[(.*)\]$/, "$1");
   if (normalized === "0.0.0.0") return "127.0.0.1";
@@ -332,6 +302,7 @@ export async function collectDoctorChecks({
   host = "127.0.0.1",
   port = 2026,
   checkAdapter = true,
+  configOnly = false,
   checkAdapterListeningFn = checkAdapterListening,
   checkRunningAdapterFn = checkRunningAdapter,
   online = false,
@@ -342,6 +313,7 @@ export async function collectDoctorChecks({
   compatTimeoutMs = 120000,
   inspectAdapterCompatibilityFn = inspectAdapterCompatibility,
 } = {}) {
+  if (configOnly) return inspectCodexConfig({ home, host, port });
   checkedDoctorProfile(profile);
   const checks = [
     ...inspectAuthProfiles({ home }),
@@ -406,7 +378,7 @@ export async function runDoctor(options = {}) {
     options.online ? "--online" : "",
     options.compat ? "--compat" : "",
   ].filter(Boolean);
-  log(`${options.commandName || "ccdx"} doctor${flags.length ? ` ${flags.join(" ")}` : ""}`);
+  log(`${options.commandName || "ccdx"} doctor${options.configOnly ? " config" : flags.length ? ` ${flags.join(" ")}` : ""}`);
   const checks = await collectDoctorChecks(options);
   for (const check of checks) log(status(check.kind, check.message));
   const totals = { ok: 0, warn: 0, err: 0 };

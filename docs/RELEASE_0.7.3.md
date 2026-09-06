@@ -2,6 +2,8 @@
 
 Date: 2026-09-05. Baseline: `42134ed3dfc483d9bc8fbbaae8f141f48c13674e` (0.7.2).
 
+Historical verification for 0.7.3. See [current guidance](../README.md) for current behavior and configuration.
+
 ## Scope and result
 
 Fix native Responses message identity drift: bind each confirmed message's full
@@ -13,13 +15,15 @@ generated IDs, or opaque-ID decoding is involved.
 Only `src/responses-proxy.mjs` changes production behavior. Tool IDs/call IDs,
 reasoning/encrypted content, phases, annotations, usage, unknown event types,
 model catalogs, Fast routing, compaction, non-streaming requests, and existing
-history are not rewritten by this change. Failed/incomplete responses remain
+history are not rewritten by this change. Failed/incomplete streams remain
 uncached. The binding is local to one response stream.
 
 Stable SSE events preserve their original bytes. Modified events preserve their
 JSON fields except the relevant message identity and retain SSE metadata.
 Parsing remains single-pass and bounded by the existing 8 MiB event limit.
-Writes are batched within each upstream read in 64 KiB slices and await drain.
+Each upstream read is processed in 64 KiB slices, with writes batched within
+that read and awaiting drain. A completed SSE event can exceed 64 KiB, bounded
+by the event-size limit; 64 KiB is not a maximum downstream write size.
 Completed large fragment buffers transfer ownership, preventing both a redundant
 large copy and corruption of buffers retained by an asynchronous downstream.
 

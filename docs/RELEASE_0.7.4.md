@@ -2,6 +2,8 @@
 
 Date: 2026-09-06. Baseline: `debddf1` (0.7.3).
 
+Historical verification for 0.7.4. See [current guidance](../README.md) for current behavior and configuration.
+
 ## Scope
 
 - Reuse the exact serialized request after an image fallback reaches its byte

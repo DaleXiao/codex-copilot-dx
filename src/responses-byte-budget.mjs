@@ -3,14 +3,17 @@ import {
   readResponsesImagePart,
   readResponsesToolOutputParts,
 } from "./responses-content.mjs";
+import { measureRequestStage } from "./stream-performance.mjs";
 
 const IMAGE_OMISSION_TEXT = "[CCDX: earlier image omitted to fit the upstream request byte budget.]";
 
 function bodyPayload(reqBody, assertActive) {
-  assertActive?.();
-  const bodyText = JSON.stringify(reqBody);
-  assertActive?.();
-  return { bodyText, bodyBytes: Buffer.byteLength(bodyText) };
+  return measureRequestStage("serialization", () => {
+    assertActive?.();
+    const bodyText = JSON.stringify(reqBody);
+    assertActive?.();
+    return { bodyText, bodyBytes: Buffer.byteLength(bodyText) };
+  });
 }
 
 function inlineImageIdentity(part) {
@@ -264,7 +267,7 @@ export function trimResponsesHistoryToByteBudget(reqBody, {
   initialBodyBytes,
 } = {}) {
   assertActive?.();
-  let bodyText = initialBodyText ?? JSON.stringify(reqBody);
+  let bodyText = initialBodyText ?? measureRequestStage("serialization", () => JSON.stringify(reqBody));
   assertActive?.();
   let bodyBytes = initialBodyBytes ?? Buffer.byteLength(bodyText);
   const limit = Number.isFinite(targetBytes) && targetBytes > 0 ? Math.floor(targetBytes) : bodyBytes;
@@ -322,7 +325,7 @@ export function trimResponsesHistoricalImages(reqBody, {
   initialBodyBytes,
 } = {}) {
   assertActive?.();
-  let bodyText = initialBodyText ?? JSON.stringify(reqBody);
+  let bodyText = initialBodyText ?? measureRequestStage("serialization", () => JSON.stringify(reqBody));
   assertActive?.();
   let bodyBytes = initialBodyBytes ?? Buffer.byteLength(bodyText);
   const byteLimit = Number.isFinite(targetBytes) && targetBytes > 0

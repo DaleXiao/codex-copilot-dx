@@ -111,6 +111,9 @@ try {
   assert.equal(runtimeStatus.requests.total, 5);
   assert.equal(runtimeStatus.requests.active, 0);
   assert.equal(runtimeStatus.admission.activeRequests, 0);
+  assert.equal(runtimeStatus.stream_performance.by_route.responses.preparation_ms.body.samples, 2);
+  assert.ok(runtimeStatus.stream_performance.by_route.responses.preparation_ms.serialization.samples >= 1);
+  assert.equal(runtimeStatus.stream_performance.by_route.responses.request_ttft_ms.samples, 1);
   assert.equal(Object.hasOwn(runtimeStatus.copilot, "token"), false);
 
   console.log("[OK] Offline HTTP smoke test passed");

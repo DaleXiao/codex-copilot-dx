@@ -2,6 +2,8 @@ import { performance } from "node:perf_hooks";
 import { currentRequestContext } from "./request-context.mjs";
 
 const PERFORMANCE_ROUTES = Object.freeze(["responses", "responses_compact"]);
+const PREPARATION_STAGES = Object.freeze(["admission", "body", "history", "images", "serialization"]);
+const PREPARATION_EDGES_MS = Object.freeze([1, 2, 5, 10, 20, 50, 100, 250, 500, 1_000, 5_000, 30_000, 120_000]);
 const TTFT_EDGES_MS = Object.freeze([
   100, 200, 300, 500, 700, 1_000, 1_400, 2_000, 2_800, 4_000,
   5_500, 8_000, 12_000, 16_000, 24_000, 36_000, 60_000, 120_000, 300_000,
@@ -80,6 +82,8 @@ function createRoutePerformance() {
   return {
     ttft: createHistogram(TTFT_EDGES_MS),
     tpot: createHistogram(TPOT_EDGES_US),
+    requestTtft: createHistogram(TTFT_EDGES_MS),
+    preparation: Object.fromEntries(PREPARATION_STAGES.map((stage) => [stage, createHistogram(PREPARATION_EDGES_MS)])),
     success_with_output: 0,
     errors_with_output: 0,
     zero_output_errors: 0,
@@ -95,6 +99,8 @@ function routeSnapshot(route) {
     neutral: route.neutral,
     ttft_ms: histogramSnapshot(route.ttft, "ms"),
     tpot_us: histogramSnapshot(route.tpot, "us"),
+    request_ttft_ms: histogramSnapshot(route.requestTtft, "ms"),
+    preparation_ms: Object.fromEntries(PREPARATION_STAGES.map((stage) => [stage, histogramSnapshot(route.preparation[stage], "ms")])),
   };
 }
 
@@ -105,6 +111,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now() }
     begin(routeName) {
       const route = routes[routeName];
       if (!route) return null;
+      const requestStartedAt = now();
       let upstreamStartedAt = null;
       let firstOutputAt = null;
       let outputTokens = null;
@@ -112,6 +119,17 @@ export function createStreamPerformanceMetrics({ now = () => performance.now() }
       let finished = false;
 
       return {
+        beginStage(stage) {
+          const histogram = route.preparation[stage];
+          if (!histogram || finished) return null;
+          const startedAt = now();
+          let ended = false;
+          return () => {
+            if (ended) return;
+            ended = true;
+            observe(histogram, Math.max(0, now() - startedAt));
+          };
+        },
         upstreamStarted() {
           if (upstreamStartedAt === null) upstreamStartedAt = now();
         },
@@ -130,6 +148,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now() }
           finished = true;
           failed ||= finishFailed;
           const finishedAt = now();
+          if (firstOutputAt !== null) observe(route.requestTtft, Math.max(0, firstOutputAt - requestStartedAt));
           if (upstreamStartedAt === null) {
             route.neutral += 1;
             return;
@@ -158,6 +177,24 @@ export function createStreamPerformanceMetrics({ now = () => performance.now() }
 
 function tracker() {
   return currentRequestContext()?.streamPerformance || null;
+}
+
+export function measureRequestStage(stage, operation) {
+  const finish = tracker()?.beginStage?.(stage);
+  try {
+    return operation();
+  } finally {
+    finish?.();
+  }
+}
+
+export async function measureRequestStageAsync(stage, operation) {
+  const finish = tracker()?.beginStage?.(stage);
+  try {
+    return await operation();
+  } finally {
+    finish?.();
+  }
 }
 
 export function markUpstreamStarted() {

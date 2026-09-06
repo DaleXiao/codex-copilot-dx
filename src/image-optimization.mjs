@@ -6,6 +6,7 @@ import {
 } from "./responses-content.mjs";
 import { createBoundedResultCache } from "./bounded-result-cache.mjs";
 import { status } from "./status.mjs";
+import { measureRequestStage, measureRequestStageAsync } from "./stream-performance.mjs";
 
 const DEFAULT_IMG_CONCURRENCY = 2;
 const IMG_MAX_CONCURRENCY = 12;
@@ -430,6 +431,15 @@ export async function optimizeImagesInBody(reqBody, {
   return reqBody;
 }
 
+function serializePayload(reqBody, assertActive) {
+  return measureRequestStage("serialization", () => {
+    assertActive?.();
+    const bodyText = JSON.stringify(reqBody);
+    assertActive?.();
+    return { bodyText, bodyBytes: Buffer.byteLength(bodyText) };
+  });
+}
+
 export async function prepareResponsesPayload(reqBody, {
   assertActive,
   currentInputStart = 0,
@@ -444,18 +454,15 @@ export async function prepareResponsesPayload(reqBody, {
   const collection = shouldOptimizeImages ? collectImageReferences(reqBody, assertActive) : null;
   const originalImages = collection ? uniqueOriginalImages(collection.references, assertActive) : [];
   if (collection) {
-    await optimizeImageReferences(collection, {
+    await measureRequestStageAsync("images", () => optimizeImageReferences(collection, {
       assertActive,
       concurrency: IMG_CONCURRENCY,
       model: reqBody.model,
       optimizeImage: (dataUrl, options) => optimizeImage(dataUrl, { ...options, quality: IMG_QUALITY }),
       signal,
-    });
+    }));
   }
-  assertActive?.();
-  let bodyText = JSON.stringify(reqBody);
-  assertActive?.();
-  let bodyBytes = Buffer.byteLength(bodyText);
+  let { bodyText, bodyBytes } = serializePayload(reqBody, assertActive);
   const summary = summarizeReqBody(reqBody);
   const targetBytes = positiveInt(maxBytes, MAX_UPSTREAM_BODY_BYTES);
   let adapted = false;
@@ -467,37 +474,34 @@ export async function prepareResponsesPayload(reqBody, {
       assertActive?.();
       const beforeBytes = bodyBytes;
       let processed = 0;
+      let bodyTextDirty = false;
       stage = `q${positiveInt(profile.quality, IMG_QUALITY, 100)}`;
       const orderedImages = orderImagesByCurrentWireBytes(originalImages);
       for (let index = 0; index < orderedImages.length && bodyBytes > targetBytes; index += batchSize) {
         assertActive?.();
         const batch = orderedImages.slice(index, index + batchSize);
-        const candidates = await Promise.all(batch.map((image) => optimizeImage(image.dataUrl, {
+        const candidates = await measureRequestStageAsync("images", () => Promise.all(batch.map((image) => optimizeImage(image.dataUrl, {
           ...profile,
           force: true,
           model: reqBody.model,
           signal,
-        })));
+        }))));
         assertActive?.();
         for (let offset = 0; offset < batch.length && bodyBytes > targetBytes; offset += 1) {
           processed += 1;
           const applied = applyImageCandidate(collection, batch[offset], candidates[offset], bodyBytes);
           bodyBytes = applied.bodyBytes;
           adapted ||= applied.changed;
+          bodyTextDirty ||= applied.changed;
           if (bodyBytes <= targetBytes) {
             collection.commitDirty();
-            assertActive?.();
-            bodyText = JSON.stringify(reqBody);
-            assertActive?.();
-            bodyBytes = Buffer.byteLength(bodyText);
+            ({ bodyText, bodyBytes } = serializePayload(reqBody, assertActive));
+            bodyTextDirty = false;
           }
         }
       }
       collection.commitDirty();
-      assertActive?.();
-      bodyText = JSON.stringify(reqBody);
-      assertActive?.();
-      bodyBytes = Buffer.byteLength(bodyText);
+      if (bodyTextDirty) ({ bodyText, bodyBytes } = serializePayload(reqBody, assertActive));
       console.warn(status("warn", `responses payload ${beforeBytes}b exceeds ${targetBytes}b; image profile max_dim=${profile.maxDim} quality=${profile.quality} processed=${processed}/${orderedImages.length} -> ${bodyBytes}b`));
       if (bodyBytes <= targetBytes) break;
     }

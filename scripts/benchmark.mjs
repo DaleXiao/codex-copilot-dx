@@ -395,6 +395,14 @@ if (checkMode) {
     largePayloadProbe(30, 2),
   ];
   report.visual_history_pressure_36x4 = visualHistoryPressureProbe();
+  report.native_responses = runProbe(`
+    import { nativeResponsesProbe } from "./scripts/benchmark-probes.mjs";
+    process.stdout.write(JSON.stringify(await nativeResponsesProbe()));
+  `);
+  report.image_lifecycle = runProbe(`
+    import { imageLifecycleProbe } from "./scripts/benchmark-probes.mjs";
+    process.stdout.write(JSON.stringify(await imageLifecycleProbe()));
+  `);
 } else if (process.argv.includes("--large-payload")) {
   report.large_payload_peak = [
     largePayloadProbe(5, 1),
@@ -436,6 +444,29 @@ if (checkMode) {
     || !visualHistory.retained_historical_images.every((count) => count === 16)
     || !visualHistory.output_body_mib.every((size, index) => size < visualHistory.input_body_mib[index])) {
     failures.push("36-image x4 visual history pressure did not preserve the expected 16-image upstream window");
+  }
+  for (const sample of report.native_responses) {
+    if (!sample.successful || !sample.content_matches || !sample.cancelled) {
+      failures.push(`native Responses changed content or failed to close its reader: ${sample.name}`);
+    }
+    if (sample.parse_calls !== sample.expected_events || sample.parse_ratio > 1.01 || sample.copy_ratio > 8) {
+      failures.push(`native Responses repeated parsing or copying: ${sample.name}`);
+    }
+    if (sample.writes > Math.ceil(sample.input_bytes / (16 * 1024)) + 2) {
+      failures.push(`native Responses lost per-read write batching: ${sample.name}`);
+    }
+    if (sample.name.startsWith("slow") && (sample.drains !== sample.writes || !sample.drains || sample.reads_while_blocked)) {
+      failures.push(`native Responses read ahead of downstream drain: ${sample.name}`);
+    }
+  }
+  const lifecycle = report.image_lifecycle;
+  if (!lifecycle.all_outputs_match || !lifecycle.work_settled
+    || lifecycle.samples.length !== 6 || lifecycle.samples.slice(1).some((sample) => sample.cache_hits_added === 0)) {
+    failures.push("repeated image requests did not reuse stable results or settle image work");
+  }
+  if (lifecycle.retained_heap_growth_bytes > lifecycle.retention_budget_bytes
+    || lifecycle.retained_array_buffer_growth_bytes > lifecycle.retention_budget_bytes) {
+    failures.push("repeated image requests retained more than two batches after warm-up and GC");
   }
   if (failures.length) {
     for (const failure of failures) console.error(`[FAIL] ${failure}`);

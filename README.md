@@ -172,6 +172,8 @@ curl -s http://127.0.0.1:2026/_ccdx/status | jq
 
 The status endpoint is restricted to the socket's real loopback address even when LAN binding is explicitly enabled. It reports fixed-size request counters, bounded TTFT/TPOT histograms, admission pressure, memory use, response-history size, image queue/cache and adaptive-history state, model-cache counts, and token expiry state. It never retains metric samples or includes prompts, completions, tool arguments, image content, account names, or token values.
 
+`stream_performance.by_route` also reports `request_ttft_ms`, measured from adapter entry to the first observed output delta, including local preparation. The existing `ttft_ms` continues to start at upstream dispatch. Neither timestamp means the client has drained or displayed the output. `preparation_ms` contains bounded histograms for admission (including history reservations), body reading/decompression/JSON parsing, history materialization/compact preparation, image optimization, and request serialization. Each sample measures one operation, including failed operations; retries can add samples. These are diagnostic intervals rather than a complete breakdown of request time: body reading includes internal decoded-body admission waits; authentication, routing, and other preparation are not individually timed. Non-streaming requests contribute preparation samples without inventing a first-token measurement.
+
 Every API response includes a safe `X-Request-Id` for correlation. To include the same ID in related terminal and file log lines, start with:
 
 ```bash
@@ -294,6 +296,8 @@ npm ci
 npm run verify
 npm run bench:payload
 ```
+
+`bench:check` covers both SSE parsers, including native Responses identity rewriting, 1/4/8 MiB fragmented events, write batching, and slow-client backpressure. It also repeats four concurrent image preparations across six rounds using a desktop-sized synthetic screenshot and a public-domain photograph. Checks enforce content preservation, single-pass JSON parsing, bounded copying, cache reuse, settled work, and bounded retained heap/ArrayBuffers after warm-up and GC. Sampled RSS and absolute timings remain report-only because allocators, runtimes, and machines differ; the fixtures do not establish production latency or visual model accuracy.
 
 `npm test` runs unit and handler-level tests. `npm run test:smoke` starts a real local adapter with fully injected offline upstreams. `npm run bench:check` enforces linear SSE scanning, image/tool processing, and request-admission resource limits. `npm run pack:check` verifies npm tarball contents without publishing. `npm run bench:payload` is a report-only isolated-process benchmark for 5–60 MiB image payloads and does not contact Copilot. CI runs verification on the supported Node.js release lines.
 

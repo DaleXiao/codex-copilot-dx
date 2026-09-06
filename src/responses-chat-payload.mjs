@@ -6,6 +6,7 @@ import {
 import { responsesToChat } from "./responses-bridge.mjs";
 import { readResponsesImagePart, readResponsesToolOutputParts } from "./responses-content.mjs";
 import { withChatStreamUsage } from "./stream-contract.mjs";
+import { measureRequestStage } from "./stream-performance.mjs";
 
 const DEFAULT_MAX_UPSTREAM_BODY_BYTES = 30 * 1024 * 1024;
 
@@ -23,10 +24,12 @@ function configuredBodyLimit(payloadOptions) {
 }
 
 function jsonPayload(value, assertActive) {
-  assertActive?.();
-  const bodyText = JSON.stringify(value);
-  assertActive?.();
-  return { bodyText, bodyBytes: Buffer.byteLength(bodyText) };
+  return measureRequestStage("serialization", () => {
+    assertActive?.();
+    const bodyText = JSON.stringify(value);
+    assertActive?.();
+    return { bodyText, bodyBytes: Buffer.byteLength(bodyText) };
+  });
 }
 
 function chatRequest(responsesBody, stream) {

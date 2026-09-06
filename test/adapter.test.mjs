@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as zlib from "node:zlib";
-import { cacheModelEndpoints, resetModelEndpointCacheForTests } from "../src/copilot.mjs";
+import { cacheModelEndpoints, createCopilotClient, resetModelEndpointCacheForTests } from "../src/copilot.mjs";
 import { prepareResponsesChatPayload } from "../src/responses-chat-payload.mjs";
 import {
   abortErrorStatusCode,
@@ -41,6 +41,7 @@ import {
   MAX_UPSTREAM_RESPONSES_SUCCESS_BODY_BYTES,
 } from "../src/http-transport.mjs";
 import { RUNTIME_DEFAULTS } from "../src/runtime-config.mjs";
+import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
 
 const gzipAsync = promisify(zlib.gzip);
 const zstdCompressAsync = zlib.zstdCompress ? promisify(zlib.zstdCompress) : null;
@@ -51,6 +52,57 @@ function jsonRequest(body, contentEncoding, headers = {}) {
   if (contentEncoding) req.headers["content-encoding"] = contentEncoding;
   return req;
 }
+
+test("preparation metrics cover native, Chat fallback, and compact without altering payloads", async () => {
+  const previousUsageDisabled = process.env.CCDX_DISABLE_USAGE;
+  process.env.CCDX_DISABLE_USAGE = "1";
+  try {
+    for (const mode of ["native", "chat", "compact"]) {
+      const metrics = createStreamPerformanceMetrics();
+      const client = createCopilotClient({
+        profile: "timing-test",
+        allowTokenDiscovery: false,
+        readGithubCredentials: async () => ({ token: "test-token", identity: { login: "test", id: 1 } }),
+        tokenFetchImpl: async () => Response.json({ token: "test-service", expires_at: Date.now() / 1000 + 1800 }),
+      });
+      let sent;
+      const fetchImpl = async (_url, options) => {
+        sent = JSON.parse(options.body);
+        return Response.json(mode === "chat"
+          ? { id: "chat_timing", choices: [{ message: { role: "assistant", content: "OK" }, finish_reason: "stop" }] }
+          : { id: `resp_timing_${mode}`, status: "completed", output: mode === "compact"
+            ? [{ type: "compaction", id: "cmp_timing", encrypted_content: "opaque-test" }]
+            : [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "OK" }] }] });
+      };
+      const responses = (body, options) => client.responses(body, {
+        ...options, fetchImpl, payloadOptions: { optimizeImage: async (url) => url },
+      });
+      const response = await invokeAdapter({
+        streamPerformanceMetrics: metrics,
+        responsesFn: responses,
+        responsesCompactFn: responses,
+        chatCompletionsFn: (body, options) => client.chatCompletions(body, { ...options, fetchImpl }),
+      }, {
+        url: mode === "compact" ? "/v1/responses/compact" : "/v1/responses",
+        body: { model: mode === "chat" ? "gpt-4o" : "gpt-5.6-sol", input: "preserve this input", stream: false },
+      });
+      assert.equal(response.status, 200, response.text);
+      assert.equal(sent.stream, false);
+      assert.ok(JSON.stringify(sent).includes("preserve this input"));
+      const route = metrics.snapshot().by_route[mode === "compact" ? "responses_compact" : "responses"];
+      assert.equal(route.preparation_ms.admission.samples, 1);
+      assert.equal(route.preparation_ms.body.samples, 1);
+      assert.ok(route.preparation_ms.history.samples >= 1);
+      assert.ok(route.preparation_ms.serialization.samples >= 1);
+      assert.equal(route.request_ttft_ms.samples, 0);
+      assert.equal(route.ttft_ms.samples, 0);
+    }
+  } finally {
+    clearResponseHistoryForTests();
+    if (previousUsageDisabled === undefined) delete process.env.CCDX_DISABLE_USAGE;
+    else process.env.CCDX_DISABLE_USAGE = previousUsageDisabled;
+  }
+});
 
 async function invokeAdapterRequest(options, req) {
   const res = new EventEmitter();

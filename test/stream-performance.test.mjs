@@ -12,7 +12,73 @@ import {
   createStreamPerformanceMetrics,
   isChatOutputDelta,
   isResponsesOutputEvent,
+  measureRequestStage,
+  measureRequestStageAsync,
 } from "../src/stream-performance.mjs";
+
+test("request timings include preparation without changing upstream TTFT and TPOT", async () => {
+  let time = 0;
+  const metrics = createStreamPerformanceMetrics({ now: () => time });
+  const sample = metrics.begin("responses");
+  await runWithRequestContext({ streamPerformance: sample }, async () => {
+    await measureRequestStageAsync("admission", async () => { time += 10; });
+    await measureRequestStageAsync("body", async () => { time += 25; });
+    assert.equal(measureRequestStage("history", () => { time += 5; return 42; }), 42);
+    await measureRequestStageAsync("images", async () => { time += 35; });
+    measureRequestStage("serialization", () => { time += 5; });
+    time = 100;
+    sample.upstreamStarted();
+    time = 350;
+    sample.firstOutput();
+    time = 400;
+    sample.firstOutput();
+    sample.setOutputTokens(6);
+    time = 450;
+    sample.finish();
+    sample.finish();
+  });
+  const route = metrics.snapshot().by_route.responses;
+  assert.equal(route.request_ttft_ms.avg, 350);
+  assert.equal(route.request_ttft_ms.samples, 1);
+  assert.equal(route.ttft_ms.avg, 250);
+  assert.equal(route.tpot_us.avg, 20_000);
+  assert.deepEqual(Object.fromEntries(Object.entries(route.preparation_ms).map(([stage, data]) => [stage, [data.samples, data.avg]])), {
+    admission: [1, 10], body: [1, 25], history: [1, 5], images: [1, 35], serialization: [1, 5],
+  });
+});
+
+test("preparation timings retain original failures, count retries, and isolate concurrent request contexts", async () => {
+  let time = 0;
+  const metrics = createStreamPerformanceMetrics({ now: () => time });
+  const first = metrics.begin("responses");
+  const second = metrics.begin("responses_compact");
+  const failure = new Error("preparation aborted");
+  let resume;
+  const gate = new Promise((resolve) => { resume = resolve; });
+  const pending = runWithRequestContext({ streamPerformance: first }, () => measureRequestStageAsync("images", async () => {
+    await gate;
+    time += 7;
+    throw failure;
+  }));
+  await runWithRequestContext({ streamPerformance: second }, async () => {
+    assert.throws(() => measureRequestStage("serialization", () => { time += 3; throw failure; }), (error) => error === failure);
+    assert.equal(await measureRequestStageAsync("images", async () => { time += 5; return "ready"; }), "ready");
+  });
+  resume();
+  await assert.rejects(pending, (error) => error === failure);
+  runWithRequestContext({ streamPerformance: first }, () => measureRequestStage("images", () => { time += 2; }));
+  first.finish({ failed: true });
+  second.finish();
+  const routes = metrics.snapshot().by_route;
+  assert.equal(routes.responses.preparation_ms.images.samples, 2);
+  assert.equal(routes.responses.preparation_ms.images.avg, 8.5);
+  assert.equal(routes.responses.preparation_ms.serialization.samples, 0);
+  assert.equal(routes.responses_compact.preparation_ms.images.avg, 5);
+  assert.equal(routes.responses_compact.preparation_ms.serialization.avg, 3);
+  assert.equal(routes.responses.request_ttft_ms.samples, 0);
+  assert.equal(measureRequestStage("history", () => 42), 42);
+  assert.equal(await measureRequestStageAsync("body", async () => 43), 43);
+});
 
 function trackerSpy() {
   const calls = { firstOutput: 0, outputTokens: [], upstreamStarted: 0 };

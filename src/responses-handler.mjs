@@ -37,6 +37,7 @@ import { status } from "./status.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordResponsesUsage } from "./usage.mjs";
+import { measureRequestStage, measureRequestStageAsync } from "./stream-performance.mjs";
 
 const RESPONSES_ONLY_FALLBACK = new Set([
   "gpt-5.6-luna",
@@ -183,28 +184,28 @@ export function createResponsesHandler(options) {
       releaseRequest();
     };
     try {
-      releaseRequest = await acquireRequest(req, { signal: abort.signal });
+      releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal }));
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
-      parsed = await readJsonBody(req, { admission: releaseRequest, signal: abort.signal });
+      parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
       activeDeadline = now() + upstreamTimeoutMs;
       activeTimeoutReason = "responses_prepare_timeout";
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
       if (parsed.previous_response_id !== undefined && parsed.previous_response_id !== null) {
-        historySnapshot = acquireResponseHistorySnapshot(parsed.previous_response_id, {
+        historySnapshot = measureRequestStage("history", () => acquireResponseHistorySnapshot(parsed.previous_response_id, {
           assertActive: assertPrepareActive,
           signal: abort.signal,
-        });
+        }));
         if (historySnapshot.bytes > 0) {
-          await releaseRequest.reserveResponseHistory?.(historySnapshot.bytes, { signal: abort.signal });
+          await measureRequestStageAsync("admission", () => releaseRequest.reserveResponseHistory?.(historySnapshot.bytes, { signal: abort.signal }));
         }
         assertPrepareActive();
       }
-      prepared = prepareResponsesRequest(parsed, {
+      prepared = measureRequestStage("history", () => prepareResponsesRequest(parsed, {
         assertActive: assertPrepareActive,
         copilotBoundary: false,
         historySnapshot,
         mutate: true,
-      });
+      }));
       parsed = null;
       assertPrepareActive();
       imagePressureResult = imagePressure?.apply?.(prepared, { assertActive: assertPrepareActive }) || null;
@@ -435,33 +436,33 @@ export function createResponsesCompactHandler(options) {
       releaseRequest();
     };
     try {
-      releaseRequest = await acquireRequest(req, { signal: abort.signal });
+      releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal }));
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
-      const parsed = await readJsonBody(req, { admission: releaseRequest, signal: abort.signal });
+      const parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
       activeDeadline = now() + upstreamTimeoutMs;
       activeTimeoutReason = "responses_prepare_timeout";
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
       if (parsed.previous_response_id !== undefined && parsed.previous_response_id !== null) {
-        historySnapshot = acquireResponseHistorySnapshot(parsed.previous_response_id, {
+        historySnapshot = measureRequestStage("history", () => acquireResponseHistorySnapshot(parsed.previous_response_id, {
           assertActive: assertPrepareActive,
           signal: abort.signal,
-        });
+        }));
         if (historySnapshot.bytes > 0) {
-          await releaseRequest.reserveResponseHistory?.(historySnapshot.bytes, { signal: abort.signal });
+          await measureRequestStageAsync("admission", () => releaseRequest.reserveResponseHistory?.(historySnapshot.bytes, { signal: abort.signal }));
         }
         assertPrepareActive();
       }
-      prepared = prepareResponsesRequest(parsed, {
+      prepared = measureRequestStage("history", () => prepareResponsesRequest(parsed, {
         assertActive: assertPrepareActive,
         copilotBoundary: false,
         historySnapshot,
         mutate: true,
-      });
+      }));
       imagePressureResult = imagePressure?.applyRecovery?.(prepared, { assertActive: assertPrepareActive }) || null;
       if (imagePressureResult?.adapted) {
         console.warn(status("warn", `responses compact visual history mode=recovery historical_images=${imagePressureResult.initialHistoricalImages}->${imagePressureResult.historicalImages} omitted=${imagePressureResult.imagesOmitted} bytes=${imagePressureResult.initialBodyBytes}->${imagePressureResult.bodyBytes}`));
       }
-      prepared = prepareResponsesCompactionRequest(prepared);
+      prepared = measureRequestStage("history", () => prepareResponsesCompactionRequest(prepared));
       assertPrepareActive();
       prepared.surface = "responses_compact";
       const model = parsed.model || "unknown";

@@ -125,9 +125,13 @@ The selector is ordered numerically:
 4. Chase
 5. Mirror
 6. Pulse
-7. Braille
+7. Stack — short light trails arrive, accumulate, then leave as one bundle
+8. Relay — fixed nodes receive and pass a short light trail
+9. Split — one incoming light trail divides into two outgoing trails
 
 Enter the corresponding number to select an animation. The Comet row includes a static preview, and after a selection CCDX plays one cycle of the chosen animation as confirmation when terminal animation is enabled. The setting is saved in `~/.config/codex-copilot-dx/config.json`, or under `XDG_CONFIG_HOME` when set.
+
+All nine animations use the same 20-column colon track and cyan/blue palette. They indicate activity, not completion percentage. Braille was removed in 0.7.7. A saved `terminal_animation: "braille"` falls back to Comet without rewriting the settings file; choosing another animation replaces it, and explicitly choosing Comet clears it. Other settings remain intact.
 
 The selected theme is loaded once when a new adapter starts, so changing it does not restart or alter an adapter that is already running. Stop and start CCDX to apply the new theme. `CCDX_TERMINAL_ANIMATION=0` (also `false`, `no`, or `off`) remains the boolean gate that disables terminal animation regardless of the selected theme.
 

@@ -31,7 +31,7 @@ function outputBuffer({ isTTY = true } = {}) {
 test("animation selector: shows the fixed ordered menu and persists a numeric selection", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-animation-selector-"));
   const output = outputBuffer();
-  const answers = ["wrong", "8", "2"];
+  const answers = ["wrong", "10", "2"];
   const events = [];
 
   const result = await runAnimationCommand({
@@ -53,14 +53,14 @@ test("animation selector: shows the fixed ordered menu and persists a numeric se
   assert.equal(result.cancelled, false);
   assert.equal(result.theme, "twin");
   assert.equal(savedTerminalAnimationTheme({ env: {}, home }), "twin");
-  assert.deepEqual(events, ["answer:wrong", "answer:8", "answer:2", "preview:twin"]);
+  assert.deepEqual(events, ["answer:wrong", "answer:10", "answer:2", "preview:twin"]);
 
   const rendered = output.text();
   const plain = rendered.replace(ANSI_PATTERN, "");
-  assert.match(plain, /1\. Comet \[default, current\].*\n  2\. Twin\n  3\. Shuttle\n  4\. Chase\n  5\. Mirror\n  6\. Pulse\n  7\. Braille\n/);
+  assert.match(plain, /1\. Comet \[default, current\].*\n  2\. Twin\n  3\. Shuttle\n  4\. Chase\n  5\. Mirror\n  6\. Pulse\n  7\. Stack\n  8\. Relay\n  9\. Split\n/);
   assert.match(rendered, /1\. Comet.*\u001b\[97m:/);
-  assert.doesNotMatch(rendered, /Braille Comet/i);
-  assert.equal((plain.match(/Enter a number from 1 to 7/g) || []).length, 2);
+  assert.doesNotMatch(rendered, /braille/i);
+  assert.equal((plain.match(/Enter a number from 1 to 9/g) || []).length, 2);
   assert.match(plain, /Saved terminal animation: Twin/);
   assert.match(plain, /The next ccdx start will use this animation/);
 });
@@ -181,4 +181,40 @@ test("animation selector: rejects non-interactive use without an injected prompt
     runAnimationCommand({ input: { isTTY: false }, output: { isTTY: false } }),
     /ccdx animation requires an interactive terminal/,
   );
+});
+
+test("animation selector: old Braille settings allow selecting and keeping each new theme", async (t) => {
+  for (const [choice, theme] of [["7", "stack"], ["8", "relay"], ["9", "split"]]) {
+    await t.test(theme, async (t) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-animation-upgrade-"));
+      t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+      const filePath = userSettingsPath({ env: {}, home });
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      const original = JSON.stringify({ terminal_animation: "braille", untouched: { enabled: true } });
+      fs.writeFileSync(filePath, original);
+      const output = outputBuffer();
+      const previews = [];
+      const options = { env: {}, home, output: output.stream, preview: async (value) => previews.push(value) };
+
+      const cancelled = await runAnimationCommand({ ...options, prompt: async () => "q" });
+      assert.deepEqual(cancelled, { changed: false, cancelled: true, theme: "comet" });
+      const keptDefault = await runAnimationCommand({ ...options, prompt: async () => "" });
+      assert.equal(keptDefault.changed, false);
+      assert.equal(keptDefault.theme, "comet");
+      assert.equal(fs.readFileSync(filePath, "utf8"), original);
+
+      const selected = await runAnimationCommand({ ...options, prompt: async () => choice });
+      assert.equal(selected.changed, true);
+      assert.equal(selected.theme, theme);
+      assert.deepEqual(readUserSettings({ env: {}, home }), { terminal_animation: theme, untouched: { enabled: true } });
+      const saved = fs.readFileSync(filePath, "utf8");
+      const kept = await runAnimationCommand({ ...options, prompt: async () => "" });
+      assert.equal(kept.changed, false);
+      assert.equal(kept.theme, theme);
+      assert.equal(fs.readFileSync(filePath, "utf8"), saved);
+      assert.deepEqual(previews, ["comet", theme, theme]);
+      assert.match(output.text(), /Current: Comet \(default\)/);
+      assert.doesNotMatch(output.text(), /braille/i);
+    });
+  }
 });

@@ -6,6 +6,7 @@ import {
 } from "../src/terminal-activity.mjs";
 import {
   TERMINAL_ANIMATION_THEMES,
+  getTerminalAnimationFrameDelay,
   renderTerminalAnimationFrame,
 } from "../src/terminal-animation.mjs";
 
@@ -263,4 +264,56 @@ test("terminal activity: starts after idle, loops, and yields immediately to rea
   assert.equal(events.length, countAfterFinish);
   indicator.cleanup();
   assert.equal(consoleObj.log, originalLog);
+});
+
+test("terminal activity: new themes finish full cycles and yield with concurrent requests", async (t) => {
+  for (const id of ["stack", "relay", "split"]) {
+    await t.test(id, () => {
+      const theme = TERMINAL_ANIMATION_THEMES.find((theme) => theme.id === id);
+      const events = [];
+      const timers = fakeTimers();
+      const consoleObj = fakeConsole(events);
+      const originalWarn = consoleObj.warn;
+      const indicator = createTerminalActivityIndicator({
+        env: {},
+        theme: id,
+        output: fakeStream(events),
+        errorOutput: fakeStream(events, { name: "error-output" }),
+        consoleObj,
+        timers,
+      });
+      const finishFirst = indicator.beginRequest();
+      const finishLast = indicator.beginRequest();
+      timers.advance(800);
+      for (let index = 0; index < theme.frameCount; index += 1) {
+        assert.ok(events.at(-1).text.endsWith(renderTerminalAnimationFrame(id, index)), `${id} frame ${index}`);
+        const count = events.length;
+        timers.advance(getTerminalAnimationFrameDelay(id, index) - 1);
+        assert.equal(events.length, count);
+        timers.advance(1);
+        assert.equal(events.length, count + 1);
+      }
+      assert.ok(events.at(-1).text.endsWith(renderTerminalAnimationFrame(id, 0)));
+
+      const beforeFinish = events.length;
+      finishFirst();
+      assert.equal(events.length, beforeFinish);
+      consoleObj.warn("request still active");
+      assert.equal(events.at(-2).text, "\r\u001b[2K\u001b[?25h");
+      assert.equal(events.at(-1).type, "warn");
+      const afterLog = events.length;
+      timers.advance(799);
+      assert.equal(events.length, afterLog);
+      timers.advance(1);
+      assert.equal(events.at(-1).text, `\u001b[?25l\r\u001b[2K${renderTerminalAnimationFrame(id, 0)}`);
+
+      finishLast();
+      assert.equal(events.at(-1).text, "\r\u001b[2K\u001b[?25h");
+      indicator.cleanup();
+      assert.equal(consoleObj.warn, originalWarn);
+      const afterCleanup = events.length;
+      timers.advance(6000);
+      assert.equal(events.length, afterCleanup);
+    });
+  }
 });

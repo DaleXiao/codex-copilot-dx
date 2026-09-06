@@ -130,7 +130,7 @@ test("user settings: invalid animation settings preserve valid runtime settings 
   });
   assert.throws(
     () => readUserSettings({ env, home, strict: true }),
-    /terminal_animation must be one of: comet, twin, shuttle, chase, mirror, pulse, braille/,
+    /terminal_animation must be one of: comet, twin, shuttle, chase, mirror, pulse, stack, relay, split/,
   );
   assert.throws(
     () => writeTerminalAnimationTheme("pulse", { env, home }),
@@ -145,4 +145,27 @@ test("user settings: invalid animation settings preserve valid runtime settings 
     /Terminal animation must be one of/,
   );
   assert.equal(fs.readFileSync(filePath, "utf8"), invalid);
+});
+
+test("user settings: retired Braille falls back without blocking settings reads or writes", (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-settings-retired-animation-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const options = { env: {}, home };
+  const filePath = userSettingsPath(options);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const original = JSON.stringify({ terminal_animation: "braille", auto_review_model: "gpt-5.6-sol", untouched: 42 });
+  fs.writeFileSync(filePath, original);
+
+  assert.deepEqual(terminalAnimationPreference(options), { theme: "comet", source: "default" });
+  assert.equal(savedTerminalAnimationTheme(options), "");
+  assert.equal(savedAutoReviewModel(options), "gpt-5.6-sol");
+  assert.deepEqual(readUserSettings({ ...options, strict: true }), JSON.parse(original));
+  assert.equal(fs.readFileSync(filePath, "utf8"), original);
+  assert.throws(() => writeTerminalAnimationTheme("braille", options), /Terminal animation must be one of/);
+  assert.equal(fs.readFileSync(filePath, "utf8"), original);
+
+  assert.equal(writeAutoReviewModel("gpt-5.6-luna", options).changed, true);
+  assert.deepEqual(readUserSettings(options), { terminal_animation: "braille", auto_review_model: "gpt-5.6-luna", untouched: 42 });
+  assert.equal(writeTerminalAnimationTheme("comet", options).changed, true);
+  assert.deepEqual(readUserSettings(options), { auto_review_model: "gpt-5.6-luna", untouched: 42 });
 });

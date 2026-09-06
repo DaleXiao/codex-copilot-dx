@@ -37,7 +37,8 @@ export function readUserSettings({ env = process.env, home = os.homedir(), stric
     }
     if (Object.hasOwn(parsed, TERMINAL_ANIMATION_KEY)) {
       const value = parsed[TERMINAL_ANIMATION_KEY];
-      if (!isTerminalAnimationTheme(value)) {
+      // Accept the retired value on read so upgrades can fall back and select a replacement.
+      if (value !== "braille" && !isTerminalAnimationTheme(value)) {
         const choices = TERMINAL_ANIMATION_THEMES.map(({ id }) => id).join(", ");
         if (strict) {
           throw invalidSettings(filePath, `${TERMINAL_ANIMATION_KEY} must be one of: ${choices}`);

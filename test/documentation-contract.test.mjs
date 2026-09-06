@@ -5,9 +5,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseCliArgs } from "../src/cli-options.mjs";
 import { loadRuntimeConfig } from "../src/runtime-config.mjs";
+import { TERMINAL_ANIMATION_THEMES } from "../src/terminal-animation.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+
+test("documented animation choices match the current selector order", () => {
+  const section = readme.split("### Terminal animation\n")[1].split("### Update\n")[0];
+  const labels = [...section.matchAll(/^\d+\. (\w+)/gm)].map((match) => match[1]);
+  assert.deepEqual(labels, TERMINAL_ANIMATION_THEMES.map((theme) => theme.label));
+});
 
 test("documented runtime defaults match the runtime configuration", () => {
   const source = fs.readFileSync(path.join(root, "src/runtime-config.mjs"), "utf8");

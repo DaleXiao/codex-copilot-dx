@@ -5,7 +5,7 @@ export const DEFAULT_TERMINAL_ANIMATION_THEME = "comet";
 
 const TAIL_LENGTH = 7;
 const TAIL_COLORS = Object.freeze([159, 123, 87, 51, 45, 39, 33]);
-const BRAILLE_GLYPHS = Object.freeze(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]);
+const RELAY_ROUTE = Object.freeze([2, 9, 16, 9, 2]);
 
 function colorCell(glyph, color) {
   return `${ESC}[${color}m${glyph}${ESC}[0m`;
@@ -37,6 +37,25 @@ function pingPongState(index) {
   return offset < TERMINAL_ANIMATION_TRACK_WIDTH
     ? { position: offset, direction: 1 }
     : { position: period - offset, direction: -1 };
+}
+
+function setGlowCell(cells, index, level) {
+  const color = level === 0 ? "97" : `38;5;${TAIL_COLORS[Math.min(level - 1, TAIL_LENGTH - 1)]}`;
+  setCell(cells, index, ":", color);
+}
+
+function stackState(index) {
+  // Three incoming packets each leave three cells parked on the left.
+  for (let parked = 0; parked < 9; parked += 3) {
+    const travelFrames = TERMINAL_ANIMATION_TRACK_WIDTH - parked;
+    if (index < travelFrames) {
+      return { parked, head: TERMINAL_ANIMATION_TRACK_WIDTH - 1 - index, delayMs: 55 };
+    }
+    if (index === travelFrames) return { parked: parked + 3, delayMs: 180 };
+    index -= travelFrames + 1;
+  }
+  // Release the accumulated bundle, then leave a blank frame before restarting.
+  return { shift: index, delayMs: index === 0 ? 130 : index === 21 ? 180 : 50 };
 }
 
 const THEME_DEFINITIONS = Object.freeze([
@@ -137,15 +156,84 @@ const THEME_DEFINITIONS = Object.freeze([
     },
   }),
   Object.freeze({
-    id: "braille",
-    label: "Braille",
-    frameCount: BRAILLE_GLYPHS.length,
-    frameDelayMs: 80,
+    id: "stack",
+    label: "Stack",
+    frameCount: 76,
+    frameDelayMs: 55,
     loopPauseMs: 0,
     startFrame: 0,
+    frameDelay(index) {
+      return stackState(index).delayMs;
+    },
     render(index) {
       const cells = blankTrack();
-      setCell(cells, Math.floor(TERMINAL_ANIMATION_TRACK_WIDTH / 2), BRAILLE_GLYPHS[index], `38;5;${TAIL_COLORS[2]}`);
+      const state = stackState(index);
+      if (state.shift !== undefined) {
+        for (let column = 0; column < 9; column += 1) {
+          setGlowCell(cells, state.shift + column, 8 - column);
+        }
+      } else {
+        for (let column = 0; column < state.parked; column += 1) setGlowCell(cells, column, 5);
+        if (state.head !== undefined) drawComet(cells, state.head, -1, 2);
+      }
+      return wrapTrack(cells);
+    },
+  }),
+  Object.freeze({
+    id: "relay",
+    label: "Relay",
+    frameCount: 40,
+    frameDelayMs: 85,
+    loopPauseMs: 0,
+    startFrame: 0,
+    frameDelay(index) {
+      const phase = index % 10;
+      return phase === 0 ? 220 : phase < 7 ? 85 : 70;
+    },
+    render(index) {
+      const cells = blankTrack();
+      const leg = Math.floor(index / 10);
+      const from = RELAY_ROUTE[leg];
+      const to = RELAY_ROUTE[leg + 1];
+      const phase = index % 10;
+      const active = phase === 0 ? from : phase >= 7 ? to : -1;
+      const level = phase >= 7 ? [0, 1, 3][phase - 7] : 0;
+      for (let center = 2; center <= 16; center += 7) {
+        for (let offset = -1; offset <= 1; offset += 1) {
+          setGlowCell(cells, center + offset, center === active ? level + Math.abs(offset) * 2 : 7);
+        }
+      }
+      if (phase > 0 && phase < 7) {
+        const direction = Math.sign(to - from);
+        drawComet(cells, from + direction * phase, direction, 2);
+      }
+      return wrapTrack(cells);
+    },
+  }),
+  Object.freeze({
+    id: "split",
+    label: "Split",
+    frameCount: 29,
+    frameDelayMs: 65,
+    loopPauseMs: 0,
+    startFrame: 0,
+    frameDelay(index) {
+      return index < 10 ? 70 : index < 13 ? 80 : index < 28 ? 65 : 220;
+    },
+    render(index) {
+      const cells = blankTrack();
+      if (index < 10) {
+        drawComet(cells, index, 1, 4);
+      } else if (index < 13) {
+        const level = [2, 0, 1][index - 10];
+        for (let offset = -2; offset <= 2; offset += 1) {
+          setGlowCell(cells, 9 + offset, level + Math.abs(offset));
+        }
+      } else if (index < 28) {
+        const distance = index - 13;
+        drawComet(cells, 9 - distance, -1, 4);
+        drawComet(cells, 10 + distance, 1, 4);
+      }
       return wrapTrack(cells);
     },
   }),

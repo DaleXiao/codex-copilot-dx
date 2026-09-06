@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   DEFAULT_TERMINAL_ANIMATION_THEME,
   TERMINAL_ANIMATION_THEMES,
@@ -23,8 +24,24 @@ const EXPECTED_THEMES = [
   { id: "chase", label: "Chase", frameCount: 34, frameDelayMs: 65, loopPauseMs: 0, startFrame: 13 },
   { id: "mirror", label: "Mirror", frameCount: 18, frameDelayMs: 75, loopPauseMs: 0, startFrame: 3 },
   { id: "pulse", label: "Pulse", frameCount: 8, frameDelayMs: 115, loopPauseMs: 0, startFrame: 2 },
-  { id: "braille", label: "Braille", frameCount: 10, frameDelayMs: 80, loopPauseMs: 0, startFrame: 0 },
+  { id: "stack", label: "Stack", frameCount: 76, frameDelayMs: 55, loopPauseMs: 0, startFrame: 0 },
+  { id: "relay", label: "Relay", frameCount: 40, frameDelayMs: 85, loopPauseMs: 0, startFrame: 0 },
+  { id: "split", label: "Split", frameCount: 29, frameDelayMs: 65, loopPauseMs: 0, startFrame: 0 },
 ];
+
+// Captured from 0.7.6 for the original six themes, and from the accepted design
+// previews for the additions. Each digest covers a full cycle of [ANSI frame, delay].
+const PLAYBACK_DIGESTS = {
+  comet: "dec2367aee406093269d90a5aa1cd491d701ff3c65f65979cc7900e38d509c59",
+  twin: "128efc906ed732e3dc5c09931f9b7edd9cc091bf4324bcb5040980901123f220",
+  shuttle: "3116c38860332e1c11e17e3db82b9dfef8e9d047c60fca0b1e6a2f8f6a412ca2",
+  chase: "cfb7d8733dc636a19dedffdb7cab3b97abf554ba5f0f08187fff3ca2b6ae8b1d",
+  mirror: "92fc93b8e81c9c8d774000bedb398cf2b660a2e0881664d4d76b3b737f03f5f4",
+  pulse: "be2d9d17df90a756674467c038c303a559fdec1097813ead52afec09c682fe0a",
+  stack: "e1aefac532ad2ec6ce10c4974349a8697e858dc9a0fcd483fa6895c6703e4ed1",
+  relay: "87f7e523816028c0c93b662069a413e8e2151178ff49c6ef1597f01be0f2798d",
+  split: "e7b4f6736a6061dbb39d63fc87a45d5a3cfd587415d98b4be3e14d3b2b918db2",
+};
 
 function legacyCometFrame(position) {
   const colors = [159, 123, 87, 51, 45, 39, 33];
@@ -69,7 +86,7 @@ test("terminal animation: exposes the exact ordered theme catalog", () => {
   assert.ok(TERMINAL_ANIMATION_THEMES.every(Object.isFrozen));
 
   for (const { id } of EXPECTED_THEMES) assert.equal(isTerminalAnimationTheme(id), true);
-  for (const value of ["braille-comet", "current", "Comet", "", null, 1]) {
+  for (const value of ["braille", "braille-comet", "current", "Comet", "", null, 1]) {
     assert.equal(isTerminalAnimationTheme(value), false);
   }
 });
@@ -87,18 +104,26 @@ test("terminal animation: every frame keeps the fixed track and established colo
       const colors = [...frame.matchAll(ANSI_COLOR_PATTERN)].map((match) => match[1]);
       assert.ok(colors.every((color) => ALLOWED_COLORS.has(color)), `${theme.id} frame ${frameIndex}`);
 
-      if (theme.id === "braille") {
-        assert.match(plain, /^\[[ ⠀-⣿]{20}\]$/u);
-        assert.equal([...plain].filter((glyph) => /[⠀-⣿]/u.test(glyph)).length, 1);
-      } else {
-        assert.match(plain, /^\[[ :]{20}\]$/);
-      }
+      assert.match(plain, /^\[[ :]{20}\]$/);
     }
 
     assert.equal(
       renderTerminalAnimationFrame(theme.id, theme.frameCount),
       renderTerminalAnimationFrame(theme.id, 0),
     );
+  }
+});
+
+test("terminal animation: preserves existing playback and matches the accepted new previews", () => {
+  for (const theme of TERMINAL_ANIMATION_THEMES) {
+    const playback = Array.from({ length: theme.frameCount }, (_, offset) => [
+      renderTerminalAnimationFrame(theme.id, theme.startFrame + offset),
+      getTerminalAnimationFrameDelay(theme.id, theme.startFrame + offset),
+    ]);
+    const digest = createHash("sha256").update(JSON.stringify(playback)).digest("hex");
+    assert.equal(digest, PLAYBACK_DIGESTS[theme.id], theme.id);
+    assert.equal(renderTerminalAnimationFrame(theme.id, -1), renderTerminalAnimationFrame(theme.id, theme.frameCount - 1));
+    assert.equal(getTerminalAnimationFrameDelay(theme.id, -1), getTerminalAnimationFrameDelay(theme.id, theme.frameCount - 1));
   }
 });
 
@@ -117,7 +142,9 @@ test("terminal animation: cycle timing is deterministic for every theme", () => 
       (_, offset) => getTerminalAnimationFrameDelay(theme.id, theme.startFrame + offset),
     );
     assert.ok(delays.every((delay) => Number.isInteger(delay) && delay > 0));
-    if (theme.id !== "shuttle") assert.deepEqual(new Set(delays), new Set([theme.frameDelayMs]));
+    if (["comet", "twin", "chase", "mirror", "pulse"].includes(theme.id)) {
+      assert.deepEqual(new Set(delays), new Set([theme.frameDelayMs]));
+    }
   }
 
   assert.equal(getTerminalAnimationFrameDelay("shuttle", 0), 160);

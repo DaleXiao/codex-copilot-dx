@@ -6,6 +6,8 @@ import { createInterface } from "node:readline/promises";
 import { atomicWriteFilePairSync } from "./atomic-file.mjs";
 import { terminalCell } from "./cli-table.mjs";
 import { computeImageMcpCodexConfig } from "./config.mjs";
+import { probeImageTool } from "./image-readiness.mjs";
+import { updateImageSkill } from "./image-skill.mjs";
 import {
   imageProviderConfigPath,
   inspectImageProvider,
@@ -103,13 +105,19 @@ function enableImageProvider({ providerConfig, providerPath, codexPath, codexCon
     adapterHost,
   });
   const normalized = validateImageProviderConfig(providerConfig, { filePath: providerPath });
-  atomicWriteFilePairSync(
-    codexPath,
-    codex.content,
-    providerPath,
-    `${JSON.stringify(normalized, null, 2)}\n`,
-    { mode: 0o600 },
-  );
+  const skill = updateImageSkill({ enabled: true, codexPath, adapterPort, adapterHost });
+  try {
+    atomicWriteFilePairSync(
+      codexPath,
+      codex.content,
+      providerPath,
+      `${JSON.stringify(normalized, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  } catch (error) {
+    skill.rollback();
+    throw error;
+  }
   return { codexChanged: codex.changed, config: normalized };
 }
 
@@ -120,12 +128,27 @@ function disableImageProvider({ providerPath, codexPath, codexContent, adapterPo
     adapterHost,
   });
   const providerExists = fs.existsSync(providerPath);
-  if (fs.existsSync(codexPath)) {
-    atomicWriteFilePairSync(codexPath, codex.content, providerPath, null, { mode: 0o600 });
-  } else if (providerExists) {
-    fs.unlinkSync(providerPath);
+  const skill = updateImageSkill({ enabled: false, codexPath, adapterPort, adapterHost });
+  try {
+    if (fs.existsSync(codexPath)) {
+      atomicWriteFilePairSync(codexPath, codex.content, providerPath, null, { mode: 0o600 });
+    } else if (providerExists) {
+      fs.unlinkSync(providerPath);
+    }
+  } catch (error) {
+    skill.rollback();
+    throw error;
   }
-  return { changed: providerExists || codex.changed };
+  return { changed: providerExists || codex.changed || skill.changed, preservedGuidance: Boolean(skill.preserved) };
+}
+
+export function syncEnabledImageSkill({ home = os.homedir(), codexPath = defaultCodexConfigPath(home), ...options } = {}) {
+  return updateImageSkill({ ...options, enabled: true, codexPath });
+}
+
+function printImageReadiness(readiness, output, commandName) {
+  if (readiness.ready) output.write("Local image service: ready (generation tool verified; no image generated).\n");
+  else output.write(`Local image service: unavailable (${readiness.reason}). Start or restart ${commandName} to use images.\n`);
 }
 
 export async function runImageCommand({
@@ -138,6 +161,7 @@ export async function runImageCommand({
   prompt,
   promptSecret,
   fetchImpl = fetch,
+  probeFetchImpl = fetch,
   adapterPort = 2026,
   adapterHost = "127.0.0.1",
   codexPath = defaultCodexConfigPath(home),
@@ -151,14 +175,18 @@ export async function runImageCommand({
     }
     const summary = configSummary(config);
     output.write(`Image generation: enabled\nEndpoint: ${terminalCell(summary.endpoint)}\nModel: ${terminalCell(summary.model)}\nProtocol: ${terminalCell(summary.protocol)}\n`);
-    return { enabled: true, ...summary };
+    const readiness = await probeImageTool(fileContent(codexPath), { fetchImpl: probeFetchImpl });
+    printImageReadiness(readiness, output, commandName);
+    return { enabled: true, ...summary, readiness };
   }
 
   const codexContent = fileContent(codexPath);
   if (action === "disable") {
     const result = disableImageProvider({ providerPath, codexPath, codexContent, adapterPort, adapterHost });
     output.write(`${result.changed ? "Disabled" : "Kept disabled"} image generation.\n`);
-    output.write("Restart Codex App to remove the image tool from active tasks.\n");
+    output.write(result.preservedGuidance
+      ? "Kept user-modified image guidance. Existing image tool calls are now disabled.\n"
+      : "Removed CCDX image guidance. Existing image tool calls are now disabled.\n");
     return { enabled: false, ...result };
   }
   if (action !== "enable") throw new Error(`Unknown image command action: ${action}`);
@@ -194,6 +222,9 @@ export async function runImageCommand({
     adapterHost,
   });
   output.write(`Enabled image generation with ${terminalCell(model)}.\n`);
-  output.write("Restart Codex App to load the image tool. A running ccdx adapter can remain running.\n");
-  return { enabled: true, ...configSummary(result.config), codexChanged: result.codexChanged };
+  const readiness = await probeImageTool(fileContent(codexPath), { fetchImpl: probeFetchImpl });
+  printImageReadiness(readiness, output, commandName);
+  output.write("Installed CCDX image guidance for new and existing tasks. Ask Codex to draw an image.\n");
+  output.write("If the open task has not refreshed its skills, restart Codex App once.\n");
+  return { enabled: true, ...configSummary(result.config), codexChanged: result.codexChanged, readiness };
 }

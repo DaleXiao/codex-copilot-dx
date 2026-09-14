@@ -42,7 +42,7 @@ function imageTool() {
   return {
     name: IMAGE_TOOL_NAME,
     title: "Generate image",
-    description: "Generate a new image from a detailed text prompt. Use this when the user asks to create, draw, render, or generate an image. This tool does not edit an existing image.",
+    description: "Generate a new image with the image provider the user enabled in CCDX. Call directly for text-to-image requests; returns the image inline. Credentials and generation are handled by CCDX, with no Python or OpenAI SDK setup. Does not edit or take reference images.",
     inputSchema: {
       type: "object",
       properties: {
@@ -113,7 +113,9 @@ export function createImageMcpHandler({
         protocolVersion: MCP_PROTOCOL_VERSIONS.has(requestedVersion) ? requestedVersion : MCP_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "ccdx-image", version: "1" },
-        instructions: "Use generate_image only when the user asks to create a new image.",
+        instructions: configLoader()
+          ? "The user enabled CCDX as their image provider. For new text-to-image requests, call generate_image directly and display the returned image. CCDX handles credentials and the API; no Python, SDK installation, OPENAI_API_KEY, or alternate endpoint is needed. Follow the user's image request; do not retry a failed generation automatically. Editing and reference-image requests require a different capable tool."
+          : "Image generation is disabled. Enable it with ccdx enable-image before requesting images.",
       });
       return;
     }

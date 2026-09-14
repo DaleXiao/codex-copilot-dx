@@ -214,10 +214,7 @@ async function reuseRunningAdapterIfAvailable() {
   if (!running.ok) return false;
 
   console.log(status("ok", `Using existing adapter at ${running.baseUrl}`));
-  ensureCodexConfig(ADAPTER_PORT, {
-    host: ADAPTER_HOST,
-    imageProviderEnabled: Boolean(readImageProviderConfig()),
-  });
+  await configureCodexClient();
 
   await openCodex();
   console.log(`
@@ -228,6 +225,19 @@ async function reuseRunningAdapterIfAvailable() {
   Tip: Run ${CLI_NAME} help to view more features and commands.
 `);
   return true;
+}
+
+async function configureCodexClient() {
+  const imageProviderEnabled = Boolean(readImageProviderConfig());
+  ensureCodexConfig(ADAPTER_PORT, { host: ADAPTER_HOST, imageProviderEnabled });
+  if (imageProviderEnabled) {
+    try {
+      const { syncEnabledImageSkill } = await import("../src/cli-image.mjs");
+      syncEnabledImageSkill({ adapterPort: ADAPTER_PORT, adapterHost: ADAPTER_HOST });
+    } catch (error) {
+      console.warn(status("warn", `Image guidance could not be updated: ${error.message}`));
+    }
+  }
 }
 
 if (CLI.command === "doctor") {
@@ -298,10 +308,7 @@ try {
   });
 
   // Point Codex App at the adapter.
-  ensureCodexConfig(ADAPTER_PORT, {
-    host: ADAPTER_HOST,
-    imageProviderEnabled: Boolean(readImageProviderConfig()),
-  });
+  await configureCodexClient();
 
   // Launch Codex when available.
   await openCodex();

@@ -167,7 +167,7 @@ test("both CLI entrypoints expose the same complete subcommand help", async () =
 
   assert.equal(legacy.stdout, primary.stdout);
   assertNoCompatibilityWarning(legacy.stderr);
-  for (const command of ["auth", "doctor", "status", "models", "usage", "animation", "auto-review-model", "update"]) {
+  for (const command of ["auth", "doctor", "status", "models", "usage", "animation", "enable-image", "disable-image", "image-status", "auto-review-model", "update"]) {
     assert.match(primary.stdout, new RegExp(`ccdx ${command}`));
   }
   assert.doesNotMatch(primary.stdout, /Claude|Anthropic|pms|pm-studio/i);
@@ -196,6 +196,21 @@ test("both CLI entrypoints keep nested help and argument errors byte-for-byte eq
   assert.match(primaryAnimationHelp.stdout, /next time the adapter starts/);
   assert.equal(primaryAnimationHelp.stderr, "");
   assertNoCompatibilityWarning(legacyAnimationHelp.stderr);
+
+  const [primaryImageHelp, legacyImageHelp] = await Promise.all([
+    execFileAsync(process.execPath, [cliPath, "enable-image", "--help"], {
+      timeout: 2000,
+      env: { ...process.env, ADAPTER_PORT: "invalid" },
+    }),
+    execFileAsync(process.execPath, [legacyCliPath, "enable-image", "--help"], {
+      timeout: 2000,
+      env: { ...process.env, ADAPTER_PORT: "invalid" },
+    }),
+  ]);
+  assert.equal(legacyImageHelp.stdout, primaryImageHelp.stdout);
+  assert.match(primaryImageHelp.stdout, /HTTPS image API endpoint/);
+  assert.equal(primaryImageHelp.stderr, "");
+  assertNoCompatibilityWarning(legacyImageHelp.stderr);
 
   const [primaryError, legacyError] = await Promise.allSettled([
     execFileAsync(process.execPath, [cliPath, "models", "--profile", "all"], { timeout: 2000 }),

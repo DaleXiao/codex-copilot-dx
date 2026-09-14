@@ -40,6 +40,11 @@ test("public environment controls and README command examples match code", () =>
   for (const [, argumentsText = ""] of commands) assert.doesNotThrow(() => parseCliArgs(argumentsText ? argumentsText.split(/\s+/) : []));
 });
 
+test("startup advertises the canonical help command on new and reused adapters", () => {
+  const source = fs.readFileSync(path.join(root, "bin/cli.mjs"), "utf8");
+  assert.equal(source.match(/Tip: Run \$\{CLI_NAME\} help to view more features and commands\./g)?.length, 2);
+});
+
 test("documentation local links resolve and release reports identify their historical scope", () => {
   const files = ["README.md", "scripts/fixtures/README.md", ...fs.readdirSync(path.join(root, "docs")).filter((name) => name.endsWith(".md")).map((name) => `docs/${name}`)];
   for (const relative of files) {

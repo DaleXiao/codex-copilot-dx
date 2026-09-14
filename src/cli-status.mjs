@@ -1,5 +1,6 @@
 import { ADAPTER_STATUS_PATH, adapterBaseUrl } from "./running-adapter.mjs";
 import { status } from "./status.mjs";
+import { terminalCell } from "./cli-table.mjs";
 
 function finiteNumber(value) {
   const number = Number(value);
@@ -135,6 +136,7 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
   const history = data.response_history || {};
   const images = data.image_optimization || {};
   const imageHistory = data.image_history_pressure;
+  const responseFailures = data.response_failures;
   const models = data.models || {};
   const copilot = data.copilot || {};
   const limits = data.limits || {};
@@ -155,6 +157,16 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
   ];
   if (imageHistory && typeof imageHistory === "object") {
     lines.push(status("info", `Visual history: ${count(imageHistory.active_recovery_trees)} recovery trees, ${count(imageHistory.adapted_requests)} adapted requests, ${count(imageHistory.historical_images_omitted)} older images omitted, ${count(imageHistory.timeouts_recorded)} timeouts`));
+  }
+  if (responseFailures && typeof responseFailures === "object") {
+    lines.push(status("info", `Response failures: ${count(responseFailures.total)} observed, ${count(responseFailures.retried)} compatibility retries`));
+    for (const failure of Array.isArray(responseFailures.recent) ? responseFailures.recent.slice(-3).reverse() : []) {
+      const model = terminalCell(failure.model, { fallback: "unknown" });
+      const code = terminalCell(failure.code, { fallback: "unknown_error" });
+      const message = terminalCell(failure.message, { fallback: "unknown failure" }).slice(0, 160);
+      const retryPolicy = terminalCell(failure.retry_policy, { fallback: "yes" });
+      lines.push(status("warn", `  ${model} ${code}: ${message}${failure.retried ? ` [retried:${retryPolicy}]` : ""}`));
+    }
   }
   lines.push(status("info", `Models: ${count(models.models)} total; Copilot token ${copilot.token_cached ? `cached (${duration(copilot.token_expires_in_ms)} remaining)` : "not cached"}`));
   if (data.profiles?.codex) {

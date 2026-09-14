@@ -84,6 +84,7 @@ function isEncryptedContentPart(value) {
 const OMIT_ENCRYPTED_CONTENT = Symbol("omit-encrypted-content");
 const ENCRYPTED_HISTORY_REBASE = Symbol("encrypted-history-rebase");
 const RELEASE_HISTORY_INPUT = Symbol("release-history-input");
+const RELEASED_MATERIALIZED_HISTORY = Symbol("released-materialized-history");
 const HISTORY_PRESSURE_ROOT = Symbol("history-pressure-root");
 const ENCRYPTED_TOOL_OUTPUT_MARKER = "[CCDX: encrypted tool output omitted because upstream could not decrypt it.]";
 
@@ -185,6 +186,10 @@ function responseValueHasOpaqueState(value) {
     if (parsed?.parts.some(responseValueHasOpaqueState)) return true;
   }
   return Object.values(value).some(responseValueHasOpaqueState);
+}
+
+export function hasEncryptedResponseState(value) {
+  return responseValueHasOpaqueState(value);
 }
 
 export function sanitizeEncryptedReasoningRequest(reqContext, { historicalOnly = false } = {}) {
@@ -379,8 +384,26 @@ export function dropMaterializedResponseHistory(reqContext) {
   reqContext.body = { ...reqContext.body, input: releaseInput };
   reqContext.inputItems = releaseInput;
   delete reqContext[RELEASE_HISTORY_INPUT];
+  reqContext[RELEASED_MATERIALIZED_HISTORY] = true;
   reqContext.currentInputStart = 0;
   return true;
+}
+
+export function restoreMaterializedResponseHistoryForRetry(reqContext, { assertActive } = {}) {
+  if (!reqContext?.[RELEASED_MATERIALIZED_HISTORY] || !reqContext.historyParentId) return reqContext;
+  const body = cloneJson(reqContext.body);
+  body.previous_response_id = reqContext.historyParentId;
+  body.input = cloneJson(reqContext.historyInputItems || reqContext.body.input);
+  let restored = prepareResponsesRequest(body, {
+    assertActive,
+    copilotBoundary: false,
+    mutate: true,
+  });
+  restored.surface = reqContext.surface;
+  if (reqContext.routePlan) {
+    restored = applyResponseHistoryRoutePlan(restored, reqContext.routePlan);
+  }
+  return restored;
 }
 
 export function rememberResponseHistory(reqContext, responseJson) {

@@ -153,6 +153,33 @@ test("formatAdapterStatus: tolerates absent optional metrics", () => {
   assert.match(output, /Copilot token not cached/);
 });
 
+test("formatAdapterStatus: reports recent response.failed diagnostics without terminal injection", () => {
+  const output = formatAdapterStatus({
+    baseUrl: "http://127.0.0.1:2026",
+    data: {
+      ok: true,
+      name: "codex-copilot-dx",
+      version: "0.7.8",
+      pid: 1,
+      response_failures: {
+        total: 2,
+        retried: 1,
+        recent: [{
+          model: "gpt-5.6-sol\u001b[31m",
+          code: "invalid_request_body",
+          message: "Encrypted content rejected\nsecond line",
+          retried: true,
+          retry_policy: "encrypted-replay-rejected",
+        }],
+      },
+    },
+  }, { cliVersion: "0.7.8" });
+
+  assert.match(output, /Response failures: 2 observed, 1 compatibility retries/);
+  assert.match(output, /gpt-5\.6-sol invalid_request_body: Encrypted content rejected second line/);
+  assert.doesNotMatch(output, /\u001b\[31m/);
+});
+
 test("readAdapterStatus: reports HTTP, JSON, protocol, connection, and timeout failures", async (t) => {
   await t.test("HTTP", async () => {
     await assert.rejects(

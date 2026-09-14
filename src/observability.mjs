@@ -154,6 +154,7 @@ export function runtimeStatusPayload({
   streamPerformance,
   admission,
   imagePressure,
+  responseFailures,
   modelRegistry,
   codexClient,
   codexModelRegistry,
@@ -177,6 +178,7 @@ export function runtimeStatusPayload({
     response_history: responseHistoryStats(),
     image_optimization: imageOptimizationStats(),
     image_history_pressure: imagePressure?.snapshot?.() || null,
+    response_failures: responseFailures?.snapshot?.() || null,
     copilot: codexRuntime,
     models: codexModels,
     profiles: {

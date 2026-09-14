@@ -8,6 +8,9 @@ import { adapterBaseUrl } from "./running-adapter.mjs";
 const CONFIG_PATH = path.join(os.homedir(), ".codex", "config.toml");
 const MODEL_CONTEXT_WINDOW = 1_000_000;
 const MODEL_AUTO_COMPACT_TOKEN_LIMIT = 900_000;
+const IMAGE_MCP_START = "# ccdx:image-mcp:start";
+const IMAGE_MCP_END = "# ccdx:image-mcp:end";
+const IMAGE_MCP_SECTION = "mcp_servers.ccdx_image";
 
 function isTomlTableHeader(line) {
   const source = line.trimStart();
@@ -105,7 +108,65 @@ function ensureContextManagementDefault(lines) {
   return true;
 }
 
-export function computeUpdatedCodexConfig(content, adapterPort = 2026, adapterHost = "127.0.0.1") {
+function imageMcpHost(adapterHost) {
+  const host = String(adapterHost || "127.0.0.1").trim();
+  if (host === "0.0.0.0") return "127.0.0.1";
+  if (host === "::" || host === "[::]") return "::1";
+  return host;
+}
+
+function removeManagedImageMcp(lines) {
+  const starts = lines.flatMap((line, index) => line === IMAGE_MCP_START ? [index] : []);
+  const ends = lines.flatMap((line, index) => line === IMAGE_MCP_END ? [index] : []);
+  let start = starts[0] ?? -1;
+  const end = ends[0] ?? -1;
+  if (start === -1 && end === -1) return false;
+  if (starts.length !== 1 || ends.length !== 1 || end < start) {
+    throw new Error("Invalid managed CCDX image MCP block in Codex config");
+  }
+  lines.splice(start, end - start + 1);
+  while (start > 0 && start >= lines.length && lines[start - 1].trim() === "") {
+    lines.splice(start - 1, 1);
+    start -= 1;
+  }
+  while (start < lines.length && lines[start].trim() === "" && start > 0 && lines[start - 1].trim() === "") {
+    lines.splice(start, 1);
+  }
+  return true;
+}
+
+function hasUnmanagedImageMcp(lines) {
+  return lines.some((line) => line.trim() === `[${IMAGE_MCP_SECTION}]`);
+}
+
+function ensureImageMcp(lines, enabled, adapterPort, adapterHost) {
+  const previous = lines.join("\n");
+  removeManagedImageMcp(lines);
+  if (enabled) {
+    if (hasUnmanagedImageMcp(lines)) {
+      throw new Error(`Codex config already defines [${IMAGE_MCP_SECTION}] outside the CCDX-managed block`);
+    }
+    while (lines.length && lines.at(-1).trim() === "") lines.pop();
+    if (lines.length) lines.push("");
+    const url = `${adapterBaseUrl(imageMcpHost(adapterHost), adapterPort)}/mcp/image`;
+    lines.push(
+      IMAGE_MCP_START,
+      `[${IMAGE_MCP_SECTION}]`,
+      `url = ${JSON.stringify(url)}`,
+      "enabled = true",
+      "tool_timeout_sec = 210",
+      IMAGE_MCP_END,
+    );
+  }
+  return lines.join("\n") !== previous;
+}
+
+export function computeUpdatedCodexConfig(
+  content,
+  adapterPort = 2026,
+  adapterHost = "127.0.0.1",
+  { imageProviderEnabled } = {},
+) {
   const baseUrl = `${adapterBaseUrl(adapterHost, adapterPort)}/v1`;
   const hadTrailingNewline = content.endsWith("\n");
   const lines = content.split("\n");
@@ -131,13 +192,16 @@ export function computeUpdatedCodexConfig(content, adapterPort = 2026, adapterHo
   changed = setTomlKey(lines, "shell_environment_policy.set", "OPENAI_BASE_URL", baseUrl) || changed;
   changed = setTomlKey(lines, "shell_environment_policy.set", "OPENAI_API_KEY", "dummy") || changed;
   changed = ensureContextManagementDefault(lines) || changed;
+  if (typeof imageProviderEnabled === "boolean") {
+    changed = ensureImageMcp(lines, imageProviderEnabled, adapterPort, adapterHost) || changed;
+  }
 
   return { content: lines.join("\n") + (hadTrailingNewline ? "\n" : ""), changed };
 }
 
-export function initialCodexConfig(adapterPort, adapterHost) {
+export function initialCodexConfig(adapterPort, adapterHost, { imageProviderEnabled = false } = {}) {
   const baseUrl = `${adapterBaseUrl(adapterHost, adapterPort)}/v1`;
-  return `openai_base_url = "${baseUrl}"
+  const base = `openai_base_url = "${baseUrl}"
 model_context_window = ${MODEL_CONTEXT_WINDOW}
 model_auto_compact_token_limit = ${MODEL_AUTO_COMPACT_TOKEN_LIMIT}
 
@@ -151,20 +215,38 @@ OPENAI_API_KEY = "dummy"
 [features]
 context_management = true
 `;
+  return imageProviderEnabled
+    ? computeUpdatedCodexConfig(base, adapterPort, adapterHost, { imageProviderEnabled }).content
+    : base;
 }
 
-export function ensureCodexConfig(adapterPort = 2026, { filePath = CONFIG_PATH, host = "127.0.0.1" } = {}) {
+export function computeImageMcpCodexConfig(
+  content,
+  { enabled, adapterPort = 2026, adapterHost = "127.0.0.1" } = {},
+) {
+  const hadTrailingNewline = content.endsWith("\n");
+  const lines = content.split("\n");
+  if (hadTrailingNewline) lines.pop();
+  const changed = ensureImageMcp(lines, Boolean(enabled), adapterPort, adapterHost);
+  return { content: lines.join("\n") + (hadTrailingNewline || lines.length ? "\n" : ""), changed };
+}
+
+export function ensureCodexConfig(adapterPort = 2026, {
+  filePath = CONFIG_PATH,
+  host = "127.0.0.1",
+  imageProviderEnabled = false,
+} = {}) {
   const baseUrl = `${adapterBaseUrl(host, adapterPort)}/v1`;
 
   if (!fs.existsSync(filePath)) {
     // Codex config does not exist yet; create the local proxy defaults.
-    atomicWriteFileIfChangedSync(filePath, initialCodexConfig(adapterPort, host));
+    atomicWriteFileIfChangedSync(filePath, initialCodexConfig(adapterPort, host, { imageProviderEnabled }));
     console.log(status("ok", "Created ~/.codex/config.toml"));
     return;
   }
 
   const content = fs.readFileSync(filePath, "utf-8");
-  const updated = computeUpdatedCodexConfig(content, adapterPort, host);
+  const updated = computeUpdatedCodexConfig(content, adapterPort, host, { imageProviderEnabled });
 
   if (!updated.changed) {
     console.log(status("ok", `Codex already points to ${baseUrl}`));

@@ -22,6 +22,7 @@ import { runAuthCommand } from "../src/cli-auth.mjs";
 import { createProfileRuntime } from "../src/profile-runtime.mjs";
 import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
 import { createCodexModelCatalog } from "../src/codex-model-catalog.mjs";
+import { readImageProviderConfig } from "../src/image-provider-config.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
 const CLI_NAME = cliCommandName();
@@ -48,6 +49,24 @@ if (CLI.command === "animation") {
   try {
     const { runAnimationCommand } = await import("../src/cli-animation.mjs");
     await runAnimationCommand({ commandName: CLI_NAME });
+    process.exit(0);
+  } catch (e) {
+    console.error(status("err", e.message));
+    process.exit(1);
+  }
+}
+if (CLI.command === "image") {
+  try {
+    const address = CLI.action === "enable"
+      ? parseAdapterAddressOptions(process.env)
+      : { adapterPort: 2026, adapterHost: "127.0.0.1" };
+    const { runImageCommand } = await import("../src/cli-image.mjs");
+    await runImageCommand({
+      action: CLI.action,
+      commandName: CLI_NAME,
+      adapterPort: address.adapterPort,
+      adapterHost: address.adapterHost,
+    });
     process.exit(0);
   } catch (e) {
     console.error(status("err", e.message));
@@ -195,13 +214,18 @@ async function reuseRunningAdapterIfAvailable() {
   if (!running.ok) return false;
 
   console.log(status("ok", `Using existing adapter at ${running.baseUrl}`));
-  ensureCodexConfig(ADAPTER_PORT, { host: ADAPTER_HOST });
+  ensureCodexConfig(ADAPTER_PORT, {
+    host: ADAPTER_HOST,
+    imageProviderEnabled: Boolean(readImageProviderConfig()),
+  });
 
   await openCodex();
   console.log(`
   ${status("ok", "Ready, using the existing ccdx adapter")}
 
   Adapter: ${running.baseUrl}
+
+  Tip: Run ${CLI_NAME} help to view more features and commands.
 `);
   return true;
 }
@@ -274,7 +298,10 @@ try {
   });
 
   // Point Codex App at the adapter.
-  ensureCodexConfig(ADAPTER_PORT, { host: ADAPTER_HOST });
+  ensureCodexConfig(ADAPTER_PORT, {
+    host: ADAPTER_HOST,
+    imageProviderEnabled: Boolean(readImageProviderConfig()),
+  });
 
   // Launch Codex when available.
   await openCodex();
@@ -293,6 +320,8 @@ try {
   ${status("ok", "Ready, Codex App is ready to use")}
 
   Adapter: ${adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT)}
+
+  Tip: Run ${CLI_NAME} help to view more features and commands.
 
   Press Ctrl+C to stop.
 `);

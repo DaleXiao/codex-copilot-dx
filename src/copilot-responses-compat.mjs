@@ -33,8 +33,29 @@ const RETRY_POLICIES = Object.freeze([
   }),
 ]);
 
+export function selectCopilotResponseRetry(
+  reqContext,
+  statusCode,
+  errorText,
+  usedPolicies = new Set(),
+) {
+  for (const policy of RETRY_POLICIES) {
+    if (usedPolicies.has(policy.id) || !policy.matches(statusCode, errorText)) continue;
+    const candidate = policy.apply(reqContext);
+    if (!candidate) continue;
+    usedPolicies.add(policy.id);
+    return {
+      reqContext: candidate,
+      policyId: policy.id,
+      warning: policy.warning,
+      usedPolicies,
+    };
+  }
+  return null;
+}
+
 export async function openCopilotResponse(reqContext, upstream = copilotResponses, options = {}) {
-  const usedPolicies = new Set();
+  const usedPolicies = options.usedRetryPolicies || new Set();
   let payloadPrepared = false;
   for (let attempt = 0; attempt <= RETRY_POLICIES.length; attempt += 1) {
     options.assertPrepareActive?.();
@@ -49,7 +70,7 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
     payloadPrepared = true;
     if (resp.ok) {
       reqContext = finalizeEncryptedHistoryRebase(reqContext);
-      return { resp, reqContext };
+      return { resp, reqContext, usedRetryPolicies: usedPolicies };
     }
 
     const errorText = await readBoundedResponseText(resp, {
@@ -57,24 +78,13 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
       label: "Copilot Responses error body",
     });
     options.assertPrepareActive?.();
-    let retryPolicy = null;
-    let retryContext = null;
-    for (const policy of RETRY_POLICIES) {
-      if (usedPolicies.has(policy.id) || !policy.matches(resp.status, errorText)) continue;
-      const candidate = policy.apply(reqContext);
-      if (candidate) {
-        retryPolicy = policy;
-        retryContext = candidate;
-        break;
-      }
-    }
-    if (retryPolicy && retryContext) {
-      usedPolicies.add(retryPolicy.id);
-      reqContext = retryContext;
-      console.warn(status("warn", retryPolicy.warning));
+    const retry = selectCopilotResponseRetry(reqContext, resp.status, errorText, usedPolicies);
+    if (retry) {
+      reqContext = retry.reqContext;
+      console.warn(status("warn", retry.warning));
       continue;
     }
-    return { resp, reqContext, errorText };
+    return { resp, reqContext, errorText, usedRetryPolicies: usedPolicies };
   }
   throw httpError("Responses compatibility retry limit exceeded", 502);
 }

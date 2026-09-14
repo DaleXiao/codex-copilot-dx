@@ -16,6 +16,7 @@ import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
 import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
 import { createResponsesImagePressureController } from "./responses-image-pressure.mjs";
+import { createResponseFailureDiagnostics } from "./response-failures.mjs";
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
 import {
   createRequestAdmission,
@@ -159,6 +160,8 @@ export function createAdapterHandler(options = {}) {
   const requestMetrics = options.requestMetrics || createRequestMetrics();
   const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics();
   const imagePressure = options.imagePressure || createResponsesImagePressureController();
+  const responseFailures = options.responseFailures || createResponseFailureDiagnostics();
+  let imageMcpHandler = options.imageMcpHandler || null;
   const responsesHandler = createResponsesHandler({
     acquireRequest,
     autoReviewModelResolver: options.autoReviewModelResolver,
@@ -170,6 +173,7 @@ export function createAdapterHandler(options = {}) {
     openAIModelEnv,
     responsesPayloadOptions: options.responsesPayloadOptions,
     responsesFn,
+    responseFailures,
     requestBodyTimeoutMs,
     streamHandshakeTimeoutMs,
     streamIdleTimeoutMs,
@@ -189,6 +193,13 @@ export function createAdapterHandler(options = {}) {
     upstreamTimeoutMs,
   });
   const dispatch = (req, res, pathname) => {
+    if (pathname === "/mcp/image") {
+      if (imageMcpHandler) return imageMcpHandler(req, res);
+      return import("./image-mcp.mjs").then(({ createImageMcpHandler }) => {
+        imageMcpHandler = createImageMcpHandler();
+        return imageMcpHandler(req, res);
+      });
+    }
     if (req.method === "GET" && pathname === ADAPTER_STATUS_PATH) {
       if (!isLoopbackAddress(req.socket?.remoteAddress)) {
         res.writeHead(403, { "Content-Type": "application/json" });
@@ -201,6 +212,7 @@ export function createAdapterHandler(options = {}) {
         streamPerformance: streamPerformanceMetrics,
         admission: acquireRequest,
         imagePressure,
+        responseFailures,
         modelRegistry: codexModelRegistry,
         codexClient,
         codexModelRegistry,

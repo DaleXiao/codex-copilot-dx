@@ -8,8 +8,18 @@ import {
   sendUpstreamError,
   writeOrDrain,
 } from "./http-transport.mjs";
-import { openCopilotResponse } from "./copilot-responses-compat.mjs";
-import { rememberResponseHistory } from "./responses-request.mjs";
+import { openCopilotResponse, selectCopilotResponseRetry } from "./copilot-responses-compat.mjs";
+import {
+  dropMaterializedResponseHistory,
+  hasEncryptedResponseState,
+  rememberResponseHistory,
+  restoreMaterializedResponseHistoryForRetry,
+} from "./responses-request.mjs";
+import {
+  formatResponseFailureLog,
+  responseFailureDetails,
+  responseFailureText,
+} from "./response-failures.mjs";
 import {
   compactionInputWithoutTrigger,
   parseResponsesCompactionResult,
@@ -30,9 +40,11 @@ import {
 } from "./stream-performance.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordResponsesUsage } from "./usage.mjs";
+import { status } from "./status.mjs";
 
 const MAX_SSE_BUFFER_BYTES = loadRuntimeConfig().maxSseBufferBytes;
 const SSE_WRITE_BATCH_BYTES = 64 * 1024;
+const STREAM_RETRY_PRELUDE_MAX_BYTES = 256 * 1024;
 const RESPONSES_TERMINAL_EVENT_TYPES = new Set([
   "response.completed",
   "response.incomplete",
@@ -124,7 +136,9 @@ function inspectResponseSseEvent(state, eventName, data) {
     );
   }
   state.sawTerminal = true;
-  if (eventType === "response.failed" || eventType === "error") markStreamFailure();
+  if (eventType === "response.failed" || eventType === "error") {
+    state.failure = { event, eventType };
+  }
   if (eventType === "response.completed") {
     const response = event.response;
     state.completed = { response, event };
@@ -292,68 +306,182 @@ function storeCompletedResponse(reqContext, completed) {
   });
 }
 
-export async function proxyCopilotResponses(reqContext, req, res, upstream = copilotResponses, options = {}) {
-  let opened;
-  try {
-    opened = await openCopilotResponse(reqContext, upstream, options);
-  } finally {
-    options.releaseRequest?.(opened?.reqContext);
-  }
-  const { resp, errorText } = opened;
-  reqContext = opened.reqContext;
-  if (errorText !== undefined) {
-    sendUpstreamError(res, resp, errorText);
-    return { successful: false, compacted: false, upstreamStatus: resp.status };
-  }
+function streamHeaders(resp) {
+  return {
+    ...safeUpstreamResponseHeaders(resp.headers, { defaultContentType: "text/event-stream" }),
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  };
+}
 
-  if (reqContext.body.stream) {
+function selectStreamFailureRetry(reqContext, failure, usedRetryPolicies) {
+  if (!failure) return null;
+  try {
+    const restored = restoreMaterializedResponseHistoryForRetry(reqContext);
+    return {
+      retry: selectCopilotResponseRetry(
+        restored,
+        400,
+        responseFailureText(failure.event, failure.eventType),
+        usedRetryPolicies,
+      ),
+      retrySkipped: null,
+    };
+  } catch {
+    return { retry: null, retrySkipped: "history_unavailable" };
+  }
+}
+
+function recordResponseFailure(options, reqContext, resp, failure, {
+  retry,
+  retrySkipped,
+} = {}) {
+  if (!failure) return;
+  const details = responseFailureDetails(failure.event, failure.eventType, {
+    model: reqContext.body?.model,
+    headers: resp.headers,
+    retried: Boolean(retry),
+    retryPolicy: retry?.policyId,
+    retrySkipped,
+  });
+  options.responseFailures?.record?.(details);
+  console.warn(status("warn", formatResponseFailureLog(details)));
+}
+
+async function proxyStreamingResponses(opened, res, upstream, options) {
+  while (true) {
+    let {
+      resp,
+      errorText,
+      reqContext,
+      streamRetryEligible = false,
+      usedRetryPolicies = new Set(),
+    } = opened;
+    if (errorText !== undefined) {
+      sendUpstreamError(res, resp, errorText);
+      return { successful: false, compacted: false, upstreamStatus: resp.status };
+    }
     await requireUpstreamEventStream(resp);
     options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
-    res.writeHead(resp.status, {
-      ...safeUpstreamResponseHeaders(resp.headers, { defaultContentType: "text/event-stream" }),
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    });
+    const headers = streamHeaders(resp);
+    let headersSent = false;
+    const writeHeaders = () => {
+      if (headersSent || res.headersSent) return;
+      headersSent = true;
+      res.writeHead(resp.status, headers);
+    };
     const reader = resp.body.getReader();
     const streamState = {
       completed: null,
+      failure: null,
       sawTerminal: false,
       sawOutput: false,
       toolArgumentGuard: new ToolArgumentDeltaGuard(),
       messageIds: new Map(),
     };
     const transformer = createResponseSseTransformer(streamState);
+    let holdPrelude = streamRetryEligible;
+    let retryDisabledReason = holdPrelude ? null : "request_not_eligible";
+    const prelude = [];
+    let preludeBytes = 0;
+    const flushPrelude = async () => {
+      if (!preludeBytes) return true;
+      writeHeaders();
+      const body = prelude.length === 1 ? prelude[0] : Buffer.concat(prelude, preludeBytes);
+      prelude.length = 0;
+      preludeBytes = 0;
+      return writeOrDrain(res, body);
+    };
+    const forwardFrame = async (frame) => {
+      if (!frame) return true;
+      if (!holdPrelude) {
+        writeHeaders();
+        return writeOrDrain(res, frame);
+      }
+      prelude.push(frame);
+      preludeBytes += frame.byteLength;
+      if (!streamState.sawOutput && preludeBytes <= STREAM_RETRY_PRELUDE_MAX_BYTES) return true;
+      retryDisabledReason = streamState.sawOutput ? "output_started" : "prelude_limit";
+      holdPrelude = false;
+      return flushPrelude();
+    };
+
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
           if (!streamState.sawTerminal) throw incompleteUpstreamStream("a terminal Responses event");
-          storeCompletedResponse(reqContext, streamState.completed);
-          res.end();
-          return { successful: Boolean(streamState.completed), compacted: false };
+          break;
         }
         options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
-        // Batch within this read, not across reads, and await drain before processing more.
         for (let offset = 0; offset < value.byteLength; offset += SSE_WRITE_BATCH_BYTES) {
           const frame = transformer.push(value.subarray(offset, offset + SSE_WRITE_BATCH_BYTES));
-          if (frame && !await writeOrDrain(res, frame)) return;
+          if (!await forwardFrame(frame)) return { successful: false, compacted: false };
           if (streamState.sawTerminal) break;
         }
-        if (streamState.sawTerminal) {
-          storeCompletedResponse(reqContext, streamState.completed);
-          res.end();
-          return { successful: Boolean(streamState.completed), compacted: false };
-        }
+        if (streamState.sawTerminal) break;
       }
-    } catch (e) {
-      logRequestFailure("Responses", e, options.abort);
-      await endStreamWithError(res, e, options.abort);
+
+      let retry = null;
+      if (streamState.failure && holdPrelude && !streamState.sawOutput) {
+        const selected = selectStreamFailureRetry(reqContext, streamState.failure, usedRetryPolicies);
+        retry = selected?.retry || null;
+        if (!retry) retryDisabledReason = selected?.retrySkipped || "not_applicable";
+      }
+      if (streamState.failure) {
+        recordResponseFailure(options, reqContext, resp, streamState.failure, {
+          retry,
+          retrySkipped: retry ? null : retryDisabledReason,
+        });
+      }
+      if (retry) {
+        console.warn(status("warn", retry.warning));
+        opened = await openCopilotResponse(retry.reqContext, upstream, {
+          ...options,
+          usedRetryPolicies: retry.usedPolicies,
+        });
+        opened.streamRetryEligible = hasEncryptedResponseState(opened.reqContext.body?.input);
+        dropMaterializedResponseHistory(opened.reqContext);
+        continue;
+      }
+      if (streamState.failure) markStreamFailure();
+      if (holdPrelude && !await flushPrelude()) return { successful: false, compacted: false };
+      storeCompletedResponse(reqContext, streamState.completed);
+      if (!res.writableEnded) res.end();
+      return { successful: Boolean(streamState.completed), compacted: false };
+    } catch (error) {
+      logRequestFailure("Responses", error, options.abort);
+      writeHeaders();
+      await endStreamWithError(res, error, options.abort);
       return { successful: false, compacted: false };
     } finally {
       await reader.cancel().catch(() => {});
       reader.releaseLock();
     }
-  } else {
+  }
+}
+
+export async function proxyCopilotResponses(reqContext, req, res, upstream = copilotResponses, options = {}) {
+  let opened;
+  try {
+    opened = await openCopilotResponse(reqContext, upstream, options);
+    opened.streamRetryEligible = opened.reqContext.body.stream === true
+      && hasEncryptedResponseState(opened.reqContext.body?.input);
+  } finally {
+    options.releaseRequest?.(opened?.reqContext);
+  }
+  reqContext = opened.reqContext;
+  if (reqContext.body.stream) {
+    return proxyStreamingResponses(opened, res, upstream, options);
+  }
+
+  while (true) {
+    const { resp, errorText, usedRetryPolicies = new Set() } = opened;
+    reqContext = opened.reqContext;
+    if (errorText !== undefined) {
+      sendUpstreamError(res, resp, errorText);
+      return { successful: false, compacted: false, upstreamStatus: resp.status };
+    }
     const data = resp.ok
       ? await readBoundedResponseText(resp, {
         maxBytes: MAX_UPSTREAM_RESPONSES_SUCCESS_BODY_BYTES,
@@ -385,6 +513,24 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
     }
     if (resp.ok) {
       const response = parseSuccessfulResponsesResult(data);
+      if (response.status === "failed") {
+        const failure = { event: { type: "response.failed", response }, eventType: "response.failed" };
+        const selected = selectStreamFailureRetry(reqContext, failure, usedRetryPolicies);
+        const retry = selected?.retry || null;
+        recordResponseFailure(options, reqContext, resp, failure, {
+          retry,
+          retrySkipped: retry ? null : selected?.retrySkipped || "not_applicable",
+        });
+        if (retry) {
+          console.warn(status("warn", retry.warning));
+          opened = await openCopilotResponse(retry.reqContext, upstream, {
+            ...options,
+            usedRetryPolicies: retry.usedPolicies,
+          });
+          dropMaterializedResponseHistory(opened.reqContext);
+          continue;
+        }
+      }
       rememberResponseHistory(reqContext, response);
       recordResponsesUsage({
         surface: reqContext.surface,
@@ -397,7 +543,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
         contentType: "application/json",
       }));
       res.end(data);
-      return { successful: true, compacted: false };
+      return { successful: response.status !== "failed" && response.status !== "incomplete", compacted: false };
     }
     res.writeHead(resp.status, safeUpstreamResponseHeaders(resp.headers, {
       contentType: "application/json",

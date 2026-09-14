@@ -32,6 +32,10 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["auth", "status", "--online", "--format", "table"]).outputFormat, "table");
   assert.equal(parseCliArgs(["auto-review-model"]).command, "auto-review-model");
   assert.equal(parseCliArgs(["animation"]).command, "animation");
+  assert.deepEqual(
+    ["enable-image", "disable-image", "image-status"].map((command) => parseCliArgs([command]).action),
+    ["enable", "disable", "status"],
+  );
   assert.equal(parseCliArgs(["update"]).command, "update");
   assert.equal(parseCliArgs(["update", "npm"]).updateSource, "npm");
   assert.equal(parseCliArgs(["update", "github"]).updateSource, "github");
@@ -44,12 +48,14 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.match(cliHelp(), /--show-request-id/);
   assert.match(cliHelp(), /ccdx auto-review-model/);
   assert.match(cliHelp(), /ccdx animation/);
+  assert.match(cliHelp(), /ccdx enable-image/);
   assert.match(cliHelp(), /ccdx update \[npm\|github\]/);
   assert.match(cliHelp("codex-copilot-dx"), /ccdx status/);
   assert.doesNotMatch(cliHelp("codex-copilot-dx"), /Equivalent command/);
   assert.equal(parseCliArgs(["doctor", "--help"]).helpTopic, "doctor");
   assert.equal(parseCliArgs(["animation", "--help"]).helpTopic, "animation");
   assert.match(cliHelp("ccdx", "animation"), /next time the adapter starts/);
+  assert.match(cliHelp("ccdx", "enable-image"), /HTTPS image API endpoint/);
   assert.match(cliHelp("ccdx", "doctor"), /consumes a small amount of Copilot usage/);
   assert.doesNotMatch(cliHelp(), /Claude|Anthropic|pms|pm-studio/i);
   assert.equal(cliHelp("ccdx"), cliHelp("codex-copilot-dx"));

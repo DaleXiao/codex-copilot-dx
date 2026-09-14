@@ -109,6 +109,7 @@ export function createResponsesHandler(options) {
     requestBodyTimeoutMs,
     responsesPayloadOptions,
     responsesFn,
+    responseFailures,
     streamHandshakeTimeoutMs,
     streamIdleTimeoutMs,
     upstreamTimeoutMs,
@@ -255,6 +256,7 @@ export function createResponsesHandler(options) {
           abort,
           onUpstreamStart: startUpstreamTimeout,
           releaseRequest: releaseUpstreamPayload,
+          responseFailures,
           streamIdleTimeoutMs,
         });
         if (result?.successful) imagePressure?.markSuccess?.(responseHistoryPressureRootId(prepared));

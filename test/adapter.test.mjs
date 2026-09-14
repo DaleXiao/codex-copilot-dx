@@ -42,6 +42,7 @@ import {
 } from "../src/http-transport.mjs";
 import { RUNTIME_DEFAULTS } from "../src/runtime-config.mjs";
 import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
+import { createResponseFailureDiagnostics } from "../src/response-failures.mjs";
 
 const gzipAsync = promisify(zlib.gzip);
 const zstdCompressAsync = zlib.zstdCompress ? promisify(zlib.zstdCompress) : null;
@@ -152,6 +153,191 @@ async function invokeAdapter(options, { method = "POST", url = "/v1/responses", 
   req.socket = { remoteAddress: "127.0.0.1" };
   return invokeAdapterRequest(options, req);
 }
+
+function responsesSse(...events) {
+  return new Response(events.map((event) => (
+    `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
+  )).join(""), {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream", "X-Request-Id": "upstream-stream-request" },
+  });
+}
+
+function encryptedFailure(responseId = "resp_failed") {
+  return {
+    type: "response.failed",
+    response: {
+      id: responseId,
+      object: "response",
+      status: "failed",
+      model: "gpt-5.6-sol",
+      output: [],
+      error: {
+        code: "invalid_request_body",
+        message: `The encrypted content ${"g".repeat(120)} could not be verified. Reason: Encrypted content could not be decrypted or parsed.`,
+      },
+    },
+  };
+}
+
+test("HTTP 200 response.failed retries an exact encrypted continuation before downstream output", async () => {
+  clearResponseHistoryForTests();
+  try {
+    const parent = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "remember this context" });
+    rememberResponseHistory(parent, {
+      id: "resp_parent_encrypted",
+      status: "completed",
+      output: [
+        { type: "reasoning", id: "rs_stale", encrypted_content: "stale-encrypted-state", summary: [] },
+        { type: "message", id: "msg_parent", role: "assistant", content: [{ type: "output_text", text: "parent answer" }] },
+      ],
+    });
+    const failures = createResponseFailureDiagnostics({ now: () => "2026-09-14T00:00:00.000Z" });
+    const bodies = [];
+    const response = await invokeAdapter({
+      responseFailures: failures,
+      responsesFn: async (body) => {
+        bodies.push(structuredClone(body));
+        if (bodies.length === 1) {
+          return responsesSse(
+            { type: "response.created", response: { id: "resp_failed", object: "response", status: "in_progress", output: [] } },
+            encryptedFailure(),
+          );
+        }
+        return responsesSse({
+          type: "response.completed",
+          response: { id: "resp_recovered", object: "response", status: "completed", model: "gpt-5.6-sol", output: [] },
+        });
+      },
+    }, {
+      body: {
+        model: "gpt-5.6-sol",
+        stream: true,
+        previous_response_id: "resp_parent_encrypted",
+        input: "continue",
+      },
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(bodies.length, 2);
+    assert.equal(JSON.stringify(bodies[0]).includes("stale-encrypted-state"), true);
+    assert.equal(JSON.stringify(bodies[1]).includes("encrypted_content"), false);
+    assert.equal(JSON.stringify(bodies[1]).includes("remember this context"), true);
+    assert.equal(JSON.stringify(bodies[1]).includes("parent answer"), true);
+    assert.equal(JSON.stringify(bodies[1]).includes("continue"), true);
+    assert.doesNotMatch(response.text, /resp_failed|response\.failed/);
+    assert.match(response.text, /resp_recovered|response\.completed/);
+    const snapshot = failures.snapshot();
+    assert.equal(snapshot.total, 1);
+    assert.equal(snapshot.retried, 1);
+    assert.equal(snapshot.recent[0].retry_policy, "encrypted-replay-rejected");
+    assert.doesNotMatch(snapshot.recent[0].message, /g{24}/);
+    assert.equal(snapshot.recent[0].upstream_request_id, "upstream-stream-request");
+  } finally {
+    clearResponseHistoryForTests();
+  }
+});
+
+test("HTTP 200 response.failed never retries after visible stream output", async () => {
+  const failures = createResponseFailureDiagnostics();
+  let calls = 0;
+  const response = await invokeAdapter({
+    responseFailures: failures,
+    responsesFn: async () => {
+      calls += 1;
+      return responsesSse(
+        { type: "response.created", response: { id: "resp_partial", object: "response", status: "in_progress", output: [] } },
+        { type: "response.output_text.delta", output_index: 0, item_id: "msg_partial", delta: "partial output" },
+        encryptedFailure("resp_partial"),
+      );
+    },
+  }, {
+    body: {
+      model: "gpt-5.6-sol",
+      stream: true,
+      input: [
+        { type: "reasoning", encrypted_content: "stale", summary: [] },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
+      ],
+    },
+  });
+
+  assert.equal(calls, 1);
+  assert.match(response.text, /partial output/);
+  assert.match(response.text, /response\.failed/);
+  assert.equal(failures.snapshot().recent[0].retry_skipped, "output_started");
+});
+
+test("HTTP 200 unary failed response retries exact encrypted history once", async () => {
+  const failures = createResponseFailureDiagnostics();
+  const bodies = [];
+  const response = await invokeAdapter({
+    responseFailures: failures,
+    responsesFn: async (body) => {
+      bodies.push(structuredClone(body));
+      if (bodies.length === 1) return Response.json(encryptedFailure("resp_unary_failed").response);
+      return Response.json({ id: "resp_unary_recovered", object: "response", status: "completed", output: [] });
+    },
+  }, {
+    body: {
+      model: "gpt-5.6-sol",
+      stream: false,
+      input: [
+        { type: "reasoning", encrypted_content: "stale", summary: [] },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
+      ],
+    },
+  });
+
+  assert.equal(bodies.length, 2);
+  assert.equal(JSON.stringify(bodies[1]).includes("encrypted_content"), false);
+  assert.equal(JSON.parse(response.text).id, "resp_unary_recovered");
+  assert.equal(failures.snapshot().retried, 1);
+});
+
+test("HTTP 200 response.failed repairs an encrypted function output without leaving a schema shell", async () => {
+  const bodies = [];
+  const response = await invokeAdapter({
+    responsesFn: async (body) => {
+      bodies.push(structuredClone(body));
+      if (bodies.length === 1) {
+        return responsesSse({
+          type: "response.failed",
+          response: {
+            id: "resp_function_failed",
+            object: "response",
+            status: "failed",
+            output: [],
+            error: {
+              code: "invalid_request_body",
+              message: "Encrypted function output content could not be decrypted or decoded.",
+            },
+          },
+        });
+      }
+      return responsesSse({
+        type: "response.completed",
+        response: { id: "resp_function_recovered", object: "response", status: "completed", output: [] },
+      });
+    },
+  }, {
+    body: {
+      model: "gpt-5.6-sol",
+      stream: true,
+      input: [
+        { type: "function_call", id: "call_encrypted", call_id: "call_encrypted", name: "lookup", arguments: "{}" },
+        { type: "function_call_output", call_id: "call_encrypted", output: { type: "encrypted_content", encrypted_content: "opaque" } },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
+      ],
+    },
+  });
+
+  assert.equal(bodies.length, 2);
+  const output = bodies[1].input.find((item) => item.type === "function_call_output");
+  assert.match(output.output, /encrypted tool output omitted/);
+  assert.doesNotMatch(JSON.stringify(bodies[1]), /encrypted_content/);
+  assert.match(response.text, /resp_function_recovered/);
+});
 
 test("requestPath: ignores query strings on API routes", () => {
   assert.equal(requestPath("/v1/responses?stream=true"), "/v1/responses");

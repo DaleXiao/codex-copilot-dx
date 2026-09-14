@@ -74,6 +74,7 @@ Normal startup and reuse of an existing adapter check `~/.codex/config.toml` onc
 | `model_auto_compact_token_limit` | Add `900000` only when missing | `900000` |
 | `[shell_environment_policy.set]` OpenAI URL/key | Update `OPENAI_BASE_URL` and set `OPENAI_API_KEY="dummy"` when this section is recognized; leave an absent section absent | Create the section and set both keys; set `shell_environment_policy.inherit="core"` |
 | `[features]` `context_management` | Add `true` when missing; preserve explicit values and alternative declarations as described above | `true` |
+| `[mcp_servers.ccdx_image]` | Added in a marked CCDX-owned block only after `ccdx enable-image`; removed by `ccdx disable-image` | Absent by default |
 
 The two token limits are fixed defaults, not detected model capabilities. Existing custom values are retained. Writes target the listed keys with line-based edits and atomic replacement; this is not a general TOML formatter. The shell environment updater recognizes the literal `[shell_environment_policy.set]` header. Use `ccdx doctor config` to inspect parsed values and preview what this writer would do with the current file. No actual change means no file rewrite.
 
@@ -88,6 +89,7 @@ The upgrade intentionally does not delete or rewrite retired Claude or PM Studio
 ## Commands
 
 Run `ccdx <command> --help` for command-specific behavior and side-effect details.
+After startup, CCDX prints a short reminder that `ccdx help` lists all available commands.
 
 ### Live models
 
@@ -134,6 +136,29 @@ Enter the corresponding number to select an animation. The Comet row includes a 
 All nine animations use the same 20-column colon track and cyan/blue palette. They indicate activity, not completion percentage. Braille was removed in 0.7.7. A saved `terminal_animation: "braille"` falls back to Comet without rewriting the settings file; choosing another animation replaces it, and explicitly choosing Comet clears it. Other settings remain intact.
 
 The selected theme is loaded once when a new adapter starts, so changing it does not restart or alter an adapter that is already running. Stop and start CCDX to apply the new theme. `CCDX_TERMINAL_ANIMATION=0` (also `false`, `no`, or `off`) remains the boolean gate that disables terminal animation regardless of the selected theme.
+
+### Optional image generation
+
+Image generation is disabled by default. Configure it interactively only when you want Codex App to receive the local CCDX image tool:
+
+```bash
+ccdx enable-image
+```
+
+The command asks for an HTTPS `/images/generations` endpoint and an API key without echoing the key. It reads the endpoint's `/models` catalog, detects either the standard OpenAI Images request format or the supported `input.messages` format, and asks for a numeric model selection only when multiple image models are available. Its validation request omits the prompt and does not generate an image.
+
+The provider credential is stored in `~/.config/codex-copilot-dx/image-provider.json`, or under `XDG_CONFIG_HOME`, with mode `0600`. The API key is never written to `~/.codex/config.toml`; that file receives only a marked local MCP entry pointing to the running CCDX adapter with a 210-second tool timeout. Restart Codex App after enabling so it loads the tool. The existing CCDX adapter can remain running because provider settings are loaded when the tool is invoked.
+
+Inspect or disable the optional provider with:
+
+```bash
+ccdx image-status
+ccdx disable-image
+```
+
+`image-status` never prints the API key. Disabling removes the stored provider credential and the CCDX-owned MCP block; restart Codex App to remove the tool from already running tasks. The image endpoint is contacted only by `enable-image` validation and by explicit `generate_image` tool calls. Ordinary Responses, models, authentication, Fast, Auto-review, compaction, and image-input paths remain on their existing routes.
+
+Generated image downloads must use public HTTPS addresses, do not follow redirects, are DNS-checked against private and reserved addresses, and are capped at 32 MiB. The local MCP route accepts calls only from the same device and permits at most two concurrent generations. The tool supports new-image generation at `1024x1024`, `1536x1024`, or `1024x1536`; it does not claim image editing or multi-turn image editing support.
 
 ### Update
 
@@ -202,7 +227,7 @@ For the complete machine-readable status payload:
 curl -s http://127.0.0.1:2026/_ccdx/status | jq
 ```
 
-The status endpoint is restricted to the socket's real loopback address even when LAN binding is explicitly enabled. It reports fixed-size request counters, bounded TTFT/TPOT histograms, admission pressure, memory use, response-history size, image queue/cache and adaptive-history state, model-cache counts, and token expiry state. It never retains metric samples or includes prompts, completions, tool arguments, image content, account names, or token values.
+The status endpoint is restricted to the socket's real loopback address even when LAN binding is explicitly enabled. It reports fixed-size request counters, bounded TTFT/TPOT histograms, admission pressure, memory use, response-history size, image queue/cache and adaptive-history state, model-cache counts, token expiry state, and the ten most recent upstream `response.failed` diagnostics retained by the running process. Failure diagnostics include the event type, model, error code/message, response/request IDs when supplied upstream, and retry outcome; long opaque encrypted values are redacted. They are cleared when the adapter restarts. The endpoint never includes prompts, completions, tool arguments, image content, account names, or token values.
 
 `stream_performance.by_route` also reports `request_ttft_ms`, measured from adapter entry to the first observed output delta, including local preparation. The existing `ttft_ms` continues to start at upstream dispatch. Neither timestamp means the client has drained or displayed the output. `preparation_ms` contains bounded histograms for admission (including history reservations), body reading/decompression/JSON parsing, history materialization/compact preparation, image optimization, and request serialization. Each sample measures one operation, including failed operations; retries can add samples. These are diagnostic intervals rather than a complete breakdown of request time: body reading includes internal decoded-body admission waits; authentication, routing, and other preparation are not individually timed. Non-streaming requests contribute preparation samples without inventing a first-token measurement.
 
@@ -232,6 +257,7 @@ Recovery first tries compatible local credentials and starts Device Flow only wh
 - CCDX binds to loopback by default. Non-loopback hosts are rejected unless `CCDX_ALLOW_LAN=1` is set explicitly.
 - Enabling LAN binding exposes a Copilot-backed API to other reachable machines. Provide your own host firewall and network isolation; do not expose the listener to an untrusted network.
 - The GitHub OAuth credential is stored locally at `~/.local/share/copilot-api/github_token`. Short-lived Copilot service tokens remain in process memory and are refreshed as needed.
+- The optional image API credential is stored separately with mode `0600` only after `ccdx enable-image`; it is never placed in Codex configuration or diagnostic output.
 - Runtime status and usage records retain metadata rather than request/response content. Diagnostic logging records status and error messages; it is not a general redaction layer for arbitrary error text. See Debug logging before sharing logs.
 - Request and response bodies are bounded. Queues, history, image work, SSE parsing, retries, and shutdown all have explicit resource or time limits.
 
@@ -319,7 +345,7 @@ When expanded history exceeds Copilot's 50-image request limit, CCDX removes old
 
 For `/v1/responses/compact`, CCDX sends one terminal `compaction_trigger`, validates completed compaction state, and preserves the complete returned window as the canonical next context. Only a validated window becomes a new local history root. Existing older branches remain available until normal history eviction.
 
-Changing the model or transport of a continuation can require removing incompatible encrypted history from the forwarded request. A specific upstream encrypted-state verification failure can also trigger one sanitized retry. CCDX does not decrypt that state locally.
+Changing the model or transport of a continuation can require removing incompatible encrypted history from the forwarded request. A specific upstream encrypted-state verification failure can also trigger one sanitized retry, including when a nominally successful HTTP response ends with `response.failed`. CCDX withholds only the pre-output prelude of an encrypted continuation while evaluating that terminal event; it never retries after visible model output, so it cannot duplicate an already-started answer. Unrelated failures pass through unchanged. CCDX does not decrypt that state locally.
 
 Successful streaming responses are accepted only when the upstream body is SSE and reaches its protocol terminal event. Unexpected EOF becomes a protocol-native stream error, and repeated blank tool-argument deltas are stopped per tool call. Allowlisted rate-limit, retry, model, trace, and upstream request-ID metadata are forwarded; cookies, authorization, body-length, and encoding headers are not.
 

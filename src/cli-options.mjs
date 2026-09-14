@@ -21,6 +21,9 @@ const HELP_TOPICS = new Set([
   "models",
   "usage",
   "animation",
+  "enable-image",
+  "disable-image",
+  "image-status",
   "auto-review-model",
   "update",
   "version",
@@ -200,6 +203,12 @@ export function parseCliArgs(args = []) {
     if (rest.length) unexpectedArgs(rest);
     return baseCommand("animation");
   }
+  if (command === "enable-image" || command === "disable-image" || command === "image-status") {
+    if (rest.length) unexpectedArgs(rest);
+    return baseCommand("image", {
+      action: command === "enable-image" ? "enable" : command === "disable-image" ? "disable" : "status",
+    });
+  }
   if (command === "auto-review-model") {
     if (rest.length) unexpectedArgs(rest);
     return baseCommand("auto-review-model");
@@ -293,6 +302,9 @@ function topicHelp(name, topic) {
     models: `Usage:\n  ${name} models [--format table|plain]\n\nPerforms a fresh, read-only Copilot model-directory lookup for the saved account. Interactive terminals use a table by default.`,
     usage: `Usage:\n  ${name} usage [--format table|plain]\n\nSummarizes local token usage metadata without reading prompt or completion content. Interactive terminals use a table by default.`,
     animation: `Usage:\n  ${name} animation\n\nInteractively selects the terminal activity animation used the next time the adapter starts.`,
+    "enable-image": `Usage:\n  ${name} enable-image\n\nInteractively configures an HTTPS image API endpoint and API key, detects its supported image model and protocol, and registers the local CCDX image tool for Codex App.`,
+    "disable-image": `Usage:\n  ${name} disable-image\n\nDisables the local CCDX image tool and removes its stored API credential.`,
+    "image-status": `Usage:\n  ${name} image-status\n\nShows whether the optional image provider is configured without exposing its API key.`,
     "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nInteractively selects an advertised Responses model for Codex Auto-review.`,
     update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or GitHub main. With no source, an interactive terminal prompts for one.`,
     version: `Usage:\n  ${name} --version`,
@@ -313,6 +325,9 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} models [--format table|plain]
   ${name} usage [--format table|plain]
   ${name} animation
+  ${name} enable-image
+  ${name} disable-image
+  ${name} image-status
   ${name} auto-review-model
   ${name} update [npm|github]
   ${name} --version
@@ -326,6 +341,9 @@ Commands:
   models             Query a saved account's live Copilot model catalog
   usage              Summarize locally recorded token usage
   animation          Select the terminal activity animation
+  enable-image       Configure and enable the optional image provider
+  disable-image      Disable the image provider and remove its credential
+  image-status       Show the optional image provider status
   auto-review-model  Select the Codex Auto-review Responses model
   update             Update the global package from npm or GitHub
 

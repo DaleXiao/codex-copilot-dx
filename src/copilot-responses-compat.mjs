@@ -33,6 +33,10 @@ const RETRY_POLICIES = Object.freeze([
   }),
 ]);
 
+export function hasCopilotResponseRetryPolicy(statusCode, errorText, usedPolicies = new Set()) {
+  return RETRY_POLICIES.some((policy) => !usedPolicies.has(policy.id) && policy.matches(statusCode, errorText));
+}
+
 export function selectCopilotResponseRetry(
   reqContext,
   statusCode,

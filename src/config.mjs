@@ -4,6 +4,7 @@ import os from "node:os";
 import { status } from "./status.mjs";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { adapterBaseUrl } from "./running-adapter.mjs";
+import { codexTomlStatements, configValue, parseCodexToml, validateManagedConfigEdit } from "./config-toml.mjs";
 
 const CONFIG_PATH = path.join(os.homedir(), ".codex", "config.toml");
 const MODEL_CONTEXT_WINDOW = 1_000_000;
@@ -11,99 +12,75 @@ const MODEL_AUTO_COMPACT_TOKEN_LIMIT = 900_000;
 const IMAGE_MCP_START = "# ccdx:image-mcp:start";
 const IMAGE_MCP_END = "# ccdx:image-mcp:end";
 const IMAGE_MCP_SECTION = "mcp_servers.ccdx_image";
+const STARTUP_MANAGED_PATHS = [
+  "openai_base_url",
+  "model_context_window",
+  "model_auto_compact_token_limit",
+  "shell_environment_policy.set.OPENAI_BASE_URL",
+  "shell_environment_policy.set.OPENAI_API_KEY",
+  "features.context_management",
+].map((key) => key.split("."));
+const IMAGE_MANAGED_PATH = ["mcp_servers", "ccdx_image"];
 
-function isTomlTableHeader(line) {
-  const source = line.trimStart();
-  const openingBrackets = source.startsWith("[[") ? 2 : source.startsWith("[") ? 1 : 0;
-  if (!openingBrackets) return false;
+function sameKeys(left, right) {
+  return left.length === right.length && left.every((key, index) => key === right[index]);
+}
 
-  let quote = "";
-  let escaped = false;
-  for (let index = openingBrackets; index < source.length; index += 1) {
-    const char = source[index];
-    if (quote) {
-      if (quote === '"' && char === "\\" && !escaped) {
-        escaped = true;
-        continue;
-      }
-      if (char === quote && !escaped) quote = "";
-      escaped = false;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-    if (char !== "]" || (openingBrackets === 2 && source[index + 1] !== "]")) continue;
-
-    if (!source.slice(openingBrackets, index).trim()) return false;
-    const tail = source.slice(index + openingBrackets).trim();
-    return tail === "" || tail.startsWith("#");
-  }
-  return false;
+function setExistingTomlValue(lines, keys, value) {
+  const content = lines.join("\n");
+  if (configValue(parseCodexToml(content), keys) === value) return false;
+  const entry = codexTomlStatements(content).find((item) => item.kind === "value" && sameKeys(item.keys, keys));
+  if (!entry) return false;
+  const updated = content.slice(0, entry.valueStart) + JSON.stringify(value) + content.slice(entry.valueEnd);
+  lines.splice(0, lines.length, ...updated.split("\n"));
+  return true;
 }
 
 function setTopLevelTomlDefault(lines, key, value) {
-  let end = lines.findIndex(isTomlTableHeader);
-  if (end === -1) end = lines.length;
-
-  const keyRe = new RegExp(`^\\s*${key}\\s*=`);
-  if (lines.slice(0, end).some((line) => keyRe.test(line))) return false;
-
+  const content = lines.join("\n");
+  if (Object.hasOwn(parseCodexToml(content), key)) return false;
+  let end = codexTomlStatements(content).find((item) => item.kind === "table")?.line ?? lines.length;
   while (end > 0 && lines[end - 1].trim() === "") end--;
   lines.splice(end, 0, `${key} = ${value}`);
   return true;
 }
 
 function setTomlKey(lines, sectionName, key, value) {
-  const sectionLine = `[${sectionName}]`;
-  const start = lines.findIndex((line) => line.trim() === sectionLine);
-  if (start === -1) return false;
-
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (isTomlTableHeader(lines[i])) {
-      end = i;
-      break;
-    }
+  const keys = [...sectionName.split("."), key];
+  const content = lines.join("\n");
+  if (configValue(parseCodexToml(content), keys) !== undefined) {
+    return setExistingTomlValue(lines, keys, value);
   }
-
-  const nextLine = `${key} = "${value}"`;
-  const keyRe = new RegExp(`^\\s*${key}\\s*=`);
-  for (let i = start + 1; i < end; i++) {
-    if (keyRe.test(lines[i])) {
-      const changed = lines[i] !== nextLine;
-      lines[i] = nextLine;
-      return changed;
-    }
-  }
-
-  lines.splice(end, 0, nextLine);
+  const statements = codexTomlStatements(content);
+  const parent = keys.slice(0, -1);
+  const table = statements.find((item) => item.kind === "table" && sameKeys(item.keys, parent));
+  const dotted = statements.find((item) => item.kind === "value"
+    && item.keys.length > parent.length && sameKeys(item.keys.slice(0, parent.length), parent));
+  const anchor = table || dotted;
+  // Preserve absent and inline environment tables; only edit declarations whose
+  // exact value or insertion scope can be identified without rewriting them.
+  if (!anchor) return false;
+  const scope = table ? table.keys : dotted.section;
+  const nextKey = keys.slice(scope.length).join(".");
+  const end = statements.find((item) => item.kind === "table" && item.start > anchor.start)?.line ?? lines.length;
+  lines.splice(end, 0, `${nextKey} = ${JSON.stringify(value)}`);
   return true;
 }
 
 function ensureContextManagementDefault(lines) {
-  const firstSection = lines.findIndex(isTomlTableHeader);
-  const topLevel = lines.slice(0, firstSection === -1 ? lines.length : firstSection);
-  // Preserve alternative existing TOML declarations rather than creating a
-  // conflicting table or replacing a structured context-management value.
-  if (topLevel.some((line) => /^\s*(?:features|"features"|'features')\s*(?:=|\.)/.test(line))
-    || lines.some((line) => /^\s*\[\s*(?:features|"features"|'features')\s*\.\s*(?:context_management|"context_management"|'context_management')\s*(?:\.|\])/.test(line))) {
-    return false;
-  }
-  const start = lines.findIndex((line) => /^\s*\[\s*(?:features|"features"|'features')\s*\]\s*(?:#.*)?$/.test(line));
-  if (start === -1) {
+  const content = lines.join("\n");
+  const config = parseCodexToml(content);
+  if (configValue(config, ["features", "context_management"]) !== undefined) return false;
+  const statements = codexTomlStatements(content);
+  const table = statements.find((item) => item.kind === "table" && sameKeys(item.keys, ["features"]));
+  if (!table) {
+    if (Object.hasOwn(config, "features")) return false;
     if (lines.length && lines.at(-1).trim() !== "") lines.push("");
     lines.push("[features]", "context_management = true");
     return true;
   }
-
-  let end = start + 1;
-  while (end < lines.length && !isTomlTableHeader(lines[end])) end += 1;
-  if (lines.slice(start + 1, end).some((line) => /^\s*(?:context_management|"context_management"|'context_management')\s*(?:=|\.)/.test(line))) {
-    return false;
-  }
-  while (end > start + 1 && lines[end - 1].trim() === "") end -= 1;
+  let end = statements.find((item) => item.kind === "table" && item.start > table.start)?.line ?? lines.length;
+  while (end > table.line + 1 && lines[end - 1].trim() === "") end -= 1;
   lines.splice(end, 0, "context_management = true");
   return true;
 }
@@ -116,8 +93,9 @@ function imageMcpHost(adapterHost) {
 }
 
 function removeManagedImageMcp(lines) {
-  const starts = lines.flatMap((line, index) => line === IMAGE_MCP_START ? [index] : []);
-  const ends = lines.flatMap((line, index) => line === IMAGE_MCP_END ? [index] : []);
+  const comments = codexTomlStatements(lines.join("\n")).filter((item) => item.kind === "comment");
+  const starts = comments.filter((item) => lines[item.line] === IMAGE_MCP_START).map((item) => item.line);
+  const ends = comments.filter((item) => lines[item.line] === IMAGE_MCP_END).map((item) => item.line);
   let start = starts[0] ?? -1;
   const end = ends[0] ?? -1;
   if (start === -1 && end === -1) return false;
@@ -136,7 +114,7 @@ function removeManagedImageMcp(lines) {
 }
 
 function hasUnmanagedImageMcp(lines) {
-  return lines.some((line) => line.trim() === `[${IMAGE_MCP_SECTION}]`);
+  return configValue(parseCodexToml(lines.join("\n")), IMAGE_MANAGED_PATH) !== undefined;
 }
 
 function ensureImageMcp(lines, enabled, adapterPort, adapterHost) {
@@ -167,6 +145,7 @@ export function computeUpdatedCodexConfig(
   adapterHost = "127.0.0.1",
   { imageProviderEnabled } = {},
 ) {
+  const config = parseCodexToml(content);
   const baseUrl = `${adapterBaseUrl(adapterHost, adapterPort)}/v1`;
   const hadTrailingNewline = content.endsWith("\n");
   const lines = content.split("\n");
@@ -174,17 +153,11 @@ export function computeUpdatedCodexConfig(
 
   let changed = false;
   const openaiLine = `openai_base_url = "${baseUrl}"`;
-  const firstSection = lines.findIndex(isTomlTableHeader);
-  const topLevelEnd = firstSection === -1 ? lines.length : firstSection;
-  const openaiIndex = lines.findIndex((line, index) => (
-    index < topLevelEnd && /^\s*openai_base_url\s*=/.test(line)
-  ));
-  if (openaiIndex === -1) {
+  if (!Object.hasOwn(config, "openai_base_url")) {
     lines.unshift(openaiLine);
     changed = true;
-  } else if (lines[openaiIndex] !== openaiLine) {
-    lines[openaiIndex] = openaiLine;
-    changed = true;
+  } else {
+    changed = setExistingTomlValue(lines, ["openai_base_url"], baseUrl);
   }
 
   changed = setTopLevelTomlDefault(lines, "model_context_window", MODEL_CONTEXT_WINDOW) || changed;
@@ -196,7 +169,10 @@ export function computeUpdatedCodexConfig(
     changed = ensureImageMcp(lines, imageProviderEnabled, adapterPort, adapterHost) || changed;
   }
 
-  return { content: lines.join("\n") + (hadTrailingNewline ? "\n" : ""), changed };
+  const updated = lines.join("\n") + (hadTrailingNewline ? "\n" : "");
+  validateManagedConfigEdit(config, updated, typeof imageProviderEnabled === "boolean"
+    ? [...STARTUP_MANAGED_PATHS, IMAGE_MANAGED_PATH] : STARTUP_MANAGED_PATHS);
+  return { content: updated, changed };
 }
 
 export function initialCodexConfig(adapterPort, adapterHost, { imageProviderEnabled = false } = {}) {
@@ -224,11 +200,14 @@ export function computeImageMcpCodexConfig(
   content,
   { enabled, adapterPort = 2026, adapterHost = "127.0.0.1" } = {},
 ) {
+  const config = parseCodexToml(content);
   const hadTrailingNewline = content.endsWith("\n");
   const lines = content.split("\n");
   if (hadTrailingNewline) lines.pop();
   const changed = ensureImageMcp(lines, Boolean(enabled), adapterPort, adapterHost);
-  return { content: lines.join("\n") + (hadTrailingNewline || lines.length ? "\n" : ""), changed };
+  const updated = lines.join("\n") + (hadTrailingNewline || lines.length ? "\n" : "");
+  validateManagedConfigEdit(config, updated, [IMAGE_MANAGED_PATH]);
+  return { content: updated, changed };
 }
 
 export function ensureCodexConfig(adapterPort = 2026, {
@@ -245,7 +224,13 @@ export function ensureCodexConfig(adapterPort = 2026, {
     return;
   }
 
-  const content = fs.readFileSync(filePath, "utf-8");
+  let content;
+  try {
+    content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(fs.readFileSync(filePath));
+  } catch (error) {
+    if (error?.code !== "ERR_ENCODING_INVALID_ENCODED_DATA") throw error;
+    throw new Error("Codex configuration is not valid UTF-8 TOML; no configuration changes were written");
+  }
   const updated = computeUpdatedCodexConfig(content, adapterPort, host, { imageProviderEnabled });
 
   if (!updated.changed) {

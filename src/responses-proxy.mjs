@@ -8,7 +8,11 @@ import {
   sendUpstreamError,
   writeOrDrain,
 } from "./http-transport.mjs";
-import { openCopilotResponse, selectCopilotResponseRetry } from "./copilot-responses-compat.mjs";
+import {
+  hasCopilotResponseRetryPolicy,
+  openCopilotResponse,
+  selectCopilotResponseRetry,
+} from "./copilot-responses-compat.mjs";
 import {
   dropMaterializedResponseHistory,
   hasEncryptedResponseState,
@@ -314,21 +318,29 @@ function streamHeaders(resp) {
   };
 }
 
-function selectStreamFailureRetry(reqContext, failure, usedRetryPolicies) {
+async function selectStreamFailureRetry(reqContext, failure, usedRetryPolicies, options) {
   if (!failure) return null;
+  const errorText = responseFailureText(failure.event, failure.eventType);
+  if (!hasCopilotResponseRetryPolicy(400, errorText, usedRetryPolicies)) return null;
+  const preparation = await options.acquireRetryPreparation?.(reqContext);
+  let keepReservation = false;
   try {
-    const restored = restoreMaterializedResponseHistoryForRetry(reqContext);
+    const restored = restoreMaterializedResponseHistoryForRetry(reqContext, {
+      assertActive: options.assertPrepareActive,
+      historySnapshot: preparation?.historySnapshot,
+    });
+    const retry = selectCopilotResponseRetry(restored, 400, errorText, usedRetryPolicies);
+    options.assertPrepareActive?.();
+    keepReservation = Boolean(retry);
     return {
-      retry: selectCopilotResponseRetry(
-        restored,
-        400,
-        responseFailureText(failure.event, failure.eventType),
-        usedRetryPolicies,
-      ),
+      retry: retry ? { ...retry, releasePreparation: preparation?.release } : null,
       retrySkipped: null,
     };
   } catch {
+    options.assertPrepareActive?.();
     return { retry: null, retrySkipped: "history_unavailable" };
+  } finally {
+    if (!keepReservation) preparation?.release();
   }
 }
 
@@ -362,6 +374,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       return { successful: false, compacted: false, upstreamStatus: resp.status };
     }
     await requireUpstreamEventStream(resp);
+    options.onStreamStart?.();
     options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
     const headers = streamHeaders(resp);
     let headersSent = false;
@@ -424,7 +437,13 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
 
       let retry = null;
       if (streamState.failure && holdPrelude && !streamState.sawOutput) {
-        const selected = selectStreamFailureRetry(reqContext, streamState.failure, usedRetryPolicies);
+        let selected;
+        try {
+          selected = await selectStreamFailureRetry(reqContext, streamState.failure, usedRetryPolicies, options);
+        } catch (error) {
+          recordResponseFailure(options, reqContext, resp, streamState.failure, { retrySkipped: "retry_preparation_failed" });
+          throw error;
+        }
         retry = selected?.retry || null;
         if (!retry) retryDisabledReason = selected?.retrySkipped || "not_applicable";
       }
@@ -436,12 +455,16 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       }
       if (retry) {
         console.warn(status("warn", retry.warning));
-        opened = await openCopilotResponse(retry.reqContext, upstream, {
-          ...options,
-          usedRetryPolicies: retry.usedPolicies,
-        });
-        opened.streamRetryEligible = hasEncryptedResponseState(opened.reqContext.body?.input);
-        dropMaterializedResponseHistory(opened.reqContext);
+        try {
+          opened = await openCopilotResponse(retry.reqContext, upstream, {
+            ...options,
+            usedRetryPolicies: retry.usedPolicies,
+          });
+          opened.streamRetryEligible = hasEncryptedResponseState(opened.reqContext.body?.input);
+          dropMaterializedResponseHistory(opened.reqContext);
+        } finally {
+          retry.releasePreparation?.();
+        }
         continue;
       }
       if (streamState.failure) markStreamFailure();
@@ -515,7 +538,13 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
       const response = parseSuccessfulResponsesResult(data);
       if (response.status === "failed") {
         const failure = { event: { type: "response.failed", response }, eventType: "response.failed" };
-        const selected = selectStreamFailureRetry(reqContext, failure, usedRetryPolicies);
+        let selected;
+        try {
+          selected = await selectStreamFailureRetry(reqContext, failure, usedRetryPolicies, options);
+        } catch (error) {
+          recordResponseFailure(options, reqContext, resp, failure, { retrySkipped: "retry_preparation_failed" });
+          throw error;
+        }
         const retry = selected?.retry || null;
         recordResponseFailure(options, reqContext, resp, failure, {
           retry,
@@ -523,11 +552,15 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
         });
         if (retry) {
           console.warn(status("warn", retry.warning));
-          opened = await openCopilotResponse(retry.reqContext, upstream, {
-            ...options,
-            usedRetryPolicies: retry.usedPolicies,
-          });
-          dropMaterializedResponseHistory(opened.reqContext);
+          try {
+            opened = await openCopilotResponse(retry.reqContext, upstream, {
+              ...options,
+              usedRetryPolicies: retry.usedPolicies,
+            });
+            dropMaterializedResponseHistory(opened.reqContext);
+          } finally {
+            retry.releasePreparation?.();
+          }
           continue;
         }
       }

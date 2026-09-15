@@ -170,6 +170,7 @@ export async function inspectImageProvider({
   apiKey,
   fetchImpl = fetch,
   timeoutMs = IMAGE_PROVIDER_TIMEOUT_MS,
+  selectModel,
 } = {}) {
   const normalizedEndpoint = normalizeImageEndpoint(endpoint);
   const normalizedKey = checkedApiKey(apiKey);
@@ -178,11 +179,13 @@ export async function inspectImageProvider({
   if (!models.response.ok) throw new Error(`Image API model lookup failed with HTTP ${models.response.status}`);
   const modelIds = imageModelIds(models.body);
   if (!modelIds.length) throw new Error("Image API model lookup returned no image models");
+  const model = selectModel ? await selectModel([...modelIds]) : modelIds[0];
+  if (!modelIds.includes(model)) throw new Error("Selected image model is not in the provider catalog");
 
   const probe = await fetchJson(normalizedEndpoint, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: modelIds[0] }),
+    body: JSON.stringify({ model }),
   }, { fetchImpl, timeoutMs });
   const protocol = detectProtocol(probe.response.status, probe.body);
   if (!protocol) throw new Error("Image API protocol is unsupported or could not be detected safely");

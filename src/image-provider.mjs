@@ -197,58 +197,66 @@ export async function downloadPublicImage(urlValue, {
   if (url.protocol !== "https:" || url.username || url.password) {
     throw providerError("Image API returned an unsafe image URL", "ccdx_image_url_unsafe");
   }
-  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
-  if (!Array.isArray(addresses) || !addresses.length || addresses.some(({ address }) => !publicAddress(address))) {
-    throw providerError("Image API returned a non-public image URL", "ccdx_image_url_unsafe");
-  }
   return new Promise((resolve, reject) => {
     let settled = false;
+    let request;
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
-      if (error) reject(error);
+      if (error) {
+        request?.destroy(error);
+        reject(error);
+      }
       else resolve(value);
     };
-    const request = https.get(url, {
-      headers: { Accept: "image/*,application/octet-stream;q=0.5" },
-      lookup: (_hostname, options, callback) => {
-        if (options?.all) callback(null, addresses);
-        else callback(null, addresses[0].address, addresses[0].family);
-      },
-    }, (response) => {
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        response.resume();
-        finish(providerError(`Image download failed with HTTP ${response.statusCode}`));
+    const timer = setTimeout(() => finish(providerError("Image download timed out", "ccdx_image_timeout")), timeoutMs);
+    timer.unref?.();
+    const onAbort = () => finish(signal.reason instanceof Error ? signal.reason : providerError("Image request was cancelled"));
+    if (signal?.aborted) { onAbort(); return; }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    // DNS and transfer share one deadline; a late lookup cannot start a cancelled download.
+    Promise.resolve().then(() => settled ? undefined : lookup(url.hostname, { all: true, verbatim: true })).then((addresses) => {
+      if (settled) return;
+      if (!Array.isArray(addresses) || !addresses.length || addresses.some(({ address }) => !publicAddress(address))) {
+        finish(providerError("Image API returned a non-public image URL", "ccdx_image_url_unsafe"));
         return;
       }
-      const declared = Number(response.headers["content-length"]);
-      if (Number.isFinite(declared) && declared > maxBytes) {
-        response.destroy();
-        finish(providerError("Generated image exceeds the size limit", "ccdx_image_too_large"));
-        return;
-      }
-      const chunks = [];
-      let total = 0;
-      response.on("data", (chunk) => {
-        total += chunk.length;
-        if (total > maxBytes) {
+      request = https.get(url, {
+        headers: { Accept: "image/*,application/octet-stream;q=0.5" },
+        lookup: (_hostname, options, callback) => {
+          if (options?.all) callback(null, addresses);
+          else callback(null, addresses[0].address, addresses[0].family);
+        },
+      }, (response) => {
+        response.on("error", (error) => finish(error));
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          response.resume();
+          finish(providerError(`Image download failed with HTTP ${response.statusCode}`));
+          return;
+        }
+        const declared = Number(response.headers["content-length"]);
+        if (Number.isFinite(declared) && declared > maxBytes) {
           response.destroy();
           finish(providerError("Generated image exceeds the size limit", "ccdx_image_too_large"));
           return;
         }
-        chunks.push(chunk);
+        const chunks = [];
+        let total = 0;
+        response.on("data", (chunk) => {
+          total += chunk.length;
+          if (total > maxBytes) {
+            response.destroy();
+            finish(providerError("Generated image exceeds the size limit", "ccdx_image_too_large"));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.on("end", () => finish(null, Buffer.concat(chunks, total)));
       });
-      response.on("end", () => finish(null, Buffer.concat(chunks, total)));
-      response.on("error", (error) => finish(error));
-    });
-    const timer = setTimeout(() => request.destroy(providerError("Image download timed out", "ccdx_image_timeout")), timeoutMs);
-    timer.unref?.();
-    request.on("close", () => clearTimeout(timer));
-    request.on("error", (error) => finish(error));
-    const onAbort = () => request.destroy(signal.reason instanceof Error ? signal.reason : providerError("Image request was cancelled"));
-    if (signal?.aborted) onAbort();
-    else signal?.addEventListener("abort", onAbort, { once: true });
+      request.on("error", (error) => finish(error));
+    }).catch((error) => finish(error));
   });
 }
 

@@ -51,9 +51,14 @@ function unmanagedSettings(config) {
 }
 
 function startupPreview(content, config, host, port) {
-  const updated = content === null
-    ? { content: initialCodexConfig(port, host), changed: true }
-    : computeUpdatedCodexConfig(content, port, host);
+  let updated;
+  try {
+    updated = content === null
+      ? { content: initialCodexConfig(port, host), changed: true }
+      : computeUpdatedCodexConfig(content, port, host);
+  } catch {
+    return { kind: "err", message: "Startup configuration cannot be edited safely; review the file before starting ccdx" };
+  }
   if (!updated.changed) return { kind: "ok", message: "No startup configuration changes required" };
   let next;
   try {

@@ -113,6 +113,17 @@ export function createImageMcpHandler({
       writeJson(res, 405, jsonRpcError(null, -32600, "Only POST is supported"));
       return;
     }
+    // This endpoint serves native Codex/Node clients, not browser pages. A
+    // loopback socket alone does not make a browser-supplied Origin trusted.
+    if (Object.hasOwn(req.headers || {}, "origin")) {
+      writeJson(res, 403, jsonRpcError(null, -32001, "Browser origins are not allowed for Image MCP"));
+      return;
+    }
+    const mediaType = String(req.headers?.["content-type"] || "").split(";", 1)[0].trim().toLowerCase();
+    if (mediaType !== "application/json") {
+      writeJson(res, 415, jsonRpcError(null, -32600, "Image MCP requires application/json"));
+      return;
+    }
 
     let request;
     try { request = await readBody(req); }

@@ -389,7 +389,8 @@ export function dropMaterializedResponseHistory(reqContext) {
   return true;
 }
 
-export function restoreMaterializedResponseHistoryForRetry(reqContext, { assertActive } = {}) {
+export function restoreMaterializedResponseHistoryForRetry(reqContext, { assertActive, historySnapshot } = {}) {
+  assertActive?.();
   if (!reqContext?.[RELEASED_MATERIALIZED_HISTORY] || !reqContext.historyParentId) return reqContext;
   const body = cloneJson(reqContext.body);
   body.previous_response_id = reqContext.historyParentId;
@@ -397,6 +398,7 @@ export function restoreMaterializedResponseHistoryForRetry(reqContext, { assertA
   let restored = prepareResponsesRequest(body, {
     assertActive,
     copilotBoundary: false,
+    historySnapshot,
     mutate: true,
   });
   restored.surface = reqContext.surface;

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { EventEmitter, getEventListeners } from "node:events";
+import https from "node:https";
 import { test } from "node:test";
 import { downloadPublicImage, generateImage, IMAGE_INPUT_MAX_BYTES, supportsImageEditing } from "../src/image-provider.mjs";
 
@@ -165,4 +167,124 @@ test("image provider: rejects unsafe downloads, invalid arguments, and upstream 
   await assert.rejects(generateImage(config, { prompt: "hello" }, {
     fetchImpl: async () => Response.json({ error: { message: "quota exhausted" } }, { status: 429 }),
   }), /HTTP 429: quota exhausted/);
+});
+
+test("image downloads apply their deadline during DNS and ignore late lookup results", async (t) => {
+  let completeLookup;
+  let connections = 0;
+  t.mock.method(https, "get", () => { connections += 1; throw new Error("must not connect"); });
+  const downloading = downloadPublicImage("https://cdn.example/result.png", {
+    lookup: () => new Promise((resolve) => { completeLookup = resolve; }),
+    timeoutMs: 10,
+  }).then(() => null, (error) => error);
+  const result = await Promise.race([downloading, new Promise((resolve) => setTimeout(() => resolve(null), 80))]);
+  assert.equal(result?.code, "ccdx_image_timeout");
+  completeLookup([{ address: "1.1.1.1", family: 4 }]);
+  await new Promise(setImmediate);
+  assert.equal(connections, 0);
+});
+
+test("image downloads cancel during DNS and do not look up an already cancelled request", async (t) => {
+  let lookups = 0;
+  let rejectLookup;
+  let connections = 0;
+  t.mock.method(https, "get", () => { connections += 1; throw new Error("must not connect"); });
+  const controller = new AbortController();
+  const cancelled = new Error("fixture cancellation");
+  const options = {
+    lookup: () => { lookups += 1; return new Promise((_resolve, reject) => { rejectLookup = reject; }); },
+    timeoutMs: 1000,
+    signal: controller.signal,
+  };
+  const downloading = downloadPublicImage("https://cdn.example/result.png", options).then(() => null, (error) => error);
+  await new Promise(setImmediate);
+  controller.abort(cancelled);
+  const result = await Promise.race([downloading, new Promise((resolve) => setTimeout(() => resolve(null), 80))]);
+  assert.equal(result, cancelled);
+  rejectLookup(new Error("late DNS failure"));
+  await new Promise(setImmediate);
+  await assert.rejects(downloadPublicImage("https://cdn.example/result.png", options), (error) => error === cancelled);
+  assert.equal(lookups, 1);
+  assert.equal(connections, 0);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("image downloads retain pinned DNS, bounded image bytes, and one transfer", async (t) => {
+  const controller = new AbortController();
+  const bytes = png();
+  let lookups = 0;
+  let connections = 0;
+  const request = new EventEmitter();
+  request.destroy = (error) => { queueMicrotask(() => request.emit("error", error)); };
+  t.mock.method(https, "get", (url, options, callback) => {
+    connections += 1;
+    assert.equal(url.href, "https://cdn.example/result.png");
+    assert.equal(options.headers.Authorization, undefined);
+    options.lookup(url.hostname, {}, (error, address, family) => {
+      assert.equal(error, null);
+      assert.equal(address, "1.1.1.1");
+      assert.equal(family, 4);
+    });
+    setImmediate(() => {
+      const response = new EventEmitter();
+      Object.assign(response, { statusCode: 200, headers: { "content-length": String(bytes.length) } });
+      callback(response);
+      response.emit("data", bytes.subarray(0, 12));
+      response.emit("data", bytes.subarray(12));
+      response.emit("end");
+    });
+    return request;
+  });
+  const result = await downloadPublicImage("https://cdn.example/result.png", {
+    lookup: async () => { lookups += 1; return [{ address: "1.1.1.1", family: 4 }]; },
+    signal: controller.signal,
+  });
+  assert.deepEqual(result, bytes);
+  assert.equal(lookups, 1);
+  assert.equal(connections, 1);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("image download cancellation destroys an active transfer without retrying", async (t) => {
+  const controller = new AbortController();
+  let connections = 0;
+  let destroyed = 0;
+  const request = new EventEmitter();
+  request.destroy = (error) => { destroyed += 1; queueMicrotask(() => request.emit("error", error)); };
+  t.mock.method(https, "get", () => { connections += 1; return request; });
+  const downloading = downloadPublicImage("https://cdn.example/result.png", {
+    lookup: async () => [{ address: "1.1.1.1", family: 4 }], signal: controller.signal,
+  });
+  await new Promise(setImmediate);
+  controller.abort(new Error("cancel transfer"));
+  await assert.rejects(downloading, /cancel transfer/);
+  assert.equal(connections, 1);
+  assert.equal(destroyed, 1);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("image download failure closes the transfer and safely absorbs response errors", async (t) => {
+  for (const [statusCode, headers, expected] of [
+    [503, {}, /HTTP 503/],
+    [200, { "content-length": "100" }, /size limit/],
+  ]) {
+    let destroyed = 0;
+    const response = new EventEmitter();
+    Object.assign(response, { statusCode, headers, resume() {}, destroy() {} });
+    const request = new EventEmitter();
+    request.destroy = (error) => {
+      destroyed += 1;
+      queueMicrotask(() => { response.emit("error", error); request.emit("error", error); });
+    };
+    const mocked = t.mock.method(https, "get", (_url, _options, callback) => {
+      setImmediate(() => callback(response));
+      return request;
+    });
+    await assert.rejects(downloadPublicImage("https://cdn.example/result.png", {
+      lookup: async () => [{ address: "1.1.1.1", family: 4 }], maxBytes: 50,
+    }), expected);
+    assert.equal(mocked.mock.callCount(), 1);
+    assert.equal(destroyed, 1);
+    mocked.mock.restore();
+  }
 });

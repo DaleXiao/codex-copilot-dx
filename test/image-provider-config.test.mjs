@@ -86,3 +86,38 @@ test("image provider inspection detects OpenAI Images errors and rejects unknown
   assert.equal((await inspect("Missing required parameter: prompt")).protocol, "openai-images");
   await assert.rejects(inspect("Invalid request"), /unsupported or could not be detected/);
 });
+
+test("image provider inspection probes only the chosen model after reading its catalog", async () => {
+  const calls = [];
+  const result = await inspectImageProvider({
+    endpoint: "https://images.example/v1/images/generations",
+    apiKey: "secret-value",
+    selectModel: async (models) => {
+      assert.deepEqual(models, ["qwen-image-3.0-pro", "gpt-image-1"]);
+      assert.deepEqual(calls.map(({ method }) => method), ["GET"]);
+      return models[1];
+    },
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ method: init.method || "GET", body: init.body && JSON.parse(init.body) });
+      if (url.endsWith("/models")) return Response.json({ data: [{ id: "qwen-image-3.0-pro" }, { id: "gpt-image-1" }] });
+      assert.deepEqual(JSON.parse(init.body), { model: "gpt-image-1" });
+      return Response.json({ error: { message: "Missing required parameter: prompt" } }, { status: 400 });
+    },
+  });
+  assert.equal(result.protocol, "openai-images");
+  assert.equal(calls.length, 2);
+});
+
+test("image provider inspection does not probe a cancelled or invalid model choice", async () => {
+  for (const selectModel of [async () => { throw new Error("selection cancelled"); }, async () => "absent-image-model"]) {
+    let calls = 0;
+    await assert.rejects(inspectImageProvider({
+      endpoint: "https://images.example/v1/images/generations", apiKey: "secret-value", selectModel,
+      fetchImpl: async () => {
+        calls += 1;
+        return Response.json({ data: [{ id: "qwen-image-3.0-pro" }] });
+      },
+    }), /cancelled|selected image model/i);
+    assert.equal(calls, 1);
+  }
+});

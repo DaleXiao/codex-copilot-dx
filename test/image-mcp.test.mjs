@@ -6,7 +6,7 @@ import { createAdapterHandler } from "../src/adapter.mjs";
 import { createImageMcpHandler } from "../src/image-mcp.mjs";
 import { createImageReferenceStore } from "../src/image-references.mjs";
 
-async function rpc(handler, id, method, params) {
+async function rpc(handler, id, method, params, headers = {}) {
   const request = Readable.from([Buffer.from(JSON.stringify({
     jsonrpc: "2.0",
     id,
@@ -15,6 +15,7 @@ async function rpc(handler, id, method, params) {
   }))]);
   request.method = "POST";
   request.url = "/mcp/image";
+  request.headers = { "content-type": "application/json", ...headers };
   request.socket = { remoteAddress: "127.0.0.1", localAddress: "127.0.0.1" };
 
   const response = new EventEmitter();
@@ -41,6 +42,56 @@ async function rpc(handler, id, method, params) {
   await completed;
   return { status: response.statusCode, body: response.body ? JSON.parse(response.body) : null };
 }
+
+test("image MCP rejects browser origins and non-JSON requests before reading credentials or dispatching", async () => {
+  let configReads = 0;
+  let calls = 0;
+  const app = createAdapterHandler({ imageMcpHandler: createImageMcpHandler({
+    configLoader: () => { configReads += 1; return { model: "test" }; },
+    generateImageFn: async () => { calls += 1; throw new Error("must not generate"); },
+  }) });
+  const params = { name: "generate_image", arguments: { prompt: "test" } };
+  for (const origin of ["https://untrusted.example", "null", "", "http://127.0.0.1:2026"]) {
+    const result = await rpc(app, 1, "tools/call", params, { origin });
+    assert.equal(result.status, 403);
+    assert.match(result.body.error.message, /origin/i);
+  }
+  for (const type of [undefined, "text/plain", "application/x-www-form-urlencoded", "multipart/form-data", "application/jsonx"]) {
+    const result = await rpc(app, 1, "tools/call", params, { "content-type": type });
+    assert.equal(result.status, 415);
+    assert.match(result.body.error.message, /application\/json/);
+  }
+  assert.equal(configReads, 0);
+  assert.equal(calls, 0);
+});
+
+test("image MCP retains native JSON clients including charset parameters and notifications", async () => {
+  const handler = createImageMcpHandler({ configLoader: () => null });
+  for (const type of ["application/json", "application/json; charset=utf-8", "Application/JSON; charset=UTF-8"]) {
+    const headers = { "content-type": type };
+    const initialized = await rpc(handler, 1, "initialize", { protocolVersion: "2025-06-18" }, headers);
+    assert.equal(initialized.status, 200);
+    assert.equal(initialized.body.result.serverInfo.name, "ccdx-image");
+    assert.equal((await rpc(handler, undefined, "notifications/initialized", {}, headers)).status, 202);
+  }
+});
+
+test("image MCP preserves loopback and explicit same-device sockets without widening LAN access", async () => {
+  const handler = createImageMcpHandler({ configLoader: () => null });
+  for (const [remoteAddress, localAddress, expected] of [
+    ["::1", "::1", 200],
+    ["::ffff:127.0.0.1", "::ffff:127.0.0.1", 200],
+    ["192.168.1.10", "192.168.1.10", 200],
+    ["::ffff:192.168.1.10", "192.168.1.10", 200],
+    ["192.168.1.20", "192.168.1.10", 403],
+  ]) {
+    const result = await rpc((req, res) => {
+      req.socket = { remoteAddress, localAddress };
+      return handler(req, res);
+    }, 1, "initialize", { protocolVersion: "2025-06-18" });
+    assert.equal(result.status, expected);
+  }
+});
 
 test("image MCP: advertises no tool by default and returns the configured image as MCP content", async () => {
   let config = null;

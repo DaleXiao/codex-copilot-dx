@@ -64,9 +64,12 @@ export function hiddenQuestion(input, output, question) {
 }
 
 function fileContent(filePath) {
-  try { return fs.readFileSync(filePath, "utf8"); }
+  try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(fs.readFileSync(filePath)); }
   catch (error) {
     if (error?.code === "ENOENT") return "";
+    if (error?.code === "ERR_ENCODING_INVALID_ENCODED_DATA") {
+      throw new Error("Codex configuration is not valid UTF-8 TOML; no configuration changes were written");
+    }
     throw error;
   }
 }
@@ -206,8 +209,14 @@ export async function runImageCommand({
   if (!apiKey) throw new Error("Image API key is required");
 
   output.write("Checking image API...\n");
-  const inspected = await inspectImageProvider({ endpoint, apiKey, fetchImpl });
-  const model = await chooseModel(inspected.modelIds, current?.model, ask, output);
+  let model;
+  const inspected = await inspectImageProvider({
+    endpoint, apiKey, fetchImpl,
+    selectModel: async (modelIds) => {
+      model = await chooseModel(modelIds, current?.model, ask, output);
+      return model;
+    },
+  });
   const result = enableImageProvider({
     providerConfig: {
       endpoint: inspected.endpoint,

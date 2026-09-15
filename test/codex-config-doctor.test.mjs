@@ -77,7 +77,8 @@ OPENAI_API_KEY = "dummy"
   assert.ok(checks.some((check) => check.message === "model_context_window is missing"));
   assert.ok(checks.some((check) => /features.context_management is missing/.test(check.message)));
   assert.ok(checks.some((check) => /Optional shell_environment_policy.set table is absent/.test(check.message)));
-  assert.ok(checks.some((check) => check.kind === "err" && /outside CCDX's managed keys/.test(check.message)));
+  assert.ok(checks.every((check) => check.kind !== "err"));
+  assert.ok(checks.some((check) => /Next startup would set:.*openai_base_url/.test(check.message)));
 });
 
 test("valid custom limits and false flags remain valid across quoted, dotted, and inline TOML", (t) => {
@@ -133,4 +134,13 @@ test("structured context-management settings are retained with an explicit verif
   const checks = inspectCodexConfig({ home });
   assert.ok(checks.some((check) => check.kind === "warn" && /Structured context-management.*not verified/.test(check.message)));
   assert.equal(checks.at(-1).message, "No startup configuration changes required");
+});
+
+test("doctor reports unsafe startup edits without throwing or revealing configured values", (t) => {
+  const { home, file } = fixture(t, '[[features]]\nnote = "sensitive-value"\n');
+  const before = fs.readFileSync(file);
+  const checks = inspectCodexConfig({ home });
+  assert.ok(checks.some((check) => check.kind === "err" && /cannot be edited safely/.test(check.message)));
+  assert.doesNotMatch(JSON.stringify(checks), /sensitive-value/);
+  assert.deepEqual(fs.readFileSync(file), before);
 });

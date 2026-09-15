@@ -144,6 +144,42 @@ export function createResponsesHandler(options) {
       activeDeadline = now() + timeoutMs;
       abort.setTimeout(timeoutMs, activeTimeoutReason);
     };
+    const startStream = () => {
+      assertPrepareActive();
+      // Headers completed this phase. Stream liveness is now governed by its
+      // idle timer, not the original handshake deadline.
+      activeDeadline = Number.POSITIVE_INFINITY;
+    };
+    const acquireRetryPreparation = async (reqContext) => {
+      assertPrepareActive();
+      activeDeadline = now() + upstreamTimeoutMs;
+      activeTimeoutReason = "responses_prepare_timeout";
+      abort.setTimeout(upstreamTimeoutMs, activeTimeoutReason);
+      let releaseRetryRequest = () => {};
+      let retrySnapshot = null;
+      const release = () => {
+        retrySnapshot?.release();
+        releaseRetryRequest();
+      };
+      try {
+        releaseRetryRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal }));
+        assertPrepareActive();
+        if (reqContext.historyParentId) {
+          retrySnapshot = measureRequestStage("history", () => acquireResponseHistorySnapshot(reqContext.historyParentId, {
+            assertActive: assertPrepareActive,
+            signal: abort.signal,
+          }));
+          if (retrySnapshot.bytes > 0) {
+            await measureRequestStageAsync("admission", () => releaseRetryRequest.reserveResponseHistory?.(retrySnapshot.bytes, { signal: abort.signal }));
+          }
+        }
+        assertPrepareActive();
+        return { historySnapshot: retrySnapshot, release };
+      } catch (error) {
+        release();
+        throw error;
+      }
+    };
     const applyAdaptiveTimeout = (error) => {
       if (!["responses_prepare_timeout", "stream_handshake_timeout", "upstream_timeout"].includes(abort.reason)) {
         return error;
@@ -251,10 +287,12 @@ export function createResponsesHandler(options) {
       applyCopilotResponsesRequestPolicies(prepared.body);
       if (routePlan.protocol === "openai-responses") {
         const result = await proxyCopilotResponses(prepared, req, res, responsesFn, {
+          acquireRetryPreparation,
           assertPrepareActive,
           signal: abort.signal,
           abort,
           onUpstreamStart: startUpstreamTimeout,
+          onStreamStart: startStream,
           releaseRequest: releaseUpstreamPayload,
           responseFailures,
           streamIdleTimeoutMs,

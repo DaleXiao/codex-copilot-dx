@@ -7,12 +7,15 @@ import { runImageToolClient } from "../src/image-tool-client.mjs";
 
 const IMAGE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
 const ENDPOINT = "http://127.0.0.1:2026/mcp/image";
+const SOURCE_ID = "ccdx_img_5f204219-003e-4fca-9f31-25780acccabe";
+const RESULT_ID = "ccdx_img_61b1f655-91d4-43aa-9784-cda9158dabcd";
 
 function fixture(t) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-image-tool-"));
   t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
   const writes = [];
-  return { cwd, writes, output: { write: (value) => writes.push(value) } };
+  const metadata = [];
+  return { cwd, writes, metadata, output: { write: (value) => writes.push(value) }, metadataOutput: { write: (value) => metadata.push(value) } };
 }
 
 function serverFetch(requests, imageResult = { content: [{ type: "image", data: IMAGE, mimeType: "image/png" }] }) {
@@ -48,13 +51,66 @@ test("image helper rejects invalid inputs, remote endpoints and existing output 
   fs.writeFileSync(existing, "keep");
   let calls = 0;
   const options = { ...context, endpoint: ENDPOINT, fetchImpl: async () => { calls += 1; throw new Error("unexpected network"); } };
-  for (const args of [[], ["--prompt", "a", "--size", "1x1"], ["--prompt", "a", "--out"], ["--prompt", "a", "--prompt", "b"], ["--prompt", "a", "--out", existing]]) {
+  for (const args of [[], ["--prompt", "a", "--size", "1x1"], ["--prompt", "a", "--out"], ["--prompt", "a", "--prompt", "b"], ["--prompt", "a", "--out", existing],
+    ["--prompt", "a", "--image-id", "../../source.png"], ["--prompt", "a", "--image-id", "ccdx_img_invalid"],
+    ["--prompt", "a", "--image-id", SOURCE_ID, "--out", existing]]) {
     await assert.rejects(runImageToolClient({ ...options, args }));
   }
   await assert.rejects(runImageToolClient({ ...options, endpoint: "https://images.example/mcp/image", args: ["--prompt", "a"] }), /local/);
   assert.equal(await runImageToolClient({ ...options, args: ["--help"] }), null);
   assert.equal(calls, 0);
   assert.equal(fs.readFileSync(existing, "utf8"), "keep");
+});
+
+test("image helper edits the explicit source once, retains its size by omission and reports the new ID off stdout", async (t) => {
+  const context = fixture(t);
+  const requests = [];
+  const source = path.join(context.cwd, "source.png");
+  fs.writeFileSync(source, "original image");
+  const result = await runImageToolClient({
+    ...context, endpoint: ENDPOINT, args: ["--prompt", "Make the background blue; preserve the subject", "--image-id", SOURCE_ID],
+    fetchImpl: serverFetch(requests, {
+      content: [{ type: "image", data: IMAGE, mimeType: "image/png" }], _meta: { "ccdx/image_id": RESULT_ID },
+    }),
+  });
+  assert.deepEqual(requests.filter(({ method }) => method === "tools/call").map(({ params }) => params), [{
+    name: "edit_image", arguments: { prompt: "Make the background blue; preserve the subject", image_id: SOURCE_ID },
+  }]);
+  assert.deepEqual(context.writes, [`${result}\n`]);
+  assert.deepEqual(context.metadata, [`CCDX image_id: ${RESULT_ID}\n`]);
+  assert.equal(fs.readFileSync(source, "utf8"), "original image");
+  assert.deepEqual(fs.readFileSync(result), Buffer.from(IMAGE, "base64"));
+});
+
+test("image helper keeps square generation defaults and accepts an explicit editing size", async (t) => {
+  const context = fixture(t);
+  for (const [args, expected] of [
+    [["--prompt", "A circle"], { name: "generate_image", arguments: { prompt: "A circle", size: "1024x1024" } }],
+    [["--prompt", "A circle", "--image-id", SOURCE_ID, "--size", "1024x1536"], {
+      name: "edit_image", arguments: { prompt: "A circle", size: "1024x1536", image_id: SOURCE_ID },
+    }],
+  ]) {
+    const requests = [];
+    await runImageToolClient({
+      ...context, endpoint: ENDPOINT, args, fetchImpl: serverFetch(requests, {
+        content: [{ type: "image", data: IMAGE, mimeType: "image/png" }], _meta: { "ccdx/image_id": "untrusted\nmetadata" },
+      }),
+    });
+    assert.deepEqual(requests.at(-1).params, expected);
+  }
+  assert.deepEqual(context.metadata, []);
+});
+
+test("image helper does not replace a failed or unsupported edit with a new generation", async (t) => {
+  const context = fixture(t);
+  const requests = [];
+  await assert.rejects(runImageToolClient({
+    ...context, endpoint: ENDPOINT, args: ["--prompt", "Change the background", "--image-id", SOURCE_ID],
+    fetchImpl: serverFetch(requests, { isError: true, content: [{ type: "text", text: "Image editing is not supported by this provider" }] }),
+  }), /not supported/);
+  assert.deepEqual(requests.filter(({ method }) => method === "tools/call").map(({ params }) => params.name), ["edit_image"]);
+  assert.deepEqual(context.writes, []);
+  assert.deepEqual(context.metadata, []);
 });
 
 test("image helper never retries a disabled, failed or ambiguous generation", async (t) => {

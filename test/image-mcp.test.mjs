@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { test } from "node:test";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { createImageMcpHandler } from "../src/image-mcp.mjs";
+import { createImageReferenceStore } from "../src/image-references.mjs";
 
 async function rpc(handler, id, method, params) {
   const request = Readable.from([Buffer.from(JSON.stringify({
@@ -72,7 +73,7 @@ test("image MCP: advertises no tool by default and returns the configured image 
     protocol: "qwen-messages",
   };
   const listed = await rpc(app, 3, "tools/list");
-  assert.deepEqual(listed.body.result.tools.map(({ name }) => name), ["generate_image"]);
+  assert.deepEqual(listed.body.result.tools.map(({ name }) => name), ["generate_image", "edit_image"]);
   const called = await rpc(app, 4, "tools/call", {
     name: "generate_image",
     arguments: { prompt: "A blue circle", size: "1024x1024" },
@@ -83,6 +84,99 @@ test("image MCP: advertises no tool by default and returns the configured image 
   assert.equal(called.body.result.content[0].data, Buffer.from("image").toString("base64"));
   assert.equal(generated.loaded.api_key, "secret-value");
   assert.deepEqual(generated.args, { prompt: "A blue circle", size: "1024x1024" });
+  assert.match(called.body.result._meta["ccdx/image_id"], /^ccdx_img_/);
+  assert.equal(called.body.result.structuredContent, undefined);
+});
+
+test("image MCP chains explicit edits with new IDs and preserves both original pixels and source size", async () => {
+  const calls = [];
+  const config = { endpoint: "https://images.example/v1/images/generations", api_key: "secret", model: "qwen-image-3.0-pro", protocol: "qwen-messages" };
+  const handler = createImageMcpHandler({ configLoader: () => config, generateImageFn: async (_config, args) => {
+    calls.push(args);
+    return { data: Buffer.from(`pixels-${calls.length}`).toString("base64"), mimeType: "image/png", size: args.size, model: config.model };
+  } });
+  const call = async (name, args) => (await rpc(handler, calls.length + 1, "tools/call", { name, arguments: args })).body.result;
+  const first = await call("generate_image", { prompt: "A blue circle", size: "1536x1024", image: "must not forward arbitrary pixels" });
+  const firstId = first._meta["ccdx/image_id"];
+  assert.equal(calls[0].image, undefined);
+  const second = await call("edit_image", { image_id: firstId, prompt: "Make it red" });
+  const secondId = second._meta["ccdx/image_id"];
+  assert.notEqual(firstId, secondId);
+  assert.deepEqual(calls[1], { prompt: "Make it red", size: "1536x1024", image: `data:image/png;base64,${first.content[0].data}` });
+  await call("edit_image", { image_id: secondId, prompt: "Make it green" });
+  assert.equal(calls[2].image, `data:image/png;base64,${second.content[0].data}`);
+  await call("edit_image", { image_id: firstId, prompt: "Edit the original instead" });
+  assert.equal(calls[3].image, `data:image/png;base64,${first.content[0].data}`);
+  const failure = await call("edit_image", { image_id: "missing", prompt: "change" });
+  assert.equal(failure.isError, true);
+  assert.equal(calls.length, 4);
+});
+
+test("image MCP fails edits before dispatch on provider changes, expiry or unsupported capability", async () => {
+  let config = { endpoint: "https://images.example/v1/images/generations", api_key: "secret", model: "qwen-image-3.0-pro", protocol: "qwen-messages" };
+  let calls = 0;
+  const references = createImageReferenceStore();
+  const handler = createImageMcpHandler({ configLoader: () => config, imageReferences: references, generateImageFn: async () => {
+    calls += 1;
+    return { data: "aW1hZ2U=", mimeType: "image/png", model: config.model };
+  } });
+  const generated = (await rpc(handler, 1, "tools/call", { name: "generate_image", arguments: { prompt: "test" } })).body.result;
+  const imageId = generated._meta["ccdx/image_id"];
+  config = { ...config, api_key: "new-credential" };
+  const edit = () => rpc(handler, 2, "tools/call", { name: "edit_image", arguments: { image_id: imageId, prompt: "change" } });
+  assert.equal((await edit()).body.result.isError, true);
+  config = { ...config, api_key: "secret" };
+  references.clear();
+  assert.equal((await edit()).body.result.isError, true);
+  config = { ...config, model: "gpt-image-1", protocol: "openai-images" };
+  assert.deepEqual((await rpc(handler, 3, "tools/list")).body.result.tools.map((tool) => tool.name), ["generate_image"]);
+  assert.equal((await edit()).body.result.isError, true);
+  config = null;
+  assert.equal((await edit()).body.result.isError, true);
+  assert.equal(calls, 1);
+});
+
+test("image MCP still delivers generated images if reference retention is unavailable", async () => {
+  const handler = createImageMcpHandler({
+    configLoader: () => ({ model: "qwen-image-3.0-pro", protocol: "qwen-messages" }),
+    imageReferences: createImageReferenceStore({ maxBytes: 1 }),
+    generateImageFn: async () => ({ data: "aW1hZ2U=", mimeType: "image/png", model: "qwen-image-3.0-pro" }),
+  });
+  const result = (await rpc(handler, 1, "tools/call", { name: "generate_image", arguments: { prompt: "test" } })).body.result;
+  assert.equal(result.isError, undefined);
+  assert.equal(result.content[0].data, "aW1hZ2U=");
+  assert.equal(result.structuredContent, undefined);
+});
+
+test("image MCP shares concurrency across generation and editing and keeps a source after failure", async () => {
+  const config = { endpoint: "https://images.example/v1/images/generations", api_key: "secret", model: "qwen-image-3.0-pro", protocol: "qwen-messages" };
+  const sourcePixels = "aW1hZ2U=";
+  let calls = 0;
+  let waiting = false;
+  let failEdit = false;
+  const waitingCalls = [];
+  const handler = createImageMcpHandler({ configLoader: () => config, generateImageFn: async (_config, args) => {
+    calls += 1;
+    if (args.image) assert.equal(args.image, `data:image/png;base64,${sourcePixels}`);
+    if (failEdit && args.image) throw new Error("fixture upstream rejection");
+    if (waiting) await new Promise((resolve) => waitingCalls.push(resolve));
+    return { data: sourcePixels, mimeType: "image/png", model: config.model };
+  } });
+  const first = (await rpc(handler, 1, "tools/call", { name: "generate_image", arguments: { prompt: "test" } })).body.result;
+  const editArgs = { name: "edit_image", arguments: { image_id: first._meta["ccdx/image_id"], prompt: "change" } };
+  failEdit = true;
+  assert.equal((await rpc(handler, 2, "tools/call", editArgs)).body.result.isError, true);
+  failEdit = false;
+  waiting = true;
+  const editing = rpc(handler, 3, "tools/call", editArgs);
+  const generating = rpc(handler, 4, "tools/call", { name: "generate_image", arguments: { prompt: "new" } });
+  await new Promise(setImmediate);
+  assert.equal(waitingCalls.length, 2);
+  assert.match((await rpc(handler, 5, "tools/call", editArgs)).body.result.content[0].text, /busy/);
+  assert.equal(calls, 4);
+  waiting = false;
+  waitingCalls.forEach((resolve) => resolve());
+  for (const result of await Promise.all([editing, generating])) assert.equal(result.body.result.isError, undefined);
 });
 
 test("image MCP: stale calls fail closed when the provider is disabled", async () => {

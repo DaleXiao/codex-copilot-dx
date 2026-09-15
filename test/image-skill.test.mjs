@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { updateImageSkill } from "../src/image-skill.mjs";
 
@@ -24,12 +24,25 @@ test("image skill is absent by default and installs a self-contained helper only
   assert.equal(installed.skillPath, fixtureData.skillPath);
   const help = execFileSync(process.execPath, [fixtureData.helperPath, "--help"], { encoding: "utf8", cwd: fixtureData.home });
   assert.match(help, /^Usage: generate\.mjs/);
+  assert.match(help, /--image-id/);
   const repeated = updateImageSkill({ ...fixtureData, enabled: true });
   assert.equal(repeated.changed, false);
   assert.equal(fs.existsSync(fixtureData.codexPath), false);
   installed.rollback();
   installed.rollback();
   assert.equal(fs.existsSync(fixtureData.skillDirectory), false);
+});
+
+test("installed self-contained helper validates editing input before contacting the adapter", (t) => {
+  const fixtureData = fixture(t);
+  updateImageSkill({ ...fixtureData, enabled: true, adapterPort: 1 });
+  const result = spawnSync(process.execPath, [fixtureData.helperPath, "--prompt", "Make the sky blue", "--image-id", "../source.png"], {
+    encoding: "utf8", cwd: fixtureData.home,
+  });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /Invalid CCDX image ID/);
+  assert.equal(fs.existsSync(path.join(fixtureData.home, "output")), false);
 });
 
 test("image skill update and disable rollback restore the exact previous owned pair", (t) => {

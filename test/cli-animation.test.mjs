@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { runAnimationCommand } from "../src/cli-animation.mjs";
 import {
   readUserSettings,
@@ -57,7 +58,11 @@ test("animation selector: shows the fixed ordered menu and persists a numeric se
 
   const rendered = output.text();
   const plain = rendered.replace(ANSI_PATTERN, "");
-  assert.match(plain, /1\. Comet \[default, current\].*\n  2\. Twin\n  3\. Shuttle\n  4\. Chase\n  5\. Mirror\n  6\. Pulse\n  7\. Stack\n  8\. Relay\n  9\. Split\n/);
+  const rows = plain.split("\n").filter((line) => /^  \d\./.test(line));
+  assert.equal(rows.length, 9);
+  assert.deepEqual(rows.map((line) => line.match(/^  \d\. (\w+)/)[1]),
+    ["Comet", "Twin", "Shuttle", "Chase", "Mirror", "Pulse", "Stack", "Relay", "Split"]);
+  assert.ok(rows.every((line) => /\[[ :]{20}\]$/.test(line)));
   assert.match(rendered, /1\. Comet.*\u001b\[97m:/);
   assert.doesNotMatch(rendered, /braille/i);
   assert.equal((plain.match(/Enter a number from 1 to 9/g) || []).length, 2);
@@ -181,6 +186,62 @@ test("animation selector: rejects non-interactive use without an injected prompt
     runAnimationCommand({ input: { isTTY: false }, output: { isTTY: false } }),
     /ccdx animation requires an interactive terminal/,
   );
+});
+
+test("animation selector: runs all-theme preview while awaiting input and stops before saving or cancelling", async (t) => {
+  for (const answer of ["2", "q", ""]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-animation-gallery-"));
+    t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+    const events = [];
+    const result = await runAnimationCommand({
+      env: {}, home, output: outputBuffer().stream,
+      gallery: () => {
+        events.push("gallery");
+        return { enabled: true, stop: () => events.push("stop") };
+      },
+      prompt: async () => { events.push("input"); return answer; },
+      preview: async () => { throw new Error("A live gallery needs no blocking confirmation cycle"); },
+    });
+    assert.deepEqual(events.slice(0, 3), ["gallery", "input", "stop"]);
+    assert.equal(result.cancelled, answer === "q");
+    assert.equal(savedTerminalAnimationTheme({ env: {}, home }), answer === "2" ? "twin" : "");
+  }
+});
+
+test("animation selector: closes its gallery when the input stream ends", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-animation-eof-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const input = new PassThrough();
+  input.isTTY = true;
+  input.setRawMode = () => {};
+  const output = new PassThrough();
+  output.isTTY = true;
+  output.columns = 80;
+  output.rows = 24;
+  let stopped = false;
+  const result = runAnimationCommand({ env: {}, home, input, output,
+    gallery: () => ({ enabled: true, stop: () => { stopped = true; } }),
+  });
+  input.end();
+  assert.equal((await result).cancelled, true);
+  assert.equal(stopped, true);
+  assert.equal(fs.existsSync(userSettingsPath({ env: {}, home })), false);
+});
+
+test("animation selector: a wrapped invalid answer never restarts the gallery on stale row positions", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-animation-wrapped-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const input = Object.assign(new PassThrough(), { isTTY: true, setRawMode() {} });
+  const output = Object.assign(new PassThrough(), { isTTY: true, columns: 80, rows: 24 });
+  let starts = 0;
+  const result = runAnimationCommand({ env: {}, home, input, output,
+    gallery: () => { starts += 1; return { enabled: true, stop() {} }; },
+  });
+  input.write(`${"x".repeat(95)}\r`);
+  await new Promise(setImmediate);
+  input.write("2\r");
+  assert.equal((await result).theme, "twin");
+  assert.equal(starts, 1);
 });
 
 test("animation selector: old Braille settings allow selecting and keeping each new theme", async (t) => {

@@ -1,6 +1,7 @@
 // Optional installed-runtime regression: node scripts/codex-image-replay.mjs --codex /absolute/path/to/codex
 // All model responses and generated pixels are synthetic. No installed configuration or credentials are used.
 // Optional --live-model MODEL uses the running loopback CCDX for one real model-selection check; pixels stay synthetic.
+// Add --edit to verify generation followed by two edits, including the prior image handle and preserved originals.
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
@@ -18,8 +19,10 @@ const args = process.argv.slice(2);
 let codex = process.env.CCDX_CODEX_BINARY;
 let liveModel;
 let withoutMcp = false;
+let editing = false;
 for (let index = 0; index < args.length; index += 1) {
   if (args[index] === "--without-mcp") { withoutMcp = true; continue; }
+  if (args[index] === "--edit") { editing = true; continue; }
   assert.ok(args[index + 1], `Missing value for ${args[index]}`);
   if (args[index] === "--codex") codex = args[index + 1];
   else if (args[index] === "--live-model") liveModel = args[index + 1];
@@ -36,10 +39,14 @@ const cwd = path.join(root, "project");
 const codexPath = path.join(home, "config.toml");
 const helperPath = path.join(home, "skills", "ccdx-image", "scripts", "generate.mjs");
 const imageDimension = liveModel ? 1024 : 64;
-const pixels = liveModel
-  ? sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="1024" height="1024" fill="white"/><circle cx="512" cy="512" r="300" fill="#2060c0"/></svg>'))
-  : sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 32, g: 96, b: 192 } } });
-const png = (await pixels.png().toBuffer()).toString("base64");
+const pngs = await Promise.all(["#2060c0", "#c02020", "#209040"].map(async (color) => {
+  const pixels = liveModel
+    ? sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="1024" height="1024" fill="white"/><circle cx="512" cy="512" r="300" fill="${color}"/></svg>`))
+    : sharp({ create: { width: 64, height: 64, channels: 3, background: color } });
+  return (await pixels.png().toBuffer()).toString("base64");
+}));
+const imageIdPattern = /^ccdx_img_[0-9a-f-]{36}$/;
+const syntheticPrompts = ["A synthetic blue square.", "Make the square red; keep everything else unchanged.", "Make the square green; keep everything else unchanged."];
 const toolNamespace = "mcp__ccdx_image";
 const model = liveModel || "gpt-5.5";
 const timeoutMs = liveModel ? 120_000 : 30_000;
@@ -49,10 +56,15 @@ let stderr = "";
 let scenario;
 let upstreamCount = 0;
 let generationCount = 0;
+let editCount = 0;
 let fixtureApprovals = 0;
 let helperApprovals = 0;
 let serverError;
 const summaries = [];
+const imageCalls = [];
+const knownImages = new Map();
+const savedImages = new Map();
+let latestImageId;
 
 function runtimeEnv() {
   return {
@@ -159,9 +171,10 @@ function createClient(process) {
           if (event.method === "mcpServer/elicitation/request"
             && approval.serverName === "ccdx_image"
             && approval._meta?.codex_approval_kind === "mcp_tool_call"
-            && approval.message?.includes('"generate_image"')
+            && approval.message?.includes(scenario?.editStep ? '"edit_image"' : '"generate_image"')
             && typeof approval._meta?.tool_params?.prompt === "string"
-            && (liveModel || approval._meta.tool_params.prompt === "A synthetic blue square.")
+            && (liveModel || approval._meta.tool_params.prompt === syntheticPrompts[scenario?.editStep || 0])
+            && (scenario?.editStep ? approval._meta.tool_params.image_id === scenario.imageId : approval._meta.tool_params.image_id === undefined)
             && [undefined, "1024x1024", "1536x1024", "1024x1536"].includes(approval._meta.tool_params.size)) {
             fixtureApprovals += 1;
             process.stdin.write(`${JSON.stringify({ id: event.id, result: { action: "accept", content: {} } })}\n`);
@@ -235,22 +248,43 @@ function finalMessage(label) {
 }
 
 const imageMcp = createImageMcpHandler({
-  configLoader: () => ({ model: "synthetic-image", api_key: "unused-offline-fixture" }),
+  configLoader: () => ({ model: "qwen-image-3.0-pro", protocol: "qwen-messages", api_key: "unused-offline-fixture" }),
   generateImageFn: async (_config, args) => {
+    assert.ok(scenario?.image, "Image provider called outside an image turn");
     if (!liveModel) {
-      assert.equal(args.prompt, "A synthetic blue square.");
+      assert.equal(args.prompt, syntheticPrompts[scenario.editStep]);
       assert.equal(args.size, "1024x1024");
     }
     assert.ok(typeof args.prompt === "string" && args.prompt.trim() && args.prompt.length <= 16000);
-    assert.ok(!liveModel || generationCount === 0, "Live replay permits only one synthetic generation");
+    assert.equal(scenario.providerCalls++, 0, "Exactly one synthetic provider call is permitted per image turn");
+    if (scenario.editStep) {
+      assert.equal(args.image, `data:image/png;base64,${knownImages.get(scenario.imageId)}`, "Edit must receive the exact previous image pixels");
+      editCount += 1;
+    } else assert.equal(args.image, undefined, "Fresh generation must not carry a source image");
     generationCount += 1;
-    return { data: png, mimeType: "image/png", width: imageDimension, height: imageDimension, size: args.size, model: "synthetic-image" };
+    return { data: pngs[scenario.editStep], mimeType: "image/png", width: imageDimension, height: imageDimension, size: args.size, model: "qwen-image-3.0-pro" };
   },
 });
 let catalog;
 const server = http.createServer((req, res) => {
   (async () => {
-    if (req.url === "/mcp/image") return imageMcp(req, res);
+    if (req.url === "/mcp/image") {
+      if (req.method !== "POST") return imageMcp(req, res);
+      const record = {};
+      const chunks = [];
+      req.on("data", (chunk) => chunks.push(chunk));
+      req.once("end", () => {
+        if (!chunks.length) return;
+        record.request = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        if (record.request.method === "tools/call") imageCalls.push(record);
+      });
+      const end = res.end;
+      res.end = function (body, ...rest) {
+        if (body) record.response = JSON.parse(String(body));
+        return end.call(this, body, ...rest);
+      };
+      return imageMcp(req, res);
+    }
     if (req.method === "GET" && req.url.startsWith("/v1/models")) {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(catalog));
@@ -290,22 +324,25 @@ const server = http.createServer((req, res) => {
     }
     assert.ok(step < (scenario.image ? 3 : 1), "Unexpected model retry or repeated tool invocation");
     let output = [finalMessage(scenario.label)];
+    const toolName = scenario.editStep ? "edit_image" : "generate_image";
     if (scenario.image && step === 0) {
       assert.ok(body.tools.some((tool) => tool.type === "tool_search"), "Actual Codex must expose discovery for deferred MCP tools");
       assert.ok(JSON.stringify(body.input).includes("ccdx-image"), "CCDX image skill missing from actual Codex input context");
-      output = [{ id: `search_${scenario.label}`, type: "tool_search_call", execution: "client", call_id: `search_${scenario.label}`, status: "completed", arguments: { query: "+ccdx_image generate_image", limit: 5 } }];
+      output = [{ id: `search_${scenario.label}`, type: "tool_search_call", execution: "client", call_id: `search_${scenario.label}`, status: "completed", arguments: { query: `+ccdx_image ${toolName}`, limit: 5 } }];
     } else if (scenario.image && step === 1) {
       const discovery = body.input.find((item) => item.type === "tool_search_output" && item.call_id === `search_${scenario.label}`);
-      assert.ok(discovery?.tools.some((tool) => tool.name === toolNamespace && tool.tools?.some((nested) => nested.name === "generate_image")), "CCDX image tool missing from actual Codex deferred-tool discovery");
-      output = [{ id: `fc_${scenario.label}`, type: "function_call", namespace: toolNamespace, name: "generate_image", call_id: `call_${scenario.label}`, status: "completed", arguments: JSON.stringify({ prompt: "A synthetic blue square.", size: "1024x1024" }) }];
+      assert.ok(discovery?.tools.some((tool) => tool.name === toolNamespace && tool.tools?.some((nested) => nested.name === toolName)), "CCDX image tool missing from actual Codex deferred-tool discovery");
+      output = [{ id: `fc_${scenario.label}`, type: "function_call", namespace: toolNamespace, name: toolName, call_id: `call_${scenario.label}`, status: "completed", arguments: JSON.stringify({ prompt: syntheticPrompts[scenario.editStep], size: "1024x1024", ...(scenario.editStep ? { image_id: scenario.imageId } : {}) }) }];
     } else if (scenario.image) {
       const result = body.input.find((item) => item.type === "function_call_output" && item.call_id === `call_${scenario.label}`);
       assert.ok(result, "Image MCP call output missing from follow-up model request");
+      assert.ok(Array.isArray(result.output), `Native image output was replaced: ${JSON.stringify(result.output).slice(0, 700)}`);
       const image = result.output.find((part) => part.type === "input_image" && part.image_url?.startsWith("data:image/"));
       assert.ok(image, "Generated image not preserved as native image input");
       const metadata = await sharp(Buffer.from(image.image_url.split(",")[1], "base64")).metadata();
       assert.equal(metadata.width, 64);
       assert.equal(metadata.height, 64);
+      assert.equal(image.image_url, `data:image/png;base64,${pngs[scenario.editStep]}`, "Model continuation must receive the latest image pixels");
     }
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     res.end(syntheticResponse(output, `resp_${scenario.label}_${step}`));
@@ -335,11 +372,17 @@ async function stopClient() {
   }
 }
 
-async function runTurn(threadId, label, image, requireSkill = false) {
-  scenario = { label, image, requireSkill, steps: 0 };
+async function runTurn(threadId, label, image, requireSkill = false, editStep = 0) {
+  const imageId = editStep ? latestImageId : undefined;
+  if (editStep) assert.match(imageId, imageIdPattern, "An edit requires the preceding result handle");
+  scenario = { label, image, requireSkill, steps: 0, providerCalls: 0, editStep, imageId };
   const offset = client.events.length;
   const before = generationCount;
-  await client.call("turn/start", { threadId, input: [{ type: "text", text: image ? (liveModel ? "画一张蓝色圆形，纯白背景，正方形，生成图片。" : "Generate a synthetic blue square.") : "Save this synthetic pre-image thread.", text_elements: [] }] });
+  const callsBefore = imageCalls.length;
+  const prompt = liveModel
+    ? ["画一张蓝色圆形，纯白背景，正方形，生成图片。", "把刚才蓝色圆形改成红色，其他不变。", "把刚才红色圆形改成绿色，其他不变。"][editStep]
+    : ["Generate a synthetic blue square.", "Edit the preceding blue square to red; preserve everything else.", "Edit the preceding red square to green; preserve everything else."][editStep];
+  await client.call("turn/start", { threadId, input: [{ type: "text", text: image ? prompt : "Save this synthetic pre-image thread.", text_elements: [] }] });
   const completed = await client.waitFor((event) => event.method === "turn/completed" && event.params.threadId === threadId, `${label} turn completion`, offset);
   if (serverError) throw serverError;
   assert.equal(completed.params.turn.status, "completed", JSON.stringify(completed.params.turn.error));
@@ -350,11 +393,27 @@ async function runTurn(threadId, label, image, requireSkill = false) {
       command: event.params.item.command, exitCode: event.params.item.exitCode,
       output: String(event.params.item.aggregatedOutput || "").slice(0, 1200) }))));
   const toolItems = client.events.slice(offset).filter((event) => event.method === "item/completed" && event.params.item.type === "mcpToolCall");
+  let resultImageId;
+  if (image) {
+    const calls = imageCalls.slice(callsBefore);
+    assert.equal(calls.length, 1, "Exactly one image tool call reaches the local MCP service");
+    assert.equal(calls[0].request.params.name, editStep ? "edit_image" : "generate_image");
+    assert.equal(calls[0].request.params.arguments.image_id, imageId, "Edit must use the exact preceding result handle");
+    assert.equal(calls[0].response.result.isError, undefined, "Image tool returned an error");
+    resultImageId = calls[0].response.result._meta?.["ccdx/image_id"];
+    assert.match(resultImageId, imageIdPattern, "Production MCP result must return an image handle");
+    assert.equal(knownImages.has(resultImageId), false, "Every edit and generation must return a fresh image handle");
+    const returned = calls[0].response.result.content.find((part) => part.type === "image");
+    assert.equal(returned?.data, pngs[editStep]);
+    knownImages.set(resultImageId, returned.data);
+    latestImageId = resultImageId;
+  }
   if (image && !withoutMcp) {
     assert.equal(toolItems.length, 1, "Exactly one completed native MCP image item");
     const item = toolItems[0].params.item;
     assert.equal(item.status, "completed");
-    assert.ok(JSON.stringify(item.result).includes(png), "Native image content missing from completed MCP item");
+    assert.ok(JSON.stringify(item.result).includes(pngs[editStep]), "Native image content missing from completed MCP item");
+    assert.ok(JSON.stringify(item.result).includes(resultImageId), "Image handle missing from completed native MCP item");
   }
   if (liveModel) {
     const commands = client.events.slice(offset).filter((event) => event.method === "item/started" && event.params.item.type === "commandExecution");
@@ -366,16 +425,23 @@ async function runTurn(threadId, label, image, requireSkill = false) {
         && event.params.item.exitCode === 0
         && helperCommandArguments(event.params.item.command, event.params.item.cwd || cwd));
       assert.equal(succeeded.length, 1, "Exactly one successful literal image-helper execution");
+      const helperArgs = helperCommandArguments(succeeded[0].params.item.command, succeeded[0].params.item.cwd || cwd);
+      assert.equal(helperArgs.imageId, imageId, "Helper must use --image-id with the exact preceding result handle");
+      assert.ok(String(succeeded[0].params.item.aggregatedOutput || "").includes(`CCDX image_id: ${resultImageId}`), "Helper must report the reusable image handle");
       const files = (await fs.readdir(cwd, { recursive: true })).filter((file) => /\.(?:png|jpe?g|webp)$/i.test(file));
-      assert.equal(files.length, 1, "Exactly one image saved in the isolated workspace");
-      const output = path.join(cwd, files[0]);
+      assert.equal(files.length, savedImages.size + 1, "Each turn saves exactly one new image and preserves existing images");
+      for (const [file, data] of savedImages) assert.equal((await fs.readFile(file)).toString("base64"), data, "Editing must not change any earlier saved image");
+      const output = files.map((file) => path.join(cwd, file)).find((file) => !savedImages.has(file));
       assert.ok((await fs.lstat(output)).isFile(), "Helper output must be a regular file");
       const metadata = await sharp(output).metadata();
       assert.equal(metadata.width, 1024);
       assert.equal(metadata.height, 1024);
+      const data = (await fs.readFile(output)).toString("base64");
+      assert.equal(data, pngs[editStep], "Helper must save the latest returned image");
+      savedImages.set(output, data);
     }
   }
-  summaries.push({ scenario: label, modelRequests: scenario.steps, imageCalls: generationCount - before, nativeImageResult: image && !withoutMcp, savedImage: image && withoutMcp });
+  summaries.push({ scenario: label, modelRequests: scenario.steps, imageCalls: generationCount - before, edit: Boolean(editStep), nativeImageResult: image && !withoutMcp, savedImage: image && withoutMcp, ...(image ? { imageId: resultImageId, ...(imageId ? { sourceImageId: imageId } : {}) } : {}) });
   scenario = null;
 }
 
@@ -411,8 +477,15 @@ try {
       await updateImageSkill({ enabled: true, codexPath, adapterPort: port, adapterHost: "127.0.0.1" });
     }
     await runTurn(fresh.thread.id, withoutMcp ? "stale_task_without_mcp_live_selection" : "natural_language_live_selection", true, withoutMcp);
-    console.log(JSON.stringify({ version, liveModel, withoutMcp, localAdapter: "127.0.0.1:2026", syntheticPixels: true, builtinSkillCoexists: true, upstreamCount, generationCount, fixtureApprovals, helperApprovals, summaries }, null, 2));
-    console.log("PASS: real model selected CCDX once from a natural image request with built-in imagegen present.");
+    if (editing) {
+      await runTurn(fresh.thread.id, "natural_language_first_edit", true, false, 1);
+      await runTurn(fresh.thread.id, "natural_language_second_edit", true, false, 2);
+      assert.equal(editCount, 2, "Natural-language edit chain must issue exactly two edits");
+    }
+    console.log(JSON.stringify({ version, liveModel, withoutMcp, editing, localAdapter: "127.0.0.1:2026", syntheticPixels: true, builtinSkillCoexists: true, upstreamCount, generationCount, editCount, fixtureApprovals, helperApprovals, summaries }, null, 2));
+    console.log(editing
+      ? "PASS: real model generated and edited twice through CCDX, with one image call per turn and the correct preceding handle."
+      : "PASS: real model selected CCDX once from a natural image request with built-in imagegen present.");
   } else {
   await startClient();
   const started = await client.call("thread/start", { cwd, model: "gpt-5.5", modelProvider: "replay", approvalPolicy: "on-request", sandbox: "read-only", experimentalRawEvents: false });
@@ -430,18 +503,23 @@ try {
   const enabled = await client.call("mcpServerStatus/list", { threadId });
   const imageServer = enabled.data.find((entry) => entry.name === "ccdx_image");
   assert.ok(imageServer && Object.values(imageServer.tools).some((tool) => tool.name === "generate_image"), "Reloaded Codex must discover production MCP image tool");
+  if (editing) assert.ok(Object.values(imageServer.tools).some((tool) => tool.name === "edit_image"), "Reloaded Codex must discover production MCP edit tool for the eligible provider");
   await runTurn(threadId, "same_thread_after_reload", true);
+  if (editing) await runTurn(threadId, "same_thread_first_edit", true, false, 1);
 
   await stopClient();
   await startClient();
   await client.call("thread/resume", { threadId, cwd, modelProvider: "replay", approvalPolicy: "on-request", sandbox: "read-only" });
-  await runTurn(threadId, "saved_thread_after_restart", true);
+  await runTurn(threadId, editing ? "saved_thread_second_edit_after_restart" : "saved_thread_after_restart", true, false, editing ? 2 : 0);
   const read = await client.call("thread/read", { threadId, includeTurns: true });
-  assert.equal(read.thread.turns.length, 4, "Saved original thread retains every completed turn");
+  assert.equal(read.thread.turns.length, editing ? 5 : 4, "Saved original thread retains every completed turn");
   const fresh = await client.call("thread/start", { cwd, model: "gpt-5.5", modelProvider: "replay", approvalPolicy: "on-request", sandbox: "read-only" });
   await runTurn(fresh.thread.id, "new_thread_enabled", true);
-  console.log(JSON.stringify({ version, offline: true, skillDiscovered: true, mcpReload: true, upstreamCount, generationCount, fixtureApprovals, summaries }, null, 2));
-  console.log("PASS: installed Codex discovers CCDX images, reloads an existing task, and preserves native image output after saved-task resume.");
+  if (editing) assert.equal(editCount, 2, "Offline edit chain must issue exactly two edits");
+  console.log(JSON.stringify({ version, offline: true, editing, skillDiscovered: true, mcpReload: true, upstreamCount, generationCount, editCount, fixtureApprovals, summaries }, null, 2));
+  console.log(editing
+    ? "PASS: installed Codex generated and edited twice, preserving handles and native image output through saved-task resume."
+    : "PASS: installed Codex discovers CCDX images, reloads an existing task, and preserves native image output after saved-task resume.");
   }
 } catch (error) {
   throw new Error(`${serverError?.message || error.message}\n${stderr}`, { cause: error });

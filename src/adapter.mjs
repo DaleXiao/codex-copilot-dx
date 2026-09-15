@@ -196,7 +196,7 @@ export function createAdapterHandler(options = {}) {
     if (pathname === "/mcp/image") {
       if (imageMcpHandler) return imageMcpHandler(req, res);
       return import("./image-mcp.mjs").then(({ createImageMcpHandler }) => {
-        imageMcpHandler = createImageMcpHandler();
+        imageMcpHandler ||= createImageMcpHandler();
         return imageMcpHandler(req, res);
       });
     }

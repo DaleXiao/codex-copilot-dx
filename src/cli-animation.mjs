@@ -6,6 +6,7 @@ import {
   renderTerminalAnimationFrame,
   TERMINAL_ANIMATION_THEMES,
 } from "./terminal-animation.mjs";
+import { startTerminalAnimationGallery } from "./terminal-animation-gallery.mjs";
 import {
   readUserSettings,
   terminalAnimationPreference,
@@ -34,6 +35,7 @@ export async function runAnimationCommand({
   output = process.stdout,
   prompt,
   preview = playTerminalAnimationPreview,
+  gallery = startTerminalAnimationGallery,
 } = {}) {
   if (!prompt && (!input.isTTY || !output.isTTY)) {
     throw new Error(`${commandName} animation requires an interactive terminal`);
@@ -45,24 +47,49 @@ export async function runAnimationCommand({
 
   output.write(`${commandName} animation\n`);
   output.write(`Current: ${TERMINAL_ANIMATION_THEMES[currentIndex].label} (${current.source})\n\n`);
+  const labels = TERMINAL_ANIMATION_THEMES.map((theme, index) => `  ${index + 1}. ${theme.label}${markers(theme, current.theme)}`);
+  const prefixWidth = Math.max(...labels.map((label) => label.length)) + 2;
   TERMINAL_ANIMATION_THEMES.forEach((theme, index) => {
-    const staticPreview = theme.id === DEFAULT_TERMINAL_ANIMATION_THEME
-      ? `  ${renderTerminalAnimationFrame(theme.id, 10)}`
-      : "";
-    output.write(`  ${index + 1}. ${theme.label}${markers(theme, current.theme)}${staticPreview}\n`);
+    output.write(`${labels[index].padEnd(prefixWidth)}${renderTerminalAnimationFrame(theme.id, theme.startFrame)}\n`);
   });
 
   let readline;
+  const abort = new AbortController();
   const ask = prompt || (async (question) => {
-    readline ||= createInterface({ input, output });
-    return readline.question(question);
+    if (!readline) {
+      readline = createInterface({ input, output });
+      readline.once("SIGINT", () => abort.abort());
+      readline.once("close", () => abort.abort());
+    }
+    return readline.question(question, { signal: abort.signal });
   });
 
   let selectedTheme = current.theme;
   let keepCurrent = false;
+  let livePreviewed = false;
+  let rowsBelow = 0;
+  let activeGallery;
+  let layoutChanged = false;
+  const stopForLayoutChange = () => {
+    layoutChanged = true;
+    activeGallery?.stop();
+  };
+  const onKeypress = (_text, key) => {
+    if ((key?.ctrl && key.name === "l") || (readline?.getCursorPos().rows ?? 0) > 0) stopForLayoutChange();
+  };
+  output.on?.("resize", stopForLayoutChange);
+  input.on?.("keypress", onKeypress);
   try {
     while (true) {
-      const answer = String(await ask(`Select [${currentIndex + 1}], or q to cancel: `) || "").trim();
+      activeGallery = layoutChanged ? { enabled: false, stop() {} }
+        : gallery({ output, env, prefixWidth, rowsBelow, getInputRows: () => readline?.getCursorPos().rows ?? 0 });
+      livePreviewed ||= activeGallery.enabled;
+      let answer;
+      try {
+        answer = String(await ask(`Select [${currentIndex + 1}], or q to cancel: `) || "").trim();
+      } finally {
+        activeGallery.stop();
+      }
       if (answer.toLowerCase() === "q") {
         output.write("No changes made.\n");
         return { changed: false, cancelled: true, theme: current.theme };
@@ -79,8 +106,16 @@ export async function runAnimationCommand({
         break;
       }
       output.write(`Enter a number from 1 to ${TERMINAL_ANIMATION_THEMES.length}, or q to cancel.\n`);
+      rowsBelow += 2;
     }
+  } catch (error) {
+    if (!abort.signal.aborted) throw error;
+    output.write("\nNo changes made.\n");
+    return { changed: false, cancelled: true, theme: current.theme };
   } finally {
+    activeGallery?.stop();
+    output.off?.("resize", stopForLayoutChange);
+    input.off?.("keypress", onKeypress);
     readline?.close();
   }
 
@@ -88,7 +123,7 @@ export async function runAnimationCommand({
     ? { changed: false, theme: current.theme }
     : writeTerminalAnimationTheme(selectedTheme, { env, home });
   const disabledValue = disabledEnvironmentValue(env);
-  if (!disabledValue) {
+  if (!disabledValue && !livePreviewed) {
     try {
       await preview(selectedTheme, { output });
     } catch {

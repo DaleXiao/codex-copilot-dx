@@ -108,28 +108,32 @@ export function updateImageSkill({
   const endpoint = `${adapterBaseUrl(host, adapterPort)}/mcp/image`;
   const skillBody = `---
 name: ccdx-image
-description: Generate new images from text using the user's configured CCDX image provider. Use for requests to draw, create, or render a new image. Excludes editing existing images, image references, transparent output, and code-native SVG or diagrams.
+description: Generate images from text and edit previously generated CCDX images using the user's configured provider. Use for drawing a new image or modifying a CCDX result identified in the conversation. Excludes arbitrary image uploads, masks, transparent output, and code-native SVG or diagrams.
 ---
 
 # CCDX image generation
 
-The user enabled this provider through ccdx enable-image. For new text-to-image requests, use the configured CCDX provider directly.
+The user enabled this provider through ccdx enable-image. Use the configured CCDX provider directly for text-to-image requests and supported edits of its previous results.
 
-Use the ccdx_image server's generate_image tool when available. Supply a complete prompt and one size: 1024x1024 (square), 1536x1024 (landscape), or 1024x1536 (portrait). Display its returned image. No Python, SDK installation, extra API key, or provider discovery is needed.
+For a new image, use the ccdx_image server's generate_image tool. Supply a complete prompt and one size: 1024x1024 (square), 1536x1024 (landscape), or 1024x1536 (portrait). Display its returned image and retain the returned image_id in the conversation for later edits. No Python, SDK installation, extra API key, or provider discovery is needed.
 
-If the tool is not directly callable and the host provides tool search, make one targeted search for ccdx_image generate_image and use the tool if it becomes callable. If it is still unavailable, run the bundled Node helper once:
+For an edit, use edit_image with the image_id of the specific CCDX result the user wants to change and a prompt describing the changes and what to preserve. Omit size to keep the source dimensions unless the user requests another size. Select the ID from this conversation; never assume a global last image or substitute a different result. Each edit returns a new image and image_id and preserves the source. IDs belong to the running CCDX process and can expire after cache eviction or restart. If the source ID is missing or expired, explain that the original image is unavailable for this edit. The provider must support edit_image; an unsupported edit is not permission to generate a replacement.
+
+If the desired tool is not directly callable and the host provides tool search, make one targeted search for ccdx_image generate_image or ccdx_image edit_image as appropriate and use that tool if it becomes callable. If it is still unavailable, run the bundled Node helper once. To generate:
 
 \`\`\`sh
 ${quote(nodePath)} ${quote(helperPath)} --prompt 'A complete image prompt' --size 1024x1024
 \`\`\`
 
-Quote the actual prompt safely for the shell. The helper uses the same local CCDX service and prints the saved absolute image path. An optional --out argument selects a new output file; existing files are never overwritten. Inspect and display the saved image with the available image viewer or an absolute-path Markdown image.
+To edit, add --image-id with the exact source ID returned earlier and supply the editing prompt. Omit --size to preserve the source dimensions. This sends one edit_image call to the same service.
+
+Quote the actual prompt safely for the shell. The helper uses the same local CCDX service and prints only the saved absolute image path to stdout; stderr reports CCDX image_id for subsequent edits. An optional --out argument selects a new output file; existing files are never overwritten. Inspect and display the saved image with the available image viewer or an absolute-path Markdown image, and retain its new ID.
 
 The helper needs loopback HTTP access. If the task reports restricted network access, use the execution tool's normal permission-request mechanism for this exact command before running it; localhost is also restricted. Keep the host's approval policy unchanged.
 
-Only use the helper when the MCP tool is absent, not after a generation fails or times out: the first request may already have consumed a generation. A helper error explicitly saying generation has not started means no generation was submitted; resolve its stated local connection or permission issue before trying again. Otherwise report the failure once without switching providers, installing dependencies, or repeating generation.
+Only use the helper when the MCP tool is absent, not after generation or editing fails or times out: the first request may already have consumed a generation or edit. A helper error explicitly saying generation or editing has not started means no image request was submitted; resolve its stated local connection or permission issue before trying again. Otherwise report the failure once without switching providers, installing dependencies, or repeating the image request.
 
-This provider supports text-to-image only. For edits, reference images, transparent output, or explicitly requested other providers, keep the relevant native tools and skills; do not substitute a fresh CCDX generation.
+For arbitrary uploaded images, reference-image workflows, masks, transparent output, or explicitly requested other providers, keep the relevant native tools and skills; do not substitute a fresh CCDX generation.
 `;
   const skillContent = skillBody.replace("# CCDX image generation", `<!-- ccdx:image-skill:${digest(skillBody)} -->\n# CCDX image generation`);
   const helperBody = `${fs.readFileSync(new URL("./image-tool-client.mjs", import.meta.url), "utf8")}\ntry {\n  await runImageToolClient({ endpoint: ${JSON.stringify(endpoint)} });\n} catch (error) {\n  console.error(String(error?.message || "Image generation failed").replace(/[\\u0000-\\u001f\\u007f-\\u009f]/g, " ").slice(0, 1000));\n  process.exitCode = 1;\n}\n`;

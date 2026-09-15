@@ -3,6 +3,7 @@ import https from "node:https";
 import net from "node:net";
 
 export const IMAGE_MAX_BYTES = 32 * 1024 * 1024;
+export const IMAGE_INPUT_MAX_BYTES = 10 * 1024 * 1024;
 export const IMAGE_GENERATION_TIMEOUT_MS = 180_000;
 export const IMAGE_DOWNLOAD_TIMEOUT_MS = 60_000;
 export const IMAGE_SIZES = new Set(["1024x1024", "1536x1024", "1024x1536"]);
@@ -28,15 +29,59 @@ function checkedSize(value) {
   return size;
 }
 
-function generationBody(config, prompt, size) {
+export function supportsImageEditing(config) {
+  return ["qwen-image-3.0-pro", "qwen-image-3.0"].includes(config?.model)
+    && ["qwen-messages", "openai-images"].includes(config?.protocol);
+}
+
+function checkedImage(config, value) {
+  if (value === undefined) return undefined;
+  if (!supportsImageEditing(config)) {
+    throw providerError("Image editing is not supported by the configured provider", "ccdx_image_edit_unsupported");
+  }
+  if (typeof value !== "string") {
+    throw providerError("Source image must be a PNG, JPEG, or WebP base64 data URI", "ccdx_image_input_invalid");
+  }
+  if (value.length > 4 * Math.ceil(IMAGE_INPUT_MAX_BYTES / 3) + 32) {
+    throw providerError("Source image exceeds the 10 MiB size limit", "ccdx_image_input_too_large");
+  }
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,/.exec(value);
+  if (!match) {
+    throw providerError("Source image must be a PNG, JPEG, or WebP base64 data URI", "ccdx_image_input_invalid");
+  }
+  const encoded = value.slice(match[0].length);
+  if (encoded.length > 4 * Math.ceil(IMAGE_INPUT_MAX_BYTES / 3)) {
+    throw providerError("Source image exceeds the 10 MiB size limit", "ccdx_image_input_too_large");
+  }
+  if (!encoded || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+    throw providerError("Source image contains invalid base64 data", "ccdx_image_input_invalid");
+  }
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.length > IMAGE_INPUT_MAX_BYTES) {
+    throw providerError("Source image exceeds the 10 MiB size limit", "ccdx_image_input_too_large");
+  }
+  if (bytes.toString("base64") !== encoded) {
+    throw providerError("Source image contains non-canonical base64 data", "ccdx_image_input_invalid");
+  }
+  let metadata;
+  try { metadata = imageMetadata(bytes); } catch {
+    throw providerError("Source image has an unsupported image format", "ccdx_image_input_invalid");
+  }
+  if (metadata.mimeType !== match[1]) {
+    throw providerError("Source image format does not match its data URI", "ccdx_image_input_invalid");
+  }
+  return value;
+}
+
+function generationBody(config, prompt, size, image) {
   if (config.protocol === "qwen-messages") {
     return {
       model: config.model,
-      input: { messages: [{ role: "user", content: [{ text: prompt }] }] },
+      input: { messages: [{ role: "user", content: [...(image ? [{ image }] : []), { text: prompt }] }] },
       parameters: { n: 1, size: size.replace("x", "*"), watermark: false },
     };
   }
-  return { model: config.model, prompt, n: 1, size };
+  return { model: config.model, prompt, n: 1, size, ...(image ? { image } : {}) };
 }
 
 async function boundedJson(response) {
@@ -210,6 +255,7 @@ export async function downloadPublicImage(urlValue, {
 export async function generateImage(config, {
   prompt,
   size = "1024x1024",
+  image,
 } = {}, {
   fetchImpl = fetch,
   downloadImage = downloadPublicImage,
@@ -218,6 +264,7 @@ export async function generateImage(config, {
 } = {}) {
   const normalizedPrompt = checkedPrompt(prompt);
   const normalizedSize = checkedSize(size);
+  const normalizedImage = checkedImage(config, image);
   const timeout = AbortSignal.timeout(timeoutMs);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let response;
@@ -229,7 +276,7 @@ export async function generateImage(config, {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify(generationBody(config, normalizedPrompt, normalizedSize)),
+      body: JSON.stringify(generationBody(config, normalizedPrompt, normalizedSize, normalizedImage)),
       signal: requestSignal,
     });
   } catch (error) {

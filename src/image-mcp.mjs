@@ -1,11 +1,13 @@
 import { isLoopbackAddress } from "./observability.mjs";
-import { generateImage } from "./image-provider.mjs";
+import { generateImage, supportsImageEditing } from "./image-provider.mjs";
 import { readImageProviderConfig } from "./image-provider-config.mjs";
+import { createImageReferenceStore } from "./image-references.mjs";
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const MCP_PROTOCOL_VERSIONS = new Set(["2025-06-18", "2025-03-26", "2024-11-05"]);
 const MCP_MAX_BODY_BYTES = 256 * 1024;
 const IMAGE_TOOL_NAME = "generate_image";
+const EDIT_TOOL_NAME = "edit_image";
 
 function sameHostSocket(socket) {
   const remote = String(socket?.remoteAddress || "").replace(/^::ffff:/, "");
@@ -66,6 +68,25 @@ function imageTool() {
   };
 }
 
+function editTool() {
+  const tool = imageTool();
+  return {
+    ...tool,
+    name: EDIT_TOOL_NAME,
+    title: "Edit image",
+    description: "Edit a previously generated CCDX image using its exact image_id and a change instruction. Preserve the source and return a new image with a new ID for further edits. Source images must still be retained by this running adapter. Does not accept file paths, URLs, masks, or arbitrary uploads.",
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: {
+        image_id: { type: "string", description: "The image_id returned in the result of the specific CCDX image to edit." },
+        prompt: { type: "string", description: "Describe the requested changes and what to preserve from the source image." },
+        size: { type: "string", enum: [...tool.inputSchema.properties.size.enum], description: "Optional output dimensions; defaults to the source image's requested size." },
+      },
+      required: ["image_id", "prompt"],
+    },
+  };
+}
+
 function safeToolError(error, apiKey) {
   if (typeof error?.message === "string" && error.message) {
     let message = error.message.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
@@ -79,6 +100,7 @@ export function createImageMcpHandler({
   configLoader = () => readImageProviderConfig(),
   generateImageFn = generateImage,
   maxConcurrent = 2,
+  imageReferences = createImageReferenceStore(),
 } = {}) {
   let active = 0;
   return async function imageMcpHandler(req, res) {
@@ -109,12 +131,14 @@ export function createImageMcpHandler({
     const reply = (result) => writeJson(res, 200, { jsonrpc: "2.0", id: request.id, result });
     if (request.method === "initialize") {
       const requestedVersion = String(request.params?.protocolVersion || "");
+      const config = configLoader();
+      if (!config) imageReferences.clear();
       reply({
         protocolVersion: MCP_PROTOCOL_VERSIONS.has(requestedVersion) ? requestedVersion : MCP_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "ccdx-image", version: "1" },
-        instructions: configLoader()
-          ? "The user enabled CCDX as their image provider. For new text-to-image requests, call generate_image directly and display the returned image. CCDX handles credentials and the API; no Python, SDK installation, OPENAI_API_KEY, or alternate endpoint is needed. Follow the user's image request; do not retry a failed generation automatically. Editing and reference-image requests require a different capable tool."
+        instructions: config
+          ? `The user enabled CCDX as their image provider. Call generate_image for new images.${supportsImageEditing(config) ? " For changes to a CCDX image, call edit_image with that image's returned image_id. Keep each returned ID with its image; there is no global last image." : " Editing is not supported by this configured provider."} Display the returned image. CCDX handles credentials and the API; no Python, SDK installation, extra API key or alternate endpoint is needed. Do not automatically retry failed generations or edits.`
           : "Image generation is disabled. Enable it with ccdx enable-image before requesting images.",
       });
       return;
@@ -125,20 +149,27 @@ export function createImageMcpHandler({
     }
     if (request.method === "tools/list") {
       const config = configLoader();
-      reply({ tools: config ? [imageTool()] : [] });
+      if (!config) imageReferences.clear();
+      reply({ tools: config ? [imageTool(), ...(supportsImageEditing(config) ? [editTool()] : [])] : [] });
       return;
     }
     if (request.method !== "tools/call") {
       writeJson(res, 200, jsonRpcError(request.id, -32601, "Method not found"));
       return;
     }
-    if (request.params?.name !== IMAGE_TOOL_NAME) {
+    if (![IMAGE_TOOL_NAME, EDIT_TOOL_NAME].includes(request.params?.name)) {
       writeJson(res, 200, jsonRpcError(request.id, -32602, "Unknown image tool"));
       return;
     }
     const config = configLoader();
     if (!config) {
+      imageReferences.clear();
       reply({ content: [{ type: "text", text: "Image generation is disabled. Run ccdx enable-image first." }], isError: true });
+      return;
+    }
+    const editing = request.params.name === EDIT_TOOL_NAME;
+    if (editing && !supportsImageEditing(config)) {
+      reply({ content: [{ type: "text", text: "The configured image provider does not support CCDX editing. No edit was submitted." }], isError: true });
       return;
     }
     if (active >= maxConcurrent) {
@@ -151,11 +182,24 @@ export function createImageMcpHandler({
     req.once?.("aborted", cancel);
     res.once?.("close", cancel);
     try {
-      const image = await generateImageFn(config, request.params?.arguments || {}, { signal: abort.signal });
+      const args = request.params?.arguments || {};
+      // Only an explicit retained handle can add source pixels to a request.
+      const source = editing ? imageReferences.resolve(config, args.image_id) : null;
+      const parameters = { prompt: args.prompt, size: args.size ?? source?.size ?? "1024x1024" };
+      if (source) parameters.image = source.image;
+      const image = await generateImageFn(config, parameters, { signal: abort.signal });
+      let imageId = null;
+      if (supportsImageEditing(config)) {
+        try { imageId = imageReferences.remember(config, { ...image, size: parameters.size }); } catch {}
+      }
+      const note = imageId ? ` Image ID: ${imageId}. Use this ID for further edits while retained by this adapter.`
+        : supportsImageEditing(config) ? " The image is available, but an editing reference could not be retained." : "";
       reply({
+        // Codex prioritizes structuredContent over image blocks. Keep IDs in metadata/text.
+        ...(imageId ? { _meta: { "ccdx/image_id": imageId } } : {}),
         content: [
           { type: "image", data: image.data, mimeType: image.mimeType },
-          { type: "text", text: `Generated ${image.width || ""}${image.width && image.height ? "×" : ""}${image.height || image.size} image with ${image.model}.` },
+          { type: "text", text: `${editing ? "Edited" : "Generated"} ${image.width || ""}${image.width && image.height ? "×" : ""}${image.height || image.size} image with ${image.model}.${note}` },
         ],
       });
     } catch (error) {

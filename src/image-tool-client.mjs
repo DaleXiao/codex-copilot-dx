@@ -7,22 +7,25 @@ const IMAGE_SIZES = new Set(["1024x1024", "1536x1024", "1024x1536"]);
 const IMAGE_EXTENSIONS = new Map([["image/png", ".png"], ["image/jpeg", ".jpg"], ["image/webp", ".webp"]]);
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 48 * 1024 * 1024;
-const USAGE = "Usage: generate.mjs --prompt <text> [--size 1024x1024|1536x1024|1024x1536] [--out <new-file>]";
+const IMAGE_ID = /^ccdx_img_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const USAGE = "Usage: generate.mjs --prompt <text> [--image-id <previous-CCDX-image-id>] [--size 1024x1024|1536x1024|1024x1536] [--out <new-file>]";
 
 export function parseImageToolArgs(args = []) {
   if (args.length === 1 && ["--help", "-h"].includes(args[0])) return { help: true };
   const values = {};
   for (let index = 0; index < args.length; index += 2) {
     const option = args[index];
-    if (!["--prompt", "--size", "--out"].includes(option) || option in values) throw new Error(USAGE);
+    if (!["--prompt", "--image-id", "--size", "--out"].includes(option) || option in values) throw new Error(USAGE);
     if (typeof args[index + 1] !== "string" || !args[index + 1].trim()) throw new Error(`Missing value for ${option}`);
     values[option] = args[index + 1];
   }
   const prompt = String(values["--prompt"] || "").trim();
   if (!prompt || prompt.length > 16_000) throw new Error("Image prompt must contain 1 to 16000 characters");
-  const size = String(values["--size"] || "1024x1024").trim().toLowerCase();
-  if (!IMAGE_SIZES.has(size)) throw new Error("Unsupported image size");
-  return { prompt, size, out: values["--out"] };
+  const imageId = values["--image-id"]?.trim();
+  if (imageId !== undefined && !IMAGE_ID.test(imageId)) throw new Error("Invalid CCDX image ID");
+  const size = values["--size"] ? values["--size"].trim().toLowerCase() : (imageId ? undefined : "1024x1024");
+  if (size !== undefined && !IMAGE_SIZES.has(size)) throw new Error("Unsupported image size");
+  return { prompt, size, out: values["--out"], imageId };
 }
 
 function localImageEndpoint(value) {
@@ -79,6 +82,7 @@ export async function runImageToolClient({
   cwd = process.cwd(),
   fetchImpl = fetch,
   output = process.stdout,
+  metadataOutput = process.stderr,
   signal = AbortSignal.timeout(210_000),
 } = {}) {
   const options = parseImageToolArgs(args);
@@ -114,11 +118,14 @@ export async function runImageToolClient({
     const detail = ["EPERM", "EACCES"].includes(code)
       ? "Local network access was denied. Request normal execution permission for this helper command."
       : cleanError(error.message);
-    throw Object.assign(new Error(`Image generation has not started: ${detail}`), { code: "CCDX_IMAGE_NOT_STARTED" });
+    throw Object.assign(new Error(`Image ${options.imageId ? "editing" : "generation"} has not started: ${detail}`), { code: "CCDX_IMAGE_NOT_STARTED" });
   }
+  const argumentsValue = { prompt: options.prompt };
+  if (options.size !== undefined) argumentsValue.size = options.size;
+  if (options.imageId) argumentsValue.image_id = options.imageId;
   const result = await readRpcResponse(await post({
     jsonrpc: "2.0", id: 2, method: "tools/call",
-    params: { name: "generate_image", arguments: { prompt: options.prompt, size: options.size } },
+    params: { name: options.imageId ? "edit_image" : "generate_image", arguments: argumentsValue },
   }), 2);
   if (result.isError) {
     throw new Error(cleanError(result.content?.find((part) => part.type === "text")?.text));
@@ -137,5 +144,7 @@ export async function runImageToolClient({
   const filePath = requestedOutput || path.join(directory, `image-${randomUUID()}${extension}`);
   fs.writeFileSync(filePath, bytes, { flag: "wx", mode: 0o600 });
   output.write(`${filePath}\n`);
+  const imageId = result._meta?.["ccdx/image_id"];
+  if (typeof imageId === "string" && IMAGE_ID.test(imageId)) metadataOutput.write(`CCDX image_id: ${imageId}\n`);
   return filePath;
 }

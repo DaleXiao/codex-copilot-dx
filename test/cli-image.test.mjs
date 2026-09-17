@@ -60,6 +60,7 @@ test("image CLI: enable, status, and disable form one safe configuration lifecyc
   assert.match(output.text(), /Local image service: unavailable/);
   const skillPath = path.join(home, ".codex", "skills", "ccdx-image", "SKILL.md");
   assert.equal(fs.existsSync(skillPath), true);
+  for (const reference of ["editing.md", "helper.md"]) assert.equal(fs.existsSync(path.join(path.dirname(skillPath), "references", reference)), true);
   const saved = readImageProviderConfig({ home, env: {}, strict: true });
   assert.equal(saved.api_key, "secret-value");
   assert.equal(fs.statSync(imageProviderConfigPath({ home, env: {} })).mode & 0o777, 0o600);
@@ -82,6 +83,7 @@ test("image CLI: enable, status, and disable form one safe configuration lifecyc
   assert.equal(disabled.enabled, false);
   assert.equal(fs.existsSync(imageProviderConfigPath({ home, env: {} })), false);
   assert.equal(fs.existsSync(skillPath), false);
+  assert.equal(fs.existsSync(path.dirname(skillPath)), false);
   assert.doesNotMatch(fs.readFileSync(codexPath, "utf8"), /ccdx:image-mcp|mcp_servers\.ccdx_image/);
   assert.equal(fs.readFileSync(codexPath, "utf8"), "model = \"gpt-5.6-sol\"\n");
   fs.rmSync(home, { recursive: true, force: true });
@@ -185,9 +187,26 @@ test("failed provider persistence rolls back newly installed image guidance", as
       promptSecret: async () => "secret-value", fetchImpl: providerFetch, probeFetchImpl: offlineProbe,
     }));
     assert.equal(fs.existsSync(path.join(home, ".codex", "skills", "ccdx-image", "SKILL.md")), false);
+    assert.equal(fs.existsSync(path.join(home, ".codex", "skills", "ccdx-image")), false);
     assert.equal(fs.existsSync(path.join(home, ".codex", "config.toml")), false);
     assert.equal(fs.statSync(providerPath).isDirectory(), true);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test("image status and disable without prior enable install neither skill nor MCP", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-image-disabled-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const codexPath = path.join(home, ".codex", "config.toml");
+  const output = capture();
+  let requests = 0;
+  const fetchImpl = async () => { requests += 1; throw new Error("Disabled images must not use the network"); };
+  for (const action of ["status", "disable", "status"]) {
+    const result = await runImageCommand({ action, home, env: {}, codexPath, output, fetchImpl, probeFetchImpl: fetchImpl });
+    assert.equal(result.enabled, false);
+    assert.equal(fs.existsSync(path.join(home, ".codex")), false);
+    assert.equal(fs.existsSync(imageProviderConfigPath({ home, env: {} })), false);
+  }
+  assert.equal(requests, 0);
 });
 
 test("image setup selects before probing and saves that model's protocol on mixed gateways", async () => {

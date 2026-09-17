@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parse } from "smol-toml";
-import { computeImageMcpCodexConfig, computeUpdatedCodexConfig } from "../src/config.mjs";
+import { computeImageMcpCodexConfig, computeUpdatedCodexConfig, initialCodexConfig } from "../src/config.mjs";
 
 test("image MCP Codex config: is explicit, idempotent, and exactly reversible", () => {
   const before = "model = \"gpt-5.6-sol\"\n";
@@ -32,6 +32,10 @@ test("image MCP Codex config: refuses to overwrite a user-owned server name", ()
 });
 
 test("normal startup leaves image disabled unless explicitly enabled", () => {
+  for (const options of [undefined, { imageProviderEnabled: false }]) {
+    const initial = initialCodexConfig(2026, "127.0.0.1", options);
+    assert.equal(parse(initial).mcp_servers?.ccdx_image, undefined);
+  }
   const before = "openai_base_url = \"http://127.0.0.1:2026/v1\"\n";
   const updated = computeUpdatedCodexConfig(before);
   assert.doesNotMatch(updated.content, /mcp_servers\.ccdx_image|ccdx:image-mcp/);

@@ -147,6 +147,21 @@ test("image MCP: advertises no tool by default and returns the configured image 
   assert.equal(called.body.result.structuredContent, undefined);
 });
 
+test("image MCP initialization stays compact, reflects edit capability, and dispatches no images", async () => {
+  let calls = 0;
+  for (const [model, protocol, editing] of [["qwen-image-3.0-pro", "qwen-messages", true], ["qwen-image-3.0-pro", "openai-images", true], ["gpt-image-1", "openai-images", false]]) {
+    const config = { endpoint: "https://images.example/v1/images/generations", api_key: "secret-value", model, protocol };
+    const handler = createImageMcpHandler({ configLoader: () => config, generateImageFn: async () => { calls += 1; throw new Error("Unexpected generation"); } });
+    const initialized = (await rpc(handler, 1, "initialize", { protocolVersion: "2025-06-18" })).body.result;
+    assert.ok(initialized.instructions.length <= 512);
+    assert.doesNotMatch(initialized.instructions, /secret-value/);
+    const listed = (await rpc(handler, 2, "tools/list")).body.result.tools;
+    assert.deepEqual(listed.map(tool => tool.name), editing ? ["generate_image", "edit_image"] : ["generate_image"]);
+    for (const tool of listed) assert.equal(tool.annotations.idempotentHint, false);
+  }
+  assert.equal(calls, 0);
+});
+
 test("image MCP chains explicit edits with new IDs and preserves both original pixels and source size", async () => {
   const calls = [];
   const config = { endpoint: "https://images.example/v1/images/generations", api_key: "secret", model: "qwen-image-3.0-pro", protocol: "qwen-messages" };

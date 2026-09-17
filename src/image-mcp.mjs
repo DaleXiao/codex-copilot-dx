@@ -78,7 +78,7 @@ function imageTool() {
   return {
     name: IMAGE_TOOL_NAME,
     title: "Generate image",
-    description: "Generate a new image with the image provider the user enabled in CCDX. Returns image content and saved-image Markdown: include that Markdown in the final chat reply to show a thumbnail. Credentials and generation are handled by CCDX, with no Python or OpenAI SDK setup. Does not edit or take reference images. Do not call just to redisplay an existing result.",
+    description: "Generate a raster image with the user's enabled CCDX provider. Input: text prompt and optional size; no source images. Returns image content, saved-image Markdown for the final chat reply, and an edit ID when supported. For changes to an earlier CCDX image use edit_image; for redisplay reuse its Markdown without a tool call.",
     inputSchema: {
       type: "object",
       properties: {
@@ -108,7 +108,7 @@ function editTool() {
     ...tool,
     name: EDIT_TOOL_NAME,
     title: "Edit image",
-    description: "Edit a previously generated CCDX image using its exact image_id and a change instruction. Preserve the source and return a new image with a new ID for further edits; include its returned saved-image Markdown in the final chat reply. Source images must still be retained by this running adapter. Does not accept file paths, URLs, masks, or arbitrary uploads. Do not call just to redisplay an existing result.",
+    description: "Edit a retained CCDX image using its exact image_id and a change prompt. Preserves the source and returns a new image, saved-image Markdown for the final chat reply, and a new edit ID when retained. Omit size to preserve source dimensions. Does not accept paths, URLs, masks, or arbitrary uploads. Redisplay requires no tool call.",
     inputSchema: {
       ...tool.inputSchema,
       properties: {
@@ -184,7 +184,7 @@ export function createImageMcpHandler({
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "ccdx-image", version: "1" },
         instructions: config
-          ? `The user enabled CCDX as their image provider. Call generate_image for new images.${supportsImageEditing(config) ? " For changes to a CCDX image, call edit_image with that image's returned image_id. Keep each returned ID with its image; there is no global last image." : " Editing is not supported by this configured provider."} Include the returned saved-image Markdown in the final chat reply to display a thumbnail; tool image content alone does not ensure chat delivery. To show an existing image again, reuse its Markdown without calling generation or editing. CCDX handles credentials and the API; no Python, SDK installation, extra API key or alternate endpoint is needed. Do not automatically retry failed generations or edits.`
+          ? `CCDX handles the configured image API and credentials; no Python or SDK setup. Embed returned image Markdown in the final reply. Redisplay reuses it without tool calls. Keep each image_id with its own image. Do not automatically retry failed/timed-out requests or switch providers.${supportsImageEditing(config) ? " Use generate_image for new images; edit_image requires the exact retained source ID." : " Use generate_image for new images. Editing is unsupported; do not substitute generation."}`
           : "Image generation is disabled. Enable it with ccdx enable-image before requesting images.",
       });
       return;

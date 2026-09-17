@@ -506,7 +506,13 @@ async function runTurn(threadId, label, image, requireSkill = false, editStep = 
       latestChatImage = { imageId: resultImageId, filePath: chatImagePath, markdown };
     }
   }
-  summaries.push({ scenario: label, modelRequests: scenario.steps, imageCalls: generationCount - before, edit: Boolean(editStep), nativeImageResult: image && !withoutMcp, savedImage: image && withoutMcp, finalChatImage: image || redisplay, ...(redisplay ? { redisplay: true } : {}), ...(image ? { imageId: resultImageId, ...(imageId ? { sourceImageId: imageId } : {}) } : {}) });
+  const guidanceRead = [...new Set(client.events.slice(offset).filter(event => event.method === "item/completed" && event.params.item.type === "commandExecution")
+    .flatMap(event => {
+      const output = String(event.params.item.aggregatedOutput || "");
+      return [["SKILL.md", "# CCDX image generation"], ["editing.md", "# Edit a CCDX result"], ["helper.md", "# MCP-unavailable fallback"]]
+        .filter(([, heading]) => output.includes(heading)).map(([name]) => name);
+    }))];
+  summaries.push({ scenario: label, modelRequests: scenario.steps, imageCalls: generationCount - before, edit: Boolean(editStep), nativeImageResult: image && !withoutMcp, savedImage: image && withoutMcp, finalChatImage: image || redisplay, ...(liveModel ? { guidanceRead } : {}), ...(redisplay ? { redisplay: true } : {}), ...(image ? { imageId: resultImageId, ...(imageId ? { sourceImageId: imageId } : {}) } : {}) });
   scenario = null;
 }
 
@@ -558,6 +564,9 @@ try {
   const threadId = started.thread.id;
   const disabled = await client.call("mcpServerStatus/list", { threadId });
   assert.equal(disabled.data.some((entry) => entry.name === "ccdx_image"), false);
+  const disabledSkills = await client.call("skills/list", { cwds: [cwd], forceReload: true });
+  assert.equal(disabledSkills.data.flatMap((entry) => entry.skills).some((skill) => skill.name === "ccdx-image"), false);
+  assert.equal(await fs.stat(path.join(home, "skills", "ccdx-image")).then(() => true, (error) => { if (error.code === "ENOENT") return false; throw error; }), false);
   await runTurn(threadId, "before_enable", false);
 
   await fs.writeFile(codexPath, computeImageMcpCodexConfig(base, { enabled: true, adapterPort: port }).content);
@@ -566,6 +575,7 @@ try {
   await client.call("config/mcpServer/reload", {});
   const skills = await client.call("skills/list", { cwds: [cwd], forceReload: true });
   assert.ok(skills.data.flatMap((entry) => entry.skills).some((skill) => skill.name === "ccdx-image" && skill.enabled), "Installed Codex must discover the managed CCDX image skill");
+  for (const reference of ["editing.md", "helper.md"]) await fs.access(path.join(home, "skills", "ccdx-image", "references", reference));
   const enabled = await client.call("mcpServerStatus/list", { threadId });
   const imageServer = enabled.data.find((entry) => entry.name === "ccdx_image");
   assert.ok(imageServer && Object.values(imageServer.tools).some((tool) => tool.name === "generate_image"), "Reloaded Codex must discover production MCP image tool");

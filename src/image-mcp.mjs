@@ -1,5 +1,9 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { isLoopbackAddress } from "./observability.mjs";
-import { generateImage, supportsImageEditing } from "./image-provider.mjs";
+import { generateImage, supportsImageEditing, IMAGE_MAX_BYTES } from "./image-provider.mjs";
 import { readImageProviderConfig } from "./image-provider-config.mjs";
 import { createImageReferenceStore } from "./image-references.mjs";
 
@@ -8,6 +12,36 @@ const MCP_PROTOCOL_VERSIONS = new Set(["2025-06-18", "2025-03-26", "2024-11-05"]
 const MCP_MAX_BODY_BYTES = 256 * 1024;
 const IMAGE_TOOL_NAME = "generate_image";
 const EDIT_TOOL_NAME = "edit_image";
+const IMAGE_EXTENSIONS = new Map([["image/png", ".png"], ["image/jpeg", ".jpg"], ["image/webp", ".webp"]]);
+
+async function saveChatImage(image, directory, signal) {
+  const extension = IMAGE_EXTENSIONS.get(image.mimeType);
+  if (!extension || typeof image.data !== "string" || !image.data
+    || image.data.length > 4 * Math.ceil(IMAGE_MAX_BYTES / 3)
+    || !/^[A-Za-z0-9+/]+={0,2}$/.test(image.data)) throw new Error("Invalid image data for chat display");
+  const bytes = Buffer.from(image.data, "base64");
+  if (!bytes.length || bytes.length > IMAGE_MAX_BYTES || bytes.toString("base64") !== image.data) {
+    throw new Error("Invalid image data for chat display");
+  }
+  signal.throwIfAborted();
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  if (!(await fs.lstat(directory)).isDirectory()) throw new Error("Image output path is not a regular directory");
+  const filePath = path.join(await fs.realpath(directory), `image-${randomUUID()}${extension}`);
+  signal.throwIfAborted();
+  const file = await fs.open(filePath, "wx", 0o600);
+  try {
+    await file.writeFile(bytes, { signal });
+    signal.throwIfAborted();
+    await file.close();
+  } catch (error) {
+    await file.close().catch(() => {});
+    await fs.unlink(filePath).catch(() => {});
+    throw error;
+  }
+  const displayPath = encodeURI(filePath.replaceAll("\\", "/"))
+    .replace(/[?#()[\]]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  return { filePath, markdown: `![Generated image](<${displayPath}>)` };
+}
 
 function sameHostSocket(socket) {
   const remote = String(socket?.remoteAddress || "").replace(/^::ffff:/, "");
@@ -44,7 +78,7 @@ function imageTool() {
   return {
     name: IMAGE_TOOL_NAME,
     title: "Generate image",
-    description: "Generate a new image with the image provider the user enabled in CCDX. Call directly for text-to-image requests; returns the image inline. Credentials and generation are handled by CCDX, with no Python or OpenAI SDK setup. Does not edit or take reference images.",
+    description: "Generate a new image with the image provider the user enabled in CCDX. Returns image content and saved-image Markdown: include that Markdown in the final chat reply to show a thumbnail. Credentials and generation are handled by CCDX, with no Python or OpenAI SDK setup. Does not edit or take reference images. Do not call just to redisplay an existing result.",
     inputSchema: {
       type: "object",
       properties: {
@@ -74,7 +108,7 @@ function editTool() {
     ...tool,
     name: EDIT_TOOL_NAME,
     title: "Edit image",
-    description: "Edit a previously generated CCDX image using its exact image_id and a change instruction. Preserve the source and return a new image with a new ID for further edits. Source images must still be retained by this running adapter. Does not accept file paths, URLs, masks, or arbitrary uploads.",
+    description: "Edit a previously generated CCDX image using its exact image_id and a change instruction. Preserve the source and return a new image with a new ID for further edits; include its returned saved-image Markdown in the final chat reply. Source images must still be retained by this running adapter. Does not accept file paths, URLs, masks, or arbitrary uploads. Do not call just to redisplay an existing result.",
     inputSchema: {
       ...tool.inputSchema,
       properties: {
@@ -101,6 +135,7 @@ export function createImageMcpHandler({
   generateImageFn = generateImage,
   maxConcurrent = 2,
   imageReferences = createImageReferenceStore(),
+  imageDirectory = path.join(os.homedir(), ".local", "share", "codex-copilot-dx", "images"),
 } = {}) {
   let active = 0;
   return async function imageMcpHandler(req, res) {
@@ -149,7 +184,7 @@ export function createImageMcpHandler({
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "ccdx-image", version: "1" },
         instructions: config
-          ? `The user enabled CCDX as their image provider. Call generate_image for new images.${supportsImageEditing(config) ? " For changes to a CCDX image, call edit_image with that image's returned image_id. Keep each returned ID with its image; there is no global last image." : " Editing is not supported by this configured provider."} Display the returned image. CCDX handles credentials and the API; no Python, SDK installation, extra API key or alternate endpoint is needed. Do not automatically retry failed generations or edits.`
+          ? `The user enabled CCDX as their image provider. Call generate_image for new images.${supportsImageEditing(config) ? " For changes to a CCDX image, call edit_image with that image's returned image_id. Keep each returned ID with its image; there is no global last image." : " Editing is not supported by this configured provider."} Include the returned saved-image Markdown in the final chat reply to display a thumbnail; tool image content alone does not ensure chat delivery. To show an existing image again, reuse its Markdown without calling generation or editing. CCDX handles credentials and the API; no Python, SDK installation, extra API key or alternate endpoint is needed. Do not automatically retry failed generations or edits.`
           : "Image generation is disabled. Enable it with ccdx enable-image before requesting images.",
       });
       return;
@@ -205,12 +240,25 @@ export function createImageMcpHandler({
       }
       const note = imageId ? ` Image ID: ${imageId}. Use this ID for further edits while retained by this adapter.`
         : supportsImageEditing(config) ? " The image is available, but an editing reference could not be retained." : "";
+      let saved;
+      let delivery;
+      // The bundled helper already saves once at its caller-selected output path.
+      if (request.params?._meta?.["ccdx/client_saves_image"] === true) {
+        delivery = "\nThe calling helper will save this image and return its local path. Embed the saved image in the final chat reply; do not generate or edit again just to display it.";
+      } else {
+        try {
+          saved = await saveChatImage(image, imageDirectory, abort.signal);
+          delivery = `\nInclude this image Markdown in your final chat reply to show its thumbnail:\n${saved.markdown}\nTo display this same image again, reuse this Markdown; do not call generate_image or edit_image.`;
+        } catch {
+          delivery = "\nThe image was generated, but its chat-preview file could not be saved. Image content is still returned. Do not claim it was displayed, invent a file path, or generate/edit again to retry delivery.";
+        }
+      }
       reply({
         // Codex prioritizes structuredContent over image blocks. Keep IDs in metadata/text.
-        ...(imageId ? { _meta: { "ccdx/image_id": imageId } } : {}),
+        ...(imageId || saved ? { _meta: { ...(imageId ? { "ccdx/image_id": imageId } : {}), ...(saved ? { "ccdx/image_path": saved.filePath } : {}) } } : {}),
         content: [
           { type: "image", data: image.data, mimeType: image.mimeType },
-          { type: "text", text: `${editing ? "Edited" : "Generated"} ${image.width || ""}${image.width && image.height ? "×" : ""}${image.height || image.size} image with ${image.model}.${note}` },
+          { type: "text", text: `${editing ? "Edited" : "Generated"} ${image.width || ""}${image.width && image.height ? "×" : ""}${image.height || image.size} image with ${image.model}.${note}${delivery}` },
         ],
       });
     } catch (error) {

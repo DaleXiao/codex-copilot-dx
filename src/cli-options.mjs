@@ -302,7 +302,7 @@ function topicHelp(name, topic) {
     models: `Usage:\n  ${name} models [--format table|plain]\n\nPerforms a fresh, read-only Copilot model-directory lookup for the saved account. Interactive terminals use a table by default.`,
     usage: `Usage:\n  ${name} usage [--format table|plain]\n\nSummarizes local token usage metadata without reading prompt or completion content. Interactive terminals use a table by default.`,
     animation: `Usage:\n  ${name} animation\n\nPreviews all terminal activity animations together and selects the theme used the next time the adapter starts.`,
-    "enable-image": `Usage:\n  ${name} enable-image\n\nInteractively configures an HTTPS image API endpoint and API key, detects its supported image model and protocol, installs CCDX image guidance, and checks the local image tool for Codex App without generating an image.`,
+    "enable-image": `Usage:\n  ${name} enable-image\n\nInteractively configures an HTTPS image API endpoint (base URLs are also accepted) and API key, detects its supported image model and protocol, installs CCDX image guidance, and checks the local image tool for Codex App without generating an image.`,
     "disable-image": `Usage:\n  ${name} disable-image\n\nDisables the local CCDX image tool and removes its stored API credential and unmodified CCDX image guidance.`,
     "image-status": `Usage:\n  ${name} image-status\n\nShows provider configuration and probes local image-tool readiness without generating an image or exposing its API key.`,
     "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nInteractively selects an advertised Responses model for Codex Auto-review.`,

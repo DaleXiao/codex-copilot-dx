@@ -201,9 +201,10 @@ export async function runImageCommand({
   const ask = prompt || ((question) => visibleQuestion(input, output, question));
   const askSecret = promptSecret || ((question) => hiddenQuestion(input, output, question));
   output.write(`${commandName} enable-image\n`);
-  const endpointAnswer = String(await ask(`API endpoint${current ? ` [${current.endpoint}]` : ""}: `) || "").trim();
+  output.write("Enter an HTTPS base URL (for example, https://api.example/v1) or a full /images/generations endpoint.\n");
+  const endpointAnswer = String(await ask(`API base URL or endpoint${current ? ` [${current.endpoint}]` : ""}: `) || "").trim();
   const endpoint = endpointAnswer || current?.endpoint;
-  if (!endpoint) throw new Error("Image API endpoint is required");
+  if (!endpoint) throw new Error("Image API base URL or endpoint is required");
   const keyAnswer = String(await askSecret(`API key${current ? " [Enter to keep current]" : ""}: `) || "").trim();
   const apiKey = keyAnswer || current?.api_key;
   if (!apiKey) throw new Error("Image API key is required");

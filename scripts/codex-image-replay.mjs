@@ -2,6 +2,7 @@
 // All model responses and generated pixels are synthetic. No installed configuration or credentials are used.
 // Optional --live-model MODEL uses the running loopback CCDX for one real model-selection check; pixels stay synthetic.
 // Add --edit to verify generation followed by two edits, including the prior image handle and preserved originals.
+// Every image turn verifies final chat image Markdown; redisplay must reuse the prior file without an image call.
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
@@ -36,6 +37,7 @@ globalThis.fetch = async () => { throw new Error("Network fetch is forbidden in 
 const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-image-replay-")));
 const home = path.join(root, "codex");
 const cwd = path.join(root, "project");
+const imageDirectory = path.join(root, "mcp-images");
 const codexPath = path.join(home, "config.toml");
 const helperPath = path.join(home, "skills", "ccdx-image", "scripts", "generate.mjs");
 const imageDimension = liveModel ? 1024 : 64;
@@ -64,7 +66,9 @@ const summaries = [];
 const imageCalls = [];
 const knownImages = new Map();
 const savedImages = new Map();
+const deliveredImages = new Map();
 let latestImageId;
+let latestChatImage;
 
 function runtimeEnv() {
   return {
@@ -168,7 +172,7 @@ function createClient(process) {
       } else if (event.method) {
         if (event.id !== undefined) {
           const approval = event.params;
-          if (event.method === "mcpServer/elicitation/request"
+          if (scenario?.image && event.method === "mcpServer/elicitation/request"
             && approval.serverName === "ccdx_image"
             && approval._meta?.codex_approval_kind === "mcp_tool_call"
             && approval.message?.includes(scenario?.editStep ? '"edit_image"' : '"generate_image"')
@@ -178,7 +182,7 @@ function createClient(process) {
             && [undefined, "1024x1024", "1536x1024", "1024x1536"].includes(approval._meta.tool_params.size)) {
             fixtureApprovals += 1;
             process.stdin.write(`${JSON.stringify({ id: event.id, result: { action: "accept", content: {} } })}\n`);
-          } else if (event.method === "item/commandExecution/requestApproval"
+          } else if (scenario?.image && event.method === "item/commandExecution/requestApproval"
             && helperCommandArguments(approval.command, approval.cwd)) {
             helperApprovals += 1;
             process.stdin.write(`${JSON.stringify({ id: event.id, result: { decision: "accept" } })}\n`);
@@ -243,11 +247,19 @@ function syntheticResponse(output, id) {
   return events.join("");
 }
 
-function finalMessage(label) {
-  return { id: `msg_${label}`, type: "message", role: "assistant", phase: "final_answer", status: "completed", content: [{ type: "output_text", text: `SYNTHETIC ${label} COMPLETE.`, annotations: [] }] };
+function finalMessage(label, imageMarkdown = "") {
+  return { id: `msg_${label}`, type: "message", role: "assistant", phase: "final_answer", status: "completed", content: [{ type: "output_text", text: `SYNTHETIC ${label} COMPLETE.${imageMarkdown ? `\n\n${imageMarkdown}` : ""}`, annotations: [] }] };
+}
+
+function displayedImagePaths(text) {
+  const prose = String(text || "").replace(/```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g, "");
+  return [...prose.matchAll(/!\[[^\]\r\n]*\]\(\s*(?:<([^>\r\n]+)>|([^\s)]+))\s*\)/g)].map((match) => {
+    try { return decodeURIComponent(match[1] || match[2]); } catch { return ""; }
+  });
 }
 
 const imageMcp = createImageMcpHandler({
+  imageDirectory,
   configLoader: () => ({ model: "qwen-image-3.0-pro", protocol: "qwen-messages", api_key: "unused-offline-fixture" }),
   generateImageFn: async (_config, args) => {
     assert.ok(scenario?.image, "Image provider called outside an image turn");
@@ -308,7 +320,7 @@ const server = http.createServer((req, res) => {
       assert.ok(JSON.stringify(body.input).includes("ccdx-image"), "Next turn did not discover newly installed ccdx-image before explicit skill/MCP reload");
     }
     const step = scenario.steps++;
-    if (liveModel && scenario.image) {
+    if (liveModel && (scenario.image || scenario.redisplay)) {
       assert.ok(step < 12, "Live replay exceeded its bounded model request budget");
       assert.ok(JSON.stringify(body.input).includes("ccdx-image"), "Managed skill missing from live model context");
       const upstream = await loopbackFetch("http://127.0.0.1:2026/v1/responses", {
@@ -323,7 +335,7 @@ const server = http.createServer((req, res) => {
       return;
     }
     assert.ok(step < (scenario.image ? 3 : 1), "Unexpected model retry or repeated tool invocation");
-    let output = [finalMessage(scenario.label)];
+    let output = [finalMessage(scenario.label, scenario.redisplay ? latestChatImage.markdown : "")];
     const toolName = scenario.editStep ? "edit_image" : "generate_image";
     if (scenario.image && step === 0) {
       assert.ok(body.tools.some((tool) => tool.type === "tool_search"), "Actual Codex must expose discovery for deferred MCP tools");
@@ -343,6 +355,13 @@ const server = http.createServer((req, res) => {
       assert.equal(metadata.width, 64);
       assert.equal(metadata.height, 64);
       assert.equal(image.image_url, `data:image/png;base64,${pngs[scenario.editStep]}`, "Model continuation must receive the latest image pixels");
+      const returned = imageCalls.at(-1)?.response?.result;
+      const text = returned?.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+      const markdown = text?.match(/!\[[^\]\r\n]*\]\(<[^>\r\n]+>\)/)?.[0];
+      assert.ok(markdown, "Production image result must supply ready-to-use chat Markdown");
+      assert.ok(result.output.some((part) => typeof part.text === "string" && part.text.includes(markdown)), "Image delivery Markdown missing from the model continuation");
+      assert.deepEqual(displayedImagePaths(markdown), [returned._meta?.["ccdx/image_path"]]);
+      output = [finalMessage(scenario.label, markdown)];
     }
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     res.end(syntheticResponse(output, `resp_${scenario.label}_${step}`));
@@ -372,21 +391,24 @@ async function stopClient() {
   }
 }
 
-async function runTurn(threadId, label, image, requireSkill = false, editStep = 0) {
+async function runTurn(threadId, label, image, requireSkill = false, editStep = 0, redisplay = false) {
   const imageId = editStep ? latestImageId : undefined;
   if (editStep) assert.match(imageId, imageIdPattern, "An edit requires the preceding result handle");
-  scenario = { label, image, requireSkill, steps: 0, providerCalls: 0, editStep, imageId };
+  const priorChatImage = latestChatImage;
+  if (redisplay) assert.ok(priorChatImage, "Redisplay requires a preceding delivered image");
+  scenario = { label, image, requireSkill, steps: 0, providerCalls: 0, editStep, imageId, redisplay };
   const offset = client.events.length;
   const before = generationCount;
+  const editsBefore = editCount;
   const callsBefore = imageCalls.length;
   const prompt = liveModel
     ? ["画一张蓝色圆形，纯白背景，正方形，生成图片。", "把刚才蓝色圆形改成红色，其他不变。", "把刚才红色圆形改成绿色，其他不变。"][editStep]
     : ["Generate a synthetic blue square.", "Edit the preceding blue square to red; preserve everything else.", "Edit the preceding red square to green; preserve everything else."][editStep];
-  await client.call("turn/start", { threadId, input: [{ type: "text", text: image ? prompt : "Save this synthetic pre-image thread.", text_elements: [] }] });
+  await client.call("turn/start", { threadId, input: [{ type: "text", text: redisplay ? "图呢，请在聊天中展示刚才那张原图。" : image ? prompt : "Save this synthetic pre-image thread.", text_elements: [] }] });
   const completed = await client.waitFor((event) => event.method === "turn/completed" && event.params.threadId === threadId, `${label} turn completion`, offset);
   if (serverError) throw serverError;
   assert.equal(completed.params.turn.status, "completed", JSON.stringify(completed.params.turn.error));
-  if (!liveModel || !image) assert.equal(scenario.steps, image ? 3 : 1);
+  if (!liveModel || (!image && !redisplay)) assert.equal(scenario.steps, image ? 3 : 1);
   assert.equal(generationCount - before, image ? 1 : 0, JSON.stringify(client.events.slice(offset)
     .filter((event) => event.method === "item/completed" && ["agentMessage", "commandExecution"].includes(event.params.item.type))
     .map((event) => ({ type: event.params.item.type, text: event.params.item.text,
@@ -394,6 +416,7 @@ async function runTurn(threadId, label, image, requireSkill = false, editStep = 
       output: String(event.params.item.aggregatedOutput || "").slice(0, 1200) }))));
   const toolItems = client.events.slice(offset).filter((event) => event.method === "item/completed" && event.params.item.type === "mcpToolCall");
   let resultImageId;
+  let chatImagePath;
   if (image) {
     const calls = imageCalls.slice(callsBefore);
     assert.equal(calls.length, 1, "Exactly one image tool call reaches the local MCP service");
@@ -405,6 +428,18 @@ async function runTurn(threadId, label, image, requireSkill = false, editStep = 
     assert.equal(knownImages.has(resultImageId), false, "Every edit and generation must return a fresh image handle");
     const returned = calls[0].response.result.content.find((part) => part.type === "image");
     assert.equal(returned?.data, pngs[editStep]);
+    chatImagePath = calls[0].response.result._meta?.["ccdx/image_path"];
+    if (withoutMcp) {
+      assert.equal(calls[0].request.params._meta?.["ccdx/client_saves_image"], true, "Helper must declare its single local image save");
+      assert.equal(chatImagePath, undefined, "MCP must not return a second delivery path when the helper saves the image");
+    } else {
+      assert.ok(typeof chatImagePath === "string" && path.isAbsolute(chatImagePath), "Production MCP result must return a saved absolute image path");
+      assert.equal(path.dirname(chatImagePath), imageDirectory, "Replay image delivery must stay in its isolated output directory");
+      assert.ok((await fs.lstat(chatImagePath)).isFile(), "Chat image must be a regular file");
+      assert.equal((await fs.readFile(chatImagePath)).toString("base64"), returned.data, "Chat thumbnail file must contain the original generated image bytes");
+      assert.equal(deliveredImages.has(chatImagePath), false, "Generation and edits must preserve earlier delivery files");
+      deliveredImages.set(chatImagePath, returned.data);
+    }
     knownImages.set(resultImageId, returned.data);
     latestImageId = resultImageId;
   }
@@ -431,7 +466,11 @@ async function runTurn(threadId, label, image, requireSkill = false, editStep = 
       const files = (await fs.readdir(cwd, { recursive: true })).filter((file) => /\.(?:png|jpe?g|webp)$/i.test(file));
       assert.equal(files.length, savedImages.size + 1, "Each turn saves exactly one new image and preserves existing images");
       for (const [file, data] of savedImages) assert.equal((await fs.readFile(file)).toString("base64"), data, "Editing must not change any earlier saved image");
-      const output = files.map((file) => path.join(cwd, file)).find((file) => !savedImages.has(file));
+      const reportedPaths = String(succeeded[0].params.item.aggregatedOutput || "").split(/\r?\n/).map((line) => line.trim())
+        .filter((line) => path.isAbsolute(line) && /\.(?:png|jpe?g|webp)$/i.test(line));
+      assert.equal(reportedPaths.length, 1, "Successful helper output must report its one saved absolute image path");
+      const output = reportedPaths[0];
+      assert.deepEqual(files.map((file) => path.join(cwd, file)).filter((file) => !savedImages.has(file)), [output], "Helper-reported path must be the only newly saved image");
       assert.ok((await fs.lstat(output)).isFile(), "Helper output must be a regular file");
       const metadata = await sharp(output).metadata();
       assert.equal(metadata.width, 1024);
@@ -439,9 +478,35 @@ async function runTurn(threadId, label, image, requireSkill = false, editStep = 
       const data = (await fs.readFile(output)).toString("base64");
       assert.equal(data, pngs[editStep], "Helper must save the latest returned image");
       savedImages.set(output, data);
+      chatImagePath = output;
     }
   }
-  summaries.push({ scenario: label, modelRequests: scenario.steps, imageCalls: generationCount - before, edit: Boolean(editStep), nativeImageResult: image && !withoutMcp, savedImage: image && withoutMcp, ...(image ? { imageId: resultImageId, ...(imageId ? { sourceImageId: imageId } : {}) } : {}) });
+  if (redisplay) {
+    assert.equal(imageCalls.length, callsBefore, "Redisplay must not call generate_image or edit_image");
+    assert.equal(editCount, editsBefore, "Redisplay must not dispatch an edit");
+    assert.equal(latestImageId, priorChatImage.imageId, "Redisplay must retain the original image handle");
+    chatImagePath = priorChatImage.filePath;
+  }
+  if (image || redisplay) {
+    const finalItem = client.events.slice(offset).filter((event) => event.method === "item/completed" && event.params.item.type === "agentMessage").at(-1)?.params.item;
+    const finalText = String(finalItem?.text || "");
+    assert.ok(displayedImagePaths(finalText).includes(chatImagePath), `Final assistant reply did not embed the actual saved image: ${finalText.slice(0, 1800)}`);
+    for (const [file, data] of [...deliveredImages, ...savedImages]) {
+      assert.equal((await fs.readFile(file)).toString("base64"), data, "Generation, editing and redisplay must preserve prior image bytes");
+    }
+    if (withoutMcp) {
+      const mcpFiles = await fs.readdir(imageDirectory).catch((error) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      });
+      assert.equal(mcpFiles.length, 0, "Helper generation and redisplay must not create a duplicate MCP image file");
+    } else assert.equal((await fs.readdir(imageDirectory)).length, deliveredImages.size, "Redisplay must not create another image delivery file");
+    if (image) {
+      const markdown = finalText.match(/!\[[^\]\r\n]*\]\(\s*(?:<[^>\r\n]+>|[^\s)]+)\s*\)/g)?.find((value) => displayedImagePaths(value).includes(chatImagePath));
+      latestChatImage = { imageId: resultImageId, filePath: chatImagePath, markdown };
+    }
+  }
+  summaries.push({ scenario: label, modelRequests: scenario.steps, imageCalls: generationCount - before, edit: Boolean(editStep), nativeImageResult: image && !withoutMcp, savedImage: image && withoutMcp, finalChatImage: image || redisplay, ...(redisplay ? { redisplay: true } : {}), ...(image ? { imageId: resultImageId, ...(imageId ? { sourceImageId: imageId } : {}) } : {}) });
   scenario = null;
 }
 
@@ -477,6 +542,7 @@ try {
       await updateImageSkill({ enabled: true, codexPath, adapterPort: port, adapterHost: "127.0.0.1" });
     }
     await runTurn(fresh.thread.id, withoutMcp ? "stale_task_without_mcp_live_selection" : "natural_language_live_selection", true, withoutMcp);
+    await runTurn(fresh.thread.id, "natural_language_original_redisplay", false, false, 0, true);
     if (editing) {
       await runTurn(fresh.thread.id, "natural_language_first_edit", true, false, 1);
       await runTurn(fresh.thread.id, "natural_language_second_edit", true, false, 2);
@@ -484,8 +550,8 @@ try {
     }
     console.log(JSON.stringify({ version, liveModel, withoutMcp, editing, localAdapter: "127.0.0.1:2026", syntheticPixels: true, builtinSkillCoexists: true, upstreamCount, generationCount, editCount, fixtureApprovals, helperApprovals, summaries }, null, 2));
     console.log(editing
-      ? "PASS: real model generated and edited twice through CCDX, with one image call per turn and the correct preceding handle."
-      : "PASS: real model selected CCDX once from a natural image request with built-in imagegen present.");
+      ? "PASS: real model delivered and edited CCDX images with final chat Markdown, correct handles, and zero-call original redisplay."
+      : "PASS: real model selected CCDX once, embedded its saved image in final chat Markdown, and redisplayed the original without an image call.");
   } else {
   await startClient();
   const started = await client.call("thread/start", { cwd, model: "gpt-5.5", modelProvider: "replay", approvalPolicy: "on-request", sandbox: "read-only", experimentalRawEvents: false });
@@ -505,6 +571,7 @@ try {
   assert.ok(imageServer && Object.values(imageServer.tools).some((tool) => tool.name === "generate_image"), "Reloaded Codex must discover production MCP image tool");
   if (editing) assert.ok(Object.values(imageServer.tools).some((tool) => tool.name === "edit_image"), "Reloaded Codex must discover production MCP edit tool for the eligible provider");
   await runTurn(threadId, "same_thread_after_reload", true);
+  await runTurn(threadId, "same_thread_original_redisplay", false, false, 0, true);
   if (editing) await runTurn(threadId, "same_thread_first_edit", true, false, 1);
 
   await stopClient();
@@ -512,14 +579,14 @@ try {
   await client.call("thread/resume", { threadId, cwd, modelProvider: "replay", approvalPolicy: "on-request", sandbox: "read-only" });
   await runTurn(threadId, editing ? "saved_thread_second_edit_after_restart" : "saved_thread_after_restart", true, false, editing ? 2 : 0);
   const read = await client.call("thread/read", { threadId, includeTurns: true });
-  assert.equal(read.thread.turns.length, editing ? 5 : 4, "Saved original thread retains every completed turn");
+  assert.equal(read.thread.turns.length, editing ? 6 : 5, "Saved original thread retains every completed turn");
   const fresh = await client.call("thread/start", { cwd, model: "gpt-5.5", modelProvider: "replay", approvalPolicy: "on-request", sandbox: "read-only" });
   await runTurn(fresh.thread.id, "new_thread_enabled", true);
   if (editing) assert.equal(editCount, 2, "Offline edit chain must issue exactly two edits");
   console.log(JSON.stringify({ version, offline: true, editing, skillDiscovered: true, mcpReload: true, upstreamCount, generationCount, editCount, fixtureApprovals, summaries }, null, 2));
   console.log(editing
-    ? "PASS: installed Codex generated and edited twice, preserving handles and native image output through saved-task resume."
-    : "PASS: installed Codex discovers CCDX images, reloads an existing task, and preserves native image output after saved-task resume.");
+    ? "PASS: installed Codex generated and edited twice with final chat image Markdown, zero-call redisplay, and preserved handles through saved-task resume."
+    : "PASS: installed Codex discovers CCDX images and preserves native output, final chat image Markdown, and zero-call redisplay through task reload/resume.");
   }
 } catch (error) {
   throw new Error(`${serverError?.message || error.message}\n${stderr}`, { cause: error });

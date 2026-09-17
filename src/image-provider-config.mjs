@@ -21,7 +21,7 @@ export function normalizeImageEndpoint(value) {
   try {
     url = new URL(String(value || "").trim());
   } catch {
-    throw new Error("Image API endpoint must be a valid HTTPS URL");
+    throw new Error("Image API base URL or endpoint must be a valid HTTPS URL");
   }
   if (url.protocol !== "https:"
     || !url.hostname
@@ -29,13 +29,14 @@ export function normalizeImageEndpoint(value) {
     || url.password
     || url.search
     || url.hash) {
-    throw new Error("Image API endpoint must be an HTTPS URL without credentials, query, or fragment");
+    throw new Error("Image API base URL or endpoint must be an HTTPS URL without credentials, query, or fragment");
   }
   const pathname = url.pathname.replace(/\/+$/, "");
-  if (!pathname.endsWith("/images/generations")) {
-    throw new Error("Image API endpoint path must end with /images/generations");
+  if (pathname.endsWith("/images/generations")) return `${url.origin}${pathname}`;
+  if (/\/(?:images(?:\/(?:edits|variations))?|chat\/completions|completions|responses|embeddings|models)$/i.test(pathname)) {
+    throw new Error("Image API URL must be a base URL or an endpoint ending with /images/generations");
   }
-  return `${url.origin}${pathname}`;
+  return `${url.origin}${pathname || "/v1"}/images/generations`;
 }
 
 export function imageModelsEndpoint(endpoint) {

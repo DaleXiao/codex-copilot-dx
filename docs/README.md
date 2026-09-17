@@ -14,6 +14,7 @@ These reports record a specific release and test environment. Their version,
 test counts, timings, live-provider observations, and limitations remain
 historical facts rather than current guarantees.
 
+- [0.8.1: chat image delivery and image-provider base URLs](RELEASE_0.8.1.md)
 - [0.8.0: configuration safety, bounded failure recovery, and image integration hardening](RELEASE_0.8.0.md)
 - [0.7.10: generated-image editing and simultaneous animation previews](RELEASE_0.7.10.md)
 - [0.7.9: image tool discovery and invocation](RELEASE_0.7.9.md)

@@ -22,6 +22,12 @@ test("image skill is absent by default and installs a self-contained helper only
   const installed = updateImageSkill({ ...fixtureData, enabled: true });
   assert.equal(installed.changed, true);
   assert.equal(installed.skillPath, fixtureData.skillPath);
+  const guidance = fs.readFileSync(fixtureData.skillPath, "utf8");
+  assert.match(guidance, /Include that exact Markdown in your final chat reply/);
+  assert.match(guidance, /clickable thumbnail/);
+  assert.match(guidance, /do not generate or edit another image just to display it/);
+  assert.match(guidance, /If the tool reports that saving failed, do not invent a path/);
+  assert.match(guidance, /A viewer call alone does not replace the final thumbnail/);
   const help = execFileSync(process.execPath, [fixtureData.helperPath, "--help"], { encoding: "utf8", cwd: fixtureData.home });
   assert.match(help, /^Usage: generate\.mjs/);
   assert.match(help, /--image-id/);

@@ -87,6 +87,65 @@ test("image CLI: enable, status, and disable form one safe configuration lifecyc
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test("image CLI: base URLs configure the existing generation endpoint without extra provider requests", async () => {
+  for (const [baseUrl, endpoint, modelsUrl] of [
+    ["https://images.example", "https://images.example/v1/images/generations", "https://images.example/v1/models"],
+    ["https://images.example/v1/", "https://images.example/v1/images/generations", "https://images.example/v1/models"],
+    ["https://images.example/proxy/v1", "https://images.example/proxy/v1/images/generations", "https://images.example/proxy/v1/models"],
+    ["https://images.example/custom/images/generations", "https://images.example/custom/images/generations", "https://images.example/custom/models"],
+  ]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-image-cli-base-"));
+    try {
+      const output = capture();
+      const requests = [];
+      const enabled = await runImageCommand({
+        action: "enable", home, env: {}, output,
+        prompt: async (question) => {
+          assert.match(question, /^API base URL or endpoint/);
+          return baseUrl;
+        },
+        promptSecret: async () => "secret-value", probeFetchImpl: offlineProbe,
+        fetchImpl: async (url, init = {}) => {
+          requests.push({ url, method: init.method || "GET", body: init.body && JSON.parse(init.body) });
+          return providerFetch(url);
+        },
+      });
+      assert.equal(enabled.endpoint, endpoint);
+      assert.equal(enabled.model, "qwen-image-3.0-pro");
+      assert.equal(enabled.protocol, "qwen-messages");
+      assert.equal(readImageProviderConfig({ home, env: {}, strict: true }).endpoint, endpoint);
+      assert.deepEqual(requests, [
+        { url: modelsUrl, method: "GET", body: undefined },
+        { url: endpoint, method: "POST", body: { model: "qwen-image-3.0-pro" } },
+      ]);
+      assert.match(output.text(), /HTTPS base URL.*full \/images\/generations endpoint/);
+      assert.doesNotMatch(output.text(), /secret-value/);
+    } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  }
+});
+
+test("image CLI: blank answers preserve an existing full endpoint, key and chosen model", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-image-cli-keep-endpoint-"));
+  try {
+    const endpoint = "https://images.example/custom/api/images/generations";
+    writeImageProviderConfig({
+      endpoint, api_key: "secret-value", model: "qwen-image-3.0-pro", protocol: "qwen-messages",
+    }, { home, env: {} });
+    const enabled = await runImageCommand({
+      action: "enable", home, env: {}, output: capture(),
+      prompt: async (question) => {
+        assert.equal(question, `API base URL or endpoint [${endpoint}]: `);
+        return "";
+      },
+      promptSecret: async () => "", fetchImpl: providerFetch, probeFetchImpl: offlineProbe,
+    });
+    assert.equal(enabled.endpoint, endpoint);
+    assert.deepEqual(readImageProviderConfig({ home, env: {}, strict: true }), {
+      enabled: true, endpoint, api_key: "secret-value", model: "qwen-image-3.0-pro", protocol: "qwen-messages",
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
 test("image setup preserves user-owned guidance and provider config on an ownership conflict", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-image-conflict-"));
   try {

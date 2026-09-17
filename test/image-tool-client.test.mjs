@@ -38,7 +38,7 @@ test("image helper calls the configured local MCP once and saves its image with 
     fetchImpl: serverFetch(requests),
   });
   assert.deepEqual(requests.map(({ method }) => method), ["initialize", "notifications/initialized", "tools/call"]);
-  assert.deepEqual(requests.at(-1).params, { name: "generate_image", arguments: { prompt: "A cat's blue umbrella", size: "1536x1024" } });
+  assert.deepEqual(requests.at(-1).params, { name: "generate_image", arguments: { prompt: "A cat's blue umbrella", size: "1536x1024" }, _meta: { "ccdx/client_saves_image": true } });
   assert.deepEqual(fs.readFileSync(result), Buffer.from(IMAGE, "base64"));
   assert.equal(path.dirname(result), path.join(context.cwd, "output", "imagegen"));
   assert.equal(path.extname(result), ".png");
@@ -74,7 +74,7 @@ test("image helper edits the explicit source once, retains its size by omission 
     }),
   });
   assert.deepEqual(requests.filter(({ method }) => method === "tools/call").map(({ params }) => params), [{
-    name: "edit_image", arguments: { prompt: "Make the background blue; preserve the subject", image_id: SOURCE_ID },
+    name: "edit_image", arguments: { prompt: "Make the background blue; preserve the subject", image_id: SOURCE_ID }, _meta: { "ccdx/client_saves_image": true },
   }]);
   assert.deepEqual(context.writes, [`${result}\n`]);
   assert.deepEqual(context.metadata, [`CCDX image_id: ${RESULT_ID}\n`]);
@@ -96,7 +96,7 @@ test("image helper keeps square generation defaults and accepts an explicit edit
         content: [{ type: "image", data: IMAGE, mimeType: "image/png" }], _meta: { "ccdx/image_id": "untrusted\nmetadata" },
       }),
     });
-    assert.deepEqual(requests.at(-1).params, expected);
+    assert.deepEqual(requests.at(-1).params, { ...expected, _meta: { "ccdx/client_saves_image": true } });
   }
   assert.deepEqual(context.metadata, []);
 });

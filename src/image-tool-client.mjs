@@ -125,7 +125,7 @@ export async function runImageToolClient({
   if (options.imageId) argumentsValue.image_id = options.imageId;
   const result = await readRpcResponse(await post({
     jsonrpc: "2.0", id: 2, method: "tools/call",
-    params: { name: options.imageId ? "edit_image" : "generate_image", arguments: argumentsValue },
+    params: { name: options.imageId ? "edit_image" : "generate_image", arguments: argumentsValue, _meta: { "ccdx/client_saves_image": true } },
   }), 2);
   if (result.isError) {
     throw new Error(cleanError(result.content?.find((part) => part.type === "text")?.text));

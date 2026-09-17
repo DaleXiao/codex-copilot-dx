@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Readable } from "node:stream";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { createAdapterHandler } from "../src/adapter.mjs";
-import { createImageMcpHandler } from "../src/image-mcp.mjs";
+import { createImageMcpHandler as createHandler } from "../src/image-mcp.mjs";
 import { createImageReferenceStore } from "../src/image-references.mjs";
+
+const imageDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-image-chat-"));
+after(() => fs.rmSync(imageDirectory, { recursive: true, force: true }));
+const createImageMcpHandler = (options) => createHandler({ imageDirectory, ...options });
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
 
 async function rpc(handler, id, method, params, headers = {}) {
   const request = Readable.from([Buffer.from(JSON.stringify({
@@ -254,4 +262,131 @@ test("image MCP: never returns a provider API key embedded in an upstream error"
   assert.doesNotMatch(text, /secret-value/);
   assert.match(text, /\[redacted\]/);
   assert.doesNotMatch(text, /\n/);
+});
+
+test("image MCP delivers immutable local images and safe final-chat Markdown without extra provider calls", async () => {
+  const directory = path.join(imageDirectory, "chat # [preview] (中文)");
+  const config = { model: "qwen-image-3.0-pro", protocol: "qwen-messages", api_key: "secret" };
+  let calls = 0;
+  const handler = createImageMcpHandler({
+    imageDirectory: directory, configLoader: () => config,
+    generateImageFn: async () => { calls += 1; return { data: PNG, mimeType: "image/png", model: config.model }; },
+  });
+  const first = (await rpc(handler, 1, "tools/call", { name: "generate_image", arguments: { prompt: "A circle" } })).body.result;
+  const firstPath = first._meta["ccdx/image_path"];
+  assert.equal(calls, 1);
+  assert.ok(path.isAbsolute(firstPath));
+  assert.equal(path.dirname(firstPath), fs.realpathSync(directory));
+  assert.deepEqual(fs.readFileSync(firstPath), Buffer.from(PNG, "base64"));
+  const markdown = first.content[1].text.match(/!\[Generated image\]\(<([^>]+)>\)/);
+  assert.ok(markdown);
+  assert.equal(decodeURIComponent(markdown[1]), firstPath.replaceAll("\\", "/"));
+  for (const encoded of ["%20", "%23", "%5B", "%5D", "%28", "%29"]) assert.ok(markdown[1].includes(encoded));
+  assert.match(first.content[1].text, /final chat reply/);
+  assert.match(first.content[1].text, /do not call generate_image or edit_image/);
+  assert.equal(first.content[0].data, PNG);
+  assert.equal(first.structuredContent, undefined);
+  if (process.platform !== "win32") {
+    assert.equal(fs.statSync(firstPath).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
+  }
+  const edited = (await rpc(handler, 2, "tools/call", {
+    name: "edit_image", arguments: { image_id: first._meta["ccdx/image_id"], prompt: "Make it red" },
+  })).body.result;
+  assert.equal(calls, 2);
+  assert.notEqual(edited._meta["ccdx/image_path"], firstPath);
+  assert.notEqual(edited._meta["ccdx/image_id"], first._meta["ccdx/image_id"]);
+  assert.deepEqual(fs.readFileSync(firstPath), Buffer.from(PNG, "base64"));
+  assert.deepEqual(fs.readFileSync(edited._meta["ccdx/image_path"]), Buffer.from(PNG, "base64"));
+  // Redisplaying the returned Markdown reads the saved original, without an image operation.
+  assert.deepEqual(fs.readFileSync(decodeURIComponent(markdown[1])), Buffer.from(PNG, "base64"));
+  assert.equal(calls, 2);
+});
+
+test("image MCP saves chat thumbnails for generation-only providers without adding editing capability", async () => {
+  const handler = createImageMcpHandler({ configLoader: () => ({ model: "gpt-image-1", protocol: "openai-images" }),
+    generateImageFn: async () => ({ data: PNG, mimeType: "image/png", model: "gpt-image-1" }),
+  });
+  assert.deepEqual((await rpc(handler, 1, "tools/list")).body.result.tools.map(t => t.name), ["generate_image"]);
+  const generated = (await rpc(handler, 2, "tools/call", { name: "generate_image", arguments: { prompt: "test" } })).body.result;
+  assert.equal(generated._meta["ccdx/image_id"], undefined);
+  assert.deepEqual(fs.readFileSync(generated._meta["ccdx/image_path"]), Buffer.from(PNG, "base64"));
+  assert.equal(generated.content[0].type, "image");
+});
+
+test("image MCP retains generated content if chat saving fails, without inventing a path or retrying", async () => {
+  const blocked = path.join(imageDirectory, "not-a-directory");
+  fs.writeFileSync(blocked, "keep");
+  let calls = 0;
+  const handler = createImageMcpHandler({ imageDirectory: blocked,
+    configLoader: () => ({ model: "qwen-image-3.0-pro", protocol: "qwen-messages" }),
+    generateImageFn: async () => { calls += 1; return { data: PNG, mimeType: "image/png", model: "qwen-image-3.0-pro" }; },
+  });
+  const result = (await rpc(handler, 1, "tools/call", { name: "generate_image", arguments: { prompt: "test" } })).body.result;
+  assert.equal(calls, 1);
+  assert.equal(result.isError, undefined);
+  assert.equal(result.content[0].data, PNG);
+  assert.match(result._meta["ccdx/image_id"], /^ccdx_img_/);
+  assert.equal(result._meta["ccdx/image_path"], undefined);
+  assert.match(result.content[1].text, /chat-preview file could not be saved/);
+  assert.doesNotMatch(result.content[1].text, /!\[/);
+  assert.equal(fs.readFileSync(blocked, "utf8"), "keep");
+});
+
+test("image MCP does not follow a chat-output directory symlink", async () => {
+  const target = path.join(imageDirectory, "unrelated");
+  const link = path.join(imageDirectory, "linked-output");
+  fs.mkdirSync(target);
+  fs.symlinkSync(target, link, "dir");
+  const handler = createImageMcpHandler({ imageDirectory: link,
+    configLoader: () => ({ model: "gpt-image-1", protocol: "openai-images" }),
+    generateImageFn: async () => ({ data: PNG, mimeType: "image/png", model: "gpt-image-1" }),
+  });
+  const result = (await rpc(handler, 1, "tools/call", { name: "generate_image", arguments: { prompt: "test" } })).body.result;
+  assert.equal(result.isError, undefined);
+  assert.equal(result._meta?.["ccdx/image_path"], undefined);
+  assert.deepEqual(fs.readdirSync(target), []);
+});
+
+test("image MCP leaves the bundled helper's single output write to the client", async () => {
+  const directory = path.join(imageDirectory, "helper-must-not-create");
+  let calls = 0;
+  const handler = createImageMcpHandler({ imageDirectory: directory,
+    configLoader: () => ({ model: "gpt-image-1", protocol: "openai-images" }),
+    generateImageFn: async () => { calls += 1; return { data: PNG, mimeType: "image/png", model: "gpt-image-1" }; },
+  });
+  const result = (await rpc(handler, 1, "tools/call", { name: "generate_image", arguments: { prompt: "test" }, _meta: { "ccdx/client_saves_image": true } })).body.result;
+  assert.equal(calls, 1);
+  assert.equal(result.content[0].data, PNG);
+  assert.equal(result._meta?.["ccdx/image_path"], undefined);
+  assert.equal(fs.existsSync(directory), false);
+});
+
+test("image MCP preserves JPEG and WebP bytes and uses their matching file extensions", async () => {
+  const { default: sharp } = await import("sharp");
+  for (const [format, mimeType, extension] of [["jpeg", "image/jpeg", ".jpg"], ["webp", "image/webp", ".webp"]]) {
+    const pixels = await sharp({ create: { width: 8, height: 8, channels: 3, background: "blue" } }).toFormat(format).toBuffer();
+    const handler = createImageMcpHandler({ configLoader: () => ({ model: "test", protocol: "openai-images" }),
+      generateImageFn: async () => ({ data: pixels.toString("base64"), mimeType, model: "test" }),
+    });
+    const result = (await rpc(handler, 1, "tools/call", { name: "generate_image", arguments: { prompt: "test" } })).body.result;
+    const output = result._meta["ccdx/image_path"];
+    assert.equal(path.extname(output), extension);
+    assert.deepEqual(fs.readFileSync(output), pixels);
+    assert.equal((await sharp(output).metadata()).format, format);
+  }
+});
+
+test("image MCP does not save a cancelled delivery or dispatch another image request", async () => {
+  const directory = path.join(imageDirectory, "cancelled-must-not-create");
+  let calls = 0;
+  let cancel;
+  const handler = createImageMcpHandler({ imageDirectory: directory,
+    configLoader: () => ({ model: "test", protocol: "openai-images" }),
+    generateImageFn: async () => { calls += 1; cancel(); return { data: PNG, mimeType: "image/png", model: "test" }; },
+  });
+  const result = await rpc((req, res) => { cancel = () => req.emit("aborted"); return handler(req, res); }, 1, "tools/call", { name: "generate_image", arguments: { prompt: "test" } });
+  assert.equal(calls, 1);
+  assert.equal(result.body.result._meta?.["ccdx/image_path"], undefined);
+  assert.equal(fs.existsSync(directory), false);
 });

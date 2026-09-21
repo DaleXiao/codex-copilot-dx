@@ -209,6 +209,30 @@ test("image status and disable without prior enable install neither skill nor MC
   assert.equal(requests, 0);
 });
 
+test("disable-image removes owned configuration and guidance after marker loss or damage", async (t) => {
+  for (const marker of ["both", "start", "end"]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-image-orphan-disable-"));
+    t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+    const codexPath = path.join(home, ".codex", "config.toml");
+    await runImageCommand({
+      action: "enable", home, env: {}, output: capture(),
+      prompt: async () => "https://images.example/v1", promptSecret: async () => "fixture-only-key",
+      fetchImpl: providerFetch, probeFetchImpl: offlineProbe,
+    });
+    const original = fs.readFileSync(codexPath, "utf8");
+    const stripped = original.split("\n").filter(line => marker === "both"
+      ? !line.startsWith("# ccdx:image-mcp:") : line !== `# ccdx:image-mcp:${marker}`).join("\n");
+    fs.writeFileSync(codexPath, `${stripped}\n[mcp_servers.other]\ncommand = "keep"\n`);
+    const disabled = await runImageCommand({ action: "disable", home, env: {}, codexPath, output: capture() });
+    assert.equal(disabled.enabled, false);
+    assert.equal(fs.existsSync(imageProviderConfigPath({ home, env: {} })), false);
+    assert.equal(fs.existsSync(path.join(home, ".codex", "skills", "ccdx-image")), false);
+    const finalConfig = fs.readFileSync(codexPath, "utf8");
+    assert.doesNotMatch(finalConfig, /ccdx_image|ccdx:image-mcp/);
+    assert.ok(finalConfig.includes('[mcp_servers.other]\ncommand = "keep"'));
+  }
+});
+
 test("image setup selects before probing and saves that model's protocol on mixed gateways", async () => {
   for (const [models, protocol, message] of [
     [["qwen-image-3.0-pro", "gpt-image-1"], "openai-images", "Missing required parameter: prompt"],

@@ -229,8 +229,8 @@ async function reuseRunningAdapterIfAvailable() {
 
 async function configureCodexClient() {
   const imageProviderEnabled = Boolean(readImageProviderConfig());
-  ensureCodexConfig(ADAPTER_PORT, { host: ADAPTER_HOST, imageProviderEnabled });
-  if (imageProviderEnabled) {
+  const { imageMcpSkipped } = ensureCodexConfig(ADAPTER_PORT, { host: ADAPTER_HOST, imageProviderEnabled });
+  if (imageProviderEnabled && !imageMcpSkipped) {
     try {
       const { syncEnabledImageSkill } = await import("../src/cli-image.mjs");
       syncEnabledImageSkill({ adapterPort: ADAPTER_PORT, adapterHost: ADAPTER_HOST });

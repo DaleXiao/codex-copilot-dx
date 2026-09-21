@@ -205,7 +205,9 @@ trust_level = "trusted"
 # ccdx:image-mcp:end
 `;
   for (const enabled of [true, false]) {
-    assert.throws(() => computeImageMcpCodexConfig(before, { enabled }), /outside CCDX's managed keys/);
+    const result = computeImageMcpCodexConfig(before, { enabled });
+    assert.equal(result.content, before);
+    assert.deepEqual(parse(result.content).projects, parse(before).projects);
   }
 });
 

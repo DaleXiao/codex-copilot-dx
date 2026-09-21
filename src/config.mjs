@@ -4,6 +4,7 @@ import os from "node:os";
 import { status } from "./status.mjs";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { adapterBaseUrl } from "./running-adapter.mjs";
+import { isLoopbackHost } from "./security.mjs";
 import { codexTomlStatements, configValue, parseCodexToml, validateManagedConfigEdit } from "./config-toml.mjs";
 
 const CONFIG_PATH = path.join(os.homedir(), ".codex", "config.toml");
@@ -12,6 +13,10 @@ const MODEL_AUTO_COMPACT_TOKEN_LIMIT = 900_000;
 const IMAGE_MCP_START = "# ccdx:image-mcp:start";
 const IMAGE_MCP_END = "# ccdx:image-mcp:end";
 const IMAGE_MCP_SECTION = "mcp_servers.ccdx_image";
+const IMAGE_MCP_KEYS = ["enabled", "tool_timeout_sec", "url"];
+
+// Only optional image-configuration conflicts may degrade to core-only startup.
+export class ImageMcpConfigError extends Error {}
 const STARTUP_MANAGED_PATHS = [
   "openai_base_url",
   "model_context_window",
@@ -92,41 +97,98 @@ function imageMcpHost(adapterHost) {
   return host;
 }
 
-function removeManagedImageMcp(lines) {
-  const comments = codexTomlStatements(lines.join("\n")).filter((item) => item.kind === "comment");
-  const starts = comments.filter((item) => lines[item.line] === IMAGE_MCP_START).map((item) => item.line);
-  const ends = comments.filter((item) => lines[item.line] === IMAGE_MCP_END).map((item) => item.line);
-  let start = starts[0] ?? -1;
-  const end = ends[0] ?? -1;
-  if (start === -1 && end === -1) return false;
-  if (starts.length !== 1 || ends.length !== 1 || end < start) {
-    throw new Error("Invalid managed CCDX image MCP block in Codex config");
-  }
-  lines.splice(start, end - start + 1);
-  while (start > 0 && start >= lines.length && lines[start - 1].trim() === "") {
-    lines.splice(start - 1, 1);
-    start -= 1;
-  }
-  while (start < lines.length && lines[start].trim() === "" && start > 0 && lines[start - 1].trim() === "") {
-    lines.splice(start, 1);
-  }
-  return true;
+function imageMcpUrl(value) {
+  if (typeof value !== "string" || /[\s\x00-\x1f\x7f]/.test(value)) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" && url.pathname === "/mcp/image"
+      && !url.username && !url.password && !url.search && !url.hash ? url : null;
+  } catch { return null; }
 }
 
-function hasUnmanagedImageMcp(lines) {
-  return configValue(parseCodexToml(lines.join("\n")), IMAGE_MANAGED_PATH) !== undefined;
+function isImageDeclaration(item) {
+  return ["table", "value"].includes(item.kind)
+    && sameKeys(item.keys.slice(0, IMAGE_MANAGED_PATH.length), IMAGE_MANAGED_PATH);
 }
 
-function ensureImageMcp(lines, enabled, adapterPort, adapterHost) {
+function imageMcpMarkers(content, statements) {
+  return statements.filter((item) => item.kind === "comment"
+    && [IMAGE_MCP_START, IMAGE_MCP_END].includes(item.source.trim())
+    && !content.slice(content.lastIndexOf("\n", item.start - 1) + 1, item.start).trim());
+}
+
+function knownImageMcp(section, expectedUrl, previousBaseUrl, statements, markers) {
+  if (!section || Object.keys(section).sort().join(",") !== IMAGE_MCP_KEYS.join(",")
+    || section.enabled !== true || section.tool_timeout_sec !== 210n) return false;
+  const url = imageMcpUrl(section.url);
+  if (!url) return false;
+  if (url.href === new URL(expectedUrl).href) return true;
+  // The core and image URLs were configured together. This survives comment
+  // stripping and allows an adapter address change without guessing a new owner.
+  try {
+    const previous = new URL(previousBaseUrl);
+    if (previous.protocol === "http:" && previous.pathname === "/v1"
+      && !previous.username && !previous.password && !previous.search && !previous.hash
+      && previous.origin === url.origin
+      && (isLoopbackHost(url.hostname) || url.hostname === new URL(expectedUrl).hostname)) return true;
+  } catch {}
+  // Legacy markers are an additional ownership hint, never deletion boundaries.
+  const starts = markers.filter((item) => item.source.trim() === IMAGE_MCP_START);
+  const ends = markers.filter((item) => item.source.trim() === IMAGE_MCP_END);
+  if (starts.length !== 1 || ends.length !== 1 || starts[0].start >= ends[0].start
+    || !(isLoopbackHost(url.hostname) || url.hostname === new URL(expectedUrl).hostname)) return false;
+  const declarations = statements.filter((item) => ["table", "value"].includes(item.kind));
+  return declarations.some(isImageDeclaration)
+    && declarations.filter(isImageDeclaration).every((item) => item.start > starts[0].start && item.end < ends[0].start)
+    && declarations.filter((item) => item.start > starts[0].start && item.start < ends[0].start).every(isImageDeclaration);
+}
+
+function removeImageMcpDeclarations(content, statements, markers) {
+  const declarations = statements.filter(isImageDeclaration);
+  // A shared inline parent is not a surgical edit target. Reuse it unchanged or
+  // leave it for the user; never serialize away sibling settings or credentials.
+  if (!declarations.length) return null;
+  const ranges = [...declarations, ...markers].map((item) => {
+    const start = content.lastIndexOf("\n", item.start - 1) + 1;
+    const newline = content.indexOf("\n", item.end);
+    return [start, newline < 0 ? content.length : newline + 1];
+  }).sort((left, right) => right[0] - left[0]);
+  for (const [start, end] of ranges) content = content.slice(0, start) + content.slice(end);
+  return content;
+}
+
+function ensureImageMcp(lines, enabled, adapterPort, adapterHost, previousBaseUrl) {
   const previous = lines.join("\n");
-  removeManagedImageMcp(lines);
+  const config = parseCodexToml(previous);
+  const section = configValue(config, IMAGE_MANAGED_PATH);
+  const url = `${adapterBaseUrl(imageMcpHost(adapterHost), adapterPort)}/mcp/image`;
+  if (section !== undefined) {
+    // Reuse compatible registrations without rewriting comments, formatting,
+    // user tool policies, or timeouts. An explicit disabled flag is preserved.
+    if (enabled && imageMcpUrl(section?.url)?.href === new URL(url).href
+      && [undefined, true].includes(section?.enabled)) return false;
+    const statements = codexTomlStatements(previous);
+    const markers = imageMcpMarkers(previous, statements);
+    if (!knownImageMcp(section, url, previousBaseUrl, statements, markers)) {
+      if (!enabled) return false;
+      throw new ImageMcpConfigError(`Codex config already defines [${IMAGE_MCP_SECTION}] outside the CCDX-managed block; its settings were preserved`);
+    }
+    const removed = removeImageMcpDeclarations(previous, statements, markers);
+    if (removed === null) {
+      if (!enabled) return false;
+      throw new ImageMcpConfigError(`Cannot safely update [${IMAGE_MCP_SECTION}] inside a shared inline table; its settings were preserved`);
+    }
+    lines.splice(0, lines.length, ...removed.split("\n"));
+    while (lines.length && !lines.at(-1).trim()) lines.pop();
+  }
   if (enabled) {
-    if (hasUnmanagedImageMcp(lines)) {
-      throw new Error(`Codex config already defines [${IMAGE_MCP_SECTION}] outside the CCDX-managed block`);
+    const parent = config.mcp_servers;
+    if (parent !== undefined && (typeof parent !== "object" || parent === null || Array.isArray(parent)
+      || codexTomlStatements(previous).some((item) => item.kind === "value" && sameKeys(item.keys, ["mcp_servers"])))) {
+      throw new ImageMcpConfigError("Cannot append the image MCP to an inline or non-table mcp_servers setting; its settings were preserved");
     }
     while (lines.length && lines.at(-1).trim() === "") lines.pop();
     if (lines.length) lines.push("");
-    const url = `${adapterBaseUrl(imageMcpHost(adapterHost), adapterPort)}/mcp/image`;
     lines.push(
       IMAGE_MCP_START,
       `[${IMAGE_MCP_SECTION}]`,
@@ -149,7 +211,6 @@ export function computeUpdatedCodexConfig(
   const baseUrl = `${adapterBaseUrl(adapterHost, adapterPort)}/v1`;
   const hadTrailingNewline = content.endsWith("\n");
   const lines = content.split("\n");
-  if (hadTrailingNewline) lines.pop();
 
   let changed = false;
   const openaiLine = `openai_base_url = "${baseUrl}"`;
@@ -166,10 +227,11 @@ export function computeUpdatedCodexConfig(
   changed = setTomlKey(lines, "shell_environment_policy.set", "OPENAI_API_KEY", "dummy") || changed;
   changed = ensureContextManagementDefault(lines) || changed;
   if (typeof imageProviderEnabled === "boolean") {
-    changed = ensureImageMcp(lines, imageProviderEnabled, adapterPort, adapterHost) || changed;
+    changed = ensureImageMcp(lines, imageProviderEnabled, adapterPort, adapterHost, config.openai_base_url) || changed;
   }
 
-  const updated = lines.join("\n") + (hadTrailingNewline ? "\n" : "");
+  const joined = lines.join("\n");
+  const updated = joined + (hadTrailingNewline && !joined.endsWith("\n") ? "\n" : "");
   validateManagedConfigEdit(config, updated, typeof imageProviderEnabled === "boolean"
     ? [...STARTUP_MANAGED_PATHS, IMAGE_MANAGED_PATH] : STARTUP_MANAGED_PATHS);
   return { content: updated, changed };
@@ -196,18 +258,24 @@ context_management = true
     : base;
 }
 
-export function computeImageMcpCodexConfig(
+function computeImageConfig(
   content,
   { enabled, adapterPort = 2026, adapterHost = "127.0.0.1" } = {},
+  previousBaseUrl,
 ) {
   const config = parseCodexToml(content);
   const hadTrailingNewline = content.endsWith("\n");
   const lines = content.split("\n");
-  if (hadTrailingNewline) lines.pop();
-  const changed = ensureImageMcp(lines, Boolean(enabled), adapterPort, adapterHost);
-  const updated = lines.join("\n") + (hadTrailingNewline || lines.length ? "\n" : "");
+  const changed = ensureImageMcp(lines, Boolean(enabled), adapterPort, adapterHost, previousBaseUrl ?? config.openai_base_url);
+  if (!changed) return { content, changed: false };
+  const joined = lines.join("\n");
+  const updated = joined + ((hadTrailingNewline || lines.length) && !joined.endsWith("\n") ? "\n" : "");
   validateManagedConfigEdit(config, updated, [IMAGE_MANAGED_PATH]);
   return { content: updated, changed };
+}
+
+export function computeImageMcpCodexConfig(content, options = {}) {
+  return computeImageConfig(content, options);
 }
 
 export function ensureCodexConfig(adapterPort = 2026, {
@@ -217,26 +285,41 @@ export function ensureCodexConfig(adapterPort = 2026, {
 } = {}) {
   const baseUrl = `${adapterBaseUrl(host, adapterPort)}/v1`;
 
-  if (!fs.existsSync(filePath)) {
-    // Codex config does not exist yet; create the local proxy defaults.
-    atomicWriteFileIfChangedSync(filePath, initialCodexConfig(adapterPort, host, { imageProviderEnabled }));
-    console.log(status("ok", "Created ~/.codex/config.toml"));
-    return;
-  }
-
   let content;
   try {
     content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(fs.readFileSync(filePath));
   } catch (error) {
-    if (error?.code !== "ERR_ENCODING_INVALID_ENCODED_DATA") throw error;
-    throw new Error("Codex configuration is not valid UTF-8 TOML; no configuration changes were written");
+    if (error?.code === "ERR_ENCODING_INVALID_ENCODED_DATA") {
+      throw new Error("Codex configuration is not valid UTF-8 TOML; no configuration changes were written");
+    }
+    if (error?.code !== "ENOENT") throw error;
   }
-  const updated = computeUpdatedCodexConfig(content, adapterPort, host, { imageProviderEnabled });
-
-  if (!updated.changed) {
+  // Commit essential configuration independently. Image-only parse/edit/write
+  // failures must not roll it back or close an otherwise usable GPT adapter.
+  const core = content === undefined
+    ? { content: initialCodexConfig(adapterPort, host), changed: true }
+    : computeUpdatedCodexConfig(content, adapterPort, host);
+  if (!core.changed) {
     console.log(status("ok", `Codex already points to ${baseUrl}`));
-    return;
+  } else {
+    atomicWriteFileIfChangedSync(filePath, core.content);
+    console.log(status("ok", content === undefined ? "Created ~/.codex/config.toml" : `Configured Codex base URL: ${baseUrl}`));
   }
-  atomicWriteFileIfChangedSync(filePath, updated.content);
-  console.log(status("ok", `Configured Codex base URL: ${baseUrl}`));
+  // Disabled means no image maintenance, including no implicit removal of old
+  // or user-owned entries. Explicit disable-image owns the cleanup operation.
+  if (!imageProviderEnabled) return { imageMcpSkipped: false };
+  try {
+    const previousBaseUrl = content === undefined ? undefined : parseCodexToml(content).openai_base_url;
+    const image = computeImageConfig(core.content, { enabled: true, adapterPort, adapterHost: host }, previousBaseUrl);
+    if (image.changed) {
+      if (fs.readFileSync(filePath, "utf8") !== core.content) {
+        throw new ImageMcpConfigError("Codex config changed during image setup; the newer configuration was preserved");
+      }
+      atomicWriteFileIfChangedSync(filePath, image.content);
+    }
+    return { imageMcpSkipped: false };
+  } catch (error) {
+    console.warn(status("warn", `Image MCP setup was skipped: ${error.message}. Core proxy startup will continue.`));
+    return { imageMcpSkipped: true };
+  }
 }

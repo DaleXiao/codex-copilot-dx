@@ -213,6 +213,7 @@ export function createAdapterHandler(options = {}) {
         admission: acquireRequest,
         imagePressure,
         responseFailures,
+        imageGeneration: imageMcpHandler?.stats?.(),
         modelRegistry: codexModelRegistry,
         codexClient,
         codexModelRegistry,
@@ -237,7 +238,12 @@ export function createAdapterHandler(options = {}) {
     if (req.method === "GET" && pathname === "/v1/models") {
       const clientVersion = modelClientVersion(req.url);
       const abort = createRequestAbort(req, res);
-      abort.setTimeout(upstreamTimeoutMs);
+      // Keep live discovery and explicit auth failures authoritative, but do
+      // not make a usable cached picker wait the full inference timeout.
+      const modelTimeoutMs = isValidModelList(codexModelRegistry?.models)
+        ? Math.min(upstreamTimeoutMs, parsePositiveInteger(options.cachedModelsTimeoutMs, 1500))
+        : upstreamTimeoutMs;
+      abort.setTimeout(modelTimeoutMs);
       listModelsFn({ signal: abort.signal })
         .then(async ({ status, body }) => {
           abort.clearTimeout();

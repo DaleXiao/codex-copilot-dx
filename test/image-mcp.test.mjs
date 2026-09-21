@@ -248,9 +248,13 @@ test("image MCP shares concurrency across generation and editing and keeps a sou
   assert.equal(waitingCalls.length, 2);
   assert.match((await rpc(handler, 5, "tools/call", editArgs)).body.result.content[0].text, /busy/);
   assert.equal(calls, 4);
+  assert.equal(handler.stats().active, 2);
+  assert.equal(handler.stats().busy, 1);
   waiting = false;
   waitingCalls.forEach((resolve) => resolve());
   for (const result of await Promise.all([editing, generating])) assert.equal(result.body.result.isError, undefined);
+  assert.deepEqual(handler.stats(), { total: 5, succeeded: 3, failed: 2, busy: 1, cancelled: 0,
+    delivery_failures: 0, active: 0, max_concurrent: 2 });
 });
 
 test("image MCP: stale calls fail closed when the provider is disabled", async () => {
@@ -346,6 +350,9 @@ test("image MCP retains generated content if chat saving fails, without inventin
   assert.match(result.content[1].text, /chat-preview file could not be saved/);
   assert.doesNotMatch(result.content[1].text, /!\[/);
   assert.equal(fs.readFileSync(blocked, "utf8"), "keep");
+  assert.equal(handler.stats().delivery_failures, 1);
+  assert.equal(handler.stats().succeeded, 1);
+  assert.equal(handler.stats().failed, 0);
 });
 
 test("image MCP does not follow a chat-output directory symlink", async () => {
@@ -375,6 +382,30 @@ test("image MCP leaves the bundled helper's single output write to the client", 
   assert.equal(result.content[0].data, PNG);
   assert.equal(result._meta?.["ccdx/image_path"], undefined);
   assert.equal(fs.existsSync(directory), false);
+  assert.equal(handler.stats().cancelled, 0);
+  assert.equal(handler.stats().succeeded, 1);
+  assert.equal(handler.stats().active, 0);
+});
+
+test("adapter status reports image tool failures separately from HTTP 200 without probing or revealing provider state", async () => {
+  let reads = 0;
+  const imageHandler = createImageMcpHandler({
+    configLoader: () => { reads += 1; return { model: "fixture", api_key: "fixture-secret" }; },
+    generateImageFn: async () => { throw new Error("fixture error"); },
+  });
+  const app = createAdapterHandler({ imageMcpHandler: imageHandler });
+  const called = await rpc(app, 1, "tools/call", { name: "generate_image", arguments: { prompt: "fixture-private" } });
+  assert.equal(called.status, 200);
+  assert.equal(called.body.result.isError, true);
+  let snapshot;
+  const res = new EventEmitter();
+  Object.assign(res, { setHeader() {}, writeHead() {}, end(text) { snapshot = JSON.parse(text); } });
+  await app({ method: "GET", url: "/_ccdx/status", socket: { remoteAddress: "127.0.0.1" } }, res);
+  assert.equal(reads, 1, "status must not read provider config");
+  assert.equal(snapshot.image_generation.failed, 1);
+  assert.equal(snapshot.requests.by_route.image_mcp.status_2xx, 1);
+  assert.equal(snapshot.requests.by_route.not_found.total, 0);
+  assert.doesNotMatch(JSON.stringify(snapshot), /fixture-secret|fixture-private|fixture error/);
 });
 
 test("image MCP preserves JPEG and WebP bytes and uses their matching file extensions", async () => {
@@ -404,4 +435,7 @@ test("image MCP does not save a cancelled delivery or dispatch another image req
   assert.equal(calls, 1);
   assert.equal(result.body.result._meta?.["ccdx/image_path"], undefined);
   assert.equal(fs.existsSync(directory), false);
+  assert.equal(handler.stats().cancelled, 1);
+  assert.equal(handler.stats().succeeded, 0);
+  assert.equal(handler.stats().active, 0);
 });

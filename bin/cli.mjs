@@ -248,6 +248,7 @@ if (CLI.command === "doctor") {
     online: CLI.online,
     compat: CLI.compat,
   });
+  await LOGGING.cleanup();
   process.exit(checks.some((check) => check.kind === "err") ? 1 : 0);
 }
 
@@ -270,7 +271,10 @@ async function printUpdateNotice() {
 try {
   assertSafeAdapterHost(ADAPTER_HOST, process.env);
   void runInBackground(printUpdateNotice);
-  if (await reuseRunningAdapterIfAvailable()) process.exit(0);
+  if (await reuseRunningAdapterIfAvailable()) {
+    await LOGGING.cleanup();
+    process.exit(0);
+  }
 
   // Ensure GitHub login, using device flow if no token exists.
   await ensureAuth();
@@ -347,7 +351,7 @@ try {
       exitCode = 1;
       console.error(status("err", `Shutdown failed: ${e.message}`));
     } finally {
-      LOGGING.cleanup();
+      await LOGGING.cleanup();
       process.exit(exitCode);
     }
   };
@@ -357,6 +361,6 @@ try {
   console.error(status("err", e.message));
   await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs }).catch(() => {});
   await flushUsageWrites();
-  LOGGING.cleanup();
+  await LOGGING.cleanup();
   process.exit(1);
 }

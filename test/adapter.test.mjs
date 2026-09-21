@@ -3319,6 +3319,37 @@ test("HTTP models route updates and falls back to last-known-good model metadata
   assert.deepEqual(JSON.parse(transientFallback.text), live);
 });
 
+test("cached model discovery has a short deadline without changing uncached or auth-error behavior", async () => {
+  let aborted = false;
+  const started = Date.now();
+  const result = await invokeAdapter({
+    modelRegistry: { models: { data: [{ id: "gpt-cached" }] } },
+    upstreamTimeoutMs: 5000, cachedModelsTimeoutMs: 20,
+    listModelsFn: ({ signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener("abort", () => { aborted = true; reject(signal.reason); }, { once: true });
+    }),
+  }, { method: "GET", url: "/v1/models" });
+  assert.equal(aborted, true);
+  assert.equal(result.status, 200);
+  assert.equal(result.headers["X-CCDX-Model-Source"], "last-known-good");
+  assert.ok(Date.now() - started < 2000);
+  for (const status of [401, 403]) {
+    const failure = await invokeAdapter({
+      modelRegistry: { models: { data: [{ id: "gpt-cached" }] } }, cachedModelsTimeoutMs: 20,
+      listModelsFn: async () => ({ status, body: JSON.stringify({ error: "unauthorized" }) }),
+    }, { method: "GET", url: "/v1/models" });
+    assert.equal(failure.status, status);
+    assert.equal(failure.headers["X-CCDX-Model-Source"], undefined);
+  }
+  const uncached = await invokeAdapter({ cachedModelsTimeoutMs: 1, upstreamTimeoutMs: 5000,
+    listModelsFn: async () => {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return { status: 200, body: JSON.stringify({ data: [{ id: "gpt-live" }] }) };
+    },
+  }, { method: "GET", url: "/v1/models" });
+  assert.equal(uncached.status, 200);
+});
+
 test("HTTP models route adds the complete Codex catalog only for versioned Codex clients", async () => {
   const live = { object: "list", data: [{
     id: "gpt-6-astra",

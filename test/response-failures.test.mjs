@@ -36,3 +36,18 @@ test("response failure diagnostics retain a bounded, redacted runtime history", 
   assert.equal(details.upstream_request_id, "request-123");
   assert.match(formatResponseFailureLog(details), /retry=encrypted-replay-rejected/);
 });
+
+test("failure diagnostics redact short credential forms and labelled upstream input echoes", () => {
+  for (const message of [
+    'Bearer fixture-private-token', 'api_key="fixture-private-key"',
+    `ghp_${'A'.repeat(36)}`, 'prompt="fixture-private-prompt"', 'input=fixture-private-input',
+  ]) {
+    const details = responseFailureDetails({ type: "response.failed", response: {
+      id: "resp_fixture", error: { code: "invalid_request", message },
+    } });
+    assert.match(details.message, /redacted/);
+    assert.doesNotMatch(JSON.stringify(details), /fixture-private|ghp_A/);
+    assert.equal(details.code, "invalid_request");
+    assert.equal(details.response_id, "resp_fixture");
+  }
+});

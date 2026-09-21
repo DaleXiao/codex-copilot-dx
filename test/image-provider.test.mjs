@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter, getEventListeners } from "node:events";
 import https from "node:https";
+import dns from "node:dns/promises";
 import { test } from "node:test";
 import { downloadPublicImage, generateImage, IMAGE_INPUT_MAX_BYTES, supportsImageEditing } from "../src/image-provider.mjs";
 
@@ -11,6 +12,30 @@ function png(width = 1024, height = 1024) {
   bytes.writeUInt32BE(height, 20);
   return bytes;
 }
+
+test("image download blocks equivalent private IPv6 forms before HTTPS dispatch", async t => {
+  let requests = 0;
+  t.mock.method(https, "get", () => { requests += 1; throw new Error("OFFLINE_PUBLIC_DISPATCH"); });
+  for (const address of ["::1", "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1", "::ffff:7f00:1",
+    "0:0:0:0:0:ffff:7f00:1", "::ffff:a00:1", "::ffff:c0a8:101", "2001:0db8::1", "fc00::1", "fe80::1"]) {
+    await assert.rejects(downloadPublicImage("https://fixture.invalid/image.png", {
+      lookup: () => dns.lookup(address, { all: true, verbatim: true }),
+    }), error => error.code === "ccdx_image_url_unsafe", address);
+  }
+  assert.equal(requests, 0);
+  for (const address of ["2606:4700:4700::1111", "::ffff:808:808", "8.8.8.8"]) {
+    await assert.rejects(downloadPublicImage("https://fixture.invalid/image.png", {
+      lookup: () => dns.lookup(address, { all: true, verbatim: true }),
+    }), /OFFLINE_PUBLIC_DISPATCH/);
+  }
+  assert.equal(requests, 3);
+});
+
+test("literal public IPv6 image URLs resolve without brackets and private literals fail closed", async t => {
+  t.mock.method(https, "get", () => { throw new Error("OFFLINE_PUBLIC_DISPATCH"); });
+  await assert.rejects(downloadPublicImage("https://[2606:4700:4700::1111]/image.png"), /OFFLINE_PUBLIC_DISPATCH/);
+  await assert.rejects(downloadPublicImage("https://[::ffff:127.0.0.1]/image.png"), error => error.code === "ccdx_image_url_unsafe");
+});
 
 test("image provider: adapts qwen messages and downloads its generated URL", async () => {
   let body;

@@ -179,11 +179,16 @@ function publicAddress(address) {
   const family = net.isIP(address);
   if (family === 4) return ipv4Public(address);
   if (family !== 6) return false;
-  const lower = address.toLowerCase();
+  let lower;
+  try { lower = new URL(`https://[${address}]/`).hostname.slice(1, -1); }
+  catch { return false; }
   if (lower === "::" || lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd")
     || /^fe[89ab]/.test(lower) || lower.startsWith("ff") || lower.startsWith("2001:db8:")) return false;
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
-  return mapped ? ipv4Public(mapped[1]) : true;
+  const mapped = /^::ffff:([a-f0-9]{1,4}):([a-f0-9]{1,4})$/.exec(lower);
+  if (!mapped) return true;
+  const high = Number.parseInt(mapped[1], 16);
+  const low = Number.parseInt(mapped[2], 16);
+  return ipv4Public([high >> 8, high & 255, low >> 8, low & 255].join("."));
 }
 
 export async function downloadPublicImage(urlValue, {
@@ -217,7 +222,8 @@ export async function downloadPublicImage(urlValue, {
     if (signal?.aborted) { onAbort(); return; }
     signal?.addEventListener("abort", onAbort, { once: true });
     // DNS and transfer share one deadline; a late lookup cannot start a cancelled download.
-    Promise.resolve().then(() => settled ? undefined : lookup(url.hostname, { all: true, verbatim: true })).then((addresses) => {
+    const hostname = url.hostname.replace(/^\[|\]$/g, "");
+    Promise.resolve().then(() => settled ? undefined : lookup(hostname, { all: true, verbatim: true })).then((addresses) => {
       if (settled) return;
       if (!Array.isArray(addresses) || !addresses.length || addresses.some(({ address }) => !publicAddress(address))) {
         finish(providerError("Image API returned a non-public image URL", "ccdx_image_url_unsafe"));

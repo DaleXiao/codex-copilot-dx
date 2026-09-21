@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { proxyCopilotResponses } from "../src/responses-proxy.mjs";
 import { RUNTIME_DEFAULTS } from "../src/runtime-config.mjs";
+import { createRequestAbort } from "../src/http-transport.mjs";
 
 function message(id, text = "", status = "in_progress") {
   return {
@@ -36,7 +37,7 @@ function parseEvents(text) {
   });
 }
 
-function startProxy(chunks, { backpressure = false } = {}) {
+function startProxy(chunks, { backpressure = false, idleTimeoutMs } = {}) {
   let pulls = 0;
   let cancelled = false;
   const body = new ReadableStream({
@@ -55,6 +56,7 @@ function startProxy(chunks, { backpressure = false } = {}) {
   res.writableEnded = false;
   res.headersSent = false;
   res.writeHead = () => { res.headersSent = true; };
+  res.destroy = () => { res.destroyed = true; res.emit("close"); };
   res.write = (chunk) => {
     writes.push(chunk);
     snapshots.push(Buffer.from(chunk));
@@ -64,12 +66,13 @@ function startProxy(chunks, { backpressure = false } = {}) {
     if (chunk !== undefined) res.write(chunk);
     res.writableEnded = true;
   };
+  const abort = idleTimeoutMs ? createRequestAbort(new EventEmitter(), res) : null;
   const pending = proxyCopilotResponses({
     body: { model: "gpt-6-astra", stream: true, input: [] },
     surface: "responses",
   }, {}, res, async () => new Response(body, {
     headers: { "Content-Type": "text/event-stream" },
-  }));
+  }), abort ? { abort, signal: abort.signal, streamIdleTimeoutMs: idleTimeoutMs } : {}).finally(() => abort?.cleanup());
   return {
     pending,
     res,
@@ -81,6 +84,22 @@ function startProxy(chunks, { backpressure = false } = {}) {
     text: () => Buffer.concat(writes).toString("utf8"),
   };
 }
+
+test("native stream idle timeout releases a backpressured client even without drain or close", async () => {
+  const run = startProxy([Buffer.from(frame({ type: "response.output_text.delta", delta: "fixture" }))], {
+    backpressure: true, idleTimeoutMs: 20,
+  });
+  let timer;
+  try {
+    const result = await Promise.race([run.pending,
+      new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error("stream did not settle")), 1000); }),
+    ]);
+    assert.equal(result.successful, false);
+    assert.equal(run.res.destroyed, true);
+    assert.equal(run.cancelled(), true);
+    for (const event of ["drain", "close", "error"]) assert.equal(run.res.listenerCount(event), 0);
+  } finally { clearTimeout(timer); run.res.destroy(); await run.pending; }
+});
 
 test("native message transport preserves stable bytes across UTF-8, CRLF and multi-data fragments", async () => {
   const initial = message("message_stable");

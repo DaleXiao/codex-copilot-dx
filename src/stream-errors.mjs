@@ -11,6 +11,10 @@ export async function endStreamWithError(res, error, abort) {
   markStreamFailure();
   if (res.destroyed || res.writableEnded) return;
   const data = streamErrorData(error, abort);
-  await writeOrDrain(res, `event: error\ndata: ${JSON.stringify(data)}\n\n`).catch(() => false);
+  // Allow a final error frame after an upstream timeout, but never wait forever
+  // for a client that has stopped reading (including protocol-error paths).
+  await writeOrDrain(res, `event: error\ndata: ${JSON.stringify(data)}\n\n`, {
+    signal: AbortSignal.timeout(1000),
+  }).catch(() => false);
   if (!res.destroyed && !res.writableEnded) res.end();
 }

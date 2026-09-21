@@ -78,6 +78,7 @@ test("request metrics use fixed Codex route buckets and complete exactly once", 
     "responses",
     "responses_compact",
     "models",
+    "image_mcp",
     "not_found",
   ]);
 });
@@ -86,9 +87,19 @@ test("route classification recognizes only supported Codex routes", () => {
   assert.equal(classifyAdapterRoute("POST", "/v1/responses"), "responses");
   assert.equal(classifyAdapterRoute("POST", "/v1/responses/compact"), "responses_compact");
   assert.equal(classifyAdapterRoute("GET", "/v1/models"), "models");
+  assert.equal(classifyAdapterRoute("POST", "/mcp/image"), "image_mcp");
   assert.equal(classifyAdapterRoute("POST", "/v1/messages"), "not_found");
   assert.equal(classifyAdapterRoute("GET", "/pm-ccdx/models"), "not_found");
   assert.equal(classifyAdapterRoute("GET", "/other"), "not_found");
+});
+
+test("unused image status stays uninitialized and contains only local logging counters", async () => {
+  const result = await invoke(createAdapterHandler(), { url: ADAPTER_STATUS_PATH });
+  const payload = JSON.parse(result.body);
+  assert.equal(payload.image_generation, null);
+  assert.equal(payload.requests.by_route.image_mcp.total, 0);
+  assert.equal(payload.logging.debug.enabled, false);
+  assert.equal(payload.logging.usage.pending_records, 0);
 });
 
 test("loopback checks do not trust non-loopback or malformed addresses", () => {

@@ -20,6 +20,63 @@ function providerFetch(url) {
 
 const offlineProbe = async () => new Response(null, { status: 404 });
 
+test("image setup merges edits made during prompts and skips unchanged config replacements", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-image-concurrent-"));
+  const codexPath = path.join(home, ".codex", "config.toml");
+  fs.mkdirSync(path.dirname(codexPath), { recursive: true });
+  fs.writeFileSync(codexPath, 'model = "gpt-5.5"\n');
+  const options = { action: "enable", home, env: {}, codexPath, output: capture(),
+    fetchImpl: providerFetch, probeFetchImpl: offlineProbe, promptSecret: async () => "fixture-key" };
+  try {
+    await runImageCommand({ ...options, prompt: async () => {
+      fs.writeFileSync(codexPath, 'model = "gpt-6-astra"\n# edited while prompting\n');
+      return "https://images.example/v1";
+    } });
+    assert.match(fs.readFileSync(codexPath, "utf8"), /gpt-6-astra/);
+    assert.match(fs.readFileSync(codexPath, "utf8"), /edited while prompting/);
+    const before = fs.statSync(codexPath);
+    const providerBefore = fs.statSync(imageProviderConfigPath({ home, env: {} }));
+    const result = await runImageCommand({ ...options, prompt: async () => "", promptSecret: async () => "" });
+    assert.equal(result.codexChanged, false);
+    assert.equal(fs.statSync(codexPath).ino, before.ino);
+    assert.equal(fs.statSync(codexPath).mtimeMs, before.mtimeMs);
+    assert.equal(fs.statSync(imageProviderConfigPath({ home, env: {} })).ino, providerBefore.ino);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test("image setup cannot forward an old key to a new origin after a blank answer", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-image-origin-"));
+  writeImageProviderConfig({ endpoint: "https://old.example/v1", api_key: "old-fixture-key", model: "qwen-image-3.0-pro", protocol: "qwen-messages" }, { home, env: {} });
+  let calls = 0;
+  try {
+    await assert.rejects(runImageCommand({ action: "enable", home, env: {}, output: capture(),
+      prompt: async () => "https://new.example/v1", promptSecret: async question => {
+        assert.match(question, /new origin/); return "";
+      }, fetchImpl: async () => { calls += 1; throw new Error("must not call"); },
+    }), /API key is required/);
+    assert.equal(calls, 0);
+    assert.equal(readImageProviderConfig({ home, env: {} }).api_key, "old-fixture-key");
+    assert.equal(fs.existsSync(path.join(home, ".codex", "skills")), false);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test("image setup preserves a conflicting MCP declaration added during validation", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-image-new-conflict-"));
+  const codexPath = path.join(home, ".codex", "config.toml");
+  fs.mkdirSync(path.dirname(codexPath), { recursive: true });
+  fs.writeFileSync(codexPath, 'model = "gpt-5.5"\n');
+  const external = '[mcp_servers.ccdx_image]\ncommand = "user-owned-command"\n';
+  try {
+    await assert.rejects(runImageCommand({ action: "enable", home, env: {}, codexPath, output: capture(),
+      prompt: async () => "https://images.example/v1", promptSecret: async () => "fixture-key",
+      fetchImpl: async url => { fs.writeFileSync(codexPath, external); return providerFetch(url); }, probeFetchImpl: offlineProbe,
+    }), /ccdx_image/);
+    assert.equal(fs.readFileSync(codexPath, "utf8"), external);
+    assert.equal(readImageProviderConfig({ home, env: {} }), null);
+    assert.equal(fs.existsSync(path.join(home, ".codex", "skills", "ccdx-image")), false);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
 test("image CLI: API key entry is hidden and restores terminal raw mode", async () => {
   const input = new PassThrough();
   input.isTTY = true;

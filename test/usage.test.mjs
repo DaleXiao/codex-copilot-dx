@@ -15,9 +15,49 @@ import {
   recordUsage,
   summarizeUsage,
   summarizeUsageLogs,
+  usageLoggingStats,
 } from "../src/usage.mjs";
 
 const usageWriterFixture = fileURLToPath(new URL("./fixtures/usage-writer.mjs", import.meta.url));
+
+test("usage queues bound queued and in-flight bytes/records, report drops, and recover", async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-usage-bound-"));
+  const oldPath = process.env.CCDX_USAGE_PATH;
+  process.env.CCDX_USAGE_PATH = path.join(dir, "usage.jsonl");
+  const warnings = [];
+  const originalError = console.error;
+  console.error = message => warnings.push(message);
+  const gate = Promise.withResolvers();
+  const originalAppend = fs.appendFile;
+  t.mock.method(fs, "appendFile", async (...args) => { await gate.promise; return originalAppend(...args); });
+  const before = usageLoggingStats().dropped_records;
+  const writes = [];
+  try {
+    writes.push(recordUsage({ model: "fixture", usage: { total_tokens: 1 } }));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    for (let index = 0; index < 5000; index += 1) writes.push(recordUsage({ model: "fixture", usage: { total_tokens: 1 } }));
+    const pressure = usageLoggingStats();
+    assert.equal(pressure.pending_records, pressure.max_records);
+    assert.ok(pressure.pending_bytes <= pressure.max_bytes);
+    assert.ok(pressure.dropped_records > before);
+    writes.push(recordUsage({ model: 'large fixture '.repeat(400000) }));
+    assert.ok(usageLoggingStats().pending_bytes <= pressure.max_bytes);
+    assert.equal(warnings.length, 1);
+    gate.resolve();
+    await Promise.all(writes);
+    assert.equal(usageLoggingStats().pending_records, 0);
+    assert.equal(usageLoggingStats().pending_bytes, 0);
+    await recordUsage({ model: "recovered", usage: { total_tokens: 1 } });
+    const records = await readUsageRecords(process.env.CCDX_USAGE_PATH);
+    assert.equal(records.length, pressure.max_records + 1);
+    assert.equal(records.at(-1).model, "recovered");
+  } finally {
+    gate.resolve(); await Promise.all(writes); console.error = originalError;
+    if (oldPath === undefined) delete process.env.CCDX_USAGE_PATH;
+    else process.env.CCDX_USAGE_PATH = oldPath;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
 
 function waitForChildMessage(child, expected) {
   return new Promise((resolve, reject) => {

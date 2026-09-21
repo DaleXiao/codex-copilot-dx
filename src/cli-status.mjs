@@ -158,6 +158,17 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
   if (imageHistory && typeof imageHistory === "object") {
     lines.push(status("info", `Visual history: ${count(imageHistory.active_recovery_trees)} recovery trees, ${count(imageHistory.adapted_requests)} adapted requests, ${count(imageHistory.historical_images_omitted)} older images omitted, ${count(imageHistory.timeouts_recorded)} timeouts`));
   }
+  if (data.image_generation) {
+    const generation = data.image_generation;
+    lines.push(status("info", `Image generation: ${count(generation.active)} active, ${count(generation.succeeded)} succeeded, ${count(generation.failed)} failed (${count(generation.busy)} busy), ${count(generation.cancelled)} cancelled, ${count(generation.delivery_failures)} delivery failures`));
+  }
+  if (data.logging) {
+    for (const [name, logging] of Object.entries(data.logging)) {
+      if (logging?.enabled === false) continue;
+      lines.push(status(logging.dropped_records || logging.write_failures ? "warn" : "info",
+        `${name === "usage" ? "Usage" : "Debug"} logging: ${count(logging.pending_records)} pending (${mebibytes(logging.pending_bytes)}), ${count(logging.dropped_records)} dropped, ${count(logging.write_failures)} write failures`));
+    }
+  }
   if (responseFailures && typeof responseFailures === "object") {
     lines.push(status("info", `Response failures: ${count(responseFailures.total)} observed, ${count(responseFailures.retried)} compatibility retries`));
     for (const failure of Array.isArray(responseFailures.recent) ? responseFailures.recent.slice(-3).reverse() : []) {

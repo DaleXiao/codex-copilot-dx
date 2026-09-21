@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { cliOutputFormat, cliOutputWidth, formatResponsiveCliTable, terminalCell } from "./cli-table.mjs";
-import { parseByteLimit, rotateFileIfNeededSync, rotatedFilePath } from "./file-rotation.mjs";
+import { appendRotatingLines, parseByteLimit, rotatedFilePath } from "./file-rotation.mjs";
 import { withFileLock } from "./lock.mjs";
 
 const DEFAULT_USAGE_PATH = path.join(os.homedir(), ".local", "share", "codex-copilot-dx", "usage.jsonl");
@@ -15,6 +15,17 @@ const USAGE_FLUSH_TIMEOUT_MS = 1_500;
 
 const pendingWrites = [];
 let writeDrain = null;
+const USAGE_QUEUE_MAX_RECORDS = 4096;
+const USAGE_QUEUE_MAX_BYTES = 4 * 1024 * 1024;
+let pendingRecords = 0;
+let pendingBytes = 0;
+let droppedRecords = 0;
+let writeFailures = 0;
+
+export function usageLoggingStats() {
+  return { pending_records: pendingRecords, pending_bytes: pendingBytes, dropped_records: droppedRecords,
+    write_failures: writeFailures, max_records: USAGE_QUEUE_MAX_RECORDS, max_bytes: USAGE_QUEUE_MAX_BYTES };
+}
 
 export function usageLogPath() {
   return process.env.CCDX_USAGE_PATH || DEFAULT_USAGE_PATH;
@@ -114,10 +125,7 @@ async function writeUsageBatch(batch) {
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
   await withFileLock(`${path.resolve(filePath)}.lock`, async () => {
     batch.push(...takePendingWrites(filePath, maxBytes));
-    for (const { line } of batch) {
-      rotateFileIfNeededSync(filePath, Buffer.byteLength(line), maxBytes);
-      await fs.promises.appendFile(filePath, line, { encoding: "utf8", mode: 0o600 });
-    }
+    await appendRotatingLines(filePath, batch.map(({ line }) => line), maxBytes);
   }, {
     timeoutMs: USAGE_WRITE_LOCK_TIMEOUT_MS,
     staleMs: USAGE_WRITE_LOCK_STALE_MS,
@@ -134,10 +142,15 @@ function scheduleUsageWriteDrain() {
       try {
         await writeUsageBatch(batch);
       } catch (error) {
+        writeFailures += 1;
         batch.push(...takePendingWrites(first.filePath, first.maxBytes));
         console.error(`codex-copilot-dx usage log write failed: ${error.message}`);
       } finally {
-        for (const entry of batch) entry.resolve();
+        for (const entry of batch) {
+          pendingRecords -= 1;
+          pendingBytes -= entry.bytes;
+          entry.resolve();
+        }
       }
     }
   }).finally(() => {
@@ -150,8 +163,16 @@ export function recordUsage(record) {
   if (!record || process.env.CCDX_DISABLE_USAGE === "1") return Promise.resolve();
   const filePath = usageLogPath();
   const line = `${JSON.stringify(record)}\n`;
+  const bytes = Buffer.byteLength(line);
+  if (pendingRecords >= USAGE_QUEUE_MAX_RECORDS || pendingBytes + bytes > USAGE_QUEUE_MAX_BYTES) {
+    droppedRecords += 1;
+    if (droppedRecords === 1) console.error("codex-copilot-dx usage queue is full; excess usage records are dropped, inference is unaffected (see ccdx status)");
+    return Promise.resolve();
+  }
+  pendingRecords += 1;
+  pendingBytes += bytes;
   const completed = new Promise((resolve) => {
-    pendingWrites.push({ filePath, line, maxBytes: usageLogMaxBytes(), resolve });
+    pendingWrites.push({ filePath, line, bytes, maxBytes: usageLogMaxBytes(), resolve });
   });
   scheduleUsageWriteDrain();
   return completed;

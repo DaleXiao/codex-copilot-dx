@@ -138,7 +138,8 @@ export function createImageMcpHandler({
   imageDirectory = path.join(os.homedir(), ".local", "share", "codex-copilot-dx", "images"),
 } = {}) {
   let active = 0;
-  return async function imageMcpHandler(req, res) {
+  const metrics = { total: 0, succeeded: 0, failed: 0, busy: 0, cancelled: 0, delivery_failures: 0 };
+  const handler = async function imageMcpHandler(req, res) {
     if (!isLoopbackAddress(req.socket?.remoteAddress) && !sameHostSocket(req.socket)) {
       writeJson(res, 403, jsonRpcError(null, -32001, "Image MCP is available only on this device"));
       return;
@@ -207,18 +208,23 @@ export function createImageMcpHandler({
       writeJson(res, 200, jsonRpcError(request.id, -32602, "Unknown image tool"));
       return;
     }
+    metrics.total += 1;
     const config = configLoader();
     if (!config) {
+      metrics.failed += 1;
       imageReferences.clear();
       reply({ content: [{ type: "text", text: "Image generation is disabled. Run ccdx enable-image first." }], isError: true });
       return;
     }
     const editing = request.params.name === EDIT_TOOL_NAME;
     if (editing && !supportsImageEditing(config)) {
+      metrics.failed += 1;
       reply({ content: [{ type: "text", text: "The configured image provider does not support CCDX editing. No edit was submitted." }], isError: true });
       return;
     }
     if (active >= maxConcurrent) {
+      metrics.busy += 1;
+      metrics.failed += 1;
       reply({ content: [{ type: "text", text: "Image generation is busy. Try again after the current request finishes." }], isError: true });
       return;
     }
@@ -234,6 +240,7 @@ export function createImageMcpHandler({
       const parameters = { prompt: args.prompt, size: args.size ?? source?.size ?? "1024x1024" };
       if (source) parameters.image = source.image;
       const image = await generateImageFn(config, parameters, { signal: abort.signal });
+      abort.signal.throwIfAborted();
       let imageId = null;
       if (supportsImageEditing(config)) {
         try { imageId = imageReferences.remember(config, { ...image, size: parameters.size }); } catch {}
@@ -250,9 +257,12 @@ export function createImageMcpHandler({
           saved = await saveChatImage(image, imageDirectory, abort.signal);
           delivery = `\nInclude this image Markdown in your final chat reply to show its thumbnail:\n${saved.markdown}\nTo display this same image again, reuse this Markdown; do not call generate_image or edit_image.`;
         } catch {
+          if (abort.signal.aborted) throw abort.signal.reason;
+          metrics.delivery_failures += 1;
           delivery = "\nThe image was generated, but its chat-preview file could not be saved. Image content is still returned. Do not claim it was displayed, invent a file path, or generate/edit again to retry delivery.";
         }
       }
+      abort.signal.throwIfAborted();
       reply({
         // Codex prioritizes structuredContent over image blocks. Keep IDs in metadata/text.
         ...(imageId || saved ? { _meta: { ...(imageId ? { "ccdx/image_id": imageId } : {}), ...(saved ? { "ccdx/image_path": saved.filePath } : {}) } } : {}),
@@ -261,7 +271,10 @@ export function createImageMcpHandler({
           { type: "text", text: `${editing ? "Edited" : "Generated"} ${image.width || ""}${image.width && image.height ? "×" : ""}${image.height || image.size} image with ${image.model}.${note}${delivery}` },
         ],
       });
+      metrics.succeeded += 1;
     } catch (error) {
+      if (abort.signal.aborted) metrics.cancelled += 1;
+      else metrics.failed += 1;
       if (!res.destroyed && !res.writableEnded) {
         reply({ content: [{ type: "text", text: safeToolError(error, config.api_key) }], isError: true });
       }
@@ -271,4 +284,7 @@ export function createImageMcpHandler({
       res.off?.("close", cancel);
     }
   };
+  // Status never reads credentials, loads image guidance, or probes a provider.
+  handler.stats = () => ({ ...metrics, active, max_concurrent: maxConcurrent });
+  return handler;
 }

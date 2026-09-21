@@ -28,6 +28,8 @@ Codex App requests a versioned, capability-rich model catalog that is different 
 
 CCDX exposes the GPT-6 Standard path and removes its unverified speed-tier metadata. It leaves the bundled reasoning-effort options unchanged, including Ultra when supplied by the installed catalog. GPT-5.6 Sol Fast follows the separate rule above. Versioned model discovery matches the bundled catalog to the client's `client_version`, caches it by application binary identity, and reloads it after an App update. If a matching usable catalog cannot be loaded, the versioned models request returns `503`; an unversioned request returns the Copilot-style list.
 
+`/v1/models` still attempts live discovery first. With a usable in-process catalog, it limits that upstream wait to 1.5 seconds (or a shorter configured upstream timeout) before falling back to last-known-good data. Without a catalog it retains the regular upstream timeout. Received HTTP `401`/`403` responses remain errors, not cached successes; fallback does not grant inference access. This does not change the explicitly live `ccdx models` command.
+
 ## Prerequisites
 
 - A GitHub account with Copilot access to the desired models
@@ -77,6 +79,8 @@ Normal startup and reuse of an existing adapter check `~/.codex/config.toml` onc
 | `[mcp_servers.ccdx_image]` | Added in a marked CCDX-owned block only after `ccdx enable-image`; removed by `ccdx disable-image` | Absent by default |
 
 The two token limits are fixed defaults, not detected model capabilities. Existing custom values are retained. Writes target the listed keys with format-preserving edits and atomic replacement; this is not a general TOML formatter. Quoted keys, quoted table headers, and explicit dotted shell-environment declarations are recognized; inline shell-environment tables are left intact. Startup and image configuration commands validate UTF-8/TOML and verify that unrelated settings retain their values before writing. An unsafe edit leaves the original file unchanged. Use `ccdx doctor config` to inspect parsed values and preview what this writer would do with the current file. No actual change means no file rewrite.
+
+Interactive image setup rereads the shared config after prompts and network validation, so unrelated changes made during setup are preserved. It checks the snapshot again before committing and rejects conflicting image declarations. Identical configuration bytes are not replaced; private file permissions may still be corrected. These checks reduce lost-update risks but are not a filesystem-wide transaction with other applications that do not share a lock.
 
 ## Version 0.7.0 migration
 
@@ -146,6 +150,8 @@ ccdx enable-image
 ```
 
 The command accepts an HTTPS base URL or a full `/images/generations` endpoint, then asks for an API key without echoing the key. A bare origin such as `https://api.example` expands to `/v1/images/generations`; `https://api.example/v1` expands to the same endpoint. Custom base paths are retained, and existing full endpoints remain unchanged. CCDX uses GET for the corresponding `/models` catalog and POST for image requests; there is no endpoint-search or automatic fallback. It asks for a numeric model selection only when multiple image models are available, then detects either the standard OpenAI Images request format or the supported `input.messages` format for the selected model only. Its single validation request omits the prompt and does not generate an image.
+
+An empty key answer retains the saved key only when the normalized endpoint has the same origin (scheme, host, and port). Changing origins requires explicitly entering a key before any provider request; the old key is never automatically sent to a new origin.
 
 The provider credential is stored in `~/.config/codex-copilot-dx/image-provider.json`, or under `XDG_CONFIG_HOME`, with mode `0600`. The API key is never written to `~/.codex/config.toml`; that file receives only a marked local MCP entry pointing to the running CCDX adapter with a 210-second tool timeout. Only after enabling, CCDX installs `ccdx-image` guidance under `~/.codex/skills`, with a self-contained Node helper. The concise `SKILL.md` keeps operation selection, safety, and final-image delivery rules; editing details and helper instructions live in references read only for those operations. Codex uses the MCP tool directly, including through deferred tool search; an already-open task without that tool can use the helper to call the same local service and display the saved image. Neither route requires Python, an OpenAI SDK, or copying credentials. Built-in skills and unrelated tools are not modified.
 
@@ -237,7 +243,9 @@ For the complete machine-readable status payload:
 curl -s http://127.0.0.1:2026/_ccdx/status | jq
 ```
 
-The status endpoint is restricted to the socket's real loopback address even when LAN binding is explicitly enabled. It reports fixed-size request counters, bounded TTFT/TPOT histograms, admission pressure, memory use, response-history size, image queue/cache and adaptive-history state, model-cache counts, token expiry state, and the ten most recent upstream `response.failed` diagnostics retained by the running process. Failure diagnostics include the event type, model, error code/message, response/request IDs when supplied upstream, and retry outcome; long opaque encrypted values are redacted. They are cleared when the adapter restarts. The endpoint never includes prompts, completions, tool arguments, image content, account names, or token values.
+The status endpoint is restricted to the socket's real loopback address even when LAN binding is explicitly enabled. It reports fixed-size request counters, bounded TTFT/TPOT histograms, admission pressure, memory use, response-history size, image queue/cache and adaptive-history state, model-cache counts, token expiry state, and the ten most recent upstream `response.failed` diagnostics retained by the running process. Failure diagnostics include the event type, model, error code/message, response/request IDs when supplied upstream, and retry outcome. Common credential forms, long opaque encrypted values, and explicitly labelled input/prompt/tool-content echoes are redacted. They are cleared when the adapter restarts. No request/response bodies, credential fields, or account profiles are copied into status. Arbitrary upstream prose cannot be guaranteed free of sensitive content; review diagnostics before sharing them.
+
+`image_mcp` has its own HTTP route counter. After the image handler has been used, `image_generation` separately reports active, succeeded, failed, busy, cancelled, and chat-file delivery-failure counts, including tool errors returned with HTTP 200. A delivery failure can accompany a successful generation; it never causes another generation. Before handler initialization this field is `null`, meaning not observed, not necessarily disabled. Status never initializes that handler, reads its provider credential, installs guidance, or probes the provider. Input-image optimization metrics remain separate. `logging` reports pending records/bytes, queue caps, overflow drops, and write failures for usage and enabled debug-file logging.
 
 `stream_performance.by_route` also reports `request_ttft_ms`, measured from adapter entry to the first observed output delta, including local preparation. The existing `ttft_ms` continues to start at upstream dispatch. Neither timestamp means the client has drained or displayed the output. `preparation_ms` contains bounded histograms for admission (including history reservations), body reading/decompression/JSON parsing, history materialization/compact preparation, image optimization, and request serialization. Each sample measures one operation, including failed operations; retries can add samples. These are diagnostic intervals rather than a complete breakdown of request time: body reading includes internal decoded-body admission waits; authentication, routing, and other preparation are not individually timed. Non-streaming requests contribute preparation samples without inventing a first-token measurement.
 
@@ -269,7 +277,7 @@ Recovery first tries compatible local credentials and starts Device Flow only wh
 - The GitHub OAuth credential is stored locally at `~/.local/share/copilot-api/github_token`. Short-lived Copilot service tokens remain in process memory and are refreshed as needed.
 - The optional image API credential is stored separately with mode `0600` only after `ccdx enable-image`; it is never placed in Codex configuration or diagnostic output.
 - Runtime status and usage records retain metadata rather than request/response content. Diagnostic logging records status and error messages; it is not a general redaction layer for arbitrary error text. See Debug logging before sharing logs.
-- Request and response bodies are bounded. Queues, history, image work, SSE parsing, retries, and shutdown all have explicit resource or time limits.
+- Request/response bodies, request-admission queues, retained history, image work, SSE buffers, log queues, retries, and shutdown have explicit limits. These component limits are not a single process-wide memory ceiling; completed image files are persistent user artifacts, not an automatically evicted cache.
 
 ## Configuration
 
@@ -333,9 +341,11 @@ ccdx usage
 
 The summary covers the current log and its single rotated backup, not an unbounded lifetime history. It reports recorded responses and per-model input, cache-read, output, and total token metadata.
 
+Usage writes are asynchronous and batched under the existing cross-process rotation lock. Pending and in-flight records share a 4096-record / 4 MiB ceiling. If either ceiling is reached, new excess records are dropped with a warning and a status counter; inference does not wait or retry. Normal records and per-record rotation boundaries are unchanged. The bounded shutdown flush remains 1.5 seconds; disk failures and shutdown deadlines can prevent persistence, so usage is diagnostic rather than a billing ledger.
+
 ## Debug logging
 
-Set `CCDX_LOG_PATH=1` to mirror terminal logs to `~/.local/share/codex-copilot-dx/debug.log`, or provide a custom path. Add `CCDX_LOG_LEVEL=debug` for upstream attempts, retry causes, status codes, and timings. The adapter does not deliberately dump request/response bodies or authorization headers. The log mirror writes console text verbatim, including diagnostic/error messages that can originate in external components, so review logs before sharing them. `ccdx doctor config` bypasses file logging entirely.
+Set `CCDX_LOG_PATH=1` to mirror terminal logs to `~/.local/share/codex-copilot-dx/debug.log`, or provide a custom path. Add `CCDX_LOG_LEVEL=debug` for upstream attempts, retry causes, status codes, and timings. The adapter does not deliberately dump request/response bodies or authorization headers. File diagnostics redact common credential forms and labelled content echoes, but this cannot identify every secret in arbitrary external prose; review logs before sharing them. File writes are asynchronous and batched with a 4096-record / 2 MiB pending-and-in-flight ceiling. Overflow drops excess file records with one warning and a status counter; terminal output continues. CLI exit paths flush for at most 1.5 seconds. `ccdx doctor config` bypasses file logging entirely.
 
 ## Large histories and images
 
@@ -358,6 +368,8 @@ For `/v1/responses/compact`, CCDX sends one terminal `compaction_trigger`, valid
 Changing the model or transport of a continuation can require removing incompatible encrypted history from the forwarded request. A specific upstream encrypted-state verification failure can also trigger one sanitized retry, including when a nominally successful HTTP response ends with `response.failed`. CCDX withholds only the pre-output prelude of an encrypted continuation while evaluating that terminal event; it never retries after visible model output, so it cannot duplicate an already-started answer. Unrelated failures pass through unchanged. CCDX does not decrypt that state locally.
 
 After the stream handshake succeeds, stream liveness uses the idle timeout rather than the expired handshake deadline. Eligible HTTP-200 failure recovery acquires a bounded preparation budget and history admission before rebuilding its payload, then releases those reservations when the retry opens upstream or fails. Normal streams still release preparation admission after their response headers arrive.
+
+Downstream backpressure waits also observe cancellation and the stream deadline. A client that stops reading cannot retain the pending stream indefinitely after timeout; CCDX closes that connection without retrying its request. Final error-frame delivery has a separate one-second maximum drain wait.
 
 Successful streaming responses are accepted only when the upstream body is SSE and reaches its protocol terminal event. Unexpected EOF becomes a protocol-native stream error, and repeated blank tool-argument deltas are stopped per tool call. Allowlisted rate-limit, retry, model, trace, and upstream request-ID metadata are forwarded; cookies, authorization, body-length, and encoding headers are not.
 

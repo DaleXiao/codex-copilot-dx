@@ -2,6 +2,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 
+test("status distinguishes image outcomes from input optimization and reports logging pressure", () => {
+  const output = formatAdapterStatus({ baseUrl: "http://127.0.0.1:2026", data: statusPayload({
+    image_generation: { active: 1, succeeded: 4, failed: 2, busy: 1, cancelled: 3, delivery_failures: 1 },
+    logging: { usage: { pending_records: 2, pending_bytes: 100, dropped_records: 3, write_failures: 1 }, debug: { enabled: false } },
+  }) });
+  assert.match(output, /Image generation: 1 active, 4 succeeded, 2 failed \(1 busy\), 3 cancelled, 1 delivery failures/);
+  assert.match(output, /\[WARN\] Usage logging: 2 pending.*3 dropped, 1 write failures/);
+  assert.doesNotMatch(output, /Debug logging/);
+});
+
 function statusPayload(overrides = {}) {
   return {
     ok: true,

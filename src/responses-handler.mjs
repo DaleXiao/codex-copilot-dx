@@ -319,7 +319,7 @@ export function createResponsesHandler(options) {
               "Cache-Control": "no-cache",
               Connection: "keep-alive",
             });
-            const written = await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+            const written = await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`, { signal: abort.signal });
             if (!written) return false;
             if (event === "response.completed") {
               rememberResponseHistory(prepared, data.response);

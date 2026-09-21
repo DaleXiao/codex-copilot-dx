@@ -5,6 +5,8 @@ import { imageOptimizationStats } from "./image-optimization.mjs";
 import { responseHistoryStats } from "./response-history.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
 import { profileRouting } from "./profile-routing.mjs";
+import { usageLoggingStats } from "./usage.mjs";
+import { debugLoggingStats } from "./log.mjs";
 
 export { ADAPTER_STATUS_PATH };
 const OBSERVABILITY_RUNTIME_CONFIG = loadRuntimeConfig();
@@ -13,6 +15,7 @@ const ROUTE_NAMES = Object.freeze([
   "responses",
   "responses_compact",
   "models",
+  "image_mcp",
   "not_found",
 ]);
 
@@ -94,6 +97,7 @@ export function classifyAdapterRoute(method, pathname) {
   if (method === "POST" && pathname === "/v1/responses") return "responses";
   if (method === "POST" && pathname === "/v1/responses/compact") return "responses_compact";
   if (method === "GET" && pathname === "/v1/models") return "models";
+  if (pathname === "/mcp/image") return "image_mcp";
   return "not_found";
 }
 
@@ -155,6 +159,7 @@ export function runtimeStatusPayload({
   admission,
   imagePressure,
   responseFailures,
+  imageGeneration,
   modelRegistry,
   codexClient,
   codexModelRegistry,
@@ -177,6 +182,8 @@ export function runtimeStatusPayload({
     admission: admission?.diagnostics?.() || admission?.stats?.() || null,
     response_history: responseHistoryStats(),
     image_optimization: imageOptimizationStats(),
+    image_generation: imageGeneration || null,
+    logging: { usage: usageLoggingStats(), debug: debugLoggingStats() },
     image_history_pressure: imagePressure?.snapshot?.() || null,
     response_failures: responseFailures?.snapshot?.() || null,
     copilot: codexRuntime,

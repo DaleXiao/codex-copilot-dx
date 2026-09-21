@@ -3,6 +3,7 @@ import * as zlib from "node:zlib";
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
 import { status } from "./status.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
+import { redactDiagnosticText } from "./diagnostic-text.mjs";
 
 const COMPRESSED_BODY_WEIGHT_MULTIPLIER = 4;
 const gunzipAsync = promisify(zlib.gunzip);
@@ -730,21 +731,29 @@ export function sendUpstreamError(res, response, text) {
   res.end(text || JSON.stringify({ error: "Upstream request failed" }));
 }
 
-export function writeOrDrain(res, chunk) {
+export function writeOrDrain(res, chunk, { signal } = {}) {
   if (res.destroyed || res.writableEnded) return Promise.resolve(false);
+  if (signal?.aborted) {
+    res.destroy?.();
+    return Promise.resolve(false);
+  }
   if (res.write(chunk)) return Promise.resolve(true);
   return new Promise((resolve, reject) => {
     const cleanup = () => {
       res.off("drain", onDrain);
       res.off("error", onError);
       res.off("close", onClose);
+      signal?.removeEventListener("abort", onAbort);
     };
     const onDrain = () => { cleanup(); resolve(true); };
     const onClose = () => { cleanup(); resolve(false); };
     const onError = (err) => { cleanup(); reject(err); };
+    const onAbort = () => { cleanup(); res.destroy?.(); resolve(false); };
     res.once("drain", onDrain);
     res.once("close", onClose);
     res.once("error", onError);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 
@@ -800,7 +809,7 @@ export function createRequestAbort(req, res) {
 
 export function logRequestFailure(label, err, abort) {
   if (!isAbortLikeError(err)) {
-    console.error(status("err", `${label} request failed: ${err.message}`));
+    console.error(status("err", `${label} request failed: ${redactDiagnosticText(err.message)}`));
     return;
   }
 

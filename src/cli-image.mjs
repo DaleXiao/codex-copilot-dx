@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { createInterface } from "node:readline/promises";
-import { atomicWriteFilePairSync } from "./atomic-file.mjs";
+import { atomicWriteFileIfChangedSync, atomicWriteFilePairSync } from "./atomic-file.mjs";
 import { terminalCell } from "./cli-table.mjs";
 import { computeImageMcpCodexConfig } from "./config.mjs";
 import { probeImageTool } from "./image-readiness.mjs";
@@ -11,6 +11,7 @@ import { updateImageSkill } from "./image-skill.mjs";
 import {
   imageProviderConfigPath,
   inspectImageProvider,
+  normalizeImageEndpoint,
   readImageProviderConfig,
   validateImageProviderConfig,
 } from "./image-provider-config.mjs";
@@ -110,12 +111,15 @@ function enableImageProvider({ providerConfig, providerPath, codexPath, codexCon
   const normalized = validateImageProviderConfig(providerConfig, { filePath: providerPath });
   const skill = updateImageSkill({ enabled: true, codexPath, adapterPort, adapterHost });
   try {
+    if (fileContent(codexPath) !== codexContent) {
+      throw new Error("Codex configuration changed during image setup; retry to preserve the newer settings");
+    }
     atomicWriteFilePairSync(
       codexPath,
       codex.content,
       providerPath,
       `${JSON.stringify(normalized, null, 2)}\n`,
-      { mode: 0o600 },
+      { mode: 0o600, writeFile: atomicWriteFileIfChangedSync },
     );
   } catch (error) {
     skill.rollback();
@@ -134,7 +138,12 @@ function disableImageProvider({ providerPath, codexPath, codexContent, adapterPo
   const skill = updateImageSkill({ enabled: false, codexPath, adapterPort, adapterHost });
   try {
     if (fs.existsSync(codexPath)) {
-      atomicWriteFilePairSync(codexPath, codex.content, providerPath, null, { mode: 0o600 });
+      if (fileContent(codexPath) !== codexContent) {
+        throw new Error("Codex configuration changed during image cleanup; retry to preserve the newer settings");
+      }
+      atomicWriteFilePairSync(codexPath, codex.content, providerPath, null, {
+        mode: 0o600, writeFile: atomicWriteFileIfChangedSync,
+      });
     } else if (providerExists) {
       fs.unlinkSync(providerPath);
     }
@@ -203,10 +212,11 @@ export async function runImageCommand({
   output.write(`${commandName} enable-image\n`);
   output.write("Enter an HTTPS base URL (for example, https://api.example/v1) or a full /images/generations endpoint.\n");
   const endpointAnswer = String(await ask(`API base URL or endpoint${current ? ` [${current.endpoint}]` : ""}: `) || "").trim();
-  const endpoint = endpointAnswer || current?.endpoint;
-  if (!endpoint) throw new Error("Image API base URL or endpoint is required");
-  const keyAnswer = String(await askSecret(`API key${current ? " [Enter to keep current]" : ""}: `) || "").trim();
-  const apiKey = keyAnswer || current?.api_key;
+  if (!endpointAnswer && !current?.endpoint) throw new Error("Image API base URL or endpoint is required");
+  const endpoint = normalizeImageEndpoint(endpointAnswer || current.endpoint);
+  const sameOrigin = current && new URL(endpoint).origin === new URL(current.endpoint).origin;
+  const keyAnswer = String(await askSecret(`API key${sameOrigin ? " [Enter to keep current]" : current ? " [new origin; enter a key]" : ""}: `) || "").trim();
+  const apiKey = keyAnswer || (sameOrigin ? current.api_key : undefined);
   if (!apiKey) throw new Error("Image API key is required");
 
   output.write("Checking image API...\n");
@@ -227,7 +237,9 @@ export async function runImageCommand({
     },
     providerPath,
     codexPath,
-    codexContent,
+    // Prompts and provider validation may take minutes. Merge into the latest
+    // shared file rather than replacing edits made while we were waiting.
+    codexContent: fileContent(codexPath),
     adapterPort,
     adapterHost,
   });

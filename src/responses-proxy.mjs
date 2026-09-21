@@ -403,13 +403,13 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       const body = prelude.length === 1 ? prelude[0] : Buffer.concat(prelude, preludeBytes);
       prelude.length = 0;
       preludeBytes = 0;
-      return writeOrDrain(res, body);
+      return writeOrDrain(res, body, { signal: options.signal });
     };
     const forwardFrame = async (frame) => {
       if (!frame) return true;
       if (!holdPrelude) {
         writeHeaders();
-        return writeOrDrain(res, frame);
+        return writeOrDrain(res, frame, { signal: options.signal });
       }
       prelude.push(frame);
       preludeBytes += frame.byteLength;

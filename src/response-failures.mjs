@@ -1,17 +1,16 @@
 import { terminalCell } from "./cli-table.mjs";
+import { redactDiagnosticText } from "./diagnostic-text.mjs";
 
 const DEFAULT_RECENT_FAILURES = 10;
 
 function safeIdentifier(value, fallback = "unknown") {
-  const text = terminalCell(value, { fallback });
+  const text = redactDiagnosticText(terminalCell(value, { fallback }));
   return text.slice(0, 200);
 }
 
 function safeFailureMessage(value) {
   let text = terminalCell(value, { fallback: "Response failed without an error message" });
-  text = text
-    .replace(/(encrypted(?: function output)? content\s+)[A-Za-z0-9+/_=-]{24,}/gi, "$1[redacted]")
-    .replace(/\b[A-Za-z0-9+/_=-]{96,}\b/g, "[redacted]");
+  text = redactDiagnosticText(text);
   return text.slice(0, 500);
 }
 

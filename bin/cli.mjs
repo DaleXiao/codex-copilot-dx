@@ -16,13 +16,14 @@ import { cliCommandName, cliHelp, parseAdapterAddressOptions, parseAdapterProbeO
 import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
 import { runAutoReviewModelCommand } from "../src/auto-review-model.mjs";
-import { autoReviewModelPreference, terminalAnimationPreference } from "../src/user-settings.mjs";
+import { autoReviewModelPreference, responseHistoryLimitPreference, terminalAnimationPreference } from "../src/user-settings.mjs";
 import { fetchLiveCopilotModels, formatLiveCopilotModels } from "../src/cli-models.mjs";
 import { runAuthCommand } from "../src/cli-auth.mjs";
 import { createProfileRuntime } from "../src/profile-runtime.mjs";
 import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
 import { createCodexModelCatalog } from "../src/codex-model-catalog.mjs";
 import { readImageProviderConfig } from "../src/image-provider-config.mjs";
+import { setResponseHistoryMaxBytes } from "../src/response-history.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
 const CLI_NAME = cliCommandName();
@@ -79,6 +80,26 @@ if (CLI.command === "usage") {
     output: process.stdout,
   });
   process.exit(0);
+}
+if (CLI.command === "cache") {
+  try {
+    const probe = parseAdapterProbeOptions(process.env);
+    const { runCacheCommand } = await import("../src/cli-cache.mjs");
+    await runCacheCommand({
+      action: CLI.action,
+      limitMib: CLI.limitMib,
+      resetLimit: CLI.resetLimit,
+      history: CLI.history,
+      yes: CLI.yes,
+      host: probe.adapterHost,
+      port: probe.adapterPort,
+      timeoutMs: probe.existingAdapterTimeoutMs,
+    });
+    process.exit(0);
+  } catch (e) {
+    console.error(status("err", e.message));
+    process.exit(1);
+  }
 }
 if (CLI.command === "retired") {
   console.error(status("err", `${CLI.integration} integration was retired in ccdx 0.7.0.`));
@@ -182,6 +203,7 @@ if (CLI.command === "doctor" && CLI.configOnly) {
 let RUNTIME;
 try {
   RUNTIME = parseRuntimeOptions(process.env);
+  setResponseHistoryMaxBytes(responseHistoryLimitPreference().bytes);
 } catch (e) {
   console.error(e.message);
   process.exit(2);

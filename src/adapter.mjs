@@ -17,12 +17,19 @@ import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
 import { createResponsesImagePressureController } from "./responses-image-pressure.mjs";
 import { createResponseFailureDiagnostics } from "./response-failures.mjs";
+import {
+  ADAPTER_CACHE_PATH,
+  cacheRuntimeSnapshot,
+  cleanRuntimeCaches,
+  setHistoryCacheLimit,
+} from "./cache-control.mjs";
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
 import {
   createRequestAdmission,
   createRequestAbort,
   httpError,
   logRequestFailure,
+  readJsonBody,
   sendJsonError,
 } from "./http-transport.mjs";
 
@@ -192,7 +199,7 @@ export function createAdapterHandler(options = {}) {
     streamIdleTimeoutMs,
     upstreamTimeoutMs,
   });
-  const dispatch = (req, res, pathname) => {
+  const dispatch = async (req, res, pathname) => {
     if (pathname === "/mcp/image") {
       if (imageMcpHandler) return imageMcpHandler(req, res);
       return import("./image-mcp.mjs").then(({ createImageMcpHandler }) => {
@@ -224,6 +231,56 @@ export function createAdapterHandler(options = {}) {
     if (req.method === "GET" && pathname === ADAPTER_HEALTH_PATH) {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(adapterHealthPayload()));
+      return;
+    }
+
+    if (pathname === ADAPTER_CACHE_PATH) {
+      if (!isLoopbackAddress(req.socket?.remoteAddress)) {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Cache control is available only from loopback" }));
+        return;
+      }
+      if (req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify(cacheRuntimeSnapshot()));
+        return;
+      }
+      if (req.method !== "POST") {
+        res.writeHead(405, { "Content-Type": "application/json", Allow: "GET, POST" });
+        res.end(JSON.stringify({ error: "Only GET and POST are supported" }));
+        return;
+      }
+      if (Object.hasOwn(req.headers || {}, "origin")) {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Browser origins are not allowed for cache control" }));
+        return;
+      }
+      const mediaType = String(req.headers?.["content-type"] || "").split(";", 1)[0].trim().toLowerCase();
+      if (mediaType !== "application/json") {
+        res.writeHead(415, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Cache control requires application/json" }));
+        return;
+      }
+      const abort = createRequestAbort(req, res);
+      abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
+      try {
+        const body = await readJsonBody(req, {
+          maxBodyBytes: 8 * 1024,
+          maxDecodedBodyBytes: 8 * 1024,
+          signal: abort.signal,
+        });
+        let result;
+        if (body?.action === "set_limit") result = setHistoryCacheLimit(body.max_bytes);
+        else if (body?.action === "clean") result = cleanRuntimeCaches({ history: body.history === true });
+        else throw httpError("Unknown cache action", 400);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify(result));
+      } catch (error) {
+        if (["ccdx_cache_busy", "ccdx_cache_limit_below_usage"].includes(error?.code)) error.statusCode = 409;
+        sendJsonError(res, error, 400);
+      } finally {
+        abort.cleanup();
+      }
       return;
     }
 
@@ -314,7 +371,9 @@ export function createAdapterHandler(options = {}) {
       return;
     }
 
-    const trackRequest = pathname !== ADAPTER_HEALTH_PATH && pathname !== ADAPTER_STATUS_PATH;
+    const trackRequest = pathname !== ADAPTER_HEALTH_PATH
+      && pathname !== ADAPTER_STATUS_PATH
+      && pathname !== ADAPTER_CACHE_PATH;
     const routeName = classifyAdapterRoute(req.method, pathname);
     const complete = trackRequest ? requestMetrics.begin(routeName) : () => {};
     const streamPerformance = trackRequest ? streamPerformanceMetrics.begin(routeName) : null;

@@ -203,15 +203,41 @@ function makeRoomFor({ additionalBytes, additionalEntries, protectedRoots }) {
   return true;
 }
 
-export function clearResponseHistoryForTests() {
+export function clearResponseHistory() {
+  if (pinnedTrees.size > 0) {
+    const error = new Error("Response history is active; retry cleanup after current requests finish");
+    error.code = "ccdx_cache_busy";
+    throw error;
+  }
+  const removed = { entries: histories.size, bytes: totalBytes };
   histories.clear();
   childrenById.clear();
   treeLru.clear();
   pinnedTrees.clear();
   evictedIds.clear();
   totalBytes = 0;
+  return removed;
+}
+
+export function clearResponseHistoryForTests() {
+  clearResponseHistory();
   maxBytes = DEFAULT_MAX_BYTES;
   maxEntries = DEFAULT_MAX_ENTRIES;
+}
+
+export function setResponseHistoryMaxBytes(nextMaxBytes) {
+  const parsed = Number(nextMaxBytes);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new TypeError("Response history cache limit must be a positive safe integer");
+  }
+  if (parsed < totalBytes) {
+    const error = new Error(`Response history currently uses ${totalBytes} bytes, above the requested ${parsed}-byte limit`);
+    error.code = "ccdx_cache_limit_below_usage";
+    throw error;
+  }
+  const previousMaxBytes = maxBytes;
+  maxBytes = parsed;
+  return { previousMaxBytes, maxBytes };
 }
 
 export function configureResponseHistoryForTests({ maxBytes: nextMaxBytes, maxEntries: nextMaxEntries } = {}) {
@@ -220,7 +246,8 @@ export function configureResponseHistoryForTests({ maxBytes: nextMaxBytes, maxEn
 }
 
 export function responseHistoryStats() {
-  return { entries: histories.size, bytes: totalBytes, evicted: evictedIds.size };
+  return { entries: histories.size, bytes: totalBytes, evicted: evictedIds.size,
+    pinnedTrees: pinnedTrees.size, maxBytes, maxEntries };
 }
 
 export function responseHistoryRootId(responseId) {

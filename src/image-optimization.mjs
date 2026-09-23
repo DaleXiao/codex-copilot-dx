@@ -159,6 +159,18 @@ export function imageOptimizationStats() {
   };
 }
 
+export function clearImageOptimizationCache() {
+  const stats = imageOptimizationStats();
+  if (stats.active > 0 || stats.queued > 0 || stats.cache_inflight > 0) {
+    const error = new Error("Image optimization is active; retry cache cleanup after current requests finish");
+    error.code = "ccdx_cache_busy";
+    throw error;
+  }
+  const removed = { entries: stats.cache_entries, bytes: stats.cache_bytes };
+  imageResultCache.clear();
+  return removed;
+}
+
 export function resetImageOptimizationCacheForTests() {
   imageResultCache.clear();
 }

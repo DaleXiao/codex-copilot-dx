@@ -44,7 +44,7 @@ test("resolveCopilotPriorityTierModel: maps only an explicitly enabled OpenAI Re
   assert.equal(resolveCopilotPriorityTierModel("gpt-5.6-sol", "default", { data: [eligible] }), null);
   assert.equal(resolveCopilotPriorityTierModel("gpt-5.6-sol", "ultrafast", { data: [eligible] }), null);
   assert.equal(resolveCopilotPriorityTierModel("gpt-5.6-sol-fast", "priority", { data: [eligible] }), null);
-  assert.equal(resolveCopilotPriorityTierModel("gpt-future", "priority", { data: [{ ...eligible, id: "gpt-future-fast" }] }), null);
+  assert.equal(resolveCopilotPriorityTierModel("gpt-future", "priority", { data: [{ ...eligible, id: "gpt-future-fast" }] }), "gpt-future-fast");
   assert.equal(resolveCopilotPriorityTierModel("gpt-5.6-sol", "priority", { data: [] }), null);
 
   for (const ineligible of [

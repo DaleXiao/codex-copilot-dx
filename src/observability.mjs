@@ -167,6 +167,7 @@ export function runtimeStatusPayload({
   const memory = process.memoryUsage();
   const codexRuntime = safeClientRuntimeStatus(codexClient);
   const codexModels = modelRegistryStatus(codexModelRegistry || modelRegistry);
+  const history = responseHistoryStats();
   return {
     ...adapterHealthPayload(),
     uptime_ms: Math.round(process.uptime() * 1000),
@@ -180,7 +181,7 @@ export function runtimeStatusPayload({
     requests: metrics?.snapshot?.() || createRequestMetrics().snapshot(),
     stream_performance: streamPerformance?.snapshot?.() || null,
     admission: admission?.diagnostics?.() || admission?.stats?.() || null,
-    response_history: responseHistoryStats(),
+    response_history: history,
     image_optimization: imageOptimizationStats(),
     image_generation: imageGeneration || null,
     logging: { usage: usageLoggingStats(), debug: debugLoggingStats() },
@@ -196,8 +197,8 @@ export function runtimeStatusPayload({
       max_body_bytes: OBSERVABILITY_RUNTIME_CONFIG.maxBodyBytes,
       max_decoded_body_bytes: OBSERVABILITY_RUNTIME_CONFIG.maxDecodedBodyBytes,
       max_sse_buffer_bytes: OBSERVABILITY_RUNTIME_CONFIG.maxSseBufferBytes,
-      response_history_max_bytes: OBSERVABILITY_RUNTIME_CONFIG.responseHistoryMaxBytes,
-      response_history_max_entries: OBSERVABILITY_RUNTIME_CONFIG.responseHistoryMaxEntries,
+      response_history_max_bytes: history.maxBytes,
+      response_history_max_entries: history.maxEntries,
     },
   };
 }

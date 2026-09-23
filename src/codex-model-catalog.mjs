@@ -4,6 +4,30 @@ import os from "node:os";
 import path from "node:path";
 import { CODEX_GPT6_MODEL } from "./models.mjs";
 
+// Compatibility metadata is derived from OpenAI Codex's public models catalog
+// at commit 0a2eb4696c26ac33204bcd255721ab30220a4774. The installed client's
+// GPT-6 Astra entry supplies its own schema and instructions; these overrides
+// describe only the two new model identities and capability differences.
+const GPT6_COMPATIBILITY_SPECS = new Map([
+  ["gpt-6-sol", Object.freeze({
+    display_name: "GPT-6-Sol",
+    description: "Workhorse model for coding and everyday work.",
+    default_reasoning_level: "medium",
+    shell_type: "shell_command",
+    priority: 2,
+    node_repl_auto_review_required: true,
+  })],
+  ["gpt-6-luna", Object.freeze({
+    display_name: "GPT-6-Luna",
+    description: "Fast and affordable model for easier tasks.",
+    default_reasoning_level: "medium",
+    shell_type: "shell_command",
+    priority: 3,
+    node_repl_auto_review_required: false,
+  })],
+]);
+const MANAGED_GPT6_MODELS = new Set([CODEX_GPT6_MODEL, ...GPT6_COMPATIBILITY_SPECS.keys()]);
+
 export { CODEX_GPT6_MODEL };
 
 export const CODEX_APP_BINARY_PATHS = [
@@ -50,29 +74,81 @@ function isEligibleOpenAIModel(model, id) {
     && supportsResponses(model);
 }
 
-export function isEligibleCopilotGpt6(copilotModels) {
+export function isEligibleCopilotGpt6(copilotModels, id = CODEX_GPT6_MODEL) {
   const data = copilotModelData(copilotModels);
   if (!data) return false;
-  const matches = data.filter((model) => String(model?.id || "").trim() === CODEX_GPT6_MODEL);
-  return matches.length === 1 && isEligibleOpenAIModel(matches[0], CODEX_GPT6_MODEL);
+  const matches = data.filter((model) => String(model?.id || "").trim() === id);
+  return matches.length === 1 && isEligibleOpenAIModel(matches[0], id);
+}
+
+function copilotModel(copilotModels, id) {
+  return copilotModelData(copilotModels)?.find((model) => String(model?.id || "").trim() === id);
+}
+
+function advertisedReasoningEfforts(model) {
+  const values = model?.capabilities?.supports?.reasoning_effort;
+  return new Set(Array.isArray(values) ? values.map((value) => String(value)) : []);
+}
+
+function catalogModelForCopilot(model, copilotModels, { filterReasoning = false } = {}) {
+  const upstream = copilotModel(copilotModels, model.slug);
+  const reasoning = advertisedReasoningEfforts(upstream);
+  const patched = {
+    ...structuredClone(model),
+    visibility: "list",
+    supported_reasoning_levels: filterReasoning && reasoning.size
+      ? model.supported_reasoning_levels.filter(({ effort }) => reasoning.has(effort))
+      : model.supported_reasoning_levels,
+  };
+  // The Codex catalog describes ChatGPT service tiers. Copilot must advertise
+  // an exact fast model before CCDX exposes the corresponding selector.
+  if (!isEligibleCopilotGpt6(copilotModels, `${model.slug}-fast`)) {
+    patched.additional_speed_tiers = [];
+    patched.service_tiers = [];
+    delete patched.default_service_tier;
+  }
+  return patched;
+}
+
+function compatibilityModel(codexCatalog, slug) {
+  const astra = codexCatalog.models.find((model) => model.slug === CODEX_GPT6_MODEL);
+  const spec = GPT6_COMPATIBILITY_SPECS.get(slug);
+  if (!astra || !spec) return null;
+  return {
+    ...structuredClone(astra),
+    ...spec,
+    slug,
+    supports_parallel_tool_calls: true,
+    multi_agent_reasoning_effort: null,
+    supports_experimental_context: false,
+    minimal_client_version: "0.155.0",
+  };
+}
+
+function insertByPriority(models, model) {
+  const priority = Number(model.priority);
+  const index = models.findIndex((candidate) => Number.isFinite(priority)
+    && Number.isFinite(Number(candidate.priority))
+    && Number(candidate.priority) > priority);
+  if (index < 0) models.push(model);
+  else models.splice(index, 0, model);
 }
 
 export function buildCodexModelResponse({ copilotModels, codexCatalog } = {}) {
   if (!copilotModelData(copilotModels) || !codexCatalogIsValid(codexCatalog)) return null;
 
-  const exposeGpt6 = isEligibleCopilotGpt6(copilotModels);
+  const bundledSlugs = new Set(codexCatalog.models.map(({ slug }) => slug));
   const models = codexCatalog.models.map((model) => {
-    if (model.slug !== CODEX_GPT6_MODEL) return model;
-    if (!exposeGpt6) return { ...model, visibility: "hide" };
-    const patched = {
-      ...model,
-      visibility: "list",
-      additional_speed_tiers: [],
-      service_tiers: [],
-    };
-    delete patched.default_service_tier;
-    return patched;
+    if (!MANAGED_GPT6_MODELS.has(model.slug)) return model;
+    if (!isEligibleCopilotGpt6(copilotModels, model.slug)) return { ...model, visibility: "hide" };
+    return catalogModelForCopilot(model, copilotModels);
   });
+  for (const slug of GPT6_COMPATIBILITY_SPECS.keys()) {
+    if (bundledSlugs.has(slug) || !isEligibleCopilotGpt6(copilotModels, slug)) continue;
+    const model = compatibilityModel(codexCatalog, slug);
+    if (!model) continue;
+    insertByPriority(models, catalogModelForCopilot(model, copilotModels, { filterReasoning: true }));
+  }
 
   return { ...copilotModels, object: copilotModels.object || "list", models };
 }

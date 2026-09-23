@@ -154,6 +154,50 @@ async function invokeAdapter(options, { method = "POST", url = "/v1/responses", 
   return invokeAdapterRequest(options, req);
 }
 
+test("loopback cache control reports, resizes, and explicitly clears runtime history", async () => {
+  clearResponseHistoryForTests();
+  try {
+    const context = prepareResponsesRequest({ model: "gpt-5.6-sol", input: "cache fixture" });
+    rememberResponseHistory(context, { id: "resp_cache_control", output: [], status: "completed" });
+    const before = await invokeAdapter({}, { method: "GET", url: "/_ccdx/cache" });
+    assert.equal(before.status, 200);
+    assert.equal(JSON.parse(before.text).response_history.entries, 1);
+
+    const resized = await invokeAdapter({}, {
+      url: "/_ccdx/cache", body: { action: "set_limit", max_bytes: 128 * 1024 * 1024 },
+    });
+    assert.equal(resized.status, 200, resized.text);
+    assert.equal(JSON.parse(resized.text).response_history.maxBytes, 128 * 1024 * 1024);
+
+    const defaultClean = await invokeAdapter({}, {
+      url: "/_ccdx/cache", body: { action: "clean", history: false },
+    });
+    assert.equal(defaultClean.status, 200);
+    assert.equal(responseHistoryStats().entries, 1);
+
+    const historyClean = await invokeAdapter({}, {
+      url: "/_ccdx/cache", body: { action: "clean", history: true },
+    });
+    assert.equal(historyClean.status, 200);
+    assert.equal(JSON.parse(historyClean.text).cleaned.response_history.entries, 1);
+    assert.equal(responseHistoryStats().entries, 0);
+  } finally { clearResponseHistoryForTests(); }
+});
+
+test("cache control rejects browser and non-loopback mutation before reading a body", async () => {
+  for (const [remoteAddress, headers] of [
+    ["192.168.1.5", { "content-type": "application/json" }],
+    ["127.0.0.1", { "content-type": "application/json", origin: "https://untrusted.example" }],
+  ]) {
+    const req = jsonRequest(Buffer.from(JSON.stringify({ action: "clean", history: true })), undefined, headers);
+    req.method = "POST";
+    req.url = "/_ccdx/cache";
+    req.socket = { remoteAddress };
+    const response = await invokeAdapterRequest({}, req);
+    assert.equal(response.status, 403);
+  }
+});
+
 function responsesSse(...events) {
   return new Response(events.map((event) => (
     `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
@@ -2621,10 +2665,8 @@ test("HTTP Responses preserves service tiers when a fast mapping is not explicit
 });
 
 test("GPT-6 drops unsupported inherited priority tiers without changing other requests", async () => {
-  for (const { compact, stream } of [
-    { compact: false, stream: false },
-    { compact: false, stream: true },
-    { compact: true, stream: false },
+  for (const model of ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]) for (const { compact, stream } of [
+    { compact: false, stream: false }, { compact: false, stream: true }, { compact: true, stream: false },
   ]) {
     let upstreamBody;
     const upstream = async (body) => {
@@ -2648,11 +2690,11 @@ test("GPT-6 drops unsupported inherited priority tiers without changing other re
       ...(compact ? { responsesCompactFn: upstream } : { responsesFn: upstream }),
     }, {
       url: compact ? "/v1/responses/compact" : "/v1/responses",
-      body: { model: "gpt-6-astra", service_tier: "priority", stream, input: "hello" },
+      body: { model, service_tier: "priority", stream, input: "hello" },
     });
 
     assert.equal(response.status, 200);
-    assert.equal(upstreamBody.model, "gpt-6-astra");
+    assert.equal(upstreamBody.model, model);
     assert.equal(Object.hasOwn(upstreamBody, "service_tier"), false);
   }
 
@@ -2667,6 +2709,24 @@ test("GPT-6 drops unsupported inherited priority tiers without changing other re
     body: { model: "gpt-6-astra", service_tier: "default", input: "hello" },
   });
   assert.equal(defaultTierBody.service_tier, "default");
+});
+
+test("GPT-6 priority tier uses an exact eligible fast model when advertised", async () => {
+  let upstreamBody;
+  const response = await invokeAdapter({
+    codexModelRegistry: { models: { data: [{
+      id: "gpt-6-sol-fast", vendor: "OpenAI", policy: { state: "enabled" },
+      model_picker_enabled: true, supported_endpoints: ["/responses"],
+    }] } },
+    getCachedModelEndpointsFn: () => ["/responses"],
+    responsesFn: async (body) => {
+      upstreamBody = structuredClone(body);
+      return Response.json({ id: "resp_gpt6_fast", status: "completed", output: [] });
+    },
+  }, { body: { model: "gpt-6-sol", service_tier: "priority", input: "hello" } });
+  assert.equal(response.status, 200);
+  assert.equal(upstreamBody.model, "gpt-6-sol-fast");
+  assert.equal(Object.hasOwn(upstreamBody, "service_tier"), false);
 });
 
 test("direct fast requests are not rewritten by the priority-tier resolver", async () => {

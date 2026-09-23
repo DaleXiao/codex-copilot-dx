@@ -20,6 +20,7 @@ const HELP_TOPICS = new Set([
   "status",
   "models",
   "usage",
+  "cache",
   "animation",
   "enable-image",
   "disable-image",
@@ -154,6 +155,37 @@ export function parseCliArgs(args = []) {
   if (command === "usage") {
     const options = parseOptions(rest, new Map([["--format", "value"]]));
     return baseCommand("usage", outputFormatOption(options["--format"]));
+  }
+  if (command === "cache") {
+    let cacheArgs = rest;
+    if (rest.length === 1 && /^-\d+$/.test(rest[0])) {
+      cacheArgs = ["--limit", rest[0].slice(1)];
+    } else if (rest[0] === "-clean") {
+      cacheArgs = ["--clean", ...rest.slice(1)];
+    }
+    const options = parseOptions(cacheArgs, new Map([
+      ["--limit", "value"],
+      ["--clean", "flag"],
+      ["--history", "flag"],
+      ["--yes", "flag"],
+    ]));
+    if (options["--limit"] && options["--clean"]) {
+      throw new Error("Use --limit or --clean in one cache command, not both");
+    }
+    if ((options["--history"] || options["--yes"]) && !options["--clean"]) {
+      throw new Error("--history and --yes require --clean");
+    }
+    const rawLimit = options["--limit"];
+    if (rawLimit && rawLimit !== "default" && !/^\d+$/.test(rawLimit)) {
+      throw new Error(`Cache limit must be an integer MiB value or default: ${rawLimit}`);
+    }
+    return baseCommand("cache", {
+      action: rawLimit ? "limit" : options["--clean"] ? "clean" : "status",
+      limitMib: rawLimit && rawLimit !== "default" ? Number(rawLimit) : undefined,
+      resetLimit: rawLimit === "default",
+      history: Boolean(options["--history"]),
+      yes: Boolean(options["--yes"]),
+    });
   }
   if (PM_COMMANDS.has(command)) {
     return baseCommand("retired", { integration: "PM Studio" });
@@ -301,6 +333,7 @@ function topicHelp(name, topic) {
     status: `Usage:\n  ${name} status\n\nShows bounded runtime, routing, performance, queue, and cache metrics from a running adapter.`,
     models: `Usage:\n  ${name} models [--format table|plain]\n\nPerforms a fresh, read-only Copilot model-directory lookup for the saved account. Interactive terminals use a table by default.`,
     usage: `Usage:\n  ${name} usage [--format table|plain]\n\nSummarizes local token usage metadata without reading prompt or completion content. Interactive terminals use a table by default.`,
+    cache: `Usage:\n  ${name} cache\n  ${name} cache --limit <MiB|default>\n  ${name} cache --clean [--history] [--yes]\n\nShows runtime cache use, saves and applies the shared response-history limit, or clears the rebuildable image-transform cache. --history also clears in-memory response history for all tasks and can make their next continuation fail, so interactive confirmation or --yes is required. Generated image files and saved Codex transcripts are never deleted. Short aliases: -128 sets 128 MiB and -clean equals --clean.`,
     animation: `Usage:\n  ${name} animation\n\nPreviews all terminal activity animations together and selects the theme used the next time the adapter starts.`,
     "enable-image": `Usage:\n  ${name} enable-image\n\nInteractively configures an HTTPS image API endpoint (base URLs are also accepted) and API key, detects its supported image model and protocol, installs CCDX image guidance, and checks the local image tool for Codex App without generating an image. A blank key preserves the saved key only for the same origin; a new origin requires explicit key entry. Concurrent unrelated config edits are preserved.`,
     "disable-image": `Usage:\n  ${name} disable-image\n\nDisables the local CCDX image tool and removes its stored API credential and unmodified CCDX image guidance.`,
@@ -324,6 +357,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} status
   ${name} models [--format table|plain]
   ${name} usage [--format table|plain]
+  ${name} cache [--limit <MiB|default> | --clean [--history] [--yes]]
   ${name} animation
   ${name} enable-image
   ${name} disable-image
@@ -340,6 +374,7 @@ Commands:
   status             Show runtime routing, performance, queue, and cache health
   models             Query a saved account's live Copilot model catalog
   usage              Summarize locally recorded token usage
+  cache              Inspect, size, or clear bounded runtime caches
   animation          Select the terminal activity animation
   enable-image       Configure and enable the optional image provider
   disable-image      Disable the image provider and remove its credential

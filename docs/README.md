@@ -14,6 +14,7 @@ These reports record a specific release and test environment. Their version,
 test counts, timings, live-provider observations, and limitations remain
 historical facts rather than current guarantees.
 
+- [0.8.5: GPT-6 Sol/Luna compatibility and runtime cache control](RELEASE_0.8.5.md)
 - [0.8.4: bounded audit fixes and safety verification](RELEASE_0.8.4.md)
 - [0.8.3: image configuration recovery and core-service isolation](RELEASE_0.8.3.md)
 - [0.8.2: progressive image guidance and opt-in lifecycle](RELEASE_0.8.2.md)

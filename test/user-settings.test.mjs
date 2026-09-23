@@ -8,10 +8,12 @@ import {
   readUserSettings,
   savedAutoReviewModel,
   savedTerminalAnimationTheme,
+  responseHistoryLimitPreference,
   terminalAnimationPreference,
   userSettingsPath,
   writeAutoReviewModel,
   writeTerminalAnimationTheme,
+  writeResponseHistoryLimitMib,
 } from "../src/user-settings.mjs";
 
 test("user settings: honors XDG_CONFIG_HOME and stores model changes atomically", () => {
@@ -26,6 +28,46 @@ test("user settings: honors XDG_CONFIG_HOME and stores model changes atomically"
   assert.equal(writeAutoReviewModel("gpt-5.6-terra", { env, home }).changed, false);
   assert.equal(writeAutoReviewModel("", { env, home }).changed, true);
   assert.equal(savedAutoReviewModel({ env, home }), "");
+});
+
+test("user settings: stores a bounded history-cache limit with environment precedence", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-settings-cache-"));
+  try {
+    assert.deepEqual(responseHistoryLimitPreference({ env: {}, home }), {
+      bytes: 64 * 1024 * 1024, mib: 64, source: "default",
+    });
+    assert.equal(writeResponseHistoryLimitMib(128, { env: {}, home }).changed, true);
+    assert.deepEqual(responseHistoryLimitPreference({ env: {}, home }), {
+      bytes: 128 * 1024 * 1024, mib: 128, source: "settings",
+    });
+    assert.deepEqual(responseHistoryLimitPreference({ env: { CCDX_RESPONSE_HISTORY_MAX_BYTES: "33554432" }, home }), {
+      bytes: 32 * 1024 * 1024, source: "environment",
+    });
+    assert.throws(() => writeResponseHistoryLimitMib(8, { env: {}, home }), /16 to 1024 MiB/);
+    assert.throws(() => writeResponseHistoryLimitMib(2048, { env: {}, home }), /16 to 1024 MiB/);
+    assert.equal(readUserSettings({ env: {}, home }).response_history_max_mib, 128);
+    assert.equal(writeResponseHistoryLimitMib(null, { env: {}, home }).changed, true);
+    assert.deepEqual(readUserSettings({ env: {}, home }), {});
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test("user settings: malformed cache limits do not suppress unrelated runtime preferences", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-settings-cache-invalid-"));
+  const filePath = userSettingsPath({ env: {}, home });
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify({
+    response_history_max_mib: 8,
+    auto_review_model: "gpt-5.6-sol",
+    terminal_animation: "twin",
+  }));
+  try {
+    assert.deepEqual(readUserSettings({ env: {}, home }), {
+      auto_review_model: "gpt-5.6-sol", terminal_animation: "twin",
+    });
+    assert.equal(responseHistoryLimitPreference({ env: {}, home }).source, "default");
+    assert.throws(() => readUserSettings({ env: {}, home, strict: true }), /response_history_max_mib/);
+    assert.throws(() => writeResponseHistoryLimitMib(128, { env: {}, home }), /Invalid ccdx settings/);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test("user settings: environment override wins over saved model and default", () => {

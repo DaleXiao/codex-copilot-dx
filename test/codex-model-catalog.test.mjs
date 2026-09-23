@@ -42,6 +42,13 @@ function copilotGpt6(overrides = {}) {
   };
 }
 
+function copilotModel(id, efforts = ["low", "medium", "high", "xhigh", "max"]) {
+  return copilotGpt6({
+    id,
+    capabilities: { supports: { reasoning_effort: efforts } },
+  });
+}
+
 test("Codex catalog loader uses safe argv and caches by binary stat", async () => {
   let binaryMtime = 10;
   let versionExecutions = 0;
@@ -284,7 +291,7 @@ test("dual model response exposes eligible GPT-6 without changing other models o
   assert.deepEqual(response.models[1].unknown_capability, { future: true });
 });
 
-test("dual model response does not advertise GPT-6 Fast before routing supports it", () => {
+test("dual model response advertises GPT-6 Fast only with an exact eligible fast model", () => {
   const response = buildCodexModelResponse({
     copilotModels: { data: [copilotGpt6({ additional_speed_tiers: ["fast"] })] },
     codexCatalog: bundledCatalog,
@@ -305,7 +312,60 @@ test("dual model response does not advertise GPT-6 Fast before routing supports 
     ] },
     codexCatalog: bundledCatalog,
   });
-  assert.deepEqual(fastVariant.models[1], response.models[1]);
+  assert.deepEqual(fastVariant.models[1].additional_speed_tiers, ["fast"]);
+  assert.deepEqual(fastVariant.models[1].service_tiers, bundledGpt6.service_tiers);
+  assert.equal(fastVariant.models[1].default_service_tier, null);
+});
+
+test("missing client entries use the installed GPT-6 schema only for exact eligible Copilot models", () => {
+  const response = buildCodexModelResponse({
+    copilotModels: { data: [copilotGpt6(), copilotModel("gpt-6-sol"), copilotModel("gpt-6-luna")] },
+    codexCatalog: bundledCatalog,
+  });
+  assert.deepEqual(response.models.map(({ slug }) => slug), [
+    "gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+  ]);
+  const sol = response.models.find(({ slug }) => slug === "gpt-6-sol");
+  const luna = response.models.find(({ slug }) => slug === "gpt-6-luna");
+  assert.equal(sol.display_name, "GPT-6-Sol");
+  assert.equal(sol.default_reasoning_level, "medium");
+  assert.deepEqual(sol.supported_reasoning_levels.map(({ effort }) => effort), ["low"]);
+  assert.equal(sol.unknown_capability.future, true);
+  assert.equal(sol.model_messages, undefined, "fixture Astra has no messages and fallback must not invent them");
+  assert.deepEqual(sol.additional_speed_tiers, []);
+  assert.equal(luna.node_repl_auto_review_required, false);
+  assert.deepEqual(luna.additional_speed_tiers, []);
+
+  const ineligible = buildCodexModelResponse({
+    copilotModels: { data: [
+      copilotGpt6(),
+      copilotModel("gpt-6-sol", []),
+      copilotGpt6({ id: "gpt-6-luna", vendor: "Microsoft" }),
+    ] },
+    codexCatalog: bundledCatalog,
+  });
+  assert.equal(ineligible.models.some(({ slug }) => slug === "gpt-6-sol"), true);
+  assert.equal(ineligible.models.some(({ slug }) => slug === "gpt-6-luna"), false);
+});
+
+test("client-provided GPT-6 Sol and Luna entries win over compatibility metadata", () => {
+  const clientSol = { slug: "gpt-6-sol", visibility: "hide", priority: 77,
+    supported_reasoning_levels: [{ effort: "high" }], future_client_field: { keep: true } };
+  const clientLuna = { slug: "gpt-6-luna", visibility: "hide", priority: 78,
+    supported_reasoning_levels: [{ effort: "max" }], future_client_field: { keep: true } };
+  const response = buildCodexModelResponse({
+    copilotModels: { data: [copilotGpt6(), copilotModel("gpt-6-sol"), copilotModel("gpt-6-luna")] },
+    codexCatalog: { models: [...bundledCatalog.models, clientSol, clientLuna] },
+  });
+  for (const original of [clientSol, clientLuna]) {
+    const model = response.models.find(({ slug }) => slug === original.slug);
+    assert.equal(model.visibility, "list");
+    assert.equal(model.priority, original.priority);
+    assert.deepEqual(model.supported_reasoning_levels, original.supported_reasoning_levels);
+    assert.deepEqual(model.future_client_field, { keep: true });
+    assert.deepEqual(model.additional_speed_tiers, []);
+    assert.deepEqual(model.service_tiers, []);
+  }
 });
 
 test("GPT-6 remains hidden unless the Copilot entry is unambiguously eligible", () => {

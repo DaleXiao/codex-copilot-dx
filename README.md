@@ -18,15 +18,17 @@ The adapter handles response history, encrypted reasoning state, function/custom
 
 ### Fast and Standard modes
 
-Codex can select Standard or Fast without changing CCDX configuration. When the client requests `gpt-5.6-sol` with `service_tier: "priority"`, CCDX uses `gpt-5.6-sol-fast` only when the live Copilot catalog advertises that exact model as enabled, selectable, OpenAI-owned, and Responses-only. Standard mode continues to use `gpt-5.6-sol`; CCDX does not invent Fast availability when the upstream catalog does not provide it.
+Codex can select Standard or Fast without changing CCDX configuration. When the client requests a model with `service_tier: "priority"`, CCDX uses its exact `-fast` model only when the live Copilot catalog advertises that variant as enabled, selectable, OpenAI-owned, and Responses-only. Standard mode continues to use the base model; CCDX does not invent Fast availability when the upstream catalog does not provide it. This retains the established `gpt-5.6-sol` / `gpt-5.6-sol-fast` mapping and applies the same exact-match rule to future models.
 
 Codex Auto-review uses the hidden `codex-auto-review` model ID. CCDX maps it to Copilot's `gpt-5.5` Responses model by default, independently of the interactive Fast/Standard selection, and logs both model IDs when the mapping is used. The review target can be changed interactively without reinstalling or restarting CCDX.
 
 ### GPT-6 model catalog
 
-Codex App requests a versioned, capability-rich model catalog that is different from Copilot's raw model list. CCDX reads the complete catalog bundled with the installed Codex App and preserves every other model entry and capability. It exposes the bundled `gpt-6-astra` entry only when Copilot's available catalog advertises that exact model as enabled, selectable, OpenAI-owned, and Responses-capable.
+Codex App requests a versioned, capability-rich model catalog that is different from Copilot's raw model list. CCDX reads the complete catalog bundled with the installed Codex App and preserves every other model entry and capability. It exposes each managed GPT-6 entry only when Copilot advertises that exact model as enabled, selectable, OpenAI-owned, and Responses-capable.
 
-CCDX exposes the GPT-6 Standard path and removes its unverified speed-tier metadata. It leaves the bundled reasoning-effort options unchanged, including Ultra when supplied by the installed catalog. GPT-5.6 Sol Fast follows the separate rule above. Versioned model discovery matches the bundled catalog to the client's `client_version`, caches it by application binary identity, and reloads it after an App update. If a matching usable catalog cannot be loaded, the versioned models request returns `503`; an unversioned request returns the Copilot-style list.
+When an installed 0.155.x catalog does not yet contain `gpt-6-sol` or `gpt-6-luna`, CCDX derives their client-compatible entries from that catalog's GPT-6 Astra schema and the published OpenAI Codex model definitions at commit `0a2eb4696c26ac33204bcd255721ab30220a4774`. Only those two missing entries are inserted. Their fallback reasoning controls are intersected with Copilot's advertised efforts; every other bundled entry remains byte-for-byte equivalent. A newer client-provided Sol/Luna entry always wins and is preserved.
+
+CCDX exposes GPT-6 Standard paths and removes unverified speed-tier metadata. It leaves bundled reasoning-effort options unchanged, including Ultra when supplied by the installed catalog. Fast follows the exact upstream-variant rule above. Versioned model discovery matches the bundled catalog to the client's `client_version`, caches it by application binary identity, and reloads it after an App update. If a matching usable catalog cannot be loaded, the versioned models request returns `503`; an unversioned request returns the Copilot-style list.
 
 `/v1/models` still attempts live discovery first. With a usable in-process catalog, it limits that upstream wait to 1.5 seconds (or a shorter configured upstream timeout) before falling back to last-known-good data. Without a catalog it retains the regular upstream timeout. Received HTTP `401`/`403` responses remain errors, not cached successes; fallback does not grant inference access. This does not change the explicitly live `ccdx models` command.
 
@@ -114,6 +116,20 @@ ccdx auto-review-model
 The selector first queries the running adapter, including its last-known-good model list when live refresh is unavailable, then falls back to a local model cache no older than seven days. It offers model IDs that advertise a Responses endpoint and are not explicitly hidden from the model picker. This selection does not itself verify policy or inference access.
 
 The selection is saved in `~/.config/codex-copilot-dx/config.json`, or under `XDG_CONFIG_HOME` when set. Choosing `gpt-5.5` clears the override and restores the package default. A running adapter reads the setting on the next Auto-review request.
+
+### Runtime caches
+
+```bash
+ccdx cache
+ccdx cache --limit 128
+ccdx cache --limit default
+ccdx cache --clean
+ccdx cache --clean --history
+```
+
+`ccdx cache` separates the shared in-memory Responses history from the rebuildable input-image transform cache. The history limit accepts 16–1024 MiB, is saved in the normal CCDX settings file, and applies immediately to a compatible running adapter. `CCDX_RESPONSE_HISTORY_MAX_BYTES` remains the higher-precedence environment override. Lowering the limit below current usage is rejected rather than evicting tasks silently. `ccdx cache -128` is a short alias for `--limit 128`; `-clean` aliases `--clean`.
+
+Plain `--clean` clears only completed image transforms; the next matching request may recompute them. Adding `--history` also invalidates all process-local `previous_response_id` chains and can make a task's next continuation fail, so it requires interactive confirmation or `--yes`. Cleanup waits for active cache users to finish and never deletes Codex transcripts, generated image files, provider credentials, image edit handles, model catalogs, or usage/debug logs. A stopped or older adapter must be restarted before runtime cleanup; a saved limit applies on the next start.
 
 ### Terminal animation
 
@@ -324,7 +340,7 @@ Recovery first tries compatible local credentials and starts Device Flow only wh
 | `CCDX_EXISTING_ADAPTER_TIMEOUT_MS` | `500` | Timeout for detecting an already-running local adapter during startup |
 | `CCDX_MODEL_REFRESH_TIMEOUT_MS` | `5000` | Timeout for Copilot model refresh or live Auto-review model lookup |
 | `CCDX_MODEL_REFRESH_INTERVAL_MS` | `7200000` | Periodic model refresh interval; `0` disables periodic refresh, while startup cache/refresh behavior still applies |
-| `CCDX_RESPONSE_HISTORY_MAX_BYTES` | `67108864` | Total in-memory byte budget for locally expanded Responses history |
+| `CCDX_RESPONSE_HISTORY_MAX_BYTES` | `67108864` | Higher-precedence total in-memory byte budget for locally expanded Responses history; `ccdx cache --limit` provides a persistent 16–1024 MiB setting when this is unset |
 | `CCDX_RESPONSE_HISTORY_MAX_ENTRIES` | `4096` | Maximum stored incremental Responses history nodes |
 | `CCDX_USAGE_PATH` | `~/.local/share/codex-copilot-dx/usage.jsonl` | Local JSONL token-usage log |
 | `CCDX_USAGE_MAX_BYTES` | `33554432` | Rotate the usage log at this size and retain one `.1` backup; set to `0` to disable rotation |

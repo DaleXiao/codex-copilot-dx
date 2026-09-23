@@ -32,8 +32,8 @@ test("adapterBaseUrl: builds local probe URLs", () => {
 
 test("adapter health reports the version frozen for this process", () => {
   assert.equal(adapterHealthPayload().version, ADAPTER_VERSION);
-  assert.equal(adapterHealthPayload().protocol_version, 3);
-  assert.deepEqual(ADAPTER_CAPABILITIES, []);
+  assert.equal(adapterHealthPayload().protocol_version, 4);
+  assert.deepEqual(ADAPTER_CAPABILITIES, ["cache-control-v1"]);
   assert.deepEqual(adapterHealthPayload().capabilities, ADAPTER_CAPABILITIES);
 });
 
@@ -80,7 +80,7 @@ test("checkRunningAdapter: rejects old protocols or mismatched adapter versions"
   const legacyCapabilityIsIrrelevant = await checkRunningAdapter({
     fetchImpl: async () => jsonResp(200, {
       ...adapterHealthPayload(),
-      capabilities: ["pm_studio_relay_v1"],
+      capabilities: ["cache-control-v1", "pm_studio_relay_v1"],
     }),
   });
   assert.equal(legacyCapabilityIsIrrelevant.ok, true);

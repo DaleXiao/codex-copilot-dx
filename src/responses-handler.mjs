@@ -89,9 +89,10 @@ function resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver) {
   return resolveOpenAIModel(model, openAIModelEnv, options);
 }
 
-function stripUnsupportedGpt6ServiceTier(body, requestedModel, upstreamModel) {
-  if (requestedModel === CODEX_GPT6_MODEL
+function stripUnsupportedGpt6ServiceTier(body, requestedModel, upstreamModel, priorityTierModel) {
+  if (requestedModel.startsWith("gpt-6-")
     && upstreamModel === requestedModel
+    && !priorityTierModel
     && body.service_tier === "priority") {
     delete body.service_tier;
   }
@@ -263,7 +264,7 @@ export function createResponsesHandler(options) {
         upstreamModel = priorityTierModel;
         delete prepared.body.service_tier;
       }
-      stripUnsupportedGpt6ServiceTier(prepared.body, requestedModel, upstreamModel);
+      stripUnsupportedGpt6ServiceTier(prepared.body, requestedModel, upstreamModel, priorityTierModel);
       if (requestedModel === CODEX_AUTO_REVIEW_MODEL) delete prepared.body.service_tier;
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
@@ -516,7 +517,7 @@ export function createResponsesCompactHandler(options) {
         upstreamModel = priorityTierModel;
         delete prepared.body.service_tier;
       }
-      stripUnsupportedGpt6ServiceTier(prepared.body, requestedModel, upstreamModel);
+      stripUnsupportedGpt6ServiceTier(prepared.body, requestedModel, upstreamModel, priorityTierModel);
       if (requestedModel === CODEX_AUTO_REVIEW_MODEL) delete prepared.body.service_tier;
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;

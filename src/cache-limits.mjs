@@ -1,0 +1,4 @@
+export const RESPONSE_HISTORY_DEFAULT_MIB = 64;
+export const RESPONSE_HISTORY_MIN_MIB = 16;
+export const RESPONSE_HISTORY_MAX_MIB = 1024;
+export const MIB = 1024 * 1024;

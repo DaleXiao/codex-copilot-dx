@@ -26,8 +26,8 @@ export function modelIsResponsesOnly(model) {
 
 export function resolveCopilotPriorityTierModel(model, serviceTier, models) {
   const baseModel = String(model || "").trim();
-  if (baseModel !== "gpt-5.6-sol" || serviceTier !== "priority") return null;
-  const fastModelId = "gpt-5.6-sol-fast";
+  if (!baseModel.startsWith("gpt-") || serviceTier !== "priority") return null;
+  const fastModelId = `${baseModel}-fast`;
   const fastModel = copilotModelData(models)
     .find((entry) => String(entry?.id || "").trim() === fastModelId);
   const vendor = String(fastModel?.vendor || fastModel?.owned_by || "").trim().toLowerCase();

@@ -20,6 +20,14 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["status"]).command, "status");
   assert.equal(parseCliArgs(["--status"]).command, "status");
   assert.equal(parseCliArgs(["usage"]).command, "usage");
+  assert.equal(parseCliArgs(["cache"]).action, "status");
+  assert.deepEqual(
+    [parseCliArgs(["cache", "--limit", "128"]), parseCliArgs(["cache", "-128"])].map(({ action, limitMib }) => ({ action, limitMib })),
+    [{ action: "limit", limitMib: 128 }, { action: "limit", limitMib: 128 }],
+  );
+  assert.equal(parseCliArgs(["cache", "--limit", "default"]).resetLimit, true);
+  assert.equal(parseCliArgs(["cache", "-clean"]).action, "clean");
+  assert.equal(parseCliArgs(["cache", "--clean", "--history", "--yes"]).history, true);
   assert.equal(parseCliArgs(["usage", "--format", "table"]).outputFormat, "table");
   assert.deepEqual(parseCliArgs(["models"]), { command: "models", showRequestId: false, online: false, compat: false });
   assert.equal(parseCliArgs(["models", "--format", "table"]).outputFormat, "table");
@@ -48,12 +56,14 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.match(cliHelp(), /--show-request-id/);
   assert.match(cliHelp(), /ccdx auto-review-model/);
   assert.match(cliHelp(), /ccdx animation/);
+  assert.match(cliHelp(), /ccdx cache/);
   assert.match(cliHelp(), /ccdx enable-image/);
   assert.match(cliHelp(), /ccdx update \[npm\|github\]/);
   assert.match(cliHelp("codex-copilot-dx"), /ccdx status/);
   assert.doesNotMatch(cliHelp("codex-copilot-dx"), /Equivalent command/);
   assert.equal(parseCliArgs(["doctor", "--help"]).helpTopic, "doctor");
   assert.equal(parseCliArgs(["animation", "--help"]).helpTopic, "animation");
+  assert.equal(parseCliArgs(["cache", "--help"]).helpTopic, "cache");
   assert.match(cliHelp("ccdx", "animation"), /next time the adapter starts/);
   assert.match(cliHelp("ccdx", "enable-image"), /HTTPS image API endpoint/);
   assert.match(cliHelp("ccdx", "doctor"), /consumes a small amount of Copilot usage/);
@@ -106,6 +116,9 @@ test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
   assert.throws(() => parseCliArgs(["usage", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["usage", "--format"]), /Missing value for --format/);
   assert.throws(() => parseCliArgs(["usage", "--format", "json"]), /Format must be table or plain: json/);
+  assert.throws(() => parseCliArgs(["cache", "--limit", "128", "--clean"]), /not both/);
+  assert.throws(() => parseCliArgs(["cache", "--history"]), /require --clean/);
+  assert.throws(() => parseCliArgs(["cache", "--limit", "large"]), /integer MiB value or default/);
   assert.throws(() => parseCliArgs(["status", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["models", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["models", "--profile"]), /Missing value for --profile/);

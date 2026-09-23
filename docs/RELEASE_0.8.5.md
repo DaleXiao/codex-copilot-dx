@@ -87,5 +87,18 @@ the tested account, client, and release behavior, not universal entitlement.
 
 ## Publication
 
-GitHub CI, release URL, npm workflow, and published package integrity are added
-after the corresponding release operations complete.
+- Release commit/tag: `c53420c` / `v0.8.5`.
+- GitHub CI passed on Node 22.15.0 and 24.x:
+  `https://github.com/DaleXiao/codex-copilot-dx/actions/runs/35830911849`.
+- GitHub Release:
+  `https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.8.5`.
+- npm publication workflow passed after rerunning `prepublishOnly`:
+  `https://github.com/DaleXiao/codex-copilot-dx/actions/runs/35831124924`.
+- The workflow published `codex-copilot-dx@0.8.5`. Its reported SHA-1
+  `2816de6c223ff4e1c5ec1bf2853fb742d981bc20` and SHA-512 integrity
+  `sha512-fqrdyVRDqVdX8lYPqbk0U6SyQY/bHuYhI7IvIYDF3OCB78YpZBjagzgZXoNKDXX8qMAtIrTo2OiFBt1j5pCt7w==`
+  match the locally verified 239,766-byte / 92-entry package.
+- This host's configured Microsoft package-feed proxy still reports stale
+  package metadata, and direct anonymous access to registry.npmjs.org failed
+  with `ENOTCONN`. The successful one-shot npm workflow and matching package
+  hashes are the publication evidence; publication was not repeated.

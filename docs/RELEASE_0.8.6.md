@@ -51,4 +51,16 @@ inference or a larger history cache.
 
 ## Publication
 
-Pending GitHub CI, GitHub Release, and npm workflow verification.
+- Release commit/tag: `9c873c7` / `v0.8.6`.
+- GitHub CI passed on Node 22.15.0 and 24.x:
+  `https://github.com/DaleXiao/codex-copilot-dx/actions/runs/35847478080`.
+- GitHub Release:
+  `https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.8.6`.
+- The one-shot npm workflow passed, including its `prepublishOnly` verification:
+  `https://github.com/DaleXiao/codex-copilot-dx/actions/runs/35847699773`.
+- The workflow published `codex-copilot-dx@0.8.6` under `latest`. Its SHA-1
+  `0891e602c953031d44fa8efd05d7b1415d2039f5` and 92-file, 240.1 kB
+  package summary match the local dry-run.
+- Direct anonymous registry verification from this host failed with
+  `ENOTCONN`; the successful publish workflow and matching package digest
+  are the publication evidence. Publication was not repeated.

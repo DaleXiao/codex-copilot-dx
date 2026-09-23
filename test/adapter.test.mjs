@@ -4760,6 +4760,17 @@ test("readJsonBody: streams identity JSON across a split UTF-8 character", async
   assert.deepEqual(parsed, { input: "你好" });
 });
 
+test("readJsonBody: large identity bodies preserve UTF-8 and mismatched content lengths", async () => {
+  const source = { input: `${"x".repeat(1024 * 1024)}你好` };
+  const encoded = Buffer.from(JSON.stringify(source));
+  const splitAt = encoded.indexOf(Buffer.from("你")) + 1;
+  for (const declaredBytes of [encoded.length, encoded.length - 1, encoded.length + 1]) {
+    const req = Readable.from([encoded.subarray(0, splitAt), encoded.subarray(splitAt)]);
+    req.headers = { "content-length": String(declaredBytes) };
+    assert.deepEqual(await readJsonBody(req), source);
+  }
+});
+
 test("readJsonBody: rejects raw request bodies above the configured limit", async () => {
   await assert.rejects(
     readJsonBody(jsonRequest(Buffer.from("{}"), undefined, { "content-length": "2" }), { maxBodyBytes: 1 }),

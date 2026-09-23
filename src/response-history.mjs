@@ -10,8 +10,15 @@ function cloneJson(value) {
 }
 
 function jsonStringByteLength(value) {
+  let start = 0;
   let bytes = 2;
-  for (let index = 0; index < value.length; index += 1) {
+  if (value.length >= 1024) {
+    const firstEscape = /["\\\u0000-\u001f\uD800-\uDFFF]/u.exec(value);
+    if (!firstEscape) return Buffer.byteLength(value) + 2;
+    start = firstEscape.index;
+    bytes += Buffer.byteLength(value.slice(0, start));
+  }
+  for (let index = start; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
     if (code === 0x22 || code === 0x5c) {
       bytes += 2;

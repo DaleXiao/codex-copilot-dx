@@ -50,6 +50,20 @@ test("response history snapshot materializes a stable chain and route metadata",
   snapshot.release();
 });
 
+test("large history strings retain exact JSON byte accounting", () => {
+  const imageUrl = `data:image/png;base64,${"A".repeat(1024 * 1024)}`;
+  const inputItems = [
+    { type: "input_image", image_url: imageUrl },
+    { type: "input_text", text: "é".repeat(1024) },
+    { type: "input_text", text: `${"x".repeat(1024)}😀` },
+    { type: "input_text", text: `${"x".repeat(1024)}"` },
+  ];
+  assert.equal(rememberResponseHistoryNode({
+    id: "resp_image", inputItems, outputItems: [], takeOwnership: true,
+  }), true);
+  assert.equal(responseHistoryStats().bytes, Buffer.byteLength(JSON.stringify([inputItems, []])));
+});
+
 test("all response history snapshot leases must release before a root is evictable", () => {
   configureResponseHistoryForTests({ maxBytes: 1_000_000, maxEntries: 1 });
   assert.equal(rememberNode("resp_root"), true);

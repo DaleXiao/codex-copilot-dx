@@ -572,7 +572,15 @@ async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal) 
     throw payloadTooLarge("Decoded", maxDecodedBodyBytes);
   }
 
-  const decoder = new TextDecoder();
+  // Larger preallocations raise peak RSS; keep the streaming path for those bodies.
+  const preallocatedLength = Number.isFinite(contentLength)
+    && contentLength >= 1024 * 1024
+    && contentLength <= 24 * 1024 * 1024
+    ? contentLength
+    : 0;
+  let allocated = null;
+  let overflow = null;
+  const decoder = preallocatedLength ? null : new TextDecoder();
   let text = "";
   let total = 0;
   await consumeRequestChunks(req, {
@@ -581,9 +589,23 @@ async function readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal) 
       total += buffer.length;
       if (total > maxBodyBytes) throw payloadTooLarge("Raw", maxBodyBytes);
       if (total > maxDecodedBodyBytes) throw payloadTooLarge("Decoded", maxDecodedBodyBytes);
-      text += decoder.decode(buffer, { stream: true });
+      if (preallocatedLength) {
+        allocated ||= Buffer.allocUnsafe(preallocatedLength);
+        if (!overflow && total <= allocated.length) {
+          buffer.copy(allocated, total - buffer.length);
+        } else {
+          if (!overflow) overflow = [allocated.subarray(0, total - buffer.length)];
+          overflow.push(buffer);
+        }
+      } else {
+        text += decoder.decode(buffer, { stream: true });
+      }
     },
   });
+  if (preallocatedLength) {
+    if (!allocated) return "";
+    return new TextDecoder().decode(overflow ? Buffer.concat(overflow, total) : allocated.subarray(0, total));
+  }
   return text + decoder.decode();
 }
 

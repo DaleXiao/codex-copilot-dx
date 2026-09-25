@@ -35,4 +35,13 @@ automatic history compression or recovery of an evicted `previous_response_id`.
 
 ## Publication
 
-Pending successful CI, GitHub Release, and one-shot npm workflow.
+- Release commit/tag: `63848db` / `v0.8.7`.
+- GitHub CI passed on Node 22.15.0 and 24.x:
+  `https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36107882316`.
+- GitHub Release:
+  `https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.8.7`.
+- The one-shot npm workflow passed, including its `prepublishOnly` verification:
+  `https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36108074544`.
+- Its publish log confirms `codex-copilot-dx@0.8.7` under `latest`, SHA-1
+  `19089ffcecb051527cee6229f7b6a51aeae5887b`, 92 files, and 242.3 kB.
+  Those match the local dry-run. Publication was not repeated.

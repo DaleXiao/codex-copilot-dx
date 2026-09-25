@@ -40,6 +40,8 @@ import {
   isResponsesOutputEvent,
   markFirstOutput,
   markOutputTokens,
+  markResponseErrorOrigin,
+  markResponseTerminal,
   markStreamFailure,
 } from "./stream-performance.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
@@ -146,6 +148,8 @@ function inspectResponseSseEvent(state, eventName, data) {
   if (eventType === "response.completed") {
     const response = event.response;
     state.completed = { response, event };
+  } else if (eventType === "response.incomplete") {
+    state.incomplete = { response: event.response, event };
   }
   return changed ? event : null;
 }
@@ -370,6 +374,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       usedRetryPolicies = new Set(),
     } = opened;
     if (errorText !== undefined) {
+      markResponseErrorOrigin("upstream_http");
       sendUpstreamError(res, resp, errorText);
       return { successful: false, compacted: false, upstreamStatus: resp.status };
     }
@@ -386,6 +391,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
     const reader = resp.body.getReader();
     const streamState = {
       completed: null,
+      incomplete: null,
       failure: null,
       sawTerminal: false,
       sawOutput: false,
@@ -467,12 +473,28 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
         }
         continue;
       }
-      if (streamState.failure) markStreamFailure();
       if (holdPrelude && !await flushPrelude()) return { successful: false, compacted: false };
+      if (streamState.completed) {
+        markResponseTerminal("completed", {
+          model: streamState.completed.response.model || reqContext.body?.model,
+          origin: "upstream_response",
+        });
+      } else if (streamState.incomplete) {
+        markResponseTerminal("incomplete", {
+          model: streamState.incomplete.response.model || reqContext.body?.model,
+          origin: "upstream_response",
+          reason: streamState.incomplete.response.incomplete_details?.reason,
+        });
+      } else if (streamState.failure) {
+        markStreamFailure();
+        markResponseTerminal("failed", { model: reqContext.body?.model, origin: "upstream_event" });
+      }
       storeCompletedResponse(reqContext, streamState.completed);
       if (!res.writableEnded) res.end();
       return { successful: Boolean(streamState.completed), compacted: false };
     } catch (error) {
+      markResponseErrorOrigin("transport");
+      markStreamFailure();
       logRequestFailure("Responses", error, options.abort);
       writeHeaders();
       await endStreamWithError(res, error, options.abort);
@@ -502,6 +524,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
     const { resp, errorText, usedRetryPolicies = new Set() } = opened;
     reqContext = opened.reqContext;
     if (errorText !== undefined) {
+      markResponseErrorOrigin("upstream_http");
       sendUpstreamError(res, resp, errorText);
       return { successful: false, compacted: false, upstreamStatus: resp.status };
     }
@@ -528,6 +551,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
         response,
         event: response,
       });
+      markResponseTerminal("completed", { model: response.model || reqContext.body?.model, origin: "upstream_response" });
       res.writeHead(resp.status, safeUpstreamResponseHeaders(resp.headers, {
         contentType: "application/json",
       }));
@@ -572,6 +596,13 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
         response,
         event: response,
       });
+      if (["completed", "incomplete", "failed"].includes(response.status)) {
+        markResponseTerminal(response.status, {
+          model: response.model || reqContext.body?.model,
+          origin: "upstream_response",
+          reason: response.incomplete_details?.reason,
+        });
+      }
       res.writeHead(resp.status, safeUpstreamResponseHeaders(resp.headers, {
         contentType: "application/json",
       }));
@@ -581,6 +612,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
     res.writeHead(resp.status, safeUpstreamResponseHeaders(resp.headers, {
       contentType: "application/json",
     }));
+    markResponseErrorOrigin("upstream_http");
     res.end(data);
     return { successful: false, compacted: false };
   }

@@ -128,6 +128,8 @@ async function invokeAdapterRequest(options, req) {
   res.end = (chunk) => {
     if (chunk !== undefined) chunks.push(Buffer.from(chunk));
     res.writableEnded = true;
+    res.writableFinished = true;
+    res.emit("finish");
     finish();
     return res;
   };
@@ -2144,7 +2146,7 @@ test("responsesToChat: preserves flat Responses function tools", () => {
   }]);
 });
 
-test("responsesToChat: preserves image detail and unsupported content as text", () => {
+test("responsesToChat: preserves image detail", () => {
   const converted = responsesToChat({
     model: "gpt-4o",
     input: [{
@@ -2153,7 +2155,6 @@ test("responsesToChat: preserves image detail and unsupported content as text", 
       content: [
         { type: "input_text", text: "inspect" },
         { type: "input_image", image_url: "data:image/png;base64,YQ==", detail: "high" },
-        { type: "input_file", filename: "note.txt", file_data: "data:text/plain;base64,YQ==" },
       ],
     }],
   });
@@ -2161,8 +2162,28 @@ test("responsesToChat: preserves image detail and unsupported content as text", 
   assert.deepEqual(converted.messages[0].content, [
     { type: "text", text: "inspect" },
     { type: "image_url", image_url: { url: "data:image/png;base64,YQ==", detail: "high" } },
-    { type: "text", text: JSON.stringify({ type: "input_file", filename: "note.txt", file_data: "data:text/plain;base64,YQ==" }) },
   ]);
+});
+
+test("HTTP Chat fallback rejects unsupported content before upstream dispatch", async () => {
+  let upstreamCalls = 0;
+  const streamPerformanceMetrics = createStreamPerformanceMetrics();
+  const response = await invokeAdapter({
+    streamPerformanceMetrics,
+    chatCompletionsFn: async () => { upstreamCalls += 1; throw new Error("unexpected Chat request"); },
+  }, {
+    body: {
+      model: "gpt-4o",
+      input: [{ type: "message", role: "user", content: [{ type: "input_audio", input_audio: { data: "YQ==", format: "wav" } }] }],
+    },
+  });
+  assert.equal(response.status, 400);
+  assert.equal(JSON.parse(response.text).error.code, "ccdx_responses_chat_incompatible");
+  assert.equal(upstreamCalls, 0);
+  const outcomes = streamPerformanceMetrics.snapshot().by_route.responses.terminal_outcomes;
+  assert.equal(outcomes.totals.unknown, 1);
+  assert.equal(outcomes.by_origin.client_validation.unknown, 1);
+  assert.equal(outcomes.by_model["gpt-4o"].unknown, 1);
 });
 
 test("responsesToChat: preserves top-level and Anthropic base64 images as user image messages", () => {
@@ -3112,7 +3133,9 @@ test("HTTP compact route honors the Codex auto-review model override", async () 
 });
 
 test("HTTP non-stream Responses conversion preserves upstream error status", async () => {
+  const streamPerformanceMetrics = createStreamPerformanceMetrics();
   const response = await invokeAdapter({
+    streamPerformanceMetrics,
     chatCompletionsFn: async () => new Response(JSON.stringify({ error: { message: "denied" } }), {
       status: 403,
       headers: { "Content-Type": "application/json" },
@@ -3123,6 +3146,10 @@ test("HTTP non-stream Responses conversion preserves upstream error status", asy
 
   assert.equal(response.status, 403);
   assert.deepEqual(JSON.parse(response.text), { error: { message: "denied" } });
+  const outcomes = streamPerformanceMetrics.snapshot().by_route.responses.terminal_outcomes;
+  assert.equal(outcomes.totals.unknown, 1);
+  assert.equal(outcomes.by_origin.upstream_http.unknown, 1);
+  assert.equal(outcomes.by_model["gpt-4o"].unknown, 1);
 });
 
 test("HTTP non-stream Responses conversion returns text, tools, and usage", async () => {
@@ -3160,6 +3187,26 @@ test("HTTP non-stream Responses conversion returns text, tools, and usage", asyn
   assert.equal(upstreamBody.stream, false);
   assert.deepEqual(data.output.map((item) => item.type), ["message", "function_call"]);
   assert.deepEqual(data.usage, { input_tokens: 11, output_tokens: 7, total_tokens: 18 });
+});
+
+test("HTTP non-stream Chat length finish reason returns incomplete without dropping partial text", async () => {
+  const streamPerformanceMetrics = createStreamPerformanceMetrics();
+  const response = await invokeAdapter({
+    streamPerformanceMetrics,
+    chatCompletionsFn: async () => Response.json({
+      model: "gpt-4o",
+      choices: [{ message: { role: "assistant", content: "partial" }, finish_reason: "length" }],
+    }),
+  }, { body: { model: "gpt-4o", input: "continue", stream: false } });
+  const data = JSON.parse(response.text);
+  assert.equal(response.status, 200);
+  assert.equal(data.status, "incomplete");
+  assert.deepEqual(data.incomplete_details, { reason: "max_output_tokens" });
+  assert.equal(data.output[0].content[0].text, "partial");
+  assert.equal(data.output[0].status, "incomplete");
+  const outcomes = streamPerformanceMetrics.snapshot().by_route.responses.terminal_outcomes;
+  assert.equal(outcomes.totals.incomplete, 1);
+  assert.equal(outcomes.by_model["gpt-4o"].incomplete, 1);
 });
 
 test("HTTP Responses chat bridge applies q82, q75, and q65 before forwarding", async () => {
@@ -4908,4 +4955,27 @@ test("forwardToChat: emits a completed empty message for an empty successful str
   assert.equal(response.output.length, 1);
   assert.equal(response.output[0].type, "message");
   assert.equal(response.output[0].content[0].text, "");
+});
+
+test("forwardToChat: streaming length and content_filter finish reasons remain incomplete", async () => {
+  for (const [finishReason, reason] of [["length", "max_output_tokens"], ["content_filter", "content_filter"]]) {
+    const events = [];
+    const wire = [
+      { choices: [{ delta: { content: "partial" } }] },
+      { choices: [{ delta: {}, finish_reason: finishReason }] },
+    ].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n";
+    const result = await forwardToChat(
+      { model: "gpt-4o", messages: [] },
+      async (event, data) => { events.push({ event, data }); },
+      () => {},
+      () => assert.fail("known incomplete finish reason must not become a transport error"),
+      { chatCompletionsFn: async () => new Response(wire, { headers: { "Content-Type": "text/event-stream" } }) },
+    );
+    assert.equal(result, false);
+    assert.equal(events.some(({ event }) => event === "response.completed"), false);
+    const terminal = events.find(({ event }) => event === "response.incomplete")?.data.response;
+    assert.equal(terminal?.status, "incomplete");
+    assert.deepEqual(terminal?.incomplete_details, { reason });
+    assert.equal(terminal?.output[0]?.status, "incomplete");
+  }
 });

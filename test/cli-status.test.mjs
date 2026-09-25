@@ -97,6 +97,30 @@ test("formatAdapterStatus: summarizes runtime health with invocation-aware ident
   assert.doesNotMatch(output, /Profiles:|Routing:/);
 });
 
+test("formatAdapterStatus: reports model terminal outcomes separately from HTTP status", () => {
+  const payload = statusPayload();
+  payload.stream_performance.by_route.responses.terminal_outcomes = {
+    totals: { completed: 12, incomplete: 2, failed: 1, cancelled: 3, unknown: 0 },
+  };
+  const output = formatAdapterStatus({ baseUrl: "http://127.0.0.1:2026", data: payload });
+  assert.match(output, /Model outcomes: 12 completed, 2 incomplete, 1 failed, 3 cancelled/);
+  assert.match(output, /19\/20 completed, 1 active, 2 4xx/);
+});
+
+test("formatAdapterStatus: warns about history pressure without calling markers failed requests", () => {
+  const output = formatAdapterStatus({ baseUrl: "http://127.0.0.1:2026", data: statusPayload({
+    response_history: {
+      entries: 25, bytes: 63 * 1024 * 1024, evicted: 256,
+      tree_count: 3, largest_tree_bytes: 40 * 1024 * 1024,
+      lookup_misses: 2, evicted_lookup_misses: 1,
+    },
+  }) });
+  assert.match(output, /256 evicted ID markers/);
+  assert.match(output, /History near limit/);
+  assert.match(output, /largest tree 40\.0MiB across 3 trees/);
+  assert.match(output, /2 lookup misses, 1 for evicted IDs/);
+});
+
 test("formatAdapterStatus: summarizes the Codex profile and Responses routing when available", () => {
   const output = formatAdapterStatus({
     baseUrl: "http://127.0.0.1:2026",

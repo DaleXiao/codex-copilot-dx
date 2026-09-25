@@ -15,7 +15,14 @@ import {
   upstreamChatStreamError,
   withChatStreamUsage,
 } from "./stream-contract.mjs";
-import { isChatOutputDelta, markFirstOutput, markOutputTokens } from "./stream-performance.mjs";
+import {
+  isChatOutputDelta,
+  markFirstOutput,
+  markOutputTokens,
+  markResponseErrorOrigin,
+  markResponseTerminal,
+  markStreamFailure,
+} from "./stream-performance.mjs";
 
 function cloneJson(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -66,18 +73,20 @@ export function responsesToChat(body) {
 
   const messageContent = (content) => {
     if (typeof content === "string") return content;
-    if (!Array.isArray(content)) return JSON.stringify(content);
+    if (content === null) return null;
+    if (!Array.isArray(content)) throw chatCompatibilityError("message content", typeof content);
     const parts = [];
     for (const part of content) {
-      if (!part || typeof part !== "object") continue;
+      if (!part || typeof part !== "object") throw chatCompatibilityError("message content", part?.type);
       if (["input_text", "output_text", "text"].includes(part.type)) {
-        parts.push({ type: "text", text: String(part.text || "") });
+        if (typeof part.text !== "string") throw chatCompatibilityError("message content", part.type);
+        parts.push({ type: "text", text: part.text });
       } else if (["input_image", "image_url", "image"].includes(part.type)) {
         const imagePart = chatImagePart(part);
         if (imagePart) parts.push(imagePart);
-        else parts.push({ type: "text", text: JSON.stringify(part) });
+        else throw chatCompatibilityError("message content", part.type);
       } else {
-        parts.push({ type: "text", text: JSON.stringify(part) });
+        throw chatCompatibilityError("message content", part.type);
       }
     }
     if (parts.length === 1 && parts[0].type === "text") return parts[0].text;
@@ -176,11 +185,20 @@ export function responsesToChat(body) {
 
 function uid() { return randomUUID().replace(/-/g, ""); }
 
+function chatTerminal(finishReason) {
+  const reason = finishReason === "length" ? "max_output_tokens"
+    : finishReason === "content_filter" ? "content_filter" : null;
+  return reason
+    ? { status: "incomplete", incomplete_details: { reason } }
+    : { status: "completed" };
+}
+
 export function chatToResponses(chatResp, model) {
   const id = `resp_${uid()}`, choice = chatResp.choices?.[0], msg = choice?.message, output = [];
-  if (msg?.content) output.push({ type: "message", id: `msg_${uid()}`, role: "assistant", status: "completed", content: [{ type: "output_text", text: msg.content }] });
-  if (msg?.tool_calls) for (const tc of msg.tool_calls) output.push({ type: "function_call", id: tc.id, call_id: tc.id, name: tc.function.name, arguments: tc.function.arguments, status: "completed" });
-  return { id, object: "response", status: "completed", model: chatResp.model || model, output, usage: chatResp.usage ? { input_tokens: chatResp.usage.prompt_tokens || 0, output_tokens: chatResp.usage.completion_tokens || 0, total_tokens: chatResp.usage.total_tokens || 0 } : undefined };
+  const terminal = chatTerminal(choice?.finish_reason);
+  if (msg?.content) output.push({ type: "message", id: `msg_${uid()}`, role: "assistant", status: terminal.status, content: [{ type: "output_text", text: msg.content }] });
+  if (msg?.tool_calls) for (const tc of msg.tool_calls) output.push({ type: "function_call", id: tc.id, call_id: tc.id, name: tc.function.name, arguments: tc.function.arguments, status: terminal.status });
+  return { id, object: "response", ...terminal, model: chatResp.model || model, output, usage: chatResp.usage ? { input_tokens: chatResp.usage.prompt_tokens || 0, output_tokens: chatResp.usage.completion_tokens || 0, total_tokens: chatResp.usage.total_tokens || 0 } : undefined };
 }
 
 export async function forwardToChat(chatReq, emitEvent, onDone, onError, options = {}) {
@@ -216,11 +234,15 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
       releaseRequest?.();
     }
   } catch (e) {
+    markResponseErrorOrigin("transport");
+    markStreamFailure();
     const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(abort?.reason) : 502;
     await onError(statusCode, e.message);
     return false;
   }
   if (!resp.ok) {
+    markResponseErrorOrigin("upstream_http");
+    markStreamFailure();
     await onError(resp.status, await readBoundedResponseText(resp, {
       maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
       label: "Copilot Chat error body",
@@ -230,6 +252,8 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   try {
     await requireUpstreamEventStream(resp);
   } catch (error) {
+    markResponseErrorOrigin("transport");
+    markStreamFailure();
     await onError(error.statusCode, error.message, error);
     return false;
   }
@@ -237,6 +261,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   abort?.setTimeout(streamIdleTimeoutMs, "stream_idle_timeout");
   const respId = `resp_${uid()}`;
   let actualModel = requestModel;
+  let finishReason = null;
   let fullText = "";
   let messageItem = null;
   let nextOutputIndex = 0;
@@ -298,7 +323,8 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
     return { tool, created: true };
   };
 
-  const emitCompleted = async () => {
+  const emitTerminal = async () => {
+    const terminal = chatTerminal(finishReason);
     if (!messageItem && toolCalls.size === 0) await ensureMessageItem();
     const output = [];
     if (messageItem) {
@@ -306,7 +332,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
         type: "message",
         id: messageItem.id,
         role: "assistant",
-        status: "completed",
+        status: terminal.status,
         content: [{ type: "output_text", text: fullText }],
       };
       await emitEvent("response.output_text.done", { output_index: messageItem.outputIndex, content_index: 0, text: fullText });
@@ -321,7 +347,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
         call_id: tool.callId,
         name: tool.name,
         arguments: tool.arguments,
-        status: "completed",
+        status: terminal.status,
       };
       await emitEvent("response.function_call_arguments.done", {
         output_index: tool.outputIndex,
@@ -331,16 +357,21 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
       await emitEvent("response.output_item.done", { output_index: tool.outputIndex, item });
       output[tool.outputIndex] = item;
     }
-    await emitEvent("response.completed", {
+    if (terminal.status === "incomplete") markStreamFailure();
+    await emitEvent(`response.${terminal.status}`, {
       response: {
         id: respId,
         object: "response",
-        status: "completed",
+        ...terminal,
         model: actualModel,
         output: output.filter(Boolean),
         usage,
       },
     });
+    markResponseTerminal(terminal.status, {
+      model: actualModel, origin: "chat_completion", reason: terminal.incomplete_details?.reason,
+    });
+    return terminal.status === "completed";
   };
 
   try {
@@ -350,7 +381,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
     })) {
       if (!line.startsWith("data: ")) continue;
       const data = line.slice(6).trim();
-      if (data === "[DONE]") { await emitCompleted(); onDone(); return true; }
+      if (data === "[DONE]") { const completed = await emitTerminal(); onDone(); return completed; }
       let parsed;
       try {
         parsed = JSON.parse(data);
@@ -373,7 +404,9 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
         if (cached) usage.input_tokens_details = { cached_tokens: cached };
         markOutputTokens(usage.output_tokens);
       }
-      const delta = parsed.choices?.[0]?.delta;
+      const choice = parsed.choices?.[0];
+      if (choice?.finish_reason) finishReason = choice.finish_reason;
+      const delta = choice?.delta;
       if (!delta) continue;
       if (isChatOutputDelta(delta)) markPerformanceOutput();
       if (delta.content) {
@@ -401,14 +434,19 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
     }
   } catch (e) {
     if (e === downstreamClosed) {
+      markResponseTerminal("cancelled", { model: actualModel, origin: "client_disconnect" });
       await resp.body?.cancel?.().catch?.(() => {});
       return false;
     }
+    markResponseErrorOrigin("transport");
+    markStreamFailure();
     const statusCode = isAbortLikeError(e) ? abortErrorStatusCode(abort?.reason) : (e?.statusCode || 502);
     await onError(statusCode, e?.message || "upstream stream error", e);
     return false;
   }
   const error = incompleteUpstreamStream("[DONE]");
+  markResponseErrorOrigin("transport");
+  markStreamFailure();
   await onError(error.statusCode, error.message, error);
   return false;
 }

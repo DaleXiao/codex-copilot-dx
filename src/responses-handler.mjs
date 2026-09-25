@@ -37,7 +37,13 @@ import { status } from "./status.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordResponsesUsage } from "./usage.mjs";
-import { measureRequestStage, measureRequestStageAsync } from "./stream-performance.mjs";
+import {
+  markResponseErrorOrigin,
+  markResponseModel,
+  markResponseTerminal,
+  measureRequestStage,
+  measureRequestStageAsync,
+} from "./stream-performance.mjs";
 
 const RESPONSES_ONLY_FALLBACK = new Set([
   "gpt-5.6-luna",
@@ -267,6 +273,7 @@ export function createResponsesHandler(options) {
       stripUnsupportedGpt6ServiceTier(prepared.body, requestedModel, upstreamModel, priorityTierModel);
       if (requestedModel === CODEX_AUTO_REVIEW_MODEL) delete prepared.body.service_tier;
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
+      markResponseModel(upstreamModel);
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${streaming}`));
       const usesCustomTools = responsesBodyUsesCustomTools(prepared.body);
@@ -322,19 +329,21 @@ export function createResponsesHandler(options) {
             });
             const written = await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`, { signal: abort.signal });
             if (!written) return false;
-            if (event === "response.completed") {
-              rememberResponseHistory(prepared, data.response);
+            if (event === "response.completed" || event === "response.incomplete") {
+              if (event === "response.completed") rememberResponseHistory(prepared, data.response);
               recordResponsesUsage({ surface: prepared.surface, mode: "stream", model, response: data.response, event: data });
             }
             return true;
           }, () => { if (!res.writableEnded) res.end(); }, async (statusCode, errMsg, error, upstreamResponse) => {
             if (!res.headersSent) {
               if (upstreamResponse) {
+                markResponseErrorOrigin("upstream_http");
                 markAdaptiveHttpTimeout(upstreamResponse.status);
                 sendUpstreamError(res, upstreamResponse, errMsg);
                 return;
               }
               const responseError = applyAdaptiveTimeout(error || Object.assign(new Error(errMsg), { statusCode }));
+              markResponseErrorOrigin("transport");
               sendJsonError(res, responseError, statusCode || 500);
               return;
             }
@@ -374,13 +383,17 @@ export function createResponsesHandler(options) {
                 label: "Copilot Chat error body",
               });
             if (!upstream.ok) {
+              markResponseErrorOrigin("upstream_http");
               markAdaptiveHttpTimeout(upstream.status);
               sendUpstreamError(res, upstream, data);
               return;
             }
             const response = chatToResponses(JSON.parse(data), model);
+            markResponseTerminal(response.status, {
+              model: response.model || model, origin: "chat_completion", reason: response.incomplete_details?.reason,
+            });
             rememberResponseHistory(prepared, response);
-            imagePressure?.markSuccess?.(responseHistoryPressureRootId(prepared));
+            if (response.status === "completed") imagePressure?.markSuccess?.(responseHistoryPressureRootId(prepared));
             recordResponsesUsage({ surface: prepared.surface, mode: "json", model, response, event: response });
             res.writeHead(200, safeUpstreamResponseHeaders(upstream.headers, {
               contentType: "application/json",
@@ -388,6 +401,8 @@ export function createResponsesHandler(options) {
             res.end(JSON.stringify(response));
           } catch (error) {
             const responseError = applyAdaptiveTimeout(error);
+            markResponseErrorOrigin(responseError?.statusCode >= 400 && responseError.statusCode < 500
+              ? "client_validation" : "transport");
             logRequestFailure("Responses", responseError, abort);
             sendJsonError(res, responseError, 502);
           }
@@ -397,6 +412,8 @@ export function createResponsesHandler(options) {
       }
     } catch (error) {
       const responseError = applyAdaptiveTimeout(error);
+      markResponseErrorOrigin(responseError?.statusCode >= 400 && responseError.statusCode < 500
+        ? "client_validation" : "transport");
       logRequestFailure("Responses", responseError, abort);
       sendJsonError(res, responseError, 502);
     } finally {

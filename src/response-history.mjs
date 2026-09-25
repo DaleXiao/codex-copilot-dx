@@ -81,6 +81,9 @@ const treeLru = new Map();
 const pinnedTrees = new Map();
 const evictedIds = new Set();
 let totalBytes = 0;
+let evictedEntriesTotal = 0;
+let lookupMisses = 0;
+let evictedLookupMisses = 0;
 const HISTORY_RUNTIME_CONFIG = loadRuntimeConfig();
 let maxBytes = HISTORY_RUNTIME_CONFIG.responseHistoryMaxBytes;
 let maxEntries = HISTORY_RUNTIME_CONFIG.responseHistoryMaxEntries;
@@ -133,6 +136,7 @@ function removeSubtree(rootId) {
   const pending = [rootId];
   const removed = new Set();
   const affectedRoots = new Set();
+  let removedEntries = 0;
   while (pending.length) {
     const id = pending.pop();
     if (removed.has(id)) continue;
@@ -149,7 +153,9 @@ function removeSubtree(rootId) {
     totalBytes -= entry.bytes;
     histories.delete(id);
     rememberEvictedId(id);
+    removedEntries += 1;
   }
+  evictedEntriesTotal += removedEntries;
   for (const affectedRoot of affectedRoots) {
     const entry = histories.get(affectedRoot);
     if (!entry || entry.rootId !== affectedRoot) treeLru.delete(affectedRoot);
@@ -223,6 +229,9 @@ export function clearResponseHistory() {
   pinnedTrees.clear();
   evictedIds.clear();
   totalBytes = 0;
+  evictedEntriesTotal = 0;
+  lookupMisses = 0;
+  evictedLookupMisses = 0;
   return removed;
 }
 
@@ -253,7 +262,18 @@ export function configureResponseHistoryForTests({ maxBytes: nextMaxBytes, maxEn
 }
 
 export function responseHistoryStats() {
+  const trees = new Map();
+  for (const entry of histories.values()) {
+    trees.set(entry.rootId, (trees.get(entry.rootId) || 0) + entry.bytes);
+  }
+  let largestTreeBytes = 0;
+  for (const bytes of trees.values()) largestTreeBytes = Math.max(largestTreeBytes, bytes);
   return { entries: histories.size, bytes: totalBytes, evicted: evictedIds.size,
+    evicted_entries_total: evictedEntriesTotal,
+    lookup_misses: lookupMisses,
+    evicted_lookup_misses: evictedLookupMisses,
+    tree_count: trees.size,
+    largest_tree_bytes: largestTreeBytes,
     pinnedTrees: pinnedTrees.size, maxBytes, maxEntries };
 }
 
@@ -270,7 +290,10 @@ function responseHistoryChain(responseId) {
     seen.add(currentId);
     const entry = histories.get(currentId);
     if (!entry) {
-      const reason = evictedIds.has(currentId) ? " was evicted after reaching the local history limit" : " is not available";
+      lookupMisses += 1;
+      const wasEvicted = evictedIds.has(currentId);
+      if (wasEvicted) evictedLookupMisses += 1;
+      const reason = wasEvicted ? " was evicted after reaching the local history limit" : " is not available";
       throw httpError(`previous_response_id${reason}: ${currentId}`, 400);
     }
     chain.push(entry);

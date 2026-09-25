@@ -152,6 +152,55 @@ test("stream performance distinguishes neutral, zero-output, and partial-output 
   assert.equal(route.tpot_us.samples, 0);
 });
 
+test("stream performance separates model terminal outcomes from HTTP status", () => {
+  const metrics = createStreamPerformanceMetrics({ now: () => 10 });
+  const incomplete = metrics.begin("responses");
+  incomplete.upstreamStarted();
+  incomplete.firstOutput();
+  incomplete.terminal("incomplete", { model: "gpt-5.6-sol", origin: "upstream_response", reason: "max_output_tokens" });
+  incomplete.finish({ statusCode: 200 });
+
+  const upstreamFailed = metrics.begin("responses");
+  upstreamFailed.upstreamStarted();
+  upstreamFailed.terminal("failed", { model: "gpt-6-astra", origin: "upstream_event" });
+  upstreamFailed.finish({ statusCode: 200 });
+
+  const cancelled = metrics.begin("responses");
+  cancelled.upstreamStarted();
+  cancelled.finish({ aborted: true });
+
+  const invalid = metrics.begin("responses");
+  invalid.setModel("gpt-4o");
+  invalid.setErrorOrigin("client_validation");
+  invalid.finish({ failed: true, statusCode: 400 });
+
+  const route = metrics.snapshot().by_route.responses;
+  assert.equal(route.errors_with_output, 1);
+  assert.equal(route.success_with_output, 0);
+  assert.deepEqual(route.terminal_outcomes.totals, {
+    completed: 0, incomplete: 1, failed: 1, cancelled: 1, unknown: 1,
+  });
+  assert.equal(route.terminal_outcomes.by_model["gpt-5.6-sol"].incomplete, 1);
+  assert.equal(route.terminal_outcomes.by_model["gpt-4o"].unknown, 1);
+  assert.equal(route.terminal_outcomes.by_origin.upstream_response.incomplete, 1);
+  assert.equal(route.terminal_outcomes.by_origin.upstream_event.failed, 1);
+  assert.equal(route.terminal_outcomes.incomplete_reasons.max_output_tokens, 1);
+  assert.equal(route.terminal_outcomes.by_origin.client_validation.unknown, 1);
+  assert.equal(route.terminal_outcomes.by_origin.client_disconnect.cancelled, 1);
+});
+
+test("model outcome labels remain bounded for arbitrary request models", () => {
+  const metrics = createStreamPerformanceMetrics();
+  for (let index = 0; index < 40; index += 1) {
+    const request = metrics.begin("responses");
+    request.terminal("completed", { model: `gpt-fixture-${index}`, origin: "upstream_response" });
+    request.finish();
+  }
+  const models = metrics.snapshot().by_route.responses.terminal_outcomes.by_model;
+  assert.ok(Object.keys(models).length <= 33);
+  assert.ok(models.other.completed > 0);
+});
+
 test("Copilot transport starts TTFT immediately before a streaming upstream request", async () => {
   resetCopilotTokenForTests();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-stream-performance-"));
@@ -234,4 +283,36 @@ test("Chat fallback and native Responses streams record first output once and ca
   })));
   assert.equal(native.calls.firstOutput, 1);
   assert.deepEqual(native.calls.outputTokens, [6]);
+});
+
+test("native response.incomplete is not a successful stream despite HTTP 200 and partial output", async () => {
+  const metrics = createStreamPerformanceMetrics();
+  const tracker = metrics.begin("responses");
+  const res = {
+    destroyed: false, headersSent: false, writableEnded: false, statusCode: 200,
+    writeHead(statusCode) { this.statusCode = statusCode; this.headersSent = true; },
+    write() { return true; },
+    end() { this.writableEnded = true; },
+  };
+  const events = [
+    { type: "response.output_text.delta", output_index: 0, delta: "partial" },
+    { type: "response.incomplete", response: { id: "resp_partial", status: "incomplete", model: "gpt-5.6-sol", incomplete_details: { reason: "max_output_tokens" }, output: [] } },
+  ];
+  const body = events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+  const result = await runWithRequestContext({ streamPerformance: tracker }, async () => {
+    tracker.upstreamStarted();
+    const value = await proxyCopilotResponses({
+      body: { model: "gpt-5.6-sol", stream: true, input: [] }, surface: "responses",
+    }, {}, res, async () => new Response(body, { headers: { "Content-Type": "text/event-stream" } }));
+    tracker.finish({ statusCode: res.statusCode });
+    return value;
+  });
+  const route = metrics.snapshot().by_route.responses;
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(result, { successful: false, compacted: false });
+  assert.equal(route.errors_with_output, 1);
+  assert.equal(route.success_with_output, 0);
+  assert.equal(route.terminal_outcomes.totals.incomplete, 1);
+  assert.equal(route.terminal_outcomes.by_model["gpt-5.6-sol"].incomplete, 1);
+  assert.equal(route.terminal_outcomes.incomplete_reasons.max_output_tokens, 1);
 });

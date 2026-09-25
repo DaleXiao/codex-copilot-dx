@@ -14,6 +14,7 @@ These reports record a specific release and test environment. Their version,
 test counts, timings, live-provider observations, and limitations remain
 historical facts rather than current guarantees.
 
+- [0.8.7: faithful Chat fallback and response-outcome diagnostics](RELEASE_0.8.7.md)
 - [0.8.6: bounded large-body memory and history accounting improvements](RELEASE_0.8.6.md)
 - [0.8.5: GPT-6 Sol/Luna compatibility and runtime cache control](RELEASE_0.8.5.md)
 - [0.8.4: bounded audit fixes and safety verification](RELEASE_0.8.4.md)

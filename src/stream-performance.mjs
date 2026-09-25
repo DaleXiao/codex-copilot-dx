@@ -3,6 +3,13 @@ import { currentRequestContext } from "./request-context.mjs";
 
 const PERFORMANCE_ROUTES = Object.freeze(["responses", "responses_compact"]);
 const PREPARATION_STAGES = Object.freeze(["admission", "body", "history", "images", "serialization"]);
+const TERMINAL_OUTCOMES = Object.freeze(["completed", "incomplete", "failed", "cancelled", "unknown"]);
+const INCOMPLETE_REASONS = new Set(["max_output_tokens", "max_messages", "content_filter", "steered"]);
+const TERMINAL_ORIGINS = new Set([
+  "upstream_response", "upstream_event", "chat_completion", "client_validation",
+  "upstream_http", "transport", "client_disconnect", "unclassified",
+]);
+const MAX_MODEL_OUTCOME_LABELS = 32;
 const PREPARATION_EDGES_MS = Object.freeze([1, 2, 5, 10, 20, 50, 100, 250, 500, 1_000, 5_000, 30_000, 120_000]);
 const TTFT_EDGES_MS = Object.freeze([
   100, 200, 300, 500, 700, 1_000, 1_400, 2_000, 2_800, 4_000,
@@ -78,6 +85,16 @@ function histogramSnapshot(histogram, unit) {
   };
 }
 
+function emptyOutcomes() {
+  return Object.fromEntries(TERMINAL_OUTCOMES.map((outcome) => [outcome, 0]));
+}
+
+function modelLabel(value) {
+  const model = String(value || "").trim();
+  return model === "codex-auto-review" || /^gpt-[A-Za-z0-9._-]{1,72}$/.test(model)
+    ? model : "other";
+}
+
 function createRoutePerformance() {
   return {
     ttft: createHistogram(TTFT_EDGES_MS),
@@ -88,6 +105,10 @@ function createRoutePerformance() {
     errors_with_output: 0,
     zero_output_errors: 0,
     neutral: 0,
+    terminalTotals: emptyOutcomes(),
+    incompleteReasons: Object.create(null),
+    terminalByModel: new Map(),
+    terminalByOrigin: Object.create(null),
   };
 }
 
@@ -97,6 +118,12 @@ function routeSnapshot(route) {
     errors_with_output: route.errors_with_output,
     zero_output_errors: route.zero_output_errors,
     neutral: route.neutral,
+    terminal_outcomes: {
+      totals: { ...route.terminalTotals },
+      incomplete_reasons: { ...route.incompleteReasons },
+      by_model: Object.fromEntries([...route.terminalByModel].map(([model, counts]) => [model, { ...counts }])),
+      by_origin: Object.fromEntries(Object.entries(route.terminalByOrigin).map(([origin, counts]) => [origin, { ...counts }])),
+    },
     ttft_ms: histogramSnapshot(route.ttft, "ms"),
     tpot_us: histogramSnapshot(route.tpot, "us"),
     request_ttft_ms: histogramSnapshot(route.requestTtft, "ms"),
@@ -117,6 +144,11 @@ export function createStreamPerformanceMetrics({ now = () => performance.now() }
       let outputTokens = null;
       let failed = false;
       let finished = false;
+      let model = "other";
+      let terminalOutcome = null;
+      let terminalOrigin = null;
+      let incompleteReason = null;
+      let errorOrigin = null;
 
       return {
         beginStage(stage) {
@@ -140,13 +172,37 @@ export function createStreamPerformanceMetrics({ now = () => performance.now() }
           const tokens = Number(value);
           if (Number.isFinite(tokens) && tokens >= 0) outputTokens = tokens;
         },
+        setModel(value) {
+          model = modelLabel(value);
+        },
+        setErrorOrigin(value) {
+          if (TERMINAL_ORIGINS.has(value)) errorOrigin = value;
+        },
+        terminal(outcome, { model: terminalModel, origin, reason } = {}) {
+          if (finished || terminalOutcome || !TERMINAL_OUTCOMES.includes(outcome)) return;
+          terminalOutcome = outcome;
+          if (terminalModel !== undefined) model = modelLabel(terminalModel);
+          if (TERMINAL_ORIGINS.has(origin)) terminalOrigin = origin;
+          if (outcome === "incomplete") incompleteReason = INCOMPLETE_REASONS.has(reason) ? reason : "other";
+          if (outcome !== "completed") failed = true;
+        },
         fail() {
           failed = true;
         },
-        finish({ failed: finishFailed = false } = {}) {
+        finish({ failed: finishFailed = false, aborted = false } = {}) {
           if (finished) return;
           finished = true;
           failed ||= finishFailed;
+          const outcome = terminalOutcome || (aborted ? "cancelled" : "unknown");
+          const origin = terminalOrigin || errorOrigin || (aborted ? "client_disconnect" : "unclassified");
+          route.terminalTotals[outcome] += 1;
+          if (incompleteReason) route.incompleteReasons[incompleteReason] = (route.incompleteReasons[incompleteReason] || 0) + 1;
+          const label = route.terminalByModel.has(model) || route.terminalByModel.size < MAX_MODEL_OUTCOME_LABELS
+            ? model : "other";
+          if (!route.terminalByModel.has(label)) route.terminalByModel.set(label, emptyOutcomes());
+          route.terminalByModel.get(label)[outcome] += 1;
+          route.terminalByOrigin[origin] ||= emptyOutcomes();
+          route.terminalByOrigin[origin][outcome] += 1;
           const finishedAt = now();
           if (firstOutputAt !== null) observe(route.requestTtft, Math.max(0, firstOutputAt - requestStartedAt));
           if (upstreamStartedAt === null) {
@@ -211,4 +267,16 @@ export function markOutputTokens(value) {
 
 export function markStreamFailure() {
   tracker()?.fail();
+}
+
+export function markResponseModel(model) {
+  tracker()?.setModel?.(model);
+}
+
+export function markResponseErrorOrigin(origin) {
+  tracker()?.setErrorOrigin?.(origin);
+}
+
+export function markResponseTerminal(outcome, options) {
+  tracker()?.terminal?.(outcome, options);
 }

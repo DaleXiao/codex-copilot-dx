@@ -132,6 +132,7 @@ export async function readAdapterStatus({
 export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", cliVersion = data.version } = {}) {
   const requests = data.requests || {};
   const performance = data.stream_performance?.by_route?.responses || {};
+  const terminalOutcomes = performance.terminal_outcomes?.totals;
   const admission = data.admission || {};
   const history = data.response_history || {};
   const images = data.image_optimization || {};
@@ -150,11 +151,18 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
     adapterLine,
     status("info", `Requests: ${count(requests.completed)}/${count(requests.total)} completed, ${count(requests.active)} active, ${count(requests.status_4xx)} 4xx, ${count(requests.status_5xx)} 5xx, ${count(requests.aborted)} aborted`),
     status("info", `Responses stream: TTFT avg ${latency(performance.ttft_ms?.avg)} (${count(performance.ttft_ms?.samples)} samples), TPOT avg ${tpot(performance.tpot_us)}`),
+    ...(terminalOutcomes ? [status("info", `Model outcomes: ${count(terminalOutcomes.completed)} completed, ${count(terminalOutcomes.incomplete)} incomplete, ${count(terminalOutcomes.failed)} failed, ${count(terminalOutcomes.cancelled)} cancelled, ${count(terminalOutcomes.unknown)} without terminal`)] : []),
     status("info", `Admission: ${count(admission.activeRequests)} active, ${count(admission.queued)} queued, ${count(admission.rejected)} rejected, ${count(admission.timedOut)} timed out, wait avg ${latency(admission.waitMsAvg)}`),
     status("info", `Memory: RSS ${mebibytes(processStats.rss_bytes)}, heap ${mebibytes(processStats.heap_used_bytes)}`),
-    status("info", `History: ${mebibytes(history.bytes)} / ${mebibytes(limits.response_history_max_bytes)}, ${count(history.entries)} entries, ${count(history.evicted)} evicted`),
+    status("info", `History: ${mebibytes(history.bytes)} / ${mebibytes(limits.response_history_max_bytes)}, ${count(history.entries)} entries, ${count(history.evicted)} evicted ID markers`),
     status("info", `Image cache: ${count(images.cache_entries)} entries, ${cacheHitRate(images)} hits, ${mebibytes(images.cache_bytes)} / ${mebibytes(images.cache_max_bytes)}`),
   ];
+  if (Number.isFinite(history.tree_count)) {
+    const limit = Number(limits.response_history_max_bytes || history.maxBytes);
+    const nearLimit = Number.isFinite(limit) && limit > 0 && history.bytes / limit >= 0.9;
+    lines.push(status(nearLimit ? "warn" : "info",
+      `${nearLimit ? "History near limit" : "History diagnostics"}: largest tree ${mebibytes(history.largest_tree_bytes)} across ${count(history.tree_count)} trees; ${count(history.lookup_misses)} lookup misses, ${count(history.evicted_lookup_misses)} for evicted IDs`));
+  }
   if (imageHistory && typeof imageHistory === "object") {
     lines.push(status("info", `Visual history: ${count(imageHistory.active_recovery_trees)} recovery trees, ${count(imageHistory.adapted_requests)} adapted requests, ${count(imageHistory.historical_images_omitted)} older images omitted, ${count(imageHistory.timeouts_recorded)} timeouts`));
   }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { responsesToChat } from "../src/responses-bridge.mjs";
+import { chatToResponses, responsesToChat } from "../src/responses-bridge.mjs";
 
 test("responsesToChat: rejects tools that Chat Completions cannot represent", () => {
   for (const tool of [
@@ -25,6 +25,33 @@ test("responsesToChat: rejects input items that Chat Completions cannot represen
       && error.code === "ccdx_responses_chat_incompatible"
       && error.jsonBody?.error?.item_type === "reasoning",
   );
+});
+
+test("responsesToChat: rejects message content that Chat Completions cannot represent", () => {
+  for (const part of [
+    { type: "input_file", filename: "note.txt", file_data: "data:text/plain;base64,YQ==" },
+    { type: "input_audio", input_audio: { data: "YQ==", format: "wav" } },
+    { type: "input_image", image_url: null },
+  ]) {
+    assert.throws(
+      () => responsesToChat({ model: "m", input: [{ type: "message", role: "user", content: [part] }] }),
+      (error) => error.statusCode === 400
+        && error.code === "ccdx_responses_chat_incompatible"
+        && error.jsonBody?.error?.item_type === part.type,
+    );
+  }
+});
+
+test("chatToResponses: truncation and filtering remain incomplete", () => {
+  for (const [finishReason, reason] of [["length", "max_output_tokens"], ["content_filter", "content_filter"]]) {
+    const response = chatToResponses({
+      model: "m", choices: [{ message: { role: "assistant", content: "partial" }, finish_reason: finishReason }],
+    }, "m");
+    assert.equal(response.status, "incomplete");
+    assert.deepEqual(response.incomplete_details, { reason });
+    assert.equal(response.output[0].status, "incomplete");
+  }
+  assert.equal(chatToResponses({ choices: [{ message: { content: "done" }, finish_reason: "stop" }] }, "m").status, "completed");
 });
 
 test("responsesToChat: preserves easy input messages whose type is omitted", () => {

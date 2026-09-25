@@ -389,7 +389,7 @@ export function createAdapterHandler(options = {}) {
       if (requestFinished) return;
       requestFinished = true;
       try { complete({ statusCode, aborted }); } catch {}
-      try { streamPerformance?.finish({ failed: aborted || statusCode >= 400 }); } catch {}
+      try { streamPerformance?.finish({ failed: aborted || statusCode >= 400, aborted }); } catch {}
       try { finishTerminalActivity(); } catch {}
     };
     const containUnexpectedError = (error) => {

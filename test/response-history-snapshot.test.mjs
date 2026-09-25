@@ -84,6 +84,22 @@ test("all response history snapshot leases must release before a root is evictab
   assert.deepEqual(materializeResponseHistory("resp_replacement"), []);
 });
 
+test("history pressure diagnostics distinguish evicted entries from failed lookups", () => {
+  configureResponseHistoryForTests({ maxBytes: 1_000_000, maxEntries: 1 });
+  assert.equal(rememberNode("resp_old", { inputItems: ["old"] }), true);
+  assert.equal(rememberNode("resp_new", { inputItems: ["new"] }), true);
+  const beforeLookup = responseHistoryStats();
+  assert.equal(beforeLookup.tree_count, 1);
+  assert.equal(beforeLookup.largest_tree_bytes, beforeLookup.bytes);
+  assert.equal(beforeLookup.evicted_entries_total, 1);
+  assert.equal(beforeLookup.lookup_misses, 0);
+  assert.throws(() => materializeResponseHistory("resp_old"), /was evicted/);
+  const afterLookup = responseHistoryStats();
+  assert.equal(afterLookup.lookup_misses, 1);
+  assert.equal(afterLookup.evicted_lookup_misses, 1);
+  assert.equal(afterLookup.evicted, 1);
+});
+
 test("pinned parent keeps maxEntries hard and rejects only the new child", () => {
   configureResponseHistoryForTests({ maxBytes: 1_000_000, maxEntries: 1 });
   assert.equal(rememberNode("resp_root"), true);

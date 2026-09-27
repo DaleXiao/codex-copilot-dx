@@ -45,4 +45,13 @@ The dashboard adds no background polling or default-route provider calls.
 
 ## Publication
 
-Pending successful CI, GitHub Release, and one-shot npm workflow.
+- Release commit/tag: `7e544e6` / `v0.8.8`.
+- GitHub CI passed on Node 22.15.0 and 24.x:
+  `https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36325034874`.
+- GitHub Release:
+  `https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.8.8`.
+- The one-shot npm workflow passed, including `prepublishOnly` verification:
+  `https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36325299202`.
+- The workflow published `codex-copilot-dx@0.8.8` under `latest`. Its SHA-1
+  `57948bd6482151ec6a90664d9581ccd650ce187f`, 97 files, and 254.6 kB
+  package match the local dry-run. Publication was not repeated.

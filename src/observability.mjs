@@ -108,6 +108,19 @@ export function isLoopbackAddress(address) {
   return isIP(ipv4) === 4 && ipv4.startsWith("127.");
 }
 
+export function isLoopbackHostHeader(host) {
+  if (host === undefined) return true; // HTTP/1.0 and in-process callers may omit Host.
+  if (typeof host !== "string" || !host || host.includes(",")) return false;
+  try {
+    const url = new URL(`http://${host}`);
+    const hostname = url.hostname.replace(/^\[|\]$/g, "");
+    return !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash
+      && (hostname === "localhost" || isLoopbackAddress(hostname));
+  } catch {
+    return false;
+  }
+}
+
 function modelRegistryStatus(modelRegistry) {
   const modelData = Array.isArray(modelRegistry?.models)
     ? modelRegistry.models

@@ -8,6 +8,7 @@ import {
   classifyAdapterRoute,
   createRequestMetrics,
   isLoopbackAddress,
+  isLoopbackHostHeader,
   runtimeStatusPayload,
 } from "../src/observability.mjs";
 
@@ -109,6 +110,51 @@ test("loopback checks do not trust non-loopback or malformed addresses", () => {
   assert.equal(isLoopbackAddress("127.999.0.1"), false);
   assert.equal(isLoopbackAddress("10.0.0.5"), false);
   assert.equal(isLoopbackAddress(""), false);
+  assert.equal(isLoopbackHostHeader("127.0.0.1:2026"), true);
+  assert.equal(isLoopbackHostHeader("[::1]:2026"), true);
+  assert.equal(isLoopbackHostHeader("localhost:2026"), true);
+  assert.equal(isLoopbackHostHeader("dashboard.example:2026"), false);
+  assert.equal(isLoopbackHostHeader("bad@127.0.0.1:2026"), false);
+  assert.equal(isLoopbackHostHeader("127.0.0.1:2026/path"), false);
+});
+
+test("dashboard assets serve on loopback without initializing image tools or affecting request metrics", async () => {
+  const metrics = createRequestMetrics();
+  const handler = createAdapterHandler({ requestMetrics: metrics });
+  const request = { headers: { host: "127.0.0.1:2026" } };
+  const page = await invoke(handler, { url: "/", ...request });
+  assert.equal(page.statusCode, 200);
+  assert.match(page.headers["Content-Type"], /^text\/html/);
+  assert.match(page.headers["Content-Security-Policy"], /default-src 'none'/);
+  assert.match(page.body, /CCDX · Local dashboard/);
+  assert.match(page.body, /NO BACKGROUND POLLING/);
+  for (const [url, type] of [["/ui.css", "text/css"], ["/ui.js", "text/javascript"]]) {
+    const asset = await invoke(handler, { url, ...request });
+    assert.equal(asset.statusCode, 200);
+    assert.match(asset.headers["Content-Type"], new RegExp(`^${type}`));
+    assert.ok(asset.body.length > 0);
+  }
+  const head = await invoke(handler, { method: "HEAD", url: "/", ...request });
+  assert.equal(head.statusCode, 200);
+  assert.equal(head.body, "");
+  assert.equal(metrics.snapshot().total, 0);
+  const snapshot = await invoke(handler, { url: ADAPTER_STATUS_PATH, ...request });
+  assert.equal(JSON.parse(snapshot.body).image_generation, null);
+  assert.equal(JSON.parse(snapshot.body).requests.total, 0);
+});
+
+test("dashboard and local status reject LAN clients and hostile Host headers", async () => {
+  const handler = createAdapterHandler();
+  for (const url of ["/", "/ui.css", "/ui.js"]) {
+    const lan = await invoke(handler, { url, remoteAddress: "10.0.0.5", headers: { host: "127.0.0.1:2026" } });
+    const rebinding = await invoke(handler, { url, headers: { host: "dashboard.example:2026" } });
+    assert.equal(lan.statusCode, 403);
+    assert.equal(rebinding.statusCode, 403);
+  }
+  const rebindingStatus = await invoke(handler, { url: ADAPTER_STATUS_PATH, headers: { host: "dashboard.example:2026" } });
+  assert.equal(rebindingStatus.statusCode, 403);
+  const rebindingCache = await invoke(handler, { url: "/_ccdx/cache", headers: { host: "dashboard.example:2026" } });
+  assert.equal(rebindingCache.statusCode, 403);
 });
 
 test("runtime status exposes only bounded Codex client and model health", () => {

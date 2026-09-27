@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 process.env.CCDX_DISABLE_USAGE = "1";
 
@@ -31,7 +34,14 @@ function streamingChatResponse() {
 }
 
 let chatCalls = 0;
+const dashboardHome = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-dashboard-smoke-"));
 const options = {
+  dashboardOptions: {
+    env: {},
+    home: dashboardHome,
+    liveModelsFn: async () => ({ advertised: 1, upstreamHost: "smoke.test", models: [{ id: "gpt-5.6-sol", vendor: "OpenAI", endpoints: ["responses"], preview: false }] }),
+    usageSummaryFn: async () => ({ requests: 1, totals: { input_tokens: 2, output_tokens: 1, total_tokens: 3 }, byModel: { "gpt-5.6-sol": { requests: 1, input_tokens: 2, output_tokens: 1, total_tokens: 3 } } }),
+  },
   listModelsFn: async () => ({
     status: 200,
     body: JSON.stringify({ data: [{ id: "gpt-5.6-sol", supported_endpoints: ["/responses"] }] }),
@@ -63,6 +73,28 @@ try {
 
   const health = await fetch(`${baseUrl}/_ccdx/health`).then((response) => response.json());
   assert.equal(health.name, "codex-copilot-dx");
+
+  const dashboard = await fetch(`${baseUrl}/`);
+  assert.equal(dashboard.status, 200);
+  assert.match(dashboard.headers.get("content-type"), /^text\/html/);
+  assert.match(await dashboard.text(), /CCDX · Local dashboard/);
+  const dashboardScript = await fetch(`${baseUrl}/ui.js`);
+  assert.equal(dashboardScript.status, 200);
+  assert.match(await dashboardScript.text(), /\/_ccdx\/status/);
+  const animation = await fetch(`${baseUrl}/_ccdx/ui/animation`, { headers: { "X-CCDX-Dashboard": "1" } }).then((response) => response.json());
+  assert.equal(animation.theme, "comet");
+  const savedAnimation = await fetch(`${baseUrl}/_ccdx/ui/animation`, {
+    method: "POST",
+    headers: { Origin: baseUrl, "Content-Type": "application/json", "X-CCDX-Dashboard": "1" },
+    body: JSON.stringify({ theme: "twin" }),
+  });
+  assert.equal(savedAnimation.status, 200);
+  assert.equal((await savedAnimation.json()).theme, "twin");
+  const liveModels = await fetch(`${baseUrl}/_ccdx/ui/models/live`, { headers: { "X-CCDX-Dashboard": "1" } }).then((response) => response.json());
+  assert.equal(liveModels.source, "live");
+  assert.equal(liveModels.models[0].id, "gpt-5.6-sol");
+  const usage = await fetch(`${baseUrl}/_ccdx/ui/usage`, { headers: { "X-CCDX-Dashboard": "1" } }).then((response) => response.json());
+  assert.equal(usage.total.total_tokens, 3);
 
   const models = await fetch(`${baseUrl}/v1/models`).then((response) => response.json());
   assert.equal(models.data[0].id, "gpt-5.6-sol");
@@ -119,4 +151,5 @@ try {
   console.log("[OK] Offline HTTP smoke test passed");
 } finally {
   await closeHttpServer(server);
+  fs.rmSync(dashboardHome, { recursive: true, force: true });
 }

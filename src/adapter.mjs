@@ -7,6 +7,7 @@ import {
   classifyAdapterRoute,
   createRequestMetrics,
   isLoopbackAddress,
+  isLoopbackHostHeader,
   runtimeStatusPayload,
 } from "./observability.mjs";
 import { createRequestId, runWithRequestContext } from "./request-context.mjs";
@@ -63,6 +64,8 @@ export {
 } from "./responses-request.mjs";
 
 const ADAPTER_RUNTIME_CONFIG = loadRuntimeConfig();
+const DASHBOARD_PATHS = new Set(["/", "/ui.css", "/ui.js"]);
+const DASHBOARD_API_PATHS = new Set(["/_ccdx/ui/animation", "/_ccdx/ui/models/live", "/_ccdx/ui/usage"]);
 
 export function requestPath(reqUrl) {
   return new URL(reqUrl || "/", "http://localhost").pathname;
@@ -200,6 +203,14 @@ export function createAdapterHandler(options = {}) {
     upstreamTimeoutMs,
   });
   const dispatch = async (req, res, pathname) => {
+    if (DASHBOARD_API_PATHS.has(pathname)) {
+      const { handleDashboardApi } = await import("./dashboard-api.mjs");
+      return handleDashboardApi(req, res, pathname, options.dashboardOptions);
+    }
+    if ((req.method === "GET" || req.method === "HEAD") && DASHBOARD_PATHS.has(pathname)) {
+      const { serveDashboard } = await import("./dashboard.mjs");
+      return serveDashboard(req, res, pathname);
+    }
     if (pathname === "/mcp/image") {
       if (imageMcpHandler) return imageMcpHandler(req, res);
       return import("./image-mcp.mjs").then(({ createImageMcpHandler }) => {
@@ -208,7 +219,7 @@ export function createAdapterHandler(options = {}) {
       });
     }
     if (req.method === "GET" && pathname === ADAPTER_STATUS_PATH) {
-      if (!isLoopbackAddress(req.socket?.remoteAddress)) {
+      if (!isLoopbackAddress(req.socket?.remoteAddress) || !isLoopbackHostHeader(req.headers?.host)) {
         res.writeHead(403, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Runtime status is available only from loopback" }));
         return;
@@ -235,7 +246,7 @@ export function createAdapterHandler(options = {}) {
     }
 
     if (pathname === ADAPTER_CACHE_PATH) {
-      if (!isLoopbackAddress(req.socket?.remoteAddress)) {
+      if (!isLoopbackAddress(req.socket?.remoteAddress) || !isLoopbackHostHeader(req.headers?.host)) {
         res.writeHead(403, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Cache control is available only from loopback" }));
         return;
@@ -373,7 +384,9 @@ export function createAdapterHandler(options = {}) {
 
     const trackRequest = pathname !== ADAPTER_HEALTH_PATH
       && pathname !== ADAPTER_STATUS_PATH
-      && pathname !== ADAPTER_CACHE_PATH;
+      && pathname !== ADAPTER_CACHE_PATH
+      && !DASHBOARD_API_PATHS.has(pathname)
+      && !((req.method === "GET" || req.method === "HEAD") && DASHBOARD_PATHS.has(pathname));
     const routeName = classifyAdapterRoute(req.method, pathname);
     const complete = trackRequest ? requestMetrics.begin(routeName) : () => {};
     const streamPerformance = trackRequest ? streamPerformanceMetrics.begin(routeName) : null;

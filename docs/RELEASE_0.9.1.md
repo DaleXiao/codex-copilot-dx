@@ -35,4 +35,15 @@ claimed speed gain. The new validation runs only for `data:` image responses.
 
 ## Publication
 
-Publication results will be recorded after GitHub and npm checks finish.
+- Release commit/tag: `32c8550` / `v0.9.1`.
+- GitHub CI passed on Node 22.15.0 and 24.x, including configuration startup
+  replay: https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36417971646.
+- GitHub Release: https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.1.
+- The one-shot npm workflow passed, including `prepublishOnly` verification:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36418168361.
+- npm accepted `codex-copilot-dx@0.9.1` under `latest`. The publish receipt's
+  SHA-1 `8a66f582011bfe02a5226f19e0ebb8488b33fd4f`, 99 files, and 258.0 kB
+  package match the local dry-run. Publication was not repeated.
+- The configured Microsoft npm mirror still returned 404 immediately after
+  publication; the official-registry publish receipt is the available
+  publication evidence, not an independent download check from this machine.

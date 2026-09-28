@@ -10,6 +10,7 @@ const css = readFileSync(new URL("../src/dashboard/ui.css", import.meta.url), "u
 function loadTheme(storage) {
   const listeners = new Map();
   const root = { dataset: {} };
+  const favicon = { href: "data:," };
   const button = {
     title: "",
     setAttribute(name, value) { this[name] = value; },
@@ -18,11 +19,11 @@ function loadTheme(storage) {
   const document = {
     documentElement: root,
     addEventListener(name, callback) { listeners.set(name, callback); },
-    getElementById() { return button; },
+    getElementById(id) { return id === "favicon" ? favicon : button; },
   };
-  runInNewContext(script, { document, localStorage: storage });
+  runInNewContext(script, { document, localStorage: storage, encodeURIComponent });
   listeners.get("DOMContentLoaded")();
-  return { root, button };
+  return { root, button, favicon };
 }
 
 test("dashboard defaults to the existing dark theme and switches without a server call", () => {
@@ -31,15 +32,23 @@ test("dashboard defaults to the existing dark theme and switches without a serve
     getItem(key) { return saved.get(key) || null; },
     setItem(key, value) { saved.set(key, value); },
   };
-  const { root, button } = loadTheme(storage);
+  const { root, button, favicon } = loadTheme(storage);
   assert.equal(root.dataset.theme, "dark");
   assert.equal(button["aria-label"], "Switch to light mode");
+  assert.match(favicon.href, /^data:image\/svg\+xml,/);
+  const darkIcon = decodeURIComponent(favicon.href);
+  assert.match(darkIcon, /viewBox="0 0 64 64"/);
+  assert.match(darkIcon, /d="M7 27v10M12 22v20M17 14v36/);
+  assert.match(darkIcon, /stroke="#a6f5a8"/);
+  assert.doesNotMatch(darkIcon, /<rect|#0b110d/);
   button.click();
   assert.equal(root.dataset.theme, "light");
   assert.equal(button["aria-label"], "Switch to dark mode");
+  assert.match(decodeURIComponent(favicon.href), /stroke="#176b3a"/);
   assert.equal(saved.get("ccdx.dashboard.theme"), "light");
   button.click();
   assert.equal(root.dataset.theme, "dark");
+  assert.match(decodeURIComponent(favicon.href), /stroke="#a6f5a8"/);
   assert.equal(saved.get("ccdx.dashboard.theme"), "dark");
 });
 
@@ -47,6 +56,7 @@ test("dashboard restores light mode before the stylesheet loads and tolerates un
   const persisted = loadTheme({ getItem: () => "light", setItem() {} });
   assert.equal(persisted.root.dataset.theme, "light");
   assert.equal(persisted.button["aria-label"], "Switch to dark mode");
+  assert.match(decodeURIComponent(persisted.favicon.href), /stroke="#176b3a"/);
   const blocked = loadTheme({ getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } });
   assert.equal(blocked.root.dataset.theme, "dark");
   blocked.button.click();
@@ -54,6 +64,7 @@ test("dashboard restores light mode before the stylesheet loads and tolerates un
 });
 
 test("dashboard uses inline SVG sun in dark mode and moon in light mode", () => {
+  assert.match(html, /<link id="favicon" rel="icon" type="image\/svg\+xml" href="data:,">[\s\S]*<script src="\/theme\.js"><\/script>/);
   assert.match(html, /<script src="\/theme\.js"><\/script>[\s\S]*<link rel="stylesheet"/);
   assert.match(html, /class="icon-sun"[^>]*aria-hidden="true"/);
   assert.match(html, /class="icon-moon"[^>]*fill="currentColor"[^>]*aria-hidden="true"/);

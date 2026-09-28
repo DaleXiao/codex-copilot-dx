@@ -21,6 +21,7 @@ const HELP_TOPICS = new Set([
   "models",
   "usage",
   "cache",
+  "limits",
   "animation",
   "enable-image",
   "disable-image",
@@ -187,6 +188,21 @@ export function parseCliArgs(args = []) {
       yes: Boolean(options["--yes"]),
     });
   }
+  if (command === "limits") {
+    const limitArgs = rest.length === 1 && /^-\d+$/.test(rest[0])
+      ? ["--decoded", rest[0].slice(1)]
+      : rest;
+    const options = parseOptions(limitArgs, new Map([["--decoded", "value"]]));
+    const rawLimit = options["--decoded"];
+    if (rawLimit && rawLimit !== "default" && !/^\d+$/.test(rawLimit)) {
+      throw new Error(`Decoded request-body limit must be an integer MiB value or default: ${rawLimit}`);
+    }
+    return baseCommand("limits", {
+      action: rawLimit ? "set" : "status",
+      limitMib: rawLimit && rawLimit !== "default" ? Number(rawLimit) : undefined,
+      resetLimit: rawLimit === "default",
+    });
+  }
   if (PM_COMMANDS.has(command)) {
     return baseCommand("retired", { integration: "PM Studio" });
   }
@@ -334,6 +350,7 @@ function topicHelp(name, topic) {
     models: `Usage:\n  ${name} models [--format table|plain]\n\nPerforms a fresh, read-only Copilot model-directory lookup for the saved account. Interactive terminals use a table by default.`,
     usage: `Usage:\n  ${name} usage [--format table|plain]\n\nSummarizes local token usage metadata without reading prompt or completion content. Interactive terminals use a table by default.`,
     cache: `Usage:\n  ${name} cache\n  ${name} cache --limit <MiB|default>\n  ${name} cache --clean [--history] [--yes]\n\nShows runtime cache use, saves and applies the shared response-history limit, or clears the rebuildable image-transform cache. --history also clears in-memory response history for all tasks and can make their next continuation fail, so interactive confirmation or --yes is required. Generated image files and saved Codex transcripts are never deleted. Short aliases: -128 sets 128 MiB and -clean equals --clean.`,
+    limits: `Usage:\n  ${name} limits\n  ${name} limits --decoded <MiB|default>\n\nShows configured and running request-body limits, or saves a decoded request-body limit from 128 to 512 MiB. The raw-body limit is unchanged. Restart ccdx to apply a saved change; no conversation or cache is cleared. Short alias: -256 sets 256 MiB.`,
     animation: `Usage:\n  ${name} animation\n\nPreviews all terminal activity animations together and selects the theme used the next time the adapter starts.`,
     "enable-image": `Usage:\n  ${name} enable-image\n\nInteractively configures an HTTPS image API endpoint (base URLs are also accepted) and API key, detects its supported image model and protocol, installs CCDX image guidance, and checks the local image tool for Codex App without generating an image. A blank key preserves the saved key only for the same origin; a new origin requires explicit key entry. Concurrent unrelated config edits are preserved.`,
     "disable-image": `Usage:\n  ${name} disable-image\n\nDisables the local CCDX image tool and removes its stored API credential and unmodified CCDX image guidance.`,
@@ -358,6 +375,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} models [--format table|plain]
   ${name} usage [--format table|plain]
   ${name} cache [--limit <MiB|default> | --clean [--history] [--yes]]
+  ${name} limits [--decoded <MiB|default>]
   ${name} animation
   ${name} enable-image
   ${name} disable-image
@@ -375,6 +393,7 @@ Commands:
   models             Query a saved account's live Copilot model catalog
   usage              Summarize locally recorded token usage
   cache              Inspect, size, or clear bounded runtime caches
+  limits             Inspect or configure the decoded request-body limit
   animation          Select the terminal activity animation
   enable-image       Configure and enable the optional image provider
   disable-image      Disable the image provider and remove its credential

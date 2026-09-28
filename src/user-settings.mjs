@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { DEFAULT_CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
-import { loadRuntimeConfig } from "./runtime-config.mjs";
+import { loadRuntimeConfig, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
 import {
   MIB,
   RESPONSE_HISTORY_DEFAULT_MIB,
@@ -19,6 +19,9 @@ import {
 const AUTO_REVIEW_MODEL_KEY = "auto_review_model";
 const TERMINAL_ANIMATION_KEY = "terminal_animation";
 const RESPONSE_HISTORY_MAX_MIB_KEY = "response_history_max_mib";
+const DECODED_BODY_LIMIT_MIB_KEY = "decoded_body_limit_mib";
+export const DECODED_BODY_LIMIT_MIN_MIB = RUNTIME_DEFAULTS.maxDecodedBodyBytes / MIB;
+export const DECODED_BODY_LIMIT_MAX_MIB = 512;
 export { RESPONSE_HISTORY_MAX_MIB, RESPONSE_HISTORY_MIN_MIB };
 
 export function userSettingsPath({ env = process.env, home = os.homedir() } = {}) {
@@ -64,6 +67,17 @@ export function readUserSettings({ env = process.env, home = os.homedir(), stric
           throw invalidSettings(filePath, `${RESPONSE_HISTORY_MAX_MIB_KEY} must be an integer from ${RESPONSE_HISTORY_MIN_MIB} to ${RESPONSE_HISTORY_MAX_MIB}`);
         }
         delete parsed[RESPONSE_HISTORY_MAX_MIB_KEY];
+      }
+    }
+    if (Object.hasOwn(parsed, DECODED_BODY_LIMIT_MIB_KEY)) {
+      const value = parsed[DECODED_BODY_LIMIT_MIB_KEY];
+      if (!Number.isSafeInteger(value)
+        || value < DECODED_BODY_LIMIT_MIN_MIB
+        || value > DECODED_BODY_LIMIT_MAX_MIB) {
+        if (strict) {
+          throw invalidSettings(filePath, `${DECODED_BODY_LIMIT_MIB_KEY} must be an integer from ${DECODED_BODY_LIMIT_MIN_MIB} to ${DECODED_BODY_LIMIT_MAX_MIB}`);
+        }
+        delete parsed[DECODED_BODY_LIMIT_MIB_KEY];
       }
     }
     return parsed;
@@ -112,6 +126,39 @@ export function responseHistoryLimitPreference({ env = process.env, home = os.ho
   const mib = settings[RESPONSE_HISTORY_MAX_MIB_KEY];
   if (Number.isSafeInteger(mib)) return { bytes: mib * MIB, mib, source: "settings" };
   return { bytes: RESPONSE_HISTORY_DEFAULT_MIB * MIB, mib: RESPONSE_HISTORY_DEFAULT_MIB, source: "default" };
+}
+
+export function decodedBodyLimitPreference({ env = process.env, home = os.homedir() } = {}) {
+  const environment = String(env.CCDX_MAX_DECODED_BODY_BYTES || "").trim();
+  if (environment) {
+    return { bytes: loadRuntimeConfig(env).maxDecodedBodyBytes, source: "environment" };
+  }
+  const settings = readUserSettings({ env, home });
+  const mib = settings[DECODED_BODY_LIMIT_MIB_KEY];
+  if (Number.isSafeInteger(mib)) return { bytes: mib * MIB, mib, source: "settings" };
+  return { bytes: RUNTIME_DEFAULTS.maxDecodedBodyBytes, mib: DECODED_BODY_LIMIT_MIN_MIB, source: "default" };
+}
+
+export function writeDecodedBodyLimitMib(mib, { env = process.env, home = os.homedir() } = {}) {
+  const filePath = userSettingsPath({ env, home });
+  const settings = readUserSettings({ env, home, strict: true });
+  const next = { ...settings };
+  if (mib === null || mib === undefined || mib === "") {
+    if (!Object.hasOwn(next, DECODED_BODY_LIMIT_MIB_KEY)) {
+      return { changed: false, filePath, ...decodedBodyLimitPreference({ env, home }) };
+    }
+    delete next[DECODED_BODY_LIMIT_MIB_KEY];
+  } else {
+    const parsed = Number(mib);
+    if (!Number.isSafeInteger(parsed)
+      || parsed < DECODED_BODY_LIMIT_MIN_MIB
+      || parsed > DECODED_BODY_LIMIT_MAX_MIB) {
+      throw new Error(`Decoded request-body limit must be an integer from ${DECODED_BODY_LIMIT_MIN_MIB} to ${DECODED_BODY_LIMIT_MAX_MIB} MiB`);
+    }
+    next[DECODED_BODY_LIMIT_MIB_KEY] = parsed;
+  }
+  const changed = atomicWriteFileIfChangedSync(filePath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  return { changed, filePath, ...decodedBodyLimitPreference({ env, home }) };
 }
 
 export function writeResponseHistoryLimitMib(mib, { env = process.env, home = os.homedir() } = {}) {

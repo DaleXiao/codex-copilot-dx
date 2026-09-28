@@ -28,6 +28,12 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["cache", "--limit", "default"]).resetLimit, true);
   assert.equal(parseCliArgs(["cache", "-clean"]).action, "clean");
   assert.equal(parseCliArgs(["cache", "--clean", "--history", "--yes"]).history, true);
+  assert.equal(parseCliArgs(["limits"]).action, "status");
+  assert.deepEqual(
+    [parseCliArgs(["limits", "--decoded", "256"]), parseCliArgs(["limits", "-256"])].map(({ action, limitMib }) => ({ action, limitMib })),
+    [{ action: "set", limitMib: 256 }, { action: "set", limitMib: 256 }],
+  );
+  assert.equal(parseCliArgs(["limits", "--decoded", "default"]).resetLimit, true);
   assert.equal(parseCliArgs(["usage", "--format", "table"]).outputFormat, "table");
   assert.deepEqual(parseCliArgs(["models"]), { command: "models", showRequestId: false, online: false, compat: false });
   assert.equal(parseCliArgs(["models", "--format", "table"]).outputFormat, "table");
@@ -57,6 +63,7 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.match(cliHelp(), /ccdx auto-review-model/);
   assert.match(cliHelp(), /ccdx animation/);
   assert.match(cliHelp(), /ccdx cache/);
+  assert.match(cliHelp(), /ccdx limits/);
   assert.match(cliHelp(), /ccdx enable-image/);
   assert.match(cliHelp(), /ccdx update \[npm\|github\]/);
   assert.match(cliHelp("codex-copilot-dx"), /ccdx status/);
@@ -64,6 +71,8 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["doctor", "--help"]).helpTopic, "doctor");
   assert.equal(parseCliArgs(["animation", "--help"]).helpTopic, "animation");
   assert.equal(parseCliArgs(["cache", "--help"]).helpTopic, "cache");
+  assert.equal(parseCliArgs(["limits", "--help"]).helpTopic, "limits");
+  assert.match(cliHelp("ccdx", "limits"), /Restart ccdx to apply/);
   assert.match(cliHelp("ccdx", "animation"), /next time the adapter starts/);
   assert.match(cliHelp("ccdx", "enable-image"), /HTTPS image API endpoint/);
   assert.match(cliHelp("ccdx", "doctor"), /consumes a small amount of Copilot usage/);
@@ -119,6 +128,9 @@ test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
   assert.throws(() => parseCliArgs(["cache", "--limit", "128", "--clean"]), /not both/);
   assert.throws(() => parseCliArgs(["cache", "--history"]), /require --clean/);
   assert.throws(() => parseCliArgs(["cache", "--limit", "large"]), /integer MiB value or default/);
+  assert.throws(() => parseCliArgs(["limits", "--decoded", "large"]), /integer MiB value or default/);
+  assert.throws(() => parseCliArgs(["limits", "--decoded"]), /Missing value for --decoded/);
+  assert.throws(() => parseCliArgs(["limits", "--decoded", "256", "--decoded", "384"]), /Unexpected argument: --decoded/);
   assert.throws(() => parseCliArgs(["status", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["models", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["models", "--profile"]), /Missing value for --profile/);

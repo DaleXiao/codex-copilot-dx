@@ -1,6 +1,7 @@
 import { promisify } from "node:util";
 import * as zlib from "node:zlib";
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
+import { decodedBodyLimitPreference } from "./user-settings.mjs";
 import { status } from "./status.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
@@ -13,7 +14,7 @@ const zstdDecompressAsync = zlib.zstdDecompress ? promisify(zlib.zstdDecompress)
 
 const HTTP_RUNTIME_CONFIG = loadRuntimeConfig();
 const MAX_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxBodyBytes;
-const MAX_DECODED_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxDecodedBodyBytes;
+const MAX_DECODED_BODY_BYTES = decodedBodyLimitPreference().bytes;
 const MAX_INFLIGHT_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxInflightBodyBytes;
 const MAX_QUEUED_REQUESTS = HTTP_RUNTIME_CONFIG.maxQueuedRequests;
 const REQUEST_QUEUE_TIMEOUT_MS = HTTP_RUNTIME_CONFIG.requestQueueTimeoutMs;

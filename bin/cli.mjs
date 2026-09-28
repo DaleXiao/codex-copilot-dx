@@ -101,6 +101,24 @@ if (CLI.command === "cache") {
     process.exit(1);
   }
 }
+if (CLI.command === "limits") {
+  try {
+    const probe = parseAdapterProbeOptions(process.env);
+    const { runLimitsCommand } = await import("../src/cli-limits.mjs");
+    await runLimitsCommand({
+      action: CLI.action,
+      limitMib: CLI.limitMib,
+      resetLimit: CLI.resetLimit,
+      host: probe.adapterHost,
+      port: probe.adapterPort,
+      timeoutMs: probe.existingAdapterTimeoutMs,
+    });
+    process.exit(0);
+  } catch (e) {
+    console.error(status("err", e.message));
+    process.exit(1);
+  }
+}
 if (CLI.command === "retired") {
   console.error(status("err", `${CLI.integration} integration was retired in ccdx 0.7.0.`));
   if (CLI.integration === "PM Studio") {

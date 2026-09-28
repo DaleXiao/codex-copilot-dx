@@ -4,12 +4,14 @@ import { copilotRuntimeStatus } from "./copilot.mjs";
 import { imageOptimizationStats } from "./image-optimization.mjs";
 import { responseHistoryStats } from "./response-history.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
+import { decodedBodyLimitPreference } from "./user-settings.mjs";
 import { profileRouting } from "./profile-routing.mjs";
 import { usageLoggingStats } from "./usage.mjs";
 import { debugLoggingStats } from "./log.mjs";
 
 export { ADAPTER_STATUS_PATH };
 const OBSERVABILITY_RUNTIME_CONFIG = loadRuntimeConfig();
+const OBSERVABILITY_DECODED_BODY_BYTES = decodedBodyLimitPreference().bytes;
 
 const ROUTE_NAMES = Object.freeze([
   "responses",
@@ -208,7 +210,7 @@ export function runtimeStatusPayload({
     routing: profileRouting(),
     limits: {
       max_body_bytes: OBSERVABILITY_RUNTIME_CONFIG.maxBodyBytes,
-      max_decoded_body_bytes: OBSERVABILITY_RUNTIME_CONFIG.maxDecodedBodyBytes,
+      max_decoded_body_bytes: OBSERVABILITY_DECODED_BODY_BYTES,
       max_sse_buffer_bytes: OBSERVABILITY_RUNTIME_CONFIG.maxSseBufferBytes,
       response_history_max_bytes: history.maxBytes,
       response_history_max_entries: history.maxEntries,

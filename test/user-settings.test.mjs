@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   autoReviewModelPreference,
+  decodedBodyLimitPreference,
   readUserSettings,
   savedAutoReviewModel,
   savedTerminalAnimationTheme,
@@ -12,6 +13,7 @@ import {
   terminalAnimationPreference,
   userSettingsPath,
   writeAutoReviewModel,
+  writeDecodedBodyLimitMib,
   writeTerminalAnimationTheme,
   writeResponseHistoryLimitMib,
 } from "../src/user-settings.mjs";
@@ -48,6 +50,44 @@ test("user settings: stores a bounded history-cache limit with environment prece
     assert.equal(readUserSettings({ env: {}, home }).response_history_max_mib, 128);
     assert.equal(writeResponseHistoryLimitMib(null, { env: {}, home }).changed, true);
     assert.deepEqual(readUserSettings({ env: {}, home }), {});
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test("user settings: decoded-body limit is bounded, atomic, and preserves other preferences", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-settings-body-"));
+  const env = {};
+  try {
+    writeAutoReviewModel("gpt-5.6-sol", { env, home });
+    assert.deepEqual(decodedBodyLimitPreference({ env, home }), {
+      bytes: 128 * 1024 * 1024, mib: 128, source: "default",
+    });
+    assert.equal(writeDecodedBodyLimitMib(256, { env, home }).changed, true);
+    assert.equal(writeDecodedBodyLimitMib(256, { env, home }).changed, false);
+    assert.equal(fs.statSync(userSettingsPath({ env, home })).mode & 0o777, 0o600);
+    assert.deepEqual(decodedBodyLimitPreference({ env, home }), {
+      bytes: 256 * 1024 * 1024, mib: 256, source: "settings",
+    });
+    assert.deepEqual(decodedBodyLimitPreference({ env: { CCDX_MAX_DECODED_BODY_BYTES: "201326592" }, home }), {
+      bytes: 192 * 1024 * 1024, source: "environment",
+    });
+    for (const value of [64, 513, 1.5]) {
+      assert.throws(() => writeDecodedBodyLimitMib(value, { env, home }), /128 to 512 MiB/);
+    }
+    assert.equal(writeDecodedBodyLimitMib(null, { env, home }).changed, true);
+    assert.deepEqual(readUserSettings({ env, home }), { auto_review_model: "gpt-5.6-sol" });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test("user settings: invalid decoded-body preference is ignored at runtime and blocks writes", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-settings-body-invalid-"));
+  const env = {};
+  const filePath = userSettingsPath({ env, home });
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify({ decoded_body_limit_mib: 1024, auto_review_model: "gpt-5.6-sol" }));
+  try {
+    assert.deepEqual(readUserSettings({ env, home }), { auto_review_model: "gpt-5.6-sol" });
+    assert.equal(decodedBodyLimitPreference({ env, home }).source, "default");
+    assert.throws(() => writeDecodedBodyLimitMib(256, { env, home }), /decoded_body_limit_mib/);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 

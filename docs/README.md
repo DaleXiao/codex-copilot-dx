@@ -14,6 +14,7 @@ These reports record a specific release and test environment. Their version,
 test counts, timings, live-provider observations, and limitations remain
 historical facts rather than current guarantees.
 
+- [0.9.0: opt-in decoded request-body limit CLI](RELEASE_0.9.0.md)
 - [0.8.11: theme-aware double-peak SVG favicon](RELEASE_0.8.11.md)
 - [0.8.10: borderless theme toggle and fuller moon icon](RELEASE_0.8.10.md)
 - [0.8.9: local dashboard light and dark themes](RELEASE_0.8.9.md)

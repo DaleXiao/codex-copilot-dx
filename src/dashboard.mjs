@@ -4,6 +4,7 @@ import { isLoopbackAddress, isLoopbackHostHeader } from "./observability.mjs";
 const ASSETS = new Map([
   ["/", ["./dashboard/index.html", "text/html; charset=utf-8"]],
   ["/ui.css", ["./dashboard/ui.css", "text/css; charset=utf-8"]],
+  ["/theme.js", ["./dashboard/theme.js", "text/javascript; charset=utf-8"]],
   ["/ui.js", ["./dashboard/ui.js", "text/javascript; charset=utf-8"]],
 ]);
 

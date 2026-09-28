@@ -22,3 +22,17 @@ Date: 2026-09-28. Baseline: `8f450a8` (0.9.1).
   and npm package dry-run (99 package entries). `git diff --check` passed.
 - No server-side request, cache, or status code changed. The performance gates
   found no detected regression; they are not a claim of a speed improvement.
+
+## Publication
+
+- Release commit/tag: `01699f2` / `v0.9.2`.
+- GitHub CI passed on Node 22.15.0 and 24.x:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36430186898.
+- GitHub Release: https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.2.
+- The one-shot npm workflow passed, including its `prepublishOnly` verification:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36430404734.
+  Its registry receipt reports `codex-copilot-dx@0.9.2` under `latest`, 99 files,
+  a 258.2 kB package, and SHA-1 `6fa56609411c6da65c43c47cf0ef65def3b0de1d`.
+- This machine's independent official-registry lookup returned `ENOTCONN`; the
+  successful publish receipt is the available npm evidence. Publication was
+  not repeated.

@@ -68,6 +68,73 @@ test("image provider: adapts qwen messages and downloads its generated URL", asy
   assert.equal(result.data, bytes.toString("base64"));
 });
 
+test("image provider: decodes Qwen and standard image data URIs without downloading", async () => {
+  const formats = [
+    ["image/png", png()],
+    ["image/jpeg", Buffer.from([0xff, 0xd8, 0xff, 0xd9])],
+    ["image/webp", Buffer.from("RIFF\u0004\u0000\u0000\u0000WEBP", "binary")],
+  ];
+  for (const [mimeType, bytes] of formats) {
+    const uri = `data:${mimeType};base64,${bytes.toString("base64")}`;
+    for (const body of [
+      { output: { choices: [{ message: { content: [{ image: uri }] } }] } },
+      { data: [{ url: uri }] },
+    ]) {
+      const result = await generateImage({
+        endpoint: "https://images.example/v1/images/generations",
+        api_key: "secret-value",
+        model: "qwen-image-3.0-pro",
+        protocol: "qwen-messages",
+      }, { prompt: "A red square" }, {
+        fetchImpl: async () => Response.json(body),
+        downloadImage: async () => { throw new Error("data URI must not start a download"); },
+      });
+      assert.equal(result.data, bytes.toString("base64"));
+      assert.equal(result.mimeType, mimeType);
+    }
+  }
+});
+
+test("image provider: rejects malformed or unsupported data URIs without network fallback", async () => {
+  const encoded = png().toString("base64");
+  const config = { endpoint: "https://images.example/v1/images/generations", api_key: "secret-value",
+    model: "qwen-image-3.0-pro", protocol: "qwen-messages" };
+  for (const [uri, code] of [
+    [`data:image/svg+xml;base64,${encoded}`, "ccdx_image_format_unsupported"],
+    [`data:image/jpeg;base64,${encoded}`, "ccdx_image_format_unsupported"],
+    [`data:image/png;base64,${encoded}\n`, "ccdx_image_data_invalid"],
+    ["data:image/png;base64,AB==", "ccdx_image_data_invalid"],
+    ["data:image/png;base64,AAAA", "ccdx_image_format_unsupported"],
+  ]) {
+    await assert.rejects(generateImage(config, { prompt: "A red square" }, {
+      fetchImpl: async () => Response.json({ output: { choices: [{ message: { content: [{ image: uri }] } }] } }),
+      downloadImage: async () => { throw new Error("unsafe data URI must not start a download"); },
+    }), { code });
+  }
+  for (const uri of ["http://cdn.example/result.png", "https://user:pass@cdn.example/result.png"]) {
+    await assert.rejects(generateImage(config, { prompt: "A red square" }, {
+      fetchImpl: async () => Response.json({ output: { choices: [{ message: { content: [{ image: uri }] } }] } }),
+    }), { code: "ccdx_image_url_unsafe" });
+  }
+});
+
+test("image provider: cancelled data URI generation does not deliver an image", async () => {
+  const controller = new AbortController();
+  const uri = `data:image/png;base64,${png().toString("base64")}`;
+  await assert.rejects(generateImage({
+    endpoint: "https://images.example/v1/images/generations",
+    api_key: "secret-value",
+    model: "qwen-image-3.0-pro",
+    protocol: "qwen-messages",
+  }, { prompt: "A red square" }, {
+    signal: controller.signal,
+    fetchImpl: async () => {
+      controller.abort();
+      return Response.json({ output: { choices: [{ message: { content: [{ image: uri }] } }] } });
+    },
+  }), { code: "ccdx_image_timeout" });
+});
+
 test("image provider: accepts standard OpenAI base64 responses", async () => {
   const bytes = png(1536, 1024);
   let body;
@@ -235,6 +302,7 @@ test("image downloads cancel during DNS and do not look up an already cancelled 
 });
 
 test("image downloads retain pinned DNS, bounded image bytes, and one transfer", async (t) => {
+  const signedUrl = "https://cdn.example/result.png?signature=fixture";
   const controller = new AbortController();
   const bytes = png();
   let lookups = 0;
@@ -243,7 +311,7 @@ test("image downloads retain pinned DNS, bounded image bytes, and one transfer",
   request.destroy = (error) => { queueMicrotask(() => request.emit("error", error)); };
   t.mock.method(https, "get", (url, options, callback) => {
     connections += 1;
-    assert.equal(url.href, "https://cdn.example/result.png");
+    assert.equal(url.href, signedUrl);
     assert.equal(options.headers.Authorization, undefined);
     options.lookup(url.hostname, {}, (error, address, family) => {
       assert.equal(error, null);
@@ -260,7 +328,7 @@ test("image downloads retain pinned DNS, bounded image bytes, and one transfer",
     });
     return request;
   });
-  const result = await downloadPublicImage("https://cdn.example/result.png", {
+  const result = await downloadPublicImage(signedUrl, {
     lookup: async () => { lookups += 1; return [{ address: "1.1.1.1", family: 4 }]; },
     signal: controller.signal,
   });

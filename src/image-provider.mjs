@@ -73,6 +73,29 @@ function checkedImage(config, value) {
   return value;
 }
 
+function decodeGeneratedImageDataUri(value, signal) {
+  if (signal?.aborted) throw providerError("Image generation timed out or was cancelled", "ccdx_image_timeout");
+  const maxEncodedLength = 4 * Math.ceil(IMAGE_MAX_BYTES / 3);
+  if (value.length > maxEncodedLength + 32) {
+    throw providerError("Generated image exceeds the size limit", "ccdx_image_too_large");
+  }
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,/.exec(value);
+  if (!match) throw providerError("Image API returned an unsupported image data URI", "ccdx_image_format_unsupported");
+  const encoded = value.slice(match[0].length);
+  if (!encoded || encoded.length > maxEncodedLength || encoded.length % 4 !== 0
+    || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+    throw providerError("Image API returned invalid image data", "ccdx_image_data_invalid");
+  }
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.length > IMAGE_MAX_BYTES) throw providerError("Generated image exceeds the size limit", "ccdx_image_too_large");
+  if (bytes.toString("base64") !== encoded) throw providerError("Image API returned invalid image data", "ccdx_image_data_invalid");
+  if (imageMetadata(bytes).mimeType !== match[1]) {
+    throw providerError("Image API returned image data with a mismatched format", "ccdx_image_format_unsupported");
+  }
+  if (signal?.aborted) throw providerError("Image generation timed out or was cancelled", "ccdx_image_timeout");
+  return bytes;
+}
+
 function generationBody(config, prompt, size, image) {
   if (config.protocol === "qwen-messages") {
     return {
@@ -306,9 +329,9 @@ export async function generateImage(config, {
   if (!source) throw providerError("Image API response did not contain an image");
   let bytes;
   try {
-    bytes = source.type === "base64"
-      ? Buffer.from(source.value, "base64")
-      : await downloadImage(source.value, { signal: requestSignal, maxBytes: IMAGE_MAX_BYTES });
+    if (source.type === "base64") bytes = Buffer.from(source.value, "base64");
+    else if (source.value.startsWith("data:")) bytes = decodeGeneratedImageDataUri(source.value, requestSignal);
+    else bytes = await downloadImage(source.value, { signal: requestSignal, maxBytes: IMAGE_MAX_BYTES });
   } catch (error) {
     if (error?.code?.startsWith?.("ccdx_")) throw error;
     const code = String(error?.cause?.code || error?.code || "").replace(/[^A-Z0-9_-]/gi, "").slice(0, 64);

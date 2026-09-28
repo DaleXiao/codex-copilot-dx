@@ -32,4 +32,15 @@ claimed speed gain. The saved limit is read at process startup, not per request.
 
 ## Publication
 
-Publication results will be recorded after GitHub and npm checks finish.
+- Release commit/tag: `bfad1e5` / `v0.9.0`.
+- GitHub CI passed on Node 22.15.0 and 24.x, including configuration startup
+  replay: https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36400201303.
+- GitHub Release: https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.0.
+- The one-shot npm workflow passed, including `prepublishOnly` verification:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36400387064.
+- npm accepted `codex-copilot-dx@0.9.0` under `latest`. The publish receipt's
+  SHA-1 `41591949e2ced734c77bed591dd6a1af34d7080f`, 99 files, and 257.8 kB
+  package match the local dry-run. Publication was not repeated.
+- The configured Microsoft npm mirror still returned 404 immediately after
+  publication; the official-registry publish receipt is the available
+  publication evidence, not an independent download check from this machine.

@@ -50,6 +50,7 @@ function render(data) {
   const requests = data.requests || {};
   text("requests", number(requests.total));
   text("request-errors", `4xx ${number(requests.status_4xx)} / 5xx ${number(requests.status_5xx)} / active ${number(requests.active)}`);
+  text("body-limits", `raw ${mib(data.limits?.max_body_bytes)} / decoded ${mib(data.limits?.max_decoded_body_bytes)}`);
 
   const outcomes = data.stream_performance?.by_route?.responses?.terminal_outcomes?.totals || {};
   for (const key of ["completed", "incomplete", "failed", "cancelled"]) text(key, number(outcomes[key]));

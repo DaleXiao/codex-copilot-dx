@@ -15,7 +15,8 @@ button { border: 1px solid var(--button-border); border-radius: 2px; background:
 button:hover { background: var(--button-hover); }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 button:disabled { opacity: .55; cursor: wait; }
-.icon-button { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 6px; }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 6px; border: 0; background: transparent; }
+.icon-button:hover { background: transparent; color: var(--accent); }
 .icon-button svg { width: 18px; height: 18px; }
 .icon-moon, :root[data-theme="light"] .icon-sun { display: none; }
 :root[data-theme="light"] .icon-moon { display: block; }

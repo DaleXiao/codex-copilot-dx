@@ -56,7 +56,9 @@ test("dashboard restores light mode before the stylesheet loads and tolerates un
 test("dashboard uses inline SVG sun in dark mode and moon in light mode", () => {
   assert.match(html, /<script src="\/theme\.js"><\/script>[\s\S]*<link rel="stylesheet"/);
   assert.match(html, /class="icon-sun"[^>]*aria-hidden="true"/);
-  assert.match(html, /class="icon-moon"[^>]*aria-hidden="true"/);
+  assert.match(html, /class="icon-moon"[^>]*fill="currentColor"[^>]*aria-hidden="true"/);
+  assert.match(css, /\.icon-button \{[^}]*border: 0; background: transparent; \}/);
+  assert.match(css, /\.icon-button:hover \{ background: transparent; color: var\(--accent\); \}/);
   assert.match(css, /\.icon-moon, :root\[data-theme="light"\] \.icon-sun \{ display: none; \}/);
   assert.match(css, /:root\[data-theme="light"\] \.icon-moon \{ display: block; \}/);
 });

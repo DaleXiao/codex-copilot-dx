@@ -3508,6 +3508,30 @@ test("HTTP models route adds the complete Codex catalog only for versioned Codex
   });
 });
 
+test("versioned Codex model discovery includes eligible GPT-6.1 Sol without dropping bundled models", async () => {
+  const live = { data: [{
+    id: "gpt-6.1-sol", vendor: "OpenAI", policy: { state: "enabled" },
+    model_picker_enabled: true, supported_endpoints: ["/responses"],
+    capabilities: { supports: { reasoning_effort: ["low", "medium", "high", "xhigh", "max"] } },
+  }] };
+  const bundled = { models: [
+    { slug: "gpt-5.6-sol", visibility: "list", future_field: { keep: true } },
+    { slug: "gpt-6-sol", visibility: "list", priority: 2,
+      supported_reasoning_levels: ["low", "medium", "ultra"].map((effort) => ({ effort })) },
+  ] };
+  const response = await invokeAdapter({
+    codexModelCatalog: { load: async () => bundled },
+    listModelsFn: async () => ({ status: 200, body: JSON.stringify(live) }),
+  }, { method: "GET", url: "/v1/models?client_version=0.158.0-alpha.2.1" });
+
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.text);
+  assert.deepEqual(body.data, live.data);
+  assert.deepEqual(body.models[0], bundled.models[0]);
+  assert.deepEqual(body.models.find(({ slug }) => slug === "gpt-6.1-sol")?.supported_reasoning_levels,
+    [{ effort: "low" }, { effort: "medium" }]);
+});
+
 test("versioned Codex model discovery preserves dual shape for last-known-good fallback", async () => {
   const cached = { object: "list", data: [{
     id: "gpt-6-astra",

@@ -4,11 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import { CODEX_GPT6_MODEL } from "./models.mjs";
 
-// Compatibility metadata is derived from OpenAI Codex's public models catalog
-// at commit 0a2eb4696c26ac33204bcd255721ab30220a4774. The installed client's
-// GPT-6 Astra entry supplies its own schema and instructions; these overrides
-// describe only the two new model identities and capability differences.
+// GPT-6 Sol/Luna compatibility metadata comes from OpenAI Codex's public models
+// catalog at commit 0a2eb4696c26ac33204bcd255721ab30220a4774. GPT-6.1 Sol
+// identity and defaults come from commit ab84d71f5767e4a565ce81c2c426287cb48c7918.
+// The installed client's Astra or Sol entry supplies its schema and instructions.
 const GPT6_COMPATIBILITY_SPECS = new Map([
+  ["gpt-6.1-sol", Object.freeze({
+    display_name: "GPT-6.1-Sol",
+    description: "Latest workhorse model for coding and everyday work.",
+    default_reasoning_level: "low",
+    priority: 1,
+  })],
   ["gpt-6-sol", Object.freeze({
     display_name: "GPT-6-Sol",
     description: "Workhorse model for coding and everyday work.",
@@ -33,8 +39,12 @@ export { CODEX_GPT6_MODEL };
 export const CODEX_APP_BINARY_PATHS = [
   "/Applications/Codex.app/Contents/Resources/codex",
   "/Applications/ChatGPT.app/Contents/Resources/codex",
+  "/Applications/Codex.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+  "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
   path.join(os.homedir(), "Applications", "Codex.app", "Contents", "Resources", "codex"),
   path.join(os.homedir(), "Applications", "ChatGPT.app", "Contents", "Resources", "codex"),
+  path.join(os.homedir(), "Applications", "Codex.app", "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex"),
+  path.join(os.homedir(), "Applications", "ChatGPT.app", "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex"),
 ];
 export const CODEX_MODEL_CATALOG_TIMEOUT_MS = 5_000;
 export const CODEX_MODEL_CATALOG_MAX_BUFFER = 8 * 1024 * 1024;
@@ -96,7 +106,7 @@ function catalogModelForCopilot(model, copilotModels, { filterReasoning = false 
   const patched = {
     ...structuredClone(model),
     visibility: "list",
-    supported_reasoning_levels: filterReasoning && reasoning.size
+    supported_reasoning_levels: filterReasoning && reasoning.size && Array.isArray(model.supported_reasoning_levels)
       ? model.supported_reasoning_levels.filter(({ effort }) => reasoning.has(effort))
       : model.supported_reasoning_levels,
   };
@@ -111,17 +121,18 @@ function catalogModelForCopilot(model, copilotModels, { filterReasoning = false 
 }
 
 function compatibilityModel(codexCatalog, slug) {
-  const astra = codexCatalog.models.find((model) => model.slug === CODEX_GPT6_MODEL);
+  const isGpt61Sol = slug === "gpt-6.1-sol";
+  const template = codexCatalog.models.find((model) => model.slug === (isGpt61Sol ? "gpt-6-sol" : CODEX_GPT6_MODEL));
   const spec = GPT6_COMPATIBILITY_SPECS.get(slug);
-  if (!astra || !spec) return null;
+  if (!template || !spec || (isGpt61Sol && !Array.isArray(template.supported_reasoning_levels))) return null;
   return {
-    ...structuredClone(astra),
+    ...structuredClone(template),
     ...spec,
     slug,
     supports_parallel_tool_calls: true,
-    multi_agent_reasoning_effort: null,
+    multi_agent_reasoning_effort: isGpt61Sol ? "xhigh" : null,
     supports_experimental_context: false,
-    minimal_client_version: "0.155.0",
+    minimal_client_version: isGpt61Sol ? "0.158.0" : "0.155.0",
   };
 }
 
@@ -141,7 +152,7 @@ export function buildCodexModelResponse({ copilotModels, codexCatalog } = {}) {
   const models = codexCatalog.models.map((model) => {
     if (!MANAGED_GPT6_MODELS.has(model.slug)) return model;
     if (!isEligibleCopilotGpt6(copilotModels, model.slug)) return { ...model, visibility: "hide" };
-    return catalogModelForCopilot(model, copilotModels);
+    return catalogModelForCopilot(model, copilotModels, { filterReasoning: model.slug === "gpt-6.1-sol" });
   });
   for (const slug of GPT6_COMPATIBILITY_SPECS.keys()) {
     if (bundledSlugs.has(slug) || !isEligibleCopilotGpt6(copilotModels, slug)) continue;

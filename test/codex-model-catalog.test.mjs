@@ -146,6 +146,29 @@ test("Codex catalog loader selects the first installed trusted app binary", asyn
   assert.equal(executedPath, CODEX_APP_BINARY_PATHS[1]);
 });
 
+test("Codex catalog loader finds the bundled CLI in the current ChatGPT App layout", async () => {
+  const binaryPath = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
+  const calls = [];
+  const loader = createCodexModelCatalog({
+    statFn: async (candidate) => {
+      if (candidate !== binaryPath) throw new Error("missing");
+      return { size: 1, mtimeMs: 1, isFile: () => true };
+    },
+    execFileFn: (candidate, args, _options, done) => {
+      calls.push({ candidate, args });
+      done(null, args[0] === "--version"
+        ? "codex-cli 0.158.0-alpha.2.1\n"
+        : JSON.stringify(bundledCatalog), "");
+    },
+  });
+
+  assert.deepEqual(await loader.load({ clientVersion: "0.158.0-alpha.2.1" }), bundledCatalog);
+  assert.deepEqual(calls, [
+    { candidate: binaryPath, args: ["--version"] },
+    { candidate: binaryPath, args: ["debug", "models", "--bundled"] },
+  ]);
+});
+
 test("Codex catalog loader selects the installed binary matching clientVersion", async () => {
   const versionByPath = new Map([
     [CODEX_APP_BINARY_PATHS[0], "0.152.0"],
@@ -366,6 +389,76 @@ test("client-provided GPT-6 Sol and Luna entries win over compatibility metadata
     assert.deepEqual(model.additional_speed_tiers, []);
     assert.deepEqual(model.service_tiers, []);
   }
+});
+
+test("eligible GPT-6.1 Sol uses the installed Sol schema without inventing Fast or Ultra", () => {
+  const clientSol = {
+    slug: "gpt-6-sol", visibility: "list", priority: 2,
+    supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"]
+      .map((effort) => ({ effort })),
+    additional_speed_tiers: ["fast"],
+    service_tiers: [{ id: "priority", name: "Fast" }],
+    client_capability: { keep: true },
+  };
+  const codexCatalog = { models: [...bundledCatalog.models, clientSol] };
+  const original = structuredClone(codexCatalog);
+  const copilotModels = { data: [copilotModel("gpt-6.1-sol")] };
+  const response = buildCodexModelResponse({ copilotModels, codexCatalog });
+  const next = response.models.find((model) => model.slug === "gpt-6.1-sol");
+
+  assert.deepEqual(codexCatalog, original);
+  assert.deepEqual(response.models[0], codexCatalog.models[0]);
+  assert.equal(next.display_name, "GPT-6.1-Sol");
+  assert.equal(next.default_reasoning_level, "low");
+  assert.equal(next.priority, 1);
+  assert.equal(next.visibility, "list");
+  assert.deepEqual(next.supported_reasoning_levels.map(({ effort }) => effort),
+    ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(next.client_capability, { keep: true });
+  assert.deepEqual(next.additional_speed_tiers, []);
+  assert.deepEqual(next.service_tiers, []);
+  assert.equal(Object.hasOwn(next, "default_service_tier"), false);
+});
+
+test("client-provided GPT-6.1 Sol entry wins; ineligible upstream cannot expose it", () => {
+  const clientModel = {
+    slug: "gpt-6.1-sol", visibility: "hide", display_name: "Client 6.1",
+    supported_reasoning_levels: [{ effort: "low" }, { effort: "ultra" }],
+    client_capability: { future: true },
+  };
+  const codexCatalog = { models: [...bundledCatalog.models, clientModel] };
+  const eligible = buildCodexModelResponse({
+    copilotModels: { data: [copilotModel("gpt-6.1-sol")] }, codexCatalog,
+  }).models.find(({ slug }) => slug === "gpt-6.1-sol");
+  assert.equal(eligible.display_name, "Client 6.1");
+  assert.equal(eligible.visibility, "list");
+  assert.deepEqual(eligible.client_capability, { future: true });
+  assert.deepEqual(eligible.supported_reasoning_levels, [{ effort: "low" }]);
+  const futureClient = { ...clientModel };
+  delete futureClient.supported_reasoning_levels;
+  const future = buildCodexModelResponse({
+    copilotModels: { data: [copilotModel("gpt-6.1-sol")] },
+    codexCatalog: { models: [...bundledCatalog.models, futureClient] },
+  }).models.find(({ slug }) => slug === "gpt-6.1-sol");
+  assert.equal(future.visibility, "list");
+  assert.equal(future.supported_reasoning_levels, undefined);
+
+  for (const upstream of [
+    [copilotGpt6()],
+    [copilotGpt6({ id: "gpt-6.1-sol", vendor: "Microsoft" })],
+    [copilotGpt6({ id: "gpt-6.1-sol", model_picker_enabled: false })],
+    [copilotGpt6({ id: "gpt-6.1-sol", supported_endpoints: ["/chat/completions"] })],
+    [copilotModel("gpt-6.1-sol", ["low"]), copilotModel("gpt-6.1-sol", ["low"])],
+    [copilotGpt6({ id: "gpt-6.1-sol", policy: { state: "disabled" } })],
+  ]) {
+    const response = buildCodexModelResponse({ copilotModels: { data: upstream }, codexCatalog });
+    assert.equal(response.models.find(({ slug }) => slug === "gpt-6.1-sol").visibility, "hide");
+  }
+  const missing = buildCodexModelResponse({
+    copilotModels: { data: [copilotGpt6()] },
+    codexCatalog: { models: bundledCatalog.models },
+  });
+  assert.equal(missing.models.some(({ slug }) => slug === "gpt-6.1-sol"), false);
 });
 
 test("GPT-6 remains hidden unless the Copilot entry is unambiguously eligible", () => {

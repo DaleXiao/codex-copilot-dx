@@ -36,3 +36,19 @@ Date: 2026-09-30. Baseline: `ecc8c27` (0.9.3).
 Older logs that omit zero cache counts cannot be reconstructed accurately;
 this release does not rewrite them. The performance gates found no detected
 regression in their covered paths, not a claimed speed improvement.
+
+## Publication
+
+- Release commit/tag: `8bf2817` / `v0.9.4`.
+- GitHub CI passed on Node 22.15.0 and 24.x:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36667514578.
+- GitHub Release: https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.4.
+- The one-shot npm publish workflow passed, including its required
+  `prepublishOnly` verification:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36667621463.
+  The official-registry receipt reports `codex-copilot-dx@0.9.4` with tag
+  `latest`, 99 files, 259.2 kB, and SHA-1
+  `32eea59847795e762f3df009400e9955b08302cb`, matching the local pack preflight.
+- This machine's independent official-registry query returned `ENOTCONN`;
+  the successful workflow receipt is the available npm publication evidence.
+  Publication was not repeated.

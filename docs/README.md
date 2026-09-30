@@ -14,6 +14,7 @@ These reports record a specific release and test environment. Their version,
 test counts, timings, live-provider observations, and limitations remain
 historical facts rather than current guarantees.
 
+- [0.9.5: cache hit rates with incomplete history](RELEASE_0.9.5.md)
 - [0.9.4: token cache hit rate in usage and dashboard](RELEASE_0.9.4.md)
 - [0.9.3: GPT-6.1 Sol Codex catalog compatibility](RELEASE_0.9.3.md)
 - [0.9.2: read-only runtime limits in the dashboard](RELEASE_0.9.2.md)

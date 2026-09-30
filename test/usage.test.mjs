@@ -329,7 +329,7 @@ test("cache hit rate preserves explicit zero reports and distinguishes missing d
   assert.equal(usageCacheHitRate(summarizeUsage([absent]).totals), null);
 });
 
-test("cache hit rate weights input tokens and never hides incomplete or invalid records", () => {
+test("cache hit rate weights recorded totals without hiding computable incomplete history", () => {
   const records = [
     { model: "a", usage: { input_tokens: 10, cached_input_tokens: 10 } },
     { model: "b", usage: { input_tokens: 90, cache_read_input_tokens: 0 } },
@@ -338,11 +338,20 @@ test("cache hit rate weights input tokens and never hides incomplete or invalid 
   assert.equal(usageCacheHitRate(summary.totals), 0.1);
   assert.equal(usageCacheHitRate(summary.byModel.a), 1);
   assert.equal(usageCacheHitRate(summary.byModel.b), 0);
+  for (const [usage, expected] of [
+    [undefined, 0.1], [null, 0.1], [{ input_tokens: 30 }, 10 / 130], [{ cached_input_tokens: 3 }, 0.13],
+  ]) {
+    const partial = summarizeUsage([...records, { model: "partial", usage }]);
+    assert.equal(usageCacheHitRate(partial.totals), expected);
+    assert.equal(partial.totals.cache_hit_unknown_requests, 1);
+    assert.match(formatUsageSummary(partial, { format: "plain", filePath: "fixture" }), /Cache hit: ~/);
+  }
   for (const usage of [
-    undefined, null, { input_tokens: 30 }, { cached_input_tokens: 3 },
     { input_tokens: 10, cached_input_tokens: -1 },
     { input_tokens: 10, cached_input_tokens: 11 },
     { input_tokens: Infinity, cached_input_tokens: 1 },
+    { input_tokens: 10, cached_input_tokens: NaN },
+    { input_tokens: -10, cached_input_tokens: 0 },
   ]) {
     assert.equal(usageCacheHitRate(summarizeUsage([...records, { model: "bad", usage }]).totals), null);
   }
@@ -360,8 +369,9 @@ test("cache hit rate aggregates paired counts across current and rotated logs", 
   assert.equal(usageCacheHitRate(summary.byModel.a), 0.1);
   await fs.appendFile(filePath, `${JSON.stringify({ model: "a", usage: { input_tokens: 3 } })}\n`);
   const incomplete = await summarizeUsageLogs(filePath);
-  assert.equal(usageCacheHitRate(incomplete.totals), null);
-  assert.equal(usageCacheHitRate(incomplete.byModel.a), null);
+  assert.equal(usageCacheHitRate(incomplete.totals), 10 / 103);
+  assert.equal(usageCacheHitRate(incomplete.byModel.a), 10 / 103);
+  assert.match(formatUsageSummary(incomplete, { format: "plain", filePath }), /Cache hit: ~9\.7%/);
 });
 
 test("recordUsage: appends JSONL records to CCDX_USAGE_PATH", async () => {

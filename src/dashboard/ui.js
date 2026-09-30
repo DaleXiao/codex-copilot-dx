@@ -309,7 +309,7 @@ async function loadModels() {
 
 function usageValues(row) {
   const rate = Number.isFinite(row.cache_hit_rate) && row.cache_hit_rate >= 0 && row.cache_hit_rate <= 1
-    ? `${(row.cache_hit_rate * 100).toFixed(1)}%` : "—";
+    ? `${row.cache_hit_rate_partial ? "~" : ""}${(row.cache_hit_rate * 100).toFixed(1)}%` : "—";
   return [row.model, number(row.requests), number(row.input_tokens), number(row.cache_read_tokens), number(row.output_tokens), number(row.total_tokens), rate];
 }
 

@@ -277,6 +277,13 @@ export function summarizeUsage(records) {
       summary.totals.cache_hit_unknown_requests = (summary.totals.cache_hit_unknown_requests || 0) + 1;
       modelTotals.cache_hit_unknown_requests = (modelTotals.cache_hit_unknown_requests || 0) + 1;
     }
+    const cacheCounts = [record.usage?.cached_input_tokens, record.usage?.cache_read_input_tokens];
+    if ((input != null && (!Number.isFinite(input) || input < 0))
+      || cacheCounts.some((value) => value != null && (!Number.isFinite(value) || value < 0))
+      || (Number.isFinite(input) && Number.isFinite(cached) && cached > input)) {
+      summary.totals.cache_hit_invalid_requests = (summary.totals.cache_hit_invalid_requests || 0) + 1;
+      modelTotals.cache_hit_invalid_requests = (modelTotals.cache_hit_invalid_requests || 0) + 1;
+    }
   }
   return summary;
 }
@@ -315,14 +322,14 @@ export function cacheReadTokens(usage = {}) {
 export function usageCacheHitRate(usage = {}) {
   const input = usage.input_tokens;
   const cached = cacheReadTokens(usage);
-  if (usage.cache_hit_unknown_requests > 0 || !Number.isFinite(input) || input <= 0
+  if (usage.cache_hit_invalid_requests > 0 || !Number.isFinite(input) || input <= 0
     || !Number.isFinite(cached) || cached < 0 || cached > input) return null;
   return cached / input;
 }
 
 function cacheHitPercent(usage) {
   const rate = usageCacheHitRate(usage);
-  return rate === null ? "—" : `${(rate * 100).toFixed(1)}%`;
+  return rate === null ? "—" : `${usage.cache_hit_unknown_requests > 0 ? "~" : ""}${(rate * 100).toFixed(1)}%`;
 }
 
 function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {

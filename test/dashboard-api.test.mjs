@@ -164,7 +164,7 @@ test("dashboard usage returns bounded metadata-only rows sorted by tokens", asyn
   assert.doesNotMatch(JSON.stringify(result.body), /must-not-leak/);
 });
 
-test("dashboard cache hit rate matches CLI token weighting and marks incomplete totals unknown", async () => {
+test("dashboard cache hit rate matches CLI and marks computable incomplete totals partial", async () => {
   const records = [
     { model: "a", usage: { input_tokens: 10, cached_input_tokens: 10, total_tokens: 10 } },
     { model: "b", usage: { input_tokens: 90, cached_input_tokens: 0, total_tokens: 90 } },
@@ -176,9 +176,11 @@ test("dashboard cache hit rate matches CLI token weighting and marks incomplete 
   assert.equal(first.body.rows.find(({ model }) => model === "b").cache_hit_rate, 0);
   records.push({ model: "old-log", usage: { input_tokens: 5 } });
   const incomplete = await invoke(handler, { url: "/_ccdx/ui/usage" });
-  assert.equal(incomplete.body.total.cache_hit_rate, null);
+  assert.equal(incomplete.body.total.cache_hit_rate, 10 / 105);
+  assert.equal(incomplete.body.total.cache_hit_rate_partial, true);
   assert.equal(incomplete.body.rows.find(({ model }) => model === "old-log").cache_hit_rate, null);
   assert.equal(incomplete.body.rows.find(({ model }) => model === "a").cache_hit_rate, 1);
+  assert.equal(incomplete.body.rows.find(({ model }) => model === "a").cache_hit_rate_partial, false);
 });
 
 test("dashboard usage bounds model rows without dropping the aggregate total", async () => {

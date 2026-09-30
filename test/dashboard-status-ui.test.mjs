@@ -18,6 +18,8 @@ test("dashboard usage renders percentages, zero hits and unknown rates in the se
   for (const [rate, expected] of [[0, "0.0%"], [1, "100.0%"], [null, "—"], [undefined, "—"], [1.2, "—"]]) {
     assert.equal(usageValues({ ...row, cache_hit_rate: rate }).at(-1), expected);
   }
+  assert.equal(usageValues({ ...row, cache_hit_rate_partial: true }).at(-1), "~80.0%");
+  assert.equal(usageValues({ ...row, cache_hit_rate: null, cache_hit_rate_partial: true }).at(-1), "—");
   assert.match(html, /<th scope="col">CACHE HIT<\/th>/);
   assert.match(html, /id="usage-body"><tr><td colspan="7">Loading/);
 });

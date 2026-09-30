@@ -40,3 +40,20 @@ Date: 2026-09-30. Baseline: `fd104d9` (0.9.2).
   model-list response. In a 40-iteration, in-process comparison on this Mac,
   median merge-and-serialize time was 1.31 ms before and 1.51 ms after. This
   is a local observation, not a cross-device performance guarantee.
+- The user's running adapter and Codex App were not restarted for this test;
+  the visible picker must refresh after installing and starting this release.
+
+## Publication
+
+- Release commit/tag: `e857ce2` / `v0.9.3`.
+- GitHub CI passed on Node 22.15.0 and 24.x:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36654878488.
+- GitHub Release: https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.3.
+- The one-shot npm workflow passed, including `prepublishOnly` verification:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36655168606.
+  Its official-registry receipt reports `codex-copilot-dx@0.9.3` under
+  `latest`, 99 files, 258.5 kB, and SHA-1
+  `cef1fab93020f80fc19241990996d0d7c3cc5da5`, matching the local pack
+  preflight. Publication was not repeated.
+- This machine's independent official-registry lookup returned `ENOTCONN`;
+  the successful workflow receipt is the available npm evidence.

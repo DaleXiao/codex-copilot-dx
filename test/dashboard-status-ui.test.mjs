@@ -7,6 +7,21 @@ const html = readFileSync(new URL("../src/dashboard/index.html", import.meta.url
 const script = readFileSync(new URL("../src/dashboard/ui.js", import.meta.url), "utf8");
 const renderScript = script.split('\nelement("refresh").addEventListener("click", refresh);')[0];
 
+test("dashboard usage renders percentages, zero hits and unknown rates in the seventh column", () => {
+  const usageScript = script.slice(script.indexOf("function usageValues(row)"), script.indexOf("async function loadUsage()"));
+  const usageValues = runInNewContext(`${usageScript}\nusageValues;`, {
+    number: (value) => value ?? "—",
+  });
+  const row = { model: "test", requests: 1, input_tokens: 100, cache_read_tokens: 80,
+    output_tokens: 3, total_tokens: 103, cache_hit_rate: 0.8 };
+  assert.deepEqual(Array.from(usageValues(row)), ["test", 1, 100, 80, 3, 103, "80.0%"]);
+  for (const [rate, expected] of [[0, "0.0%"], [1, "100.0%"], [null, "—"], [undefined, "—"], [1.2, "—"]]) {
+    assert.equal(usageValues({ ...row, cache_hit_rate: rate }).at(-1), expected);
+  }
+  assert.match(html, /<th scope="col">CACHE HIT<\/th>/);
+  assert.match(html, /id="usage-body"><tr><td colspan="7">Loading/);
+});
+
 test("dashboard shows active per-request caps separately from history occupancy", () => {
   assert.match(html, /Per-request limits \(active\)<br><span id="body-limits">/);
   assert.match(html, /<strong id="history">—<\/strong><progress id="history-meter"/);

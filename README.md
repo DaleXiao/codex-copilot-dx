@@ -107,6 +107,8 @@ This performs a fresh, read-only GitHub Copilot model-directory lookup without s
 
 Interactive terminals use aligned tables for `models`, `auth status`, and `usage`. Redirected or piped output retains the plain-text layout for scripts; use `--format table` or `--format plain` when a command offers an explicit format override.
 
+`ccdx usage` and the dashboard Usage table show token cache hit rate for each model and the aggregate: cached input tokens divided by input tokens, weighted by token count rather than averaging request percentages. This describes the upstream prompt cache; the local history and image-transform caches are separate. A rate is `—` when input tokens are zero or any included record lacks valid paired input/cache counts. Older logs may omit explicit zero cache counts; new Responses usage records retain reported zeros. CLI tables keep existing token columns on narrow terminals and show rates below the table when the extra column does not fit.
+
 ### Auto-review model
 
 ```bash

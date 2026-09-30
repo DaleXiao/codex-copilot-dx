@@ -16,6 +16,7 @@ import {
   summarizeUsage,
   summarizeUsageLogs,
   usageLoggingStats,
+  usageCacheHitRate,
 } from "../src/usage.mjs";
 
 const usageWriterFixture = fileURLToPath(new URL("./fixtures/usage-writer.mjs", import.meta.url));
@@ -317,6 +318,52 @@ test("buildResponsesUsageRecord: skips empty usage", () => {
   assert.equal(record, null);
 });
 
+test("cache hit rate preserves explicit zero reports and distinguishes missing data", () => {
+  const zero = buildResponsesUsageRecord({ response: {
+    model: "zero", usage: { input_tokens: 10, input_tokens_details: { cached_tokens: 0 } },
+  } });
+  assert.equal(zero.usage.cached_input_tokens, 0);
+  assert.equal(usageCacheHitRate(summarizeUsage([zero]).totals), 0);
+  const absent = buildResponsesUsageRecord({ response: { usage: { input_tokens: 10 } } });
+  assert.equal(absent.usage.cached_input_tokens, undefined);
+  assert.equal(usageCacheHitRate(summarizeUsage([absent]).totals), null);
+});
+
+test("cache hit rate weights input tokens and never hides incomplete or invalid records", () => {
+  const records = [
+    { model: "a", usage: { input_tokens: 10, cached_input_tokens: 10 } },
+    { model: "b", usage: { input_tokens: 90, cache_read_input_tokens: 0 } },
+  ];
+  const summary = summarizeUsage(records);
+  assert.equal(usageCacheHitRate(summary.totals), 0.1);
+  assert.equal(usageCacheHitRate(summary.byModel.a), 1);
+  assert.equal(usageCacheHitRate(summary.byModel.b), 0);
+  for (const usage of [
+    undefined, null, { input_tokens: 30 }, { cached_input_tokens: 3 },
+    { input_tokens: 10, cached_input_tokens: -1 },
+    { input_tokens: 10, cached_input_tokens: 11 },
+    { input_tokens: Infinity, cached_input_tokens: 1 },
+  ]) {
+    assert.equal(usageCacheHitRate(summarizeUsage([...records, { model: "bad", usage }]).totals), null);
+  }
+  assert.equal(usageCacheHitRate({ input_tokens: 0, cached_input_tokens: 0 }), null);
+});
+
+test("cache hit rate aggregates paired counts across current and rotated logs", async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-usage-hit-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const filePath = path.join(dir, "usage.jsonl");
+  await fs.writeFile(`${filePath}.1`, `${JSON.stringify({ model: "a", usage: { input_tokens: 10, cached_input_tokens: 10 } })}\n`);
+  await fs.writeFile(filePath, `${JSON.stringify({ model: "a", usage: { input_tokens: 90, cache_read_input_tokens: 0 } })}\n`);
+  const summary = await summarizeUsageLogs(filePath);
+  assert.equal(usageCacheHitRate(summary.totals), 0.1);
+  assert.equal(usageCacheHitRate(summary.byModel.a), 0.1);
+  await fs.appendFile(filePath, `${JSON.stringify({ model: "a", usage: { input_tokens: 3 } })}\n`);
+  const incomplete = await summarizeUsageLogs(filePath);
+  assert.equal(usageCacheHitRate(incomplete.totals), null);
+  assert.equal(usageCacheHitRate(incomplete.byModel.a), null);
+});
+
 test("recordUsage: appends JSONL records to CCDX_USAGE_PATH", async () => {
   const oldPath = process.env.CCDX_USAGE_PATH;
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-usage-"));
@@ -362,10 +409,11 @@ test("formatUsageSummary: plain layout remains compatible and combines cache fie
     "Usage log: /tmp/usage.jsonl",
     "Requests: 2",
     "Tokens: input=12 cache_read=5 output=3 total=15",
+    "Cache hit: 41.7% (cached/input tokens)",
     "",
     "By model:",
-    "  b: requests=1 input=4 cache_read=2 output=1 total=5",
-    "  a: requests=1 input=8 cache_read=3 output=2 total=10",
+    "  b: requests=1 input=4 cache_read=2 output=1 total=5 cache_hit=50.0%",
+    "  a: requests=1 input=8 cache_read=3 output=2 total=10 cache_hit=37.5%",
   ].join("\n"));
 });
 
@@ -380,11 +428,11 @@ test("formatUsageSummary: auto uses a full table on a wide TTY and sorts models 
     format: "auto",
     output: { isTTY: true, columns: 120 },
   });
-  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\n\nMODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+OUTPUT\s+TOTAL/m);
+  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\n\nMODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+OUTPUT\s+TOTAL\s+HIT %/m);
   assert.ok(output.indexOf("TOTAL") < output.indexOf("large-a"));
   assert.ok(output.indexOf("large-a") < output.indexOf("large-b"));
   assert.ok(output.indexOf("large-b") < output.indexOf("small"));
-  assert.match(output, /TOTAL\s+3\s+15\s+6\s+8\s+23/);
+  assert.match(output, /TOTAL\s+3\s+15\s+6\s+8\s+23\s+40\.0%/);
 });
 
 test("formatUsageSummary: large totals still fit a standard 80-column terminal", () => {
@@ -404,6 +452,7 @@ test("formatUsageSummary: large totals still fit a standard 80-column terminal",
   });
   assert.match(output, /MODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+OUTPUT\s+TOTAL/);
   assert.doesNotMatch(output, /Details:/);
+  assert.match(output, /Cache hit \(cached\/input tokens\):\nTOTAL: 96\.9%/);
 });
 
 test("formatUsageSummary: both formats combine cache fields and use dashes for missing values", () => {
@@ -417,8 +466,8 @@ test("formatUsageSummary: both formats combine cache fields and use dashes for m
     format: "table",
     output: { isTTY: false, columns: 120 },
   });
-  assert.match(output, /mixed\s+2\s+—\s+12\s+—\s+12/);
-  assert.match(output, /missing\s+1\s+—\s+—\s+2\s+2/);
+  assert.match(output, /mixed\s+2\s+—\s+12\s+—\s+12\s+—/);
+  assert.match(output, /missing\s+1\s+—\s+—\s+2\s+2\s+—/);
   assert.match(formatUsageSummary(summary, {
     filePath: "/tmp/usage.jsonl",
     format: "plain",
@@ -451,6 +500,7 @@ test("formatUsageSummary: compact table preserves totals and appends omitted tok
   assert.match(output, /wide-model-name\s+1\s+124,245/);
   assert.match(output, /Details:/);
   assert.match(output, /wide-model-name: input=123,456 cache_read=100,000 output=789/);
+  assert.match(output, /wide-model-name: .*cache_hit=81\.0%/);
 });
 
 test("formatUsageSummary: auto falls back to plain when even the compact table cannot fit", () => {

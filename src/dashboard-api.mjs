@@ -9,7 +9,7 @@ import {
   renderTerminalAnimationFrame,
   TERMINAL_ANIMATION_THEMES,
 } from "./terminal-animation.mjs";
-import { summarizeUsageLogs } from "./usage.mjs";
+import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate } from "./usage.mjs";
 import { readUserSettings, terminalAnimationPreference, writeTerminalAnimationTheme } from "./user-settings.mjs";
 
 const ANIMATION_PATH = "/_ccdx/ui/animation";
@@ -79,17 +79,13 @@ function finite(value) {
   return Number.isFinite(value) ? Math.max(0, value) : null;
 }
 
-function cacheReadTokens(usage = {}) {
-  const values = [usage.cache_read_input_tokens, usage.cached_input_tokens].filter(Number.isFinite);
-  return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
-}
-
 function usageRow(model, values) {
   return {
     model: safeText(model, 100),
     requests: finite(values.requests),
     input_tokens: finite(values.input_tokens),
-    cache_read_tokens: cacheReadTokens(values),
+    cache_read_tokens: cacheReadTokens(values) ?? null,
+    cache_hit_rate: usageCacheHitRate(values),
     output_tokens: finite(values.output_tokens),
     total_tokens: finite(values.total_tokens),
   };

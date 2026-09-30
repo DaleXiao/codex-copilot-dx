@@ -54,9 +54,10 @@ function hasPositiveTokenValue(usage) {
 
 function normalizeResponsesUsage(usage) {
   if (!usage || typeof usage !== "object") return undefined;
+  const cachedInput = numberOrUndefined(usage.cached_input_tokens ?? usage.input_tokens_details?.cached_tokens);
   const out = compactObject({
     input_tokens: positiveNumber(usage.input_tokens),
-    cached_input_tokens: positiveNumber(usage.cached_input_tokens ?? usage.input_tokens_details?.cached_tokens),
+    cached_input_tokens: cachedInput >= 0 ? cachedInput : undefined,
     output_tokens: positiveNumber(usage.output_tokens),
     reasoning_output_tokens: positiveNumber(usage.reasoning_output_tokens ?? usage.output_tokens_details?.reasoning_tokens),
     total_tokens: positiveNumber(usage.total_tokens),
@@ -251,7 +252,7 @@ export async function readUsageRecords(filePath = usageLogPath(), { warn = conso
 }
 
 function addUsageTotals(target, usage = {}) {
-  for (const [key, value] of Object.entries(usage)) {
+  for (const [key, value] of Object.entries(usage || {})) {
     if (Number.isFinite(value)) target[key] = (target[key] || 0) + value;
   }
 }
@@ -270,6 +271,12 @@ export function summarizeUsage(records) {
     const modelTotals = summary.byModel[model];
     modelTotals.requests += 1;
     addUsageTotals(modelTotals, record.usage);
+    const input = record.usage?.input_tokens;
+    const cached = cacheReadTokens(record.usage || {});
+    if (!Number.isFinite(input) || input < 0 || !Number.isFinite(cached) || cached < 0 || cached > input) {
+      summary.totals.cache_hit_unknown_requests = (summary.totals.cache_hit_unknown_requests || 0) + 1;
+      modelTotals.cache_hit_unknown_requests = (modelTotals.cache_hit_unknown_requests || 0) + 1;
+    }
   }
   return summary;
 }
@@ -298,11 +305,24 @@ function tableNumber(n) {
   return Number.isFinite(n) ? n.toLocaleString("en-US") : undefined;
 }
 
-function cacheReadTokens(usage = {}) {
+export function cacheReadTokens(usage = {}) {
   const values = [usage.cache_read_input_tokens, usage.cached_input_tokens]
     .filter((value) => Number.isFinite(value));
   const value = values.length > 0 ? values.reduce((total, current) => total + current, 0) : undefined;
   return Number.isFinite(value) ? value : undefined;
+}
+
+export function usageCacheHitRate(usage = {}) {
+  const input = usage.input_tokens;
+  const cached = cacheReadTokens(usage);
+  if (usage.cache_hit_unknown_requests > 0 || !Number.isFinite(input) || input <= 0
+    || !Number.isFinite(cached) || cached < 0 || cached > input) return null;
+  return cached / input;
+}
+
+function cacheHitPercent(usage) {
+  const rate = usageCacheHitRate(usage);
+  return rate === null ? "—" : `${(rate * 100).toFixed(1)}%`;
 }
 
 function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {
@@ -314,11 +334,12 @@ function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {
   lines.push(
     `Requests: ${fmt(summary.requests)}`,
     `Tokens: input=${fmt(summary.totals.input_tokens)} cache_read=${fmt(cacheReadTokens(summary.totals))} output=${fmt(summary.totals.output_tokens)} total=${fmt(summary.totals.total_tokens)}`,
+    `Cache hit: ${cacheHitPercent(summary.totals)} (cached/input tokens)`,
     "",
     "By model:",
   );
   for (const [model, row] of Object.entries(summary.byModel)) {
-    lines.push(`  ${model}: requests=${fmt(row.requests)} input=${fmt(row.input_tokens)} cache_read=${fmt(cacheReadTokens(row))} output=${fmt(row.output_tokens)} total=${fmt(row.total_tokens)}`);
+    lines.push(`  ${model}: requests=${fmt(row.requests)} input=${fmt(row.input_tokens)} cache_read=${fmt(cacheReadTokens(row))} output=${fmt(row.output_tokens)} total=${fmt(row.total_tokens)} cache_hit=${cacheHitPercent(row)}`);
   }
   return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
 }
@@ -338,11 +359,12 @@ function usageTableRow(model, usage) {
     cacheRead: tableNumber(cacheReadTokens(usage)),
     output: tableNumber(usage.output_tokens),
     total: tableNumber(usage.total_tokens),
+    cacheHit: cacheHitPercent(usage),
   };
 }
 
 function usageDetailLine(model, usage) {
-  return `${terminalCell(model)}: input=${fmt(usage.input_tokens)} cache_read=${fmt(cacheReadTokens(usage))} output=${fmt(usage.output_tokens)}`;
+  return `${terminalCell(model)}: input=${fmt(usage.input_tokens)} cache_read=${fmt(cacheReadTokens(usage))} output=${fmt(usage.output_tokens)} cache_hit=${cacheHitPercent(usage)}`;
 }
 
 function formatTableUsageSummary(summary, filePath, output) {
@@ -362,13 +384,19 @@ function formatTableUsageSummary(summary, filePath, output) {
     .sort(compareModelUsage);
   const totalUsage = { requests: summary.requests, ...summary.totals };
   const rows = [usageTableRow("TOTAL", totalUsage), ...modelUsage.map(({ model, row }) => usageTableRow(model, row))];
-  const table = formatResponsiveCliTable({
-    columns,
-    compactColumns,
+  let table = formatResponsiveCliTable({
+    columns: [...columns, { key: "cacheHit", label: "HIT %", align: "right" }],
+    compactColumns: columns,
     rows,
     width: cliOutputWidth(output),
     gap: 1,
   });
+  const rateFits = !table.compact;
+  if (table.overflow) {
+    table = formatResponsiveCliTable({ columns, compactColumns, rows, width: cliOutputWidth(output), gap: 1 });
+  } else {
+    table.compact = false;
+  }
   const lines = [`Usage log: ${safePath}`, "", table.output];
   if (table.compact) {
     lines.push(
@@ -377,6 +405,10 @@ function formatTableUsageSummary(summary, filePath, output) {
       usageDetailLine("TOTAL", totalUsage),
       ...modelUsage.map(({ model, row }) => usageDetailLine(model, row)),
     );
+  } else if (!rateFits) {
+    lines.push("", "Cache hit (cached/input tokens):",
+      `TOTAL: ${cacheHitPercent(totalUsage)}`,
+      ...modelUsage.map(({ model, row }) => `${terminalCell(model)}: ${cacheHitPercent(row)}`));
   }
   return { output: lines.join("\n"), overflow: table.overflow };
 }

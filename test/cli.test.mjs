@@ -330,10 +330,12 @@ test("usage table is explicit while non-interactive default output stays compati
       execFileAsync(process.execPath, [cliPath, "usage"], { timeout: 2000, env }),
     ]);
     assert.equal(legacy.stdout, primary.stdout);
-    assert.match(primary.stdout, /^MODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+OUTPUT\s+TOTAL$/m);
-    assert.match(primary.stdout, /TOTAL\s+2\s+10\s+9\s+5\s+20/);
+    assert.match(primary.stdout, /^MODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+OUTPUT\s+TOTAL\s+HIT %$/m);
+    assert.match(primary.stdout, /TOTAL\s+2\s+10\s+9\s+5\s+20\s+—/);
+    assert.match(primary.stdout, /gpt-test\s+1\s+10\s+4\s+2\s+12\s+40\.0%/);
     assert.match(plain.stdout, /^Usage log: .*\nRequests: 2\nTokens:/);
     assert.doesNotMatch(plain.stdout, /^MODEL\s+RECORDS/m);
+    assert.match(plain.stdout, /Cache hit: — \(cached\/input tokens\)/);
     assert.equal(primary.stderr, "");
     assertNoCompatibilityWarning(legacy.stderr);
   } finally {

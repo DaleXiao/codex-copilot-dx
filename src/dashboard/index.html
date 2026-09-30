@@ -63,7 +63,8 @@
         <section class="panel dashboard-section" aria-label="Usage by model">
           <div class="panel-heading"><h2>USAGE</h2><div class="heading-actions"><span id="usage-state">READING LOG</span><button id="refresh-usage" type="button">Refresh</button></div></div>
           <p id="usage-note" class="table-note">Aggregating local usage metadata…</p>
-          <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col">MODEL</th><th scope="col">CALLS</th><th scope="col">INPUT</th><th scope="col">CACHE READ</th><th scope="col">OUTPUT</th><th scope="col">TOTAL</th></tr></thead><tbody id="usage-body"><tr><td colspan="6">Loading…</td></tr></tbody></table></div>
+          <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col">MODEL</th><th scope="col">CALLS</th><th scope="col">INPUT</th><th scope="col">CACHE READ</th><th scope="col">OUTPUT</th><th scope="col">TOTAL</th><th scope="col">CACHE HIT</th></tr></thead><tbody id="usage-body"><tr><td colspan="7">Loading…</td></tr></tbody></table></div>
+          <p class="hint">Cache hit = cached / input tokens. — = incomplete usage data or no input tokens.</p>
         </section>
 
         <section class="lower" aria-label="Recent failures">

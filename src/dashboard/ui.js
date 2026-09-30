@@ -308,7 +308,9 @@ async function loadModels() {
 }
 
 function usageValues(row) {
-  return [row.model, number(row.requests), number(row.input_tokens), number(row.cache_read_tokens), number(row.output_tokens), number(row.total_tokens)];
+  const rate = Number.isFinite(row.cache_hit_rate) && row.cache_hit_rate >= 0 && row.cache_hit_rate <= 1
+    ? `${(row.cache_hit_rate * 100).toFixed(1)}%` : "—";
+  return [row.model, number(row.requests), number(row.input_tokens), number(row.cache_read_tokens), number(row.output_tokens), number(row.total_tokens), rate];
 }
 
 async function loadUsage() {
@@ -316,7 +318,7 @@ async function loadUsage() {
   button.disabled = true;
   text("usage-state", "READING LOG");
   text("usage-note", "Aggregating local usage metadata…");
-  emptyTable("usage-body", 6, "Loading…");
+  emptyTable("usage-body", 7, "Loading…");
   try {
     const response = await fetch("/_ccdx/ui/usage", { cache: "no-store", headers: { "X-CCDX-Dashboard": "1" }, signal: AbortSignal.timeout(15000) });
     const data = await response.json();
@@ -327,14 +329,14 @@ async function loadUsage() {
       body.append(tableRow(usageValues(data.total), { total: true }));
       for (const row of data.rows) body.append(tableRow(usageValues(row)));
     } else {
-      emptyTable("usage-body", 6, "No usage records.");
+      emptyTable("usage-body", 7, "No usage records.");
     }
     text("usage-state", "LOCAL LOG");
     text("usage-note", `${number(data.total.requests)} records / ${number(data.rows.length)} of ${number(data.model_count)} models shown`);
   } catch (error) {
     text("usage-state", "LOG UNAVAILABLE");
     text("usage-note", String(error.message || error).slice(0, 180));
-    emptyTable("usage-body", 6, "No usage summary available.");
+    emptyTable("usage-body", 7, "No usage summary available.");
   } finally {
     button.disabled = false;
   }

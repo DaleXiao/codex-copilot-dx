@@ -8,6 +8,7 @@ import path from "node:path";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { TERMINAL_ANIMATION_THEMES } from "../src/terminal-animation.mjs";
 import { userSettingsPath } from "../src/user-settings.mjs";
+import { summarizeUsage } from "../src/usage.mjs";
 
 async function invoke(handler, {
   method = "GET",
@@ -157,7 +158,27 @@ test("dashboard usage returns bounded metadata-only rows sorted by tokens", asyn
   assert.equal(result.body.source, "local_usage_log");
   assert.deepEqual(result.body.rows.map((row) => row.model), ["gpt-6-astra", "gpt-6-sol"]);
   assert.equal(result.body.total.cache_read_tokens, 3);
+  assert.equal(result.body.total.cache_hit_rate, 3 / 21);
+  assert.equal(result.body.rows[0].cache_hit_rate, 3 / 16);
+  assert.equal(result.body.rows[1].cache_hit_rate, null);
   assert.doesNotMatch(JSON.stringify(result.body), /must-not-leak/);
+});
+
+test("dashboard cache hit rate matches CLI token weighting and marks incomplete totals unknown", async () => {
+  const records = [
+    { model: "a", usage: { input_tokens: 10, cached_input_tokens: 10, total_tokens: 10 } },
+    { model: "b", usage: { input_tokens: 90, cached_input_tokens: 0, total_tokens: 90 } },
+  ];
+  const handler = createAdapterHandler({ dashboardOptions: { usageSummaryFn: async () => summarizeUsage(records) } });
+  const first = await invoke(handler, { url: "/_ccdx/ui/usage" });
+  assert.equal(first.body.total.cache_hit_rate, 0.1);
+  assert.equal(first.body.rows.find(({ model }) => model === "a").cache_hit_rate, 1);
+  assert.equal(first.body.rows.find(({ model }) => model === "b").cache_hit_rate, 0);
+  records.push({ model: "old-log", usage: { input_tokens: 5 } });
+  const incomplete = await invoke(handler, { url: "/_ccdx/ui/usage" });
+  assert.equal(incomplete.body.total.cache_hit_rate, null);
+  assert.equal(incomplete.body.rows.find(({ model }) => model === "old-log").cache_hit_rate, null);
+  assert.equal(incomplete.body.rows.find(({ model }) => model === "a").cache_hit_rate, 1);
 });
 
 test("dashboard usage bounds model rows without dropping the aggregate total", async () => {

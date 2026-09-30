@@ -39,3 +39,19 @@ Date: 2026-09-30. Baseline: `6e7a7a8` (0.9.4).
 Partial rates describe recorded totals and cannot reconstruct omitted data.
 The performance gates found no detected regression in their covered paths;
 they do not establish a speed improvement or universal client behavior.
+
+## Publication
+
+- Release commit/tag: `6ba5873` / `v0.9.5`.
+- GitHub CI passed on Node 22.15.0 and 24.x:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36675651675.
+- GitHub Release: https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.5.
+- The one-shot npm workflow passed, including its required `prepublishOnly`
+  verification:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36675776633.
+  The official-registry receipt reports `codex-copilot-dx@0.9.5` with tag
+  `latest`, 99 files, 259.4 kB, and SHA-1
+  `2d5e39969f95db5ad79d970066ee8d362874ca55`, matching the local pack preflight.
+- This machine's independent official-registry query returned `ENOTCONN`;
+  the successful workflow receipt is the available publication evidence.
+  Publication was not repeated.

@@ -15,8 +15,10 @@ function duration(value) {
 
 function renderFailures(recent) {
   const list = element("failures");
+  const expanded = new Set([...list.querySelectorAll("details[open]")].map((item) => item.dataset.key));
   list.replaceChildren();
-  const failures = Array.isArray(recent) ? recent.slice(-5).reverse() : [];
+  const failures = Array.isArray(recent) ? recent.slice(-10).reverse() : [];
+  text("failure-count", `${failures.length} retained / response.failed`);
   if (!failures.length) {
     const item = document.createElement("li");
     item.className = "empty";
@@ -26,11 +28,38 @@ function renderFailures(recent) {
   }
   for (const failure of failures) {
     const item = document.createElement("li");
-    const title = document.createElement("strong");
-    const detail = document.createElement("span");
-    title.textContent = `${String(failure.model || "unknown_model").slice(0, 80)} / ${String(failure.code || "unknown_error").slice(0, 80)}`;
-    detail.textContent = `${String(failure.message || "No message").slice(0, 240)}${failure.retried ? " / retried" : ""}`;
-    item.append(title, detail);
+    const details = document.createElement("details");
+    details.dataset.key = `${failure.at}/${failure.response_id}/${failure.code}`;
+    details.open = expanded.has(details.dataset.key);
+    const title = document.createElement("summary");
+    title.textContent = `${String(failure.at || "unknown time")} / ${String(failure.model || "unknown_model").slice(0, 80)} / ${String(failure.code || "unknown_error").slice(0, 80)} / ${failure.retried ? "retry attempted" : "no retry"}`;
+    const fields = { time: failure.at, model: failure.model, event: failure.event_type, code: failure.code,
+      message: failure.message, response_id: failure.response_id, upstream_request_id: failure.upstream_request_id,
+      retry: failure.retried ? "attempted (outcome not recorded here)" : "not attempted",
+      retry_policy: failure.retry_policy, retry_skipped: failure.retry_skipped };
+    const diagnostic = document.createElement("dl");
+    diagnostic.className = "failure-detail";
+    const lines = [];
+    for (const [key, value] of Object.entries(fields)) {
+      if (value === undefined || value === null || value === "") continue;
+      const label = document.createElement("dt");
+      const content = document.createElement("dd");
+      label.textContent = key;
+      content.textContent = String(value).slice(0, 500);
+      diagnostic.append(label, content);
+      lines.push(`${key}: ${content.textContent}`);
+    }
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.textContent = "Copy diagnostic";
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(lines.join("\n"));
+        copy.textContent = "Copied";
+      } catch { copy.textContent = "Copy unavailable"; }
+    });
+    details.append(title, diagnostic, copy);
+    item.append(details);
     list.append(item);
   }
 }
@@ -109,6 +138,8 @@ let previewDisabledByEnvironment = false;
 let previewVisible = false;
 let previewTimer = null;
 let previewStarted = 0;
+let animationLoading = false;
+let animationFramesLoaded = false;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 function renderAnsiFrame(target, frame) {
@@ -146,14 +177,14 @@ function stopAnimationPreview() {
 
 function tickAnimationPreview() {
   previewTimer = null;
-  if (!previewVisible || document.visibilityState !== "visible" || reducedMotion.matches || previewDisabledByEnvironment) return;
+  if (!animationTimelines.length || !element("animation-settings").open || !previewVisible || document.visibilityState !== "visible" || reducedMotion.matches || previewDisabledByEnvironment) return;
   renderAnimationFrames(performance.now() - previewStarted);
   previewTimer = setTimeout(tickAnimationPreview, 32);
 }
 
 function syncAnimationPreview() {
   stopAnimationPreview();
-  if (!previewVisible || document.visibilityState !== "visible" || reducedMotion.matches || previewDisabledByEnvironment) {
+  if (!animationTimelines.length || !element("animation-settings").open || !previewVisible || document.visibilityState !== "visible" || reducedMotion.matches || previewDisabledByEnvironment) {
     for (const timeline of animationTimelines) timeline.lastFrame = -2;
     renderAnimationFrames(0);
     return;
@@ -186,6 +217,7 @@ function buildAnimationOptions(data) {
       selectedAnimation = theme.id;
       for (const [id, row] of animationRows) row.setAttribute("aria-pressed", String(id === theme.id));
       element("save-animation").disabled = selectedAnimation === savedAnimation;
+      updateAnimationState();
       syncAnimationPreview();
     });
     const name = document.createElement("span");
@@ -220,18 +252,31 @@ function animationNote(data) {
 }
 
 async function loadAnimation() {
+  const includeFrames = element("animation-settings").open;
+  if (animationLoading || (includeFrames && animationFramesLoaded)) return;
+  animationLoading = true;
   text("animation-state", "READING");
   try {
-    const response = await fetch("/_ccdx/ui/animation", { cache: "no-store", headers: { "X-CCDX-Dashboard": "1" }, signal: AbortSignal.timeout(8000) });
+    const response = await fetch(`/_ccdx/ui/animation${includeFrames ? "" : "?frames=0"}`, { cache: "no-store", headers: { "X-CCDX-Dashboard": "1" }, signal: AbortSignal.timeout(8000) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    buildAnimationOptions(data);
-    text("animation-state", `CURRENT ${data.theme.toUpperCase()}`);
+    if (includeFrames) {
+      buildAnimationOptions(data);
+      animationFramesLoaded = true;
+    } else { savedAnimation = data.theme; selectedAnimation = data.theme; }
+    updateAnimationState();
     text("animation-note", animationNote(data));
   } catch (error) {
     text("animation-state", "UNAVAILABLE");
     text("animation-note", String(error.message || error).slice(0, 180));
+  } finally {
+    animationLoading = false;
+    if (!includeFrames && element("animation-settings").open) loadAnimation();
   }
+}
+
+function updateAnimationState() {
+  text("animation-state", `CURRENT ${savedAnimation.toUpperCase()}${selectedAnimation !== savedAnimation ? " / UNSAVED" : ""}`);
 }
 
 async function saveAnimation() {
@@ -249,7 +294,7 @@ async function saveAnimation() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     savedAnimation = data.theme;
-    text("animation-state", `CURRENT ${data.theme.toUpperCase()}`);
+    updateAnimationState();
     text("animation-note", animationNote(data));
   } catch (error) {
     text("animation-note", `Not saved / ${String(error.message || error).slice(0, 150)}`);
@@ -313,36 +358,178 @@ function usageValues(row) {
   return [row.model, number(row.requests), number(row.input_tokens), number(row.cache_read_tokens), number(row.output_tokens), number(row.total_tokens), rate];
 }
 
+let usageData = null;
+let usageLoading = false;
+let selectedUsageDate = "";
+
+function renderUsageTable() {
+  const day = selectedUsageDate && usageData.analytics?.days.find((entry) => entry.date === selectedUsageDate);
+  const model = element("analytics-model").value;
+  const total = day ? { model: "TOTAL", ...analyticsPoint(day, model) } : usageData.total;
+  const rows = day ? day.models.filter((row) => !model || row.model === model).sort((a, b) => b.total_tokens - a.total_tokens || a.model.localeCompare(b.model)) : usageData.rows;
+  const body = element("usage-body");
+  body.replaceChildren();
+  if (total.requests > 0) {
+    body.append(tableRow(usageValues(total), { total: true }));
+    for (const row of rows) body.append(tableRow(usageValues(row)));
+  } else { emptyTable("usage-body", 7, "No usage records."); }
+  element("clear-usage-day").hidden = !day;
+  text("usage-state", day ? day.date : "LOCAL LOG");
+  text("usage-note", `${number(total.requests)} records / ${number(rows.length)} of ${number(day ? rows.length : usageData.model_count)} models shown${day ? ` / ${usageData.analytics.time_zone} / ${model || "All models"}` : ""}`);
+}
+
+function analyticsPoint(day, model) {
+  return model ? day.models.find((row) => row.model === model) || { requests: 0, input_tokens: 0, output_tokens: 0 } : day;
+}
+
+function selectUsageDay(date) {
+  selectedUsageDate = date;
+  renderUsageTable();
+  renderAnalytics();
+}
+
+function dayButton(day, point) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.disabled = !day.available;
+  button.setAttribute("aria-pressed", String(day.date === selectedUsageDate));
+  const description = !day.available ? "no retained history"
+    : `${number(point.requests)} recorded calls / input ${number(point.input_tokens)} / output ${number(point.output_tokens)} / cached ${number(point.cache_read_tokens)} (included in input)${point.tokens_partial ? " / partial token counts" : ""}`;
+  button.title = `${day.date} / ${description}`;
+  button.setAttribute("aria-label", button.title);
+  button.addEventListener("click", () => selectUsageDay(day.date));
+  return button;
+}
+
+function renderAnalytics() {
+  const analytics = usageData?.analytics;
+  if (!analytics) return;
+  const model = element("analytics-model").value;
+  const days = analytics.days;
+  const daily = days.slice(-Number(element("analytics-range").value));
+  const maximum = Math.max(1, ...daily.map((day) => {
+    const point = analyticsPoint(day, model);
+    return point.input_tokens + point.output_tokens;
+  }));
+  const bars = element("daily-bars");
+  bars.replaceChildren();
+  for (const day of daily) {
+    const point = analyticsPoint(day, model);
+    const button = dayButton(day, point);
+    button.className = "daily-bar";
+    for (const key of ["output_tokens", "input_tokens"]) {
+      const segment = document.createElement("span");
+      segment.className = key === "input_tokens" ? "bar-input" : "bar-output";
+      segment.style.height = `${point[key] / maximum * 100}%`;
+      button.append(segment);
+    }
+    bars.append(button);
+  }
+  text("daily-from", daily[0].date);
+  text("daily-to", analytics.to);
+  const metric = element("analytics-metric").value;
+  const value = (day) => {
+    const point = analyticsPoint(day, model);
+    return metric === "tokens" ? point.input_tokens + point.output_tokens : point.requests;
+  };
+  const peak = Math.max(1, ...days.map(value));
+  text("activity-scale", `${metric === "tokens" ? "INPUT + OUTPUT" : "RECORDED CALLS"} / PEAK ${number(peak === 1 && days.every((day) => value(day) === 0) ? 0 : peak)}`);
+  const calendar = element("activity-calendar");
+  calendar.replaceChildren();
+  const offset = (new Date(`${days[0].date}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const months = element("calendar-months");
+  months.replaceChildren();
+  const columns = Math.ceil((offset + days.length) / 7);
+  let previousColumn = -4;
+  days.forEach((day, index) => {
+    if (index !== 0 && !day.date.endsWith("-01")) return;
+    const column = Math.floor((offset + index) / 7);
+    if (column - previousColumn < 4 || column + 4 > columns) return;
+    previousColumn = column;
+    const label = document.createElement("span");
+    label.textContent = day.date.slice(0, 7);
+    label.style.gridColumn = `${column + 1} / span 4`;
+    months.append(label);
+  });
+  for (let index = 0; index < offset; index += 1) {
+    const spacer = document.createElement("span");
+    spacer.setAttribute("aria-hidden", "true");
+    calendar.append(spacer);
+  }
+  for (const day of days) {
+    const button = dayButton(day, analyticsPoint(day, model));
+    button.className = "calendar-day";
+    const count = value(day);
+    button.dataset.level = String(count > 0 ? Math.min(4, Math.ceil(count / peak * 4)) : 0);
+    calendar.append(button);
+  }
+  text("analytics-note", `${analytics.time_zone} / ${daily[0].date} — ${analytics.to} / retained history starts ${analytics.first_date || "unknown"}; oldest day may be partial.${analytics.undated_records ? ` ${number(analytics.undated_records)} records with invalid/future timestamps excluded.` : ""}${analytics.models_truncated ? " Model filters limited to 100; all-model totals include the remainder." : ""}`);
+  text("analytics-selection", selectedUsageDate ? `Selected ${selectedUsageDate} / ${model || "All models"}: totals in the Usage table above / All history resets the table.` : "Select a day for model totals. Calls are usage records, not messages or time. Hatched cells: no retained history; empty cells: zero recorded calls.");
+}
+
+function updateAnalyticsModels() {
+  const select = element("analytics-model");
+  const previous = select.value;
+  select.replaceChildren();
+  for (const model of ["", ...usageData.analytics.models]) {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = model || "All models";
+    select.append(option);
+  }
+  select.value = usageData.analytics.models.includes(previous) ? previous : "";
+}
+
 async function loadUsage() {
+  if (usageLoading) return;
+  usageLoading = true;
+  const includeAnalytics = element("usage-analytics").open || Boolean(selectedUsageDate);
   const button = element("refresh-usage");
   button.disabled = true;
   text("usage-state", "READING LOG");
   text("usage-note", "Aggregating local usage metadata…");
   emptyTable("usage-body", 7, "Loading…");
   try {
-    const response = await fetch("/_ccdx/ui/usage", { cache: "no-store", headers: { "X-CCDX-Dashboard": "1" }, signal: AbortSignal.timeout(15000) });
+    const query = includeAnalytics ? `?analytics=1&time_zone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}` : "";
+    const response = await fetch(`/_ccdx/ui/usage${query}`, { cache: "no-store", headers: { "X-CCDX-Dashboard": "1" }, signal: AbortSignal.timeout(15000) });
     const data = await response.json();
     if (!response.ok || data.source !== "local_usage_log") throw new Error(data.error || `HTTP ${response.status}`);
-    const body = element("usage-body");
-    body.replaceChildren();
-    if (data.total.requests > 0) {
-      body.append(tableRow(usageValues(data.total), { total: true }));
-      for (const row of data.rows) body.append(tableRow(usageValues(row)));
-    } else {
-      emptyTable("usage-body", 7, "No usage records.");
-    }
-    text("usage-state", "LOCAL LOG");
-    text("usage-note", `${number(data.total.requests)} records / ${number(data.rows.length)} of ${number(data.model_count)} models shown`);
+    usageData = data;
+    if (data.analytics) updateAnalyticsModels();
+    renderUsageTable();
+    renderAnalytics();
   } catch (error) {
     text("usage-state", "LOG UNAVAILABLE");
     text("usage-note", String(error.message || error).slice(0, 180));
     emptyTable("usage-body", 7, "No usage summary available.");
+    if (includeAnalytics) text("analytics-note", "Analytics unavailable / refresh Usage to retry.");
   } finally {
+    usageLoading = false;
     button.disabled = false;
+    if (!includeAnalytics && element("usage-analytics").open) loadUsage();
   }
 }
 
 element("save-animation").addEventListener("click", saveAnimation);
+element("animation-settings").addEventListener("toggle", () => {
+  element("open-animation").setAttribute("aria-expanded", String(element("animation-settings").open));
+  if (element("animation-settings").open) loadAnimation();
+  syncAnimationPreview();
+});
+element("open-animation").addEventListener("click", () => {
+  const settings = element("animation-settings");
+  settings.open = true;
+  settings.scrollIntoView({ block: "center" });
+  settings.querySelector("summary").focus();
+});
+element("usage-analytics").addEventListener("toggle", () => {
+  if (element("usage-analytics").open && !usageData?.analytics) loadUsage();
+});
+for (const id of ["analytics-model", "analytics-range", "analytics-metric"]) element(id).addEventListener("change", () => {
+  renderAnalytics();
+  if (usageData && selectedUsageDate) renderUsageTable();
+});
+element("clear-usage-day").addEventListener("click", () => selectUsageDay(""));
 element("refresh-models").addEventListener("click", loadModels);
 element("refresh-usage").addEventListener("click", loadUsage);
 loadAnimation();

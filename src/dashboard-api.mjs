@@ -10,6 +10,7 @@ import {
   TERMINAL_ANIMATION_THEMES,
 } from "./terminal-animation.mjs";
 import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate } from "./usage.mjs";
+import { createUsageAnalytics } from "./usage-analytics.mjs";
 import { readUserSettings, terminalAnimationPreference, writeTerminalAnimationTheme } from "./user-settings.mjs";
 
 const ANIMATION_PATH = "/_ccdx/ui/animation";
@@ -107,7 +108,7 @@ export async function handleDashboardApi(req, res, pathname, {
   env = process.env,
   home = os.homedir(),
   liveModelsFn = () => fetchLiveCopilotModels({ home }),
-  usageSummaryFn = () => summarizeUsageLogs(),
+  usageSummaryFn = (options) => summarizeUsageLogs(undefined, options),
 } = {}) {
   if (!isLoopbackAddress(req.socket?.remoteAddress)
     || req.headers?.host === undefined
@@ -122,7 +123,8 @@ export async function handleDashboardApi(req, res, pathname, {
 
   if (pathname === ANIMATION_PATH && req.method === "GET") {
     try {
-      sendJson(res, 200, animationState(env, home, { includeFrames: true }));
+      const query = new URL(req.url, "http://localhost").searchParams;
+      sendJson(res, 200, animationState(env, home, { includeFrames: query.get("frames") !== "0" }));
     } catch {
       sendJson(res, 409, { error: "Animation settings are invalid; inspect them with ccdx animation" });
     }
@@ -189,8 +191,21 @@ export async function handleDashboardApi(req, res, pathname, {
   }
 
   if (pathname === USAGE_PATH && req.method === "GET") {
+    const query = new URL(req.url, "http://localhost").searchParams;
+    let analytics = null;
+    if (query.get("analytics") === "1") {
+      try {
+        const timeZone = query.get("time_zone") || "UTC";
+        if (timeZone.length > 100) throw new Error("Invalid time zone");
+        analytics = createUsageAnalytics({ timeZone });
+      } catch {
+        sendJson(res, 400, { error: "Select a valid usage time zone" });
+        return;
+      }
+    }
     try {
-      sendJson(res, 200, { source: "local_usage_log", ...(usageTable(await usageSummaryFn())) });
+      const summary = await usageSummaryFn(analytics ? { onRecord: analytics.record } : undefined);
+      sendJson(res, 200, { source: "local_usage_log", ...usageTable(summary), ...(analytics ? { analytics: analytics.snapshot() } : {}) });
     } catch {
       sendJson(res, 500, { error: "Could not read local usage summary" });
     }

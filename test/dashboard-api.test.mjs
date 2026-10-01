@@ -62,6 +62,11 @@ test("dashboard animation uses existing themes and settings, preserving unrelate
   assert.deepEqual(before.body.themes.map(({ id }) => id), TERMINAL_ANIMATION_THEMES.map(({ id }) => id));
   assert.equal(before.body.themes[0].frames.length, TERMINAL_ANIMATION_THEMES[0].frameCount);
   assert.match(before.body.themes[0].frames[0].ansi, /\u001b\[/);
+  const metadata = await invoke(handler, { url: "/_ccdx/ui/animation?frames=0" });
+  assert.equal(metadata.status, 200);
+  assert.deepEqual(metadata.body.themes.map(({ id }) => id), before.body.themes.map(({ id }) => id));
+  assert.equal(metadata.body.themes[0].frames, undefined);
+  assert.ok(JSON.stringify(metadata.body).length < JSON.stringify(before.body).length / 100);
 
   const saved = await invoke(handler, {
     method: "POST", url: "/_ccdx/ui/animation", origin: "http://127.0.0.1:2026",
@@ -82,6 +87,35 @@ test("dashboard animation uses existing themes and settings, preserving unrelate
   assert.equal(reset.status, 200);
   assert.equal(reset.body.source, "default");
   assert.deepEqual(JSON.parse(fs.readFileSync(filePath, "utf8")), { auto_review_model: "gpt-5.6-sol" });
+});
+
+test("usage analytics is opt-in, uses one metadata scan and validates timezone before reading", async () => {
+  const records = [{ ts: new Date(Date.now() - 1000).toISOString(), model: "gpt-6.1-sol", usage: { input_tokens: 10, output_tokens: 2, cached_input_tokens: 0, total_tokens: 12 }, prompt: "not-for-dashboard", key: "secret-key" }];
+  let calls = 0;
+  let callbacks = 0;
+  const handler = createAdapterHandler({ dashboardOptions: { usageSummaryFn: async (options) => {
+    calls += 1;
+    for (const row of records) if (options?.onRecord) { callbacks += 1; options.onRecord(row, summarizeUsage([row])); }
+    return summarizeUsage(records);
+  } } });
+  const plain = await invoke(handler, { url: "/_ccdx/ui/usage" });
+  assert.equal(plain.body.analytics, undefined);
+  assert.equal(callbacks, 0);
+  const result = await invoke(handler, { url: "/_ccdx/ui/usage?analytics=1&time_zone=Asia%2FShanghai" });
+  assert.equal(calls, 2);
+  assert.equal(callbacks, 1);
+  assert.deepEqual(result.body.total, plain.body.total);
+  assert.deepEqual(result.body.rows, plain.body.rows);
+  assert.equal(result.body.analytics.days.length, 365);
+  assert.equal(result.body.analytics.days.at(-1).requests, 1);
+  assert.doesNotMatch(JSON.stringify(result.body), /not-for-dashboard|secret-key|response_id/);
+  const invalid = await invoke(handler, { url: "/_ccdx/ui/usage?analytics=1&time_zone=Invalid%2FZone" });
+  assert.equal(invalid.status, 400);
+  assert.equal(calls, 2);
+  for (const options of [{ remoteAddress: "10.0.0.2" }, { dashboardHeader: "" }, { host: "evil.example" }]) {
+    assert.equal((await invoke(handler, { url: "/_ccdx/ui/usage?analytics=1", ...options })).status, 403);
+  }
+  assert.equal(calls, 2);
 });
 
 test("dashboard animation rejects cross-origin, LAN, bad media type and unlisted themes without writes", async (t) => {

@@ -236,6 +236,10 @@ The dashboard loads local status, a live GitHub Copilot model directory, and a s
 
 The transparent, single-color double-peak favicon follows the dashboard's saved light/dark choice without a separate network request.
 
+Usage Analytics is collapsed by default. Opening it adds daily input/output token bars (7/30/90 days) and a 365-day calendar of recorded usage calls or tokens, grouped in the browser's time zone. Cache-read tokens are already part of input and are not added again. Model and range filters use the current snapshot without additional requests; selecting a day shows its filtered model totals in the Usage table, and All history restores the original table. Analytics shares the existing current/rotated-log scan and exposes only bounded metadata (365 days, up to 100 model filters). Days before retained history are hatched, not presented as zero; the oldest retained day may be partial. Counts describe retained usage records, not messages, session time, or all HTTP requests. Refresh explicitly to update the snapshot; there is no background collection or polling.
+
+Terminal Animation is collapsed at the bottom of the page, with an Animation shortcut in the header. Preview frames load only when opened; closing it, hiding the page, or requesting reduced motion stops the preview timer. Unsaved choices survive folding and reopening. Recent upstream failures expand to existing diagnostic fields (time, model, code, message, response/request IDs, and retry policy) with a Copy diagnostic control. These are the last 10 retained `response.failed` events, not complete session histories; a retry attempt does not prove recovery. Diagnostic prose is redacted by the existing recorder but can still contain sensitive context: review before copying or sharing.
+
 Inspect only the local Codex configuration:
 
 ```bash

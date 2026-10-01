@@ -288,11 +288,12 @@ export function summarizeUsage(records) {
   return summary;
 }
 
-export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error } = {}) {
+export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord } = {}) {
   const summary = { requests: 0, totals: {}, byModel: {} };
   for (const candidate of [rotatedFilePath(filePath), filePath]) {
     for await (const record of iterateUsageRecords(candidate, { warn })) {
       const one = summarizeUsage([record]);
+      onRecord?.(record, one);
       summary.requests += one.requests;
       addUsageTotals(summary.totals, one.totals);
       for (const [model, values] of Object.entries(one.byModel)) {

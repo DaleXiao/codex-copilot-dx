@@ -32,6 +32,7 @@ test("dashboard shows active per-request caps separately from history occupancy"
     textContent: "",
     value: 0,
     children: [],
+    querySelectorAll() { return []; },
     replaceChildren(...children) { this.children = children; },
     append(child) { this.children.push(child); },
   });

@@ -58,3 +58,25 @@ no user activity. The oldest retained day and missing token fields may be
 partial. Cache tokens are a subset of input, not an additional bar segment.
 Model filters are capped at 100 while all-model daily totals retain every
 in-range valid-timestamp record. No session-shape analysis is included.
+
+## Publication
+
+- Release commit/tag: `8a4963d` / `v0.9.6`.
+- GitHub CI passed for this exact commit:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36809337426.
+- GitHub Release is public (not a draft or prerelease):
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.6.
+- The one-shot npm publish workflow succeeded, including its existing
+  `prepublishOnly` verification:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36809448639.
+  The official-registry receipt confirms `codex-copilot-dx@0.9.6`, tag
+  `latest`, 100 files, 265.4 kB, and SHA-1
+  `b47c4185d93bd8007eec174997cd63c4f22a554d`, matching local pack preflight.
+- This machine's independent registry lookup returned `ENOTCONN`;
+  publication was not repeated. GitHub operations used the previously
+  user-provided PAT, not a different stored account or browser authentication.
+- The isolated preview tab/server, temporary script and fixture settings were
+  removed. Existing user settings, running adapter and dependencies were
+  preserved. A screenshot was retained outside the repository as a delivery
+  artifact. Version/tag were not moved by the documentation-only evidence
+  commit; no second npm publication was made.

@@ -61,6 +61,7 @@ test("dashboard auth renders saved username and fallbacks without claiming onlin
     [{ configured: true, valid: false, reason: "credential_read_failed" }, "GitHub / UNAVAILABLE"],
     [{ configured: true, valid: true }, "GitHub / account unknown / SAVED"],
     [{ configured: true, valid: true, id: "7" }, "GitHub / ID 7 / SAVED"],
+    [{ configured: true, valid: true, login: "dingxiao_microsoft", id: "7" }, "GitHub / @dingxiao_microsoft / SAVED"],
   ]) { h.api.renderAuth(data); assert.equal(h.nodes.get("auth-account").textContent, expected); }
   assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/auth").length, 1);
   h.nodes.get("refresh").listeners.click();

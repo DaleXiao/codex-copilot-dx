@@ -81,6 +81,23 @@ test("dashboard auth matches local CLI identity, suppresses stale metadata and n
   assert.equal((await invoke(handler, { url })).body.reason, "empty_token");
 });
 
+test("dashboard auth preserves underscore account names from fingerprint-bound CLI metadata", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-dashboard-managed-auth-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const tokenPath = githubTokenPath(home);
+  fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+  fs.writeFileSync(tokenPath, "fixture-github-token\n");
+  const handler = createAdapterHandler({ dashboardOptions: { home } });
+  for (const login of ["dingxiao_microsoft", "Some-User_1", "a".repeat(38) + "_"]) {
+    fs.writeFileSync(githubTokenMetadataPath(home), JSON.stringify({ login, id: 7, token_fingerprint: githubTokenFingerprint("fixture-github-token") }));
+    const result = await invoke(handler, { url: "/_ccdx/ui/auth" });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.login, login);
+    assert.equal(result.body.login, authStatus({ home }).profiles.codex.login);
+    assert.equal(result.body.id, "7");
+  }
+});
+
 test("dashboard auth projects only safe fields and bounds malformed identities and errors", async () => {
   const profile = { configured: true, valid: true, login: "octocat", id: "7", token: "secret-token", paths: { token: "/private/token" }, metadata: { token_fingerprint: "secret-fingerprint" }, online: { token: "secret-online" } };
   const handler = createAdapterHandler({ dashboardOptions: { authStatusFn: () => ({ profiles: { codex: profile } }) } });
@@ -88,7 +105,7 @@ test("dashboard auth projects only safe fields and bounds malformed identities a
   const body = (await invoke(handler, { url })).body;
   assert.deepEqual(Object.keys(body), ["source", "configured", "valid", "login", "id", "reason"]);
   assert.doesNotMatch(JSON.stringify(body), /secret|private|token|metadata|online/);
-  for (const login of ["ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234", "sk-mg-12345678901234567890123456789012", "<img src=x onerror=alert(1)>", "a".repeat(100), "\u001boctocat"]) {
+  for (const login of ["ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234", "github_pat_ABCDEFGHIJKLMNOPQRSTUVWX", "sk-mg-12345678901234567890123456789012", "<img src=x onerror=alert(1)>", "a".repeat(100), "a".repeat(39) + "_", "\u001boctocat"]) {
     profile.login = login;
     profile.id = "secret-id";
     profile.reason = "private-path-and-token";

@@ -129,7 +129,7 @@ export async function handleDashboardApi(req, res, pathname, {
     try {
       const profile = authStatusFn()?.profiles?.codex;
       if (!profile || typeof profile.configured !== "boolean" || typeof profile.valid !== "boolean") throw new Error("Invalid auth status");
-      const login = typeof profile.login === "string" && /^[a-z\d-]{1,39}$/i.test(profile.login)
+      const login = typeof profile.login === "string" && /^[a-z\d_-]{1,39}$/i.test(profile.login)
         && redactDiagnosticText(profile.login) === profile.login ? profile.login : "";
       const id = /^\d{1,20}$/.test(String(profile.id || "")) ? String(profile.id) : "";
       sendJson(res, 200, {

@@ -9,6 +9,10 @@ import { createAdapterHandler } from "../src/adapter.mjs";
 import { TERMINAL_ANIMATION_THEMES } from "../src/terminal-animation.mjs";
 import { userSettingsPath } from "../src/user-settings.mjs";
 import { summarizeUsage } from "../src/usage.mjs";
+import { authStatus } from "../src/cli-auth.mjs";
+import { githubTokenPath, githubTokenMetadataPath } from "../src/auth.mjs";
+import { githubTokenFingerprint } from "../src/github-identity.mjs";
+import { createRequestMetrics } from "../src/observability.mjs";
 
 async function invoke(handler, {
   method = "GET",
@@ -46,6 +50,73 @@ async function invoke(handler, {
   const text = Buffer.concat(chunks).toString("utf8");
   return { status: res.statusCode, headers: res.headers, body: JSON.parse(text) };
 }
+
+test("dashboard auth matches local CLI identity, suppresses stale metadata and never exports credentials", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-dashboard-auth-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const metrics = createRequestMetrics();
+  const handler = createAdapterHandler({ requestMetrics: metrics, dashboardOptions: { home } });
+  const url = "/_ccdx/ui/auth";
+  const missing = await invoke(handler, { url });
+  assert.equal(missing.body.configured, false);
+  assert.equal(missing.body.valid, false);
+  assert.equal(missing.body.reason, "unconfigured");
+  const tokenPath = githubTokenPath(home);
+  fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+  fs.writeFileSync(tokenPath, "saved-github-token\n");
+  fs.writeFileSync(githubTokenMetadataPath(home), JSON.stringify({ login: "octocat", id: 7, token_fingerprint: githubTokenFingerprint("saved-github-token"), extra: "private-metadata" }));
+  const result = await invoke(handler, { url });
+  const profile = authStatus({ home }).profiles.codex;
+  assert.equal(result.status, 200);
+  assert.equal(result.headers["Cache-Control"], "no-store");
+  assert.deepEqual(result.body, { source: "local_auth_status", configured: profile.configured, valid: profile.valid, login: profile.login, id: profile.id, reason: profile.reason });
+  assert.doesNotMatch(JSON.stringify(result.body), /saved-github-token|fingerprint|private-metadata|tokenPath|online|routing/);
+  assert.equal(metrics.snapshot().total, 0);
+  fs.writeFileSync(tokenPath, "replacement-token\n");
+  const changed = await invoke(handler, { url });
+  assert.equal(changed.body.valid, true);
+  assert.equal(changed.body.login, "");
+  assert.equal(changed.body.id, "");
+  fs.writeFileSync(tokenPath, "\n");
+  assert.equal((await invoke(handler, { url })).body.reason, "empty_token");
+});
+
+test("dashboard auth projects only safe fields and bounds malformed identities and errors", async () => {
+  const profile = { configured: true, valid: true, login: "octocat", id: "7", token: "secret-token", paths: { token: "/private/token" }, metadata: { token_fingerprint: "secret-fingerprint" }, online: { token: "secret-online" } };
+  const handler = createAdapterHandler({ dashboardOptions: { authStatusFn: () => ({ profiles: { codex: profile } }) } });
+  const url = "/_ccdx/ui/auth";
+  const body = (await invoke(handler, { url })).body;
+  assert.deepEqual(Object.keys(body), ["source", "configured", "valid", "login", "id", "reason"]);
+  assert.doesNotMatch(JSON.stringify(body), /secret|private|token|metadata|online/);
+  for (const login of ["ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234", "sk-mg-12345678901234567890123456789012", "<img src=x onerror=alert(1)>", "a".repeat(100), "\u001boctocat"]) {
+    profile.login = login;
+    profile.id = "secret-id";
+    profile.reason = "private-path-and-token";
+    const result = await invoke(handler, { url });
+    assert.equal(result.body.login, "");
+    assert.equal(result.body.id, "");
+    assert.equal(result.body.reason, "");
+  }
+  profile.login = "octocat";
+  profile.id = "7";
+  profile.valid = false;
+  assert.equal((await invoke(handler, { url })).body.login, "");
+  const failure = createAdapterHandler({ dashboardOptions: { authStatusFn() { throw new Error("secret-token /private/token"); } } });
+  const failed = await invoke(failure, { url });
+  assert.equal(failed.status, 500);
+  assert.deepEqual(failed.body, { error: "Could not read local auth status" });
+});
+
+test("dashboard auth security gates and methods reject before touching credentials", async () => {
+  let reads = 0;
+  const handler = createAdapterHandler({ dashboardOptions: { authStatusFn() { reads += 1; return {}; } } });
+  const url = "/_ccdx/ui/auth";
+  for (const options of [{ remoteAddress: "10.0.0.2" }, { host: "evil.example" }, { dashboardHeader: "" }]) {
+    assert.equal((await invoke(handler, { url, ...options })).status, 403);
+  }
+  for (const method of ["POST", "HEAD", "OPTIONS"]) assert.equal((await invoke(handler, { url, method })).status, 405);
+  assert.equal(reads, 0);
+});
 
 test("dashboard animation uses existing themes and settings, preserving unrelated keys", async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-dashboard-animation-"));

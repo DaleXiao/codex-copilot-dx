@@ -65,7 +65,7 @@ export {
 
 const ADAPTER_RUNTIME_CONFIG = loadRuntimeConfig();
 const DASHBOARD_PATHS = new Set(["/", "/ui.css", "/theme.js", "/ui.js"]);
-const DASHBOARD_API_PATHS = new Set(["/_ccdx/ui/animation", "/_ccdx/ui/models/live", "/_ccdx/ui/usage"]);
+const DASHBOARD_API_PATHS = new Set(["/_ccdx/ui/animation", "/_ccdx/ui/models/live", "/_ccdx/ui/usage", "/_ccdx/ui/auth"]);
 
 export function requestPath(reqUrl) {
   return new URL(reqUrl || "/", "http://localhost").pathname;

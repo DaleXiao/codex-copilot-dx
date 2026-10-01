@@ -3,6 +3,28 @@ const text = (id, value) => { element(id).textContent = value; };
 const finite = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
 const number = (value) => finite(value) ? Math.max(0, Math.round(Number(value))).toLocaleString() : "—";
 const mib = (value) => finite(value) ? `${(Number(value) / 1048576).toFixed(1)} MiB` : "—";
+let authLoading = false;
+
+function renderAuth(data) {
+  const account = data.login ? `@${data.login}` : data.id ? `ID ${data.id}` : "account unknown";
+  const label = data.reason === "credential_read_failed" ? "UNAVAILABLE"
+    : !data.configured ? "NOT CONFIGURED" : !data.valid ? "INVALID" : `${account} / SAVED`;
+  text("auth-account", `GitHub / ${label}`);
+}
+
+async function loadAuth() {
+  if (authLoading) return;
+  authLoading = true;
+  text("auth-account", "GitHub / READING");
+  try {
+    const response = await fetch("/_ccdx/ui/auth", { cache: "no-store", headers: { "X-CCDX-Dashboard": "1" }, signal: AbortSignal.timeout(5000) });
+    const data = await response.json();
+    if (!response.ok || data.source !== "local_auth_status") throw new Error("Auth status unavailable");
+    renderAuth(data);
+  } catch {
+    text("auth-account", "GitHub / UNAVAILABLE");
+  } finally { authLoading = false; }
+}
 
 function duration(value) {
   if (!finite(value)) return "—";
@@ -127,8 +149,9 @@ async function refresh() {
   }
 }
 
-element("refresh").addEventListener("click", refresh);
+element("refresh").addEventListener("click", () => { refresh(); loadAuth(); });
 refresh();
+loadAuth();
 
 const animationRows = new Map();
 let animationTimelines = [];

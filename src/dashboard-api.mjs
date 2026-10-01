@@ -1,5 +1,7 @@
 import os from "node:os";
 import { fetchLiveCopilotModels } from "./cli-models.mjs";
+import { authStatus } from "./cli-auth.mjs";
+import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { createRequestAbort, readJsonBody } from "./http-transport.mjs";
 import { isLoopbackAddress, isLoopbackHostHeader } from "./observability.mjs";
 import {
@@ -16,6 +18,7 @@ import { readUserSettings, terminalAnimationPreference, writeTerminalAnimationTh
 const ANIMATION_PATH = "/_ccdx/ui/animation";
 const MODELS_PATH = "/_ccdx/ui/models/live";
 const USAGE_PATH = "/_ccdx/ui/usage";
+const AUTH_PATH = "/_ccdx/ui/auth";
 const DISABLED_ANIMATION = /^(0|false|no|off)$/i;
 
 function sendJson(res, statusCode, value) {
@@ -109,6 +112,7 @@ export async function handleDashboardApi(req, res, pathname, {
   home = os.homedir(),
   liveModelsFn = () => fetchLiveCopilotModels({ home }),
   usageSummaryFn = (options) => summarizeUsageLogs(undefined, options),
+  authStatusFn = () => authStatus({ home }),
 } = {}) {
   if (!isLoopbackAddress(req.socket?.remoteAddress)
     || req.headers?.host === undefined
@@ -118,6 +122,27 @@ export async function handleDashboardApi(req, res, pathname, {
   }
   if (req.headers?.["x-ccdx-dashboard"] !== "1") {
     sendJson(res, 403, { error: "Dashboard API requires a same-origin page request" });
+    return;
+  }
+
+  if (pathname === AUTH_PATH && req.method === "GET") {
+    try {
+      const profile = authStatusFn()?.profiles?.codex;
+      if (!profile || typeof profile.configured !== "boolean" || typeof profile.valid !== "boolean") throw new Error("Invalid auth status");
+      const login = typeof profile.login === "string" && /^[a-z\d-]{1,39}$/i.test(profile.login)
+        && redactDiagnosticText(profile.login) === profile.login ? profile.login : "";
+      const id = /^\d{1,20}$/.test(String(profile.id || "")) ? String(profile.id) : "";
+      sendJson(res, 200, {
+        source: "local_auth_status",
+        configured: profile.configured,
+        valid: profile.valid,
+        login: profile.valid ? login : "",
+        id: profile.valid ? id : "",
+        reason: ["unconfigured", "empty_token", "credential_read_failed"].includes(profile.reason) ? profile.reason : "",
+      });
+    } catch {
+      sendJson(res, 500, { error: "Could not read local auth status" });
+    }
     return;
   }
 

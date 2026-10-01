@@ -14,6 +14,7 @@ These reports record a specific release and test environment. Their version,
 test counts, timings, live-provider observations, and limitations remain
 historical facts rather than current guarantees.
 
+- [0.9.7: saved GitHub account in the dashboard header](RELEASE_0.9.7.md)
 - [0.9.6: lazy dashboard controls and daily usage analytics](RELEASE_0.9.6.md)
 - [0.9.5: cache hit rates with incomplete history](RELEASE_0.9.5.md)
 - [0.9.4: token cache hit rate in usage and dashboard](RELEASE_0.9.4.md)

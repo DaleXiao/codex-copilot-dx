@@ -5,7 +5,7 @@ import test from "node:test";
 
 const html = readFileSync(new URL("../src/dashboard/index.html", import.meta.url), "utf8");
 const script = readFileSync(new URL("../src/dashboard/ui.js", import.meta.url), "utf8");
-const renderScript = script.split('\nelement("refresh").addEventListener("click", refresh);')[0];
+const renderScript = script.split('\nelement("refresh").addEventListener(')[0];
 
 test("dashboard usage renders percentages, zero hits and unknown rates in the seventh column", () => {
   const usageScript = script.slice(script.indexOf("function usageValues(row)"), script.indexOf("async function loadUsage()"));

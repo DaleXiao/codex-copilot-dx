@@ -33,7 +33,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false } = {}) 
   const requests = [];
   const timers = new Set();
   let observer;
-  const api = runInNewContext(`${script}\n({ renderFailures, loadAnimation, loadUsage, renderAnalytics, selectUsageDay, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, {
+  const api = runInNewContext(`${script}\n({ renderFailures, renderAuth, loadAuth, loadAnimation, loadUsage, renderAnalytics, selectUsageDay, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, {
     document, window: { matchMedia: () => ({ matches: reduced, addEventListener() {} }) }, navigator: { clipboard: { writeText: clipboard } },
     performance: { now: () => 0 }, AbortSignal, Intl, setTimeout(fn) { timers.add(fn); return fn; }, clearTimeout(fn) { timers.delete(fn); },
     IntersectionObserver: class { constructor(fn) { observer = fn; } observe() {} },
@@ -41,6 +41,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false } = {}) 
       requests.push(url);
       if (fetchFn) { const response = await fetchFn(url, options); if (response) return response; }
       const data = url === "/_ccdx/status" ? { ok: true, name: "codex-copilot-dx" }
+        : url === "/_ccdx/ui/auth" ? { source: "local_auth_status", configured: true, valid: true, login: "octocat" }
         : url.includes("/models/") ? { source: "live", models: [] }
         : url.includes("/usage") ? { ...usage, ...(url.includes("analytics=1") ? { analytics: collector.snapshot() } : {}) }
         : url.includes("frames=0") ? { ...themes, themes: themes.themes.map(({ id, label }) => ({ id, label })) } : themes;
@@ -49,6 +50,39 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false } = {}) 
   });
   return { api, nodes, requests, timers, visible(value) { observer([{ isIntersecting: value }]); } };
 }
+
+test("dashboard auth renders saved username and fallbacks without claiming online validation", async () => {
+  const h = harness();
+  await flush();
+  assert.equal(h.nodes.get("auth-account").textContent, "GitHub / @octocat / SAVED");
+  for (const [data, expected] of [
+    [{ configured: false }, "GitHub / NOT CONFIGURED"],
+    [{ configured: true, valid: false }, "GitHub / INVALID"],
+    [{ configured: true, valid: false, reason: "credential_read_failed" }, "GitHub / UNAVAILABLE"],
+    [{ configured: true, valid: true }, "GitHub / account unknown / SAVED"],
+    [{ configured: true, valid: true, id: "7" }, "GitHub / ID 7 / SAVED"],
+  ]) { h.api.renderAuth(data); assert.equal(h.nodes.get("auth-account").textContent, expected); }
+  assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/auth").length, 1);
+  h.nodes.get("refresh").listeners.click();
+  await flush();
+  assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/auth").length, 2);
+});
+
+test("auth failure and slow auth do not block normal dashboard refresh or cause retry loops", async () => {
+  let release;
+  const h = harness({ fetchFn: (url) => url === "/_ccdx/ui/auth" ? new Promise((resolve) => { release = resolve; }) : undefined });
+  await flush();
+  assert.equal(h.nodes.get("connection").textContent, "LOCAL OK");
+  assert.equal(h.nodes.get("refresh").disabled, false);
+  h.nodes.get("refresh").listeners.click();
+  await flush();
+  assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/auth").length, 1);
+  release({ ok: false, json: async () => ({ error: "secret-error" }) });
+  await flush();
+  assert.equal(h.nodes.get("auth-account").textContent, "GitHub / UNAVAILABLE");
+  assert.equal(h.nodes.get("connection").textContent, "LOCAL OK");
+  assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/auth").length, 1);
+});
 
 test("animation is lazy, stops while collapsed, and keeps unsaved choices on reopen", async () => {
   const h = harness();

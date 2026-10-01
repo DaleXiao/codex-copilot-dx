@@ -50,3 +50,24 @@ Date: 2026-10-01. Baseline: `5ce8a2f` (0.9.6).
 Release gates found no detected regression in their covered paths; the
 improvement is account visibility and explicit local-auth state, not a claim of
 faster inference or freshly verified upstream access.
+
+## Publication and cleanup
+
+- Release commit/tag: `a9a1f1a` / `v0.9.7`.
+- GitHub CI passed for the exact release commit:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36879328754.
+- Public GitHub Release (not draft/prerelease):
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.7.
+- One npm publish workflow succeeded, including required prepublish checks:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36879650564.
+  The official-registry receipt confirms `codex-copilot-dx@0.9.7`, tag
+  `latest`, 100 files, 266.3 kB, SHA-1
+  `81dcf01f8ea8b28e1c9e7ca98f4cecb1dda79d7b`, matching local preflight.
+- The independent local registry lookup returned `ENOTCONN`; publication was
+  not repeated. GitHub operations used the previously user-provided PAT.
+- Removed the fixture browser tab, loopback test server, temporary preview
+  script and fixture credential directory. Preserved real credentials/settings,
+  the running adapter, dependencies and unrelated files. A header screenshot
+  is retained outside the repository as a delivery artifact.
+- A documentation-only evidence commit does not move the release tag or cause
+  a second npm publication.

@@ -41,3 +41,25 @@ The improvement is correct account-name visibility. Performance gates found no
 detected regression in covered paths; this does not claim faster inference or
 new upstream authorization. Real credentials and the active adapter were not
 modified during verification.
+
+## Publication and cleanup
+
+- Release commit/tag: `c5926ed` / `v0.9.8`.
+- GitHub CI passed for this exact commit:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36881988149.
+- Public GitHub Release (not draft/prerelease):
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.8.
+- One npm publish workflow succeeded, including required prepublish checks:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/36882269632.
+  The official-registry receipt confirms `codex-copilot-dx@0.9.8`, tag
+  `latest`, 100 files, 266.4 kB, SHA-1
+  `5be87172c5e2f59f7312a588de1afaa8a1251b9d`, matching local preflight.
+- The independent local registry lookup returned `ENOTCONN`; publication was
+  not repeated. GitHub operations used the previously user-provided PAT.
+- Removed the fixture browser tab, loopback test server, temporary preview
+  script and fixture credential directory. Preserved real credentials/settings,
+  the active adapter, dependencies and unrelated files. A fixture screenshot
+  remains outside the repository as a delivery artifact.
+- A documentation-only evidence commit does not move the release tag or cause
+  a second npm publication. Upgrade/restart CCDX and refresh the page to use
+  the new display filter; no re-login or token replacement is required.

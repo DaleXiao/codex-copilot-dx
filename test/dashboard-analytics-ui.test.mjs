@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { runInNewContext } from "node:vm";
+import { createContext, runInContext } from "node:vm";
 import test from "node:test";
 import { createUsageAnalytics } from "../src/usage-analytics.mjs";
 import { summarizeUsage } from "../src/usage.mjs";
 
 const script = readFileSync(new URL("../src/dashboard/ui.js", import.meta.url), "utf8");
+const languageScript = readFileSync(new URL("../src/dashboard/language.js", import.meta.url), "utf8");
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 class Node {
@@ -13,6 +14,8 @@ class Node {
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   setAttribute(key, value) { this.attributes[key] = value; }
+  getAttribute(key) { return this.attributes[key] ?? null; }
+  hasAttribute(key) { return Object.hasOwn(this.attributes, key); }
   addEventListener(event, fn) { this.listeners[event] = fn; }
   querySelectorAll(selector) { return this.children.flatMap((node) => [...(selector === "details[open]" && node.tag === "details" && node.open ? [node] : []), ...node.querySelectorAll(selector)]); }
   querySelector() { return new Node("summary"); }
@@ -20,9 +23,17 @@ class Node {
   focus() {}
 }
 
-function harness({ fetchFn, clipboard = async () => {}, reduced = false } = {}) {
+function harness({ fetchFn, clipboard = async () => {}, reduced = false, language = false, savedLanguage = "en" } = {}) {
   const nodes = new Map();
-  const document = { visibilityState: "visible", getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); }, createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node(), addEventListener() {} };
+  const ready = [];
+  const document = { documentElement: { dataset: {} }, visibilityState: "visible", getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); }, createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node(), addEventListener(event, fn) { if (event === "DOMContentLoaded") ready.push(fn); },
+    querySelectorAll() {
+      const found = new Set();
+      const visit = (node) => { if (Object.keys(node.attributes).some((key) => key.startsWith("data-i18n"))) found.add(node); node.children.forEach(visit); };
+      nodes.forEach(visit);
+      return [...found];
+    },
+  };
   document.getElementById("analytics-range").value = "30";
   document.getElementById("analytics-metric").value = "requests";
   const records = [{ ts: "2026-10-01T00:00:00Z", model: "test", usage: { input_tokens: 100, cached_input_tokens: 80, output_tokens: 10, total_tokens: 110 } }];
@@ -33,9 +44,10 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false } = {}) 
   const requests = [];
   const timers = new Set();
   let observer;
-  const api = runInNewContext(`${script}\n({ renderFailures, renderAuth, loadAuth, loadAnimation, loadUsage, renderAnalytics, selectUsageDay, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, {
+  const context = createContext({
     document, window: { matchMedia: () => ({ matches: reduced, addEventListener() {} }) }, navigator: { clipboard: { writeText: clipboard } },
     performance: { now: () => 0 }, AbortSignal, Intl, setTimeout(fn) { timers.add(fn); return fn; }, clearTimeout(fn) { timers.delete(fn); },
+    localStorage: { getItem: () => savedLanguage, setItem() {} },
     IntersectionObserver: class { constructor(fn) { observer = fn; } observe() {} },
     fetch: async (url, options) => {
       requests.push(url);
@@ -48,8 +60,65 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false } = {}) 
       return { ok: true, json: async () => data };
     },
   });
+  if (language) runInContext(languageScript, context);
+  const api = runInContext(`${script}\n({ renderFailures, renderAuth, loadAuth, loadAnimation, loadUsage, renderAnalytics, selectUsageDay, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, context);
+  ready.forEach((fn) => fn());
   return { api, nodes, requests, timers, visible(value) { observer([{ isIntersecting: value }]); } };
 }
+
+test("language switch preserves unsaved animation, chart nodes/selection and expanded failures without fetching", async () => {
+  let copied;
+  const h = harness({ language: true, clipboard: async (value) => { copied = value; } });
+  await flush();
+  h.nodes.get("animation-settings").open = true;
+  h.nodes.get("animation-settings").listeners.toggle();
+  h.nodes.get("usage-analytics").open = true;
+  h.nodes.get("usage-analytics").listeners.toggle();
+  await flush();
+  h.nodes.get("animation-options").children[1].listeners.click();
+  h.visible(true);
+  h.nodes.get("analytics-model").value = "test";
+  h.nodes.get("analytics-model").listeners.change();
+  h.nodes.get("daily-bars").children.at(-1).listeners.click();
+  h.api.renderFailures([{ at: "time", model: "test", code: "response.failed", message: "<script>raw source</script>", retried: true }]);
+  const failure = h.nodes.get("failures").children[0].children[0];
+  failure.open = true;
+  const calendar = [...h.nodes.get("activity-calendar").children];
+  const requests = h.requests.length;
+  const timer = h.api.timer;
+  h.nodes.get("language-toggle").listeners.click();
+  assert.equal(h.api.selection, "twin");
+  assert.equal(h.nodes.get("save-animation").disabled, false);
+  assert.match(h.nodes.get("animation-state").textContent, /未保存/);
+  assert.equal(h.nodes.get("analytics-model").value, "test");
+  assert.equal(h.nodes.get("usage-state").textContent, "2026-10-01");
+  assert.equal(h.nodes.get("usage-body").children[0].children[0].textContent, "合计");
+  assert.deepEqual(h.nodes.get("activity-calendar").children, calendar);
+  assert.equal(failure.open, true);
+  assert.strictEqual(h.api.timer, timer);
+  assert.equal(h.requests.length, requests);
+  assert.match(h.nodes.get("auth-account").textContent, /@octocat \/ 已保存/);
+  assert.match(h.nodes.get("daily-bars").children.at(-1).attributes.title, /已包含在输入中/);
+  await failure.children.at(-1).listeners.click();
+  assert.match(copied, /message: <script>raw source<\/script>/);
+  assert.match(copied, /retry: attempted \(outcome not recorded here\)/);
+  h.nodes.get("language-toggle").listeners.click();
+  assert.match(h.nodes.get("animation-state").textContent, /UNSAVED/);
+  assert.equal(h.nodes.get("usage-body").children[0].children[0].textContent, "TOTAL");
+  assert.equal(h.requests.length, requests);
+});
+
+test("saved Chinese applies to asynchronous data, counts and later refresh results", async () => {
+  const h = harness({ language: true, savedLanguage: "zh" });
+  await flush();
+  assert.equal(h.nodes.get("connection").textContent, "本机正常");
+  assert.equal(h.nodes.get("auth-account").textContent, "GitHub / @octocat / 已保存");
+  assert.equal(h.nodes.get("usage-body").children[0].children[0].textContent, "合计");
+  assert.equal(h.nodes.get("usage-body").children[0].children[2].textContent, "100");
+  h.nodes.get("refresh").listeners.click();
+  await flush();
+  assert.equal(h.nodes.get("connection").textContent, "本机正常");
+});
 
 test("dashboard auth renders saved username and fallbacks without claiming online validation", async () => {
   const h = harness();

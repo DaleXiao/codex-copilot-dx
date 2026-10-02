@@ -20,12 +20,12 @@ test("dashboard usage renders percentages, zero hits and unknown rates in the se
   }
   assert.equal(usageValues({ ...row, cache_hit_rate_partial: true }).at(-1), "~80.0%");
   assert.equal(usageValues({ ...row, cache_hit_rate: null, cache_hit_rate_partial: true }).at(-1), "—");
-  assert.match(html, /<th scope="col">CACHE HIT<\/th>/);
-  assert.match(html, /id="usage-body"><tr><td colspan="7">Loading/);
+  assert.match(html, /<th scope="col" data-i18n>CACHE HIT<\/th>/);
+  assert.match(html, /id="usage-body"><tr><td colspan="7" data-i18n>Loading/);
 });
 
 test("dashboard shows active per-request caps separately from history occupancy", () => {
-  assert.match(html, /Per-request limits \(active\)<br><span id="body-limits">/);
+  assert.match(html, /Per-request limits \(active\)<\/span><br><span id="body-limits">/);
   assert.match(html, /<strong id="history">—<\/strong><progress id="history-meter"/);
   const nodes = new Map();
   const createNode = () => ({

@@ -16,8 +16,13 @@
     const button = document.getElementById("theme-toggle");
     const updateLabel = () => {
       const label = `Switch to ${theme === "dark" ? "light" : "dark"} mode`;
-      button.setAttribute("aria-label", label);
-      button.title = label;
+      if (globalThis.ccdxLanguage) {
+        globalThis.ccdxLanguage.set(button, label, {}, "aria-label");
+        globalThis.ccdxLanguage.set(button, label, {}, "title");
+      } else {
+        button.setAttribute("aria-label", label);
+        button.title = label;
+      }
     };
     updateLabel();
     button.addEventListener("click", () => {

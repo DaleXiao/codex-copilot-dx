@@ -1,15 +1,27 @@
 const element = (id) => document.getElementById(id);
-const text = (id, value) => { element(id).textContent = value; };
+const phrase = (key, values = {}) => ({ key, values });
+const english = (key, values = {}) => String(key).replace(/\{(\w+)\}/g, (match, name) => {
+  if (!Object.hasOwn(values, name)) return match;
+  const value = values[name];
+  return value && typeof value === "object" && typeof value.key === "string" ? english(value.key, value.values) : String(value ?? "");
+});
+const localize = (target, key, values = {}, attribute = "textContent") => {
+  if (globalThis.ccdxLanguage) return globalThis.ccdxLanguage.set(target, key, values, attribute);
+  const value = english(key, values);
+  if (attribute === "textContent") target.textContent = value;
+  else target.setAttribute(attribute, value);
+};
+const text = (id, key, values) => { localize(element(id), key, values); };
 const finite = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
 const number = (value) => finite(value) ? Math.max(0, Math.round(Number(value))).toLocaleString() : "—";
 const mib = (value) => finite(value) ? `${(Number(value) / 1048576).toFixed(1)} MiB` : "—";
 let authLoading = false;
 
 function renderAuth(data) {
-  const account = data.login ? `@${data.login}` : data.id ? `ID ${data.id}` : "account unknown";
+  const account = data.login ? `@${data.login}` : data.id ? `ID ${data.id}` : phrase("account unknown");
   const label = data.reason === "credential_read_failed" ? "UNAVAILABLE"
-    : !data.configured ? "NOT CONFIGURED" : !data.valid ? "INVALID" : `${account} / SAVED`;
-  text("auth-account", `GitHub / ${label}`);
+    : !data.configured ? "NOT CONFIGURED" : !data.valid ? "INVALID" : "SAVED";
+  text("auth-account", label === "SAVED" ? "GitHub / {account} / SAVED" : `GitHub / ${label}`, { account });
 }
 
 async function loadAuth() {
@@ -40,11 +52,11 @@ function renderFailures(recent) {
   const expanded = new Set([...list.querySelectorAll("details[open]")].map((item) => item.dataset.key));
   list.replaceChildren();
   const failures = Array.isArray(recent) ? recent.slice(-10).reverse() : [];
-  text("failure-count", `${failures.length} retained / response.failed`);
+  text("failure-count", "{count} retained / response.failed", { count: failures.length });
   if (!failures.length) {
     const item = document.createElement("li");
     item.className = "empty";
-    item.textContent = "No response.failed events recorded.";
+    localize(item, "No response.failed events recorded.");
     list.append(item);
     return;
   }
@@ -54,7 +66,10 @@ function renderFailures(recent) {
     details.dataset.key = `${failure.at}/${failure.response_id}/${failure.code}`;
     details.open = expanded.has(details.dataset.key);
     const title = document.createElement("summary");
-    title.textContent = `${String(failure.at || "unknown time")} / ${String(failure.model || "unknown_model").slice(0, 80)} / ${String(failure.code || "unknown_error").slice(0, 80)} / ${failure.retried ? "retry attempted" : "no retry"}`;
+    localize(title, "{detail} / {retry}", {
+      detail: `${String(failure.at || "unknown time")} / ${String(failure.model || "unknown_model").slice(0, 80)} / ${String(failure.code || "unknown_error").slice(0, 80)}`,
+      retry: phrase(failure.retried ? "retry attempted" : "no retry"),
+    });
     const fields = { time: failure.at, model: failure.model, event: failure.event_type, code: failure.code,
       message: failure.message, response_id: failure.response_id, upstream_request_id: failure.upstream_request_id,
       retry: failure.retried ? "attempted (outcome not recorded here)" : "not attempted",
@@ -66,19 +81,21 @@ function renderFailures(recent) {
       if (value === undefined || value === null || value === "") continue;
       const label = document.createElement("dt");
       const content = document.createElement("dd");
-      label.textContent = key;
-      content.textContent = String(value).slice(0, 500);
+      localize(label, key);
+      const rawValue = String(value).slice(0, 500);
+      if (key === "retry") localize(content, rawValue);
+      else content.textContent = rawValue;
       diagnostic.append(label, content);
-      lines.push(`${key}: ${content.textContent}`);
+      lines.push(`${key}: ${rawValue}`);
     }
     const copy = document.createElement("button");
     copy.type = "button";
-    copy.textContent = "Copy diagnostic";
+    localize(copy, "Copy diagnostic");
     copy.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(lines.join("\n"));
-        copy.textContent = "Copied";
-      } catch { copy.textContent = "Copy unavailable"; }
+        localize(copy, "Copied");
+      } catch { localize(copy, "Copy unavailable"); }
     });
     details.append(title, diagnostic, copy);
     item.append(details);
@@ -88,20 +105,20 @@ function renderFailures(recent) {
 
 function render(data) {
   text("version", `v${data.version || "?"}`);
-  text("uptime", `pid ${number(data.pid)} / uptime ${duration(data.uptime_ms)}`);
+  text("uptime", "pid {pid} / uptime {duration}", { pid: number(data.pid), duration: duration(data.uptime_ms) });
 
   const copilot = data.copilot || {};
   text("copilot", copilot.account_bound ? "BOUND" : "UNCONFIRMED");
-  text("token", copilot.token_cached ? `service token / TTL ${duration(copilot.token_expires_in_ms)}` : "service token not cached");
+  text("token", copilot.token_cached ? "service token / TTL {duration}" : "service token not cached", { duration: duration(copilot.token_expires_in_ms) });
 
   const models = data.models || {};
   text("models", number(models.models));
-  text("model-source", `source ${String(models.source || "unknown").slice(0, 80)} / live: ccdx models`);
+  text("model-source", "source {source} / live: ccdx models", { source: phrase(String(models.source || "unknown").slice(0, 80)) });
 
   const requests = data.requests || {};
   text("requests", number(requests.total));
-  text("request-errors", `4xx ${number(requests.status_4xx)} / 5xx ${number(requests.status_5xx)} / active ${number(requests.active)}`);
-  text("body-limits", `raw ${mib(data.limits?.max_body_bytes)} / decoded ${mib(data.limits?.max_decoded_body_bytes)}`);
+  text("request-errors", "4xx {client} / 5xx {server} / active {active}", { client: number(requests.status_4xx), server: number(requests.status_5xx), active: number(requests.active) });
+  text("body-limits", "raw {raw} / decoded {decoded}", { raw: mib(data.limits?.max_body_bytes), decoded: mib(data.limits?.max_decoded_body_bytes) });
 
   const outcomes = data.stream_performance?.by_route?.responses?.terminal_outcomes?.totals || {};
   for (const key of ["completed", "incomplete", "failed", "cancelled"]) text(key, number(outcomes[key]));
@@ -110,17 +127,17 @@ function render(data) {
   const limit = Number(history.maxBytes || data.limits?.response_history_max_bytes || 0);
   const used = Number(history.bytes || 0);
   text("history", `${mib(used)} / ${mib(limit)}`);
-  text("history-detail", `entries ${number(history.entries)} / trees ${number(history.tree_count)} / misses ${number(history.lookup_misses)} (evicted ${number(history.evicted_lookup_misses)})`);
+  text("history-detail", "entries {entries} / trees {trees} / misses {misses} (evicted {evicted})", { entries: number(history.entries), trees: number(history.tree_count), misses: number(history.lookup_misses), evicted: number(history.evicted_lookup_misses) });
   element("history-meter").value = limit > 0 ? Math.min(100, Math.max(0, used / limit * 100)) : 0;
 
   const image = data.image_generation;
-  text("image", image ? `${number(image.succeeded)} succeeded` : "NOT INITIALIZED");
+  text("image", image ? "{count} succeeded" : "NOT INITIALIZED", { count: number(image?.succeeded) });
   text("image-detail", image
-    ? `active ${number(image.active)} / failed ${number(image.failed)} / delivery failures ${number(image.delivery_failures)}`
-    : "Setup state unknown / ccdx image-status");
+    ? "active {active} / failed {failed} / delivery failures {delivery}"
+    : "Setup state unknown / ccdx image-status", { active: number(image?.active), failed: number(image?.failed), delivery: number(image?.delivery_failures) });
 
   renderFailures(data.response_failures?.recent);
-  text("updated", `Snapshot ${new Date().toLocaleTimeString()}`);
+  text("updated", "Snapshot {time}", { time: new Date().toLocaleTimeString() });
 }
 
 async function refresh() {
@@ -248,7 +265,7 @@ function buildAnimationOptions(data) {
     name.textContent = `${String(index + 1).padStart(2, "0")} ${theme.label}`;
     if (theme.default) {
       const marker = document.createElement("small");
-      marker.textContent = "DEFAULT";
+      localize(marker, "DEFAULT");
       name.append(marker);
     }
     const preview = document.createElement("span");
@@ -299,7 +316,7 @@ async function loadAnimation() {
 }
 
 function updateAnimationState() {
-  text("animation-state", `CURRENT ${savedAnimation.toUpperCase()}${selectedAnimation !== savedAnimation ? " / UNSAVED" : ""}`);
+  text("animation-state", "CURRENT {theme}{unsaved}", { theme: savedAnimation.toUpperCase(), unsaved: selectedAnimation !== savedAnimation ? phrase(" / UNSAVED") : "" });
 }
 
 async function saveAnimation() {
@@ -320,7 +337,7 @@ async function saveAnimation() {
     updateAnimationState();
     text("animation-note", animationNote(data));
   } catch (error) {
-    text("animation-note", `Not saved / ${String(error.message || error).slice(0, 150)}`);
+    text("animation-note", "Not saved / {error}", { error: String(error.message || error).slice(0, 150) });
   } finally {
     button.disabled = selectedAnimation === savedAnimation;
   }
@@ -332,17 +349,18 @@ function emptyTable(bodyId, columns, message) {
   const row = document.createElement("tr");
   const cell = document.createElement("td");
   cell.colSpan = columns;
-  cell.textContent = message;
+  localize(cell, message);
   row.append(cell);
   body.append(row);
 }
 
-function tableRow(values, { total = false } = {}) {
+function tableRow(values, { total = false, labels = [] } = {}) {
   const row = document.createElement("tr");
   if (total) row.className = "total-row";
-  for (const value of values) {
+  for (const [index, value] of values.entries()) {
     const cell = document.createElement("td");
-    cell.textContent = value;
+    if ((total && index === 0) || labels.includes(index)) localize(cell, value);
+    else cell.textContent = value;
     row.append(cell);
   }
   return row;
@@ -361,11 +379,11 @@ async function loadModels() {
     const body = element("live-models-body");
     body.replaceChildren();
     for (const model of data.models) {
-      body.append(tableRow([model.id, model.vendor, model.endpoints.join(" / "), model.preview ? "preview" : "—"]));
+      body.append(tableRow([model.id, model.vendor, model.endpoints.join(" / "), model.preview ? "preview" : "—"], { labels: [3] }));
     }
     if (!data.models.length) emptyTable("live-models-body", 4, "No selectable GPT models advertised.");
     text("models-state", "LIVE SNAPSHOT");
-    text("models-note", `${number(data.selectable)} selectable / ${number(data.advertised)} advertised / ${data.upstream_host} / ${new Date(data.checked_at).toLocaleTimeString()}`);
+    text("models-note", "{selectable} selectable / {advertised} advertised / {host} / {time}", { selectable: number(data.selectable), advertised: number(data.advertised), host: data.upstream_host, time: new Date(data.checked_at).toLocaleTimeString() });
   } catch (error) {
     text("models-state", "LIVE LOOKUP FAILED");
     text("models-note", String(error.message || error).slice(0, 240));
@@ -388,7 +406,7 @@ let selectedUsageDate = "";
 function renderUsageTable() {
   const day = selectedUsageDate && usageData.analytics?.days.find((entry) => entry.date === selectedUsageDate);
   const model = element("analytics-model").value;
-  const total = day ? { model: "TOTAL", ...analyticsPoint(day, model) } : usageData.total;
+  const total = day ? { ...analyticsPoint(day, model), model: "TOTAL" } : usageData.total;
   const rows = day ? day.models.filter((row) => !model || row.model === model).sort((a, b) => b.total_tokens - a.total_tokens || a.model.localeCompare(b.model)) : usageData.rows;
   const body = element("usage-body");
   body.replaceChildren();
@@ -398,7 +416,10 @@ function renderUsageTable() {
   } else { emptyTable("usage-body", 7, "No usage records."); }
   element("clear-usage-day").hidden = !day;
   text("usage-state", day ? day.date : "LOCAL LOG");
-  text("usage-note", `${number(total.requests)} records / ${number(rows.length)} of ${number(day ? rows.length : usageData.model_count)} models shown${day ? ` / ${usageData.analytics.time_zone} / ${model || "All models"}` : ""}`);
+  text("usage-note", "{records} records / {shown} of {models} models shown{day}", {
+    records: number(total.requests), shown: number(rows.length), models: number(day ? rows.length : usageData.model_count),
+    day: day ? phrase(" / {zone} / {model}", { zone: usageData.analytics.time_zone, model: model || phrase("All models") }) : "",
+  });
 }
 
 function analyticsPoint(day, model) {
@@ -416,10 +437,11 @@ function dayButton(day, point) {
   button.type = "button";
   button.disabled = !day.available;
   button.setAttribute("aria-pressed", String(day.date === selectedUsageDate));
-  const description = !day.available ? "no retained history"
-    : `${number(point.requests)} recorded calls / input ${number(point.input_tokens)} / output ${number(point.output_tokens)} / cached ${number(point.cache_read_tokens)} (included in input)${point.tokens_partial ? " / partial token counts" : ""}`;
-  button.title = `${day.date} / ${description}`;
-  button.setAttribute("aria-label", button.title);
+  const description = !day.available ? phrase("no retained history")
+    : phrase("{calls} recorded calls / input {input} / output {output} / cached {cached} (included in input){partial}", {
+      calls: number(point.requests), input: number(point.input_tokens), output: number(point.output_tokens), cached: number(point.cache_read_tokens), partial: point.tokens_partial ? phrase(" / partial token counts") : "",
+    });
+  for (const attribute of ["title", "aria-label"]) localize(button, "{date} / {description}", { date: day.date, description }, attribute);
   button.addEventListener("click", () => selectUsageDay(day.date));
   return button;
 }
@@ -456,7 +478,7 @@ function renderAnalytics() {
     return metric === "tokens" ? point.input_tokens + point.output_tokens : point.requests;
   };
   const peak = Math.max(1, ...days.map(value));
-  text("activity-scale", `${metric === "tokens" ? "INPUT + OUTPUT" : "RECORDED CALLS"} / PEAK ${number(peak === 1 && days.every((day) => value(day) === 0) ? 0 : peak)}`);
+  text("activity-scale", "{metric} / PEAK {peak}", { metric: phrase(metric === "tokens" ? "INPUT + OUTPUT" : "RECORDED CALLS"), peak: number(peak === 1 && days.every((day) => value(day) === 0) ? 0 : peak) });
   const calendar = element("activity-calendar");
   calendar.replaceChildren();
   const offset = (new Date(`${days[0].date}T00:00:00Z`).getUTCDay() + 6) % 7;
@@ -486,8 +508,12 @@ function renderAnalytics() {
     button.dataset.level = String(count > 0 ? Math.min(4, Math.ceil(count / peak * 4)) : 0);
     calendar.append(button);
   }
-  text("analytics-note", `${analytics.time_zone} / ${daily[0].date} — ${analytics.to} / retained history starts ${analytics.first_date || "unknown"}; oldest day may be partial.${analytics.undated_records ? ` ${number(analytics.undated_records)} records with invalid/future timestamps excluded.` : ""}${analytics.models_truncated ? " Model filters limited to 100; all-model totals include the remainder." : ""}`);
-  text("analytics-selection", selectedUsageDate ? `Selected ${selectedUsageDate} / ${model || "All models"}: totals in the Usage table above / All history resets the table.` : "Select a day for model totals. Calls are usage records, not messages or time. Hatched cells: no retained history; empty cells: zero recorded calls.");
+  text("analytics-note", "{zone} / {from} — {to} / retained history starts {first}; oldest day may be partial.{excluded}{limit}", {
+    zone: analytics.time_zone, from: daily[0].date, to: analytics.to, first: analytics.first_date || phrase("unknown"),
+    excluded: analytics.undated_records ? phrase(" {count} records with invalid/future timestamps excluded.", { count: number(analytics.undated_records) }) : "",
+    limit: analytics.models_truncated ? phrase(" Model filters limited to 100; all-model totals include the remainder.") : "",
+  });
+  text("analytics-selection", selectedUsageDate ? "Selected {date} / {model}: totals in the Usage table above / All history resets the table." : "Select a day for model totals. Calls are usage records, not messages or time. Hatched cells: no retained history; empty cells: zero recorded calls.", { date: selectedUsageDate, model: model || phrase("All models") });
 }
 
 function updateAnalyticsModels() {
@@ -497,7 +523,8 @@ function updateAnalyticsModels() {
   for (const model of ["", ...usageData.analytics.models]) {
     const option = document.createElement("option");
     option.value = model;
-    option.textContent = model || "All models";
+    if (model) option.textContent = model;
+    else localize(option, "All models");
     select.append(option);
   }
   select.value = usageData.analytics.models.includes(previous) ? previous : "";

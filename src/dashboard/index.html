@@ -5,92 +5,93 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark light">
     <link id="favicon" rel="icon" type="image/svg+xml" href="data:,">
+    <script src="/language.js"></script>
     <script src="/theme.js"></script>
     <link rel="stylesheet" href="/ui.css">
     <script src="/ui.js" defer></script>
-    <title>CCDX · Local dashboard</title>
+    <title data-i18n>CCDX · Local dashboard</title>
   </head>
   <body>
     <div class="shell">
       <header class="topbar">
-        <div class="brand">CCDX <span class="brand-detail">/ LOCAL STATUS</span></div>
-        <div class="topbar-actions"><span id="connection" class="badge neutral" role="status">READING</span><button id="theme-toggle" class="icon-button" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg><svg class="icon-moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 3A9 9 0 1 0 21 12 7 7 0 0 1 12 3Z"/></svg></button><button id="open-animation" type="button" aria-controls="animation-settings" aria-expanded="false">Animation</button><button id="refresh" type="button">Refresh</button></div>
+        <div class="brand">CCDX <span class="brand-detail" data-i18n>/ LOCAL STATUS</span></div>
+        <div class="topbar-actions"><span id="connection" class="badge neutral" role="status" data-i18n>READING</span><button id="theme-toggle" class="icon-button" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg><svg class="icon-moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 3A9 9 0 1 0 21 12 7 7 0 0 1 12 3Z"/></svg></button><button id="language-toggle" class="icon-button language-button" type="button" aria-label="Switch to Chinese" title="Switch to Chinese">中文</button><button id="open-animation" type="button" aria-controls="animation-settings" aria-expanded="false" data-i18n>Animation</button><button id="refresh" type="button" data-i18n>Refresh</button></div>
       </header>
 
       <main>
         <section class="intro">
           <h1><span aria-hidden="true">$</span> ccdx status</h1>
-          <div class="snapshot-meta"><p id="auth-account" role="status" title="Saved GitHub Copilot account / local credentials only; not an online entitlement check.">GitHub / READING</p><p id="updated">Reading status…</p></div>
+          <div class="snapshot-meta"><p id="auth-account" role="status" data-i18n data-i18n-title title="Saved GitHub Copilot account / local credentials only; not an online entitlement check.">GitHub / READING</p><p id="updated" data-i18n>Reading status…</p></div>
         </section>
 
-        <section class="overview" aria-label="Overview">
-          <article class="card"><h2>ADAPTER</h2><strong id="version">—</strong><p id="uptime">—</p></article>
+        <section class="overview" aria-label="Overview" data-i18n-label>
+          <article class="card"><h2 data-i18n>ADAPTER</h2><strong id="version">—</strong><p id="uptime">—</p></article>
           <article class="card"><h2>COPILOT</h2><strong id="copilot">—</strong><p id="token">—</p></article>
-          <article class="card"><h2>KNOWN MODELS</h2><strong id="models">—</strong><p id="model-source">—</p></article>
-          <article class="card"><h2>REQUESTS</h2><strong id="requests">—</strong><p id="request-errors">—</p><p>Per-request limits (active)<br><span id="body-limits">—</span></p></article>
+          <article class="card"><h2 data-i18n>KNOWN MODELS</h2><strong id="models">—</strong><p id="model-source">—</p></article>
+          <article class="card"><h2 data-i18n>REQUESTS</h2><strong id="requests">—</strong><p id="request-errors">—</p><p><span data-i18n>Per-request limits (active)</span><br><span id="body-limits">—</span></p></article>
         </section>
 
-        <section class="details" aria-label="Runtime details">
+        <section class="details" aria-label="Runtime details" data-i18n-label>
           <article class="panel">
-            <div class="panel-heading"><h2>MODEL OUTCOMES</h2><span>RESPONSES</span></div>
-            <dl class="stats"><div><dt>Completed</dt><dd id="completed">—</dd></div><div><dt>Incomplete</dt><dd id="incomplete">—</dd></div><div><dt>Failed</dt><dd id="failed">—</dd></div><div><dt>Cancelled</dt><dd id="cancelled">—</dd></div></dl>
-            <p class="hint">HTTP 2xx != model completed.</p>
+            <div class="panel-heading"><h2 data-i18n>MODEL OUTCOMES</h2><span>RESPONSES</span></div>
+            <dl class="stats"><div><dt data-i18n>Completed</dt><dd id="completed">—</dd></div><div><dt data-i18n>Incomplete</dt><dd id="incomplete">—</dd></div><div><dt data-i18n>Failed</dt><dd id="failed">—</dd></div><div><dt data-i18n>Cancelled</dt><dd id="cancelled">—</dd></div></dl>
+            <p class="hint" data-i18n>HTTP 2xx != model completed.</p>
           </article>
           <article class="panel">
-            <div class="panel-heading"><h2>LOCAL HISTORY</h2><span>ACTIVE LIMIT</span></div>
-            <strong id="history">—</strong><progress id="history-meter" class="meter" max="100" value="0" aria-label="History cache usage"></progress>
+            <div class="panel-heading"><h2 data-i18n>LOCAL HISTORY</h2><span data-i18n>ACTIVE LIMIT</span></div>
+            <strong id="history">—</strong><progress id="history-meter" class="meter" max="100" value="0" aria-label="History cache usage" data-i18n-label></progress>
             <p id="history-detail" class="hint">—</p>
           </article>
           <article class="panel">
-            <div class="panel-heading"><h2>IMAGE GENERATION</h2><span>OPTIONAL</span></div>
+            <div class="panel-heading"><h2 data-i18n>IMAGE GENERATION</h2><span data-i18n>OPTIONAL</span></div>
             <strong id="image">—</strong><p id="image-detail" class="hint">—</p>
           </article>
         </section>
 
-        <section class="panel dashboard-section" aria-label="Live upstream models">
-          <div class="panel-heading"><h2>UPSTREAM GPT MODELS</h2><div class="heading-actions"><span id="models-state">CHECKING LIVE</span><button id="refresh-models" type="button">Refresh</button></div></div>
-          <p id="models-note" class="table-note">Querying GitHub Copilot…</p>
-          <div class="table-wrap"><table><thead><tr><th scope="col">MODEL</th><th scope="col">VENDOR</th><th scope="col">API</th><th scope="col">FLAG</th></tr></thead><tbody id="live-models-body"><tr><td colspan="4">Loading…</td></tr></tbody></table></div>
-          <p class="hint">Catalog listing does not guarantee inference access.</p>
+        <section class="panel dashboard-section" aria-label="Live upstream models" data-i18n-label>
+          <div class="panel-heading"><h2 data-i18n>UPSTREAM GPT MODELS</h2><div class="heading-actions"><span id="models-state" data-i18n>CHECKING LIVE</span><button id="refresh-models" type="button" data-i18n>Refresh</button></div></div>
+          <p id="models-note" class="table-note" data-i18n>Querying GitHub Copilot…</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n>MODEL</th><th scope="col" data-i18n>VENDOR</th><th scope="col">API</th><th scope="col" data-i18n>FLAG</th></tr></thead><tbody id="live-models-body"><tr><td colspan="4" data-i18n>Loading…</td></tr></tbody></table></div>
+          <p class="hint" data-i18n>Catalog listing does not guarantee inference access.</p>
         </section>
 
-        <section class="panel dashboard-section" aria-label="Usage by model">
-          <div class="panel-heading"><h2>USAGE</h2><div class="heading-actions"><span id="usage-state">READING LOG</span><button id="clear-usage-day" type="button" hidden>All history</button><button id="refresh-usage" type="button">Refresh</button></div></div>
-          <p id="usage-note" class="table-note">Aggregating local usage metadata…</p>
-          <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col">MODEL</th><th scope="col">CALLS</th><th scope="col">INPUT</th><th scope="col">CACHE READ</th><th scope="col">OUTPUT</th><th scope="col">TOTAL</th><th scope="col">CACHE HIT</th></tr></thead><tbody id="usage-body"><tr><td colspan="7">Loading…</td></tr></tbody></table></div>
-          <p class="hint">Cache hit = recorded cached / input tokens. ~ = incomplete history. — = unavailable or invalid counts.</p>
+        <section class="panel dashboard-section" aria-label="Usage by model" data-i18n-label>
+          <div class="panel-heading"><h2 data-i18n>USAGE</h2><div class="heading-actions"><span id="usage-state" data-i18n>READING LOG</span><button id="clear-usage-day" type="button" hidden data-i18n>All history</button><button id="refresh-usage" type="button" data-i18n>Refresh</button></div></div>
+          <p id="usage-note" class="table-note" data-i18n>Aggregating local usage metadata…</p>
+          <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col" data-i18n>MODEL</th><th scope="col" data-i18n>CALLS</th><th scope="col" data-i18n>INPUT</th><th scope="col" data-i18n>CACHE READ</th><th scope="col" data-i18n>OUTPUT</th><th scope="col" data-i18n>TOTAL</th><th scope="col" data-i18n>CACHE HIT</th></tr></thead><tbody id="usage-body"><tr><td colspan="7" data-i18n>Loading…</td></tr></tbody></table></div>
+          <p class="hint" data-i18n>Cache hit = recorded cached / input tokens. ~ = incomplete history. — = unavailable or invalid counts.</p>
           <details id="usage-analytics" class="analytics-section">
-            <summary>USAGE ANALYTICS</summary>
+            <summary data-i18n>USAGE ANALYTICS</summary>
             <div class="analytics-controls">
-              <label>Model <select id="analytics-model"><option value="">All models</option></select></label>
-              <label>Daily range <select id="analytics-range"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select></label>
-              <label>Activity <select id="analytics-metric"><option value="requests">Calls</option><option value="tokens">Tokens</option></select></label>
+              <label><span data-i18n>Model</span> <select id="analytics-model"><option value="" data-i18n>All models</option></select></label>
+              <label><span data-i18n>Daily range</span> <select id="analytics-range"><option value="7" data-i18n>7 days</option><option value="30" selected data-i18n>30 days</option><option value="90" data-i18n>90 days</option></select></label>
+              <label><span data-i18n>Activity</span> <select id="analytics-metric"><option value="requests" data-i18n>Calls</option><option value="tokens" data-i18n>Tokens</option></select></label>
             </div>
-            <p id="analytics-note" class="table-note" role="status">Open to read retained usage history.</p>
-            <div class="chart-heading"><h3>DAILY TOKENS</h3><span>INPUT + OUTPUT / CACHE INCLUDED IN INPUT</span></div>
-            <div id="daily-bars" class="daily-bars" aria-label="Daily token usage"></div>
+            <p id="analytics-note" class="table-note" role="status" data-i18n>Open to read retained usage history.</p>
+            <div class="chart-heading"><h3 data-i18n>DAILY TOKENS</h3><span data-i18n>INPUT + OUTPUT / CACHE INCLUDED IN INPUT</span></div>
+            <div id="daily-bars" class="daily-bars" aria-label="Daily token usage" data-i18n-label></div>
             <div class="daily-axis"><span id="daily-from"></span><span id="daily-to"></span></div>
-            <div class="chart-legend"><span class="legend-input">Input</span><span class="legend-output">Output</span></div>
-            <div class="chart-heading"><h3>REQUEST ACTIVITY · 365 DAYS</h3><span id="activity-scale">—</span></div>
-            <div class="calendar-scroll"><div class="calendar-grid"><div id="calendar-months" class="calendar-months" aria-hidden="true"></div><div id="activity-calendar" class="activity-calendar" aria-label="Daily recorded request activity"></div></div></div>
-            <p id="analytics-selection" class="hint" role="status">Select a day to inspect its model totals. No history is distinct from zero recorded calls.</p>
+            <div class="chart-legend"><span class="legend-input" data-i18n>Input</span><span class="legend-output" data-i18n>Output</span></div>
+            <div class="chart-heading"><h3 data-i18n>REQUEST ACTIVITY · 365 DAYS</h3><span id="activity-scale">—</span></div>
+            <div class="calendar-scroll"><div class="calendar-grid"><div id="calendar-months" class="calendar-months" aria-hidden="true"></div><div id="activity-calendar" class="activity-calendar" aria-label="Daily recorded request activity" data-i18n-label></div></div></div>
+            <p id="analytics-selection" class="hint" role="status" data-i18n>Select a day to inspect its model totals. No history is distinct from zero recorded calls.</p>
           </details>
         </section>
 
-        <section class="lower" aria-label="Recent failures">
-          <div class="panel-heading"><h2>RECENT UPSTREAM FAILURES</h2><span id="failure-count">response.failed</span></div>
-          <ol id="failures"><li class="empty">Reading…</li></ol>
-          <p class="hint">Upstream messages may contain sensitive text.</p>
+        <section class="lower" aria-label="Recent failures" data-i18n-label>
+          <div class="panel-heading"><h2 data-i18n>RECENT UPSTREAM FAILURES</h2><span id="failure-count">response.failed</span></div>
+          <ol id="failures"><li class="empty" data-i18n>Reading…</li></ol>
+          <p class="hint" data-i18n>Upstream messages may contain sensitive text.</p>
         </section>
 
         <details id="animation-settings" class="panel dashboard-section settings-panel">
-          <summary class="panel-heading"><h2>TERMINAL ANIMATION</h2><span id="animation-state">READING</span></summary>
-          <div id="animation-options" class="animation-options" role="group" aria-label="Animation theme"></div>
-          <div class="section-actions"><button id="save-animation" type="button" disabled>Save selection</button><span id="animation-note" role="status">Applies on next ccdx start.</span></div>
+          <summary class="panel-heading"><h2 data-i18n>TERMINAL ANIMATION</h2><span id="animation-state" data-i18n>READING</span></summary>
+          <div id="animation-options" class="animation-options" role="group" aria-label="Animation theme" data-i18n-label></div>
+          <div class="section-actions"><button id="save-animation" type="button" disabled data-i18n>Save selection</button><span id="animation-note" role="status" data-i18n>Applies on next ccdx start.</span></div>
         </details>
       </main>
 
-      <footer>LOCAL ONLY / NO BACKGROUND POLLING</footer>
+      <footer data-i18n>LOCAL ONLY / NO BACKGROUND POLLING</footer>
     </div>
   </body>
 </html>

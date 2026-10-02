@@ -49,6 +49,35 @@ Date: 2026-10-02. Baseline: `d7134bb` (0.9.8).
 - Both English and Chinese had no page overflow at 320px and 390px. Dark/light
   modes, accessible theme labels and manual Refresh stayed functional; browser
   console inspection returned no errors or warnings.
+- Initial CI passed Node 24 but the existing Node 22.15 compact timeout fixture
+  failed: its 5ms deadline expired before the mocked upstream call, so the call
+  count was 0 instead of 1. The compact test/production code were unchanged by
+  this release. Its isolated local run passed, and the failed CI job passed on
+  one bounded rerun of the unchanged release commit. No test was skipped, no
+  assertion/deadline was relaxed, and the release tag was not moved. This
+  scheduling-sensitive fixture remains a known test limitation.
 
 This release improves language accessibility, not inference speed or upstream
 model access. No broader analytics or authentication work was undertaken.
+
+## Publication and cleanup
+
+- Release commit/tag: `87fdf55` / `v0.9.9`.
+- GitHub CI passed on Node 22.15 and 24 after the single failed-job rerun noted
+  above: https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37029038329.
+- Public GitHub Release (not draft/prerelease):
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.9.
+- One npm publish workflow succeeded, including required prepublish checks:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37030282967.
+  The official-registry receipt confirms `codex-copilot-dx@0.9.9`, tag
+  `latest`, 101 files, 271.2 kB, SHA-1
+  `db1db478e97fc3cc06752db1071ed90c573b6acb`, matching local preflight.
+- The independent local registry lookup returned `ENOTCONN`; publication was
+  not repeated. GitHub operations used the previously user-provided PAT.
+- Removed the isolated browser tab, fixture server, temporary preview script
+  and fixture settings directory; reset the viewport override. Preserved real
+  credentials/settings, the active adapter, dependencies and unrelated files.
+  A fixture screenshot remains outside the repository as a delivery artifact.
+- A documentation-only evidence commit does not move the release tag or trigger
+  another npm publication. Upgrade/restart CCDX and refresh the page to load
+  the new local translation asset.

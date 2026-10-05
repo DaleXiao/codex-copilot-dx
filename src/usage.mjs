@@ -288,7 +288,7 @@ export function summarizeUsage(records) {
   return summary;
 }
 
-export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord } = {}) {
+async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord } = {}) {
   const summary = { requests: 0, totals: {}, byModel: {} };
   for (const candidate of [rotatedFilePath(filePath), filePath]) {
     for await (const record of iterateUsageRecords(candidate, { warn })) {
@@ -303,6 +303,51 @@ export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = con
     }
   }
   return summary;
+}
+
+const SUMMARY_CACHE_MAX_BYTES = 256 * 1024;
+const SUMMARY_CACHE_SETTLED_MS = 2000;
+let cachedSummary = null;
+
+async function usageSummaryVersion(filePath) {
+  try {
+    const files = await Promise.all([rotatedFilePath(filePath), filePath].map(async (file) => {
+      try {
+        const stat = await fs.promises.stat(file, { bigint: true });
+        if (!stat.isFile()) return null;
+        const recent = Math.max(Number(stat.mtimeMs), Number(stat.ctimeMs));
+        if (Date.now() - recent < SUMMARY_CACHE_SETTLED_MS) return null;
+        return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(":");
+      } catch (error) {
+        if (error?.code === "ENOENT") return "missing";
+        throw error;
+      }
+    }));
+    return files.some((version) => version === null) ? null : `${path.resolve(filePath)}\0${files.join("|")}`;
+  } catch { return null; } // Uncacheable metadata never replaces the normal read/error path.
+}
+
+export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord } = {}) {
+  if (onRecord || warn !== console.error) return summarizeUsageLogFiles(filePath, { warn, onRecord });
+  const version = await usageSummaryVersion(filePath);
+  if (version === null) {
+    cachedSummary = null;
+    return summarizeUsageLogFiles(filePath, { warn });
+  }
+  if (cachedSummary?.version === version) return structuredClone(await cachedSummary.promise);
+  const entry = { version, promise: null };
+  cachedSummary = entry;
+  entry.promise = (async () => {
+    let warned = false;
+    const summary = await summarizeUsageLogFiles(filePath, { warn(message) { warned = true; warn(message); } });
+    const after = await usageSummaryVersion(filePath);
+    const retain = !warned && after === version && Object.keys(summary.byModel).length <= 128
+      && Buffer.byteLength(JSON.stringify(summary)) <= SUMMARY_CACHE_MAX_BYTES;
+    if (!retain && cachedSummary === entry) cachedSummary = null;
+    return summary;
+  })();
+  try { return structuredClone(await entry.promise); }
+  catch (error) { if (cachedSummary === entry) cachedSummary = null; throw error; }
 }
 
 function fmt(n) {

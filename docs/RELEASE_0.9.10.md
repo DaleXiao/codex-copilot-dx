@@ -74,6 +74,27 @@ OAuth and low-level connection retries. Only the 20 latest finished requests are
 retained, so older failure events may have no matching timeline. Data resets on
 restart; this does not provide durable session recovery or decrypt opaque state.
 
-## Publication
+## Publication and cleanup
 
-Publication and browser acceptance results are recorded after verification.
+- Release commit/tag: `46edafa` / `v0.9.10`; the tag remains on the verified
+  application commit. Subsequent report-only updates do not change package bytes.
+- GitHub CI passed on Node 22.15 and 24:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37319167066.
+- Formal GitHub Release (not draft/prerelease):
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.10.
+- One npm publish workflow succeeded, including required prepublish verification:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37319515987.
+  The official-registry receipt confirms `codex-copilot-dx@0.9.10`, tag `latest`,
+  101 files, 273,719 bytes and SHA-1 `0b7e84080d0ffa2df67b2237884c3d0f7241d712`,
+  matching the final local package preflight. GitHub operations used the exact
+  previously successful PAT source, without token output or credential files;
+  npm used the existing repository NPM_TOKEN secret.
+- An independent local registry lookup returned ENOTCONN; the read-only web
+  lookup was unavailable too. Publication was not repeated. Confirmation rests
+  on the successful official-registry publish receipt and matching package hash.
+- Closed the isolated fixture server/tab, reset the viewport override and removed
+  both owned fixture settings directories. Removed regenerable Finder metadata
+  from the repository root and scripts directory. Release helpers/probe scripts
+  and temporary logs are removed after the final remote checks; only the cropped
+  acceptance screenshot remains outside the repository as a delivery artifact.
+  Preserve dependencies, real credentials/settings and the active adapter.

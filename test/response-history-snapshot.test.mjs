@@ -1,5 +1,6 @@
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
   acquireResponseHistorySnapshot,
   clearResponseHistoryForTests,
@@ -62,6 +63,59 @@ test("large history strings retain exact JSON byte accounting", () => {
     id: "resp_image", inputItems, outputItems: [], takeOwnership: true,
   }), true);
   assert.equal(responseHistoryStats().bytes, Buffer.byteLength(JSON.stringify([inputItems, []])));
+});
+
+test("opaque state preserves every UTF-16 code unit and exact JSON accounting through history replay", () => {
+  const values = ["AA==", "AA", "_-8", "\u0000\r\n\"\\", "\ud800", "\udfff", "😀", "é", ""].map((value, index) => (
+    `${index}:${value}:${"x".repeat(1025)}`
+  ));
+  const inputItems = values.map((value) => ({ type: "reasoning", id: value, encrypted_content: value, summary: [] }));
+  const outputItems = [{ type: "compaction", encrypted_content: values.join("|") }];
+  rememberResponseHistoryNode({ id: "resp_unicode", inputItems, outputItems, hasOpaque: true });
+  assert.equal(responseHistoryStats().bytes, Buffer.byteLength(JSON.stringify([inputItems, outputItems])));
+  const snapshot = acquireResponseHistorySnapshot("resp_unicode");
+  try {
+    const replay = prepareResponsesRequest({ model: "gpt-6-astra", previous_response_id: "resp_unicode", input: [] }, { historySnapshot: snapshot });
+    assert.deepEqual(replay.body.input, [...inputItems, ...outputItems]);
+    const decoded = JSON.parse(JSON.stringify(replay.body.input));
+    assert.deepEqual(decoded, [...inputItems, ...outputItems]);
+    decoded[0].encrypted_content = "changed-copy";
+    assert.equal(snapshot.materialize()[0].encrypted_content, values[0]);
+  } finally { snapshot.release(); }
+});
+
+test("repeated opaque-history eviction releases payload memory after warm-up", () => {
+  const moduleUrl = new URL("../src/response-history.mjs", import.meta.url).href;
+  const result = execFileSync(process.execPath, ["--expose-gc", "--input-type=module", "-e", `
+    import assert from "node:assert/strict";
+    import { rememberResponseHistoryNode, acquireResponseHistorySnapshot, clearResponseHistoryForTests,
+      configureResponseHistoryForTests, responseHistoryStats } from ${JSON.stringify(moduleUrl)};
+    configureResponseHistoryForTests({ maxBytes: 256 * 1024, maxEntries: 8 });
+    function batch(offset) {
+      for (let index = 0; index < 128; index += 1) {
+        const id = "resp_" + (offset + index);
+        const opaque = (String(offset + index) + ":x").repeat(4096) + "\\ud800";
+        assert.equal(rememberResponseHistoryNode({ id, inputItems: [], outputItems: [
+          { type: "reasoning", encrypted_content: opaque, summary: [] }
+        ], hasOpaque: true }), true);
+        const snapshot = acquireResponseHistorySnapshot(id);
+        assert.equal(snapshot.materialize()[0].encrypted_content, opaque);
+        snapshot.release();
+        assert.ok(responseHistoryStats().bytes <= 256 * 1024);
+        assert.ok(responseHistoryStats().entries <= 8);
+      }
+    }
+    function memory() { global.gc(); global.gc(); return process.memoryUsage().heapUsed; }
+    batch(0); clearResponseHistoryForTests(); const baseline = memory();
+    configureResponseHistoryForTests({ maxBytes: 256 * 1024, maxEntries: 8 });
+    for (let round = 0; round < 6; round += 1) batch((round + 1) * 128);
+    const retained = memory(); clearResponseHistoryForTests(); const cleared = memory();
+    assert.ok(retained - baseline < 8 * 1024 * 1024, "bounded history retained excess heap");
+    assert.ok(cleared - baseline < 4 * 1024 * 1024, "evicted history was not released");
+    console.log(JSON.stringify({ retained_delta_bytes: retained - baseline, cleared_delta_bytes: cleared - baseline }));
+  `], { encoding: "utf8", timeout: 20_000 });
+  const memory = JSON.parse(result);
+  assert.ok(Number.isFinite(memory.retained_delta_bytes));
 });
 
 test("all response history snapshot leases must release before a root is evictable", () => {

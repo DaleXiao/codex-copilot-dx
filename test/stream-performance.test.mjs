@@ -201,6 +201,67 @@ test("model outcome labels remain bounded for arbitrary request models", () => {
   assert.ok(models.other.completed > 0);
 });
 
+test("request timeline records stages, retry attempts and activity without changing TTFT", () => {
+  let time = 0;
+  const metrics = createStreamPerformanceMetrics({ now: () => time, wallNow: () => "2026-10-05T00:00:00Z" });
+  const request = metrics.begin("responses", { requestId: "request-1", prompt: "private-prompt" });
+  const admission = request.beginStage("admission");
+  time = 5; admission(); admission();
+  request.setModel("gpt-6-astra");
+  time = 10; request.upstreamStarted();
+  time = 20; request.upstreamHeaders();
+  time = 30; request.upstreamActivity();
+  time = 40; request.upstreamStarted();
+  time = 45; request.upstreamHeaders();
+  time = 50; request.firstOutput();
+  time = 80; request.upstreamActivity();
+  time = 90; request.terminal("completed", { origin: "upstream_response" });
+  time = 95; request.finish({ statusCode: 200 }); request.finish();
+  const snapshot = metrics.snapshot();
+  assert.equal(snapshot.by_route.responses.ttft_ms.avg, 40);
+  assert.equal(snapshot.recent_requests.length, 1);
+  assert.deepEqual(snapshot.recent_requests[0], {
+    request_id: "request-1", at: "2026-10-05T00:00:00Z", route: "responses", model: "gpt-6-astra",
+    outcome: "completed", origin: "upstream_response", phase: "upstream_stream", failed: false,
+    http_status: 200, upstream_attempts: 2, timings_ms: { admission: 5, body: 0, history: 0,
+      images: 0, serialization: 0, upstream_start: 10, upstream_headers: 45, first_output: 50,
+      last_activity: 80, terminal: 90, finished: 95 },
+  });
+  snapshot.recent_requests[0].timings_ms.finished = 12345;
+  assert.equal(metrics.snapshot().recent_requests[0].timings_ms.finished, 95);
+  assert.doesNotMatch(JSON.stringify(metrics.snapshot()), /private-prompt/);
+});
+
+test("timeline bounds retention and covers JSON, validation, disconnect and partial stream failures", () => {
+  const metrics = createStreamPerformanceMetrics({ now: () => 1 });
+  assert.equal(metrics.begin("models"), null);
+  const json = metrics.begin("responses", { requestId: "json" });
+  json.upstreamStarted(false); json.upstreamHeaders();
+  json.terminal("completed", { origin: "upstream_response" }); json.finish({ statusCode: 200 });
+  assert.equal(metrics.snapshot().by_route.responses.ttft_ms.samples, 0);
+  assert.equal(metrics.snapshot().recent_requests[0].upstream_attempts, 1);
+  for (let index = 0; index < 25; index += 1) {
+    const request = metrics.begin("responses", { requestId: `request-${index}` });
+    request.beginStage("body")();
+    request.setErrorOrigin("client_validation");
+    request.finish({ statusCode: 400, failed: true });
+  }
+  const partial = metrics.begin("responses", { requestId: "partial" });
+  partial.upstreamStarted(); partial.upstreamHeaders(); partial.firstOutput(); partial.upstreamActivity();
+  partial.setErrorOrigin("transport"); partial.fail(); partial.finish({ statusCode: 200 });
+  const cancelled = metrics.begin("responses_compact", { requestId: "cancelled" });
+  cancelled.finish({ aborted: true });
+  const recent = metrics.snapshot().recent_requests;
+  assert.equal(recent.length, 20);
+  assert.equal(recent[0].request_id, "request-7");
+  assert.equal(recent.at(-2).outcome, "unknown");
+  assert.equal(recent.at(-2).phase, "upstream_stream");
+  assert.equal(recent.at(-2).origin, "transport");
+  assert.equal(recent.at(-2).failed, true);
+  assert.equal(recent.at(-1).outcome, "cancelled");
+  assert.equal(recent.at(-1).origin, "client_disconnect");
+});
+
 test("Copilot transport starts TTFT immediately before a streaming upstream request", async () => {
   resetCopilotTokenForTests();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-stream-performance-"));

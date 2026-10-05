@@ -272,3 +272,36 @@ test("failure details are text-only, preserve expansion and copy only existing d
   h.api.renderFailures(failures);
   assert.equal(list.children[0].children[0].open, true);
 });
+
+test("failure timelines correlate recovered events and include transport failures without extra requests", async () => {
+  let copied;
+  const h = harness({ language: true, savedLanguage: "zh", clipboard: async (value) => { copied = value; } });
+  await flush();
+  const requestCount = h.requests.length;
+  const requests = [{ request_id: "local-1", at: "2026-10-05T00:00:00Z", model: "gpt-6-astra",
+    outcome: "completed", origin: "upstream_response", phase: "upstream_stream", failed: false,
+    http_status: 200, upstream_attempts: 2, timings_ms: { upstream_start: 10, first_output: 50, finished: 100, token: "excluded" } },
+  { request_id: "local-2", at: "2026-10-05T00:01:00Z", model: "gpt-5.6-sol", outcome: "unknown",
+    origin: "transport", phase: "upstream_stream", failed: true, http_status: 200, upstream_attempts: 1,
+    timings_ms: { last_activity: 500, finished: 120500 }, prompt: "excluded" }];
+  const failures = [{ request_id: "local-1", at: "2026-10-05T00:00:01Z", response_id: "resp-1",
+    model: "gpt-6-astra", event_type: "response.failed", code: "encrypted-replay", message: "upstream {input}", retried: true }];
+  h.api.renderFailures(failures, requests);
+  const list = h.nodes.get("failures");
+  assert.equal(list.children.length, 2);
+  const detail = list.children[0].children[0];
+  detail.open = true;
+  await detail.children.at(-1).listeners.click();
+  assert.match(copied, /request_id: local-2/);
+  assert.match(copied, /origin: transport/);
+  assert.match(copied, /last_activity=500.0/);
+  assert.match(copied, /http_status: 200/);
+  assert.doesNotMatch(copied, /excluded/);
+  h.api.renderFailures(failures, requests);
+  assert.equal(list.children[0].children[0].open, true);
+  await list.children[1].children[0].children.at(-1).listeners.click();
+  assert.match(copied, /outcome: completed/);
+  assert.match(copied, /upstream_attempts: 2/);
+  assert.match(copied, /upstream \{input\}/);
+  assert.equal(h.requests.length, requestCount);
+});

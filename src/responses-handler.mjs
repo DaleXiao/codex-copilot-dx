@@ -41,6 +41,7 @@ import {
   markResponseErrorOrigin,
   markResponseModel,
   markResponseTerminal,
+  markUpstreamHeaders,
   measureRequestStage,
   measureRequestStageAsync,
 } from "./stream-performance.mjs";
@@ -371,6 +372,7 @@ export function createResponsesHandler(options) {
               bodyText,
               onUpstreamStart: startUpstreamTimeout,
             });
+            markUpstreamHeaders();
             releaseChatPayload();
             const data = upstream.ok
               ? await readBoundedResponseText(upstream, {

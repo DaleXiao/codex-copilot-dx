@@ -102,7 +102,7 @@ export function createCopilotClientRuntime({
     });
     headers["Content-Length"] = String(Buffer.byteLength(serializedBody));
     onUpstreamStart?.();
-    if (upstreamReq.stream === true) markUpstreamStarted();
+    markUpstreamStarted(upstreamReq.stream === true);
     return fetchCopilotUpstream(`${tokenSession.getApiBase()}/chat/completions`, {
       method: "POST",
       headers,
@@ -185,7 +185,7 @@ export function createCopilotClientRuntime({
     headers.Accept = reqBody.stream ? "text/event-stream" : "application/json";
     try {
       onUpstreamStart?.();
-      if (reqBody.stream === true) markUpstreamStarted();
+      markUpstreamStarted(reqBody.stream === true);
       return await fetchCopilotUpstream(`${tokenSession.getApiBase()}${responsesEndpointPath()}`, {
         method: "POST",
         headers,

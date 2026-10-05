@@ -43,6 +43,7 @@ import {
   markResponseErrorOrigin,
   markResponseTerminal,
   markStreamFailure,
+  markUpstreamActivity,
 } from "./stream-performance.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordResponsesUsage } from "./usage.mjs";
@@ -432,6 +433,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
           if (!streamState.sawTerminal) throw incompleteUpstreamStream("a terminal Responses event");
           break;
         }
+        markUpstreamActivity();
         options.abort?.setTimeout(options.streamIdleTimeoutMs, "stream_idle_timeout");
         for (let offset = 0; offset < value.byteLength; offset += SSE_WRITE_BATCH_BYTES) {
           const frame = transformer.push(value.subarray(offset, offset + SSE_WRITE_BATCH_BYTES));

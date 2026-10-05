@@ -389,7 +389,7 @@ export function createAdapterHandler(options = {}) {
       && !((req.method === "GET" || req.method === "HEAD") && DASHBOARD_PATHS.has(pathname));
     const routeName = classifyAdapterRoute(req.method, pathname);
     const complete = trackRequest ? requestMetrics.begin(routeName) : () => {};
-    const streamPerformance = trackRequest ? streamPerformanceMetrics.begin(routeName) : null;
+    const streamPerformance = trackRequest ? streamPerformanceMetrics.begin(routeName, { requestId }) : null;
     let finishTerminalActivity = () => {};
     if (trackRequest) {
       try {
@@ -402,7 +402,7 @@ export function createAdapterHandler(options = {}) {
       if (requestFinished) return;
       requestFinished = true;
       try { complete({ statusCode, aborted }); } catch {}
-      try { streamPerformance?.finish({ failed: aborted || statusCode >= 400, aborted }); } catch {}
+      try { streamPerformance?.finish({ failed: aborted || statusCode >= 400, aborted, statusCode }); } catch {}
       try { finishTerminalActivity(); } catch {}
     };
     const containUnexpectedError = (error) => {

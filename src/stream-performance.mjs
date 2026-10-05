@@ -10,6 +10,7 @@ const TERMINAL_ORIGINS = new Set([
   "upstream_http", "transport", "client_disconnect", "unclassified",
 ]);
 const MAX_MODEL_OUTCOME_LABELS = 32;
+const MAX_RECENT_REQUESTS = 20;
 const PREPARATION_EDGES_MS = Object.freeze([1, 2, 5, 10, 20, 50, 100, 250, 500, 1_000, 5_000, 30_000, 120_000]);
 const TTFT_EDGES_MS = Object.freeze([
   100, 200, 300, 500, 700, 1_000, 1_400, 2_000, 2_800, 4_000,
@@ -131,11 +132,12 @@ function routeSnapshot(route) {
   };
 }
 
-export function createStreamPerformanceMetrics({ now = () => performance.now() } = {}) {
+export function createStreamPerformanceMetrics({ now = () => performance.now(), wallNow = () => new Date().toISOString() } = {}) {
   const routes = Object.fromEntries(PERFORMANCE_ROUTES.map((name) => [name, createRoutePerformance()]));
+  const recentRequests = [];
 
   return {
-    begin(routeName) {
+    begin(routeName, { requestId } = {}) {
       const route = routes[routeName];
       if (!route) return null;
       const requestStartedAt = now();
@@ -149,21 +151,49 @@ export function createStreamPerformanceMetrics({ now = () => performance.now() }
       let terminalOrigin = null;
       let incompleteReason = null;
       let errorOrigin = null;
+      const at = wallNow();
+      const preparationMs = Object.fromEntries(PREPARATION_STAGES.map((stage) => [stage, 0]));
+      let phase = "received";
+      let attempts = 0;
+      let firstAttemptAt = null;
+      let headersAt = null;
+      let lastActivityAt = null;
+      let terminalAt = null;
+      const elapsed = (time) => time === null ? null : Number(Math.max(0, time - requestStartedAt).toFixed(1));
 
       return {
         beginStage(stage) {
           const histogram = route.preparation[stage];
           if (!histogram || finished) return null;
+          phase = stage;
           const startedAt = now();
           let ended = false;
           return () => {
             if (ended) return;
             ended = true;
-            observe(histogram, Math.max(0, now() - startedAt));
+            const duration = Math.max(0, now() - startedAt);
+            preparationMs[stage] += duration;
+            observe(histogram, duration);
           };
         },
-        upstreamStarted() {
-          if (upstreamStartedAt === null) upstreamStartedAt = now();
+        upstreamStarted(streaming = true) {
+          if (finished) return;
+          const time = now();
+          attempts += 1;
+          firstAttemptAt ??= time;
+          phase = "upstream_connection";
+          if (streaming && upstreamStartedAt === null) upstreamStartedAt = time;
+        },
+        upstreamHeaders() {
+          if (finished) return;
+          headersAt = now();
+          lastActivityAt = headersAt;
+          phase = "upstream_response";
+        },
+        upstreamActivity() {
+          if (finished) return;
+          lastActivityAt = now();
+          phase = "upstream_stream";
         },
         firstOutput() {
           if (firstOutputAt === null) firstOutputAt = now();
@@ -181,6 +211,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now() }
         terminal(outcome, { model: terminalModel, origin, reason } = {}) {
           if (finished || terminalOutcome || !TERMINAL_OUTCOMES.includes(outcome)) return;
           terminalOutcome = outcome;
+          terminalAt = now();
           if (terminalModel !== undefined) model = modelLabel(terminalModel);
           if (TERMINAL_ORIGINS.has(origin)) terminalOrigin = origin;
           if (outcome === "incomplete") incompleteReason = INCOMPLETE_REASONS.has(reason) ? reason : "other";
@@ -189,7 +220,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now() }
         fail() {
           failed = true;
         },
-        finish({ failed: finishFailed = false, aborted = false } = {}) {
+        finish({ failed: finishFailed = false, aborted = false, statusCode = 0 } = {}) {
           if (finished) return;
           finished = true;
           failed ||= finishFailed;
@@ -204,6 +235,21 @@ export function createStreamPerformanceMetrics({ now = () => performance.now() }
           route.terminalByOrigin[origin] ||= emptyOutcomes();
           route.terminalByOrigin[origin][outcome] += 1;
           const finishedAt = now();
+          // Only scalar, allowlisted metadata survives the request; never retain payloads.
+          recentRequests.push({
+            request_id: typeof requestId === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(requestId) ? requestId : null,
+            at, route: routeName, model, outcome, origin, phase,
+            failed: failed || aborted || (terminalOutcome !== null && terminalOutcome !== "completed"),
+            http_status: Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599 ? statusCode : null,
+            upstream_attempts: attempts,
+            timings_ms: {
+              ...Object.fromEntries(PREPARATION_STAGES.map((stage) => [stage, Number(preparationMs[stage].toFixed(1))])),
+              upstream_start: elapsed(firstAttemptAt), upstream_headers: elapsed(headersAt),
+              first_output: elapsed(firstOutputAt), last_activity: elapsed(lastActivityAt),
+              terminal: elapsed(terminalAt), finished: elapsed(finishedAt),
+            },
+          });
+          if (recentRequests.length > MAX_RECENT_REQUESTS) recentRequests.shift();
           if (firstOutputAt !== null) observe(route.requestTtft, Math.max(0, firstOutputAt - requestStartedAt));
           if (upstreamStartedAt === null) {
             route.neutral += 1;
@@ -226,6 +272,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now() }
     snapshot() {
       return {
         by_route: Object.fromEntries(PERFORMANCE_ROUTES.map((name) => [name, routeSnapshot(routes[name])])),
+        recent_requests: recentRequests.map((entry) => ({ ...entry, timings_ms: { ...entry.timings_ms } })),
       };
     },
   };
@@ -253,8 +300,16 @@ export async function measureRequestStageAsync(stage, operation) {
   }
 }
 
-export function markUpstreamStarted() {
-  tracker()?.upstreamStarted();
+export function markUpstreamStarted(streaming = true) {
+  tracker()?.upstreamStarted(streaming);
+}
+
+export function markUpstreamHeaders() {
+  tracker()?.upstreamHeaders?.();
+}
+
+export function markUpstreamActivity() {
+  tracker()?.upstreamActivity?.();
 }
 
 export function markFirstOutput() {

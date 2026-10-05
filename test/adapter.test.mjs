@@ -97,6 +97,14 @@ test("preparation metrics cover native, Chat fallback, and compact without alter
       assert.ok(route.preparation_ms.serialization.samples >= 1);
       assert.equal(route.request_ttft_ms.samples, 0);
       assert.equal(route.ttft_ms.samples, 0);
+      const timeline = metrics.snapshot().recent_requests[0];
+      assert.equal(timeline.request_id, response.headers["X-Request-Id"]);
+      assert.equal(timeline.http_status, 200);
+      assert.equal(timeline.outcome, "completed");
+      assert.equal(timeline.upstream_attempts, 1);
+      assert.ok(timeline.timings_ms.upstream_headers !== null);
+      assert.equal(timeline.timings_ms.first_output, null);
+      assert.doesNotMatch(JSON.stringify(timeline), /preserve this input|test-service|test-token/);
     }
   } finally {
     clearResponseHistoryForTests();

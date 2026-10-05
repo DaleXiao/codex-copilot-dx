@@ -1,5 +1,6 @@
 import { terminalCell } from "./cli-table.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
+import { currentRequestContext } from "./request-context.mjs";
 
 const DEFAULT_RECENT_FAILURES = 10;
 
@@ -38,6 +39,7 @@ export function responseFailureDetails(event, eventType = event?.type, {
       : event;
   return {
     at: new Date().toISOString(),
+    request_id: currentRequestContext()?.requestId || null,
     event_type: safeIdentifier(eventType || "response.failed"),
     model: safeIdentifier(response?.model || model),
     code: safeIdentifier(error?.code || "unknown_error"),

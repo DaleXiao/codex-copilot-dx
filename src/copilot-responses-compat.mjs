@@ -14,6 +14,7 @@ import {
   sanitizeEncryptedReasoningRequest,
 } from "./responses-request.mjs";
 import { status } from "./status.mjs";
+import { markUpstreamHeaders } from "./stream-performance.mjs";
 
 // Ordered Copilot-only fallbacks. Each policy is single-use and must be gated
 // by an exact upstream failure plus a request transformation that changes the
@@ -70,6 +71,7 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
       onUpstreamStart: options.onUpstreamStart,
       payloadPrepared,
     });
+    markUpstreamHeaders();
     options.assertPrepareActive?.();
     payloadPrepared = true;
     if (resp.ok) {

@@ -47,33 +47,52 @@ function duration(value) {
   return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
-function renderFailures(recent) {
+function renderFailures(recent, recentRequests = []) {
   const list = element("failures");
   const expanded = new Set([...list.querySelectorAll("details[open]")].map((item) => item.dataset.key));
   list.replaceChildren();
-  const failures = Array.isArray(recent) ? recent.slice(-10).reverse() : [];
-  text("failure-count", "{count} retained / response.failed", { count: failures.length });
+  const requests = Array.isArray(recentRequests) ? recentRequests.slice(-20) : [];
+  const byRequest = new Map(requests.filter((request) => request.request_id).map((request) => [request.request_id, request]));
+  const failures = Array.isArray(recent) ? recent.slice(-10).map((failure) => ({ ...failure, timeline: byRequest.get(failure.request_id) })) : [];
+  const recorded = new Set(failures.map((failure) => failure.request_id).filter(Boolean));
+  for (const request of requests) {
+    if (!request.failed || recorded.has(request.request_id)) continue;
+    failures.push({ at: request.at, model: request.model, request_id: request.request_id,
+      event_type: `request.${request.outcome}`, code: request.origin, timeline: request,
+      message: "Request ended without successful completion.", local_message: true, retried: request.upstream_attempts > 1 });
+  }
+  failures.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+  failures.splice(0, Math.max(0, failures.length - 10));
+  failures.reverse();
+  text("failure-count", "{count} retained / requests + events", { count: failures.length });
   if (!failures.length) {
     const item = document.createElement("li");
     item.className = "empty";
-    localize(item, "No response.failed events recorded.");
+    localize(item, "No recent request failures recorded.");
     list.append(item);
     return;
   }
   for (const failure of failures) {
     const item = document.createElement("li");
     const details = document.createElement("details");
-    details.dataset.key = `${failure.at}/${failure.response_id}/${failure.code}`;
+    details.dataset.key = `${failure.at}/${failure.request_id || failure.response_id}/${failure.code}`;
     details.open = expanded.has(details.dataset.key);
     const title = document.createElement("summary");
     localize(title, "{detail} / {retry}", {
       detail: `${String(failure.at || "unknown time")} / ${String(failure.model || "unknown_model").slice(0, 80)} / ${String(failure.code || "unknown_error").slice(0, 80)}`,
       retry: phrase(failure.retried ? "retry attempted" : "no retry"),
     });
+    const timeline = failure.timeline;
+    const timings = timeline?.timings_ms || {};
+    const timingText = ["admission", "body", "history", "images", "serialization", "upstream_start", "upstream_headers", "first_output", "last_activity", "terminal", "finished"]
+      .filter((key) => finite(timings[key])).map((key) => `${key}=${Number(timings[key]).toFixed(1)}`).join(" / ");
     const fields = { time: failure.at, model: failure.model, event: failure.event_type, code: failure.code,
       message: failure.message, response_id: failure.response_id, upstream_request_id: failure.upstream_request_id,
-      retry: failure.retried ? "attempted (outcome not recorded here)" : "not attempted",
-      retry_policy: failure.retry_policy, retry_skipped: failure.retry_skipped };
+      retry: failure.retried ? (timeline ? "attempted" : "attempted (outcome not recorded here)") : "not attempted",
+      retry_policy: failure.retry_policy, retry_skipped: failure.retry_skipped,
+      request_id: failure.request_id, outcome: timeline?.outcome, origin: timeline?.origin,
+      phase: timeline?.phase, http_status: timeline?.http_status, upstream_attempts: timeline?.upstream_attempts,
+      timings_ms: timingText };
     const diagnostic = document.createElement("dl");
     diagnostic.className = "failure-detail";
     const lines = [];
@@ -83,7 +102,7 @@ function renderFailures(recent) {
       const content = document.createElement("dd");
       localize(label, key);
       const rawValue = String(value).slice(0, 500);
-      if (key === "retry") localize(content, rawValue);
+      if (key === "retry" || (key === "message" && failure.local_message)) localize(content, rawValue);
       else content.textContent = rawValue;
       diagnostic.append(label, content);
       lines.push(`${key}: ${rawValue}`);
@@ -136,7 +155,7 @@ function render(data) {
     ? "active {active} / failed {failed} / delivery failures {delivery}"
     : "Setup state unknown / ccdx image-status", { active: number(image?.active), failed: number(image?.failed), delivery: number(image?.delivery_failures) });
 
-  renderFailures(data.response_failures?.recent);
+  renderFailures(data.response_failures?.recent, data.stream_performance?.recent_requests);
   text("updated", "Snapshot {time}", { time: new Date().toLocaleTimeString() });
 }
 

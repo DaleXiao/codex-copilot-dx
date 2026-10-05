@@ -60,8 +60,27 @@ confirm four concurrent settled-file queries perform only one pair of log reads.
   prose expects the existing redaction result rather than unchanged text.
   No existing test was skipped or weakened; no unrelated scope was added.
 - Native SSE parsing/copying, writes, backpressure and content/cancellation
-  invariants are compared with the baseline by the existing resource probes.
+  invariants were unchanged in the baseline/candidate resource probes. Adapter
+  import heap remained 7.0 MiB; stringified tool outputs were parsed once in both
+  runs and retained image array-buffer growth stayed at zero.
 
 ## Publication and cleanup
 
-Publication receipts and final cleanup are recorded after release verification.
+- Release application commit/tag: `cf7c111` / `v0.9.11`; report-only updates do
+  not move the tag or change npm package bytes.
+- GitHub CI passed on Node 22.15 and 24:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37334142811.
+- Formal GitHub Release, not draft/prerelease:
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.11.
+- Exactly one npm publish workflow succeeded, including required prepublish gates:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37334566248.
+  The official-registry receipt confirms version 0.9.11, tag `latest`, 101 files,
+  274,910 bytes and SHA-1 `6b378136e8cf7f37b6123459ae874ba1b78a1dca`, matching
+  local preflight. GitHub used the same previously successful PAT source, without
+  printing or persisting its value; npm used the existing repository NPM_TOKEN.
+- One independent local registry read returned ENOTCONN. Publication was not
+  repeated; confirmation is the official publish receipt and matching package hash.
+- All probes used owned temporary directories and removed them. Temporary probe/
+  release scripts and logs are removed after final remote checks. No browser tab,
+  standalone server, extra client configuration or dependency was added. Preserve
+  user credentials/configuration, existing dependencies and the active adapter.

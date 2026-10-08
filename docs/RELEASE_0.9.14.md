@@ -87,8 +87,22 @@ inference or image-provider call was needed for this release's verification.
 
 ## Publication and cleanup
 
-GitHub CI and single npm-publication evidence are added after completion. GitHub
-uses the previously supplied, verified DaleXiao PAT without printing/persisting
-its value; npm uses the repository's existing NPM_TOKEN. Cleanup is limited to
-owned temporary scripts, logs, caches and test settings; preserve dependencies,
-user settings/credentials, the active adapter and useful report/screenshot evidence.
+- Application commit/tag: `6f25ca979310c730e44f46a3b7cbc627f25df8e5` /
+  `v0.9.14`. Report-only updates do not move the tag or change package bytes.
+- GitHub CI passed on Node 22.15 and 24:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37726310482.
+- Formal GitHub Release, not draft/prerelease:
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.14.
+- Exactly one npm publish workflow succeeded, including prepublish gates:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37726573987.
+  The official receipt confirms `codex-copilot-dx@0.9.14`, `latest`, 105 files
+  and SHA-1 `584f657d39715c759b3bc6a2bc54e2f3716c4f26`, matching local
+  preflight's 284,331-byte package. The complete reference is included.
+- GitHub used the previously supplied, verified DaleXiao PAT without printing
+  or persisting its value; npm used the existing repository NPM_TOKEN. A single
+  independent official-registry query returned ENOTCONN. Publication was not
+  repeated; official publish receipt/hash evidence is distinct from that read.
+- Cleanup is limited to owned temporary scripts, logs, npm query cache and test
+  settings. Preserve dependencies, real settings/credentials, the active adapter
+  and useful report/screenshot evidence. Final handoff checks include a clean
+  checkout, no untracked workspace garbage and synchronization with remote main.

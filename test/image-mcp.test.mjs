@@ -84,6 +84,42 @@ test("image MCP retains native JSON clients including charset parameters and not
   }
 });
 
+test("image MCP validates Host without changing native, IPv6 and same-device LAN access", async () => {
+  let reads = 0;
+  const handler = createImageMcpHandler({ localHostname: "Adapter.local", configLoader: () => { reads += 1; return null; } });
+  for (const [host, remoteAddress, localAddress, expected] of [
+    [undefined, "127.0.0.1", "127.0.0.1", 200],
+    ["localhost:2026", "127.0.0.1", "127.0.0.1", 200],
+    ["127.0.0.1:2026", "127.0.0.1", "127.0.0.1", 200],
+    ["[::1]:2026", "::1", "::1", 200],
+    ["[::ffff:7f00:1]:2026", "127.0.0.1", "127.0.0.1", 200],
+    ["192.168.1.5:2026", "192.168.1.5", "192.168.1.5", 200],
+    ["192.168.1.5:2026", "::ffff:192.168.1.5", "::ffff:192.168.1.5", 200],
+    ["[::ffff:c0a8:105]:2026", "192.168.1.5", "192.168.1.5", 200],
+    ["192.168.1.5:2026", "::ffff:c0a8:105", "::ffff:c0a8:105", 200],
+    ["[2001:0db8:0:0:0:0:0:5]:2026", "2001:db8::5", "2001:db8::5", 200],
+    ["adapter.local:2026", "192.168.1.5", "192.168.1.5", 200],
+    ["evil.example", "127.0.0.1", "127.0.0.1", 403],
+    ["192.168.1.5:2026", "127.0.0.1", "127.0.0.1", 403],
+    ["192.168.1.5:2026", "192.168.1.20", "192.168.1.5", 403],
+    ["adapter.local:2026", "192.168.1.20", "192.168.1.5", 403],
+    ["user@192.168.1.5:2026", "192.168.1.5", "192.168.1.5", 403],
+    ["192.168.1.5:2026/path", "192.168.1.5", "192.168.1.5", 403],
+    ["192.168.1.5:2026?query=1", "192.168.1.5", "192.168.1.5", 403],
+    ["192.168.1.5:2026#fragment", "192.168.1.5", "192.168.1.5", 403],
+    ["192.168.1.5:70000", "192.168.1.5", "192.168.1.5", 403],
+    ["localhost,evil.example", "127.0.0.1", "127.0.0.1", 403],
+  ]) {
+    const before = reads;
+    const result = await rpc((req, res) => {
+      req.socket = { remoteAddress, localAddress };
+      return handler(req, res);
+    }, 1, "initialize", {}, host === undefined ? {} : { host });
+    assert.equal(result.status, expected, `${host} / ${remoteAddress}`);
+    assert.equal(reads - before, expected === 200 ? 1 : 0);
+  }
+});
+
 test("image MCP preserves loopback and explicit same-device sockets without widening LAN access", async () => {
   const handler = createImageMcpHandler({ configLoader: () => null });
   for (const [remoteAddress, localAddress, expected] of [

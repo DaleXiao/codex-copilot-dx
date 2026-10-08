@@ -233,6 +233,9 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   delete chatReq.max_tokens;
   const requestModel = chatReq.model || "unknown";
   let upstreamReq = withChatStreamUsage(chatReq);
+  // Retain names only, not the request's schemas, images or message history.
+  const declaredToolNames = new Set((Array.isArray(upstreamReq.tools) ? upstreamReq.tools : [])
+    .map((tool) => tool?.function?.name).filter((name) => typeof name === "string" && name));
   let {
     abort,
     bodyText,
@@ -450,7 +453,17 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
         for (const tc of delta.tool_calls) {
           const { tool, created } = await ensureToolCall(tc);
           if (tc.id) tool.callId = tc.id;
-          if (!created && tc.function?.name) tool.name += tc.function.name;
+          if (!created && tc.function?.name) {
+            const name = tc.function.name;
+            let completeRepeat = name === tool.name && declaredToolNames.has(name);
+            if (completeRepeat) {
+              // An overlap may be a real fragment of a longer declared name.
+              for (const declared of declaredToolNames) {
+                if (declared.startsWith(tool.name + name)) { completeRepeat = false; break; }
+              }
+            }
+            if (!completeRepeat) tool.name += name;
+          }
           const argumentDelta = tc.function?.arguments;
           toolArgumentGuard.observe(tool.outputIndex, argumentDelta);
           if (argumentDelta) {

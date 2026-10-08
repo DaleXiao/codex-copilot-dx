@@ -20,6 +20,29 @@ function assertNoCompatibilityWarning(stderr) {
   assert.equal(stderr, "");
 }
 
+test("usage CLI wraps real read errors but keeps missing and malformed logs nonfatal", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-usage-cli-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const missing = path.join(directory, "absent", "usage.jsonl");
+  const options = (file) => ({ timeout: 5000, env: { ...process.env, CCDX_USAGE_PATH: file } });
+  const empty = await execFileAsync(process.execPath, [cliPath, "usage"], options(missing));
+  assert.match(empty.stdout, /No usage records yet\./);
+  assert.equal(empty.stderr, "");
+  assert.equal(fs.existsSync(path.dirname(missing)), false);
+  await assert.rejects(execFileAsync(process.execPath, [cliPath, "usage"], options(directory)), (error) => {
+    assert.equal(error.code, 1);
+    assert.match(error.stderr, /\[ERR\]/);
+    assert.doesNotMatch(error.stderr, /triggerUncaughtException|node:internal|\n\s+at /);
+    return true;
+  });
+  const malformed = path.join(directory, "usage.jsonl");
+  fs.writeFileSync(malformed, "private-invalid-record\n");
+  const ignored = await execFileAsync(process.execPath, [cliPath, "usage"], options(malformed));
+  assert.match(ignored.stdout, /No usage records yet\./);
+  assert.match(ignored.stderr, /ignored 1 invalid record/);
+  assert.doesNotMatch(ignored.stderr, /private-invalid-record/);
+});
+
 test("package exposes ccdx and keeps the deprecated command as a compatibility shim", () => {
   assert.deepEqual(packageJson.bin, {
     ccdx: "bin/cli.mjs",

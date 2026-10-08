@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { isLoopbackAddress } from "./observability.mjs";
+import { isIP } from "node:net";
+import { isLoopbackAddress, isLoopbackHostHeader } from "./observability.mjs";
 import { generateImage, supportsImageEditing, IMAGE_MAX_BYTES } from "./image-provider.mjs";
 import { readImageProviderConfig } from "./image-provider-config.mjs";
 import { createImageReferenceStore } from "./image-references.mjs";
@@ -47,6 +48,28 @@ function sameHostSocket(socket) {
   const remote = String(socket?.remoteAddress || "").replace(/^::ffff:/, "");
   const local = String(socket?.localAddress || "").replace(/^::ffff:/, "");
   return remote && local && remote === local;
+}
+
+function canonicalIpHost(hostname) {
+  const address = hostname.replace(/^\[|\]$/g, "");
+  const mapped = /^::ffff:([a-f0-9]{1,4}):([a-f0-9]{1,4})$/.exec(address);
+  if (!mapped) return address;
+  const high = Number.parseInt(mapped[1], 16);
+  const low = Number.parseInt(mapped[2], 16);
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
+}
+
+function ownHostHeader(host, socket, bindHostname) {
+  if (isLoopbackHostHeader(host)) return true;
+  if (typeof host !== "string" || !host || host.includes(",")) return false;
+  try {
+    const url = new URL(`http://${host}`);
+    if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) return false;
+    if (bindHostname && url.hostname === bindHostname) return true;
+    const local = String(socket?.localAddress || "");
+    if (!isIP(local)) return false;
+    return canonicalIpHost(url.hostname) === canonicalIpHost(new URL(`http://${isIP(local) === 6 ? `[${local}]` : local}`).hostname);
+  } catch { return false; }
 }
 
 function writeJson(res, statusCode, body) {
@@ -134,13 +157,22 @@ export function createImageMcpHandler({
   configLoader = () => readImageProviderConfig(),
   generateImageFn = generateImage,
   maxConcurrent = 2,
+  localHostname = "",
   imageReferences = createImageReferenceStore(),
   imageDirectory = path.join(os.homedir(), ".local", "share", "codex-copilot-dx", "images"),
 } = {}) {
+  let bindHostname = "";
+  if (localHostname && !isIP(localHostname.replace(/^\[|\]$/g, ""))) {
+    try { bindHostname = new URL(`http://${localHostname}`).hostname; } catch {}
+  }
   let active = 0;
   const metrics = { total: 0, succeeded: 0, failed: 0, busy: 0, cancelled: 0, delivery_failures: 0 };
   const handler = async function imageMcpHandler(req, res) {
     if (!isLoopbackAddress(req.socket?.remoteAddress) && !sameHostSocket(req.socket)) {
+      writeJson(res, 403, jsonRpcError(null, -32001, "Image MCP is available only on this device"));
+      return;
+    }
+    if (!ownHostHeader(req.headers?.host, req.socket, bindHostname)) {
       writeJson(res, 403, jsonRpcError(null, -32001, "Image MCP is available only on this device"));
       return;
     }

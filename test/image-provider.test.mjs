@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter, getEventListeners } from "node:events";
 import https from "node:https";
 import dns from "node:dns/promises";
+import net from "node:net";
 import { test } from "node:test";
 import { downloadPublicImage, generateImage, IMAGE_INPUT_MAX_BYTES, supportsImageEditing } from "../src/image-provider.mjs";
 
@@ -12,6 +13,115 @@ function png(width = 1024, height = 1024) {
   bytes.writeUInt32BE(height, 20);
   return bytes;
 }
+
+test("NAT64 well-known mappings reuse IPv4 rules without rejecting public translations", async (t) => {
+  let dispatched = 0;
+  t.mock.method(https, "get", () => { dispatched += 1; throw new Error("OFFLINE_PUBLIC_DISPATCH"); });
+  for (const address of ["64:ff9b::10.0.0.1", "64:ff9b::127.0.0.1", "64:ff9b::192.168.1.5",
+    "64:ff9b::100.64.0.1", "64:ff9b::169.254.1.1", "64:ff9b::239.1.2.3", "64:ff9b::", "64:ff9b::1",
+    "0064:ff9b:0:0:0:0:a00:1"]) {
+    assert.equal(net.isIP(address), 6, `Fixture must be a valid IPv6 address: ${address}`);
+    await assert.rejects(downloadPublicImage("https://fixture.invalid/image.png", {
+      lookup: async () => [{ address, family: 6 }],
+    }), { code: "ccdx_image_url_unsafe" });
+  }
+  assert.equal(dispatched, 0);
+  for (const address of ["64:ff9b::8.8.8.8", "64:ff9b:0:0:0:0:102:304", "64:ff9b:2::1"]) {
+    assert.equal(net.isIP(address), 6);
+    await assert.rejects(downloadPublicImage("https://fixture.invalid/image.png", {
+      lookup: async () => [{ address, family: 6 }],
+    }), /OFFLINE_PUBLIC_DISPATCH/);
+  }
+  assert.equal(dispatched, 3);
+  await assert.rejects(downloadPublicImage("https://fixture.invalid/image.png", {
+    lookup: async () => [{ address: "64:ff9b::8.8.8.8", family: 6 }, { address: "10.0.0.1", family: 4 }],
+  }), { code: "ccdx_image_url_unsafe" });
+  assert.equal(dispatched, 3);
+});
+
+test("image generation redirects preserve same-origin Fetch methods, one body and one signal", async () => {
+  const config = { endpoint: "https://images.example/v1/images/generations", api_key: "fixture-key", model: "gpt-image-1", protocol: "openai-images" };
+  for (const status of [301, 302, 303, 307, 308]) {
+    const calls = [];
+    let cancelled = 0;
+    const result = await generateImage(config, { prompt: "fixture" }, { fetchImpl: async (url, init) => {
+      calls.push({ url, ...init });
+      assert.equal(init.redirect, "manual");
+      if (calls.length === 1) return { status, headers: new Headers({ location: "/final?task=1" }), body: { cancel: async () => { cancelled += 1; } } };
+      return Response.json({ data: [{ b64_json: png().toString("base64") }] });
+    } });
+    assert.equal(result.mimeType, "image/png");
+    assert.equal(calls.length, 2);
+    assert.equal(cancelled, 1);
+    assert.equal(calls[1].url, "https://images.example/final?task=1");
+    assert.strictEqual(calls[0].signal, calls[1].signal);
+    assert.equal(calls[1].headers.Authorization, "Bearer fixture-key");
+    assert.equal(calls[0].headers["Content-Type"], "application/json");
+    if (status === 307 || status === 308) {
+      assert.equal(calls[1].method, "POST");
+      assert.equal(calls[1].body, calls[0].body);
+    } else {
+      assert.equal(calls[1].method, "GET");
+      assert.equal(calls[1].body, undefined);
+      assert.equal(calls[1].headers["Content-Type"], undefined);
+    }
+  }
+});
+
+test("image redirects block changed origins, downgrades and credentials before forwarding data", async () => {
+  const config = { endpoint: "https://images.example/v1/images/generations", api_key: "fixture-key", model: "gpt-image-1", protocol: "openai-images" };
+  for (const location of ["https://evil.example/final", "http://images.example/final", "https://images.example:444/final", "https://user:pass@images.example/final", "https://["]) {
+    let calls = 0;
+    let cancelled = 0;
+    await assert.rejects(generateImage(config, { prompt: "private-fixture" }, { fetchImpl: async () => {
+      calls += 1;
+      return { status: 307, headers: new Headers({ location }), body: { cancel: async () => { cancelled += 1; } } };
+    } }), (error) => {
+      assert.equal(error.code, "ccdx_image_redirect_unsafe");
+      assert.doesNotMatch(error.message, /fixture-key|private-fixture|user:pass/);
+      return true;
+    });
+    assert.equal(calls, 1);
+    assert.equal(cancelled, 1);
+  }
+});
+
+test("image redirects retain the 20-hop cap, shared timeout and no auto-retry", async () => {
+  const config = { endpoint: "https://images.example/v1/images/generations", api_key: "fixture-key", model: "gpt-image-1", protocol: "openai-images" };
+  let calls = 0;
+  let cancelled = 0;
+  await assert.rejects(generateImage(config, { prompt: "fixture" }, { fetchImpl: async () => {
+    calls += 1;
+    return { status: 307, headers: new Headers({ location: "/loop" }), body: { cancel: async () => { cancelled += 1; } } };
+  } }), { code: "ccdx_image_redirect_limit" });
+  assert.equal(calls, 21);
+  assert.equal(cancelled, 21);
+  let signal;
+  calls = 0;
+  await assert.rejects(generateImage(config, { prompt: "fixture" }, { timeoutMs: 20, fetchImpl: async (_url, init) => {
+    calls += 1;
+    if (!signal) signal = init.signal;
+    assert.strictEqual(init.signal, signal);
+    if (calls === 1) return new Response(null, { status: 307, headers: { location: "/slow" } });
+    return new Promise((_resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Fixture deadline exceeded")), 1000);
+      init.signal.addEventListener("abort", () => { clearTimeout(timer); reject(init.signal.reason); }, { once: true });
+    });
+  } }), { code: "ccdx_image_timeout" });
+  assert.equal(calls, 2);
+});
+
+test("cancelled image redirects do not start the next provider request", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  await assert.rejects(generateImage({ endpoint: "https://images.example/v1/images/generations", api_key: "fixture-key", model: "gpt-image-1", protocol: "openai-images" }, { prompt: "fixture" }, {
+    signal: controller.signal, fetchImpl: async () => {
+      calls += 1;
+      return { status: 307, headers: new Headers({ location: "/next" }), body: { cancel: async () => controller.abort() } };
+    },
+  }), { code: "ccdx_image_timeout" });
+  assert.equal(calls, 1);
+});
 
 test("image download blocks equivalent private IPv6 forms before HTTPS dispatch", async t => {
   let requests = 0;

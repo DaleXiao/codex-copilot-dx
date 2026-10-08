@@ -75,11 +75,16 @@ if (CLI.command === "image") {
   }
 }
 if (CLI.command === "usage") {
-  await printUsageSummary({
-    format: CLI.outputFormat || "auto",
-    output: process.stdout,
-  });
-  process.exit(0);
+  try {
+    await printUsageSummary({
+      format: CLI.outputFormat || "auto",
+      output: process.stdout,
+    });
+    process.exit(0);
+  } catch (e) {
+    console.error(status("err", e.message));
+    process.exit(1);
+  }
 }
 if (CLI.command === "cache") {
   try {

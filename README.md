@@ -62,6 +62,8 @@ The dashboard does not poll in the background; refresh when needed.
   break continuations. Generated images and Codex transcripts are not deleted.
 - Optional image setup/maintenance never blocks the primary service. Disabled
   users get no CCDX image skill or MCP installation.
+- Image API redirects must stay on the same HTTPS origin. Returned images must
+  use public HTTPS URLs; well-known NAT64 mappings follow IPv4 address rules.
 - Keep the adapter on loopback. LAN mode is only for trusted networks; do not
   expose it to the public internet. The dashboard is not an authentication wall
   for the API. Diagnostic errors may contain sensitive upstream text.

@@ -207,10 +207,11 @@ function publicAddress(address) {
   catch { return false; }
   if (lower === "::" || lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd")
     || /^fe[89ab]/.test(lower) || lower.startsWith("ff") || lower.startsWith("2001:db8:")) return false;
-  const mapped = /^::ffff:([a-f0-9]{1,4}):([a-f0-9]{1,4})$/.exec(lower);
+  const mapped = /^::ffff:([a-f0-9]{1,4}):([a-f0-9]{1,4})$/.exec(lower)
+    || /^64:ff9b::(?:([a-f0-9]{1,4}):)?([a-f0-9]{1,4})?$/.exec(lower);
   if (!mapped) return true;
-  const high = Number.parseInt(mapped[1], 16);
-  const low = Number.parseInt(mapped[2], 16);
+  const high = Number.parseInt(mapped[1] || "0", 16);
+  const low = Number.parseInt(mapped[2] || "0", 16);
   return ipv4Public([high >> 8, high & 255, low >> 8, low & 255].join("."));
 }
 
@@ -305,20 +306,36 @@ export async function generateImage(config, {
   const timeout = AbortSignal.timeout(timeoutMs);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let response;
-  try {
-    response = await fetchImpl(config.endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.api_key}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(generationBody(config, normalizedPrompt, normalizedSize, normalizedImage)),
-      signal: requestSignal,
-    });
-  } catch (error) {
-    if (requestSignal.aborted) throw providerError("Image generation timed out or was cancelled", "ccdx_image_timeout");
-    throw providerError("Image API could not be reached");
+  let requestUrl = config.endpoint;
+  let method = "POST";
+  let requestBody = JSON.stringify(generationBody(config, normalizedPrompt, normalizedSize, normalizedImage));
+  let headers = { Authorization: `Bearer ${config.api_key}`, "Content-Type": "application/json", Accept: "application/json" };
+  for (let redirects = 0; ; redirects += 1) {
+    try {
+      if (requestSignal.aborted) throw requestSignal.reason;
+      response = await fetchImpl(requestUrl, { method, headers, body: requestBody, signal: requestSignal, redirect: "manual" });
+    } catch (error) {
+      if (requestSignal.aborted) throw providerError("Image generation timed out or was cancelled", "ccdx_image_timeout");
+      throw providerError("Image API could not be reached");
+    }
+    const location = [301, 302, 303, 307, 308].includes(response.status) ? response.headers?.get?.("location") : null;
+    if (location == null) break;
+    await response.body?.cancel?.().catch?.(() => {});
+    let target;
+    try { target = new URL(location, requestUrl); }
+    catch { throw providerError("Image API returned an invalid redirect", "ccdx_image_redirect_unsafe"); }
+    if (target.protocol !== "https:" || target.username || target.password || target.origin !== new URL(requestUrl).origin) {
+      throw providerError("Image API redirect was refused; use a same-origin HTTPS endpoint", "ccdx_image_redirect_unsafe");
+    }
+    if (redirects >= 20) throw providerError("Image API returned too many redirects", "ccdx_image_redirect_limit");
+    // Preserve Fetch's method/body rules for legitimate same-origin redirects.
+    if (((response.status === 301 || response.status === 302) && method === "POST") || (response.status === 303 && method !== "GET")) {
+      method = "GET";
+      requestBody = undefined;
+      headers = { ...headers };
+      delete headers["Content-Type"];
+    }
+    requestUrl = target.href;
   }
   const body = await boundedJson(response);
   if (!response.ok) {

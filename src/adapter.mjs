@@ -215,7 +215,7 @@ export function createAdapterHandler(options = {}) {
     if (pathname === "/mcp/image") {
       if (imageMcpHandler) return imageMcpHandler(req, res);
       return import("./image-mcp.mjs").then(({ createImageMcpHandler }) => {
-        imageMcpHandler ||= createImageMcpHandler();
+        imageMcpHandler ||= createImageMcpHandler({ localHostname: options.imageMcpHostname });
         return imageMcpHandler(req, res);
       });
     }
@@ -460,7 +460,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
   const terminalActivity = ownsTerminalActivity
     ? createTerminalActivityIndicator({ theme: options.terminalAnimationTheme })
     : options.terminalActivity;
-  const handler = createAdapterHandler({ ...options, terminalActivity });
+  const handler = createAdapterHandler({ ...options, terminalActivity, imageMcpHostname: host });
   const server = http.createServer(handler);
   const cleanupTerminalActivity = () => {
     if (ownsTerminalActivity) terminalActivity?.cleanup?.();

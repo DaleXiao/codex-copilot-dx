@@ -52,4 +52,26 @@ Date: 2026-10-08. Baseline: `fec8a90` (0.9.14).
 
 ## Publication
 
-Publication evidence will be recorded after remote CI and release completion.
+- Application commit/tag: `3f1d712db68698f784ae0766f4c5a26bfeec6c81` /
+  `v0.9.15`. Report-only updates do not move the tag or change npm package bytes.
+- GitHub CI passed on Node 22.15 and 24:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37729763243.
+- Formal GitHub Release, neither draft nor prerelease:
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.15.
+- Exactly one npm publish workflow succeeded, including prepublish gates:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37729894202.
+  Official receipt confirms `codex-copilot-dx@0.9.15`, `latest`, 105 files and
+  SHA-1 `e2138685acf6def43083ccee9403f3960273b89d`, matching local preflight's
+  284,362-byte package.
+- GitHub used the previously supplied, verified DaleXiao PAT without printing
+  or persisting its value; npm used the existing repository NPM_TOKEN. A single
+  independent official-registry query returned ENOTCONN. The successful official
+  publish receipt and matching hash are separate evidence; publishing was not
+  repeated in response to that read failure.
+
+## Cleanup
+
+Cleanup is limited to owned temporary fixture/settings, release helper, logs and
+npm query cache. Preserve dependencies, real settings/credentials, the active
+adapter and useful report/screenshot evidence. Final handoff checks require a
+clean checkout, no untracked workspace garbage and synchronization with remote main.

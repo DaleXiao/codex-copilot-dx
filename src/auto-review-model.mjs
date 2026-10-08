@@ -3,12 +3,13 @@ import { createInterface } from "node:readline/promises";
 import { loadModelCache } from "./model-cache.mjs";
 import {
   DEFAULT_CODEX_AUTO_REVIEW_MODEL,
+  autoReviewReasoningEfforts,
   responsesModelIdsFromCopilotModels,
 } from "./models.mjs";
 import { parseAdapterProbeOptions } from "./cli-options.mjs";
 import { adapterBaseUrl } from "./running-adapter.mjs";
 import {
-  autoReviewModelPreference,
+  autoReviewPreference,
   readUserSettings,
   writeAutoReviewModel,
 } from "./user-settings.mjs";
@@ -26,6 +27,13 @@ function sortedModelIds(modelIds, currentModel) {
     const rightRank = right === currentModel ? 0 : right === DEFAULT_CODEX_AUTO_REVIEW_MODEL ? 1 : 2;
     return leftRank - rightRank || left.localeCompare(right);
   });
+}
+
+function catalogReasoningEfforts(models, modelIds) {
+  const data = Array.isArray(models) ? models : models?.data;
+  return Object.fromEntries(modelIds.map((id) => [id,
+    autoReviewReasoningEfforts(data?.find((model) => String(model?.id || "").trim() === id)),
+  ]));
 }
 
 export async function loadAutoReviewModelCatalog({
@@ -52,7 +60,8 @@ export async function loadAutoReviewModelCatalog({
       const modelIds = responsesModelIdsFromCopilotModels(models);
       if (modelIds.length) {
         const fallback = response.headers.get("X-CCDX-Model-Source") === "last-known-good";
-        return { modelIds, source: fallback ? "running adapter cache" : "running adapter" };
+        return { modelIds, reasoningEfforts: catalogReasoningEfforts(models, modelIds),
+          source: fallback ? "running adapter cache" : "running adapter" };
       }
       liveError = "adapter returned no selectable Responses models";
     }
@@ -66,7 +75,7 @@ export async function loadAutoReviewModelCatalog({
 
   const cached = loadModelCacheFn({ home });
   const modelIds = responsesModelIdsFromCopilotModels(cached);
-  if (modelIds.length) return { modelIds, source: "local model cache" };
+  if (modelIds.length) return { modelIds, reasoningEfforts: catalogReasoningEfforts(cached, modelIds), source: "local model cache" };
   throw new Error(`No selectable Responses models are available (${liveError}). Start ccdx once to refresh the model list.`);
 }
 
@@ -85,13 +94,14 @@ export async function runAutoReviewModelCommand({
   }
 
   readUserSettings({ env, home, strict: true });
-  const current = autoReviewModelPreference({ env, home });
+  const current = autoReviewPreference({ env, home });
   const catalog = await loadCatalog({ env, fetchImpl, home });
   const modelIds = sortedModelIds(catalog.modelIds, current.model);
   if (!modelIds.length) throw new Error("No selectable Responses models are available");
 
   output.write(`${commandName} auto-review-model\n`);
   output.write(`Current: ${current.model} (${current.source})\n`);
+  output.write(`Reasoning: ${current.reasoningEffort || "follow client (low when omitted)"}\n`);
   output.write(`Responses models from ${catalog.source}:\n`);
   modelIds.forEach((model, index) => {
     const markers = [];
@@ -111,6 +121,7 @@ export async function runAutoReviewModelCommand({
   });
 
   let selectedModel;
+  let selectedEffort;
   try {
     while (!selectedModel) {
       const answer = String(await ask(`Select a model [${defaultIndex + 1}], or q to cancel: `) || "").trim();
@@ -125,17 +136,45 @@ export async function runAutoReviewModelCommand({
         output.write(`Enter a number from 1 to ${modelIds.length}, or q to cancel.\n`);
       }
     }
+    const efforts = catalog.reasoningEfforts?.[selectedModel] || [];
+    const choices = [null, ...efforts];
+    const currentEffort = selectedModel === current.model ? current.reasoningEffort : undefined;
+    const effortIndex = selectedModel === current.model && current.reasoningEffort === null
+      ? 0 : currentEffort ? efforts.indexOf(currentEffort) + 1 : efforts.indexOf("low") + 1;
+    output.write(`Reasoning for ${selectedModel}:\n`);
+    output.write("  0. Follow client (low when omitted)\n");
+    efforts.forEach((effort, index) => {
+      const markers = [];
+      if (effort === currentEffort) markers.push("current");
+      if (effort === "low") markers.push("default");
+      output.write(`  ${index + 1}. ${effort}${markers.length ? ` [${markers.join(", ")}]` : ""}\n`);
+    });
+    if (!efforts.length) output.write("No reasoning efforts are advertised; no override will be set.\n");
+    while (selectedEffort === undefined) {
+      const answer = String(await ask(`Select reasoning [${effortIndex}], or q to cancel: `) || "").trim();
+      if (["q", "quit"].includes(answer.toLowerCase())) {
+        output.write("No changes made.\n");
+        return { changed: false, cancelled: true, model: current.model };
+      }
+      const selectedIndex = answer === "" ? effortIndex : Number(answer);
+      if (Number.isInteger(selectedIndex) && selectedIndex >= 0 && selectedIndex < choices.length) {
+        selectedEffort = choices[selectedIndex];
+      } else {
+        output.write(`Enter a number from 0 to ${efforts.length}, or q to cancel.\n`);
+      }
+    }
   } finally {
     readline?.close();
   }
 
   const savedModel = selectedModel === DEFAULT_CODEX_AUTO_REVIEW_MODEL ? "" : selectedModel;
-  const result = writeAutoReviewModel(savedModel, { env, home });
+  const result = writeAutoReviewModel(savedModel, { env, home, reasoningEffort: selectedEffort });
   output.write(`${result.changed ? "Saved" : "Kept"} Auto Review model: ${selectedModel}\n`);
+  output.write(`Reasoning: ${selectedEffort || "follow client (low when omitted)"}\n`);
   if (String(env.CCDX_AUTO_REVIEW_MODEL || "").trim()) {
-    output.write(`CCDX_AUTO_REVIEW_MODEL=${current.model} remains the effective override until it is unset.\n`);
+    output.write(`CCDX_AUTO_REVIEW_MODEL=${current.model} remains the effective override until it is unset. Reasoning is bound to ${selectedModel}.\n`);
   } else {
-    output.write("The running adapter will use this model on the next Auto Review request.\n");
+    output.write("The running adapter will use this model on the next Auto Review request. Reasoning selection requires an adapter running 0.9.13 or newer.\n");
   }
-  return { ...result, cancelled: false, model: selectedModel };
+  return { ...result, cancelled: false, model: selectedModel, reasoningEffort: selectedEffort };
 }

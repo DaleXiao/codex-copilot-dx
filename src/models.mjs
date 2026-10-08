@@ -1,6 +1,16 @@
 export const CODEX_AUTO_REVIEW_MODEL = "codex-auto-review";
 export const DEFAULT_CODEX_AUTO_REVIEW_MODEL = "gpt-6.1-sol";
 export const CODEX_GPT6_MODEL = "gpt-6-astra";
+export const AUTO_REVIEW_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max", "minimal", "none"];
+
+export function autoReviewReasoningEfforts(model) {
+  const advertised = model?.capabilities?.supports?.reasoning_effort;
+  const supported = new Set(Array.isArray(advertised) ? advertised : []);
+  const id = String(model?.id || "").trim();
+  const gpt61Sol = id === "gpt-6.1-sol" || id === "gpt-6.1-sol-fast";
+  return AUTO_REVIEW_REASONING_EFFORTS.filter((effort) => supported.has(effort)
+    && !(gpt61Sol && ["none", "minimal"].includes(effort)));
+}
 
 function hasOpenAIEndpoint(model) {
   const endpoints = Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];

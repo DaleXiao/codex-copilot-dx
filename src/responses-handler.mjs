@@ -90,10 +90,13 @@ function unsupportedCustomToolsError(model) {
 }
 
 function resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver) {
-  const options = model === CODEX_AUTO_REVIEW_MODEL && typeof autoReviewModelResolver === "function"
-    ? { autoReviewModel: autoReviewModelResolver() }
-    : {};
-  return resolveOpenAIModel(model, openAIModelEnv, options);
+  const preference = model === CODEX_AUTO_REVIEW_MODEL && typeof autoReviewModelResolver === "function"
+    ? autoReviewModelResolver() : undefined;
+  const resolved = resolveOpenAIModel(model, openAIModelEnv, {
+    autoReviewModel: typeof preference === "string" ? preference : preference?.model,
+  });
+  return { ...resolved, reasoningEffort: preference?.model === resolved.upstreamModel
+    ? preference.reasoningEffort : undefined };
 }
 
 function stripUnsupportedGpt6ServiceTier(body, requestedModel, upstreamModel, priorityTierModel) {
@@ -274,8 +277,8 @@ export function createResponsesHandler(options) {
       stripUnsupportedGpt6ServiceTier(prepared.body, requestedModel, upstreamModel, priorityTierModel);
       if (requestedModel === CODEX_AUTO_REVIEW_MODEL) {
         delete prepared.body.service_tier;
-        if (prepared.body.reasoning?.effort === undefined) {
-          prepared.body.reasoning = { ...prepared.body.reasoning, effort: "low" };
+        if (resolvedModel.reasoningEffort || prepared.body.reasoning?.effort === undefined) {
+          prepared.body.reasoning = { ...prepared.body.reasoning, effort: resolvedModel.reasoningEffort || "low" };
         }
       }
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
@@ -544,8 +547,8 @@ export function createResponsesCompactHandler(options) {
       stripUnsupportedGpt6ServiceTier(prepared.body, requestedModel, upstreamModel, priorityTierModel);
       if (requestedModel === CODEX_AUTO_REVIEW_MODEL) {
         delete prepared.body.service_tier;
-        if (prepared.body.reasoning?.effort === undefined) {
-          prepared.body.reasoning = { ...prepared.body.reasoning, effort: "low" };
+        if (resolvedModel.reasoningEffort || prepared.body.reasoning?.effort === undefined) {
+          prepared.body.reasoning = { ...prepared.body.reasoning, effort: resolvedModel.reasoningEffort || "low" };
         }
       }
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   autoReviewModelPreference,
+  autoReviewPreference,
   decodedBodyLimitPreference,
   readUserSettings,
   savedAutoReviewModel,
@@ -17,6 +18,54 @@ import {
   writeTerminalAnimationTheme,
   writeResponseHistoryLimitMib,
 } from "../src/user-settings.mjs";
+
+test("user settings: review model and bound effort save together and resolve with one file read", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-settings-review-effort-"));
+  const options = { env: {}, home };
+  const filePath = userSettingsPath(options);
+  try {
+    writeTerminalAnimationTheme("twin", options);
+    writeAutoReviewModel("", { ...options, reasoningEffort: "high" });
+    assert.deepEqual(readUserSettings(options), {
+      terminal_animation: "twin", auto_review_reasoning: { model: "gpt-6.1-sol", effort: "high" },
+    });
+    const originalRead = fs.readFileSync;
+    let reads = 0;
+    fs.readFileSync = function (target, ...args) { if (target === filePath) reads += 1; return originalRead.call(this, target, ...args); };
+    try {
+      assert.deepEqual(autoReviewPreference(options), { model: "gpt-6.1-sol", source: "default", reasoningEffort: "high" });
+      assert.equal(reads, 1);
+    } finally { fs.readFileSync = originalRead; }
+    assert.deepEqual(autoReviewPreference({ env: { CCDX_AUTO_REVIEW_MODEL: "gpt-5.5" }, home }), {
+      model: "gpt-5.5", source: "environment", reasoningEffort: undefined,
+    });
+    writeAutoReviewModel("gpt-5.5", options);
+    assert.equal(readUserSettings(options).auto_review_reasoning, undefined);
+    writeAutoReviewModel("gpt-5.5", { ...options, reasoningEffort: "none" });
+    assert.equal(autoReviewPreference(options).reasoningEffort, "none");
+    writeAutoReviewModel("gpt-5.5", { ...options, reasoningEffort: null });
+    assert.equal(autoReviewPreference(options).reasoningEffort, null);
+    assert.equal(readUserSettings(options).terminal_animation, "twin");
+    assert.equal(fs.statSync(filePath).mode & 0o777, 0o600);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test("user settings: malformed review effort does not suppress valid preferences or permit writes", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-settings-review-invalid-"));
+  const options = { env: {}, home };
+  const filePath = userSettingsPath(options);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  try {
+    for (const value of [null, "high", [], { model: "", effort: "low" }, { model: "gpt-6.1-sol", effort: "future" }]) {
+      const original = JSON.stringify({ auto_review_model: "gpt-5.5", terminal_animation: "twin", auto_review_reasoning: value });
+      fs.writeFileSync(filePath, original);
+      assert.deepEqual(readUserSettings(options), { auto_review_model: "gpt-5.5", terminal_animation: "twin" });
+      assert.throws(() => writeAutoReviewModel("", { ...options, reasoningEffort: "low" }), /auto_review_reasoning/);
+      assert.equal(fs.readFileSync(filePath, "utf8"), original);
+    }
+    assert.throws(() => writeAutoReviewModel("gpt-5.5", { ...options, reasoningEffort: "future" }), /reasoning effort is invalid/);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
 
 test("user settings: honors XDG_CONFIG_HOME and stores model changes atomically", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-settings-"));

@@ -16,7 +16,7 @@ import { cliCommandName, cliHelp, parseAdapterAddressOptions, parseAdapterProbeO
 import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
 import { runAutoReviewModelCommand } from "../src/auto-review-model.mjs";
-import { autoReviewModelPreference, responseHistoryLimitPreference, terminalAnimationPreference } from "../src/user-settings.mjs";
+import { autoReviewModelPreference, autoReviewPreference, responseHistoryLimitPreference, terminalAnimationPreference } from "../src/user-settings.mjs";
 import { fetchLiveCopilotModels, formatLiveCopilotModels } from "../src/cli-models.mjs";
 import { runAuthCommand } from "../src/cli-auth.mjs";
 import { createProfileRuntime } from "../src/profile-runtime.mjs";
@@ -340,7 +340,7 @@ try {
   const terminalAnimationTheme = terminalAnimationPreference().theme;
   const codexModelCatalog = createCodexModelCatalog();
   activeServer = await startAdapter(ADAPTER_PORT, ADAPTER_HOST, {
-    autoReviewModelResolver: () => autoReviewModelPreference().model,
+    autoReviewModelResolver: () => autoReviewPreference(),
     codexClient: profileRuntime.codexClient,
     codexModelCatalog,
     codexModelRegistry: profileModels.codexRegistry,

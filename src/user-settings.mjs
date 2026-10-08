@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
-import { DEFAULT_CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
+import { AUTO_REVIEW_REASONING_EFFORTS, DEFAULT_CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
 import { loadRuntimeConfig, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
 import {
   MIB,
@@ -17,6 +17,7 @@ import {
 } from "./terminal-animation.mjs";
 
 const AUTO_REVIEW_MODEL_KEY = "auto_review_model";
+const AUTO_REVIEW_REASONING_KEY = "auto_review_reasoning";
 const TERMINAL_ANIMATION_KEY = "terminal_animation";
 const RESPONSE_HISTORY_MAX_MIB_KEY = "response_history_max_mib";
 const DECODED_BODY_LIMIT_MIB_KEY = "decoded_body_limit_mib";
@@ -45,6 +46,15 @@ export function readUserSettings({ env = process.env, home = os.homedir(), stric
       const value = parsed[AUTO_REVIEW_MODEL_KEY];
       if (typeof value !== "string" || !value.trim()) {
         throw invalidSettings(filePath, `${AUTO_REVIEW_MODEL_KEY} must be a non-empty string`);
+      }
+    }
+    if (Object.hasOwn(parsed, AUTO_REVIEW_REASONING_KEY)) {
+      const value = parsed[AUTO_REVIEW_REASONING_KEY];
+      if (!value || typeof value !== "object" || Array.isArray(value)
+        || typeof value.model !== "string" || !value.model.trim()
+        || !(value.effort === null || AUTO_REVIEW_REASONING_EFFORTS.includes(value.effort))) {
+        if (strict) throw invalidSettings(filePath, `${AUTO_REVIEW_REASONING_KEY} must contain a model and valid effort`);
+        delete parsed[AUTO_REVIEW_REASONING_KEY];
       }
     }
     if (Object.hasOwn(parsed, TERMINAL_ANIMATION_KEY)) {
@@ -97,12 +107,18 @@ export function savedAutoReviewModel(options = {}) {
 }
 
 export function autoReviewModelPreference({ env = process.env, home = os.homedir() } = {}) {
-  const environmentModel = String(env.CCDX_AUTO_REVIEW_MODEL || "").trim();
-  if (environmentModel) return { model: environmentModel, source: "environment" };
+  const { model, source } = autoReviewPreference({ env, home });
+  return { model, source };
+}
 
-  const savedModel = savedAutoReviewModel({ env, home });
-  if (savedModel) return { model: savedModel, source: "settings" };
-  return { model: DEFAULT_CODEX_AUTO_REVIEW_MODEL, source: "default" };
+export function autoReviewPreference({ env = process.env, home = os.homedir() } = {}) {
+  const settings = readUserSettings({ env, home });
+  const environmentModel = String(env.CCDX_AUTO_REVIEW_MODEL || "").trim();
+  const savedModel = String(settings[AUTO_REVIEW_MODEL_KEY] || "").trim();
+  const model = environmentModel || savedModel || DEFAULT_CODEX_AUTO_REVIEW_MODEL;
+  const source = environmentModel ? "environment" : savedModel ? "settings" : "default";
+  const reasoning = settings[AUTO_REVIEW_REASONING_KEY];
+  return { model, source, reasoningEffort: reasoning?.model === model ? reasoning.effort : undefined };
 }
 
 export function savedTerminalAnimationTheme(options = {}) {
@@ -183,13 +199,22 @@ export function writeResponseHistoryLimitMib(mib, { env = process.env, home = os
   return { changed, filePath, ...responseHistoryLimitPreference({ env, home }) };
 }
 
-export function writeAutoReviewModel(model, { env = process.env, home = os.homedir() } = {}) {
+export function writeAutoReviewModel(model, { env = process.env, home = os.homedir(), reasoningEffort } = {}) {
+  if (reasoningEffort !== undefined && reasoningEffort !== null
+    && !AUTO_REVIEW_REASONING_EFFORTS.includes(reasoningEffort)) {
+    throw new Error("Auto-review reasoning effort is invalid");
+  }
   const filePath = userSettingsPath({ env, home });
   const settings = readUserSettings({ env, home, strict: true });
   const value = String(model || "").trim();
   const next = { ...settings };
   if (value) next[AUTO_REVIEW_MODEL_KEY] = value;
   else delete next[AUTO_REVIEW_MODEL_KEY];
+  const selectedModel = value || DEFAULT_CODEX_AUTO_REVIEW_MODEL;
+  if (reasoningEffort !== undefined) next[AUTO_REVIEW_REASONING_KEY] = { model: selectedModel, effort: reasoningEffort };
+  else if (next[AUTO_REVIEW_REASONING_KEY]?.model !== selectedModel) {
+    delete next[AUTO_REVIEW_REASONING_KEY];
+  }
 
   const changed = atomicWriteFileIfChangedSync(filePath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
   return { changed, filePath, model: value || DEFAULT_CODEX_AUTO_REVIEW_MODEL };

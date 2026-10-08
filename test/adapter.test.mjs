@@ -32,7 +32,7 @@ import {
   stripInternalResponsesInputFields,
   writeOrDrain,
 } from "../src/adapter.mjs";
-import { autoReviewModelPreference, writeAutoReviewModel } from "../src/user-settings.mjs";
+import { autoReviewModelPreference, autoReviewPreference, writeAutoReviewModel } from "../src/user-settings.mjs";
 import { responsesHistoricalImageStats } from "../src/responses-byte-budget.mjs";
 import { isResponsesToolOutputItem, readResponsesToolOutputParts } from "../src/responses-content.mjs";
 import { createResponsesImagePressureController } from "../src/responses-image-pressure.mjs";
@@ -2675,6 +2675,62 @@ test("Auto Review defaults omitted reasoning to low without rewriting explicit e
       }
     }
   }
+});
+
+test("Auto Review saved effort is model-bound, hot-reloaded and isolated from foreground JSON/SSE/compact", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-review-effort-handler-"));
+  const settings = { env: {}, home };
+  try {
+    for (const mode of ["json", "sse", "compact"]) {
+      const sent = [];
+      let env = {};
+      let resolverCalls = 0;
+      const upstream = async (body) => {
+        sent.push(structuredClone(body));
+        const completed = { id: "resp_review_effort_saved", status: "completed", output: mode === "compact"
+          ? [{ type: "compaction", id: "cmp_review_effort_saved", encrypted_content: "review-state" }] : [] };
+        return mode === "sse" ? new Response(`event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: completed })}\n\n`, {
+          headers: { "Content-Type": "text/event-stream" },
+        }) : Response.json(completed);
+      };
+      const options = {
+        openAIModelEnv: env,
+        getCachedModelEndpointsFn: () => ["/responses"],
+        autoReviewModelResolver: () => { resolverCalls += 1; return autoReviewPreference({ env, home }); },
+        responsesFn: upstream, responsesCompactFn: upstream,
+      };
+      const invoke = async (model = "codex-auto-review", effort = "low") => {
+        const before = sent.length;
+        const response = await invokeAdapter({ ...options, openAIModelEnv: env }, {
+          url: mode === "compact" ? "/v1/responses/compact" : "/v1/responses",
+          body: { model, input: "review", stream: mode === "sse", service_tier: "priority", reasoning: { effort, summary: "auto" } },
+        });
+        assert.equal(response.status, 200, response.text);
+        assert.equal(sent.length, before + 1);
+        return sent.at(-1);
+      };
+      writeAutoReviewModel("", { ...settings, reasoningEffort: "medium" });
+      assert.deepEqual((await invoke()).reasoning, { effort: "medium", summary: "auto" });
+      writeAutoReviewModel("", { ...settings, reasoningEffort: "high" });
+      const high = await invoke();
+      assert.equal(high.model, "gpt-6.1-sol");
+      assert.deepEqual(high.reasoning, { effort: "high", summary: "auto" });
+      assert.equal(Object.hasOwn(high, "service_tier"), false);
+      const reads = resolverCalls;
+      const foreground = await invoke("gpt-6.1-sol", "low");
+      assert.deepEqual(foreground.reasoning, { effort: "low", summary: "auto" });
+      assert.equal(resolverCalls, reads);
+      env = { CCDX_AUTO_REVIEW_MODEL: "gpt-5.5" };
+      const changedModel = await invoke();
+      assert.equal(changedModel.model, "gpt-5.5");
+      assert.equal(changedModel.reasoning.effort, "low");
+      env = {};
+      writeAutoReviewModel("", { ...settings, reasoningEffort: null });
+      assert.equal((await invoke("codex-auto-review", "high")).reasoning.effort, "high");
+      writeAutoReviewModel("gpt-5.5", { ...settings, reasoningEffort: "none" });
+      assert.equal((await invoke()).reasoning.effort, "none");
+    }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test("HTTP Responses maps Codex App priority tier to a catalog-approved fast model for JSON and SSE", async () => {

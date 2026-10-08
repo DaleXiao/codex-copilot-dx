@@ -1,12 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  autoReviewReasoningEfforts,
   codexAutoReviewModelStatus,
   gptModelIdsFromCopilotModels,
   responsesModelIdsFromCopilotModels,
   resolveCopilotPriorityTierModel,
   resolveOpenAIModel,
 } from "../src/models.mjs";
+
+test("autoReviewReasoningEfforts: advertises only known supported efforts and excludes invalid GPT-6.1 efforts", () => {
+  const capabilities = { supports: { reasoning_effort: ["none", "minimal", "max", "high", "low", "high", "future", null] } };
+  assert.deepEqual(autoReviewReasoningEfforts({ id: " gpt-6.1-sol ", capabilities }), ["low", "high", "max"]);
+  assert.deepEqual(autoReviewReasoningEfforts({ id: "gpt-6.1-sol-fast", capabilities }), ["low", "high", "max"]);
+  assert.deepEqual(autoReviewReasoningEfforts({ id: "gpt-5.5", capabilities }), ["low", "high", "max", "minimal", "none"]);
+  assert.deepEqual(autoReviewReasoningEfforts({ id: "gpt-6.1-sol" }), []);
+  assert.deepEqual(autoReviewReasoningEfforts({ capabilities: { supports: { reasoning_effort: "high" } } }), []);
+});
 
 test("gptModelIdsFromCopilotModels: maps enabled GPT models", () => {
   const ids = gptModelIdsFromCopilotModels({

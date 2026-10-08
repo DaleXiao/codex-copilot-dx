@@ -355,7 +355,7 @@ function topicHelp(name, topic) {
     "enable-image": `Usage:\n  ${name} enable-image\n\nInteractively configures an HTTPS image API endpoint (base URLs are also accepted) and API key, detects its supported image model and protocol, installs CCDX image guidance, and checks the local image tool for Codex App without generating an image. A blank key preserves the saved key only for the same origin; a new origin requires explicit key entry. Concurrent unrelated config edits are preserved.`,
     "disable-image": `Usage:\n  ${name} disable-image\n\nDisables the local CCDX image tool and removes its stored API credential and unmodified CCDX image guidance.`,
     "image-status": `Usage:\n  ${name} image-status\n\nShows provider configuration and probes local image-tool readiness without generating an image or exposing its API key.`,
-    "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nInteractively selects an advertised Responses model for Codex Auto-review.`,
+    "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nSelect a Responses model, then an advertised reasoning effort. Enter keeps the default/current choice; q cancels both steps without saving. Effort 0 follows the client (low when omitted). Settings apply only to Auto-review on the next request; no client patch or restart is required for adapters running 0.9.13 or newer.`,
     update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or GitHub main. With no source, an interactive terminal prompts for one.`,
     version: `Usage:\n  ${name} --version`,
   };
@@ -398,7 +398,7 @@ Commands:
   enable-image       Configure and enable the optional image provider
   disable-image      Disable the image provider and remove its credential
   image-status       Show the optional image provider status
-  auto-review-model  Select the Codex Auto-review Responses model
+  auto-review-model  Select the Codex Auto-review model and reasoning effort
   update             Update the global package from npm or GitHub
 
 Run ${name} <command> --help for command details.`;

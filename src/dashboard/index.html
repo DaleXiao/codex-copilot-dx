@@ -48,6 +48,13 @@
           </article>
         </section>
 
+        <details class="panel dashboard-section" id="request-context">
+          <summary data-i18n>RECENT REQUEST CONTEXT</summary>
+          <p id="context-note" class="table-note">—</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n>MODEL</th><th scope="col" data-i18n>WIRE MiB</th><th scope="col" data-i18n>IMAGES</th><th scope="col" data-i18n>INPUT TOKENS</th><th scope="col" data-i18n>MODEL WINDOW</th><th scope="col" data-i18n>INPUT / WINDOW</th><th scope="col" data-i18n>OUTCOME</th></tr></thead><tbody id="context-body"><tr><td colspan="7" data-i18n>No observed request metadata.</td></tr></tbody></table></div>
+          <p class="hint" data-i18n>Recent upstream request metadata, not exact live session occupancy. Missing values are unknown. No prompt or image content is retained.</p>
+        </details>
+
         <section class="panel dashboard-section" aria-label="Live upstream models" data-i18n-label>
           <div class="panel-heading"><h2 data-i18n>UPSTREAM GPT MODELS</h2><div class="heading-actions"><span id="models-state" data-i18n>CHECKING LIVE</span><button id="refresh-models" type="button" data-i18n>Refresh</button></div></div>
           <p id="models-note" class="table-note" data-i18n>Querying GitHub Copilot…</p>

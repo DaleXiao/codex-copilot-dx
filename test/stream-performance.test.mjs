@@ -226,10 +226,25 @@ test("request timeline records stages, retry attempts and activity without chang
     http_status: 200, upstream_attempts: 2, timings_ms: { admission: 5, body: 0, history: 0,
       images: 0, serialization: 0, upstream_start: 10, upstream_headers: 45, first_output: 50,
       last_activity: 80, terminal: 90, finished: 95 },
+    context: { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: null },
   });
   snapshot.recent_requests[0].timings_ms.finished = 12345;
   assert.equal(metrics.snapshot().recent_requests[0].timings_ms.finished, 95);
   assert.doesNotMatch(JSON.stringify(metrics.snapshot()), /private-prompt/);
+});
+
+test("request context retains only bounded numeric observations and isolated snapshots", () => {
+  const metrics = createStreamPerformanceMetrics();
+  const tracker = metrics.begin("responses");
+  tracker.observeContext({ payload_bytes: 2048, images: 2, input_tokens: 100, context_window_tokens: 1000,
+    prompt: "private-prompt", image: "private-image", token: "secret" });
+  tracker.observeContext({ payload_bytes: NaN, images: -1, input_tokens: null, context_window_tokens: 0 });
+  tracker.finish({ statusCode: 200 });
+  const first = metrics.snapshot();
+  assert.deepEqual(first.recent_requests[0].context, { payload_bytes: 2048, images: 2, input_tokens: 100, context_window_tokens: 1000 });
+  first.recent_requests[0].context.input_tokens = 999;
+  assert.equal(metrics.snapshot().recent_requests[0].context.input_tokens, 100);
+  assert.doesNotMatch(JSON.stringify(metrics.snapshot()), /private-prompt|private-image|secret/);
 });
 
 test("timeline bounds retention and covers JSON, validation, disconnect and partial stream failures", () => {

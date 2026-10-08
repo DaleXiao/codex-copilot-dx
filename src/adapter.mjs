@@ -178,6 +178,7 @@ export function createAdapterHandler(options = {}) {
     chatCompletionsFn,
     getCachedModelEndpointsFn,
     imagePressure,
+    keepaliveIntervalMs: options.keepaliveIntervalMs,
     modelRegistry: codexModelRegistry,
     now: options.now,
     openAIModelEnv,
@@ -235,6 +236,7 @@ export function createAdapterHandler(options = {}) {
         modelRegistry: codexModelRegistry,
         codexClient,
         codexModelRegistry,
+        codexModelCatalog,
       })));
       return;
     }

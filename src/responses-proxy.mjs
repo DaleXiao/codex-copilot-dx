@@ -30,6 +30,7 @@ import {
 } from "./responses-compaction.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
+import { createSseKeepalive } from "./sse-keepalive.mjs";
 import {
   incompleteUpstreamStream,
   invalidUpstreamStream,
@@ -40,6 +41,7 @@ import {
   isResponsesOutputEvent,
   markFirstOutput,
   markOutputTokens,
+  markRequestObservation,
   markResponseErrorOrigin,
   markResponseTerminal,
   markStreamFailure,
@@ -123,6 +125,8 @@ function inspectResponseSseEvent(state, eventName, data) {
   const changed = normalizeMessageIds(state, event, eventType);
   const outputTokens = event.response?.usage?.output_tokens ?? event.usage?.output_tokens;
   if (outputTokens !== undefined) markOutputTokens(outputTokens);
+  const inputTokens = event.response?.usage?.input_tokens ?? event.usage?.input_tokens;
+  if (inputTokens !== undefined) markRequestObservation({ input_tokens: inputTokens });
   if (!state.sawOutput && isResponsesOutputEvent(event, eventType)) {
     state.sawOutput = true;
     markFirstOutput();
@@ -404,18 +408,23 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
     let retryDisabledReason = holdPrelude ? null : "request_not_eligible";
     const prelude = [];
     let preludeBytes = 0;
+    const keepalive = createSseKeepalive({ res, signal: options.signal,
+      intervalMs: options.keepaliveIntervalMs,
+      canWrite: () => !holdPrelude && !streamState.sawTerminal });
     const flushPrelude = async () => {
       if (!preludeBytes) return true;
       writeHeaders();
       const body = prelude.length === 1 ? prelude[0] : Buffer.concat(prelude, preludeBytes);
       prelude.length = 0;
       preludeBytes = 0;
+      keepalive.activity();
       return writeOrDrain(res, body, { signal: options.signal });
     };
     const forwardFrame = async (frame) => {
       if (!frame) return true;
       if (!holdPrelude) {
         writeHeaders();
+        keepalive.activity();
         return writeOrDrain(res, frame, { signal: options.signal });
       }
       prelude.push(frame);
@@ -502,6 +511,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       await endStreamWithError(res, error, options.abort);
       return { successful: false, compacted: false };
     } finally {
+      keepalive.stop();
       await reader.cancel().catch(() => {});
       reader.releaseLock();
     }

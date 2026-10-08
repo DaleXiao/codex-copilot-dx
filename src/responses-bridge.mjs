@@ -49,7 +49,7 @@ export function responsesBodyUsesCustomTools(body) {
   if (body?.tool_choice?.type === "custom") return true;
   if (Array.isArray(body?.tools) && body.tools.some((tool) => tool?.type === "custom")) return true;
   return Array.isArray(body?.input)
-    && body.input.some((item) => item?.type === "custom_tool_call" || item?.type === "custom_tool_call_output");
+    && body.input.some((item) => ["custom_tool_call", "custom_tool_call_output", "additional_tools", "tool_search_output"].includes(item?.type));
 }
 
 function chatCompatibilityError(kind, itemType) {

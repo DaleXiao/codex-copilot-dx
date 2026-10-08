@@ -8,7 +8,8 @@ import { loadRuntimeConfig } from "../src/runtime-config.mjs";
 import { TERMINAL_ANIMATION_THEMES } from "../src/terminal-animation.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+const readme = fs.readFileSync(path.join(root, "README.md"), "utf8")
+  + "\n" + fs.readFileSync(path.join(root, "docs/REFERENCE.md"), "utf8");
 
 test("documented animation choices match the current selector order", () => {
   const section = readme.split("### Terminal animation\n")[1].split("### Update\n")[0];

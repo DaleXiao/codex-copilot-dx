@@ -248,6 +248,7 @@ export function createCodexModelCatalog({
   const catalogFailures = new Map();
   const catalogPending = new Map();
   let activeBinaryKeys = new Set();
+  let lastObservation = null;
 
   function retainCurrentEntries(map) {
     for (const key of map.keys()) {
@@ -341,8 +342,21 @@ export function createCodexModelCatalog({
 
   async function load({ clientVersion = "" } = {}) {
     const candidate = await selectBinary(clientVersion);
-    return candidate ? loadCatalog(candidate) : null;
+    const catalog = candidate ? await loadCatalog(candidate) : null;
+    const app = candidate?.binaryPath.match(/(?:^|\/)(ChatGPT|Codex)\.app\//)?.[1];
+    lastObservation = {
+      client_version: wholeSemver(clientVersion) || null,
+      application: app ? `${app}.app` : candidate ? "custom binary" : null,
+      source: catalog ? "bundled" : "unavailable",
+      matched: Boolean(catalog && wholeSemver(clientVersion)),
+      observed_at: new Date(now()).toISOString(),
+    };
+    return catalog;
   }
 
-  return { load };
+  return { load, snapshot: () => ({
+    last_request: lastObservation ? { ...lastObservation } : null,
+    observed_versions: [...new Set(versionCache.values())].slice(0, 8),
+    client_cache_verified: false,
+  }) };
 }

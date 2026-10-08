@@ -178,10 +178,27 @@ export function runtimeStatusPayload({
   modelRegistry,
   codexClient,
   codexModelRegistry,
+  codexModelCatalog,
 } = {}) {
   const memory = process.memoryUsage();
   const codexRuntime = safeClientRuntimeStatus(codexClient);
   const codexModels = modelRegistryStatus(codexModelRegistry || modelRegistry);
+  if (typeof codexModelCatalog?.snapshot === "function") {
+    const snapshot = codexModelCatalog.snapshot();
+    const observed = snapshot?.last_request;
+    const version = (value) => /^\d+\.\d+\.\d+$/.test(value || "") ? value : null;
+    codexModels.client_catalog = {
+      last_request: observed ? {
+        client_version: version(observed.client_version),
+        application: ["ChatGPT.app", "Codex.app", "custom binary"].includes(observed.application) ? observed.application : null,
+        source: observed.source === "bundled" ? "bundled" : "unavailable",
+        matched: observed.matched === true,
+        observed_at: typeof observed.observed_at === "string" && /^\d{4}-\d{2}-\d{2}T[0-9:.]+Z$/.test(observed.observed_at) ? observed.observed_at : null,
+      } : null,
+      observed_versions: (Array.isArray(snapshot?.observed_versions) ? snapshot.observed_versions : []).filter(version).slice(0, 8),
+      client_cache_verified: false,
+    };
+  }
   const history = responseHistoryStats();
   return {
     ...adapterHealthPayload(),

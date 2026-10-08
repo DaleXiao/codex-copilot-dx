@@ -44,27 +44,44 @@ function toolName(tool) {
 // the removal. Revalidate against Copilot before deleting or broadening it.
 // Reference: https://github.com/Menci/Floway/blob/ac2bbb04352033a7d9d74574a9d465d40395ef06/packages/provider-copilot/src/interceptors/openai-responses/strip-image-generation.ts
 export function applyCopilotResponsesRequestPolicies(body, options = {}) {
-  if (!Array.isArray(body?.tools)) return false;
+  if (!body || typeof body !== "object") return false;
   const removedNames = new Set();
-  const filtered = body.tools.filter((tool) => {
-    const removed = isCopilotImageNamespaceTool(tool, options);
-    if (removed) {
+  const survivingNames = new Set();
+  let survivingTools = 0;
+  let changed = false;
+  const filter = (container, topLevel = false) => {
+    if (!Array.isArray(container?.tools)) return;
+    const tools = container.tools;
+    const filtered = tools.filter((tool) => {
+      const removed = isCopilotImageNamespaceTool(tool, options);
       const name = toolName(tool);
-      if (name) removedNames.add(name);
-    }
-    return !removed;
-  });
-  if (filtered.length === body.tools.length) return false;
-  if (filtered.length) body.tools = filtered;
-  else delete body.tools;
+      if (removed && name) removedNames.add(name);
+      if (!removed) {
+        survivingTools += 1;
+        if (name) survivingNames.add(name);
+      }
+      return !removed;
+    });
+    if (filtered.length === tools.length) return;
+    changed = true;
+    if (topLevel && !filtered.length) delete container.tools;
+    else container.tools = filtered;
+  };
+  filter(body, true);
+  for (const item of Array.isArray(body.input) ? body.input : []) {
+    if (["additional_tools", "tool_search_output"].includes(item?.type)) filter(item);
+  }
+  if (!changed) return false;
 
-  const choiceName = toolName(body.tool_choice);
-  const choiceTargetsRemovedTool = choiceName
-    && removedNames.has(choiceName)
-    && !filtered.some((tool) => toolName(tool) === choiceName);
-  if (isCopilotImageNamespaceTool(body.tool_choice, options)
-    || choiceTargetsRemovedTool
-    || (body.tool_choice === "required" && !body.tools)) {
+  const removedChoice = (choice) => isCopilotImageNamespaceTool(choice, options)
+    || (removedNames.has(toolName(choice)) && !survivingNames.has(toolName(choice)));
+  if (body.tool_choice?.type === "allowed_tools" && Array.isArray(body.tool_choice.tools)) {
+    const choices = body.tool_choice.tools.filter((choice) => !removedChoice(choice));
+    body.tool_choice = choices.length ? { ...body.tool_choice, tools: choices } : "none";
+  } else if (removedChoice(body.tool_choice)) {
+    if (survivingTools) body.tool_choice = "none";
+    else delete body.tool_choice;
+  } else if (body.tool_choice === "required" && !survivingTools) {
     delete body.tool_choice;
   }
   return true;

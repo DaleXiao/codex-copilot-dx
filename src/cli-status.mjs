@@ -195,5 +195,8 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
     lines.push(status("info", `Routing: /v1/responses -> ${routingTarget(data.routing.responses)}`));
   }
   lines.push(status("info", `Limits: request body ${mebibytes(limits.max_body_bytes)}, decoded body ${mebibytes(limits.max_decoded_body_bytes)}`));
+  const recentContext = data.stream_performance?.recent_requests?.at(-1)?.context;
+  const contextValue = (value, format) => value === null || value === undefined ? "n/a" : format(value);
+  if (recentContext) lines.push(status("info", `Latest request context: wire ${contextValue(recentContext.payload_bytes, mebibytes)}, ${contextValue(recentContext.images, count)} images, input ${contextValue(recentContext.input_tokens, count)} tokens / window ${contextValue(recentContext.context_window_tokens, count)} (reported metadata, not live session occupancy)`));
   return lines.join("\n");
 }

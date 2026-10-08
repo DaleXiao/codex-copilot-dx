@@ -5,7 +5,34 @@ import test from "node:test";
 
 const html = readFileSync(new URL("../src/dashboard/index.html", import.meta.url), "utf8");
 const script = readFileSync(new URL("../src/dashboard/ui.js", import.meta.url), "utf8");
-const renderScript = script.split('\nelement("refresh").addEventListener(')[0];
+const renderScript = script.split('\nelement("refresh").addEventListener(')[0]
+  + script.slice(script.indexOf("function emptyTable("), script.indexOf("async function loadModels("));
+
+test("request-context rows are lazy, bounded, text-only and distinguish missing values from zero", () => {
+  const nodes = new Map();
+  const createNode = () => ({ textContent: "", children: [], open: false,
+    replaceChildren(...children) { this.children = children; }, append(...children) { this.children.push(...children); } });
+  const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, createNode()); return nodes.get(id); }, createElement: createNode };
+  const renderContext = runInNewContext(`${renderScript}\nrenderContext;`, { document });
+  renderContext({ recent_requests: [
+    { model: "gpt-6.1-sol", outcome: "completed", context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000 } },
+    { model: "<script>not-html</script>", outcome: "failed", context: { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: 1000 } },
+  ], by_route: { responses_compact: { terminal_outcomes: { totals: { completed: 2, incomplete: 0, failed: 1 } } } } });
+  assert.equal(nodes.get("context-body").children.length, 0);
+  document.getElementById("request-context").open = true;
+  renderContext();
+  const rows = nodes.get("context-body").children;
+  assert.equal(rows[0].children[0].textContent, "<script>not-html</script>");
+  assert.equal(rows[0].children[2].textContent, "—");
+  assert.equal(rows[0].children[5].textContent, "—");
+  assert.equal(rows[1].children[2].textContent, "0");
+  assert.equal(rows[1].children[5].textContent, "15.0%");
+  assert.equal(rows[0].children[6].textContent, "Failed");
+  assert.equal(rows[1].children[6].textContent, "Completed");
+  assert.match(nodes.get("context-note").textContent, /2 completed, 0 incomplete, 1 failed/);
+  renderContext({ recent_requests: Array.from({ length: 25 }, () => ({ context: {} })) });
+  assert.equal(nodes.get("context-body").children.length, 20);
+});
 
 test("dashboard usage renders percentages, zero hits and unknown rates in the seventh column", () => {
   const usageScript = script.slice(script.indexOf("function usageValues(row)"), script.indexOf("async function loadUsage()"));

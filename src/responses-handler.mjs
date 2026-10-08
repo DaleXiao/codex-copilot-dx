@@ -16,6 +16,7 @@ import {
   CODEX_AUTO_REVIEW_MODEL,
   modelIsResponsesOnly,
   modelSupportsChatCompletions,
+  modelContextWindowTokens,
   resolveCopilotPriorityTierModel,
   resolveOpenAIModel,
 } from "./models.mjs";
@@ -35,11 +36,13 @@ import {
 import { createRoutePlan } from "./route-plan.mjs";
 import { status } from "./status.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
+import { createSseKeepalive } from "./sse-keepalive.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordResponsesUsage } from "./usage.mjs";
 import {
   markResponseErrorOrigin,
   markResponseModel,
+  markRequestObservation,
   markResponseTerminal,
   markUpstreamHeaders,
   measureRequestStage,
@@ -115,6 +118,7 @@ export function createResponsesHandler(options) {
     chatCompletionsFn,
     getCachedModelEndpointsFn = getCachedModelEndpoints,
     imagePressure,
+    keepaliveIntervalMs,
     modelRegistry,
     openAIModelEnv,
     requestBodyTimeoutMs,
@@ -283,6 +287,7 @@ export function createResponsesHandler(options) {
       }
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       markResponseModel(upstreamModel);
+      markRequestObservation({ context_window_tokens: modelContextWindowTokens(modelRegistry?.models, upstreamModel) });
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${streaming}`));
       const usesCustomTools = responsesBodyUsesCustomTools(prepared.body);
@@ -313,6 +318,7 @@ export function createResponsesHandler(options) {
           releaseRequest: releaseUpstreamPayload,
           responseFailures,
           streamIdleTimeoutMs,
+          keepaliveIntervalMs,
         });
         if (result?.successful) imagePressure?.markSuccess?.(responseHistoryPressureRootId(prepared));
         else markAdaptiveHttpTimeout(result?.upstreamStatus);
@@ -330,12 +336,15 @@ export function createResponsesHandler(options) {
         };
         if (streaming) {
           let streamResponseHeaders = null;
-          const successful = await forwardToChat(chatReq, async (event, data) => {
+          const keepalive = createSseKeepalive({ res, signal: abort.signal, intervalMs: keepaliveIntervalMs });
+          let successful;
+          try { successful = await forwardToChat(chatReq, async (event, data) => {
             if (!res.headersSent) res.writeHead(200, {
               ...streamResponseHeaders,
               "Cache-Control": "no-cache",
               Connection: "keep-alive",
             });
+            keepalive.activity();
             const written = await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`, { signal: abort.signal });
             if (!written) return false;
             if (event === "response.completed" || event === "response.incomplete") {
@@ -370,7 +379,7 @@ export function createResponsesHandler(options) {
                 contentType: "text/event-stream",
               });
             },
-          });
+          }); } finally { keepalive.stop(); }
           if (successful) imagePressure?.markSuccess?.(responseHistoryPressureRootId(prepared));
         } else {
           try {
@@ -552,6 +561,7 @@ export function createResponsesCompactHandler(options) {
         }
       }
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
+      markRequestObservation({ context_window_tokens: modelContextWindowTokens(modelRegistry?.models, upstreamModel) });
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=false`));
       prepared = applyResponseHistoryRoutePlan(prepared, createRoutePlan({

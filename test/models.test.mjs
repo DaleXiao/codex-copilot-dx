@@ -2,12 +2,23 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   autoReviewReasoningEfforts,
+  modelContextWindowTokens,
   codexAutoReviewModelStatus,
   gptModelIdsFromCopilotModels,
   responsesModelIdsFromCopilotModels,
   resolveCopilotPriorityTierModel,
   resolveOpenAIModel,
 } from "../src/models.mjs";
+
+test("model context windows use explicit provider limits, never prompt caps or guesses", () => {
+  const data = [{ id: "gpt-6.1-sol", capabilities: { limits: { max_context_window_tokens: 1050000, max_prompt_tokens: 922000 } } }];
+  assert.equal(modelContextWindowTokens({ data }, "gpt-6.1-sol"), 1050000);
+  assert.equal(modelContextWindowTokens(data, "missing"), null);
+  for (const value of [0, -1, null, Infinity, "1050000"]) {
+    data[0].capabilities.limits.max_context_window_tokens = value;
+    assert.equal(modelContextWindowTokens(data, "gpt-6.1-sol"), null);
+  }
+});
 
 test("autoReviewReasoningEfforts: advertises only known supported efforts and excludes invalid GPT-6.1 efforts", () => {
   const capabilities = { supports: { reasoning_effort: ["none", "minimal", "max", "high", "low", "high", "future", null] } };

@@ -56,6 +56,12 @@ function copilotModelData(models) {
   return Array.isArray(data) ? data : [];
 }
 
+export function modelContextWindowTokens(models, id) {
+  const model = copilotModelData(models).find((entry) => String(entry?.id || "").trim() === id);
+  const limit = model?.capabilities?.limits?.max_context_window_tokens;
+  return Number.isSafeInteger(limit) && limit > 0 ? limit : null;
+}
+
 function uniqueIds(models, predicate) {
   const ids = [];
   const seen = new Set();

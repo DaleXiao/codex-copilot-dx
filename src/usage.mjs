@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { markRequestObservation } from "./stream-performance.mjs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -180,6 +181,8 @@ export function recordUsage(record) {
 }
 
 export function recordResponsesUsage(args) {
+  const response = args.response || args.event?.response || args.event;
+  markRequestObservation({ input_tokens: response?.usage?.input_tokens });
   return recordUsage(buildResponsesUsageRecord(args));
 }
 

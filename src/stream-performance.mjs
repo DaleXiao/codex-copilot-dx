@@ -159,6 +159,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       let headersAt = null;
       let lastActivityAt = null;
       let terminalAt = null;
+      const context = { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: null };
       const elapsed = (time) => time === null ? null : Number(Math.max(0, time - requestStartedAt).toFixed(1));
 
       return {
@@ -205,6 +206,13 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         setModel(value) {
           model = modelLabel(value);
         },
+        observeContext(values) {
+          if (finished || !values || typeof values !== "object") return;
+          for (const key of Object.keys(context)) {
+            const value = values[key];
+            if (Number.isSafeInteger(value) && value >= 0 && (key !== "context_window_tokens" || value > 0)) context[key] = value;
+          }
+        },
         setErrorOrigin(value) {
           if (TERMINAL_ORIGINS.has(value)) errorOrigin = value;
         },
@@ -242,6 +250,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
             failed: failed || aborted || (terminalOutcome !== null && terminalOutcome !== "completed"),
             http_status: Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599 ? statusCode : null,
             upstream_attempts: attempts,
+            context: { ...context },
             timings_ms: {
               ...Object.fromEntries(PREPARATION_STAGES.map((stage) => [stage, Number(preparationMs[stage].toFixed(1))])),
               upstream_start: elapsed(firstAttemptAt), upstream_headers: elapsed(headersAt),
@@ -272,7 +281,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
     snapshot() {
       return {
         by_route: Object.fromEntries(PERFORMANCE_ROUTES.map((name) => [name, routeSnapshot(routes[name])])),
-        recent_requests: recentRequests.map((entry) => ({ ...entry, timings_ms: { ...entry.timings_ms } })),
+        recent_requests: recentRequests.map((entry) => ({ ...entry, context: { ...entry.context }, timings_ms: { ...entry.timings_ms } })),
       };
     },
   };
@@ -318,6 +327,10 @@ export function markFirstOutput() {
 
 export function markOutputTokens(value) {
   tracker()?.setOutputTokens(value);
+}
+
+export function markRequestObservation(values) {
+  tracker()?.observeContext?.(values);
 }
 
 export function markStreamFailure() {

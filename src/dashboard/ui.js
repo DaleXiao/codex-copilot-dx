@@ -16,6 +16,8 @@ const finite = (value) => value !== null && value !== undefined && Number.isFini
 const number = (value) => finite(value) ? Math.max(0, Math.round(Number(value))).toLocaleString() : "—";
 const mib = (value) => finite(value) ? `${(Number(value) / 1048576).toFixed(1)} MiB` : "—";
 let authLoading = false;
+let contextRequests = [];
+let contextCompactions = {};
 
 function renderAuth(data) {
   const account = data.login ? `@${data.login}` : data.id ? `ID ${data.id}` : phrase("account unknown");
@@ -156,7 +158,34 @@ function render(data) {
     : "Setup state unknown / ccdx image-status", { active: number(image?.active), failed: number(image?.failed), delivery: number(image?.delivery_failures) });
 
   renderFailures(data.response_failures?.recent, data.stream_performance?.recent_requests);
+  renderContext(data.stream_performance);
   text("updated", "Snapshot {time}", { time: new Date().toLocaleTimeString() });
+}
+
+function renderContext(performance) {
+  if (performance !== undefined) {
+    contextRequests = Array.isArray(performance?.recent_requests) ? performance.recent_requests.slice(-20).reverse() : [];
+    contextCompactions = performance?.by_route?.responses_compact?.terminal_outcomes?.totals || {};
+  }
+  const body = element("context-body");
+  if (!body) return;
+  text("context-note", "20 latest finished requests / compactions: {completed} completed, {incomplete} incomplete, {failed} failed", {
+    completed: number(contextCompactions.completed), incomplete: number(contextCompactions.incomplete), failed: number(contextCompactions.failed),
+  });
+  if (element("request-context")?.open === false) return;
+  body.replaceChildren();
+  for (const request of contextRequests) {
+    const context = request.context || {};
+    const outcome = ["completed", "incomplete", "failed", "cancelled"].includes(request.outcome)
+      ? request.outcome[0].toUpperCase() + request.outcome.slice(1) : "Unknown";
+    const ratio = finite(context.input_tokens) && finite(context.context_window_tokens) && Number(context.context_window_tokens) > 0
+      ? `${(100 * Number(context.input_tokens) / Number(context.context_window_tokens)).toFixed(1)}%` : "—";
+    body.append(tableRow([String(request.model || "unknown").slice(0, 80),
+      finite(context.payload_bytes) ? (Number(context.payload_bytes) / 1048576).toFixed(2) : "—",
+      number(context.images), number(context.input_tokens), number(context.context_window_tokens), ratio,
+      outcome], { labels: [6] }));
+  }
+  if (!contextRequests.length) emptyTable("context-body", 7, "No observed request metadata.");
 }
 
 async function refresh() {
@@ -186,6 +215,7 @@ async function refresh() {
 }
 
 element("refresh").addEventListener("click", () => { refresh(); loadAuth(); });
+element("request-context").addEventListener("toggle", () => { if (element("request-context").open) renderContext(); });
 refresh();
 loadAuth();
 

@@ -312,6 +312,7 @@ export async function collectDoctorChecks({
   onlineTimeoutMs = 10000,
   compatTimeoutMs = 120000,
   inspectAdapterCompatibilityFn = inspectAdapterCompatibility,
+  inspectCodexClientFn,
 } = {}) {
   if (configOnly) return inspectCodexConfig({ home, host, port });
   checkedDoctorProfile(profile);
@@ -353,6 +354,8 @@ export async function collectDoctorChecks({
           fix: "ccdx start",
         });
     }
+    const inspectClient = inspectCodexClientFn || (await import("./codex-client-doctor.mjs")).inspectCodexClient;
+    checks.push(...await inspectClient({ home, host, port, fetchImpl, running }));
   }
 
   if (compat) {

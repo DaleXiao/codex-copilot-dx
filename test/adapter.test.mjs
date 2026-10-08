@@ -2107,7 +2107,7 @@ test("prepareResponsesRequest: drops unsupported image generation tools", () => 
     tool_choice: { type: "image_generation" },
   });
   assert.deepEqual(forcedUnsupported.body.tools, [{ type: "function", name: "lookup" }]);
-  assert.equal(forcedUnsupported.body.tool_choice, undefined);
+  assert.equal(forcedUnsupported.body.tool_choice, "none");
 
   const requiredWithoutTools = prepareResponsesRequest({
     model: "gpt-5.5",
@@ -2631,6 +2631,61 @@ test("HTTP responses route maps Codex auto-review directly to Responses", async 
     { type: "function", name: "approve", parameters: { type: "object" } },
   ]);
   assert.equal(upstreamBody.text.format.name, "review");
+});
+
+test("native Responses preserve sealed main/subagent/reply items and Unicode across history continuation", async () => {
+  clearResponseHistoryForTests();
+  const sealed = (author, recipient) => ({ type: "agent_message", author, recipient, content: [
+    { type: "input_text", text: "Message Type: FINAL_ANSWER\nPayload:\n" },
+    { type: "encrypted_content", encrypted_content: "gAAAAAopaque==😀\ud800\u0000" },
+  ] });
+  const task = sealed("/root", "/root/worker");
+  const reply = sealed("/root/worker", "/root");
+  const sent = [];
+  const options = { getCachedModelEndpointsFn: () => ["/responses"],
+    responsesFn: async body => {
+      sent.push(structuredClone(body));
+      return Response.json({ id: `resp_sealed_${sent.length}`, status: "completed", output: [] });
+    }, chatCompletionsFn: () => { throw Error("sealed items must not be lowered to Chat"); } };
+  try {
+    for (const body of [
+      { model: "gpt-6.1-sol", input: "main starts" },
+      { model: "gpt-6.1-sol", input: [task] },
+      { model: "gpt-6.1-sol", previous_response_id: "resp_sealed_1", input: [reply] },
+    ]) {
+      const before = JSON.stringify(body);
+      const result = await invokeAdapter(options, { body });
+      assert.equal(result.status, 200, result.text);
+      assert.equal(JSON.stringify(body), before);
+    }
+    assert.deepEqual(sent[1].input, [task]);
+    assert.deepEqual(sent[2].input.at(-1), reply);
+    assert.equal(sent.length, 3);
+    assert.ok(JSON.stringify(sent[2]).includes("main starts"));
+  } finally { clearResponseHistoryForTests(); }
+});
+
+test("positional tools stay native on a dual-endpoint model and remain isolated from image filtering", async () => {
+  for (const type of ["additional_tools", "tool_search_output"]) {
+    let sent;
+    let calls = 0;
+    const item = { type, id: "carrier-id", call_id: "search-id", role: "developer",
+      tools: [{ type: "image_generation" }, { type: "function", name: "lookup", parameters: { type: "object" } }] };
+    const response = await invokeAdapter({
+      getCachedModelEndpointsFn: () => ["/responses", "/chat/completions"],
+      responsesFn: async body => { calls += 1; sent = structuredClone(body); return Response.json({ id: "resp_carrier", status: "completed", output: [] }); },
+      chatCompletionsFn: () => { throw Error("carrier must not be lowered to Chat"); },
+    }, { body: { model: "gpt-6.1-sol", input: [item], tool_choice: { type: "image_generation" } } });
+    assert.equal(response.status, 200);
+    assert.equal(calls, 1);
+    assert.equal(sent.input[0].id, "carrier-id");
+    assert.deepEqual(sent.input[0].tools, [item.tools[1]]);
+    assert.equal(sent.tool_choice, "none");
+    const rejected = await invokeAdapter({ getCachedModelEndpointsFn: () => ["/chat/completions"],
+      responsesFn: () => { throw Error("must not call"); }, chatCompletionsFn: () => { throw Error("must not call"); } },
+    { body: { model: "gpt-chat-only", input: [item] } });
+    assert.equal(rejected.status, 400);
+  }
 });
 
 test("Auto Review defaults omitted reasoning to low without rewriting explicit efforts or foreground requests", async () => {
@@ -4906,10 +4961,10 @@ test("openCopilotResponse: retries an explicit image_gen namespace collision onc
   assert.equal(calls.length, 2);
   assert.deepEqual(payloadPrepared, [false, true]);
   assert.deepEqual(calls[1].tools, [{ type: "function", name: "lookup" }]);
-  assert.equal(calls[1].tool_choice, undefined);
+  assert.equal(calls[1].tool_choice, "none");
   const sanitized = sanitizeImageNamespaceCollisionRequest(ctx);
   assert.deepEqual(sanitized.body.tools, [{ type: "function", name: "lookup" }]);
-  assert.equal(sanitized.body.tool_choice, undefined);
+  assert.equal(sanitized.body.tool_choice, "none");
 });
 
 test("readJsonBody: parses gzip-compressed JSON request bodies", async () => {

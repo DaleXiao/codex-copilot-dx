@@ -3,6 +3,18 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createAdapterHandler } from "../src/adapter.mjs";
+
+test("client catalog runtime metadata excludes executable paths, arbitrary fields and internal-cache claims", () => {
+  const payload = runtimeStatusPayload({ codexModelCatalog: { snapshot: () => ({
+    client_cache_verified: true, credential: "secret-token", observed_versions: ["0.162.0", "private-path"],
+    last_request: { client_version: "0.161.0", application: "ChatGPT.app", source: "bundled", matched: true,
+      observed_at: "2026-10-08T00:00:00.000Z", binaryPath: "/private/secret-bin", prompt: "private-prompt" },
+  }) } });
+  assert.equal(payload.models.client_catalog.client_cache_verified, false);
+  assert.deepEqual(payload.models.client_catalog.observed_versions, ["0.162.0"]);
+  assert.equal(payload.models.client_catalog.last_request.client_version, "0.161.0");
+  assert.doesNotMatch(JSON.stringify(payload), /secret-token|private-path|private-prompt|secret-bin/);
+});
 import {
   ADAPTER_STATUS_PATH,
   classifyAdapterRoute,

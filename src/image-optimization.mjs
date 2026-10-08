@@ -546,7 +546,7 @@ export function summarizeReqBody(reqBody) {
 
     for (const item of input) {
       if (["input_image", "image", "image_url"].includes(item?.type)) countImages([item]);
-      if (item?.type === "message") countImages(item.content);
+      if (item?.type === "message" || item?.type === "agent_message") countImages(item.content);
       const toolOutput = readResponsesToolOutputParts(item);
       if (toolOutput) countImages(toolOutput.parts);
     }

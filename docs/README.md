@@ -1,6 +1,7 @@
 # Documentation index
 
-The [root README](../README.md) describes current behavior. `ccdx --help` and
+The [root README](../README.md) is the quick start; the [command/configuration
+reference](REFERENCE.md) preserves complete current behavior and limits. `ccdx --help` and
 `ccdx <command> --help` describe the installed package's CLI. Code and tests
 resolve any discrepancy; CLI version and running-adapter version can differ.
 
@@ -13,6 +14,11 @@ effective Codex configuration or validate every field against the installed app.
 These reports record a specific release and test environment. Their version,
 test counts, timings, live-provider observations, and limitations remain
 historical facts rather than current guarantees.
+
+- [0.9.13: model-bound Auto-review reasoning selection](RELEASE_0.9.13.md)
+- [0.9.12: GPT-6.1 Sol / low Auto-review default](RELEASE_0.9.12.md)
+- [0.9.11: bounded usage-summary cache and diagnostic redaction](RELEASE_0.9.11.md)
+- [0.9.10: agent messages, opaque-state tests and bounded request timelines](RELEASE_0.9.10.md)
 
 - [0.9.9: English and Simplified Chinese dashboard](RELEASE_0.9.9.md)
 - [0.9.8: underscore account names in the dashboard](RELEASE_0.9.8.md)

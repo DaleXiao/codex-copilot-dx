@@ -5,7 +5,7 @@ import { debugLog } from "./log.mjs";
 import { enforceResponsesPayloadByteBudget } from "./responses-byte-budget.mjs";
 import { status } from "./status.mjs";
 import { withChatStreamUsage } from "./stream-contract.mjs";
-import { markUpstreamStarted } from "./stream-performance.mjs";
+import { markRequestObservation, markUpstreamStarted } from "./stream-performance.mjs";
 
 function abortError(signal) {
   if (signal?.reason instanceof Error) return signal.reason;
@@ -178,6 +178,7 @@ export function createCopilotClientRuntime({
       ? preparedPayload.summary
       : summarizeReqBody(reqBody);
     console.log(status("info", `responses payload bytes=${bodyBytes} input_items=${summary.items} images=${summary.images}`));
+    markRequestObservation({ payload_bytes: bodyBytes, images: summary.images });
     if (adapted) debugLog(`responses payload adapted stage=${stage} bytes=${bodyBytes}/${preparedPayload.targetBytes}`);
     const headers = buildHeaders({ token, version: getVSCodeVersion(), initiator: "user", vision: false });
     headers["Content-Type"] = "application/json; charset=utf-8";

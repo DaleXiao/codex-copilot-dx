@@ -6,8 +6,6 @@ import {
   ADAPTER_STATUS_PATH,
   classifyAdapterRoute,
   createRequestMetrics,
-  isLoopbackAddress,
-  isLoopbackHostHeader,
   runtimeStatusPayload,
 } from "./observability.mjs";
 import { createRequestId, runWithRequestContext } from "./request-context.mjs";
@@ -26,13 +24,14 @@ import {
 } from "./cache-control.mjs";
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
 import {
-  createRequestAdmission,
   createRequestAbort,
-  httpError,
   logRequestFailure,
   readJsonBody,
   sendJsonError,
 } from "./http-transport.mjs";
+import { httpError } from "./http-errors.mjs";
+import { createRequestAdmission } from "./request-admission.mjs";
+import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 
 export {
   abortErrorStatusCode,

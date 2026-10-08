@@ -1,4 +1,4 @@
-import { httpError } from "./http-transport.mjs";
+import { httpError } from "./http-errors.mjs";
 import { clearResponsesToolOutputPartsCache } from "./responses-content.mjs";
 import { loadRuntimeConfig, parsePositiveInteger, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
 

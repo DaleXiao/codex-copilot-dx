@@ -1,4 +1,4 @@
-import { httpError } from "./http-transport.mjs";
+import { httpError } from "./http-errors.mjs";
 
 const COMPACTION_TRIGGER_TYPE = "compaction_trigger";
 

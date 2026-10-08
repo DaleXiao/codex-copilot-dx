@@ -1,4 +1,4 @@
-import { terminalCell } from "./cli-table.mjs";
+import { terminalCell } from "./terminal-text.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { currentRequestContext } from "./request-context.mjs";
 

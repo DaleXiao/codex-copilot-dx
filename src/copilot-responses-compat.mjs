@@ -5,10 +5,10 @@ import {
   sanitizeImageNamespaceCollisionRequest,
 } from "./copilot-responses-policy.mjs";
 import {
-  httpError,
   MAX_UPSTREAM_ERROR_BODY_BYTES,
   readBoundedResponseText,
 } from "./http-transport.mjs";
+import { httpError } from "./http-errors.mjs";
 import {
   finalizeEncryptedHistoryRebase,
   sanitizeEncryptedReasoningRequest,

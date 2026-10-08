@@ -1,6 +1,5 @@
 import { responses as copilotResponses } from "./copilot.mjs";
 import {
-  httpError,
   logRequestFailure,
   MAX_UPSTREAM_ERROR_BODY_BYTES,
   MAX_UPSTREAM_RESPONSES_SUCCESS_BODY_BYTES,
@@ -8,6 +7,7 @@ import {
   sendUpstreamError,
   writeOrDrain,
 } from "./http-transport.mjs";
+import { httpError } from "./http-errors.mjs";
 import {
   hasCopilotResponseRetryPolicy,
   openCopilotResponse,
@@ -48,7 +48,7 @@ import {
   markUpstreamActivity,
 } from "./stream-performance.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
-import { recordResponsesUsage } from "./usage.mjs";
+import { recordResponsesUsage } from "./usage-store.mjs";
 import { status } from "./status.mjs";
 
 const MAX_SSE_BUFFER_BYTES = loadRuntimeConfig().maxSseBufferBytes;

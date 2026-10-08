@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { isLoopbackAddress, isLoopbackHostHeader } from "./observability.mjs";
+import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 
 const ASSETS = new Map([
   ["/", ["./dashboard/index.html", "text/html; charset=utf-8"]],

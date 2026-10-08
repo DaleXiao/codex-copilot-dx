@@ -1,9 +1,9 @@
 import os from "node:os";
-import { fetchLiveCopilotModels } from "./cli-models.mjs";
-import { authStatus } from "./cli-auth.mjs";
+import { fetchLiveCopilotModels } from "./live-models.mjs";
+import { authStatus } from "./auth-status.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { createRequestAbort, readJsonBody } from "./http-transport.mjs";
-import { isLoopbackAddress, isLoopbackHostHeader } from "./observability.mjs";
+import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 import {
   DEFAULT_TERMINAL_ANIMATION_THEME,
   getTerminalAnimationFrameDelay,
@@ -11,7 +11,7 @@ import {
   renderTerminalAnimationFrame,
   TERMINAL_ANIMATION_THEMES,
 } from "./terminal-animation.mjs";
-import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate } from "./usage.mjs";
+import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate } from "./usage-store.mjs";
 import { createUsageAnalytics } from "./usage-analytics.mjs";
 import { readUserSettings, terminalAnimationPreference, writeTerminalAnimationTheme } from "./user-settings.mjs";
 

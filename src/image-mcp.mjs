@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
-import { isLoopbackAddress, isLoopbackHostHeader } from "./observability.mjs";
+import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 import { generateImage, supportsImageEditing, IMAGE_MAX_BYTES } from "./image-provider.mjs";
 import { readImageProviderConfig } from "./image-provider-config.mjs";
 import { createImageReferenceStore } from "./image-references.mjs";

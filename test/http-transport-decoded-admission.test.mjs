@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import * as zlib from "node:zlib";
-import { createRequestAdmission, readJsonBody } from "../src/http-transport.mjs";
+import { createRequestAdmission } from "../src/request-admission.mjs";
+import { readJsonBody } from "../src/http-transport.mjs";
 
 const gzipAsync = promisify(zlib.gzip);
 const zstdCompressAsync = zlib.zstdCompress ? promisify(zlib.zstdCompress) : null;

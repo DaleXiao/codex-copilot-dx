@@ -38,7 +38,7 @@ import { status } from "./status.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
 import { createSseKeepalive } from "./sse-keepalive.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
-import { recordResponsesUsage } from "./usage.mjs";
+import { recordResponsesUsage } from "./usage-store.mjs";
 import {
   markResponseErrorOrigin,
   markResponseModel,

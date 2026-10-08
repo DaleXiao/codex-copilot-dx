@@ -1,4 +1,3 @@
-import { isIP } from "node:net";
 import { ADAPTER_STATUS_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 import { copilotRuntimeStatus } from "./copilot.mjs";
 import { imageOptimizationStats } from "./image-optimization.mjs";
@@ -6,10 +5,11 @@ import { responseHistoryStats } from "./response-history.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
 import { decodedBodyLimitPreference } from "./user-settings.mjs";
 import { profileRouting } from "./profile-routing.mjs";
-import { usageLoggingStats } from "./usage.mjs";
+import { usageLoggingStats } from "./usage-store.mjs";
 import { debugLoggingStats } from "./log.mjs";
 
 export { ADAPTER_STATUS_PATH };
+export { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 const OBSERVABILITY_RUNTIME_CONFIG = loadRuntimeConfig();
 const OBSERVABILITY_DECODED_BODY_BYTES = decodedBodyLimitPreference().bytes;
 
@@ -101,26 +101,6 @@ export function classifyAdapterRoute(method, pathname) {
   if (method === "GET" && pathname === "/v1/models") return "models";
   if (pathname === "/mcp/image") return "image_mcp";
   return "not_found";
-}
-
-export function isLoopbackAddress(address) {
-  const normalized = String(address || "").trim().toLowerCase();
-  if (normalized === "::1" || normalized === "[::1]") return true;
-  const ipv4 = normalized.startsWith("::ffff:") ? normalized.slice(7) : normalized;
-  return isIP(ipv4) === 4 && ipv4.startsWith("127.");
-}
-
-export function isLoopbackHostHeader(host) {
-  if (host === undefined) return true; // HTTP/1.0 and in-process callers may omit Host.
-  if (typeof host !== "string" || !host || host.includes(",")) return false;
-  try {
-    const url = new URL(`http://${host}`);
-    const hostname = url.hostname.replace(/^\[|\]$/g, "");
-    return !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash
-      && (hostname === "localhost" || isLoopbackAddress(hostname));
-  } catch {
-    return false;
-  }
 }
 
 function modelRegistryStatus(modelRegistry) {

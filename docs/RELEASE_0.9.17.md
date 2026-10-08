@@ -83,7 +83,23 @@ leak claim were not adopted. Existing name-fragment coverage was retained.
 
 ## Publication and cleanup
 
-Remote publication evidence will be recorded after CI and release completion.
+- Application commit/tag: `0fc61dc61ba92611ac054a6fb55ae0e639a4ec48` /
+  `v0.9.17`. Report-only updates do not move the tag or change package bytes.
+- GitHub CI passed on Node 22.15 and 24:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37742010491.
+- Formal GitHub Release, neither draft nor prerelease:
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.17.
+- Exactly one npm publish workflow succeeded, including prepublish gates:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37742316577.
+  Official receipt confirms `codex-copilot-dx@0.9.17`, `latest`, 105 files and
+  SHA-1 `5524ac59e865315740bc9648df44eb28c5f8ee04`, matching local preflight's
+  288,731-byte package.
+- GitHub used the previously supplied, verified DaleXiao PAT without printing
+  or persisting its value; npm used the existing repository NPM_TOKEN. One
+  independent official-registry query returned ENOTCONN. Publication was not
+  repeated; successful official publish receipt and hash evidence are separate
+  from the unavailable independent read.
+
 Cleanup is limited to owned release helpers, logs and npm query cache; tests own
 and remove their temporary files/servers. Preserve real settings/credentials,
 dependencies, active services and this report. Final handoff requires a clean

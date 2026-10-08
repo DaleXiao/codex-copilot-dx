@@ -61,8 +61,25 @@ Date: 2026-10-08. Baseline: `181b44d` (0.9.11).
 
 ## Publication and cleanup
 
-Publication evidence is added after GitHub CI and the single npm publication
-workflow complete. GitHub uses the previously supplied and verified DaleXiao
-PAT without printing or persisting it; npm uses the existing repository NPM_TOKEN.
-Temporary release/probe scripts and logs will be removed after remote checks;
-preserve user settings, credentials, dependencies and the running adapter.
+- Application commit/tag: `1303f1fa5b3e074dec95c17c2208902e7b6dc88e` /
+  `v0.9.12`. Report-only publication updates do not move the tag or change the
+  npm package bytes.
+- GitHub CI passed on Node 22.15 and 24:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37717714325.
+- Formal GitHub Release, not a draft/prerelease:
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.12.
+- Exactly one npm publication succeeded, including its prepublish verification:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37717888221.
+  The official npm receipt confirms `codex-copilot-dx@0.9.12`, `latest`, 101
+  files and SHA-1 `c97bfc65fdd21193a8ff83e50a15d6603f0b2907`, matching the
+  local 275,091-byte package preflight.
+- GitHub used the previously supplied, verified DaleXiao PAT without printing
+  or persisting its value; npm used the existing repository NPM_TOKEN. The
+  machine's default npm registry is a package-feed mirror; a query during
+  publication returned 404. One independent query directly to the official npm
+  registry returned ENOTCONN. Publication was not retried; successful official
+  publish receipt/checksum confirmation is distinct from a local registry read.
+- Cleanup is limited to this run's temporary release/probe scripts, logs and
+  identified npm diagnostic logs. Preserve user settings, credentials, existing
+  dependencies, saved evaluation results and the active adapter. Final handoff
+  checks include a clean checkout, no untracked workspace garbage and remote sync.

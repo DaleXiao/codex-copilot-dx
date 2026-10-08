@@ -100,8 +100,25 @@ SHA-1 `661f0882ec81f6e57559b8b04a90bb027019d410`.
 
 GitHub identity and target were checked with the previously supplied DaleXiao
 PAT, held only in process memory. Remote main matched the clean baseline.
-Publication receipts and remote/tag confirmation will be recorded after success.
+
+- Application commit/tag: `694b5577ec9d87b7fb7ad67145fdb159e3f342ad` /
+  `v0.9.18`. The annotated tag object is
+  `8efacdf4172b87d2f1b2586aa326a3deecee31d4`; report-only updates do not move it.
+- GitHub CI passed on Node 22.15 and 24, including full verification and
+  isolated startup replay:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37748296928.
+- Formal Release, neither draft nor prerelease:
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.18.
+- Exactly one npm publish workflow succeeded with prepublish gates:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37748534483.
+  Official receipt confirms version 0.9.18, `latest`, 111 files and SHA-1
+  `661f0882ec81f6e57559b8b04a90bb027019d410`, matching local preflight.
+  npm used the repository's existing NPM_TOKEN, not a newly selected credential.
+- One independent, unauthenticated official-registry read returned ENOTCONN
+  on this machine. This does not replace the successful publication receipt;
+  publication was not repeated and no mirror or alternate token was tried.
 
 Cleanup is limited to owned measurement/release helpers, logs, the baseline
 copy and temporary test directories. Preserve dependencies, actual user
-settings/credentials, active services, the source and this report.
+settings/credentials, active services, the source and this report. Final handoff
+requires clean git status, an empty cleanup preview and synchronized remote main.

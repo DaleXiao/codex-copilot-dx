@@ -7,7 +7,7 @@ import {
   loadAutoReviewModelCatalog,
   runAutoReviewModelCommand,
 } from "../src/auto-review-model.mjs";
-import { savedAutoReviewModel, writeAutoReviewModel } from "../src/user-settings.mjs";
+import { autoReviewModelPreference, savedAutoReviewModel, writeAutoReviewModel } from "../src/user-settings.mjs";
 
 function outputBuffer() {
   let value = "";
@@ -59,7 +59,7 @@ test("auto-review selector: retries invalid input and persists a listed model", 
     input: { isTTY: true },
     output: output.stream,
     loadCatalog: async () => ({
-      modelIds: ["gpt-5.6-sol", "gpt-5.5"],
+      modelIds: ["gpt-5.6-sol", "gpt-6.1-sol"],
       source: "test catalog",
     }),
     prompt: async () => answers.shift(),
@@ -67,7 +67,7 @@ test("auto-review selector: retries invalid input and persists a listed model", 
 
   assert.equal(result.model, "gpt-5.6-sol");
   assert.equal(savedAutoReviewModel({ env: {}, home }), "gpt-5.6-sol");
-  assert.match(output.text(), /1\. gpt-5\.5 \[current, default\]/);
+  assert.match(output.text(), /1\. gpt-6\.1-sol \[current, default\]/);
   assert.match(output.text(), /Enter a number from 1 to 2/);
   assert.match(output.text(), /The running adapter will use this model on the next Auto Review request/);
   assert.doesNotMatch(output.text(), /0\.5\.1/);
@@ -83,12 +83,36 @@ test("auto-review selector: choosing the default clears a saved override", async
     home,
     input: { isTTY: true },
     output: output.stream,
-    loadCatalog: async () => ({ modelIds: ["gpt-5.5", "gpt-5.6-sol"], source: "test catalog" }),
+    loadCatalog: async () => ({ modelIds: ["gpt-6.1-sol", "gpt-5.6-sol"], source: "test catalog" }),
     prompt: async () => "2",
   });
 
   assert.equal(savedAutoReviewModel({ env: {}, home }), "");
-  assert.match(output.text(), /Auto Review model: gpt-5\.5/);
+  assert.match(output.text(), /Auto Review model: gpt-6\.1-sol/);
+});
+
+test("auto-review selector: GPT-5.5 remains an explicit non-default choice", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-selector-legacy-review-"));
+  const output = outputBuffer();
+  try {
+    const result = await runAutoReviewModelCommand({
+      env: {}, home, output: output.stream,
+      loadCatalog: async () => ({ modelIds: ["gpt-5.5", "gpt-6.1-sol"], source: "test catalog" }),
+      prompt: async () => "2",
+    });
+    assert.equal(result.model, "gpt-5.5");
+    assert.equal(savedAutoReviewModel({ env: {}, home }), "gpt-5.5");
+    assert.match(output.text(), /1\. gpt-6\.1-sol \[current, default\]/);
+    assert.match(output.text(), /2\. gpt-5\.5\n/);
+
+    const kept = await runAutoReviewModelCommand({
+      env: {}, home, output: output.stream,
+      loadCatalog: async () => ({ modelIds: ["gpt-6.1-sol", "gpt-5.5"], source: "test catalog" }),
+      prompt: async () => "",
+    });
+    assert.equal(kept.model, "gpt-5.5");
+    assert.deepEqual(autoReviewModelPreference({ env: {}, home }), { model: "gpt-5.5", source: "settings" });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test("auto-review selector: reports environment precedence and rejects non-interactive use", async () => {

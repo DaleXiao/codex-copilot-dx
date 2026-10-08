@@ -20,7 +20,7 @@ The adapter handles response history, encrypted reasoning state, function/custom
 
 Codex can select Standard or Fast without changing CCDX configuration. When the client requests a model with `service_tier: "priority"`, CCDX uses its exact `-fast` model only when the live Copilot catalog advertises that variant as enabled, selectable, OpenAI-owned, and Responses-only. Standard mode continues to use the base model; CCDX does not invent Fast availability when the upstream catalog does not provide it. This retains the established `gpt-5.6-sol` / `gpt-5.6-sol-fast` mapping and applies the same exact-match rule to future models.
 
-Codex Auto-review uses the hidden `codex-auto-review` model ID. CCDX maps it to Copilot's `gpt-5.5` Responses model by default, independently of the interactive Fast/Standard selection, and logs both model IDs when the mapping is used. The review target can be changed interactively without reinstalling or restarting CCDX.
+Codex Auto-review uses the hidden `codex-auto-review` model ID. CCDX maps it to Copilot's `gpt-6.1-sol` Responses model by default, independently of the interactive Fast/Standard selection, and logs both model IDs when the mapping is used. An omitted Auto-review reasoning effort defaults to `low`; explicit efforts and other reasoning fields are preserved. The review target can be changed interactively without reinstalling or restarting CCDX.
 
 ### GPT-6 model catalog
 
@@ -117,7 +117,7 @@ ccdx auto-review-model
 
 The selector first queries the running adapter, including its last-known-good model list when live refresh is unavailable, then falls back to a local model cache no older than seven days. It offers model IDs that advertise a Responses endpoint and are not explicitly hidden from the model picker. This selection does not itself verify policy or inference access.
 
-The selection is saved in `~/.config/codex-copilot-dx/config.json`, or under `XDG_CONFIG_HOME` when set. Choosing `gpt-5.5` clears the override and restores the package default. A running adapter reads the setting on the next Auto-review request.
+The selection is saved in `~/.config/codex-copilot-dx/config.json`, or under `XDG_CONFIG_HOME` when set. Choosing `gpt-6.1-sol` clears the override and restores the package default. Existing saved models, including `gpt-5.5`, and environment overrides remain effective. A running adapter reads the setting on the next Auto-review request. The selector changes the model, not the reasoning effort; Codex Guardian currently sends `low`. GPT-6.1 Sol does not support explicit `none` or `minimal` efforts.
 
 ### Runtime caches
 
@@ -352,7 +352,7 @@ Recovery first tries compatible local credentials and starts Device Flow only wh
 | `CCDX_STREAM_IDLE_TIMEOUT_MS` | `120000` | Maximum idle time between upstream streaming body chunks |
 | `CCDX_UPSTREAM_RETRIES` | `2` | Retries for safe requests and clearly pre-connect POST failures; capped at `5` |
 | `CCDX_UPSTREAM_RETRY_DELAY_MS` | `300` | Initial upstream retry backoff in milliseconds; capped at `5000` |
-| `CCDX_AUTO_REVIEW_MODEL` | saved selection or `gpt-5.5` | Copilot Responses model used for Codex Auto-review; overrides the interactive selection |
+| `CCDX_AUTO_REVIEW_MODEL` | saved selection or `gpt-6.1-sol` | Copilot Responses model used for Codex Auto-review; overrides the interactive selection |
 | `CCDX_LOG_PATH` | unset | Mirror terminal logs to a file; set to `1` for `~/.local/share/codex-copilot-dx/debug.log` |
 | `CCDX_LOG_LEVEL` | `info` | Set to `debug` for upstream attempts, status codes, retry causes, and timings |
 | `CCDX_LOG_MAX_BYTES` | `16777216` | Rotate the debug log at this size and retain one `.1` backup; set to `0` to disable rotation |

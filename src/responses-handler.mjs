@@ -272,7 +272,12 @@ export function createResponsesHandler(options) {
         delete prepared.body.service_tier;
       }
       stripUnsupportedGpt6ServiceTier(prepared.body, requestedModel, upstreamModel, priorityTierModel);
-      if (requestedModel === CODEX_AUTO_REVIEW_MODEL) delete prepared.body.service_tier;
+      if (requestedModel === CODEX_AUTO_REVIEW_MODEL) {
+        delete prepared.body.service_tier;
+        if (prepared.body.reasoning?.effort === undefined) {
+          prepared.body.reasoning = { ...prepared.body.reasoning, effort: "low" };
+        }
+      }
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       markResponseModel(upstreamModel);
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
@@ -537,7 +542,12 @@ export function createResponsesCompactHandler(options) {
         delete prepared.body.service_tier;
       }
       stripUnsupportedGpt6ServiceTier(prepared.body, requestedModel, upstreamModel, priorityTierModel);
-      if (requestedModel === CODEX_AUTO_REVIEW_MODEL) delete prepared.body.service_tier;
+      if (requestedModel === CODEX_AUTO_REVIEW_MODEL) {
+        delete prepared.body.service_tier;
+        if (prepared.body.reasoning?.effort === undefined) {
+          prepared.body.reasoning = { ...prepared.body.reasoning, effort: "low" };
+        }
+      }
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=false`));

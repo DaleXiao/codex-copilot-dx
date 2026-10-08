@@ -123,7 +123,7 @@ test("user settings: environment override wins over saved model and default", ()
     source: "environment",
   });
   assert.deepEqual(autoReviewModelPreference({ env: {}, home: path.join(home, "missing") }), {
-    model: "gpt-5.5",
+    model: "gpt-6.1-sol",
     source: "default",
   });
 });
@@ -136,7 +136,7 @@ test("user settings: runtime ignores malformed files while writes fail safely", 
 
   assert.deepEqual(readUserSettings({ env: {}, home }), {});
   assert.deepEqual(autoReviewModelPreference({ env: {}, home }), {
-    model: "gpt-5.5",
+    model: "gpt-6.1-sol",
     source: "default",
   });
   assert.throws(
@@ -148,6 +148,23 @@ test("user settings: runtime ignores malformed files while writes fail safely", 
     /Invalid ccdx settings/,
   );
   assert.equal(fs.readFileSync(filePath, "utf8"), "{broken");
+});
+
+test("user settings: upgrading the default preserves an existing GPT-5.5 selection", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-settings-legacy-review-"));
+  const options = { env: {}, home };
+  const filePath = userSettingsPath(options);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const original = JSON.stringify({ auto_review_model: "gpt-5.5", untouched: 42 });
+  fs.writeFileSync(filePath, original);
+  try {
+    assert.deepEqual(autoReviewModelPreference(options), { model: "gpt-5.5", source: "settings" });
+    assert.equal(fs.readFileSync(filePath, "utf8"), original);
+    assert.deepEqual(autoReviewModelPreference({ env: { CCDX_AUTO_REVIEW_MODEL: "gpt-6.1-sol" }, home }), {
+      model: "gpt-6.1-sol", source: "environment",
+    });
+    assert.equal(fs.readFileSync(filePath, "utf8"), original);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test("user settings: stores animation choices, preserves other keys, and clears the default", () => {

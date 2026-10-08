@@ -2625,11 +2625,56 @@ test("HTTP responses route maps Codex auto-review directly to Responses", async 
 
   assert.equal(response.status, 200);
   assert.equal(chatCalled, false);
-  assert.equal(upstreamBody.model, "gpt-5.5");
+  assert.equal(upstreamBody.model, "gpt-6.1-sol");
+  assert.deepEqual(upstreamBody.reasoning, { effort: "low" });
   assert.deepEqual(upstreamBody.tools, [
     { type: "function", name: "approve", parameters: { type: "object" } },
   ]);
   assert.equal(upstreamBody.text.format.name, "review");
+});
+
+test("Auto Review defaults omitted reasoning to low without rewriting explicit efforts or foreground requests", async () => {
+  for (const mode of ["json", "sse", "compact"]) {
+    for (const model of ["codex-auto-review", "gpt-6.1-sol"]) {
+      for (const reasoning of [undefined, { summary: "auto" }, { effort: "low", summary: "auto" }, { effort: "high", summary: "auto" }]) {
+        let upstreamBody;
+        let upstreamCalls = 0;
+        const upstream = async (body) => {
+          upstreamCalls += 1;
+          upstreamBody = structuredClone(body);
+          const completed = {
+            id: "resp_review_effort", status: "completed",
+            output: mode === "compact"
+              ? [{ type: "compaction", id: "cmp_review_effort", encrypted_content: "review-state" }]
+              : [],
+          };
+          return mode === "sse"
+            ? new Response(`event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: completed })}\n\n`, {
+              headers: { "Content-Type": "text/event-stream" },
+            })
+            : Response.json(completed);
+        };
+        const response = await invokeAdapter({
+          openAIModelEnv: {},
+          getCachedModelEndpointsFn: () => ["/responses"],
+          responsesFn: upstream,
+          responsesCompactFn: upstream,
+          chatCompletionsFn: async () => { throw new Error("review must remain native Responses"); },
+        }, {
+          url: mode === "compact" ? "/v1/responses/compact" : "/v1/responses",
+          body: { model, input: "review this command", stream: mode === "sse", ...(reasoning ? { reasoning } : {}) },
+        });
+        assert.equal(response.status, 200, `${mode} ${model} ${JSON.stringify(reasoning)}`);
+        assert.equal(upstreamCalls, 1);
+        assert.equal(upstreamBody.model, "gpt-6.1-sol");
+        const expected = model === "codex-auto-review" && reasoning?.effort === undefined
+          ? { ...reasoning, effort: "low" }
+          : reasoning;
+        assert.deepEqual(upstreamBody.reasoning, expected);
+        if (mode === "sse") assert.match(response.text, /response.completed/);
+      }
+    }
+  }
 });
 
 test("HTTP Responses maps Codex App priority tier to a catalog-approved fast model for JSON and SSE", async () => {
@@ -2795,7 +2840,7 @@ test("Auto Review drops inherited priority tiers without applying the Fast model
     supported_endpoints: ["/responses", "ws:/responses"],
   }] } };
   const modelCases = [
-    { name: "default", options: { openAIModelEnv: {} }, expectedModel: "gpt-5.5" },
+    { name: "default", options: { openAIModelEnv: {} }, expectedModel: "gpt-6.1-sol" },
     {
       name: "saved",
       options: {
@@ -2836,6 +2881,7 @@ test("Auto Review drops inherited priority tiers without applying the Fast model
       assert.equal(response.status, 200, `${name} ${compact ? "compact" : "responses"}`);
       assert.equal(upstreamBody.model, expectedModel, `${name} ${compact ? "compact" : "responses"}`);
       assert.equal(Object.hasOwn(upstreamBody, "service_tier"), false, `${name} ${compact ? "compact" : "responses"}`);
+      assert.deepEqual(upstreamBody.reasoning, { effort: "low" });
     }
   }
 });

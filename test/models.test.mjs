@@ -61,11 +61,15 @@ test("resolveCopilotPriorityTierModel: maps only an explicitly enabled OpenAI Re
 test("resolveOpenAIModel: maps only the Codex auto-review model", () => {
   assert.deepEqual(resolveOpenAIModel("codex-auto-review", {}), {
     requestedModel: "codex-auto-review",
-    upstreamModel: "gpt-5.5",
+    upstreamModel: "gpt-6.1-sol",
   });
   assert.deepEqual(resolveOpenAIModel("codex-auto-review", { CCDX_AUTO_REVIEW_MODEL: " gpt-5.6-sol " }), {
     requestedModel: "codex-auto-review",
     upstreamModel: "gpt-5.6-sol",
+  });
+  assert.deepEqual(resolveOpenAIModel("codex-auto-review", {}, { autoReviewModel: "gpt-5.5" }), {
+    requestedModel: "codex-auto-review",
+    upstreamModel: "gpt-5.5",
   });
   assert.deepEqual(resolveOpenAIModel("codex-auto-review", {}, { autoReviewModel: "gpt-5.6-terra" }), {
     requestedModel: "codex-auto-review",
@@ -83,13 +87,13 @@ test("resolveOpenAIModel: maps only the Codex auto-review model", () => {
 
 test("codexAutoReviewModelStatus: validates the configured Responses target", () => {
   const models = { data: [
-    { id: "gpt-5.5", supported_endpoints: ["/responses"] },
+    { id: "gpt-6.1-sol", supported_endpoints: ["/responses"] },
     { id: "gpt-chat", supported_endpoints: ["/chat/completions"] },
   ] };
 
   assert.deepEqual(codexAutoReviewModelStatus(models, {}), {
     available: true,
-    upstreamModel: "gpt-5.5",
+    upstreamModel: "gpt-6.1-sol",
     reason: "",
   });
   assert.deepEqual(codexAutoReviewModelStatus(models, { CCDX_AUTO_REVIEW_MODEL: "gpt-chat" }), {
@@ -100,6 +104,13 @@ test("codexAutoReviewModelStatus: validates the configured Responses target", ()
   assert.deepEqual(codexAutoReviewModelStatus(models, { CCDX_AUTO_REVIEW_MODEL: "gpt-missing" }), {
     available: false,
     upstreamModel: "gpt-missing",
+    reason: "model is not advertised",
+  });
+  assert.deepEqual(codexAutoReviewModelStatus({ data: [
+    { id: "gpt-5.5", supported_endpoints: ["/responses"] },
+  ] }, {}), {
+    available: false,
+    upstreamModel: "gpt-6.1-sol",
     reason: "model is not advertised",
   });
 });

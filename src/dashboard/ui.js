@@ -81,7 +81,11 @@ function renderFailures(recent, recentRequests = []) {
     details.open = expanded.has(details.dataset.key);
     const title = document.createElement("summary");
     localize(title, "{detail} / {retry}", {
-      detail: `${String(failure.at || "unknown time")} / ${String(failure.model || "unknown_model").slice(0, 80)} / ${String(failure.code || "unknown_error").slice(0, 80)}`,
+      detail: phrase("{time} / {model} / {code}", {
+        time: failure.at ? String(failure.at) : phrase("unknown time"),
+        model: failure.model ? String(failure.model).slice(0, 80) : phrase("unknown_model"),
+        code: failure.code ? String(failure.code).slice(0, 80) : phrase("unknown_error"),
+      }),
       retry: phrase(failure.retried ? "retry attempted" : "no retry"),
     });
     const timeline = failure.timeline;
@@ -311,7 +315,9 @@ function buildAnimationOptions(data) {
     });
     const name = document.createElement("span");
     name.className = "theme-name";
-    name.textContent = `${String(index + 1).padStart(2, "0")} ${theme.label}`;
+    const label = document.createElement("span");
+    localize(label, "{index} {theme}", { index: String(index + 1).padStart(2, "0"), theme: phrase(theme.label) });
+    name.append(label);
     if (theme.default) {
       const marker = document.createElement("small");
       localize(marker, "DEFAULT");
@@ -365,7 +371,7 @@ async function loadAnimation() {
 }
 
 function updateAnimationState() {
-  text("animation-state", "CURRENT {theme}{unsaved}", { theme: savedAnimation.toUpperCase(), unsaved: selectedAnimation !== savedAnimation ? phrase(" / UNSAVED") : "" });
+  text("animation-state", "CURRENT {theme}{unsaved}", { theme: phrase(savedAnimation.toUpperCase()), unsaved: selectedAnimation !== savedAnimation ? phrase(" / UNSAVED") : "" });
 }
 
 async function saveAnimation() {
@@ -435,7 +441,10 @@ async function loadModels() {
     text("models-note", "{selectable} selectable / {advertised} advertised / {host} / {time}", { selectable: number(data.selectable), advertised: number(data.advertised), host: data.upstream_host, time: new Date(data.checked_at).toLocaleTimeString() });
   } catch (error) {
     text("models-state", "LIVE LOOKUP FAILED");
-    text("models-note", String(error.message || error).slice(0, 240));
+    const message = String(error.message || error).slice(0, 240);
+    const httpError = /^Live model lookup failed \(HTTP (\d{3})\)\. Run ccdx models for details\.$/.exec(message);
+    if (httpError) text("models-note", "Live model lookup failed (HTTP {status}). Run ccdx models for details.", { status: httpError[1] });
+    else text("models-note", message);
     emptyTable("live-models-body", 4, "No live catalog available.");
   } finally {
     button.disabled = false;

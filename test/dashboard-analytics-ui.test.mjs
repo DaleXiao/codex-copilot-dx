@@ -40,7 +40,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   const collector = createUsageAnalytics({ now: Date.parse("2026-10-01T12:00:00Z") });
   records.forEach((row) => collector.record(row, summarizeUsage([row])));
   const usage = { source: "local_usage_log", total: { model: "TOTAL", requests: 1, input_tokens: 100, output_tokens: 10, total_tokens: 110 }, rows: [], model_count: 1 };
-  const themes = { theme: "comet", themes: ["comet", "twin"].map((id) => ({ id, label: id, frames: [{ ansi: "x", delay_ms: 50 }], loop_pause_ms: 50 })) };
+  const themes = { theme: "comet", themes: [["comet", "Comet"], ["twin", "Twin"]].map(([id, label], index) => ({ id, label, default: index === 0, frames: [{ ansi: "x", delay_ms: 50 }], loop_pause_ms: 50 })) };
   const requests = [];
   const timers = new Set();
   let observer;
@@ -89,16 +89,16 @@ test("language switch preserves unsaved animation, chart nodes/selection and exp
   h.nodes.get("language-toggle").listeners.click();
   assert.equal(h.api.selection, "twin");
   assert.equal(h.nodes.get("save-animation").disabled, false);
-  assert.match(h.nodes.get("animation-state").textContent, /未保存/);
+  assert.match(h.nodes.get("animation-state").textContent, /待保存/);
   assert.equal(h.nodes.get("analytics-model").value, "test");
   assert.equal(h.nodes.get("usage-state").textContent, "2026-10-01");
-  assert.equal(h.nodes.get("usage-body").children[0].children[0].textContent, "合计");
+  assert.equal(h.nodes.get("usage-body").children[0].children[0].textContent, "总用量");
   assert.deepEqual(h.nodes.get("activity-calendar").children, calendar);
   assert.equal(failure.open, true);
   assert.strictEqual(h.api.timer, timer);
   assert.equal(h.requests.length, requests);
   assert.match(h.nodes.get("auth-account").textContent, /@octocat \/ 已保存/);
-  assert.match(h.nodes.get("daily-bars").children.at(-1).attributes.title, /已包含在输入中/);
+  assert.match(h.nodes.get("daily-bars").children.at(-1).attributes.title, /已计入输入用量/);
   await failure.children.at(-1).listeners.click();
   assert.match(copied, /message: <script>raw source<\/script>/);
   assert.match(copied, /retry: attempted \(outcome not recorded here\)/);
@@ -113,11 +113,78 @@ test("saved Chinese applies to asynchronous data, counts and later refresh resul
   await flush();
   assert.equal(h.nodes.get("connection").textContent, "本机正常");
   assert.equal(h.nodes.get("auth-account").textContent, "GitHub / @octocat / 已保存");
-  assert.equal(h.nodes.get("usage-body").children[0].children[0].textContent, "合计");
+  assert.equal(h.nodes.get("usage-body").children[0].children[0].textContent, "总用量");
   assert.equal(h.nodes.get("usage-body").children[0].children[2].textContent, "100");
   h.nodes.get("refresh").listeners.click();
   await flush();
   assert.equal(h.nodes.get("connection").textContent, "本机正常");
+});
+
+test("bilingual animation names preserve numbering, default marker and unsaved choices", async () => {
+  const h = harness({ language: true });
+  await flush();
+  const panel = h.nodes.get("animation-settings");
+  panel.open = true;
+  panel.listeners.toggle();
+  await flush();
+  const options = h.nodes.get("animation-options").children;
+  const caption = options[0].children[0];
+  const marker = caption.children[1];
+  assert.equal(caption.children[0].textContent, "01 Comet");
+  assert.equal(marker.textContent, "DEFAULT");
+  options[1].listeners.click();
+  const requests = h.requests.length;
+  h.nodes.get("language-toggle").listeners.click();
+  assert.equal(caption.children[0].textContent, "01 彗星");
+  assert.strictEqual(caption.children[1], marker);
+  assert.equal(marker.textContent, "默认");
+  assert.equal(options[1].children[0].children[0].textContent, "02 双星");
+  assert.equal(h.api.selection, "twin");
+  assert.equal(options[1].attributes["aria-pressed"], "true");
+  assert.equal(h.nodes.get("animation-state").textContent, "已保存：彗星 / 待保存");
+  assert.equal(h.nodes.get("save-animation").disabled, false);
+  h.nodes.get("language-toggle").listeners.click();
+  assert.equal(caption.children[0].textContent, "01 Comet");
+  assert.equal(marker.textContent, "DEFAULT");
+  assert.equal(h.nodes.get("animation-state").textContent, "SAVED COMET / UNSAVED");
+  assert.equal(h.requests.length, requests);
+});
+
+test("English copy and Chinese failures keep raw values, missing states and diagnostic clipboard intact", async () => {
+  let copied;
+  const h = harness({ language: true, clipboard: async (value) => { copied = value; } });
+  await flush();
+  assert.equal(h.nodes.get("usage-state").textContent, "LOCAL RECORDS");
+  assert.equal(h.nodes.get("connection").textContent, "LOCAL OK");
+  h.api.renderFailures([{ at: "time", model: "Comet", code: "response.failed", message: "DEFAULT {input}", retried: false }, {}]);
+  h.nodes.get("language-toggle").listeners.click();
+  const rows = h.nodes.get("failures").children;
+  assert.ok(rows.some((row) => /模型未知/.test(row.children[0].children[0].textContent)));
+  const literal = rows.find((row) => /Comet/.test(row.children[0].children[0].textContent)).children[0];
+  assert.match(literal.children[0].textContent, /Comet \/ response.failed/);
+  await literal.children.at(-1).listeners.click();
+  assert.match(copied, /model: Comet/);
+  assert.match(copied, /message: DEFAULT \{input\}/);
+  assert.match(copied, /retry: not attempted/);
+  assert.equal(literal.children.at(-1).textContent, "已复制");
+});
+
+test("model HTTP errors localize only the known CCDX message and retain status codes", async () => {
+  let message = "Live model lookup failed (HTTP 403). Run ccdx models for details.";
+  const h = harness({ language: true, savedLanguage: "zh", fetchFn: (url) => url.includes("/models/")
+    ? { ok: false, json: async () => ({ error: message }) } : undefined });
+  await flush();
+  assert.equal(h.nodes.get("models-state").textContent, "查询失败");
+  assert.match(h.nodes.get("models-note").textContent, /模型查询失败：HTTP 403/);
+  assert.match(h.nodes.get("models-note").textContent, /ccdx models/);
+  const requests = h.requests.length;
+  h.nodes.get("language-toggle").listeners.click();
+  assert.match(h.nodes.get("models-note").textContent, /Model check failed: HTTP 403/);
+  assert.equal(h.requests.length, requests);
+  message = "Provider raw failure {status}: response.failed";
+  h.nodes.get("refresh-models").listeners.click();
+  await flush();
+  assert.equal(h.nodes.get("models-note").textContent, message);
 });
 
 test("dashboard auth renders saved username and fallbacks without claiming online validation", async () => {

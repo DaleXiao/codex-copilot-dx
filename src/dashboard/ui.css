@@ -72,6 +72,7 @@ h1 span { color: var(--accent-soft); }
 .section-actions { display: flex; align-items: center; gap: 15px; margin-top: 16px; }
 .section-actions span { color: var(--muted); font-size: 11px; }
 .table-note { margin: 15px 0 8px; color: var(--muted); font-size: 11px; }
+.card p, .hint, .table-note, .section-actions span, .chart-heading span { white-space: pre-line; }
 .table-wrap { width: 100%; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 11px; }
 th { color: var(--heading); text-align: left; font-weight: 700; letter-spacing: .05em; }

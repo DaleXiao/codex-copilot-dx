@@ -230,7 +230,11 @@ ccdx update npm
 ccdx update github
 ```
 
-`ccdx update gh` is accepted as shorthand for the GitHub source. The npm source installs `codex-copilot-dx@latest` through the registry already configured for npm, including a company mirror. The GitHub source installs the latest commit from `DaleXiao/codex-copilot-dx` `main` and opts in to Git fetching only for that command. It does not change npm's persistent `allow-git` setting.
+Normal startup checks the latest stable GitHub Release once in the background, without accessing the npm registry. The anonymous check requires no PAT or Copilot credentials, has a two-second deadline and a bounded response body, and silently skips network errors, rate limits and invalid metadata. It never falls back to npm, retries, polls, installs an update or restarts the service. When a newer release is found, it prints the versions and `ccdx update github`. On adapter reuse, Ready is displayed before waiting for any remaining check budget so the short-lived command does not lose its notification.
+
+`ccdx update gh` is accepted as shorthand for the GitHub source. The npm source installs `codex-copilot-dx@latest` through the registry already configured for npm, including a company mirror. The GitHub source queries the latest stable published Release (ten-second deadline), validates its version tag, and installs that exact tag from `DaleXiao/codex-copilot-dx`, not `main`. Lookup failure stops before installation, without an npm fallback. It opts in to Git fetching only for that command and does not change npm's persistent `allow-git` setting.
+
+GitHub is the package source, not a replacement for the npm installer. Dependencies such as `sharp` may still need the configured npm registry during an explicit update; use a company-approved mirror/cache where required. GitHub updates do not promise an entirely registry-free installation.
 
 If a configured npm mirror has not synchronized the current release yet, use the GitHub source. A running adapter keeps its loaded version until it is stopped and restarted.
 

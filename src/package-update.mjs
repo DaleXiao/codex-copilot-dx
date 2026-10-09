@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
+import { fetchLatestRelease, githubReleaseVersion } from "./version.mjs";
 
 const PACKAGE_NAME = "codex-copilot-dx";
 const UPDATE_SPECS = {
   npm: `${PACKAGE_NAME}@latest`,
-  github: "github:DaleXiao/codex-copilot-dx#main",
+  github: "github:DaleXiao/codex-copilot-dx",
 };
 
 export function normalizeUpdateSource(value) {
@@ -13,12 +14,16 @@ export function normalizeUpdateSource(value) {
   return Object.hasOwn(UPDATE_SPECS, source) ? source : "";
 }
 
-export function globalUpdateCommand(source, { platform = process.platform } = {}) {
+export function globalUpdateCommand(source, { platform = process.platform, releaseTag } = {}) {
   const normalized = normalizeUpdateSource(source);
   if (!normalized) throw new Error(`Update source must be npm or github: ${source}`);
   const args = ["install", "--global"];
-  if (normalized === "github") args.push("--allow-git=all");
-  args.push(UPDATE_SPECS[normalized]);
+  if (normalized === "github") {
+    if (!githubReleaseVersion(releaseTag)) throw new Error("A valid stable GitHub release tag is required");
+    args.push("--allow-git=all", `${UPDATE_SPECS.github}#${releaseTag}`);
+  } else {
+    args.push(UPDATE_SPECS[normalized]);
+  }
   return {
     command: platform === "win32" ? "npm.cmd" : "npm",
     args,
@@ -52,6 +57,7 @@ export async function runPackageUpdateCommand({
   prompt,
   source,
   spawnImpl = spawn,
+  fetchImpl = fetch,
 } = {}) {
   let selectedSource = normalizeUpdateSource(source);
   if (source && !selectedSource) throw new Error(`Update source must be npm or github: ${source}`);
@@ -63,7 +69,7 @@ export async function runPackageUpdateCommand({
 
     output.write(`${commandName} update\n`);
     output.write("  1. npm registry [default]\n");
-    output.write("  2. GitHub main\n");
+    output.write("  2. GitHub release\n");
 
     let readline;
     const ask = prompt || (async (question) => {
@@ -86,8 +92,14 @@ export async function runPackageUpdateCommand({
     }
   }
 
-  const update = globalUpdateCommand(selectedSource, { platform });
-  const sourceLabel = selectedSource === "npm" ? "npm registry" : "GitHub main";
+  let release;
+  if (selectedSource === "github") {
+    output.write("Checking the latest stable GitHub release...\n");
+    release = await fetchLatestRelease({ fetchImpl, timeoutMs: 10000 });
+    if (!release) throw new Error("Could not read the latest stable GitHub release. No update was installed.");
+  }
+  const update = globalUpdateCommand(selectedSource, { platform, releaseTag: release?.tagName });
+  const sourceLabel = selectedSource === "npm" ? "npm registry" : `GitHub release ${release.tagName}`;
   output.write(`Updating ${PACKAGE_NAME} from ${sourceLabel}...\n`);
   const child = spawnImpl(update.command, update.args, {
     env,

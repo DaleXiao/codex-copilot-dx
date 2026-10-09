@@ -307,7 +307,7 @@ async function printUpdateNotice() {
     const { latestVersion, updateAvailable } = await checkForUpdate({ currentVersion: LOCAL_VERSION });
     if (!updateAvailable) return;
     console.log(`\n  ${status("warn", `Update available: ${LOCAL_VERSION} -> ${latestVersion}`)}`);
-    console.log("  npm install -g codex-copilot-dx@latest\n");
+    console.log(`  Run ${CLI_NAME} update github to update, then restart ${CLI_NAME}.\n`);
   } catch {
     // Never block startup on the update check.
   }
@@ -315,8 +315,10 @@ async function printUpdateNotice() {
 
 try {
   assertSafeAdapterHost(ADAPTER_HOST, process.env);
-  void runInBackground(printUpdateNotice);
+  const updateNotice = runInBackground(printUpdateNotice);
   if (await reuseRunningAdapterIfAvailable()) {
+    // Ready is already displayed; finish the bounded check before this short-lived CLI exits.
+    await updateNotice;
     await LOGGING.cleanup();
     process.exit(0);
   }

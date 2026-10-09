@@ -68,6 +68,8 @@ The dashboard does not poll in the background; refresh when needed.
   expose it to the public internet. The dashboard is not an authentication wall
   for the API. Diagnostic errors may contain sensitive upstream text.
 
+Startup checks GitHub Releases, not npm, and suggests `ccdx update github` when a newer stable version is available. GitHub updates install the exact release tag; dependency downloads still use npm's configured registry.
+
 See the [complete command/configuration reference](https://github.com/DaleXiao/codex-copilot-dx/blob/main/docs/REFERENCE.md)
 for authentication recovery, configuration-write boundaries, advanced limits,
 logging, image setup and client compatibility details.

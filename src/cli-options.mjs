@@ -356,7 +356,7 @@ function topicHelp(name, topic) {
     "disable-image": `Usage:\n  ${name} disable-image\n\nDisables the local CCDX image tool and removes its stored API credential and unmodified CCDX image guidance.`,
     "image-status": `Usage:\n  ${name} image-status\n\nShows provider configuration and probes local image-tool readiness without generating an image or exposing its API key.`,
     "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nSelect a Responses model, then an advertised reasoning effort. Enter keeps the default/current choice; q cancels both steps without saving. Effort 0 follows the client (low when omitted). Settings apply only to Auto-review on the next request; no client patch or restart is required for adapters running 0.9.13 or newer.`,
-    update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or GitHub main. With no source, an interactive terminal prompts for one.`,
+    update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or the latest stable GitHub release. With no source, an interactive terminal prompts for one.`,
     version: `Usage:\n  ${name} --version`,
   };
   return sections[topic];

@@ -23,9 +23,29 @@ if (process.env.CCDX_TEST_IMAGE_WRITE_FAILURE === "1") {
 syncBuiltinESMExports();
 const localFetch = globalThis.fetch;
 let finishImage;
-process.on("message", message => { if (message === "release-image-fixture") finishImage?.(); });
+let finishUpdate;
+process.on("message", message => {
+  if (message === "release-image-fixture") finishImage?.();
+  if (message === "release-update-fixture") finishUpdate?.();
+});
 globalThis.fetch = async (input, init) => {
   const url = new URL(String(input));
+  if (url.hostname === "registry.npmjs.org") console.log("Registry fixture request blocked");
+  if (url.href === "https://api.github.com/repos/DaleXiao/codex-copilot-dx/releases/latest" && process.env.CCDX_TEST_UPDATE_MODE) {
+    console.log("Update fixture request received");
+    if (init.headers.Authorization || init.headers.authorization) throw new Error("Update checks must be anonymous");
+    const mode = process.env.CCDX_TEST_UPDATE_MODE;
+    if (mode === "offline") throw new Error("synthetic offline release check");
+    if (mode === "malformed") return Response.json({ tag_name: "main", draft: false, prerelease: false });
+    if (mode === "current") return Response.json({ tag_name: `v${require("../../package.json").version}`, draft: false, prerelease: false });
+    return new Promise((resolve, reject) => {
+      const clean = () => { finishUpdate = undefined; init.signal.removeEventListener("abort", onAbort); };
+      const onAbort = () => { clean(); console.log("Update fixture cancelled"); reject(new Error("synthetic release timeout")); };
+      finishUpdate = () => { clean(); resolve(Response.json({ tag_name: "v99.0.0", draft: false, prerelease: false })); };
+      init.signal.addEventListener("abort", onAbort, { once: true });
+      if (init.signal.aborted) onAbort();
+    });
+  }
   if (url.origin === "https://images.example") console.log("Image fixture outbound request");
   if (url.origin === `http://127.0.0.1:${process.env.ADAPTER_PORT}`) return localFetch(input, init);
   if (url.href === "https://api.github.com/user") return Response.json({ login: "startup-fixture", id: 1 });

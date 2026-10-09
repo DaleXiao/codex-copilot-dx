@@ -24,6 +24,8 @@ function successfulSpawn(calls) {
   };
 }
 
+const fetchRelease = async () => Response.json({ tag_name: "v0.9.19", draft: false, prerelease: false });
+
 test("package update: builds fixed npm and GitHub global install commands", () => {
   assert.equal(normalizeUpdateSource("gh"), "github");
   assert.deepEqual(globalUpdateCommand("npm"), {
@@ -31,12 +33,15 @@ test("package update: builds fixed npm and GitHub global install commands", () =
     args: ["install", "--global", "codex-copilot-dx@latest"],
     source: "npm",
   });
-  assert.deepEqual(globalUpdateCommand("github", { platform: "win32" }), {
+  assert.deepEqual(globalUpdateCommand("github", { platform: "win32", releaseTag: "v0.9.19" }), {
     command: "npm.cmd",
-    args: ["install", "--global", "--allow-git=all", "github:DaleXiao/codex-copilot-dx#main"],
+    args: ["install", "--global", "--allow-git=all", "github:DaleXiao/codex-copilot-dx#v0.9.19"],
     source: "github",
   });
   assert.throws(() => globalUpdateCommand("other"), /must be npm or github/);
+  for (const releaseTag of [undefined, "main", "v1.2.3-beta", "v1.2.3#main", "v1.2.3\n"]) {
+    assert.throws(() => globalUpdateCommand("github", { releaseTag }), /valid stable GitHub release tag/);
+  }
 });
 
 test("package update: direct source works without a terminal and never uses a shell", async () => {
@@ -49,6 +54,7 @@ test("package update: direct source works without a terminal and never uses a sh
     output: output.stream,
     source: "npm",
     spawnImpl: successfulSpawn(calls),
+    fetchImpl: () => assert.fail("npm updates must not query GitHub"),
   });
 
   assert.deepEqual(result, { cancelled: false, source: "npm" });
@@ -69,6 +75,7 @@ test("package update: interactive selection retries and can choose GitHub", asyn
     platform: "win32",
     prompt: async () => answers.shift(),
     spawnImpl: successfulSpawn(calls),
+    fetchImpl: fetchRelease,
   });
 
   assert.equal(result.source, "github");
@@ -77,7 +84,7 @@ test("package update: interactive selection retries and can choose GitHub", asyn
     "install",
     "--global",
     "--allow-git=all",
-    "github:DaleXiao/codex-copilot-dx#main",
+    "github:DaleXiao/codex-copilot-dx#v0.9.19",
   ]);
   assert.match(output.text(), /Enter 1 for npm, 2 for GitHub/);
 });
@@ -107,6 +114,38 @@ test("package update: propagates spawn and nonzero exit failures", async (t) => 
       queueMicrotask(() => child.emit("exit", 17, null));
       return child;
     };
-    await assert.rejects(runPackageUpdateCommand({ output: output.stream, source: "github", spawnImpl }), /status 17/);
+    await assert.rejects(runPackageUpdateCommand({ output: output.stream, source: "github", spawnImpl, fetchImpl: fetchRelease }), /status 17/);
   });
+});
+
+test("GitHub update resolves once and pins the tag without trusting returned download URLs", async () => {
+  const calls = [];
+  const output = outputBuffer(false);
+  let lookups = 0;
+  const env = { PATH: "/test/bin", npm_config_registry: "https://approved-mirror.example" };
+  await runPackageUpdateCommand({
+    source: "gh", env, output: output.stream, spawnImpl: successfulSpawn(calls),
+    fetchImpl: async () => { lookups++; return Response.json({ tag_name: "v1.2.3", draft: false, prerelease: false, tarball_url: "https://unsafe.example/archive" }); },
+  });
+  assert.equal(lookups, 1);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args, ["install", "--global", "--allow-git=all", "github:DaleXiao/codex-copilot-dx#v1.2.3"]);
+  assert.equal(calls[0].options.env, env);
+  assert.equal(calls[0].options.shell, false);
+  assert.match(output.text(), /GitHub release v1.2.3/);
+});
+
+test("unavailable or invalid GitHub release fails before installation with no fallback", async () => {
+  for (const fetchImpl of [async () => { throw new Error("offline"); }, async () => new Response("limited", { status: 429 }), async () => Response.json({ tag_name: "main", draft: false, prerelease: false })]) {
+    await assert.rejects(runPackageUpdateCommand({ source: "github", output: outputBuffer(false).stream,
+      fetchImpl, spawnImpl: () => assert.fail("No installer may run after release lookup failure"),
+    }), /No update was installed/);
+  }
+});
+
+test("cancelling interactive update does not query or install anything", async () => {
+  const result = await runPackageUpdateCommand({ output: outputBuffer().stream, prompt: async () => "q",
+    fetchImpl: () => assert.fail("No lookup on cancellation"), spawnImpl: () => assert.fail("No install on cancellation"),
+  });
+  assert.equal(result.cancelled, true);
 });

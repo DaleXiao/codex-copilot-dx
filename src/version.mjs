@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REGISTRY_LATEST_URL = "https://registry.npmjs.org/codex-copilot-dx/latest";
+const GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/DaleXiao/codex-copilot-dx/releases/latest";
+const MAX_RELEASE_BYTES = 256 * 1024;
 
 export function localPackageVersion() {
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -29,22 +30,71 @@ export function isVersionGreater(a, b) {
   return false;
 }
 
-export async function fetchLatestVersion({ fetchImpl = fetch, timeoutMs = 2000 } = {}) {
+export function githubReleaseVersion(tag) {
+  if (typeof tag !== "string" || tag.length > 64) return null;
+  const match = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(tag);
+  if (!match || !match.slice(1).every((part) => Number.isSafeInteger(Number(part)))) return null;
+  return match.slice(1).join(".");
+}
+
+async function readReleaseJson(response, signal) {
+  const reader = response.body?.getReader?.();
+  if (!reader) throw new Error("GitHub release response has no readable body");
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener("abort", cancel, { once: true });
+  const chunks = [];
+  let bytes = 0;
+  let complete = false;
+  try {
+    if (Number(response.headers?.get?.("content-length")) > MAX_RELEASE_BYTES) {
+      throw new Error("GitHub release response is too large");
+    }
+    while (!signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) {
+        complete = true;
+        break;
+      }
+      bytes += value.byteLength;
+      if (bytes > MAX_RELEASE_BYTES) throw new Error("GitHub release response is too large");
+      chunks.push(Buffer.from(value));
+    }
+    if (signal.aborted) throw new Error("GitHub release request timed out");
+    return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8"));
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    if (!complete) cancel();
+    reader.releaseLock();
+  }
+}
+
+export async function fetchLatestRelease({ fetchImpl = fetch, timeoutMs = 2000 } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const resp = await fetchImpl(REGISTRY_LATEST_URL, {
-      headers: { Accept: "application/json" },
+    const resp = await fetchImpl(GITHUB_LATEST_RELEASE_URL, {
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "codex-copilot-dx" },
+      redirect: "error",
       signal: controller.signal,
     });
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    return typeof data.version === "string" ? data.version : null;
+    if (!resp.ok) {
+      void resp.body?.cancel?.().catch(() => {});
+      return null;
+    }
+    const data = await readReleaseJson(resp, controller.signal);
+    const version = githubReleaseVersion(data?.tag_name);
+    return version && data.draft === false && data.prerelease === false
+      ? { version, tagName: data.tag_name }
+      : null;
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function fetchLatestVersion(options) {
+  return (await fetchLatestRelease(options))?.version || null;
 }
 
 export async function checkForUpdate({ currentVersion = localPackageVersion(), fetchImpl, timeoutMs } = {}) {

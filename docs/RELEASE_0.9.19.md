@@ -50,6 +50,11 @@ global npm configuration changes were introduced.
 - One live anonymous GitHub lookup using the candidate returned stable v0.9.18
   in 1,344.7 ms. Its generated installation plan pinned that tag; no installer
   was executed. No live inference/image calls or real config/credential changes.
+- After publication, a default-budget check was skipped silently once; its HTTP
+  cause was not recorded. A single diagnostic read returned HTTP 200 and v0.9.19.
+  The final instrumented candidate check then returned latestVersion 0.9.19 and
+  updateAvailable true in 1,387.4 ms, under the normal two-second budget. No
+  retry loop, authentication fallback, npm query or installer was used.
 - One bounded source/test review found no remaining production npm-check URL
   or `main` update target. Version API result shape stays compatible: the
   before/after injected lookup returns the same update result, with only the
@@ -77,13 +82,30 @@ secret/authentication flow to public update checks.
 
 ## Publication and cleanup
 
-Local preflight: `codex-copilot-dx@0.9.19`, 111 files, 290,833 packed bytes,
-SHA-1 `5965217635fd681659f7e6fe273e051f333bdd62`.
+Final local preflight: `codex-copilot-dx@0.9.19`, 111 files, 290,867 packed bytes,
+SHA-1 `22f6d723ac92b5d5002da1790ba903606f246c11`.
 
-Publication receipts will be recorded after successful CI, GitHub Release and
-the single npm workflow. GitHub uses the previously supplied and verified
-DaleXiao PAT in process memory; npm uses the repository's existing NPM_TOKEN.
-No local npm-registry metadata query will be made on this corporate machine.
+The earlier verify preflight preceded the new documentation-index entry. npm
+automatically includes `docs/README.md`; its added 80 bytes explain the older
+290,833-byte/`5965217635fd681659f7e6fe273e051f333bdd62` result. The final local
+preflight and official publish receipt match. No production code changed and
+no second publication was attempted.
+
+- Application commit/tag: `6466cac2bfd9f9ebd69eab76fa44703b102122f0` /
+  `v0.9.19`. Annotated tag object:
+  `23a7e10e7b01a7e09a2d4e384054afe95cedc727`. Report-only updates do not move it.
+- Node 22.15 and 24 CI passed full verification and startup replay:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37875906801.
+- Formal GitHub Release, neither draft nor prerelease:
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.19.
+- Exactly one npm workflow succeeded, including 985 tests and prepublish gates:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/37876180733.
+  Official receipt confirms version 0.9.19, `latest`, 111 files and the final
+  matching SHA-1 above.
+
+GitHub used the previously supplied, identity-verified DaleXiao PAT only in
+process memory; npm used the repository's existing NPM_TOKEN. No local npm
+registry metadata query was made on this corporate machine.
 
 Cleanup is limited to owned baseline copies, temporary release helpers/logs and
 test profiles. Preserve dependencies, actual settings/credentials, the running

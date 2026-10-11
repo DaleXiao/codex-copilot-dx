@@ -91,6 +91,25 @@ Initial final preflight: 112 package files, 293,779 packed bytes, SHA-1
 `384201331ff9f2a8465917a44fd1c81bbf86af70`. Later package preflight is checked
 again after documentation/index finalization and matched to the publish receipt.
 
+Final package: 112 files, 293,808 packed bytes, SHA-1
+`3f10712db9d39495a07b849c416c90eb11d6f270`; the added documentation-index entry
+explains the pre-finalization difference. Final local preflight and official npm
+receipt match.
+
+- Application commit/tag: `025b03b4713f608fcc07ce8efb1e48fe41eb2e0e` /
+  `v0.9.20`; annotated tag object `94f29be7a559d2b90162da2051436af41c0e0099`.
+  The task-owned tag was corrected before any Release/npm publication for the
+  isolated Node-wrapper test fix, with an exact old-tag force-with-lease.
+  Published tags remain unchanged by report-only updates.
+- All three CI jobs passed (Node 22.15, Node 24 and latest official Codex):
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38110448521.
+  The official Codex runtime tested on that runner was 0.162.1.
+- Formal GitHub Release, neither draft nor prerelease:
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.20.
+- Exactly one npm workflow succeeded with 995 tests and prepublish gates:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38110549695.
+  Its official receipt confirms 0.9.20, `latest` and the matching final SHA-1.
+
 GitHub uses the previously supplied DaleXiao PAT, freshly identity-verified and
 held only in memory; npm uses the repository's existing NPM_TOKEN. Publication
 requires the Node matrix and new latest-client CI check before one npm dispatch.

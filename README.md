@@ -62,6 +62,9 @@ The dashboard does not poll in the background; refresh when needed.
   break continuations. Generated images and Codex transcripts are not deleted.
 - Optional image setup/maintenance never blocks the primary service. Disabled
   users get no CCDX image skill or MCP installation.
+- CCDX adds experimental local history compression only when installed App
+  runtimes support it and report it off. Existing choices are preserved; an
+  already-enabled default, unavailable runtime or failed check is skipped.
 - Image API redirects must stay on the same HTTPS origin. Returned images must
   use public HTTPS URLs; well-known NAT64 mappings follow IPv4 address rules.
 - Keep the adapter on loopback. LAN mode is only for trusted networks; do not

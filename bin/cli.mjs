@@ -24,6 +24,7 @@ import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
 import { createCodexModelCatalog } from "../src/codex-model-catalog.mjs";
 import { readImageProviderConfig } from "../src/image-provider-config.mjs";
 import { setResponseHistoryMaxBytes } from "../src/response-history.mjs";
+import { ensureCodexThreadCompression } from "../src/codex-thread-compression.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
 const CLI_NAME = cliCommandName();
@@ -259,7 +260,7 @@ async function reuseRunningAdapterIfAvailable() {
   if (!running.ok) return false;
 
   console.log(status("ok", `Using existing adapter at ${running.baseUrl}`));
-  await configureCodexClient();
+  const { compressionSetup } = await configureCodexClient();
 
   await openCodex();
   console.log(`
@@ -269,6 +270,7 @@ async function reuseRunningAdapterIfAvailable() {
 
   Tip: Run ${CLI_NAME} help to view more features and commands.
 `);
+  await compressionSetup;
   return true;
 }
 
@@ -283,6 +285,7 @@ async function configureCodexClient() {
       console.warn(status("warn", `Image guidance could not be updated: ${error.message}`));
     }
   }
+  return { compressionSetup: runInBackground(ensureCodexThreadCompression) };
 }
 
 if (CLI.command === "doctor") {
@@ -359,7 +362,7 @@ try {
   });
 
   // Point Codex App at the adapter.
-  await configureCodexClient();
+  const { compressionSetup } = await configureCodexClient();
 
   // Launch Codex when available.
   await openCodex();
@@ -404,6 +407,7 @@ try {
   };
   process.once("SIGINT", () => { void shutdown("SIGINT"); });
   process.once("SIGTERM", () => { void shutdown("SIGTERM"); });
+  await compressionSetup;
 } catch (e) {
   console.error(status("err", e.message));
   await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs }).catch(() => {});

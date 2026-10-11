@@ -7,6 +7,7 @@ import fs from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { zstdDecompressSync } from "node:zlib";
 
 const args = process.argv.slice(2);
 const codex = args.length === 2 && args[0] === "--codex"
@@ -19,6 +20,7 @@ process.env.CCDX_DISABLE_USAGE = "1";
 globalThis.fetch = async () => { throw new Error("Network fetch is forbidden in this offline replay"); };
 const { proxyCopilotResponses } = await import("../src/responses-proxy.mjs");
 const { ensureCodexConfig } = await import("../src/config.mjs");
+const { ensureCodexThreadCompression, codexNeedsThreadCompressionDefault } = await import("../src/codex-thread-compression.mjs");
 const { buildCodexModelResponse } = await import("../src/codex-model-catalog.mjs");
 const root = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-message-id-replay-"));
 const phases = ["commentary", "final_answer"];
@@ -207,6 +209,8 @@ async function replay(mode, catalog) {
       server.listen(0, "127.0.0.1", resolve);
     });
     ensureCodexConfig(server.address().port, { filePath: path.join(home, "config.toml"), host: "127.0.0.1" });
+    const compressionNeeded = await codexNeedsThreadCompressionDefault({ binaryPaths: [codex] });
+    await ensureCodexThreadCompression({ filePath: path.join(home, "config.toml"), probe: async () => compressionNeeded });
     const overrides = {
       model: "gpt-5.5",
       model_provider: "replay",
@@ -222,10 +226,12 @@ async function replay(mode, catalog) {
       "feedback.enabled": false,
       check_for_update_on_startup: false,
     };
-    child = spawn(codex, [
+    const runtimeArgs = [
       ...Object.entries(overrides).flatMap(([key, value]) => ["-c", `${key}=${JSON.stringify(value)}`]),
       "app-server", "--stdio",
-    ], { cwd: home, env: runtimeEnv(home), stdio: ["pipe", "pipe", "pipe"] });
+    ];
+    const startRuntime = () => spawn(codex, runtimeArgs, { cwd: home, env: runtimeEnv(home), stdio: ["pipe", "pipe", "pipe"] });
+    child = startRuntime();
     child.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
     const client = createClient(child);
     await client.call("initialize", {
@@ -237,6 +243,7 @@ async function replay(mode, catalog) {
     assert.equal(configuration.config.model, "gpt-5.5");
     assert.equal(configuration.config.model_provider, "replay");
     assert.equal(configuration.config.openai_base_url, `http://127.0.0.1:${server.address().port}/v1`);
+    if (compressionNeeded) assert.equal(configuration.config.features.local_thread_store_compression, true);
     const modelList = await client.call("model/list", {});
     assert.ok(modelList.data.some(model => model.id === "gpt-5.5"), "The real client must expose the configured model");
     const started = await client.call("thread/start", {
@@ -277,7 +284,45 @@ async function replay(mode, catalog) {
       summary.push({ phase, startedId, deltaIds: deltas.map((event) => event.params.itemId), completedId, historyId: history[0].id });
     }
     assert.equal(client.events.filter((event) => event.method === "item/agentMessage/delta").length, 4);
-    return { mode, requests, summary, configVerified: true, modelCatalogVerified: true };
+    let compressionRoundtrip = null;
+    if (mode === "proxy" && compressionNeeded) {
+      await stopChild(child);
+      const sessions = path.join(home, "sessions");
+      const paths = (await fs.readdir(sessions, { recursive: true }))
+        .filter(file => file.endsWith(".jsonl")).map(file => path.join(sessions, file));
+      assert.ok(paths.length, "The synthetic thread must have a saved transcript");
+      const originals = await Promise.all(paths.map(file => fs.readFile(file)));
+      const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+      await Promise.all(paths.map(file => fs.utimes(file, old, old)));
+      // Codex suppresses repeated compression passes for six hours. Age only the
+      // synthetic home's marker so this restart exercises a real cold-file pass.
+      await fs.utimes(path.join(home, ".tmp", "rollout-compression.lock"), old, old).catch(error => {
+        if (error.code !== "ENOENT") throw error;
+      });
+      child = startRuntime();
+      child.stderr.on("data", chunk => { stderr = (stderr + chunk).slice(-4000); });
+      const resumed = createClient(child);
+      await resumed.call("initialize", { clientInfo: { name: "ccdx-compression-replay", version: "1.0" }, capabilities: { experimentalApi: true } });
+      resumed.notify("initialized");
+      const compressionDeadline = Date.now() + timeoutMs;
+      while (!(await Promise.all(paths.map(file => fs.stat(`${file}.zst`).then(() => true, () => false)))).every(Boolean)) {
+        if (Date.now() > compressionDeadline) throw new Error("Cold synthetic transcript compression timed out");
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      let compressedBytes = 0;
+      for (const [index, file] of paths.entries()) {
+        const compressed = await fs.readFile(`${file}.zst`);
+        assert.deepEqual(zstdDecompressSync(compressed), originals[index]);
+        compressedBytes += compressed.length;
+      }
+      const restored = await resumed.call("thread/read", { threadId: started.thread.id, includeTurns: true });
+      const restoredMessages = restored.thread.turns.flatMap(turn => turn.items).filter(item => item.type === "agentMessage");
+      for (const entry of summary) assert.ok(restoredMessages.some(item => item.id === entry.historyId && item.text === texts[phases.indexOf(entry.phase)]));
+      await resumed.call("thread/resume", { threadId: started.thread.id });
+      assert.equal(requests.filter(request => request === "POST /v1/responses").length, 1, "Compression/resume must not generate another response");
+      compressionRoundtrip = { files: paths.length, originalBytes: originals.reduce((bytes, value) => bytes + value.length, 0), compressedBytes, byteExact: true, readAndResume: true };
+    }
+    return { mode, requests, summary, configVerified: true, modelCatalogVerified: true, compressionRoundtrip };
   } catch (error) {
     throw new Error(`${mode} replay failed: ${error.message}\n${stderr}`, { cause: error });
   } finally {

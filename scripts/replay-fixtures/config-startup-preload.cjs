@@ -4,17 +4,46 @@ const http = require("node:http");
 const { syncBuiltinESMExports } = require("node:module");
 if (!process.env.CCDX_TEST_HOME) throw new Error("Startup replay requires an isolated profile");
 os.homedir = () => process.env.CCDX_TEST_HOME;
+const childProcess = require("node:child_process");
+const execute = childProcess.execFile;
+let finishCompression;
+if (process.env.CCDX_TEST_COMPRESSION_MODE) {
+  const fs = require("node:fs");
+  const stat = fs.statSync;
+  const realpath = fs.realpathSync;
+  const appBinary = value => /\/(?:Codex|ChatGPT)\.app\/Contents\/.*codex$/.test(String(value));
+  fs.statSync = (value, ...args) => {
+    if (!appBinary(value)) return stat(value, ...args);
+    if (value === "/Applications/Codex.app/Contents/Resources/codex") return { isFile: () => true };
+    throw Object.assign(new Error("synthetic absent App"), { code: "ENOENT" });
+  };
+  fs.realpathSync = (value, ...args) => appBinary(value) ? value : realpath(value, ...args);
+}
+childProcess.execFile = (file, args, options, callback) => {
+  if (args?.join(" ") !== "features list") return execute(file, args, options, callback);
+  const mode = process.env.CCDX_TEST_COMPRESSION_MODE;
+  if (!mode) { queueMicrotask(() => callback(null, "", "")); return; }
+  console.log("Compression fixture probe received");
+  const complete = () => callback(null, `local_thread_store_compression ${mode === "default-on" ? "stable true" : mode === "removed" ? "removed false" : "under development false"}\n`, "");
+  if (mode === "pending") finishCompression = complete;
+  else if (mode === "timeout") setTimeout(() => callback(new Error("private fixture timeout")), options.timeout);
+  else queueMicrotask(complete);
+};
+childProcess.execFile[require("node:util").promisify.custom] = (file, args, options) => new Promise((resolve, reject) => {
+  childProcess.execFile(file, args, options, (error, stdout, stderr) => error ? reject(error) : resolve({ stdout, stderr }));
+});
 const emit = http.Server.prototype.emit;
 http.Server.prototype.emit = function (event, ...args) {
   if (event === "request" && args[0]?.url?.split("?", 1)[0] === "/mcp/image") console.log("Image fixture MCP request received");
   return emit.call(this, event, ...args);
 };
-if (process.env.CCDX_TEST_IMAGE_WRITE_FAILURE === "1") {
+if (process.env.CCDX_TEST_IMAGE_WRITE_FAILURE === "1" || process.env.CCDX_TEST_COMPRESSION_MODE === "write-failure") {
   const fs = require("node:fs");
   const path = require("node:path");
   const rename = fs.renameSync;
   fs.renameSync = (from, to) => {
-    if (to === path.join(process.env.CCDX_TEST_HOME, ".codex", "config.toml")) {
+    if (to === path.join(process.env.CCDX_TEST_HOME, ".codex", "config.toml")
+      && (process.env.CCDX_TEST_IMAGE_WRITE_FAILURE === "1" || fs.readFileSync(from, "utf8").includes("local_thread_store_compression"))) {
       throw Object.assign(new Error("synthetic optional config write failure"), { code: "EACCES" });
     }
     return rename(from, to);
@@ -27,6 +56,7 @@ let finishUpdate;
 process.on("message", message => {
   if (message === "release-image-fixture") finishImage?.();
   if (message === "release-update-fixture") finishUpdate?.();
+  if (message === "release-compression-fixture") finishCompression?.();
 });
 globalThis.fetch = async (input, init) => {
   const url = new URL(String(input));

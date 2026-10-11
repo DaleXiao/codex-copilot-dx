@@ -150,7 +150,7 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
     `${commandName} status`,
     adapterLine,
     status("info", `Requests: ${count(requests.completed)}/${count(requests.total)} completed, ${count(requests.active)} active, ${count(requests.status_4xx)} 4xx, ${count(requests.status_5xx)} 5xx, ${count(requests.aborted)} aborted`),
-    status("info", `Responses stream: TTFT avg ${latency(performance.ttft_ms?.avg)} (${count(performance.ttft_ms?.samples)} samples), TPOT avg ${tpot(performance.tpot_us)}`),
+    status("info", `Responses stream: TTFT avg ${latency(performance.ttft_ms?.avg)} (${count(performance.ttft_ms?.samples)} samples), TPOT avg ${tpot(performance.tpot_us)} (${count(performance.tpot_us?.samples)} samples; gateway estimate)`),
     ...(terminalOutcomes ? [status("info", `Model outcomes: ${count(terminalOutcomes.completed)} completed, ${count(terminalOutcomes.incomplete)} incomplete, ${count(terminalOutcomes.failed)} failed, ${count(terminalOutcomes.cancelled)} cancelled, ${count(terminalOutcomes.unknown)} without terminal`)] : []),
     status("info", `Admission: ${count(admission.activeRequests)} active, ${count(admission.queued)} queued, ${count(admission.rejected)} rejected, ${count(admission.timedOut)} timed out, wait avg ${latency(admission.waitMsAvg)}`),
     status("info", `Memory: RSS ${mebibytes(processStats.rss_bytes)}, heap ${mebibytes(processStats.heap_used_bytes)}`),

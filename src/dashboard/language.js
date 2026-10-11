@@ -1,5 +1,9 @@
 (() => {
   const translations = {
+    "First output": ["First output", "首次输出"],
+    "Token time": ["Token time", "输出耗时"],
+    "Gateway timing. Token time is estimated.": ["Observed at the gateway. Token time is an estimate.", "网关观测时间。\n每Token耗时为估算值。"],
+    "{value} / {samples} samples": ["{value} / {samples} samples", "{value} / {samples}次样本"],
     "CCDX · Local dashboard": ["CCDX · Dashboard", "CCDX · 运行看板"],
     "/ LOCAL STATUS": ["/ DASHBOARD", "/ 运行看板"],
     "READING": ["READING", "读取中"],

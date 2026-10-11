@@ -47,7 +47,7 @@ export async function probeImageTool(codexContent, { fetchImpl = fetch, timeoutM
     await rpc(undefined, "notifications/initialized", {});
     const result = await rpc(2, "tools/list", {});
     return result?.tools?.some((tool) => tool.name === "generate_image")
-      ? { ready: true }
+      ? { ready: true, generation: true, editing: result.tools.some(tool => tool.name === "edit_image") }
       : { ready: false, reason: "tool_unavailable" };
   } catch (error) {
     return { ready: false, reason: signal.aborted ? "timeout" : /^HTTP \d+$/.test(error.message) ? error.message : "unreachable" };

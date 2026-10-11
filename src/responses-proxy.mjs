@@ -40,6 +40,7 @@ import {
 import {
   isResponsesOutputEvent,
   markFirstOutput,
+  responsesTimingSource,
   markOutputTokens,
   markRequestObservation,
   markResponseErrorOrigin,
@@ -127,9 +128,15 @@ function inspectResponseSseEvent(state, eventName, data) {
   if (outputTokens !== undefined) markOutputTokens(outputTokens);
   const inputTokens = event.response?.usage?.input_tokens ?? event.usage?.input_tokens;
   if (inputTokens !== undefined) markRequestObservation({ input_tokens: inputTokens });
+  if (!state.sawTiming) {
+    const timingSource = responsesTimingSource(event, eventType);
+    if (timingSource) {
+      state.sawTiming = true;
+      markFirstOutput(timingSource);
+    }
+  }
   if (!state.sawOutput && isResponsesOutputEvent(event, eventType)) {
     state.sawOutput = true;
-    markFirstOutput();
   }
   if (["response.function_call_arguments.delta", "response.custom_tool_call_input.delta"].includes(eventType)) {
     state.toolArgumentGuard.observe(event.output_index ?? event.item_id ?? event.call_id, event.delta);

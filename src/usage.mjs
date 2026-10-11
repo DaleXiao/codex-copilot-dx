@@ -2,6 +2,7 @@ import { cliOutputFormat, cliOutputWidth, formatResponsiveCliTable, terminalCell
 import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate, usageLogPath } from "./usage-store.mjs";
 
 export {
+  usageSummaryVersion,
   usageLoggingStats,
   usageLogPath,
   usageLogMaxBytes,

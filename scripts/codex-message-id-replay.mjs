@@ -18,6 +18,8 @@ process.env.CCDX_DISABLE_USAGE = "1";
 // The proxy receives an injected synthetic upstream. Fail closed if it ever attempts a real fetch.
 globalThis.fetch = async () => { throw new Error("Network fetch is forbidden in this offline replay"); };
 const { proxyCopilotResponses } = await import("../src/responses-proxy.mjs");
+const { ensureCodexConfig } = await import("../src/config.mjs");
+const { buildCodexModelResponse } = await import("../src/codex-model-catalog.mjs");
 const root = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-message-id-replay-"));
 const phases = ["commentary", "final_answer"];
 const texts = ["SYNTHETIC COMMENTARY ONLY.", "SYNTHETIC FINAL ONLY."];
@@ -204,6 +206,7 @@ async function replay(mode, catalog) {
       server.once("error", reject);
       server.listen(0, "127.0.0.1", resolve);
     });
+    ensureCodexConfig(server.address().port, { filePath: path.join(home, "config.toml"), host: "127.0.0.1" });
     const overrides = {
       model: "gpt-5.5",
       model_provider: "replay",
@@ -230,6 +233,12 @@ async function replay(mode, catalog) {
       capabilities: { experimentalApi: true },
     });
     client.notify("initialized");
+    const configuration = await client.call("config/read", { includeLayers: false });
+    assert.equal(configuration.config.model, "gpt-5.5");
+    assert.equal(configuration.config.model_provider, "replay");
+    assert.equal(configuration.config.openai_base_url, `http://127.0.0.1:${server.address().port}/v1`);
+    const modelList = await client.call("model/list", {});
+    assert.ok(modelList.data.some(model => model.id === "gpt-5.5"), "The real client must expose the configured model");
     const started = await client.call("thread/start", {
       cwd: home, model: "gpt-5.5", modelProvider: "replay",
       approvalPolicy: "never", sandbox: "read-only", experimentalRawEvents: false,
@@ -268,7 +277,7 @@ async function replay(mode, catalog) {
       summary.push({ phase, startedId, deltaIds: deltas.map((event) => event.params.itemId), completedId, historyId: history[0].id });
     }
     assert.equal(client.events.filter((event) => event.method === "item/agentMessage/delta").length, 4);
-    return { mode, requests, summary };
+    return { mode, requests, summary, configVerified: true, modelCatalogVerified: true };
   } catch (error) {
     throw new Error(`${mode} replay failed: ${error.message}\n${stderr}`, { cause: error });
   } finally {
@@ -284,7 +293,15 @@ try {
   await fs.mkdir(probeHome);
   const options = { cwd: probeHome, env: runtimeEnv(probeHome), encoding: "utf8", timeout: timeoutMs, stdio: ["ignore", "pipe", "pipe"] };
   const version = execFileSync(codex, ["--version"], options).trim();
-  const catalog = JSON.parse(execFileSync(codex, ["debug", "models", "--bundled"], { ...options, maxBuffer: 8 * 1024 * 1024 }));
+  const bundled = JSON.parse(execFileSync(codex, ["debug", "models", "--bundled"], { ...options, maxBuffer: 8 * 1024 * 1024 }));
+  const catalog = buildCodexModelResponse({ codexCatalog: bundled, copilotModels: { data: ["gpt-5.5", "gpt-6-astra", "gpt-6.1-sol"].map(id => ({
+    id, vendor: "OpenAI", policy: { state: "enabled" }, model_picker_enabled: true,
+    supported_endpoints: ["/responses"], capabilities: { supports: { reasoning_effort: ["low", "medium", "high", "xhigh", "max"] } },
+  })) } });
+  assert.ok(catalog && catalog.models.length >= bundled.models.length);
+  for (const slug of ["gpt-6-astra", "gpt-6.1-sol"]) {
+    if (bundled.models.some(model => model.slug === slug)) assert.equal(catalog.models.find(model => model.slug === slug).visibility, "list");
+  }
   const direct = await replay("direct", catalog);
   const proxy = await replay("proxy", catalog);
   console.log(JSON.stringify({ version, direct, proxy }, null, 2));

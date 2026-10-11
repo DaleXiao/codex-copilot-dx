@@ -159,7 +159,10 @@ export function syncEnabledImageSkill({ home = os.homedir(), codexPath = default
 }
 
 function printImageReadiness(readiness, output, commandName) {
-  if (readiness.ready) output.write("Local image service: ready (generation tool verified; no image generated).\n");
+  if (readiness.ready) {
+    output.write("Local image service: ready (generation tool verified; no image generated).\n");
+    output.write(`Generate: available\nEdit: ${readiness.editing ? "available" : "not advertised"}\n`);
+  }
   else output.write(`Local image service: unavailable (${readiness.reason}). Start or restart ${commandName} to use images.\n`);
 }
 

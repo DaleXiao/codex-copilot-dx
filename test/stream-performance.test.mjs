@@ -12,6 +12,7 @@ import {
   createStreamPerformanceMetrics,
   isChatOutputDelta,
   isResponsesOutputEvent,
+  responsesTimingSource,
   measureRequestStage,
   measureRequestStageAsync,
 } from "../src/stream-performance.mjs";
@@ -45,6 +46,39 @@ test("request timings include preparation without changing upstream TTFT and TPO
   assert.deepEqual(Object.fromEntries(Object.entries(route.preparation_ms).map(([stage, data]) => [stage, [data.samples, data.avg]])), {
     admission: [1, 10], body: [1, 25], history: [1, 5], images: [1, 35], serialization: [1, 5],
   });
+});
+
+test("timing evidence includes hidden reasoning and tools without changing output commitment", () => {
+  for (const type of ["reasoning", "function_call", "custom_tool_call", "web_search_call", "multi_agent_call"]) {
+    const event = { type: "response.output_item.added", item: { type, content: [], summary: [] } };
+    assert.equal(responsesTimingSource(event), "announcement");
+    assert.equal(isResponsesOutputEvent(event), false);
+  }
+  assert.equal(responsesTimingSource({ type: "response.output_item.added", item: { type: "message", content: [] } }), null);
+  for (const type of ["function_call_output", "additional_tools", "compaction"]) {
+    assert.equal(responsesTimingSource({ type: "response.output_item.added", item: { type, input: "not model output" } }), null);
+  }
+  assert.equal(responsesTimingSource({ type: "response.content_part.done", part: { text: "complete text" } }), "snapshot");
+  assert.equal(responsesTimingSource({ type: "response.completed", response: { output: [{ type: "message", content: [{ text: "snapshot" }] }] } }), "snapshot");
+  assert.equal(responsesTimingSource({ type: "response.output_item.added", item: { type: "program_output" } }), "runtime");
+  assert.equal(responsesTimingSource({ type: "response.output_item.added", item: { type: "function_call", caller: { type: "program" } } }), "runtime");
+  assert.equal(responsesTimingSource({ type: "response.output_text.delta", delta: "visible" }), "delta");
+});
+
+test("timing source is counted once and remains scalar metadata with isolated samples", () => {
+  let now = 0;
+  const metrics = createStreamPerformanceMetrics({ now: () => now });
+  const tracker = metrics.begin("responses");
+  tracker.upstreamStarted();
+  now = 20; tracker.firstOutput("announcement");
+  now = 30; tracker.firstOutput("delta");
+  tracker.setOutputTokens(3); now = 40; tracker.finish();
+  const state = metrics.snapshot();
+  assert.equal(state.by_route.responses.ttft_ms.avg, 20);
+  assert.deepEqual(state.by_route.responses.first_output_sources, { delta: 0, announcement: 1, snapshot: 0, runtime: 0 });
+  assert.equal(state.by_route.responses.tpot_us.samples, 1);
+  assert.equal(state.by_route.responses.tpot_estimated, true);
+  assert.equal(state.recent_requests[0].first_output_source, "announcement");
 });
 
 test("preparation timings retain original failures, count retries, and isolate concurrent request contexts", async () => {
@@ -223,7 +257,7 @@ test("request timeline records stages, retry attempts and activity without chang
   assert.deepEqual(snapshot.recent_requests[0], {
     request_id: "request-1", at: "2026-10-05T00:00:00Z", route: "responses", model: "gpt-6-astra",
     outcome: "completed", origin: "upstream_response", phase: "upstream_stream", failed: false,
-    http_status: 200, upstream_attempts: 2, timings_ms: { admission: 5, body: 0, history: 0,
+    http_status: 200, upstream_attempts: 2, first_output_source: "delta", timings_ms: { admission: 5, body: 0, history: 0,
       images: 0, serialization: 0, upstream_start: 10, upstream_headers: 45, first_output: 50,
       last_activity: 80, terminal: 90, finished: 95 },
     context: { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: null },

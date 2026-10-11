@@ -68,6 +68,7 @@ test("HTTP 200 response.failed retries an exact encrypted continuation before do
         if (bodies.length === 1) {
           return responsesSse(
             { type: "response.created", response: { id: "resp_failed", object: "response", status: "in_progress", output: [] } },
+            { type: "response.output_item.added", output_index: 0, item: { id: "rs_hidden", type: "reasoning", summary: [] } },
             encryptedFailure(),
           );
         }

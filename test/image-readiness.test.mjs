@@ -17,7 +17,7 @@ test("image readiness verifies initialize and tool discovery without generation 
       ? { serverInfo: { name: "ccdx-image" }, protocolVersion: "2025-06-18" }
       : { tools: [{ name: "generate_image" }] } });
   } });
-  assert.deepEqual(result, { ready: true });
+  assert.deepEqual(result, { ready: true, generation: true, editing: false });
   assert.deepEqual(methods, ["initialize", "notifications/initialized", "tools/list"]);
 });
 
@@ -26,6 +26,19 @@ test("image readiness never probes a disabled, malformed or non-local registrati
   for (const content of ["", config.replace("true", "false"), config.replace("127.0.0.1", "images.example")]) {
     assert.equal((await probeImageTool(content, { fetchImpl })).ready, false);
   }
+});
+
+test("image readiness reports editing only when the local tool catalog advertises it", async () => {
+  const methods = [];
+  const result = await probeImageTool(config, { fetchImpl: async (_, { body }) => {
+    const message = JSON.parse(body);
+    methods.push(message.method);
+    if (message.id === undefined) return new Response(null, { status: 202 });
+    return Response.json({ jsonrpc: "2.0", id: message.id, result: message.method === "initialize"
+      ? { serverInfo: { name: "ccdx-image" } } : { tools: [{ name: "generate_image" }, { name: "edit_image" }] } });
+  } });
+  assert.deepEqual(result, { ready: true, generation: true, editing: true });
+  assert.deepEqual(methods, ["initialize", "notifications/initialized", "tools/list"]);
 });
 
 test("image readiness distinguishes unavailable service from a missing tool and bounds timeout", async () => {

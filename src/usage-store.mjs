@@ -312,7 +312,7 @@ const SUMMARY_CACHE_MAX_BYTES = 256 * 1024;
 const SUMMARY_CACHE_SETTLED_MS = 2000;
 let cachedSummary = null;
 
-async function usageSummaryVersion(filePath) {
+export async function usageSummaryVersion(filePath) {
   try {
     const files = await Promise.all([rotatedFilePath(filePath), filePath].map(async (file) => {
       try {

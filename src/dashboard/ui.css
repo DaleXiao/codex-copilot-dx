@@ -134,3 +134,5 @@ footer { color: var(--footer); font-size: 10px; letter-spacing: .05em; padding: 
 @media (max-width: 620px) { .snapshot-meta { justify-content: flex-start; margin-top: 9px; } }
 @media (max-width: 620px) { .shell { padding: 0 16px; } .topbar { min-height: 60px; } .brand-detail { display: none; } .topbar-actions { gap: 11px; } .intro { display: block; padding: 29px 0 21px; } .intro p { margin-top: 9px; } .overview, .details { grid-template-columns: 1fr; } .details .panel:last-child { grid-column: auto; } .card { min-height: 122px; } .card strong { margin-top: 14px; } .lower li { display: block; } .lower li span { display: block; margin-top: 5px; } }
 @media (max-width: 460px) { .topbar { flex-wrap: wrap; padding: 12px 0; gap: 10px; } .topbar-actions { gap: 9px; } .panel-heading { flex-wrap: wrap; } .heading-actions { gap: 10px; } .failure-detail { grid-template-columns: 1fr; gap: 3px; } .failure-detail dd { margin-bottom: 7px; } select { max-width: 210px; } }
+.timing-stats { grid-template-columns: 1fr; }
+.timing-stats dt { white-space: nowrap; }

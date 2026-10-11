@@ -39,6 +39,39 @@ export function isResponsesOutputEvent(event, eventType = event?.type) {
   return RESPONSES_OUTPUT_EVENT_TYPES.has(eventType) && nonEmptyString(event?.delta);
 }
 
+// Timing evidence is separate from the output/compatibility-retry commitment.
+export function responsesTimingSource(event, eventType = event?.type) {
+  if (isResponsesOutputEvent(event, eventType)) return "delta";
+  const itemSource = (item, announced = false) => {
+    if (!item || typeof item !== "object") return null;
+    if (["function_call_output", "custom_tool_call_output", "computer_call_output", "additional_tools", "compaction", "compaction_summary", "mcp_approval_response"].includes(item.type)) return null;
+    if (["program_output", "shell_call_output", "tool_search_output"].includes(item.type)) return "runtime";
+    if (item.caller?.type === "program") return "runtime";
+    if (announced && ["reasoning", "function_call", "custom_tool_call", "web_search_call", "file_search_call", "computer_call", "tool_search_call", "mcp_call", "program", "multi_agent_call", "image_generation_call"].includes(item.type)) return "announcement";
+    const content = item.content || item.summary;
+    if (Array.isArray(content) && content.some(part => nonEmptyString(part?.text) || nonEmptyString(part?.refusal))) return "snapshot";
+    if (nonEmptyString(item.arguments) || nonEmptyString(item.input)) return "snapshot";
+    return null;
+  };
+  if (eventType === "response.output_item.added" || eventType === "response.output_item.done") {
+    return itemSource(event.item, eventType === "response.output_item.added");
+  }
+  if (["response.content_part.added", "response.content_part.done", "response.reasoning_summary_part.added", "response.reasoning_summary_part.done"].includes(eventType)
+    && (nonEmptyString(event.part?.text) || nonEmptyString(event.part?.refusal))) return "snapshot";
+  if (eventType === "response.shell_call_output_content.delta"
+    && (nonEmptyString(event.delta?.stdout) || nonEmptyString(event.delta?.stderr))) return "runtime";
+  if (["response.completed", "response.incomplete", "response.failed"].includes(eventType)) {
+    let runtime = null;
+    for (const item of Array.isArray(event.response?.output) ? event.response.output : []) {
+      const source = itemSource(item);
+      if (source && source !== "runtime") return source;
+      runtime ||= source;
+    }
+    return runtime;
+  }
+  return null;
+}
+
 export function isChatOutputDelta(delta) {
   if (!delta || typeof delta !== "object") return false;
   return nonEmptyString(delta.content)
@@ -101,6 +134,7 @@ function createRoutePerformance() {
     ttft: createHistogram(TTFT_EDGES_MS),
     tpot: createHistogram(TPOT_EDGES_US),
     requestTtft: createHistogram(TTFT_EDGES_MS),
+    outputSources: { delta: 0, announcement: 0, snapshot: 0, runtime: 0 },
     preparation: Object.fromEntries(PREPARATION_STAGES.map((stage) => [stage, createHistogram(PREPARATION_EDGES_MS)])),
     success_with_output: 0,
     errors_with_output: 0,
@@ -128,6 +162,9 @@ function routeSnapshot(route) {
     ttft_ms: histogramSnapshot(route.ttft, "ms"),
     tpot_us: histogramSnapshot(route.tpot, "us"),
     request_ttft_ms: histogramSnapshot(route.requestTtft, "ms"),
+    first_output_sources: { ...route.outputSources },
+    timing_boundary: "gateway_observed",
+    tpot_estimated: true,
     preparation_ms: Object.fromEntries(PREPARATION_STAGES.map((stage) => [stage, histogramSnapshot(route.preparation[stage], "ms")])),
   };
 }
@@ -143,6 +180,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       const requestStartedAt = now();
       let upstreamStartedAt = null;
       let firstOutputAt = null;
+      let firstOutputSource = null;
       let outputTokens = null;
       let failed = false;
       let finished = false;
@@ -196,8 +234,11 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           lastActivityAt = now();
           phase = "upstream_stream";
         },
-        firstOutput() {
-          if (firstOutputAt === null) firstOutputAt = now();
+        firstOutput(source = "delta") {
+          if (firstOutputAt === null) {
+            firstOutputAt = now();
+            firstOutputSource = Object.hasOwn(route.outputSources, source) ? source : "delta";
+          }
         },
         setOutputTokens(value) {
           const tokens = Number(value);
@@ -250,6 +291,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
             failed: failed || aborted || (terminalOutcome !== null && terminalOutcome !== "completed"),
             http_status: Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599 ? statusCode : null,
             upstream_attempts: attempts,
+            first_output_source: firstOutputSource,
             context: { ...context },
             timings_ms: {
               ...Object.fromEntries(PREPARATION_STAGES.map((stage) => [stage, Number(preparationMs[stage].toFixed(1))])),
@@ -260,6 +302,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           });
           if (recentRequests.length > MAX_RECENT_REQUESTS) recentRequests.shift();
           if (firstOutputAt !== null) observe(route.requestTtft, Math.max(0, firstOutputAt - requestStartedAt));
+          if (firstOutputSource) route.outputSources[firstOutputSource] += 1;
           if (upstreamStartedAt === null) {
             route.neutral += 1;
             return;
@@ -321,8 +364,8 @@ export function markUpstreamActivity() {
   tracker()?.upstreamActivity?.();
 }
 
-export function markFirstOutput() {
-  tracker()?.firstOutput();
+export function markFirstOutput(source) {
+  tracker()?.firstOutput(source);
 }
 
 export function markOutputTokens(value) {

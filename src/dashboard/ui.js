@@ -147,6 +147,11 @@ function render(data) {
 
   const outcomes = data.stream_performance?.by_route?.responses?.terminal_outcomes?.totals || {};
   for (const key of ["completed", "incomplete", "failed", "cancelled"]) text(key, number(outcomes[key]));
+  const timing = data.stream_performance?.by_route?.responses || {};
+  for (const [id, metric, scale, unit] of [["ttft", timing.ttft_ms, 1, "ms"], ["tpot", timing.tpot_us, timing.tpot_us?.unit === "us" ? 1000 : 1, "ms/token"]]) {
+    const value = metric?.samples > 0 && finite(metric.avg) ? `${(Number(metric.avg) / scale).toFixed(1)} ${unit}` : "—";
+    text(id, "{value} / {samples} samples", { value, samples: number(metric?.samples) });
+  }
 
   const history = data.response_history || {};
   const limit = Number(history.maxBytes || data.limits?.response_history_max_bytes || 0);

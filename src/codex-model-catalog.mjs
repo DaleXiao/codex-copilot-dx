@@ -110,6 +110,16 @@ function catalogModelForCopilot(model, copilotModels, { filterReasoning = false 
       ? model.supported_reasoning_levels.filter(({ effort }) => reasoning.has(effort))
       : model.supported_reasoning_levels,
   };
+  // Only repair a supplied mapping that no longer names an advertised wire effort.
+  const levels = patched.supported_reasoning_levels;
+  if (Array.isArray(levels) && patched.multi_agent_reasoning_effort != null
+    && (!levels.some(level => level.effort === patched.multi_agent_reasoning_effort)
+      || (reasoning.size && !reasoning.has(patched.multi_agent_reasoning_effort)))) {
+    const supported = levels.filter(level => level.effort !== "ultra"
+      && (!reasoning.size || reasoning.has(level.effort)));
+    const effort = supported.at(-1)?.effort;
+    if (effort) patched.multi_agent_reasoning_effort = effort;
+  }
   // The Codex catalog describes ChatGPT service tiers. Copilot must advertise
   // an exact fast model before CCDX exposes the corresponding selector.
   if (!isEligibleCopilotGpt6(copilotModels, `${model.slug}-fast`)) {

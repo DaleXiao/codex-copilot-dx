@@ -16,6 +16,7 @@ test counts, timings, live-provider observations, and limitations remain
 historical facts rather than current guarantees.
 
 - [0.9.19: GitHub startup checks and stable-release updates](RELEASE_0.9.19.md)
+- [0.9.20: timing evidence, real-client checks and bounded analytics reuse](RELEASE_0.9.20.md)
 - [0.9.13: model-bound Auto-review reasoning selection](RELEASE_0.9.13.md)
 - [0.9.12: GPT-6.1 Sol / low Auto-review default](RELEASE_0.9.12.md)
 - [0.9.11: bounded usage-summary cache and diagnostic redaction](RELEASE_0.9.11.md)

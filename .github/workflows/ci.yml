@@ -24,3 +24,16 @@ jobs:
       - run: npm ci
       - run: npm run verify
       - run: node scripts/config-startup-replay.mjs
+  codex-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - name: Provision latest official Codex on the CI runner
+        run: npm install --prefix "$RUNNER_TEMP/ccdx-codex" @openai/codex@latest
+      - name: Verify real Codex configuration, catalog and synthetic Responses
+        run: node scripts/codex-message-id-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"

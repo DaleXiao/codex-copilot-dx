@@ -461,6 +461,24 @@ test("client-provided GPT-6.1 Sol entry wins; ineligible upstream cannot expose 
   assert.equal(missing.models.some(({ slug }) => slug === "gpt-6.1-sol"), false);
 });
 
+test("multi-agent effort repairs only unsupported mappings and preserves valid choices and order", () => {
+  const levels = ["low", "high", "max", "ultra"].map(effort => ({ effort, description: `Keep ${effort}` }));
+  const client = { slug: "gpt-6.1-sol", visibility: "hide", supported_reasoning_levels: levels,
+    multi_agent_reasoning_effort: "xhigh", multi_agent_version: "v2", default_reasoning_level: "low", model_messages: { keep: true } };
+  const upstream = copilotModel("gpt-6.1-sol");
+  upstream.capabilities.supports.reasoning_effort = ["low", "high", "max", "ultra"];
+  const build = entry => buildCodexModelResponse({ copilotModels: { data: [upstream] }, codexCatalog: { models: [entry] } }).models[0];
+  const repaired = build(client);
+  assert.equal(repaired.multi_agent_reasoning_effort, "max");
+  assert.deepEqual(repaired.supported_reasoning_levels, levels);
+  assert.equal(repaired.multi_agent_version, "v2");
+  assert.equal(repaired.default_reasoning_level, "low");
+  assert.deepEqual(repaired.model_messages, { keep: true });
+  assert.equal(build({ ...client, multi_agent_reasoning_effort: "high" }).multi_agent_reasoning_effort, "high");
+  assert.equal(build({ ...client, multi_agent_reasoning_effort: null }).multi_agent_reasoning_effort, null);
+  assert.equal(client.multi_agent_reasoning_effort, "xhigh");
+});
+
 test("GPT-6 remains hidden unless the Copilot entry is unambiguously eligible", () => {
   const ineligible = [
     copilotGpt6({ vendor: "Microsoft" }),

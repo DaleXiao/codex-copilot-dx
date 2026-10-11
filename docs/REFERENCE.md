@@ -201,7 +201,7 @@ ccdx image-status
 ccdx disable-image
 ```
 
-`image-status` never prints the API key and performs only a local, non-generating tool-readiness check. Disabling removes the stored provider credential, the CCDX-owned MCP block, and unmodified skill, reference, and helper files; user-modified files are preserved. Cached tool calls then fail closed. The Node helper creates a new file under the task's `output/imagegen` directory by default and reports its absolute path; it never overwrites an existing file or automatically repeats a failed generation. The image endpoint is contacted only by `enable-image` validation and by explicit `generate_image` or `edit_image` tool calls. Ordinary Responses, models, authentication, Fast, Auto-review, compaction, and image-input paths remain on their existing routes.
+`image-status` never prints the API key and performs only a local, non-generating tool-readiness check. It lists generation and editing separately based on the local tools/list response; a configured model name alone does not prove editing is available. Disabling removes the stored provider credential, the CCDX-owned MCP block, and unmodified skill, reference, and helper files; user-modified files are preserved. Cached tool calls then fail closed. The Node helper creates a new file under the task's `output/imagegen` directory by default and reports its absolute path; it never overwrites an existing file or automatically repeats a failed generation. The image endpoint is contacted only by `enable-image` validation and by explicit `generate_image` or `edit_image` tool calls. Ordinary Responses, models, authentication, Fast, Auto-review, compaction, and image-input paths remain on their existing routes.
 
 Generated image downloads must use public HTTPS addresses, do not follow redirects, are DNS-checked against private and reserved addresses, and are capped at 32 MiB. Well-known NAT64 `64:ff9b::/96` addresses apply the same IPv4 public/private rules to the embedded address, without rejecting legitimate public translations. DNS resolution and downloading share one deadline and respond to cancellation; a late DNS result cannot start a cancelled download. The local MCP route accepts calls only from the same device and permits at most two concurrent image operations. Host must name loopback, the actual local socket address (including equivalent IPv6/IPv4-mapped forms), or the explicitly configured bind hostname. Missing Host remains compatible with HTTP/1.0 and in-process clients. It requires `application/json` and rejects browser `Origin` headers; native Codex and Node clients do not send an Origin. The tool supports new-image generation at `1024x1024`, `1536x1024`, or `1024x1536`.
 
@@ -239,6 +239,28 @@ GitHub is the package source, not a replacement for the npm installer. Dependenc
 If a configured npm mirror has not synchronized the current release yet, use the GitHub source. A running adapter keeps its loaded version until it is stopped and restarted.
 
 ## Diagnostics
+
+`ccdx status` and the dashboard show the sample count beside each timing. First
+output is observed at the gateway from generated deltas, hidden-reasoning/tool
+announcements or content snapshots; a runtime-only result is marked separately.
+Empty message/envelope frames, client tool results and compaction are excluded.
+`first_output_sources` and each recent request's `first_output_source` describe
+that evidence, not internal model decode or prefill timing. Per-token time is a
+gateway estimate and can include hosted-tool and downstream delays. The new
+timing classifier does not change stream forwarding or the existing output
+commitment that gates compatibility retries.
+
+The adapted Codex model catalog preserves valid multi-agent reasoning mappings.
+Only a mapping no longer supported by the final advertised effort options is
+repaired to the last available non-Ultra effort; no model switch or forced
+highest-effort policy is introduced. Client-provided defaults, option order,
+instructions and multi-agent version stay intact.
+
+CI additionally provisions the latest official Codex on its runner and uses an
+isolated app-server to verify configuration, its model list and synthetic direct
+and proxied Responses message delivery. It logs the tested runtime version,
+does not skip installed-version mismatches and does not install clients on user
+machines or use live credentials/models.
 
 `ccdx doctor` also inspects installed macOS App version metadata and running
 Codex/ChatGPT App executable identities, without reading command arguments,
@@ -432,7 +454,7 @@ The summary covers the current log and its single rotated backup, not an unbound
 
 Usage writes are asynchronous and batched under the existing cross-process rotation lock. Pending and in-flight records share a 4096-record / 4 MiB ceiling. If either ceiling is reached, new excess records are dropped with a warning and a status counter; inference does not wait or retry. Normal records and per-record rotation boundaries are unchanged. The bounded shutdown flush remains 1.5 seconds; disk failures and shutdown deadlines can prevent persistence, so usage is diagnostic rather than a billing ledger.
 
-Repeated plain usage summaries in the same process reuse one bounded cache entry when both retained log files are unchanged. File identity, size, modification/change timestamps and a two-second recent-write guard control reuse; concurrent settled-file queries share one scan. The serialized summary budget is 256 KiB and at most 128 model groups; larger results remain complete but uncached. Warnings, unstable reads, metadata errors and scans with changed files are not retained. Each caller receives an independent result. Analytics record callbacks and custom-warning reads keep the original streaming path. There is no persistent index, background polling, cross-process cache or change to usage writes; opening analytics still scans the retained records.
+Repeated plain usage summaries in the same process reuse one bounded cache entry when both retained log files are unchanged. File identity, size, modification/change timestamps and a two-second recent-write guard control reuse; concurrent settled-file queries share one scan. The serialized summary budget is 256 KiB and at most 128 model groups; larger results remain complete but uncached. Warnings, unstable reads, metadata errors and scans with changed files are not retained. Each caller receives an independent result. Analytics record callbacks and custom-warning reads keep the original streaming path. There is no persistent index, background polling, cross-process cache or change to usage writes; the first analytics read still scans the retained records. Dashboard analytics then reuses up to two settled aggregate snapshots within a combined 2 MiB serialized budget, keyed by file identity/version, time zone and local date. Concurrent identical reads share one scan; writes, rotation, truncation, replacement, warnings, future/undated records and oversized results prevent reuse. Returned data is cloned, and custom callbacks/warnings keep the uncached path.
 
 Diagnostic redaction removes Basic authorization payloads and URL userinfo, and consumes escaped quotes inside sensitive JSON fields. Ordinary Basic-related prose, safe host/path information and error codes are retained. These protections apply to existing failure/status/debug diagnostics, not forwarded requests or upstream response bodies. They do not make arbitrary upstream prose guaranteed safe to share.
 

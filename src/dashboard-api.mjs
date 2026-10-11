@@ -13,6 +13,7 @@ import {
 } from "./terminal-animation.mjs";
 import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate } from "./usage-store.mjs";
 import { createUsageAnalytics } from "./usage-analytics.mjs";
+import { analyzeUsageLogs } from "./usage-analysis.mjs";
 import { readUserSettings, terminalAnimationPreference, writeTerminalAnimationTheme } from "./user-settings.mjs";
 
 const ANIMATION_PATH = "/_ccdx/ui/animation";
@@ -111,7 +112,7 @@ export async function handleDashboardApi(req, res, pathname, {
   env = process.env,
   home = os.homedir(),
   liveModelsFn = () => fetchLiveCopilotModels({ home }),
-  usageSummaryFn = (options) => summarizeUsageLogs(undefined, options),
+  usageSummaryFn,
   authStatusFn = () => authStatus({ home }),
 } = {}) {
   if (!isLoopbackAddress(req.socket?.remoteAddress)
@@ -229,8 +230,10 @@ export async function handleDashboardApi(req, res, pathname, {
       }
     }
     try {
-      const summary = await usageSummaryFn(analytics ? { onRecord: analytics.record } : undefined);
-      sendJson(res, 200, { source: "local_usage_log", ...usageTable(summary), ...(analytics ? { analytics: analytics.snapshot() } : {}) });
+      const analysis = analytics && !usageSummaryFn
+        ? await analyzeUsageLogs(undefined, { timeZone: query.get("time_zone") || "UTC" }) : null;
+      const summary = analysis?.summary || await (usageSummaryFn || (options => summarizeUsageLogs(undefined, options)))(analytics ? { onRecord: analytics.record } : undefined);
+      sendJson(res, 200, { source: "local_usage_log", ...usageTable(summary), ...(analytics ? { analytics: analysis?.analytics || analytics.snapshot() } : {}) });
     } catch {
       sendJson(res, 500, { error: "Could not read local usage summary" });
     }

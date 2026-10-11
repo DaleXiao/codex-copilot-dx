@@ -47,7 +47,7 @@ export function contextMessages(entries) {
 
 // Use the client's paginated reader: no transcript scans, SQLite access, forks,
 // turn starts, or writes to the user's conversation. Zstandard remains its job.
-export function readSuggestionContext(threadId, config, { signal, spawnFn = spawn } = {}) {
+export function readSuggestionContext(threadId, config, { signal, spawnFn = spawn, includePage = false } = {}) {
   if (!UUID.test(threadId)) return Promise.reject(new Error("Invalid conversation ID"));
   return new Promise((resolve, reject) => {
     const decoder = new StringDecoder("utf8");
@@ -95,7 +95,8 @@ export function readSuggestionContext(threadId, config, { signal, spawnFn = spaw
           } else {
             if (!Array.isArray(reply.result?.data)) { finish(new Error("Invalid conversation page")); return; }
             const messages = contextMessages(reply.result.data);
-            finish(messages.length ? null : new Error("No recent text messages are available for a suggestion"), messages);
+            finish(messages.length ? null : new Error("No recent text messages are available for a suggestion"), includePage
+              ? { messages, latestTurnId: reply.result.data[0]?.turnId || null } : messages);
           }
         }
       });

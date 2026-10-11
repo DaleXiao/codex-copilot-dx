@@ -9,7 +9,7 @@ CCDX is a local compatibility adapter for Codex App. It configures Codex to use 
 ### Optional next-message suggestions
 
 Suggestions are disabled by default. No suggestion MCP or skill is installed at
-startup, and the primary adapter does not import or start a predictor.
+startup, and the primary adapter does not start a predictor.
 
 ```bash
 ccdx suggestion on
@@ -23,7 +23,7 @@ Start CCDX, enable suggestions, then open **Next message / 下一句** from a lo
 conversation panel, or ask Codex for a next-message suggestion. **Add to draft /
 加入草稿** appends ordinary text and never sends. The user still presses Send.
 If the MCP has not appeared in an open App, restart the App once. There is no
-client patch, grey ghost text, automatic background prediction, or auto-approval.
+client patch, grey ghost text, automatic draft insertion, or auto-approval.
 Model selection alone keeps the feature disabled. The initial model is
 `gpt-6-luna`; `low` reasoning is used when advertised. No service tier is forced.
 
@@ -44,7 +44,8 @@ The MCP uses the host-supplied thread ID and the installed Codex's paginated
 user/assistant text excerpts and 16,000 characters. Images, reasoning items and
 tool outputs are excluded; there is no transcript scan, fork or resumed turn.
 Recent text is sent through the local CCDX adapter to the selected Copilot model
-only when the user requests a suggestion. Provider data policies still apply.
+when requested manually, or after a reply through the separately reviewed optional
+hook described below. Provider data policies still apply.
 Context lookup is capped at 5 seconds/2 MiB, the operation at 30 seconds, output
 at 64 KiB/300 characters, concurrent work at two, and in-memory candidates at 16.
 Candidates expire for adoption after 10 minutes and are bound to their thread
@@ -52,6 +53,31 @@ and selected model. Failure/HTTP 200 incomplete responses never become drafts.
 No additional retry is added by the suggestion feature. Existing adapter policies
 remain unchanged. App support requires MCP draft insertion; the executable can
 be selected explicitly with `CCDX_CODEX_BINARY` when automatic discovery fails.
+
+On supported macOS/Linux Codex runtimes, `suggestion on` also registers an
+asynchronous `Stop` hook. It generates after a finished reply only after the user
+reviews and trusts that exact `suggestion-auto.mjs` command through Codex's normal
+hook review screen (`/hooks` in Codex CLI). CCDX never writes hook trust or bypasses
+review. Existing handlers and native prediction settings are preserved. Windows,
+unsupported hook runtimes and conflicting hook declarations keep the manual panel.
+Existing 0.9.22 users can run `ccdx suggestion on` once to configure the hook.
+
+Automatic work has one local slot, a 30-second deadline, no added retries and one
+attempt per observed turn. It checks the latest turn before and after inference;
+newer turns or changed settings discard the result. The hook does not start a new
+turn, send a message, edit a draft or wait on the foreground reply. Enabled users
+incur additional selected-model usage after replies. `suggestion off` removes only
+the unchanged CCDX hook and disables both automatic and manual requests.
+
+Only the candidate and generation metadata are saved locally in `suggestion-state`
+beside settings, with at most 32 entries. Candidates expire for adoption after ten
+minutes; stale files are pruned on the next automatic operation. No context excerpts
+are saved there. The loopback dashboard reads settings and safe recent status only;
+it does not invoke a model or confirm hook trust. Refresh it after changing settings.
+Opening Next message reads a current cached candidate without a second model call.
+The user must still choose **Add to draft**, then Send. Closed panels cannot access
+the composer, and the host exposes no atomic empty-draft insertion; automatic
+draft filling is therefore intentionally unavailable.
 
 ### Core adapter
 

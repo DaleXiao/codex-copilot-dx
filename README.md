@@ -71,8 +71,10 @@ The dashboard does not poll in the background; refresh when needed.
   `gpt-6-luna`, with `low` reasoning when advertised. Requires a running local
   adapter and a recent Codex with paginated thread reads and MCP draft support.
 - Suggestions read only a bounded page from the host-identified current thread.
-  Images, reasoning items and tool outputs are excluded. There is no background
-  prediction or startup hook; selecting a model alone does not enable the feature.
+  Images, reasoning items and tool outputs are excluded. On supported runtimes,
+  `suggestion on` configures an async Stop hook; review it in Codex before it runs.
+  CCDX never grants trust. The panel reads saved suggestions; adding drafts is manual.
+  The dashboard shows settings and generation status. Model selection alone stays off.
   Existing user-managed MCP/profile configuration is preserved. Native prediction
   settings are untouched; account/remote defaults in all future clients cannot be
   reliably detected. Use `ccdx suggestion off` when preferring an official feature.

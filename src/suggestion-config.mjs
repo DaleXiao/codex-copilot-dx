@@ -19,6 +19,7 @@ export function readSuggestionConfig({ filePath = suggestionConfigPath(), strict
     const value = JSON.parse(fs.readFileSync(filePath, "utf8"));
     if (!value || typeof value !== "object" || Array.isArray(value)
       || typeof value.enabled !== "boolean"
+      || (value.automatic !== undefined && typeof value.automatic !== "boolean")
       || typeof value.model !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(value.model)) throw new Error();
     return value;
   } catch (error) {
@@ -62,6 +63,26 @@ export function computeSuggestionMcpConfig(content, { enabled, filePath }) {
   const updated = content + (content.endsWith("\n") ? "\n" : "\n\n") + block;
   validateManagedConfigEdit(parsed, updated, [sectionPath]);
   return { content: updated, changed: true };
+}
+
+export function computeSuggestionAutoHook(content, { enabled, filePath }) {
+  const parsed=parseCodexToml(content);
+  const quote=value=>`'${value.replaceAll("'", "'\\''")}'`;
+  const command=`CCDX_SUGGESTION_CONFIG=${quote(filePath)} ${quote(process.execPath)} ${quote(fileURLToPath(new URL("./suggestion-auto.mjs",import.meta.url)))}`;
+  const start="# ccdx:suggestion-auto:start",end="# ccdx:suggestion-auto:end";
+  const block=`${start}\n[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = "command"\ncommand = ${JSON.stringify(command)}\nasync = true\ntimeout = 35\n${end}\n`;
+  const owned=content.indexOf(start);
+  if(owned>=0){
+    if(!content.includes(block)||content.indexOf(start,owned+start.length)!==-1)return {content,changed:false,skipped:true};
+    if(enabled)return {content,changed:false};
+    const updated=content.replace(block,"");validateManagedConfigEdit(parsed,updated,[["hooks","Stop"]]);return {content:updated,changed:true};
+  }
+  if(!enabled)return {content,changed:false};
+  if(process.platform==="win32")return {content,changed:false,skipped:true};
+  const statements=codexTomlStatements(content);
+  if(statements.some(item=>item.kind==="value"&&item.keys[0]==="hooks"&&(item.keys.length===1||item.keys.length===2&&item.keys[1]==="Stop")))return {content,changed:false,skipped:true};
+  const updated=content+(content.endsWith("\n")?"\n":"\n\n")+block;
+  validateManagedConfigEdit(parsed,updated,[["hooks","Stop"]]);return {content:updated,changed:true};
 }
 
 export function suggestionCodexConfigPath({ env = process.env, home = os.homedir() } = {}) {

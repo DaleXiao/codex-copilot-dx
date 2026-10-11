@@ -8,7 +8,8 @@ import { EventEmitter } from "node:events";
 import { parseCliArgs, cliHelp } from "../src/cli-options.mjs";
 import { parseCodexToml } from "../src/config-toml.mjs";
 import { runSuggestionCommand } from "../src/cli-suggestion.mjs";
-import { computeSuggestionMcpConfig, readSuggestionConfig, suggestionConfigPath } from "../src/suggestion-config.mjs";
+import { computeSuggestionAutoHook, computeSuggestionMcpConfig, readSuggestionConfig, suggestionConfigPath } from "../src/suggestion-config.mjs";
+import { runAutomaticSuggestion, readAutomaticSuggestion, automaticSuggestionStatus } from "../src/suggestion-auto.mjs";
 import { contextMessages, readSuggestionContext, suggestionThreadId } from "../src/suggestion-context.mjs";
 import { generateSuggestion, suggestionAdapterUrl } from "../src/suggestion-provider.mjs";
 import { createSuggestionMcp, runSuggestionStdio } from "../src/suggestion-mcp.mjs";
@@ -21,7 +22,7 @@ function setup(t) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-suggestion-test-"));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const env = { CODEX_HOME: path.join(home, "codex") }, output = { write() {} };
-  const options = { home, env, output, resolveBinary: () => "/fake/codex", loadCatalog: async () => ({ modelIds: ["gpt-6-luna", "gpt-6.1-sol"], reasoningEfforts: { "gpt-6-luna": ["low"], "gpt-6.1-sol": ["low", "high"] } }) };
+  const options = { home, env, output, resolveBinary: () => "/fake/codex", probeHooks:async()=>false,loadCatalog: async () => ({ modelIds: ["gpt-6-luna", "gpt-6.1-sol"], reasoningEfforts: { "gpt-6-luna": ["low"], "gpt-6.1-sol": ["low", "high"] } }) };
   return { home, env, options, settings: suggestionConfigPath({ env, home }), codex: path.join(env.CODEX_HOME,"config.toml") };
 }
 function write(file, text) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); }
@@ -44,10 +45,70 @@ test("suggestions default off: status and off install nothing and do no lookup",
 
 test("model selection alone remains off and installs no MCP", async t => {
   const s=setup(t);
-  await runSuggestionCommand({...s.options,action:"model",model:"gpt-6.1-sol"});
+  await runSuggestionCommand({...s.options,action:"model",model:"gpt-6.1-sol",resolveBinary:()=>assert.fail("Disabled model selection must not start Codex")});
   assert.equal(readSuggestionConfig({filePath:s.settings}).enabled,false);
   assert.equal(readSuggestionConfig({filePath:s.settings}).model,"gpt-6.1-sol");
   assert.equal(fs.existsSync(s.codex),false);
+});
+
+test("automatic hook setup preserves user hooks, is idempotent, and removes only its own block", async t => {
+  const s=setup(t), original='[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype="command"\ncommand="user-hook"\n';
+  write(s.codex,original);
+  const result=await runSuggestionCommand({...s.options,action:"on",probeHooks:async()=>true});
+  assert.equal(result.automatic,process.platform!=="win32");
+  const content=fs.readFileSync(s.codex,"utf8");
+  if(process.platform!=="win32")assert.equal(parseCodexToml(content).hooks.Stop.length,2);
+  assert.equal((await runSuggestionCommand({...s.options,action:"on",loadCatalog:()=>assert.fail("No repeated lookup")})).changed,false);
+  await runSuggestionCommand({...s.options,action:"off"});
+  assert.deepEqual(parseCodexToml(fs.readFileSync(s.codex,"utf8")).hooks,parseCodexToml(original).hooks);
+  const inline='hooks = { Stop = [] }\n';
+  if(process.platform!=="win32")assert.equal(computeSuggestionAutoHook(inline,{enabled:true,filePath:s.settings}).skipped,true);
+});
+
+test("automatic generation is disabled by default, bounded, deduplicated, and metadata-only on the dashboard", async t => {
+  const s=setup(t), event={hook_event_name:"Stop",session_id:ID,turn_id:OTHER};
+  const options={filePath:s.settings,readContext:async()=>({latestTurnId:OTHER,messages:[{role:"user",content:"PRIVATE PROMPT"}]}),generate:async()=>"PRIVATE CANDIDATE"};
+  assert.equal((await runAutomaticSuggestion(event,{...options,readContext:()=>assert.fail("Disabled must not read")})).skipped,true);
+  assert.equal(fs.existsSync(path.join(path.dirname(s.settings),"suggestion-state")),false);
+  write(s.settings,JSON.stringify({...config,automatic:true}));
+  const result=await runAutomaticSuggestion(event,options);assert.equal(result.state,"ready");
+  assert.equal((await runAutomaticSuggestion(event,{...options,generate:()=>assert.fail("No duplicate model call")})).skipped,true);
+  assert.equal(readAutomaticSuggestion(s.settings,ID).suggestion,"PRIVATE CANDIDATE");
+  assert.equal(automaticSuggestionStatus(s.settings).state,"ready");
+  assert.doesNotMatch(JSON.stringify(automaticSuggestionStatus(s.settings)),/PRIVATE|candidate_id|turnId|model/);
+  assert.equal(automaticSuggestionStatus(s.settings,Date.now()+600001).state,"idle");
+});
+
+test("automatic generation rejects recursive, stale and changed turns and never caches failed content", async t => {
+  const s=setup(t), event={hook_event_name:"Stop",session_id:ID,turn_id:OTHER};
+  write(s.settings,JSON.stringify({...config,automatic:true}));
+  const options={filePath:s.settings,generate:()=>assert.fail("No stale inference"),readContext:async()=>({latestTurnId:ID,messages:[]})};
+  assert.equal((await runAutomaticSuggestion({...event,stop_hook_active:true},options)).skipped,true);
+  assert.equal((await runAutomaticSuggestion(event,options)).skipped,true);
+  assert.equal(readAutomaticSuggestion(s.settings,ID).reason,"turn_changed");
+  const next={...event,turn_id:ID};
+  const failed=await runAutomaticSuggestion(next,{...options,generate:async()=>{throw new Error("PRIVATE UPSTREAM BODY")}});
+  assert.equal(failed.state,"failed");assert.equal(failed.reason,"model_failed");assert.doesNotMatch(JSON.stringify(failed),/PRIVATE/);
+});
+
+test("automatic work limits concurrency and drops results after settings or turn changes", async t => {
+  const s=setup(t), event={hook_event_name:"Stop",session_id:ID,turn_id:OTHER};
+  write(s.settings,JSON.stringify({...config,automatic:true}));
+  let release;const wait=new Promise(resolve=>release=resolve);
+  const options={filePath:s.settings,readContext:async()=>({latestTurnId:OTHER,messages:[]}),generate:async()=>{await wait;return "old candidate"}};
+  const first=runAutomaticSuggestion(event,options);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal((await runAutomaticSuggestion({...event,session_id:OTHER},options)).busy,true);
+  write(s.settings,JSON.stringify({...config,automatic:false}));release();
+  const result=await first;assert.equal(result.reason,"settings_changed");assert.equal(result.suggestion,undefined);
+  assert.equal(fs.existsSync(path.join(path.dirname(s.settings),"suggestion-state","slot-0.lock")),false);
+});
+
+test("cached automatic candidates are read without inference and cannot be adopted after a new turn", async () => {
+  const cached={state:"ready",model:config.model,suggestion:"Next?",candidate_id:"candidate",at:Date.now(),turnId:OTHER};
+  const handle=createSuggestionMcp({loadConfig:()=>config,loadAutomatic:()=>cached,generate:()=>assert.fail("Read cache only"),readContext:async()=>({latestTurnId:ID,messages:[]})});
+  assert.equal((await handle(tool("latest_suggestion"))).structuredContent.suggestion,"Next?");
+  await assert.rejects(handle(tool("prepare_suggestion_draft",{candidate_id:"candidate"})),/Conversation changed/);
 });
 
 test("on is idempotent; off preserves all unrelated Codex settings", async t => {

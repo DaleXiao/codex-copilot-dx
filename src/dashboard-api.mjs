@@ -15,11 +15,14 @@ import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate } from "./usage-
 import { createUsageAnalytics } from "./usage-analytics.mjs";
 import { analyzeUsageLogs } from "./usage-analysis.mjs";
 import { readUserSettings, terminalAnimationPreference, writeTerminalAnimationTheme } from "./user-settings.mjs";
+import { readSuggestionConfig, suggestionConfigPath } from "./suggestion-config.mjs";
+import { automaticSuggestionStatus } from "./suggestion-auto.mjs";
 
 const ANIMATION_PATH = "/_ccdx/ui/animation";
 const MODELS_PATH = "/_ccdx/ui/models/live";
 const USAGE_PATH = "/_ccdx/ui/usage";
 const AUTH_PATH = "/_ccdx/ui/auth";
+const SUGGESTION_PATH = "/_ccdx/ui/suggestion";
 const DISABLED_ANIMATION = /^(0|false|no|off)$/i;
 
 function sendJson(res, statusCode, value) {
@@ -144,6 +147,15 @@ export async function handleDashboardApi(req, res, pathname, {
     } catch {
       sendJson(res, 500, { error: "Could not read local auth status" });
     }
+    return;
+  }
+  if(pathname===SUGGESTION_PATH && req.method==="GET"){
+    try{
+      const filePath=suggestionConfigPath({env,home}),config=readSuggestionConfig({filePath,strict:true});
+      sendJson(res,200,{source:"local_suggestion_settings",enabled:config.enabled,model:config.model,
+        automatic_generation_configured:config.enabled&&config.automatic===true,hook_trust:"unknown",automatic_insertion:false,
+        recent:config.enabled?automaticSuggestionStatus(filePath):{state:"idle",at:null,reason:null}});
+    }catch{sendJson(res,409,{error:"Suggestion settings are invalid; run ccdx suggestion status"})}
     return;
   }
 

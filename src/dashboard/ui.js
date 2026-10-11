@@ -16,6 +16,7 @@ const finite = (value) => value !== null && value !== undefined && Number.isFini
 const number = (value) => finite(value) ? Math.max(0, Math.round(Number(value))).toLocaleString() : "—";
 const mib = (value) => finite(value) ? `${(Number(value) / 1048576).toFixed(1)} MiB` : "—";
 let authLoading = false;
+let suggestionLoading=false;
 let contextRequests = [];
 let contextCompactions = {};
 
@@ -38,6 +39,23 @@ async function loadAuth() {
   } catch {
     text("auth-account", "GitHub / UNAVAILABLE");
   } finally { authLoading = false; }
+}
+
+async function loadSuggestion(){
+  if(suggestionLoading)return;
+  suggestionLoading=true;
+  try{
+    const response=await fetch("/_ccdx/ui/suggestion",{cache:"no-store",headers:{"X-CCDX-Dashboard":"1"},signal:AbortSignal.timeout(5000)});
+    const data=await response.json();
+    if(!response.ok||data.source!=="local_suggestion_settings")throw new Error();
+    text("suggestion-enabled",data.enabled?"ENABLED":"DISABLED");
+    element("suggestion-model").textContent=data.model;
+    text("suggestion-auto",data.automatic_generation_configured?"Configured; review hook":"DISABLED");
+    const state={idle:"No automatic suggestion yet",generating:"Generating suggestion",ready:"Suggestion ready; open Next message",empty:"No useful suggestion",failed:"Suggestion failed; retry manually",cancelled:"Suggestion cancelled",unknown:"Unknown"}[data.recent?.state]||"Unknown";
+    text("suggestion-recent",state);
+    text("suggestion-detail","{time} / {reason}",{time:data.recent?.at?new Date(data.recent.at).toLocaleTimeString():"—",reason:phrase({context_unavailable:"Context unavailable",model_failed:"Model request failed",settings_changed:"Settings changed",turn_changed:"Conversation changed",timeout:"Suggestion timed out"}[data.recent?.reason]||"No recorded error")});
+  }catch{text("suggestion-enabled","UNAVAILABLE");element("suggestion-model").textContent="—";text("suggestion-auto","UNAVAILABLE");text("suggestion-recent","Run ccdx suggestion status");element("suggestion-detail").textContent="—";}
+  finally{suggestionLoading=false;}
 }
 
 function duration(value) {
@@ -223,10 +241,11 @@ async function refresh() {
   }
 }
 
-element("refresh").addEventListener("click", () => { refresh(); loadAuth(); });
+element("refresh").addEventListener("click", () => { refresh(); loadAuth(); loadSuggestion(); });
 element("request-context").addEventListener("toggle", () => { if (element("request-context").open) renderContext(); });
 refresh();
 loadAuth();
+loadSuggestion();
 
 const animationRows = new Map();
 let animationTimelines = [];

@@ -5,6 +5,7 @@ import { StringDecoder } from "node:string_decoder";
 import { readSuggestionConfig, suggestionConfigPath } from "./suggestion-config.mjs";
 import { readSuggestionContext, suggestionThreadId } from "./suggestion-context.mjs";
 import { generateSuggestion } from "./suggestion-provider.mjs";
+import { readAutomaticSuggestion } from "./suggestion-auto.mjs";
 
 const URI = "ui://ccdx-suggestion/panel.html";
 const protocolVersions = new Set(["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"]);
@@ -23,12 +24,19 @@ export const SUGGESTION_TOOLS = [
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: { ui: { visibility: ["app"] } },
   },
+  {
+    name:"latest_suggestion",title:"Read latest suggestion",
+    description:"Read an already-generated candidate for this local conversation. Does not invoke a model or edit a draft.",
+    inputSchema:{type:"object",properties:{},additionalProperties:false},
+    annotations:{readOnlyHint:true,openWorldHint:false,destructiveHint:false},_meta:{ui:{visibility:["app"]}},
+  },
 ];
 
 export function createSuggestionMcp({
   loadConfig = () => readSuggestionConfig({ filePath: suggestionConfigPath() }),
   readContext = readSuggestionContext, generate = generateSuggestion,
   now = Date.now, timeoutMs = 30_000,
+  loadAutomatic = threadId => readAutomaticSuggestion(suggestionConfigPath(),threadId),
 } = {}) {
   const candidates = new Map();
   let active = 0;
@@ -55,10 +63,24 @@ export function createSuggestionMcp({
     const args = request.params?.arguments || {};
     if (typeof args !== "object" || Array.isArray(args)) throw new Error("Invalid suggestion parameters");
     prune();
+    const automatic = () => {
+      const item=loadAutomatic(threadId);
+      return item?.state==="ready" && typeof item.suggestion==="string" && item.suggestion.length<=300
+        && typeof item.candidate_id==="string" && item.model===config.model && Number.isFinite(item.at) && now()-item.at<=10*60_000 ? item : null;
+    };
+    if(request.params.name==="latest_suggestion"){
+      if(Object.keys(args).length)throw new Error("Invalid latest suggestion parameters");
+      const item=automatic();return result(item?{suggestion:item.suggestion,candidate_id:item.candidate_id,model:item.model}:{suggestion:null,candidate_id:null,model:config.model});
+    }
     if (request.params.name === "prepare_suggestion_draft") {
       if (Object.keys(args).some(key => key !== "candidate_id")) throw new Error("Invalid draft parameters");
-      const item = candidates.get(args.candidate_id);
+      const stored=automatic();
+      const item = candidates.get(args.candidate_id) || (stored?.candidate_id===args.candidate_id?{...stored,threadId}:null);
       if (!item || item.threadId !== threadId || item.model !== config.model) throw new Error("Suggestion expired or conversation changed; generate a new suggestion");
+      if(stored?.candidate_id===args.candidate_id){
+        const page=await readContext(threadId,config,{signal,includePage:true});
+        if(page.latestTurnId!==stored.turnId)throw new Error("Conversation changed; generate a new suggestion");
+      }
       return result({ candidate_id: args.candidate_id, suggestion: item.suggestion, model: item.model });
     }
     if (request.params.name !== "suggest_next_message" || Object.keys(args).length) throw new Error("Invalid suggestion tool or parameters");

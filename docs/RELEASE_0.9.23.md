@@ -69,4 +69,22 @@ send:false and repeat-adoption prevention. This is a browser host harness, not a
 claim of a new native-App visual test. The unchanged MCP draft mechanism was
 previously user-verified in the unmodified App.
 
-Publication receipts will be recorded after GitHub CI and npm publication succeed.
+## Publication
+
+Application commit: `7baff37e0d9e8ed478b9a7a1277a03aa3ce3b418`.
+Annotated tag object: `9e2f52db477c3a72fabf2f2de82f3f2d033a29c9`.
+
+- Node 22.15, Node 24 and latest official Codex jobs succeeded:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38130762462.
+- Formal GitHub Release, neither draft nor prerelease:
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.23.
+- Exactly one npm publishing workflow succeeded, including all prepublish gates:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38130887115.
+- npm published `codex-copilot-dx@0.9.23` with `latest`. Local and both CI package
+  checks match the SHA-1, file count and packed size recorded above.
+
+GitHub used the same previously supplied DaleXiao PAT from its exact proven source,
+identity-verified and held only in memory. npm used the existing repository NPM_TOKEN.
+No alternate credential, browser authentication, local npm registry query or client
+patch was used. Test processes were closed and task-owned temporary files cleaned;
+real Codex configuration, hook trust records and running CCDX were not modified.

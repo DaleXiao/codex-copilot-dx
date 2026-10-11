@@ -28,7 +28,7 @@ const timeoutMs = 20_000;
 function runtimeEnv(home) {
   // Deliberately omit inherited credentials, provider URLs, proxies, and Codex configuration overrides.
   return Object.fromEntries(Object.entries({
-    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+    PATH: [path.dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(path.delimiter),
     TMPDIR: root,
     LANG: process.env.LANG || "en_US.UTF-8",
     CODEX_HOME: home,

@@ -57,6 +57,9 @@ unknown-event heuristic or forced highest-effort policy was imported.
   Visual inspection found crowded timing rows; the scoped repair stacks them
   vertically using the existing font and size. No browser download/user profile.
 - Test-fixture DOM omissions were corrected without relaxing production checks.
+  The new Linux CI exposed that npm's Codex wrapper needs Node on the isolated
+  PATH; the replay now adds only the current Node executable's directory, not
+  the inherited PATH or credentials. A local env-node wrapper regression passes.
   No live provider requests, user configuration edits or active-service restart.
   `git diff --check` passed. No new dependencies.
 

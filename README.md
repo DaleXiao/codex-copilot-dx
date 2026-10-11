@@ -38,6 +38,8 @@ The dashboard does not poll in the background; refresh when needed.
 | `ccdx models` | Fresh upstream model list |
 | `ccdx usage` | Recorded tokens and upstream prompt-cache hit rate |
 | `ccdx auto-review-model` | Select model, then reasoning effort; `0` follows client |
+| `ccdx suggestion on` / `ccdx suggestion off` | Enable or disable the optional next-message panel |
+| `ccdx suggestion model` / `ccdx suggestion status` | Choose its model by number, or check settings |
 | `ccdx animation` | Preview and select terminal animation |
 | `ccdx cache --limit 128` | Set the history-cache budget in MiB |
 | `ccdx cache --clean` | Clear the rebuildable image-transform cache |
@@ -62,6 +64,18 @@ The dashboard does not poll in the background; refresh when needed.
   break continuations. Generated images and Codex transcripts are not deleted.
 - Optional image setup/maintenance never blocks the primary service. Disabled
   users get no CCDX image skill or MCP installation.
+- Next-message suggestions are **off by default**. Opt in with `ccdx suggestion on`,
+  then open **Next message / 下一句** in a local conversation panel or ask Codex for
+  a next-message suggestion. **Add to draft / 加入草稿** appends ordinary text; it
+  never sends, replaces your draft, or patches the client. Default model:
+  `gpt-6-luna`, with `low` reasoning when advertised. Requires a running local
+  adapter and a recent Codex with paginated thread reads and MCP draft support.
+- Suggestions read only a bounded page from the host-identified current thread.
+  Images, reasoning items and tool outputs are excluded. There is no background
+  prediction or startup hook; selecting a model alone does not enable the feature.
+  Existing user-managed MCP/profile configuration is preserved. Native prediction
+  settings are untouched; account/remote defaults in all future clients cannot be
+  reliably detected. Use `ccdx suggestion off` when preferring an official feature.
 - CCDX adds experimental local history compression only when installed App
   runtimes support it and report it off. Existing choices are preserved; an
   already-enabled default, unavailable runtime or failed check is skipped.

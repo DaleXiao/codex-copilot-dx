@@ -75,6 +75,16 @@ if (CLI.command === "image") {
     process.exit(1);
   }
 }
+if (CLI.command === "suggestion") {
+  try {
+    const { runSuggestionCommand } = await import("../src/cli-suggestion.mjs");
+    await runSuggestionCommand({ action: CLI.action, model: CLI.model, commandName: CLI_NAME });
+    process.exit(0);
+  } catch (error) {
+    console.error(status("err", error.message));
+    process.exit(1);
+  }
+}
 if (CLI.command === "usage") {
   try {
     await printUsageSummary({

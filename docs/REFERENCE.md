@@ -6,6 +6,55 @@ CCDX is a local compatibility adapter for Codex App. It configures Codex to use 
 
 ## How it works
 
+### Optional next-message suggestions
+
+Suggestions are disabled by default. No suggestion MCP or skill is installed at
+startup, and the primary adapter does not import or start a predictor.
+
+```bash
+ccdx suggestion on
+ccdx suggestion off
+ccdx suggestion model
+ccdx suggestion model gpt-6.1-sol
+ccdx suggestion status
+```
+
+Start CCDX, enable suggestions, then open **Next message / 下一句** from a local
+conversation panel, or ask Codex for a next-message suggestion. **Add to draft /
+加入草稿** appends ordinary text and never sends. The user still presses Send.
+If the MCP has not appeared in an open App, restart the App once. There is no
+client patch, grey ghost text, automatic background prediction, or auto-approval.
+Model selection alone keeps the feature disabled. The initial model is
+`gpt-6-luna`; `low` reasoning is used when advertised. No service tier is forced.
+
+Settings are stored in `suggestion.json` beside CCDX's `config.json`.
+`CCDX_SUGGESTION_CONFIG` overrides this file path; the managed MCP sets it to
+the exact saved file, so normal users do not need to set it. The managed
+MCP is `mcp_servers.ccdx_suggestion` in the active `CODEX_HOME/config.toml` (or
+`~/.codex/config.toml`). Existing user-managed, inline or profile-specific entries
+are preserved rather than overwritten; identical enabled setup is a no-op.
+Native prediction settings are never changed. Official account/remote defaults
+currently have no reliable generic local signal, so CCDX does not promise to
+detect every future client default. Use `suggestion off` when preferring native
+predictions. An unavailable capability reports a local error, not a fallback
+that edits the client or sends a chat message.
+
+The MCP uses the host-supplied thread ID and the installed Codex's paginated
+`thread/items/list` API. It reads at most 24 recent items, retaining up to eight
+user/assistant text excerpts and 16,000 characters. Images, reasoning items and
+tool outputs are excluded; there is no transcript scan, fork or resumed turn.
+Recent text is sent through the local CCDX adapter to the selected Copilot model
+only when the user requests a suggestion. Provider data policies still apply.
+Context lookup is capped at 5 seconds/2 MiB, the operation at 30 seconds, output
+at 64 KiB/300 characters, concurrent work at two, and in-memory candidates at 16.
+Candidates expire for adoption after 10 minutes and are bound to their thread
+and selected model. Failure/HTTP 200 incomplete responses never become drafts.
+No additional retry is added by the suggestion feature. Existing adapter policies
+remain unchanged. App support requires MCP draft insertion; the executable can
+be selected explicitly with `CCDX_CODEX_BINARY` when automatic discovery fails.
+
+### Core adapter
+
 One in-process adapter listens on `127.0.0.1:2026` by default and exposes:
 
 - `POST /v1/responses`

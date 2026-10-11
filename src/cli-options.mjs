@@ -27,6 +27,7 @@ const HELP_TOPICS = new Set([
   "disable-image",
   "image-status",
   "auto-review-model",
+  "suggestion",
   "update",
   "version",
 ]);
@@ -251,6 +252,12 @@ export function parseCliArgs(args = []) {
     if (rest.length) unexpectedArgs(rest);
     return baseCommand("animation");
   }
+  if (command === "suggestion") {
+    const [action = "status", model, ...extra] = rest;
+    if (!["on", "off", "model", "status"].includes(action)) throw new Error("Suggestion action must be on, off, model, or status");
+    if (extra.length || (model !== undefined && action !== "model")) unexpectedArgs(rest.slice(1));
+    return baseCommand("suggestion", { action, ...(model !== undefined ? { model } : {}) });
+  }
   if (command === "enable-image" || command === "disable-image" || command === "image-status") {
     if (rest.length) unexpectedArgs(rest);
     return baseCommand("image", {
@@ -356,6 +363,7 @@ function topicHelp(name, topic) {
     "disable-image": `Usage:\n  ${name} disable-image\n\nDisables the local CCDX image tool and removes its stored API credential and unmodified CCDX image guidance.`,
     "image-status": `Usage:\n  ${name} image-status\n\nShows provider configuration and locally advertised generation/editing tools without generating an image or exposing its API key.`,
     "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nSelect a Responses model, then an advertised reasoning effort. Enter keeps the default/current choice; q cancels both steps without saving. Effort 0 follows the client (low when omitted). Settings apply only to Auto-review on the next request; no client patch or restart is required for adapters running 0.9.13 or newer.`,
+    "suggestion": `Usage:\n  ${name} suggestion on\n  ${name} suggestion off\n  ${name} suggestion model [MODEL_ID]\n  ${name} suggestion status\n\nOptional next-message panel; disabled by default. Open it in a local Codex conversation to generate a suggestion, then choose Add to draft. Ordinary text only: no client patch, background prediction, automatic insertion or sending. Model selection alone does not enable the feature. Requires a running local adapter and recent Codex. Existing user-owned MCP configuration is preserved; native prediction settings are never modified. Future account/remote defaults cannot be universally detected.`,
     update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or the latest stable GitHub release. With no source, an interactive terminal prompts for one.`,
     version: `Usage:\n  ${name} --version`,
   };
@@ -381,6 +389,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} disable-image
   ${name} image-status
   ${name} auto-review-model
+  ${name} suggestion on|off|model|status
   ${name} update [npm|github]
   ${name} --version
   ${name} --help
@@ -399,6 +408,7 @@ Commands:
   disable-image      Disable the image provider and remove its credential
   image-status       Show the optional image provider status
   auto-review-model  Select the Codex Auto-review model and reasoning effort
+  suggestion         Optional next-message suggestions (off by default)
   update             Update the global package from npm or GitHub
 
 Run ${name} <command> --help for command details.`;

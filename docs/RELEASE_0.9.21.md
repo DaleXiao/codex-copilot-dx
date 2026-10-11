@@ -49,6 +49,9 @@ transcript and maintenance marker, and verifies Zstandard decoding is byte-exact
 thread/read and thread/resume succeed, with no additional inference request.
 Test waits are bounded and all synthetic directories are cleaned automatically.
 The same real-client regression is part of the existing latest-Codex CI job.
+The local synthetic transcript was 47,506 bytes before and 14,643 bytes after
+compression. The latest-client CI independently verified 40,521 to 13,369 bytes,
+byte-exact decoding and successful read/resume; these are fixture-specific sizes.
 
 ## Performance boundary
 
@@ -60,10 +63,23 @@ synthetic transcript, not promised as faster inference or lower gateway memory.
 
 ## Publication
 
-Release and npm receipts will be recorded after the Node 22.15/24 matrix and
-latest official Codex CI pass. GitHub uses the previously supplied DaleXiao PAT
-only in memory; npm uses the repository's existing NPM_TOKEN via its publish
-workflow. No alternate credential or local npm registry query.
+Application commit: `838465edb68f0bdac572defd6b22a4dc1f1f5695`.
+Annotated `v0.9.21` tag object: `43034173e8ba755dc5e5af04fb6540a92d2bad8f`.
+
+- Node 22.15, Node 24 and latest official Codex jobs all succeeded:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38114162914.
+- Formal GitHub Release, neither draft nor prerelease:
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.21.
+- Exactly one npm workflow succeeded, including 1006 tests and prepublish gates:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38114233934.
+- Official receipt confirms `codex-copilot-dx@0.9.21`, published with `latest`.
+  Local and runner preflights match: 113 files, 295,721 packed bytes, SHA-1
+  `d57fec897c1824df6eafe3711f70da412bd21c2e`.
+
+GitHub used the previously supplied, freshly identity-verified DaleXiao PAT only
+in memory; npm used the repository's existing NPM_TOKEN via its publish workflow.
+No alternate credential or local npm registry query. Published tag stays fixed;
+the final report-only commit does not change the npm payload.
 
 Cleanup is limited to this task's baseline copy, test logs and release helpers;
 preserve user settings, credentials, images, dependencies and running service.

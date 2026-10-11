@@ -85,11 +85,26 @@ faster foreground model inference or improved upstream service reliability.
 
 ## Publication
 
-GitHub uses the same previously supplied DaleXiao PAT, retrieved from the exact
-source used for 0.9.21, identity-verified again and held only in memory. npm uses
+Application commit: `5121b3f267502d8a2b2a7e15f6ad5ea1506598c1`.
+Annotated `v0.9.22` tag object: `0911084ed97e4488e7adbeb27494ece4635dd25d`.
+
+- Node 22.15, Node 24 and latest official Codex jobs all succeeded:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38128225591.
+- The latest-Codex job independently passed the complete suggestion MCP replay,
+  including unchanged thread contents and disabled mode with no extra inference.
+- Formal GitHub Release, neither draft nor prerelease:
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.22.
+- Exactly one npm publishing workflow succeeded, including prepublish gates:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38128400919.
+- The npm receipt confirms `codex-copilot-dx@0.9.22`, published with `latest`.
+  Local and both CI runner package checks agree: 119 files, 308,167 packed bytes,
+  SHA-1 `e4132bb5090363e5b649ae597076fde2d48aa3de`.
+
+GitHub used the same previously supplied DaleXiao PAT, retrieved from the exact
+source used for 0.9.21, identity-verified again and held only in memory. npm used
 the repository's existing NPM_TOKEN through its publish workflow. No alternate
-credential, browser sign-in or local registry lookup is used. CI and publication
-receipts will be recorded after the release gates complete.
+credential, browser sign-in or local registry lookup was used. The published tag
+stays fixed; this final report-only update does not change the package payload.
 
 Cleanup is limited to task-owned fixture, UI-test and release-helper directories.
 User credentials, client configuration, saved conversations, generated images,

@@ -107,6 +107,13 @@ responses. The current candidate retains company PAC decisions and uses Windows
 automatic upstream routing. A native-worker compilation/session test is included
 in Windows CI; simulated protocol tests are not native Windows evidence.
 
+The `.3` user-machine snapshot then reported a running bridge with a direct
+original route, zero configuration/TLS/upstream events and no native settings
+switch. The App's actual current launch/PAC must be checked before blaming
+prediction inference or authentication. Windows CI independently passed native
+worker compilation and real NTFS trust after fixing child PowerShell module
+precedence; that does not explain or resolve the user's unobserved client route.
+
 The user has agreed to a Windows-machine check. Normal App login, profile discovery,
 bridge startup and delivery of the live PAC to the registered main process have
 been observed. Verify TLS after binding the original trusted profile, then test

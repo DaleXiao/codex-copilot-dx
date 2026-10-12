@@ -27,9 +27,21 @@ composer and company-network verification are outstanding release gates.
   HTTP/SSE smoke, performance/resource and package gates passed.
 - Intermediate candidate: 1,104 passing tests, two Windows-only skips; the same
   full gates passed. These checks ran on macOS with isolated Windows fixtures.
+- Final macOS gate before the platform-specific module-path correction: 1,106
+  passing tests, two Windows-only skips; HTTP/SSE, performance/resource and
+  package gates passed. Existing isolated startup replay passed.
 - One bounded implementation review fixed upload buffering, fail-fast worker
-  shutdown and diagnostic identifier sanitization. Final gate results, Windows
-  CI, UI checks and user-machine results will be appended before release.
+  shutdown, diagnostic identifiers and disclosure heading alignment.
+- [Windows/Linux/latest-client CI](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38232197204)
+  passed at `70b3eed`: Windows native worker compilation/session and real NTFS
+  certificate lifecycle, Node 22.15/24 regression and latest official Codex replay.
+  The first Windows run exposed inherited PowerShell 7 module-path incompatibility;
+  the fix only prepends bundled Windows PowerShell modules in child environments.
+- Isolated browser: English/Chinese × dark/light × 1440/390 pixels passed keyboard
+  disclosures and refresh controls, with no page errors or document overflow.
+- User Windows `.3` result: bridge running, original route direct, zero observed
+  configuration/TLS/upstream events, and missing settings switch. This is a live
+  integration failure under investigation, not successful prediction evidence.
 
 ## Boundaries
 

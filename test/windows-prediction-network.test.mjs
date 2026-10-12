@@ -4,6 +4,7 @@ import { EventEmitter, once } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { runInNewContext } from "node:vm";
 import { readFileSync } from "node:fs";
+import http from "node:http";
 import { companyPredictionPac, startWindowsPredictionNetwork } from "../src/windows-prediction-network.mjs";
 
 const pac = "function FindProxyForURL(url,host){if(host==='intranet')return 'DIRECT';return 'PROXY company.test:8080; PROXY backup.test:8080';}";
@@ -91,4 +92,17 @@ test("native source uses Windows automatic routing and keeps credentials, TLS an
 test("Windows real worker compiles and opens a native session without changing routes", { skip: process.platform !== "win32" }, async t => {
   const network = await startWindowsPredictionNetwork({ settings: { autoDetect: false, pac: "" } });
   t.after(() => network.close());assert.equal(network.script, null);
+});
+
+test("Windows native PAC fetch reads the original script and rejects missing files", { skip: process.platform !== "win32" }, async t => {
+  const server = http.createServer((req, res) => {
+    if (req.url !== "/company.pac") { res.writeHead(404);res.end();return; }
+    res.writeHead(200, { "Content-Type": "application/x-ns-proxy-autoconfig" });res.end(pac);
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const address = `http://127.0.0.1:${server.address().port}`;
+  const network = await startWindowsPredictionNetwork({ settings: { pac: `${address}/company.pac`, autoDetect: false } });
+  t.after(() => network.close());assert.equal(network.script, pac);
+  await assert.rejects(startWindowsPredictionNetwork({ settings: { pac: `${address}/missing.pac`, autoDetect: false } }), /winhttp_pac_http_error/);
 });

@@ -298,16 +298,18 @@ async function reuseRunningAdapterIfAvailable() {
 
   let predictionPacUrl = null;
   let predictionApp = null;
+  let predictionProfile = null;
   try {
     const { readPredictionSettings } = await import("../src/native-prediction-profile.mjs");
     const preference = readPredictionSettings();
     if (preference.enabled) {
       predictionPacUrl = running.data?.native_prediction_pac || null;
       predictionApp = preference.app?.app;
+      predictionProfile = preference.app?.profile;
       if (!predictionPacUrl) console.warn(status("warn", "Restart ccdx to activate the newly enabled prediction bridge"));
     }
   } catch (error) { console.warn(status("warn", error.message)); }
-  await openCodex({ predictionPacUrl, predictionApp });
+  await openCodex({ predictionPacUrl, predictionApp, predictionProfile });
   console.log(`
   ${status("ok", "Ready, using the existing ccdx adapter")}
 
@@ -405,7 +407,7 @@ try {
   nativePrediction = await (await clientIntegrations()).start();
 
   // Launch Codex when available. A running App is never forcibly restarted.
-  await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app });
+  await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app, predictionProfile: nativePrediction?.profile });
 
   // Periodically refresh the model list + endpoint cache so a long-running
   // adapter picks up newly released models without a restart.

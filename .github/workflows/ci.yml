@@ -2,13 +2,25 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "codex/windows-*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  windows-prediction:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - name: Verify native Windows worker, profile, ACL and launch boundaries
+        run: node --test test/native-prediction-windows.test.mjs test/windows-prediction-network.test.mjs
   test:
     runs-on: ubuntu-latest
     strategy:

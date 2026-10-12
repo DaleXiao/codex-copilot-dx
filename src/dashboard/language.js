@@ -154,6 +154,7 @@
     "retry": ["Retry status", "重试情况"],
     "retry_policy": ["Retry rule", "重试规则"],
     "retry_skipped": ["Skip reason", "跳过原因"],
+    "recovery": ["Recovery", "恢复处理"],
     "attempted (outcome not recorded here)": ["Retried; result not recorded here.", "已重试；这里未记录结果。"],
     "attempted": ["retried", "已重试"],
     "not attempted": ["not retried", "未重试"],

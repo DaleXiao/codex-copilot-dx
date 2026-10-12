@@ -50,6 +50,13 @@
           </article>
         </section>
 
+        <details class="panel dashboard-section" id="client-features" open>
+          <summary class="panel-heading"><h2 data-i18n>CLIENT FEATURES</h2><span data-i18n>OBSERVED STATE</span></summary>
+          <dl class="stats"><div><dt data-i18n>Native predictions</dt><dd id="prediction-preference">—</dd></div><div><dt data-i18n>Local bridge</dt><dd id="prediction-bridge">—</dd></div><div><dt data-i18n>Client route</dt><dd id="prediction-route">—</dd></div><div><dt data-i18n>Visible candidate</dt><dd id="prediction-candidate">—</dd></div></dl>
+          <p id="prediction-note" class="hint">—</p>
+          <p class="hint" data-i18n>Configured does not mean displayed. Use ccdx prediction status for details.</p>
+        </details>
+
         <details class="panel dashboard-section" id="request-context">
           <summary data-i18n>RECENT REQUEST CONTEXT</summary>
           <p id="context-note" class="table-note">—</p>
@@ -57,22 +64,17 @@
           <p class="hint" data-i18n>Recent upstream request metadata, not exact live session occupancy. Missing values are unknown. No prompt or image content is retained.</p>
         </details>
 
-        <section class="panel dashboard-section" aria-label="CLIENT FEATURES" data-i18n-label>
-          <div class="panel-heading"><h2 data-i18n>CLIENT FEATURES</h2><span data-i18n>OBSERVED STATE</span></div>
-          <dl class="stats"><div><dt data-i18n>Native predictions</dt><dd id="prediction-preference">—</dd></div><div><dt data-i18n>Local bridge</dt><dd id="prediction-bridge">—</dd></div><div><dt data-i18n>Client route</dt><dd id="prediction-route">—</dd></div><div><dt data-i18n>Visible candidate</dt><dd id="prediction-candidate">—</dd></div></dl>
-          <p id="prediction-note" class="hint">—</p>
-          <p class="hint" data-i18n>Configured does not mean displayed. Use ccdx prediction status for details.</p>
-        </section>
-
-        <section class="panel dashboard-section" aria-label="Live upstream models" data-i18n-label>
-          <div class="panel-heading"><h2 data-i18n>UPSTREAM GPT MODELS</h2><div class="heading-actions"><span id="models-state" data-i18n>CHECKING LIVE</span><button id="refresh-models" type="button" data-i18n>Refresh</button></div></div>
+        <details class="panel dashboard-section" id="upstream-models" open>
+          <summary class="panel-heading"><h2 data-i18n>UPSTREAM GPT MODELS</h2><span id="models-state" data-i18n>CHECKING LIVE</span></summary>
+          <div class="section-actions"><button id="refresh-models" type="button" data-i18n>Refresh</button></div>
           <p id="models-note" class="table-note" data-i18n>Querying GitHub Copilot…</p>
           <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n>MODEL</th><th scope="col" data-i18n>VENDOR</th><th scope="col" data-i18n>API</th><th scope="col" data-i18n>FLAG</th></tr></thead><tbody id="live-models-body"><tr><td colspan="4" data-i18n>Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n>Catalog listing does not guarantee inference access.</p>
-        </section>
+        </details>
 
-        <section class="panel dashboard-section" aria-label="Usage by model" data-i18n-label>
-          <div class="panel-heading"><h2 data-i18n>USAGE</h2><div class="heading-actions"><span id="usage-state" data-i18n>READING LOG</span><button id="clear-usage-day" type="button" hidden data-i18n>All history</button><button id="refresh-usage" type="button" data-i18n>Refresh</button></div></div>
+        <details class="panel dashboard-section" id="model-usage" open>
+          <summary class="panel-heading"><h2 data-i18n>USAGE</h2><span id="usage-state" data-i18n>READING LOG</span></summary>
+          <div class="section-actions"><button id="clear-usage-day" type="button" hidden data-i18n>All history</button><button id="refresh-usage" type="button" data-i18n>Refresh</button></div>
           <p id="usage-note" class="table-note" data-i18n>Aggregating local usage metadata…</p>
           <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col" data-i18n>MODEL</th><th scope="col" data-i18n>CALLS</th><th scope="col" data-i18n>INPUT</th><th scope="col" data-i18n>CACHE READ</th><th scope="col" data-i18n>OUTPUT</th><th scope="col" data-i18n>TOTAL</th><th scope="col" data-i18n>CACHE HIT</th></tr></thead><tbody id="usage-body"><tr><td colspan="7" data-i18n>Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n>Cache hit = recorded cached / input tokens. ~ = incomplete history. — = unavailable or invalid counts.</p>
@@ -92,13 +94,13 @@
             <div class="calendar-scroll"><div class="calendar-grid"><div id="calendar-months" class="calendar-months" aria-hidden="true"></div><div id="activity-calendar" class="activity-calendar" aria-label="Daily recorded request activity" data-i18n-label></div></div></div>
             <p id="analytics-selection" class="hint" role="status" data-i18n>Select a day to inspect its model totals. No history is distinct from zero recorded calls.</p>
           </details>
-        </section>
+        </details>
 
-        <section class="lower" aria-label="Recent failures" data-i18n-label>
-          <div class="panel-heading"><h2 data-i18n>RECENT RESPONSE FAILURES</h2><span id="failure-count">requests + events</span></div>
+        <details class="lower" id="recent-failures" open>
+          <summary class="panel-heading"><h2 data-i18n>RECENT RESPONSE FAILURES</h2><span id="failure-count">requests + events</span></summary>
           <ol id="failures"><li class="empty" data-i18n>Reading…</li></ol>
           <p class="hint" data-i18n>Upstream messages may contain sensitive text.</p>
-        </section>
+        </details>
 
         <details id="animation-settings" class="panel dashboard-section settings-panel">
           <summary class="panel-heading"><h2 data-i18n>TERMINAL ANIMATION</h2><span id="animation-state" data-i18n>READING</span></summary>

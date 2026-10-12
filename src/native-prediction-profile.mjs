@@ -7,10 +7,18 @@ import { atomicWriteFileSync } from "./atomic-file.mjs";
 import { userSettingsPath } from "./user-settings.mjs";
 import { resolveNetworkRoute } from "./network-route.mjs";
 import { codexPaths } from "./codex-paths.mjs";
+import { assertWindowsCodexClosed, installedWindowsPredictionApp, windowsPredictionProfile,
+  windowsPredictionOpenSSL, windowsPrivatePredictionPath } from "./native-prediction-windows.mjs";
 
-export function predictionPaths({ env = process.env, home = os.homedir() } = {}) {
+export function predictionPaths({ env = process.env, home = os.homedir(), platform = process.platform, app } = {}) {
   const directory = path.join(path.dirname(userSettingsPath({ env, home })), "native-prediction");
-  const { profile, certificateStore } = codexPaths({ env, home });
+  let { profile, certificateStore } = codexPaths({ env, home });
+  if (platform === "win32") {
+    const override = String(env.CODEX_ELECTRON_USER_DATA_PATH || "").trim();
+    profile = override ? path.resolve(override)
+      : app?.profile || path.join(env.APPDATA || path.join(home, "AppData", "Roaming"), "Codex");
+    certificateStore = path.join(profile, "Default", "ServerCertificate");
+  }
   return { directory, settings: path.join(directory, "settings.json"), profile,
     store: certificateStore };
 }
@@ -35,7 +43,8 @@ export function assertPredictionProxyCompatible({ env = process.env, systemProxy
   return resolveNetworkRoute({ env, systemProxy });
 }
 
-export function assertCodexClosed({ exec = execFileSync } = {}) {
+export function assertCodexClosed({ exec = execFileSync, platform = process.platform, ...options } = {}) {
+  if (platform === "win32") return assertWindowsCodexClosed({ ...options, exec });
   for (const name of ["ChatGPT", "Codex"]) {
     try {
       exec("/usr/bin/pgrep", ["-x", name], { stdio: "pipe", timeout: 2000 });
@@ -47,9 +56,11 @@ export function assertCodexClosed({ exec = execFileSync } = {}) {
   }
 }
 
-export function installedPredictionApp({ exec = execFileSync } = {}) {
-  for (const app of ["/Applications/ChatGPT.app", "/Applications/Codex.app"]) {
-    const archive = path.join(app, "Contents", "Resources", "app.asar");
+export function installedPredictionApp({ exec = execFileSync, platform = process.platform, ...options } = {}) {
+  const candidates = platform === "win32" ? [installedWindowsPredictionApp({ ...options, exec })]
+    : ["/Applications/ChatGPT.app", "/Applications/Codex.app"].map(app => ({ app, archive: path.join(app, "Contents", "Resources", "app.asar") }));
+  for (const candidate of candidates) {
+    const { app, archive } = candidate;
     if (!fs.existsSync(archive)) continue;
     // Check only during explicit setup; startup uses the cheap identity check.
     const fd = fs.openSync(archive, "r");
@@ -71,8 +82,13 @@ export function installedPredictionApp({ exec = execFileSync } = {}) {
       const rendererBytes = Buffer.alloc(renderer.size);
       fs.readSync(fd, rendererBytes, 0, rendererBytes.length, 8 + prefix.readUInt32LE(4) + Number(renderer.offset));
       if (!rendererBytes.includes(Buffer.from("4290031608"))) continue;
-      exec("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], { stdio: "pipe", timeout: 15_000 });
+      if (platform !== "win32") exec("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], { stdio: "pipe", timeout: 15_000 });
       const stat = fs.statSync(archive);
+      if (platform === "win32") {
+        const executable = fs.statSync(app);
+        return { ...candidate, profile: windowsPredictionProfile({ app: candidate, env: options.env, preferredProfile: options.preferredProfile }),
+          size: stat.size, mtimeMs: stat.mtimeMs, executableSize: executable.size, executableMtimeMs: executable.mtimeMs };
+      }
       return { app, archive, size: stat.size, mtimeMs: stat.mtimeMs };
     } finally { fs.closeSync(fd); }
   }
@@ -80,24 +96,33 @@ export function installedPredictionApp({ exec = execFileSync } = {}) {
 }
 
 export function predictionAppMatches(app) {
-  try { const stat = fs.statSync(app.archive); return stat.size === app.size && stat.mtimeMs === app.mtimeMs; }
+  try {
+    const stat = fs.statSync(app.archive);
+    if (app.executableSize !== undefined) {
+      const executable = fs.statSync(app.app);
+      if (executable.size !== app.executableSize || executable.mtimeMs !== app.executableMtimeMs) return false;
+    }
+    return stat.size === app.size && stat.mtimeMs === app.mtimeMs;
+  }
   catch { return false; }
 }
 
-function privateDirectory(directory) {
+function privateDirectory(directory, { platform = process.platform, ...options } = {}) {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const stat = fs.lstatSync(directory);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077)) {
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (platform !== "win32" && (stat.mode & 0o077))) {
     throw new Error("Prediction key directory must be private and must not be a symlink");
   }
+  if (platform === "win32") windowsPrivatePredictionPath(directory, { ...options, create: fs.readdirSync(directory).length === 0 });
 }
 
-export function readPredictionCertificate(directory, { allowExpired = false } = {}) {
+export function readPredictionCertificate(directory, { allowExpired = false, platform = process.platform, ...options } = {}) {
   const cert = fs.readFileSync(path.join(directory, "bridge.pem"));
   const ca = new X509Certificate(fs.readFileSync(path.join(directory, "ca.pem")));
   const keyFile = path.join(directory, "bridge.key");
   const info = fs.lstatSync(keyFile);
-  if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077)) throw new Error("Prediction key is not private");
+  if (!info.isFile() || info.isSymbolicLink() || (platform !== "win32" && (info.mode & 0o077))) throw new Error("Prediction key is not private");
+  if (platform === "win32") windowsPrivatePredictionPath(keyFile, options);
   const key = fs.readFileSync(keyFile);
   const x509 = new X509Certificate(cert);
   const publicKey = createPublicKey(createPrivateKey(key)).export({ type: "spki", format: "der" });
@@ -109,8 +134,9 @@ export function readPredictionCertificate(directory, { allowExpired = false } = 
   return { cert, key, ca: ca.toString(), hash: createHash("sha256").update(ca.raw).digest("hex").toUpperCase(), der: ca.raw };
 }
 
-export function createPredictionCertificate(directory, { exec = execFileSync } = {}) {
-  privateDirectory(directory);
+export function createPredictionCertificate(directory, { exec = execFileSync, platform = process.platform, ...options } = {}) {
+  privateDirectory(directory, { ...options, exec, platform });
+  const openssl = platform === "win32" ? windowsPredictionOpenSSL({ ...options, exec }) : "/usr/bin/openssl";
   const temporary = fs.mkdtempSync(path.join(directory, "certificate-"));
   try {
     const config = `[req]\nprompt=no\ndistinguished_name=dn\nx509_extensions=ext\n[dn]\nCN=CCDX native prediction local bridge\n[ext]\nbasicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:chatgpt.com,DNS:ab.chatgpt.com\nnameConstraints=critical,permitted;DNS:chatgpt.com\n`;
@@ -118,7 +144,7 @@ export function createPredictionCertificate(directory, { exec = execFileSync } =
     atomicWriteFileSync(configFile, config);
     const certFile = path.join(temporary, "cert.pem"), keyFile = path.join(temporary, "key.pem");
     const caFile = path.join(temporary, "ca.pem"), caKey = path.join(temporary, "ca.key");
-    const run = (args) => exec("/usr/bin/openssl", args, { stdio: "pipe", timeout: 15_000 });
+    const run = (args) => exec(openssl, args, { stdio: "pipe", timeout: 15_000, windowsHide: true });
     run(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "90", "-config", configFile, "-out", caFile, "-keyout", caKey]);
     const csr = path.join(temporary, "leaf.csr"), extensions = path.join(temporary, "leaf.cnf");
     atomicWriteFileSync(extensions, "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:chatgpt.com,DNS:ab.chatgpt.com\n");
@@ -127,7 +153,7 @@ export function createPredictionCertificate(directory, { exec = execFileSync } =
     atomicWriteFileSync(path.join(directory, "bridge.key"), fs.readFileSync(keyFile), { preserveMode: false });
     atomicWriteFileSync(path.join(directory, "bridge.pem"), fs.readFileSync(certFile), { preserveMode: false });
     atomicWriteFileSync(path.join(directory, "ca.pem"), fs.readFileSync(caFile), { preserveMode: false });
-    return readPredictionCertificate(directory);
+    return readPredictionCertificate(directory, { ...options, exec, platform });
   } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
 }
 

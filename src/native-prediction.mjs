@@ -7,9 +7,22 @@ import { predictionPaths, readPredictionSettings, writePredictionSettings, asser
 import { retirePredictionIntegration } from "./prediction-retirement.mjs";
 import { networkRouteSnapshot } from "./network-route.mjs";
 import { withFileLock } from "./lock.mjs";
+import { windowsSystemProxy, windowsProxySettings, windowsProxyText } from "./native-prediction-windows.mjs";
 
-function systemProxy(exec = execFileSync) {
+function systemProxy(exec = execFileSync, { platform = process.platform, env = process.env } = {}) {
+  if (platform === "win32") return windowsSystemProxy({ exec, env });
   return exec("/usr/sbin/scutil", ["--proxy"], { encoding: "utf8", timeout: 2000, maxBuffer: 64 * 1024 });
+}
+
+function predictionNetworkOptions(options) {
+  if (options.platform !== "win32") return { networkRoute: assertPredictionProxyCompatible({ env: options.env, systemProxy: systemProxy(options.exec, options) }) };
+  const settings = windowsProxySettings(options);
+  if (!settings.autoDetect && !settings.pac) return { networkRoute: assertPredictionProxyCompatible({ env: options.env, systemProxy: windowsProxyText(settings) }) };
+  const environment = assertPredictionProxyCompatible({ env: options.env });
+  if (environment.http || environment.https || environment.bypass.length) {
+    throw new Error("Windows automatic proxy and explicit proxy environment rules require separate routing; existing routes were preserved");
+  }
+  return { settings };
 }
 
 function certificateDirectory(settings, paths) {
@@ -23,7 +36,7 @@ function certificateDirectory(settings, paths) {
 
 export async function runPredictionCommand(options = {}) {
   if (!options.action || options.action === "status") return runPredictionCommandUnlocked(options);
-  if ((options.platform || process.platform) !== "darwin") return runPredictionCommandUnlocked(options);
+  if (!["darwin", "win32"].includes(options.platform || process.platform)) return runPredictionCommandUnlocked(options);
   const { settings } = predictionPaths(options);
   return withFileLock(`${settings}.lock`, () => runPredictionCommandUnlocked(options), { timeoutMs: 2000 });
 }
@@ -31,7 +44,7 @@ export async function runPredictionCommand(options = {}) {
 async function runPredictionCommandUnlocked({ action = "status", env = process.env,
   platform = process.platform, output = console.log, resolveApp = installedPredictionApp,
   writeSettings = writePredictionSettings, runtimeSnapshot, ...options } = {}) {
-  const opts = { ...options, env };
+  const opts = { ...options, env, platform };
   const settings = readPredictionSettings(opts);
   if (action === "status") {
     output(`Native prediction preference: ${settings.enabled ? "on" : "off"} (default: off)`);
@@ -50,15 +63,15 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
     return settings;
   }
   if (!["on", "off"].includes(action)) throw new Error("Prediction action must be on, off, or status");
-  if (platform !== "darwin") throw new Error("Native prediction setup currently supports macOS only; no configuration changed");
-  const paths = predictionPaths(opts);
+  if (!["darwin", "win32"].includes(platform)) throw new Error("Native prediction setup supports macOS and Windows only; no configuration changed");
+  let paths = predictionPaths({ ...opts, app: settings.app });
   if (action === "off") {
     // Disable the response overlay first, even when App-owned trust is busy.
     if (settings.enabled) writeSettings({ ...settings, enabled: false }, opts);
     if (settings.certificateHash && settings.store) {
       try {
-        assertCodexClosed(options);
-        const certificate = readPredictionCertificate(certificateDirectory(settings, paths), { allowExpired: true });
+        assertCodexClosed(opts);
+        const certificate = readPredictionCertificate(certificateDirectory(settings, paths), { ...opts, allowExpired: true });
         if (certificate.hash !== settings.certificateHash) throw new Error("Prediction certificate changed; trust cleanup was skipped");
         await updatePredictionTrust(settings.store, certificate, { remove: true });
       } catch (error) {
@@ -67,29 +80,34 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
       }
     }
     const { store, certificateHash, app, ...disabled } = settings;
-    if (store || certificateHash || app) writeSettings({ ...disabled, enabled: false }, opts);
+    // Retain the verified Windows profile binding, not its certificate trust.
+    // An earlier direct launch can have created a second initialized profile.
+    if (store || certificateHash || (app && platform !== "win32")) {
+      writeSettings({ ...disabled, enabled: false, ...(platform === "win32" && app ? { app } : {}) }, opts);
+    }
     try { retirePredictionIntegration(opts); }
     catch (error) { output(`Legacy prediction cleanup skipped: ${error.message}`); }
     output("Native predictions off. Restart Codex to clear cached predictions and its temporary route.");
     return { ...settings, enabled: false };
   }
-  assertCodexClosed(options);
-  assertPredictionProxyCompatible({ env, systemProxy: systemProxy(options.exec) });
-  const app = resolveApp(options);
+  assertCodexClosed(opts);
+  predictionNetworkOptions(opts);
+  const app = resolveApp({ ...opts, ...(platform === "win32" && settings.app?.profile ? { preferredProfile: settings.app.profile } : {}) });
+  paths = predictionPaths({ ...opts, app });
   if (settings.store && settings.store !== paths.store) throw new Error("Codex profile changed; disable the previous profile before enabling another");
   let certificate, previous, generated = false;
   let credentialsDirectory = certificateDirectory(settings, paths);
-  try { certificate = readPredictionCertificate(credentialsDirectory); }
+  try { certificate = readPredictionCertificate(credentialsDirectory, opts); }
   catch (error) {
     if (error.code !== "ENOENT" && !error.message.includes("needs renewal")) throw error;
     if (settings.certificateHash) {
-      previous = readPredictionCertificate(credentialsDirectory, { allowExpired: true });
+      previous = readPredictionCertificate(credentialsDirectory, { ...opts, allowExpired: true });
       if (previous.hash !== settings.certificateHash) throw new Error("Existing prediction certificate changed; it was preserved");
     }
     fs.mkdirSync(paths.directory, { recursive: true, mode: 0o700 });
     credentialsDirectory = fs.mkdtempSync(path.join(paths.directory, "credentials-"));
     generated = true;
-    try { certificate = createPredictionCertificate(credentialsDirectory, options); }
+    try { certificate = createPredictionCertificate(credentialsDirectory, opts); }
     catch (failure) { fs.rmSync(credentialsDirectory, { recursive: true, force: true }); throw failure; }
   }
   const next = { version: 1, enabled: true, app, store: paths.store, certificateHash: certificate.hash, credentialsDirectory };
@@ -120,16 +138,17 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
 
 export async function startNativePrediction({ env = process.env, platform = process.platform,
   warning = () => {}, state, ...options } = {}) {
-  const opts = { ...options, env };
+  const opts = { ...options, env, platform };
   const settings = readPredictionSettings(opts);
   state?.configure(settings.enabled);
   if (!settings.enabled) return null;
-  if (platform !== "darwin") throw new Error("Native predictions were skipped: unsupported platform");
-  const networkRoute = assertPredictionProxyCompatible({ env, systemProxy: systemProxy(options.exec) });
+  if (!["darwin", "win32"].includes(platform)) throw new Error("Native predictions were skipped: unsupported platform");
+  const network = predictionNetworkOptions(opts);
+  let networkRoute = network.networkRoute;
   if (!predictionAppMatches(settings.app)) throw new Error("Codex App changed; run ccdx prediction on after quitting it to recheck compatibility");
-  const paths = predictionPaths(opts);
+  const paths = predictionPaths({ ...opts, app: settings.app });
   if (settings.store !== paths.store || !fs.existsSync(paths.store)) throw new Error("Prediction profile trust is unavailable; run ccdx prediction on after quitting Codex");
-  const certificate = readPredictionCertificate(certificateDirectory(settings, paths));
+  const certificate = readPredictionCertificate(certificateDirectory(settings, paths), opts);
   if (certificate.hash !== settings.certificateHash) throw new Error("Prediction certificate changed; setup must be checked again");
   const [{ startPredictionTransport }, { applyNativePredictionOverlay, normalizeStatsigRequest }, { createProxyAgent }] = await Promise.all([
     import("./native-prediction-transport.mjs"), import("./native-prediction-overlay.mjs"),
@@ -144,9 +163,23 @@ export async function startNativePrediction({ env = process.env, platform = proc
   }, 1000);
   timer.unref();
   let transport;
+  let windowsNetwork;
   try {
+    if (network.settings) {
+      const { startWindowsPredictionNetwork } = await import("./windows-prediction-network.mjs");
+      windowsNetwork = await startWindowsPredictionNetwork({ settings: network.settings, env, onFailure(error) {
+        clearInterval(timer);state?.unavailable(error);void transport?.close();
+      } });
+      // Automatic detection enabled does not prove a company PAC exists.
+      // A native "not found" result retains the configured static/direct route.
+      if (windowsNetwork.script === null) {
+        windowsNetwork.close();windowsNetwork = null;
+        networkRoute = assertPredictionProxyCompatible({ env, systemProxy: windowsProxyText({ ...network.settings, autoDetect: false, pac: null }) });
+      }
+    }
     transport = await startPredictionTransport({ ...certificate, enabled: () => enabled,
-      networkRoute, agent: networkRoute.https ? createProxyAgent(networkRoute) : undefined,
+      networkRoute, agent: networkRoute?.https ? createProxyAgent(networkRoute) : undefined,
+      ...(windowsNetwork ? { requestImpl: windowsNetwork.requestImpl, pacImpl: windowsNetwork.pac } : {}),
       onEvent: (event) => state?.event(event),
       overlay: ({ host, pathname, status, body, enabled }) => {
         const result = applyNativePredictionOverlay({ hostname: host, pathname, statusCode: status, body, enabled });
@@ -157,14 +190,15 @@ export async function startNativePrediction({ env = process.env, platform = proc
         return result.changed ? JSON.parse(result.body) : parsed;
       },
     });
-  } catch (error) { clearInterval(timer); throw error; }
-  state?.running(networkRouteSnapshot(networkRoute));
+  } catch (error) { clearInterval(timer); windowsNetwork?.close(); throw error; }
+  state?.running(windowsNetwork ? { source: "system", type: "auto", bypass_rules: null, proxy_credentials: false } : networkRouteSnapshot(networkRoute));
   warning("Native prediction bridge enabled; only the two configuration hosts use its App-only route.");
   warning("If Codex is already running, quit it and run ccdx again to apply the route.");
   return {
     app: settings.app.app,
+    ...(platform === "win32" ? { profile: paths.profile } : {}),
     pacUrl: transport.pacUrl,
-    args: [`--proxy-pac-url=${transport.pacUrl}`],
-    async close() { clearInterval(timer); await transport.close(); state?.stopped(); },
+    args: [...(platform === "win32" ? [`--user-data-dir=${paths.profile}`] : []), `--proxy-pac-url=${transport.pacUrl}`],
+    async close() { clearInterval(timer); await transport.close(); windowsNetwork?.close(); state?.stopped(); },
   };
 }

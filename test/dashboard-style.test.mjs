@@ -21,7 +21,18 @@ test("all native disclosures use one plus/minus rule without duplicate animation
   assert.doesNotMatch(css, /summary h2::before/);
   assert.match(css, /\.settings-panel > summary \{ display: grid; grid-template-columns: auto minmax\(0, 1fr\) auto; \}/);
   assert.match(css, /summary:focus-visible, select:focus-visible \{ outline: 2px solid var\(--accent\);/);
-  for (const id of ["request-context", "usage-analytics", "animation-settings"]) {
+  for (const id of ["client-features", "request-context", "upstream-models", "model-usage", "recent-failures", "usage-analytics", "animation-settings"]) {
     assert.match(html, new RegExp(`<details[^>]*id="${id}"[^>]*>\\s*<summary`));
   }
+});
+
+test("client features precede context and all lower dashboard regions are native disclosures", () => {
+  assert.ok(html.indexOf('id="client-features"') < html.indexOf('id="request-context"'));
+  const lower = html.slice(html.indexOf('id="client-features"'));
+  assert.doesNotMatch(lower, /<section\b/);
+  assert.equal((html.match(/<article\b/g) || []).length, 7);
+  for (const id of ["client-features", "upstream-models", "model-usage", "recent-failures"]) {
+    assert.match(html, new RegExp(`<details[^>]*id="${id}"[^>]*open>`));
+  }
+  assert.doesNotMatch(html, /<summary\b[^>]*>(?:(?!<\/summary>)[\s\S])*<button/);
 });

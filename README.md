@@ -45,7 +45,7 @@ The dashboard does not poll in the background; refresh when needed.
 | `ccdx limits --decoded 256` | Set the decoded request-body budget; restart to apply |
 | `ccdx enable-image` | Opt in to image generation/editing with your own API |
 | `ccdx image-status` / `ccdx disable-image` | Check or disable optional images |
-| `ccdx prediction on` / `off` / `status` | Opt in to native next-message predictions (macOS) |
+| `ccdx prediction on` / `off` / `status` | Opt in to native predictions (macOS; Windows candidate) |
 | `ccdx update` | Update the global package |
 
 ## Compatibility and safety
@@ -74,7 +74,7 @@ The dashboard does not poll in the background; refresh when needed.
   hosts is decrypted locally, but only prediction configuration is changed.
   Other domains and the CCDX model endpoint stay on their existing routes.
   No program files or OS trust are changed. Static HTTP/HTTPS/SOCKS5 proxies and bypass rules are retained.
-  Dynamic PAC/WPAD routes are reported as unsupported; see the reference for routing, rollback and client-version limits.
+  The Windows candidate adds company PAC/WPAD routing; macOS dynamic routing remains unsupported. See the reference for verification and rollback limits.
 - CCDX adds experimental local history compression only when installed App
   runtimes support it and report it off. Existing choices are preserved; an
   already-enabled default, unavailable runtime or failed check is skipped.

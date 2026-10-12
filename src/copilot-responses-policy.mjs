@@ -4,6 +4,15 @@ function cloneJson(value) {
   return value === undefined ? undefined : structuredClone(value);
 }
 
+export function isConnectionOwnedInputError(statusCode, text) {
+  if (statusCode !== 400 || !text) return false;
+  try {
+    const error = JSON.parse(text)?.error;
+    return typeof error?.message === "string"
+      && error.message.trim().toLowerCase() === "input item does not belong to this connection";
+  } catch { return false; }
+}
+
 export function isEncryptedContentVerificationError(statusCode, text) {
   if (statusCode < 400 || !text) return false;
   const lower = errorEvidenceText(text).toLowerCase();
@@ -14,7 +23,7 @@ export function isEncryptedContentVerificationError(statusCode, text) {
     && lower.includes("could not be decrypted or decoded");
   const missingEncryptedContent = statusCode < 500
     && /missing required parameter:\s*(['"]?)input\[\d+\](?:\.[a-z0-9_]+|\[\d+\])*\.encrypted_content\1(?=\.?(?:\s|$|["},\]]))/.test(lower);
-  return reasoningFailure || functionOutputFailure || missingEncryptedContent;
+  return reasoningFailure || functionOutputFailure || missingEncryptedContent || isConnectionOwnedInputError(statusCode, text);
 }
 
 export function isImageNamespaceCollisionError(statusCode, text) {

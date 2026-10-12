@@ -38,6 +38,7 @@ test("shared data and foundation modules do not depend on presentation or compos
     "client-integration.mjs": ["responses-handler.mjs", "responses-proxy.mjs", "dashboard/ui.js"],
     "network-route.mjs": ["copilot.mjs", "native-prediction-profile.mjs", "dashboard-api.mjs"],
     "native-prediction-state.mjs": ["adapter.mjs", "dashboard-api.mjs", "cli-status.mjs"],
+    "windows-prediction-network.mjs": ["responses-handler.mjs", "copilot.mjs", "dashboard-api.mjs", "config.mjs"],
     "codex-paths.mjs": ["config.mjs", "cli-image.mjs", "native-prediction.mjs"],
   };
   for (const [file, forbidden] of Object.entries(rules)) {

@@ -26,10 +26,51 @@ the old Hook exits with an empty result, and the old MCP exposes no tools or pan
 ### Optional native predictions
 
 Native next-message predictions are **off by default** and use no MCP, Hook, skill,
-panel, renderer injection, or client-program modification. This macOS-only
-compatibility feature uses the App's existing composer UI and the conversation's
+panel, renderer injection, or client-program modification. This compatibility
+feature uses the App's existing composer UI and the conversation's
 selected model through CCDX. Suggestions are not sent automatically. Native
 eligibility rules still apply; availability is not promised for every thread type.
+
+The `0.9.26-windows.3` candidate adds Windows platform adapters. It is not a stable
+Windows release until native composer verification is complete. Windows setup
+requires a current-user, Store-signed `OpenAI.Codex` MSIX registration (Store and
+official offline MSIX use the same registration), an initialized Codex profile and
+OpenSSL. Git for Windows includes OpenSSL; CCDX does not download another runtime.
+Run CCDX using Windows-native Node, not inside WSL. The App's agent may still use
+WSL independently. No administrator prompt or execution-policy change is added.
+AppData may be virtualized by MSIX: setup selects an existing `Codex/Local State`
+profile (also `ChatGPT/Local State` for `ChatGPT.exe`) under roaming AppData or the
+package's `LocalCache/Roaming` directory. The nested `Codex/web/Codex/Local State`
+layout is also recognized; trust belongs to that nested profile's `Default`
+directory, not to its parent `Codex` directory. Setup does not recursively scan
+App data. A previously verified profile binding is reused on reactivation;
+turning predictions off removes only CCDX trust, not that directory binding.
+Absent or initially ambiguous profiles are not guessed; open the App once or set the exact
+`CODEX_ELECTRON_USER_DATA_PATH`. Existing App profile trust uses the same bounded
+Chromium database schema. Private-key privacy is verified with NTFS ACLs, not
+Unix mode bits. No Windows root/personal certificate store is changed.
+
+Windows reads the current user's WinINET proxy configuration through WinHTTP's
+query API without changing it. Static proxies/bypass rules compose with the same
+environment precedence. Automatic routing uses a separate, persistent Windows
+WinHTTP worker and a temporary PAC that delegates unrelated URLs to the original
+company script. The script is syntax-checked but never executed in Node. Windows
+handles upstream routing, proxy failover, authentication and certificate trust;
+the bridge never weakens TLS checks or the OS credential policy. Requests and
+responses stream through bounded private pipes; cookies are not cached by the
+worker, and redirects are not followed. Only the selected HTTPS hosts use the
+bridge; WebSocket PAC URLs keep the original company decision. If native WPAD
+discovery reports no PAC, configured static/direct settings are retained. A
+configured PAC that cannot be downloaded is not replaced with direct access.
+Explicit proxy environment rules combined with automatic routing are currently
+preserved and reported as a conflict, not silently merged. The
+launcher pins both Chromium `--user-data-dir` and the process-only
+`CODEX_ELECTRON_USER_DATA_PATH` to that verified existing profile and passes the
+local PAC to the exact registered executable. This prevents a direct MSIX launch
+from using another profile without the trust record. An explicit conflicting
+profile override is preserved and the optional launch is skipped. There is no
+shell, account replacement, new profile, `CODEX_HOME` change or forced App exit. Disabled predictions
+add no Windows probe or launch. `CCDX_AUTO_LAUNCH=0` is still respected.
 
 ```bash
 # Fully quit Codex App first.
@@ -67,8 +108,12 @@ Route selection is a startup snapshot; restart CCDX and Codex after changing it.
 Bypass lists support host/domain patterns and optional ports. Unsupported CIDR
 notation is reported explicitly rather than silently changing the route.
 
-Dynamic PAC/WPAD is not executed or overwritten. Setup identifies the exact
-system setting and preserves its rules. A non-default `CODEX_API_BASE_URL` is
+macOS dynamic PAC/WPAD remains unsupported and is not overwritten. Windows
+automatic routing is opt-in and requires the native worker; a failed worker
+closes its optional bridge while core inference continues. Restart CCDX and Codex
+after changing networks or company PAC settings; this is not a live network-policy
+watcher. Actual company authentication and native composer behavior still need
+Windows-machine verification. A non-default `CODEX_API_BASE_URL` is
 also preserved and reported as a custom-route conflict; setting it to the normal
 `https://chatgpt.com/backend-api` does not cause a conflict. No automatic direct
 fallback after upstream-proxy rejection is added. The default App profile

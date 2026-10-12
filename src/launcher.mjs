@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { installedWindowsPredictionApp } from "./native-prediction-windows.mjs";
 import { status } from "./status.mjs";
 
 export { ensureAuth } from "./auth.mjs";
@@ -36,9 +39,41 @@ export function launchAttempts() {
   return [["-b", CODEX_BUNDLE_ID], ...APP_PATH_CANDIDATES.map((path) => [path])];
 }
 
-export async function openCodex({ env = process.env, spawnImpl = spawn, platform = process.platform, predictionPacUrl = null, predictionApp = null } = {}) {
+export async function openCodex({ env = process.env, spawnImpl = spawn, platform = process.platform, predictionPacUrl = null, predictionApp = null, predictionProfile = null,
+  resolveWindowsApp = installedWindowsPredictionApp } = {}) {
+  if (platform === "win32" && autoLaunchEnabled(env) && typeof predictionPacUrl === "string"
+    && /^http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac$/.test(predictionPacUrl)
+    && typeof predictionApp === "string" && path.win32.isAbsolute(predictionApp)) {
+    try {
+      if (typeof predictionProfile !== "string" || !path.win32.isAbsolute(predictionProfile)
+        || /[\0\r\n]/.test(predictionProfile) || !fs.existsSync(path.win32.join(predictionProfile, "Local State"))) {
+        throw new Error("Verified Windows browser profile is unavailable; prediction launch was skipped");
+      }
+      const override = String(env.CODEX_ELECTRON_USER_DATA_PATH || "").trim();
+      if (override && path.win32.resolve(override).toLowerCase() !== path.win32.normalize(predictionProfile).toLowerCase()) {
+        throw new Error("Existing browser profile override differs from prediction trust; it was preserved");
+      }
+      const current = resolveWindowsApp({ env });
+      if (path.win32.normalize(current.app).toLowerCase() !== path.win32.normalize(predictionApp).toLowerCase()) {
+        throw new Error("Windows Codex App changed; prediction launch was skipped");
+      }
+      const launched = await new Promise(resolve => {
+        const child = spawnImpl(current.app, [`--user-data-dir=${predictionProfile}`, `--proxy-pac-url=${predictionPacUrl}`], {
+          cwd: path.win32.dirname(current.app), env: { ...env, CODEX_ELECTRON_USER_DATA_PATH: predictionProfile },
+          stdio: "ignore", detached: true, shell: false,
+        });
+        child.once("error", () => resolve(false));
+        child.once("spawn", () => { child.unref(); resolve(true); });
+      });
+      console.log(status(launched ? "ok" : "warn", launched ? "Codex app launched" : "Could not launch the registered Windows Codex App"));
+      return launched;
+    } catch (error) {
+      console.log(status("warn", `Optional Windows prediction launch skipped: ${error.message}`));
+      return false;
+    }
+  }
   if (platform !== "darwin") {
-    console.log(status("warn", "Auto-launch is only supported on macOS"));
+    console.log(status("warn", "Automatic launch requires macOS or an enabled Windows prediction setup"));
     console.log(status("info", "Open Codex App manually; it will connect to the adapter."));
     return false;
   }

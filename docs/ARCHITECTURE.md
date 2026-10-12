@@ -22,8 +22,25 @@ Native prediction has a separate loopback transport and an isolated HTTPS agent.
 Only its two selected hosts use the App-specific route. Non-configuration requests
 on those hosts are forwarded unchanged. The bridge does not replace Copilot or
 image-provider networking, modify client program files, or install system trust.
-Static upstream proxy routes and bypass rules are preserved. Dynamic PAC/WPAD
-and CIDR bypass rules are reported as unsupported, not silently discarded.
+Static upstream proxy routes and bypass rules are preserved. macOS dynamic
+PAC/WPAD and static CIDR bypass rules are reported as unsupported, not discarded.
+The Windows candidate isolates registration, process, proxy, OpenSSL and NTFS
+interfaces in `native-prediction-windows.mjs`. The bridge, overlay, model selection
+and lifecycle remain shared. Windows discovery requires verified registration
+and an existing unambiguous profile; no generalized OS framework is introduced.
+The Windows automatic-proxy candidate has one isolated native WinHTTP worker
+(`windows-prediction-network.mjs` / `.cs`) for company routing, authentication and
+TLS trust. Its private, credit-based pipes stream data without transcript files.
+The App PAC delegates unrelated URLs to the company script; Node never executes
+that script. This worker is not a shared inference/image network backend and is
+not started for disabled predictions or static/direct configurations.
+
+Connection-ownership replay rejection is a provider-owned retry policy. It
+removes only unavailable reasoning once, preserving visible history and tools.
+Opaque compaction cannot be assumed equivalent to remaining plaintext: rejection
+returns `ccdx_history_rebuild_required`, without modifying stored history. The
+client must restore full plaintext history; CCDX cannot reconstruct unavailable
+encrypted memory from its diagnostic metadata.
 
 ## Configuration ownership
 

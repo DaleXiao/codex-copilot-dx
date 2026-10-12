@@ -1,0 +1,201 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { EventEmitter } from "node:events";
+import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
+import { assertWindowsCodexClosed, installedWindowsPredictionApp, windowsPredictionProfile,
+  windowsProxyText, windowsSystemProxy, windowsPredictionOpenSSL, windowsPrivatePredictionPath } from "../src/native-prediction-windows.mjs";
+import { resolveNetworkRoute, networkProxyFor } from "../src/network-route.mjs";
+import { openCodex } from "../src/launcher.mjs";
+import { runPredictionCommand, startNativePrediction } from "../src/native-prediction.mjs";
+import { predictionPaths, readPredictionSettings, readPredictionCertificate, createPredictionCertificate } from "../src/native-prediction-profile.mjs";
+
+const registration = { root: "C:\\Program Files\\WindowsApps\\OpenAI.Codex_fixture", executable: "app/ChatGPT.exe", family: "OpenAI.Codex_2p2nqsd0c76g0" };
+const executable = path.win32.join(registration.root, registration.executable);
+const archive = path.win32.join(path.win32.dirname(executable), "resources", "app.asar");
+
+test("Windows discovery uses registered Store metadata, not guessed executables or a shell", t => {
+  t.mock.method(fs, "existsSync", file => file === archive);
+  let call;
+  const app = installedWindowsPredictionApp({ env: { SystemRoot: "C:\\Windows" }, exec(command, args, options) {
+    call = { command, args, options };return JSON.stringify(registration);
+  } });
+  assert.deepEqual(app, { app: executable, archive, family: registration.family });
+  assert.match(call.args.at(-1), /Get-AppxPackage -Name OpenAI.Codex/);
+  assert.match(call.args.at(-1), /SignatureKind -eq 3/);
+  assert.match(call.args.at(-1), /Publisher -eq 'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B'/);
+  assert.equal(call.args.includes("-NoProfile"), true);
+  assert.equal(call.args.includes("-ExecutionPolicy"), false);
+  assert.equal(call.options.windowsHide, true);
+  for (const changed of [{ executable: "..\\Codex.exe" }, { executable: "C:\\outside\\Codex.exe" }, { executable: "cmd.exe" },
+    { root: "\\\\remote\\share" }, { family: "unrelated_package" }]) {
+    assert.throws(() => installedWindowsPredictionApp({ exec: () => JSON.stringify({ ...registration, ...changed }) }), /Unknown Windows/);
+  }
+});
+
+test("Windows process checks fail closed and never stop an App", () => {
+  assert.doesNotThrow(() => assertWindowsCodexClosed({ exec: () => "closed" }));
+  for (const value of ["running", "unexpected", ""]) assert.throws(() => assertWindowsCodexClosed({ exec: () => value }), /Quit Codex/);
+  assert.throws(() => assertWindowsCodexClosed({ exec() { throw new Error("fixture"); } }), /Could not check/);
+});
+
+test("Windows profile discovery handles MSIX virtualization and preserves ambiguous profiles", t => {
+  const env = { APPDATA: "C:\\Users\\测试\\AppData\\Roaming", LOCALAPPDATA: "C:\\Users\\测试\\AppData\\Local" };
+  const packaged = path.win32.join(env.LOCALAPPDATA, "Packages", registration.family, "LocalCache", "Roaming", "Codex");
+  let present = [path.win32.join(packaged, "Local State")];
+  t.mock.method(fs, "existsSync", file => present.includes(file));
+  assert.equal(windowsPredictionProfile({ env, app: registration }), packaged);
+  present.push(path.win32.join(env.APPDATA, "Codex", "Local State"));
+  assert.throws(() => windowsPredictionProfile({ env, app: registration }), /Multiple/);
+  assert.equal(windowsPredictionProfile({ env, app: registration, preferredProfile: packaged }), packaged);
+  assert.equal(windowsPredictionProfile({ env: { ...env, CODEX_ELECTRON_USER_DATA_PATH: " " }, app: registration, preferredProfile: packaged }), packaged);
+  for (const preferredProfile of ["--bad-option", "C:\\missing", packaged + "\n"]) {
+    assert.throws(() => windowsPredictionProfile({ env, app: registration, preferredProfile }), /Previously selected/);
+  }
+  present = [];assert.throws(() => windowsPredictionProfile({ env, app: registration }), /Open Codex App once/);
+  const modern = path.win32.join(env.APPDATA, "ChatGPT");present = [path.win32.join(modern, "Local State")];
+  assert.equal(windowsPredictionProfile({ env, app: { ...registration, app: executable } }), modern);
+  present.push(path.win32.join(packaged, "Local State"));
+  assert.throws(() => windowsPredictionProfile({ env, app: { ...registration, app: executable } }), /Multiple/);
+  assert.equal(windowsPredictionProfile({ env: { CODEX_ELECTRON_USER_DATA_PATH: "/explicit-profile" } }), path.resolve("/explicit-profile"));
+});
+
+test("Windows nested web profiles select their own trust location without scanning unrelated directories", t => {
+  const env = { APPDATA: "C:\\Users\\fixture\\AppData\\Roaming", LOCALAPPDATA: "C:\\Users\\fixture\\AppData\\Local" };
+  const root = path.win32.join(env.LOCALAPPDATA, "Packages", registration.family, "LocalCache", "Roaming", "Codex");
+  const profile = path.win32.join(root, "web", "Codex");
+  let present = [root, path.win32.join(root, "web"), path.win32.join(profile, "Local State"),
+    path.win32.join(profile, "Default", "Preferences"), path.win32.join(profile, "Default", "ServerCertificate")];
+  t.mock.method(fs, "existsSync", file => present.includes(file));
+  t.mock.method(fs, "readdirSync", () => assert.fail("profile discovery must not recursively scan App data"));
+  assert.equal(windowsPredictionProfile({ env, app: { ...registration, app: executable } }), profile);
+  present.push(path.win32.join(root, "Local State"));
+  assert.throws(() => windowsPredictionProfile({ env, app: { ...registration, app: executable } }), /Multiple/);
+  present = [root, path.win32.join(root, "web")];
+  assert.throws(() => windowsPredictionProfile({ env, app: { ...registration, app: executable } }), /profile was not found/);
+  const ordinary = path.win32.join(env.APPDATA, "Codex", "web", "Codex");
+  present = [path.win32.join(ordinary, "Local State")];
+  assert.equal(windowsPredictionProfile({ env, app: { ...registration, app: executable } }), ordinary);
+});
+
+test("Windows static proxy and bypass rules compose with existing environment priority", () => {
+  const plan = resolveNetworkRoute({ env: { HTTPS_PROXY: "socks5://env.test:1080" }, systemProxy: windowsProxyText({
+    proxy: "http=http.test:80;https=https.test:3128;socks=socks.test:1080", bypass: "*.internal.test;<local>" }) });
+  assert.equal(plan.http.url.hostname, "http.test");assert.equal(plan.https.url.hostname, "env.test");
+  for (const url of ["https://host.internal.test", "https://intranet"]) assert.equal(networkProxyFor(new URL(url), plan), null);
+  assert.equal(networkProxyFor(new URL("https://chatgpt.com"), plan).source, "HTTPS_PROXY");
+  assert.equal(resolveNetworkRoute({ env: {}, systemProxy: windowsProxyText({ proxy: "[::1]:7890" }) }).https.url.hostname, "[::1]");
+  for (const settings of [{ autoDetect: true }, { pac: "https://private.example/rules.pac" }, { proxy: "https=bad/path" },
+    { proxy: "ftp=host:80" }, { proxy: "https=a:80;https=b:80" }, { proxy: "alice:secret@proxy:80" }]) {
+    assert.throws(() => windowsProxyText(settings), /preserved/);
+  }
+  let script;
+  const raw = windowsSystemProxy({ exec(_command, args) { script = args.at(-1);return '{"proxy":"proxy.test:8080","autoDetect":false}'; } });
+  assert.equal(resolveNetworkRoute({ env: {}, systemProxy: raw }).https.url.hostname, "proxy.test");
+  assert.match(script, /WinHttpGetIEProxyConfigForCurrentUser/);assert.doesNotMatch(script, /Set-ItemProperty|WinHttpSet/);
+  for (const value of ["[]", "null", '{"autoDetect":"false"}', '{"autoDetect":false,"proxy":{}}']) {
+    assert.throws(() => windowsSystemProxy({ exec: () => value }), /Windows proxy settings/);
+  }
+});
+
+test("Windows OpenSSL resolution is explicit and ACL checks never interpolate paths into scripts", () => {
+  assert.equal(windowsPredictionOpenSSL({ exec: () => "C:\\Program Files\\Git\\usr\\bin\\openssl.exe" }), "C:\\Program Files\\Git\\usr\\bin\\openssl.exe");
+  assert.throws(() => windowsPredictionOpenSSL({ exec: () => "" }), /Git for Windows/);
+  const privatePath = "C:\\Users\\测试'$\\private";
+  let call;
+  windowsPrivatePredictionPath(privatePath, { create: true, exec(command, args, options) { call = { command, args, options };return ""; } });
+  assert.equal(call.options.env.CCDX_PREDICTION_PRIVATE_PATH, privatePath);
+  assert.ok(!call.args.at(-1).includes(privatePath));
+  assert.match(call.args.at(-1), /SetAccessRuleProtection\(\$true,\$false\)/);
+  assert.match(call.args.at(-1), /GetAccessRules/);assert.doesNotMatch(call.args.at(-1), /Cert:|LocalMachine|CurrentUser\\Root/);
+});
+
+test("Windows prediction launch binds native and Chromium storage to the existing trusted profile", async t => {
+  const calls = [];
+  const profile = "C:\\Users\\fixture name 测试\\AppData\\Local\\Packages\\OpenAI.Codex_fixture\\LocalCache\\Roaming\\Codex\\web\\Codex";
+  t.mock.method(fs, "existsSync", file => file === path.win32.join(profile, "Local State"));
+  const spawnImpl = (command, args, options) => {
+    calls.push({ command, args, options });const child = new EventEmitter();child.unref = () => {};
+    queueMicrotask(() => child.emit("spawn"));return child;
+  };
+  const env = Object.freeze({ CODEX_HOME: "C:\\existing-codex-home" });
+  const options = { env, platform: "win32", predictionApp: executable, predictionProfile: profile, predictionPacUrl: "http://127.0.0.1:12345/proxy.pac",
+    resolveWindowsApp: () => ({ app: executable }), spawnImpl };
+  assert.equal(await openCodex(options), true);
+  assert.equal(calls[0].command, executable);assert.deepEqual(calls[0].args, [`--user-data-dir=${profile}`, "--proxy-pac-url=http://127.0.0.1:12345/proxy.pac"]);
+  assert.equal(calls[0].options.env.CODEX_ELECTRON_USER_DATA_PATH, profile);
+  assert.equal(calls[0].options.env.CODEX_HOME, env.CODEX_HOME);
+  assert.deepEqual(env, { CODEX_HOME: "C:\\existing-codex-home" });
+  assert.equal(calls[0].options.shell, false);assert.equal(calls[0].options.detached, true);
+  calls.length = 0;
+  assert.equal(await openCodex({ ...options, resolveWindowsApp: () => ({ app: "C:\\other\\Codex.exe" }) }), false);
+  assert.equal(await openCodex({ ...options, env: { CCDX_AUTO_LAUNCH: "0" } }), false);
+  assert.equal(await openCodex({ ...options, predictionPacUrl: "https://remote.test/proxy.pac" }), false);
+  assert.equal(calls.length, 0);
+  assert.equal(await openCodex({ ...options, predictionProfile: null }), false);
+  assert.equal(await openCodex({ ...options, predictionProfile: "C:\\missing" }), false);
+  assert.equal(await openCodex({ ...options, predictionProfile: profile + "\n" }), false);
+  assert.equal(await openCodex({ ...options, env: { CODEX_ELECTRON_USER_DATA_PATH: "C:\\other-profile" } }), false);
+  assert.equal(calls.length, 0);
+  assert.equal(await openCodex({ ...options, env: { CODEX_ELECTRON_USER_DATA_PATH: profile.toLowerCase() } }), true);
+});
+
+test("Windows default-off startup and status make no platform probes or writes", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-win-disabled-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const options = { home, env: {}, platform: "win32", exec() { assert.fail("must not probe"); }, output() {} };
+  assert.equal(await startNativePrediction(options), null);
+  await runPredictionCommand({ ...options, action: "status" });
+  assert.deepEqual(fs.readdirSync(home), []);
+});
+
+test("Windows on/off lifecycle preserves App trust and never changes Codex configuration", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-win-lifecycle-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const profile = path.join(home, "app-profile");
+  const fixtureArchive = path.join(home, "app.asar");fs.writeFileSync(fixtureArchive, "fixture program identity");
+  const archiveStat = fs.statSync(fixtureArchive);
+  const openssl = process.platform === "win32" ? windowsPredictionOpenSSL() : "/usr/bin/openssl";
+  const app = { app: executable, archive: fixtureArchive, family: registration.family, profile, size: archiveStat.size, mtimeMs: archiveStat.mtimeMs };
+  // On POSIX this emulates only the Windows OS checks; cryptography/SQLite are
+  // real. The native Windows-only test below exercises PowerShell and NTFS ACLs.
+  const options = { env: { CODEX_ELECTRON_USER_DATA_PATH: profile }, home, platform: "win32", output() {}, resolveApp: () => app,
+    exec(command, args, settings) {
+      if (command.endsWith("powershell.exe")) {
+        const script = args.at(-1);
+        if (script.includes("Get-Process")) return "closed";
+        if (script.includes("WinHttpGetIEProxyConfigForCurrentUser")) return '{"autoDetect":false}';
+        if (script.includes("Get-Command openssl.exe")) return process.platform === "win32" ? openssl : "C:\\fixture\\openssl.exe";
+        return "";
+      }
+      return execFileSync(openssl, args, settings);
+    } };
+  await runPredictionCommand({ ...options, action: "on" });
+  const settings = readPredictionSettings(options);
+  assert.equal(settings.enabled, true);assert.equal(settings.store, predictionPaths({ ...options, app }).store);
+  const native = await startNativePrediction(options);
+  assert.equal(native.profile, profile);
+  assert.deepEqual(native.args, [`--user-data-dir=${profile}`, `--proxy-pac-url=${native.pacUrl}`]);
+  await native.close();
+  const db = new DatabaseSync(settings.store);db.prepare("INSERT INTO certificates VALUES(?,?,?)").run("UNRELATED", Buffer.from("user"), Buffer.from("trust"));db.close();
+  await runPredictionCommand({ ...options, action: "off" });
+  const disabled = readPredictionSettings(options);
+  assert.equal(disabled.enabled, false);assert.deepEqual(disabled.app, app);
+  assert.equal(disabled.store, undefined);assert.equal(disabled.certificateHash, undefined);
+  const after = new DatabaseSync(settings.store);assert.equal(after.prepare("SELECT count(*) AS n FROM certificates").get().n, 1);after.close();
+  assert.equal(fs.existsSync(path.join(home, ".codex", "config.toml")), false);
+  await runPredictionCommand({ ...options, action: "off", writeSettings() { assert.fail("repeated off must not rewrite the profile binding"); } });
+  let preferredProfile;
+  await runPredictionCommand({ ...options, action: "on", resolveApp(opts) { preferredProfile = opts.preferredProfile;return app; } });
+  assert.equal(preferredProfile, profile);
+  await runPredictionCommand({ ...options, action: "off" });
+});
+
+test("native Windows certificate generation enforces NTFS privacy and validates its chain", { skip: process.platform !== "win32" }, t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-win-native-certificate-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const directory = path.join(home, "private-keys"), certificate = createPredictionCertificate(directory);
+  assert.equal(readPredictionCertificate(directory).hash, certificate.hash);
+  windowsPrivatePredictionPath(path.join(directory, "bridge.key"));
+  assert.deepEqual(fs.readdirSync(directory).sort(), ["bridge.key", "bridge.pem", "ca.pem"]);
+});

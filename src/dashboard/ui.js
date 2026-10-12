@@ -96,6 +96,7 @@ function renderFailures(recent, recentRequests = []) {
       message: failure.message, response_id: failure.response_id, upstream_request_id: failure.upstream_request_id,
       retry: failure.retried ? (timeline ? "attempted" : "attempted (outcome not recorded here)") : "not attempted",
       retry_policy: failure.retry_policy, retry_skipped: failure.retry_skipped,
+      recovery: failure.recovery ? JSON.stringify(failure.recovery) : undefined,
       request_id: failure.request_id, outcome: timeline?.outcome, origin: timeline?.origin,
       phase: timeline?.phase, http_status: timeline?.http_status, upstream_attempts: timeline?.upstream_attempts,
       timings_ms: timingText };

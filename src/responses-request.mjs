@@ -192,6 +192,36 @@ export function hasEncryptedResponseState(value) {
   return responseValueHasOpaqueState(value);
 }
 
+// Ownership rejection is ambiguous: compaction may be the only surviving
+// memory of earlier turns. Never infer that nearby plaintext replaces it.
+export function sanitizeConnectionOwnedReasoningRequest(reqContext) {
+  const input = reqContext.body?.input;
+  if (!Array.isArray(input)) return null;
+  const compactions = input.filter(item => item?.type === "compaction" && item.encrypted_content);
+  const reasoning = input.filter(item => item?.type === "reasoning" && item.encrypted_content);
+  if (compactions.length) {
+    const message = "Saved encrypted compaction is unavailable on this connection. Restore the full plaintext conversation history before retrying; CCDX has preserved it and will not discard earlier context.";
+    throw Object.assign(new Error(message), { statusCode: 400, code: "ccdx_history_rebuild_required",
+      jsonBody: { error: { type: "invalid_request_error", code: "ccdx_history_rebuild_required", message,
+        recoverable: true, recovery: { action: "restore_plaintext_history", compaction_items: compactions.length, reasoning_items: reasoning.length } } } });
+  }
+  if (!reasoning.length) return null;
+  // Restrict this recovery to unavailable reasoning; visible messages and
+  // opaque tool results are left untouched, including call/result pairing.
+  const keep = item => !(item?.type === "reasoning" && item.encrypted_content);
+  const body = cloneJson(reqContext.body);
+  body.input = body.input.filter(keep);
+  const historicalRemoved = Number.isFinite(reqContext.currentInputStart)
+    ? input.slice(0, reqContext.currentInputStart).filter(item => !keep(item)).length : 0;
+  const historyInputItems = Array.isArray(reqContext.historyInputItems)
+    ? cloneJson(reqContext.historyInputItems.filter(keep))
+    : reqContext.historyInputItems;
+  return { ...reqContext, body, inputItems: body.input, historyInputItems,
+    currentInputStart: Number.isFinite(reqContext.currentInputStart) ? reqContext.currentInputStart - historicalRemoved : reqContext.currentInputStart,
+    ...(historicalRemoved && reqContext.historyParentId ? { [ENCRYPTED_HISTORY_REBASE]: true } : {}),
+    [RELEASE_HISTORY_INPUT]: historyInputItems };
+}
+
 export function sanitizeEncryptedReasoningRequest(reqContext, { historicalOnly = false } = {}) {
   const state = { changed: false };
   let body = cloneJson(reqContext.body);

@@ -59,7 +59,7 @@ function listen(server) {
 export async function startPredictionTransport({
   key, cert, overlay, normalizeRequest = (value) => value,
   enabled = () => true, requestImpl = https.request,
-  agent, networkRoute, onEvent = () => {},
+  agent, networkRoute, pacImpl, onEvent = () => {},
   timeoutMs = 30_000, maxConnections = 128,
 }) {
   const sockets = new Set();
@@ -222,7 +222,7 @@ export async function startPredictionTransport({
     if (req.method === "GET" && req.url === "/proxy.pac" && !req.headers.origin
       && ["127.0.0.1", "localhost"].includes(String(req.headers.host || "").split(":")[0])) {
       res.writeHead(200, { "Content-Type": "application/x-ns-proxy-autoconfig", "Cache-Control": "no-store" });
-      res.end(predictionPac(proxy.address().port, networkRoute)); return;
+      res.end(pacImpl ? pacImpl(proxy.address().port) : predictionPac(proxy.address().port, networkRoute)); return;
     }
     res.writeHead(403); res.end();
   });

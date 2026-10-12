@@ -352,8 +352,9 @@ async function selectStreamFailureRetry(reqContext, failure, usedRetryPolicies, 
       retry: retry ? { ...retry, releasePreparation: preparation?.release } : null,
       retrySkipped: null,
     };
-  } catch {
+  } catch (error) {
     options.assertPrepareActive?.();
+    if (error.code === "ccdx_history_rebuild_required") throw error;
     return { retry: null, retrySkipped: "history_unavailable" };
   } finally {
     if (!keepReservation) preparation?.release();
@@ -363,6 +364,7 @@ async function selectStreamFailureRetry(reqContext, failure, usedRetryPolicies, 
 function recordResponseFailure(options, reqContext, resp, failure, {
   retry,
   retrySkipped,
+  recovery,
 } = {}) {
   if (!failure) return;
   const details = responseFailureDetails(failure.event, failure.eventType, {
@@ -372,6 +374,8 @@ function recordResponseFailure(options, reqContext, resp, failure, {
     retryPolicy: retry?.policyId,
     retrySkipped,
   });
+  if (retry?.recovery) details.recovery = retry.recovery;
+  else if (recovery) details.recovery = recovery;
   options.responseFailures?.record?.(details);
   console.warn(status("warn", formatResponseFailureLog(details)));
 }
@@ -465,7 +469,10 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
         try {
           selected = await selectStreamFailureRetry(reqContext, streamState.failure, usedRetryPolicies, options);
         } catch (error) {
-          recordResponseFailure(options, reqContext, resp, streamState.failure, { retrySkipped: "retry_preparation_failed" });
+          recordResponseFailure(options, reqContext, resp, streamState.failure, {
+            retrySkipped: error.code === "ccdx_history_rebuild_required" ? error.code : "retry_preparation_failed",
+            recovery: error.jsonBody?.error?.recovery,
+          });
           throw error;
         }
         retry = selected?.retry || null;
@@ -585,7 +592,10 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
         try {
           selected = await selectStreamFailureRetry(reqContext, failure, usedRetryPolicies, options);
         } catch (error) {
-          recordResponseFailure(options, reqContext, resp, failure, { retrySkipped: "retry_preparation_failed" });
+          recordResponseFailure(options, reqContext, resp, failure, {
+            retrySkipped: error.code === "ccdx_history_rebuild_required" ? error.code : "retry_preparation_failed",
+            recovery: error.jsonBody?.error?.recovery,
+          });
           throw error;
         }
         const retry = selected?.retry || null;

@@ -68,7 +68,7 @@ test("static proxies are accepted; invalid and dynamic routes preserve existing 
 
 test("unsupported systems and running Apps cause no setup writes", async (t) => {
   const opts = fixture(t);
-  await assert.rejects(runPredictionCommand({ ...opts, action: "on", platform: "linux" }), /macOS only/);
+  await assert.rejects(runPredictionCommand({ ...opts, action: "on", platform: "linux" }), /macOS and Windows only/);
   await assert.rejects(runPredictionCommand({ ...opts, action: "on", platform: "darwin", exec() { return "42"; } }), /Quit Codex/);
   assert.equal(fs.existsSync(predictionPaths(opts).settings), false);
 });
@@ -115,6 +115,7 @@ test("explicit on/off supports profile changes and never writes config.toml", as
   await runPredictionCommand({ ...run, action: "off" });
   const disabled = readPredictionSettings(opts);
   assert.equal(disabled.enabled, false); assert.equal(disabled.store, undefined); assert.equal(disabled.certificateHash, undefined);
+  assert.equal(disabled.app, undefined);
   const other = { ...run, env: { CODEX_ELECTRON_USER_DATA_PATH: path.join(opts.root, "second-profile") } };
   await runPredictionCommand({ ...other, action: "on" });
   assert.equal(readPredictionSettings(other).store, predictionPaths(other).store);

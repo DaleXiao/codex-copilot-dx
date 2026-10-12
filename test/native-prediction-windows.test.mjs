@@ -136,15 +136,17 @@ test("Windows OpenSSL resolution is explicit and ACL checks never interpolate pa
 
 test("Windows prediction launch binds native and Chromium storage to the existing trusted profile", async t => {
   const calls = [];
+  let running = [];
   const profile = "C:\\Users\\fixture name 测试\\AppData\\Local\\Packages\\OpenAI.Codex_fixture\\LocalCache\\Roaming\\Codex\\web\\Codex";
   t.mock.method(fs, "existsSync", file => file === path.win32.join(profile, "Local State"));
   const spawnImpl = (command, args, options) => {
     calls.push({ command, args, options });const child = new EventEmitter();child.unref = () => {};
+    running = [{ pid: 1, readable: true, route: "http://127.0.0.1:12345/proxy.pac" }];
     queueMicrotask(() => child.emit("spawn"));return child;
   };
   const env = Object.freeze({ CODEX_HOME: "C:\\existing-codex-home" });
   const options = { env, platform: "win32", predictionApp: executable, predictionProfile: profile, predictionPacUrl: "http://127.0.0.1:12345/proxy.pac",
-    resolveWindowsApp: () => ({ app: executable }), windowsAppProcesses: () => [], spawnImpl };
+    resolveWindowsApp: () => ({ app: executable }), windowsAppProcesses: () => running, spawnImpl };
   assert.equal(await openCodex(options), true);
   assert.equal(calls[0].command, executable);assert.deepEqual(calls[0].args, [`--user-data-dir=${profile}`, "--proxy-pac-url=http://127.0.0.1:12345/proxy.pac"]);
   assert.equal(calls[0].options.env.CODEX_ELECTRON_USER_DATA_PATH, profile);
@@ -167,6 +169,9 @@ test("Windows prediction launch binds native and Chromium storage to the existin
   assert.equal(await openCodex({ ...options, windowsAppProcesses: () => [{ pid: 1, readable: true, route: "http://127.0.0.1:54321/proxy.pac" }] }), false);
   assert.equal(await openCodex({ ...options, windowsAppProcesses: () => [{ pid: 1, readable: false, route: null }] }), false);
   assert.equal(calls.length, before, "must not spawn into a running instance or kill it");
+  let inspections = 0;
+  assert.equal(await openCodex({ ...options, windowsAppProcesses: () => ++inspections === 1 ? [] : [{ pid: 2, readable: true, route: null }] }), false,
+    "a package activation that drops launch flags is not reported as connected");
 });
 
 test("Windows default-off startup and status make no platform probes or writes", async t => {

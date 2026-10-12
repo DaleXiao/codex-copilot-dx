@@ -72,8 +72,14 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
         child.once("error", () => resolve(false));
         child.once("spawn", () => { child.unref(); resolve(true); });
       });
-      console.log(status(launched ? "info" : "warn", launched ? "Codex launch requested; prediction status will show when configuration traffic is observed" : "Could not launch the registered Windows Codex App"));
-      return launched;
+      if (!launched) { console.log(status("warn", "Could not launch the registered Windows Codex App"));return false; }
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const actual = windowsAppProcesses(current.app, { env });
+      const routeRetained = actual.length === 1 && actual[0].readable && actual[0].route === predictionPacUrl;
+      console.log(status(routeRetained ? "info" : "warn", routeRetained
+        ? "Codex launch route verified; prediction status will show when configuration traffic is observed"
+        : "Codex launch requested, but the active App did not retain the current prediction route. Core adapter remains available"));
+      return routeRetained;
     } catch (error) {
       console.log(status("warn", `Optional Windows prediction launch skipped: ${error.message}`));
       return false;

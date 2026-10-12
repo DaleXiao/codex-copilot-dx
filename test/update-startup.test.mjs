@@ -66,7 +66,7 @@ for (const [mode, executable] of [["new", cli], ["new", legacy], ["current", cli
       CCDX_AUTO_LAUNCH: "0", CCDX_MODEL_REFRESH_INTERVAL_MS: "0", CCDX_DISABLE_TOKEN_DISCOVERY: "1" };
     const cold = start(env, executable);
     runs.push(cold);
-    await marker(cold, "Ready, Codex App is ready to use");
+    await marker(cold, "Ready, CCDX adapter is ready to use");
     const health = await fetch(`${origin}/_ccdx/health`, { signal: AbortSignal.timeout(3000) }).then(response => response.json());
     assert.equal(health.version, localPackageVersion());
     assert.equal(health.ok, true);

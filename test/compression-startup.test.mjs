@@ -64,7 +64,7 @@ for (const mode of ["pending", "default-on", "removed", "timeout", "write-failur
       assert.match(await response.text(), /startup fixture response/);
     };
     const cold = start();
-    await until(() => cold.output().includes("Ready, Codex App is ready to use"), "cold Ready");
+    await until(() => cold.output().includes("Ready, CCDX adapter is ready to use"), "cold Ready");
     await core();
     if (mode === "pending") {
       await until(() => cold.output().includes("Compression fixture probe received"), "probe");

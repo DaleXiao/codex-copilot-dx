@@ -78,7 +78,9 @@ replaced. Before launch, CCDX checks only registered App main-process route
 metadata. A running App with an old/unreadable PAC receives an explicit quit and
 relaunch instruction; it is not killed or reported as newly connected. The first
 upgrade from an ephemeral-port candidate may require one full App quit. Successful
-process creation is reported as a launch request, not proof of configuration traffic.
+process creation is not proof of configuration traffic. A bounded post-launch
+main-process check verifies retained PAC arguments; adapter readiness is reported
+separately from App route readiness.
 
 ```bash
 # Fully quit Codex App first.

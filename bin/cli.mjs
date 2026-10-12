@@ -420,7 +420,7 @@ try {
   }
 
   console.log(`
-  ${status("ok", "Ready, Codex App is ready to use")}
+  ${status("ok", "Ready, CCDX adapter is ready to use")}
 
   Adapter: ${adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT)}
 

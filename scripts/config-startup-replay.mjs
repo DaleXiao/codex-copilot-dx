@@ -38,7 +38,7 @@ function start(env) {
   return { child, output: () => output, done: once(child, "exit") };
 }
 
-async function ready(run, marker = "Ready, Codex App is ready to use") {
+async function ready(run, marker = "Ready, CCDX adapter is ready to use") {
   await bounded((async () => {
     while (!run.output().includes(marker)) {
       if (run.child.exitCode !== null || run.child.signalCode) throw new Error(`CLI exited before ready: ${run.output()}`);

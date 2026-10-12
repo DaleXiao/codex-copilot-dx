@@ -96,4 +96,25 @@ candidate. Original official enabled configuration remains preserved.
 
 ## Publication
 
-GitHub CI and publication receipts will be recorded after their actual completion.
+- Release commit: `a56d27f5872fe6f0da44dda050b01b654b238185`.
+- [GitHub CI](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38206739216)
+  passed Node 22.15.0, Node 24 and the latest official Codex compatibility job.
+- [GitHub Release v0.9.25](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.25)
+  is published from that exact commit. The previously supplied PAT was used; no
+  browser login or alternate credential was tried.
+- [npm publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38206858594)
+  completed with `+ codex-copilot-dx@0.9.25`, using the existing repository
+  `NPM_TOKEN` workflow. Prepublication verification passed again.
+- Local final package and published package receipts match: 127 files, SHA-1
+  `2343762f38ac35c1a0eb28a8471aea7abe954984`, integrity
+  `sha512-72H0/FfPSKSOIp4SMSatx82U91JluK+k3R4wZcj9avI8zxYM17Xtza95coKvYBqknvDA3myclViUeFnaaPFtnw==`.
+
+The complete diagnostic JSON snapshot includes TLS/upstream counters and the last
+redacted error. CLI/WebUI summarize preference, readiness, configuration traffic
+and setup-failure reasons; they do not display a full transport error history.
+
+Publication receipts are a documentation-only follow-up. The release tag and npm
+artifact are not moved or republished. Task-owned temporary profiles, benchmark
+fixtures, logs, screenshots and release helpers are removed after publication;
+user configuration, credentials, history, installed dependencies and running
+services are preserved.

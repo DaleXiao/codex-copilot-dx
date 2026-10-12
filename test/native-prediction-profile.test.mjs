@@ -145,9 +145,17 @@ test("expired renewal commit failure retains old trust and off can still remove 
   const opts = fixture(t), paths = predictionPaths(opts);
   const directory = path.join(paths.directory, "credentials-expired");
   const expireLeaf = (command, args, options) => {
-    const altered = [...args];
-    if (args[0] === "x509") altered[args.indexOf("-days") + 1] = "0";
-    return execFileSync(command, altered, options);
+    if (args[0] !== "x509") return execFileSync(command, args, options);
+    // `x509 -days 0` is rejected by macOS LibreSSL. The CA command supports
+    // explicit historical validity dates on both LibreSSL and OpenSSL.
+    const value = (flag) => args[args.indexOf(flag) + 1];
+    const temporary = path.dirname(value("-in"));
+    const index = path.join(temporary, "index.txt"), serial = path.join(temporary, "serial");
+    const config = path.join(temporary, "expired-ca.cnf");
+    fs.writeFileSync(index, "");fs.writeFileSync(serial, "01\n");
+    fs.writeFileSync(config, `[ca]\ndefault_ca=fixture\n[fixture]\ndatabase=${index}\nserial=${serial}\nnew_certs_dir=${temporary}\ncertificate=${value("-CA")}\nprivate_key=${value("-CAkey")}\ndefault_md=sha256\npolicy=subject\n[subject]\ncommonName=supplied\n`);
+    return execFileSync(command, ["ca", "-batch", "-config", config, "-in", value("-in"), "-out", value("-out"),
+      "-startdate", "20200101000000Z", "-enddate", "20210101000000Z", "-extfile", value("-extfile"), "-notext"], options);
   };
   assert.throws(() => createPredictionCertificate(directory, { exec: expireLeaf }), /needs renewal/);
   const expired = readPredictionCertificate(directory, { allowExpired: true });

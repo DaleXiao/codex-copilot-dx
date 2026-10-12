@@ -5,12 +5,19 @@ import { execFileSync } from "node:child_process";
 const WINDOWS_PUBLISHER = "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B";
 const WINDOWS_PACKAGE_FAMILY = "OpenAI.Codex_2p2nqsd0c76g0";
 
+export function windowsPowerShellEnvironment(env = process.env) {
+  // PowerShell 7 can export a Core-only PSModulePath. Prefer the bundled
+  // Windows PowerShell modules for this child, retaining user module paths.
+  const modules = path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "Modules");
+  return { ...env, PSModulePath: [modules, env.PSModulePath].filter(Boolean).join(";") };
+}
+
 function powershell(script, { env = process.env, exec = execFileSync, ...options } = {}) {
   const command = path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   try {
     return exec(command, ["-NoProfile", "-NonInteractive", "-Command",
       "$ErrorActionPreference='Stop';[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);" + script],
-    { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, env, windowsHide: true, ...options }).trim();
+    { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, env: windowsPowerShellEnvironment(env), windowsHide: true, ...options }).trim();
   } catch {
     throw new Error("Windows prediction check failed; verify PowerShell, App registration and current-user permissions");
   }

@@ -7,7 +7,7 @@ import { EventEmitter } from "node:events";
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { assertWindowsCodexClosed, installedWindowsPredictionApp, windowsPredictionProfile,
-  windowsProxyText, windowsSystemProxy, windowsPredictionOpenSSL, windowsPrivatePredictionPath } from "../src/native-prediction-windows.mjs";
+  windowsProxyText, windowsSystemProxy, windowsPredictionOpenSSL, windowsPrivatePredictionPath, windowsPowerShellEnvironment } from "../src/native-prediction-windows.mjs";
 import { resolveNetworkRoute, networkProxyFor } from "../src/network-route.mjs";
 import { openCodex } from "../src/launcher.mjs";
 import { runPredictionCommand, startNativePrediction } from "../src/native-prediction.mjs";
@@ -16,6 +16,13 @@ import { predictionPaths, readPredictionSettings, readPredictionCertificate, cre
 const registration = { root: "C:\\Program Files\\WindowsApps\\OpenAI.Codex_fixture", executable: "app/ChatGPT.exe", family: "OpenAI.Codex_2p2nqsd0c76g0" };
 const executable = path.win32.join(registration.root, registration.executable);
 const archive = path.win32.join(path.win32.dirname(executable), "resources", "app.asar");
+
+test("Windows PowerShell children prefer bundled modules without changing the caller environment", () => {
+  const env = Object.freeze({ SystemRoot: "C:\\Windows", PSModulePath: "C:\\Program Files\\PowerShell\\7\\Modules;C:\\custom", CODEX_HOME: "existing" });
+  const child = windowsPowerShellEnvironment(env);
+  assert.equal(child.PSModulePath, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules;" + env.PSModulePath);
+  assert.equal(child.CODEX_HOME, "existing");assert.equal(env.PSModulePath.startsWith("C:\\Program Files"), true);
+});
 
 test("Windows discovery uses registered Store metadata, not guessed executables or a shell", t => {
   t.mock.method(fs, "existsSync", file => file === archive);

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { PassThrough, Writable } from "node:stream";
 import { Script } from "node:vm";
+import { windowsPowerShellEnvironment } from "./native-prediction-windows.mjs";
 
 function failure(code) {
   return Object.assign(new Error(`Windows prediction network failed (${code}); existing company routes were preserved`), { code });
@@ -23,7 +24,7 @@ export async function startWindowsPredictionNetwork({ settings, env = process.en
   const source = fileURLToPath(new URL("./windows-prediction-network.cs", import.meta.url));
   const child = spawnImpl(command, ["-NoProfile", "-NonInteractive", "-Command",
     "$ErrorActionPreference='Stop';Add-Type -Path $env:CCDX_PREDICTION_NETWORK_SOURCE -ReferencedAssemblies System.dll,System.Core.dll,System.Web.Extensions.dll;[CCDXPredictionNetwork]::Run()"],
-  { env: { ...env, CCDX_PREDICTION_NETWORK_SOURCE: source }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false });
+  { env: { ...windowsPowerShellEnvironment(env), CCDX_PREDICTION_NETWORK_SOURCE: source }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false });
   const requests = new Map();let sequence = 0, buffer = "", stopped = false, initialized = false, closing = false;
   let resolveReady, rejectReady;
   const ready = new Promise((resolve, reject) => { resolveReady = resolve;rejectReady = reject; });

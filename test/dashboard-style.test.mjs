@@ -27,6 +27,7 @@ test("all native disclosures use one plus/minus rule without duplicate animation
 });
 
 test("client features precede context and all lower dashboard regions are native disclosures", () => {
+  assert.match(css, /\.dashboard-section > summary\.panel-heading, \.lower > summary\.panel-heading \{ display: grid;/);
   assert.ok(html.indexOf('id="client-features"') < html.indexOf('id="request-context"'));
   const lower = html.slice(html.indexOf('id="client-features"'));
   assert.doesNotMatch(lower, /<section\b/);

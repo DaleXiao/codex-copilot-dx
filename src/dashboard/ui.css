@@ -95,7 +95,7 @@ details > summary::marker { content: ""; }
 details > summary::before { content: "+"; color: var(--heading); font-weight: 700; letter-spacing: 0; }
 details[open] > summary::before { content: "−"; }
 .settings-panel > summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; }
-.dashboard-section > summary.panel-heading, .lower > summary.panel-heading { grid-template-columns: auto minmax(0, 1fr) auto; }
+.dashboard-section > summary.panel-heading, .lower > summary.panel-heading { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; }
 .dashboard-section > summary.panel-heading span, .lower > summary.panel-heading span { white-space: normal; text-align: right; }
 .failure-detail { display: grid; grid-template-columns: minmax(110px, auto) minmax(0, 1fr); gap: 7px 18px; margin: 14px 0; line-height: 1.6; }
 .failure-detail dt { color: var(--muted); }

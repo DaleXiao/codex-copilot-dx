@@ -1,10 +1,12 @@
+import { errorEvidenceText } from "./operation-error.mjs";
+
 function cloneJson(value) {
   return value === undefined ? undefined : structuredClone(value);
 }
 
 export function isEncryptedContentVerificationError(statusCode, text) {
   if (statusCode < 400 || !text) return false;
-  const lower = String(text).toLowerCase();
+  const lower = errorEvidenceText(text).toLowerCase();
   const reasoningFailure = lower.includes("encrypted content")
     && lower.includes("could not be verified")
     && (lower.includes("could not be decrypted") || lower.includes("could not be parsed"));
@@ -17,7 +19,7 @@ export function isEncryptedContentVerificationError(statusCode, text) {
 
 export function isImageNamespaceCollisionError(statusCode, text) {
   if (statusCode < 400 || !text) return false;
-  const lower = String(text).toLowerCase();
+  const lower = errorEvidenceText(text).toLowerCase();
   return lower.includes("namespace")
     && lower.includes("image_gen")
     && lower.includes("collid");

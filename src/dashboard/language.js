@@ -1,5 +1,18 @@
 (() => {
   const translations = {
+    "CLIENT FEATURES": ["CLIENT FEATURES", "接入能力"],
+    "OBSERVED STATE": ["OBSERVED STATE", "实际状态"],
+    "Native predictions": ["Native predictions", "输入建议"],
+    "Local bridge": ["Local bridge", "本地接入"],
+    "Client route": ["Client route", "配置请求"],
+    "Visible candidate": ["Visible candidate", "显示结果"],
+    "Configured does not mean displayed. Use ccdx prediction status for details.": ["Enabled is not proof of a visible suggestion. Check ccdx prediction status.", "开启不等于已显示。\n终端命令可查看详情。"],
+    "Enabled": ["Enabled", "已开启"],
+    "Disabled": ["Disabled", "已关闭"],
+    "Running": ["Running", "运行中"],
+    "Stopped": ["Stopped", "未运行"],
+    "Unavailable": ["Unavailable", "不可用"],
+    "Observed": ["Observed", "已收到配置请求"],
     "First output": ["First output", "首次输出"],
     "Token time": ["Token time", "输出耗时"],
     "Gateway timing. Token time is estimated.": ["Observed at the gateway. Token time is an estimate.", "网关观测时间。\n每Token耗时为估算值。"],

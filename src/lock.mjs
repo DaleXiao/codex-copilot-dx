@@ -6,6 +6,35 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Synchronous configuration writers share the same cross-process lock format.
+// Readers never take the lock. A live lock is never stolen on timeout.
+export function withFileLockSync(lockPath, fn, { timeoutMs = 1000, staleMs = 60_000 } = {}) {
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+  const started = Date.now(), owner = randomUUID();
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  while (true) {
+    if (lockPathExists(reclaimGuardPath(lockPath), fs)) {
+      if (Date.now() - started >= timeoutMs) throw new Error("Configuration lock recovery is in progress; retry shortly");
+      Atomics.wait(sleeper, 0, 0, 10);
+      continue;
+    }
+    try {
+      const fd = writeLockRecord(lockPath, { pid: process.pid, owner, created_at: new Date().toISOString() }, fs);
+      fs.closeSync(fd);
+      if (lockPathExists(reclaimGuardPath(lockPath), fs)) { removeOwnedLock(lockPath, owner, fs); continue; }
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      if (maybeRemoveStaleLock(lockPath, staleMs, Date.now(), fs, processIsAlive)) continue;
+      let sameProcess = false;
+      try { sameProcess = readLockSnapshot(lockPath).pid === process.pid; } catch {}
+      if (sameProcess || Date.now() - started >= timeoutMs) throw new Error("Configuration is being updated by another operation; retry shortly");
+      Atomics.wait(sleeper, 0, 0, 10);
+    }
+  }
+  try { return fn(); } finally { removeOwnedLock(lockPath, owner, fs); }
+}
+
 function readLockSnapshot(lockPath) {
   const stat = fs.statSync(lockPath);
   let record = {};

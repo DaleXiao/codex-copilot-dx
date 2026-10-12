@@ -102,3 +102,20 @@ test("dashboard timing shows its own sample counts and estimation boundary", () 
   assert.match(nodes.get("ttft").textContent, /^—/);
   assert.match(html, /Gateway timing\. Token time is estimated\./);
 });
+
+test("native prediction dashboard distinguishes bridge readiness from candidate visibility", () => {
+  const nodes = new Map();
+  const node = () => ({ textContent: "", children: [], querySelectorAll() { return []; }, replaceChildren() {}, append() {} });
+  const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); }, createElement: node };
+  const render = runInNewContext(`${renderScript}\nrender;`, { document });
+  const prediction = { configured: true, bridge: "running", client_route: "observed", candidate: "displayed" };
+  render({ client_integrations: { prediction } });
+  assert.equal(nodes.get("prediction-preference").textContent, "Enabled");
+  assert.equal(nodes.get("prediction-bridge").textContent, "Running");
+  assert.equal(nodes.get("prediction-route").textContent, "Observed");
+  assert.equal(nodes.get("prediction-candidate").textContent, "Unknown");
+  prediction.bridge = "unavailable";prediction.reason = "<script>unsafe</script>";
+  render({ client_integrations: { prediction } });
+  assert.equal(nodes.get("prediction-note").textContent, prediction.reason);
+  render({});assert.equal(nodes.get("prediction-preference").textContent, "Unknown");
+});

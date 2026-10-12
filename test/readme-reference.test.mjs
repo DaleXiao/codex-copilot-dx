@@ -8,6 +8,10 @@ test("quick-start command table and full reference retain active CLI and safety 
   const reference = fs.readFileSync(new URL("../docs/REFERENCE.md", import.meta.url), "utf8");
   const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   assert.ok(pkg.files.includes("docs/REFERENCE.md"), "preserve the complete offline reference in npm");
+  assert.ok(pkg.files.includes("docs/ARCHITECTURE.md"), "ship the linked architecture reference");
+  assert.ok(fs.existsSync(new URL("../docs/ARCHITECTURE.md", import.meta.url)));
+  assert.match(reference, /Startup, image setup, config doctor, compression and legacy prediction cleanup share this path/);
+  assert.doesNotMatch(reference, /does not redirect it through `CODEX_HOME`/);
   assert.ok(readme.split("\n").length < 110);
   for (const command of ["start", "status", "doctor", "models", "usage", "auto-review-model", "animation", "cache", "limits", "enable-image", "image-status", "disable-image", "update"]) {
     assert.ok(readme.includes(`ccdx ${command}`), command);

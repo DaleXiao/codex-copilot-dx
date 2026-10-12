@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.9.24",
+  "version": "0.9.25",
   "description": "Use Codex App with GitHub Copilot",
   "author": "Dale Xiao",
   "type": "module",
@@ -15,7 +15,8 @@
     "scripts/benchmark-probes.mjs",
     "scripts/fixtures/",
     "README.md",
-    "docs/REFERENCE.md"
+    "docs/REFERENCE.md",
+    "docs/ARCHITECTURE.md"
   ],
   "keywords": [
     "codex",

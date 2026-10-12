@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { operationError } from "./operation-error.mjs";
 
-const GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/DaleXiao/codex-copilot-dx/releases/latest";
-const MAX_RELEASE_BYTES = 256 * 1024;
+const GITHUB_LATEST_RELEASE_URL = "https://github.com/DaleXiao/codex-copilot-dx/releases/latest";
 
 export function localPackageVersion() {
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -37,60 +37,37 @@ export function githubReleaseVersion(tag) {
   return match.slice(1).join(".");
 }
 
-async function readReleaseJson(response, signal) {
-  const reader = response.body?.getReader?.();
-  if (!reader) throw new Error("GitHub release response has no readable body");
-  const cancel = () => { void reader.cancel().catch(() => {}); };
-  signal.addEventListener("abort", cancel, { once: true });
-  const chunks = [];
-  let bytes = 0;
-  let complete = false;
-  try {
-    if (Number(response.headers?.get?.("content-length")) > MAX_RELEASE_BYTES) {
-      throw new Error("GitHub release response is too large");
-    }
-    while (!signal.aborted) {
-      const { done, value } = await reader.read();
-      if (done) {
-        complete = true;
-        break;
-      }
-      bytes += value.byteLength;
-      if (bytes > MAX_RELEASE_BYTES) throw new Error("GitHub release response is too large");
-      chunks.push(Buffer.from(value));
-    }
-    if (signal.aborted) throw new Error("GitHub release request timed out");
-    return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8"));
-  } finally {
-    signal.removeEventListener("abort", cancel);
-    if (!complete) cancel();
-    reader.releaseLock();
-  }
-}
-
-export async function fetchLatestRelease({ fetchImpl = fetch, timeoutMs = 2000 } = {}) {
+export async function lookupLatestRelease({ fetchImpl = fetch, timeoutMs = 2000 } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const resp = await fetchImpl(GITHUB_LATEST_RELEASE_URL, {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "codex-copilot-dx" },
-      redirect: "error",
+      headers: { Accept: "text/html", "User-Agent": "codex-copilot-dx" },
+      redirect: "manual",
       signal: controller.signal,
     });
-    if (!resp.ok) {
-      void resp.body?.cancel?.().catch(() => {});
-      return null;
+    void resp.body?.cancel?.().catch(() => {});
+    if ([403, 429].includes(resp.status)) throw operationError("github_rate_limit", `GitHub release lookup was refused (HTTP ${resp.status}); retry later. No update was installed.`, { status: resp.status });
+    if (![301, 302, 303, 307, 308].includes(resp.status)) throw operationError("github_http_error", `GitHub release lookup returned HTTP ${resp.status}; no stable release redirect was received. No update was installed.`, { status: resp.status });
+    let url;
+    try { url = new URL(resp.headers.get("location"), GITHUB_LATEST_RELEASE_URL); } catch {}
+    const match = url?.pathname.match(/^\/DaleXiao\/codex-copilot-dx\/releases\/tag\/([^/]+)$/i);
+    const tagName = match?.[1], version = githubReleaseVersion(tagName);
+    if (!url || url.origin !== "https://github.com" || url.username || url.password || url.search || url.hash || !version) {
+      throw operationError("github_invalid_redirect", "GitHub did not return a valid stable release tag for this repository. No update was installed.");
     }
-    const data = await readReleaseJson(resp, controller.signal);
-    const version = githubReleaseVersion(data?.tag_name);
-    return version && data.draft === false && data.prerelease === false
-      ? { version, tagName: data.tag_name }
-      : null;
-  } catch {
-    return null;
+    return { version, tagName };
+  } catch (error) {
+    if (error.code?.startsWith("github_")) throw error;
+    if (controller.signal.aborted) throw operationError("github_timeout", "GitHub release lookup timed out. No update was installed.");
+    throw operationError(error.cause?.code || "github_network_error", "Could not connect to the GitHub release page. Check your network or proxy. No update was installed.");
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function fetchLatestRelease(options = {}) {
+  try { return await lookupLatestRelease(options); } catch { return null; }
 }
 
 export async function fetchLatestVersion(options) {

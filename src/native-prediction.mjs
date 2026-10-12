@@ -5,6 +5,8 @@ import { predictionPaths, readPredictionSettings, writePredictionSettings, asser
   assertCodexClosed, installedPredictionApp, predictionAppMatches, readPredictionCertificate,
   createPredictionCertificate, updatePredictionTrust } from "./native-prediction-profile.mjs";
 import { retirePredictionIntegration } from "./prediction-retirement.mjs";
+import { networkRouteSnapshot } from "./network-route.mjs";
+import { withFileLock } from "./lock.mjs";
 
 function systemProxy(exec = execFileSync) {
   return exec("/usr/sbin/scutil", ["--proxy"], { encoding: "utf8", timeout: 2000, maxBuffer: 64 * 1024 });
@@ -19,15 +21,32 @@ function certificateDirectory(settings, paths) {
   return directory;
 }
 
-export async function runPredictionCommand({ action = "status", env = process.env,
+export async function runPredictionCommand(options = {}) {
+  if (!options.action || options.action === "status") return runPredictionCommandUnlocked(options);
+  if ((options.platform || process.platform) !== "darwin") return runPredictionCommandUnlocked(options);
+  const { settings } = predictionPaths(options);
+  return withFileLock(`${settings}.lock`, () => runPredictionCommandUnlocked(options), { timeoutMs: 2000 });
+}
+
+async function runPredictionCommandUnlocked({ action = "status", env = process.env,
   platform = process.platform, output = console.log, resolveApp = installedPredictionApp,
-  writeSettings = writePredictionSettings, ...options } = {}) {
+  writeSettings = writePredictionSettings, runtimeSnapshot, ...options } = {}) {
   const opts = { ...options, env };
   const settings = readPredictionSettings(opts);
   if (action === "status") {
     output(`Native prediction preference: ${settings.enabled ? "on" : "off"} (default: off)`);
     output("Uses the conversation's model. No prediction MCP, Hook, or panel.");
     if (settings.enabled && !predictionAppMatches(settings.app)) output("Codex App changed; quit it and run ccdx prediction on to recheck compatibility.");
+    if (runtimeSnapshot) {
+      try {
+        const runtime = (await runtimeSnapshot())?.client_integrations?.prediction;
+        if (runtime) {
+          output(`Bridge: ${runtime.bridge}; client route: ${runtime.client_route}; visible candidate: ${runtime.candidate}`);
+          if (runtime.reason) output(runtime.reason);
+          for (const [name, event] of Object.entries(runtime.configuration || {})) output(`${name}: HTTP ${event.status}${event.modified ? " (local compatibility)" : " (upstream)"}`);
+        } else output("Runtime prediction state: unavailable; status is a saved preference, not proof of a visible suggestion.");
+      } catch { output("Runtime prediction state: unavailable; start ccdx and check again."); }
+    }
     return settings;
   }
   if (!["on", "off"].includes(action)) throw new Error("Prediction action must be on, off, or status");
@@ -100,34 +119,38 @@ export async function runPredictionCommand({ action = "status", env = process.en
 }
 
 export async function startNativePrediction({ env = process.env, platform = process.platform,
-  warning = () => {}, ...options } = {}) {
+  warning = () => {}, state, ...options } = {}) {
   const opts = { ...options, env };
   const settings = readPredictionSettings(opts);
+  state?.configure(settings.enabled);
   if (!settings.enabled) return null;
   if (platform !== "darwin") throw new Error("Native predictions were skipped: unsupported platform");
-  assertPredictionProxyCompatible({ env, systemProxy: systemProxy(options.exec) });
+  const networkRoute = assertPredictionProxyCompatible({ env, systemProxy: systemProxy(options.exec) });
   if (!predictionAppMatches(settings.app)) throw new Error("Codex App changed; run ccdx prediction on after quitting it to recheck compatibility");
   const paths = predictionPaths(opts);
   if (settings.store !== paths.store || !fs.existsSync(paths.store)) throw new Error("Prediction profile trust is unavailable; run ccdx prediction on after quitting Codex");
   const certificate = readPredictionCertificate(certificateDirectory(settings, paths));
   if (certificate.hash !== settings.certificateHash) throw new Error("Prediction certificate changed; setup must be checked again");
-  const [{ startPredictionTransport }, { applyNativePredictionOverlay, normalizeStatsigRequest }] = await Promise.all([
+  const [{ startPredictionTransport }, { applyNativePredictionOverlay, normalizeStatsigRequest }, { createProxyAgent }] = await Promise.all([
     import("./native-prediction-transport.mjs"), import("./native-prediction-overlay.mjs"),
+    import("./proxy-tunnel.mjs"),
   ]);
   // An in-memory switch is refreshed independently of request bodies and never
   // touches the model path. A failed read turns off this optional overlay.
   let enabled = true;
   const timer = setInterval(() => {
-    try { enabled = readPredictionSettings(opts).enabled; }
+    try { enabled = readPredictionSettings(opts).enabled; state?.configure(enabled); }
     catch { enabled = false; }
   }, 1000);
   timer.unref();
   let transport;
   try {
     transport = await startPredictionTransport({ ...certificate, enabled: () => enabled,
+      networkRoute, agent: networkRoute.https ? createProxyAgent(networkRoute) : undefined,
+      onEvent: (event) => state?.event(event),
       overlay: ({ host, pathname, status, body, enabled }) => {
         const result = applyNativePredictionOverlay({ hostname: host, pathname, statusCode: status, body, enabled });
-        return result.changed ? { body: result.body, status: result.statusCode } : null;
+        return result.changed ? { body: result.body, status: result.statusCode } : { official: result.official };
       },
       normalizeRequest: (parsed) => {
         const result = normalizeStatsigRequest({ hostname: "ab.chatgpt.com", pathname: "/v1/initialize", body: JSON.stringify(parsed), enabled });
@@ -135,12 +158,13 @@ export async function startNativePrediction({ env = process.env, platform = proc
       },
     });
   } catch (error) { clearInterval(timer); throw error; }
+  state?.running(networkRouteSnapshot(networkRoute));
   warning("Native prediction bridge enabled; only the two configuration hosts use its App-only route.");
   warning("If Codex is already running, quit it and run ccdx again to apply the route.");
   return {
     app: settings.app.app,
     pacUrl: transport.pacUrl,
     args: [`--proxy-pac-url=${transport.pacUrl}`],
-    async close() { clearInterval(timer); await transport.close(); },
+    async close() { clearInterval(timer); await transport.close(); state?.stopped(); },
   };
 }

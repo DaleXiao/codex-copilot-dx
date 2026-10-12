@@ -4,6 +4,8 @@ The [root README](../README.md) is the quick start; the [command/configuration
 reference](REFERENCE.md) preserves complete current behavior and limits. `ccdx --help` and
 `ccdx <command> --help` describe the installed package's CLI. Code and tests
 resolve any discrepancy; CLI version and running-adapter version can differ.
+The [architecture boundaries](ARCHITECTURE.md) explain module ownership,
+optional integration lifecycle and configuration safety.
 
 `ccdx doctor config` performs local, read-only configuration diagnostics and
 previews the current startup writer. It does not claim to resolve the complete
@@ -14,6 +16,8 @@ effective Codex configuration or validate every field against the installed app.
 These reports record a specific release and test environment. Their version,
 test counts, timings, live-provider observations, and limitations remain
 historical facts rather than current guarantees.
+
+- [0.9.25: static proxy compatibility, integration boundaries and release diagnostics](RELEASE_0.9.25.md)
 
 - [0.9.19: GitHub startup checks and stable-release updates](RELEASE_0.9.19.md)
 - [0.9.21: compatibility-gated local history compression](RELEASE_0.9.21.md)

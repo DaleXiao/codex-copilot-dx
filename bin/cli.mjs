@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { ensureAuth, openCodex } from "../src/launcher.mjs";
-import { ensureCodexConfig } from "../src/config.mjs";
 import { startAdapter } from "../src/adapter.mjs";
 import { defaultCopilotClient, refreshVSCodeVersion } from "../src/copilot.mjs";
 import { status } from "../src/status.mjs";
@@ -22,9 +21,7 @@ import { runAuthCommand } from "../src/cli-auth.mjs";
 import { createProfileRuntime } from "../src/profile-runtime.mjs";
 import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
 import { createCodexModelCatalog } from "../src/codex-model-catalog.mjs";
-import { readImageProviderConfig } from "../src/image-provider-config.mjs";
 import { setResponseHistoryMaxBytes } from "../src/response-history.mjs";
-import { ensureCodexThreadCompression } from "../src/codex-thread-compression.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
 const CLI_NAME = cliCommandName();
@@ -91,7 +88,10 @@ if (CLI.command === "suggestion") {
 if (CLI.command === "prediction") {
   try {
     const { runPredictionCommand } = await import("../src/native-prediction.mjs");
-    await runPredictionCommand({ action: CLI.action });
+    await runPredictionCommand({ action: CLI.action, runtimeSnapshot: () => {
+      const probe = parseAdapterProbeOptions(process.env);
+      return readAdapterStatus({ host: probe.adapterHost, port: probe.adapterPort, timeoutMs: probe.existingAdapterTimeoutMs }).then(({ data }) => data);
+    } });
     process.exit(0);
   } catch (error) {
     console.error(status("err", error.message));
@@ -265,6 +265,16 @@ let activeServer = null;
 let modelRefreshTimer = null;
 let shuttingDown = false;
 let nativePrediction = null;
+let clientIntegration = null;
+
+async function clientIntegrations() {
+  if (!clientIntegration) {
+    const { createClientIntegration } = await import("../src/client-integration.mjs");
+    clientIntegration = createClientIntegration({ port: ADAPTER_PORT, host: ADAPTER_HOST,
+      info: (message) => console.log(status("info", message)), warning: (message) => console.warn(status("warn", message)) });
+  }
+  return clientIntegration;
+}
 
 if (LOGGING.filePath) {
   console.log(status("info", `Debug log: ${LOGGING.filePath}`));
@@ -310,25 +320,7 @@ async function reuseRunningAdapterIfAvailable() {
 }
 
 async function configureCodexClient() {
-  try {
-    const { retirePredictionIntegration } = await import("../src/prediction-retirement.mjs");
-    const result = retirePredictionIntegration();
-    if (result.changed) console.log(status("info", "Removed the retired CCDX prediction integration"));
-    if (result.preserved) console.warn(status("warn", "Modified prediction settings were preserved"));
-  } catch (error) {
-    console.warn(status("warn", `${error.message}. Core startup will continue.`));
-  }
-  const imageProviderEnabled = Boolean(readImageProviderConfig());
-  const { imageMcpSkipped } = ensureCodexConfig(ADAPTER_PORT, { host: ADAPTER_HOST, imageProviderEnabled });
-  if (imageProviderEnabled && !imageMcpSkipped) {
-    try {
-      const { syncEnabledImageSkill } = await import("../src/cli-image.mjs");
-      syncEnabledImageSkill({ adapterPort: ADAPTER_PORT, adapterHost: ADAPTER_HOST });
-    } catch (error) {
-      console.warn(status("warn", `Image guidance could not be updated: ${error.message}`));
-    }
-  }
-  return { compressionSetup: runInBackground(ensureCodexThreadCompression) };
+  return (await clientIntegrations()).configure();
 }
 
 if (CLI.command === "doctor") {
@@ -403,16 +395,14 @@ try {
     streamIdleTimeoutMs: RUNTIME.streamIdleTimeoutMs,
     terminalAnimationTheme,
     nativePredictionPac: () => nativePrediction?.pacUrl || null,
+    clientIntegrationSnapshot: () => clientIntegration?.snapshot() || null,
   });
 
   // Point Codex App at the adapter.
   const { compressionSetup } = await configureCodexClient();
 
   // Optional native prediction setup must never prevent the core adapter from running.
-  try {
-    const { startNativePrediction } = await import("../src/native-prediction.mjs");
-    nativePrediction = await startNativePrediction({ warning: (message) => console.log(status("info", message)) });
-  } catch (error) { console.warn(status("warn", `${error.message}. Core startup will continue.`)); }
+  nativePrediction = await (await clientIntegrations()).start();
 
   // Launch Codex when available. A running App is never forcibly restarted.
   await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app });
@@ -444,7 +434,7 @@ try {
     let exitCode = 0;
     try {
       if (modelRefreshTimer) clearInterval(modelRefreshTimer);
-      await nativePrediction?.close();
+      await clientIntegration?.close();
       const result = await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs });
       if (result.forced) console.warn(status("warn", "Forced remaining adapter connections closed"));
       await flushUsageWrites();
@@ -461,7 +451,7 @@ try {
   await compressionSetup;
 } catch (e) {
   console.error(status("err", e.message));
-  await nativePrediction?.close().catch(() => {});
+  await clientIntegration?.close().catch(() => {});
   await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs }).catch(() => {});
   await flushUsageWrites();
   await LOGGING.cleanup();

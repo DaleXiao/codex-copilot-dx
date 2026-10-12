@@ -5,13 +5,14 @@ import { execFileSync } from "node:child_process";
 import { createHash, X509Certificate, createPrivateKey, createPublicKey } from "node:crypto";
 import { atomicWriteFileSync } from "./atomic-file.mjs";
 import { userSettingsPath } from "./user-settings.mjs";
+import { resolveNetworkRoute } from "./network-route.mjs";
+import { codexPaths } from "./codex-paths.mjs";
 
 export function predictionPaths({ env = process.env, home = os.homedir() } = {}) {
   const directory = path.join(path.dirname(userSettingsPath({ env, home })), "native-prediction");
-  const profile = env.CODEX_ELECTRON_USER_DATA_PATH?.trim()
-    || path.join(home, "Library", "Application Support", "Codex");
+  const { profile, certificateStore } = codexPaths({ env, home });
   return { directory, settings: path.join(directory, "settings.json"), profile,
-    store: path.join(profile, "Default", "ServerCertificate") };
+    store: certificateStore };
 }
 
 export function readPredictionSettings(options = {}) {
@@ -31,11 +32,7 @@ export function writePredictionSettings(value, options = {}) {
 }
 
 export function assertPredictionProxyCompatible({ env = process.env, systemProxy = "" } = {}) {
-  if (["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy", "CODEX_API_BASE_URL"]
-    .some((key) => env[key]?.trim())
-    || /(?:HTTPEnable|HTTPSEnable|SOCKSEnable|ProxyAutoConfigEnable|ProxyAutoDiscoveryEnable)\s*:\s*1/.test(systemProxy)) {
-    throw new Error("Native prediction setup skipped: an existing proxy or API route is configured; it was not replaced");
-  }
+  return resolveNetworkRoute({ env, systemProxy });
 }
 
 export function assertCodexClosed({ exec = execFileSync } = {}) {

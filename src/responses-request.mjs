@@ -309,7 +309,8 @@ export function prepareResponsesRequest(reqBody, {
   assertActive?.();
   const body = mutate ? reqBody : cloneJson(reqBody);
   assertActive?.();
-  const currentInputItems = responsesInputItems(body.input, { assertActive, clone: !mutate });
+  // body is already an owned clone unless the caller explicitly allows mutation.
+  const currentInputItems = responsesInputItems(body.input, { assertActive, clone: false });
   const currentInputRefs = new Set(
     currentInputItems.filter((item) => item && typeof item === "object"),
   );
@@ -359,7 +360,9 @@ export function prepareResponsesRequest(reqBody, {
   // concrete Copilot RoutePlan.
   if (copilotBoundary) applyCopilotResponsesRequestPolicies(body);
   stripInternalResponsesInputFields(body.input, { assertActive });
-  stripInternalResponsesInputFields(historyInputItems, { assertActive });
+  // The first pass already covers shared current items. Only an independent
+  // pre-adaptation snapshot needs another pass.
+  if (historyInputItems !== currentInputItems) stripInternalResponsesInputFields(historyInputItems, { assertActive });
   assertActive?.();
   const retainedCurrentInputStart = body.input.findIndex((item) => currentInputRefs.has(item));
 

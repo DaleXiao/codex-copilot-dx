@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 import { CODEX_APP_BINARY_PATHS } from "./codex-model-catalog.mjs";
 import { parseCodexToml, codexTomlStatements, validateManagedConfigEdit } from "./config-toml.mjs";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
+import { codexPaths } from "./codex-paths.mjs";
+import { withFileLockSync } from "./lock.mjs";
 import { status } from "./status.mjs";
 
 const FEATURE = "local_thread_store_compression";
@@ -70,7 +72,8 @@ export async function codexNeedsThreadCompressionDefault({
 }
 
 export async function ensureCodexThreadCompression({
-  filePath = path.join(os.homedir(), ".codex", "config.toml"),
+  env = process.env, home = os.homedir(),
+  filePath = codexPaths({ env, home }).config,
   probe = codexNeedsThreadCompressionDefault,
 } = {}) {
   try {
@@ -79,11 +82,13 @@ export async function ensureCodexThreadCompression({
     if (!await probe()) return;
     // The client/user may edit the shared file while the asynchronous probe runs.
     // Recompute against its current bytes; explicit opt-outs always win.
-    const updated = computeThreadCompressionDefault(read());
-    if (updated.changed) {
-      atomicWriteFileIfChangedSync(filePath, updated.content);
-      console.log(status("ok", "Enabled Codex local history compression (experimental)"));
-    }
+    withFileLockSync(`${filePath}.ccdx.lock`, () => {
+      const updated = computeThreadCompressionDefault(read());
+      if (updated.changed) {
+        atomicWriteFileIfChangedSync(filePath, updated.content);
+        console.log(status("ok", "Enabled Codex local history compression (experimental)"));
+      }
+    });
   } catch {
     console.warn(status("warn", "Optional Codex history compression setup was skipped; core proxy remains available"));
   }

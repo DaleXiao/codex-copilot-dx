@@ -6,6 +6,8 @@ import { isDeepStrictEqual } from "node:util";
 import { atomicWriteFileIfChangedSync, atomicWriteFilePairSync } from "./atomic-file.mjs";
 import { codexTomlStatements, parseCodexToml, validateManagedConfigEdit } from "./config-toml.mjs";
 import { userSettingsPath } from "./user-settings.mjs";
+import { codexPaths } from "./codex-paths.mjs";
+import { withFileLockSync } from "./lock.mjs";
 
 const SERVER_PATH = ["mcp_servers", "ccdx_suggestion"];
 const same = (left, right) => isDeepStrictEqual(left, right);
@@ -52,9 +54,18 @@ export function computeRetiredPredictionConfig(content, filePath) {
   return { content: updated, changed: updated !== content, preserved: Boolean(existing && !owned) || (content.includes("# ccdx:suggestion-auto:start") && !hookOwned) };
 }
 
-export function retirePredictionIntegration({ env = process.env, home = os.homedir(), dryRun = false } = {}) {
+export function retirePredictionIntegration(options = {}) {
+  if (options.dryRun) return retirePredictionIntegrationUnlocked(options);
+  const { config } = codexPaths(options);
+  // No registration/settings means no lock directory or other write on startup.
+  const env = options.env || process.env;
+  const settings = path.resolve(env.CCDX_SUGGESTION_CONFIG || path.join(path.dirname(userSettingsPath(options)), "suggestion.json"));
+  if (!fs.existsSync(config) && !fs.existsSync(settings)) return { changed: false, preserved: false };
+  return withFileLockSync(`${config}.ccdx.lock`, () => retirePredictionIntegrationUnlocked(options));
+}
+function retirePredictionIntegrationUnlocked({ env = process.env, home = os.homedir(), dryRun = false } = {}) {
   const settings = path.resolve(env.CCDX_SUGGESTION_CONFIG || path.join(path.dirname(userSettingsPath({ env, home })), "suggestion.json"));
-  const codex = path.join(env.CODEX_HOME || path.join(home, ".codex"), "config.toml");
+  const codex = codexPaths({ env, home }).config;
   let content;
   try { content = new TextDecoder("utf-8", { fatal: true }).decode(fs.readFileSync(codex)); }
   catch (error) { if (error.code !== "ENOENT") throw new Error("Cannot safely read prediction configuration"); }

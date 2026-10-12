@@ -57,6 +57,13 @@
           <p class="hint" data-i18n>Recent upstream request metadata, not exact live session occupancy. Missing values are unknown. No prompt or image content is retained.</p>
         </details>
 
+        <section class="panel dashboard-section" aria-label="CLIENT FEATURES" data-i18n-label>
+          <div class="panel-heading"><h2 data-i18n>CLIENT FEATURES</h2><span data-i18n>OBSERVED STATE</span></div>
+          <dl class="stats"><div><dt data-i18n>Native predictions</dt><dd id="prediction-preference">—</dd></div><div><dt data-i18n>Local bridge</dt><dd id="prediction-bridge">—</dd></div><div><dt data-i18n>Client route</dt><dd id="prediction-route">—</dd></div><div><dt data-i18n>Visible candidate</dt><dd id="prediction-candidate">—</dd></div></dl>
+          <p id="prediction-note" class="hint">—</p>
+          <p class="hint" data-i18n>Configured does not mean displayed. Use ccdx prediction status for details.</p>
+        </section>
+
         <section class="panel dashboard-section" aria-label="Live upstream models" data-i18n-label>
           <div class="panel-heading"><h2 data-i18n>UPSTREAM GPT MODELS</h2><div class="heading-actions"><span id="models-state" data-i18n>CHECKING LIVE</span><button id="refresh-models" type="button" data-i18n>Refresh</button></div></div>
           <p id="models-note" class="table-note" data-i18n>Querying GitHub Copilot…</p>

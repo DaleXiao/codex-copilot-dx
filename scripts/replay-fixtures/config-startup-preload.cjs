@@ -61,17 +61,17 @@ process.on("message", message => {
 globalThis.fetch = async (input, init) => {
   const url = new URL(String(input));
   if (url.hostname === "registry.npmjs.org") console.log("Registry fixture request blocked");
-  if (url.href === "https://api.github.com/repos/DaleXiao/codex-copilot-dx/releases/latest" && process.env.CCDX_TEST_UPDATE_MODE) {
+  if (url.href === "https://github.com/DaleXiao/codex-copilot-dx/releases/latest" && process.env.CCDX_TEST_UPDATE_MODE) {
     console.log("Update fixture request received");
     if (init.headers.Authorization || init.headers.authorization) throw new Error("Update checks must be anonymous");
     const mode = process.env.CCDX_TEST_UPDATE_MODE;
     if (mode === "offline") throw new Error("synthetic offline release check");
     if (mode === "malformed") return Response.json({ tag_name: "main", draft: false, prerelease: false });
-    if (mode === "current") return Response.json({ tag_name: `v${require("../../package.json").version}`, draft: false, prerelease: false });
+    if (mode === "current") return new Response(null, { status: 302, headers: { location: `/DaleXiao/codex-copilot-dx/releases/tag/v${require("../../package.json").version}` } });
     return new Promise((resolve, reject) => {
       const clean = () => { finishUpdate = undefined; init.signal.removeEventListener("abort", onAbort); };
       const onAbort = () => { clean(); console.log("Update fixture cancelled"); reject(new Error("synthetic release timeout")); };
-      finishUpdate = () => { clean(); resolve(Response.json({ tag_name: "v99.0.0", draft: false, prerelease: false })); };
+      finishUpdate = () => { clean(); resolve(new Response(null, { status: 302, headers: { location: "/DaleXiao/codex-copilot-dx/releases/tag/v99.0.0" } })); };
       init.signal.addEventListener("abort", onAbort, { once: true });
       if (init.signal.aborted) onAbort();
     });

@@ -1,13 +1,12 @@
 import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
 import { status } from "./status.mjs";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { adapterBaseUrl } from "./running-adapter.mjs";
 import { isLoopbackHost } from "./security.mjs";
 import { codexTomlStatements, configValue, parseCodexToml, validateManagedConfigEdit } from "./config-toml.mjs";
+import { codexPaths } from "./codex-paths.mjs";
+import { withFileLockSync } from "./lock.mjs";
 
-const CONFIG_PATH = path.join(os.homedir(), ".codex", "config.toml");
 const MODEL_CONTEXT_WINDOW = 1_000_000;
 const MODEL_AUTO_COMPACT_TOKEN_LIMIT = 900_000;
 const IMAGE_MCP_START = "# ccdx:image-mcp:start";
@@ -278,8 +277,13 @@ export function computeImageMcpCodexConfig(content, options = {}) {
   return computeImageConfig(content, options);
 }
 
-export function ensureCodexConfig(adapterPort = 2026, {
-  filePath = CONFIG_PATH,
+export function ensureCodexConfig(adapterPort = 2026, options = {}) {
+  const filePath = options.filePath || codexPaths(options).config;
+  return withFileLockSync(`${filePath}.ccdx.lock`, () => ensureCodexConfigUnlocked(adapterPort, { ...options, filePath }));
+}
+
+function ensureCodexConfigUnlocked(adapterPort = 2026, {
+  filePath,
   host = "127.0.0.1",
   imageProviderEnabled = false,
 } = {}) {
@@ -303,7 +307,7 @@ export function ensureCodexConfig(adapterPort = 2026, {
     console.log(status("ok", `Codex already points to ${baseUrl}`));
   } else {
     atomicWriteFileIfChangedSync(filePath, core.content);
-    console.log(status("ok", content === undefined ? "Created ~/.codex/config.toml" : `Configured Codex base URL: ${baseUrl}`));
+    console.log(status("ok", content === undefined ? `Created Codex configuration: ${filePath}` : `Configured Codex base URL: ${baseUrl}`));
   }
   // Disabled means no image maintenance, including no implicit removal of old
   // or user-owned entries. Explicit disable-image owns the cleanup operation.

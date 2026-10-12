@@ -30,7 +30,7 @@ The dashboard does not poll in the background; refresh when needed.
 | Command | Purpose |
 | --- | --- |
 | `ccdx help` | Command help; use `ccdx help <command>` for details |
-| `ccdx start` | Start without launching the App |
+| `ccdx start` | Start or reuse the adapter and open Codex when auto-launch is enabled |
 | `ccdx status` | Runtime, limits and bounded request diagnostics |
 | `ccdx doctor` | Configuration, adapter and read-only App/catalog diagnostics |
 | `ccdx doctor config` | Read-only configuration check |
@@ -73,8 +73,8 @@ The dashboard does not poll in the background; refresh when needed.
   trust and an App-only route for `chatgpt.com` and `ab.chatgpt.com`; HTTPS on those
   hosts is decrypted locally, but only prediction configuration is changed.
   Other domains and the CCDX model endpoint stay on their existing routes.
-  No program files or OS trust are changed. Existing proxies are not replaced.
-  See the reference for restart, rollback and client-version boundaries.
+  No program files or OS trust are changed. Static HTTP/HTTPS/SOCKS5 proxies and bypass rules are retained.
+  Dynamic PAC/WPAD routes are reported as unsupported; see the reference for routing, rollback and client-version limits.
 - CCDX adds experimental local history compression only when installed App
   runtimes support it and report it off. Existing choices are preserved; an
   already-enabled default, unavailable runtime or failed check is skipped.
@@ -84,11 +84,14 @@ The dashboard does not poll in the background; refresh when needed.
   expose it to the public internet. The dashboard is not an authentication wall
   for the API. Diagnostic errors may contain sensitive upstream text.
 
-Startup checks GitHub Releases, not npm, and suggests `ccdx update github` when a newer stable version is available. GitHub updates install the exact release tag; dependency downloads still use npm's configured registry.
+Startup checks GitHub's latest-release web redirect, not npm or the anonymous REST quota, and suggests `ccdx update github`.
+Updates install the exact stable tag; dependencies still use npm's configured registry. Lookup errors identify HTTP refusal, timeout, network failure or invalid redirects.
+
+The dashboard and CLI separate prediction preference, bridge state and observed config traffic; candidate visibility stays unknown.
+Inference, client integration, optional images and management have separate ownership. See [architecture boundaries](docs/ARCHITECTURE.md).
 
 See the [complete command/configuration reference](https://github.com/DaleXiao/codex-copilot-dx/blob/main/docs/REFERENCE.md)
-for authentication recovery, configuration-write boundaries, advanced limits,
-logging, image setup and client compatibility details.
+for authentication recovery, configuration safety, limits, logging, images and client compatibility.
 The same reference is included as `docs/REFERENCE.md` in the installed npm package.
 
 ## Development

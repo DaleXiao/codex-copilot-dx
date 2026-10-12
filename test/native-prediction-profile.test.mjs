@@ -41,11 +41,24 @@ test("default and status do not create files, probe an App, or start a bridge", 
   assert.deepEqual(fs.readdirSync(opts.root), before);
 });
 
-test("proxy and process checks fail closed without overwriting existing settings", () => {
-  for (const key of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "ALL_PROXY", "CODEX_API_BASE_URL"]) {
-    assert.throws(() => assertPredictionProxyCompatible({ env: { [key]: "https://proxy.example.test" } }), /not replaced/);
+test("prediction status reports runtime evidence without modifying the saved preference", async t => {
+  const opts = fixture(t), before = fs.readdirSync(opts.root), lines = [];
+  await runPredictionCommand({ ...opts, action: "status", output: text => lines.push(text),
+    runtimeSnapshot: async () => ({ client_integrations: { prediction: {
+      bridge: "running", client_route: "observed", candidate: "unknown",
+      configuration: { bootstrap: { status: 200, modified: true } },
+    } } }) });
+  assert.match(lines.join("\n"), /Bridge: running; client route: observed; visible candidate: unknown/);
+  assert.match(lines.join("\n"), /bootstrap: HTTP 200 \(local compatibility\)/);
+  assert.deepEqual(fs.readdirSync(opts.root), before);
+});
+
+test("static proxies are accepted; invalid and dynamic routes preserve existing settings", () => {
+  for (const key of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "ALL_PROXY"]) {
+    assert.doesNotThrow(() => assertPredictionProxyCompatible({ env: { [key]: "https://proxy.example.test" } }));
   }
-  for (const name of ["HTTPEnable", "HTTPSEnable", "SOCKSEnable", "ProxyAutoConfigEnable", "ProxyAutoDiscoveryEnable"]) {
+  assert.throws(() => assertPredictionProxyCompatible({ env: { CODEX_API_BASE_URL: "https://custom.test" } }), /CODEX_API_BASE_URL/);
+  for (const name of ["ProxyAutoConfigEnable", "ProxyAutoDiscoveryEnable"]) {
     assert.throws(() => assertPredictionProxyCompatible({ env: {}, systemProxy: `${name} : 1` }));
   }
   assert.doesNotThrow(() => assertPredictionProxyCompatible({ env: {}, systemProxy: "HTTPEnable : 0" }));

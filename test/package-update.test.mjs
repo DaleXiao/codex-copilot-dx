@@ -24,7 +24,7 @@ function successfulSpawn(calls) {
   };
 }
 
-const fetchRelease = async () => Response.json({ tag_name: "v0.9.19", draft: false, prerelease: false });
+const fetchRelease = async () => new Response(null, { status: 302, headers: { location: "/DaleXiao/codex-copilot-dx/releases/tag/v0.9.19" } });
 
 test("package update: builds fixed npm and GitHub global install commands", () => {
   assert.equal(normalizeUpdateSource("gh"), "github");
@@ -125,7 +125,7 @@ test("GitHub update resolves once and pins the tag without trusting returned dow
   const env = { PATH: "/test/bin", npm_config_registry: "https://approved-mirror.example" };
   await runPackageUpdateCommand({
     source: "gh", env, output: output.stream, spawnImpl: successfulSpawn(calls),
-    fetchImpl: async () => { lookups++; return Response.json({ tag_name: "v1.2.3", draft: false, prerelease: false, tarball_url: "https://unsafe.example/archive" }); },
+    fetchImpl: async () => { lookups++; return new Response(null, { status: 302, headers: { location: "/DaleXiao/codex-copilot-dx/releases/tag/v1.2.3" } }); },
   });
   assert.equal(lookups, 1);
   assert.equal(calls.length, 1);

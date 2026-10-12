@@ -2,6 +2,8 @@ import http from "node:http";
 import https from "node:https";
 import { promisify } from "node:util";
 import { gunzip, inflate, brotliDecompress } from "node:zlib";
+import { networkPredictionPac } from "./network-route.mjs";
+import { operationErrorDetails } from "./operation-error.mjs";
 
 export const PREDICTION_HOSTS = Object.freeze(["chatgpt.com", "ab.chatgpt.com"]);
 const CONFIG_LIMIT = 16 * 1024 * 1024;
@@ -15,8 +17,9 @@ export function predictionRoute(host, pathname) {
   return null;
 }
 
-export function predictionPac(port) {
+export function predictionPac(port, networkRoute) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid prediction proxy port");
+  if (networkRoute) return networkPredictionPac(port, networkRoute);
   return `function FindProxyForURL(url, host) { if (url.indexOf('https:') === 0 && (host === 'chatgpt.com' || host === 'ab.chatgpt.com')) return 'PROXY 127.0.0.1:${port}; DIRECT'; return 'DIRECT'; }\n`;
 }
 
@@ -56,6 +59,7 @@ function listen(server) {
 export async function startPredictionTransport({
   key, cert, overlay, normalizeRequest = (value) => value,
   enabled = () => true, requestImpl = https.request,
+  agent, networkRoute, onEvent = () => {},
   timeoutMs = 30_000, maxConnections = 128,
 }) {
   const sockets = new Set();
@@ -76,7 +80,8 @@ export async function startPredictionTransport({
     // No decoding/re-encoding on pass-through paths.
     if (route && enabled()) headers["accept-encoding"] = "identity";
     let upstream;
-    const fail = () => {
+    const fail = (error) => {
+      onEvent({ type: "upstream_error", error: operationErrorDetails(error) });
       if (!res.headersSent) { res.writeHead(502); res.end(); } else res.destroy();
     };
     const send = (body, streamRemainder = false) => {
@@ -86,6 +91,7 @@ export async function startPredictionTransport({
         servername: target.hostname, method: req.method,
         path: req.url, headers,
         rejectUnauthorized: true,
+        ...(agent ? { agent } : {}),
       }, (reply) => {
         const pass = () => {
           res.writeHead(reply.statusCode, cleanHeaders(reply.headers));
@@ -95,7 +101,10 @@ export async function startPredictionTransport({
         // Error and non-JSON responses are forwarded as received. The overlay
         // decides whether the narrowly allowed missing-config response applies.
         const mediaType = String(reply.headers["content-type"] || "").split(";", 1)[0].trim();
-        if (!route || !enabled() || mediaType !== "application/json") { pass(); return; }
+        if (!route || !enabled() || mediaType !== "application/json") {
+          if (route) onEvent({ type: "configuration", route, status: reply.statusCode, changed: false });
+          pass(); return;
+        }
         let size = 0;
         const parts = [];
         let streaming = false;
@@ -124,10 +133,12 @@ export async function startPredictionTransport({
             });
           } catch { /* Preserve unexpected upstream payloads byte-for-byte. */ }
           if (next?.body !== undefined && (next.body !== original.toString("utf8") || next.status !== reply.statusCode)) {
+            onEvent({ type: "configuration", route, status: next.status ?? reply.statusCode, changed: true });
             const bytes = Buffer.from(next.body);
             res.writeHead(next.status ?? reply.statusCode, changedHeaders(reply.headers, bytes.length));
             res.end(bytes);
           } else {
+            onEvent({ type: "configuration", route, status: reply.statusCode, changed: false, official: next?.official });
             res.writeHead(reply.statusCode, cleanHeaders(reply.headers)); res.end(original);
           }
         })().catch(fail));
@@ -179,6 +190,7 @@ export async function startPredictionTransport({
     const upstream = requestImpl({
       protocol: "https:", hostname: host, port: 443, servername: host,
       method: req.method, path: req.url, rejectUnauthorized: true,
+      ...(agent ? { agent } : {}),
       headers: { ...cleanHeaders(req.headers), connection: "Upgrade", upgrade: req.headers.upgrade },
     });
     upstreams.add(upstream);
@@ -204,13 +216,13 @@ export async function startPredictionTransport({
     socket.once("close", () => { upstreams.delete(upstream); upstream.destroy(); });
     upstream.end();
   });
-  gateway.on("tlsClientError", (_error, socket) => socket.destroy());
+  gateway.on("tlsClientError", (error, socket) => { onEvent({ type: "tls_error", error: operationErrorDetails(error) }); socket.destroy(); });
   gateway.on("clientError", (_error, socket) => socket.destroy());
   const proxy = http.createServer((req, res) => {
     if (req.method === "GET" && req.url === "/proxy.pac" && !req.headers.origin
       && ["127.0.0.1", "localhost"].includes(String(req.headers.host || "").split(":")[0])) {
       res.writeHead(200, { "Content-Type": "application/x-ns-proxy-autoconfig", "Cache-Control": "no-store" });
-      res.end(predictionPac(proxy.address().port)); return;
+      res.end(predictionPac(proxy.address().port, networkRoute)); return;
     }
     res.writeHead(403); res.end();
   });
@@ -234,6 +246,7 @@ export async function startPredictionTransport({
     async close() {
       closing = true;
       for (const upstream of upstreams) upstream.destroy();
+      agent?.destroy();
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve) => proxy.close(resolve));
       gateway.close();

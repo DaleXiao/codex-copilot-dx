@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
-import { fetchLatestRelease, githubReleaseVersion } from "./version.mjs";
+import { lookupLatestRelease, githubReleaseVersion } from "./version.mjs";
 
 const PACKAGE_NAME = "codex-copilot-dx";
 const UPDATE_SPECS = {
@@ -95,8 +95,7 @@ export async function runPackageUpdateCommand({
   let release;
   if (selectedSource === "github") {
     output.write("Checking the latest stable GitHub release...\n");
-    release = await fetchLatestRelease({ fetchImpl, timeoutMs: 10000 });
-    if (!release) throw new Error("Could not read the latest stable GitHub release. No update was installed.");
+    release = await lookupLatestRelease({ fetchImpl, timeoutMs: 10000 });
   }
   const update = globalUpdateCommand(selectedSource, { platform, releaseTag: release?.tagName });
   const sourceLabel = selectedSource === "npm" ? "npm registry" : `GitHub release ${release.tagName}`;

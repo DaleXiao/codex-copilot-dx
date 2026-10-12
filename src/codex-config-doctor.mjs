@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
-import path from "node:path";
+import { codexPaths } from "./codex-paths.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { parse } from "smol-toml";
 import { computeUpdatedCodexConfig, initialCodexConfig } from "./config.mjs";
@@ -87,8 +87,8 @@ function checkUrl(value, expected, label) {
     : { kind: "warn", message: `${label} differs from the CCDX address ${expected}` };
 }
 
-export function inspectCodexConfig({ home = os.homedir(), host = "127.0.0.1", port = 2026 } = {}) {
-  const filePath = path.join(home, ".codex", "config.toml");
+export function inspectCodexConfig({ home = os.homedir(), env: processEnv = process.env, host = "127.0.0.1", port = 2026 } = {}) {
+  const filePath = codexPaths({ env: processEnv, home }).config;
   let content;
   try {
     content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(fs.readFileSync(filePath));

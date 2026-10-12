@@ -159,6 +159,7 @@ export function runtimeStatusPayload({
   codexClient,
   codexModelRegistry,
   codexModelCatalog,
+  clientIntegrations,
 } = {}) {
   const memory = process.memoryUsage();
   const codexRuntime = safeClientRuntimeStatus(codexClient);
@@ -196,6 +197,7 @@ export function runtimeStatusPayload({
     response_history: history,
     image_optimization: imageOptimizationStats(),
     image_generation: imageGeneration || null,
+    client_integrations: clientIntegrations || null,
     logging: { usage: usageLoggingStats(), debug: debugLoggingStats() },
     image_history_pressure: imagePressure?.snapshot?.() || null,
     response_failures: responseFailures?.snapshot?.() || null,

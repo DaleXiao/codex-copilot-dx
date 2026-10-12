@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
+import { withFileLockSync } from "./lock.mjs";
 import { AUTO_REVIEW_REASONING_EFFORTS, DEFAULT_CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
 import { loadRuntimeConfig, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
 import {
@@ -155,7 +156,10 @@ export function decodedBodyLimitPreference({ env = process.env, home = os.homedi
   return { bytes: RUNTIME_DEFAULTS.maxDecodedBodyBytes, mib: DECODED_BODY_LIMIT_MIN_MIB, source: "default" };
 }
 
-export function writeDecodedBodyLimitMib(mib, { env = process.env, home = os.homedir() } = {}) {
+export function writeDecodedBodyLimitMib(mib, options = {}) {
+  return withFileLockSync(`${userSettingsPath(options)}.lock`, () => writeDecodedBodyLimitMibUnlocked(mib, options));
+}
+function writeDecodedBodyLimitMibUnlocked(mib, { env = process.env, home = os.homedir() } = {}) {
   const filePath = userSettingsPath({ env, home });
   const settings = readUserSettings({ env, home, strict: true });
   const next = { ...settings };
@@ -177,7 +181,10 @@ export function writeDecodedBodyLimitMib(mib, { env = process.env, home = os.hom
   return { changed, filePath, ...decodedBodyLimitPreference({ env, home }) };
 }
 
-export function writeResponseHistoryLimitMib(mib, { env = process.env, home = os.homedir() } = {}) {
+export function writeResponseHistoryLimitMib(mib, options = {}) {
+  return withFileLockSync(`${userSettingsPath(options)}.lock`, () => writeResponseHistoryLimitMibUnlocked(mib, options));
+}
+function writeResponseHistoryLimitMibUnlocked(mib, { env = process.env, home = os.homedir() } = {}) {
   const filePath = userSettingsPath({ env, home });
   const settings = readUserSettings({ env, home, strict: true });
   const next = { ...settings };
@@ -199,7 +206,10 @@ export function writeResponseHistoryLimitMib(mib, { env = process.env, home = os
   return { changed, filePath, ...responseHistoryLimitPreference({ env, home }) };
 }
 
-export function writeAutoReviewModel(model, { env = process.env, home = os.homedir(), reasoningEffort } = {}) {
+export function writeAutoReviewModel(model, options = {}) {
+  return withFileLockSync(`${userSettingsPath(options)}.lock`, () => writeAutoReviewModelUnlocked(model, options));
+}
+function writeAutoReviewModelUnlocked(model, { env = process.env, home = os.homedir(), reasoningEffort } = {}) {
   if (reasoningEffort !== undefined && reasoningEffort !== null
     && !AUTO_REVIEW_REASONING_EFFORTS.includes(reasoningEffort)) {
     throw new Error("Auto-review reasoning effort is invalid");
@@ -220,7 +230,10 @@ export function writeAutoReviewModel(model, { env = process.env, home = os.homed
   return { changed, filePath, model: value || DEFAULT_CODEX_AUTO_REVIEW_MODEL };
 }
 
-export function writeTerminalAnimationTheme(theme, { env = process.env, home = os.homedir() } = {}) {
+export function writeTerminalAnimationTheme(theme, options = {}) {
+  return withFileLockSync(`${userSettingsPath(options)}.lock`, () => writeTerminalAnimationThemeUnlocked(theme, options));
+}
+function writeTerminalAnimationThemeUnlocked(theme, { env = process.env, home = os.homedir() } = {}) {
   if (!isTerminalAnimationTheme(theme)) {
     const choices = TERMINAL_ANIMATION_THEMES.map(({ id }) => id).join(", ");
     throw new Error(`Terminal animation must be one of: ${choices}`);

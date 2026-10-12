@@ -236,6 +236,7 @@ export function createAdapterHandler(options = {}) {
         codexClient,
         codexModelRegistry,
         codexModelCatalog,
+        clientIntegrations: options.clientIntegrationSnapshot?.(),
       })));
       return;
     }

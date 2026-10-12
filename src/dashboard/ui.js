@@ -168,6 +168,15 @@ function render(data) {
 
   renderFailures(data.response_failures?.recent, data.stream_performance?.recent_requests);
   renderContext(data.stream_performance);
+  if (element("prediction-preference")) {
+    const prediction = data.client_integrations?.prediction;
+    text("prediction-preference", prediction ? prediction.configured ? "Enabled" : "Disabled" : "Unknown");
+    text("prediction-bridge", ({ running: "Running", stopped: "Stopped", unavailable: "Unavailable" })[prediction?.bridge] || "Unknown");
+    text("prediction-route", prediction?.client_route === "observed" ? "Observed" : "Unknown");
+    text("prediction-candidate", "Unknown");
+    const note = element("prediction-note");
+    if (note) note.textContent = prediction?.reason || "";
+  }
   text("updated", "Snapshot {time}", { time: new Date().toLocaleTimeString() });
 }
 

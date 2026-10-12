@@ -188,6 +188,11 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
     }
   }
   lines.push(status("info", `Models: ${count(models.models)} total; Copilot token ${copilot.token_cached ? `cached (${duration(copilot.token_expires_in_ms)} remaining)` : "not cached"}`));
+  const prediction = data.client_integrations?.prediction;
+  if (prediction) {
+    lines.push(status("info", `Native predictions: ${prediction.configured ? "on" : "off"}; bridge ${prediction.bridge}; client route ${prediction.client_route}; visible candidate unknown`));
+    if (prediction.reason) lines.push(status("warn", terminalCell(prediction.reason).slice(0, 400)));
+  }
   if (data.profiles?.codex) {
     lines.push(status("info", `Profile: ${profileSummary("Codex", data.profiles.codex)}`));
   }

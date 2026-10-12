@@ -53,8 +53,25 @@ account identity or account-permission value is rewritten. Credentials are not
 logged or persisted by the bridge. The local private key has owner-only permissions;
 its signing key is discarded after certificate creation.
 
-Existing App proxy/PAC/environment routes cause setup to skip with an explanation.
-This initial version does not compose enterprise proxies. The default App profile
+Static proxy settings are composed with the local bridge. For HTTPS targets,
+`https_proxy` takes precedence over `HTTPS_PROXY`, then `all_proxy`/`ALL_PROXY`,
+then the macOS HTTPS proxy or SOCKS proxy. HTTP targets follow their corresponding
+HTTP setting. An HTTP-only environment proxy is not used for HTTPS. HTTP CONNECT,
+TLS to an HTTPS proxy, SOCKS5 (including username/password), `NO_PROXY`/`no_proxy`,
+system exceptions and simple-host exclusions are supported. Proxy credentials
+remain in memory, are never included in PAC responses or diagnostics, and are
+sent only to the proxy. TLS verification remains enabled for both proxy and target.
+Other App domains keep the resolved original route; if a bridge fails, its PAC
+fallback uses that route rather than adding an unrequested direct connection.
+Route selection is a startup snapshot; restart CCDX and Codex after changing it.
+Bypass lists support host/domain patterns and optional ports. Unsupported CIDR
+notation is reported explicitly rather than silently changing the route.
+
+Dynamic PAC/WPAD is not executed or overwritten. Setup identifies the exact
+system setting and preserves its rules. A non-default `CODEX_API_BASE_URL` is
+also preserved and reported as a custom-route conflict; setting it to the normal
+`https://chatgpt.com/backend-api` does not cause a conflict. No automatic direct
+fallback after upstream-proxy rejection is added. The default App profile
 is `~/Library/Application Support/Codex`; an explicit
 `CODEX_ELECTRON_USER_DATA_PATH` is respected. Quit the App before trust changes;
 CCDX never kills it. The launcher uses the exact App that passed the compatibility
@@ -79,13 +96,34 @@ trust removal is deferred; quit it and run `prediction off` again. Only the exac
 owned certificate record is removed, never the whole store. Failed activation
 rolls back newly added trust; certificate replacement keeps old trust until the
 new preference is committed. If the bridge stops, new connections can fall back
-to direct routing; already-interrupted requests are not replayed. Run `ccdx`
+to the original route; already-interrupted requests are not replayed. Run `ccdx`
 after quitting Codex to attach a newly started bridge. `CCDX_AUTO_LAUNCH=0` keeps
 automatic launch disabled and does not attach the route to a manually opened App.
 Optional prediction failures never prevent the core adapter or image service from
-starting. `prediction status` reports the saved preference, not proof of live UI
-availability. Prediction settings are stored separately in
+starting. `prediction status` reports the saved preference and, when a compatible
+running adapter responds, its bridge state, configuration-response observations
+and bounded TLS/upstream errors. The dashboard uses the same snapshot and manual
+refresh. Configuration traffic is evidence of a request reaching the bridge, not
+proof of a generated/displayed candidate. Candidate visibility remains unknown;
+no prompt matching, UI injection, transcript scanning or extra inference is used
+to invent that status. Prediction settings are stored separately in
 `~/.config/codex-copilot-dx/native-prediction/` (or under `XDG_CONFIG_HOME`).
+
+### Configuration ownership
+
+Core setup, image setup/guidance, config doctor, optional history compression and
+legacy prediction cleanup resolve the same `CODEX_HOME/config.toml`; absent
+`CODEX_HOME`, they use `~/.codex/config.toml`. An explicit function-level file path
+still takes precedence for embedders. App-profile trust is a separate location
+selected by `CODEX_ELECTRON_USER_DATA_PATH`, not by `CODEX_HOME`.
+
+CCDX-owned config mutations share an owner-recorded cross-process lock, reread
+under the lock, and retain existing atomic replacement/rollback checks. User
+settings updates use a separate lock for their shared JSON file; prediction
+on/off uses its own settings lock. Readers take no lock and write no lock file.
+Contention fails with a retry message instead of stealing a live lock. Other
+applications do not participate in these locks, so snapshot conflict checks still
+apply; the locks do not claim a global filesystem transaction.
 
 ### Core adapter
 
@@ -141,7 +179,7 @@ On a normal launch, CCDX:
 1. Prints the installed package version and checks for a newer npm release in the background.
 2. Reuses a compatible running adapter when available; otherwise it reuses a compatible local Copilot credential or starts GitHub Device Flow when authentication is required.
 3. Loads a usable model cache or attempts a live refresh, then starts listening. A cache older than two hours refreshes in the background; a fresh cache can be used immediately. A failed refresh retains the last-known-good list when one is available.
-4. Checks the startup-managed settings in `~/.codex/config.toml`, including the local `/v1` endpoint.
+4. Checks the startup-managed settings in `CODEX_HOME/config.toml` (default `~/.codex/config.toml`), including the local `/v1` endpoint.
 5. Attempts to open Codex App on macOS unless `CCDX_AUTO_LAUNCH` disables it.
 
 The `OPENAI_API_KEY=dummy` value used in the Codex shell environment is only a client-side placeholder. It is not a GitHub credential. CCDX exchanges the saved GitHub OAuth credential for short-lived Copilot service tokens internally.
@@ -156,7 +194,7 @@ If a compatible adapter is already running, a later launch reuses it and checks 
 
 ### Codex configuration writes
 
-Normal startup and reuse of an existing adapter check `~/.codex/config.toml` once, after startup prerequisites succeed. There is no file watcher or periodic configuration rewrite. The path is based on the OS home directory; CCDX does not redirect it through `CODEX_HOME` or edit project-level Codex files.
+Normal startup and reuse of an existing adapter check `CODEX_HOME/config.toml` (default `~/.codex/config.toml`) once, after startup prerequisites succeed. There is no file watcher or periodic configuration rewrite. Startup, image setup, config doctor, compression and legacy prediction cleanup share this path. CCDX does not edit project-level Codex files.
 
 | Setting | Existing file | New file |
 | --- | --- | --- |
@@ -318,7 +356,14 @@ ccdx update npm
 ccdx update github
 ```
 
-Normal startup checks the latest stable GitHub Release once in the background, without accessing the npm registry. The anonymous check requires no PAT or Copilot credentials, has a two-second deadline and a bounded response body, and silently skips network errors, rate limits and invalid metadata. It never falls back to npm, retries, polls, installs an update or restarts the service. When a newer release is found, it prints the versions and `ccdx update github`. On adapter reuse, Ready is displayed before waiting for any remaining check budget so the short-lived command does not lose its notification.
+Normal startup checks the official GitHub `releases/latest` web endpoint once in
+the background, without accessing the npm registry or REST API. The anonymous
+check requires no PAT or Copilot credentials, has a two-second deadline, validates
+only the redirect header, cancels the response body without reading HTML, and
+silently skips errors. Redirects must use HTTPS, the exact GitHub repository and
+a stable version tag with no credentials, query or fragment. It never follows
+the redirect, retries, polls, installs or restarts. On adapter reuse, Ready is
+displayed before waiting for any remaining check budget.
 
 `ccdx update gh` is accepted as shorthand for the GitHub source. The npm source installs `codex-copilot-dx@latest` through the registry already configured for npm, including a company mirror. The GitHub source queries the latest stable published Release (ten-second deadline), validates its version tag, and installs that exact tag from `DaleXiao/codex-copilot-dx`, not `main`. Lookup failure stops before installation, without an npm fallback. It opts in to Git fetching only for that command and does not change npm's persistent `allow-git` setting.
 

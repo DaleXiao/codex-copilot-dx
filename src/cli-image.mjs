@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
-import path from "node:path";
 import readline from "node:readline";
 import { createInterface } from "node:readline/promises";
+import { codexPaths } from "./codex-paths.mjs";
+import { withFileLockSync } from "./lock.mjs";
 import { atomicWriteFileIfChangedSync, atomicWriteFilePairSync } from "./atomic-file.mjs";
 import { terminalCell } from "./cli-table.mjs";
 import { computeImageMcpCodexConfig } from "./config.mjs";
@@ -15,11 +16,6 @@ import {
   readImageProviderConfig,
   validateImageProviderConfig,
 } from "./image-provider-config.mjs";
-
-function defaultCodexConfigPath(home) {
-  return path.join(home, ".codex", "config.toml");
-}
-
 async function visibleQuestion(input, output, question) {
   const prompt = createInterface({ input, output });
   try { return await prompt.question(question); }
@@ -102,7 +98,10 @@ function configSummary(config) {
   };
 }
 
-function enableImageProvider({ providerConfig, providerPath, codexPath, codexContent, adapterPort, adapterHost }) {
+function enableImageProvider(options) {
+  return withFileLockSync(`${options.codexPath}.ccdx.lock`, () => enableImageProviderUnlocked(options));
+}
+function enableImageProviderUnlocked({ providerConfig, providerPath, codexPath, codexContent, adapterPort, adapterHost }) {
   const codex = computeImageMcpCodexConfig(codexContent, {
     enabled: true,
     adapterPort,
@@ -128,7 +127,11 @@ function enableImageProvider({ providerConfig, providerPath, codexPath, codexCon
   return { codexChanged: codex.changed, config: normalized };
 }
 
-function disableImageProvider({ providerPath, codexPath, codexContent, adapterPort, adapterHost }) {
+function disableImageProvider(options) {
+  if (!fs.existsSync(options.codexPath)) return disableImageProviderUnlocked(options);
+  return withFileLockSync(`${options.codexPath}.ccdx.lock`, () => disableImageProviderUnlocked(options));
+}
+function disableImageProviderUnlocked({ providerPath, codexPath, codexContent, adapterPort, adapterHost }) {
   const codex = computeImageMcpCodexConfig(codexContent, {
     enabled: false,
     adapterPort,
@@ -154,7 +157,7 @@ function disableImageProvider({ providerPath, codexPath, codexContent, adapterPo
   return { changed: providerExists || codex.changed || skill.changed, preservedGuidance: Boolean(skill.preserved) };
 }
 
-export function syncEnabledImageSkill({ home = os.homedir(), codexPath = defaultCodexConfigPath(home), ...options } = {}) {
+export function syncEnabledImageSkill({ home = os.homedir(), env = process.env, codexPath = codexPaths({ env, home }).config, ...options } = {}) {
   return updateImageSkill({ ...options, enabled: true, codexPath });
 }
 
@@ -179,7 +182,7 @@ export async function runImageCommand({
   probeFetchImpl = fetch,
   adapterPort = 2026,
   adapterHost = "127.0.0.1",
-  codexPath = defaultCodexConfigPath(home),
+  codexPath = codexPaths({ env, home }).config,
 } = {}) {
   const providerPath = imageProviderConfigPath({ env, home });
   if (action === "status") {

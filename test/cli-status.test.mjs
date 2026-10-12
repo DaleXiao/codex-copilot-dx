@@ -2,6 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 
+test("native prediction status does not equate an observed route with visible suggestions", () => {
+  const output = formatAdapterStatus({ data: statusPayload({ client_integrations: {
+    prediction: { configured: true, bridge: "running", client_route: "observed" },
+  } }) });
+  assert.match(output, /running/);assert.match(output, /observed/);assert.match(output, /unknown/i);
+});
+
 test("status distinguishes image outcomes from input optimization and reports logging pressure", () => {
   const output = formatAdapterStatus({ baseUrl: "http://127.0.0.1:2026", data: statusPayload({
     image_generation: { active: 1, succeeded: 4, failed: 2, busy: 1, cancelled: 3, delivery_failures: 1 },

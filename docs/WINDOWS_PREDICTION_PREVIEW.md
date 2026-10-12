@@ -1,6 +1,6 @@
 # Windows prediction candidate
 
-`0.9.26-windows.3` is an unpublished test candidate, not a validated stable
+`0.9.26-windows.4` is an unpublished test candidate, not a validated stable
 Windows release. The existing macOS implementation remains covered by regression
 tests. Prediction is still off by default and images retain their separate opt-in.
 
@@ -113,6 +113,15 @@ switch. The App's actual current launch/PAC must be checked before blaming
 prediction inference or authentication. Windows CI independently passed native
 worker compilation and real NTFS trust after fixing child PowerShell module
 precedence; that does not explain or resolve the user's unobserved client route.
+
+The next launch report identified the live mismatch: the signed App main process
+used PAC port 55468, while running CCDX PID 24376 served PAC port 49730. The old
+App's parent no longer existed. This explains zero current-bridge events without
+blaming company routing, certificates or prediction inference. Version `.4`
+checks existing App routes before launch and persists only its own successful
+bridge port. It never kills the App, steals a busy port or silently picks a new
+one. Migration from `.3` still needs one full App exit; future bridge restarts
+can reuse the same route. The user's manual `.3` quit/reuse check is pending.
 
 The user has agreed to a Windows-machine check. Normal App login, profile discovery,
 bridge startup and delivery of the live PAC to the registered main process have

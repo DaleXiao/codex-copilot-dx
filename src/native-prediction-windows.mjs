@@ -30,6 +30,25 @@ export function assertWindowsCodexClosed(options = {}) {
   if (result !== "closed") throw new Error("Quit Codex App before changing native prediction setup; no running App will be stopped");
 }
 
+export function windowsPredictionAppProcesses(app, { env = process.env, ...options } = {}) {
+  const raw = powershell(`$rows=@(Get-CimInstance Win32_Process -Filter "Name='ChatGPT.exe' OR Name='Codex.exe'" -OperationTimeoutSec 5 | Where-Object {
+      $_.ExecutablePath -eq $env:CCDX_PREDICTION_APP_PATH -and ($_.CommandLine -notmatch '--type(?:=|\\s)')
+    } | ForEach-Object {
+      $route=$null;
+      if($_.CommandLine -match '--proxy-pac-url=(?:"(http://127\\.0\\.0\\.1:\\d{1,5}/proxy\\.pac)"|(http://127\\.0\\.0\\.1:\\d{1,5}/proxy\\.pac))'){
+        $route=if($Matches[1]){$Matches[1]}else{$Matches[2]}
+      };
+      @{pid=[int]$_.ProcessId;route=$route;readable=![string]::IsNullOrWhiteSpace($_.CommandLine)}
+    });ConvertTo-Json -InputObject $rows -Compress`, { ...options, env: { ...env, CCDX_PREDICTION_APP_PATH: app } });
+  let rows;
+  try { rows = JSON.parse(raw); } catch { throw new Error("Could not verify the running Windows App route; launch was skipped"); }
+  if (!Array.isArray(rows) || rows.length > 8 || rows.some(row => !Number.isInteger(row?.pid) || typeof row.readable !== "boolean"
+    || (row.route !== null && (typeof row.route !== "string" || !/^http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac$/.test(row.route))))) {
+    throw new Error("Unknown running Windows App route; launch was skipped");
+  }
+  return rows;
+}
+
 export function installedWindowsPredictionApp(options = {}) {
   const raw = powershell(`$p=@(Get-AppxPackage -Name OpenAI.Codex | Where-Object { [int]$_.Status -eq 0 -and [int]$_.SignatureKind -eq 3 -and $_.Publisher -eq '${WINDOWS_PUBLISHER}' -and $_.PackageFamilyName -eq '${WINDOWS_PACKAGE_FAMILY}' });
     if($p.Count -ne 1){throw 'A single official OpenAI.Codex MSIX registration is required'};

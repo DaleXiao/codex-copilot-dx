@@ -1,6 +1,6 @@
 # CCDX 0.9.26 — release preparation
 
-Not published. The current test package is `0.9.26-windows.3`; Windows native
+Not published. The current test package is `0.9.26-windows.4`; Windows native
 composer and company-network verification are outstanding release gates.
 
 ## Scope
@@ -42,6 +42,11 @@ composer and company-network verification are outstanding release gates.
 - User Windows `.3` result: bridge running, original route direct, zero observed
   configuration/TLS/upstream events, and missing settings switch. This is a live
   integration failure under investigation, not successful prediction evidence.
+- The launch diagnostic established an old PAC port (55468) versus the current
+  bridge (49730). A subsequent App main process was Explorer-owned without PAC
+  arguments. Launch-output investigation remains open. The candidate now detects
+  running route conflicts and saves its successful Windows bridge port for reuse;
+  tests reject port stealing and silent port changes. No running App is killed.
 
 ## Boundaries
 

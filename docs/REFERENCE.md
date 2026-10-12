@@ -31,7 +31,7 @@ feature uses the App's existing composer UI and the conversation's
 selected model through CCDX. Suggestions are not sent automatically. Native
 eligibility rules still apply; availability is not promised for every thread type.
 
-The `0.9.26-windows.3` candidate adds Windows platform adapters. It is not a stable
+The `0.9.26-windows.4` candidate adds Windows platform adapters. It is not a stable
 Windows release until native composer verification is complete. Windows setup
 requires a current-user, Store-signed `OpenAI.Codex` MSIX registration (Store and
 official offline MSIX use the same registration), an initialized Codex profile and
@@ -71,6 +71,14 @@ from using another profile without the trust record. An explicit conflicting
 profile override is preserved and the optional launch is skipped. There is no
 shell, account replacement, new profile, `CODEX_HOME` change or forced App exit. Disabled predictions
 add no Windows probe or launch. `CCDX_AUTO_LAUNCH=0` is still respected.
+
+Windows remembers its own loopback bridge port after successful activation and
+reuses it across service restarts. A busy saved port is not stolen or silently
+replaced. Before launch, CCDX checks only registered App main-process route
+metadata. A running App with an old/unreadable PAC receives an explicit quit and
+relaunch instruction; it is not killed or reported as newly connected. The first
+upgrade from an ephemeral-port candidate may require one full App quit. Successful
+process creation is reported as a launch request, not proof of configuration traffic.
 
 ```bash
 # Fully quit Codex App first.

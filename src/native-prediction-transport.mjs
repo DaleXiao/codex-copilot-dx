@@ -44,10 +44,10 @@ async function decode(bytes, encoding, limit) {
   return decoders[encoding](bytes, { maxOutputLength: limit });
 }
 
-function listen(server) {
+function listen(server, port = 0) {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(port, "127.0.0.1", () => {
       server.removeListener("error", reject);
       resolve(server.address().port);
     });
@@ -60,7 +60,7 @@ export async function startPredictionTransport({
   key, cert, overlay, normalizeRequest = (value) => value,
   enabled = () => true, requestImpl = https.request,
   agent, networkRoute, pacImpl, onEvent = () => {},
-  timeoutMs = 30_000, maxConnections = 128,
+  timeoutMs = 30_000, maxConnections = 128, listenPort = 0,
 }) {
   const sockets = new Set();
   const upstreams = new Set();
@@ -240,7 +240,9 @@ export async function startPredictionTransport({
     gateway.emit("connection", socket);
   });
   proxy.on("clientError", (_error, socket) => socket.destroy());
-  const port = await listen(proxy);
+  let port;
+  try { port = await listen(proxy, listenPort); }
+  catch (error) { agent?.destroy();gateway.close();throw error; }
   return {
     port, pacUrl: `http://127.0.0.1:${port}/proxy.pac`,
     async close() {

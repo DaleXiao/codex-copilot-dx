@@ -6,8 +6,9 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
+import http from "node:http";
 import { assertWindowsCodexClosed, installedWindowsPredictionApp, windowsPredictionProfile,
-  windowsProxyText, windowsSystemProxy, windowsPredictionOpenSSL, windowsPrivatePredictionPath, windowsPowerShellEnvironment } from "../src/native-prediction-windows.mjs";
+  windowsProxyText, windowsSystemProxy, windowsPredictionOpenSSL, windowsPrivatePredictionPath, windowsPowerShellEnvironment, windowsPredictionAppProcesses } from "../src/native-prediction-windows.mjs";
 import { resolveNetworkRoute, networkProxyFor } from "../src/network-route.mjs";
 import { openCodex } from "../src/launcher.mjs";
 import { runPredictionCommand, startNativePrediction } from "../src/native-prediction.mjs";
@@ -47,6 +48,19 @@ test("Windows process checks fail closed and never stop an App", () => {
   assert.doesNotThrow(() => assertWindowsCodexClosed({ exec: () => "closed" }));
   for (const value of ["running", "unexpected", ""]) assert.throws(() => assertWindowsCodexClosed({ exec: () => value }), /Quit Codex/);
   assert.throws(() => assertWindowsCodexClosed({ exec() { throw new Error("fixture"); } }), /Could not check/);
+});
+
+test("Windows launch-route inspection is bounded and never outputs or interpolates full command lines", () => {
+  let call;
+  const result = windowsPredictionAppProcesses(executable, { exec(command, args, options) {
+    call = { args, options };return '[{"pid":123,"route":"http://127.0.0.1:12345/proxy.pac","readable":true}]';
+  } });
+  assert.equal(result[0].pid, 123);assert.equal(call.options.env.CCDX_PREDICTION_APP_PATH, executable);
+  assert.ok(!call.args.at(-1).includes(executable));assert.match(call.args.at(-1), /Get-CimInstance/);
+  assert.doesNotMatch(call.args.at(-1), /Stop-Process|CommandLine\s*=|taskkill/);
+  for (const raw of ['{}', '[{"pid":1,"readable":true,"route":"https://outside.test"}]']) {
+    assert.throws(() => windowsPredictionAppProcesses(executable, { exec: () => raw }), /route/);
+  }
 });
 
 test("Windows profile discovery handles MSIX virtualization and preserves ambiguous profiles", t => {
@@ -130,7 +144,7 @@ test("Windows prediction launch binds native and Chromium storage to the existin
   };
   const env = Object.freeze({ CODEX_HOME: "C:\\existing-codex-home" });
   const options = { env, platform: "win32", predictionApp: executable, predictionProfile: profile, predictionPacUrl: "http://127.0.0.1:12345/proxy.pac",
-    resolveWindowsApp: () => ({ app: executable }), spawnImpl };
+    resolveWindowsApp: () => ({ app: executable }), windowsAppProcesses: () => [], spawnImpl };
   assert.equal(await openCodex(options), true);
   assert.equal(calls[0].command, executable);assert.deepEqual(calls[0].args, [`--user-data-dir=${profile}`, "--proxy-pac-url=http://127.0.0.1:12345/proxy.pac"]);
   assert.equal(calls[0].options.env.CODEX_ELECTRON_USER_DATA_PATH, profile);
@@ -148,6 +162,11 @@ test("Windows prediction launch binds native and Chromium storage to the existin
   assert.equal(await openCodex({ ...options, env: { CODEX_ELECTRON_USER_DATA_PATH: "C:\\other-profile" } }), false);
   assert.equal(calls.length, 0);
   assert.equal(await openCodex({ ...options, env: { CODEX_ELECTRON_USER_DATA_PATH: profile.toLowerCase() } }), true);
+  const before = calls.length;
+  assert.equal(await openCodex({ ...options, windowsAppProcesses: () => [{ pid: 1, readable: true, route: options.predictionPacUrl }] }), true);
+  assert.equal(await openCodex({ ...options, windowsAppProcesses: () => [{ pid: 1, readable: true, route: "http://127.0.0.1:54321/proxy.pac" }] }), false);
+  assert.equal(await openCodex({ ...options, windowsAppProcesses: () => [{ pid: 1, readable: false, route: null }] }), false);
+  assert.equal(calls.length, before, "must not spawn into a running instance or kill it");
 });
 
 test("Windows default-off startup and status make no platform probes or writes", async t => {
@@ -185,6 +204,17 @@ test("Windows on/off lifecycle preserves App trust and never changes Codex confi
   assert.equal(native.profile, profile);
   assert.deepEqual(native.args, [`--user-data-dir=${profile}`, `--proxy-pac-url=${native.pacUrl}`]);
   await native.close();
+  const savedPort = readPredictionSettings(options).bridgePort;
+  assert.ok(savedPort >= 1024);
+  const reusedNative = await startNativePrediction(options);
+  assert.equal(reusedNative.pacUrl, native.pacUrl, "service restarts retain the existing App route");
+  await reusedNative.close();
+  const occupied = http.createServer();
+  await new Promise(resolve => occupied.listen(savedPort, "127.0.0.1", resolve));
+  try {
+    await assert.rejects(startNativePrediction(options), error => error.code === "EADDRINUSE");
+    assert.equal(readPredictionSettings(options).bridgePort, savedPort, "must not silently replace an owned route with a new port");
+  } finally { await new Promise(resolve => occupied.close(resolve)); }
   const db = new DatabaseSync(settings.store);db.prepare("INSERT INTO certificates VALUES(?,?,?)").run("UNRELATED", Buffer.from("user"), Buffer.from("trust"));db.close();
   await runPredictionCommand({ ...options, action: "off" });
   const disabled = readPredictionSettings(options);

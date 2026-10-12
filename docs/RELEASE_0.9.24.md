@@ -91,9 +91,23 @@ remain the release baseline.
 Local package check: 120 entries, 312,401 packed bytes, 991,410 unpacked bytes;
 SHA-1 `09b137ba7ac0527c66b2f614a254d4868559d6cb`.
 
-GitHub CI and publication receipts are recorded after the remote gates. GitHub
-uses the previously supplied, identity-checked
+Application commit: `3bca90a5ebdd88305861ba3b9d23340de34e6f03`.
+
+- Node 22.15, Node 24 and latest official Codex jobs succeeded:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38194644767.
+- The final CI suite contains 1,064 tests; all passed. Both Node package checks
+  match the local SHA-1 above.
+- Formal GitHub Release (neither draft nor prerelease):
+  https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.24.
+- Exactly one npm publishing workflow succeeded, including prepublish gates:
+  https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38194793014.
+- npm published `codex-copilot-dx@0.9.24` with `latest`; its 120-file package
+  SHA-1 matches `09b137ba7ac0527c66b2f614a254d4868559d6cb`.
+- Annotated tag object: `3ab6b75a50ebca0851f6f65d3bb0406ab4c23c3a`.
+
+GitHub uses the previously supplied, identity-checked
 DaleXiao PAT, held only in memory. npm uses the repository's existing publishing
 secret. No browser login, alternate credential or local npm registry lookup is
-required. Task-created temporary keys, fixtures, logs and release helpers will be
-removed after publication; unrelated data and user profiles remain untouched.
+required. Cleanup is limited to task-created temporary keys, fixtures, logs and
+release helpers; unrelated data and user profiles remain untouched. The evidence
+commit does not move the release tag or trigger a second npm publication.

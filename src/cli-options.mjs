@@ -28,6 +28,7 @@ const HELP_TOPICS = new Set([
   "image-status",
   "auto-review-model",
   "suggestion",
+  "prediction",
   "update",
   "version",
 ]);
@@ -252,11 +253,18 @@ export function parseCliArgs(args = []) {
     if (rest.length) unexpectedArgs(rest);
     return baseCommand("animation");
   }
+  if (command === "prediction") {
+    const [action = "status", ...extra] = rest;
+    if (!["on", "off", "status"].includes(action)) throw new Error("Prediction action must be on, off, or status");
+    if (extra.length) unexpectedArgs(extra);
+    return baseCommand("prediction", { action });
+  }
   if (command === "suggestion") {
     const [action = "status", model, ...extra] = rest;
     if (!["on", "off", "model", "status"].includes(action)) throw new Error("Suggestion action must be on, off, model, or status");
     if (extra.length || (model !== undefined && action !== "model")) unexpectedArgs(rest.slice(1));
-    return baseCommand("suggestion", { action, ...(model !== undefined ? { model } : {}) });
+    if (["on", "model"].includes(action)) throw new Error("The CCDX prediction panel has been retired; use ccdx prediction for the separate optional native feature");
+    return baseCommand("suggestion", { action });
   }
   if (command === "enable-image" || command === "disable-image" || command === "image-status") {
     if (rest.length) unexpectedArgs(rest);
@@ -363,7 +371,8 @@ function topicHelp(name, topic) {
     "disable-image": `Usage:\n  ${name} disable-image\n\nDisables the local CCDX image tool and removes its stored API credential and unmodified CCDX image guidance.`,
     "image-status": `Usage:\n  ${name} image-status\n\nShows provider configuration and locally advertised generation/editing tools without generating an image or exposing its API key.`,
     "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nSelect a Responses model, then an advertised reasoning effort. Enter keeps the default/current choice; q cancels both steps without saving. Effort 0 follows the client (low when omitted). Settings apply only to Auto-review on the next request; no client patch or restart is required for adapters running 0.9.13 or newer.`,
-    "suggestion": `Usage:\n  ${name} suggestion on\n  ${name} suggestion off\n  ${name} suggestion model [MODEL_ID]\n  ${name} suggestion status\n\nOptional next-message panel; disabled by default. Open it in a local Codex conversation to generate a suggestion, then choose Add to draft. Ordinary text only: no client patch, background prediction, automatic insertion or sending. Model selection alone does not enable the feature. Requires a running local adapter and recent Codex. Existing user-owned MCP configuration is preserved; native prediction settings are never modified. Future account/remote defaults cannot be universally detected.`,
+    "suggestion": `The CCDX prediction panel has been retired. Run ${name} suggestion off to safely remove unchanged CCDX registrations. This cleanup does not change native predictions; see ${name} prediction --help for that separate opt-in feature.`,
+    prediction: `Usage:\n  ${name} prediction [status|on|off]\n\nOptional native next-message predictions; off by default. macOS only. Quit Codex before on/off, then restart ccdx. On adds private App-profile certificate trust and an App-only route for chatgpt.com and ab.chatgpt.com. HTTPS on those hosts is decrypted locally; only prediction configuration is changed. No client program files, OS trust, account permissions, MCP or Hooks are changed. Existing proxies are not replaced. Official prediction configuration is preserved; the conversation's model is used. App updates require another compatibility check.`,
     update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or the latest stable GitHub release. With no source, an interactive terminal prompts for one.`,
     version: `Usage:\n  ${name} --version`,
   };
@@ -389,7 +398,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} disable-image
   ${name} image-status
   ${name} auto-review-model
-  ${name} suggestion on|off|model|status
+  ${name} prediction [status|on|off]
   ${name} update [npm|github]
   ${name} --version
   ${name} --help
@@ -408,7 +417,7 @@ Commands:
   disable-image      Disable the image provider and remove its credential
   image-status       Show the optional image provider status
   auto-review-model  Select the Codex Auto-review model and reasoning effort
-  suggestion         Optional next-message suggestions (off by default)
+  prediction         Toggle optional native next-message predictions
   update             Update the global package from npm or GitHub
 
 Run ${name} <command> --help for command details.`;

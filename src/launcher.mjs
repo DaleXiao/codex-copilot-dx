@@ -36,7 +36,7 @@ export function launchAttempts() {
   return [["-b", CODEX_BUNDLE_ID], ...APP_PATH_CANDIDATES.map((path) => [path])];
 }
 
-export async function openCodex({ env = process.env, spawnImpl = spawn, platform = process.platform } = {}) {
+export async function openCodex({ env = process.env, spawnImpl = spawn, platform = process.platform, predictionPacUrl = null, predictionApp = null } = {}) {
   if (platform !== "darwin") {
     console.log(status("warn", "Auto-launch is only supported on macOS"));
     console.log(status("info", "Open Codex App manually; it will connect to the adapter."));
@@ -48,7 +48,12 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
     return false;
   }
 
-  for (const args of launchAttempts()) {
+  const extraArgs = typeof predictionPacUrl === "string" && /^http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac$/.test(predictionPacUrl)
+    && APP_PATH_CANDIDATES.includes(predictionApp)
+    ? ["--args", `--proxy-pac-url=${predictionPacUrl}`] : [];
+  const attempts = extraArgs.length ? [[predictionApp]] : launchAttempts();
+  for (const attempt of attempts) {
+    const args = [...attempt, ...extraArgs];
     if (await tryOpen(args, { spawnImpl })) {
       console.log(status("ok", "Codex app launched"));
       return true;

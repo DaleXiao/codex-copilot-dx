@@ -86,6 +86,10 @@ try {
     }
     if (mode === "disabled-dirty") await fs.writeFile(path.join(home, ".codex", "skills"), "must remain untouched");
     const env = { PATH: process.env.PATH, TMPDIR: root, LANG: "en_US.UTF-8", CCDX_TEST_HOME: home, CODEX_HOME: path.dirname(codexPath), XDG_CONFIG_HOME: path.join(home, ".config"), XDG_CACHE_HOME: path.join(home, ".cache"), ADAPTER_HOST: "127.0.0.1", ADAPTER_PORT: String(port), CCDX_AUTO_LAUNCH: "0", CCDX_MODEL_REFRESH_INTERVAL_MS: "0", CCDX_DISABLE_TOKEN_DISCOVERY: "1" };
+    if (mode === "disabled") {
+      env.CCDX_SUGGESTION_CONFIG = path.join(home, "suggestion.json");
+      await fs.writeFile(env.CCDX_SUGGESTION_CONFIG, "invalid-retired-settings");
+    }
     if (mode === "image-write-failure") env.CCDX_TEST_IMAGE_WRITE_FAILURE = "1";
     if (mode === "runtime-image-failure") env.CCDX_TEST_PENDING_IMAGE = "1";
     const cold = start(env);

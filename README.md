@@ -5,6 +5,7 @@ Use Codex App with GitHub Copilot through a local adapter.
 CCDX targets Codex App. It discovers Copilot models, adapts the client's model
 catalog, and preserves Responses streaming, tool calls and conversation history.
 Default Auto-review: **GPT-6.1 Sol / low**. Image generation is **off by default**.
+Native predictions are also **off by default**.
 
 ## Install and run
 
@@ -38,14 +39,13 @@ The dashboard does not poll in the background; refresh when needed.
 | `ccdx models` | Fresh upstream model list |
 | `ccdx usage` | Recorded tokens and upstream prompt-cache hit rate |
 | `ccdx auto-review-model` | Select model, then reasoning effort; `0` follows client |
-| `ccdx suggestion on` / `ccdx suggestion off` | Enable or disable the optional next-message panel |
-| `ccdx suggestion model` / `ccdx suggestion status` | Choose its model by number, or check settings |
 | `ccdx animation` | Preview and select terminal animation |
 | `ccdx cache --limit 128` | Set the history-cache budget in MiB |
 | `ccdx cache --clean` | Clear the rebuildable image-transform cache |
 | `ccdx limits --decoded 256` | Set the decoded request-body budget; restart to apply |
 | `ccdx enable-image` | Opt in to image generation/editing with your own API |
 | `ccdx image-status` / `ccdx disable-image` | Check or disable optional images |
+| `ccdx prediction on` / `off` / `status` | Opt in to native next-message predictions (macOS) |
 | `ccdx update` | Update the global package |
 
 ## Compatibility and safety
@@ -64,20 +64,17 @@ The dashboard does not poll in the background; refresh when needed.
   break continuations. Generated images and Codex transcripts are not deleted.
 - Optional image setup/maintenance never blocks the primary service. Disabled
   users get no CCDX image skill or MCP installation.
-- Next-message suggestions are **off by default**. Opt in with `ccdx suggestion on`,
-  then open **Next message / 下一句** in a local conversation panel or ask Codex for
-  a next-message suggestion. **Add to draft / 加入草稿** appends ordinary text; it
-  never sends, replaces your draft, or patches the client. Default model:
-  `gpt-6-luna`, with `low` reasoning when advertised. Requires a running local
-  adapter and a recent Codex with paginated thread reads and MCP draft support.
-- Suggestions read only a bounded page from the host-identified current thread.
-  Images, reasoning items and tool outputs are excluded. On supported runtimes,
-  `suggestion on` configures an async Stop hook; review it in Codex before it runs.
-  CCDX never grants trust. The panel reads saved suggestions; adding drafts is manual.
-  The dashboard shows settings and generation status. Model selection alone stays off.
-  Existing user-managed MCP/profile configuration is preserved. Native prediction
-  settings are untouched; account/remote defaults in all future clients cannot be
-  reliably detected. Use `ccdx suggestion off` when preferring an official feature.
+- The manual prediction MCP, background hook and dashboard panel are retired.
+  Startup removes only unchanged CCDX registrations and disables saved prediction
+  settings. The optional image MCP remains unchanged. Modified old registrations
+  can use inert compatibility entrypoints; they no longer generate suggestions.
+- Native predictions are a separate, opt-in compatibility feature. Quit Codex,
+  run `ccdx prediction on`, then restart CCDX. This adds App-profile certificate
+  trust and an App-only route for `chatgpt.com` and `ab.chatgpt.com`; HTTPS on those
+  hosts is decrypted locally, but only prediction configuration is changed.
+  Other domains and the CCDX model endpoint stay on their existing routes.
+  No program files or OS trust are changed. Existing proxies are not replaced.
+  See the reference for restart, rollback and client-version boundaries.
 - CCDX adds experimental local history compression only when installed App
   runtimes support it and report it off. Existing choices are preserved; an
   already-enabled default, unavailable runtime or failed check is skipped.

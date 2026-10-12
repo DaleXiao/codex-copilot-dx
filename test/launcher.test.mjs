@@ -69,3 +69,22 @@ test("openCodex is a no-op on non-darwin", async () => {
   assert.equal(ok, false);
   assert.equal(calls.length, 0);
 });
+
+test("prediction route launches only the exact verified App, without profile or auth overrides", async () => {
+  const args = ["/Applications/ChatGPT.app", "--args", "--proxy-pac-url=http://127.0.0.1:12345/proxy.pac"];
+  const { spawnImpl, calls } = fakeSpawn({ [JSON.stringify(args)]: 0 });
+  assert.equal(await openCodex({ env: {}, platform: "darwin", spawnImpl,
+    predictionPacUrl: "http://127.0.0.1:12345/proxy.pac", predictionApp: "/Applications/ChatGPT.app" }), true);
+  assert.deepEqual(calls, [args]);
+});
+
+test("untrusted prediction launch metadata cannot inject App arguments", async () => {
+  for (const overrides of [
+    { predictionPacUrl: "https://remote.test/proxy.pac", predictionApp: "/Applications/ChatGPT.app" },
+    { predictionPacUrl: "http://127.0.0.1:12345/proxy.pac", predictionApp: "--bad-option" },
+  ]) {
+    const { spawnImpl, calls } = fakeSpawn({ '["-b","com.openai.codex"]': 0 });
+    await openCodex({ env: {}, platform: "darwin", spawnImpl, ...overrides });
+    assert.deepEqual(calls, [["-b", "com.openai.codex"]]);
+  }
+});

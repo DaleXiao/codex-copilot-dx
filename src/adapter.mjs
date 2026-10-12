@@ -64,7 +64,7 @@ export {
 
 const ADAPTER_RUNTIME_CONFIG = loadRuntimeConfig();
 const DASHBOARD_PATHS = new Set(["/", "/ui.css", "/theme.js", "/language.js", "/ui.js"]);
-const DASHBOARD_API_PATHS = new Set(["/_ccdx/ui/animation", "/_ccdx/ui/models/live", "/_ccdx/ui/usage", "/_ccdx/ui/auth", "/_ccdx/ui/suggestion"]);
+const DASHBOARD_API_PATHS = new Set(["/_ccdx/ui/animation", "/_ccdx/ui/models/live", "/_ccdx/ui/usage", "/_ccdx/ui/auth"]);
 
 export function requestPath(reqUrl) {
   return new URL(reqUrl || "/", "http://localhost").pathname;
@@ -242,7 +242,9 @@ export function createAdapterHandler(options = {}) {
 
     if (req.method === "GET" && pathname === ADAPTER_HEALTH_PATH) {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(adapterHealthPayload()));
+      const predictionPac = isLoopbackAddress(req.socket?.remoteAddress) && isLoopbackHostHeader(req.headers?.host)
+        ? options.nativePredictionPac?.() : null;
+      res.end(JSON.stringify({ ...adapterHealthPayload(), ...(predictionPac ? { native_prediction_pac: predictionPac } : {}) }));
       return;
     }
 

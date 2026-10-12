@@ -77,8 +77,21 @@ if (CLI.command === "image") {
 }
 if (CLI.command === "suggestion") {
   try {
-    const { runSuggestionCommand } = await import("../src/cli-suggestion.mjs");
-    await runSuggestionCommand({ action: CLI.action, model: CLI.model, commandName: CLI_NAME });
+    const { retirePredictionIntegration } = await import("../src/prediction-retirement.mjs");
+    const result = retirePredictionIntegration({ dryRun: CLI.action === "status" });
+    console.log("The CCDX prediction panel has been retired and cannot be enabled.");
+    if (CLI.action === "status" && result.changed) console.log(`Legacy settings remain; run ${CLI_NAME} suggestion off to clean them up.`);
+    if (result.preserved) console.warn("Modified prediction settings were preserved.");
+    process.exit(0);
+  } catch (error) {
+    console.error(status("err", error.message));
+    process.exit(1);
+  }
+}
+if (CLI.command === "prediction") {
+  try {
+    const { runPredictionCommand } = await import("../src/native-prediction.mjs");
+    await runPredictionCommand({ action: CLI.action });
     process.exit(0);
   } catch (error) {
     console.error(status("err", error.message));
@@ -251,6 +264,7 @@ const LOGGING = configureLogging();
 let activeServer = null;
 let modelRefreshTimer = null;
 let shuttingDown = false;
+let nativePrediction = null;
 
 if (LOGGING.filePath) {
   console.log(status("info", `Debug log: ${LOGGING.filePath}`));
@@ -272,7 +286,18 @@ async function reuseRunningAdapterIfAvailable() {
   console.log(status("ok", `Using existing adapter at ${running.baseUrl}`));
   const { compressionSetup } = await configureCodexClient();
 
-  await openCodex();
+  let predictionPacUrl = null;
+  let predictionApp = null;
+  try {
+    const { readPredictionSettings } = await import("../src/native-prediction-profile.mjs");
+    const preference = readPredictionSettings();
+    if (preference.enabled) {
+      predictionPacUrl = running.data?.native_prediction_pac || null;
+      predictionApp = preference.app?.app;
+      if (!predictionPacUrl) console.warn(status("warn", "Restart ccdx to activate the newly enabled prediction bridge"));
+    }
+  } catch (error) { console.warn(status("warn", error.message)); }
+  await openCodex({ predictionPacUrl, predictionApp });
   console.log(`
   ${status("ok", "Ready, using the existing ccdx adapter")}
 
@@ -285,6 +310,14 @@ async function reuseRunningAdapterIfAvailable() {
 }
 
 async function configureCodexClient() {
+  try {
+    const { retirePredictionIntegration } = await import("../src/prediction-retirement.mjs");
+    const result = retirePredictionIntegration();
+    if (result.changed) console.log(status("info", "Removed the retired CCDX prediction integration"));
+    if (result.preserved) console.warn(status("warn", "Modified prediction settings were preserved"));
+  } catch (error) {
+    console.warn(status("warn", `${error.message}. Core startup will continue.`));
+  }
   const imageProviderEnabled = Boolean(readImageProviderConfig());
   const { imageMcpSkipped } = ensureCodexConfig(ADAPTER_PORT, { host: ADAPTER_HOST, imageProviderEnabled });
   if (imageProviderEnabled && !imageMcpSkipped) {
@@ -369,13 +402,20 @@ try {
     streamHandshakeTimeoutMs: RUNTIME.streamHandshakeTimeoutMs,
     streamIdleTimeoutMs: RUNTIME.streamIdleTimeoutMs,
     terminalAnimationTheme,
+    nativePredictionPac: () => nativePrediction?.pacUrl || null,
   });
 
   // Point Codex App at the adapter.
   const { compressionSetup } = await configureCodexClient();
 
-  // Launch Codex when available.
-  await openCodex();
+  // Optional native prediction setup must never prevent the core adapter from running.
+  try {
+    const { startNativePrediction } = await import("../src/native-prediction.mjs");
+    nativePrediction = await startNativePrediction({ warning: (message) => console.log(status("info", message)) });
+  } catch (error) { console.warn(status("warn", `${error.message}. Core startup will continue.`)); }
+
+  // Launch Codex when available. A running App is never forcibly restarted.
+  await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app });
 
   // Periodically refresh the model list + endpoint cache so a long-running
   // adapter picks up newly released models without a restart.
@@ -404,6 +444,7 @@ try {
     let exitCode = 0;
     try {
       if (modelRefreshTimer) clearInterval(modelRefreshTimer);
+      await nativePrediction?.close();
       const result = await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs });
       if (result.forced) console.warn(status("warn", "Forced remaining adapter connections closed"));
       await flushUsageWrites();
@@ -420,6 +461,7 @@ try {
   await compressionSetup;
 } catch (e) {
   console.error(status("err", e.message));
+  await nativePrediction?.close().catch(() => {});
   await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs }).catch(() => {});
   await flushUsageWrites();
   await LOGGING.cleanup();

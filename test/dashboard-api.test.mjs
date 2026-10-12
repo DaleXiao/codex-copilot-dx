@@ -13,7 +13,6 @@ import { authStatus } from "../src/cli-auth.mjs";
 import { githubTokenPath, githubTokenMetadataPath } from "../src/auth.mjs";
 import { githubTokenFingerprint } from "../src/github-identity.mjs";
 import { createRequestMetrics } from "../src/observability.mjs";
-import { suggestionConfigPath } from "../src/suggestion-config.mjs";
 
 async function invoke(handler, {
   method = "GET",
@@ -52,22 +51,6 @@ async function invoke(handler, {
   return { status: res.statusCode, headers: res.headers, body: JSON.parse(text) };
 }
 
-test("suggestion dashboard reads safe local metadata only and rejects foreign requests", async t => {
-  const home=fs.mkdtempSync(path.join(os.tmpdir(),"ccdx-dashboard-suggestion-"));
-  t.after(()=>fs.rmSync(home,{recursive:true,force:true}));
-  const env={},settings=suggestionConfigPath({home,env});
-  const handler=createAdapterHandler({dashboardOptions:{home,env}}),url="/_ccdx/ui/suggestion";
-  const missing=await invoke(handler,{url});assert.equal(missing.body.enabled,false);
-  assert.equal(fs.existsSync(settings),false);
-  fs.mkdirSync(path.dirname(settings),{recursive:true});
-  fs.writeFileSync(settings,JSON.stringify({enabled:true,automatic:true,model:"gpt-6-luna",adapter_url:"PRIVATE ENDPOINT",extra:"PRIVATE SECRET"}));
-  const result=await invoke(handler,{url});assert.equal(result.body.automatic_generation_configured,true);assert.equal(result.body.automatic_insertion,false);assert.equal(result.body.hook_trust,"unknown");
-  assert.doesNotMatch(JSON.stringify(result.body),/PRIVATE|adapter_url|extra/);
-  for(const options of [{remoteAddress:"192.168.1.2"},{host:"foreign.example"},{dashboardHeader:""}])assert.equal((await invoke(handler,{url,...options})).status,403);
-  assert.equal((await invoke(handler,{url,method:"POST"})).status,405);
-  fs.writeFileSync(settings,'{"enabled":true,"automatic":"yes","model":"gpt-6-luna"}');
-  assert.equal((await invoke(handler,{url})).status,409);
-});
 
 test("dashboard auth matches local CLI identity, suppresses stale metadata and never exports credentials", async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-dashboard-auth-"));

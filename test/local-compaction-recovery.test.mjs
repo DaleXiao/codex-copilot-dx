@@ -37,6 +37,12 @@ function fixture(t) {
 
 test("verified same-thread compaction restores earlier messages/tools exactly once without changing the rollout or request", async t => {
   const f = fixture(t), before = fs.readFileSync(f.file), original = structuredClone(f.context);
+  if (process.platform === "win32") {
+    const stat = await fsp.lstat(f.file), handle = await fsp.open(f.file, "r");
+    try { const opened = await handle.stat();t.diagnostic(JSON.stringify({ syntheticFixtureSnapshot: {
+      lstat: { dev: stat.dev, ino: stat.ino, size: stat.size }, fstat: { dev: opened.dev, ino: opened.ino, size: opened.size } } })); }
+    finally { await handle.close(); }
+  }
   let reservations = 0, releases = 0;
   const result = await recoverLocalCompaction(f.context, { ...f, reserveHistory: async () => { reservations++;return () => { releases++; }; } });
   assert.deepEqual(result.reqContext.body.input, [...history, message("user", "Continue.")]);

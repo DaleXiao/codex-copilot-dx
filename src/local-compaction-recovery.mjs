@@ -100,7 +100,10 @@ async function readPrefix(file, directory, id, ciphertext, budget, check, signal
   let stream, raw;
   try {
     const stat = await handle.stat();
-    if (stat.ino !== before.ino || stat.dev !== before.dev || stat.size !== before.size) throw unavailable("rollout_changed");
+    // Older Windows libuv reports the device number differently for lstat and
+    // fstat. The validated path, file ID and snapshot size remain mandatory.
+    if (!stat.isFile() || stat.ino !== before.ino || stat.size !== before.size
+      || (process.platform !== "win32" && stat.dev !== before.dev)) throw unavailable("rollout_changed");
     raw = handle.createReadStream({ autoClose: false, end: stat.size - 1, highWaterMark: 64 * 1024, signal });
     stream = file.endsWith(".zst") ? raw.pipe(createZstdDecompress()) : raw;
     if (stream !== raw) raw.on("error", error => stream.destroy(error));

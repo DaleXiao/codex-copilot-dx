@@ -57,6 +57,41 @@ outliving its parent; the POSIX replay now owns and terminates its process group
 and uses bounded directory-cleanup retries. These are test changes, not client
 program changes.
 
+## Final verification receipts
+
+- [GitHub stable release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.29)
+  and [npm latest publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38360954262)
+  completed successfully from tag `v0.9.29`. The published tarball contains
+  135 files / 350,912 bytes; all packaged files match the tagged source. No
+  runtime dependency was added. SHA-1: `d709f1ea900b90bc146416b24ac17dce24584921`;
+  GitHub asset SHA-256: `9c7945a7e32c823f3a5c28e93078e1f88ad70c92f286d23fddba22fbd19838ee`.
+
+- [Candidate CI](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38359945390)
+  passed all six jobs at `0aef2b384d01515b51012f0ac9b9abecafaa9db7`.
+- Linux Node 22.15/24: 1,144 passing tests, zero failures, four Windows-only skips,
+  offline HTTP/SSE, all performance/resource gates and nine startup scenarios.
+- Windows Node 22.15/24: 118 native, management, reader, header and architecture
+  tests each; zero failures and no skipped validation jobs.
+- Official latest `codex-cli 0.162.1`: config/catalog, stable streaming IDs,
+  encrypted compaction/local recovery and reasoning-declaration replay passed.
+- Actual Chromium/WebKit: all 16 language/theme/420px/1280px combinations passed,
+  including successful resource application, one periodic model query, auto-off,
+  no whole-page horizontal overflow, retained chart/model nodes and animation draft.
+  Local installed Chromium independently passed eight combinations.
+- Fifty concurrent refresh intents share one in-flight read; hidden and collapsed
+  resources add no scheduled calls. These are deterministic controlled benefits,
+  not a claimed percentage improvement in actual Copilot inference speed.
+- Three alternating isolated baseline/candidate benchmark pairs passed all resource
+  gates. Median import: 38.1/38.6 ms; small native stream: 25.032/25.230 ms; large
+  stream: 49.169/47.589 ms; warm image handling: 69.023/69.909 ms. Import RSS:
+  58.2/58.3 MiB; visual-history peak RSS growth: 87.7/87.7 MiB. Retained image
+  ArrayBuffer growth was zero in every arm. Small timing differences are not
+  evidence of stable inference speed changes; no new inference timer was added.
+
+The first paired benchmark harness wrongly looked for its success marker on
+stdout; the existing runner writes that marker to stderr. The harness was fixed
+to check exit status and parse the JSON result, without changing either product.
+
 ## Preserved behavior
 
 No change to model selection, Standard/Fast routing, Auto-review model/effort,

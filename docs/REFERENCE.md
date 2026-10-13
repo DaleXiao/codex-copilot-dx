@@ -491,6 +491,29 @@ ccdx update npm
 ccdx update github
 ```
 
+In Windows PowerShell, use `ccdx.cmd update github` (or `ccdx.cmd update npm`)
+when script policy blocks npm's `.ps1` shim. Since `0.9.31`, the updater runs
+`npm.cmd` through the system `cmd.exe`, with AutoRun and delayed expansion
+disabled, fixed installer arguments and a validated stable release tag.
+It does not enable Node's generic `shell` option, change PowerShell policy,
+rewrite npm configuration or add an external dependency. The caller's PATH,
+registry, proxy, prefix/cache settings and terminal streams are preserved.
+macOS/Linux retain direct `npm` execution and separate argument arrays.
+
+Versions through `0.9.30` can fail with `spawn EINVAL` before the Windows
+installer starts. To bootstrap this fix, run the installer directly:
+
+```powershell
+npm.cmd install -g --allow-git=all 'github:DaleXiao/codex-copilot-dx#v0.9.31'
+ccdx.cmd version
+```
+
+This GitHub installation still requires Git on PATH. Stop/restart the running
+adapter after installation; installation alone does not update a running process.
+Installer errors and nonzero exits fail the update without a success message or
+automatic retry. Missing Git, blocked dependency downloads or npm cache-only
+settings remain npm/environment errors, not fixed by changing the launcher.
+
 Normal startup checks the official GitHub `releases/latest` web endpoint once in
 the background, without accessing the npm registry or REST API. The anonymous
 check requires no PAT or Copilot credentials, has a two-second deadline, validates

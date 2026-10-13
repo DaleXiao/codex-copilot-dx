@@ -18,6 +18,13 @@ The CLI composes the service. Client integration owns its `configure`, `start`,
 render the dashboard. The adapter exposes integration snapshots and keeps
 management/MCP routes separate from the Responses path.
 
+Package installation is an explicit management operation in `package-update.mjs`,
+not part of inference or optional client integration. Windows uses the system
+command interpreter only for the fixed `npm.cmd` installer command; stable-tag
+validation remains upstream of launch. macOS/Linux use direct npm argv. There
+is no generic shell runner or package-manager framework, and npm's configured
+registry/proxy environment remains owned by the user.
+
 Native prediction has a separate loopback transport and an isolated HTTPS agent.
 Only its two selected hosts use the App-specific route. Non-configuration requests
 on those hosts are forwarded unchanged. The bridge does not replace Copilot or

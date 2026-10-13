@@ -19,7 +19,7 @@ ccdx
 CCDX reuses a compatible local credential or starts GitHub Device Flow, listens
 on `127.0.0.1:2026`, configures Codex, and opens the App. No client binary patch
 is needed. On Windows, open the App manually unless native prediction setup is
-enabled. The configured `dummy` API key is a placeholder, not a credential.
+enabled. If PowerShell blocks scripts, use `npm.cmd` / `ccdx.cmd`; do not change company policy. The configured `dummy` API key is a placeholder, not a credential.
 
 Open [the local dashboard](http://127.0.0.1:2026/) for status, model discovery,
 usage, cache/limits, recent failures, request context and animation settings.

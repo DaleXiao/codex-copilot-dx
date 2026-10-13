@@ -28,7 +28,7 @@ const fetchRelease = async () => new Response(null, { status: 302, headers: { lo
 
 test("package update: builds fixed npm and GitHub global install commands", () => {
   assert.equal(normalizeUpdateSource("gh"), "github");
-  assert.deepEqual(globalUpdateCommand("npm"), {
+  assert.deepEqual(globalUpdateCommand("npm", { platform: "darwin" }), {
     command: "npm",
     args: ["install", "--global", "codex-copilot-dx@latest"],
     source: "npm",
@@ -39,17 +39,19 @@ test("package update: builds fixed npm and GitHub global install commands", () =
     source: "github",
   });
   assert.throws(() => globalUpdateCommand("other"), /must be npm or github/);
-  for (const releaseTag of [undefined, "main", "v1.2.3-beta", "v1.2.3#main", "v1.2.3\n"]) {
+  for (const releaseTag of [undefined, "main", "v1.2.3-beta", "v1.2.3#main", "v1.2.3\n", 'v1.2.3"',
+    "v1.2.3&echo injected", "v1.2.3|whoami", "v1.2.3%PATH%", "v1.2.3!injected!", "v1.2.3^&echo", "v1.2.3\r\n"]) {
     assert.throws(() => globalUpdateCommand("github", { releaseTag }), /valid stable GitHub release tag/);
   }
 });
 
-test("package update: direct source works without a terminal and never uses a shell", async () => {
+test("package update: POSIX direct source works without a terminal and never uses a shell", async () => {
   const calls = [];
   const output = outputBuffer(false);
   const env = { PATH: "/test/bin" };
   const result = await runPackageUpdateCommand({
     env,
+    platform: "darwin",
     input: { isTTY: false },
     output: output.stream,
     source: "npm",
@@ -73,19 +75,18 @@ test("package update: interactive selection retries and can choose GitHub", asyn
   const result = await runPackageUpdateCommand({
     output: output.stream,
     platform: "win32",
+    env: { SystemRoot: "D:\\Windows", ComSpec: "C:\\unrelated\\shell.exe" },
     prompt: async () => answers.shift(),
     spawnImpl: successfulSpawn(calls),
     fetchImpl: fetchRelease,
   });
 
   assert.equal(result.source, "github");
-  assert.equal(calls[0].command, "npm.cmd");
-  assert.deepEqual(calls[0].args, [
-    "install",
-    "--global",
-    "--allow-git=all",
-    "github:DaleXiao/codex-copilot-dx#v0.9.19",
-  ]);
+  assert.equal(calls[0].command, "D:\\Windows\\System32\\cmd.exe");
+  assert.deepEqual(calls[0].args, ["/d", "/s", "/v:off", "/c", '"npm.cmd install --global --allow-git=all github:DaleXiao/codex-copilot-dx#v0.9.19"']);
+  assert.equal(calls[0].options.shell, false);
+  assert.equal(calls[0].options.windowsVerbatimArguments, true);
+  assert.equal(calls[0].options.windowsHide, true);
   assert.match(output.text(), /Enter 1 for npm, 2 for GitHub/);
 });
 
@@ -124,7 +125,7 @@ test("GitHub update resolves once and pins the tag without trusting returned dow
   let lookups = 0;
   const env = { PATH: "/test/bin", npm_config_registry: "https://approved-mirror.example" };
   await runPackageUpdateCommand({
-    source: "gh", env, output: output.stream, spawnImpl: successfulSpawn(calls),
+    source: "gh", env, platform: "darwin", output: output.stream, spawnImpl: successfulSpawn(calls),
     fetchImpl: async () => { lookups++; return new Response(null, { status: 302, headers: { location: "/DaleXiao/codex-copilot-dx/releases/tag/v1.2.3" } }); },
   });
   assert.equal(lookups, 1);
@@ -148,4 +149,46 @@ test("cancelling interactive update does not query or install anything", async (
     fetchImpl: () => assert.fail("No lookup on cancellation"), spawnImpl: () => assert.fail("No install on cancellation"),
   });
   assert.equal(result.cancelled, true);
+});
+
+test("Windows npm update preserves environment and uses only a fixed command through system cmd.exe", async () => {
+  const env = Object.freeze({ WINDIR: "C:\\Windows", PATH: "C:\\Program Files\\nodejs;C:\\npm", npm_config_registry: "https://company.example/npm" });
+  const calls = [], output = outputBuffer(false);
+  await runPackageUpdateCommand({ env, platform: "win32", source: "npm", output: output.stream,
+    spawnImpl: successfulSpawn(calls), fetchImpl() { assert.fail("npm source does not look up a release"); } });
+  assert.deepEqual(calls[0], { command: "C:\\Windows\\System32\\cmd.exe",
+    args: ["/d", "/s", "/v:off", "/c", '"npm.cmd install --global codex-copilot-dx@latest"'],
+    options: { env, shell: false, stdio: "inherit", windowsVerbatimArguments: true, windowsHide: true } });
+  assert.equal(calls[0].options.env, env);
+  assert.match(output.text(), /Updated codex-copilot-dx/);
+});
+
+test("POSIX sources retain exact argv and no Windows launcher flags", async () => {
+  for (const platform of ["darwin", "linux"]) for (const source of ["npm", "github"]) {
+    const calls = [], env = Object.freeze({ PATH: "/company/bin" });
+    await runPackageUpdateCommand({ env, platform, source, output: outputBuffer(false).stream,
+      spawnImpl: successfulSpawn(calls), fetchImpl: fetchRelease });
+    assert.equal(calls[0].command, "npm");
+    assert.deepEqual(calls[0].args, globalUpdateCommand(source, { platform, releaseTag: "v0.9.19" }).args);
+    assert.deepEqual(calls[0].options, { env, shell: false, stdio: "inherit" });
+  }
+});
+
+test("Windows invalid source or hostile release metadata cannot reach the command interpreter", async () => {
+  const spawnImpl = () => assert.fail("invalid metadata must not start an installer");
+  await assert.rejects(runPackageUpdateCommand({ platform: "win32", source: "npm & whoami", spawnImpl }), /must be npm or github/);
+  for (const tag_name of ['v1.2.3" & whoami', "v1.2.3%PATH%", "v1.2.3!var!", "v1.2.3\r\nwhoami"]) {
+    await assert.rejects(runPackageUpdateCommand({ platform: "win32", source: "github", spawnImpl,
+      output: outputBuffer(false).stream, fetchImpl: async () => Response.json({ tag_name, draft: false, prerelease: false }),
+    }), /No update was installed/);
+  }
+});
+
+test("synchronous launch errors and signalled exits do not print update success", async () => {
+  const output = outputBuffer(false);
+  await assert.rejects(runPackageUpdateCommand({ platform: "win32", source: "npm", output: output.stream,
+    spawnImpl() { throw Object.assign(new Error("fixture launch failure"), { code: "EINVAL" }); } }), /fixture launch failure/);
+  await assert.rejects(runPackageUpdateCommand({ platform: "win32", source: "npm", output: output.stream,
+    spawnImpl() { const child = new EventEmitter();queueMicrotask(() => child.emit("exit", null, "SIGINT"));return child; } }), /interrupted by SIGINT/);
+  assert.doesNotMatch(output.text(), /Updated codex-copilot-dx/);
 });

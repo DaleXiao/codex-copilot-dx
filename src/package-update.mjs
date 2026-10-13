@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { lookupLatestRelease, githubReleaseVersion } from "./version.mjs";
 
@@ -100,10 +101,17 @@ export async function runPackageUpdateCommand({
   const update = globalUpdateCommand(selectedSource, { platform, releaseTag: release?.tagName });
   const sourceLabel = selectedSource === "npm" ? "npm registry" : `GitHub release ${release.tagName}`;
   output.write(`Updating ${PACKAGE_NAME} from ${sourceLabel}...\n`);
-  const child = spawnImpl(update.command, update.args, {
+  const windows = platform === "win32";
+  // npm.cmd needs cmd.exe. Only fixed install arguments and a validated stable
+  // release tag enter this command line; no user-supplied command is evaluated.
+  const command = windows
+    ? path.win32.join(env.SystemRoot || env.WINDIR || "C:\\Windows", "System32", "cmd.exe") : update.command;
+  const args = windows ? ["/d", "/s", "/v:off", "/c", `"${[update.command, ...update.args].join(" ")}"`] : update.args;
+  const child = spawnImpl(command, args, {
     env,
     shell: false,
     stdio: "inherit",
+    ...(windows ? { windowsVerbatimArguments: true, windowsHide: true } : {}),
   });
   await waitForExit(child);
   output.write(`Updated ${PACKAGE_NAME} from ${sourceLabel}. Restart the running adapter to use the new version.\n`);

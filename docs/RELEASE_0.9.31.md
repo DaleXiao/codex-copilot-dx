@@ -52,6 +52,12 @@ ComSpec, and has no inferred effect on core request processing. The complete
 Windows updater suite is now included in both Windows Node CI jobs; it is not
 replaced by the POSIX mocked launch tests.
 
+The first Windows CI run reproduced the original EINVAL and passed the corrected
+updater's real batch process on both Node lines. The full CLI test then exposed
+a fixture issue: Windows drive paths supplied to `--import` must be file URLs.
+The fixture now uses `pathToFileURL`; the production updater was unchanged.
+This failed candidate is not used as publication evidence for the full chain.
+
 The production installer is not exercised against a real registry on a user's
 Windows machine by these tests. Company download/SSO restrictions, missing Git,
 offline caches and lock permissions remain environment concerns. Versions with

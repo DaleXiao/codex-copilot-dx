@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { runPackageUpdateCommand } from "../src/package-update.mjs";
 
 const cli = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
@@ -57,7 +57,7 @@ test("real Windows updater executes npm.cmd under paths with spaces, Unicode and
 test("real Windows CLI npm/GitHub updates and installer failure use the same fixed process chain", windowsOnly, t => {
   const f = fixture(t);
   for (const source of ["npm", "github"]) {
-    const result = spawnSync(process.execPath, ["--import", f.preload, cli, "update", source],
+    const result = spawnSync(process.execPath, ["--import", pathToFileURL(f.preload).href, cli, "update", source],
       { env: f.env, encoding: "utf8", timeout: 20_000 });
     assert.equal(result.error, undefined);assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.match(result.stdout, /Updated codex-copilot-dx/);
@@ -66,7 +66,7 @@ test("real Windows CLI npm/GitHub updates and installer failure use the same fix
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[1].args, ["install", "--global", "--allow-git=all", "github:DaleXiao/codex-copilot-dx#v0.9.31"]);
   for (const call of calls) assert.equal(call.registry, f.env.npm_config_registry);
-  const failed = spawnSync(process.execPath, ["--import", f.preload, cli, "update", "github"],
+  const failed = spawnSync(process.execPath, ["--import", pathToFileURL(f.preload).href, cli, "update", "github"],
     { env: { ...f.env, CCDX_UPDATE_TEST_EXIT: "17" }, encoding: "utf8", timeout: 20_000 });
   assert.equal(failed.status, 1);assert.match(failed.stderr, /npm update exited with status 17/);
   assert.doesNotMatch(failed.stdout, /Updated codex-copilot-dx/);

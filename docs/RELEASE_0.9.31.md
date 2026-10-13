@@ -58,6 +58,19 @@ a fixture issue: Windows drive paths supplied to `--import` must be file URLs.
 The fixture now uses `pathToFileURL`; the production updater was unchanged.
 This failed candidate is not used as publication evidence for the full chain.
 
+Final [candidate CI](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38374770228)
+passed all six jobs at `c1721ab2871a8438bffe139905fd318c9f366b5b`:
+Windows Node 22.15 and 24 each passed 150 tests with no failures/skips, including
+all three real-process regressions and the actual CLI update chain. Linux Node
+22.15 and 24 each passed 1,157 tests, zero failures and seven Windows-only skips,
+all offline HTTP/SSE/performance/package gates and nine startup/reuse scenarios.
+Official Codex synthetic replays and 16 Chromium/WebKit dashboard combinations
+also passed. This is real OS process validation with a controlled installer,
+not a claim that every user's Git/registry installation was performed.
+Local baseline/candidate import RSS was 58.2/58.5 MiB and heap 7/7 MiB; duplicate
+image optimizer calls remained one and oversized output bytes were identical.
+Timings are report-only; no statistical core speedup is claimed.
+
 The production installer is not exercised against a real registry on a user's
 Windows machine by these tests. Company download/SSO restrictions, missing Git,
 offline caches and lock permissions remain environment concerns. Versions with

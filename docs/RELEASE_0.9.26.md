@@ -1,7 +1,7 @@
 # CCDX 0.9.26
 
-Promoted from the validated `0.9.26-windows.4` candidate. Publication receipts
-will be recorded below after GitHub and npm confirm the stable release.
+Promoted from the validated `0.9.26-windows.4` candidate and published as stable
+`0.9.26`. Publication receipts are recorded below.
 
 ## Scope
 
@@ -82,3 +82,20 @@ The native worker uses the documented
 [Windows automatic proxy session](https://learn.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpopen).
 Source/protocol tests alone do not prove company authentication or visible
 predictions; the visible Windows result is separately confirmed above.
+
+## Publication
+
+- Release commit/tag target: `dc7bed8552a215e49d7bfa062726c62e24a43b2b`.
+- [Stable GitHub release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.26):
+  not a draft or prerelease.
+- [Release CI](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38330284370):
+  all four jobs passed, including Windows and latest official Codex.
+- [npm publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38330539596):
+  succeeded with `+ codex-copilot-dx@0.9.26`, tag `latest`, default access.
+- Published package: 130 files; SHA-1
+  `890677f524d396c5956d28716ea44544a2902198`, identical to the locally verified tarball.
+  The receipt was checked through GitHub without querying a blocked local npm
+  registry or trying an alternate credential.
+
+The tagged npm package predates this receipt-only documentation update. Runtime
+code and version metadata did not change after publication.

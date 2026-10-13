@@ -19,7 +19,7 @@ const zstdDecompressAsync = zlib.zstdDecompress ? promisify(zlib.zstdDecompress)
 
 const HTTP_RUNTIME_CONFIG = loadRuntimeConfig();
 const MAX_BODY_BYTES = HTTP_RUNTIME_CONFIG.maxBodyBytes;
-const MAX_DECODED_BODY_BYTES = decodedBodyLimitPreference().bytes;
+export const MAX_DECODED_BODY_BYTES = decodedBodyLimitPreference().bytes;
 
 export const MAX_UPSTREAM_ERROR_BODY_BYTES = 1024 * 1024;
 export const MAX_UPSTREAM_MODEL_CATALOG_BYTES = 8 * 1024 * 1024;

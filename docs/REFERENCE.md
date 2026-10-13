@@ -203,6 +203,47 @@ Responses-only models and compaction use Copilot's Responses transport directly.
 
 The adapter handles response history, encrypted reasoning state, function/custom tools, images, compaction, cancellation, retries, and usage metadata within the compatibility boundaries below. Routing prefers endpoint metadata from Copilot's live or cached catalog; when metadata is unavailable, a small built-in set identifies known Responses-only GPT models.
 
+### Local compaction recovery preview
+
+`0.9.28-recovery.1` is a user-validation package, not a claim that the affected
+real chat is fixed. After the exact decoded HTTP 400 `input item does not belong
+to this connection` rejection, or its HTTP-200/pre-output Responses failure
+equivalent, a request containing encrypted compaction can attempt one verified
+plaintext rebuild. Healthy encrypted histories remain unchanged.
+
+The reader is loaded only after this failure. It requires a loopback peer and
+Host, no browser Origin, and LAN mode disabled. It binds a UUID from native
+`thread-id` / `client_metadata.thread_id`, or an exact UUID session/cache key
+when primary metadata is absent. Conflicting primary IDs are rejected. It reads
+only UUID-matching rollout filenames under the service's configured
+`CODEX_HOME/sessions` and `archived_sessions`; it does not search by conversation
+title, similarity, arbitrary request paths or another machine's filesystem.
+
+Supported source files are complete JSONL logs and their `.jsonl.zst` variants,
+decoded with Node's built-in Zstandard support. Header identity, the exact
+compaction ciphertext, retained message order and function/custom-tool pairs
+must match. A history-base reference, fork reference, rollback/reset marker,
+missing plaintext tool content, malformed data or multiple matching sources
+stops recovery. Referenced/split histories are not assembled in this preview;
+the caller must have a complete standalone source prefix.
+
+The request replaces the rejected compaction with recorded plaintext before it,
+retains current instructions and post-compaction input, and removes unavailable
+reasoning. It does not decrypt or claim to reproduce hidden encrypted reasoning.
+Normal preparation, image limits and upstream model/context limits still apply.
+The reader has a five-second deadline, a 4,096-entry directory lookup bound and
+a 16-candidate bound. Decoded reads and the rebuilt body are bounded by the
+running adapter's decoded-body limit; history admission reservations cover
+recovery preparation. Requests cannot retry after visible output has begun.
+
+Neither the original rollout nor client configuration is rewritten. Recovery
+diagnostics contain type/count/status metadata, not transcript text, ciphertext
+or file paths. If verification fails, `ccdx_history_rebuild_required` includes
+`recovery.local_status`; "not modified" does not imply CCDX has backed up complete
+plaintext. Cross-machine/LAN recovery is intentionally unavailable. A full
+plaintext replay can still exceed the upstream context window; this preview
+does not silently truncate it or add chunked re-compaction.
+
 ### Fast and Standard modes
 
 Codex can select Standard or Fast without changing CCDX configuration. When the client requests a model with `service_tier: "priority"`, CCDX uses its exact `-fast` model only when the live Copilot catalog advertises that variant as enabled, selectable, OpenAI-owned, and Responses-only. Standard mode continues to use the base model; CCDX does not invent Fast availability when the upstream catalog does not provide it. This retains the established `gpt-5.6-sol` / `gpt-5.6-sol-fast` mapping and applies the same exact-match rule to future models.

@@ -11,7 +11,7 @@ import { httpError } from "./http-errors.mjs";
 import {
   hasCopilotResponseRetryPolicy,
   openCopilotResponse,
-  selectCopilotResponseRetry,
+  selectCopilotResponseRetryWithHistory,
 } from "./copilot-responses-compat.mjs";
 import {
   dropMaterializedResponseHistory,
@@ -345,11 +345,13 @@ async function selectStreamFailureRetry(reqContext, failure, usedRetryPolicies, 
       assertActive: options.assertPrepareActive,
       historySnapshot: preparation?.historySnapshot,
     });
-    const retry = selectCopilotResponseRetry(restored, 400, errorText, usedRetryPolicies);
+    const retry = await selectCopilotResponseRetryWithHistory(restored, 400, errorText, usedRetryPolicies, {
+      ...options, reserveHistory: preparation?.reserveHistory || options.reserveHistory,
+    });
     options.assertPrepareActive?.();
     keepReservation = Boolean(retry);
     return {
-      retry: retry ? { ...retry, releasePreparation: preparation?.release } : null,
+      retry: retry ? { ...retry, releasePreparation: () => { retry.releasePreparation?.();preparation?.release(); } } : null,
       retrySkipped: null,
     };
   } catch (error) {

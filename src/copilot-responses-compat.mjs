@@ -72,53 +72,82 @@ export function selectCopilotResponseRetry(
   return null;
 }
 
+// Preserve the synchronous selector contract; disk recovery is an explicitly
+// injected, asynchronous capability at the HTTP boundary, never a blanket retry.
+export async function selectCopilotResponseRetryWithHistory(reqContext, statusCode, errorText, usedPolicies = new Set(), options = {}) {
+  try { return selectCopilotResponseRetry(reqContext, statusCode, errorText, usedPolicies); }
+  catch (error) {
+    if (error.code !== "ccdx_history_rebuild_required" || !options.restorePlaintextHistory) throw error;
+    let restored;
+    try { restored = await options.restorePlaintextHistory(reqContext, { reserveHistory: options.reserveHistory }); }
+    catch (failure) {
+      options.assertPrepareActive?.();
+      if (options.signal?.aborted) throw options.signal.reason || failure;
+      const reason = /^[a-z][a-z_]{1,60}$/.test(failure.code || "") ? failure.code : "local_history_unavailable";
+      error.jsonBody.error.recovery.local_status = reason;
+      throw error;
+    }
+    usedPolicies.add("encrypted-connection-rejected");
+    return { ...restored, policyId: "encrypted-connection-rejected", usedPolicies,
+      warning: "saved compaction rejected; retrying once with verified complete local plaintext history" };
+  }
+}
+
 export async function openCopilotResponse(reqContext, upstream = copilotResponses, options = {}) {
   const usedPolicies = options.usedRetryPolicies || new Set();
   let payloadPrepared = false;
-  for (let attempt = 0; attempt <= RETRY_POLICIES.length; attempt += 1) {
-    options.assertPrepareActive?.();
-    const resp = await upstream(reqContext.body, {
-      assertActive: options.assertPrepareActive,
-      signal: options.signal,
-      currentInputStart: reqContext.currentInputStart,
-      onUpstreamStart: options.onUpstreamStart,
-      payloadPrepared,
-    });
-    markUpstreamHeaders();
-    options.assertPrepareActive?.();
-    payloadPrepared = true;
-    if (resp.ok) {
-      reqContext = finalizeEncryptedHistoryRebase(reqContext);
-      return { resp, reqContext, usedRetryPolicies: usedPolicies };
-    }
-
-    const errorText = await readBoundedResponseText(resp, {
-      maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
-      label: "Copilot Responses error body",
-    });
-    options.assertPrepareActive?.();
-    let retry;
-    try { retry = selectCopilotResponseRetry(reqContext, resp.status, errorText, usedPolicies); }
-    catch (error) {
-      if (error.code === "ccdx_history_rebuild_required") {
-        const details = responseFailureDetails({ error: error.jsonBody.error }, "upstream.http_error", {
-          model: reqContext.body.model, headers: resp.headers, retrySkipped: error.code });
-        error.jsonBody.error.upstream_request_id = details.upstream_request_id;
-        options.responseFailures?.record?.({ ...details, recovery: error.jsonBody.error.recovery });
+  let releaseRecovery;
+  try {
+    for (let attempt = 0; attempt <= RETRY_POLICIES.length; attempt += 1) {
+      let resp;
+      try {
+        options.assertPrepareActive?.();
+        resp = await upstream(reqContext.body, {
+          assertActive: options.assertPrepareActive,
+          signal: options.signal,
+          currentInputStart: reqContext.currentInputStart,
+          onUpstreamStart: options.onUpstreamStart,
+          payloadPrepared,
+        });
+      } finally { releaseRecovery?.();releaseRecovery = null; }
+      markUpstreamHeaders();
+      options.assertPrepareActive?.();
+      payloadPrepared = true;
+      if (resp.ok) {
+        reqContext = finalizeEncryptedHistoryRebase(reqContext);
+        return { resp, reqContext, usedRetryPolicies: usedPolicies };
       }
-      throw error;
+
+      const errorText = await readBoundedResponseText(resp, {
+        maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES,
+        label: "Copilot Responses error body",
+      });
+      options.assertPrepareActive?.();
+      let retry;
+      try { retry = await selectCopilotResponseRetryWithHistory(reqContext, resp.status, errorText, usedPolicies, options); }
+      catch (error) {
+        if (error.code === "ccdx_history_rebuild_required") {
+          const details = responseFailureDetails({ error: error.jsonBody.error }, "upstream.http_error", {
+            model: reqContext.body.model, headers: resp.headers, retrySkipped: error.code });
+          error.jsonBody.error.upstream_request_id = details.upstream_request_id;
+          options.responseFailures?.record?.({ ...details, recovery: error.jsonBody.error.recovery });
+        }
+        throw error;
+      }
+      releaseRecovery = retry?.releasePreparation;
+      if (retry?.policyId === "encrypted-connection-rejected") {
+        options.responseFailures?.record?.({ ...responseFailureDetails(JSON.parse(errorText), "upstream.http_error", {
+          model: reqContext.body.model, headers: resp.headers, retried: true, retryPolicy: retry.policyId }),
+          recovery: retry.recovery });
+      }
+      if (retry) {
+        reqContext = retry.reqContext;
+        if (retry.recovery?.source === "local_codex_rollout") payloadPrepared = false;
+        console.warn(status("warn", retry.warning));
+        continue;
+      }
+      return { resp, reqContext, errorText, usedRetryPolicies: usedPolicies };
     }
-    if (retry?.policyId === "encrypted-connection-rejected") {
-      options.responseFailures?.record?.({ ...responseFailureDetails(JSON.parse(errorText), "upstream.http_error", {
-        model: reqContext.body.model, headers: resp.headers, retried: true, retryPolicy: retry.policyId }),
-        recovery: retry.recovery });
-    }
-    if (retry) {
-      reqContext = retry.reqContext;
-      console.warn(status("warn", retry.warning));
-      continue;
-    }
-    return { resp, reqContext, errorText, usedRetryPolicies: usedPolicies };
-  }
-  throw httpError("Responses compatibility retry limit exceeded", 502);
+    throw httpError("Responses compatibility retry limit exceeded", 502);
+  } finally { releaseRecovery?.(); }
 }

@@ -3,6 +3,7 @@ import { applyCopilotResponsesRequestPolicies } from "./copilot-responses-policy
 import {
   createRequestAbort,
   logRequestFailure,
+  MAX_DECODED_BODY_BYTES,
   MAX_UPSTREAM_CHAT_SUCCESS_BODY_BYTES,
   MAX_UPSTREAM_ERROR_BODY_BYTES,
   readJsonBody,
@@ -189,7 +190,7 @@ export function createResponsesHandler(options) {
           }
         }
         assertPrepareActive();
-        return { historySnapshot: retrySnapshot, release };
+        return { historySnapshot: retrySnapshot, reserveHistory: releaseRetryRequest.reserveResponseHistory, release };
       } catch (error) {
         release();
         throw error;
@@ -308,6 +309,12 @@ export function createResponsesHandler(options) {
       if (prepared.historyParentId === null) releaseHistorySnapshot();
       applyCopilotResponsesRequestPolicies(prepared.body);
       if (routePlan.protocol === "openai-responses") {
+        const restorePlaintextHistory = async (context, { reserveHistory } = {}) => {
+          assertPrepareActive();
+          const { recoverLocalCompaction } = await import("./local-compaction-recovery.mjs");
+          return recoverLocalCompaction(context, { request: req, env: openAIModelEnv,
+            signal: abort.signal, assertActive: assertPrepareActive, reserveHistory, maxBytes: MAX_DECODED_BODY_BYTES });
+        };
         const result = await proxyCopilotResponses(prepared, req, res, responsesFn, {
           acquireRetryPreparation,
           assertPrepareActive,
@@ -317,6 +324,8 @@ export function createResponsesHandler(options) {
           onStreamStart: startStream,
           releaseRequest: releaseUpstreamPayload,
           responseFailures,
+          restorePlaintextHistory,
+          reserveHistory: releaseRequest.reserveResponseHistory,
           streamIdleTimeoutMs,
           keepaliveIntervalMs,
         });

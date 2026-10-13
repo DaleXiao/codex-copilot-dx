@@ -23,8 +23,8 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - name: Verify native Windows certificates without Git/OpenSSL, worker, profile, ACL and launch boundaries
-        run: node --test test/native-prediction-windows.test.mjs test/windows-prediction-network.test.mjs
+      - name: Verify native Windows certificates, worker, profile, ACL, launch and local-history recovery
+        run: node --test test/native-prediction-windows.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -53,3 +53,5 @@ jobs:
         run: npm install --prefix "$RUNNER_TEMP/ccdx-codex" @openai/codex@latest
       - name: Verify real Codex configuration, catalog and synthetic Responses
         run: node scripts/codex-message-id-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
+      - name: Verify native recorded compaction and local plaintext recovery without live provider calls
+        run: node scripts/codex-history-recovery-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"

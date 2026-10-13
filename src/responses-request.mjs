@@ -200,7 +200,7 @@ export function sanitizeConnectionOwnedReasoningRequest(reqContext) {
   const compactions = input.filter(item => item?.type === "compaction" && item.encrypted_content);
   const reasoning = input.filter(item => item?.type === "reasoning" && item.encrypted_content);
   if (compactions.length) {
-    const message = "Saved encrypted compaction is unavailable on this connection. Restore the full plaintext conversation history before retrying; CCDX has preserved it and will not discard earlier context.";
+    const message = "The request contains encrypted compaction and upstream rejected saved state. Verified local recovery was unavailable; restore the full plaintext conversation history before retrying. CCDX has not modified the original history.";
     throw Object.assign(new Error(message), { statusCode: 400, code: "ccdx_history_rebuild_required",
       jsonBody: { error: { type: "invalid_request_error", code: "ccdx_history_rebuild_required", message,
         recoverable: true, recovery: { action: "restore_plaintext_history", compaction_items: compactions.length, reasoning_items: reasoning.length } } } });

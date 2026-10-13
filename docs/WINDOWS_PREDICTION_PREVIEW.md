@@ -1,8 +1,10 @@
-# Windows prediction candidate
+# Windows prediction validation history
 
-`0.9.26-windows.4` is an unpublished test candidate, not a validated stable
-Windows release. The existing macOS implementation remains covered by regression
-tests. Prediction is still off by default and images retain their separate opt-in.
+This report preserves intermediate evidence from Windows candidates `.0`–`.4`.
+The `.4` native composer flow was confirmed by the user on 2026-10-13 and promoted
+to `0.9.26`. Earlier failures and pending checks below describe their original
+stage, not the current release. Prediction remains off by default; images retain
+their separate opt-in. See [the final release report](RELEASE_0.9.26.md).
 
 ## Implemented boundary
 
@@ -19,7 +21,7 @@ tests. Prediction is still off by default and images retain their separate opt-i
   Neither the existing network route nor core
   inference should be replaced by an unverified fallback.
 
-## Evidence collected
+## Earlier evidence (2026-10-12)
 
 - Windows user supplied official `OpenAI.Codex` version `26.1007.2314.0`, current
   Store signature kind `3` and status `0`. Its publisher is
@@ -69,7 +71,7 @@ tests. Prediction is still off by default and images retain their separate opt-i
   exit/relaunch still reported an unknown client route; process parameters have
   not yet been collected again after that relaunch. This does not distinguish
   a reused/forwarded launch from an App that received but ignored the route.
-- The current Windows launcher treats the OS spawn event as successful launch;
+- The first Windows launcher treated the OS spawn event as successful launch;
   it does not verify the App's effective prediction route. A focused read-only
   diagnostic collects registered entry/dependencies, actual process paths,
   parent relationships, route flags, local PAC availability and error counters.
@@ -98,7 +100,7 @@ tests. Prediction is still off by default and images retain their separate opt-i
   Windows off removes owned trust while retaining that verified profile binding,
   so reactivation does not guess between the two initialized directories.
 
-## Remaining release gate
+## Later integration findings and completed gate
 
 After profile binding, the user observed bootstrap HTTP 200 and the native
 settings switch, but no gray candidate. The next runtime snapshot was a different
@@ -121,14 +123,17 @@ blaming company routing, certificates or prediction inference. Version `.4`
 checks existing App routes before launch and persists only its own successful
 bridge port. It never kills the App, steals a busy port or silently picks a new
 one. Migration from `.3` still needs one full App exit; future bridge restarts
-can reuse the same route. The user's manual `.3` quit/reuse check is pending.
+can reuse the same route. The user's manual `.3` quit/reuse check still failed and
+yielded an Explorer-owned main process without PAC arguments. Version `.4` added
+a bounded post-launch argument check and stopped equating adapter readiness
+with App-route readiness.
 
-The user has agreed to a Windows-machine check. Normal App login, profile discovery,
-bridge startup and delivery of the live PAC to the registered main process have
-been observed. Verify TLS after binding the original trusted profile, then test
-native gray text, adoption,
-normal reply, explicit off and preserved ordinary replies. Also confirm Windows
-ACLs and upstream TLS with the actual runtime. Only then consider a stable release.
+The user completed the `.4` Windows-machine check on 2026-10-13: the native switch
+and gray text appeared; adopting/sending worked; disabling Show predictions left
+ordinary replies working without new gray text. Windows CI also passed native
+worker compilation/session, PAC download/refusal and real NTFS trust checks.
+The machine's observed upstream route was direct. Actual enterprise proxy
+authentication remains an untested environment, not a claimed universal result.
 
 The temporary local preview and rollback tarballs do not represent an npm or
 GitHub publication. Do not downgrade before disabling the preview's App trust.

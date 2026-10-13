@@ -24,11 +24,11 @@ on those hosts are forwarded unchanged. The bridge does not replace Copilot or
 image-provider networking, modify client program files, or install system trust.
 Static upstream proxy routes and bypass rules are preserved. macOS dynamic
 PAC/WPAD and static CIDR bypass rules are reported as unsupported, not discarded.
-The Windows candidate isolates registration, process, proxy, OpenSSL and NTFS
+The Windows adapter isolates registration, process, proxy, OpenSSL and NTFS
 interfaces in `native-prediction-windows.mjs`. The bridge, overlay, model selection
 and lifecycle remain shared. Windows discovery requires verified registration
 and an existing unambiguous profile; no generalized OS framework is introduced.
-The Windows automatic-proxy candidate has one isolated native WinHTTP worker
+Windows automatic-proxy support has one isolated native WinHTTP worker
 (`windows-prediction-network.mjs` / `.cs`) for company routing, authentication and
 TLS trust. Its private, credit-based pipes stream data without transcript files.
 The App PAC delegates unrelated URLs to the company script; Node never executes

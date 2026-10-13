@@ -1,7 +1,7 @@
-# CCDX 0.9.26 — release preparation
+# CCDX 0.9.26
 
-Not published. The current test package is `0.9.26-windows.4`; Windows native
-composer and company-network verification are outstanding release gates.
+Promoted from the validated `0.9.26-windows.4` candidate. Publication receipts
+will be recorded below after GitHub and npm confirm the stable release.
 
 ## Scope
 
@@ -21,7 +21,7 @@ composer and company-network verification are outstanding release gates.
   Native network policy controls proxy authentication and TLS checks. No MCP,
   Hook, renderer injection, account substitution or automatic sending.
 
-## Verification so far
+## Bounded verification
 
 - Existing Windows `.2` baseline: 1,095 passing tests, one Windows-only skip;
   HTTP/SSE smoke, performance/resource and package gates passed.
@@ -39,14 +39,30 @@ composer and company-network verification are outstanding release gates.
   the fix only prepends bundled Windows PowerShell modules in child environments.
 - Isolated browser: English/Chinese × dark/light × 1440/390 pixels passed keyboard
   disclosures and refresh controls, with no page errors or document overflow.
-- User Windows `.3` result: bridge running, original route direct, zero observed
+- Earlier user Windows `.3` result: bridge running, original route direct, zero observed
   configuration/TLS/upstream events, and missing settings switch. This is a live
-  integration failure under investigation, not successful prediction evidence.
+  integration failure at that stage, not successful prediction evidence.
 - The launch diagnostic established an old PAC port (55468) versus the current
   bridge (49730). A subsequent App main process was Explorer-owned without PAC
-  arguments. Launch-output investigation remains open. The candidate now detects
+  arguments. The final implementation now detects
   running route conflicts and saves its successful Windows bridge port for reuse;
   tests reject port stealing and silent port changes. No running App is killed.
+- Final `.4` local gate: 1,108 passing tests, three Windows-only skips, zero
+  failures; HTTP/SSE smoke, performance/resource and package gates passed.
+  Nine fixed cold/reuse startup scenarios passed after the accurate Ready-message
+  change. No unrelated optimization followed the live-launch findings.
+- [Final candidate CI](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38234749861)
+  passed at `be7e8ed`: both Node regression jobs, latest official Codex replay,
+  and the Windows-native job including worker compilation, real PAC download,
+  missing-PAC refusal and NTFS trust checks.
+- On 2026-10-13 (Asia/Shanghai), the user confirmed on Windows `.4`: the native
+  settings switch appeared, gray suggestions appeared, adopting/sending worked,
+  and disabling Show predictions preserved normal replies without new gray text.
+- Stable `0.9.26` local gate: 1,108 passing tests, three Windows-only skips,
+  zero failures; HTTP/SSE smoke, performance/resource and package gates passed.
+  All 124 packaged runtime files (`src`, `bin`, shipped scripts) were byte-identical
+  to the user-tested `.4` tarball. Only version metadata and final documentation
+  changed for promotion.
 
 ## Boundaries
 
@@ -55,7 +71,14 @@ macOS routing retain their existing agents. Dynamic Windows routing and explicit
 proxy environment overrides are not silently combined. Restart after changing
 network/PAC policy. A failed optional worker must not stop core inference.
 No universal company-policy or future-client compatibility guarantee is made.
+The user's Windows route was observed as direct. Company PAC script delegation,
+backup/direct ordering and bounded streaming have fixtures and native CI coverage;
+live enterprise NTLM/Kerberos and client-certificate environments were not tested.
+CLI on/off and owned-trust cleanup have lifecycle/Windows ACL coverage; the live
+user off check used the native Show predictions setting, not a real-profile trust
+removal experiment.
 
 The native worker uses the documented
 [Windows automatic proxy session](https://learn.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpopen).
-Source/protocol tests do not prove company authentication or visible predictions.
+Source/protocol tests alone do not prove company authentication or visible
+predictions; the visible Windows result is separately confirmed above.

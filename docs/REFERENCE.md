@@ -31,8 +31,9 @@ feature uses the App's existing composer UI and the conversation's
 selected model through CCDX. Suggestions are not sent automatically. Native
 eligibility rules still apply; availability is not promised for every thread type.
 
-The `0.9.26-windows.4` candidate adds Windows platform adapters. It is not a stable
-Windows release until native composer verification is complete. Windows setup
+Version `0.9.26` adds Windows platform adapters. Native gray suggestions,
+adoption/sending and switching predictions off were verified on Windows with the
+`.4` candidate. Windows setup
 requires a current-user, Store-signed `OpenAI.Codex` MSIX registration (Store and
 official offline MSIX use the same registration), an initialized Codex profile and
 OpenSSL. Git for Windows includes OpenSSL; CCDX does not download another runtime.
@@ -122,8 +123,9 @@ macOS dynamic PAC/WPAD remains unsupported and is not overwritten. Windows
 automatic routing is opt-in and requires the native worker; a failed worker
 closes its optional bridge while core inference continues. Restart CCDX and Codex
 after changing networks or company PAC settings; this is not a live network-policy
-watcher. Actual company authentication and native composer behavior still need
-Windows-machine verification. A non-default `CODEX_API_BASE_URL` is
+watcher. Native composer behavior was verified on one Windows machine. Its
+observed upstream route was direct; arbitrary company PAC, integrated-authentication
+and client-certificate policies are not claimed as live-tested. A non-default `CODEX_API_BASE_URL` is
 also preserved and reported as a custom-route conflict; setting it to the normal
 `https://chatgpt.com/backend-api` does not cause a conflict. No automatic direct
 fallback after upstream-proxy rejection is added. The default App profile

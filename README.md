@@ -4,12 +4,11 @@ Use Codex App with GitHub Copilot through a local adapter.
 
 CCDX targets Codex App. It discovers Copilot models, adapts the client's model
 catalog, and preserves Responses streaming, tool calls and conversation history.
-Default Auto-review: **GPT-6.1 Sol / low**. Image generation is **off by default**.
-Native predictions are also **off by default**.
+Default Auto-review: **GPT-6.1 Sol / low**. Image generation is **off by default**. Native predictions are also **off by default**.
 
 ## Install and run
 
-Requires macOS, Codex App, Node.js **22.15+**, and a GitHub account with Copilot
+Requires macOS or Windows, Codex App, Node.js **22.15+**, and a GitHub account with Copilot
 access to the models you want to use.
 
 ```bash
@@ -19,7 +18,8 @@ ccdx
 
 CCDX reuses a compatible local credential or starts GitHub Device Flow, listens
 on `127.0.0.1:2026`, configures Codex, and opens the App. No client binary patch
-is needed. The configured `dummy` API key is a placeholder, not a credential.
+is needed. On Windows, open the App manually unless native prediction setup is
+enabled. The configured `dummy` API key is a placeholder, not a credential.
 
 Open [the local dashboard](http://127.0.0.1:2026/) for status, model discovery,
 usage, cache/limits, recent failures, request context and animation settings.
@@ -45,7 +45,7 @@ The dashboard does not poll in the background; refresh when needed.
 | `ccdx limits --decoded 256` | Set the decoded request-body budget; restart to apply |
 | `ccdx enable-image` | Opt in to image generation/editing with your own API |
 | `ccdx image-status` / `ccdx disable-image` | Check or disable optional images |
-| `ccdx prediction on` / `off` / `status` | Opt in to native predictions (macOS; Windows candidate) |
+| `ccdx prediction on` / `off` / `status` | Opt in to native predictions (macOS and Windows) |
 | `ccdx update` | Update the global package |
 
 ## Compatibility and safety
@@ -53,7 +53,7 @@ The dashboard does not poll in the background; refresh when needed.
 - Standard/Fast follow the exact variants advertised by Copilot; CCDX does not
   invent Fast availability. Auto-review is separate from the foreground model.
 - Model discovery does not prove inference access. If a new model is absent in
-  Codex, run `ccdx doctor`; fully quit the App with **Command-Q** before reopening.
+  Codex, run `ccdx doctor`; fully quit the App (**Command-Q** on macOS) before reopening.
   CCDX does not claim it can verify the App's internal model cache externally.
 - After a package upgrade, restart the running CCDX adapter. Choosing a model or
   effort on a current adapter takes effect on its next Auto-review request.
@@ -74,7 +74,7 @@ The dashboard does not poll in the background; refresh when needed.
   hosts is decrypted locally, but only prediction configuration is changed.
   Other domains and the CCDX model endpoint stay on their existing routes.
   No program files or OS trust are changed. Static HTTP/HTTPS/SOCKS5 proxies and bypass rules are retained.
-  The Windows candidate adds company PAC/WPAD routing; macOS dynamic routing remains unsupported. See the reference for verification and rollback limits.
+  Windows supports company PAC/WPAD routing; macOS dynamic routing remains unsupported. Windows setup needs the official MSIX App and OpenSSL. See the reference for compatibility limits.
 - CCDX adds experimental local history compression only when installed App
   runtimes support it and report it off. Existing choices are preserved; an
   already-enabled default, unavailable runtime or failed check is skipped.

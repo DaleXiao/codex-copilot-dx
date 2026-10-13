@@ -17,6 +17,8 @@ These reports record a specific release and test environment. Their version,
 test counts, timings, live-provider observations, and limitations remain
 historical facts rather than current guarantees.
 
+- [0.9.26: Windows native predictions, safe ownership recovery and dashboard disclosures](RELEASE_0.9.26.md)
+- [Windows prediction validation history](WINDOWS_PREDICTION_PREVIEW.md)
 - [0.9.25: static proxy compatibility, integration boundaries and release diagnostics](RELEASE_0.9.25.md)
 
 - [0.9.19: GitHub startup checks and stable-release updates](RELEASE_0.9.19.md)

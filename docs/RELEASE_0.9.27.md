@@ -44,6 +44,8 @@
 - No inference, image, model, dashboard, proxy-worker or launch implementation
   changed; npm dependencies are byte-identical apart from version metadata.
   Performance/resource gates pass; this is not a claim of faster model inference.
+- The installed-layout package check located the shipped C# helper correctly.
+  All 132 packaged files matched the release commit byte-for-byte.
 
 Visible Windows predictions in 0.9.26 are historical evidence, not a new 0.9.27
 live App UI result. Native Windows tests exercise the actual system certificate
@@ -59,3 +61,23 @@ inference, image tools and dashboard code are outside this change.
 
 The helper uses the documented
 [CertificateRequest API](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.x509certificates.certificaterequest?view=netframework-4.8.1).
+
+## Publication
+
+- Published stable `0.9.27` on 2026-10-13 (Asia/Shanghai).
+- Release/tag target: `59a54c166557c42ef1907f3866c15f1d57c3f898`.
+- [Final main CI](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38334409930):
+  all five jobs passed, including native Windows on both supported Node lines.
+- [GitHub release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.27):
+  latest stable, not draft/prerelease, with the verified package attached.
+- [npm publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38334648603):
+  succeeded with `+ codex-copilot-dx@0.9.27`, tag `latest`, default access.
+- Published npm package: 132 files, SHA-1
+  `45b8c97a9f388dc04772d0f25ddbcb4c6fa1c250`, identical to the locally checked tarball.
+  GitHub's uploaded asset also matched its SHA-256
+  `1232894217e897064d682286ca12fb7619594418e3ad6bb6c43798a20687711c`.
+
+Publication used the same user-provided GitHub PAT as prior successful releases
+and the repository's existing npm secret. No browser login or credential
+replacement was performed. This receipt-only report update does not change
+runtime code or the tagged/published package.

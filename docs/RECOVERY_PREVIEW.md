@@ -35,7 +35,26 @@ The actual user history remains untested until the user verifies this package.
   wrong thread/content, broken pairs, missing opaque tool text, malformed files,
   Zstandard expansion, byte limits, symlinks, rollback and referenced histories,
   cancellation, admission release and refusal to retry after visible output.
-- Full candidate and cross-platform receipts will be added after their gates.
+- Final local macOS gate: 1,130 passing tests, four Windows-only skips, zero
+  failures; HTTP/SSE smoke, relative performance/resource checks and package
+  checks passed. Nine isolated startup scenarios passed with no live provider.
+- [Final cross-platform CI](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38351642760)
+  passed at `9ebf3be`: Linux Node 22.15/24 full gates, Windows Node 22.15/24
+  native tests (41 passes each, no skips), and latest official Codex `0.162.1`
+  configuration/catalog plus native compaction/recovery replays.
+- The first matrix exposed a real Windows Node 22.15 difference: synthetic
+  `lstat.dev` was zero while open-file `fstat.dev` reported the volume. Windows
+  now retains validated path, file type, inode and snapshot-size checks without
+  depending on that inconsistent device field. POSIX device checks are unchanged.
+  Both native Windows variants then passed; no validation job was skipped.
+- One bounded review addressed rollback marker recognition, reservation cleanup
+  and resizing, the active adapter byte limit, post-output retry refusal, LAN
+  exclusion and preservation of user/tool data in fingerprints. No adjacent
+  updater, model, native-prediction, image or UI implementation changed.
+
+Tests use generic synthetic histories, not the reporter's private transcript.
+Native replays establish the recorded-data/control path, not acceptance of the
+actual user's decrypted/rebuilt data by Copilot. That final check remains open.
 
 ## User validation
 

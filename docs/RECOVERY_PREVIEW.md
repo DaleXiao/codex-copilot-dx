@@ -76,6 +76,13 @@ actual user's decrypted/rebuilt data by Copilot. That final check remains open.
    worked, recovery count/source/status and any upstream request ID. Do not
    share raw transcripts, encrypted blobs, tokens or private filesystem paths.
 
+   Read-only PowerShell metadata check (adjust the port if configured):
+
+   ```powershell
+   $s = Invoke-RestMethod -Uri 'http://127.0.0.1:2026/_ccdx/status' -TimeoutSec 10
+   $s.response_failures.recent | Select-Object code,retried,retry_skipped,recovery,upstream_request_id | ConvertTo-Json -Depth 5
+   ```
+
 If `recovery.local_status` reports a missing source, incomplete history or
 retained-prefix mismatch, the original data remains unchanged. A source on a
 different machine, a referenced history prefix, or a full replay above the model

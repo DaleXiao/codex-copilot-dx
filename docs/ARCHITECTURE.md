@@ -48,7 +48,7 @@ optional boundary. Core inference keeps its existing service port and lifecycle.
 Connection-ownership replay rejection is a provider-owned retry policy. It
 removes only unavailable reasoning once, preserving visible history and tools.
 Opaque compaction cannot be assumed equivalent to remaining plaintext. The
-`0.9.28-recovery.1` preview injects a lazy, asynchronous local recovery capability
+`0.9.28` injects a lazy, asynchronous local recovery capability
 at the HTTP boundary, while preserving the synchronous provider-selector API.
 `local-compaction-recovery.mjs` owns source lookup, readonly decoding and verified
 reassembly; it is not a general transcript service or startup scanner. The

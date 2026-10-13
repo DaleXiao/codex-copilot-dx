@@ -203,10 +203,10 @@ Responses-only models and compaction use Copilot's Responses transport directly.
 
 The adapter handles response history, encrypted reasoning state, function/custom tools, images, compaction, cancellation, retries, and usage metadata within the compatibility boundaries below. Routing prefers endpoint metadata from Copilot's live or cached catalog; when metadata is unavailable, a small built-in set identifies known Responses-only GPT models.
 
-### Local compaction recovery preview
+### Local compaction recovery
 
-`0.9.28-recovery.1` is a user-validation package, not a claim that the affected
-real chat is fixed. After the exact decoded HTTP 400 `input item does not belong
+`0.9.28` adds bounded local recovery; the affected user's real chat still needs
+verification. After the exact decoded HTTP 400 `input item does not belong
 to this connection` rejection, or its HTTP-200/pre-output Responses failure
 equivalent, a request containing encrypted compaction can attempt one verified
 plaintext rebuild. Healthy encrypted histories remain unchanged.
@@ -224,7 +224,7 @@ decoded with Node's built-in Zstandard support. Header identity, the exact
 compaction ciphertext, retained message order and function/custom-tool pairs
 must match. A history-base reference, fork reference, rollback/reset marker,
 missing plaintext tool content, malformed data or multiple matching sources
-stops recovery. Referenced/split histories are not assembled in this preview;
+stops recovery. Referenced/split histories are not assembled by this recovery;
 the caller must have a complete standalone source prefix.
 
 The request replaces the rejected compaction with recorded plaintext before it,
@@ -241,7 +241,7 @@ diagnostics contain type/count/status metadata, not transcript text, ciphertext
 or file paths. If verification fails, `ccdx_history_rebuild_required` includes
 `recovery.local_status`; "not modified" does not imply CCDX has backed up complete
 plaintext. Cross-machine/LAN recovery is intentionally unavailable. A full
-plaintext replay can still exceed the upstream context window; this preview
+plaintext replay can still exceed the upstream context window; this recovery
 does not silently truncate it or add chunked re-compaction.
 
 ### Fast and Standard modes

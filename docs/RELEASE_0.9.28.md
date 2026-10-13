@@ -1,4 +1,9 @@
-# CCDX 0.9.28-recovery.1 validation candidate
+# CCDX 0.9.28: verified local plaintext recovery
+
+The user approved promotion to the stable GitHub release and npm `latest`.
+The recovery implementation is unchanged from the cross-platform tested
+candidate. Publication does not establish that the reporter's original chat
+has resumed; that user-validation check remains open.
 
 ## Acceptance
 
@@ -63,12 +68,12 @@ actual user's decrypted/rebuilt data by Copilot. That final check remains open.
 2. In PowerShell, use the package directory and run:
 
    ```powershell
-   npm.cmd install -g .\codex-copilot-dx-0.9.28-recovery.1.tgz
+   npm.cmd install -g .\codex-copilot-dx-0.9.28.tgz
    ccdx.cmd version
    ccdx.cmd
    ```
 
-   On macOS/Linux, use `npm install -g ./codex-copilot-dx-0.9.28-recovery.1.tgz`,
+   On macOS/Linux, use `npm install -g ./codex-copilot-dx-0.9.28.tgz`,
    then `ccdx version` and `ccdx`.
 3. Continue the original affected chat. Verify an early decision/tool result
    still exists in context, then send another input. Also check a healthy chat.
@@ -86,7 +91,7 @@ actual user's decrypted/rebuilt data by Copilot. That final check remains open.
 If `recovery.local_status` reports a missing source, incomplete history or
 retained-prefix mismatch, the original data remains unchanged. A source on a
 different machine, a referenced history prefix, or a full replay above the model
-window is not supported by this preview. Do not describe these as successful
+window is not supported by this recovery. Do not describe these as successful
 recovery. Keep issue #1 open until the actual affected chat is confirmed.
 
 This implements verified plaintext rebuilding, not decryption. The official

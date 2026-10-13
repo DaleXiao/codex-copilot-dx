@@ -5,6 +5,24 @@ The recovery implementation is unchanged from the cross-platform tested
 candidate. Publication does not establish that the reporter's original chat
 has resumed; that user-validation check remains open.
 
+## Publication receipts
+
+- Release commit: `07a917c9626fb20121005c8750a47dce97049a80`, tag `v0.9.28`.
+- [Stable cross-platform CI](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38353382092):
+  all five jobs passed, including both Windows versions and native Codex replay.
+- [GitHub stable release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.28):
+  `codex-copilot-dx-0.9.28.tgz`, 346,695 bytes, 133 files; all packaged files
+  matched the tagged source.
+- [npm publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38353558872):
+  published `codex-copilot-dx@0.9.28` with `latest`; its prepublication gate
+  reported 1,130 passes, zero failures and four Windows-only skips on Linux.
+  HTTP/SSE, performance/resource and package gates passed.
+- GitHub and npm tarball SHA-1: `f33789c7fa99685a64d866e626bcae82812ebf98`.
+  GitHub asset SHA-256: `2cab3e55c55714042a60ff7ca5b3eee50547401d2d2a3e5c93ae79cdb0cb9761`.
+
+These receipts confirm publication and automated checks, not the reporter's
+original-chat recovery. Issue #1 remains open for that verification.
+
 ## Acceptance
 
 The affected user's original chat must resume while retaining facts and tool

@@ -57,7 +57,24 @@ changes, ambiguous PAC arguments and immediate rejection of an observed wrong
 route. A separate isolated macOS composition replay occupied the saved port,
 called the actual client-integration start and verified prediction unavailability,
 unchanged settings/occupant, and HTTP 200 from core Responses and the dashboard.
-It made zero real provider requests and did not configure the real user profile.
+The final composition replay made zero real provider requests and did not
+configure the real user profile. The first temporary harness omitted endpoint
+metadata, so its synthetic GPT-6.1 request selected the real Chat compatibility
+fallback and returned HTTP 400. The harness was corrected to inject Responses
+metadata and refuse every non-loopback Fetch; no private chat content was used
+and this required no production behavior change.
+
+All six release-candidate CI jobs passed at
+`fc2c15bca7f9863cc249f04759bb793f4abaf2fc`:
+[CI receipts](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38369583029).
+They cover Linux Node 22.15/24 full gates, Windows Node 22.15/24 native platform
+and launcher regressions, the latest official Codex synthetic replay and the
+16 Chromium/WebKit dashboard combinations. Node 22.15 Linux reports 1,153 passing
+tests; Node 22.15 Windows reports 133, zero failures/skips.
+Baseline/candidate local resource gates passed with import RSS 58.4/58.5 MiB,
+heap 7/7 MiB and the same 162.3 MiB single-request admission RSS peak delta.
+One-off timings vary; this release claims restart reliability, not faster model
+inference or statistical speedups. Request processing modules are unchanged.
 
 An upgrade from random-port macOS versions can require one full App quit to
 attach the newly saved address. Persistence prevents subsequent port-change

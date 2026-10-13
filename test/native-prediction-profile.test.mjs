@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
+import http from "node:http";
 import { predictionPaths, readPredictionSettings, writePredictionSettings, assertPredictionProxyCompatible,
   createPredictionCertificate, readPredictionCertificate, updatePredictionTrust, predictionTrustMetadata,
   assertCodexClosed } from "../src/native-prediction-profile.mjs";
@@ -30,6 +31,9 @@ test("prediction CLI has explicit on/off/status, off by default, without model r
   assert.throws(() => parseCliArgs(["prediction", "on", "extra"]));
   assert.match(cliHelp("ccdx", "prediction"), /off by default/);
   assert.match(cliHelp("ccdx", "prediction"), /decrypted locally/);
+  assert.match(cliHelp("ccdx", "prediction"), /Git\/OpenSSL is not required/);
+  assert.match(cliHelp("ccdx", "prediction"), /port persists across restarts\/updates/);
+  assert.doesNotMatch(cliHelp("ccdx", "prediction"), /Windows \(candidate\)|real composer verification is pending/);
 });
 
 test("default and status do not create files, probe an App, or start a bridge", async (t) => {
@@ -195,4 +199,68 @@ test("malformed preferences cannot silently reenable or write settings", async (
   await assert.rejects(startNativePrediction(opts), /invalid/);
   await assert.rejects(runPredictionCommand({ ...opts, action: "status", output() {} }), /invalid/);
   assert.equal(fs.readFileSync(paths.settings, "utf8"), "bad json");
+});
+
+test("macOS prediction startup persists its port and reuses the identical route across restarts", { skip: process.platform === "win32" }, async t => {
+  const opts = fixture(t), archive = path.join(opts.root, "app.asar");
+  fs.writeFileSync(archive, "synthetic App identity");
+  const stat = fs.statSync(archive), verified = { ...app, archive, size: stat.size, mtimeMs: stat.mtimeMs };
+  const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => verified, output() {} };
+  await runPredictionCommand({ ...run, action: "on" });
+  assert.equal(readPredictionSettings(opts).bridgePort, undefined, "activation does not reserve a port before listening");
+  let bridge;
+  t.after(async () => bridge?.close());
+  bridge = await startNativePrediction(run);
+  const pacUrl = bridge.pacUrl, port = readPredictionSettings(opts).bridgePort;
+  assert.ok(port >= 1024);await bridge.close();
+  const saved = fs.readFileSync(predictionPaths(opts).settings);
+  for (let restart = 0; restart < 3; restart++) {
+    bridge = await startNativePrediction(run);
+    assert.equal(bridge.pacUrl, pacUrl);
+    assert.deepEqual(fs.readFileSync(predictionPaths(opts).settings), saved, "restart must not rewrite settings or rotate keys");
+    const pac = await fetch(pacUrl);assert.equal(pac.status, 200);
+    assert.match(await pac.text(), new RegExp(`127\\.0\\.0\\.1:${port}`));
+    await bridge.close();
+  }
+  const occupied = http.createServer((_req, res) => res.end("unrelated service"));
+  await new Promise(resolve => occupied.listen(port, "127.0.0.1", resolve));
+  try {
+    await assert.rejects(startNativePrediction(run), error => error.code === "EADDRINUSE" && /not replaced.*core adapter remains available/.test(error.message));
+    assert.deepEqual(fs.readFileSync(predictionPaths(opts).settings), saved);
+    assert.equal(await fetch(`http://127.0.0.1:${port}`).then(r => r.text()), "unrelated service");
+  } finally { await new Promise(resolve => occupied.close(resolve)); }
+  // Explicit off/on retains port ownership too, without preserving removed trust.
+  await runPredictionCommand({ ...run, action: "off" });
+  await runPredictionCommand({ ...run, action: "on" });
+  bridge = await startNativePrediction(run);assert.equal(bridge.pacUrl, pacUrl);await bridge.close();
+  await runPredictionCommand({ ...run, action: "off" });
+});
+
+test("invalid saved ports fail before startup changes files, on macOS as well as Windows", async t => {
+  const opts = fixture(t);
+  for (const bridgePort of [0, 1023, 65536, 1.5, "2026", null]) {
+    writePredictionSettings({ version: 1, enabled: true, bridgePort, app }, opts);
+    const before = fs.readFileSync(predictionPaths(opts).settings);
+    await assert.rejects(startNativePrediction({ ...opts, platform: "darwin", exec: noRunningApp }), /Saved prediction bridge port is invalid/);
+    assert.deepEqual(fs.readFileSync(predictionPaths(opts).settings), before);
+  }
+});
+
+test("a first-start preference conflict closes its uncommitted listener rather than persisting a stale route", { skip: process.platform === "win32" }, async t => {
+  const opts = fixture(t), archive = path.join(opts.root, "app.asar");fs.writeFileSync(archive, "synthetic App identity");
+  const stat = fs.statSync(archive), verified = { ...app, archive, size: stat.size, mtimeMs: stat.mtimeMs };
+  const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => verified, output() {} };
+  await runPredictionCommand({ ...run, action: "on" });
+  const settings = predictionPaths(opts).settings;
+  const readOriginal = fs.readFileSync;let reads = 0;
+  t.mock.method(fs, "readFileSync", function(file, ...args) {
+    const result = readOriginal.call(fs, file, ...args);
+    if (file === settings && String(result).includes('"enabled": true')) {
+      reads++;
+      if (reads === 2) return JSON.stringify({ ...JSON.parse(result), enabled: false });
+    }
+    return result;
+  });
+  await assert.rejects(startNativePrediction(run), /Prediction setup changed during startup/);
+  assert.equal(readPredictionSettings(opts).bridgePort, undefined);
 });

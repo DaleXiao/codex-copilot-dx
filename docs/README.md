@@ -17,6 +17,7 @@ These reports record a specific release and test environment. Their version,
 test counts, timings, live-provider observations, and limitations remain
 historical facts rather than current guarantees.
 
+- [0.9.30: persistent prediction routes and verified macOS launch](RELEASE_0.9.30.md)
 - [0.9.29: visible-page refresh, atom favicon and safe reasoning declarations](RELEASE_0.9.29.md)
 - [0.9.28: verified local plaintext recovery and validation boundaries](RELEASE_0.9.28.md)
 - [0.9.27: Windows certificate setup without Git/OpenSSL](RELEASE_0.9.27.md)

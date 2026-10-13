@@ -42,8 +42,13 @@ TLS trust. Its private, credit-based pipes stream data without transcript files.
 The App PAC delegates unrelated URLs to the company script; Node never executes
 that script. This worker is not a shared inference/image network backend and is
 not started for disabled predictions or static/direct configurations.
-Windows bridge-port ownership and App launch-route checks also stay in this
-optional boundary. Core inference keeps its existing service port and lifecycle.
+Bridge-port ownership is shared across macOS and Windows in the existing
+prediction lifecycle, with locked first-start persistence and no replacement
+on conflict. OS process inspection stays in the launcher/platform boundary;
+it runs only for explicit prediction-enabled launch/reuse, not per model request.
+macOS uses bounded system `ps` reads and Windows retains its existing registered
+process checks. No process is stopped, no permanent watcher or dependency is
+added. Core inference keeps its existing service port and lifecycle.
 
 Connection-ownership replay rejection is a provider-owned retry policy. It
 removes only unavailable reasoning once, preserving visible history and tools.

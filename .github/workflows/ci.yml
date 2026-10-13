@@ -24,7 +24,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Verify native Windows certificates, worker, profile, ACL, launch and local-history recovery
-        run: node --test test/native-prediction-windows.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs test/dashboard-refresh.test.mjs test/dashboard-analytics-ui.test.mjs test/dashboard-language.test.mjs test/dashboard-theme.test.mjs test/upstream-headers.test.mjs test/cli-models.test.mjs test/module-boundaries.test.mjs test/http-transport.test.mjs
+        run: node --test test/native-prediction-windows.test.mjs test/launcher.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs test/dashboard-refresh.test.mjs test/dashboard-analytics-ui.test.mjs test/dashboard-language.test.mjs test/dashboard-theme.test.mjs test/upstream-headers.test.mjs test/cli-models.test.mjs test/module-boundaries.test.mjs test/http-transport.test.mjs
   test:
     runs-on: ubuntu-latest
     strategy:

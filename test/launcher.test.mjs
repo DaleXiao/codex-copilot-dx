@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { autoLaunchEnabled, launchAttempts, openCodex } from "../src/launcher.mjs";
+import { autoLaunchEnabled, launchAttempts, openCodex, macPredictionAppProcesses } from "../src/launcher.mjs";
 
 function fakeSpawn(exitPlan) {
   // exitPlan: map from JSON.stringify(args) -> exit code
@@ -73,9 +73,79 @@ test("openCodex is a no-op on non-darwin", async () => {
 test("prediction route launches only the exact verified App, without profile or auth overrides", async () => {
   const args = ["/Applications/ChatGPT.app", "--args", "--proxy-pac-url=http://127.0.0.1:12345/proxy.pac"];
   const { spawnImpl, calls } = fakeSpawn({ [JSON.stringify(args)]: 0 });
+  let inspections = 0;
   assert.equal(await openCodex({ env: {}, platform: "darwin", spawnImpl,
-    predictionPacUrl: "http://127.0.0.1:12345/proxy.pac", predictionApp: "/Applications/ChatGPT.app" }), true);
+    predictionPacUrl: "http://127.0.0.1:12345/proxy.pac", predictionApp: "/Applications/ChatGPT.app",
+    macAppProcesses: () => ++inspections === 1 ? [] : [{ pid: 123, readable: true, route: "http://127.0.0.1:12345/proxy.pac" }] }), true);
   assert.deepEqual(calls, [args]);
+});
+
+test("macOS prediction inspection reads only exact App main-process arguments and returns no unrelated data", () => {
+  const app = "/Applications/ChatGPT.app", calls = [];
+  const listing = ` 101 ${app}/Contents/MacOS/ChatGPT\n102 ${app}/Contents/Frameworks/Helper.app/Contents/MacOS/Helper\n103 /Applications/Other.app/Contents/MacOS/ChatGPT\n104 ${app}/Contents/MacOS/Codex\n`;
+  const rows = macPredictionAppProcesses(app, { exec(command, args, options) {
+    calls.push(args);assert.equal(command, "/bin/ps");assert.equal(options.timeout, 2000);
+    if (args[0] === "-axo") return listing;
+    if (args[1] === "101") return `${app}/Contents/MacOS/ChatGPT --proxy-pac-url="http://127.0.0.1:12345/proxy.pac" --private-value=must-not-return`;
+    throw new Error("fixture unreadable process");
+  } });
+  assert.deepEqual(rows, [{ pid: 101, readable: true, route: "http://127.0.0.1:12345/proxy.pac" }, { pid: 104, readable: false, route: null }]);
+  assert.equal(calls.length, 3);assert.doesNotMatch(JSON.stringify(rows), /private-value|must-not-return/);
+  assert.throws(() => macPredictionAppProcesses("/Applications/Other.app", { exec() { assert.fail(); } }), /Unknown/);
+  assert.throws(() => macPredictionAppProcesses(app, { exec() { throw new Error("cannot inspect"); } }), /cannot inspect/);
+  for (const args of [
+    `/Applications/Other.app/main --proxy-pac-url=http://127.0.0.1:12345/proxy.pac`,
+    `${app}/Contents/MacOS/ChatGPT --proxy-pac-url=http://127.0.0.1:12345/proxy.pac --proxy-pac-url=http://127.0.0.1:54321/proxy.pac`,
+    `${app}/Contents/MacOS/ChatGPT --proxy-pac-url=http://127.0.0.1:12345/proxy.pac.evil`,
+  ]) {
+    const [row] = macPredictionAppProcesses(app, { exec(_command, flags) {
+      return flags[0] === "-axo" ? `101 ${app}/Contents/MacOS/ChatGPT\n` : args;
+    } });
+    assert.equal(row.route, null, "changed identity, ambiguous or partial arguments cannot verify a route");
+  }
+});
+
+test("macOS prediction reuse verifies the current route without spawning or stopping an App", async () => {
+  const pac = "http://127.0.0.1:12345/proxy.pac";
+  const options = { env: {}, platform: "darwin", predictionApp: "/Applications/ChatGPT.app", predictionPacUrl: pac,
+    spawnImpl() { assert.fail("running App must not be relaunched"); } };
+  assert.equal(await openCodex({ ...options, macAppProcesses: () => [{ pid: 123, readable: true, route: pac }] }), true);
+  for (const processes of [
+    [{ pid: 123, readable: true, route: "http://127.0.0.1:54321/proxy.pac" }],
+    [{ pid: 123, readable: true, route: null }],
+    [{ pid: 123, readable: false, route: pac }],
+    [{ pid: 123, readable: true, route: pac }, { pid: 124, readable: true, route: pac }],
+  ]) assert.equal(await openCodex({ ...options, macAppProcesses: () => processes }), false);
+  assert.equal(await openCodex({ ...options, macAppProcesses() { throw new Error("process access unavailable"); } }), false);
+});
+
+test("macOS prediction launch does not report success when the active App drops its route", async () => {
+  const pac = "http://127.0.0.1:12345/proxy.pac";
+  const args = ["/Applications/ChatGPT.app", "--args", `--proxy-pac-url=${pac}`];
+  const { spawnImpl } = fakeSpawn({ [JSON.stringify(args)]: 0 });let inspections = 0;
+  assert.equal(await openCodex({ env: {}, platform: "darwin", spawnImpl, predictionApp: args[0], predictionPacUrl: pac,
+    macAppProcesses: () => ++inspections === 1 ? [] : [{ pid: 123, readable: true, route: null }] }), false);
+  assert.equal(inspections, 2, "an observed wrong route fails immediately rather than waiting or relaunching");
+});
+
+test("macOS prediction launch allows delayed main-process visibility without an unbounded watcher", async () => {
+  const pac = "http://127.0.0.1:12345/proxy.pac", args = ["/Applications/ChatGPT.app", "--args", `--proxy-pac-url=${pac}`];
+  const { spawnImpl } = fakeSpawn({ [JSON.stringify(args)]: 0 });let inspections = 0;
+  assert.equal(await openCodex({ env: {}, platform: "darwin", spawnImpl, predictionApp: args[0], predictionPacUrl: pac,
+    macAppProcesses: () => ++inspections < 4 ? [] : [{ pid: 123, readable: true, route: pac }] }), true);
+  assert.equal(inspections, 4);
+  const failure = fakeSpawn({});
+  assert.equal(await openCodex({ env: {}, platform: "darwin", spawnImpl: failure.spawnImpl, predictionApp: args[0], predictionPacUrl: pac,
+    macAppProcesses: () => [] }), false);
+  assert.equal(failure.calls.length, 1, "no unverified App fallback when the exact prediction launch fails");
+});
+
+test("disabled auto-launch and ordinary macOS launch never inspect prediction processes", async () => {
+  const { spawnImpl } = fakeSpawn({ '["-b","com.openai.codex"]': 0 });
+  const options = { platform: "darwin", spawnImpl, macAppProcesses() { assert.fail("must not inspect"); } };
+  assert.equal(await openCodex({ ...options, env: {} }), true);
+  assert.equal(await openCodex({ ...options, env: { CCDX_AUTO_LAUNCH: "0" },
+    predictionApp: "/Applications/ChatGPT.app", predictionPacUrl: "http://127.0.0.1:12345/proxy.pac" }), false);
 });
 
 test("untrusted prediction launch metadata cannot inject App arguments", async () => {

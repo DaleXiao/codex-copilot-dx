@@ -82,15 +82,29 @@ profile override is preserved and the optional launch is skipped. There is no
 shell, account replacement, new profile, `CODEX_HOME` change or forced App exit. Disabled predictions
 add no Windows probe or launch. `CCDX_AUTO_LAUNCH=0` is still respected.
 
-Windows remembers its own loopback bridge port after successful activation and
-reuses it across service restarts. A busy saved port is not stolen or silently
-replaced. Before launch, CCDX checks only registered App main-process route
+Since `0.9.30`, macOS and Windows remember their own loopback bridge port after
+the first successful bridge start and reuse it across service restarts and
+package updates. Windows already used this policy in `0.9.26`. Each user setup
+gets its own port, not a shared fixed port. A busy saved port is not stolen or
+silently replaced; only the optional prediction bridge becomes unavailable,
+and core inference and enabled image tools can still start. Port settings are
+committed under the existing file lock; a concurrent preference change aborts
+and closes the uncommitted bridge. Restarting with a saved port does not rewrite
+the preference or rotate certificates. Before launch, CCDX checks only verified App main-process route
 metadata. A running App with an old/unreadable PAC receives an explicit quit and
 relaunch instruction; it is not killed or reported as newly connected. The first
-upgrade from an ephemeral-port candidate may require one full App quit. Successful
+upgrade from an ephemeral-port version may require one full App quit. Successful
 process creation is not proof of configuration traffic. A bounded post-launch
 main-process check verifies retained PAC arguments; adapter readiness is reported
-separately from App route readiness.
+separately from App route readiness. macOS reads exact App main-process metadata
+using the system `ps`, never prints complete process arguments, and polls only
+for a bounded interval after a new launch, not while ordinary inference runs.
+Matching running Apps are reused without relaunch. Unreadable or mismatched
+routes get a warning, never a forced exit or an unverified success message.
+The stable address prevents port-change failures; it does not replay interrupted
+requests, clear App configuration caches or guarantee immediate gray suggestions
+after every restart. Network-policy changes and App compatibility checks still
+have the separate restart/setup requirements described below.
 
 ```bash
 # Fully quit Codex App first.
@@ -162,8 +176,10 @@ trust removal is deferred; quit it and run `prediction off` again. Only the exac
 owned certificate record is removed, never the whole store. Failed activation
 rolls back newly added trust; certificate replacement keeps old trust until the
 new preference is committed. If the bridge stops, new connections can fall back
-to the original route; already-interrupted requests are not replayed. Run `ccdx`
-after quitting Codex to attach a newly started bridge. `CCDX_AUTO_LAUNCH=0` keeps
+to the original route; already-interrupted requests are not replayed. An App
+already using the saved address need not be relaunched just because CCDX restarts.
+If its route is missing or differs, fully quit Codex and run `ccdx` to attach it.
+`CCDX_AUTO_LAUNCH=0` keeps
 automatic launch disabled and does not attach the route to a manually opened App.
 Optional prediction failures never prevent the core adapter or image service from
 starting. `prediction status` reports the saved preference and, when a compatible

@@ -146,9 +146,9 @@ export async function startNativePrediction({ env = process.env, platform = proc
   if (!["darwin", "win32"].includes(platform)) throw new Error("Native predictions were skipped: unsupported platform");
   const network = predictionNetworkOptions(opts);
   let networkRoute = network.networkRoute;
-  if (platform === "win32" && settings.bridgePort !== undefined
+  if (settings.bridgePort !== undefined
     && (!Number.isInteger(settings.bridgePort) || settings.bridgePort < 1024 || settings.bridgePort > 65535)) {
-    throw new Error("Saved Windows prediction bridge port is invalid; no route was replaced");
+    throw new Error("Saved prediction bridge port is invalid; no route was replaced");
   }
   if (!predictionAppMatches(settings.app)) throw new Error("Codex App changed; run ccdx prediction on after quitting it to recheck compatibility");
   const paths = predictionPaths({ ...opts, app: settings.app });
@@ -183,7 +183,7 @@ export async function startNativePrediction({ env = process.env, platform = proc
       }
     }
     transport = await startPredictionTransport({ ...certificate, enabled: () => enabled,
-      listenPort: platform === "win32" ? settings.bridgePort || 0 : 0,
+      listenPort: settings.bridgePort || 0,
       networkRoute, agent: networkRoute?.https ? createProxyAgent(networkRoute) : undefined,
       ...(windowsNetwork ? { requestImpl: windowsNetwork.requestImpl, pacImpl: windowsNetwork.pac } : {}),
       onEvent: (event) => state?.event(event),
@@ -196,7 +196,7 @@ export async function startNativePrediction({ env = process.env, platform = proc
         return result.changed ? JSON.parse(result.body) : parsed;
       },
     });
-    if (platform === "win32" && settings.bridgePort === undefined) {
+    if (settings.bridgePort === undefined) {
       await withFileLock(`${paths.settings}.lock`, () => {
         const current = readPredictionSettings(opts);
         if (!current.enabled || current.certificateHash !== settings.certificateHash || current.store !== settings.store
@@ -206,10 +206,16 @@ export async function startNativePrediction({ env = process.env, platform = proc
         writePredictionSettings({ ...current, bridgePort: transport.port }, opts);
       }, { timeoutMs: 2000 });
     }
-  } catch (error) { clearInterval(timer);await transport?.close();windowsNetwork?.close();throw error; }
+  } catch (error) {
+    clearInterval(timer);await transport?.close();windowsNetwork?.close();
+    if (error.code === "EADDRINUSE" && settings.bridgePort !== undefined) {
+      error.message = `Saved prediction port ${settings.bridgePort} is already in use; it was not replaced. Native predictions are unavailable; the core adapter remains available`;
+    }
+    throw error;
+  }
   state?.running(windowsNetwork ? { source: "system", type: "auto", bypass_rules: null, proxy_credentials: false } : networkRouteSnapshot(networkRoute));
   warning("Native prediction bridge enabled; only the two configuration hosts use its App-only route.");
-  warning("If Codex is already running, quit it and run ccdx again to apply the route.");
+  warning("If Codex uses a different or missing prediction route, fully quit it and run ccdx again.");
   return {
     app: settings.app.app,
     ...(platform === "win32" ? { profile: paths.profile } : {}),

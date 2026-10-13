@@ -120,6 +120,28 @@ test("prediction PAC routes only two HTTPS origins and falls back to direct", ()
   for (const port of [0, -1, 65536, 1.5, "2026"]) assert.throws(() => predictionPac(port), /Invalid/);
 });
 
+test("an already-cached App route still handles trusted TLS configuration after bridge restart", { timeout: 10_000 }, async t => {
+  let enabled = true;
+  const raw = JSON.stringify({ fixture: "unchanged upstream config" });
+  const f = await fixture(t, (_req, res) => { res.writeHead(200, { "content-type": "application/json" });res.end(raw); }, {
+    enabled: () => enabled, overlay: () => ({ body: JSON.stringify({ fixture: "local prediction config" }) }),
+  });
+  const pacUrl = f.bridge.pacUrl, cachedRoute = predictionPac(f.bridge.port);
+  assert.match((await f.send("chatgpt.com", "/backend-api/wham/predictions/config")).body.toString(), /local prediction config/);
+  await f.close();
+  const resumed = await startPredictionTransport({ key, cert, listenPort: f.bridge.port, enabled: () => enabled,
+    overlay: () => ({ body: JSON.stringify({ fixture: "local prediction config" }) }),
+    requestImpl: (request, callback) => http.request({ ...request, protocol: "http:", hostname: "127.0.0.1", port: f.upstream.address().port }, callback),
+  });
+  t.after(() => resumed.close());
+  assert.equal(resumed.pacUrl, pacUrl);assert.equal(predictionPac(resumed.port), cachedRoute);
+  // Reuse the same fixture/client route and certificate; no App relaunch or real upstream.
+  assert.match((await f.send("chatgpt.com", "/backend-api/wham/predictions/config")).body.toString(), /local prediction config/);
+  enabled = false;
+  assert.equal((await f.send("chatgpt.com", "/backend-api/wham/predictions/config")).body.toString(), raw);
+  assert.equal((await f.send("chatgpt.com", "/backend-api/unrelated")).body.toString(), raw);
+});
+
 test("CONNECT allowlist and PAC endpoint reject other authorities and browser origins", { timeout: 10_000 }, async t => {
   const f = await fixture(t, (_req, res) => res.end("fixture"));
   for (const authority of ["example.test:443", "chatgpt.com:80", "chatgpt.com:444", "chatgpt.com.example.test:443", "CHATGPT.COM:443"]) {

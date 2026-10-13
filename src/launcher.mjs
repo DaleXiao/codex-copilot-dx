@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { installedWindowsPredictionApp, windowsPredictionAppProcesses } from "./native-prediction-windows.mjs";
@@ -39,8 +39,30 @@ export function launchAttempts() {
   return [["-b", CODEX_BUNDLE_ID], ...APP_PATH_CANDIDATES.map((path) => [path])];
 }
 
+export function macPredictionAppProcesses(app, { exec = execFileSync } = {}) {
+  if (!APP_PATH_CANDIDATES.includes(app)) throw new Error("Unknown macOS prediction App");
+  const options = { encoding: "utf8", timeout: 2000, maxBuffer: 1024 * 1024 };
+  const listing = exec("/bin/ps", ["-axo", "pid=,comm="], options);
+  const rows = [];
+  for (const line of listing.split("\n")) {
+    const match = line.match(/^\s*(\d+)\s+(.+?)\s*$/);
+    if (!match || ![`${app}/Contents/MacOS/ChatGPT`, `${app}/Contents/MacOS/Codex`].includes(match[2])) continue;
+    const pid = Number(match[1]);
+    try {
+      const args = exec("/bin/ps", ["-p", String(pid), "-o", "args="], options);
+      const route = args.match(/(?:^|\s)--proxy-pac-url=(?:"(http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac)"|(http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac)(?=\s|$))/);
+      const readable = args.trim() === match[2] || args.trimStart().startsWith(`${match[2]} `);
+      const uniqueRoute = (args.match(/(?:^|\s)--proxy-pac-url=/g) || []).length === 1;
+      rows.push({ pid, readable, route: readable && uniqueRoute ? route?.[1] || route?.[2] || null : null });
+    } catch { rows.push({ pid, readable: false, route: null }); }
+    if (rows.length === 2) break;
+  }
+  return rows;
+}
+
 export async function openCodex({ env = process.env, spawnImpl = spawn, platform = process.platform, predictionPacUrl = null, predictionApp = null, predictionProfile = null,
-  resolveWindowsApp = installedWindowsPredictionApp, windowsAppProcesses = windowsPredictionAppProcesses } = {}) {
+  resolveWindowsApp = installedWindowsPredictionApp, windowsAppProcesses = windowsPredictionAppProcesses,
+  macAppProcesses = macPredictionAppProcesses } = {}) {
   if (platform === "win32" && autoLaunchEnabled(env) && typeof predictionPacUrl === "string"
     && /^http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac$/.test(predictionPacUrl)
     && typeof predictionApp === "string" && path.win32.isAbsolute(predictionApp)) {
@@ -99,7 +121,33 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
   const extraArgs = typeof predictionPacUrl === "string" && /^http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac$/.test(predictionPacUrl)
     && APP_PATH_CANDIDATES.includes(predictionApp)
     ? ["--args", `--proxy-pac-url=${predictionPacUrl}`] : [];
-  const attempts = extraArgs.length ? [[predictionApp]] : launchAttempts();
+  if (extraArgs.length) {
+    try {
+      const running = macAppProcesses(predictionApp);
+      if (running.length) {
+        if (running.length === 1 && running[0].readable && running[0].route === predictionPacUrl) {
+          console.log(status("ok", "Running Codex App uses the current prediction route"));return true;
+        }
+        throw new Error("Running Codex App uses an old or unverified prediction route. Fully quit the App, then run ccdx again; no process was stopped");
+      }
+      if (!await tryOpen([predictionApp, ...extraArgs], { spawnImpl })) {
+        console.log(status("warn", "Could not launch the verified macOS Codex App"));return false;
+      }
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const actual = macAppProcesses(predictionApp);
+        if (actual.length === 1 && actual[0].readable && actual[0].route === predictionPacUrl) {
+          console.log(status("info", "Codex launch route verified; prediction status will show when configuration traffic is observed"));return true;
+        }
+        if (actual.length) break;
+        if (attempt < 9) await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      console.log(status("warn", "Codex launch requested, but the active App did not retain the current prediction route. Core adapter remains available"));
+      return false;
+    } catch (error) {
+      console.log(status("warn", `Optional macOS prediction launch skipped: ${error.message}`));return false;
+    }
+  }
+  const attempts = launchAttempts();
   for (const attempt of attempts) {
     const args = [...attempt, ...extraArgs];
     if (await tryOpen(args, { spawnImpl })) {

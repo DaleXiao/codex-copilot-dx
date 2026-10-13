@@ -56,7 +56,7 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
   Codex, run `ccdx doctor`; fully quit the App (**Command-Q** on macOS) before reopening.
   CCDX does not claim it can verify the App's internal model cache externally.
 - After a package upgrade, restart the running CCDX adapter. Choosing a model or
-  effort on a current adapter takes effect on its next Auto-review request.
+  effort on a current adapter takes effect on its next Auto-review request. Native prediction ports persist on macOS/Windows; an older random route may need one full App quit. A busy saved port disables only predictions.
 - `0.9.28` adds verified local plaintext recovery after connection-owned compaction rejection; see the reference for strict source and safety limits. Request-body bytes, local-history bytes and the model's token window are
   different limits. Request-context figures are observed metadata, not exact
   live session occupancy. Prompts and images are not retained by that panel.

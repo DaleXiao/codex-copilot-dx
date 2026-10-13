@@ -12,14 +12,18 @@ permissions:
 jobs:
   windows-prediction:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.15.0", "24.x"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.x
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - name: Verify native Windows worker, profile, ACL and launch boundaries
+      - name: Verify native Windows certificates without Git/OpenSSL, worker, profile, ACL and launch boundaries
         run: node --test test/native-prediction-windows.test.mjs test/windows-prediction-network.test.mjs
   test:
     runs-on: ubuntu-latest

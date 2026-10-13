@@ -5,14 +5,17 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { execFileSync } from "node:child_process";
+import { createPrivateKey, X509Certificate } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import http from "node:http";
+import https from "node:https";
 import { assertWindowsCodexClosed, installedWindowsPredictionApp, windowsPredictionProfile,
-  windowsProxyText, windowsSystemProxy, windowsPredictionOpenSSL, windowsPrivatePredictionPath, windowsPowerShellEnvironment, windowsPredictionAppProcesses } from "../src/native-prediction-windows.mjs";
+  windowsProxyText, windowsSystemProxy, windowsPrivatePredictionPath, windowsPowerShellEnvironment, windowsPredictionAppProcesses } from "../src/native-prediction-windows.mjs";
+import { windowsPredictionCertificate } from "../src/windows-prediction-certificate.mjs";
 import { resolveNetworkRoute, networkProxyFor } from "../src/network-route.mjs";
 import { openCodex } from "../src/launcher.mjs";
 import { runPredictionCommand, startNativePrediction } from "../src/native-prediction.mjs";
-import { predictionPaths, readPredictionSettings, readPredictionCertificate, createPredictionCertificate } from "../src/native-prediction-profile.mjs";
+import { predictionPaths, readPredictionSettings, writePredictionSettings, readPredictionCertificate, createPredictionCertificate, updatePredictionTrust } from "../src/native-prediction-profile.mjs";
 
 const registration = { root: "C:\\Program Files\\WindowsApps\\OpenAI.Codex_fixture", executable: "app/ChatGPT.exe", family: "OpenAI.Codex_2p2nqsd0c76g0" };
 const executable = path.win32.join(registration.root, registration.executable);
@@ -122,9 +125,7 @@ test("Windows static proxy and bypass rules compose with existing environment pr
   }
 });
 
-test("Windows OpenSSL resolution is explicit and ACL checks never interpolate paths into scripts", () => {
-  assert.equal(windowsPredictionOpenSSL({ exec: () => "C:\\Program Files\\Git\\usr\\bin\\openssl.exe" }), "C:\\Program Files\\Git\\usr\\bin\\openssl.exe");
-  assert.throws(() => windowsPredictionOpenSSL({ exec: () => "" }), /Git for Windows/);
+test("Windows ACL checks never interpolate paths into scripts", () => {
   const privatePath = "C:\\Users\\测试'$\\private";
   let call;
   windowsPrivatePredictionPath(privatePath, { create: true, exec(command, args, options) { call = { command, args, options };return ""; } });
@@ -132,6 +133,37 @@ test("Windows OpenSSL resolution is explicit and ACL checks never interpolate pa
   assert.ok(!call.args.at(-1).includes(privatePath));
   assert.match(call.args.at(-1), /SetAccessRuleProtection\(\$true,\$false\)/);
   assert.match(call.args.at(-1), /GetAccessRules/);assert.doesNotMatch(call.args.at(-1), /Cert:|LocalMachine|CurrentUser\\Root/);
+});
+
+test("Windows certificate issuance uses only one system child and keeps keys in its private pipe", () => {
+  const env = Object.freeze({ SystemRoot: "C:\\Windows", PATH: "C:\\no-external-tools", PSModulePath: "C:\\custom" });
+  let call;
+  const result = windowsPredictionCertificate({ env, exec(command, args, options) {
+    call = { command, args, options };return '{"ca":"AQID","cert":"BAUG"}';
+  } });
+  assert.equal(call.command, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  assert.equal(call.args.includes("-ExecutionPolicy"), false);assert.equal(call.options.windowsHide, true);
+  assert.equal(call.options.timeout, 30_000);assert.equal(call.options.maxBuffer, 64 * 1024);
+  const input = JSON.parse(call.options.input);
+  assert.equal(createPrivateKey({ key: input.ca, format: "jwk" }).asymmetricKeyDetails.modulusLength, 2048);
+  const leaf = createPrivateKey(result.key).export({ format: "jwk" });assert.equal(leaf.n, input.leaf.n);
+  assert.notEqual(input.ca.n, input.leaf.n);
+  for (const key of [input.ca, input.leaf]) {
+    assert.ok(!JSON.stringify(call.args).includes(key.d));assert.ok(!JSON.stringify(call.options.env).includes(key.d));
+  }
+  assert.equal(result.ca, "-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n");
+  assert.equal(env.PSModulePath, "C:\\custom");
+  const source = fs.readFileSync(call.options.env.CCDX_PREDICTION_CERTIFICATE_SOURCE, "utf8");
+  assert.match(source, /IsEphemeral/);assert.match(source, /CertificateRequest/);
+  assert.doesNotMatch(source, /X509Store|New-SelfSignedCertificate|File\.|Export\(|Process\./);
+});
+
+test("Windows certificate errors reject malformed replies without leaking private input or diagnostics", () => {
+  for (const raw of ['null', '{}', '{"ca":"https://outside.test","cert":"AQID"}', '{"ca":"AQID","cert":1}']) {
+    assert.throws(() => windowsPredictionCertificate({ exec: () => raw }), /\.NET Framework 4\.7\.2/);
+  }
+  assert.throws(() => windowsPredictionCertificate({ exec() { throw new Error("PRIVATE_CHILD_DIAGNOSTICS"); } }),
+    error => !String(error).includes("PRIVATE_CHILD_DIAGNOSTICS") && !error.cause && !error.stdout && !error.stderr);
 });
 
 test("Windows prediction launch binds native and Chromium storage to the existing trusted profile", async t => {
@@ -187,21 +219,24 @@ test("Windows on/off lifecycle preserves App trust and never changes Codex confi
   const profile = path.join(home, "app-profile");
   const fixtureArchive = path.join(home, "app.asar");fs.writeFileSync(fixtureArchive, "fixture program identity");
   const archiveStat = fs.statSync(fixtureArchive);
-  const openssl = process.platform === "win32" ? windowsPredictionOpenSSL() : "/usr/bin/openssl";
   const app = { app: executable, archive: fixtureArchive, family: registration.family, profile, size: archiveStat.size, mtimeMs: archiveStat.mtimeMs };
-  // On POSIX this emulates only the Windows OS checks; cryptography/SQLite are
-  // real. The native Windows-only test below exercises PowerShell and NTFS ACLs.
+  // Reuse an already-valid PEM setup. On POSIX only Windows OS probes are
+  // emulated; native Windows tests below cover first issuance and NTFS ACLs.
   const options = { env: { CODEX_ELECTRON_USER_DATA_PATH: profile }, home, platform: "win32", output() {}, resolveApp: () => app,
     exec(command, args, settings) {
       if (command.endsWith("powershell.exe")) {
         const script = args.at(-1);
         if (script.includes("Get-Process")) return "closed";
         if (script.includes("WinHttpGetIEProxyConfigForCurrentUser")) return '{"autoDetect":false}';
-        if (script.includes("Get-Command openssl.exe")) return process.platform === "win32" ? openssl : "C:\\fixture\\openssl.exe";
+        assert.doesNotMatch(script, /CCDXPredictionCertificate|openssl/);
         return "";
       }
-      return execFileSync(openssl, args, settings);
+      assert.fail("valid PEM credentials must not invoke a certificate generator");
     } };
+  const root = predictionPaths(options).directory;fs.mkdirSync(root, { recursive: true });
+  const credentialsDirectory = fs.mkdtempSync(path.join(root, "credentials-"));
+  createPredictionCertificate(credentialsDirectory);
+  writePredictionSettings({ version: 1, enabled: false, credentialsDirectory }, options);
   await runPredictionCommand({ ...options, action: "on" });
   const settings = readPredictionSettings(options);
   assert.equal(settings.enabled, true);assert.equal(settings.store, predictionPaths({ ...options, app }).store);
@@ -234,10 +269,72 @@ test("Windows on/off lifecycle preserves App trust and never changes Codex confi
   await runPredictionCommand({ ...options, action: "off" });
 });
 
-test("native Windows certificate generation enforces NTFS privacy and validates its chain", { skip: process.platform !== "win32" }, t => {
+test("native Windows certificate generation works without Git/OpenSSL, enforces privacy and preserves exact extensions", { skip: process.platform !== "win32" }, async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-win-native-certificate-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
-  const directory = path.join(home, "private-keys"), certificate = createPredictionCertificate(directory);
+  const env = { ...process.env, PATH: path.join(home, "no-external-tools"), ProgramFiles: home, LOCALAPPDATA: home };
+  const directory = path.join(home, "private-keys"), certificate = createPredictionCertificate(directory, { env });
   assert.equal(readPredictionCertificate(directory).hash, certificate.hash);
   windowsPrivatePredictionPath(path.join(directory, "bridge.key"));
   assert.deepEqual(fs.readdirSync(directory).sort(), ["bridge.key", "bridge.pem", "ca.pem"]);
+  const leaf = new X509Certificate(certificate.cert), ca = new X509Certificate(certificate.ca);
+  assert.equal(ca.verify(ca.publicKey), true);assert.equal(leaf.verify(ca.publicKey), true);
+  assert.equal(leaf.publicKey.asymmetricKeyDetails.modulusLength, 2048);
+  assert.equal(ca.publicKey.asymmetricKeyDetails.modulusLength, 2048);
+  assert.equal(leaf.subjectAltName, "DNS:chatgpt.com, DNS:ab.chatgpt.com");
+  assert.equal(leaf.checkHost("other.chatgpt.com"), undefined);assert.equal(leaf.checkHost("example.com"), undefined);
+  const days = (Date.parse(leaf.validTo) - Date.now()) / 86_400_000;assert.ok(days > 89.9 && days <= 90);
+  const command = path.win32.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const extensions = JSON.parse(execFileSync(command, ["-NoProfile", "-NonInteractive", "-Command",
+    "$c=[System.Security.Cryptography.X509Certificates.X509Certificate2]::new([Convert]::FromBase64String($env:CCDX_TEST_PUBLIC_CERT));$rows=@($c.Extensions | ForEach-Object {@{oid=$_.Oid.Value;critical=$_.Critical;raw=[Convert]::ToBase64String($_.RawData)}});ConvertTo-Json -InputObject $rows -Compress"],
+  { encoding: "utf8", env: { ...env, CCDX_TEST_PUBLIC_CERT: ca.raw.toString("base64") }, windowsHide: true, timeout: 10_000 }));
+  const extension = oid => extensions.find(value => value.oid === oid);
+  assert.equal(extension("2.5.29.30").critical, true);
+  assert.equal(Buffer.from(extension("2.5.29.30").raw, "base64").toString("hex"), "3011a00f300d820b636861746770742e636f6d");
+  assert.equal(extension("2.5.29.19").critical, true);
+  assert.equal(Buffer.from(extension("2.5.29.19").raw, "base64").toString("hex"), "30060101ff020100");
+  assert.equal(extension("2.5.29.15").critical, true);
+  assert.equal(Buffer.from(extension("2.5.29.15").raw, "base64").toString("hex"), "03020284");
+  assert.equal(extension("2.5.29.37").critical, false);
+  assert.equal(Buffer.from(extension("2.5.29.37").raw, "base64").toString("hex"), "300a06082b06010505070301");
+  const store = path.join(home, "profile", "Default", "ServerCertificate");
+  await updatePredictionTrust(store, certificate);assert.equal(await updatePredictionTrust(store, certificate, { remove: true }), true);
+  const server = https.createServer(certificate, (_req, res) => res.end("certificate accepted"));
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const request = options => new Promise((resolve, reject) => {
+    https.get({ hostname: "127.0.0.1", port: server.address().port, servername: "chatgpt.com", ca: certificate.ca, ...options }, res => {
+      let body = "";res.setEncoding("utf8");res.on("data", chunk => body += chunk);res.on("end", () => resolve(body));
+    }).on("error", reject);
+  });
+  try {
+    assert.equal(await request({}), "certificate accepted");
+    await assert.rejects(request({ servername: "example.com" }), /Hostname\/IP does not match/);
+    await assert.rejects(request({ ca: [] }), /certificate|issuer|self.signed/i);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test("native Windows first activation and rollback do not need external certificate tools", { skip: process.platform !== "win32" }, async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-win-native-activation-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const profile = path.join(home, "profile"), archive = path.join(home, "app.asar");fs.writeFileSync(archive, "fixture program identity");
+  const stat = fs.statSync(archive);
+  const app = { app: executable, archive, profile, size: stat.size, mtimeMs: stat.mtimeMs };
+  const env = { ...process.env, PATH: path.join(home, "no-external-tools"), ProgramFiles: home, LOCALAPPDATA: home, CODEX_ELECTRON_USER_DATA_PATH: profile };
+  const options = { home, env, resolveApp: () => app, output() {}, exec(command, args, settings) {
+    assert.ok(command.endsWith("powershell.exe"));
+    if (args.at(-1).includes("Get-Process")) return "closed";
+    if (args.at(-1).includes("WinHttpGetIEProxyConfigForCurrentUser")) return '{"autoDetect":false}';
+    return execFileSync(command, args, settings);
+  } };
+  await assert.rejects(runPredictionCommand({ ...options, action: "on", writeSettings() { throw new Error("fixture settings write failed"); } }), /fixture settings/);
+  assert.equal(readPredictionSettings(options).enabled, false);
+  const root = predictionPaths(options).directory;
+  assert.equal(fs.readdirSync(root).some(name => name.startsWith("credentials-")), false);
+  const db = new DatabaseSync(predictionPaths({ ...options, app }).store);
+  assert.equal(db.prepare("SELECT count(*) AS count FROM certificates").get().count, 0);db.close();
+  await runPredictionCommand({ ...options, action: "on" });
+  const settings = readPredictionSettings(options), before = fs.readFileSync(path.join(settings.credentialsDirectory, "bridge.key"));
+  await runPredictionCommand({ ...options, action: "on", exec(command, args, opts) {
+    assert.doesNotMatch(args.at(-1), /CCDXPredictionCertificate/);return options.exec(command, args, opts);
+  } });
+  assert.deepEqual(fs.readFileSync(path.join(settings.credentialsDirectory, "bridge.key")), before);
+  await runPredictionCommand({ ...options, action: "off" });assert.equal(readPredictionSettings(options).enabled, false);
 });

@@ -97,18 +97,6 @@ export function windowsPredictionProfile({ app, env = process.env, preferredProf
   return profiles[0];
 }
 
-export function windowsPredictionOpenSSL(options = {}) {
-  const raw = powershell(`$found=Get-Command openssl.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1;
-    if($found){$found.Source}else{
-      $paths=@("$env:ProgramFiles\\Git\\usr\\bin\\openssl.exe", "$env:LOCALAPPDATA\\Programs\\Git\\usr\\bin\\openssl.exe");
-      $paths | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1
-    }`, options);
-  if (!path.win32.isAbsolute(raw) || !/openssl\.exe$/i.test(path.win32.basename(raw))) {
-    throw new Error("Native prediction needs OpenSSL on Windows; install Git for Windows (includes OpenSSL) and retry");
-  }
-  return raw;
-}
-
 export function windowsPrivatePredictionPath(filePath, { create = false, env = process.env, ...options } = {}) {
   powershell(`$p=$env:CCDX_PREDICTION_PRIVATE_PATH;$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User;
     $acl=Get-Acl -LiteralPath $p;

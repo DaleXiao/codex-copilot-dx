@@ -24,10 +24,18 @@ on those hosts are forwarded unchanged. The bridge does not replace Copilot or
 image-provider networking, modify client program files, or install system trust.
 Static upstream proxy routes and bypass rules are preserved. macOS dynamic
 PAC/WPAD and static CIDR bypass rules are reported as unsupported, not discarded.
-The Windows adapter isolates registration, process, proxy, OpenSSL and NTFS
+The Windows adapter isolates registration, process, proxy and NTFS
 interfaces in `native-prediction-windows.mjs`. The bridge, overlay, model selection
 and lifecycle remain shared. Windows discovery requires verified registration
 and an existing unambiguous profile; no generalized OS framework is introduced.
+Windows certificate issuance is a separate one-shot helper
+(`windows-prediction-certificate.mjs` / `.cs`), not part of the network worker.
+Node generates RSA keys and sends them through stdin to the system .NET
+`CertificateRequest` API; only public certificates return through stdout.
+The existing PEM reader, App-profile trust schema and transactional activation
+remain shared. Issuance requires neither external OpenSSL nor a Windows
+certificate store. Valid existing credentials skip issuance; default-off startup
+does not invoke it. macOS keeps the existing system OpenSSL implementation.
 Windows automatic-proxy support has one isolated native WinHTTP worker
 (`windows-prediction-network.mjs` / `.cs`) for company routing, authentication and
 TLS trust. Its private, credit-based pipes stream data without transcript files.
@@ -52,7 +60,7 @@ per-file lock, reread current contents and preserve unrelated values. Locks do
 not coordinate editors or other applications that ignore them. Read-only status
 and doctor commands do not write configuration.
 
-Legacy public module exports remain available. This change adds a concrete
+Core inference interfaces remain unchanged. This change adds a concrete
 composition boundary; it does not relocate every file or add speculative APIs.
 
 ## Evidence and verification

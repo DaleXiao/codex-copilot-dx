@@ -35,8 +35,17 @@ Version `0.9.26` adds Windows platform adapters. Native gray suggestions,
 adoption/sending and switching predictions off were verified on Windows with the
 `.4` candidate. Windows setup
 requires a current-user, Store-signed `OpenAI.Codex` MSIX registration (Store and
-official offline MSIX use the same registration), an initialized Codex profile and
-OpenSSL. Git for Windows includes OpenSSL; CCDX does not download another runtime.
+official offline MSIX use the same registration), an initialized Codex profile,
+Windows PowerShell and .NET Framework 4.7.2 or later. Since `0.9.27`, prediction
+setup and renewal do not require Git or OpenSSL. Node generates ephemeral RSA
+keys; the Windows .NET certificate API signs the same scoped CA/leaf certificate
+pair. Private keys travel only through a child-process stdin pipe; only the leaf
+key and public certificates are saved in CCDX's private directory. No Windows
+certificate store is opened. Existing valid PEM credentials are reused without
+conversion or reauthorization. macOS retains its system OpenSSL setup path.
+CCDX does not download a runtime or bypass company PowerShell policy; unavailable
+system APIs fail the optional setup without preventing core service startup.
+This does not remove Git from the separate `ccdx update github` installation path.
 Run CCDX using Windows-native Node, not inside WSL. The App's agent may still use
 WSL independently. No administrator prompt or execution-policy change is added.
 AppData may be virtualized by MSIX: setup selects an existing `Codex/Local State`

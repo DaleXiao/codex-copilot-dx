@@ -74,7 +74,8 @@ The dashboard does not poll in the background; refresh when needed.
   hosts is decrypted locally, but only prediction configuration is changed.
   Other domains and the CCDX model endpoint stay on their existing routes.
   No program files or OS trust are changed. Static HTTP/HTTPS/SOCKS5 proxies and bypass rules are retained.
-  Windows supports company PAC/WPAD routing; macOS dynamic routing remains unsupported. Windows setup needs the official MSIX App and OpenSSL. See the reference for compatibility limits.
+  Windows supports company PAC/WPAD routing; macOS dynamic routing remains unsupported. Windows setup needs the official MSIX App, Windows PowerShell and .NET Framework 4.7.2+.
+  Git/OpenSSL are not needed for predictions. See the reference for compatibility limits.
 - CCDX adds experimental local history compression only when installed App
   runtimes support it and report it off. Existing choices are preserved; an
   already-enabled default, unavailable runtime or failed check is skipped.

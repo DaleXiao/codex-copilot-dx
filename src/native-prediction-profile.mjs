@@ -8,7 +8,8 @@ import { userSettingsPath } from "./user-settings.mjs";
 import { resolveNetworkRoute } from "./network-route.mjs";
 import { codexPaths } from "./codex-paths.mjs";
 import { assertWindowsCodexClosed, installedWindowsPredictionApp, windowsPredictionProfile,
-  windowsPredictionOpenSSL, windowsPrivatePredictionPath } from "./native-prediction-windows.mjs";
+  windowsPrivatePredictionPath } from "./native-prediction-windows.mjs";
+import { windowsPredictionCertificate } from "./windows-prediction-certificate.mjs";
 
 export function predictionPaths({ env = process.env, home = os.homedir(), platform = process.platform, app } = {}) {
   const directory = path.join(path.dirname(userSettingsPath({ env, home })), "native-prediction");
@@ -136,7 +137,14 @@ export function readPredictionCertificate(directory, { allowExpired = false, pla
 
 export function createPredictionCertificate(directory, { exec = execFileSync, platform = process.platform, ...options } = {}) {
   privateDirectory(directory, { ...options, exec, platform });
-  const openssl = platform === "win32" ? windowsPredictionOpenSSL({ ...options, exec }) : "/usr/bin/openssl";
+  if (platform === "win32") {
+    const { cert, key, ca } = windowsPredictionCertificate({ ...options, exec });
+    atomicWriteFileSync(path.join(directory, "bridge.key"), key, { preserveMode: false });
+    atomicWriteFileSync(path.join(directory, "bridge.pem"), cert, { preserveMode: false });
+    atomicWriteFileSync(path.join(directory, "ca.pem"), ca, { preserveMode: false });
+    return readPredictionCertificate(directory, { ...options, exec, platform });
+  }
+  const openssl = "/usr/bin/openssl";
   const temporary = fs.mkdtempSync(path.join(directory, "certificate-"));
   try {
     const config = `[req]\nprompt=no\ndistinguished_name=dn\nx509_extensions=ext\n[dn]\nCN=CCDX native prediction local bridge\n[ext]\nbasicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:chatgpt.com,DNS:ab.chatgpt.com\nnameConstraints=critical,permitted;DNS:chatgpt.com\n`;

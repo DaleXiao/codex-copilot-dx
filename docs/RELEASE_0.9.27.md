@@ -19,11 +19,36 @@
 
 ## Verification
 
-Verification and publication receipts will be recorded after the bounded gates
-complete. Native Windows certificate tests are required; POSIX mocks alone do
-not establish that the system .NET helper compiles or that Chromium accepts its
-certificate. Visible Windows predictions in 0.9.26 are historical evidence,
-not a new 0.9.27 live UI result.
+- Unchanged 0.9.26 macOS baseline: 1,108 passing tests, three Windows-only skips,
+  zero failures; HTTP/SSE smoke, performance/resource and package gates passed.
+- Final macOS Node 22.20 gate: 1,110 passing tests, four Windows-only skips,
+  zero failures; the same full gates and nine isolated cold/reused startup
+  scenarios passed, with zero live-provider calls.
+- [Candidate CI](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38333885234)
+  passed at `a3606d2`: Linux Node 22.15/24 full gates, latest official Codex
+  configuration/catalog/synthetic Responses replay, and native Windows Node
+  22.15/24. Each Windows job passed all 21 scoped tests without skips.
+- Windows certificate tests remove external tools from PATH and mask Git lookup
+  roots. Actual .NET issuance, RSA size, 90-day validity, CA constraints and key
+  usages, exact leaf DNS names, NTFS privacy, TLS acceptance, untrusted/wrong-host
+  rejection and App-owned SQLite trust removal pass. First activation, settings
+  commit failure rollback and subsequent credential reuse also pass without
+  external certificate commands. Existing network/launch tests remain passing.
+- One bounded source/security review checked platform isolation, private-key
+  transport, ephemeral Windows keys, unchanged PEM/trust contracts and failure
+  cleanup. It addressed JWK component padding, whole-second certificate validity
+  and the existing README length contract. No adjacent refactor followed.
+- The macOS OpenSSL certificate extensions were inspected as a public reference:
+  RSA/SHA-256, CA path length zero, critical name constraints/key usages and both
+  leaf DNS names are preserved. macOS issuance itself was not replaced.
+- No inference, image, model, dashboard, proxy-worker or launch implementation
+  changed; npm dependencies are byte-identical apart from version metadata.
+  Performance/resource gates pass; this is not a claim of faster model inference.
+
+Visible Windows predictions in 0.9.26 are historical evidence, not a new 0.9.27
+live App UI result. Native Windows tests exercise the actual system certificate
+API and Node TLS, but do not claim a new Chromium UI or enterprise-authentication
+test. Existing valid certificates skip issuance entirely.
 
 ## Boundaries
 

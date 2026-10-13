@@ -69,8 +69,8 @@ All six release-candidate CI jobs passed at
 [CI receipts](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38369583029).
 They cover Linux Node 22.15/24 full gates, Windows Node 22.15/24 native platform
 and launcher regressions, the latest official Codex synthetic replay and the
-16 Chromium/WebKit dashboard combinations. Node 22.15 Linux reports 1,153 passing
-tests; Node 22.15 Windows reports 133, zero failures/skips.
+16 Chromium/WebKit dashboard combinations. Linux Node 22.15 and 24 each report
+1,153 passing tests; Windows Node 22.15 and 24 each report 133, zero failures/skips.
 Baseline/candidate local resource gates passed with import RSS 58.4/58.5 MiB,
 heap 7/7 MiB and the same 162.3 MiB single-request admission RSS peak delta.
 One-off timings vary; this release claims restart reliability, not faster model
@@ -84,3 +84,25 @@ restart. The main service must still restart after a package update. App
 identity changes and network-policy changes retain their existing checks.
 Windows/macOS GUI gray suggestions after this exact package update are not
 claimed as newly user-verified by isolated transport tests.
+
+## Publication receipts
+
+- Formal source tag: `v0.9.30` at `4ad7433092a02c0677285dc37594cc1a30c78920`.
+  Runtime/source bytes match the successful candidate CI above; the intervening
+  commit only records verification in this report.
+- [GitHub release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.30)
+  is stable, not a draft/prerelease, and is GitHub latest.
+- [npm publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38370158040)
+  succeeded with `codex-copilot-dx@0.9.30`, tag `latest`, 1,153 passing tests,
+  all smoke/performance/package gates and zero failures.
+- The GitHub archive and npm package have the same SHA-1
+  `aff84bc536f0d4aaaa933199b12796a3e976a511`, 135 files, 352,316 bytes.
+  GitHub's asset digest matches local SHA-256
+  `1ecd17e5b8fe3bfa3981e24769c42acac8916ee5c0d44cb4d2bcc59f4c0d5c3e`.
+  All 135 packed files were compared byte-for-byte with committed source.
+- GitHub operations reused the user's previously supplied PAT in memory. npm
+  used the existing repository publishing secret; no browser login or substitute
+  credential was used. No local npm-registry probe was needed.
+- The installed/running user service and real App were not upgraded or restarted
+  by this task. Upgrade installation and the initial old-route migration remain
+  explicit user actions, not silently applied to the current conversation.

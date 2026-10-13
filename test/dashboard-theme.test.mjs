@@ -38,7 +38,10 @@ test("dashboard defaults to the existing dark theme and switches without a serve
   assert.match(favicon.href, /^data:image\/svg\+xml,/);
   const darkIcon = decodeURIComponent(favicon.href);
   assert.match(darkIcon, /viewBox="0 0 64 64"/);
-  assert.match(darkIcon, /d="M7 27v10M12 22v20M17 14v36/);
+  assert.equal((darkIcon.match(/<ellipse /g) || []).length, 3);
+  assert.match(darkIcon, /transform="rotate\(60 32 32\)"/);
+  assert.match(darkIcon, /transform="rotate\(120 32 32\)"/);
+  assert.match(darkIcon, /<circle cx="32" cy="32" r="4.5" fill="#a6f5a8"/);
   assert.match(darkIcon, /stroke="#a6f5a8"/);
   assert.doesNotMatch(darkIcon, /<rect|#0b110d/);
   button.click();

@@ -15,30 +15,19 @@ const text = (id, key, values) => { localize(element(id), key, values); };
 const finite = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
 const number = (value) => finite(value) ? Math.max(0, Math.round(Number(value))).toLocaleString() : "—";
 const mib = (value) => finite(value) ? `${(Number(value) / 1048576).toFixed(1)} MiB` : "—";
-let authLoading = false;
 let contextRequests = [];
 let contextCompactions = {};
+let failureSignature;
+let contextSignature;
 
-function renderAuth(data) {
+function renderAuth(data, { failed = false } = {}) {
   const account = data.login ? `@${data.login}` : data.id ? `ID ${data.id}` : phrase("account unknown");
   const label = data.reason === "credential_read_failed" ? "UNAVAILABLE"
     : !data.configured ? "NOT CONFIGURED" : !data.valid ? "INVALID" : "SAVED";
-  text("auth-account", label === "SAVED" ? "GitHub / {account} / SAVED" : `GitHub / ${label}`, { account });
+  text("auth-account", failed ? "GitHub / {account} / UPDATE FAILED" : label === "SAVED" ? "GitHub / {account} / SAVED" : `GitHub / ${label}`, { account });
 }
 
-async function loadAuth() {
-  if (authLoading) return;
-  authLoading = true;
-  text("auth-account", "GitHub / READING");
-  try {
-    const response = await fetch("/_ccdx/ui/auth", { cache: "no-store", headers: { "X-CCDX-Dashboard": "1" }, signal: AbortSignal.timeout(5000) });
-    const data = await response.json();
-    if (!response.ok || data.source !== "local_auth_status") throw new Error("Auth status unavailable");
-    renderAuth(data);
-  } catch {
-    text("auth-account", "GitHub / UNAVAILABLE");
-  } finally { authLoading = false; }
-}
+const loadAuth = () => dashboardRefresh.refresh("auth", { force: true });
 
 function duration(value) {
   if (!finite(value)) return "—";
@@ -50,6 +39,9 @@ function duration(value) {
 }
 
 function renderFailures(recent, recentRequests = []) {
+  const signature = JSON.stringify([recent, recentRequests]);
+  if (signature === failureSignature) return;
+  failureSignature = signature;
   const list = element("failures");
   const expanded = new Set([...list.querySelectorAll("details[open]")].map((item) => item.dataset.key));
   list.replaceChildren();
@@ -192,6 +184,9 @@ function renderContext(performance) {
     completed: number(contextCompactions.completed), incomplete: number(contextCompactions.incomplete), failed: number(contextCompactions.failed),
   });
   if (element("request-context")?.open === false) return;
+  const signature = JSON.stringify(contextRequests);
+  if (signature === contextSignature) return;
+  contextSignature = signature;
   body.replaceChildren();
   for (const request of contextRequests) {
     const context = request.context || {};
@@ -207,36 +202,9 @@ function renderContext(performance) {
   if (!contextRequests.length) emptyTable("context-body", 7, "No observed request metadata.");
 }
 
-async function refresh() {
-  const button = element("refresh");
-  button.disabled = true;
-  text("connection", "READING");
-  element("connection").className = "badge neutral";
-  try {
-    const response = await fetch("/_ccdx/status", {
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json();
-    if (data?.ok !== true || data?.name !== "codex-copilot-dx") throw new Error("Unexpected status response");
-    render(data);
-    text("connection", "LOCAL OK");
-    element("connection").className = "badge good";
-  } catch {
-    text("connection", "UNAVAILABLE");
-    element("connection").className = "badge bad";
-    text("updated", "Status unavailable / check ccdx, then refresh");
-  } finally {
-    button.disabled = false;
-  }
-}
+const refresh = () => dashboardRefresh.refresh("status", { force: true });
 
-element("refresh").addEventListener("click", () => { refresh(); loadAuth(); });
-element("request-context").addEventListener("toggle", () => { if (element("request-context").open) renderContext(); });
-refresh();
-loadAuth();
+element("refresh").addEventListener("click", () => dashboardRefresh.refreshVisible({ force: true }));
 
 const animationRows = new Map();
 let animationTimelines = [];
@@ -246,7 +214,7 @@ let previewDisabledByEnvironment = false;
 let previewVisible = false;
 let previewTimer = null;
 let previewStarted = 0;
-let animationLoading = false;
+let animationSaving = false;
 let animationFramesLoaded = false;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -361,28 +329,26 @@ function animationNote(data) {
     : "Saved choice applies on next ccdx start.";
 }
 
-async function loadAnimation() {
-  const includeFrames = element("animation-settings").open;
-  if (animationLoading || (includeFrames && animationFramesLoaded)) return;
-  animationLoading = true;
-  text("animation-state", "READING");
-  try {
-    const response = await fetch(`/_ccdx/ui/animation${includeFrames ? "" : "?frames=0"}`, { cache: "no-store", headers: { "X-CCDX-Dashboard": "1" }, signal: AbortSignal.timeout(8000) });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    if (includeFrames) {
-      buildAnimationOptions(data);
-      animationFramesLoaded = true;
-    } else { savedAnimation = data.theme; selectedAnimation = data.theme; }
-    updateAnimationState();
-    text("animation-note", animationNote(data));
-  } catch (error) {
-    text("animation-state", "UNAVAILABLE");
-    text("animation-note", String(error.message || error).slice(0, 180));
-  } finally {
-    animationLoading = false;
-    if (!includeFrames && element("animation-settings").open) loadAnimation();
+function loadAnimation(options) {
+  if (!animationSaving) return dashboardRefresh.refresh("animation", options);
+}
+
+function applyAnimation(data, { changed } = {}) {
+  if (changed === false) { updateAnimationState(); return; }
+  if (!animationFramesLoaded && data.themes.some(theme => theme.frames)) {
+    buildAnimationOptions(data);
+    animationFramesLoaded = true;
+  } else {
+    const dirty = selectedAnimation && selectedAnimation !== savedAnimation;
+    savedAnimation = data.theme;
+    if (!dirty) selectedAnimation = data.theme;
+    previewDisabledByEnvironment = data.disabled_by_environment === true;
+    for (const [id, row] of animationRows) row.setAttribute("aria-pressed", String(id === selectedAnimation));
+    element("save-animation").disabled = selectedAnimation === savedAnimation;
+    syncAnimationPreview();
   }
+  updateAnimationState();
+  text("animation-note", animationNote(data));
 }
 
 function updateAnimationState() {
@@ -392,6 +358,8 @@ function updateAnimationState() {
 async function saveAnimation() {
   const button = element("save-animation");
   if (!selectedAnimation || selectedAnimation === savedAnimation) return;
+  animationSaving = true;
+  dashboardRefresh.invalidate("animation");
   button.disabled = true;
   text("animation-note", "Saving…");
   try {
@@ -409,7 +377,9 @@ async function saveAnimation() {
   } catch (error) {
     text("animation-note", "Not saved / {error}", { error: String(error.message || error).slice(0, 150) });
   } finally {
+    animationSaving = false;
     button.disabled = selectedAnimation === savedAnimation;
+    loadAnimation({ force: true });
   }
 }
 
@@ -436,34 +406,18 @@ function tableRow(values, { total = false, labels = [] } = {}) {
   return row;
 }
 
-async function loadModels() {
-  const button = element("refresh-models");
-  button.disabled = true;
-  text("models-state", "CHECKING LIVE");
-  text("models-note", "Querying GitHub Copilot…");
-  emptyTable("live-models-body", 4, "Loading…");
-  try {
-    const response = await fetch("/_ccdx/ui/models/live", { cache: "no-store", headers: { "X-CCDX-Dashboard": "1" }, signal: AbortSignal.timeout(15000) });
-    const data = await response.json();
-    if (!response.ok || data.source !== "live") throw new Error(data.error || `HTTP ${response.status}`);
+async function loadModels() { return dashboardRefresh.refresh("models", { force: true }); }
+
+function applyModels(data, { changed }) {
+  if (changed) {
     const body = element("live-models-body");
     body.replaceChildren();
     for (const model of data.models) {
       body.append(tableRow([model.id, model.vendor, model.endpoints.join(" / "), model.preview ? "preview" : "—"], { labels: [3] }));
     }
     if (!data.models.length) emptyTable("live-models-body", 4, "No selectable GPT models advertised.");
-    text("models-state", "LIVE SNAPSHOT");
-    text("models-note", "{selectable} selectable / {advertised} advertised / {host} / {time}", { selectable: number(data.selectable), advertised: number(data.advertised), host: data.upstream_host, time: new Date(data.checked_at).toLocaleTimeString() });
-  } catch (error) {
-    text("models-state", "LIVE LOOKUP FAILED");
-    const message = String(error.message || error).slice(0, 240);
-    const httpError = /^Live model lookup failed \(HTTP (\d{3})\)\. Run ccdx models for details\.$/.exec(message);
-    if (httpError) text("models-note", "Live model lookup failed (HTTP {status}). Run ccdx models for details.", { status: httpError[1] });
-    else text("models-note", message);
-    emptyTable("live-models-body", 4, "No live catalog available.");
-  } finally {
-    button.disabled = false;
   }
+  text("models-note", "{selectable} selectable / {advertised} advertised / {host} / {time}", { selectable: number(data.selectable), advertised: number(data.advertised), host: data.upstream_host, time: new Date(data.checked_at).toLocaleTimeString() });
 }
 
 function usageValues(row) {
@@ -473,7 +427,7 @@ function usageValues(row) {
 }
 
 let usageData = null;
-let usageLoading = false;
+let analyticsSignature;
 let selectedUsageDate = "";
 
 function renderUsageTable() {
@@ -493,6 +447,10 @@ function renderUsageTable() {
     records: number(total.requests), shown: number(rows.length), models: number(day ? rows.length : usageData.model_count),
     day: day ? phrase(" / {zone} / {model}", { zone: usageData.analytics.time_zone, model: model || phrase("All models") }) : "",
   });
+}
+
+function renderUsageState() {
+  text("usage-state", selectedUsageDate && usageData.analytics?.days.some(day => day.date === selectedUsageDate) ? selectedUsageDate : "LOCAL LOG");
 }
 
 function analyticsPoint(day, model) {
@@ -523,6 +481,9 @@ function renderAnalytics() {
   const analytics = usageData?.analytics;
   if (!analytics) return;
   const model = element("analytics-model").value;
+  const signature = JSON.stringify([analytics, model, element("analytics-range").value, element("analytics-metric").value, selectedUsageDate]);
+  if (signature === analyticsSignature) return;
+  analyticsSignature = signature;
   const days = analytics.days;
   const daily = days.slice(-Number(element("analytics-range").value));
   const maximum = Math.max(1, ...daily.map((day) => {
@@ -593,44 +554,167 @@ function updateAnalyticsModels() {
   const select = element("analytics-model");
   const previous = select.value;
   select.replaceChildren();
-  for (const model of ["", ...usageData.analytics.models]) {
+  for (const model of [...new Set(["", ...usageData.analytics.models, ...(previous ? [previous] : [])])]) {
     const option = document.createElement("option");
     option.value = model;
     if (model) option.textContent = model;
     else localize(option, "All models");
     select.append(option);
   }
-  select.value = usageData.analytics.models.includes(previous) ? previous : "";
+  select.value = previous;
 }
 
-async function loadUsage() {
-  if (usageLoading) return;
-  usageLoading = true;
-  const includeAnalytics = element("usage-analytics").open || Boolean(selectedUsageDate);
-  const button = element("refresh-usage");
-  button.disabled = true;
-  text("usage-state", "READING LOG");
-  text("usage-note", "Aggregating local usage metadata…");
-  emptyTable("usage-body", 7, "Loading…");
-  try {
-    const query = includeAnalytics ? `?analytics=1&time_zone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}` : "";
-    const response = await fetch(`/_ccdx/ui/usage${query}`, { cache: "no-store", headers: { "X-CCDX-Dashboard": "1" }, signal: AbortSignal.timeout(15000) });
-    const data = await response.json();
-    if (!response.ok || data.source !== "local_usage_log") throw new Error(data.error || `HTTP ${response.status}`);
-    usageData = data;
+async function loadUsage() { return dashboardRefresh.refresh("usage", { force: true }); }
+
+function applyUsage(data, { changed }) {
+  usageData = { ...data, ...(!data.analytics && usageData?.analytics ? { analytics: usageData.analytics } : {}) };
+  if (changed) {
     if (data.analytics) updateAnalyticsModels();
     renderUsageTable();
-    renderAnalytics();
-  } catch (error) {
-    text("usage-state", "LOG UNAVAILABLE");
-    text("usage-note", String(error.message || error).slice(0, 180));
-    emptyTable("usage-body", 7, "No usage summary available.");
-    if (includeAnalytics) text("analytics-note", "Analytics unavailable / refresh Usage to retry.");
-  } finally {
-    usageLoading = false;
-    button.disabled = false;
-    if (!includeAnalytics && element("usage-analytics").open) loadUsage();
+    if (data.analytics) renderAnalytics();
   }
+  if (data.analytics) {
+    text("analytics-updated", "Updated {time}", { time: new Date().toLocaleTimeString() });
+  }
+}
+
+async function readDashboard(url, { signal, timeout = 15000, source } = {}) {
+  const response = await fetch(url, { cache: "no-store", headers: { "X-CCDX-Dashboard": "1", Accept: "application/json" },
+    signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)]) });
+  const data = await response.json();
+  if (!response.ok || (source && data.source !== source)) throw new Error(data.error || `HTTP ${response.status}`);
+  return data;
+}
+
+function refreshTime(target, state) {
+  const time = state.updatedAt === null ? null : new Date(state.updatedAt).toLocaleTimeString();
+  if (state.error) localize(target, time ? "Update failed / last {time}" : "Update failed", { time });
+  else if (time) localize(target, "Updated {time}", { time });
+}
+
+const timestamps = new Map();
+for (const [key, ids] of [["status", ["client-features", "request-context", "recent-failures"]], ["models", ["upstream-models"]], ["usage", ["model-usage"]], ["animation", ["animation-settings"]]]) {
+  timestamps.set(key, ids.map(id => {
+    const node = document.createElement("p");
+    node.className = "refresh-time";
+    element(id).append(node);
+    return node;
+  }));
+}
+
+const dashboardRefresh = globalThis.ccdxRefresh.createController({
+  visible: () => document.visibilityState === "visible",
+  resources: {
+    status: {
+      visible: () => true,
+      load: async ({ signal }) => {
+        const data = await readDashboard("/_ccdx/status", { signal, timeout: 5000 });
+        if (data.ok !== true || data.name !== "codex-copilot-dx") throw new Error("Unexpected status response");
+        return data;
+      },
+      apply: render,
+      state: state => {
+        element("refresh").disabled = Boolean(state.pending);
+        text("connection", state.pending || (!state.value && !state.error) ? "READING" : state.error ? "UNAVAILABLE" : "LOCAL OK");
+        element("connection").className = `badge ${state.pending ? "neutral" : state.error ? "bad" : "good"}`;
+        if (state.error) refreshTime(element("updated"), state);
+        for (const node of timestamps.get("status")) refreshTime(node, state);
+      },
+    },
+    auth: {
+      visible: () => true,
+      load: ({ signal }) => readDashboard("/_ccdx/ui/auth", { signal, timeout: 5000, source: "local_auth_status" }),
+      apply: renderAuth,
+      state: state => {
+        if (state.value) renderAuth(state.value, { failed: Boolean(state.error) });
+        else text("auth-account", state.error ? "GitHub / UNAVAILABLE" : "GitHub / READING");
+        if (state.updatedAt !== null) localize(element("auth-account"), "Saved account / updated {time}", { time: new Date(state.updatedAt).toLocaleTimeString() }, "title");
+      },
+    },
+    models: {
+      visible: () => element("upstream-models").open,
+      load: async ({ signal }) => {
+        const data = await readDashboard("/_ccdx/ui/models/live", { signal, source: "live" });
+        if (!Array.isArray(data.models) || data.models.some(model => !model || typeof model.id !== "string" || !Array.isArray(model.endpoints))) throw new Error("Invalid model snapshot");
+        return data;
+      },
+      project: data => [data.models, data.selectable, data.advertised, data.upstream_host],
+      apply: applyModels,
+      state: state => {
+        element("refresh-models").disabled = Boolean(state.pending);
+        text("models-state", state.pending ? "CHECKING LIVE" : state.error ? "LIVE LOOKUP FAILED" : "LIVE SNAPSHOT");
+        if (state.error) {
+          const message = String(state.error.message || state.error).slice(0, 240);
+          const httpError = /^Live model lookup failed \(HTTP (\d{3})\)\. Run ccdx models for details\.$/.exec(message);
+          if (httpError) text("models-note", "Live model lookup failed (HTTP {status}). Run ccdx models for details.", { status: httpError[1] });
+          else text("models-note", message);
+        }
+        if (state.error && !state.value) emptyTable("live-models-body", 4, "No live catalog available.");
+        for (const node of timestamps.get("models")) refreshTime(node, state);
+      },
+    },
+    usage: {
+      visible: () => element("model-usage").open,
+      variant: () => ((element("model-usage").open && element("usage-analytics").open) || Boolean(selectedUsageDate)) ? "analytics" : "summary",
+      load: async ({ variant, signal }) => {
+        const data = await readDashboard(`/_ccdx/ui/usage${variant === "analytics" ? `?analytics=1&time_zone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}` : ""}`, { signal, source: "local_usage_log" });
+        if (!data.total || !Array.isArray(data.rows) || (variant === "analytics" && (!Array.isArray(data.analytics?.days) || !data.analytics.days.length))) throw new Error("Invalid usage snapshot");
+        return data;
+      },
+      apply: applyUsage,
+      state: state => {
+        element("refresh-usage").disabled = Boolean(state.pending);
+        if (state.pending) text("usage-state", "READING LOG");
+        else if (state.error) {
+          text("usage-state", "LOG UNAVAILABLE");
+          if (element("usage-analytics").open) text("analytics-note", "Analytics unavailable / refresh Usage to retry.");
+          if (!state.value) emptyTable("usage-body", 7, "No usage summary available.");
+        } else if (state.value) renderUsageState();
+        for (const node of timestamps.get("usage")) refreshTime(node, state);
+      },
+    },
+    animation: {
+      visible: () => element("animation-settings").open && !animationSaving,
+      variant: () => element("animation-settings").open && !animationFramesLoaded ? "frames" : "metadata",
+      project: data => [data.theme, data.source, data.disabled_by_environment, data.themes.map(theme => [theme.id, theme.label, theme.default, Boolean(theme.frames)])],
+      load: ({ variant, signal }) => readDashboard(`/_ccdx/ui/animation${variant === "frames" ? "" : "?frames=0"}`, { signal, timeout: 8000 }),
+      apply: applyAnimation,
+      state: state => {
+        if (state.error) {
+          text("animation-state", "UNAVAILABLE");
+          text("animation-note", String(state.error.message || state.error).slice(0, 180));
+        }
+        for (const node of timestamps.get("animation")) refreshTime(node, state);
+      },
+    },
+  },
+});
+
+const autoRefreshKey = "ccdx.dashboard.autoRefresh";
+const updateAutoRefresh = () => {
+  element("auto-refresh").setAttribute("aria-pressed", String(dashboardRefresh.automatic));
+  text("auto-refresh", dashboardRefresh.automatic ? "Auto refresh / ON" : "Auto refresh / OFF");
+};
+let automatic = true;
+try { automatic = localStorage.getItem(autoRefreshKey) !== "off"; } catch { /* Keep the default when browser storage is unavailable. */ }
+dashboardRefresh.setAutomatic(automatic);
+updateAutoRefresh();
+element("auto-refresh").addEventListener("click", () => {
+  dashboardRefresh.setAutomatic(!dashboardRefresh.automatic);
+  updateAutoRefresh();
+  try { localStorage.setItem(autoRefreshKey, dashboardRefresh.automatic ? "on" : "off"); } catch { /* Keep the current choice. */ }
+});
+document.addEventListener("visibilitychange", () => dashboardRefresh.visibilityChanged());
+window.addEventListener("pagehide", () => { dashboardRefresh.suspend(); stopAnimationPreview(); });
+window.addEventListener("pageshow", () => { dashboardRefresh.resume(); syncAnimationPreview(); });
+
+for (const [id, key] of [["client-features", "status"], ["request-context", "status"], ["recent-failures", "status"], ["upstream-models", "models"], ["model-usage", "usage"]]) {
+  element(id).addEventListener("toggle", () => {
+    if (element(id).open) {
+      if (id === "request-context") renderContext();
+      dashboardRefresh.refresh(key);
+    }
+  });
 }
 
 element("save-animation").addEventListener("click", saveAnimation);
@@ -646,7 +730,7 @@ element("open-animation").addEventListener("click", () => {
   settings.querySelector("summary").focus();
 });
 element("usage-analytics").addEventListener("toggle", () => {
-  if (element("usage-analytics").open && !usageData?.analytics) loadUsage();
+  if (element("usage-analytics").open && element("model-usage").open) dashboardRefresh.refresh("usage");
 });
 for (const id of ["analytics-model", "analytics-range", "analytics-metric"]) element(id).addEventListener("change", () => {
   renderAnalytics();
@@ -658,3 +742,5 @@ element("refresh-usage").addEventListener("click", loadUsage);
 loadAnimation();
 loadModels();
 loadUsage();
+refresh();
+loadAuth();

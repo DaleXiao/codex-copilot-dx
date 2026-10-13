@@ -59,6 +59,18 @@ Without a complete verified local source, rejection still returns
 metadata cannot reconstruct unavailable encrypted memory. LAN/browser callers
 and referenced/split histories do not gain filesystem recovery access.
 
+## Dashboard reads
+
+`dashboard/refresh.js` owns the browser-only read lifecycle: one visible-page
+timer, per-group in-flight deduplication, attempt freshness, cancellation and
+last-good snapshots. `ui.js` owns rendering and user selections. Models, usage,
+status/account and animation metadata remain independent resources; no timer
+or data watcher is added to the Node service. Animation frames load once per
+page when opened, and read refresh does not overwrite an unsaved choice.
+`upstream-body.mjs` is the shared bounded response reader. The transport retains
+its existing exports; live model lookup uses the same 8 MiB catalog limit as
+core model discovery, without importing the request lifecycle or UI layer.
+
 ## Configuration ownership
 
 `CODEX_HOME` selects Codex configuration. App profile/trust paths have their own

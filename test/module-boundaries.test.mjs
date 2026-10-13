@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import * as transport from "../src/http-transport.mjs";
+import * as upstreamBody from "../src/upstream-body.mjs";
 import * as admission from "../src/request-admission.mjs";
 import * as errors from "../src/http-errors.mjs";
 import * as security from "../src/security.mjs";
@@ -18,6 +19,7 @@ import { terminalCell } from "../src/terminal-text.mjs";
 test("legacy exports share the exact extracted functions and usage state", () => {
   assert.equal(transport.httpError, errors.httpError);
   assert.equal(transport.createRequestAdmission, admission.createRequestAdmission);
+  for (const [name, value] of Object.entries(upstreamBody)) assert.equal(transport[name], value, name);
   assert.equal(observability.isLoopbackAddress, security.isLoopbackAddress);
   assert.equal(observability.isLoopbackHostHeader, security.isLoopbackHostHeader);
   assert.equal(cliCell, terminalCell);
@@ -30,6 +32,7 @@ test("shared data and foundation modules do not depend on presentation or compos
   const rules = {
     "auth-status.mjs": ["cli-auth.mjs", "cli-table.mjs", "adapter.mjs", "dashboard-api.mjs"],
     "live-models.mjs": ["cli-models.mjs", "cli-table.mjs", "adapter.mjs", "dashboard-api.mjs"],
+    "upstream-body.mjs": ["http-transport.mjs", "request-admission.mjs", "copilot.mjs", "dashboard-api.mjs", "user-settings.mjs"],
     "usage-store.mjs": ["usage.mjs", "cli-table.mjs", "adapter.mjs", "dashboard-api.mjs"],
     "security.mjs": ["observability.mjs", "user-settings.mjs", "copilot.mjs"],
     "response-history.mjs": ["http-transport.mjs"],

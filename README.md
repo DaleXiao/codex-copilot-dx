@@ -23,7 +23,7 @@ enabled. The configured `dummy` API key is a placeholder, not a credential.
 
 Open [the local dashboard](http://127.0.0.1:2026/) for status, model discovery,
 usage, cache/limits, recent failures, request context and animation settings.
-The dashboard does not poll in the background; refresh when needed.
+Auto refresh runs every 30 minutes while visible and can be switched off. Hidden pages pause; opening sections and manual refresh still work.
 
 ## Commands
 

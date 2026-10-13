@@ -6,6 +6,7 @@ import { createUsageAnalytics } from "../src/usage-analytics.mjs";
 import { summarizeUsage } from "../src/usage.mjs";
 
 const script = readFileSync(new URL("../src/dashboard/ui.js", import.meta.url), "utf8");
+const refreshScript = readFileSync(new URL("../src/dashboard/refresh.js", import.meta.url), "utf8");
 const languageScript = readFileSync(new URL("../src/dashboard/language.js", import.meta.url), "utf8");
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -23,10 +24,12 @@ class Node {
   focus() {}
 }
 
-function harness({ fetchFn, clipboard = async () => {}, reduced = false, language = false, savedLanguage = "en" } = {}) {
+function harness({ fetchFn, clipboard = async () => {}, reduced = false, language = false, savedLanguage = "en", savedAutomatic = "on" } = {}) {
   const nodes = new Map();
   const ready = [];
-  const document = { documentElement: { dataset: {} }, visibilityState: "visible", getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); }, createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node(), addEventListener(event, fn) { if (event === "DOMContentLoaded") ready.push(fn); },
+  const listeners = new Map();
+  const on = (event, fn) => { if (!listeners.has(event)) listeners.set(event, []); listeners.get(event).push(fn); };
+  const document = { documentElement: { dataset: {} }, visibilityState: "visible", getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); }, createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node(), addEventListener(event, fn) { if (event === "DOMContentLoaded") ready.push(fn); else on(event, fn); },
     querySelectorAll() {
       const found = new Set();
       const visit = (node) => { if (Object.keys(node.attributes).some((key) => key.startsWith("data-i18n"))) found.add(node); node.children.forEach(visit); };
@@ -36,6 +39,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   };
   document.getElementById("analytics-range").value = "30";
   document.getElementById("analytics-metric").value = "requests";
+  for (const id of ["client-features", "upstream-models", "model-usage", "recent-failures"]) document.getElementById(id).open = true;
   const records = [{ ts: "2026-10-01T00:00:00Z", model: "test", usage: { input_tokens: 100, cached_input_tokens: 80, output_tokens: 10, total_tokens: 110 } }];
   const collector = createUsageAnalytics({ now: Date.parse("2026-10-01T12:00:00Z") });
   records.forEach((row) => collector.record(row, summarizeUsage([row])));
@@ -43,11 +47,14 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   const themes = { theme: "comet", themes: [["comet", "Comet"], ["twin", "Twin"]].map(([id, label], index) => ({ id, label, default: index === 0, frames: [{ ansi: "x", delay_ms: 50 }], loop_pause_ms: 50 })) };
   const requests = [];
   const timers = new Set();
+  const scheduled = new Map();
+  let now = Date.now();
+  class ClockDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
   let observer;
   const context = createContext({
-    document, window: { matchMedia: () => ({ matches: reduced, addEventListener() {} }) }, navigator: { clipboard: { writeText: clipboard } },
-    performance: { now: () => 0 }, AbortSignal, Intl, setTimeout(fn) { timers.add(fn); return fn; }, clearTimeout(fn) { timers.delete(fn); },
-    localStorage: { getItem: () => savedLanguage, setItem() {} },
+    document, window: { matchMedia: () => ({ matches: reduced, addEventListener() {} }), addEventListener: on }, navigator: { clipboard: { writeText: clipboard } },
+    Date: ClockDate, performance: { now: () => 0 }, AbortSignal, AbortController, Intl, setTimeout(fn, ms) { scheduled.set(fn, ms); if (ms < 1800000) timers.add(fn); return fn; }, clearTimeout(fn) { timers.delete(fn); scheduled.delete(fn); },
+    localStorage: { getItem: key => key === "ccdx.dashboard.autoRefresh" ? savedAutomatic : savedLanguage, setItem() {} },
     IntersectionObserver: class { constructor(fn) { observer = fn; } observe() {} },
     fetch: async (url, options) => {
       requests.push(url);
@@ -61,9 +68,14 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
     },
   });
   if (language) runInContext(languageScript, context);
-  const api = runInContext(`${script}\n({ renderFailures, renderAuth, loadAuth, loadAnimation, loadUsage, renderAnalytics, selectUsageDay, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, context);
+  runInContext(refreshScript, context);
+  const api = runInContext(`${script}\n({ renderFailures, renderAuth, loadAuth, loadAnimation, loadUsage, renderAnalytics, selectUsageDay, dashboardRefresh, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, context);
   ready.forEach((fn) => fn());
-  return { api, nodes, requests, timers, visible(value) { observer([{ isIntersecting: value }]); } };
+  return { api, nodes, requests, timers, scheduled,
+    advance(ms) { now += ms; },
+    event(name) { listeners.get(name)?.forEach(fn => fn()); },
+    hidden(value) { document.visibilityState = value ? "hidden" : "visible"; listeners.get("visibilitychange")?.forEach(fn => fn()); },
+    visible(value) { observer([{ isIntersecting: value }]); } };
 }
 
 test("language switch preserves unsaved animation, chart nodes/selection and expanded failures without fetching", async () => {
@@ -299,6 +311,7 @@ test("reduced motion suppresses animation timers even with open and visible sett
 test("usage opening during initial load follows up once and an analytics error does not loop", async () => {
   let release;
   const h = harness({ fetchFn: (url) => url === "/_ccdx/ui/usage" ? new Promise((resolve) => { release = resolve; }) : url.includes("analytics=1") ? { ok: false, json: async () => ({ error: "failed" }) } : undefined });
+  await flush();
   h.nodes.get("usage-analytics").open = true;
   h.nodes.get("usage-analytics").listeners.toggle();
   release({ ok: true, json: async () => ({ source: "local_usage_log", total: { requests: 0 }, rows: [], model_count: 0 }) });
@@ -311,9 +324,10 @@ test("usage opening during initial load follows up once and an analytics error d
 test("opening during metadata load follows up once; failed frame requests never auto-loop", async () => {
   let release;
   const h = harness({ fetchFn: (url) => url.includes("frames=0") ? new Promise((resolve) => { release = resolve; }) : url === "/_ccdx/ui/animation" ? { ok: false, json: async () => ({ error: "failed" }) } : undefined });
+  await flush();
   h.nodes.get("animation-settings").open = true;
   h.nodes.get("animation-settings").listeners.toggle();
-  release({ ok: true, json: async () => ({ theme: "comet" }) });
+  release({ ok: true, json: async () => ({ theme: "comet", themes: [] }) });
   await flush();
   await flush();
   assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/animation").length, 1);
@@ -338,6 +352,83 @@ test("failure details are text-only, preserve expansion and copy only existing d
   assert.doesNotMatch(copied, /excluded/);
   h.api.renderFailures(failures);
   assert.equal(list.children[0].children[0].open, true);
+});
+
+test("background, auto-off and collapsed groups do not poll; a visible stale page catches up once", async () => {
+  const h = harness(); await flush();
+  const initial = h.requests.length;
+  h.hidden(true); h.advance(1800000 * 3);
+  assert.equal(h.scheduled.size, 0);
+  assert.equal(h.requests.length, initial);
+  h.nodes.get("upstream-models").open = false;
+  h.nodes.get("model-usage").open = false;
+  h.hidden(false); await flush();
+  assert.equal(h.requests.length, initial + 2);
+  h.hidden(false); await flush();
+  assert.equal(h.requests.length, initial + 2);
+  h.nodes.get("auto-refresh").listeners.click();
+  assert.equal(h.nodes.get("auto-refresh").attributes["aria-pressed"], "false");
+  h.hidden(true); h.advance(1800000); h.hidden(false); await flush();
+  assert.equal(h.requests.length, initial + 2);
+  h.nodes.get("request-context").open = true;
+  h.nodes.get("request-context").listeners.toggle(); await flush();
+  assert.equal(h.requests.length, initial + 3);
+  h.event("pagehide");
+  assert.equal(h.scheduled.size, 0);
+});
+
+test("unchanged refresh keeps model, usage and chart nodes, filters, selected day and unsaved animation", async () => {
+  const h = harness(); await flush();
+  h.nodes.get("usage-analytics").open = true;
+  h.nodes.get("usage-analytics").listeners.toggle();
+  h.nodes.get("animation-settings").open = true;
+  h.nodes.get("animation-settings").listeners.toggle(); await flush();
+  h.nodes.get("animation-options").children[1].listeners.click();
+  h.nodes.get("analytics-range").value = "90";
+  h.nodes.get("analytics-model").value = "test";
+  h.nodes.get("analytics-metric").value = "tokens";
+  h.api.selectUsageDay("2026-10-01");
+  const calendar = [...h.nodes.get("activity-calendar").children];
+  const usage = [...h.nodes.get("usage-body").children];
+  const models = [...h.nodes.get("live-models-body").children];
+  h.nodes.get("refresh").listeners.click(); await flush();
+  assert.equal(h.nodes.get("usage-state").textContent, "2026-10-01");
+  assert.equal(h.nodes.get("analytics-model").value, "test");
+  assert.equal(h.nodes.get("analytics-range").value, "90");
+  assert.deepEqual(h.nodes.get("activity-calendar").children, calendar);
+  assert.deepEqual(h.nodes.get("usage-body").children, usage);
+  assert.deepEqual(h.nodes.get("live-models-body").children, models);
+  assert.equal(h.api.selection, "twin");
+  assert.equal(h.nodes.get("save-animation").disabled, false);
+  assert.equal(h.requests.filter(url => url === "/_ccdx/ui/animation").length, 1);
+});
+
+test("failed refresh preserves prior rows and account without marking them as fresh", async () => {
+  let failed = false;
+  const h = harness({ fetchFn: url => failed && (url.includes("/usage") || url.includes("/models/") || url.includes("/auth"))
+    ? { ok: false, json: async () => ({ error: "offline" }) } : undefined }); await flush();
+  const rows = [...h.nodes.get("usage-body").children];
+  const models = [...h.nodes.get("live-models-body").children];
+  const time = h.api.dashboardRefresh.state("usage").updatedAt;
+  failed = true; h.advance(30001);
+  h.nodes.get("refresh").listeners.click(); await flush();
+  assert.deepEqual(h.nodes.get("usage-body").children, rows);
+  assert.deepEqual(h.nodes.get("live-models-body").children, models);
+  assert.equal(h.api.dashboardRefresh.state("usage").updatedAt, time);
+  assert.match(h.nodes.get("auth-account").textContent, /@octocat \/ UPDATE FAILED/);
+  assert.equal(h.nodes.get("models-state").textContent, "LIVE LOOKUP FAILED");
+  assert.equal(h.nodes.get("connection").textContent, "LOCAL OK");
+});
+
+test("saved auto-off stays off and sparse heatmap levels follow actual relative values", async () => {
+  const h = harness({ savedAutomatic: "off" }); await flush();
+  assert.equal(h.scheduled.size, 0);
+  assert.equal(h.nodes.get("auto-refresh").attributes["aria-pressed"], "false");
+  h.nodes.get("usage-analytics").open = true;
+  h.nodes.get("usage-analytics").listeners.toggle(); await flush();
+  const levels = h.nodes.get("activity-calendar").children.filter(node => node.tag === "button").map(node => node.dataset.level);
+  assert.equal(levels.at(-1), "4");
+  assert.ok(levels.slice(0, -1).every(level => level === "0"));
 });
 
 test("failure timelines correlate recovered events and include transport failures without extra requests", async () => {

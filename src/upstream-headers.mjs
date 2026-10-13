@@ -41,12 +41,18 @@ function isSafeMetadataHeader(name) {
 export function safeUpstreamResponseHeaders(headers, {
   contentType,
   defaultContentType,
+  allowReasoningIncluded = false,
 } = {}) {
   const out = {};
   const resolvedContentType = contentType
     ?? headerValue(headers, "content-type")
     ?? defaultContentType;
   if (resolvedContentType) out["Content-Type"] = resolvedContentType;
+  // Codex treats presence as true, even for a literal "false" value.
+  // Native Responses callers opt in; never invent a declaration for other routes.
+  if (allowReasoningIncluded && headerValue(headers, "x-reasoning-included")?.trim().toLowerCase() === "true") {
+    out["X-Reasoning-Included"] = "true";
+  }
 
   if (headers && typeof headers[Symbol.iterator] === "function") {
     for (const [rawName, value] of headers) {

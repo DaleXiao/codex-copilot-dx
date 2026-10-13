@@ -328,7 +328,7 @@ function storeCompletedResponse(reqContext, completed) {
 
 function streamHeaders(resp) {
   return {
-    ...safeUpstreamResponseHeaders(resp.headers, { defaultContentType: "text/event-stream" }),
+    ...safeUpstreamResponseHeaders(resp.headers, { defaultContentType: "text/event-stream", allowReasoningIncluded: resp.ok }),
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
   };
@@ -582,6 +582,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
       markResponseTerminal("completed", { model: response.model || reqContext.body?.model, origin: "upstream_response" });
       res.writeHead(resp.status, safeUpstreamResponseHeaders(resp.headers, {
         contentType: "application/json",
+        allowReasoningIncluded: true,
       }));
       res.end(JSON.stringify(response));
       return { successful: true, compacted: true };
@@ -636,6 +637,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
       }
       res.writeHead(resp.status, safeUpstreamResponseHeaders(resp.headers, {
         contentType: "application/json",
+        allowReasoningIncluded: response.status !== "failed",
       }));
       res.end(data);
       return { successful: response.status !== "failed" && response.status !== "incomplete", compacted: false };

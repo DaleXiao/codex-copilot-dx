@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.9.28",
+  "version": "0.9.29",
   "description": "Use Codex App with GitHub Copilot",
   "author": "Dale Xiao",
   "type": "module",

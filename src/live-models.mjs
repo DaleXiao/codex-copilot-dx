@@ -2,6 +2,7 @@ import os from "node:os";
 import { validateGithubToken } from "./auth.mjs";
 import { AUTH_PROFILE_CODEX, readAuthProfileCredentials } from "./auth-profile.mjs";
 import { buildHeaders, FALLBACK_VSCODE_VERSION, parseApiBase } from "./copilot.mjs";
+import { MAX_UPSTREAM_ERROR_BODY_BYTES, MAX_UPSTREAM_MODEL_CATALOG_BYTES, readBoundedResponseText } from "./upstream-body.mjs";
 
 const DEFAULT_MODELS_TIMEOUT_MS = 10000;
 const SUPPORTED_ENDPOINTS = [
@@ -59,14 +60,6 @@ function validationFailure(validation) {
   return `GitHub Copilot authentication failed: ${validation?.reason || "unknown error"}${httpStatus}`;
 }
 
-async function responseText(response) {
-  try {
-    return await response.text();
-  } catch {
-    return "";
-  }
-}
-
 function readModelCredentials(home) {
   let credentials;
   try {
@@ -110,7 +103,11 @@ export async function fetchLiveCopilotModels({
       redirect: "error",
       signal: controller.signal,
     });
-    const body = await responseText(response);
+    const body = await readBoundedResponseText(response, {
+      maxBytes: response.ok ? MAX_UPSTREAM_MODEL_CATALOG_BYTES : MAX_UPSTREAM_ERROR_BODY_BYTES,
+      label: "Copilot live model catalog",
+      signal: controller.signal,
+    });
     if (!response.ok) {
       const detail = safeText(body).slice(0, 240);
       throw new Error(`Copilot models endpoint returned HTTP ${response.status}${detail ? `: ${detail}` : ""}`);

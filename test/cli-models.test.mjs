@@ -167,6 +167,30 @@ test("fetchLiveCopilotModels reports local and upstream failures", async (t) => 
   });
 });
 
+test("live catalogs are byte-bounded, cancelled when oversized, and retain large valid directories", async (t) => {
+  const home = tokenHome();
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const run = async (response, timeoutMs = 10000) => {
+    let call = 0;
+    return fetchLiveCopilotModels({ home, timeoutMs, fetchImpl: async () => {
+      if (++call === 1) return Response.json({ login: "octocat" });
+      if (call === 2) return Response.json({ token: "synthetic-token" });
+      return response;
+    } });
+  };
+  let cancelled = false;
+  const declared = new Response(new ReadableStream({ cancel() { cancelled = true; } }), { headers: { "content-length": String(8 * 1024 * 1024 + 1) } });
+  await assert.rejects(run(declared), /catalog exceeds 8388608 bytes/);
+  assert.equal(cancelled, true);
+  cancelled = false;
+  const unknown = new Response(new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array(1024 * 1024)); }, cancel() { cancelled = true; } }));
+  await assert.rejects(run(unknown), /catalog exceeds 8388608 bytes/);
+  assert.equal(cancelled, true);
+  const catalog = await run(Response.json({ data: Array.from({ length: 2048 }, (_, index) => model(`gpt-fixture-${index}`, "OpenAI", ["/responses"])) }));
+  assert.equal(catalog.models.length, 2048);
+  await assert.rejects(run(new Response(new ReadableStream({ pull() {} })), 100), /timed out/, "Stalled response reads obey the existing deadline");
+});
+
 test("formatLiveCopilotModels reports GPT totals and responsive output", () => {
   const catalog = {
     upstreamHost: "api.enterprise.githubcopilot.com",

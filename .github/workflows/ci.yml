@@ -24,7 +24,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Verify native Windows certificates, worker, profile, ACL, launch and local-history recovery
-        run: node --test test/native-prediction-windows.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs
+        run: node --test test/native-prediction-windows.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs test/dashboard-refresh.test.mjs test/dashboard-analytics-ui.test.mjs test/dashboard-language.test.mjs test/dashboard-theme.test.mjs test/upstream-headers.test.mjs test/cli-models.test.mjs test/module-boundaries.test.mjs test/http-transport.test.mjs
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -55,3 +55,20 @@ jobs:
         run: node scripts/codex-message-id-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
       - name: Verify native recorded compaction and local plaintext recovery without live provider calls
         run: node scripts/codex-history-recovery-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
+      - name: Verify native reasoning declaration handling with an isolated synthetic provider
+        run: node scripts/codex-reasoning-header-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
+  dashboard-browsers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - name: Provision test-only browser engines
+        run: |
+          npm install --prefix "$RUNNER_TEMP/ccdx-browser" playwright@1.62.1
+          "$RUNNER_TEMP/ccdx-browser/node_modules/.bin/playwright" install --with-deps chromium webkit
+      - name: Verify bilingual themes, small screens, timer and user-state preservation
+        run: node scripts/dashboard-browser-replay.mjs --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js" --output "$RUNNER_TEMP/ccdx-dashboard-screenshots"

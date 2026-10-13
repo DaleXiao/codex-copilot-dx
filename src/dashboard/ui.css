@@ -129,7 +129,9 @@ select { max-width: 260px; padding: 5px; font: inherit; color: var(--text); back
 .calendar-day[data-level="3"] { background: color-mix(in srgb, var(--accent-soft) 70%, var(--surface)); }
 .calendar-day[data-level="4"] { background: var(--accent-soft); }
 .calendar-day:disabled, .daily-bar:disabled { background: repeating-linear-gradient(135deg, transparent, transparent 3px, var(--border) 3px, var(--border) 4px); opacity: .5; cursor: default; }
-footer { color: var(--footer); font-size: 10px; letter-spacing: .05em; padding: 22px 0 30px; }
+footer { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; color: var(--footer); font-size: 10px; letter-spacing: .05em; padding: 22px 0 30px; }
+#auto-refresh[aria-pressed="false"] { background: transparent; color: var(--muted); border-color: var(--border); }
+.refresh-time { display: block; margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 @media (max-width: 1000px) { .animation-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); } .details { grid-template-columns: repeat(2, minmax(0, 1fr)); } .details .panel:last-child { grid-column: 1 / -1; } }
 @media (max-width: 680px) { .animation-options { grid-template-columns: 1fr; } }

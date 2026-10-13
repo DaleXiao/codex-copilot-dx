@@ -7,6 +7,7 @@ const ASSETS = new Map([
   ["/theme.js", ["./dashboard/theme.js", "text/javascript; charset=utf-8"]],
   ["/language.js", ["./dashboard/language.js", "text/javascript; charset=utf-8"]],
   ["/ui.js", ["./dashboard/ui.js", "text/javascript; charset=utf-8"]],
+  ["/refresh.js", ["./dashboard/refresh.js", "text/javascript; charset=utf-8"]],
 ]);
 
 export async function serveDashboard(req, res, pathname) {

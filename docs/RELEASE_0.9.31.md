@@ -82,3 +82,24 @@ installation, stop/restart the running CCDX service to load it.
 [Node child-process Windows batch-file guidance](https://nodejs.org/api/child_process.html#spawning-bat-and-cmd-files-on-windows)
 describes the required command-interpreter path; the implementation does not
 use generic `shell: true` or change PowerShell execution policy.
+
+## Publication receipts
+
+- Stable [GitHub release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.31),
+  tag `v0.9.31` at `a4c823ccb87e37c3712a23368d3ea9b94bf1d011`.
+  Runtime source matches the successful `c1721ab` candidate; the intervening
+  commit only records verified results in this report.
+- [npm publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38375390936)
+  succeeded with `codex-copilot-dx@0.9.31`, tag `latest`, 1,157 passing tests,
+  all offline smoke/performance/package gates and zero failures.
+- npm/GitHub archive SHA-1: `519967545cae00211d7a940b9a47c79fa131206c`.
+  GitHub asset digest equals local SHA-256:
+  `b3268d80c1b5638be7154dd1da5dfbe263133321d5bd9205faf9893246984bbb`.
+  The archive has 135 files and 353,383 bytes; all packed files were compared
+  byte-for-byte with committed source. No test fixture or credential helper ships.
+- GitHub operations reused the user's existing PAT in memory. npm used the
+  existing repository secret; no browser login, substitute credential or local
+  registry probe was used. Package creation used a task-owned temporary cache;
+  no user's cache ownership, npm configuration or installed package was changed.
+- This task does not silently update/restart the user's running adapter or App.
+  Affected older Windows installations need the documented manual bootstrap once.

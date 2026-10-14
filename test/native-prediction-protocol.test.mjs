@@ -43,8 +43,9 @@ test("malformed offsets, oversized entries/headers and excessive candidates fail
 
 test("recognizing a real settings chunk still requires platform signature verification", t => {
   const file = archive(t), realExists = fs.existsSync, realInspectOpen = fs.openSync, realStat = fs.statSync;
-  const target = "/Applications/ChatGPT.app/Contents/Resources/app.asar";
-  t.mock.method(fs, "existsSync", value => value === target || (value === "/Applications/Codex.app/Contents/Resources/app.asar" ? false : realExists(value)));
+  const target = path.join("/Applications/ChatGPT.app", "Contents", "Resources", "app.asar");
+  const alternate = path.join("/Applications/Codex.app", "Contents", "Resources", "app.asar");
+  t.mock.method(fs, "existsSync", value => value === target || (value === alternate ? false : realExists(value)));
   t.mock.method(fs, "openSync", (value, ...args) => realInspectOpen(value === target ? file : value, ...args));
   t.mock.method(fs, "statSync", (value, ...args) => realStat(value === target ? file : value, ...args));
   let checks = 0;

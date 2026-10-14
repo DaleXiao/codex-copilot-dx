@@ -92,6 +92,28 @@ for the local tests.
 
 ## Cross-platform and publication receipts
 
-The final CI and GitHub/npm publication results are recorded after the candidate
-passes those gates. The previously provided PAT is used in memory for GitHub;
-npm publication uses the existing repository secret. No credential is packaged.
+Candidate commit `5a81828040125ebba0dbb50ce8d57633d4d2cbb3` passed all eight
+[CI jobs](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38504557799):
+Linux and macOS Node 22.15/24, Windows Node 22.15/24, official Codex synthetic
+replays, and all 16 Chromium/WebKit bilingual/theme/viewport cases. Each Windows
+job passed its 230-test platform suite plus all 16 new startup/route/recovery
+tests. Every platform completed the owned-prefix 0.9.31 -> 0.9.34 install/upgrade
+and installed-sharp check. Linux performance/resource gates also passed.
+These results close the local network-limited installation check without changing
+the user's permanent registry, proxy or installation.
+
+[npm publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38504933137)
+succeeded after its prepublish verification, with the receipt
+`+ codex-copilot-dx@0.9.34` and tag `latest`. The
+[GitHub stable release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.34)
+is neither draft nor prerelease; GitHub latest returned `v0.9.34`.
+
+- Asset: `codex-copilot-dx-0.9.34.tgz`, 365,528 bytes, 144 files.
+- npm/local SHA-1: `d54d89d95c1a24f816d7d05abd989fc056136629`.
+- GitHub/local SHA-256: `01267e4797559465dd000c6fb7f287f062149308eadcc0a89c63b53f3fd1f889`.
+- GitHub used the previously provided PAT in memory; npm used the existing
+  repository secret. No credential was printed, written to an artifact or packaged.
+
+The final receipt commit changes documentation only; validated tag/package bytes
+remain unchanged. Cleanup removes this task's temporary release package and
+credential-free helper, not user configuration, working dependencies or services.

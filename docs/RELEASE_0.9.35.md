@@ -92,4 +92,35 @@ semantics, less repeated recovery I/O and truthful installation/status output.
 
 ## Publication
 
-Pending the candidate's complete cross-platform CI and stable publication receipts.
+Candidate commit `66b66a873a401a2caa794290c222dca49c94eed5` passed all eight
+[candidate CI jobs](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38538135186).
+An unchanged NTFS permission probe returned `unavailable` on one Windows 22.15
+runner; one bounded rerun passed without changing its three-second diagnostic
+deadline or assertion. The same commit then passed all eight
+[main CI jobs](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38538938913)
+without another correction. These include Node 22.15/24 on all three OSes,
+temporary-prefix install/upgrade and installed-sharp checks, official Codex
+synthetic replays and all 16 dashboard browser/language/theme/viewport cases.
+
+- Stable [GitHub release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.35)
+  and tag target the candidate commit. GitHub latest returned `v0.9.35`, neither
+  draft nor prerelease. Release ID: `412516882`; asset ID: `639819014`.
+- [npm publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38538954374)
+  succeeded after prepublish verification. Job `115768687849` records publication
+  to `https://registry.npmjs.org/` with tag `latest` and
+  `+ codex-copilot-dx@0.9.35`. npm notes that registry availability may take a few
+  minutes while processing. Local direct registry reads were connection-blocked;
+  the official-registry CI receipt is the publication evidence, not a claimed
+  independent local `npm view` or latest-metadata read.
+- Tarball: `codex-copilot-dx-0.9.35.tgz`, 368,326 bytes, 144 files. The npm receipt's
+  SHA-1 matches the local package: `8705ff232caf9e811d851516788767c299c600e8`.
+  GitHub's asset digest matches local SHA-256:
+  `265b16bf43edf81e488bcd5100ea60ed1ea5be5c7c85e930e80814b66fd5fba2`.
+- GitHub used the previously provided, identity-verified PAT only in memory;
+  npm used the repository's existing publication secret. Neither credential was
+  printed, saved in an artifact or added to the repository.
+
+The final receipt commit changes only this report; validated tag/package bytes
+remain unchanged. Cleanup removes only this task's temporary packages, logs,
+credential-free release helper and merged candidate branch. Existing user
+configuration, dependencies, original sessions and running App/services remain.

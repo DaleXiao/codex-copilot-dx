@@ -60,6 +60,11 @@ command, with the same policy/trust requirement. Running services are not restar
 - Local fetching of the exact npm 12 package was blocked by this host's TLS path;
   local npm is 10.9.3. Exact-version installation evidence must come from the CI
   matrix, not from a simulated local npm version or a dry-run alone.
+- The first exact-version CI run caught a test-harness incompatibility: npm 12
+  returns pack JSON keyed by package name, while npm 10/11 return an array. The
+  lifecycle test now accepts both documented shapes and additionally requires one
+  exact package name, target version and expected filename. No installer policy,
+  native-sharp assertion or production timeout was weakened to pass the check.
 
 ## Boundaries and source evidence
 

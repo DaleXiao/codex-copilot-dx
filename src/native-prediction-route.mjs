@@ -3,7 +3,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { readBoundedFileSync } from "./bounded-file.mjs";
 import { atomicWriteFileSync } from "./atomic-file.mjs";
-import { withFileLockSync } from "./lock.mjs";
+import { withFileLock } from "./lock.mjs";
 
 const validPac = value => typeof value === "string" && /^http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac$/.test(value)
   && Number(new URL(value).port) >= 1024 && Number(new URL(value).port) <= 65535;
@@ -49,13 +49,13 @@ export function hasInstalledPredictionRoute({ directory, profile, pacUrl } = {})
 
 // A write is allowed only while the App is closed. The ownership intent is
 // committed first, so an interrupted activation remains identifiable on off.
-export function updatePredictionRoute({ directory, profile, pacUrl, remove = false, assertClosed, direct = false,
+export async function updatePredictionRoute({ directory, profile, pacUrl, remove = false, assertClosed, direct = false,
   writeFile = atomicWriteFileSync } = {}) {
   if (!path.isAbsolute(profile || "") || (!remove && !validPac(pacUrl))) throw new Error("Invalid prediction route binding");
   const recordFile = path.join(directory, "route.json");
   if (remove && !fs.existsSync(recordFile)) return { status: "absent" };
   if (!remove && !direct) return { status: "preserved", reason: "Existing system/company routing was preserved" };
-  return withFileLockSync(`${recordFile}.lock`, () => {
+  return withFileLock(`${recordFile}.lock`, () => {
     const record = recordAt(recordFile, profile);
     if (remove && !record) return { status: "absent" };
     let current;
@@ -90,5 +90,5 @@ export function updatePredictionRoute({ directory, profile, pacUrl, remove = fal
     writeFile(current.file, JSON.stringify(current.value) + "\n");
     if (remove) fs.unlinkSync(recordFile);
     return { status: remove ? "removed" : "installed" };
-  }, { timeoutMs: 100 });
+  }, { timeoutMs: 100, pollMs: 10 });
 }

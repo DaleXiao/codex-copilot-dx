@@ -415,7 +415,7 @@ try {
 
   // Optional native prediction setup must never prevent the core adapter from running.
   nativePrediction = await (await clientIntegrations()).start();
-  const persistentRoute = nativePrediction?.prepareRoute();
+  const persistentRoute = await nativePrediction?.prepareRoute();
 
   // Launch Codex when available. A running App is never forcibly restarted.
   await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app, predictionProfile: nativePrediction?.profile,

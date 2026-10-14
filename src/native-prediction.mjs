@@ -74,7 +74,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
     if (settings.certificateHash && settings.store) {
       try {
         assertCodexClosed(opts);
-        updatePredictionRoute({ ...paths, remove: true, assertClosed: () => assertCodexClosed(opts) });
+        await updatePredictionRoute({ ...paths, remove: true, assertClosed: () => assertCodexClosed(opts) });
         const certificate = readPredictionCertificate(certificateDirectory(settings, paths), { ...opts, allowExpired: true });
         if (certificate.hash !== settings.certificateHash) throw new Error("Prediction certificate changed; trust cleanup was skipped");
         await updatePredictionTrust(settings.store, certificate, { remove: true });
@@ -239,15 +239,15 @@ export async function startNativePrediction({ env = process.env, platform = proc
     pacUrl: transport.pacUrl,
     enabled() { return enabled; },
     healthy() { return transport.healthy() && (!windowsNetwork || windowsNetwork.healthy()); },
-    prepareRoute() {
+    async prepareRoute() {
       try {
         const direct = !windowsNetwork && !networkRoute?.http && !networkRoute?.https && !networkRoute?.bypass?.length;
         if (!direct) {
           // A profile previously configured on a direct network must not pin
           // that local PAC after the environment switches to company routing.
-          updatePredictionRoute({ ...paths, remove: true, assertClosed: () => assertCodexClosed(opts) });
+          await updatePredictionRoute({ ...paths, remove: true, assertClosed: () => assertCodexClosed(opts) });
         }
-        const result = updatePredictionRoute({ ...paths, pacUrl: transport.pacUrl, direct,
+        const result = await updatePredictionRoute({ ...paths, pacUrl: transport.pacUrl, direct,
           assertClosed: () => assertCodexClosed(opts) });
         state?.persistence(result);
         if (result.status === "preserved") warning(`Prediction route persistence skipped: ${result.reason}`);

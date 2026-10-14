@@ -43,6 +43,13 @@ state label. No unrelated optimization or dependency upgrade was added. Clarify
 and polish guidance informed the concise copy and shared alignment; their
 unavailable impeccable dependency was not installed.
 
+The first cross-platform candidate passed all other jobs but Windows/Node 22.15
+exposed a retained same-process synchronous lock in the new route writer's repeated
+operation checks. The new writer now uses the project's existing asynchronous
+ownership lock, as the prediction settings lifecycle already does. Shared
+synchronous-lock security rules were not weakened or refactored. The affected
+route lifecycle and both calling boundaries are awaited and revalidated.
+
 ## Local verification
 
 - Baseline 0.9.33: 1,168 passed, eight Windows-only skips, zero failures.

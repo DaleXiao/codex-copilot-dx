@@ -255,14 +255,14 @@ test("closed-profile route lifecycle and compatible App updates preserve port, t
   const paths = predictionPaths(opts), pref = path.join(paths.profile, "Default", "Preferences");
   fs.writeFileSync(path.join(paths.profile, "Local State"), "{}");fs.writeFileSync(pref, '{"unrelated":42}');
   let bridge = await startNativePrediction(run);t.after(async () => bridge?.close());
-  assert.equal(bridge.prepareRoute().status, "installed");assert.equal(bridge.healthy(), true);
+  assert.equal((await bridge.prepareRoute()).status, "installed");assert.equal(bridge.healthy(), true);
   const port = readPredictionSettings(opts).bridgePort, trust = fs.readFileSync(paths.store);
   await bridge.close();assert.equal(bridge.healthy(), false);
   fs.writeFileSync(archive, "compatible changed synthetic App identity for revalidation");
   let rechecks = 0;
   bridge = await startNativePrediction({ ...run, resolveApp() { rechecks++;return identity(); } });
   assert.equal(rechecks, 1);assert.equal(readPredictionSettings(opts).bridgePort, port);
-  assert.deepEqual(fs.readFileSync(paths.store), trust);assert.equal(bridge.prepareRoute().status, "installed");
+  assert.deepEqual(fs.readFileSync(paths.store), trust);assert.equal((await bridge.prepareRoute()).status, "installed");
   assert.equal(JSON.parse(fs.readFileSync(pref)).unrelated, 42);
   await bridge.close();await runPredictionCommand({ ...run, action: "off" });
   assert.deepEqual(JSON.parse(fs.readFileSync(pref)), { unrelated: 42 });

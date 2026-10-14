@@ -16,77 +16,77 @@ function fixture(t, proxy) {
   return { profile, directory, file, options: { profile, directory, pacUrl: "http://127.0.0.1:12345/proxy.pac", direct: true, assertClosed() {} } };
 }
 
-for (const original of [undefined, { mode: "system" }]) test(`persistent route installs/restores one owned field (${original?.mode || "absent"})`, t => {
+for (const original of [undefined, { mode: "system" }]) test(`persistent route installs/restores one owned field (${original?.mode || "absent"})`, async t => {
   const f = fixture(t, original);
   assert.equal(hasInstalledPredictionRoute(f.options), false);
-  assert.equal(updatePredictionRoute(f.options).status, "installed");
+  assert.equal((await updatePredictionRoute(f.options)).status, "installed");
   assert.equal(hasInstalledPredictionRoute(f.options), true);
   const first = fs.readFileSync(f.file), stamp = fs.statSync(f.file).mtimeMs;
-  assert.equal(updatePredictionRoute({ ...f.options, assertClosed() { assert.fail("idempotent setup must not probe"); } }).status, "installed");
+  assert.equal((await updatePredictionRoute({ ...f.options, assertClosed() { assert.fail("idempotent setup must not probe"); } })).status, "installed");
   assert.deepEqual(fs.readFileSync(f.file), first);assert.equal(fs.statSync(f.file).mtimeMs, stamp);
   const edited = JSON.parse(first);edited.user.newSetting = 42;fs.writeFileSync(f.file, JSON.stringify(edited));
-  assert.equal(updatePredictionRoute({ ...f.options, remove: true }).status, "removed");
+  assert.equal((await updatePredictionRoute({ ...f.options, remove: true })).status, "removed");
   const after = JSON.parse(fs.readFileSync(f.file));
   assert.deepEqual(after.user, { keep: true, newSetting: 42 });
   assert.deepEqual(after.proxy, original);
   assert.equal(fs.existsSync(path.join(f.directory, "route.json")), false);
 });
 
-test("company routing is skipped without creating even a settings lock or calling an App probe", t => {
+test("company routing is skipped without creating even a settings lock or calling an App probe", async t => {
   const f = fixture(t), before = fs.readFileSync(f.file);
-  assert.equal(updatePredictionRoute({ ...f.options, direct: false, assertClosed() { assert.fail(); } }).status, "preserved");
+  assert.equal((await updatePredictionRoute({ ...f.options, direct: false, assertClosed() { assert.fail(); } })).status, "preserved");
   assert.deepEqual(fs.readFileSync(f.file), before);assert.equal(fs.existsSync(f.directory), false);
 });
 
-test("explicit or unknown user proxies are never adopted or replaced", t => {
+test("explicit or unknown user proxies are never adopted or replaced", async t => {
   for (const proxy of [{ mode: "direct" }, { mode: "fixed_servers", server: "company.test:8080" },
     { mode: "pac_script", pac_url: "http://127.0.0.1:12345/proxy.pac" }, { mode: "future" }]) {
     const f = fixture(t, proxy), before = fs.readFileSync(f.file);
-    assert.equal(updatePredictionRoute(f.options).status, "preserved");
+    assert.equal((await updatePredictionRoute(f.options)).status, "preserved");
     assert.deepEqual(fs.readFileSync(f.file), before);assert.equal(fs.existsSync(path.join(f.directory, "route.json")), false);
   }
 });
 
-test("running App and concurrent profile edits are preserved, including activation intent recovery", t => {
+test("running App and concurrent profile edits are preserved, including activation intent recovery", async t => {
   const f = fixture(t), original = fs.readFileSync(f.file);
-  assert.throws(() => updatePredictionRoute({ ...f.options, assertClosed() { throw new Error("App running"); } }), /App running/);
+  await assert.rejects(updatePredictionRoute({ ...f.options, assertClosed() { throw new Error("App running"); } }), /App running/);
   assert.deepEqual(fs.readFileSync(f.file), original);
   let checks = 0;
-  assert.throws(() => updatePredictionRoute({ ...f.options, assertClosed() {
+  await assert.rejects(updatePredictionRoute({ ...f.options, assertClosed() {
     if (++checks === 2) fs.writeFileSync(f.file, JSON.stringify({ user: { changed: true } }));
   } }), /changed during route setup/);
   assert.deepEqual(JSON.parse(fs.readFileSync(f.file)), { user: { changed: true } });
-  assert.equal(updatePredictionRoute(f.options).status, "installed");
+  assert.equal((await updatePredictionRoute(f.options)).status, "installed");
   assert.deepEqual(JSON.parse(fs.readFileSync(f.file)).user, { changed: true });
 });
 
-test("off preserves a user-replaced proxy and removes only CCDX ownership metadata", t => {
-  const f = fixture(t);updatePredictionRoute(f.options);
+test("off preserves a user-replaced proxy and removes only CCDX ownership metadata", async t => {
+  const f = fixture(t);await updatePredictionRoute(f.options);
   fs.writeFileSync(f.file, JSON.stringify({ proxy: { mode: "direct" }, keep: 123 }));
   const before = fs.readFileSync(f.file);
-  assert.equal(updatePredictionRoute({ ...f.options, remove: true }).status, "preserved");
+  assert.equal((await updatePredictionRoute({ ...f.options, remove: true })).status, "preserved");
   assert.deepEqual(fs.readFileSync(f.file), before);assert.equal(hasInstalledPredictionRoute(f.options), false);
 });
 
-test("malformed, oversized, linked and unknown profile/ownership files cannot cause preference writes", t => {
+test("malformed, oversized, linked and unknown profile/ownership files cannot cause preference writes", async t => {
   for (const value of ["invalid JSON", "[]", "x".repeat(1024 * 1024 + 1)]) {
     const f = fixture(t);fs.writeFileSync(f.file, value);
-    assert.throws(() => updatePredictionRoute(f.options));assert.equal(fs.readFileSync(f.file, "utf8"), value);
+    await assert.rejects(updatePredictionRoute(f.options));assert.equal(fs.readFileSync(f.file, "utf8"), value);
   }
   const f = fixture(t);fs.mkdirSync(f.directory);fs.writeFileSync(path.join(f.directory, "route.json"), JSON.stringify({ version: 999 }));
   const before = fs.readFileSync(f.file);
-  assert.throws(() => updatePredictionRoute(f.options), /ownership/);assert.deepEqual(fs.readFileSync(f.file), before);
+  await assert.rejects(updatePredictionRoute(f.options), /ownership/);assert.deepEqual(fs.readFileSync(f.file), before);
   if (process.platform !== "win32") {
     const g = fixture(t), target = path.join(g.profile, "preferences-original");
     fs.renameSync(g.file, target);fs.symlinkSync(target, g.file);
-    assert.throws(() => updatePredictionRoute(g.options), /regular owned file/);
+    await assert.rejects(updatePredictionRoute(g.options), /regular owned file/);
   }
 });
 
-test("uninitialized profiles are deferred and unsafe PAC bindings are rejected", t => {
+test("uninitialized profiles are deferred and unsafe PAC bindings are rejected", async t => {
   const f = fixture(t);fs.unlinkSync(f.file);
-  assert.equal(updatePredictionRoute(f.options).status, "pending");assert.equal(fs.existsSync(f.file), false);
+  assert.equal((await updatePredictionRoute(f.options)).status, "pending");assert.equal(fs.existsSync(f.file), false);
   for (const pacUrl of ["https://external.test/proxy.pac", "http://127.0.0.1:1/proxy.pac", "http://127.0.0.1:99999/proxy.pac", "http://127.0.0.1:12345/proxy.pac?x=1"]) {
-    assert.throws(() => updatePredictionRoute({ ...f.options, pacUrl }));
+    await assert.rejects(updatePredictionRoute({ ...f.options, pacUrl }));
   }
 });

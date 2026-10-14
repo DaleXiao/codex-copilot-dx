@@ -187,6 +187,7 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
       lines.push(status("warn", `  ${model} ${code}: ${message}${failure.retried ? ` [retried:${retryPolicy}]` : ""}`));
     }
   }
+  if (data.http_errors) lines.push(status("info", `HTTP failures: ${count(data.http_errors.total)} observed (separate from model terminal events)`));
   lines.push(status("info", `Models: ${count(models.models)} total; Copilot token ${copilot.token_cached ? `cached (${duration(copilot.token_expires_in_ms)} remaining)` : "not cached"}`));
   const prediction = data.client_integrations?.prediction;
   if (prediction) {

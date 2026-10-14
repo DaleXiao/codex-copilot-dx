@@ -1,10 +1,13 @@
 import os from "node:os";
+import { createAbortAwareSingleflight } from "./bounded-result-cache.mjs";
+import { githubTokenFingerprint } from "./github-identity.mjs";
 import { validateGithubToken } from "./auth.mjs";
 import { AUTH_PROFILE_CODEX, readAuthProfileCredentials } from "./auth-profile.mjs";
 import { buildHeaders, FALLBACK_VSCODE_VERSION, parseApiBase } from "./copilot.mjs";
 import { MAX_UPSTREAM_ERROR_BODY_BYTES, MAX_UPSTREAM_MODEL_CATALOG_BYTES, readBoundedResponseText } from "./upstream-body.mjs";
 
 const DEFAULT_MODELS_TIMEOUT_MS = 10000;
+const modelFlights = new WeakMap();
 const SUPPORTED_ENDPOINTS = [
   ["responses", new Set(["/responses", "/v1/responses"])],
   ["chat", new Set(["/chat/completions"])],
@@ -78,9 +81,21 @@ export async function fetchLiveCopilotModels({
   fetchImpl = fetch,
   timeoutMs = DEFAULT_MODELS_TIMEOUT_MS,
   vscodeVersion = FALLBACK_VSCODE_VERSION,
+  signal,
 } = {}) {
   const credentials = readModelCredentials(home);
+  let flights = modelFlights.get(fetchImpl);
+  if (!flights) { flights = createAbortAwareSingleflight();modelFlights.set(fetchImpl, flights); }
+  const key = `${home}\0${githubTokenFingerprint(credentials.token)}\0${vscodeVersion}\0${timeoutMs}`;
+  const result = await flights.run(key, sharedSignal => lookupLiveModels(credentials, { fetchImpl, timeoutMs, vscodeVersion, signal: sharedSignal }), { signal });
+  return structuredClone(result); // Independent callers retain independent catalog values.
+}
+
+async function lookupLiveModels(credentials, { fetchImpl, timeoutMs, vscodeVersion, signal }) {
   const controller = new AbortController();
+  const cancel = () => controller.abort(signal.reason);
+  signal.addEventListener("abort", cancel, { once: true });
+  if (signal.aborted) cancel();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const validation = await validateGithubToken(credentials.token, {
@@ -130,5 +145,6 @@ export async function fetchLiveCopilotModels({
     throw error;
   } finally {
     clearTimeout(timer);
+    signal.removeEventListener("abort", cancel);
   }
 }

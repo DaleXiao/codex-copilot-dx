@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.9.31",
+  "version": "0.9.32",
   "description": "Use Codex App with GitHub Copilot",
   "author": "Dale Xiao",
   "type": "module",
@@ -41,6 +41,7 @@
   "scripts": {
     "test": "node --test",
     "test:smoke": "node scripts/offline-smoke.mjs && node scripts/sse-idle-replay.mjs",
+    "test:package": "node scripts/package-lifecycle-smoke.mjs",
     "test:e2e": "bash test/e2e.sh",
     "bench": "node scripts/benchmark.mjs",
     "bench:payload": "node scripts/benchmark.mjs --large-payload",
@@ -50,7 +51,7 @@
     "prepublishOnly": "npm run verify"
   },
   "dependencies": {
-    "sharp": "^0.35.3",
+    "sharp": "0.35.3",
     "smol-toml": "1.8.0"
   }
 }

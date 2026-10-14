@@ -12,6 +12,10 @@ import { buildHeaders, FALLBACK_VSCODE_VERSION, parseApiBase } from "./copilot.m
 import { adapterBaseUrl, checkRunningAdapter } from "./running-adapter.mjs";
 import { CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
 import { inspectCodexConfig } from "./codex-config-doctor.mjs";
+import { inspectPackageUpdateEnvironment } from "./package-update.mjs";
+import { inspectCredentialPermissions } from "./credential-permissions.mjs";
+import { imageProviderConfigPath } from "./image-provider-config.mjs";
+import { terminalCell } from "./terminal-text.mjs";
 
 export { inspectCodexConfig };
 
@@ -313,6 +317,8 @@ export async function collectDoctorChecks({
   compatTimeoutMs = 120000,
   inspectAdapterCompatibilityFn = inspectAdapterCompatibility,
   inspectCodexClientFn,
+  inspectUpdateEnvironmentFn = inspectPackageUpdateEnvironment,
+  inspectCredentialPermissionsFn = inspectCredentialPermissions,
 } = {}) {
   if (configOnly) return inspectCodexConfig({ home, host, port });
   checkedDoctorProfile(profile);
@@ -320,6 +326,20 @@ export async function collectDoctorChecks({
     ...inspectAuthProfiles({ home }),
     ...inspectCodexConfig({ home, host, port }),
   ];
+  const updateEnvironment = inspectUpdateEnvironmentFn();
+  const updateMessage = updateEnvironment.state === "different" ? "npm update target differs from this CCDX installation; review PATH/prefix before updating"
+      : updateEnvironment.state === "unavailable" ? "npm update environment could not be verified; installer settings were not changed"
+        : "npm update environment checked (source checkout or matching installation)";
+  const updatePaths = ["node", "npm", "package_root", "prefix", "target"]
+    .filter(key => updateEnvironment[key]).map(key => `${key}=${terminalCell(updateEnvironment[key])}`).join(" / ");
+  checks.push({ kind: updateEnvironment.state === "different" || updateEnvironment.state === "unavailable" ? "warn" : "ok",
+    message: `${updateMessage}${updatePaths ? ` / ${updatePaths}` : ""}` });
+  for (const [label, file] of [["GitHub token", githubTokenPath(home)], ["Image API key", imageProviderConfigPath({ home })]]) {
+    const permissions = inspectCredentialPermissionsFn(file);
+    if (permissions === "missing") continue;
+    checks.push({ kind: permissions === "review" || permissions === "unavailable" ? "warn" : "ok",
+      message: `${label} file permissions: ${permissions}${permissions === "review" ? " (broader access detected; review manually, no ACL was changed)" : ""}` });
+  }
 
   if (online) {
     checks.push(...await inspectAuthProfilesOnline({

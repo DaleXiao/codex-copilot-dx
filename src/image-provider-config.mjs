@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import { readBoundedFileSync } from "./bounded-file.mjs";
 import os from "node:os";
 import path from "node:path";
 import { atomicWriteFileSync } from "./atomic-file.mjs";
@@ -77,7 +77,7 @@ export function validateImageProviderConfig(value, { filePath = "image-provider.
 export function readImageProviderConfig({ env = process.env, home = os.homedir(), strict = false } = {}) {
   const filePath = imageProviderConfigPath({ env, home });
   try {
-    return validateImageProviderConfig(JSON.parse(fs.readFileSync(filePath, "utf8")), { filePath });
+    return validateImageProviderConfig(JSON.parse(readBoundedFileSync(filePath, { encoding: "utf8" })), { filePath });
   } catch (error) {
     if (error?.code === "ENOENT") return null;
     if (strict) {

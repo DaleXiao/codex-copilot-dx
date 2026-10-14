@@ -252,14 +252,13 @@ test("a first-start preference conflict closes its uncommitted listener rather t
   const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => verified, output() {} };
   await runPredictionCommand({ ...run, action: "on" });
   const settings = predictionPaths(opts).settings;
-  const readOriginal = fs.readFileSync;let reads = 0;
-  t.mock.method(fs, "readFileSync", function(file, ...args) {
-    const result = readOriginal.call(fs, file, ...args);
-    if (file === settings && String(result).includes('"enabled": true')) {
-      reads++;
-      if (reads === 2) return JSON.stringify({ ...JSON.parse(result), enabled: false });
+  const openOriginal = fs.openSync;let reads = 0;
+  t.mock.method(fs, "openSync", function(file, ...args) {
+    if (file === settings && ++reads === 2) {
+      const current = JSON.parse(fs.readFileSync(settings, "utf8"));
+      fs.writeFileSync(settings, JSON.stringify({ ...current, enabled: false }));
     }
-    return result;
+    return openOriginal.call(fs, file, ...args);
   });
   await assert.rejects(startNativePrediction(run), /Prediction setup changed during startup/);
   assert.equal(readPredictionSettings(opts).bridgePort, undefined);

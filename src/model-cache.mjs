@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { readBoundedFileSync, MAX_MODEL_CACHE_FILE_BYTES } from "./bounded-file.mjs";
 
 export const MODEL_CACHE_SOFT_TTL_MS = 2 * 60 * 60 * 1000;
 export const MODEL_CACHE_HARD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -32,7 +33,7 @@ export function loadModelCacheEntry({
   now = Date.now,
 } = {}) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(modelCachePath(home), "utf8"));
+    const parsed = JSON.parse(readBoundedFileSync(modelCachePath(home), { maxBytes: MAX_MODEL_CACHE_FILE_BYTES, encoding: "utf8" }));
     const savedAt = Date.parse(parsed.saved_at);
     if (!Number.isFinite(savedAt)) return null;
     const expectedFingerprint = String(credentialFingerprint || "").trim();

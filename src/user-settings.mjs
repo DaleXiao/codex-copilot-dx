@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import { readBoundedFileSync } from "./bounded-file.mjs";
 import os from "node:os";
 import path from "node:path";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
@@ -39,7 +39,7 @@ function invalidSettings(filePath, reason) {
 export function readUserSettings({ env = process.env, home = os.homedir(), strict = false } = {}) {
   const filePath = userSettingsPath({ env, home });
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const parsed = JSON.parse(readBoundedFileSync(filePath, { encoding: "utf8" }));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw invalidSettings(filePath, "expected a JSON object");
     }

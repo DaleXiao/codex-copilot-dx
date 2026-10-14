@@ -381,10 +381,14 @@ export function markStreamFailure() {
 }
 
 export function markResponseModel(model) {
+  const context = currentRequestContext();
+  if (context) context.model = model;
   tracker()?.setModel?.(model);
 }
 
 export function markResponseErrorOrigin(origin) {
+  const context = currentRequestContext();
+  if (context) context.errorOrigin = origin;
   tracker()?.setErrorOrigin?.(origin);
 }
 

@@ -1,5 +1,5 @@
-import fs from "node:fs";
 import os from "node:os";
+import { readBoundedFileSync, MAX_TOKEN_FILE_BYTES } from "./bounded-file.mjs";
 import {
   githubTokenLockPath,
   githubTokenMetadataPath,
@@ -32,7 +32,7 @@ export function authProfilePaths(profile, { home = os.homedir() } = {}) {
 
 function readOptionalFile(filePath) {
   try {
-    return { exists: true, data: fs.readFileSync(filePath) };
+    return { exists: true, data: readBoundedFileSync(filePath, { maxBytes: filePath.endsWith(".account.json") ? undefined : MAX_TOKEN_FILE_BYTES }) };
   } catch (error) {
     if (error?.code === "ENOENT") return { exists: false, data: null };
     throw error;

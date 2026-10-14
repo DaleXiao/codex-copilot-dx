@@ -4,8 +4,13 @@ import { EventEmitter } from "node:events";
 import {
   globalUpdateCommand,
   normalizeUpdateSource,
-  runPackageUpdateCommand,
+  runPackageUpdateCommand as runActualUpdate,
+  inspectPackageUpdateEnvironment,
 } from "../src/package-update.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+const runPackageUpdateCommand = options => runActualUpdate({ inspectEnvironmentFn: () => null, ...options });
 
 function outputBuffer(isTTY = true) {
   let value = "";
@@ -191,4 +196,32 @@ test("synchronous launch errors and signalled exits do not print update success"
   await assert.rejects(runPackageUpdateCommand({ platform: "win32", source: "npm", output: output.stream,
     spawnImpl() { const child = new EventEmitter();queueMicrotask(() => child.emit("exit", null, "SIGINT"));return child; } }), /interrupted by SIGINT/);
   assert.doesNotMatch(output.text(), /Updated codex-copilot-dx/);
+});
+
+test("update preflight detects a different global prefix without changing the caller environment", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-update-env-"));t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const windows = process.platform === "win32";
+  const prefix = path.join(root, "chosen");
+  const target = path.join(prefix, ...(windows ? [] : ["lib"]), "node_modules", "codex-copilot-dx");
+  fs.writeFileSync(path.join(root, windows ? "npm.cmd" : "npm"), "fixture");
+  const env = Object.freeze({ PATH: root, npm_config_prefix: prefix });
+  const result = inspectPackageUpdateEnvironment({ env, nodePath: process.execPath,
+    packageRoot: path.join(root, "original", "node_modules", "codex-copilot-dx"), exec(command, args, options) {
+      assert.equal(windows ? path.basename(command) : command, windows ? "cmd.exe" : "npm");
+      assert.deepEqual(args, windows ? ["/d", "/s", "/v:off", "/c", '"npm.cmd prefix --global"'] : ["prefix", "--global"]);
+      assert.equal(options.env, env);return `${prefix}\n`;
+    } });
+  assert.equal(result.state, "different");assert.equal(result.target, target);
+  assert.equal(result.node, process.execPath);assert.equal(env.PATH, root);
+  assert.equal(inspectPackageUpdateEnvironment({ env, packageRoot: result.target, exec: () => prefix }).state, "matched");
+  assert.equal(inspectPackageUpdateEnvironment({ env, packageRoot: root, exec: () => prefix }).state, "checkout");
+  assert.equal(inspectPackageUpdateEnvironment({ env: { PATH: "" }, exec() { assert.fail(); } }).state, "unavailable");
+  assert.equal(inspectPackageUpdateEnvironment({ env, exec: () => `${prefix}\nextra` }).state, "unavailable");
+});
+
+test("a mismatched npm prefix warns but preserves an explicit user's installation choice", async () => {
+  const calls = [], output = outputBuffer(false);
+  await runActualUpdate({ source: "npm", platform: "darwin", output: output.stream, spawnImpl: successfulSpawn(calls),
+    inspectEnvironmentFn: () => ({ state: "different", target: "/chosen", package_root: "/original" }) });
+  assert.match(output.text(), /Existing PATH and prefix choices were preserved/);assert.equal(calls.length, 1);
 });

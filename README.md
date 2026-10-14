@@ -86,13 +86,13 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
 
 Startup checks GitHub's latest-release web redirect, not npm or the anonymous REST quota, and suggests `ccdx update github`.
 Updates install the exact stable tag; dependencies still use npm's configured registry. Lookup errors identify HTTP refusal, timeout, network failure or invalid redirects.
+Updates warn about mismatched npm targets without changing PATH/prefix. Full `ccdx doctor` reports this target and readonly credential permissions; it never changes ACLs.
+Recent errors separate HTTP and model failures. HTTP metadata retains status, source and IDs, not error bodies or prompts; original errors still reach Codex unchanged.
 
 The dashboard and CLI separate prediction preference, bridge state and observed config traffic; candidate visibility stays unknown.
 Inference, client integration, optional images and management have separate ownership. See [architecture boundaries](docs/ARCHITECTURE.md).
 
-See the [complete command/configuration reference](https://github.com/DaleXiao/codex-copilot-dx/blob/main/docs/REFERENCE.md)
-for authentication recovery, configuration safety, limits, logging, images and client compatibility.
-The same reference is included as `docs/REFERENCE.md` in the installed npm package.
+See the [complete reference](https://github.com/DaleXiao/codex-copilot-dx/blob/main/docs/REFERENCE.md) for authentication, configuration, limits, logging, images and compatibility. It is also included as `docs/REFERENCE.md` in the npm package.
 
 ## Development
 
@@ -102,7 +102,7 @@ npm run verify
 node scripts/config-startup-replay.mjs
 ```
 
-Verification covers unit tests, isolated HTTP/idle-stream replay, performance
-and resource gates, and package contents. These are not an upstream service SLA.
+Verification covers unit tests, isolated HTTP/idle-stream replay, performance/resource gates and package contents—not an upstream service SLA.
+CI also tests Node 22.15/24 on Linux, Windows and macOS, temporary-prefix installation/upgrade and installed image processing.
 
 License: MIT.

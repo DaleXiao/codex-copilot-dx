@@ -111,7 +111,7 @@ function usageTable(summary) {
 export async function handleDashboardApi(req, res, pathname, {
   env = process.env,
   home = os.homedir(),
-  liveModelsFn = () => fetchLiveCopilotModels({ home }),
+  liveModelsFn = options => fetchLiveCopilotModels({ home, ...options }),
   usageSummaryFn,
   authStatusFn = () => authStatus({ home }),
 } = {}) {
@@ -191,8 +191,9 @@ export async function handleDashboardApi(req, res, pathname, {
   }
 
   if (pathname === MODELS_PATH && req.method === "GET") {
+    const abort = createRequestAbort(req, res);
     try {
-      const catalog = await liveModelsFn();
+      const catalog = await liveModelsFn({ signal: abort.signal });
       if (!Array.isArray(catalog?.models) || !Number.isFinite(catalog?.advertised)) {
         throw new Error("Invalid live model catalog");
       }
@@ -211,8 +212,8 @@ export async function handleDashboardApi(req, res, pathname, {
         })),
       });
     } catch (error) {
-      sendJson(res, 502, { error: liveModelError(error) });
-    }
+      if (!res.destroyed && !res.writableEnded) sendJson(res, 502, { error: liveModelError(error) });
+    } finally { abort.cleanup(); }
     return;
   }
 

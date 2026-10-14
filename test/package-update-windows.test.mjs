@@ -17,6 +17,7 @@ function fixture(t) {
   const record = path.join(root, "calls.json"), preload = path.join(root, "network-guard.mjs");
   fs.writeFileSync(path.join(bin, "capture.mjs"), `import fs from "node:fs";
 const file = process.env.CCDX_UPDATE_TEST_RECORD;
+if (process.argv[2] === "prefix") { console.log(process.env.npm_config_prefix);process.exit(0); }
 const rows = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
 rows.push({args: process.argv.slice(2), registry: process.env.npm_config_registry, marker: process.env.CCDX_UPDATE_TEST_MARKER});
 fs.writeFileSync(file, JSON.stringify(rows));process.exitCode = Number(process.env.CCDX_UPDATE_TEST_EXIT || 0);

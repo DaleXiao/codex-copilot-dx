@@ -5,19 +5,35 @@ import os from "node:os";
 import path from "node:path";
 import { githubTokenPath } from "../src/auth.mjs";
 import {
-  collectDoctorChecks,
+  collectDoctorChecks as collectActualChecks,
   inspectAdapterCompatibility,
   inspectAuthProfiles,
   inspectAuthProfilesOnline,
   inspectCodexConfig,
   inspectGitHubTokenOnline,
-  runDoctor,
+  runDoctor as runActualDoctor,
   selectCompatibilityModels,
 } from "../src/doctor.mjs";
+const diagnosticFixtures = { inspectUpdateEnvironmentFn: () => ({ state: "checkout" }),
+  inspectCredentialPermissionsFn: file => fs.existsSync(file) ? "private" : "missing" };
+const collectDoctorChecks = options => collectActualChecks({ ...diagnosticFixtures, ...options });
+const runDoctor = options => runActualDoctor({ ...diagnosticFixtures, ...options });
+
+test("full doctor reports environment and permission evidence without mutation; config-only skips both", async () => {
+  const home = configuredHome();
+  const token = fs.readFileSync(githubTokenPath(home));
+  const checks = await collectDoctorChecks({ home, checkAdapter: false,
+    inspectUpdateEnvironmentFn: () => ({ state: "different", node: "/node", npm: "/npm", package_root: "/old", prefix: "/new", target: "/new/package" }),
+    inspectCredentialPermissionsFn: () => "review" });
+  assert.ok(checks.some(check => check.kind === "warn" && /target=\/new\/package/.test(check.message)));
+  assert.ok(checks.some(check => check.kind === "warn" && /broader access/.test(check.message)));
+  assert.deepEqual(fs.readFileSync(githubTokenPath(home)), token);
+  await collectDoctorChecks({ home, configOnly: true, inspectUpdateEnvironmentFn() { assert.fail(); }, inspectCredentialPermissionsFn() { assert.fail(); } });
+});
 
 function writeFile(filePath, content) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content);
+  fs.writeFileSync(filePath, content, { mode: 0o600 });
 }
 
 function configuredHome(host = "127.0.0.1") {
@@ -232,6 +248,6 @@ test("runDoctor prints a bounded Codex-only summary", async () => {
 
   assert.equal(checks.every((check) => check.kind === "ok"), true);
   assert.equal(lines[0], "ccdx doctor");
-  assert.match(lines.at(-1), /Summary: 10 passed, 0 warning\(s\), 0 error\(s\)/);
+  assert.match(lines.at(-1), new RegExp(`Summary: ${checks.length} passed, 0 warning\\(s\\), 0 error\\(s\\)`));
   assert.equal(lines.some((line) => /Claude|PM Studio/.test(line)), false);
 });

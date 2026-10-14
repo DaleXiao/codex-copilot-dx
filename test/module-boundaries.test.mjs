@@ -15,6 +15,9 @@ import * as usageCli from "../src/usage.mjs";
 import * as usageData from "../src/usage-store.mjs";
 import { terminalCell as cliCell } from "../src/cli-table.mjs";
 import { terminalCell } from "../src/terminal-text.mjs";
+import * as auth from "../src/auth.mjs";
+import * as credentials from "../src/auth-credentials.mjs";
+import * as device from "../src/auth-device-flow.mjs";
 
 test("legacy exports share the exact extracted functions and usage state", () => {
   assert.equal(transport.httpError, errors.httpError);
@@ -26,11 +29,17 @@ test("legacy exports share the exact extracted functions and usage state", () =>
   for (const name of ["authStatus", "authStatusOnline"]) assert.equal(authCli[name], authData[name], name);
   for (const name of ["fetchLiveCopilotModels", "selectableCopilotModels"]) assert.equal(modelCli[name], modelData[name], name);
   for (const [name, value] of Object.entries(usageData)) assert.equal(usageCli[name], value, name);
+  for (const [name, value] of Object.entries(credentials)) {
+    if (name !== "readSavedGithubToken") assert.equal(auth[name], value, name);
+  }
+  for (const name of ["interpretPoll", "requestGithubDeviceCode", "pollGithubDeviceFlow"]) assert.equal(auth[name], device[name], name);
 });
 
 test("shared data and foundation modules do not depend on presentation or composition roots", () => {
   const rules = {
     "auth-status.mjs": ["cli-auth.mjs", "cli-table.mjs", "adapter.mjs", "dashboard-api.mjs"],
+    "auth-credentials.mjs": ["auth.mjs", "auth-device-flow.mjs", "adapter.mjs", "dashboard-api.mjs"],
+    "auth-device-flow.mjs": ["auth.mjs", "auth-credentials.mjs", "adapter.mjs", "dashboard-api.mjs"],
     "live-models.mjs": ["cli-models.mjs", "cli-table.mjs", "adapter.mjs", "dashboard-api.mjs"],
     "upstream-body.mjs": ["http-transport.mjs", "request-admission.mjs", "copilot.mjs", "dashboard-api.mjs", "user-settings.mjs"],
     "usage-store.mjs": ["usage.mjs", "cli-table.mjs", "adapter.mjs", "dashboard-api.mjs"],

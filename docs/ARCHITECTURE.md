@@ -24,6 +24,14 @@ command interpreter only for the fixed `npm.cmd` installer command; stable-tag
 validation remains upstream of launch. macOS/Linux use direct npm argv. There
 is no generic shell runner or package-manager framework, and npm's configured
 registry/proxy environment remains owned by the user.
+Readonly update preflight reports Node/npm, the running package and npm's selected
+global target. A different target warns, but never changes PATH or prefix. Its
+bounded npm probe is limited to explicit update and full doctor commands.
+
+Authentication keeps its public facade in `auth.mjs`. Device-code polling and
+cancellation live in `auth-device-flow.mjs`; local discovery and transactional
+credential storage live in `auth-credentials.mjs`. These modules do not depend
+on the CLI, dashboard or service composition root.
 
 Native prediction has a separate loopback transport and an isolated HTTPS agent.
 Only its two selected hosts use the App-specific route. Non-configuration requests
@@ -75,13 +83,19 @@ and referenced/split histories do not gain filesystem recovery access.
 
 `dashboard/refresh.js` owns the browser-only read lifecycle: one visible-page
 timer, per-group in-flight deduplication, attempt freshness, cancellation and
-last-good snapshots. `ui.js` owns rendering and user selections. Models, usage,
+last-good snapshots. `ui.js` composes the controls and refresh resources;
+`status.js` owns status/failure rendering, and `usage.js` owns usage rendering
+and date selection. Their state stays page-local. Models, usage,
 status/account and animation metadata remain independent resources; no timer
 or data watcher is added to the Node service. Animation frames load once per
 page when opened, and read refresh does not overwrite an unsaved choice.
 `upstream-body.mjs` is the shared bounded response reader. The transport retains
 its existing exports; live model lookup uses the same 8 MiB catalog limit as
 core model discovery, without importing the request lifecycle or UI layer.
+Overlapping live queries with the same credential fingerprint, home, fetch
+implementation and lookup parameters share one in-flight lookup. A waiter can
+cancel independently; the last cancellation aborts the lookup. Completed results
+are not cached as live, and each waiter receives its own snapshot.
 
 ## Configuration ownership
 
@@ -90,6 +104,12 @@ selection and are not inferred from that directory. CCDX writers use a shared
 per-file lock, reread current contents and preserve unrelated values. Locks do
 not coordinate editors or other applications that ignore them. Read-only status
 and doctor commands do not write configuration.
+Small local reads use one open file descriptor with byte limits: 1 MiB for
+settings/auth metadata, 64 KiB for token files, and 9 MiB for cached model data
+(including metadata). This does not change session/history limits or symlink
+semantics. Full doctor checks credential permissions without reading secrets:
+POSIX mode bits or Windows allow entries are review evidence, not a complete
+effective-access calculation. It never rewrites ACLs or blocks startup.
 
 Core inference interfaces remain unchanged. This change adds a concrete
 composition boundary; it does not relocate every file or add speculative APIs.
@@ -100,9 +120,20 @@ Prediction preference, bridge readiness and observed configuration responses are
 different states. None proves that a candidate appeared in the App. The dashboard
 keeps that result unknown. Integration diagnostics retain bounded, redacted
 metadata, not conversation or image contents.
+HTTP failures have a separate 20-entry metadata ring (`http_errors`): status,
+safe technical code, model when observed, route, source and request IDs. Original
+HTTP error bodies are returned unchanged but not saved in that ring. Model
+terminal diagnostics and their counters retain their existing meaning. The
+dashboard merges recent HTTP, model and request-timeline failures for display.
 
 Tests cover module dependency direction, default-off behavior, concurrent writers,
 proxy handshakes, TLS validation, streaming, history isolation and release lookup.
 Performance measurements distinguish request preparation from model latency.
 Release reports describe a specific environment, not an SLA or a guarantee of
 compatibility with every future client or corporate network policy.
+CI runs Node 22.15 and 24 on Linux, Windows and macOS. The owned temporary-prefix
+package smoke installs 0.9.31, upgrades to the packed candidate and exercises
+installed sharp without provider calls. It does not claim a live Codex UI test
+or the GitHub updater's network installation; the Windows command chain has a
+separate actual-process fixture. Direct runtime dependencies are exact versions;
+the lockfile fixes CI transitives, not consumers' future transitive resolution.

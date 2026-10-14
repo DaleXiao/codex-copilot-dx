@@ -29,13 +29,13 @@ test("user settings: review model and bound effort save together and resolve wit
     assert.deepEqual(readUserSettings(options), {
       terminal_animation: "twin", auto_review_reasoning: { model: "gpt-6.1-sol", effort: "high" },
     });
-    const originalRead = fs.readFileSync;
+    const originalRead = fs.openSync;
     let reads = 0;
-    fs.readFileSync = function (target, ...args) { if (target === filePath) reads += 1; return originalRead.call(this, target, ...args); };
+    fs.openSync = function (target, ...args) { if (target === filePath) reads += 1; return originalRead.call(this, target, ...args); };
     try {
       assert.deepEqual(autoReviewPreference(options), { model: "gpt-6.1-sol", source: "default", reasoningEffort: "high" });
       assert.equal(reads, 1);
-    } finally { fs.readFileSync = originalRead; }
+    } finally { fs.openSync = originalRead; }
     assert.deepEqual(autoReviewPreference({ env: { CCDX_AUTO_REVIEW_MODEL: "gpt-5.5" }, home }), {
       model: "gpt-5.5", source: "environment", reasoningEffort: undefined,
     });

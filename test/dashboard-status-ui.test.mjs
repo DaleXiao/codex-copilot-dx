@@ -5,7 +5,8 @@ import test from "node:test";
 
 const html = readFileSync(new URL("../src/dashboard/index.html", import.meta.url), "utf8");
 const script = readFileSync(new URL("../src/dashboard/ui.js", import.meta.url), "utf8");
-const renderScript = script.split('\nelement("refresh").addEventListener(')[0]
+const viewScripts = ["status", "usage"].map(name => readFileSync(new URL(`../src/dashboard/${name}.js`, import.meta.url), "utf8")).join("\n");
+const renderScript = viewScripts + "\n" + script.split('\nelement("refresh").addEventListener(')[0]
   + script.slice(script.indexOf("function emptyTable("), script.indexOf("async function loadModels("));
 
 test("request-context rows are lazy, bounded, text-only and distinguish missing values from zero", () => {
@@ -35,8 +36,7 @@ test("request-context rows are lazy, bounded, text-only and distinguish missing 
 });
 
 test("dashboard usage renders percentages, zero hits and unknown rates in the seventh column", () => {
-  const usageScript = script.slice(script.indexOf("function usageValues(row)"), script.indexOf("async function loadUsage()"));
-  const usageValues = runInNewContext(`${usageScript}\nusageValues;`, {
+  const usageValues = runInNewContext(`${viewScripts}\nglobalThis.ccdxDashboardUsage.create({ number }).usageValues;`, {
     number: (value) => value ?? "—",
   });
   const row = { model: "test", requests: 1, input_tokens: 100, cache_read_tokens: 80,

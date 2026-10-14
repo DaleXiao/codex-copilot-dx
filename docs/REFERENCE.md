@@ -207,6 +207,16 @@ Contention fails with a retry message instead of stealing a live lock. Other
 applications do not participate in these locks, so snapshot conflict checks still
 apply; the locks do not claim a global filesystem transaction.
 
+Since `0.9.32`, local settings/auth metadata reads are capped at 1 MiB, token
+files at 64 KiB, and saved model catalog files at 9 MiB including metadata.
+Oversized files remain untouched. Existing strict readers reject them; optional
+cache readers treat them as unusable. Conversation files, HTTP request limits
+and runtime history/cache limits are unchanged.
+Full `ccdx doctor` reports npm's global installation target and readonly credential
+permission evidence. Windows checks existing NTFS allow entries for other
+identities, without changing ACLs. This is not a full effective-access audit;
+unavailable checks warn. `doctor config` performs neither npm nor ACL probes.
+
 ### Core adapter
 
 One in-process adapter listens on `127.0.0.1:2026` by default and exposes:
@@ -311,7 +321,7 @@ npm exec --yes --package=codex-copilot-dx@latest -- ccdx
 
 On a normal launch, CCDX:
 
-1. Prints the installed package version and checks for a newer npm release in the background.
+1. Prints the installed package version and checks GitHub's latest stable release in the background (not npm).
 2. Reuses a compatible running adapter when available; otherwise it reuses a compatible local Copilot credential or starts GitHub Device Flow when authentication is required.
 3. Loads a usable model cache or attempts a live refresh, then starts listening. A cache older than two hours refreshes in the background; a fresh cache can be used immediately. A failed refresh retains the last-known-good list when one is available.
 4. Checks the startup-managed settings in `CODEX_HOME/config.toml` (default `~/.codex/config.toml`), including the local `/v1` endpoint.
@@ -365,6 +375,10 @@ ccdx models
 ```
 
 This performs a fresh, read-only GitHub Copilot model-directory lookup without starting the adapter, opening Device Flow, reading the local model cache, or consuming an inference request. It lists selectable GPT model IDs, providers, advertised APIs, and preview status. Catalog availability does not guarantee that a later inference request will avoid quota, rate-limit, or policy enforcement.
+
+Concurrent identical live lookups share only the active request. Caller
+cancellation is independent; results are not retained as a fresh catalog after
+completion. The dashboard cancels its waiter when the read is abandoned.
 
 Interactive terminals use aligned tables for `models`, `auth status`, and `usage`. Redirected or piped output retains the plain-text layout for scripts; use `--format table` or `--format plain` when a command offers an explicit format override.
 
@@ -504,7 +518,7 @@ Versions through `0.9.30` can fail with `spawn EINVAL` before the Windows
 installer starts. To bootstrap this fix, run the installer directly:
 
 ```powershell
-npm.cmd install -g --allow-git=all 'github:DaleXiao/codex-copilot-dx#v0.9.31'
+npm.cmd install -g --allow-git=all 'github:DaleXiao/codex-copilot-dx#v0.9.32'
 ccdx.cmd version
 ```
 
@@ -642,6 +656,15 @@ The status endpoint is restricted to the socket's real loopback address even whe
 `stream_performance.by_route` also reports `request_ttft_ms`, measured from adapter entry to the first observed output delta, including local preparation. The existing `ttft_ms` continues to start at upstream dispatch. Neither timestamp means the client has drained or displayed the output. `preparation_ms` contains bounded histograms for admission (including history reservations), body reading/decompression/JSON parsing, history materialization/compact preparation, image optimization, and request serialization. Each sample measures one operation, including failed operations; retries can add samples. These are diagnostic intervals rather than a complete breakdown of request time: body reading includes internal decoded-body admission waits; authentication, routing, and other preparation are not individually timed. Non-streaming requests contribute preparation samples without inventing a first-token measurement.
 
 `stream_performance.recent_requests` retains at most 20 finished Responses/compact requests. Each entry contains a CCDX-owned request ID, start timestamp, bounded model/route labels, HTTP status, final model outcome, known error origin, last observed phase and provider-call count. `timings_ms` includes cumulative preparation durations and offsets from adapter entry for the first upstream dispatch, latest upstream headers, first output, latest observed upstream activity, terminal and finish. Null means not observed, not zero. Stage durations can overlap and should not be added into a total. Provider-call counts include compatibility attempts but exclude OAuth exchanges and low-level connection retries. Streams update a single activity timestamp per read; no content, headers, opaque state or unbounded event list is retained. Entries are process-local and reset on restart; normal status refresh reads them without new upstream calls or background polling.
+
+`http_errors` separately counts HTTP failures on tracked API routes and retains
+the latest 20. Entries contain HTTP status, technical code when safe, observed
+model, route/source and request IDs; the message is a fixed local explanation.
+They never retain the original body, prompt, URL query or headers. Original
+errors are still returned unchanged. Management/dashboard reads are excluded.
+The recent-error panel merges these entries with model failures and request
+timelines, retaining at most ten visible items. HTTP counts do not change model
+terminal counts; unknown sources/models remain unknown.
 
 Every API response includes a safe `X-Request-Id` for correlation. To include the same ID in related terminal and file log lines, start with:
 

@@ -6,6 +6,7 @@ import { createUsageAnalytics } from "../src/usage-analytics.mjs";
 import { summarizeUsage } from "../src/usage.mjs";
 
 const script = readFileSync(new URL("../src/dashboard/ui.js", import.meta.url), "utf8");
+const viewScripts = ["status", "usage"].map(name => readFileSync(new URL(`../src/dashboard/${name}.js`, import.meta.url), "utf8")).join("\n");
 const refreshScript = readFileSync(new URL("../src/dashboard/refresh.js", import.meta.url), "utf8");
 const languageScript = readFileSync(new URL("../src/dashboard/language.js", import.meta.url), "utf8");
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -69,7 +70,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   });
   if (language) runInContext(languageScript, context);
   runInContext(refreshScript, context);
-  const api = runInContext(`${script}\n({ renderFailures, renderAuth, loadAuth, loadAnimation, loadUsage, renderAnalytics, selectUsageDay, dashboardRefresh, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, context);
+  const api = runInContext(`${viewScripts}\n${script}\n({ renderFailures, renderAuth, loadAuth, loadAnimation, loadUsage, renderAnalytics, selectUsageDay, dashboardRefresh, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, context);
   ready.forEach((fn) => fn());
   return { api, nodes, requests, timers, scheduled,
     advance(ms) { now += ms; },

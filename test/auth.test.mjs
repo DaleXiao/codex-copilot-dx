@@ -71,7 +71,7 @@ test("interpretPoll: empty access_token is not done", () => {
 test("githubReauthMessage: points users to the token file and login command", () => {
   const message = githubReauthMessage("Saved token is invalid.", "/tmp/ccdx-home");
   assert.match(message, /Saved token is invalid\./);
-  assert.match(message, /rm '\/tmp\/ccdx-home\/\.local\/share\/copilot-api\/github_token'/);
+  assert.ok(message.includes(`rm '${githubTokenPath("/tmp/ccdx-home")}'`));
   assert.match(message, /ccdx/);
 });
 
@@ -173,7 +173,7 @@ test("ensureAuth: imports a valid local auth token before device flow", async ()
   });
 
   assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_local");
-  assert.equal((fs.statSync(githubTokenPath(home)).mode & 0o777), 0o600);
+  if (process.platform !== "win32") assert.equal((fs.statSync(githubTokenPath(home)).mode & 0o777), 0o600);
   assert.equal(lines.some((line) => /Imported GitHub token from local auth file/.test(line)), true);
 });
 
@@ -795,9 +795,9 @@ test("writeToken: commits metadata last as a 0600 pair", () => {
   });
 
   assert.deepEqual(writes, [githubTokenPath(home), githubTokenMetadataPath(home)]);
-  assert.equal(fs.statSync(githubTokenPath(home)).mode & 0o777, 0o600);
-  assert.equal(fs.statSync(githubTokenMetadataPath(home)).mode & 0o777, 0o600);
-  assert.equal(fs.statSync(path.dirname(githubTokenPath(home))).mode & 0o777, 0o700);
+  if (process.platform !== "win32") assert.equal(fs.statSync(githubTokenPath(home)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(githubTokenMetadataPath(home)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(path.dirname(githubTokenPath(home))).mode & 0o777, 0o700);
   assert.equal(readGithubTokenMetadata(home, "ghu_pair").login, "pair-user");
 });
 
@@ -832,5 +832,5 @@ test("writeToken: a token without identity removes stale metadata last", () => {
 
   assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_unbound");
   assert.equal(fs.existsSync(githubTokenMetadataPath(home)), false);
-  assert.equal(fs.statSync(githubTokenPath(home)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(githubTokenPath(home)).mode & 0o777, 0o600);
 });

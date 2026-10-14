@@ -13,6 +13,31 @@ import { prepareResponsesRequest, rememberResponseHistory } from "../src/respons
 import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
 import { invokeAdapterRequest, invokeAdapter } from "../test-support/adapter.mjs";
 
+test("HTTP diagnostics distinguish upstream refusal and local validation without changing responses", async t => {
+  const upstreamBody = JSON.stringify({ error: { code: "quota_exceeded", message: "private original error" } });
+  const handler = createAdapterHandler({ getCachedModelEndpointsFn: () => ["/responses"], responsesFn: async () => new Response(upstreamBody,
+    { status: 429, headers: { "content-type": "application/json", "x-request-id": "upstream-fixture" } }) });
+  t.after(() => handler.cleanup?.());
+  const call = (url, body, method = "POST") => {
+    const req = jsonRequest(Buffer.from(body), undefined, { "content-type": "application/json" });
+    req.method = method;req.url = url;req.socket = { remoteAddress: "127.0.0.1" };
+    return invokeAdapterRequest({}, req, handler);
+  };
+  const refusal = await call("/v1/responses", JSON.stringify({ model: "gpt-6.1-sol", input: "secret prompt", stream: false }));
+  assert.equal(refusal.status, 429);assert.equal(refusal.text, upstreamBody);
+  const badJson = await call("/v1/responses", "invalid json");assert.equal(badJson.status, 400);
+  const observed = JSON.parse((await call("/_ccdx/status", "", "GET")).text).http_errors.recent;
+  assert.equal(observed[0].code, "quota_exceeded");assert.equal(observed[0].origin, "upstream_http");
+  assert.equal(observed[0].model, "gpt-6.1-sol");assert.equal(observed[0].upstream_request_id, "upstream-fixture");
+  assert.equal(observed[1].origin, "client_validation");
+  for (let i = 0; i < 23; i++) assert.equal((await call("/missing?private=query", "{}")).status, 404);
+  const status = JSON.parse((await call("/_ccdx/status", "", "GET")).text);
+  assert.equal(status.http_errors.total, 25);assert.equal(status.http_errors.recent.length, 20);
+  assert.equal(status.response_failures.total, 0);
+  assert.doesNotMatch(JSON.stringify(status.http_errors), /secret prompt|private original error|private=query|invalid json/);
+  assert.equal(status.http_errors.recent[0].http_status, 404);
+});
+
 function jsonRequest(body, contentEncoding, headers = {}) {
   const req = Readable.from([body]);
   req.headers = { ...headers };

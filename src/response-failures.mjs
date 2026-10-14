@@ -99,3 +99,10 @@ export function createResponseFailureDiagnostics({
     },
   };
 }
+
+export function buildHttpFailureDetails({ statusCode, route, requestId, model, code, origin, headers }) {
+  const details = responseFailureDetails({ model, error: { code: typeof code === "string" && /^[a-z\d_.:-]{1,80}$/i.test(code) ? code : `http_${statusCode}`,
+    message: "HTTP request failed; original response was preserved." } }, "http.error", { headers });
+  return { ...details, request_id: requestId, http_status: statusCode, route,
+    origin: origin || (route === "not_found" ? "route" : "unclassified"), local_message: true };
+}

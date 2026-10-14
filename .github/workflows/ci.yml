@@ -24,7 +24,24 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Verify Windows updater process, certificates, worker, profile, ACL, launch and recovery
-        run: node --test test/package-update.test.mjs test/package-update-windows.test.mjs test/native-prediction-windows.test.mjs test/launcher.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs test/dashboard-refresh.test.mjs test/dashboard-analytics-ui.test.mjs test/dashboard-language.test.mjs test/dashboard-theme.test.mjs test/upstream-headers.test.mjs test/cli-models.test.mjs test/module-boundaries.test.mjs test/http-transport.test.mjs
+        run: node --test test/package-update.test.mjs test/package-update-windows.test.mjs test/bounded-file.test.mjs test/auth.test.mjs test/auth-profile.test.mjs test/doctor.test.mjs test/adapter.test.mjs test/response-failures.test.mjs test/native-prediction-windows.test.mjs test/launcher.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs test/dashboard-refresh.test.mjs test/dashboard-analytics-ui.test.mjs test/dashboard-language.test.mjs test/dashboard-theme.test.mjs test/dashboard-status-ui.test.mjs test/upstream-headers.test.mjs test/cli-models.test.mjs test/module-boundaries.test.mjs test/http-transport.test.mjs
+      - run: npm run test:package
+  macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.15.0", "24.x"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:smoke
+      - run: npm run test:package
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -39,6 +56,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run verify
+      - run: npm run test:package
       - run: node scripts/config-startup-replay.mjs
   codex-client:
     runs-on: ubuntu-latest

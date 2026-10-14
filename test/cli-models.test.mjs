@@ -61,6 +61,44 @@ test("selectableCopilotModels sanitizes terminal control characters", () => {
   assert.throws(() => selectableCopilotModels({ object: "list" }), /contained no model list/);
 });
 
+test("live model queries share only concurrent work and return independent catalogs", async t => {
+  const home = tokenHome();t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  let catalogCalls = 0, validationCalls = 0, release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const fetchImpl = async url => {
+    if (url.endsWith("/user")) return Response.json({ login: "fixture", id: 1 });
+    if (url.endsWith("/token")) { validationCalls++;return Response.json({ token: "fixture-service", expires_at: Date.now() / 1000 + 1800 }); }
+    catalogCalls++;await gate;return Response.json({ data: [model("gpt-6.1-sol", "OpenAI", ["/responses"])] });
+  };
+  const reads = Array.from({ length: 12 }, () => fetchLiveCopilotModels({ home, fetchImpl }));
+  await new Promise(resolve => setTimeout(resolve, 10));release();
+  const results = await Promise.all(reads);
+  assert.equal(catalogCalls, 1);assert.equal(validationCalls, 1);
+  results[0].models[0].id = "changed";assert.equal(results[1].models[0].id, "gpt-6.1-sol");
+  await fetchLiveCopilotModels({ home, fetchImpl });assert.equal(catalogCalls, 2, "settled values are never reused as live");
+});
+
+test("live query cancellation is waiter-owned and credential changes start separate work", async t => {
+  const home = tokenHome();t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  let release, catalogs = 0, sharedAborted = false;
+  const gate = new Promise(resolve => { release = resolve; });
+  const fetchImpl = async (url, options) => {
+    if (url.endsWith("/user")) return Response.json({ login: "fixture", id: 1 });
+    if (url.endsWith("/token")) return Response.json({ token: "fixture-service", expires_at: Date.now() / 1000 + 1800 });
+    catalogs++;options.signal.addEventListener("abort", () => { sharedAborted = true; });await gate;
+    return Response.json({ data: [model("gpt-6.1-sol", "OpenAI", ["/responses"])] });
+  };
+  const controller = new AbortController();
+  const cancelled = fetchLiveCopilotModels({ home, fetchImpl, signal: controller.signal });
+  const kept = fetchLiveCopilotModels({ home, fetchImpl });
+  const rejected = assert.rejects(cancelled, { name: "AbortError" });controller.abort();await rejected;
+  assert.equal(sharedAborted, false);
+  fs.writeFileSync(githubTokenPath(home), "different-synthetic-token");
+  const different = fetchLiveCopilotModels({ home, fetchImpl });
+  await new Promise(resolve => setTimeout(resolve, 10));release();await Promise.all([kept, different]);
+  assert.equal(catalogs, 2);assert.equal(sharedAborted, false);
+});
+
 test("fetchLiveCopilotModels validates the saved Codex token and queries its advertised endpoint", async () => {
   const home = tokenHome();
   const tokenPath = githubTokenPath(home);

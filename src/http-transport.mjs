@@ -7,6 +7,7 @@ import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { httpError } from "./http-errors.mjs";
 import { admissionAbortError, contentEncodings, requestContentLength } from "./request-admission.mjs";
+import { currentRequestContext } from "./request-context.mjs";
 
 export { httpError } from "./http-errors.mjs";
 export { createRequestAdmission } from "./request-admission.mjs";
@@ -264,6 +265,9 @@ export function sendJsonError(res, err, fallbackStatus = 400) {
     return;
   }
   const statusCode = err?.statusCode || fallbackStatus;
+  const context = currentRequestContext();
+  context?.onHttpError?.({ code: err?.code || err?.jsonBody?.error?.code,
+    origin: context.errorOrigin || (statusCode < 500 ? "client_validation" : "local_transport") });
   const headers = { "Content-Type": "application/json" };
   if (statusCode === 408 || statusCode === 413) headers.Connection = "close";
   res.writeHead(statusCode, headers);
@@ -271,6 +275,9 @@ export function sendJsonError(res, err, fallbackStatus = 400) {
 }
 
 export function sendUpstreamError(res, response, text) {
+  let code;
+  try { code = JSON.parse(text)?.error?.code; } catch {}
+  currentRequestContext()?.onHttpError?.({ code, origin: "upstream_http", headers: response.headers });
   if (!res.headersSent) {
     res.writeHead(response.status || 502, safeUpstreamResponseHeaders(response.headers, {
       defaultContentType: "application/json",

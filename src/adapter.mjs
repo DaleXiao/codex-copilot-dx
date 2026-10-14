@@ -15,7 +15,7 @@ import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
 import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
 import { createResponsesImagePressureController } from "./responses-image-pressure.mjs";
-import { createResponseFailureDiagnostics } from "./response-failures.mjs";
+import { createResponseFailureDiagnostics, buildHttpFailureDetails } from "./response-failures.mjs";
 import {
   ADAPTER_CACHE_PATH,
   cacheRuntimeSnapshot,
@@ -63,7 +63,7 @@ export {
 } from "./responses-request.mjs";
 
 const ADAPTER_RUNTIME_CONFIG = loadRuntimeConfig();
-const DASHBOARD_PATHS = new Set(["/", "/ui.css", "/theme.js", "/language.js", "/refresh.js", "/ui.js"]);
+const DASHBOARD_PATHS = new Set(["/", "/ui.css", "/theme.js", "/language.js", "/refresh.js", "/status.js", "/usage.js", "/ui.js"]);
 const DASHBOARD_API_PATHS = new Set(["/_ccdx/ui/animation", "/_ccdx/ui/models/live", "/_ccdx/ui/usage", "/_ccdx/ui/auth"]);
 
 export function requestPath(reqUrl) {
@@ -170,6 +170,7 @@ export function createAdapterHandler(options = {}) {
   const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics();
   const imagePressure = options.imagePressure || createResponsesImagePressureController();
   const responseFailures = options.responseFailures || createResponseFailureDiagnostics();
+  const httpErrors = createResponseFailureDiagnostics({ maxEntries: 20 });
   let imageMcpHandler = options.imageMcpHandler || null;
   const responsesHandler = createResponsesHandler({
     acquireRequest,
@@ -225,7 +226,7 @@ export function createAdapterHandler(options = {}) {
         return;
       }
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      res.end(JSON.stringify(runtimeStatusPayload({
+      res.end(JSON.stringify({ ...runtimeStatusPayload({
         metrics: requestMetrics,
         streamPerformance: streamPerformanceMetrics,
         admission: acquireRequest,
@@ -237,7 +238,7 @@ export function createAdapterHandler(options = {}) {
         codexModelRegistry,
         codexModelCatalog,
         clientIntegrations: options.clientIntegrationSnapshot?.(),
-      })));
+      }), http_errors: httpErrors.snapshot() }));
       return;
     }
 
@@ -402,9 +403,13 @@ export function createAdapterHandler(options = {}) {
       } catch {}
     }
     let requestFinished = false;
+    let httpEvidence = {}, context;
     const finishRequest = ({ statusCode = 0, aborted = false } = {}) => {
       if (requestFinished) return;
       requestFinished = true;
+      if (trackRequest && statusCode >= 400) {
+        try { httpErrors.record(buildHttpFailureDetails({ ...httpEvidence, statusCode, route: routeName, requestId, model: context?.model })); } catch {}
+      }
       try { complete({ statusCode, aborted }); } catch {}
       try { streamPerformance?.finish({ failed: aborted || statusCode >= 400, aborted, statusCode }); } catch {}
       try { finishTerminalActivity(); } catch {}
@@ -436,12 +441,14 @@ export function createAdapterHandler(options = {}) {
     }
 
     try {
-      const result = runWithRequestContext({
+      context = {
         requestId,
         pathname,
         showRequestId: options.showRequestId === true,
         streamPerformance,
-      }, () => dispatchRequest(req, res, pathname));
+        onHttpError: evidence => { httpEvidence = evidence; },
+      };
+      const result = runWithRequestContext(context, () => dispatchRequest(req, res, pathname));
       if (result && typeof result.then === "function") {
         return result.catch((error) => {
           containUnexpectedError(error);

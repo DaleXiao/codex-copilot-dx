@@ -141,7 +141,7 @@ test("dashboard assets serve on loopback without initializing image tools or aff
   assert.match(page.body, /CCDX · Local dashboard/);
   assert.match(page.body, /id="theme-toggle"/);
   assert.match(page.body, /VISIBLE PAGE UPDATES/);
-  for (const [url, type] of [["/ui.css", "text/css"], ["/theme.js", "text/javascript"], ["/language.js", "text/javascript"], ["/refresh.js", "text/javascript"], ["/ui.js", "text/javascript"]]) {
+  for (const [url, type] of [["/ui.css", "text/css"], ["/theme.js", "text/javascript"], ["/language.js", "text/javascript"], ["/refresh.js", "text/javascript"], ["/status.js", "text/javascript"], ["/usage.js", "text/javascript"], ["/ui.js", "text/javascript"]]) {
     const asset = await invoke(handler, { url, ...request });
     assert.equal(asset.statusCode, 200);
     assert.match(asset.headers["Content-Type"], new RegExp(`^${type}`));
@@ -158,7 +158,7 @@ test("dashboard assets serve on loopback without initializing image tools or aff
 
 test("dashboard and local status reject LAN clients and hostile Host headers", async () => {
   const handler = createAdapterHandler();
-  for (const url of ["/", "/ui.css", "/theme.js", "/language.js", "/refresh.js", "/ui.js"]) {
+  for (const url of ["/", "/ui.css", "/theme.js", "/language.js", "/refresh.js", "/status.js", "/usage.js", "/ui.js"]) {
     const lan = await invoke(handler, { url, remoteAddress: "10.0.0.5", headers: { host: "127.0.0.1:2026" } });
     const rebinding = await invoke(handler, { url, headers: { host: "dashboard.example:2026" } });
     assert.equal(lan.statusCode, 403);

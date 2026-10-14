@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { readBoundedFileSync } from "./bounded-file.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash, X509Certificate, createPrivateKey, createPublicKey } from "node:crypto";
 import { atomicWriteFileSync } from "./atomic-file.mjs";
@@ -27,7 +28,7 @@ export function predictionPaths({ env = process.env, home = os.homedir(), platfo
 export function readPredictionSettings(options = {}) {
   const { settings } = predictionPaths(options);
   try {
-    const value = JSON.parse(fs.readFileSync(settings, "utf8"));
+    const value = JSON.parse(readBoundedFileSync(settings, { encoding: "utf8" }));
     if (value?.version !== 1 || typeof value.enabled !== "boolean") throw new Error();
     return value;
   } catch (error) {

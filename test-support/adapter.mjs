@@ -9,7 +9,7 @@ function jsonRequest(body, contentEncoding, headers = {}) {
   return req;
 }
 
-export async function invokeAdapterRequest(options, req) {
+export async function invokeAdapterRequest(options, req, sharedHandler) {
   const res = new EventEmitter();
   res.destroyed = false;
   res.writableEnded = false;
@@ -38,7 +38,7 @@ export async function invokeAdapterRequest(options, req) {
     return res;
   };
 
-  const handler = createAdapterHandler(options);
+  const handler = sharedHandler || createAdapterHandler(options);
   try {
     const pending = handler(req, res);
     await Promise.all([pending, finished]);
@@ -48,7 +48,7 @@ export async function invokeAdapterRequest(options, req) {
       text: Buffer.concat(chunks).toString("utf8"),
     };
   } finally {
-    handler.cleanup?.();
+    if (!sharedHandler) handler.cleanup?.();
   }
 }
 

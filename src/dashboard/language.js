@@ -157,6 +157,8 @@
     "request_id": ["Local request ID", "本机编号"],
     "outcome": ["Result", "处理结果"],
     "origin": ["Reported by", "结果来源"],
+    "route": ["Request route", "请求入口"],
+    "HTTP request failed; original response was preserved.": ["HTTP request failed. The original error was returned.", "请求失败，已返回原始错误。"],
     "phase": ["Last step", "最后步骤"],
     "http_status": ["HTTP status", "返回状态"],
     "upstream_attempts": ["Send attempts", "发送次数"],

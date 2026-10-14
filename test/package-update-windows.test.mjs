@@ -17,6 +17,8 @@ function fixture(t) {
   const record = path.join(root, "calls.json"), preload = path.join(root, "network-guard.mjs");
   fs.writeFileSync(path.join(bin, "capture.mjs"), `import fs from "node:fs";
 const file = process.env.CCDX_UPDATE_TEST_RECORD;
+if (process.argv[2] === "--version") { console.log("12.0.1");process.exit(0); }
+if (process.argv[2] === "config") { console.log("allow-remote=none\\nregistry=" + process.env.npm_config_registry);process.exit(0); }
 if (process.argv[2] === "prefix") { console.log(process.env.npm_config_prefix);process.exit(0); }
 const rows = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
 rows.push({args: process.argv.slice(2), registry: process.env.npm_config_registry, marker: process.env.CCDX_UPDATE_TEST_MARKER});
@@ -55,6 +57,13 @@ test("real Windows updater executes npm.cmd under paths with spaces, Unicode and
   assert.deepEqual(f.calls(), [{ args: ["install", "--global", "codex-copilot-dx@latest"],
     registry: f.env.npm_config_registry, marker: f.env.CCDX_UPDATE_TEST_MARKER }]);
   assert.match(output.join(""), /Updated codex-copilot-dx/);
+});
+
+test("real Windows per-update remote consent keeps strict saved policy and does not accept arbitrary shell fragments", windowsOnly, async t => {
+  const f = fixture(t);f.env.npm_config_allow_remote = "none";
+  await runPackageUpdateCommand({ source: "npm", allowRemote: true, env: f.env, output: { write() {} } });
+  assert.deepEqual(f.calls()[0].args, ["install", "--global", "--allow-remote=all", "codex-copilot-dx@latest"]);
+  assert.equal(f.env.npm_config_allow_remote, "none");
 });
 
 test("real Windows CLI npm/GitHub updates and installer failure use the same fixed process chain", windowsOnly, t => {

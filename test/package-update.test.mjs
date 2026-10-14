@@ -7,11 +7,12 @@ import {
   runPackageUpdateCommand as runActualUpdate,
   inspectPackageUpdateEnvironment,
   verifyInstalledPackage,
+  inspectNpmDownloadPolicy,
 } from "../src/package-update.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-const runPackageUpdateCommand = options => runActualUpdate({ inspectEnvironmentFn: () => ({ target: "/fixture/package" }), verifyInstalledFn: () => "0.9.35", ...options });
+const runPackageUpdateCommand = options => runActualUpdate({ inspectEnvironmentFn: () => ({ target: "/fixture/package" }), inspectPolicyFn: () => ({ supported: false }), verifyInstalledFn: () => "0.9.35", ...options });
 
 function outputBuffer(isTTY = true) {
   let value = "";
@@ -253,4 +254,50 @@ test("a zero installer exit cannot announce an unverified update or change servi
   await runPackageUpdateCommand({ source: "npm", platform: "darwin", output: output.stream, spawnImpl: successfulSpawn(calls), verifyInstalledFn: () => null });
   assert.match(output.text(), /installed version was not verified/);
   assert.doesNotMatch(output.text(), /Updated codex-copilot-dx/);
+});
+
+test("readonly npm policy probe requests only named safe fields and hides registry credentials", () => {
+  for (const platform of ["darwin", "linux", "win32"]) {
+    const calls = [], env = Object.freeze({ SystemRoot: "C:\\Windows" });
+    const policy = inspectNpmDownloadPolicy({ platform, env, exec(command, args, opts) {
+      calls.push({ command, args });assert.equal(opts.env, env);assert.equal(opts.shell, false);
+      assert.deepEqual(opts.stdio, ["ignore", "pipe", "pipe"]);assert.equal(opts.timeout, 3000);
+      return calls.length === 1 ? "12.0.1\n" : "allow-remote=none\r\nregistry=https://alice:secret@mirror.test/npm/?token=private\r\n";
+    } });
+    assert.deepEqual(policy, { version: "12.0.1", allowRemote: "none", registryOrigin: "https://mirror.test", supported: true });
+    assert.equal(calls.length, 2);assert.doesNotMatch(JSON.stringify(policy), /alice|secret|private/);
+    assert.deepEqual(calls[1].args, platform === "win32" ? ["/d", "/s", "/v:off", "/c", '"npm.cmd config get --global allow-remote registry"'] : ["config", "get", "--global", "allow-remote", "registry"]);
+  }
+  let calls = 0;
+  assert.equal(inspectNpmDownloadPolicy({ exec() { calls++;return "10.9.3"; } }).supported, false);assert.equal(calls, 1);
+  assert.equal(inspectNpmDownloadPolicy({ exec() { throw Error("probe unavailable"); } }).supported, null);
+});
+
+test("strict policy is preserved by default, with no retry or success on failure", async () => {
+  let installs = 0;const output = outputBuffer(false);
+  await assert.rejects(runPackageUpdateCommand({ source: "github", fetchImpl: fetchRelease, output: output.stream,
+    inspectPolicyFn: () => ({ version: "12.0.1", allowRemote: "none", supported: true, registryOrigin: "https://mirror.test" }),
+    spawnImpl(command, args, opts) { installs++;assert.ok(!args.some(value => value.includes("--allow-remote")));const child = new EventEmitter();queueMicrotask(() => child.emit("exit", 1));return child; },
+  }), error => error.npmExitCode === 1 && /If npm reported EALLOWREMOTE/.test(error.message) && /update github --allow-remote/.test(error.message));
+  assert.equal(installs, 1);assert.doesNotMatch(output.text(), /Updated codex/);
+});
+
+test("only explicit per-update consent adds the fixed remote flag on all platforms", async () => {
+  for (const platform of ["win32", "darwin", "linux"]) for (const source of ["npm", "github"]) {
+    const calls = [], output = outputBuffer(false), env = Object.freeze({ SystemRoot: "C:\\Windows", npm_config_allow_remote: "none", npm_config_registry: "https://mirror.test/npm/" });
+    await runPackageUpdateCommand({ source, allowRemote: true, platform, env, output: output.stream, fetchImpl: fetchRelease,
+      inspectPolicyFn: () => ({ version: "12.0.1", allowRemote: "none", supported: true }), spawnImpl: successfulSpawn(calls) });
+    const args = calls[0].args;assert.ok(platform === "win32" ? args.at(-1).includes("--allow-remote=all") : args.includes("--allow-remote=all"));
+    assert.equal(calls[0].options.env, env);assert.equal(env.npm_config_allow_remote, "none");
+    assert.match(output.text(), /throughout the selected package's dependency tree/);assert.equal(calls.length, 1);
+  }
+});
+
+test("unknown permission support fails before installation only for an explicit opt-in; unsupported older npm receives no unknown flag", async () => {
+  const calls = [], output = outputBuffer(false);
+  await assert.rejects(runPackageUpdateCommand({ source: "npm", allowRemote: true, output: output.stream,
+    inspectPolicyFn: () => ({ supported: null }), spawnImpl: () => assert.fail("no unsupported override") }), /no installation was started/);
+  await runPackageUpdateCommand({ source: "npm", allowRemote: true, output: output.stream, spawnImpl: successfulSpawn(calls) });
+  assert.ok(!calls[0].args.some(value => value.includes("--allow-remote")));
+  assert.throws(() => globalUpdateCommand("npm", { allowRemote: "all & whoami" }), /boolean/);
 });

@@ -228,7 +228,7 @@ if (CLI.command === "auto-review-model") {
 if (CLI.command === "update") {
   try {
     const { runPackageUpdateCommand } = await import("../src/package-update.mjs");
-    await runPackageUpdateCommand({ commandName: CLI_NAME, source: CLI.updateSource });
+    await runPackageUpdateCommand({ commandName: CLI_NAME, source: CLI.updateSource, allowRemote: CLI.allowRemote });
     process.exit(0);
   } catch (e) {
     console.error(status("err", e.message));

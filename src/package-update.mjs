@@ -51,10 +51,36 @@ export function normalizeUpdateSource(value) {
   return Object.hasOwn(UPDATE_SPECS, source) ? source : "";
 }
 
-export function globalUpdateCommand(source, { platform = process.platform, releaseTag } = {}) {
+// Read only named, non-secret fields. Never inspect the complete npm config,
+// rewrite .npmrc, or probe this policy on the adapter's startup/request path.
+export function inspectNpmDownloadPolicy({ env = process.env, platform = process.platform, exec = execFileSync } = {}) {
+  const result = { version: null, allowRemote: null, registryOrigin: null, supported: null };
+  const query = args => {
+    const launch = npmLaunch(args, { platform, env });
+    return exec(launch.command, launch.args, { env, shell: false, stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8", timeout: 3000, maxBuffer: 64 * 1024, ...launch.options }).trim();
+  };
+  try {
+    const version = query(["--version"]);
+    if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) return result;
+    result.version = version;
+    if (Number(version.split(".")[0]) < 11) { result.supported = false;return result; }
+    const values = Object.fromEntries(query(["config", "get", "--global", "allow-remote", "registry"]).split(/\r?\n/)
+      .map(line => /^(allow-remote|registry)=(.*)$/.exec(line)).filter(Boolean).map(match => [match[1], match[2]]));
+    if (["all", "none", "root"].includes(values["allow-remote"])) {
+      result.allowRemote = values["allow-remote"];result.supported = true;
+    } else if (values["allow-remote"] === "undefined") result.supported = false;
+    try { const url = new URL(values.registry);if (["https:", "http:"].includes(url.protocol)) result.registryOrigin = url.origin; } catch {}
+  } catch { /* A failed readonly probe must not replace npm's own error handling. */ }
+  return result;
+}
+
+export function globalUpdateCommand(source, { platform = process.platform, releaseTag, allowRemote = false } = {}) {
+  if (typeof allowRemote !== "boolean") throw new Error("Remote download permission must be a boolean");
   const normalized = normalizeUpdateSource(source);
   if (!normalized) throw new Error(`Update source must be npm or github: ${source}`);
   const args = ["install", "--global"];
+  if (allowRemote) args.push("--allow-remote=all");
   if (normalized === "github") {
     if (!githubReleaseVersion(releaseTag)) throw new Error("A valid stable GitHub release tag is required");
     args.push("--allow-git=all", `${UPDATE_SPECS.github}#${releaseTag}`);
@@ -79,7 +105,7 @@ function waitForExit(child) {
     child.once("error", (error) => finish(reject, error));
     child.once("exit", (code, signal) => {
       if (signal) finish(reject, new Error(`npm update was interrupted by ${signal}`));
-      else if (code !== 0) finish(reject, new Error(`npm update exited with status ${code}`));
+      else if (code !== 0) finish(reject, Object.assign(new Error(`npm update exited with status ${code}`), { npmExitCode: code }));
       else finish(resolve);
     });
   });
@@ -104,11 +130,14 @@ export async function runPackageUpdateCommand({
   platform = process.platform,
   prompt,
   source,
+  allowRemote = false,
   spawnImpl = spawn,
   fetchImpl = fetch,
   inspectEnvironmentFn = inspectPackageUpdateEnvironment,
+  inspectPolicyFn = inspectNpmDownloadPolicy,
   verifyInstalledFn = verifyInstalledPackage,
 } = {}) {
+  if (typeof allowRemote !== "boolean") throw new Error("Remote download permission must be a boolean");
   let selectedSource = normalizeUpdateSource(source);
   if (source && !selectedSource) throw new Error(`Update source must be npm or github: ${source}`);
 
@@ -147,9 +176,15 @@ export async function runPackageUpdateCommand({
     output.write("Checking the latest stable GitHub release...\n");
     release = await lookupLatestRelease({ fetchImpl, timeoutMs: 10000 });
   }
-  const update = globalUpdateCommand(selectedSource, { platform, releaseTag: release?.tagName });
+  const policy = inspectPolicyFn({ env, platform });
+  if (allowRemote && policy.supported === null) throw new Error("Could not verify npm's remote-download option; no installation was started. Check npm --version and npm config get allow-remote.");
+  const permitRemote = allowRemote && policy.supported === true;
+  const update = globalUpdateCommand(selectedSource, { platform, releaseTag: release?.tagName, allowRemote: permitRemote });
   const sourceLabel = selectedSource === "npm" ? "npm registry" : `GitHub release ${release.tagName}`;
   output.write(`Updating ${PACKAGE_NAME} from ${sourceLabel}...\n`);
+  if (policy.allowRemote) output.write(`npm ${terminalCell(policy.version)}: saved allow-remote=${policy.allowRemote}${policy.registryOrigin ? `; registry ${terminalCell(policy.registryOrigin)}` : ""}.\n`);
+  if (permitRemote) output.write("Explicit permission for this update only: npm may download URL dependencies throughout the selected package's dependency tree. Registry and persistent npm settings are unchanged.\n");
+  else if (allowRemote) output.write("This npm does not expose the remote-download restriction; no unsupported permission flag was added.\n");
   const environment = inspectEnvironmentFn({ env, platform });
   if (environment?.state === "different") {
     output.write(`Warning: npm targets ${terminalCell(environment.target)}, not the running package at ${terminalCell(environment.package_root)}. Existing PATH and prefix choices were preserved.\n`);
@@ -163,7 +198,13 @@ export async function runPackageUpdateCommand({
     stdio: "inherit",
     ...launch.options,
   });
-  await waitForExit(child);
+  try { await waitForExit(child); }
+  catch (error) {
+    if (Number.isInteger(error.npmExitCode) && !allowRemote && ["none", "root"].includes(policy.allowRemote)) {
+      error.message += `. npm allow-remote=${policy.allowRemote} was preserved. If npm reported EALLOWREMOTE, its registry/mirror tarball URL was refused; only if you trust this update and policy permits it, retry explicitly with ${terminalCell(commandName)} update ${selectedSource} --allow-remote. This grants URL downloads to this installation's dependency tree, not just one hostname. No automatic retry or config change was made.`;
+    }
+    throw error;
+  }
   const installedVersion = verifyInstalledFn(environment?.target, { expectedVersion: release?.version });
   if (installedVersion) {
     output.write(`Updated ${PACKAGE_NAME}: installed v${terminalCell(installedVersion)} at ${terminalCell(environment.target)}.\n`);

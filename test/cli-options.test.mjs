@@ -54,6 +54,11 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["update", "npm"]).updateSource, "npm");
   assert.equal(parseCliArgs(["update", "github"]).updateSource, "github");
   assert.equal(parseCliArgs(["update", "gh"]).updateSource, "github");
+  assert.equal(parseCliArgs(["update", "github", "--allow-remote"]).allowRemote, true);
+  assert.equal(parseCliArgs(["update", "--allow-remote", "npm"]).updateSource, "npm");
+  assert.equal(parseCliArgs(["update", "npm"]).allowRemote, false);
+  assert.throws(() => parseCliArgs(["update", "--allow-remote", "--allow-remote"]), /only once/);
+  assert.throws(() => parseCliArgs(["update", "npm", "--allow-remote=all"]));
   assert.match(cliHelp(), /ccdx status/);
   assert.match(cliHelp(), /ccdx models/);
   assert.match(cliHelp(), /ccdx auth status \[--online\]/);

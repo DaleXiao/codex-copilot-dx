@@ -26,6 +26,17 @@ command interpreter only for the fixed `npm.cmd` installer command; stable-tag
 validation remains upstream of launch. macOS/Linux use direct npm argv. There
 is no generic shell runner or package-manager framework, and npm's configured
 registry/proxy environment remains owned by the user.
+Readonly npm policy discovery is update-only and uses the same global context as
+the installer, not an unrelated working project's `.npmrc`. It queries version,
+`allow-remote` and registry only, never the complete credential-bearing config.
+Default installer argv preserves the saved download policy. The boolean
+`--allow-remote` opt-in adds one fixed permission argument only when supported;
+it applies to that installation's entire dependency tree, not selected hosts.
+Unknown support fails before an explicitly requested override. Installation
+streams remain inherited; conditional failure guidance is not an assertion that
+every nonzero exit is a policy error. There is no automatic retry or policy write.
+The source lock retains exact versions/integrities without binding smol-toml to a
+developer's corporate feed; omitted registry resolution is delegated to npm.
 Readonly update preflight reports Node/npm, the running package and npm's selected
 global target. A different target warns, but never changes PATH or prefix. Its
 bounded npm probe is limited to explicit update and full doctor commands.

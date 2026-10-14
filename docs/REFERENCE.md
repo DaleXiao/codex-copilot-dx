@@ -678,6 +678,52 @@ displayed before waiting for any remaining check budget.
 
 GitHub is the package source, not a replacement for the npm installer. Dependencies such as `sharp` may still need the configured npm registry during an explicit update; use a company-approved mirror/cache where required. GitHub updates do not promise an entirely registry-free installation.
 
+Since `0.9.38`, update reads the npm version and named global `allow-remote` and
+registry settings using bounded probes. It never reads the full configuration or
+prints registry credentials. The global context matches `npm install --global`;
+an unrelated project's `.npmrc` cannot silently grant update permission. Old npm
+versions without this restriction do not receive an unsupported option. Failed
+policy discovery does not block an ordinary installation; explicitly requesting
+an override with unknown support fails before installation.
+
+npm 12 normally sets `allow-remote=none`. A company registry may return a tarball
+URL on a different origin/path, which can trigger `EALLOWREMOTE` even for a named
+dependency such as sharp. The default update does not weaken this policy. When
+the installation fails under a restrictive policy, CCDX gives conditional guidance
+to check npm's actual error; it does not label every failure a remote-policy error.
+
+Only if permitted by company policy and you trust the package/dependency tree,
+grant URL downloads for one explicit update:
+
+```sh
+ccdx update github --allow-remote
+# Or, for the configured npm registry:
+ccdx update npm --allow-remote
+```
+
+The option permits URL dependencies throughout that one installation, including
+transitive dependencies. It is **not** an allowlist for one registry or tarball
+host. It neither changes `.npmrc`/registry/proxy/prefix nor automatically retries
+the failed install. npm still enforces package integrity and its other policies;
+this is not permission to run every package script. Windows uses the same fixed
+system `cmd.exe` launch; use `ccdx.cmd` if PowerShell blocks `.ps1` shims.
+
+An older CCDX executable cannot gain this option before it is upgraded. To
+bootstrap `0.9.38` from a version that fails with `EALLOWREMOTE`, the equivalent
+explicit per-install command is, only with the same policy/trust approval:
+
+```sh
+npm install -g --allow-git=all --allow-remote=all 'github:DaleXiao/codex-copilot-dx#v0.9.38'
+# Windows PowerShell: use npm.cmd instead of npm.
+```
+
+Check `ccdx version`, then restart CCDX. This does not guarantee access through
+every company mirror: authentication, offline/cache-only rules, unsynchronized
+packages and administrator-enforced policies still apply. If URL permission
+cannot be granted, the registry must expose compatible allowed tarball URLs;
+CCDX does not bypass that boundary. The source lock pins versions and integrity
+without a developer-specific corporate smol-toml URL.
+
 If a configured npm mirror has not synchronized the current release yet, use the GitHub source. A running adapter keeps its loaded version until it is stopped and restarted.
 
 ## Diagnostics

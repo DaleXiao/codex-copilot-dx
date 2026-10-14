@@ -277,14 +277,18 @@ export function parseCliArgs(args = []) {
     return baseCommand("auto-review-model");
   }
   if (command === "update") {
-    if (rest.length > 1) unexpectedArgs(rest.slice(1));
-    const source = rest[0];
+    const permission = rest.filter(value => value === "--allow-remote");
+    if (permission.length > 1) throw new Error("--allow-remote may be specified only once");
+    const sources = rest.filter(value => value !== "--allow-remote");
+    if (sources.length > 1) unexpectedArgs(sources.slice(1));
+    const source = sources[0];
     if (source && !new Set(["npm", "github", "gh"]).has(source)) {
       throw new Error(`Update source must be npm or github: ${source}`);
     }
     return {
       ...baseCommand("update"),
       updateSource: source === "gh" ? "github" : source,
+      allowRemote: permission.length === 1,
     };
   }
   if (command === "doctor" || command === "--doctor") {
@@ -373,7 +377,7 @@ function topicHelp(name, topic) {
     "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nSelect a Responses model, then an advertised reasoning effort. Enter keeps the default/current choice; q cancels both steps without saving. Effort 0 follows the client (low when omitted). Settings apply only to Auto-review on the next request; no client patch or restart is required for adapters running 0.9.13 or newer.`,
     "suggestion": `The CCDX prediction panel has been retired. Run ${name} suggestion off to safely remove unchanged CCDX registrations. This cleanup does not change native predictions; see ${name} prediction --help for that separate opt-in feature.`,
     prediction: `Usage:\n  ${name} prediction [status|on|off|fix]\n\nOptional native next-message predictions; off by default. macOS and Windows. Windows requires the registered official MSIX App, an initialized profile, Windows PowerShell and .NET Framework 4.7.2+; Git/OpenSSL is not required for prediction setup. Quit Codex before on/off, then restart ccdx. On adds private App-profile certificate trust and an App-only route for chatgpt.com and ab.chatgpt.com. HTTPS on those hosts is decrypted locally; only prediction configuration is changed. No client program files, OS trust, account permissions, MCP or Hooks are changed. Static HTTP/HTTPS/SOCKS5 proxies and bypass rules are preserved. Windows supports company PAC/WPAD; macOS dynamic PAC/WPAD remains unsupported. Static IPv4/IPv6 CIDRs match URL IP literals without DNS. The bridge port persists across restarts/updates; a busy saved port disables only predictions. Launch/reuse checks the App's actual route; an older random or missing route may require one full App quit. Official prediction configuration is preserved; the conversation's model is used. App updates require another compatibility check. Status distinguishes saved preference and observed config traffic from unverified candidate visibility.\n\nFix asks a compatible running CCDX adapter to repair the enabled bridge once on its saved port. It never enables predictions, renews certificates or force-restarts Codex. Healthy unchanged bridges are retained. Fix rechecks system proxy settings. Changed routes may need a normal App relaunch to reload cached PAC; failed rechecks preserve the previous bridge with a nonzero exit. Process environment variables and Node trust are not hot-reloaded; changed trust inputs need a CCDX service restart. Startup, status and doctor share sanitized environment diagnostics. Missing App routes require a normal full quit and ccdx launch; partial repair exits 1. An older adapter must first be upgraded and restarted once to gain this repair endpoint.`,
-    update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or the latest stable GitHub release. With no source, an interactive terminal prompts for one. Windows uses system cmd.exe to run npm.cmd without changing PowerShell policy; use the .cmd entrypoint if scripts are blocked. GitHub installs require Git on PATH and dependencies may still use the configured npm registry. Restart the running adapter after installation.`,
+    update: `Usage:\n  ${name} update [npm|github] [--allow-remote]\n\nUpdates the global package from the configured npm registry or the latest stable GitHub release. With no source, an interactive terminal prompts for one. Windows uses system cmd.exe to run npm.cmd without changing PowerShell policy; use the .cmd entrypoint if scripts are blocked. GitHub installs require Git on PATH and dependencies may still use the configured npm registry. By default npm's remote-download policy is preserved. If npm reports EALLOWREMOTE for a trusted mirror tarball, --allow-remote explicitly permits URL dependencies for this one installation's entire dependency tree; it is not a hostname allowlist. No .npmrc, registry or persistent policy is changed, and failed installations are not retried automatically. Use this only if company policy permits it. Restart the running adapter after installation.`,
     version: `Usage:\n  ${name} --version`,
   };
   return sections[topic];
@@ -399,7 +403,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} image-status
   ${name} auto-review-model
   ${name} prediction [status|on|off|fix]
-  ${name} update [npm|github]
+  ${name} update [npm|github] [--allow-remote]
   ${name} --version
   ${name} --help
 

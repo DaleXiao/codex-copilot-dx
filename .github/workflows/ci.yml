@@ -10,6 +10,26 @@ permissions:
   contents: read
 
 jobs:
+  npm12-install:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.18.0"
+          cache: npm
+      - name: Provision exact npm 12 in an isolated directory
+        run: npm install --prefix "${{ runner.temp }}/ccdx-npm12" --ignore-scripts --no-audit --no-fund npm@12.0.1
+      - name: Verify clean locked dependencies under strict npm 12
+        run: node "${{ runner.temp }}/ccdx-npm12/node_modules/npm/bin/npm-cli.js" ci --ignore-scripts
+      - name: Verify actual strict registry and cross-origin CDN installs and updates
+        run: node scripts/npm12-registry-replay.mjs --npm "${{ runner.temp }}/ccdx-npm12/node_modules/npm/bin/npm-cli.js"
+      - name: Verify actual package installation, upgrade and native sharp under strict npm 12
+        run: node "${{ runner.temp }}/ccdx-npm12/node_modules/npm/bin/npm-cli.js" run test:package
   windows-prediction:
     runs-on: windows-latest
     strategy:

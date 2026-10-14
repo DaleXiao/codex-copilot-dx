@@ -11,6 +11,7 @@ import { codexPaths } from "./codex-paths.mjs";
 import { assertWindowsCodexClosed, installedWindowsPredictionApp, windowsPredictionProfile,
   windowsPrivatePredictionPath } from "./native-prediction-windows.mjs";
 import { windowsPredictionCertificate } from "./windows-prediction-certificate.mjs";
+import { inspectPredictionArchive } from "./native-prediction-protocol.mjs";
 
 export function predictionPaths({ env = process.env, home = os.homedir(), platform = process.platform, app } = {}) {
   const directory = path.join(path.dirname(userSettingsPath({ env, home })), "native-prediction");
@@ -64,35 +65,17 @@ export function installedPredictionApp({ exec = execFileSync, platform = process
   for (const candidate of candidates) {
     const { app, archive } = candidate;
     if (!fs.existsSync(archive)) continue;
-    // Check only during explicit setup; startup uses the cheap identity check.
-    const fd = fs.openSync(archive, "r");
-    try {
-      const prefix = Buffer.alloc(16); fs.readSync(fd, prefix, 0, 16, 0);
-      const headerSize = prefix.readUInt32LE(12);
-      if (headerSize > 32 * 1024 * 1024) continue;
-      const header = Buffer.alloc(headerSize); fs.readSync(fd, header, 0, header.length, 16);
-      const files = JSON.parse(header).files?.[".vite"]?.files?.build?.files;
-      const entry = Object.entries(files || {}).find(([name]) => /^main-[\w-]+\.js$/.test(name))?.[1];
-      if (!entry || entry.size > 32 * 1024 * 1024 || entry.unpacked) continue;
-      const bytes = Buffer.alloc(entry.size);
-      fs.readSync(fd, bytes, 0, bytes.length, 8 + prefix.readUInt32LE(4) + Number(entry.offset));
-      const source = bytes.toString();
-      if (!["/wham/predictions/config", "experimentalPredictionMode"].every((value) => source.includes(value))) continue;
-      const renderer = Object.entries(JSON.parse(header).files?.webview?.files?.assets?.files || {})
-        .find(([name]) => /^general-settings-[\w-]+\.js$/.test(name))?.[1];
-      if (!renderer || renderer.unpacked || renderer.size > 4 * 1024 * 1024) continue;
-      const rendererBytes = Buffer.alloc(renderer.size);
-      fs.readSync(fd, rendererBytes, 0, rendererBytes.length, 8 + prefix.readUInt32LE(4) + Number(renderer.offset));
-      if (!rendererBytes.includes(Buffer.from("4290031608"))) continue;
-      if (platform !== "win32") exec("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], { stdio: "pipe", timeout: 15_000 });
-      const stat = fs.statSync(archive);
-      if (platform === "win32") {
-        const executable = fs.statSync(app);
-        return { ...candidate, profile: windowsPredictionProfile({ app: candidate, env: options.env, preferredProfile: options.preferredProfile }),
-          size: stat.size, mtimeMs: stat.mtimeMs, executableSize: executable.size, executableMtimeMs: executable.mtimeMs };
-      }
-      return { app, archive, size: stat.size, mtimeMs: stat.mtimeMs };
-    } finally { fs.closeSync(fd); }
+    const inspected = inspectPredictionArchive(archive);
+    if (!inspected.compatible) continue;
+    if (platform !== "win32") exec("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], { stdio: "pipe", timeout: 15_000 });
+    const stat = fs.statSync(archive);
+    if (stat.size !== inspected.size || stat.mtimeMs !== inspected.mtimeMs) throw new Error("Codex App changed during compatibility verification");
+    if (platform === "win32") {
+      const executable = fs.statSync(app);
+      return { ...candidate, profile: windowsPredictionProfile({ app: candidate, env: options.env, preferredProfile: options.preferredProfile }),
+        size: stat.size, mtimeMs: stat.mtimeMs, executableSize: executable.size, executableMtimeMs: executable.mtimeMs };
+    }
+    return { app, archive, size: stat.size, mtimeMs: stat.mtimeMs };
   }
   throw new Error("This Codex App does not expose the verified native prediction protocol; setup was skipped");
 }

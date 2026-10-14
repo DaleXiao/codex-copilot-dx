@@ -39,6 +39,7 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
 | `ccdx usage` | Recorded tokens and upstream prompt-cache hit rate |
 | `ccdx auto-review-model` | Select model, then reasoning effort; `0` follows client |
 | `ccdx animation` | Preview and select terminal animation |
+| `ccdx prediction fix` | Repair an enabled prediction bridge; never force-restart Codex |
 | `ccdx cache --limit 128` | Set the history-cache budget in MiB |
 | `ccdx cache --clean` | Clear the rebuildable image-transform cache |
 | `ccdx limits --decoded 256` | Set the decoded request-body budget; restart to apply |
@@ -89,8 +90,7 @@ Updates install the exact stable tag; dependencies still use npm's configured re
 Updates warn about mismatched npm targets without changing PATH/prefix and verify the installed target version (exact tag for GitHub). Restart the adapter separately. Full `ccdx doctor` reports this target and readonly credential permissions; it never changes ACLs.
 Recent errors separate HTTP and model failures. HTTP metadata retains status, source and IDs, not error bodies or prompts; original errors still reach Codex unchanged.
 
-The dashboard and CLI separate prediction preference, bridge state and observed config traffic; candidate visibility stays unknown.
-Inference, client integration, optional images and management have separate ownership. See [architecture boundaries](docs/ARCHITECTURE.md).
+The dashboard and CLI separate prediction preference, bridge state and observed config traffic; candidate visibility stays unknown. Inference, client integration, optional images and management have separate ownership. See [architecture boundaries](docs/ARCHITECTURE.md).
 
 See the [complete reference](https://github.com/DaleXiao/codex-copilot-dx/blob/main/docs/REFERENCE.md) for authentication, configuration, limits, logging, images and compatibility. It is also included as `docs/REFERENCE.md` in the npm package.
 

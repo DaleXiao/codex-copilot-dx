@@ -81,6 +81,23 @@ only, preserves company/user routing, and never treats a saved preference as
 proof of a running route or visible candidate. App compatibility is rechecked only
 when its recorded identity changes, before existing trust/port checks are reused.
 
+`native-prediction-protocol.mjs` owns bounded archive recognition only, independent
+of certificates, networking and the CLI. It accepts multiple named hashed chunks
+without assuming the first general-settings chunk is the implementation. Signature
+and profile checks remain in the existing platform boundary.
+
+Explicit `prediction fix` uses the optional integration's serialized lifecycle,
+not a second adapter or detached predictor. Startup, repair and shutdown cannot
+create overlapping owned listeners. Healthy/current bridges are retained; explicit
+recreation preserves the saved port and existing trust and starts one new supervised
+lifecycle. The supervisor delegates health/route checks to its current bridge after
+recovery, not a closed initial transport. The health endpoint advertises repair
+capability only when the composition root supplies that operation.
+`native-prediction-fix.mjs` is the bounded local management client; the adapter
+enforces loopback/Host/Origin/method/media/body boundaries before dispatch. No new
+inference-path work, watcher, runtime dependency, forced App restart or unverified
+hot-attachment mechanism is introduced.
+
 `startup-ui.mjs` is pure terminal presentation: a static A atom, aligned checks
 and the common new/reused-service footer. It depends only on terminal/status
 utilities, not on inference or platform probes. The CLI feeds existing lifecycle

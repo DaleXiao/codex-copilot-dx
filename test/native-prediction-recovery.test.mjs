@@ -28,6 +28,7 @@ test("a lost bridge is recovered once on the same route, without overlapping che
     restart: async () => { starts++;await new Promise(resolve => { finish = resolve; });return bridge(); } });
   const check = s.owned.check();await Promise.resolve();await s.owned.check();assert.equal(starts, 1);
   finish();await check;
+  assert.equal(s.owned.healthy(), true, "manual checks must use the recovered listener, not the closed original");
   assert.equal(state.snapshot().bridge, "running");assert.deepEqual(state.snapshot().recovery.attempts, 1);
   assert.equal(state.snapshot().recovery.recovered, 1);assert.equal(closes, 1);
   await s.owned.check();assert.equal(starts, 1);await s.owned.close();

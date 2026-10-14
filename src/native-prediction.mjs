@@ -7,7 +7,7 @@ import { predictionPaths, readPredictionSettings, writePredictionSettings, asser
 import { retirePredictionIntegration } from "./prediction-retirement.mjs";
 import { networkRouteSnapshot } from "./network-route.mjs";
 import { withFileLock } from "./lock.mjs";
-import { windowsSystemProxy, windowsProxySettings, windowsProxyText } from "./native-prediction-windows.mjs";
+import { windowsSystemProxy, windowsProxySettings, windowsProxyText, windowsPredictionAppProcesses } from "./native-prediction-windows.mjs";
 import { updatePredictionRoute } from "./native-prediction-route.mjs";
 
 function systemProxy(exec = execFileSync, { platform = process.platform, env = process.env } = {}) {
@@ -36,7 +36,7 @@ function certificateDirectory(settings, paths) {
 }
 
 export async function runPredictionCommand(options = {}) {
-  if (!options.action || options.action === "status") return runPredictionCommandUnlocked(options);
+  if (!options.action || ["status", "fix"].includes(options.action)) return runPredictionCommandUnlocked(options);
   if (!["darwin", "win32"].includes(options.platform || process.platform)) return runPredictionCommandUnlocked(options);
   const { settings } = predictionPaths(options);
   return withFileLock(`${settings}.lock`, () => runPredictionCommandUnlocked(options), { timeoutMs: 2000 });
@@ -44,9 +44,26 @@ export async function runPredictionCommand(options = {}) {
 
 async function runPredictionCommandUnlocked({ action = "status", env = process.env,
   platform = process.platform, output = console.log, resolveApp = installedPredictionApp,
-  writeSettings = writePredictionSettings, runtimeSnapshot, ...options } = {}) {
+  writeSettings = writePredictionSettings, runtimeSnapshot, repairRuntime, ...options } = {}) {
   const opts = { ...options, env, platform };
   const settings = readPredictionSettings(opts);
+  if (action === "fix") {
+    if (!settings.enabled) {
+      output("Native predictions are off; nothing was enabled or changed. Run ccdx prediction on to opt in.");
+      return { status: "disabled", exitCode: 0 };
+    }
+    if (!repairRuntime) throw new Error("Prediction repair needs a running CCDX adapter with prediction-fix support");
+    const result = await repairRuntime();
+    const prediction = result.prediction;
+    output(`Prediction repair: ${result.status}; bridge: ${prediction.bridge}; candidate: ${prediction.candidate}`);
+    if (result.status === "disabled") output("The running adapter has predictions off; no feature was enabled.");
+    else if (prediction.bridge !== "running") output(prediction.reason || "Prediction bridge is unavailable; core service was not changed.");
+    else if (result.app_route === "verified") output("App launch route verified. A visible suggestion still needs an App-side check.");
+    else if (result.app_route === "closed") output("Bridge is ready. Run ccdx to open Codex with its prediction route.");
+    else if (result.status === "route_unverified") output("Bridge is ready, but App route inspection was unavailable or ambiguous. Check ccdx prediction status; no App was restarted.");
+    else output("Bridge is ready, but the running App route is not verified. No App was restarted. Fully quit Codex, then run ccdx to attach the route.");
+    return { ...result, exitCode: ["ready", "disabled"].includes(result.status) ? 0 : 1 };
+  }
   if (action === "status") {
     output(`Native prediction preference: ${settings.enabled ? "on" : "off"} (default: off)`);
     output("Uses the conversation's model. No prediction MCP, Hook, or panel.");
@@ -65,7 +82,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
     }
     return settings;
   }
-  if (!["on", "off"].includes(action)) throw new Error("Prediction action must be on, off, or status");
+  if (!["on", "off"].includes(action)) throw new Error("Prediction action must be on, off, status, or fix");
   if (!["darwin", "win32"].includes(platform)) throw new Error("Native prediction setup supports macOS and Windows only; no configuration changed");
   let paths = predictionPaths({ ...opts, app: settings.app });
   if (action === "off") {
@@ -238,7 +255,17 @@ export async function startNativePrediction({ env = process.env, platform = proc
     ...(platform === "win32" ? { profile: paths.profile } : {}),
     pacUrl: transport.pacUrl,
     enabled() { return enabled; },
+    appCurrent() { return predictionAppMatches(settings.app); },
     healthy() { return transport.healthy() && (!windowsNetwork || windowsNetwork.healthy()); },
+    async inspectRoute() {
+      const inspect = options.inspectAppProcesses || (platform === "win32" ? windowsPredictionAppProcesses
+        : (await import("./launcher.mjs")).macPredictionAppProcesses);
+      const rows = inspect(settings.app.app, opts);
+      const route = rows.length === 0 ? "closed" : rows.length !== 1 || !rows[0].readable ? "unverified"
+        : rows[0].route === transport.pacUrl ? "verified" : "missing";
+      state?.launch(route);
+      return route;
+    },
     async prepareRoute() {
       try {
         const direct = !windowsNetwork && !networkRoute?.http && !networkRoute?.https && !networkRoute?.bypass?.length;

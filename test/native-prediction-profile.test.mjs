@@ -25,7 +25,7 @@ function noRunningApp(command, args, opts) {
 const app = { app: "/Applications/ChatGPT.app", archive: "/not-an-installed-fixture", size: 1, mtimeMs: 1 };
 
 test("prediction CLI has explicit on/off/status, off by default, without model rewriting", () => {
-  for (const action of ["on", "off", "status"]) assert.equal(parseCliArgs(["prediction", action]).action, action);
+  for (const action of ["on", "off", "status", "fix"]) assert.equal(parseCliArgs(["prediction", action]).action, action);
   assert.equal(parseCliArgs(["prediction"]).action, "status");
   assert.throws(() => parseCliArgs(["prediction", "model"]));
   assert.throws(() => parseCliArgs(["prediction", "on", "extra"]));
@@ -205,13 +205,18 @@ test("macOS prediction startup persists its port and reuses the identical route 
   const opts = fixture(t), archive = path.join(opts.root, "app.asar");
   fs.writeFileSync(archive, "synthetic App identity");
   const stat = fs.statSync(archive), verified = { ...app, archive, size: stat.size, mtimeMs: stat.mtimeMs };
-  const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => verified, output() {} };
+  let observedRoutes = [];
+  const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => verified, inspectAppProcesses: () => observedRoutes, output() {} };
   await runPredictionCommand({ ...run, action: "on" });
   assert.equal(readPredictionSettings(opts).bridgePort, undefined, "activation does not reserve a port before listening");
   let bridge;
   t.after(async () => bridge?.close());
   bridge = await startNativePrediction(run);
   const pacUrl = bridge.pacUrl, port = readPredictionSettings(opts).bridgePort;
+  assert.equal(await bridge.inspectRoute(), "closed");
+  observedRoutes = [{ readable: true, route: pacUrl }];assert.equal(await bridge.inspectRoute(), "verified");
+  observedRoutes = [{ readable: true, route: null }];assert.equal(await bridge.inspectRoute(), "missing");
+  observedRoutes = [{ readable: false, route: null }];assert.equal(await bridge.inspectRoute(), "unverified");
   assert.ok(port >= 1024);await bridge.close();
   const saved = fs.readFileSync(predictionPaths(opts).settings);
   for (let restart = 0; restart < 3; restart++) {

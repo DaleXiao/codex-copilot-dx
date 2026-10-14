@@ -112,6 +112,8 @@ ccdx prediction on
 # Restart the running CCDX process, then launch Codex through ccdx.
 ccdx
 ccdx prediction status
+# Repair only an already-enabled bridge in a compatible running CCDX service:
+ccdx prediction fix
 
 # To remove the optional setup, fully quit Codex first:
 ccdx prediction off
@@ -200,13 +202,43 @@ Since `0.9.34`, an enabled bridge has a lightweight 30-second listener check.
 Healthy checks do not spawn processes, call upstream, inspect transcripts or
 probe model endpoints. A failed owned listener/native company-routing worker can
 be recreated on the saved port, using the same checked profile and certificate.
-There are at most three recovery attempts per CCDX process, with 30/60/120-second
+There are at most three automatic recovery attempts per bridge lifecycle, with 30/60/120-second
 backoff gates; checks themselves run every 30 seconds. Occupied ports are not
 stolen or rotated. Startup failures do not gain a retry loop, and configuration
 HTTP errors or missing gray text alone do not trigger transport restarts. Existing
 requests can fail during an outage and are never replayed by this supervisor.
 Disabled prediction startup creates no recovery timer. The existing in-memory
 overlay switch still observes explicit on/off changes independently.
+
+`ccdx prediction fix` asks the running adapter for one explicit repair, without
+starting another core service or forcibly restarting Codex. Disabled predictions
+remain off. Healthy/current bridges are kept; a failed bridge or changed App identity
+reuses the saved port, certificate and verified profile. Compatibility, certificate,
+company proxy and port-ownership checks are not bypassed. Certificates are not renewed
+by fix; setup problems can still require a normal closed-App `prediction on` action.
+An explicit successful recreation starts a fresh three-attempt automatic recovery
+lifecycle; it is not an automatic retry loop for initialization failures.
+
+The command checks the adapter's advertised `prediction-fix-v1` capability before
+posting bounded JSON to the native-loopback-only `/_ccdx/prediction/fix` endpoint.
+Browser Origin headers, remote peers and non-JSON bodies are refused. A repair does
+not count as model traffic. An older running adapter needs one upgrade/service restart
+to gain this endpoint; the new CLI cannot hot-upgrade an old Node process.
+
+Repair reports bridge readiness separately from the inspected App launch route.
+If a running App has no verified route, fix returns a partial result (exit 1), preserves
+its process and asks for a normal full quit followed by `ccdx`. A closed App is not
+launched by fix; run `ccdx` to open it. Neither HTTP 200 nor a verified route proves
+that gray text appeared. Normal replies, image setup and account state are not changed.
+Unavailable/ambiguous process inspection reports `route_unverified` (exit 1), not
+a definite missing route or an instruction to restart an otherwise healthy App.
+
+App compatibility inspection checks up to 16 named main candidates and 16 named
+general-settings candidates, rather than assuming the first hashed chunk owns the
+implementation. A forwarding chunk therefore cannot hide a later real settings
+module. Reads retain a 32 MiB header limit, 32/4 MiB per-entry main/settings limits,
+a combined 36 MiB source limit, archive bounds/snapshot checks and platform signature
+verification. Unknown layouts remain unsupported instead of being patched blindly.
 
 Before enabled App launch, CCDX can persist its PAC in that verified profile's
 `Default/Preferences`, but only in a direct environment, with initialized regular

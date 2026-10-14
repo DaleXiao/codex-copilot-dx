@@ -89,11 +89,15 @@ if (CLI.command === "suggestion") {
 if (CLI.command === "prediction") {
   try {
     const { runPredictionCommand } = await import("../src/native-prediction.mjs");
-    await runPredictionCommand({ action: CLI.action, runtimeSnapshot: () => {
+    const result = await runPredictionCommand({ action: CLI.action, repairRuntime: async () => {
+      const { requestPredictionFix } = await import("../src/native-prediction-fix.mjs");
+      const probe = parseAdapterProbeOptions(process.env);
+      return requestPredictionFix({ host: probe.adapterHost, port: probe.adapterPort });
+    }, runtimeSnapshot: () => {
       const probe = parseAdapterProbeOptions(process.env);
       return readAdapterStatus({ host: probe.adapterHost, port: probe.adapterPort, timeoutMs: probe.existingAdapterTimeoutMs }).then(({ data }) => data);
     } });
-    process.exit(0);
+    process.exit(CLI.action === "fix" ? result.exitCode : 0);
   } catch (error) {
     console.error(status("err", error.message));
     process.exit(1);
@@ -407,7 +411,8 @@ try {
     streamHandshakeTimeoutMs: RUNTIME.streamHandshakeTimeoutMs,
     streamIdleTimeoutMs: RUNTIME.streamIdleTimeoutMs,
     terminalAnimationTheme,
-    nativePredictionPac: () => nativePrediction?.pacUrl || null,
+    nativePredictionPac: () => clientIntegration?.pacUrl() || null,
+    fixPrediction: async () => (await clientIntegrations()).fix(),
     clientIntegrationSnapshot: () => clientIntegration?.snapshot() || null,
   });
 

@@ -12,6 +12,7 @@ export function createPredictionState({ now = () => new Date().toISOString() } =
     launch(route) { state.launch_route = ["verified", "persisted"].includes(route) ? route : "unverified"; },
     persistence(value) { state.persistence = value.status; },
     checked() { state.recovery.last_check_at = now(); },
+    supervising() { state.recovery.attempts = 0;state.recovery.last_check_at = null; },
     recovering(attempt) { state.bridge = "recovering";state.recovery.attempts = attempt;state.recovery.last_check_at = now(); },
     recovered() { state.bridge = "running";state.reason = null;delete state.error;state.recovery.recovered++; },
     unavailable(error) {

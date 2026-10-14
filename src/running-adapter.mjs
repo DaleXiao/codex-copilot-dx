@@ -3,6 +3,8 @@ import { localPackageVersion } from "./version.mjs";
 
 export const ADAPTER_HEALTH_PATH = "/_ccdx/health";
 export const ADAPTER_STATUS_PATH = "/_ccdx/status";
+export const ADAPTER_PREDICTION_FIX_PATH = "/_ccdx/prediction/fix";
+export const PREDICTION_FIX_CAPABILITY = "prediction-fix-v1";
 export const ADAPTER_PROTOCOL_VERSION = 4;
 export const ADAPTER_VERSION = localPackageVersion();
 export const ADAPTER_CAPABILITIES = Object.freeze(["cache-control-v1"]);

@@ -255,7 +255,7 @@ export function parseCliArgs(args = []) {
   }
   if (command === "prediction") {
     const [action = "status", ...extra] = rest;
-    if (!["on", "off", "status"].includes(action)) throw new Error("Prediction action must be on, off, or status");
+    if (!["on", "off", "status", "fix"].includes(action)) throw new Error("Prediction action must be on, off, status, or fix");
     if (extra.length) unexpectedArgs(extra);
     return baseCommand("prediction", { action });
   }
@@ -372,7 +372,7 @@ function topicHelp(name, topic) {
     "image-status": `Usage:\n  ${name} image-status\n\nShows provider configuration and locally advertised generation/editing tools without generating an image or exposing its API key.`,
     "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nSelect a Responses model, then an advertised reasoning effort. Enter keeps the default/current choice; q cancels both steps without saving. Effort 0 follows the client (low when omitted). Settings apply only to Auto-review on the next request; no client patch or restart is required for adapters running 0.9.13 or newer.`,
     "suggestion": `The CCDX prediction panel has been retired. Run ${name} suggestion off to safely remove unchanged CCDX registrations. This cleanup does not change native predictions; see ${name} prediction --help for that separate opt-in feature.`,
-    prediction: `Usage:\n  ${name} prediction [status|on|off]\n\nOptional native next-message predictions; off by default. macOS and Windows. Windows requires the registered official MSIX App, an initialized profile, Windows PowerShell and .NET Framework 4.7.2+; Git/OpenSSL is not required for prediction setup. Quit Codex before on/off, then restart ccdx. On adds private App-profile certificate trust and an App-only route for chatgpt.com and ab.chatgpt.com. HTTPS on those hosts is decrypted locally; only prediction configuration is changed. No client program files, OS trust, account permissions, MCP or Hooks are changed. Static HTTP/HTTPS/SOCKS5 proxies and bypass rules are preserved. Windows supports company PAC/WPAD; macOS dynamic PAC/WPAD and CIDR bypass rules are reported as unsupported. The bridge port persists across restarts/updates; a busy saved port disables only predictions. Launch/reuse checks the App's actual route; an older random or missing route may require one full App quit. Official prediction configuration is preserved; the conversation's model is used. App updates require another compatibility check. Status distinguishes saved preference and observed config traffic from unverified candidate visibility.`,
+    prediction: `Usage:\n  ${name} prediction [status|on|off|fix]\n\nOptional native next-message predictions; off by default. macOS and Windows. Windows requires the registered official MSIX App, an initialized profile, Windows PowerShell and .NET Framework 4.7.2+; Git/OpenSSL is not required for prediction setup. Quit Codex before on/off, then restart ccdx. On adds private App-profile certificate trust and an App-only route for chatgpt.com and ab.chatgpt.com. HTTPS on those hosts is decrypted locally; only prediction configuration is changed. No client program files, OS trust, account permissions, MCP or Hooks are changed. Static HTTP/HTTPS/SOCKS5 proxies and bypass rules are preserved. Windows supports company PAC/WPAD; macOS dynamic PAC/WPAD and CIDR bypass rules are reported as unsupported. The bridge port persists across restarts/updates; a busy saved port disables only predictions. Launch/reuse checks the App's actual route; an older random or missing route may require one full App quit. Official prediction configuration is preserved; the conversation's model is used. App updates require another compatibility check. Status distinguishes saved preference and observed config traffic from unverified candidate visibility.\n\nFix asks a compatible running CCDX adapter to repair the enabled bridge once on its saved port. It never enables predictions, renews certificates or force-restarts Codex. Healthy bridges are retained. Missing App routes require a normal full quit and ccdx launch; partial repair exits 1. An older adapter must first be upgraded and restarted once to gain this repair endpoint.`,
     update: `Usage:\n  ${name} update [npm|github]\n\nUpdates the global package from the configured npm registry or the latest stable GitHub release. With no source, an interactive terminal prompts for one. Windows uses system cmd.exe to run npm.cmd without changing PowerShell policy; use the .cmd entrypoint if scripts are blocked. GitHub installs require Git on PATH and dependencies may still use the configured npm registry. Restart the running adapter after installation.`,
     version: `Usage:\n  ${name} --version`,
   };
@@ -398,7 +398,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} disable-image
   ${name} image-status
   ${name} auto-review-model
-  ${name} prediction [status|on|off]
+  ${name} prediction [status|on|off|fix]
   ${name} update [npm|github]
   ${name} --version
   ${name} --help

@@ -12,7 +12,7 @@ import { createRequestId, runWithRequestContext } from "./request-context.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { status } from "./status.mjs";
 import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
-import { ADAPTER_HEALTH_PATH, adapterHealthPayload } from "./running-adapter.mjs";
+import { ADAPTER_HEALTH_PATH, ADAPTER_PREDICTION_FIX_PATH, PREDICTION_FIX_CAPABILITY, adapterHealthPayload } from "./running-adapter.mjs";
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
 import { createResponsesImagePressureController } from "./responses-image-pressure.mjs";
 import { createResponseFailureDiagnostics, buildHttpFailureDetails } from "./response-failures.mjs";
@@ -253,7 +253,38 @@ export function createAdapterHandler(options = {}) {
       res.writeHead(200, { "Content-Type": "application/json" });
       const predictionPac = isLoopbackAddress(req.socket?.remoteAddress) && isLoopbackHostHeader(req.headers?.host)
         ? options.nativePredictionPac?.() : null;
-      res.end(JSON.stringify({ ...adapterHealthPayload(), ...(predictionPac ? { native_prediction_pac: predictionPac } : {}) }));
+      const health = adapterHealthPayload();
+      res.end(JSON.stringify({ ...health,
+        capabilities: [...health.capabilities, ...(typeof options.fixPrediction === "function" ? [PREDICTION_FIX_CAPABILITY] : [])],
+        ...(predictionPac ? { native_prediction_pac: predictionPac } : {}) }));
+      return;
+    }
+
+    if (pathname === ADAPTER_PREDICTION_FIX_PATH) {
+      if (!isLoopbackAddress(req.socket?.remoteAddress) || req.headers?.host === undefined
+        || !isLoopbackHostHeader(req.headers.host) || Object.hasOwn(req.headers, "origin")) {
+        sendJsonError(res, httpError("Prediction repair is available only to native loopback clients", 403));return;
+      }
+      if (req.method !== "POST") {
+        res.setHeader?.("Allow", "POST");sendJsonError(res, httpError("Prediction repair requires POST", 405));return;
+      }
+      if (String(req.headers["content-type"] || "").split(";", 1)[0].trim().toLowerCase() !== "application/json") {
+        sendJsonError(res, httpError("Prediction repair requires application/json", 415));return;
+      }
+      if (typeof options.fixPrediction !== "function") {
+        sendJsonError(res, httpError("This adapter does not support prediction repair; upgrade and restart CCDX once", 503));return;
+      }
+      const abort = createRequestAbort(req, res);abort.setTimeout(2000);
+      try {
+        const body = await readJsonBody(req, { maxBodyBytes: 1024, maxDecodedBodyBytes: 1024, signal: abort.signal });
+        if (!body || Object.keys(body).length !== 1 || body.action !== "fix") throw httpError("Expected prediction repair action: fix", 400);
+        abort.clearTimeout();
+        const result = await options.fixPrediction();
+        if (!res.destroyed && !res.writableEnded) {
+          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });res.end(JSON.stringify(result));
+        }
+      } catch (error) { sendJsonError(res, error, 503); }
+      finally { abort.cleanup(); }
       return;
     }
 
@@ -397,6 +428,7 @@ export function createAdapterHandler(options = {}) {
     const trackRequest = pathname !== ADAPTER_HEALTH_PATH
       && pathname !== ADAPTER_STATUS_PATH
       && pathname !== ADAPTER_CACHE_PATH
+      && pathname !== ADAPTER_PREDICTION_FIX_PATH
       && !DASHBOARD_API_PATHS.has(pathname)
       && !((req.method === "GET" || req.method === "HEAD") && DASHBOARD_PATHS.has(pathname));
     const routeName = classifyAdapterRoute(req.method, pathname);

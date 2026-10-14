@@ -33,6 +33,10 @@ export function supervisePrediction({ native, restart, state, warning = () => {}
   return {
     ...native,
     check,
+    healthy() { return !closed && current.healthy(); },
+    enabled() { return !closed && current.enabled?.() !== false; },
+    appCurrent() { return current.appCurrent?.() !== false; },
+    inspectRoute() { return current.inspectRoute?.(); },
     prepareRoute() { return current.prepareRoute?.(); },
     async close() { closed = true;clearIntervalImpl(timer);await flight;await current?.close(); },
   };

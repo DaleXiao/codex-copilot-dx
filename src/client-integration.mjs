@@ -7,9 +7,27 @@ import { supervisePrediction } from "./native-prediction-recovery.mjs";
 
 // The CLI composes the services; this module owns optional client integration
 // lifecycle. It never forwards model requests or depends on dashboard rendering.
-export function createClientIntegration({ port, host, info = () => {}, warning = () => {}, configLog } = {}) {
+export function createClientIntegration({ port, host, info = () => {}, warning = () => {}, configLog,
+  startPrediction = async options => (await import("./native-prediction.mjs")).startNativePrediction(options) } = {}) {
   const prediction = createPredictionState();
   let native = null;
+  let operation = null, operationName = null, closed = false;
+  async function startPredictionBridge(expectedPort) {
+    const started = await startPrediction({ state: prediction, warning: info, ...(expectedPort ? { expectedPort } : {}) });
+    if (!started) return null;
+    if (closed) { await started.close();return null; }
+    const port = Number(new URL(started.pacUrl).port);
+    prediction.supervising();
+    return supervisePrediction({ native: started, state: prediction, warning,
+      restart: () => startPrediction({ state: prediction, warning: info, expectedPort: port }) });
+  }
+  function serialize(name, task) {
+    if (closed) return Promise.reject(new Error("Client integration is closing; repair was skipped"));
+    if (operation) return operationName === name ? operation : operation.then(() => serialize(name, task));
+    operationName = name;
+    operation = Promise.resolve().then(task).finally(() => { operation = null;operationName = null; });
+    return operation;
+  }
   return {
     async configure() {
       try {
@@ -28,21 +46,36 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
       }
       return { imageEnabled: enabled, imageMcpSkipped, compressionSetup: runInBackground(ensureCodexThreadCompression) };
     },
-    async start() {
+    start() { return serialize("start", async () => {
       try {
-        const { startNativePrediction } = await import("./native-prediction.mjs");
-        native = await startNativePrediction({ state: prediction, warning: info });
-        if (native) {
-          const expectedPort = Number(new URL(native.pacUrl).port);
-          native = supervisePrediction({ native, state: prediction, warning,
-            restart: () => startNativePrediction({ state: prediction, warning: info, expectedPort }) });
-        }
+        native ||= await startPredictionBridge();
       } catch (error) { prediction.unavailable(error); warning(`${error.message}. Core startup will continue.`); }
       return native;
-    },
+    }); },
+    fix() { return serialize("fix", async () => {
+      let restarted = false, route = "unknown";
+      try {
+        if (!native?.healthy() || native.enabled?.() === false || native.appCurrent?.() === false) {
+          const expectedPort = native ? Number(new URL(native.pacUrl).port) : undefined;
+          await native?.close();native = null;
+          native = await startPredictionBridge(expectedPort);restarted = Boolean(native);
+        }
+      } catch (error) { prediction.unavailable(error); }
+      let routeError = false;
+      if (native && !closed) {
+        try {
+          await native.prepareRoute?.();
+          route = await native.inspectRoute?.() || "unverified";
+        } catch { routeError = true;warning("Prediction bridge is ready, but App route inspection failed"); }
+      }
+      const snapshot = prediction.snapshot();
+      const status = !snapshot.configured && snapshot.bridge !== "unavailable" ? "disabled" : snapshot.bridge !== "running" ? "failed"
+        : route === "verified" || route === "closed" ? "ready" : route === "missing" ? "needs_app_relaunch" : "route_unverified";
+      return { status, bridge_restarted: restarted, app_route: route, ...(routeError ? { route_error: true } : {}), prediction: snapshot };
+    }); },
     pacUrl() { return native?.pacUrl || null; },
     launched(route) { prediction.launch(route); },
     snapshot() { return { prediction: prediction.snapshot() }; },
-    async close() { await native?.close(); native = null; },
+    async close() { closed = true;try { await operation; } finally { await native?.close();native = null; } },
   };
 }

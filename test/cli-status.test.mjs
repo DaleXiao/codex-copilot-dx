@@ -15,7 +15,7 @@ test("status distinguishes image outcomes from input optimization and reports lo
     logging: { usage: { pending_records: 2, pending_bytes: 100, dropped_records: 3, write_failures: 1 }, debug: { enabled: false } },
   }) });
   assert.match(output, /Image generation: 1 active, 4 succeeded, 2 failed \(1 busy\), 3 cancelled, 1 delivery failures/);
-  assert.match(output, /\[WARN\] Usage logging: 2 pending.*3 dropped, 1 write failures/);
+  assert.match(output, /\[WARN\]\s+Usage logging: 2 pending.*3 dropped, 1 write failures/);
   assert.doesNotMatch(output, /Debug logging/);
 });
 
@@ -168,7 +168,7 @@ test("formatAdapterStatus: warns when the running adapter is older than the CLI"
     data: statusPayload({ version: "0.4.44" }),
   }, { cliVersion: "0.5.0" });
 
-  assert.match(output, /\[WARN\] Adapter 0\.4\.44.*this CLI is 0\.5\.0.*stop the running adapter before switching versions/);
+  assert.match(output, /\[WARN\]\s+Adapter 0\.4\.44.*this CLI is 0\.5\.0.*stop the running adapter before switching versions/);
 });
 
 test("formatAdapterStatus: tolerates absent optional metrics", () => {

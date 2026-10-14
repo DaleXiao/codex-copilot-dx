@@ -176,7 +176,7 @@ test("animation selector: preview failure does not hide or undo a saved choice",
   assert.equal(result.cancelled, false);
   assert.equal(result.theme, "pulse");
   assert.equal(savedTerminalAnimationTheme({ env: {}, home }), "pulse");
-  assert.match(output.text(), /\[WARN\] Preview unavailable/);
+  assert.match(output.text(), /\[WARN\]\s+Preview unavailable/);
   assert.match(output.text(), /Saved terminal animation: Pulse/);
   assert.match(output.text(), /The next ccdx start will use this animation/);
 });

@@ -13,5 +13,5 @@ export function status(kind, message) {
   const requestContext = currentRequestContext();
   const requestId = requestContext?.showRequestId ? requestContext.requestId : "";
   const context = requestId ? ` request_id=${requestId}` : "";
-  return `${LABELS[kind] || LABELS.info}${context} ${message}`;
+  return `${(LABELS[kind] || LABELS.info).padEnd(8)}${context ? `${context.trimStart()} ` : ""}${message}`;
 }

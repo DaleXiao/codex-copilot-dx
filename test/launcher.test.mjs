@@ -128,6 +128,18 @@ test("macOS prediction launch does not report success when the active App drops 
   assert.equal(inspections, 2, "an observed wrong route fails immediately rather than waiting or relaunching");
 });
 
+test("a persisted App preference is reuse evidence, not a verified launch route or permission to restart", async () => {
+  let route;
+  const logs = [];
+  const ok = await openCodex({ env: {}, platform: "darwin", predictionApp: "/Applications/ChatGPT.app",
+    predictionPacUrl: "http://127.0.0.1:12345/proxy.pac", persistedPredictionRoute: true,
+    macAppProcesses: () => [{ pid: 123, readable: true, route: null }], onPredictionRoute: value => { route = value; },
+    log: value => logs.push(value), preparePredictionRoute() { assert.fail("running App must not be edited"); },
+    spawnImpl() { assert.fail("running App must not be restarted"); } });
+  assert.equal(ok, true);assert.equal(route, "persisted");
+  assert.match(logs.join("\n"), /waiting for configuration traffic/);assert.doesNotMatch(logs.join("\n"), /route verified/);
+});
+
 test("macOS prediction launch allows delayed main-process visibility without an unbounded watcher", async () => {
   const pac = "http://127.0.0.1:12345/proxy.pac", args = ["/Applications/ChatGPT.app", "--args", `--proxy-pac-url=${pac}`];
   const { spawnImpl } = fakeSpawn({ [JSON.stringify(args)]: 0 });let inspections = 0;

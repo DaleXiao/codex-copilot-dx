@@ -251,7 +251,7 @@ export async function refreshVSCodeVersion() {
     clearTimeout(timer);
     if (resp.ok) {
       cachedVersion = parseVSCodeVersion(await resp.json());
-      console.log(status("info", `VS Code version: ${cachedVersion}`));
+      debugLog(`VS Code version: ${cachedVersion}`);
     }
   } catch {
     // Keep the fallback quietly.

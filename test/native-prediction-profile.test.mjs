@@ -246,6 +246,42 @@ test("invalid saved ports fail before startup changes files, on macOS as well as
   }
 });
 
+test("closed-profile route lifecycle and compatible App updates preserve port, trust and unrelated preferences", { skip: process.platform === "win32" }, async t => {
+  const opts = fixture(t), archive = path.join(opts.root, "app.asar");
+  fs.writeFileSync(archive, "initial synthetic App identity");
+  const identity = () => { const stat = fs.statSync(archive);return { ...app, archive, size: stat.size, mtimeMs: stat.mtimeMs }; };
+  const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: identity, output() {} };
+  await runPredictionCommand({ ...run, action: "on" });
+  const paths = predictionPaths(opts), pref = path.join(paths.profile, "Default", "Preferences");
+  fs.writeFileSync(path.join(paths.profile, "Local State"), "{}");fs.writeFileSync(pref, '{"unrelated":42}');
+  let bridge = await startNativePrediction(run);t.after(async () => bridge?.close());
+  assert.equal(bridge.prepareRoute().status, "installed");assert.equal(bridge.healthy(), true);
+  const port = readPredictionSettings(opts).bridgePort, trust = fs.readFileSync(paths.store);
+  await bridge.close();assert.equal(bridge.healthy(), false);
+  fs.writeFileSync(archive, "compatible changed synthetic App identity for revalidation");
+  let rechecks = 0;
+  bridge = await startNativePrediction({ ...run, resolveApp() { rechecks++;return identity(); } });
+  assert.equal(rechecks, 1);assert.equal(readPredictionSettings(opts).bridgePort, port);
+  assert.deepEqual(fs.readFileSync(paths.store), trust);assert.equal(bridge.prepareRoute().status, "installed");
+  assert.equal(JSON.parse(fs.readFileSync(pref)).unrelated, 42);
+  await bridge.close();await runPredictionCommand({ ...run, action: "off" });
+  assert.deepEqual(JSON.parse(fs.readFileSync(pref)), { unrelated: 42 });
+});
+
+test("App identity/profile changes and concurrent compatibility preferences do not get adopted", { skip: process.platform === "win32" }, async t => {
+  const opts = fixture(t), archive = path.join(opts.root, "app.asar");fs.writeFileSync(archive, "first");
+  const identity = () => { const stat = fs.statSync(archive);return { ...app, archive, size: stat.size, mtimeMs: stat.mtimeMs }; };
+  const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: identity, output() {} };
+  await runPredictionCommand({ ...run, action: "on" });fs.writeFileSync(archive, "changed App identity");
+  const before = fs.readFileSync(predictionPaths(opts).settings);
+  await assert.rejects(startNativePrediction({ ...run, resolveApp: () => ({ ...identity(), app: "/Applications/Other.app" }) }), /identity\/profile changed/);
+  assert.deepEqual(fs.readFileSync(predictionPaths(opts).settings), before);
+  await assert.rejects(startNativePrediction({ ...run, resolveApp() {
+    writePredictionSettings({ ...readPredictionSettings(opts), enabled: false }, opts);return identity();
+  } }), /setup changed during App compatibility recheck/);
+  assert.equal(readPredictionSettings(opts).enabled, false);
+});
+
 test("a first-start preference conflict closes its uncommitted listener rather than persisting a stale route", { skip: process.platform === "win32" }, async t => {
   const opts = fixture(t), archive = path.join(opts.root, "app.asar");fs.writeFileSync(archive, "synthetic App identity");
   const stat = fs.statSync(archive), verified = { ...app, archive, size: stat.size, mtimeMs: stat.mtimeMs };

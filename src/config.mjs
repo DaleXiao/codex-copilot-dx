@@ -286,6 +286,7 @@ function ensureCodexConfigUnlocked(adapterPort = 2026, {
   filePath,
   host = "127.0.0.1",
   imageProviderEnabled = false,
+  log = console.log,
 } = {}) {
   const baseUrl = `${adapterBaseUrl(host, adapterPort)}/v1`;
 
@@ -304,10 +305,10 @@ function ensureCodexConfigUnlocked(adapterPort = 2026, {
     ? { content: initialCodexConfig(adapterPort, host), changed: true }
     : computeUpdatedCodexConfig(content, adapterPort, host);
   if (!core.changed) {
-    console.log(status("ok", `Codex already points to ${baseUrl}`));
+    log(status("ok", `Codex already points to ${baseUrl}`));
   } else {
     atomicWriteFileIfChangedSync(filePath, core.content);
-    console.log(status("ok", content === undefined ? `Created Codex configuration: ${filePath}` : `Configured Codex base URL: ${baseUrl}`));
+    log(status("ok", content === undefined ? `Created Codex configuration: ${filePath}` : `Configured Codex base URL: ${baseUrl}`));
   }
   // Disabled means no image maintenance, including no implicit removal of old
   // or user-owned entries. Explicit disable-image owns the cleanup operation.

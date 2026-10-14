@@ -155,8 +155,10 @@ fallback after upstream-proxy rejection is added. The default App profile
 is `~/Library/Application Support/Codex`; an explicit
 `CODEX_ELECTRON_USER_DATA_PATH` is respected. Quit the App before trust changes;
 CCDX never kills it. The launcher uses the exact App that passed the compatibility
-check. Updating the App invalidates that check: quit it and run `prediction on`
-again. Unknown client/store/configuration formats are not forcibly rewritten.
+check. A changed App is rechecked once at bridge startup using the existing
+signature/protocol and profile checks. The exact App/profile identity, saved port
+and trust must remain unchanged; unsupported updates still require explicit setup.
+Unknown client/store/configuration formats are not forcibly rewritten.
 These are checked compatibility boundaries, not a promise for every future App.
 
 The bridge changes only its own prediction fields and preserves already-enabled
@@ -173,14 +175,17 @@ provide a separate prediction-model picker.
 `prediction off` immediately disables new local overlays. Quit/reopen Codex to
 clear its cached predictions and temporary route. If the App is still running,
 trust removal is deferred; quit it and run `prediction off` again. Only the exact
-owned certificate record is removed, never the whole store. Failed activation
+owned certificate record is removed, never the whole store. A CCDX-owned persistent
+proxy preference is restored first, preserving all unrelated preference values.
+User-replaced proxy preferences are not restored over. Failed activation
 rolls back newly added trust; certificate replacement keeps old trust until the
 new preference is committed. If the bridge stops, new connections can fall back
 to the original route; already-interrupted requests are not replayed. An App
 already using the saved address need not be relaunched just because CCDX restarts.
 If its route is missing or differs, fully quit Codex and run `ccdx` to attach it.
-`CCDX_AUTO_LAUNCH=0` keeps
-automatic launch disabled and does not attach the route to a manually opened App.
+`CCDX_AUTO_LAUNCH=0` keeps automatic launch disabled and never hot-attaches a
+running App. An already-persisted direct-environment preference can still be read
+when the App is manually opened.
 Optional prediction failures never prevent the core adapter or image service from
 starting. `prediction status` reports the saved preference and, when a compatible
 running adapter responds, its bridge state, configuration-response observations
@@ -190,6 +195,36 @@ proof of a generated/displayed candidate. Candidate visibility remains unknown;
 no prompt matching, UI injection, transcript scanning or extra inference is used
 to invent that status. Prediction settings are stored separately in
 `~/.config/codex-copilot-dx/native-prediction/` (or under `XDG_CONFIG_HOME`).
+
+Since `0.9.34`, an enabled bridge has a lightweight 30-second listener check.
+Healthy checks do not spawn processes, call upstream, inspect transcripts or
+probe model endpoints. A failed owned listener/native company-routing worker can
+be recreated on the saved port, using the same checked profile and certificate.
+There are at most three recovery attempts per CCDX process, with 30/60/120-second
+backoff gates; checks themselves run every 30 seconds. Occupied ports are not
+stolen or rotated. Startup failures do not gain a retry loop, and configuration
+HTTP errors or missing gray text alone do not trigger transport restarts. Existing
+requests can fail during an outage and are never replayed by this supervisor.
+Disabled prediction startup creates no recovery timer. The existing in-memory
+overlay switch still observes explicit on/off changes independently.
+
+Before enabled App launch, CCDX can persist its PAC in that verified profile's
+`Default/Preferences`, but only in a direct environment, with initialized regular
+profile files and the App closed. Existing explicit App proxies and all company
+static/PAC/WPAD routes are preserved. Ownership intent is stored in `route.json`
+before changing the one proxy field; unrelated settings are retained, concurrent
+edits fail closed, and matching setup is not rewritten. If an App is already
+running, first-time migration is deferred until a normal closed-App launch;
+CCDX does not claim it can hot-attach a missing route. A manually reopened App
+with a saved preference is reported as awaiting configuration traffic, not as
+launch-route verified. This preference is a prevention measure, not a guarantee
+for every future Chromium profile format or OS version. Company proxy users keep
+the verified launch-argument path. Core inference/image routes are unchanged.
+
+`prediction status` and `ccdx status` also expose launch-route evidence, persistent
+route state, recovery attempts and recoveries. These are independent of the
+unknown candidate-visibility value. A successful recovery only means the bridge
+was recreated on the original address, not that gray text appeared.
 
 ### Configuration ownership
 
@@ -366,7 +401,18 @@ The upgrade intentionally does not delete or rewrite retired Claude or PM Studio
 ## Commands
 
 Run `ccdx <command> --help` for command-specific behavior and side-effect details.
-After startup, CCDX prints a short reminder that `ccdx help` lists all available commands.
+Startup uses aligned status/project/result columns and a left-aligned Ready footer
+with the Web UI URL and `ccdx help`. Ctrl+C is shown only for the foreground-owned
+service, never a short-lived command reusing another service. A static, favicon-style
+atom uses ANSI green and half-block characters only on interactive color terminals
+at least 72 columns wide; narrow terminals, `NO_COLOR`, `TERM=dumb` and redirected
+output keep a plain title. No new graphics/font/runtime dependency is installed.
+Credentials found are not labeled online-authorized, cached model lists are not
+labeled fresh upstream data, and image configuration is not a provider test.
+Ready reports core readiness independently of optional prediction/image warnings.
+Model refresh logs show counts; `ccdx models` retains the complete live list.
+VS Code compatibility-version details remain available in debug logging. Startup
+does not wait for optional update/compression work or add online doctor/model probes.
 
 ### Live models
 

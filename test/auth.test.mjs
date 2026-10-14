@@ -205,7 +205,7 @@ test("ensureAuth: rechecks the saved token after waiting for the auth lock", asy
 
   await Promise.all([holder, auth]);
   assert.equal(fs.readFileSync(githubTokenPath(home), "utf8"), "ghu_written_by_other_process");
-  assert.equal(lines.some((line) => /\[OK\] GitHub token found/.test(line)), true);
+    assert.equal(lines.some((line) => /\[OK\]\s+GitHub token found/.test(line)), true);
 });
 
 test("ensureAuth: expires Device Flow without polling or writing after its deadline", async () => {

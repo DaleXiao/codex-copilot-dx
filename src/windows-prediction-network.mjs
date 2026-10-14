@@ -119,5 +119,5 @@ export async function startWindowsPredictionNetwork({ settings, env = process.en
     if(stopped)queueMicrotask(()=>req.destroy(failure("proxy_worker_closed")));
     return req;
   };
-  return {script,requestImpl,pac:port=>companyPredictionPac(script,port),close(){closing=true;stop(failure("proxy_worker_closed"));}};
+  return {script,requestImpl,pac:port=>companyPredictionPac(script,port),healthy:()=>!stopped,close(){closing=true;stop(failure("proxy_worker_closed"));}};
 }

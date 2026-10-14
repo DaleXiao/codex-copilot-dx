@@ -10,6 +10,7 @@
     "Enabled": ["Enabled", "已开启"],
     "Disabled": ["Disabled", "已关闭"],
     "Running": ["Running", "运行中"],
+    "Recovering": ["Recovering", "恢复中"],
     "Stopped": ["Stopped", "未运行"],
     "Unavailable": ["Unavailable", "不可用"],
     "Observed": ["Observed", "已收到配置请求"],

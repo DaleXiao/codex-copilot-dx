@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parseCliArgs } from "../src/cli-options.mjs";
 import { loadRuntimeConfig } from "../src/runtime-config.mjs";
 import { TERMINAL_ANIMATION_THEMES } from "../src/terminal-animation.mjs";
+import { startupReady } from "../src/startup-ui.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8")
@@ -43,7 +44,8 @@ test("public environment controls and README command examples match code", () =>
 
 test("startup advertises the canonical help command on new and reused adapters", () => {
   const source = fs.readFileSync(path.join(root, "bin/cli.mjs"), "utf8");
-  assert.equal(source.match(/Tip: Run \$\{CLI_NAME\} help to view more features and commands\./g)?.length, 2);
+  assert.equal(source.match(/console\.log\(startupReady\(/g)?.length, 2);
+  for (const reused of [false, true]) assert.match(startupReady({ reused }), /Help    ccdx help/);
 });
 
 test("documentation local links resolve and release reports identify their historical scope", () => {

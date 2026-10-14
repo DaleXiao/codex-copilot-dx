@@ -192,6 +192,7 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
   const prediction = data.client_integrations?.prediction;
   if (prediction) {
     lines.push(status("info", `Native predictions: ${prediction.configured ? "on" : "off"}; bridge ${prediction.bridge}; client route ${prediction.client_route}; visible candidate unknown`));
+    if (prediction.launch_route) lines.push(status("info", `Prediction self-check: App route ${prediction.launch_route}; persistent route ${prediction.persistence || "unknown"}; ${count(prediction.recovery?.recovered)} bridge recoveries, ${count(prediction.recovery?.attempts)}/3 attempts used`));
     if (prediction.reason) lines.push(status("warn", terminalCell(prediction.reason).slice(0, 400)));
   }
   if (data.profiles?.codex) {

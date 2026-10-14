@@ -2,8 +2,7 @@
 
 Use Codex App with GitHub Copilot through a local adapter.
 
-CCDX targets Codex App. It discovers Copilot models, adapts the client's model
-catalog, and preserves Responses streaming, tool calls and conversation history.
+CCDX targets Codex App: Copilot discovery, adapted model catalogs, Responses streaming, tool calls and conversation history.
 Default Auto-review: **GPT-6.1 Sol / low**. Image generation is **off by default**. Native predictions are also **off by default**.
 
 ## Install and run
@@ -23,7 +22,7 @@ enabled. If PowerShell blocks scripts, use `npm.cmd` / `ccdx.cmd`; do not change
 
 Open [the local dashboard](http://127.0.0.1:2026/) for status, model discovery,
 usage, cache/limits, recent failures, request context and animation settings.
-Auto refresh runs every 30 minutes while visible and can be switched off. Hidden pages pause; opening sections and manual refresh still work.
+Auto refresh runs every 30 minutes while visible and can be switched off. Hidden pages pause; opening sections and manual refresh still work. Startup uses an atom icon and aligned checks; `Ready` refers to the core service. Narrow/non-color terminals use a plain title.
 
 ## Commands
 
@@ -75,6 +74,7 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
   Other domains and the CCDX model endpoint stay on their existing routes.
   No program files or OS trust are changed. Static HTTP/HTTPS/SOCKS5 proxies and bypass rules are retained.
   Windows supports company PAC/WPAD; macOS dynamic routing remains unsupported. Windows setup needs the official MSIX App, Windows PowerShell and .NET Framework 4.7.2+—not Git/OpenSSL. See the reference for limits.
+  Bridge checks allow three same-port recovery attempts per process, without App restart/replay. Only closed, initialized Apps in direct environments receive an owned persistent route; user/company proxies are preserved. Missing routes in running Apps are not hot-attached.
 - CCDX adds experimental local history compression only when installed App
   runtimes support it and report it off. Existing choices are preserved; an
   already-enabled default, unavailable runtime or failed check is skipped.

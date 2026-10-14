@@ -149,7 +149,7 @@
       if (element("prediction-preference")) {
         const prediction = data.client_integrations?.prediction;
         text("prediction-preference", prediction ? prediction.configured ? "Enabled" : "Disabled" : "Unknown");
-        text("prediction-bridge", ({ running: "Running", stopped: "Stopped", unavailable: "Unavailable" })[prediction?.bridge] || "Unknown");
+        text("prediction-bridge", ({ running: "Running", recovering: "Recovering", stopped: "Stopped", unavailable: "Unavailable" })[prediction?.bridge] || "Unknown");
         text("prediction-route", prediction?.client_route === "observed" ? "Observed" : "Unknown");
         text("prediction-candidate", "Unknown");
         const note = element("prediction-note");

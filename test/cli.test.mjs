@@ -455,7 +455,7 @@ test("cli doctor exits without starting the adapter", async () => {
   });
 
   assert.match(stdout, /ccdx doctor/);
-  assert.match(stdout, /\[WARN\] Adapter is not listening on http:\/\/127\.0\.0\.1:9/);
+  assert.match(stdout, /\[WARN\]\s+Adapter is not listening on http:\/\/127\.0\.0\.1:9/);
   assert.equal(stderr, "");
 });
 

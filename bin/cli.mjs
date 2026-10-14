@@ -22,6 +22,7 @@ import { createProfileRuntime } from "../src/profile-runtime.mjs";
 import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
 import { createCodexModelCatalog } from "../src/codex-model-catalog.mjs";
 import { setResponseHistoryMaxBytes } from "../src/response-history.mjs";
+import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck } from "../src/startup-ui.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
 const CLI_NAME = cliCommandName();
@@ -271,7 +272,8 @@ async function clientIntegrations() {
   if (!clientIntegration) {
     const { createClientIntegration } = await import("../src/client-integration.mjs");
     clientIntegration = createClientIntegration({ port: ADAPTER_PORT, host: ADAPTER_HOST,
-      info: (message) => console.log(status("info", message)), warning: (message) => console.warn(status("warn", message)) });
+      configLog: startupLogger("Config"),
+      info: (message) => console.log(startupCheck("info", "Client", message)), warning: (message) => console.warn(startupCheck("warn", "Client", message)) });
   }
   return clientIntegration;
 }
@@ -293,30 +295,36 @@ async function reuseRunningAdapterIfAvailable() {
   }
   if (!running.ok) return false;
 
-  console.log(status("ok", `Using existing adapter at ${running.baseUrl}`));
-  const { compressionSetup } = await configureCodexClient();
+  console.log(startupCheck("ok", "Adapter", `Using existing service at ${running.baseUrl}`));
+  console.log(startupCheck("info", "Auth", "Using existing service credentials; not rechecked"));
+  const { compressionSetup, imageEnabled, imageMcpSkipped } = await configureCodexClient();
 
   let predictionPacUrl = null;
   let predictionApp = null;
   let predictionProfile = null;
+  let persistedPredictionRoute = false;
+  let predictionConfigured = false;
+  let launchRoute = "unknown";
   try {
     const { readPredictionSettings } = await import("../src/native-prediction-profile.mjs");
     const preference = readPredictionSettings();
+    predictionConfigured = preference.enabled;
     if (preference.enabled) {
       predictionPacUrl = running.data?.native_prediction_pac || null;
       predictionApp = preference.app?.app;
       predictionProfile = preference.app?.profile;
+      const { hasInstalledPredictionRoute } = await import("../src/native-prediction-route.mjs");
+      const { predictionPaths } = await import("../src/native-prediction-profile.mjs");
+      persistedPredictionRoute = hasInstalledPredictionRoute({ ...predictionPaths({ app: preference.app }), pacUrl: predictionPacUrl });
       if (!predictionPacUrl) console.warn(status("warn", "Restart ccdx to activate the newly enabled prediction bridge"));
     }
   } catch (error) { console.warn(status("warn", error.message)); }
-  await openCodex({ predictionPacUrl, predictionApp, predictionProfile });
-  console.log(`
-  ${status("ok", "Ready, using the existing ccdx adapter")}
-
-  Adapter: ${running.baseUrl}
-
-  Tip: Run ${CLI_NAME} help to view more features and commands.
-`);
+  await openCodex({ predictionPacUrl, predictionApp, predictionProfile, persistedPredictionRoute,
+    onPredictionRoute: route => { launchRoute = route; }, log: startupLogger("App") });
+  console.log(predictionStartupCheck({ configured: predictionConfigured, bridge: predictionPacUrl ? "running" : "unknown", launch_route: launchRoute }));
+  console.log(startupCheck(imageEnabled && imageMcpSkipped ? "warn" : "info", "Images", imageEnabled
+    ? imageMcpSkipped ? "Client setup skipped; see warning above" : "Configured; provider not tested" : "Off"));
+  console.log(startupReady({ baseUrl: running.baseUrl, commandName: CLI_NAME, reused: true }));
   await compressionSetup;
   return true;
 }
@@ -337,17 +345,14 @@ if (CLI.command === "doctor") {
   process.exit(checks.some((check) => check.kind === "err") ? 1 : 0);
 }
 
-console.log(`
-  ${CLI_BANNER}
-  Use Codex App with GitHub Copilot
-`);
+console.log(`\n${startupBanner({ commandName: CLI_NAME, version: LOCAL_VERSION })}\n`);
 
 async function printUpdateNotice() {
   try {
     const { latestVersion, updateAvailable } = await checkForUpdate({ currentVersion: LOCAL_VERSION });
     if (!updateAvailable) return;
-    console.log(`\n  ${status("warn", `Update available: ${LOCAL_VERSION} -> ${latestVersion}`)}`);
-    console.log(`  Run ${CLI_NAME} update github to update, then restart ${CLI_NAME}.\n`);
+    console.log(`\n${status("warn", `Update available: ${LOCAL_VERSION} -> ${latestVersion}`)}`);
+    console.log(`Run ${CLI_NAME} update github to update, then restart ${CLI_NAME}.\n`);
   } catch {
     // Never block startup on the update check.
   }
@@ -364,7 +369,7 @@ try {
   }
 
   // Ensure GitHub login, using device flow if no token exists.
-  await ensureAuth();
+  await ensureAuth({ log: startupLogger("Auth") });
 
   const profileRuntime = createProfileRuntime({ codexClient: defaultCopilotClient });
   const profileModels = createProfileModelRuntime({
@@ -373,11 +378,15 @@ try {
     timeoutMs: MODEL_REFRESH_TIMEOUT_MS,
     commandName: CLI_NAME,
     autoReviewModelResolver: () => autoReviewModelPreference().model,
+    log: (kind, message) => console.log(startupCheck(kind, "Models", message)),
   });
 
   // Refresh the VS Code version in the background; fallback is non-blocking.
   void refreshVSCodeVersion();
   await profileModels.initialize();
+  if (profileModels.codexRegistry.source !== "live") {
+    console.log(startupCheck("info", "Models", `${profileModels.codexRegistry.source} list loaded${profileModels.codexRegistry.refreshInFlight ? "; refreshing" : ""}`));
+  }
 
   if (!isLoopbackHost(ADAPTER_HOST)) {
     console.log(status("warn", `ADAPTER_HOST=${ADAPTER_HOST} exposes the adapter beyond loopback because CCDX_ALLOW_LAN=1 is set. Use only on trusted networks.`));
@@ -387,6 +396,7 @@ try {
   const terminalAnimationTheme = terminalAnimationPreference().theme;
   const codexModelCatalog = createCodexModelCatalog();
   activeServer = await startAdapter(ADAPTER_PORT, ADAPTER_HOST, {
+    log: startupLogger("Adapter"),
     autoReviewModelResolver: () => autoReviewPreference(),
     codexClient: profileRuntime.codexClient,
     codexModelCatalog,
@@ -401,13 +411,19 @@ try {
   });
 
   // Point Codex App at the adapter.
-  const { compressionSetup } = await configureCodexClient();
+  const { compressionSetup, imageEnabled, imageMcpSkipped } = await configureCodexClient();
 
   // Optional native prediction setup must never prevent the core adapter from running.
   nativePrediction = await (await clientIntegrations()).start();
+  const persistentRoute = nativePrediction?.prepareRoute();
 
   // Launch Codex when available. A running App is never forcibly restarted.
-  await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app, predictionProfile: nativePrediction?.profile });
+  await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app, predictionProfile: nativePrediction?.profile,
+    preparePredictionRoute: () => nativePrediction?.prepareRoute(), persistedPredictionRoute: persistentRoute?.status === "installed",
+    onPredictionRoute: route => clientIntegration?.launched(route), log: startupLogger("App") });
+  console.log(predictionStartupCheck(clientIntegration?.snapshot().prediction));
+  console.log(startupCheck(imageEnabled && imageMcpSkipped ? "warn" : "info", "Images", imageEnabled
+    ? imageMcpSkipped ? "Client setup skipped; see warning above" : "Configured; provider not tested" : "Off"));
 
   // Periodically refresh the model list + endpoint cache so a long-running
   // adapter picks up newly released models without a restart.
@@ -419,15 +435,7 @@ try {
     modelRefreshTimer.unref?.();
   }
 
-  console.log(`
-  ${status("ok", "Ready, CCDX adapter is ready to use")}
-
-  Adapter: ${adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT)}
-
-  Tip: Run ${CLI_NAME} help to view more features and commands.
-
-  Press Ctrl+C to stop.
-`);
+  console.log(startupReady({ baseUrl: adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT), commandName: CLI_NAME }));
 
   const shutdown = async (signal) => {
     if (shuttingDown) return;

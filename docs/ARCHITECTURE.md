@@ -64,8 +64,23 @@ prediction lifecycle, with locked first-start persistence and no replacement
 on conflict. OS process inspection stays in the launcher/platform boundary;
 it runs only for explicit prediction-enabled launch/reuse, not per model request.
 macOS uses bounded system `ps` reads and Windows retains its existing registered
-process checks. No process is stopped, no permanent watcher or dependency is
+process checks. No process is stopped and no App-process watcher or dependency is
 added. Core inference keeps its existing service port and lifecycle.
+
+`native-prediction-recovery.mjs` supervises only the enabled optional bridge,
+using a low-cost listener check, same-route restart, single-flight recovery and
+a three-attempt budget. It does not watch App processes, modify proxy policy or
+replay inference. `native-prediction-route.mjs` separately owns the closed-profile
+preference transaction and its rollback metadata. It accepts direct environments
+only, preserves company/user routing, and never treats a saved preference as
+proof of a running route or visible candidate. App compatibility is rechecked only
+when its recorded identity changes, before existing trust/port checks are reused.
+
+`startup-ui.mjs` is pure terminal presentation: a static A atom, aligned checks
+and the common new/reused-service footer. It depends only on terminal/status
+utilities, not on inference or platform probes. The CLI feeds existing lifecycle
+results into it; presentation does not run doctor, call models or wait for optional
+background tasks. All status tags share one fixed-width column.
 
 Connection-ownership replay rejection is a provider-owned retry policy. It
 removes only unavailable reasoning once, preserving visible history and tools.

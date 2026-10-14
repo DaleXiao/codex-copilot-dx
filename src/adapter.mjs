@@ -499,7 +499,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
     server.listen(port, host, () => {
       server.off("error", onListenError);
       const actualPort = server.address()?.port || port;
-      console.log(status("ok", `Adapter listening on http://${host}:${actualPort}`));
+      (options.log || console.log)(status("ok", `Adapter listening on http://${host}:${actualPort}`));
       resolve(server);
     });
   });

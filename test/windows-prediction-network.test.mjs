@@ -48,6 +48,7 @@ test("persistent worker streams uploads and replies, preserves cookies, and clos
   const f = fixture(t);
   const env = Object.freeze({ SystemRoot: "C:\\Windows", CODEX_HOME: "unchanged" });
   const network = await startWindowsPredictionNetwork({ settings: { autoDetect: true }, spawnImpl: f.spawnImpl, env });
+  assert.equal(network.healthy(), true);
   t.after(() => network.close());
   assert.equal(f.call.options.shell, false);assert.equal(f.call.options.windowsHide, true);
   assert.equal(f.call.args.includes("-ExecutionPolicy"), false);
@@ -63,6 +64,7 @@ test("persistent worker streams uploads and replies, preserves cookies, and clos
   assert.deepEqual(Buffer.concat(f.uploads.get(1)), body);
   assert.ok(f.received.filter(event => event.op === "upload").every(event => Buffer.from(event.body, "base64").length <= 65536));
   network.close();assert.equal(f.child.killed, true);
+  assert.equal(network.healthy(), false);
 });
 
 test("worker failures, invalid targets and detection timeouts are bounded and redacted", async t => {

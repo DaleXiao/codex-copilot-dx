@@ -11,6 +11,8 @@ import { once } from "node:events";
 import { execFileSync } from "node:child_process";
 import { gzipSync } from "node:zlib";
 import { startPredictionTransport, predictionPac } from "../src/native-prediction-transport.mjs";
+import { supervisePrediction } from "../src/native-prediction-recovery.mjs";
+import { createPredictionState } from "../src/native-prediction-state.mjs";
 
 let directory, key, cert;
 before(() => {
@@ -140,6 +142,22 @@ test("an already-cached App route still handles trusted TLS configuration after 
   enabled = false;
   assert.equal((await f.send("chatgpt.com", "/backend-api/wham/predictions/config")).body.toString(), raw);
   assert.equal((await f.send("chatgpt.com", "/backend-api/unrelated")).body.toString(), raw);
+});
+
+test("supervisor repairs a closed real TLS bridge on the cached address without changing its client route", { timeout: 10_000 }, async t => {
+  const raw = JSON.stringify({ fixture: "same-port supervised recovery" });
+  const f = await fixture(t, (_req, res) => { res.writeHead(200, { "content-type": "application/json" });res.end(raw); });
+  const state = createPredictionState();state.configure(true);state.running({ type: "direct" });
+  let restarts = 0;
+  const owned = supervisePrediction({ native: { ...f.bridge, enabled: () => true, close: f.close }, state,
+    restart: async () => { restarts++;return startPredictionTransport({ key, cert, listenPort: f.bridge.port, overlay: () => null,
+      requestImpl: (request, callback) => http.request({ ...request, protocol: "http:", hostname: "127.0.0.1", port: f.upstream.address().port }, callback) }); } });
+  t.after(() => owned.close());
+  assert.equal((await f.send("chatgpt.com", "/backend-api/wham/predictions/config")).body.toString(), raw);
+  await f.close();assert.equal(f.bridge.healthy(), false);
+  await owned.check();assert.equal(restarts, 1);assert.equal(state.snapshot().recovery.recovered, 1);
+  assert.equal((await f.send("chatgpt.com", "/backend-api/wham/predictions/config")).body.toString(), raw);
+  assert.equal(owned.pacUrl, f.bridge.pacUrl);
 });
 
 test("CONNECT allowlist and PAC endpoint reject other authorities and browser origins", { timeout: 10_000 }, async t => {

@@ -61,6 +61,7 @@ export function macPredictionAppProcesses(app, { exec = execFileSync } = {}) {
 }
 
 export async function openCodex({ env = process.env, spawnImpl = spawn, platform = process.platform, predictionPacUrl = null, predictionApp = null, predictionProfile = null,
+  preparePredictionRoute, persistedPredictionRoute = false, onPredictionRoute = () => {}, log = console.log,
   resolveWindowsApp = installedWindowsPredictionApp, windowsAppProcesses = windowsPredictionAppProcesses,
   macAppProcesses = macPredictionAppProcesses } = {}) {
   if (platform === "win32" && autoLaunchEnabled(env) && typeof predictionPacUrl === "string"
@@ -82,10 +83,14 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
       const running = windowsAppProcesses(current.app, { env });
       if (running.length) {
         if (running.length === 1 && running[0].readable && running[0].route === predictionPacUrl) {
-          console.log(status("ok", "Running Codex App uses the current prediction route"));return true;
+          onPredictionRoute("verified");log(status("ok", "Running Codex App uses the current prediction route"));return true;
+        }
+        if (running.length === 1 && running[0].readable && !running[0].route && persistedPredictionRoute) {
+          onPredictionRoute("persisted");log(status("info", "App route preference is saved; waiting for configuration traffic to confirm it"));return true;
         }
         throw new Error("Running Codex App uses an old or unverified prediction route. Fully quit the App, then run ccdx again; no process was stopped");
       }
+      await preparePredictionRoute?.();
       const launched = await new Promise(resolve => {
         const child = spawnImpl(current.app, [`--user-data-dir=${predictionProfile}`, `--proxy-pac-url=${predictionPacUrl}`], {
           cwd: path.win32.dirname(current.app), env: { ...env, CODEX_ELECTRON_USER_DATA_PATH: predictionProfile },
@@ -94,27 +99,28 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
         child.once("error", () => resolve(false));
         child.once("spawn", () => { child.unref(); resolve(true); });
       });
-      if (!launched) { console.log(status("warn", "Could not launch the registered Windows Codex App"));return false; }
+      if (!launched) { onPredictionRoute("unverified");log(status("warn", "Could not launch the registered Windows Codex App"));return false; }
       await new Promise(resolve => setTimeout(resolve, 300));
       const actual = windowsAppProcesses(current.app, { env });
       const routeRetained = actual.length === 1 && actual[0].readable && actual[0].route === predictionPacUrl;
-      console.log(status(routeRetained ? "info" : "warn", routeRetained
+      onPredictionRoute(routeRetained ? "verified" : "unverified");
+      log(status(routeRetained ? "info" : "warn", routeRetained
         ? "Codex launch route verified; prediction status will show when configuration traffic is observed"
         : "Codex launch requested, but the active App did not retain the current prediction route. Core adapter remains available"));
       return routeRetained;
     } catch (error) {
-      console.log(status("warn", `Optional Windows prediction launch skipped: ${error.message}`));
+      onPredictionRoute("unverified");log(status("warn", `Optional Windows prediction launch skipped: ${error.message}`));
       return false;
     }
   }
   if (platform !== "darwin") {
-    console.log(status("warn", "Automatic launch requires macOS or an enabled Windows prediction setup"));
-    console.log(status("info", "Open Codex App manually; it will connect to the adapter."));
+    log(status("warn", "Automatic launch requires macOS or an enabled Windows prediction setup"));
+    log(status("info", "Open Codex App manually; it will connect to the adapter."));
     return false;
   }
 
   if (!autoLaunchEnabled(env)) {
-    console.log(status("info", "Auto-launch disabled (CCDX_AUTO_LAUNCH=0); open Codex App manually."));
+    log(status("info", "Auto-launch disabled (CCDX_AUTO_LAUNCH=0); open Codex App manually."));
     return false;
   }
 
@@ -126,38 +132,42 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
       const running = macAppProcesses(predictionApp);
       if (running.length) {
         if (running.length === 1 && running[0].readable && running[0].route === predictionPacUrl) {
-          console.log(status("ok", "Running Codex App uses the current prediction route"));return true;
+          onPredictionRoute("verified");log(status("ok", "Running Codex App uses the current prediction route"));return true;
+        }
+        if (running.length === 1 && running[0].readable && !running[0].route && persistedPredictionRoute) {
+          onPredictionRoute("persisted");log(status("info", "App route preference is saved; waiting for configuration traffic to confirm it"));return true;
         }
         throw new Error("Running Codex App uses an old or unverified prediction route. Fully quit the App, then run ccdx again; no process was stopped");
       }
+      await preparePredictionRoute?.();
       if (!await tryOpen([predictionApp, ...extraArgs], { spawnImpl })) {
-        console.log(status("warn", "Could not launch the verified macOS Codex App"));return false;
+        onPredictionRoute("unverified");log(status("warn", "Could not launch the verified macOS Codex App"));return false;
       }
       for (let attempt = 0; attempt < 10; attempt++) {
         const actual = macAppProcesses(predictionApp);
         if (actual.length === 1 && actual[0].readable && actual[0].route === predictionPacUrl) {
-          console.log(status("info", "Codex launch route verified; prediction status will show when configuration traffic is observed"));return true;
+          onPredictionRoute("verified");log(status("info", "Codex launch route verified; prediction status will show when configuration traffic is observed"));return true;
         }
         if (actual.length) break;
         if (attempt < 9) await new Promise(resolve => setTimeout(resolve, 100));
       }
-      console.log(status("warn", "Codex launch requested, but the active App did not retain the current prediction route. Core adapter remains available"));
+      onPredictionRoute("unverified");log(status("warn", "Codex launch requested, but the active App did not retain the current prediction route. Core adapter remains available"));
       return false;
     } catch (error) {
-      console.log(status("warn", `Optional macOS prediction launch skipped: ${error.message}`));return false;
+      onPredictionRoute("unverified");log(status("warn", `Optional macOS prediction launch skipped: ${error.message}`));return false;
     }
   }
   const attempts = launchAttempts();
   for (const attempt of attempts) {
     const args = [...attempt, ...extraArgs];
     if (await tryOpen(args, { spawnImpl })) {
-      console.log(status("ok", "Codex app launched"));
+      log(status("ok", "Codex app launched"));
       return true;
     }
   }
 
-  console.log(status("warn", "Could not launch the Codex app (checked com.openai.codex, Codex.app, ChatGPT.app)"));
-  console.log(status("info", "Open Codex App manually; it will connect to the adapter."));
-  console.log(status("info", "Download it from https://openai.com/codex"));
+  log(status("warn", "Could not launch the Codex app (checked com.openai.codex, Codex.app, ChatGPT.app)"));
+  log(status("info", "Open Codex App manually; it will connect to the adapter."));
+  log(status("info", "Download it from https://openai.com/codex"));
   return false;
 }

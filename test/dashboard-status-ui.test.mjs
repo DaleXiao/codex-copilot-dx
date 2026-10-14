@@ -114,6 +114,8 @@ test("native prediction dashboard distinguishes bridge readiness from candidate 
   assert.equal(nodes.get("prediction-bridge").textContent, "Running");
   assert.equal(nodes.get("prediction-route").textContent, "Observed");
   assert.equal(nodes.get("prediction-candidate").textContent, "Unknown");
+  prediction.bridge = "recovering";render({ client_integrations: { prediction } });
+  assert.equal(nodes.get("prediction-bridge").textContent, "Recovering");
   prediction.bridge = "unavailable";prediction.reason = "<script>unsafe</script>";
   render({ client_integrations: { prediction } });
   assert.equal(nodes.get("prediction-note").textContent, prediction.reason);

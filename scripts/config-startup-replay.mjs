@@ -38,7 +38,7 @@ function start(env) {
   return { child, output: () => output, done: once(child, "exit") };
 }
 
-async function ready(run, marker = "Ready, CCDX adapter is ready to use") {
+async function ready(run, marker = "Ready       Core service available") {
   await bounded((async () => {
     while (!run.output().includes(marker)) {
       if (run.child.exitCode !== null || run.child.signalCode) throw new Error(`CLI exited before ready: ${run.output()}`);
@@ -133,7 +133,7 @@ try {
       reused = start(env);
       const [code] = await bounded(reused.done, "existing-adapter reuse");
       assert.equal(code, 0, reused.output());
-      assert.match(reused.output(), /Using existing adapter/);
+      assert.match(reused.output(), /Using existing service/);
       assert.equal(await fs.readFile(codexPath, "utf8"), before);
       assert.equal((await fs.stat(codexPath)).mtimeMs, stat.mtimeMs);
       await checkCore(origin);

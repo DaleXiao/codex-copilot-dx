@@ -66,7 +66,7 @@ for (const [mode, executable] of [["new", cli], ["new", legacy], ["current", cli
       CCDX_AUTO_LAUNCH: "0", CCDX_MODEL_REFRESH_INTERVAL_MS: "0", CCDX_DISABLE_TOKEN_DISCOVERY: "1" };
     const cold = start(env, executable);
     runs.push(cold);
-    await marker(cold, "Ready, CCDX adapter is ready to use");
+    await marker(cold, "Ready       Core service available");
     const health = await fetch(`${origin}/_ccdx/health`, { signal: AbortSignal.timeout(3000) }).then(response => response.json());
     assert.equal(health.version, localPackageVersion());
     assert.equal(health.ok, true);
@@ -81,14 +81,14 @@ for (const [mode, executable] of [["new", cli], ["new", legacy], ["current", cli
       await marker(cold, "update github to update");
     } else if (mode === "timeout") {
       await marker(cold, "Update fixture cancelled");
-      assert.ok(cold.output().indexOf("Ready,") < cold.output().indexOf("Update fixture cancelled"));
+      assert.ok(cold.output().indexOf("Ready       ") < cold.output().indexOf("Update fixture cancelled"));
     }
     const config = path.join(home, ".codex", "config.toml");
     const before = await fs.readFile(config, "utf8");
     const stamp = (await fs.stat(config)).mtimeMs;
     const reuse = start(env, executable);
     runs.push(reuse);
-    await marker(reuse, "Ready, using the existing ccdx adapter");
+    await marker(reuse, "Ready       Using the existing CCDX adapter");
     if (mode === "new") {
       assert.equal(reuse.child.exitCode, null, "Reuse must not exit with a pending notice");
       assert.doesNotMatch(reuse.output(), /Update available:/);
@@ -102,7 +102,7 @@ for (const [mode, executable] of [["new", cli], ["new", legacy], ["current", cli
       if (mode === "new") {
         assert.equal(run.output().split("Update available:").length - 1, 1);
         assert.match(run.output(), /-> 99\.0\.0/);
-        assert.ok(run.output().indexOf("Ready,") < run.output().indexOf("Update available:"));
+        assert.ok(run.output().indexOf("Ready       ") < run.output().indexOf("Update available:"));
       }
     }
     assert.equal(await fs.readFile(config, "utf8"), before);

@@ -8,6 +8,7 @@ import { retirePredictionIntegration } from "./prediction-retirement.mjs";
 import { networkRouteSnapshot } from "./network-route.mjs";
 import { withFileLock } from "./lock.mjs";
 import { windowsSystemProxy, windowsProxySettings, windowsProxyText } from "./native-prediction-windows.mjs";
+import { updatePredictionRoute } from "./native-prediction-route.mjs";
 
 function systemProxy(exec = execFileSync, { platform = process.platform, env = process.env } = {}) {
   if (platform === "win32") return windowsSystemProxy({ exec, env });
@@ -49,12 +50,14 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
   if (action === "status") {
     output(`Native prediction preference: ${settings.enabled ? "on" : "off"} (default: off)`);
     output("Uses the conversation's model. No prediction MCP, Hook, or panel.");
-    if (settings.enabled && !predictionAppMatches(settings.app)) output("Codex App changed; quit it and run ccdx prediction on to recheck compatibility.");
+    if (settings.enabled && !predictionAppMatches(settings.app)) output("Codex App changed; bridge startup will recheck compatibility. Unsupported changes still require explicit setup.");
     if (runtimeSnapshot) {
       try {
         const runtime = (await runtimeSnapshot())?.client_integrations?.prediction;
         if (runtime) {
           output(`Bridge: ${runtime.bridge}; client route: ${runtime.client_route}; visible candidate: ${runtime.candidate}`);
+          if (runtime.launch_route) output(`App launch route: ${runtime.launch_route}; persistent route: ${runtime.persistence || "unknown"}`);
+          if (runtime.recovery) output(`Bridge recovery: ${runtime.recovery.recovered} recovered; ${runtime.recovery.attempts}/3 attempts used`);
           if (runtime.reason) output(runtime.reason);
           for (const [name, event] of Object.entries(runtime.configuration || {})) output(`${name}: HTTP ${event.status}${event.modified ? " (local compatibility)" : " (upstream)"}`);
         } else output("Runtime prediction state: unavailable; status is a saved preference, not proof of a visible suggestion.");
@@ -71,6 +74,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
     if (settings.certificateHash && settings.store) {
       try {
         assertCodexClosed(opts);
+        updatePredictionRoute({ ...paths, remove: true, assertClosed: () => assertCodexClosed(opts) });
         const certificate = readPredictionCertificate(certificateDirectory(settings, paths), { ...opts, allowExpired: true });
         if (certificate.hash !== settings.certificateHash) throw new Error("Prediction certificate changed; trust cleanup was skipped");
         await updatePredictionTrust(settings.store, certificate, { remove: true });
@@ -150,7 +154,22 @@ export async function startNativePrediction({ env = process.env, platform = proc
     && (!Number.isInteger(settings.bridgePort) || settings.bridgePort < 1024 || settings.bridgePort > 65535)) {
     throw new Error("Saved prediction bridge port is invalid; no route was replaced");
   }
-  if (!predictionAppMatches(settings.app)) throw new Error("Codex App changed; run ccdx prediction on after quitting it to recheck compatibility");
+  if (options.expectedPort !== undefined && settings.bridgePort !== options.expectedPort) throw new Error("Prediction route changed; automatic recovery was skipped");
+  if (!predictionAppMatches(settings.app)) {
+    const current = (options.resolveApp || installedPredictionApp)({ ...opts,
+      ...(platform === "win32" && settings.app?.profile ? { preferredProfile: settings.app.profile } : {}) });
+    if (current.app !== settings.app?.app || (platform === "win32" && current.profile !== settings.app?.profile)) {
+      throw new Error("Codex App identity/profile changed; run ccdx prediction on after quitting it to recheck compatibility");
+    }
+    const settingsFile = predictionPaths(opts).settings;
+    await withFileLock(`${settingsFile}.lock`, () => {
+      const latest = readPredictionSettings(opts);
+      if (JSON.stringify(latest) !== JSON.stringify(settings)) throw new Error("Prediction setup changed during App compatibility recheck");
+      writePredictionSettings({ ...latest, app: current }, opts);
+    }, { timeoutMs: 2000 });
+    settings.app = current;
+    warning("Codex App compatibility rechecked; prediction port and trust were preserved");
+  }
   const paths = predictionPaths({ ...opts, app: settings.app });
   if (settings.store !== paths.store || !fs.existsSync(paths.store)) throw new Error("Prediction profile trust is unavailable; run ccdx prediction on after quitting Codex");
   const certificate = readPredictionCertificate(certificateDirectory(settings, paths), opts);
@@ -214,12 +233,31 @@ export async function startNativePrediction({ env = process.env, platform = proc
     throw error;
   }
   state?.running(windowsNetwork ? { source: "system", type: "auto", bypass_rules: null, proxy_credentials: false } : networkRouteSnapshot(networkRoute));
-  warning("Native prediction bridge enabled; only the two configuration hosts use its App-only route.");
-  warning("If Codex uses a different or missing prediction route, fully quit it and run ccdx again.");
   return {
     app: settings.app.app,
     ...(platform === "win32" ? { profile: paths.profile } : {}),
     pacUrl: transport.pacUrl,
+    enabled() { return enabled; },
+    healthy() { return transport.healthy() && (!windowsNetwork || windowsNetwork.healthy()); },
+    prepareRoute() {
+      try {
+        const direct = !windowsNetwork && !networkRoute?.http && !networkRoute?.https && !networkRoute?.bypass?.length;
+        if (!direct) {
+          // A profile previously configured on a direct network must not pin
+          // that local PAC after the environment switches to company routing.
+          updatePredictionRoute({ ...paths, remove: true, assertClosed: () => assertCodexClosed(opts) });
+        }
+        const result = updatePredictionRoute({ ...paths, pacUrl: transport.pacUrl, direct,
+          assertClosed: () => assertCodexClosed(opts) });
+        state?.persistence(result);
+        if (result.status === "preserved") warning(`Prediction route persistence skipped: ${result.reason}`);
+        return result;
+      } catch (error) {
+        state?.persistence({ status: "pending" });
+        if (!error.message.startsWith("Quit Codex App")) warning(`Prediction route persistence deferred: ${error.message}`);
+        return { status: "pending" };
+      }
+    },
     args: [...(platform === "win32" ? [`--user-data-dir=${paths.profile}`] : []), `--proxy-pac-url=${transport.pacUrl}`],
     async close() { clearInterval(timer); await transport.close(); windowsNetwork?.close(); state?.stopped(); },
   };

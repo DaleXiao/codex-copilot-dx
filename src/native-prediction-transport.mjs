@@ -65,6 +65,7 @@ export async function startPredictionTransport({
   const sockets = new Set();
   const upstreams = new Set();
   let closing = false;
+  let listenerError = false;
   const gateway = https.createServer({ key, cert, minVersion: "TLSv1.2" }, (req, res) => {
     let target;
     try {
@@ -240,11 +241,16 @@ export async function startPredictionTransport({
     gateway.emit("connection", socket);
   });
   proxy.on("clientError", (_error, socket) => socket.destroy());
+  proxy.on("error", (error) => {
+    listenerError = true;
+    onEvent({ type: "bridge_error", error: operationErrorDetails(error) });
+  });
   let port;
   try { port = await listen(proxy, listenPort); }
   catch (error) { agent?.destroy();gateway.close();throw error; }
   return {
     port, pacUrl: `http://127.0.0.1:${port}/proxy.pac`,
+    healthy() { return !closing && !listenerError && proxy.listening; },
     async close() {
       closing = true;
       for (const upstream of upstreams) upstream.destroy();

@@ -1,6 +1,6 @@
 # CCDX 0.9.38: explicit npm download-policy compatibility
 
-Date: 2026-10-15. Base: 0.9.37. Candidate; publication receipts follow verification.
+Date: 2026-10-15. Base: 0.9.37. Publication receipts follow verification below.
 
 ## Scope
 
@@ -78,4 +78,45 @@ rules or administrator policy. Real company-network acceptance remains separate.
 
 ## Results and publication
 
-Pending final local and cross-platform results, archive hashes and publication receipts.
+Release commit `f25870973971d272802808846062663bb6398330` passed all eleven
+[candidate CI jobs](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38598320771).
+This includes the existing Node 22.15/24 platform/client/browser gates and three
+exact npm 12.0.1 / Node 24.18.0 jobs. Each exact-version job passed eight real
+synthetic registry/CDN/Git policy cases and the separate actual CCDX installation,
+upgrade, version check and native-sharp execution. These are not just mocked spawn
+assertions. The harness pack-output correction retained all original assertions
+and added exact artifact identity checks; no production permission was weakened.
+
+GitHub release: [v0.9.38](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.38).
+The 148-file archive is 380,327 bytes. GitHub reports the same SHA-256 as the local
+archive: `097388c0b44203395f86d71ccf46bf17f27b56bb70e7cb13b4a559a93bad0759`.
+Local npm-pack SHA-1: `239cab745c7f043154a1d2d79823236c1041b03b`.
+
+### Bootstrap an older client
+
+Only where company policy permits URL downloads for this trusted installation:
+
+```sh
+npm install -g --allow-git=all --allow-remote=all 'github:DaleXiao/codex-copilot-dx#v0.9.38'
+ccdx version
+```
+
+On Windows use `npm.cmd` / `ccdx.cmd` if PowerShell blocks `.ps1` scripts. Restart
+CCDX after installation. Future explicit updates can use
+`ccdx update github --allow-remote`; ordinary updates still preserve npm's policy.
+This permission covers that installation's dependency tree, not just one URL, and
+does not persist or grant unrestricted script execution. Do not use it to bypass
+administrator policy. No real affected-Mac acceptance is claimed by CI alone.
+
+The identical release commit passed all eleven
+[main-branch CI jobs](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38599265294),
+including the repeated exact npm 12 installation/native matrix. The
+[npm publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38599286224)
+succeeded with `npm publish --tag latest`; the registry acknowledged
+`+ codex-copilot-dx@0.9.38`. The runner's 148-file SHA-1 matches the local archive
+above. Prepublication verification recorded 1,228 passed / nine skipped / zero
+failures plus passing performance/resource gates. This is registry acknowledgement
+from the runner, not a claim of an independent local registry read.
+
+GitHub used the user's previously supplied PAT; npm used the existing repository
+publishing secret. Neither credential is stored in the report or release artifact.

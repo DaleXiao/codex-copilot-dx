@@ -27,6 +27,8 @@ registry/proxy environment remains owned by the user.
 Readonly update preflight reports Node/npm, the running package and npm's selected
 global target. A different target warns, but never changes PATH or prefix. Its
 bounded npm probe is limited to explicit update and full doctor commands.
+Its stdout/stderr are captured separately; npm configuration warnings do not
+leak into doctor output. The real installer's inherited streams are unchanged.
 
 Authentication keeps its public facade in `auth.mjs`. Device-code polling and
 cancellation live in `auth-device-flow.mjs`; local discovery and transactional

@@ -32,7 +32,7 @@ export function inspectPackageUpdateEnvironment({ env = process.env, platform = 
   if (!npmPath) return result;
   try {
     const launch = npmLaunch(["prefix", "--global"], { platform, env });
-    const value = exec(launch.command, launch.args, { env, shell: false, encoding: "utf8", timeout: 3000,
+    const value = exec(launch.command, launch.args, { env, shell: false, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", timeout: 3000,
       maxBuffer: 64 * 1024, ...launch.options }).trim();
     if (!paths.isAbsolute(value) || /[\r\n\0]/.test(value)) return result;
     result.prefix = paths.normalize(value);

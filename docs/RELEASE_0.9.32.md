@@ -72,4 +72,12 @@ These are not live corporate-network or gray-candidate App UI proofs.
 
 ## Publication
 
-Release receipts will be added after CI and GitHub/npm publication complete.
+Candidate CI [38493512222](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38493512222)
+passed all eight jobs (Linux/macOS: 1,168 tests each; Windows: 229 each;
+16 browser combinations). GitHub tag/release was created, but npm publication
+[38493802101](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38493802101)
+stopped in prepublish verification before registry upload: npm's publication-only
+`always-auth` warning escaped the readonly environment probe into CLI stderr.
+The GitHub release was marked prerelease, not silently retagged. Final stable
+delivery moves to 0.9.33 with captured probe stderr; this report retains the
+six-batch audit and baseline evidence.

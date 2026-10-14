@@ -209,7 +209,7 @@ test("update preflight detects a different global prefix without changing the ca
     packageRoot: path.join(root, "original", "node_modules", "codex-copilot-dx"), exec(command, args, options) {
       assert.equal(windows ? path.basename(command) : command, windows ? "cmd.exe" : "npm");
       assert.deepEqual(args, windows ? ["/d", "/s", "/v:off", "/c", '"npm.cmd prefix --global"'] : ["prefix", "--global"]);
-      assert.equal(options.env, env);return `${prefix}\n`;
+      assert.equal(options.env, env);assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe"]);return `${prefix}\n`;
     } });
   assert.equal(result.state, "different");assert.equal(result.target, target);
   assert.equal(result.node, process.execPath);assert.equal(env.PATH, root);

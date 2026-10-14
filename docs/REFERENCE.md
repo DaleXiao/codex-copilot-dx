@@ -207,7 +207,7 @@ Contention fails with a retry message instead of stealing a live lock. Other
 applications do not participate in these locks, so snapshot conflict checks still
 apply; the locks do not claim a global filesystem transaction.
 
-Since `0.9.32`, local settings/auth metadata reads are capped at 1 MiB, token
+Since `0.9.33`, local settings/auth metadata reads are capped at 1 MiB, token
 files at 64 KiB, and saved model catalog files at 9 MiB including metadata.
 Oversized files remain untouched. Existing strict readers reject them; optional
 cache readers treat them as unusable. Conversation files, HTTP request limits
@@ -518,7 +518,7 @@ Versions through `0.9.30` can fail with `spawn EINVAL` before the Windows
 installer starts. To bootstrap this fix, run the installer directly:
 
 ```powershell
-npm.cmd install -g --allow-git=all 'github:DaleXiao/codex-copilot-dx#v0.9.32'
+npm.cmd install -g --allow-git=all 'github:DaleXiao/codex-copilot-dx#v0.9.33'
 ccdx.cmd version
 ```
 

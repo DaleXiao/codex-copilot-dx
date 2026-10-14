@@ -122,7 +122,7 @@ export function createProfileModelRuntime({
     }
     const gptModelIds = gptModelIdsFromCopilotModels(models);
     if (gptModelIds.length) {
-      emit("ok", `Refreshed GPT models from GitHub Copilot: ${gptModelIds.length} available; run ${commandName} models for the list`);
+      emit("ok", `Model catalog refreshed: ${gptModelIds.length} GPT models`);
     } else {
       emit("warn", "Copilot models response contained no GPT models");
     }

@@ -21,6 +21,8 @@ if (process.argv[2] === "prefix") { console.log(process.env.npm_config_prefix);p
 const rows = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
 rows.push({args: process.argv.slice(2), registry: process.env.npm_config_registry, marker: process.env.CCDX_UPDATE_TEST_MARKER});
 fs.writeFileSync(file, JSON.stringify(rows));process.exitCode = Number(process.env.CCDX_UPDATE_TEST_EXIT || 0);
+if (!process.exitCode) { const path = await import("node:path");const target = path.join(process.env.npm_config_prefix, "node_modules", "codex-copilot-dx");
+fs.mkdirSync(target, {recursive:true});fs.writeFileSync(path.join(target,"package.json"), JSON.stringify({name:"codex-copilot-dx",version:"0.9.31"})); }
 `);
   fs.writeFileSync(path.join(bin, "npm.cmd"), '@"%CCDX_UPDATE_TEST_NODE%" "%~dp0capture.mjs" %*\r\n@exit /b %errorlevel%\r\n');
   fs.writeFileSync(preload, `globalThis.fetch = async url => {
@@ -72,5 +74,5 @@ test("real Windows CLI npm/GitHub updates and installer failure use the same fix
   assert.equal(failed.status, 1);assert.match(failed.stderr, /npm update exited with status 17/);
   assert.doesNotMatch(failed.stdout, /Updated codex-copilot-dx/);
   assert.equal(f.calls().length, 3, "nonzero installation is not retried");
-  assert.equal(fs.existsSync(path.join(f.root, "global")), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.root, "global", "node_modules", "codex-copilot-dx", "package.json"))).version, "0.9.31");
 });

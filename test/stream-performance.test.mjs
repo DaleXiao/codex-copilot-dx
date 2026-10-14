@@ -256,7 +256,7 @@ test("request timeline records stages, retry attempts and activity without chang
   assert.equal(snapshot.recent_requests.length, 1);
   assert.deepEqual(snapshot.recent_requests[0], {
     request_id: "request-1", at: "2026-10-05T00:00:00Z", route: "responses", model: "gpt-6-astra",
-    outcome: "completed", origin: "upstream_response", phase: "upstream_stream", failed: false,
+    outcome: "completed", origin: "upstream_response", phase: "upstream_stream", failed: false, empty_stream_completion: false,
     http_status: 200, upstream_attempts: 2, first_output_source: "delta", timings_ms: { admission: 5, body: 0, history: 0,
       images: 0, serialization: 0, upstream_start: 10, upstream_headers: 45, first_output: 50,
       last_activity: 80, terminal: 90, finished: 95 },

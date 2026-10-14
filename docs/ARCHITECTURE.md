@@ -17,6 +17,8 @@ The CLI composes the service. Client integration owns its `configure`, `start`,
 `snapshot` and `close` operations. It does not forward inference requests or
 render the dashboard. The adapter exposes integration snapshots and keeps
 management/MCP routes separate from the Responses path.
+The HTTP dispatch boundary rejects browser Origin-bearing inference requests
+before body admission, credential use or provider dispatch; native LAN opt-in is unchanged.
 
 Package installation is an explicit management operation in `package-update.mjs`,
 not part of inference or optional client integration. Windows uses the system
@@ -29,6 +31,9 @@ global target. A different target warns, but never changes PATH or prefix. Its
 bounded npm probe is limited to explicit update and full doctor commands.
 Its stdout/stderr are captured separately; npm configuration warnings do not
 leak into doctor output. The real installer's inherited streams are unchanged.
+After installation, the updater verifies bounded package metadata at that same
+selected target, with exact-version verification for GitHub. It never equates
+installation with replacement of an already-running service.
 
 Authentication keeps its public facade in `auth.mjs`. Device-code polling and
 cancellation live in `auth-device-flow.mjs`; local discovery and transactional
@@ -95,6 +100,10 @@ Without a complete verified local source, rejection still returns
 `ccdx_history_rebuild_required`, without modifying stored history. Diagnostic
 metadata cannot reconstruct unavailable encrypted memory. LAN/browser callers
 and referenced/split histories do not gain filesystem recovery access.
+The recovery module reuses the existing abort-aware singleflight for equivalent
+source reads, not prepared requests or reservation handles. Caller validation and
+admission remain independent. Only bounded snapshot-bound failure codes survive
+settlement for two seconds; no successful plaintext cache or transcript index exists.
 
 ## Dashboard reads
 
@@ -146,6 +155,9 @@ dashboard merges recent HTTP, model and request-timeline failures for display.
 Tests cover module dependency direction, default-off behavior, concurrent writers,
 proxy handshakes, TLS validation, streaming, history isolation and release lookup.
 Performance measurements distinguish request preparation from model latency.
+Actual loopback HTTP tests gate first-delta delivery before provider completion
+and cancellation propagation for both native Responses and Chat translation.
+Empty-stream diagnostics are additive scalar metadata, not a new retry policy.
 Release reports describe a specific environment, not an SLA or a guarantee of
 compatibility with every future client or corporate network policy.
 CI runs Node 22.15 and 24 on Linux, Windows and macOS. The owned temporary-prefix

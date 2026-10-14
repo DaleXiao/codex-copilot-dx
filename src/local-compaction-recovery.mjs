@@ -8,9 +8,14 @@ import { isLoopbackAddress, isLoopbackHostHeader, isLanAllowed } from "./securit
 import { decodedBodyLimitPreference } from "./user-settings.mjs";
 import { isResponsesToolOutputItem, readResponsesToolOutputParts } from "./responses-content.mjs";
 import { prepareResponsesRequest } from "./responses-request.mjs";
+import { createAbortAwareSingleflight } from "./bounded-result-cache.mjs";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const CALLS = new Map([["function_call", "function_call_output"], ["custom_tool_call", "custom_tool_call_output"]]);
+const sourceFlights = createAbortAwareSingleflight();
+const sourceFailures = new Map();
+const REUSABLE_FAILURES = new Set(["invalid_rollout", "incomplete_rollout", "rollout_identity_mismatch",
+  "plaintext_content_missing", "unsupported_rollout_item", "unsupported_history_change", "matching_rollout_missing", "ambiguous_rollout"]);
 
 function unavailable(code) {
   return Object.assign(new Error("Verified local plaintext history is unavailable"), { code });
@@ -189,6 +194,52 @@ function joinHistory(source, input, compactionIndex, check) {
   return { items, currentInputStart: source.length + instructions.length };
 }
 
+async function sourceVersion(files) {
+  return JSON.stringify(await Promise.all(files.map(async file => {
+    const stat = await fs.lstat(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw unavailable("unsafe_rollout_path");
+    return [file, stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs];
+  })));
+}
+
+async function loadSource(directory, id, ciphertext, limit, timeoutMs, signal) {
+  const started = Date.now();
+  const check = () => {
+    if (signal.aborted) throw signal.reason;
+    if (Date.now() - started > timeoutMs) throw unavailable("rollout_read_timeout");
+  };
+  const files = await candidateFiles(directory, id, check);
+  const version = await sourceVersion(files);
+  // Cache only failure codes for exact file snapshots, never plaintext or a
+  // missing directory. Discovery still runs so added pages are not hidden.
+  const key = createHash("sha256").update(JSON.stringify([directory, id, ciphertext, limit, version])).digest("hex");
+  const cached = sourceFailures.get(key);
+  if (cached && cached.until > Date.now()) throw unavailable(cached.code);
+  sourceFailures.delete(key);
+  try {
+    let source;
+    const budget = { remaining: limit };
+    for (const file of files) {
+      check();
+      const candidate = await readPrefix(file, directory, id, ciphertext, budget, check, signal);
+      if (!candidate) continue;
+      if (source) throw unavailable("ambiguous_rollout");
+      source = candidate;
+    }
+    if (!source) throw unavailable("matching_rollout_missing");
+    if (await sourceVersion(files) !== version) throw unavailable("rollout_changed");
+    return source;
+  } catch (error) {
+    if (files.length && !signal.aborted && REUSABLE_FAILURES.has(error.code)
+      && await sourceVersion(files) === version) {
+      for (const [old, value] of sourceFailures) if (value.until <= Date.now()) sourceFailures.delete(old);
+      while (sourceFailures.size >= 32) sourceFailures.delete(sourceFailures.keys().next().value);
+      sourceFailures.set(key, { code: error.code, until: Date.now() + 2000 });
+    }
+    throw error;
+  }
+}
+
 // Loaded only after a confirmed provider ownership rejection, never on startup
 // or healthy requests. It cannot serve remote/browser callers or mutate logs.
 export async function recoverLocalCompaction(reqContext, { request, env = process.env,
@@ -215,18 +266,11 @@ export async function recoverLocalCompaction(reqContext, { request, env = proces
     release = await reserveHistory?.(limit, { signal });
     check();
     const directory = await fs.realpath(codexPaths({ env }).directory);
-    const files = await candidateFiles(directory, id, check);
-    const budget = { remaining: limit };
-    let source;
-    for (const file of files) {
-      check();
-      const candidate = await readPrefix(file, directory, id, compactions[0].encrypted_content, budget, check, signal);
-      if (!candidate) continue;
-      if (source) throw unavailable("ambiguous_rollout");
-      source = candidate;
-    }
-    if (!source) throw unavailable("matching_rollout_missing");
-    const restored = joinHistory(source.items, input, input.indexOf(compactions[0]), check);
+    const ciphertext = compactions[0].encrypted_content;
+    const key = createHash("sha256").update(JSON.stringify([directory, id, ciphertext, limit, timeoutMs])).digest("hex");
+    const source = await sourceFlights.run(key, sharedSignal => loadSource(directory, id, ciphertext, limit, timeoutMs, sharedSignal), { signal });
+    check();
+    const restored = joinHistory(structuredClone(source.items), input, input.indexOf(compactions[0]), check);
     const body = { ...reqContext.body, input: restored.items };
     delete body.previous_response_id;
     const bodyBytes = Buffer.byteLength(JSON.stringify(body));

@@ -224,6 +224,25 @@ test("forwardToChat: emits a completed empty message for an empty successful str
   assert.equal(response.output[0].content[0].text, "");
 });
 
+test("Chat conversion preserves reasoning effort, validates advertised levels and rejects lost semantics", () => {
+  const base = { model: "synthetic-chat", input: "hello" };
+  for (const effort of ["none", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+    assert.equal(responsesToChat({ ...base, reasoning: { effort } }).reasoning_effort, effort);
+  }
+  assert.equal(responsesToChat(base).reasoning_effort, undefined);
+  const tool = { type: "function", name: "lookup", parameters: { type: "object" } };
+  assert.deepEqual(responsesToChat({ ...base, tools: [tool], tool_choice: { type: "function", name: "lookup" } }).tool_choice,
+    { type: "function", function: { name: "lookup" } });
+  for (const choice of ["auto", "none", "required"]) assert.equal(responsesToChat({ ...base, tool_choice: choice }).tool_choice, choice);
+  for (const invalid of [{ tools: {} }, { tools: [null] }, { tools: [{ type: "function" }] }, { tools: [tool], tool_choice: { type: "function", name: "missing" } },
+    { tool_choice: "web_search" }, { reasoning: { effort: "future" } }, { text: { format: { type: "unknown" } } }]) {
+    assert.throws(() => responsesToChat({ ...base, ...invalid }), error => error.code === "ccdx_responses_chat_incompatible");
+  }
+  assert.throws(() => responsesToChat({ ...base, reasoning: { effort: "high" } }, { reasoningEfforts: ["low"] }), /reasoning effort/);
+  assert.equal(responsesToChat({ ...base, reasoning: { effort: "low" } }, { reasoningEfforts: ["low"] }).reasoning_effort, "low");
+  assert.equal(responsesToChat({ ...base, text: { format: { type: "text" } } }).response_format, undefined);
+});
+
 test("forwardToChat: streaming length and content_filter finish reasons remain incomplete", async () => {
   for (const [finishReason, reason] of [["length", "max_output_tokens"], ["content_filter", "content_filter"]]) {
     const events = [];

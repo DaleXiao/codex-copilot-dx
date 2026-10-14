@@ -48,3 +48,9 @@ test("startup formatting retains prompts and warnings without importing service 
   assert.deepEqual(lines.slice(1), ["", "Open the device login page"]);
   assert.doesNotMatch(startupCheck("info", "Auth\nFAKE", "a\x1b[2J\nb"), /\x1b|\n/);
 });
+
+test("runtime status keeps one aligned line and cannot execute external terminal controls", () => {
+  const line = status("info", "model=example\x1b[2J\nforged\r\u202e row");
+  assert.equal(line, "[INFO]  model=example forged row");
+  assert.doesNotMatch(line, /[\x00-\x1f\x7f-\x9f\u202e]/);
+});

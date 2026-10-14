@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { lookupLatestRelease, githubReleaseVersion } from "./version.mjs";
 import { terminalCell } from "./terminal-text.mjs";
+import { readBoundedFileSync } from "./bounded-file.mjs";
 
 const PACKAGE_NAME = "codex-copilot-dx";
 const UPDATE_SPECS = {
@@ -84,6 +85,17 @@ function waitForExit(child) {
   });
 }
 
+export function verifyInstalledPackage(target, { expectedVersion } = {}) {
+  if (!target) return null;
+  let pkg;
+  try { pkg = JSON.parse(readBoundedFileSync(path.join(target, "package.json"), { encoding: "utf8" })); } catch {}
+  if (pkg?.name !== PACKAGE_NAME || !githubReleaseVersion(pkg.version)
+    || (expectedVersion && pkg.version !== expectedVersion)) {
+    throw new Error("npm finished, but the target package version could not be verified. Check ccdx doctor; installation was not retried.");
+  }
+  return pkg.version;
+}
+
 export async function runPackageUpdateCommand({
   commandName = "ccdx",
   env = process.env,
@@ -95,6 +107,7 @@ export async function runPackageUpdateCommand({
   spawnImpl = spawn,
   fetchImpl = fetch,
   inspectEnvironmentFn = inspectPackageUpdateEnvironment,
+  verifyInstalledFn = verifyInstalledPackage,
 } = {}) {
   let selectedSource = normalizeUpdateSource(source);
   if (source && !selectedSource) throw new Error(`Update source must be npm or github: ${source}`);
@@ -151,6 +164,12 @@ export async function runPackageUpdateCommand({
     ...launch.options,
   });
   await waitForExit(child);
-  output.write(`Updated ${PACKAGE_NAME} from ${sourceLabel}. Restart the running adapter to use the new version.\n`);
+  const installedVersion = verifyInstalledFn(environment?.target, { expectedVersion: release?.version });
+  if (installedVersion) {
+    output.write(`Updated ${PACKAGE_NAME}: installed v${terminalCell(installedVersion)} at ${terminalCell(environment.target)}.\n`);
+  } else {
+    output.write("Installer finished; the global target was unavailable, so the installed version was not verified. Run ccdx doctor.\n");
+  }
+  output.write("Restart the running adapter to use the installed version; an existing service is not replaced automatically.\n");
   return { cancelled: false, source: selectedSource };
 }

@@ -82,11 +82,11 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
   use public HTTPS URLs; well-known NAT64 mappings follow IPv4 address rules.
 - Keep the adapter on loopback. LAN mode is only for trusted networks; do not
   expose it to the public internet. The dashboard is not an authentication wall
-  for the API. Diagnostic errors may contain sensitive upstream text.
+  for the API. Inference rejects browser Origin headers; native clients remain supported. Diagnostic errors may contain sensitive upstream text.
 
 Startup checks GitHub's latest-release web redirect, not npm or the anonymous REST quota, and suggests `ccdx update github`.
 Updates install the exact stable tag; dependencies still use npm's configured registry. Lookup errors identify HTTP refusal, timeout, network failure or invalid redirects.
-Updates warn about mismatched npm targets without changing PATH/prefix. Full `ccdx doctor` reports this target and readonly credential permissions; it never changes ACLs.
+Updates warn about mismatched npm targets without changing PATH/prefix and verify the installed target version (exact tag for GitHub). Restart the adapter separately. Full `ccdx doctor` reports this target and readonly credential permissions; it never changes ACLs.
 Recent errors separate HTTP and model failures. HTTP metadata retains status, source and IDs, not error bodies or prompts; original errors still reach Codex unchanged.
 
 The dashboard and CLI separate prediction preference, bridge state and observed config traffic; candidate visibility stays unknown.

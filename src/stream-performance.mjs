@@ -139,6 +139,7 @@ function createRoutePerformance() {
     success_with_output: 0,
     errors_with_output: 0,
     zero_output_errors: 0,
+    empty_stream_completions: 0,
     neutral: 0,
     terminalTotals: emptyOutcomes(),
     incompleteReasons: Object.create(null),
@@ -152,6 +153,7 @@ function routeSnapshot(route) {
     success_with_output: route.success_with_output,
     errors_with_output: route.errors_with_output,
     zero_output_errors: route.zero_output_errors,
+    empty_stream_completions: route.empty_stream_completions,
     neutral: route.neutral,
     terminal_outcomes: {
       totals: { ...route.terminalTotals },
@@ -274,6 +276,9 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           finished = true;
           failed ||= finishFailed;
           const outcome = terminalOutcome || (aborted ? "cancelled" : "unknown");
+          const emptyStreamCompletion = outcome === "completed" && upstreamStartedAt !== null
+            && firstOutputAt === null && outputTokens === 0;
+          if (emptyStreamCompletion) route.empty_stream_completions += 1;
           const origin = terminalOrigin || errorOrigin || (aborted ? "client_disconnect" : "unclassified");
           route.terminalTotals[outcome] += 1;
           if (incompleteReason) route.incompleteReasons[incompleteReason] = (route.incompleteReasons[incompleteReason] || 0) + 1;
@@ -288,6 +293,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           recentRequests.push({
             request_id: typeof requestId === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(requestId) ? requestId : null,
             at, route: routeName, model, outcome, origin, phase,
+            empty_stream_completion: emptyStreamCompletion,
             failed: failed || aborted || (terminalOutcome !== null && terminalOutcome !== "completed"),
             http_status: Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599 ? statusCode : null,
             upstream_attempts: attempts,

@@ -6,11 +6,12 @@ import {
   normalizeUpdateSource,
   runPackageUpdateCommand as runActualUpdate,
   inspectPackageUpdateEnvironment,
+  verifyInstalledPackage,
 } from "../src/package-update.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-const runPackageUpdateCommand = options => runActualUpdate({ inspectEnvironmentFn: () => null, ...options });
+const runPackageUpdateCommand = options => runActualUpdate({ inspectEnvironmentFn: () => ({ target: "/fixture/package" }), verifyInstalledFn: () => "0.9.35", ...options });
 
 function outputBuffer(isTTY = true) {
   let value = "";
@@ -222,6 +223,34 @@ test("update preflight detects a different global prefix without changing the ca
 test("a mismatched npm prefix warns but preserves an explicit user's installation choice", async () => {
   const calls = [], output = outputBuffer(false);
   await runActualUpdate({ source: "npm", platform: "darwin", output: output.stream, spawnImpl: successfulSpawn(calls),
+    verifyInstalledFn: () => "0.9.35",
     inspectEnvironmentFn: () => ({ state: "different", target: "/chosen", package_root: "/original" }) });
   assert.match(output.text(), /Existing PATH and prefix choices were preserved/);assert.equal(calls.length, 1);
+});
+
+test("installation verification checks bounded target metadata and the exact GitHub release", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-update-result-"));t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "package.json");
+  for (const value of [{ name: "other", version: "1.2.3" }, { name: "codex-copilot-dx", version: "invalid" }, { name: "codex-copilot-dx", version: "1.2.2" }]) {
+    fs.writeFileSync(file, JSON.stringify(value));
+    assert.throws(() => verifyInstalledPackage(root, { expectedVersion: "1.2.3" }), /could not be verified/);
+  }
+  fs.writeFileSync(file, JSON.stringify({ name: "codex-copilot-dx", version: "1.2.3" }));
+  assert.equal(verifyInstalledPackage(root, { expectedVersion: "1.2.3" }), "1.2.3");
+  assert.equal(verifyInstalledPackage(root), "1.2.3");
+  fs.writeFileSync(file, "x".repeat(1024 * 1024 + 1));
+  assert.throws(() => verifyInstalledPackage(root), /could not be verified/);
+  assert.equal(verifyInstalledPackage(null), null);
+});
+
+test("a zero installer exit cannot announce an unverified update or change service state", async () => {
+  const output = outputBuffer(false), calls = [];
+  await assert.rejects(runPackageUpdateCommand({ source: "github", platform: "darwin", output: output.stream, fetchImpl: fetchRelease,
+    spawnImpl: successfulSpawn(calls), verifyInstalledFn(target, options) {
+      assert.equal(target, "/fixture/package");assert.equal(options.expectedVersion, "0.9.19");throw new Error("verification fixture failed");
+    } }), /verification fixture failed/);
+  assert.equal(calls.length, 1);assert.doesNotMatch(output.text(), /Updated codex-copilot-dx/);
+  await runPackageUpdateCommand({ source: "npm", platform: "darwin", output: output.stream, spawnImpl: successfulSpawn(calls), verifyInstalledFn: () => null });
+  assert.match(output.text(), /installed version was not verified/);
+  assert.doesNotMatch(output.text(), /Updated codex-copilot-dx/);
 });

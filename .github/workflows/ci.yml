@@ -27,6 +27,8 @@ jobs:
         run: node --test test/package-update.test.mjs test/package-update-windows.test.mjs test/bounded-file.test.mjs test/auth.test.mjs test/auth-profile.test.mjs test/doctor.test.mjs test/adapter.test.mjs test/response-failures.test.mjs test/native-prediction-windows.test.mjs test/launcher.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs test/dashboard-refresh.test.mjs test/dashboard-analytics-ui.test.mjs test/dashboard-language.test.mjs test/dashboard-theme.test.mjs test/dashboard-status-ui.test.mjs test/upstream-headers.test.mjs test/cli-models.test.mjs test/module-boundaries.test.mjs test/http-transport.test.mjs
       - name: Verify startup presentation and bounded prediction recovery on Windows
         run: node --test test/startup-ui.test.mjs test/native-prediction-route.test.mjs test/native-prediction-recovery.test.mjs
+      - name: Verify streaming delivery and Chat semantic validation on Windows
+        run: node --test test/stream-delivery.test.mjs test/responses-bridge.test.mjs test/responses-chat-http.test.mjs
       - run: npm run test:package
   macos:
     runs-on: macos-latest

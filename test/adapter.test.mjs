@@ -45,6 +45,25 @@ function jsonRequest(body, contentEncoding, headers = {}) {
   return req;
 }
 
+test("inference rejects browser origins before reading bodies while native and LAN clients remain usable", async () => {
+  for (const url of ["/v1/responses", "/v1/responses/compact"]) {
+    for (const origin of ["https://untrusted.invalid", "null", "http://127.0.0.1:2026", ""]) {
+      const req = Readable.from((async function* () { assert.fail("rejected browser body must not be read"); })());
+      Object.assign(req, { method: "POST", url, headers: { origin, "content-type": "text/plain" }, socket: { remoteAddress: "127.0.0.1" } });
+      const response = await invokeAdapterRequest({ responsesFn: () => assert.fail("must not dispatch") }, req);
+      assert.equal(response.status, 403);
+      assert.equal(JSON.parse(response.text).error.code, "ccdx_browser_origin_forbidden");
+    }
+    for (const remoteAddress of ["127.0.0.1", "::1", "192.168.1.2"]) {
+      const req = jsonRequest(Buffer.from(JSON.stringify({ model: "gpt-5.6-sol", input: "native", stream: false })));
+      Object.assign(req, { method: "POST", url, socket: { remoteAddress } });
+      const response = await invokeAdapterRequest({ responsesFn: async () => Response.json({ id: "resp_native", status: "completed", output: [] }),
+        responsesCompactFn: async () => Response.json({ id: "resp_compact_native", object: "response.compaction", output: [{ type: "compaction", encrypted_content: "fixture" }] }) }, req);
+      assert.equal(response.status, 200, response.text);
+    }
+  }
+});
+
 test("preparation metrics cover native, Chat fallback, and compact without altering payloads", async () => {
   const previousUsageDisabled = process.env.CCDX_DISABLE_USAGE;
   process.env.CCDX_DISABLE_USAGE = "1";

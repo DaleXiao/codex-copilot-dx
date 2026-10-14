@@ -372,13 +372,14 @@ try {
   await ensureAuth({ log: startupLogger("Auth") });
 
   const profileRuntime = createProfileRuntime({ codexClient: defaultCopilotClient });
+  let startupComplete = false;
   const profileModels = createProfileModelRuntime({
     codexClient: profileRuntime.codexClient,
     codexCredentialFingerprint: profileRuntime.codexCredentialFingerprint,
     timeoutMs: MODEL_REFRESH_TIMEOUT_MS,
     commandName: CLI_NAME,
     autoReviewModelResolver: () => autoReviewModelPreference().model,
-    log: (kind, message) => console.log(startupCheck(kind, "Models", message)),
+    log: (kind, message) => console.log(startupComplete ? status(kind, message) : startupCheck(kind, "Models", message)),
   });
 
   // Refresh the VS Code version in the background; fallback is non-blocking.
@@ -435,6 +436,7 @@ try {
     modelRefreshTimer.unref?.();
   }
 
+  startupComplete = true;
   console.log(startupReady({ baseUrl: adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT), commandName: CLI_NAME }));
 
   const shutdown = async (signal) => {

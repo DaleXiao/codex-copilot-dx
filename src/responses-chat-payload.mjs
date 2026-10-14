@@ -32,8 +32,8 @@ function jsonPayload(value, assertActive) {
   });
 }
 
-function chatRequest(responsesBody, stream) {
-  const chatReq = responsesToChat(responsesBody);
+function chatRequest(responsesBody, stream, reasoningEfforts) {
+  const chatReq = responsesToChat(responsesBody, { reasoningEfforts });
   chatReq.stream = Boolean(stream);
   delete chatReq.max_tokens;
   return stream ? withChatStreamUsage(chatReq) : chatReq;
@@ -81,12 +81,13 @@ function checkedChatPayload(chatReq, payload, limit, stage, adapted, assertActiv
 export async function prepareResponsesChatPayload(reqContext, {
   assertActive,
   payloadOptions = {},
+  reasoningEfforts,
   signal,
   stream = false,
 } = {}) {
   assertActive?.();
   const limit = configuredBodyLimit(payloadOptions);
-  let finalChatReq = chatRequest(reqContext.body, stream);
+  let finalChatReq = chatRequest(reqContext.body, stream, reasoningEfforts);
   assertActive?.();
   let finalChat = jsonPayload(finalChatReq, assertActive);
   const hasInlineImage = bodyHasInlineImage(reqContext.body, assertActive);
@@ -108,7 +109,7 @@ export async function prepareResponsesChatPayload(reqContext, {
     responsesPayload = { bodyText: prepared.bodyText, bodyBytes: prepared.bodyBytes };
     adapted = prepared.adapted;
     stage = prepared.stage;
-    finalChatReq = chatRequest(reqContext.body, stream);
+    finalChatReq = chatRequest(reqContext.body, stream, reasoningEfforts);
     assertActive?.();
     finalChat = jsonPayload(finalChatReq, assertActive);
   }
@@ -132,7 +133,7 @@ export async function prepareResponsesChatPayload(reqContext, {
       initialBodyBytes: responsesPayload.bodyBytes,
     });
     if (!trimmed.adapted) break;
-    const candidateChatReq = chatRequest(reqContext.body, stream);
+    const candidateChatReq = chatRequest(reqContext.body, stream, reasoningEfforts);
     assertActive?.();
     const candidateChat = jsonPayload(candidateChatReq, assertActive);
     if (candidateChat.bodyBytes >= finalChat.bodyBytes) {

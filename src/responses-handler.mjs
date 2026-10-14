@@ -335,6 +335,8 @@ export function createResponsesHandler(options) {
         let { chatReq, bodyText } = await prepareResponsesChatPayload(prepared, {
           assertActive: assertPrepareActive,
           payloadOptions: responsesPayloadOptions,
+          reasoningEfforts: (Array.isArray(modelRegistry?.models) ? modelRegistry.models : modelRegistry?.models?.data)
+            ?.find(model => model?.id === upstreamModel)?.capabilities?.supports?.reasoning_effort,
           signal: abort.signal,
           stream: streaming,
         });

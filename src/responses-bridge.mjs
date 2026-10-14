@@ -69,7 +69,7 @@ function chatCompatibilityError(kind, itemType) {
   return error;
 }
 
-export function responsesToChat(body) {
+export function responsesToChat(body, { reasoningEfforts } = {}) {
   const messages = [];
   if (body.instructions) messages.push({ role: "system", content: body.instructions });
 
@@ -165,11 +165,16 @@ export function responsesToChat(body) {
   const maxTok = body.max_output_tokens ?? body.max_tokens ?? body.max_completion_tokens;
   if (maxTok !== undefined) chatReq.max_completion_tokens = maxTok;
 
+  if (body.tools !== undefined && !Array.isArray(body.tools)) throw chatCompatibilityError("tools", typeof body.tools);
   if (body.tools?.length) {
-    const unsupportedTool = body.tools.find((tool) => tool?.type !== "function");
-    if (unsupportedTool) throw chatCompatibilityError("tool", unsupportedTool?.type);
+    if (body.tools.some(tool => tool?.type !== "function")) {
+      throw chatCompatibilityError("tool", body.tools.find(tool => tool?.type !== "function")?.type);
+    }
     chatReq.tools = body.tools
       .map((tool) => {
+        if (typeof (tool.function?.name ?? tool.name) !== "string" || !(tool.function?.name ?? tool.name).trim()) {
+          throw chatCompatibilityError("function tool", "missing_name");
+        }
         if (tool.function?.name) return cloneJson(tool);
         const fn = {
           name: tool.name,
@@ -179,21 +184,29 @@ export function responsesToChat(body) {
         };
         for (const key of Object.keys(fn)) if (fn[key] === undefined) delete fn[key];
         return { type: "function", function: fn };
-      })
-      .filter(Boolean)
-      .filter((t) => t.function?.name);
-    if (!chatReq.tools.length) delete chatReq.tools;
+      });
   }
   if (body.tool_choice !== undefined) {
     if (typeof body.tool_choice === "string") {
+      if (!["auto", "none", "required"].includes(body.tool_choice)) throw chatCompatibilityError("tool choice", body.tool_choice);
       chatReq.tool_choice = body.tool_choice;
     } else if (body.tool_choice?.type === "function" && body.tool_choice.name) {
+      if (!chatReq.tools?.some(tool => tool.function.name === body.tool_choice.name)) {
+        throw chatCompatibilityError("tool choice", "undeclared_function");
+      }
       chatReq.tool_choice = { type: "function", function: { name: body.tool_choice.name } };
     } else {
       throw chatCompatibilityError("tool choice", body.tool_choice?.type);
     }
   }
   if (body.parallel_tool_calls !== undefined) chatReq.parallel_tool_calls = body.parallel_tool_calls;
+  if (body.reasoning?.effort !== undefined) {
+    if (!["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(body.reasoning.effort)
+      || (Array.isArray(reasoningEfforts) && !reasoningEfforts.includes(body.reasoning.effort))) {
+      throw chatCompatibilityError("reasoning effort", String(body.reasoning.effort));
+    }
+    chatReq.reasoning_effort = body.reasoning.effort;
+  }
   const textFormat = body.text?.format;
   if (textFormat?.type === "json_schema") {
     chatReq.response_format = {
@@ -207,6 +220,8 @@ export function responsesToChat(body) {
     };
   } else if (textFormat?.type === "json_object") {
     chatReq.response_format = { type: "json_object" };
+  } else if (textFormat !== undefined && textFormat?.type !== "text") {
+    throw chatCompatibilityError("text format", textFormat?.type);
   }
   return chatReq;
 }

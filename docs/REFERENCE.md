@@ -262,6 +262,13 @@ One in-process adapter listens on `127.0.0.1:2026` by default and exposes:
 
 Responses-only models and compaction use Copilot's Responses transport directly. For requests routed through Chat Completions, CCDX converts the supported text, image, and function-tool subset and rejects incompatible message content rather than turning it into JSON text. Chat `length` and `content_filter` finish reasons become incomplete Responses in both streaming and non-streaming modes. Both streaming SSE and non-streaming responses are supported.
 
+Chat conversion maps an explicitly supplied `reasoning.effort` to `reasoning_effort`.
+Known effort values are checked against the existing model catalog when it advertises
+an effort array; without that metadata, upstream validation remains authoritative.
+No extra model lookup is made. Malformed function tools, forced undeclared functions,
+unsupported tool-choice strings and unknown text formats receive a local compatibility
+error instead of being dropped. Native Responses request fields are not changed by this check.
+
 The adapter handles response history, encrypted reasoning state, function/custom tools, images, compaction, cancellation, retries, and usage metadata within the compatibility boundaries below. Routing prefers endpoint metadata from Copilot's live or cached catalog; when metadata is unavailable, a small built-in set identifies known Responses-only GPT models.
 
 ### Local compaction recovery
@@ -296,6 +303,15 @@ The reader has a five-second deadline, a 4,096-entry directory lookup bound and
 a 16-candidate bound. Decoded reads and the rebuilt body are bounded by the
 running adapter's decoded-body limit; history admission reservations cover
 recovery preparation. Requests cannot retry after visible output has begun.
+
+Overlapping equivalent recovery readers share in-flight source discovery/decoding,
+with independent cancellation and independent restored requests. Every caller retains
+its admission reservation; exclusive admission can serialize reads instead of sharing.
+Successful plaintext is not retained after the flight settles. Up to 32 failure-code
+records last two seconds, keyed by the exact source file identity/size/timestamps,
+thread, compaction digest and byte limit. Directory discovery still runs; missing
+sources, cancellation, deadlines and unstable snapshots are not cached. Source changes
+invalidate reuse. No transcript index, watcher or healthy-request scan is added.
 
 Neither the original rollout nor client configuration is rewritten. Recovery
 diagnostics contain type/count/status metadata, not transcript text, ciphertext
@@ -411,6 +427,9 @@ Credentials found are not labeled online-authorized, cached model lists are not
 labeled fresh upstream data, and image configuration is not a provider test.
 Ready reports core readiness independently of optional prediction/image warnings.
 Model refresh logs show counts; `ccdx models` retains the complete live list.
+After Ready, background refresh uses the same two-column status/message layout as
+other runtime logs. Status messages remove terminal controls and collapse newlines;
+the static banner and multiline interactive prompts retain their own presentation.
 VS Code compatibility-version details remain available in debug logging. Startup
 does not wait for optional update/compression work or add online doctor/model probes.
 
@@ -574,6 +593,14 @@ Installer errors and nonzero exits fail the update without a success message or
 automatic retry. Missing Git, blocked dependency downloads or npm cache-only
 settings remain npm/environment errors, not fixed by changing the launcher.
 
+After a zero installer exit, CCDX reads bounded metadata from npm's selected global
+target and verifies the package name and stable version. GitHub requires the exact
+selected release version. A missing/mismatched target fails verification without
+retrying installation; if the global target could not be discovered, the command
+explicitly reports that the installed version is unverified rather than announcing
+an update. This check neither changes PATH/prefix/registry nor restarts a running
+adapter, and it does not verify package-file integrity or npm's current latest tag.
+
 Normal startup checks the official GitHub `releases/latest` web endpoint once in
 the background, without accessing the npm registry or REST API. The anonymous
 check requires no PAT or Copilot credentials, has a two-second deadline, validates
@@ -697,6 +724,12 @@ curl -s http://127.0.0.1:2026/_ccdx/status | jq
 
 The status endpoint is restricted to the socket's real loopback address even when LAN binding is explicitly enabled. It reports fixed-size HTTP request counters separately from bounded `completed` / `incomplete` / `failed` / `cancelled` response outcomes by model and origin, plus bounded incomplete-reason counts, TTFT/TPOT histograms, admission pressure, memory use, response-history size/tree concentration/lookup misses, image queue/cache and adaptive-history state, model-cache counts, token expiry state, and the ten most recent upstream `response.failed` diagnostics retained by the running process. HTTP errors without a model terminal remain "without terminal" and retain their known origin; they are not counted as model failures. History eviction markers are not failed-request counts; `ccdx status` warns near the cache limit without deleting or compressing history. Failure diagnostics include the event type, model, error code/message, response/request IDs when supplied upstream, and retry outcome. Common credential forms, long opaque encrypted values, and explicitly labelled input/prompt/tool-content echoes are redacted. They are cleared when the adapter restarts. No request/response bodies, credential fields, or account profiles are copied into status. Arbitrary upstream prose cannot be guaranteed free of sensitive content; review diagnostics before sharing them.
 
+`stream_performance.by_route.*.empty_stream_completions` counts completed streams
+with no observed output and an explicit zero output-token count. The recent request's
+`empty_stream_completion` flag records the same condition. Missing usage is not zero;
+non-streaming replies and observed tool/refusal output are excluded. This diagnostic
+does not change completion status, trigger a retry or reject legitimate empty replies.
+
 `image_mcp` has its own HTTP route counter. After the image handler has been used, `image_generation` separately reports active, succeeded, failed, busy, cancelled, and chat-file delivery-failure counts, including tool errors returned with HTTP 200. A delivery failure can accompany a successful generation; it never causes another generation. Before handler initialization this field is `null`, meaning not observed, not necessarily disabled. Status never initializes that handler, reads its provider credential, installs guidance, or probes the provider. Input-image optimization metrics remain separate. `logging` reports pending records/bytes, queue caps, overflow drops, and write failures for usage and enabled debug-file logging.
 
 `stream_performance.by_route` also reports `request_ttft_ms`, measured from adapter entry to the first observed output delta, including local preparation. The existing `ttft_ms` continues to start at upstream dispatch. Neither timestamp means the client has drained or displayed the output. `preparation_ms` contains bounded histograms for admission (including history reservations), body reading/decompression/JSON parsing, history materialization/compact preparation, image optimization, and request serialization. Each sample measures one operation, including failed operations; retries can add samples. These are diagnostic intervals rather than a complete breakdown of request time: body reading includes internal decoded-body admission waits; authentication, routing, and other preparation are not individually timed. Non-streaming requests contribute preparation samples without inventing a first-token measurement.
@@ -745,6 +778,7 @@ Recovery first tries compatible local credentials and starts Device Flow only wh
 
 - CCDX binds to loopback by default. Non-loopback hosts are rejected unless `CCDX_ALLOW_LAN=1` is set explicitly.
 - Enabling LAN binding exposes a Copilot-backed API to other reachable machines. Provide your own host firewall and network isolation; do not expose the listener to an untrusted network.
+- Inference POSTs reject any browser `Origin` header before reading the body or contacting upstream, including simple `text/plain` requests. Native Codex/Node requests without Origin and deliberately enabled native LAN clients keep their existing access. This is not authentication or protection against untrusted local native programs.
 - The GitHub OAuth credential is stored locally at `~/.local/share/copilot-api/github_token`. Short-lived Copilot service tokens remain in process memory and are refreshed as needed.
 - The optional image API credential is stored separately with mode `0600` only after `ccdx enable-image`; it is never placed in Codex configuration or diagnostic output.
 - Runtime status and usage records retain metadata rather than request/response content. Diagnostic logging records status and error messages; it is not a general redaction layer for arbitrary error text. See Debug logging before sharing logs.

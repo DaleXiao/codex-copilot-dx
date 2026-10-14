@@ -76,3 +76,16 @@ test("dashboard uses inline SVG sun in dark mode and moon in light mode", () => 
   assert.match(css, /\.icon-moon, :root\[data-theme="light"\] \.icon-sun \{ display: none; \}/);
   assert.match(css, /:root\[data-theme="light"\] \.icon-moon \{ display: block; \}/);
 });
+
+test("status heading replaces the prompt with the favicon geometry and inherits both theme colors", () => {
+  const heading = html.match(/<h1>([\s\S]*?)<\/h1>/)?.[1];
+  assert.ok(heading);
+  assert.doesNotMatch(heading, /\$/);
+  assert.match(heading, /class="status-icon"[^>]*viewBox="0 0 64 64"[^>]*aria-hidden="true"[^>]*focusable="false"/);
+  const { favicon } = loadTheme({ getItem: () => null, setItem() {} });
+  const geometry = source => source.match(/<ellipse [^>]*\/>|<circle [^>]*\/>/g)?.map(tag => tag.replace(/fill="[^"]*"/, 'fill="currentColor"'));
+  assert.deepEqual(geometry(heading), geometry(decodeURIComponent(favicon.href)));
+  assert.match(heading, /stroke="currentColor" stroke-width="3" stroke-linecap="round"/);
+  assert.match(css, /\.status-icon \{[^}]*width: 1em; height: 1em;[^}]*color: var\(--accent\);/);
+  assert.match(heading, /<\/svg> ccdx status$/);
+});

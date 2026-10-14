@@ -204,6 +204,13 @@ export function createAdapterHandler(options = {}) {
     upstreamTimeoutMs,
   });
   const dispatch = async (req, res, pathname) => {
+    if (req.method === "POST" && ["/v1/responses", "/v1/responses/compact"].includes(pathname)
+      && Object.hasOwn(req.headers || {}, "origin")) {
+      const error = httpError("Browser origins are not allowed for inference", 403);
+      error.jsonBody = { error: { message: error.message, type: "invalid_request_error", code: "ccdx_browser_origin_forbidden" } };
+      sendJsonError(res, error, 403);
+      return;
+    }
     if (DASHBOARD_API_PATHS.has(pathname)) {
       const { handleDashboardApi } = await import("./dashboard-api.mjs");
       return handleDashboardApi(req, res, pathname, options.dashboardOptions);

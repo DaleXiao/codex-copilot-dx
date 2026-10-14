@@ -173,6 +173,50 @@ test("cancellation and deadlines stop recovery without changing stored history",
   await assert.rejects(recoverLocalCompaction(f.context, { ...f, timeoutMs: -1 }), error => error.code === "rollout_read_timeout");
 });
 
+test("overlapping recovery shares source decoding but independently validates and owns each result", async t => {
+  const f = fixture(t), originalOpen = fsp.open.bind(fsp);let reads = 0;
+  t.mock.method(fsp, "open", async (...args) => { if (args[0] === fs.realpathSync(f.file)) reads++;return originalOpen(...args); });
+  const contexts = Array.from({ length: 8 }, () => structuredClone(f.context));
+  contexts[7].body.input[0] = message("user", "wrong retained prefix");
+  const results = await Promise.allSettled(contexts.map(context => recoverLocalCompaction(context, f)));
+  assert.equal(reads, 1);assert.equal(results[7].reason.code, "retained_prefix_mismatch");
+  for (const result of results.slice(0, 7)) assert.equal(result.status, "fulfilled");
+  results[0].value.reqContext.body.input[0].content[0].text = "changed caller result";
+  assert.deepEqual(results[1].value.reqContext.body.input, [...history, message("user", "Continue.")]);
+  await recoverLocalCompaction(f.context, f);assert.equal(reads, 2, "successful plaintext must not remain cached");
+});
+
+test("one cancelled recovery does not cancel another waiter's shared source read", async t => {
+  const f = fixture(t), originalOpen = fsp.open.bind(fsp), controller = new AbortController();
+  let entered, resume;const opened = new Promise(resolve => { entered = resolve; });const gate = new Promise(resolve => { resume = resolve; });
+  t.mock.method(fsp, "open", async (...args) => { entered();await gate;return originalOpen(...args); });
+  const cancelled = recoverLocalCompaction(f.context, { ...f, signal: controller.signal });
+  const survivor = recoverLocalCompaction(f.context, f);
+  const rejected = assert.rejects(cancelled, /cancel this waiter/);
+  await opened;controller.abort(new Error("cancel this waiter"));resume();
+  await rejected;assert.deepEqual((await survivor).reqContext.body.input, [...history, message("user", "Continue.")]);
+});
+
+test("failure reuse is snapshot-bound, expires, and never hides newly added source files", async t => {
+  const f = fixture(t), originalOpen = fsp.open.bind(fsp);let reads = 0;
+  t.mock.method(fsp, "open", async (...args) => { reads++;return originalOpen(...args); });
+  f.rows[0].payload.id = other;f.write();
+  for (let i = 0; i < 2; i++) await assert.rejects(recoverLocalCompaction(f.context, f), error => error.code === "rollout_identity_mismatch");
+  assert.equal(reads, 1);
+  f.rows[0].payload.id = id;f.write();
+  assert.deepEqual((await recoverLocalCompaction(f.context, f)).reqContext.body.input, [...history, message("user", "Continue.")]);
+  assert.equal(reads, 2);
+  f.rows[0].payload.id = other;f.write();
+  await assert.rejects(recoverLocalCompaction(f.context, f));assert.equal(reads, 3);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() + 2500 });
+  await assert.rejects(recoverLocalCompaction(f.context, f));assert.equal(reads, 4);
+  t.mock.timers.reset();
+  fs.unlinkSync(f.file);
+  await assert.rejects(recoverLocalCompaction(f.context, f), error => error.code === "matching_rollout_missing");
+  f.rows[0].payload.id = id;f.write();
+  assert.equal((await recoverLocalCompaction(f.context, f)).recovery.source, "local_codex_rollout");
+});
+
 for (const mode of ["http", "json-failed", "sse-failed"]) {
   test(`${mode} recovery preserves pre-compaction facts and reports bounded metadata through the real handler`, async t => {
     const f = fixture(t), records = createResponseFailureDiagnostics();let calls = 0;

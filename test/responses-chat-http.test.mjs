@@ -59,6 +59,21 @@ test("HTTP Chat fallback rejects unsupported content before upstream dispatch", 
   assert.equal(outcomes.by_model["gpt-4o"].unknown, 1);
 });
 
+test("HTTP Chat reasoning uses catalog efforts without adding a lookup or changing native routing", async () => {
+  const codexModelRegistry = { models: { data: [{ id: "synthetic-chat", capabilities: { supports: { reasoning_effort: ["low"] } } }] } };
+  let calls = 0;
+  const chatCompletionsFn = async body => { calls++;assert.equal(body.reasoning_effort, "low");return Response.json({ choices: [{ message: { content: "OK" }, finish_reason: "stop" }] }); };
+  for (const effort of ["high", "low"]) {
+    const response = await invokeAdapter({ codexModelRegistry, chatCompletionsFn }, { body: { model: "synthetic-chat", input: "test", reasoning: { effort }, stream: false } });
+    assert.equal(response.status, effort === "low" ? 200 : 400);
+  }
+  assert.equal(calls, 1);
+  const native = await invokeAdapter({ codexModelRegistry, getCachedModelEndpointsFn: () => ["/responses"], responsesFn: async body => {
+    assert.equal(body.reasoning.effort, "high");return Response.json({ id: "resp_native_effort", status: "completed", output: [] });
+  } }, { body: { model: "synthetic-chat", input: "test", reasoning: { effort: "high" }, stream: false } });
+  assert.equal(native.status, 200);
+});
+
 test("HTTP non-stream Responses conversion preserves upstream error status", async () => {
   const streamPerformanceMetrics = createStreamPerformanceMetrics();
   const response = await invokeAdapter({

@@ -35,6 +35,10 @@ Offline HTTP/idle-SSE, performance/resource and package-content gates passed.
 Review corrections covered malformed error-code objects, unchanged HTTP error
 bodies/counters, new static assets' loopback access restrictions, startup
 preference conflicts, and portable POSIX/NTFS test expectations.
+The first remote gate caught two Windows-only fixture errors (literal POSIX
+rollback modes and inherited PowerShell 7 module lookup). Fixtures now compare
+the actual pre-write modes and load the system PowerShell modules. Production
+behavior and assertion strength were not changed to accommodate the failures.
 
 Synthetic concurrent-model evidence: 12 overlapping lookups perform one
 validation/catalog round instead of 12. Cancelling one waiter preserves another;

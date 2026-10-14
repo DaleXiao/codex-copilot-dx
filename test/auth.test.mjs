@@ -808,6 +808,8 @@ test("writeToken: metadata failure restores previous bytes, existence, and modes
   fs.chmodSync(githubTokenMetadataPath(home), 0o604);
   const oldToken = fs.readFileSync(githubTokenPath(home));
   const oldMetadata = fs.readFileSync(githubTokenMetadataPath(home));
+  const tokenMode = fs.statSync(githubTokenPath(home)).mode & 0o777;
+  const metadataMode = fs.statSync(githubTokenMetadataPath(home)).mode & 0o777;
   let writes = 0;
 
   assert.throws(() => writeToken("ghu_new", home, { login: "new-user", id: 5 }, {
@@ -820,8 +822,8 @@ test("writeToken: metadata failure restores previous bytes, existence, and modes
 
   assert.deepEqual(fs.readFileSync(githubTokenPath(home)), oldToken);
   assert.deepEqual(fs.readFileSync(githubTokenMetadataPath(home)), oldMetadata);
-  assert.equal(fs.statSync(githubTokenPath(home)).mode & 0o777, 0o640);
-  assert.equal(fs.statSync(githubTokenMetadataPath(home)).mode & 0o777, 0o604);
+  assert.equal(fs.statSync(githubTokenPath(home)).mode & 0o777, tokenMode);
+  assert.equal(fs.statSync(githubTokenMetadataPath(home)).mode & 0o777, metadataMode);
 });
 
 test("writeToken: a token without identity removes stale metadata last", () => {

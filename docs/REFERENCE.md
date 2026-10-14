@@ -140,15 +140,21 @@ remain in memory, are never included in PAC responses or diagnostics, and are
 sent only to the proxy. TLS verification remains enabled for both proxy and target.
 Other App domains keep the resolved original route; if a bridge fails, its PAC
 fallback uses that route rather than adding an unrequested direct connection.
-Route selection is a startup snapshot; restart CCDX and Codex after changing it.
-Bypass lists support host/domain patterns and optional ports. Unsupported CIDR
-notation is reported explicitly rather than silently changing the route.
+Bypass lists support host/domain patterns, optional ports and IPv4/IPv6 CIDRs.
+CIDRs match only IP literals in URLs, not the resolved addresses of domain names,
+following Chromium's manual bypass semantics. No DNS request is added to proxy
+selection, and SOCKS remote name resolution is not replaced by local resolution.
+IPv6 CIDRs use unbracketed notation (`2001:db8::/32`); IPv6 host/port rules use
+brackets (`[2001:db8::1]:443`). Malformed rules fail explicitly without echoing
+their contents. Node and the generated PAC use the same matcher. Legal unused
+exceptions do not block a direct environment or change it into a proxied route.
 
 macOS dynamic PAC/WPAD remains unsupported and is not overwritten. Windows
 automatic routing is opt-in and requires the native worker; a failed worker
 closes its optional bridge while core inference continues. Restart CCDX and Codex
-after changing networks or company PAC settings; this is not a live network-policy
-watcher. Native composer behavior was verified on one Windows machine. Its
+after changing company PAC contents at an unchanged URL; this is not a live
+network-policy watcher. Static/system-setting changes can be rechecked by
+`prediction fix` as described below. Native composer behavior was verified on one Windows machine. Its
 observed upstream route was direct; arbitrary company PAC, integrated-authentication
 and client-certificate policies are not claimed as live-tested. A non-default `CODEX_API_BASE_URL` is
 also preserved and reported as a custom-route conflict; setting it to the normal
@@ -212,12 +218,38 @@ overlay switch still observes explicit on/off changes independently.
 
 `ccdx prediction fix` asks the running adapter for one explicit repair, without
 starting another core service or forcibly restarting Codex. Disabled predictions
-remain off. Healthy/current bridges are kept; a failed bridge or changed App identity
+remain off. Healthy/current bridges with unchanged environments are kept; a failed bridge or changed App identity
 reuses the saved port, certificate and verified profile. Compatibility, certificate,
 company proxy and port-ownership checks are not bypassed. Certificates are not renewed
 by fix; setup problems can still require a normal closed-App `prediction on` action.
 An explicit successful recreation starts a fresh three-attempt automatic recovery
 lifecycle; it is not an automatic retry loop for initialization failures.
+
+Since `0.9.37`, fix rechecks system proxy settings and compares the effective
+network snapshot before replacing a listener. A changed valid snapshot recreates
+only the optional bridge on its saved port, retaining certificate/profile checks.
+A running App may cache its earlier PAC, so `needs_app_relaunch` (exit 1) remains
+until inspection observes it closed or with a different readable main PID. No App
+is forced closed. A failed recheck reports `environment_preserved` (exit 1) and
+keeps the previous bridge; this is not a successful application of the new policy.
+
+Environment variables belong to the running service's process. A new terminal's
+variables are not copied into it by fix. Node trust inputs, including
+`NODE_EXTRA_CA_CERTS`, are startup settings, not a hot-reload interface. Changed
+inputs or changed readable extra-CA content report `needs_service_restart` (exit 1)
+without recreating certificates or claiming new trust was loaded. Extra-CA files
+are inspected read-only up to 1 MiB; `configured` means readable PEM certificates,
+not proof that they were loaded or trusted. Missing/invalid/oversized bundles are
+reported diagnostically; no root is imported and TLS verification remains required.
+
+Startup, `status`, `prediction status/fix` and a running-adapter `doctor` use the
+same sanitized environment summary: source/type, exception/CIDR counts, trust-file
+state and adaptation/restart status. They do not print proxy credentials, internal
+rules, CA paths or private comparison hashes. Status/doctor reuse runtime evidence
+instead of spawning another proxy probe. Disabled predictions perform no prediction
+environment discovery, CA-file inspection or worker/timer startup. Existing App
+paths, user settings, npm/PATH/prefix, permissions and terminal policies remain
+owned by their existing modules; there is no global auto-configuration framework.
 
 The command checks the adapter's advertised `prediction-fix-v1` capability before
 posting bounded JSON to the native-loopback-only `/_ccdx/prediction/fix` endpoint.

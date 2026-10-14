@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readAdapterStatus } from "./cli-status.mjs";
+import { formatPredictionEnvironment } from "./native-prediction-state.mjs";
 
 export function parseRunningCodexApps(stdout) {
   const apps = new Map();
@@ -51,6 +52,8 @@ export async function inspectCodexClient({
       const { data } = await readStatus({ host, port, fetchImpl, timeoutMs: 1500 });
       const source = ["live", "cache", "built-in"].includes(data.models?.source) ? data.models.source : "unknown";
       checks.push({ kind: "info", message: `Running adapter ${data.version}; upstream model directory source: ${source}` });
+      const prediction = data.client_integrations?.prediction;
+      if (prediction?.environment) checks.push({ kind: prediction.environment.status === "adapted" ? "info" : "warn", message: formatPredictionEnvironment(prediction.environment) });
       const catalog = data.models?.client_catalog;
       const observed = catalog?.last_request;
       if (!catalog) {

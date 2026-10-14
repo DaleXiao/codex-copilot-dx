@@ -1,6 +1,7 @@
 import { ADAPTER_STATUS_PATH, adapterBaseUrl } from "./running-adapter.mjs";
 import { status } from "./status.mjs";
 import { terminalCell } from "./cli-table.mjs";
+import { formatPredictionEnvironment } from "./native-prediction-state.mjs";
 
 function finiteNumber(value) {
   const number = Number(value);
@@ -194,6 +195,7 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
     lines.push(status("info", `Native predictions: ${prediction.configured ? "on" : "off"}; bridge ${prediction.bridge}; client route ${prediction.client_route}; visible candidate unknown`));
     if (prediction.launch_route) lines.push(status("info", `Prediction self-check: App route ${prediction.launch_route}; persistent route ${prediction.persistence || "unknown"}; ${count(prediction.recovery?.recovered)} bridge recoveries, ${count(prediction.recovery?.attempts)}/3 attempts used`));
     if (prediction.reason) lines.push(status("warn", terminalCell(prediction.reason).slice(0, 400)));
+    if (prediction.environment) lines.push(status("info", formatPredictionEnvironment(prediction.environment)));
   }
   if (data.profiles?.codex) {
     lines.push(status("info", `Profile: ${profileSummary("Codex", data.profiles.codex)}`));

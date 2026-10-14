@@ -255,12 +255,16 @@ test("closed-profile route lifecycle and compatible App updates preserve port, t
   const opts = fixture(t), archive = path.join(opts.root, "app.asar");
   fs.writeFileSync(archive, "initial synthetic App identity");
   const identity = () => { const stat = fs.statSync(archive);return { ...app, archive, size: stat.size, mtimeMs: stat.mtimeMs }; };
-  const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: identity, output() {} };
+  const run = { ...opts, platform: "darwin", exec(command, ...args) {
+    if (command.endsWith("scutil")) return "ExceptionsList : <array> {\n0 : 172.16.0.0/12\n1 : 10.0.0.0/8\n2 : 198.18.0.0/15\n3 : 192.168.0.0/16\n}";
+    return noRunningApp(command, ...args);
+  }, resolveApp: identity, output() {} };
   await runPredictionCommand({ ...run, action: "on" });
   const paths = predictionPaths(opts), pref = path.join(paths.profile, "Default", "Preferences");
   fs.writeFileSync(path.join(paths.profile, "Local State"), "{}");fs.writeFileSync(pref, '{"unrelated":42}');
   let bridge = await startNativePrediction(run);t.after(async () => bridge?.close());
   assert.equal((await bridge.prepareRoute()).status, "installed");assert.equal(bridge.healthy(), true);
+  assert.equal(bridge.inspectEnvironment().next.summary.network.cidr_rules, 4);
   const port = readPredictionSettings(opts).bridgePort, trust = fs.readFileSync(paths.store);
   await bridge.close();assert.equal(bridge.healthy(), false);
   fs.writeFileSync(archive, "compatible changed synthetic App identity for revalidation");

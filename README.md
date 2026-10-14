@@ -39,7 +39,7 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
 | `ccdx usage` | Recorded tokens and upstream prompt-cache hit rate |
 | `ccdx auto-review-model` | Select model, then reasoning effort; `0` follows client |
 | `ccdx animation` | Preview and select terminal animation |
-| `ccdx prediction fix` | Repair an enabled prediction bridge; never force-restart Codex |
+| `ccdx prediction fix` | Recheck system routing and repair enabled predictions; report required restarts |
 | `ccdx cache --limit 128` | Set the history-cache budget in MiB |
 | `ccdx cache --clean` | Clear the rebuildable image-transform cache |
 | `ccdx limits --decoded 256` | Set the decoded request-body budget; restart to apply |

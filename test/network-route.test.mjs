@@ -4,7 +4,7 @@ import vm from "node:vm";
 import { resolveNetworkRoute, networkProxyFor, networkPredictionPac, networkRouteSnapshot } from "../src/network-route.mjs";
 
 test("static proxy selection respects scheme, environment priority and system settings", () => {
-  assert.throws(() => resolveNetworkRoute({ env: { NO_PROXY: "10.0.0.0/8" } }), /CIDR.*preserved/);
+  assert.doesNotThrow(() => resolveNetworkRoute({ env: { NO_PROXY: "10.0.0.0/8" } }));
   const systemProxy = "HTTPEnable : 1\nHTTPProxy : system.test\nHTTPPort : 8080\nHTTPSEnable : 1\nHTTPSProxy : secure.test\nHTTPSPort : 8081\n";
   const plan = resolveNetworkRoute({ env: { https_proxy: "http://preferred.test:3128", HTTPS_PROXY: "http://ignored.test:8080" }, systemProxy });
   assert.equal(plan.https.source, "https_proxy"); assert.equal(plan.https.url.hostname, "preferred.test");

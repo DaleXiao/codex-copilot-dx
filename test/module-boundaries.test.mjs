@@ -49,6 +49,8 @@ test("shared data and foundation modules do not depend on presentation or compos
     "dashboard-api.mjs": ["cli-auth.mjs", "cli-models.mjs", "usage.mjs"],
     "client-integration.mjs": ["responses-handler.mjs", "responses-proxy.mjs", "dashboard/ui.js"],
     "network-route.mjs": ["copilot.mjs", "native-prediction-profile.mjs", "dashboard-api.mjs"],
+    "network-bypass.mjs": ["node:fs", "node:dns", "node:child_process", "native-prediction.mjs", "adapter.mjs"],
+    "native-prediction-environment.mjs": ["adapter.mjs", "copilot.mjs", "image-provider.mjs", "dashboard-api.mjs", "config.mjs", "native-prediction.mjs"],
     "native-prediction-state.mjs": ["adapter.mjs", "dashboard-api.mjs", "cli-status.mjs"],
     "native-prediction-route.mjs": ["adapter.mjs", "dashboard-api.mjs", "copilot.mjs", "startup-ui.mjs"],
     "native-prediction-recovery.mjs": ["adapter.mjs", "dashboard-api.mjs", "copilot.mjs", "startup-ui.mjs"],
@@ -62,7 +64,7 @@ test("shared data and foundation modules do not depend on presentation or compos
   for (const [file, forbidden] of Object.entries(rules)) {
     const source = fs.readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
     for (const dependency of forbidden) {
-      assert.ok(!source.includes(`"./${dependency}"`), `${file} must not depend on ${dependency}`);
+      assert.ok(!source.includes(`"${dependency.startsWith("node:") ? dependency : `./${dependency}`}"`), `${file} must not depend on ${dependency}`);
     }
   }
 });

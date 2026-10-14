@@ -1,5 +1,6 @@
 import { status } from "./status.mjs";
 import { terminalCell } from "./terminal-text.mjs";
+import { formatPredictionEnvironment } from "./native-prediction-state.mjs";
 
 // The favicon's three ellipses, rasterized as terminal half-blocks. No runtime
 // graphics library or terminal cursor control is needed.
@@ -45,10 +46,11 @@ export function startupLogger(name, output = console.log) {
 
 export function predictionStartupCheck(prediction) {
   if (!prediction?.configured) return startupCheck("info", "Prediction", "Off");
-  if (prediction.bridge !== "running") return startupCheck("warn", "Prediction", prediction.reason || "Bridge unavailable; core service is available");
+  const details = prediction.environment ? `\n${startupCheck("info", "Environment", formatPredictionEnvironment(prediction.environment))}` : "";
+  if (prediction.bridge !== "running") return startupCheck("warn", "Prediction", prediction.reason || "Bridge unavailable; core service is available") + details;
   const route = prediction.launch_route;
   const summary = startupCheck(route === "unverified" ? "warn" : "info", "Prediction", route === "verified"
     ? "Bridge running; App route verified; suggestion not checked"
     : "Bridge running; App route not verified; suggestion not checked");
-  return prediction.recovery ? `${summary}\n${startupCheck("info", "Recovery", `${prediction.recovery.attempts}/3 attempts used; persistent route ${prediction.persistence || "unknown"}`)}` : summary;
+  return (prediction.recovery ? `${summary}\n${startupCheck("info", "Recovery", `${prediction.recovery.attempts}/3 attempts used; persistent route ${prediction.persistence || "unknown"}`)}` : summary) + details;
 }

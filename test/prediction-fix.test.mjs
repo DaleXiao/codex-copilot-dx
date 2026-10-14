@@ -140,6 +140,10 @@ test("actual prediction fix CLI uses only the local management route and reports
   const first = await run();assert.match(first.stdout, /App launch route verified/);assert.equal(calls, 1);
   status = "needs_app_relaunch";
   await assert.rejects(run(), error => error.code === 1 && /No App was restarted/.test(error.stdout));assert.equal(calls, 2);
+  for (const [next, message] of [["needs_service_restart", /Restart the CCDX service/], ["environment_preserved", /existing bridge and routes were preserved/]]) {
+    status = next;await assert.rejects(run(), error => error.code === 1 && message.test(error.stdout));
+  }
+  assert.equal(calls, 4);
   writePredictionSettings({ version: 1, enabled: false }, { ...options, env });
-  assert.match((await run()).stdout, /nothing was enabled or changed/);assert.equal(calls, 2);
+  assert.match((await run()).stdout, /nothing was enabled or changed/);assert.equal(calls, 4);
 });

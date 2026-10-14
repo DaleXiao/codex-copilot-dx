@@ -36,6 +36,8 @@ export function supervisePrediction({ native, restart, state, warning = () => {}
     healthy() { return !closed && current.healthy(); },
     enabled() { return !closed && current.enabled?.() !== false; },
     appCurrent() { return current.appCurrent?.() !== false; },
+    inspectEnvironment() { return current.inspectEnvironment?.(); },
+    routeProcessId() { return current.routeProcessId?.(); },
     inspectRoute() { return current.inspectRoute?.(); },
     prepareRoute() { return current.prepareRoute?.(); },
     async close() { closed = true;clearIntervalImpl(timer);await flight;await current?.close(); },

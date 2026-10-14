@@ -1,30 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { predictionPaths, readPredictionSettings, writePredictionSettings, assertPredictionProxyCompatible,
   assertCodexClosed, installedPredictionApp, predictionAppMatches, readPredictionCertificate,
   createPredictionCertificate, updatePredictionTrust } from "./native-prediction-profile.mjs";
 import { retirePredictionIntegration } from "./prediction-retirement.mjs";
 import { networkRouteSnapshot } from "./network-route.mjs";
 import { withFileLock } from "./lock.mjs";
-import { windowsSystemProxy, windowsProxySettings, windowsProxyText, windowsPredictionAppProcesses } from "./native-prediction-windows.mjs";
+import { windowsProxyText, windowsPredictionAppProcesses } from "./native-prediction-windows.mjs";
 import { updatePredictionRoute } from "./native-prediction-route.mjs";
-
-function systemProxy(exec = execFileSync, { platform = process.platform, env = process.env } = {}) {
-  if (platform === "win32") return windowsSystemProxy({ exec, env });
-  return exec("/usr/sbin/scutil", ["--proxy"], { encoding: "utf8", timeout: 2000, maxBuffer: 64 * 1024 });
-}
-
-function predictionNetworkOptions(options) {
-  if (options.platform !== "win32") return { networkRoute: assertPredictionProxyCompatible({ env: options.env, systemProxy: systemProxy(options.exec, options) }) };
-  const settings = windowsProxySettings(options);
-  if (!settings.autoDetect && !settings.pac) return { networkRoute: assertPredictionProxyCompatible({ env: options.env, systemProxy: windowsProxyText(settings) }) };
-  const environment = assertPredictionProxyCompatible({ env: options.env });
-  if (environment.http || environment.https || environment.bypass.length) {
-    throw new Error("Windows automatic proxy and explicit proxy environment rules require separate routing; existing routes were preserved");
-  }
-  return { settings };
-}
+import { inspectPredictionEnvironment } from "./native-prediction-environment.mjs";
+import { formatPredictionEnvironment } from "./native-prediction-state.mjs";
 
 function certificateDirectory(settings, paths) {
   if (!settings.credentialsDirectory) return paths.directory;
@@ -56,8 +41,12 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
     const result = await repairRuntime();
     const prediction = result.prediction;
     output(`Prediction repair: ${result.status}; bridge: ${prediction.bridge}; candidate: ${prediction.candidate}`);
+    if (prediction.environment) output(formatPredictionEnvironment(prediction.environment));
     if (result.status === "disabled") output("The running adapter has predictions off; no feature was enabled.");
+    else if (result.status === "needs_service_restart") output("Node trust settings changed. Restart the CCDX service to apply them; no certificate or App was changed.");
+    else if (result.status === "environment_preserved") output(`Network recheck failed; the existing bridge and routes were preserved. ${result.environment_error?.message || "Check ccdx prediction status."}`);
     else if (prediction.bridge !== "running") output(prediction.reason || "Prediction bridge is unavailable; core service was not changed.");
+    else if (prediction.environment?.status === "needs_app_relaunch") output("Network settings changed. The bridge uses the new snapshot, but the App may cache its earlier PAC. Fully quit Codex, then run ccdx; no App was restarted.");
     else if (result.app_route === "verified") output("App launch route verified. A visible suggestion still needs an App-side check.");
     else if (result.app_route === "closed") output("Bridge is ready. Run ccdx to open Codex with its prediction route.");
     else if (result.status === "route_unverified") output("Bridge is ready, but App route inspection was unavailable or ambiguous. Check ccdx prediction status; no App was restarted.");
@@ -76,6 +65,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
           if (runtime.launch_route) output(`App launch route: ${runtime.launch_route}; persistent route: ${runtime.persistence || "unknown"}`);
           if (runtime.recovery) output(`Bridge recovery: ${runtime.recovery.recovered} recovered; ${runtime.recovery.attempts}/3 attempts used`);
           if (runtime.reason) output(runtime.reason);
+          if (runtime.environment) output(formatPredictionEnvironment(runtime.environment));
           for (const [name, event] of Object.entries(runtime.configuration || {})) output(`${name}: HTTP ${event.status}${event.modified ? " (local compatibility)" : " (upstream)"}`);
         } else output("Runtime prediction state: unavailable; status is a saved preference, not proof of a visible suggestion.");
       } catch { output("Runtime prediction state: unavailable; start ccdx and check again."); }
@@ -112,7 +102,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
     return { ...settings, enabled: false };
   }
   assertCodexClosed(opts);
-  predictionNetworkOptions(opts);
+  inspectPredictionEnvironment(opts);
   const app = resolveApp({ ...opts, ...(platform === "win32" && settings.app?.profile ? { preferredProfile: settings.app.profile } : {}) });
   paths = predictionPaths({ ...opts, app });
   if (settings.store && settings.store !== paths.store) throw new Error("Codex profile changed; disable the previous profile before enabling another");
@@ -165,7 +155,9 @@ export async function startNativePrediction({ env = process.env, platform = proc
   state?.configure(settings.enabled);
   if (!settings.enabled) return null;
   if (!["darwin", "win32"].includes(platform)) throw new Error("Native predictions were skipped: unsupported platform");
-  const network = predictionNetworkOptions(opts);
+  const environment = options.environment || inspectPredictionEnvironment(opts);
+  state?.environment(environment.summary);
+  const network = environment.network;
   let networkRoute = network.networkRoute;
   if (settings.bridgePort !== undefined
     && (!Number.isInteger(settings.bridgePort) || settings.bridgePort < 1024 || settings.bridgePort > 65535)) {
@@ -250,17 +242,24 @@ export async function startNativePrediction({ env = process.env, platform = proc
     throw error;
   }
   state?.running(windowsNetwork ? { source: "system", type: "auto", bypass_rules: null, proxy_credentials: false } : networkRouteSnapshot(networkRoute));
+  let routeProcessId = null;
   return {
     app: settings.app.app,
     ...(platform === "win32" ? { profile: paths.profile } : {}),
     pacUrl: transport.pacUrl,
     enabled() { return enabled; },
     appCurrent() { return predictionAppMatches(settings.app); },
+    inspectEnvironment() {
+      const next = inspectPredictionEnvironment(opts);
+      return { changed: next.networkKey !== environment.networkKey, requiresServiceRestart: next.trustKey !== environment.trustKey, next };
+    },
+    routeProcessId() { return routeProcessId; },
     healthy() { return transport.healthy() && (!windowsNetwork || windowsNetwork.healthy()); },
     async inspectRoute() {
       const inspect = options.inspectAppProcesses || (platform === "win32" ? windowsPredictionAppProcesses
         : (await import("./launcher.mjs")).macPredictionAppProcesses);
       const rows = inspect(settings.app.app, opts);
+      routeProcessId = rows.length === 1 && rows[0].readable ? rows[0].pid : null;
       const route = rows.length === 0 ? "closed" : rows.length !== 1 || !rows[0].readable ? "unverified"
         : rows[0].route === transport.pacUrl ? "verified" : "missing";
       state?.launch(route);
@@ -268,7 +267,7 @@ export async function startNativePrediction({ env = process.env, platform = proc
     },
     async prepareRoute() {
       try {
-        const direct = !windowsNetwork && !networkRoute?.http && !networkRoute?.https && !networkRoute?.bypass?.length;
+        const direct = !windowsNetwork && !networkRoute?.http && !networkRoute?.https;
         if (!direct) {
           // A profile previously configured on a direct network must not pin
           // that local PAC after the environment switches to company routing.

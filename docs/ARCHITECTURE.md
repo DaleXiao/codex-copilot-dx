@@ -44,8 +44,9 @@ Native prediction has a separate loopback transport and an isolated HTTPS agent.
 Only its two selected hosts use the App-specific route. Non-configuration requests
 on those hosts are forwarded unchanged. The bridge does not replace Copilot or
 image-provider networking, modify client program files, or install system trust.
-Static upstream proxy routes and bypass rules are preserved. macOS dynamic
-PAC/WPAD and static CIDR bypass rules are reported as unsupported, not discarded.
+Static upstream proxy routes and bypass rules are preserved. IPv4/IPv6 CIDRs
+match URL IP literals, without DNS. macOS dynamic PAC/WPAD remains unsupported
+and is reported rather than discarded.
 The Windows adapter isolates registration, process, proxy and NTFS
 interfaces in `native-prediction-windows.mjs`. The bridge, overlay, model selection
 and lifecycle remain shared. Windows discovery requires verified registration
@@ -97,6 +98,24 @@ capability only when the composition root supplies that operation.
 enforces loopback/Host/Origin/method/media/body boundaries before dispatch. No new
 inference-path work, watcher, runtime dependency, forced App restart or unverified
 hot-attachment mechanism is introduced.
+
+`network-bypass.mjs` compiles static host/IP/port/CIDR rules. The exact pure
+address/matching functions are embedded in the PAC and called by Node, with no
+DNS or system calls. Matching IP literals instead of resolving domains preserves
+Chromium's manual bypass semantics and SOCKS remote DNS. Existing domain matching
+and per-protocol source priority are retained; unused lower-priority static proxy
+addresses do not override selected routes.
+
+`native-prediction-environment.mjs` owns bounded, read-only discovery for the
+optional feature. Only enabled startup, explicit fix and failed-listener recovery
+read system policy. Private comparison hashes include effective proxy settings
+and Node trust inputs; public snapshots contain source/type/counts and diagnostic
+states, not addresses, credentials, file paths or hashes. Trust-file inspection is
+diagnostic, not loading or modifying certificate trust. Changed trust inputs need
+a service restart. A changed network snapshot reuses the port but marks a running
+App for PAC reload until it is observed closed or with a different readable PID.
+Failed rechecks preserve the existing bridge and return a non-success result.
+There is no new watcher, global environment owner or inference/image dispatcher.
 
 `startup-ui.mjs` is pure terminal presentation: a static A atom, aligned checks
 and the common new/reused-service footer. It depends only on terminal/status

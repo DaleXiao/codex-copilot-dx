@@ -18,7 +18,7 @@ export async function requestPredictionFix({ host = "127.0.0.1", port = 2026, fe
   const text = await readBoundedResponseText(response, { maxBytes: 64 * 1024, label: "Prediction repair response", signal });
   if (!response.ok) throw new Error(`Prediction repair returned HTTP ${response.status}; no App was restarted`);
   let value;try { value = JSON.parse(text); } catch {}
-  if (!["ready", "disabled", "failed", "needs_app_relaunch", "route_unverified"].includes(value?.status)
+  if (!["ready", "disabled", "failed", "needs_app_relaunch", "route_unverified", "needs_service_restart", "environment_preserved"].includes(value?.status)
     || !["running", "stopped", "unavailable", "recovering"].includes(value?.prediction?.bridge)
     || value.prediction.candidate !== "unknown"
     || (["ready", "needs_app_relaunch", "route_unverified"].includes(value.status) && value.prediction.bridge !== "running")

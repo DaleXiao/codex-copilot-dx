@@ -61,6 +61,12 @@ OS proxy/trust policy change or broad POST retry was introduced.
   assertion for additive metadata and a test provider that ignored AbortSignal.
   The corrected actual-HTTP fixtures verify cancellation without weakening the
   production contract. No unrelated refactoring or optimization was added.
+- The first remote run caught a Windows-only instrumentation bug in the new
+  source-read test: synchronous/asynchronous canonical path spellings differed,
+  so its string-filtered counter reported zero reads. The isolated fixture now
+  counts every asynchronous file open, still requiring exactly one for eight
+  recoveries and independently checking all recovered results. No production
+  behavior or safety assertion was relaxed.
 - Package and cross-platform gates must pass before stable publication. Windows
   CI explicitly includes the new Chat and actual-HTTP delivery tests, in addition
   to existing updater, NTFS/profile/trust and optional prediction tests. CI is not

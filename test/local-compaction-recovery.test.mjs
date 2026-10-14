@@ -175,7 +175,7 @@ test("cancellation and deadlines stop recovery without changing stored history",
 
 test("overlapping recovery shares source decoding but independently validates and owns each result", async t => {
   const f = fixture(t), originalOpen = fsp.open.bind(fsp);let reads = 0;
-  t.mock.method(fsp, "open", async (...args) => { if (args[0] === fs.realpathSync(f.file)) reads++;return originalOpen(...args); });
+  t.mock.method(fsp, "open", async (...args) => { reads++;return originalOpen(...args); });
   const contexts = Array.from({ length: 8 }, () => structuredClone(f.context));
   contexts[7].body.input[0] = message("user", "wrong retained prefix");
   const results = await Promise.allSettled(contexts.map(context => recoverLocalCompaction(context, f)));

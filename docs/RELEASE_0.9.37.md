@@ -44,6 +44,9 @@ Startup-only extra-CA behavior is documented in [Node's command-line reference](
   passed immediately in isolation (170 ms total), without changing its timeout or
   assertion. The concurrent baseline benchmark passed existing resource gates.
 - Final local full suite: 1,223 passed, eight Windows-only skips, zero failures.
+- Offline HTTP/idle-SSE, all nine isolated startup/reuse scenarios and the package
+  dry-run passed. Both new production modules are included, with no temporary
+  logs, release helpers, credentials or test-only modules in the package.
 - Review specifically covered a running App retaining cached PAC, repeated fixes
   retaining relaunch warnings, automatic recovery after network/trust changes,
   no-probe disabled startup, current supervisor delegation, concurrent fix/shutdown,
@@ -85,4 +88,28 @@ Real affected-Mac and company-network acceptance remains a separate user test.
 
 ## Release receipts
 
-Pending cross-platform CI, package and publication receipts for this candidate.
+Release commit `00e145f497e26a95095a8a0ae2bdb385c51ec51e` passed all eight
+[candidate CI jobs](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38592409191):
+Windows, macOS and Linux on Node 22.15/24, official Codex synthetic replays and
+Chromium/WebKit bilingual/theme/viewport dashboard replays. The platform jobs also
+verify isolated installation/upgrade and native sharp execution. No remote rerun
+or weakened production timeout/assertion was needed for this candidate.
+
+GitHub release: [v0.9.37](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.37).
+The 148-file archive is 377,749 bytes. Its local SHA-256 matches GitHub's asset
+digest: `ddd25d087e35dd539a63b3443e2d95f7a64270c8f144d016ae3b1737d9350f22`.
+Local npm-pack SHA-1: `28d1d036ffb8d4f08f0a17a79fc135382707b5d2`.
+
+[npm publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38592853205)
+succeeded with `npm publish --tag latest`; the official registry acknowledged
+`+ codex-copilot-dx@0.9.37`. The runner verified 1,223 passed / eight skipped /
+zero failures and the existing performance/resource gate before publication.
+Its 148-file package SHA-1 matches the local archive above. This is registry
+publication evidence from the runner, not a claim of an independent local read.
+GitHub used the user's previously supplied PAT, and npm used the existing
+repository publishing secret. Neither credential is stored in the report.
+
+The identical release commit also passed all eight
+[main-branch CI jobs](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38592830243).
+The last macOS/Node 24 job waited for a GitHub runner, then passed without code
+changes or a job rerun. No CI failures remain in the candidate, main or npm run.

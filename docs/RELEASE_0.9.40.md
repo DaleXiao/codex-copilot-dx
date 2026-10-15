@@ -97,3 +97,38 @@ material or dependency installation was bundled. SHA-1:
 `c3f78fa3771749e7eebf3f82445d1080a51f2d6109646c7dabd8b255f29647b3`.
 This audit file is not packed, so publication receipts do not alter package bytes.
 No publication success or full native acceptance is claimed before the receipts.
+
+## Publication receipts and measured limits
+
+- Tag `v0.9.40` points to `308b4a3e2100d12635602c613ff65c3e9de6f4b2`.
+  Only the unpacked acceptance report differs from the all-green CI source.
+- [npm publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38753787301)
+  succeeded once, publishing `codex-copilot-dx@0.9.40` with tag `latest`. Its
+  reported tarball SHA-1 exactly matches `85f47b5756bccdf9d20fab2ec24c63cd0e889657`.
+- [GitHub stable release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.40)
+  is neither draft nor prerelease. Its 390,799-byte asset reports SHA-256
+  `c3f78fa3771749e7eebf3f82445d1080a51f2d6109646c7dabd8b255f29647b3`,
+  exactly matching the verified local artifact. GitHub and npm carry the same pack.
+- GitHub used the exact, identity-verified historical PAT used for 0.9.39, only
+  in memory. npm used the existing repository publishing secret. No browser
+  authorization, substitute credential, persistent npm policy or registry change.
+
+Successful Windows full-Chromium 151.0.7922.34 measurements:
+
+| Mode | Initial fallback, round 1 / 2 | Healthy-listener recovery, round 1 / 2 |
+| --- | --- | --- |
+| Legacy control | 2,089 ms / not run | Remained on fallback during 2,113 ms observation |
+| Revised direct fallback | 4,741 / 2,115 ms | 4,354 / 7,732 ms |
+| Revised company fallback | 4,468 / 2,067 ms | 4,792 / 7,929 ms |
+
+The extra cold-failure attempt costs about 2.4-2.7 seconds in this Windows
+fixture; it is not a claim that every latency metric improved. The normal primary
+is unchanged, but a real-account/native-UI performance or recovery guarantee
+cannot be inferred from browser routing tests. The five-minute App config-cache
+and next-eligible-turn caveats remain. The user requested this release for full
+native acceptance with those evidence boundaries stated explicitly.
+
+Cleanup is limited to this run's temporary packages/cache/logs/helpers and its
+merged candidate branch. Existing `experiments/`, real credentials, configuration,
+active services and installed dependencies are preserved. No post-publication
+runtime/source change or tag movement is part of this receipt.

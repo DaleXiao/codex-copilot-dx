@@ -31,7 +31,8 @@ Date: 2026-10-15. Baseline: 0.9.39 / `ab9e294`.
 ## Bounded verification and review
 
 - Baseline: 1,272 passed, nine Windows-only skips, zero failures.
-- Reviewed candidate: 1,283 passed, nine Windows-only skips, zero failures.
+- Reviewed candidate before the additional mixed-source auth regression: 1,283
+  passed, nine Windows-only skips, zero failures. Final counts follow below.
 - Existing offline HTTP/SSE, performance/resource and package-content gates pass.
   Actual isolated CLI startup/reuse replay passes its nine scenarios, including
   disabled images, optional failures, config preservation and shutdown.
@@ -52,6 +53,11 @@ Date: 2026-10-15. Baseline: 0.9.39 / `ab9e294`.
   Chromium channel and asserts that a PAC was loaded before accepting even the
   legacy control. Recovery assertions are unchanged; this is not a production
   routing workaround or a waived test.
+- Windows then exposed a test-only dynamic-import path error: an absolute drive
+  path must be converted with `pathToFileURL`. The replay now uses that portable
+  Node API, without a Windows skip or a production dependency. Review also added
+  a mixed-source credential regression: one denied source cannot hide another
+  fully validated, unambiguous usable credential.
 - Cross-platform CI adds the real Chromium failure/recovery replay on Linux,
   Windows and macOS, separate from the existing installation, native worker,
   restricted-shell, protocol and dashboard matrix. Results are pending below.

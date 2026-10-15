@@ -227,9 +227,6 @@ export async function discoverGithubToken({
     failures.push({ source, validation });
   }
 
-  if (failures.some(item => item.validation?.accessDenied)) {
-    return { ok: false, accessDenied: true, failures };
-  }
   if (sources.incomplete || boundedSignal.aborted || failures.some(item => item.validation?.transient)) {
     return { ok: false, incomplete: true, transient: true, failures };
   }
@@ -252,6 +249,9 @@ export async function discoverGithubToken({
     };
   }
 
+  if (failures.some(item => item.validation?.accessDenied)) {
+    return { ok: false, accessDenied: true, failures };
+  }
   return { ok: false, failures };
 }
 

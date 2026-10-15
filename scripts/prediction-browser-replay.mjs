@@ -2,12 +2,13 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { predictionProxyExpression, PREDICTION_PAC_PATH } from "../src/prediction-pac.mjs";
 
 const args = process.argv.slice(2), options = new Map();
 for (let i = 0; i < args.length; i += 2) options.set(args[i], args[i + 1]);
 assert.ok(path.isAbsolute(options.get("--playwright") || ""), "Supply --playwright /absolute/path/to/playwright/index.js");
-const module = await import(options.get("--playwright"));
+const module = await import(pathToFileURL(options.get("--playwright")).href);
 const { chromium } = module.default || module;
 const listen = (server, port = 0) => new Promise((resolve, reject) => {
   const failed = error => reject(error);

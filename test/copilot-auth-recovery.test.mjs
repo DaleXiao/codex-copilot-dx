@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ensureAuth, writeToken, githubTokenPath } from "../src/auth.mjs";
+import { ensureAuth, discoverGithubToken, writeToken, githubTokenPath } from "../src/auth.mjs";
 import { createCopilotTokenSession } from "../src/copilot-token-session.mjs";
 
 function fixture(t) {
@@ -20,6 +20,19 @@ function session(home, fetchImpl) {
     defaultApiBase: "https://api.githubcopilot.com", parseApiBase: () => "https://api.githubcopilot.com",
     fetchCopilotUpstream: (url, init, options) => options.fetchImpl(url, init) });
 }
+
+test("a denied source cannot hide another fully validated unambiguous local credential", async t => {
+  const f = fixture(t);
+  const result = await discoverGithubToken({ home: f.home, env: {},
+    sources: [{ type: "auth-json", path: "denied" }, { type: "auth-json", path: "usable" }],
+    readSource: source => `ghu_${source.path}_fixture`,
+    fetchImpl: async (url, options) => {
+      if (url.endsWith("/user")) return Response.json({ login: "fixture", id: 1 });
+      return options.headers.Authorization.includes("denied") ? new Response("denied", { status: 403 }) : Response.json({ token: "service_fixture" });
+    },
+  });
+  assert.equal(result.ok, true);assert.equal(result.token, "ghu_usable_fixture");f.preserved();
+});
 
 test("saved credential startup never validates, deletes, or initiates a new login", async t => {
   const f = fixture(t);

@@ -50,13 +50,23 @@ try {
     const browser = await playwright[engine].launch({ headless: true, ...(options.get("--executable") ? { executablePath: options.get("--executable") } : {}) });
     try {
       for (const language of ["en", "zh"]) for (const theme of ["dark", "light"]) for (const width of [420, 1280]) {
-        const page = await browser.newPage({ viewport: { width, height: 900 } });
+        const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "no-preference" });
         const errors = [];
         page.on("pageerror", error => errors.push(error.message));
         await page.addInitScript(({ language, theme }) => { localStorage.setItem("ccdx.dashboard.language", language); localStorage.setItem("ccdx.dashboard.theme", theme); }, { language, theme });
+        await page.addInitScript(() => {
+          window.atomMotions = [];
+          const animate = Element.prototype.animate;
+          Element.prototype.animate = function(frames, options) {
+            if (this.id === "status-icon") window.atomMotions.push({ frames, options });
+            return animate.call(this, frames, options);
+          };
+        });
         await page.clock.install();
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
         await page.waitForFunction(() => !document.getElementById("refresh-models").disabled && !document.getElementById("refresh-usage").disabled);
+        assert.equal(await page.evaluate(() => atomMotions.length), 1);
+        assert.equal(await page.evaluate(() => atomMotions[0].options.duration), 450);
         assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
         assert.equal(await page.locator("html").getAttribute("lang"), language === "zh" ? "zh-CN" : "en");
         const icon = decodeURIComponent(await page.locator("#favicon").getAttribute("href"));
@@ -73,6 +83,7 @@ try {
         await page.evaluate(() => { window.savedCalendar = document.querySelector(".calendar-day"); window.savedModelRow = document.querySelector("#live-models-body tr"); });
         await page.locator("#refresh").click();
         await page.waitForFunction(() => !document.getElementById("refresh-models").disabled && !document.getElementById("refresh-usage").disabled);
+        assert.equal(await page.evaluate(() => atomMotions.length), 2);
         assert.equal(await page.evaluate(() => window.savedCalendar === document.querySelector(".calendar-day") && window.savedModelRow === document.querySelector("#live-models-body tr")), true);
         assert.equal(await page.locator("#analytics-range").inputValue(), "90");
         assert.equal(await page.locator(".theme-option").nth(1).getAttribute("aria-pressed"), "true");
@@ -81,11 +92,16 @@ try {
         await page.clock.fastForward(1800000);
         await page.waitForFunction(() => !document.getElementById("refresh-models").disabled);
         assert.equal(models, before + 1);
+        assert.equal(await page.evaluate(() => atomMotions.length), 2, "Background polling must not animate the atom");
         await page.waitForFunction(() => !document.getElementById("refresh-usage").disabled);
         for (const key of ["status", "auth", "models", "usage", "animation"]) assert.equal(await page.evaluate(key => dashboardRefresh.state(key).error?.message || null, key), null, `${key}: refresh must succeed`);
         await page.locator("#auto-refresh").click();
         await page.clock.fastForward(1800000);
         assert.equal(models, before + 1);
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.locator("#refresh").click();
+        await page.waitForFunction(() => !document.getElementById("refresh").disabled);
+        assert.equal(await page.evaluate(() => atomMotions.length), 2, "Reduced motion suppresses new atom rotations");
         assert.equal(errors.length, 0, errors.join("\n"));
         if (output && ((width === 1280 && language === "en" && theme === "dark") || (width === 420 && language === "zh" && theme === "light"))) await page.screenshot({ path: path.join(output, `${engine}-${language}-${theme}-${width}.png`), fullPage: true });
         results.push({ engine, language, theme, width, passed: true });

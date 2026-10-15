@@ -143,6 +143,7 @@ export async function inspectAdapterCompatibility({
       const terminals = events.filter(event => ["response.completed", "response.failed", "response.incomplete", "response.cancelled", "error"].includes(event.type));
       if (terminals.length !== 1 || terminals[0].type !== "response.completed"
         || terminals[0].response?.status !== "completed") throw new Error("stream did not finish with one valid response.completed");
+      parseResponseObject(JSON.stringify(terminals[0].response));
     });
   }
 

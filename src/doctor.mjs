@@ -126,13 +126,14 @@ export async function inspectGitHubTokenOnline({
     }
     const models = await modelResp.json();
     const data = Array.isArray(models) ? models : models?.data;
-    if (!Array.isArray(data) || !data.length) return [
+    const validModels = Array.isArray(data) ? data.filter(model => typeof model?.id === "string" && model.id.trim()) : [];
+    if (!validModels.length) return [
       { kind: "ok", message: `GitHub Copilot access verified for ${validation.login || "current account"}` },
       { kind: "err", message: "Copilot models endpoint returned no valid model directory despite HTTP 200" },
     ];
     return [
       { kind: "ok", message: `GitHub Copilot access verified for ${validation.login || "current account"}` },
-      { kind: "ok", message: `Copilot models endpoint returned ${Array.isArray(data) ? data.length : 0} models` },
+      { kind: "ok", message: `Copilot models endpoint returned ${validModels.length} models` },
     ];
   } catch (error) {
     const errorCode = error?.cause?.code || error?.code || "";

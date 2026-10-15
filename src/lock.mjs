@@ -61,7 +61,7 @@ function processIsAlive(pid) {
   }
 }
 
-function readStaleLockSnapshot(lockPath, io, { checkTimestamps = true } = {}) {
+function readStaleLockSnapshot(lockPath, io) {
   const before = io.lstatSync(lockPath);
   if (!before.isFile() || before.isSymbolicLink()) return { safe: false };
 
@@ -71,18 +71,28 @@ function readStaleLockSnapshot(lockPath, io, { checkTimestamps = true } = {}) {
     fd = io.openSync(lockPath, io.constants.O_RDONLY | noFollow);
     const opened = io.fstatSync(fd);
     if (!opened.isFile()
-      || opened.dev !== before.dev
+      || (before.dev !== 0 && opened.dev !== before.dev)
       || opened.ino !== before.ino
       || opened.size !== before.size) {
       return { safe: false };
+    }
+    // Node 22 on Windows can return dev=0 from path lstat but a real device
+    // from fstat. Do not waive device identity: verify a second path handle.
+    if (before.dev === 0 && opened.dev !== 0) {
+      const pathFd = io.openSync(lockPath, io.constants.O_RDONLY | noFollow);
+      try {
+        const current = io.fstatSync(pathFd);
+        if (!current.isFile() || current.dev !== opened.dev || current.ino !== opened.ino
+          || current.size !== opened.size) return { safe: false };
+      } finally { io.closeSync(pathFd); }
     }
     const text = io.readFileSync(fd, "utf8");
     const after = io.fstatSync(fd);
     if (after.dev !== opened.dev
       || after.ino !== opened.ino
       || after.size !== opened.size
-      || (checkTimestamps && (after.mtimeMs !== opened.mtimeMs
-        || after.ctimeMs !== opened.ctimeMs))) {
+      || after.mtimeMs !== opened.mtimeMs
+      || after.ctimeMs !== opened.ctimeMs) {
       return { safe: false };
     }
     let record = {};
@@ -137,10 +147,7 @@ function writeLockRecord(lockPath, record, io) {
 
 function removeOwnedLock(lockPath, owner, io) {
   try {
-    // Own-lock release is identified by its random owner and unchanged regular
-    // file identity/size. Windows may finalize timestamps while closing a write;
-    // timestamp stability belongs to stale reclamation, not releasing our lock.
-    const snapshot = readStaleLockSnapshot(lockPath, io, { checkTimestamps: false });
+    const snapshot = readStaleLockSnapshot(lockPath, io);
     if (snapshot.safe && snapshot.owner === owner) io.unlinkSync(lockPath);
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;

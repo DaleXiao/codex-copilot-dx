@@ -47,8 +47,12 @@ Date: 2026-10-15. Baseline: 0.9.38 / `0362d08`.
 
 ## Review and verification
 
-Baseline: 1,248 passed, 9 Windows-only skips, zero failures. Performance/resource
-gates pass. Local candidate verification includes the full suite, offline HTTP/
+Baseline: 1,248 passed, 9 Windows-only skips, zero failures. Final local suite:
+1,271 passed, 9 Windows-only skips, zero failures. Performance/resource gates
+pass. Adapter import RSS was 58.4 -> 58.5 MiB and heap 7.1 -> 7.1 MiB; these are
+single-run samples, not a statistical speedup claim. SSE scan ratios remain 1.0,
+eight repeated images invoke one optimizer, and repeated large tool output parses
+once. Local candidate verification includes the full suite, offline HTTP/
 SSE smoke, isolated startup/reuse replay, performance/resource gates, package
 manifest, and eight real Chromium bilingual/theme/viewport cases using a fresh
 headless profile and synthetic provider. No live inference or image generation,
@@ -65,12 +69,17 @@ shim in a checkout was incorrectly labelled a warning. It is now informational;
 real installed-shim failures remain warnings. A platform-independent regression
 test protects this distinction without weakening installation acceptance.
 Windows Node 22 also exposed a retained synchronous owner lock on immediately
-repeating repair. Own-lock release no longer requires stable timestamps across
-descriptor reads, while retaining regular-file identity/size and exact random
-owner checks. Stale-lock reclamation retains its stricter timestamp checks.
-Tests inject timestamp finalization, repeat real release 100 times, and preserve
-replacement owners and symlinks. No live-owner lock is stolen or stale threshold
-reduced.
+repeating repair. Actual diagnostics showed lstat dev=0 and fstat dev=742408122
+for the same regular file/inode/size/timestamps. A timestamp-only candidate did
+not solve this and was superseded, not counted as success. When path device
+metadata is missing, the final implementation verifies another path descriptor
+against the opened device/inode/size. All original timestamp, random owner,
+symlink and stale-owner protections remain. Tests inject missing device metadata
+and a mismatched descriptor, repeat real release 100 times, and preserve
+replacement owners/symlinks. No live-owner lock is stolen or stale threshold
+reduced. The real Windows ACL fixture allows longer hosted-runner PowerShell
+bootstrap only in its injected test subprocess; production remains bounded to 3s
+and permission assertions are unchanged.
 
 The local configured npm mirror returned ETARGET for the old 0.9.31 package before
 the lifecycle upgrade began. No mirror/policy override or fallback was applied.

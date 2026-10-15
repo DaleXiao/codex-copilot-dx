@@ -60,6 +60,10 @@ test("real Windows NTFS inspection detects a broader grant without changing it",
       + (process.env.PSModulePath ? `;${process.env.PSModulePath}` : "") };
   execFileSync(shell, ["-NoProfile", "-NonInteractive", "-Command", "$a=Get-Acl -LiteralPath $env:CCDX_PERMISSION_FILE;$r=[System.Security.AccessControl.FileSystemAccessRule]::new([System.Security.Principal.SecurityIdentifier]::new('S-1-1-0'),'Read','Allow');$a.AddAccessRule($r);Set-Acl -LiteralPath $env:CCDX_PERMISSION_FILE -AclObject $a"], { env, windowsHide: true });
   const acl = () => execFileSync(shell, ["-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:CCDX_PERMISSION_FILE).Sddl"], { env, encoding: "utf8", windowsHide: true });
-  const before = acl();assert.equal(inspectCredentialPermissions(file), "review");assert.equal(acl(), before);
+  // Hosted Windows runners can take several seconds just to start PowerShell.
+  // Only this real-ACL fixture gets more bootstrap time; production remains 3s.
+  const before = acl();assert.equal(inspectCredentialPermissions(file, {
+    exec: (command, args, options) => execFileSync(command, args, { ...options, timeout: 20000 }),
+  }), "review");assert.equal(acl(), before);
   assert.equal(fs.readFileSync(file, "utf8"), "synthetic secret");
 });

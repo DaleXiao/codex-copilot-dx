@@ -5,18 +5,27 @@ import os from "node:os";
 import path from "node:path";
 import { withFileLock, withFileLockSync } from "../src/lock.mjs";
 
-test("sync lock releases its own owner despite timestamp finalization and supports repeated repairs", t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-sync-timestamp-"));
+test("missing path device metadata is checked through a second descriptor for release and stale recovery", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-device-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const lock = path.join(dir, "state.lock"), original = fs.fstatSync;
+  const lock = path.join(dir, "state.lock"), original = fs.lstatSync;
+  t.mock.method(fs, "lstatSync", (...args) => { const stat = original(...args);stat.dev = 0;return stat; });
+  for (let i = 0; i < 5; i++) { withFileLockSync(lock, () => {});assert.equal(fs.existsSync(lock), false); }
+  fs.writeFileSync(lock, JSON.stringify({ pid: 2147483647, owner: "dead" }));
+  fs.utimesSync(lock, new Date(0), new Date(0));
+  await withFileLock(lock, () => {}, { timeoutMs: 100, staleMs: 10, pollMs: 2 });
+  assert.equal(fs.existsSync(lock), false);
+});
+
+test("a missing path device never permits mismatched descriptor identities", t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-device-mismatch-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const lock = path.join(dir, "state.lock"), lstat = fs.lstatSync, fstat = fs.fstatSync;
   let reads = 0;
-  fs.fstatSync = (...args) => { const stat = original(...args);stat.mtimeMs += ++reads;stat.ctimeMs += reads;return stat; };
-  try {
-    for (let i = 0; i < 5; i++) {
-      withFileLockSync(lock, () => {});
-      assert.equal(fs.existsSync(lock), false);
-    }
-  } finally { fs.fstatSync = original; }
+  t.mock.method(fs, "lstatSync", (...args) => { const stat = lstat(...args);stat.dev = 0;return stat; });
+  t.mock.method(fs, "fstatSync", (...args) => { const stat = fstat(...args);if (++reads === 2) stat.dev += 1;return stat; });
+  withFileLockSync(lock, () => {});
+  assert.equal(fs.existsSync(lock), true, "Unverified ownership must be preserved");
 });
 
 test("sync lock repeatedly releases real file handles without retaining a live-owner marker", t => {

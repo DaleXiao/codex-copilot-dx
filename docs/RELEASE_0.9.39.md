@@ -115,7 +115,7 @@ committed source and include no experimental directories, credentials or removed
 postinstall. SHA-1: `e3a447df2e096308166cdf483f6ec24b9b4b6831`.
 SHA-256: `32b393a264d5d20c7f8a5d9fdb06fe276b56f306b22683bb5080eabfa8ce19d8`.
 Only this audit file changes after candidate verification; packaged source is
-unchanged. Publication receipts are recorded after successful publication.
+unchanged. Publication receipts follow below.
 
 Installation acceptance exposed npm 12's separate script approval gate: its
 default blocks unreviewed postinstall, and strict script policy can refuse a
@@ -125,3 +125,22 @@ was added to the installer. First invocation in restricted shells uses `.cmd`,
 with subsequent setup handled by startup/update/doctor. Separate fixture CRLF
 normalization and bounded CI test concurrency preserve exact ownership/ACL
 assertions rather than relaxing them.
+
+## Publication receipts and cleanup
+
+- Source tag `v0.9.39`: `e1ed2a417b2e4778172a921006bb23ad0d758e36`.
+  Packaged bytes are identical to the successful candidate; the intervening
+  commit adds only this audit report's acceptance results.
+- [npm publication](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38736654058)
+  succeeded once, publishing `codex-copilot-dx@0.9.39` with tag `latest`, all
+  existing prepublish gates and the expected 152-file SHA-1 above.
+- [GitHub stable release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.39)
+  is neither draft nor prerelease. Its 388,541-byte archive reports the exact
+  local SHA-256 above. npm and GitHub therefore carry the same verified package.
+- GitHub used the previously supplied, identity-verified DaleXiao PAT in memory;
+  npm used the repository's existing publishing secret. No browser login,
+  substitute credential, plaintext credential file or local npm-registry probe.
+- Cleanup is restricted to this run's temporary archives, cache, screenshots,
+  logs and release helper, plus the merged candidate branch. Real credentials,
+  active services, installed dependencies and pre-existing `experiments/` are
+  preserved. No post-publication runtime/code changes or tag movement.

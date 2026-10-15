@@ -18,7 +18,7 @@ ccdx
 CCDX reuses a compatible local credential or starts GitHub Device Flow, listens
 on `127.0.0.1:2026`, configures Codex, and opens the App. No client binary patch
 is needed. On Windows, open the App manually unless native prediction setup is
-enabled. Windows installs remove only the exact npm-generated CCDX `.ps1` launchers so PowerShell can resolve `ccdx` to its `.cmd` entry, without aliases or policy changes. If install scripts were disabled or a custom launcher is present, use `ccdx.cmd doctor --fix`; `npm.cmd` remains necessary when PowerShell blocks npm's own script. Do not change company policy. The configured `dummy` API key is a placeholder, not a credential.
+enabled. In restricted Windows PowerShell, use `npm.cmd` to install and `ccdx.cmd` for the first launch, or run `ccdx.cmd doctor --fix`. Startup, updates and explicit repair remove only CCDX's exact npm-generated `.ps1` launchers so later calls can use `ccdx`. No install script, alias or policy change is added; custom launchers are preserved. npm's own script is untouched. The configured `dummy` API key is a placeholder, not a credential.
 
 Open [the local dashboard](http://127.0.0.1:2026/) for status, model discovery,
 usage, cache/limits, recent failures, request context and animation settings.

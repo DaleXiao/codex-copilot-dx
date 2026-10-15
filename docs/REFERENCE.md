@@ -752,16 +752,20 @@ partial result. Partial repairs exit 1; no automatic retry loop is added.
 include `before_checks` and final per-operation repair results. Inspect these
 results rather than equating a configured bridge with a visible gray suggestion.
 
-On Windows, installation's best-effort postinstall recognizes the exact npm
+Windows adds no install-time lifecycle script, so npm 12's script-approval policy
+is not expanded. In restricted PowerShell, install with `npm.cmd`, then first run
+`ccdx.cmd` or `ccdx.cmd doctor --fix`. Startup recognizes only the exact npm
 PowerShell shims for the two CCDX commands, checks their matching `.cmd` targets
-and package identity, then removes only those `.ps1` shims. This lets PowerShell
-resolve bare `ccdx` to `.cmd` without changing policy or profiles. Customized,
-symlinked, unexpected or unreadable shims are preserved. Installation itself is
-not failed by this optional step. The updater applies the same check only after
-verifying its installed target/version. With `--ignore-scripts`, use
-`ccdx.cmd doctor --fix`; aliases/functions and another installation earlier in
-PATH can still override resolution. npm's own `.ps1` shim is untouched, so
-`npm.cmd` may still be needed. macOS/Linux and source checkouts are no-ops.
+and package identity, then removes those `.ps1` shims. Subsequent calls can use
+bare `ccdx` without changing policy or profiles. The updater applies the same
+check only after verifying its installed target/version. Customized, symlinked,
+unexpected or unreadable shims are preserved; optional setup failures do not
+block core startup or turn a verified update into failure. Direct npm reinstalls
+can recreate the shims; a first `.cmd` invocation repairs them again. Read-only
+commands such as version/help/status do not repair them. Aliases/functions and
+another installation earlier in PATH can still override resolution. npm's own
+`.ps1` shim is untouched, so `npm.cmd` may still be needed. macOS/Linux and source
+checkouts are no-ops.
 
 `ccdx status` and the dashboard show the sample count beside each timing. First
 output is observed at the gateway from generated deltas, hidden-reasoning/tool

@@ -4,14 +4,16 @@ Date: 2026-10-15. Baseline: 0.9.38 / `0362d08`.
 
 ## Changes and boundaries
 
-- Windows postinstall recognizes only the exact npm-generated CCDX PowerShell
+- Windows startup recognizes only the exact npm-generated CCDX PowerShell
   launchers, verifies package identity and matching batch targets, and removes
   those `.ps1` shims so bare commands resolve to `.cmd`. The updater and doctor
   reuse the same ownership-checked implementation. Custom/symlinked/unreadable
   launchers are preserved; optional setup errors cannot fail an otherwise
   verified installation. No aliases, profiles, execution policy, PATH, npm shim,
-  registry or persistent download-policy changes. Disabled install scripts
-  require `ccdx.cmd doctor --fix`. Existing aliases/earlier PATH entries still win.
+  registry or persistent download-policy changes. No installation script is added;
+  restricted shells first use `ccdx.cmd` or `ccdx.cmd doctor --fix`. Existing
+  aliases/earlier PATH entries still win. A direct npm reinstall can recreate the
+  shims; the next explicit `.cmd` startup/repair handles them again.
 - The terminal atom is six rows instead of ten. Alignment and plain-title
   fallbacks remain. Ordinary prediction status no longer discusses the retired
   MCP/Hook/panel. Exact owned legacy cleanup remains silent; image MCP remains.
@@ -67,7 +69,8 @@ The local configured npm mirror returned ETARGET for the old 0.9.31 package befo
 the lifecycle upgrade began. No mirror/policy override or fallback was applied.
 Cross-platform CI must pass actual old-to-new package installation, native sharp,
 and Windows restricted PowerShell command resolution before publication. Fresh
-install and upgrade both verify bare commands in available PowerShell 5.1/7.
+install and upgrade both use disabled installation scripts, verify explicit
+`.cmd doctor --fix`, then bare commands in available PowerShell 5.1/7.
 
 Upstream source ideas were applied selectively, without copying frameworks:
 [CC Switch ordered discovery](https://github.com/farion1231/cc-switch/commit/76f99d41a66e24a5ed2e8982bc494399f306bfe6),
@@ -83,9 +86,9 @@ Pending cross-platform CI. No published-success claim is made here yet.
 
 Installation acceptance exposed npm 12's separate script approval gate: its
 default blocks unreviewed postinstall, and strict script policy can refuse a
-package with a newly introduced script. No script permission was added to the
-production installer. The user was asked to choose between no new install script
-(first restricted-shell invocation uses ccdx.cmd) and explicit CCDX-only approval.
-Publication is held for that product/security boundary; this is not a passing
-Windows installation claim. Separate fixture CRLF normalization and bounded CI
-test concurrency preserve exact ownership/ACL assertions rather than relaxing them.
+package with a newly introduced script. The user selected no new install script:
+the candidate postinstall and lock metadata were removed; no script permission
+was added to the installer. First invocation in restricted shells uses `.cmd`,
+with subsequent setup handled by startup/update/doctor. Separate fixture CRLF
+normalization and bounded CI test concurrency preserve exact ownership/ACL
+assertions rather than relaxing them.

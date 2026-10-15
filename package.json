@@ -39,7 +39,6 @@
     "node": ">=22.15.0"
   },
   "scripts": {
-    "postinstall": "node bin/postinstall.mjs",
     "test": "node --test",
     "test:smoke": "node scripts/offline-smoke.mjs && node scripts/sse-idle-replay.mjs",
     "test:package": "node scripts/package-lifecycle-smoke.mjs",

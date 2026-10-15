@@ -57,8 +57,9 @@ GitHub/Copilot validation, account matching and ambiguity handling. Saved-token
 startup does not scan sources or make new validation calls.
 
 `windows-command.mjs` owns exact npm-generated CCDX PowerShell launcher cleanup.
-The best-effort postinstall, verified updater target and explicit doctor repair
-share it. It never edits profiles, aliases, execution policy or npm's own shim.
+Best-effort Windows startup, the verified updater target and explicit doctor
+repair share it. No install-time lifecycle script is added. It never edits
+profiles, aliases, execution policy or npm's own shim.
 Custom launchers and unverifiable installations are preserved.
 
 Doctor composition stays in `doctor.mjs`; inference probes live in

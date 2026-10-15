@@ -5,6 +5,15 @@ import os from "node:os";
 import path from "node:path";
 import { inspectWindowsCommand } from "../src/windows-command.mjs";
 
+test("package adds no installation lifecycle scripts or packaged postinstall entrypoint", () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  for (const name of ["preinstall", "install", "postinstall", "prepare"]) assert.equal(pkg.scripts[name], undefined, name);
+  assert.equal(fs.existsSync(new URL("../bin/postinstall.mjs", import.meta.url)), false);
+  const cli = fs.readFileSync(new URL("../bin/cli.mjs", import.meta.url), "utf8");
+  const startup = cli.slice(cli.indexOf('console.log(`\\n${startupBanner('));
+  assert.match(startup, /process\.platform === "win32"[\s\S]*inspectWindowsCommand\(\{ repair: true \}\)/);
+});
+
 const template = fs.readFileSync(new URL("./fixtures/npm-ccdx.ps1", import.meta.url), "utf8").replaceAll("\r\n", "\n");
 function fixture(t) {
   const prefix = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-command test-"));

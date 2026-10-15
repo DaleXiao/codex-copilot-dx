@@ -366,6 +366,14 @@ async function printUpdateNotice() {
 
 try {
   assertSafeAdapterHost(ADAPTER_HOST, process.env);
+  if (process.platform === "win32") {
+    try {
+      const { inspectWindowsCommand } = await import("../src/windows-command.mjs");
+      const command = inspectWindowsCommand({ repair: true });
+      if (command.changed) console.log(startupCheck("ok", "Command", "Windows command entry updated; use ccdx next time"));
+      else if (command.status === "preserved") console.warn(startupCheck("warn", "Command", "Existing launcher preserved; use ccdx.cmd doctor to inspect it"));
+    } catch { console.warn(startupCheck("warn", "Command", "Optional command setup skipped; core startup will continue")); }
+  }
   const updateNotice = runInBackground(printUpdateNotice);
   if (await reuseRunningAdapterIfAvailable()) {
     // Ready is already displayed; finish the bounded check before this short-lived CLI exits.

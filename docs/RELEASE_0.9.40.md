@@ -1,4 +1,4 @@
-# CCDX 0.9.40 candidate: prediction retry routing and credential preservation
+# CCDX 0.9.40: prediction retry routing and credential preservation
 
 Date: 2026-10-15. Baseline: 0.9.39 / `ab9e294`.
 
@@ -47,17 +47,24 @@ Date: 2026-10-15. Baseline: 0.9.39 / `ab9e294`.
   core setup. Regression checks cover the revised PAC allowlist, one-time closed-
   profile migration and original-route rollback, exact launch arguments, bounded
   credential checks and no login after policy denial.
+- Initial browser CI used Playwright's standalone headless shell, which did not
+  fetch the PAC at all (`pacReads: 0`). The replay now explicitly selects the full
+  Chromium channel and asserts that a PAC was loaded before accepting even the
+  legacy control. Recovery assertions are unchanged; this is not a production
+  routing workaround or a waived test.
 - Cross-platform CI adds the real Chromium failure/recovery replay on Linux,
   Windows and macOS, separate from the existing installation, native worker,
   restricted-shell, protocol and dashboard matrix. Results are pending below.
 
-## Remaining publication gate
+## Native acceptance boundary
 
 The installed App can cache failed prediction configuration for 300,000 ms.
 Returning bridge traffic alone is not proof of visible native gray text. After
 one-time migration, the user must verify fallback/recovery without quitting the
 same App, then native suggestion display, adoption/sending, normal replies and
 disabled predictions. No replacement UI or inference probe counts as this result.
+The user requested GitHub/npm publication to perform this complete native test,
+rather than installing the local candidate. CI must still pass before publishing.
 See `PREDICTION_RECOVERY_FINDINGS.md` for the bounded initial experiments.
 
 Candidate package: 153 files, 390,771 bytes; SHA-1

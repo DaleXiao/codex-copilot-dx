@@ -31,7 +31,7 @@ feature uses the App's existing composer UI and the conversation's
 selected model through CCDX. Suggestions are not sent automatically. Native
 eligibility rules still apply; availability is not promised for every thread type.
 
-The candidate `0.9.40` routing revision uses the stable local PAC URL
+The `0.9.40` routing revision uses the stable local PAC URL
 `/proxy.pac?v=2`, independent of the package version. The primary proxy remains
 `127.0.0.1` on the saved port. A secondary, time-bucketed `.localhost` name points
 Chromium back to that same loopback listener after a cached proxy failure. Its
@@ -48,8 +48,9 @@ keep the revision URL, saved port and trust unchanged. An occupied saved port or
 missing App route is not repaired by this retry mechanism. The installed App may
 cache a failed prediction configuration for five minutes, and a subsequent
 eligible turn may be needed to request another prediction. Returning configuration
-traffic is not proof that native gray text is visible. Native end-to-end recovery
-remains a publication gate until tested; see the unreleased investigation report.
+traffic is not proof that native gray text is visible. Cross-platform browser
+routing is tested separately from the user's native end-to-end acceptance;
+the investigation report records these evidence levels without equating them.
 
 Version `0.9.26` adds Windows platform adapters. Native gray suggestions,
 adoption/sending and switching predictions off were verified on Windows with the

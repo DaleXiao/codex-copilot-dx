@@ -1,4 +1,4 @@
-# Prediction recovery investigation (unreleased)
+# Prediction recovery investigation
 
 Date: 2026-10-15. Baseline: 0.9.39 / `ab9e294`.
 
@@ -40,7 +40,7 @@ proxy fallback (9,275 / 10,002 ms). The legacy control stayed on fallback during
 its 2,052 ms observation window. These are routing observations, not native UI
 verification or performance speedup claims.
 
-## Remaining publication gate
+## Native acceptance still required
 
 No verified external interface was found in the inspected client JavaScript for
 reloading its active proxy configuration or invalidating its prediction controller
@@ -53,8 +53,10 @@ configuration traffic returning to the bridge, then observe native gray text,
 adoption/sending, ordinary replies and disabled predictions in the same App
 process. The user explicitly accepted one normal App quit to load the revised
 route, with later hot recovery still requiring native-gray-text verification.
-The candidate package version is 0.9.40. A partial network-layer result alone
-does not satisfy the publication gate.
+The package version is 0.9.40. The user subsequently requested publication to
+GitHub and npm to conduct full native acceptance against the released package.
+Cross-platform CI remains required before publication. Native gray-text hot
+recovery is still unverified here and is not claimed as a completed acceptance.
 
 ## Separate authentication correction
 

@@ -41,7 +41,7 @@ for (const mode of ["legacy", "recovery", "company-fallback"]) {
   const controlPort = await listen(control);
   let browser;
   try {
-    browser = await chromium.launch({ headless: true,
+    browser = await chromium.launch({ headless: true, channel: "chromium",
       ...(options.get("--executable") ? { executablePath: options.get("--executable") } : {}),
       args: [`--proxy-pac-url=http://127.0.0.1:${controlPort}${PREDICTION_PAC_PATH}`,
         "--host-resolver-rules=MAP ccdx-target.test 127.0.0.1", "--disable-background-networking", "--disable-features=HttpsUpgrades"],
@@ -53,6 +53,7 @@ for (const mode of ["legacy", "recovery", "company-fallback"]) {
     const rounds = [];
     for (let round = 0; round < (mode === "legacy" ? 1 : 2); round++) {
       assert.equal(await request(), "FALLBACK", "the still-running browser must first reach the failure/fallback state");
+      assert.ok(pacReads > 0, "the browser must load the real PAC; direct-only headless-shell is not a valid proxy-engine test");
       await listen(proxy, proxyPort);
       const started = Date.now(), deadline = started + (mode === "legacy" ? 2000 : 15000);
       let route;

@@ -48,8 +48,9 @@ Date: 2026-10-15. Baseline: 0.9.38 / `0362d08`.
 ## Review and verification
 
 Baseline: 1,248 passed, 9 Windows-only skips, zero failures. Final local suite:
-1,271 passed, 9 Windows-only skips, zero failures. Performance/resource gates
-pass. Adapter import RSS was 58.4 -> 58.5 MiB and heap 7.1 -> 7.1 MiB; these are
+1,272 passed, 9 Windows-only skips, zero failures. Performance/resource gates
+pass. Adapter import RSS was 58.4 MiB at baseline and 58.3-58.5 MiB in candidate
+samples; heap remained 7.1 MiB. These are
 single-run samples, not a statistical speedup claim. SSE scan ratios remain 1.0,
 eight repeated images invoke one optimizer, and repeated large tool output parses
 once. Local candidate verification includes the full suite, offline HTTP/
@@ -96,9 +97,25 @@ Upstream source ideas were applied selectively, without copying frameworks:
 Legacy OpenCode's GitHub-token audience was additionally checked against its
 [Copilot OAuth implementation](https://github.com/anomalyco/opencode/blob/4397ee44d038a5f17bf6ac161431673d93e563b5/packages/core/src/plugin/provider/github-copilot.ts).
 
-## Publication
+## Release verification
 
-Pending cross-platform CI. No published-success claim is made here yet.
+Runtime/source commit `3381e518154139862c1d17a77dabeeaf22cdb4b3` passed all eleven
+[candidate CI jobs](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38736106327).
+This includes Windows Node 22.15/24 command ownership, repeated lock release,
+stale/replacement-owner protection and real ACL evidence; actual npm 12.0.1
+installation/upgrade on Windows/macOS/Linux; installed native sharp; official
+Codex synthetic-provider compatibility; and sixteen Chromium/WebKit combinations.
+Fresh Windows installs/upgrades use disabled install scripts and verify the real
+`.cmd doctor --fix` followed by bare command resolution in available PowerShell
+5.1/7 under Restricted policy. No policy override or weaker ownership assertion
+was used to obtain the passing installation result.
+
+The release archive has 152 files, 388,541 bytes. All packed file bytes match the
+committed source and include no experimental directories, credentials or removed
+postinstall. SHA-1: `e3a447df2e096308166cdf483f6ec24b9b4b6831`.
+SHA-256: `32b393a264d5d20c7f8a5d9fdb06fe276b56f306b22683bb5080eabfa8ce19d8`.
+Only this audit file changes after candidate verification; packaged source is
+unchanged. Publication receipts are recorded after successful publication.
 
 Installation acceptance exposed npm 12's separate script approval gate: its
 default blocks unreviewed postinstall, and strict script policy can refuse a

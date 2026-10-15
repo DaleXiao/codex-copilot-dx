@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { inspectWindowsCommand } from "../src/windows-command.mjs";
 
-const template = fs.readFileSync(new URL("./fixtures/npm-ccdx.ps1", import.meta.url), "utf8");
+const template = fs.readFileSync(new URL("./fixtures/npm-ccdx.ps1", import.meta.url), "utf8").replaceAll("\r\n", "\n");
 function fixture(t) {
   const prefix = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-command test-"));
   t.after(() => fs.rmSync(prefix, { recursive: true, force: true }));

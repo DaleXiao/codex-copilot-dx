@@ -80,3 +80,12 @@ Legacy OpenCode's GitHub-token audience was additionally checked against its
 ## Publication
 
 Pending cross-platform CI. No published-success claim is made here yet.
+
+Installation acceptance exposed npm 12's separate script approval gate: its
+default blocks unreviewed postinstall, and strict script policy can refuse a
+package with a newly introduced script. No script permission was added to the
+production installer. The user was asked to choose between no new install script
+(first restricted-shell invocation uses ccdx.cmd) and explicit CCDX-only approval.
+Publication is held for that product/security boundary; this is not a passing
+Windows installation claim. Separate fixture CRLF normalization and bounded CI
+test concurrency preserve exact ownership/ACL assertions rather than relaxing them.

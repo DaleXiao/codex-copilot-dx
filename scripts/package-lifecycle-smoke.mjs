@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // CI-only real install/upgrade in an owned prefix. No user installation or provider calls.
 const cwd = fileURLToPath(new URL("../", import.meta.url));
@@ -34,6 +34,10 @@ try {
   assert.ok(version().startsWith(`ccdx v${expected} `));
   if (process.platform === "win32") {
     const verifyCommand = () => {
+      if (fs.existsSync(path.join(prefix, "ccdx.ps1"))) {
+        const inspect = `import {inspectWindowsCommand} from ${JSON.stringify(pathToFileURL(path.join(packageRoot, "src", "windows-command.mjs")).href)};console.log(JSON.stringify(inspectWindowsCommand()));`;
+        console.log(execFileSync(process.execPath, ["--input-type=module", "-e", inspect], { encoding: "utf8" }).trim());
+      }
       assert.equal(fs.existsSync(path.join(prefix, "ccdx.ps1")), false, "postinstall removes the exact npm PS shim");
       assert.equal(fs.existsSync(path.join(prefix, "ccdx.cmd")), true);
       const shells = [path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),

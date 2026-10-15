@@ -4,9 +4,11 @@ import os from "node:os";
 import { atomicWriteFilePairSync, atomicWriteFileSync } from "./atomic-file.mjs";
 import { githubTokenFingerprint, normalizeGithubIdentity } from "./github-identity.mjs";
 import { readBoundedFileSync, MAX_TOKEN_FILE_BYTES } from "./bounded-file.mjs";
+import { additionalGithubSources, readAdditionalGithubSource } from "./auth-sources.mjs";
 
 const DISABLE_TOKEN_DISCOVERY_VALUES = new Set(["1", "true", "yes"]);
 const MAX_AUTH_JSON_BYTES = 1024 * 1024;
+const pathKey = value => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
 
 export function githubTokenPath(home = os.homedir()) {
   return path.join(home, ".local", "share", "copilot-api", "github_token");
@@ -50,15 +52,17 @@ function localAuthRoots(home, env = process.env) {
   const roots = [
     path.join(home, "Library", "Application Support"),
     env.APPDATA ? expandHome(env.APPDATA, home) : "",
+    env.LOCALAPPDATA ? expandHome(env.LOCALAPPDATA, home) : "",
     env.XDG_CONFIG_HOME ? expandHome(env.XDG_CONFIG_HOME, home) : path.join(home, ".config"),
   ].filter(Boolean);
-  return [...new Set(roots)];
+  const seen = new Set();
+  return roots.filter(root => { const key = pathKey(root);if (seen.has(key)) return false;seen.add(key);return true; });
 }
 
 function addAuthJsonSource(sources, seen, filePath) {
-  if (seen.has(filePath)) return;
+  if (seen.has(pathKey(filePath))) return;
   if (!fs.existsSync(filePath)) return;
-  seen.add(filePath);
+  seen.add(pathKey(filePath));
   sources.push({ type: "auth-json", path: filePath });
 }
 
@@ -74,7 +78,11 @@ function localAuthJsonSources(home, env = process.env) {
       continue;
     }
 
-    for (const appDirent of appDirs) {
+    if (appDirs.length > 256) Object.defineProperty(sources, "incomplete", { value: true, configurable: true });
+    for (const appDirent of appDirs.slice(0, 256)) {
+      if (sources.length >= 128) {
+        Object.defineProperty(sources, "incomplete", { value: true, configurable: true });return sources;
+      }
       if (!appDirent.isDirectory()) continue;
       const appDir = path.join(root, appDirent.name);
       addAuthJsonSource(sources, seen, path.join(appDir, "auth.json"));
@@ -87,7 +95,11 @@ function localAuthJsonSources(home, env = process.env) {
         continue;
       }
 
-      for (const profileDirent of profileDirs) {
+      if (profileDirs.length > 64) Object.defineProperty(sources, "incomplete", { value: true, configurable: true });
+      for (const profileDirent of profileDirs.slice(0, 64)) {
+        if (sources.length >= 128) {
+          Object.defineProperty(sources, "incomplete", { value: true, configurable: true });return sources;
+        }
         if (!profileDirent.isDirectory()) continue;
         addAuthJsonSource(sources, seen, path.join(profilesDir, profileDirent.name, "auth.json"));
       }
@@ -108,8 +120,8 @@ function explicitTokenFileSources(home, env = process.env) {
   return paths
     .map((filePath) => expandHome(filePath, home))
     .filter((filePath) => {
-      if (seen.has(filePath)) return false;
-      seen.add(filePath);
+      if (seen.has(pathKey(filePath))) return false;
+      seen.add(pathKey(filePath));
       return true;
     })
     .map((filePath) => ({
@@ -141,7 +153,10 @@ export function githubTokenSources({
     sources.push({ type: "env", name: "CCDX_GITHUB_TOKEN", token: env.CCDX_GITHUB_TOKEN.trim() });
   }
   sources.push(...explicitTokenFileSources(home, env));
-  sources.push(...localAuthJsonSources(home, env));
+  const local = localAuthJsonSources(home, env);
+  sources.push(...local);
+  sources.push(...additionalGithubSources(home, env));
+  if (local.incomplete) Object.defineProperty(sources, "incomplete", { value: true });
   return sources;
 }
 
@@ -150,6 +165,8 @@ export function sourceDescription(source) {
   if (source.type === "env") return source.name;
   if (source.type === "token-file") return `${source.name} (${source.path})`;
   if (source.type === "auth-json") return `local auth file (${source.path})`;
+  if (source.type === "opencode-auth") return `OpenCode Copilot auth (${source.path})`;
+  if (source.type === "github-cli") return "GitHub CLI (github.com)";
   return source.path || source.name || "unknown source";
 }
 
@@ -167,7 +184,7 @@ export function extractGithubTokenFromAuthJson(json) {
   return candidates.find((value) => typeof value === "string" && value.trim())?.trim() || "";
 }
 
-export function readGithubTokenSource(source) {
+export function readGithubTokenSource(source, options = {}) {
   if (source?.type === "env") return source.token || "";
   if (source?.type === "token-file") return readBoundedFileSync(source.path, { encoding: "utf8", maxBytes: MAX_TOKEN_FILE_BYTES }).trim();
   if (source?.type === "auth-json") {
@@ -175,7 +192,7 @@ export function readGithubTokenSource(source) {
     if (!looksLikeCopilotAuthJson(json)) return "";
     return extractGithubTokenFromAuthJson(json);
   }
-  return "";
+  return readAdditionalGithubSource(source, { readJson: readSmallJson, ...options });
 }
 
 export function readSavedGithubToken(home = os.homedir()) {

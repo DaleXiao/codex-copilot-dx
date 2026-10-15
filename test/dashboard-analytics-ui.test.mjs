@@ -27,6 +27,7 @@ class Node {
 
 function harness({ fetchFn, clipboard = async () => {}, reduced = false, language = false, savedLanguage = "en", savedAutomatic = "on" } = {}) {
   const nodes = new Map();
+  const motions = [];
   const ready = [];
   const listeners = new Map();
   const on = (event, fn) => { if (!listeners.has(event)) listeners.set(event, []); listeners.get(event).push(fn); };
@@ -39,6 +40,9 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
     },
   };
   document.getElementById("analytics-range").value = "30";
+  const logo = document.getElementById("status-icon");
+  logo.animate = (frames, options) => { const motion = { frames, options, cancelled: false, cancel() { this.cancelled = true; } };motions.push(motion); };
+  logo.getAnimations = () => motions.filter(motion => !motion.cancelled);
   document.getElementById("analytics-metric").value = "requests";
   for (const id of ["client-features", "upstream-models", "model-usage", "recent-failures"]) document.getElementById(id).open = true;
   const records = [{ ts: "2026-10-01T00:00:00Z", model: "test", usage: { input_tokens: 100, cached_input_tokens: 80, output_tokens: 10, total_tokens: 110 } }];
@@ -72,12 +76,25 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   runInContext(refreshScript, context);
   const api = runInContext(`${viewScripts}\n${script}\n({ renderFailures, renderAuth, loadAuth, loadAnimation, loadUsage, renderAnalytics, selectUsageDay, dashboardRefresh, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, context);
   ready.forEach((fn) => fn());
-  return { api, nodes, requests, timers, scheduled,
+  return { api, nodes, requests, timers, scheduled, motions,
     advance(ms) { now += ms; },
     event(name) { listeners.get(name)?.forEach(fn => fn()); },
     hidden(value) { document.visibilityState = value ? "hidden" : "visible"; listeners.get("visibilitychange")?.forEach(fn => fn()); },
     visible(value) { observer([{ isIntersecting: value }]); } };
 }
+
+test("atom rotates once on load/manual refresh, not background refresh; reduced motion stays still", async () => {
+  const h = harness();await flush();
+  assert.equal(h.motions.length, 1);assert.equal(h.motions[0].options.duration, 450);
+  assert.equal(h.motions[0].frames.at(-1).transform, "rotate(360deg)");
+  await h.api.dashboardRefresh.refreshVisible({ force: true });
+  assert.equal(h.motions.length, 1);
+  h.nodes.get("refresh").listeners.click();await flush();
+  assert.equal(h.motions.length, 2);assert.equal(h.motions[0].cancelled, true);
+  const reduced = harness({ reduced: true });await flush();
+  reduced.nodes.get("refresh").listeners.click();await flush();
+  assert.equal(reduced.motions.length, 0);
+});
 
 test("language switch preserves unsaved animation, chart nodes/selection and expanded failures without fetching", async () => {
   let copied;

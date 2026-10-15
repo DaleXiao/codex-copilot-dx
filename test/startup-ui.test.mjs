@@ -8,7 +8,7 @@ test("A atom banner is static, bounded and enabled only on a wide colored termin
   const args = { version: "0.0.0", env: {}, stream: { isTTY: true, columns: 80 } };
   const colored = startupBanner(args);
   assert.match(colored, /\x1b\[38;2;166;245;168m/);assert.match(colored, /[▀▄█]/);
-  assert.equal(colored.split("\n").length, 10);
+  assert.equal(colored.split("\n").length, 6);
   for (const line of colored.split("\n")) assert.ok(stripVTControlCharacters(line).length < 72);
   assert.doesNotMatch(colored, /\x1b\[(?:\d*[ABCDEFGHJK]|\?25)/);
   for (const override of [{ env: { NO_COLOR: "" } }, { env: { TERM: "dumb" } },

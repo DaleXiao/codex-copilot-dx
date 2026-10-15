@@ -728,6 +728,41 @@ If a configured npm mirror has not synchronized the current release yet, use the
 
 ## Diagnostics
 
+`ccdx doctor` is read-only by default and makes no inference request. It checks
+local credentials/configuration, Node/platform, installation target, Windows
+command launchers, enabled optional feature settings and the running adapter.
+Disabled image/prediction features do not trigger provider or routing setup.
+`--online` checks GitHub/Copilot access and a nonempty model directory; `--compat`
+explicitly consumes model usage and requires completed Responses/SSE, not just
+HTTP 200. Probe bodies are bounded to 4 MiB.
+
+`ccdx doctor --fix` makes one repair attempt per supported area and verifies its
+result: exact owned Windows command shims, startup-managed Codex settings, a
+verified existing GitHub credential when none is saved, and the already-enabled
+prediction bridge through its existing management API. Credential recovery can
+contact GitHub without `--online`, but never starts Device Flow. Existing tokens,
+user-modified/invalid configuration, unrelated MCPs/hooks and company routing or
+security policy are not replaced. Existing changed config is transactionally
+backed up to `config.toml.ccdx-doctor.bak` (the latest repair backup only). Repairs
+do not install optional image tools, enable prediction, renew certificates or
+force-restart Apps. A required normal App/service restart remains an explicit
+partial result. Partial repairs exit 1; no automatic retry loop is added.
+
+`ccdx doctor --json` emits one redacted JSON report; combine with `--fix` to
+include `before_checks` and final per-operation repair results. Inspect these
+results rather than equating a configured bridge with a visible gray suggestion.
+
+On Windows, installation's best-effort postinstall recognizes the exact npm
+PowerShell shims for the two CCDX commands, checks their matching `.cmd` targets
+and package identity, then removes only those `.ps1` shims. This lets PowerShell
+resolve bare `ccdx` to `.cmd` without changing policy or profiles. Customized,
+symlinked, unexpected or unreadable shims are preserved. Installation itself is
+not failed by this optional step. The updater applies the same check only after
+verifying its installed target/version. With `--ignore-scripts`, use
+`ccdx.cmd doctor --fix`; aliases/functions and another installation earlier in
+PATH can still override resolution. npm's own `.ps1` shim is untouched, so
+`npm.cmd` may still be needed. macOS/Linux and source checkouts are no-ops.
+
 `ccdx status` and the dashboard show the sample count beside each timing. First
 output is observed at the gateway from generated deltas, hidden-reasoning/tool
 announcements or content snapshots; a runtime-only result is marked separately.
@@ -872,6 +907,21 @@ session measurement. No prompts, image bytes, files, tool results or extra sessi
 scan are retained. Rows render when opened, without another API call.
 
 When the saved token is missing, `ccdx` looks for compatible local Copilot GitHub tokens, validates them with GitHub and Copilot, and imports a valid one before starting Device Flow. It checks explicit token sources (`CCDX_GITHUB_TOKEN`, `CCDX_GITHUB_TOKEN_PATH`, and `CCDX_GITHUB_TOKEN_PATHS`) plus common local `auth.json` layouts. Generic discovery refuses to choose silently when valid credentials for multiple GitHub accounts are found.
+
+Discovery also reads legacy OpenCode's `$XDG_DATA_HOME/opencode/auth.json`
+(otherwise `~/.local/share/opencode/auth.json`), specifically `github-copilot`
+OAuth `refresh`, and an installed GitHub CLI's noninteractive
+`gh auth token --hostname github.com`. It does not import unrelated API keys,
+enterprise-host OAuth, browser cookies, subscription credentials or a newer
+OpenCode database format. `APPDATA` and `LOCALAPPDATA` auth.json roots are included
+where present. GitHub CLI is optional, not a runtime dependency; its output/time
+are bounded and no login prompt is started. Other apps' files remain read-only.
+Source reads are bounded, discovery validates at most 24 distinct tokens within
+a 12-second overall validation budget, and each candidate has a 4-second budget.
+Directory/profile scans have explicit caps; hitting a cap or a network failure
+reports incomplete discovery rather than silently selecting an account or
+starting another login. Set an explicit source/account to resolve ambiguity.
+An existing saved-token startup path performs no extra discovery/network calls.
 
 After an account is selected, automatic `401`/`403` recovery and in-process token rotation accept only that same GitHub account. Concurrent callers share token refresh work without sharing cancellation, and a still-valid Copilot token may be used briefly after a transient refresh failure. Explicit token variables remain the intentional way to select another account.
 

@@ -91,7 +91,18 @@ export async function ensureGithubTokenMetadata(token, {
 export async function validateGithubToken(token, {
   fetchImpl = fetch,
   signal,
+  timeoutMs = 10000,
 } = {}) {
+  const deadline = AbortSignal.timeout(parseTimerMs(timeoutMs, 10000));
+  const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  try {
+    return await awaitWithSignal(() => validateGithubTokenRequest(token, { fetchImpl, signal: combined }), combined);
+  } catch {
+    return { ok: false, transient: true, reason: signal?.aborted ? "validation_cancelled" : "validation_timeout" };
+  }
+}
+
+async function validateGithubTokenRequest(token, { fetchImpl, signal }) {
   if (typeof token !== "string" || !token.trim()) {
     return { ok: false, reason: "empty_token" };
   }
@@ -99,7 +110,7 @@ export async function validateGithubToken(token, {
   const headers = { Authorization: `token ${token.trim()}`, Accept: "application/json" };
   let userResp;
   try {
-    userResp = await fetchImpl(`${GITHUB_API}/user`, { headers, signal });
+    userResp = await awaitWithSignal(() => fetchImpl(`${GITHUB_API}/user`, { headers, signal, redirect: "error" }), signal);
   } catch (e) {
     return { ok: false, transient: true, reason: "github_user_request_failed", error: e };
   }
@@ -108,20 +119,22 @@ export async function validateGithubToken(token, {
     return {
       ok: false,
       status: userResp.status,
+      transient: userResp.status === 429 || userResp.status >= 500,
       reason: userResp.status === 401 || userResp.status === 403 ? "github_token_invalid" : "github_user_failed",
     };
   }
 
   let userData = {};
   try {
-    userData = await userResp.json();
+    userData = await awaitWithSignal(() => userResp.json(), signal);
   } catch {}
   const login = typeof userData.login === "string" ? userData.login : "";
   const id = userData.id === undefined || userData.id === null ? "" : String(userData.id);
+  if (!login && !id) return { ok: false, transient: true, reason: "github_identity_missing" };
 
   let copilotResp;
   try {
-    copilotResp = await fetchImpl(COPILOT_TOKEN_URL, { headers, signal });
+    copilotResp = await awaitWithSignal(() => fetchImpl(COPILOT_TOKEN_URL, { headers, signal, redirect: "error" }), signal);
   } catch (e) {
     return { ok: false, transient: true, reason: "copilot_token_request_failed", login, error: e };
   }
@@ -130,6 +143,7 @@ export async function validateGithubToken(token, {
     return {
       ok: false,
       status: copilotResp.status,
+      transient: copilotResp.status === 429 || copilotResp.status >= 500,
       reason: copilotResp.status === 401 || copilotResp.status === 403 ? "copilot_access_denied" : "copilot_token_failed",
       login,
     };
@@ -137,12 +151,12 @@ export async function validateGithubToken(token, {
 
   let copilotTokenData = {};
   try {
-    copilotTokenData = await copilotResp.json();
+    copilotTokenData = await awaitWithSignal(() => copilotResp.json(), signal);
   } catch (e) {
     return { ok: false, reason: "copilot_token_parse_failed", login, error: e };
   }
 
-  if (!copilotTokenData.token) {
+  if (typeof copilotTokenData.token !== "string" || !copilotTokenData.token.trim()) {
     return { ok: false, reason: "copilot_token_missing", login };
   }
 
@@ -158,25 +172,35 @@ export async function discoverGithubToken({
   excludeIdentities = [],
   expectedIdentity,
   strictExpectedIdentity = false,
+  timeoutMs = 12000,
+  maxCandidates = 24,
+  sources = githubTokenSources({ home, env }),
+  readSource = readGithubTokenSource,
 } = {}) {
+  const deadline = AbortSignal.timeout(parseTimerMs(timeoutMs, 12000));
+  const boundedSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const excluded = new Set(excludeTokens);
   const seen = new Set(excluded);
   const failures = [];
   const candidates = [];
 
-  for (const source of githubTokenSources({ home, env })) {
+  for (const source of sources) {
+    if (boundedSignal.aborted || seen.size - excluded.size >= maxCandidates) {
+      return { ok: false, incomplete: true, transient: true, failures };
+    }
     let token = "";
     try {
-      token = readGithubTokenSource(source).trim();
+      token = readSource(source, { env }).trim();
     } catch (e) {
-      failures.push({ source, reason: "read_failed", error: e });
+      // Child-process errors may carry stdout containing a credential.
+      failures.push({ source: { type: source.type, path: source.path }, reason: "read_failed" });
       continue;
     }
 
     if (!token || seen.has(token)) continue;
     seen.add(token);
 
-    const validation = await validateGithubToken(token, { fetchImpl, signal });
+    const validation = await validateGithubToken(token, { fetchImpl, signal: boundedSignal, timeoutMs: 4000 });
     if (validation.ok) {
       if (excludeIdentities.some((identity) => githubIdentityMatchesExpected(validation, identity))) {
         failures.push({ source, validation, reason: "github_account_excluded" });
@@ -196,6 +220,9 @@ export async function discoverGithubToken({
     failures.push({ source, validation });
   }
 
+  if (sources.incomplete || boundedSignal.aborted || failures.some(item => item.validation?.transient)) {
+    return { ok: false, incomplete: true, transient: true, failures };
+  }
   if (candidates.length) {
     const identities = new Set(candidates.map(({ validation, token }) => {
       if (validation.id) return `id:${validation.id}`;
@@ -238,6 +265,7 @@ export async function importDiscoveredGithubToken({
         return { ok: true, token: savedToken, source: { type: "saved-token" }, imported: false };
       }
       const validation = await validateGithubToken(savedToken, { fetchImpl, signal });
+      if (validation.transient) throw new Error("GitHub access could not be checked. The saved credential was preserved; check your network and retry.");
       if (validation.ok && githubIdentityMatchesExpected(validation, expectedIdentity)) {
         writeGithubTokenMetadata(validation, home, savedToken);
         return { ok: true, token: savedToken, source: { type: "saved-token" }, validation, imported: false };
@@ -257,6 +285,7 @@ export async function importDiscoveredGithubToken({
       const logins = [...new Set(discovered.candidates.map((candidate) => candidate.login || candidate.id || "unknown"))];
       throw new Error(`Multiple GitHub Copilot accounts were found (${logins.join(", ")}). Set CCDX_GITHUB_LOGIN or CCDX_GITHUB_TOKEN_PATH to select one explicitly.`);
     }
+    if (discovered.transient) throw new Error("Local GitHub credentials could not be fully checked. Check network access and retry; no new login was started.");
     if (!discovered.ok) return null;
     writeToken(discovered.token, home, discovered.validation);
     const login = discovered.validation.login ? ` for ${discovered.validation.login}` : "";

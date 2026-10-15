@@ -55,7 +55,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
   }
   if (action === "status") {
     output(`Native prediction preference: ${settings.enabled ? "on" : "off"} (default: off)`);
-    output("Uses the conversation's model. No prediction MCP, Hook, or panel.");
+    output("Uses the conversation's model.");
     if (settings.enabled && !predictionAppMatches(settings.app)) output("Codex App changed; bridge startup will recheck compatibility. Unsupported changes still require explicit setup.");
     if (runtimeSnapshot) {
       try {

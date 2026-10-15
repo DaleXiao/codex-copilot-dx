@@ -60,7 +60,11 @@ export function retirePredictionIntegration(options = {}) {
   // No registration/settings means no lock directory or other write on startup.
   const env = options.env || process.env;
   const settings = path.resolve(env.CCDX_SUGGESTION_CONFIG || path.join(path.dirname(userSettingsPath(options)), "suggestion.json"));
-  if (!fs.existsSync(config) && !fs.existsSync(settings)) return { changed: false, preserved: false };
+  if (!fs.existsSync(settings)) {
+    let content;
+    try { content = fs.readFileSync(config, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (!content?.includes("ccdx_suggestion") && !content?.includes("ccdx:suggestion-auto:start")) return { changed: false, preserved: false };
+  }
   return withFileLockSync(`${config}.ccdx.lock`, () => retirePredictionIntegrationUnlocked(options));
 }
 function retirePredictionIntegrationUnlocked({ env = process.env, home = os.homedir(), dryRun = false } = {}) {

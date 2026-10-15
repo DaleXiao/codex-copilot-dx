@@ -86,6 +86,8 @@ test("parseCliArgs: accepts supported commands and options", () => {
 });
 
 test("doctor config has a dedicated read-only grammar and help topic", () => {
+  assert.equal(parseCliArgs(["doctor", "--fix", "--json"]).fix, true);
+  assert.equal(parseCliArgs(["doctor", "--json"]).json, true);
   assert.deepEqual(parseCliArgs(["doctor", "config"]), {
     command: "doctor", showRequestId: false, online: false, compat: false, configOnly: true,
   });

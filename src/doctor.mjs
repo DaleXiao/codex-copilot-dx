@@ -10,12 +10,19 @@ import {
 import { status } from "./status.mjs";
 import { buildHeaders, FALLBACK_VSCODE_VERSION, parseApiBase } from "./copilot.mjs";
 import { adapterBaseUrl, checkRunningAdapter } from "./running-adapter.mjs";
-import { CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
 import { inspectCodexConfig } from "./codex-config-doctor.mjs";
 import { inspectPackageUpdateEnvironment } from "./package-update.mjs";
 import { inspectCredentialPermissions } from "./credential-permissions.mjs";
 import { imageProviderConfigPath } from "./image-provider-config.mjs";
 import { terminalCell } from "./terminal-text.mjs";
+import { redactDiagnosticText } from "./diagnostic-text.mjs";
+import { inspectWindowsCommand } from "./windows-command.mjs";
+import { readPredictionSettings } from "./native-prediction-profile.mjs";
+import { inspectPredictionEnvironment } from "./native-prediction-environment.mjs";
+import { formatPredictionEnvironment } from "./native-prediction-state.mjs";
+import { readImageProviderConfig } from "./image-provider-config.mjs";
+import { inspectAdapterCompatibility } from "./doctor-compat.mjs";
+export { selectCompatibilityModels, inspectAdapterCompatibility } from "./doctor-compat.mjs";
 
 export { inspectCodexConfig };
 
@@ -39,147 +46,6 @@ function displayPath(home, filePath) {
   return filePath;
 }
 
-function copilotModelData(models) {
-  const data = Array.isArray(models) ? models : models?.data;
-  return Array.isArray(data) ? data : [];
-}
-
-function modelEndpoints(model) {
-  return Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];
-}
-
-export function selectCompatibilityModels(models) {
-  const candidates = copilotModelData(models)
-    .filter((model) => model?.model_picker_enabled !== false)
-    .filter((model) => {
-      const id = String(model?.id || "");
-      const endpoints = modelEndpoints(model);
-      return id.startsWith("gpt-")
-        && (endpoints.includes("/responses") || endpoints.includes("/v1/responses"));
-    });
-  const responsesOnly = [...candidates].reverse()
-    .find((model) => !modelEndpoints(model).includes("/chat/completions"));
-  return { responsesModel: String((responsesOnly || candidates[0])?.id || "") };
-}
-
-async function fetchTextWithTimeout(fetchImpl, url, init, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const resp = await fetchImpl(url, { ...init, signal: controller.signal });
-    return { resp, text: await resp.text() };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function responseFailure(resp, text) {
-  const detail = String(text || "").replace(/\s+/g, " ").trim().slice(0, 240);
-  return new Error(`HTTP ${resp.status}${detail ? `: ${detail}` : ""}`);
-}
-
-async function compatibilityRequest(fetchImpl, url, body, timeoutMs) {
-  const { resp, text } = await fetchTextWithTimeout(fetchImpl, url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: body.stream ? "text/event-stream" : "application/json" },
-    body: JSON.stringify(body),
-  }, timeoutMs);
-  if (!resp.ok) throw responseFailure(resp, text);
-  return text;
-}
-
-async function runCompatibilityCheck(checks, label, task) {
-  const started = Date.now();
-  try {
-    const value = await task();
-    checks.push({ kind: "ok", message: `${label} passed (${Date.now() - started}ms)` });
-    return value;
-  } catch (error) {
-    const reason = error?.name === "AbortError" ? "timed out" : error?.message || "unknown error";
-    checks.push({ kind: "err", message: `${label} failed: ${reason}` });
-    return null;
-  }
-}
-
-function parseResponseObject(text) {
-  const response = JSON.parse(text);
-  if (!response?.id || !Array.isArray(response.output)) throw new Error("response body is missing id or output");
-  return response;
-}
-
-function parseCompactionResponse(text) {
-  const response = parseResponseObject(text);
-  if (response.object !== "response.compaction"
-    || !response.output.some((item) => item?.type === "compaction")) {
-    throw new Error("response body is missing valid compaction state");
-  }
-  return response;
-}
-
-export async function inspectAdapterCompatibility({
-  host = "127.0.0.1",
-  port = 2026,
-  fetchImpl = fetch,
-  timeoutMs = 120000,
-} = {}) {
-  const baseUrl = localGatewayBaseUrl(connectHost(host), port);
-  const checks = [];
-  const models = await runCompatibilityCheck(checks, "Compatibility model discovery", async () => {
-    const { resp, text } = await fetchTextWithTimeout(fetchImpl, `${baseUrl}/v1/models`, { headers: { Accept: "application/json" } }, timeoutMs);
-    if (!resp.ok) throw responseFailure(resp, text);
-    const parsed = JSON.parse(text);
-    if (!copilotModelData(parsed).length) throw new Error("model list is empty");
-    return parsed;
-  });
-  if (!models) return checks;
-
-  const { responsesModel } = selectCompatibilityModels(models);
-  if (!responsesModel) {
-    checks.push({ kind: "err", message: "Compatibility Responses check failed: no GPT model advertises /responses" });
-    return checks;
-  }
-
-  await runCompatibilityCheck(checks, "Codex Auto-review", async () => {
-    const text = await compatibilityRequest(fetchImpl, `${baseUrl}/v1/responses`, {
-      model: CODEX_AUTO_REVIEW_MODEL,
-      stream: false,
-      input: "Reply with OK only.",
-    }, timeoutMs);
-    parseResponseObject(text);
-  });
-
-  const firstResponse = await runCompatibilityCheck(checks, `Native Responses (${responsesModel})`, async () => {
-    const text = await compatibilityRequest(fetchImpl, `${baseUrl}/v1/responses`, {
-      model: responsesModel,
-      stream: false,
-      input: "Reply with OK only.",
-    }, timeoutMs);
-    return parseResponseObject(text);
-  });
-
-  if (firstResponse) {
-    await runCompatibilityCheck(checks, "Responses stream and history compatibility", async () => {
-      const text = await compatibilityRequest(fetchImpl, `${baseUrl}/v1/responses`, {
-        model: responsesModel,
-        stream: true,
-        previous_response_id: firstResponse.id,
-        input: "Reply with OK again.",
-      }, timeoutMs);
-      if (!/^event:\s*response\.completed\s*$/m.test(text)) throw new Error("stream did not contain response.completed");
-    });
-  }
-
-  await runCompatibilityCheck(checks, "Responses compact", async () => {
-    const text = await compatibilityRequest(fetchImpl, `${baseUrl}/v1/responses/compact`, {
-      model: responsesModel,
-      stream: false,
-      input: "Compact this short context.",
-    }, timeoutMs);
-    parseCompactionResponse(text);
-  });
-
-  return checks;
-}
 
 export function inspectGitHubToken({ home = os.homedir() } = {}) {
   const filePath = githubTokenPath(home);
@@ -260,6 +126,10 @@ export async function inspectGitHubTokenOnline({
     }
     const models = await modelResp.json();
     const data = Array.isArray(models) ? models : models?.data;
+    if (!Array.isArray(data) || !data.length) return [
+      { kind: "ok", message: `GitHub Copilot access verified for ${validation.login || "current account"}` },
+      { kind: "err", message: "Copilot models endpoint returned no valid model directory despite HTTP 200" },
+    ];
     return [
       { kind: "ok", message: `GitHub Copilot access verified for ${validation.login || "current account"}` },
       { kind: "ok", message: `Copilot models endpoint returned ${Array.isArray(data) ? data.length : 0} models` },
@@ -319,13 +189,37 @@ export async function collectDoctorChecks({
   inspectCodexClientFn,
   inspectUpdateEnvironmentFn = inspectPackageUpdateEnvironment,
   inspectCredentialPermissionsFn = inspectCredentialPermissions,
+  env = process.env,
+  platform = process.platform,
+  inspectWindowsCommandFn = inspectWindowsCommand,
+  readPredictionSettingsFn = readPredictionSettings,
+  inspectPredictionEnvironmentFn = inspectPredictionEnvironment,
+  readImageProviderConfigFn = readImageProviderConfig,
 } = {}) {
-  if (configOnly) return inspectCodexConfig({ home, host, port });
+  if (configOnly) return inspectCodexConfig({ home, env, host, port });
   checkedDoctorProfile(profile);
   const checks = [
-    ...inspectAuthProfiles({ home }),
-    ...inspectCodexConfig({ home, host, port }),
+    ...inspectAuthProfiles({ home }).map(check => ({ ...check, id: "github-auth" })),
+    ...inspectCodexConfig({ home, env, host, port }).map(check => ({ ...check, id: "codex-config" })),
+    { kind: "info", message: `Runtime: Node ${process.version}, ${platform}/${process.arch}` },
   ];
+  if (platform === "win32") {
+    const command = inspectWindowsCommandFn({ platform });
+    checks.push({ kind: command.status === "ready" ? "ok" : "warn", id: "windows-command",
+      message: `Windows command launcher: ${command.status}; PowerShell policy unchanged`, fix: command.status === "repairable" ? "ccdx.cmd doctor --fix" : undefined });
+  }
+  try {
+    const prediction = readPredictionSettingsFn({ home, env });
+    if (!prediction.enabled) checks.push({ kind: "info", message: "Predictions are off; optional routing checks skipped" });
+    else if (["darwin", "win32"].includes(platform)) {
+      const environment = inspectPredictionEnvironmentFn({ env, platform });
+      checks.push({ kind: environment.summary.tls.extra_ca === "unreadable_or_invalid" ? "warn" : "info", message: formatPredictionEnvironment(environment.summary) });
+    } else checks.push({ kind: "warn", message: "Native predictions require macOS or Windows; existing settings preserved" });
+  } catch { checks.push({ kind: "warn", message: "Prediction environment could not be verified; existing routing and trust settings preserved", fix: "ccdx prediction status" }); }
+  try {
+    const image = readImageProviderConfigFn({ home, env, strict: true });
+    checks.push({ kind: "info", message: image ? "Image generation configured; no provider request was made" : "Image generation is off; optional checks skipped" });
+  } catch { checks.push({ kind: "warn", message: "Image provider configuration is invalid; core service is unaffected", fix: "ccdx image-status" }); }
   const updateEnvironment = inspectUpdateEnvironmentFn();
   const updateMessage = updateEnvironment.state === "different" ? "npm update target differs from this CCDX installation; review PATH/prefix before updating"
       : updateEnvironment.state === "unavailable" ? "npm update environment could not be verified; installer settings were not changed"
@@ -400,9 +294,24 @@ export async function runDoctor(options = {}) {
   const flags = [
     options.online ? "--online" : "",
     options.compat ? "--compat" : "",
+    options.fix ? "--fix" : "",
   ].filter(Boolean);
-  log(`${options.commandName || "ccdx"} doctor${options.configOnly ? " config" : flags.length ? ` ${flags.join(" ")}` : ""}`);
-  const checks = await collectDoctorChecks(options);
+  if (!options.json) log(`${options.commandName || "ccdx"} doctor${options.configOnly ? " config" : flags.length ? ` ${flags.join(" ")}` : ""}`);
+  let checks = await collectDoctorChecks(options);
+  const before = options.fix ? checks : undefined;
+  if (options.fix && !options.configOnly) {
+    const repair = options.repairDoctorFn || (await import("./doctor-repair.mjs")).repairDoctor;
+    const repairs = await repair(options);
+    const verified = new Set(repairs.filter(check => ["fixed_verified", "unchanged"].includes(check.result)
+      && check.kind !== "warn" && check.kind !== "err").map(check => check.id));
+    checks = checks.filter(check => !verified.has(check.id)).concat(repairs);
+  }
+  for (const check of checks) check.message = terminalCell(redactDiagnosticText(check.message));
+  for (const check of before || []) check.message = terminalCell(redactDiagnosticText(check.message));
+  if (options.json) {
+    log(JSON.stringify({ command: "doctor", repair_requested: options.fix === true, checks, ...(before ? { before_checks: before } : {}) }));
+    return checks;
+  }
   for (const check of checks) log(status(check.kind, check.message));
   const totals = { ok: 0, warn: 0, err: 0 };
   for (const check of checks) totals[check.kind] = (totals[check.kind] || 0) + 1;

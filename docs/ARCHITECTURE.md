@@ -50,6 +50,24 @@ Authentication keeps its public facade in `auth.mjs`. Device-code polling and
 cancellation live in `auth-device-flow.mjs`; local discovery and transactional
 credential storage live in `auth-credentials.mjs`. These modules do not depend
 on the CLI, dashboard or service composition root.
+`auth-sources.mjs` isolates known external credential contracts: legacy OpenCode
+Copilot OAuth and noninteractive GitHub CLI token retrieval. Provider-specific
+readers do not validate or write credentials. The auth facade enforces bounded
+GitHub/Copilot validation, account matching and ambiguity handling. Saved-token
+startup does not scan sources or make new validation calls.
+
+`windows-command.mjs` owns exact npm-generated CCDX PowerShell launcher cleanup.
+The best-effort postinstall, verified updater target and explicit doctor repair
+share it. It never edits profiles, aliases, execution policy or npm's own shim.
+Custom launchers and unverifiable installations are preserved.
+
+Doctor composition stays in `doctor.mjs`; inference probes live in
+`doctor-compat.mjs` and explicit bounded repairs in `doctor-repair.mjs`.
+Repairs reuse the startup config transformation and prediction management API;
+they do not start another adapter or implement a second prediction lifecycle.
+Configuration repair takes the existing lock and commits the previous-file
+backup transactionally. Disabled optional features stay disabled. JSON reports
+separate before checks from final repair evidence; HTTP 200 alone is not success.
 
 Native prediction has a separate loopback transport and an isolated HTTPS agent.
 Only its two selected hosts use the App-specific route. Non-configuration requests

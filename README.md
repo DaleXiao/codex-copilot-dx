@@ -18,11 +18,11 @@ ccdx
 CCDX reuses a compatible local credential or starts GitHub Device Flow, listens
 on `127.0.0.1:2026`, configures Codex, and opens the App. No client binary patch
 is needed. On Windows, open the App manually unless native prediction setup is
-enabled. If PowerShell blocks scripts, use `npm.cmd` / `ccdx.cmd`; do not change company policy. The configured `dummy` API key is a placeholder, not a credential.
+enabled. Windows installs remove only the exact npm-generated CCDX `.ps1` launchers so PowerShell can resolve `ccdx` to its `.cmd` entry, without aliases or policy changes. If install scripts were disabled or a custom launcher is present, use `ccdx.cmd doctor --fix`; `npm.cmd` remains necessary when PowerShell blocks npm's own script. Do not change company policy. The configured `dummy` API key is a placeholder, not a credential.
 
 Open [the local dashboard](http://127.0.0.1:2026/) for status, model discovery,
 usage, cache/limits, recent failures, request context and animation settings.
-Auto refresh runs every 30 minutes while visible and can be switched off. Hidden pages pause; opening sections and manual refresh still work. Startup uses an atom icon and aligned checks; `Ready` refers to the core service. Narrow/non-color terminals use a plain title.
+Auto refresh runs every 30 minutes while visible and can be switched off. Hidden pages pause; opening sections and manual refresh still work. The atom rotates once on page load and manual refresh, respecting reduced motion. Startup uses a compact six-line atom and aligned checks; `Ready` refers to the core service. Narrow/non-color terminals use a plain title.
 
 ## Commands
 
@@ -32,6 +32,8 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
 | `ccdx start` | Start or reuse the adapter and open Codex when auto-launch is enabled |
 | `ccdx status` | Runtime, limits and bounded request diagnostics |
 | `ccdx doctor` | Configuration, adapter and read-only App/catalog diagnostics |
+| `ccdx doctor --fix` | Repair owned launchers/config, recover existing auth and enabled prediction routing once |
+| `ccdx doctor --json` | Redacted structured diagnostics; combines with `--fix` |
 | `ccdx doctor config` | Read-only configuration check |
 | `ccdx doctor --compat` | Online inference/continuation compatibility probes |
 | `ccdx auth status` | Saved account; add `--online` to verify access |
@@ -64,10 +66,8 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
   break continuations. Generated images and Codex transcripts are not deleted.
 - Optional image setup/maintenance never blocks the primary service. Disabled
   users get no CCDX image skill or MCP installation.
-- The manual prediction MCP, background hook and dashboard panel are retired.
-  Startup removes only unchanged CCDX registrations and disables saved prediction
-  settings. The optional image MCP remains unchanged. Modified old registrations
-  can use inert compatibility entrypoints; they no longer generate suggestions.
+- Missing-token discovery includes legacy OpenCode Copilot OAuth and GitHub CLI. Reads are bounded and account-matched; incomplete/network-failed discovery does not start another login. Other apps' credentials stay read-only.
+- `doctor --fix` does not start login, enable optional features, change company policy or force-restart Apps. It backs up changed config; missing-token repair can contact GitHub. Partial repairs exit 1. See the reference for exact scope.
 - Native predictions are a separate, opt-in compatibility feature. Quit Codex,
   run `ccdx prediction on`, then restart CCDX. This adds App-profile certificate
   trust and an App-only route for `chatgpt.com` and `ab.chatgpt.com`; HTTPS on those

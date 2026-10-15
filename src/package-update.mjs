@@ -136,6 +136,7 @@ export async function runPackageUpdateCommand({
   inspectEnvironmentFn = inspectPackageUpdateEnvironment,
   inspectPolicyFn = inspectNpmDownloadPolicy,
   verifyInstalledFn = verifyInstalledPackage,
+  repairCommandFn,
 } = {}) {
   if (typeof allowRemote !== "boolean") throw new Error("Remote download permission must be a boolean");
   let selectedSource = normalizeUpdateSource(source);
@@ -208,6 +209,13 @@ export async function runPackageUpdateCommand({
   const installedVersion = verifyInstalledFn(environment?.target, { expectedVersion: release?.version });
   if (installedVersion) {
     output.write(`Updated ${PACKAGE_NAME}: installed v${terminalCell(installedVersion)} at ${terminalCell(environment.target)}.\n`);
+    if (platform === "win32") {
+      try {
+        const repair = repairCommandFn || (await import("./windows-command.mjs")).inspectWindowsCommand;
+        const result = repair({ platform, packageRoot: environment.target, repair: true });
+        if (result.status !== "ready") output.write("Command launcher was preserved; use ccdx.cmd doctor --fix to inspect it. PowerShell policy is unchanged.\n");
+      } catch { output.write("Installed package verified; optional command setup could not finish. Use ccdx.cmd doctor --fix.\n"); }
+    }
   } else {
     output.write("Installer finished; the global target was unavailable, so the installed version was not verified. Run ccdx doctor.\n");
   }

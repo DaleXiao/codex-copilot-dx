@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.9.38",
+  "version": "0.9.39",
   "description": "Use Codex App with GitHub Copilot",
   "author": "Dale Xiao",
   "type": "module",
@@ -39,6 +39,7 @@
     "node": ">=22.15.0"
   },
   "scripts": {
+    "postinstall": "node bin/postinstall.mjs",
     "test": "node --test",
     "test:smoke": "node scripts/offline-smoke.mjs && node scripts/sse-idle-replay.mjs",
     "test:package": "node scripts/package-lifecycle-smoke.mjs",

@@ -5,6 +5,8 @@ import { isDeepStrictEqual } from "node:util";
 import { parse } from "smol-toml";
 import { computeUpdatedCodexConfig, initialCodexConfig } from "./config.mjs";
 import { adapterBaseUrl } from "./running-adapter.mjs";
+import { withFileLockSync } from "./lock.mjs";
+import { atomicWriteFileIfChangedSync, atomicWriteFilePairSync } from "./atomic-file.mjs";
 
 const MANAGED_KEYS = [
   "openai_base_url",
@@ -164,4 +166,28 @@ export function inspectCodexConfig({ home = os.homedir(), env: processEnv = proc
   }
   checks.push(startupPreview(content, config, host, port));
   return checks;
+}
+
+export function repairCodexConfig(options = {}) {
+  const { host = "127.0.0.1", port = 2026 } = options;
+  const file = codexPaths(options).config;
+  return withFileLockSync(`${file}.ccdx.lock`, () => {
+    if (inspectCodexConfig(options).some(check => check.kind === "err")) {
+      return { status: "preserved", changed: false };
+    }
+    let content = null;
+    try { content = fs.readFileSync(file, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    const next = content === null ? { content: initialCodexConfig(port, host), changed: true }
+      : computeUpdatedCodexConfig(content, port, host);
+    if (!next.changed) return { status: "unchanged", changed: false };
+    const before = content === null ? {} : parseConfig(content);
+    if (!isDeepStrictEqual(unmanagedSettings(before), unmanagedSettings(parseConfig(next.content)))) {
+      return { status: "preserved", changed: false };
+    }
+    if (content === null) atomicWriteFileIfChangedSync(file, next.content, { mode: 0o600 });
+    else atomicWriteFilePairSync(file, next.content, `${file}.ccdx-doctor.bak`, content, { mode: 0o600 });
+    const verified = !inspectCodexConfig(options).some(check => check.kind === "err"
+      || check.message.startsWith("Next startup would"));
+    return { status: verified ? "verified" : "needs_review", changed: true };
+  });
 }

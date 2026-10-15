@@ -49,10 +49,8 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
     async configure() {
       try {
         const { retirePredictionIntegration } = await import("./prediction-retirement.mjs");
-        const result = retirePredictionIntegration();
-        if (result.changed) info("Removed the retired CCDX prediction integration");
-        if (result.preserved) warning("Modified prediction settings were preserved");
-      } catch (error) { warning(`${error.message}. Core startup will continue.`); }
+        retirePredictionIntegration();
+      } catch { /* Legacy cleanup is optional; never interrupt or clutter core startup. */ }
       const enabled = Boolean(readImageProviderConfig());
       const { imageMcpSkipped } = ensureCodexConfig(port, { host, imageProviderEnabled: enabled, ...(configLog ? { log: configLog } : {}) });
       if (enabled && !imageMcpSkipped) {

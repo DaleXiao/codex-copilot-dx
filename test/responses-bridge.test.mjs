@@ -4,6 +4,21 @@ import path from "node:path";
 import { prepareResponsesChatPayload } from "../src/responses-chat-payload.mjs";
 import { forwardToChat, responsesToChat } from "../src/responses-bridge.mjs";
 
+test("Chat DONE is a hard boundary even with trailing errors or a source that never closes", async () => {
+  for (const trailing of ["", 'data: {"error":{"message":"late error"}}\n\n']) {
+    const events = [];let cancelled = false;
+    const source = new ReadableStream({ start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n' + trailing));
+    }, cancel() { cancelled = true; } });
+    const result = await forwardToChat({ model: "gpt-test", stream: true, messages: [] },
+      async (type, data) => events.push({ type, data }), () => {}, () => assert.fail("late content must not fail a completed reply"),
+      { chatCompletionsFn: async () => new Response(source, { headers: { "Content-Type": "text/event-stream" } }) });
+    assert.equal(result, true);assert.equal(cancelled, true);
+    assert.equal(events.filter(event => event.type === "response.completed").length, 1);
+    assert.equal(events.at(-1).data.response.output[0].content[0].text, "OK");
+  }
+});
+
 test("responsesToChat: preserves flat Responses function tools", () => {
   const converted = responsesToChat({
     model: "gpt-4o",

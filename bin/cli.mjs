@@ -344,9 +344,11 @@ if (CLI.command === "doctor") {
     host: ADAPTER_HOST,
     online: CLI.online,
     compat: CLI.compat,
+    fix: CLI.fix,
+    json: CLI.json,
   });
   await LOGGING.cleanup();
-  process.exit(checks.some((check) => check.kind === "err") ? 1 : 0);
+  process.exit(checks.some((check) => check.kind === "err" || (CLI.fix && check.result && check.kind === "warn")) ? 1 : 0);
 }
 
 console.log(`\n${startupBanner({ commandName: CLI_NAME, version: LOCAL_VERSION })}\n`);

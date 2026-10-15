@@ -63,7 +63,7 @@ test("collectDoctorChecks reports only configured Codex surfaces", async () => {
     checkAdapter: false,
   });
 
-  assert.equal(checks.every((check) => check.kind === "ok"), true);
+  assert.equal(checks.every((check) => ["ok", "info"].includes(check.kind)), true);
   assert.equal(checks.some((check) => /Codex authentication profile uses the legacy path/.test(check.message)), true);
   assert.equal(checks.some((check) => /Codex base URL points/.test(check.message)), true);
   assert.equal(checks.some((check) => /Claude|PM Studio/.test(check.message)), false);
@@ -84,7 +84,7 @@ test("doctor config checks report missing data and honor IPv6 loopback", async (
 test("inspectAuthProfiles never exposes credential material", () => {
   const home = configuredHome();
   const checks = inspectAuthProfiles({ home });
-  assert.equal(checks.every((check) => check.kind === "ok"), true);
+  assert.equal(checks.every((check) => ["ok", "info"].includes(check.kind)), true);
   assert.equal(JSON.stringify(checks).includes("ghu_test"), false);
 });
 
@@ -178,9 +178,9 @@ test("inspectAdapterCompatibility checks auto-review, native Responses, history 
       });
     }
     if (body?.stream) {
-      return new Response("event: response.completed\ndata: {}\n\n", { status: 200 });
+      return new Response('event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp-stream","status":"completed","output":[]}}\n\n', { status: 200 });
     }
-    return Response.json({ id: `resp-${calls.length}`, output: [] });
+    return Response.json({ id: `resp-${calls.length}`, status: "completed", output: [] });
   };
 
   const checks = await inspectAdapterCompatibility({ fetchImpl, timeoutMs: 100 });
@@ -214,9 +214,9 @@ test("inspectAdapterCompatibility isolates an Auto-review failure from native Re
       });
     }
     if (body?.stream) {
-      return new Response("event: response.completed\ndata: {}\n\n", { status: 200 });
+      return new Response('event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp-stream","status":"completed","output":[]}}\n\n', { status: 200 });
     }
-    return Response.json({ id: "resp-native", output: [] });
+    return Response.json({ id: "resp-native", status: "completed", output: [] });
   };
 
   const checks = await inspectAdapterCompatibility({ fetchImpl, timeoutMs: 100 });
@@ -246,8 +246,8 @@ test("runDoctor prints a bounded Codex-only summary", async () => {
     log: (line) => lines.push(line),
   });
 
-  assert.equal(checks.every((check) => check.kind === "ok"), true);
+  assert.equal(checks.every((check) => ["ok", "info"].includes(check.kind)), true);
   assert.equal(lines[0], "ccdx doctor");
-  assert.match(lines.at(-1), new RegExp(`Summary: ${checks.length} passed, 0 warning\\(s\\), 0 error\\(s\\)`));
+  assert.match(lines.at(-1), new RegExp(`Summary: ${checks.filter(check => check.kind === "ok").length} passed, 0 warning\\(s\\), 0 error\\(s\\)`));
   assert.equal(lines.some((line) => /Claude|PM Studio/.test(line)), false);
 });

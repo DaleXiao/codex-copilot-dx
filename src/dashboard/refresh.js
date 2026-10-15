@@ -2,7 +2,7 @@
   const interval = 30 * 60 * 1000;
   const freshness = 30 * 1000;
 
-  function createController({ resources, visible, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  function createController({ resources, visible, onState = () => {}, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
     const states = new Map(Object.keys(resources).map(key => [key, {
       value: undefined, signature: undefined, variant: undefined, pending: null,
       updatedAt: null, attemptedAt: null, error: null, generation: 0, abort: null,
@@ -12,7 +12,11 @@
     let automatic = true;
     const state = key => states.get(key);
     const stopTimer = () => { if (timer !== null) clearTimer(timer); timer = null; };
-    const notify = key => resources[key].state?.(state(key));
+    const notify = key => {
+      resources[key].state?.(state(key));
+      const pendingKeys = [...states.keys()].filter(name => state(name).pending);
+      onState({ pending: pendingKeys.length > 0, pendingKeys });
+    };
 
     function schedule() {
       stopTimer();
@@ -44,7 +48,6 @@
       entry.attemptedAt = now();
       entry.attemptVariant = variant;
       entry.pendingVariant = variant;
-      entry.error = null;
       entry.pending = Promise.resolve().then(async () => {
         try {
           const value = await resource.load({ variant, signal: abort.signal });
@@ -56,6 +59,7 @@
           entry.signature = signature;
           entry.variant = variant;
           entry.updatedAt = now();
+          entry.error = null;
           return value;
         } catch (error) {
           if (active && generation === entry.generation) entry.error = error;

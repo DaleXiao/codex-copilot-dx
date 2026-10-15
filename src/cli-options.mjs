@@ -295,6 +295,8 @@ export function parseCliArgs(args = []) {
     const options = parseOptions(rest, new Map([
       ["--online", "flag"],
       ["--compat", "flag"],
+      ["--fix", "flag"],
+      ["--json", "flag"],
       ["--profile", "value"],
     ]));
     const profile = options["--profile"];
@@ -306,6 +308,8 @@ export function parseCliArgs(args = []) {
       ...baseCommand("doctor"),
       online: Boolean(options["--online"]),
       compat: Boolean(options["--compat"]),
+      ...(options["--fix"] ? { fix: true } : {}),
+      ...(options["--json"] ? { json: true } : {}),
     };
   }
   if (RETIRED_CLAUDE_OPTIONS.has(command)) {
@@ -363,7 +367,7 @@ function topicHelp(name, topic) {
     start: `Usage:\n  ${name} [start] [--show-request-id]\n\nStarts or reuses the local adapter, updates Codex configuration, and attempts to open Codex App when auto-launch is enabled and supported.`,
     auth: `Usage:\n  ${name} auth status [--online] [--format table|plain]\n\nShows the saved GitHub Copilot account without exposing credentials. --online also verifies its entitlement and model catalog.`,
     "auth status": `Usage:\n  ${name} auth status [--online] [--format table|plain]\n\nShows the saved GitHub Copilot account without exposing credentials. --online also verifies its entitlement and model catalog. Interactive terminals use a table by default.`,
-    doctor: `Usage:\n  ${name} doctor [--online] [--compat]\n  ${name} doctor config\n\nChecks the local credential, Codex configuration, adapter, installed App version, running App identities and observed client catalog. App-internal cache is not externally verified. No processes are killed or client files changed. --online validates account entitlement; --compat sends minimal inference requests and consumes a small amount of Copilot usage. The config subcommand checks only the local file and previews startup changes, without network, authentication, file writes or process inspection.`,
+    doctor: `Usage:\n  ${name} doctor [--online] [--compat] [--fix] [--json]\n  ${name} doctor config\n\nChecks credentials, managed configuration, command launchers, adapter, enabled optional features and observed client catalog. Default is read-only; no inference requests. --online validates account entitlement; --compat sends minimal inference requests and consumes a small amount of Copilot usage, requiring successful model completion rather than HTTP 200 alone. --fix repairs owned Windows launchers and managed config, imports a verified existing credential only if none is saved, and asks the running adapter to repair enabled predictions once. No interactive login, client program edits, forced App restarts, policy changes or optional feature activation. Missing-credential repair can contact GitHub without --online. Changed existing config is backed up to config.toml.ccdx-doctor.bak. Partial repairs exit 1. --json emits a redacted report, including before_checks for repairs. App-internal cache and visible predictions are not externally verified. The config subcommand remains strictly read-only.`,
     "doctor config": `Usage:\n  ${name} doctor config\n\nReads ~/.codex/config.toml, checks TOML syntax and CCDX-managed settings, and previews the existing startup writer's changes. Does not merge Codex profiles or validate the complete installed Codex schema. No authentication, network requests, file writes, or adapter/GUI startup. Existing context_management=false is valid. Exit 1 for errors, 0 for OK/warnings; unsupported arguments exit 2.`,
     status: `Usage:\n  ${name} status\n\nShows bounded runtime, routing, performance, queue, and cache metrics from a running adapter.`,
     models: `Usage:\n  ${name} models [--format table|plain]\n\nPerforms a fresh, read-only Copilot model-directory lookup for the saved account. Interactive terminals use a table by default.`,
@@ -390,7 +394,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   return `Usage:
   ${name} [start] [--show-request-id]
   ${name} auth status [--online] [--format table|plain]
-  ${name} doctor [--online] [--compat]
+  ${name} doctor [--online] [--compat] [--fix] [--json]
   ${name} doctor config
   ${name} status
   ${name} models [--format table|plain]

@@ -23,7 +23,17 @@ const loadAuth = () => dashboardRefresh.refresh("auth", { force: true });
 
 const refresh = () => dashboardRefresh.refresh("status", { force: true });
 
-element("refresh").addEventListener("click", () => dashboardRefresh.refreshVisible({ force: true }));
+function animateRefresh() {
+  const icon = element("status-icon");
+  if (!icon || reducedMotion.matches || !icon.animate) return;
+  for (const animation of icon.getAnimations?.() || []) animation.cancel();
+  icon.animate([{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }],
+    { duration: 450, easing: "cubic-bezier(0.25, 1, 0.5, 1)" });
+}
+element("refresh").addEventListener("click", () => {
+  animateRefresh();
+  dashboardRefresh.refreshVisible({ force: true });
+});
 
 const animationRows = new Map();
 let animationTimelines = [];
@@ -267,6 +277,12 @@ for (const [key, ids] of [["status", ["client-features", "request-context", "rec
 
 const dashboardRefresh = globalThis.ccdxRefresh.createController({
   visible: () => document.visibilityState === "visible",
+  onState: ({ pendingKeys }) => {
+    // The account read remains independent; it must not block dashboard data.
+    const busy = pendingKeys.some(key => key !== "auth");
+    element("refresh").disabled = busy;
+    element("refresh").setAttribute("aria-busy", String(busy));
+  },
   resources: {
     status: {
       visible: () => true,
@@ -277,7 +293,6 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       },
       apply: render,
       state: state => {
-        element("refresh").disabled = Boolean(state.pending);
         text("connection", state.pending || (!state.value && !state.error) ? "READING" : state.error ? "UNAVAILABLE" : "LOCAL OK");
         element("connection").className = `badge ${state.pending ? "neutral" : state.error ? "bad" : "good"}`;
         if (state.error) refreshTime(element("updated"), state);
@@ -407,3 +422,4 @@ loadModels();
 loadUsage();
 refresh();
 loadAuth();
+animateRefresh();

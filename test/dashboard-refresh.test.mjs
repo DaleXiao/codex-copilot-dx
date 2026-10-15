@@ -108,6 +108,23 @@ test("errors retain the last snapshot/time, throttle failed opens and do not aut
   assert.equal(cold.reads, 1);
 });
 
+test("refresh keeps failures visible until a successful replacement and reports composite loading", async () => {
+  let fail = true, release;
+  const pending = [];
+  const controller = createController({ visible: () => true, setTimer: setTimeout, clearTimer: clearTimeout, onState: state => pending.push(state.pending), resources: {
+    fast: { visible: () => true, apply() {}, load() { if (fail) throw Error("offline");return { ok: true }; } },
+    slow: { visible: () => true, apply() {}, load: () => new Promise(resolve => { release = resolve; }) },
+  } });
+  const first = controller.refreshVisible({ force: true });await flush();
+  assert.match(controller.state("fast").error.message, /offline/);
+  assert.equal(pending.at(-1), true, "fast completion cannot clear the slower resource's loading state");
+  release({ ok: true });await first;assert.equal(pending.at(-1), false);
+  fail = false;
+  const next = controller.refresh("fast", { force: true });
+  assert.match(controller.state("fast").error.message, /offline/, "starting a retry does not erase an unread failure");
+  await next;assert.equal(controller.state("fast").error, null);
+});
+
 test("opening analytics during a summary read follows up once without concurrent reads", async () => {
   let release;
   const variants = [];

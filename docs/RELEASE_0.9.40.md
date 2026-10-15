@@ -31,8 +31,7 @@ Date: 2026-10-15. Baseline: 0.9.39 / `ab9e294`.
 ## Bounded verification and review
 
 - Baseline: 1,272 passed, nine Windows-only skips, zero failures.
-- Reviewed candidate before the additional mixed-source auth regression: 1,283
-  passed, nine Windows-only skips, zero failures. Final counts follow below.
+- Final local suite: 1,284 passed, nine Windows-only skips, zero failures.
 - Existing offline HTTP/SSE, performance/resource and package-content gates pass.
   Actual isolated CLI startup/reuse replay passes its nine scenarios, including
   disabled images, optional failures, config preservation and shutdown.
@@ -66,7 +65,16 @@ Date: 2026-10-15. Baseline: 0.9.39 / `ab9e294`.
   changes no production timeout and does not count a timeout as a pass.
 - Cross-platform CI adds the real Chromium failure/recovery replay on Linux,
   Windows and macOS, separate from the existing installation, native worker,
-  restricted-shell, protocol and dashboard matrix. Results are pending below.
+  restricted-shell, protocol and dashboard matrix.
+
+All fourteen jobs passed for source commit
+`ae2dc8b043f802aca756f6dbfa3b3bfde2108238` in
+[candidate CI](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38752585407).
+This includes real full-Chromium repeated recovery with both fallback modes on
+Windows/macOS/Linux, Node 22.15/24 protocol/native-platform checks, strict npm 12
+real installation and upgrade on all three platforms, installed sharp, official
+Codex synthetic-provider compatibility and the existing dashboard browser matrix.
+The final source change after this CI is this unpacked audit report only.
 
 ## Native acceptance boundary
 
@@ -79,6 +87,13 @@ The user requested GitHub/npm publication to perform this complete native test,
 rather than installing the local candidate. CI must still pass before publishing.
 See `PREDICTION_RECOVERY_FINDINGS.md` for the bounded initial experiments.
 
-Candidate package: 153 files, 390,771 bytes; SHA-1
-`265f106827f04e6bf4ac9807512dc51b024a5cbd`. It is a local test artifact, not an npm
-or GitHub release. No publication success or full native acceptance is claimed.
+The initial local candidate had 153 files, 390,771 bytes, SHA-1
+`265f106827f04e6bf4ac9807512dc51b024a5cbd`. It was not published.
+
+The final package has 153 files, 390,799 bytes. Every packed file was compared
+byte-for-byte against the source, and no experiment, test, private key, credential
+material or dependency installation was bundled. SHA-1:
+`85f47b5756bccdf9d20fab2ec24c63cd0e889657`. SHA-256:
+`c3f78fa3771749e7eebf3f82445d1080a51f2d6109646c7dabd8b255f29647b3`.
+This audit file is not packed, so publication receipts do not alter package bytes.
+No publication success or full native acceptance is claimed before the receipts.

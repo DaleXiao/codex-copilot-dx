@@ -58,6 +58,12 @@ Date: 2026-10-15. Baseline: 0.9.39 / `ab9e294`.
   Node API, without a Windows skip or a production dependency. Review also added
   a mixed-source credential regression: one denied source cannot hide another
   fully validated, unambiguous usable credential.
+- The Windows browser reached the closed-proxy control, then exceeded the replay's
+  2.5-second per-fetch abort while trying the two failed local endpoints. The
+  synthetic fetch bound is now eight seconds and initial-fallback latency is
+  recorded separately. The 15-second healthy-listener recovery deadline, two
+  rounds, actual PAC-load assertion and route outcomes remain unchanged. This
+  changes no production timeout and does not count a timeout as a pass.
 - Cross-platform CI adds the real Chromium failure/recovery replay on Linux,
   Windows and macOS, separate from the existing installation, native worker,
   restricted-shell, protocol and dashboard matrix. Results are pending below.

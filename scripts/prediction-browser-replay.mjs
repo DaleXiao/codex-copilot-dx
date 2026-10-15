@@ -49,11 +49,13 @@ for (const mode of ["legacy", "recovery", "company-fallback"]) {
     });
     const page = await browser.newPage();
     await page.goto(`http://127.0.0.1:${controlPort}/`);
-    const request = () => page.evaluate(async url => (await fetch(url, { signal: AbortSignal.timeout(2500) })).text(),
+    const request = () => page.evaluate(async url => (await fetch(url, { signal: AbortSignal.timeout(8000) })).text(),
       `http://ccdx-target.test:${controlPort}/route?${Date.now()}`);
     const rounds = [];
     for (let round = 0; round < (mode === "legacy" ? 1 : 2); round++) {
+      const failedAt = Date.now();
       assert.equal(await request(), "FALLBACK", "the still-running browser must first reach the failure/fallback state");
+      const fallbackMs = Date.now() - failedAt;
       assert.ok(pacReads > 0, "the browser must load the real PAC; direct-only headless-shell is not a valid proxy-engine test");
       await listen(proxy, proxyPort);
       const started = Date.now(), deadline = started + (mode === "legacy" ? 2000 : 15000);
@@ -67,7 +69,7 @@ for (const mode of ["legacy", "recovery", "company-fallback"]) {
       if (mode !== "legacy") {
         for (let i = 0; i < 5; i++) assert.equal(await request(), "BRIDGE");
       }
-      rounds.push({ round: round + 1, route, recovery_ms: Date.now() - started });
+      rounds.push({ round: round + 1, route, initial_fallback_ms: fallbackMs, recovery_ms: Date.now() - started });
       await close(proxy);
     }
     console.log(JSON.stringify({ mode, platform: process.platform, browser: browser.version(), same_browser_process: true, pacReads, rounds }));

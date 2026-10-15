@@ -116,10 +116,11 @@ async function validateGithubTokenRequest(token, { fetchImpl, signal }) {
   }
 
   if (!userResp.ok) {
+    cancelResponseBody(userResp);
     return {
       ok: false,
       status: userResp.status,
-      transient: userResp.status === 429 || userResp.status >= 500,
+      transient: userResp.status === 429 || userResp.status >= 500 || userResp.headers?.get?.("x-ratelimit-remaining") === "0",
       reason: userResp.status === 401 || userResp.status === 403 ? "github_token_invalid" : "github_user_failed",
     };
   }
@@ -140,6 +141,7 @@ async function validateGithubTokenRequest(token, { fetchImpl, signal }) {
   }
 
   if (!copilotResp.ok) {
+    cancelResponseBody(copilotResp);
     return {
       ok: false,
       status: copilotResp.status,
@@ -153,11 +155,11 @@ async function validateGithubTokenRequest(token, { fetchImpl, signal }) {
   try {
     copilotTokenData = await awaitWithSignal(() => copilotResp.json(), signal);
   } catch (e) {
-    return { ok: false, reason: "copilot_token_parse_failed", login, error: e };
+    return { ok: false, transient: true, reason: "copilot_token_parse_failed", login, error: e };
   }
 
   if (typeof copilotTokenData.token !== "string" || !copilotTokenData.token.trim()) {
-    return { ok: false, reason: "copilot_token_missing", login };
+    return { ok: false, transient: true, reason: "copilot_token_missing", login };
   }
 
   return { ok: true, login, id, copilotTokenData };

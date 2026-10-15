@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { repairCodexConfig } from "../src/codex-config-doctor.mjs";
 import { repairDoctor } from "../src/doctor-repair.mjs";
-import { runDoctor, inspectAdapterCompatibility, inspectGitHubTokenOnline } from "../src/doctor.mjs";
+import { runDoctor, collectDoctorChecks, inspectAdapterCompatibility, inspectGitHubTokenOnline } from "../src/doctor.mjs";
 import { initialCodexConfig } from "../src/config.mjs";
 import { writeToken } from "../src/auth.mjs";
 
@@ -16,6 +16,14 @@ function fixture(t, content) {
   if (content !== undefined) { fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, content); }
   return { home, file, env: {} };
 }
+
+test("Windows source checkouts are informational, not broken global command installations", async t => {
+  const f = fixture(t, initialCodexConfig(2026, "127.0.0.1"));writeToken("ghu_fixture", f.home);
+  const checks = await collectDoctorChecks({ ...f, platform: "win32", checkAdapter: false,
+    inspectWindowsCommandFn: () => ({ status: "checkout" }), inspectUpdateEnvironmentFn: () => ({ state: "checkout" }),
+    inspectCredentialPermissionsFn: () => "private" });
+  assert.equal(checks.find(check => check.id === "windows-command").kind, "info");
+});
 
 test("doctor config repair shares startup transformations, backs up changes and preserves unrelated and explicit settings", t => {
   const original = initialCodexConfig(2026, "127.0.0.1").replaceAll(":2026", ":9999")

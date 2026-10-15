@@ -206,7 +206,7 @@ export async function collectDoctorChecks({
   ];
   if (platform === "win32") {
     const command = inspectWindowsCommandFn({ platform });
-    checks.push({ kind: command.status === "ready" ? "ok" : "warn", id: "windows-command",
+    checks.push({ kind: command.status === "ready" ? "ok" : ["checkout", "not_applicable"].includes(command.status) ? "info" : "warn", id: "windows-command",
       message: `Windows command launcher: ${command.status}; PowerShell policy unchanged`, fix: command.status === "repairable" ? "ccdx.cmd doctor --fix" : undefined });
   }
   try {

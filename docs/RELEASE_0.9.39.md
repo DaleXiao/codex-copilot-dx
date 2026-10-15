@@ -58,6 +58,10 @@ failures, and the need to exclude before-repair checks superseded by verified
 repairs. Regression tests cover exact launcher ownership/idempotence, account
 audience/deadlines, disabled features, config preservation/backup, JSON redaction,
 business failure semantics, motion/no-motion and Chat `[DONE]` as a hard boundary.
+The first Windows CI exposed a source-checkout classification error: no global
+shim in a checkout was incorrectly labelled a warning. It is now informational;
+real installed-shim failures remain warnings. A platform-independent regression
+test protects this distinction without weakening installation acceptance.
 
 The local configured npm mirror returned ETARGET for the old 0.9.31 package before
 the lifecycle upgrade began. No mirror/policy override or fallback was applied.

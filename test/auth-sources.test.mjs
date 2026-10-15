@@ -51,6 +51,17 @@ test("transient auth failures do not initiate device login or save credentials",
   assert.equal(calls, 1);
 });
 
+test("malformed HTTP 200 token replies are not mistaken for a need to log in again", async t => {
+  for (const reply of [{ error: "gateway_failure" }, null]) {
+    const directory = home(t);
+    await assert.rejects(ensureAuth({ home: directory, env: { CCDX_GITHUB_TOKEN: "ghu_fixture" }, log() {},
+      fetchImpl: async url => url.endsWith("/user") ? Response.json({ login: "fixture", id: 1 })
+        : reply ? Response.json(reply) : new Response("gateway error"),
+      openAndCopyFn: () => assert.fail("must not open login"),
+    }), /no new login was started/);
+  }
+});
+
 test("discovery total deadline, candidate budget and cancelled fetches cannot silently choose an unverified account", async t => {
   const directory = home(t), keepAlive = setTimeout(() => {}, 1000);t.after(() => clearTimeout(keepAlive));
   const sources = [{ type: "auth-json", path: "first" }, { type: "auth-json", path: "second" }];

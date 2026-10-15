@@ -61,6 +61,11 @@ test("Windows launch-route inspection is bounded and never outputs or interpolat
   assert.equal(result[0].pid, 123);assert.equal(call.options.env.CCDX_PREDICTION_APP_PATH, executable);
   assert.ok(!call.args.at(-1).includes(executable));assert.match(call.args.at(-1), /Get-CimInstance/);
   assert.doesNotMatch(call.args.at(-1), /Stop-Process|CommandLine\s*=|taskkill/);
+  const revised = windowsPredictionAppProcesses(executable, { exec(_command, args) {
+    assert.match(args.at(-1), /v=2/);
+    return JSON.stringify([{ pid: 123, readable: true, route: "http://127.0.0.1:12345/proxy.pac?v=2" }]);
+  } });
+  assert.equal(revised[0].route, "http://127.0.0.1:12345/proxy.pac?v=2");
   for (const raw of ['{}', '[{"pid":1,"readable":true,"route":"https://outside.test"}]']) {
     assert.throws(() => windowsPredictionAppProcesses(executable, { exec: () => raw }), /route/);
   }

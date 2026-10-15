@@ -1,5 +1,6 @@
 import net from "node:net";
 import { compileBypassRules, matchesBypass, bypassPacSource } from "./network-bypass.mjs";
+import { predictionProxyExpression } from "./prediction-pac.mjs";
 
 const OFFICIAL_API = "https://chatgpt.com/backend-api";
 const routeError = (code, message) => Object.assign(new Error(message), { code });
@@ -80,7 +81,7 @@ function FindProxyForURL(url,host) {
   var authority=url.split('/')[2]||'', explicit=/:([0-9]+)$/.exec(authority);if(explicit)p=Number(explicit[1]);
   var skip=matchesBypass(host,p,ccdxRoute.rules,ccdxRoute.excludeSimple);
   var original=skip?'DIRECT':secure?ccdxRoute.https:ccdxRoute.http;
-  if(secure&&(host==='chatgpt.com'||host==='ab.chatgpt.com'))return 'PROXY 127.0.0.1:${port}; '+original;
+  if(secure&&(host==='chatgpt.com'||host==='ab.chatgpt.com'))return ${predictionProxyExpression(port)}+'; '+original;
   return original;
 }\n`;
 }

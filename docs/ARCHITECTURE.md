@@ -71,6 +71,10 @@ backup transactionally. Disabled optional features stay disabled. JSON reports
 separate before checks from final repair evidence; HTTP 200 alone is not success.
 
 Native prediction has a separate loopback transport and an isolated HTTPS agent.
+The opted-in listener starts in parallel with auth/model initialization,
+independently of Copilot credentials. A slow optional start cannot block core
+listener setup, and fatal
+startup cleanup closes any optional listener that was already started.
 Only its two selected hosts use the App-specific route. Non-configuration requests
 on those hosts are forwarded unchanged. The bridge does not replace Copilot or
 image-provider networking, modify client program files, or install system trust.
@@ -116,6 +120,16 @@ when its recorded identity changes, before existing trust/port checks are reused
 of certificates, networking and the CLI. It accepts multiple named hashed chunks
 without assuming the first general-settings chunk is the implementation. Signature
 and profile checks remain in the existing platform boundary.
+
+`prediction-pac.mjs` is the pure shared format boundary for direct, static and
+Windows company-PAC composition. Its stable revision URL makes a one-time old-PAC
+migration observable without coupling routes to package versions. The unchanged
+primary endpoint comes first; a clock-bucketed `.localhost` secondary lets
+Chromium retry the same restored listener despite its per-endpoint failure cache.
+The original company/direct fallback remains afterward. This adds no Node DNS
+lookup, timer, listener, process or inference-path work. Browser route recovery
+and the client's independently cached prediction configuration remain distinct;
+neither is a visibility guarantee.
 
 Explicit `prediction fix` uses the optional integration's serialized lifecycle,
 not a second adapter or detached predictor. Startup, repair and shutdown cannot

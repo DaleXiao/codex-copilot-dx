@@ -31,6 +31,26 @@ feature uses the App's existing composer UI and the conversation's
 selected model through CCDX. Suggestions are not sent automatically. Native
 eligibility rules still apply; availability is not promised for every thread type.
 
+The candidate `0.9.40` routing revision uses the stable local PAC URL
+`/proxy.pac?v=2`, independent of the package version. The primary proxy remains
+`127.0.0.1` on the saved port. A secondary, time-bucketed `.localhost` name points
+Chromium back to that same loopback listener after a cached proxy failure. Its
+name changes every ten seconds when the PAC is evaluated, without a Node timer,
+new listener, dependency, port, or background App watcher. Healthy traffic keeps
+the original primary connection path. Direct/static/company-PAC fallbacks remain
+after the two local entries, and unrelated hosts retain their original route.
+The optional listener starts alongside GitHub auth and model initialization;
+slow proxy setup does not delay the core adapter listener.
+
+An App that loaded the old PAC must normally quit once to load this revision;
+CCDX never force-restarts it or hot-writes an open profile. Subsequent upgrades
+keep the revision URL, saved port and trust unchanged. An occupied saved port or
+missing App route is not repaired by this retry mechanism. The installed App may
+cache a failed prediction configuration for five minutes, and a subsequent
+eligible turn may be needed to request another prediction. Returning configuration
+traffic is not proof that native gray text is visible. Native end-to-end recovery
+remains a publication gate until tested; see the unreleased investigation report.
+
 Version `0.9.26` adds Windows platform adapters. Native gray suggestions,
 adoption/sending and switching predictions off were verified on Windows with the
 `.4` candidate. Windows setup
@@ -926,6 +946,16 @@ Directory/profile scans have explicit caps; hitting a cap or a network failure
 reports incomplete discovery rather than silently selecting an account or
 starting another login. Set an explicit source/account to resolve ambiguity.
 An existing saved-token startup path performs no extra discovery/network calls.
+Package reinstallation does not clear that user-owned credential. Copilot's short-lived
+access token is obtained again when needed; it is not the saved GitHub credential.
+For the default credential store, Copilot HTTP 403 preserves the credential and
+reports access/network policy rather than recommending deletion. Copilot HTTP 401
+performs a bounded GitHub identity check only if compatible local recovery did not
+succeed. Only an identity HTTP 401 permits reauthorization guidance; an unavailable
+check does not establish expiry. Neither case automatically deletes the credential
+or starts Device Flow. Denials are not hidden by a cached Copilot token. A discovery
+HTTP 403 also stops before Device Flow, preserving external sources and account
+selection. Isolated/custom credential clients retain their own recovery contract.
 
 After an account is selected, automatic `401`/`403` recovery and in-process token rotation accept only that same GitHub account. Concurrent callers share token refresh work without sharing cancellation, and a still-valid Copilot token may be used briefly after a transient refresh failure. Explicit token variables remain the intentional way to select another account.
 

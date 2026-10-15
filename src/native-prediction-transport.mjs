@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { gunzip, inflate, brotliDecompress } from "node:zlib";
 import { networkPredictionPac } from "./network-route.mjs";
 import { operationErrorDetails } from "./operation-error.mjs";
+import { PREDICTION_PAC_PATH, predictionProxyExpression } from "./prediction-pac.mjs";
 
 export const PREDICTION_HOSTS = Object.freeze(["chatgpt.com", "ab.chatgpt.com"]);
 const CONFIG_LIMIT = 16 * 1024 * 1024;
@@ -20,7 +21,7 @@ export function predictionRoute(host, pathname) {
 export function predictionPac(port, networkRoute) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid prediction proxy port");
   if (networkRoute) return networkPredictionPac(port, networkRoute);
-  return `function FindProxyForURL(url, host) { if (url.indexOf('https:') === 0 && (host === 'chatgpt.com' || host === 'ab.chatgpt.com')) return 'PROXY 127.0.0.1:${port}; DIRECT'; return 'DIRECT'; }\n`;
+  return `function FindProxyForURL(url, host) { if (url.indexOf('https:') === 0 && (host === 'chatgpt.com' || host === 'ab.chatgpt.com')) return ${predictionProxyExpression(port)}+'; DIRECT'; return 'DIRECT'; }\n`;
 }
 
 function cleanHeaders(headers) {
@@ -220,7 +221,7 @@ export async function startPredictionTransport({
   gateway.on("tlsClientError", (error, socket) => { onEvent({ type: "tls_error", error: operationErrorDetails(error) }); socket.destroy(); });
   gateway.on("clientError", (_error, socket) => socket.destroy());
   const proxy = http.createServer((req, res) => {
-    if (req.method === "GET" && req.url === "/proxy.pac" && !req.headers.origin
+    if (req.method === "GET" && ["/proxy.pac", PREDICTION_PAC_PATH].includes(req.url) && !req.headers.origin
       && ["127.0.0.1", "localhost"].includes(String(req.headers.host || "").split(":")[0])) {
       res.writeHead(200, { "Content-Type": "application/x-ns-proxy-autoconfig", "Cache-Control": "no-store" });
       res.end(pacImpl ? pacImpl(proxy.address().port) : predictionPac(proxy.address().port, networkRoute)); return;
@@ -249,7 +250,7 @@ export async function startPredictionTransport({
   try { port = await listen(proxy, listenPort); }
   catch (error) { agent?.destroy();gateway.close();throw error; }
   return {
-    port, pacUrl: `http://127.0.0.1:${port}/proxy.pac`,
+    port, pacUrl: `http://127.0.0.1:${port}${PREDICTION_PAC_PATH}`,
     healthy() { return !closing && !listenerError && proxy.listening; },
     async close() {
       closing = true;

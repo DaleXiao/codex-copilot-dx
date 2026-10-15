@@ -66,7 +66,7 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
   break continuations. Generated images and Codex transcripts are not deleted.
 - Optional image setup/maintenance never blocks the primary service. Disabled
   users get no CCDX image skill or MCP installation.
-- Missing-token discovery includes legacy OpenCode Copilot OAuth and GitHub CLI. Reads are bounded and account-matched; incomplete/network-failed discovery does not start another login. Other apps' credentials stay read-only.
+- Missing-token discovery includes legacy OpenCode Copilot OAuth and GitHub CLI. Reads are bounded and account-matched; incomplete/network-failed or HTTP-403-blocked discovery does not start another login. The default saved credential is preserved; Copilot 401/403 alone is not proof that it expired. Other apps' credentials stay read-only.
 - `doctor --fix` does not start login, enable optional features, change company policy or force-restart Apps. It backs up changed config; missing-token repair can contact GitHub. Partial repairs exit 1. See the reference for exact scope.
 - Native predictions are a separate, opt-in compatibility feature. Quit Codex,
   run `ccdx prediction on`, then restart CCDX. This adds App-profile certificate
@@ -75,7 +75,7 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
   Other domains and the CCDX model endpoint stay on their existing routes.
   No program files or OS trust are changed. Static HTTP/HTTPS/SOCKS5 proxies and bypass rules are retained.
   Windows supports company PAC/WPAD; macOS dynamic routing remains unsupported. Windows setup needs the official MSIX App, Windows PowerShell and .NET Framework 4.7.2+—not Git/OpenSSL. See the reference for limits.
-  Bridge checks allow three same-port recovery attempts per process, without App restart/replay. Only closed, initialized Apps in direct environments receive an owned persistent route; user/company proxies are preserved. Missing routes in running Apps are not hot-attached.
+  Bridge checks allow three same-port recovery attempts per process. The revised PAC adds a loopback retry endpoint after the unchanged primary, preserving company fallback. Quit Codex once to load this route revision; later CCDX upgrades retain it. App prediction failures can remain cached for five minutes, so network recovery is not proof of an immediate suggestion. Only closed, initialized Apps in direct environments receive an owned persistent route; missing routes in running Apps are not hot-attached.
 - CCDX adds experimental local history compression only when installed App
   runtimes support it and report it off. Existing choices are preserved; an
   already-enabled default, unavailable runtime or failed check is skipped.

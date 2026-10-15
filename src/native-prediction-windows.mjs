@@ -35,7 +35,7 @@ export function windowsPredictionAppProcesses(app, { env = process.env, ...optio
       $_.ExecutablePath -eq $env:CCDX_PREDICTION_APP_PATH -and ($_.CommandLine -notmatch '--type(?:=|\\s)')
     } | ForEach-Object {
       $route=$null;
-      if($_.CommandLine -match '--proxy-pac-url=(?:"(http://127\\.0\\.0\\.1:\\d{1,5}/proxy\\.pac)"|(http://127\\.0\\.0\\.1:\\d{1,5}/proxy\\.pac))'){
+      if($_.CommandLine -match '--proxy-pac-url=(?:"(http://127\\.0\\.0\\.1:\\d{1,5}/proxy\\.pac(?:\\?v=2)?)"|(http://127\\.0\\.0\\.1:\\d{1,5}/proxy\\.pac(?:\\?v=2)?)(?=\\s|$))'){
         $route=if($Matches[1]){$Matches[1]}else{$Matches[2]}
       };
       @{pid=[int]$_.ProcessId;route=$route;readable=![string]::IsNullOrWhiteSpace($_.CommandLine)}
@@ -43,7 +43,7 @@ export function windowsPredictionAppProcesses(app, { env = process.env, ...optio
   let rows;
   try { rows = JSON.parse(raw); } catch { throw new Error("Could not verify the running Windows App route; launch was skipped"); }
   if (!Array.isArray(rows) || rows.length > 8 || rows.some(row => !Number.isInteger(row?.pid) || typeof row.readable !== "boolean"
-    || (row.route !== null && (typeof row.route !== "string" || !/^http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac$/.test(row.route))))) {
+    || (row.route !== null && (typeof row.route !== "string" || !/^http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac(?:\?v=2)?$/.test(row.route))))) {
     throw new Error("Unknown running Windows App route; launch was skipped");
   }
   return rows;

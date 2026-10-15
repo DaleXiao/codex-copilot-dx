@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { installedWindowsPredictionApp, windowsPredictionAppProcesses } from "./native-prediction-windows.mjs";
 import { status } from "./status.mjs";
+import { isPredictionPacUrl } from "./prediction-pac.mjs";
 
 export { ensureAuth } from "./auth.mjs";
 
@@ -50,7 +51,7 @@ export function macPredictionAppProcesses(app, { exec = execFileSync } = {}) {
     const pid = Number(match[1]);
     try {
       const args = exec("/bin/ps", ["-p", String(pid), "-o", "args="], options);
-      const route = args.match(/(?:^|\s)--proxy-pac-url=(?:"(http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac)"|(http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac)(?=\s|$))/);
+      const route = args.match(/(?:^|\s)--proxy-pac-url=(?:"(http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac(?:\?v=2)?)"|(http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac(?:\?v=2)?)(?=\s|$))/);
       const readable = args.trim() === match[2] || args.trimStart().startsWith(`${match[2]} `);
       const uniqueRoute = (args.match(/(?:^|\s)--proxy-pac-url=/g) || []).length === 1;
       rows.push({ pid, readable, route: readable && uniqueRoute ? route?.[1] || route?.[2] || null : null });
@@ -64,8 +65,7 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
   preparePredictionRoute, persistedPredictionRoute = false, onPredictionRoute = () => {}, log = console.log,
   resolveWindowsApp = installedWindowsPredictionApp, windowsAppProcesses = windowsPredictionAppProcesses,
   macAppProcesses = macPredictionAppProcesses } = {}) {
-  if (platform === "win32" && autoLaunchEnabled(env) && typeof predictionPacUrl === "string"
-    && /^http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac$/.test(predictionPacUrl)
+  if (platform === "win32" && autoLaunchEnabled(env) && isPredictionPacUrl(predictionPacUrl)
     && typeof predictionApp === "string" && path.win32.isAbsolute(predictionApp)) {
     try {
       if (typeof predictionProfile !== "string" || !path.win32.isAbsolute(predictionProfile)
@@ -124,7 +124,7 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
     return false;
   }
 
-  const extraArgs = typeof predictionPacUrl === "string" && /^http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac$/.test(predictionPacUrl)
+  const extraArgs = isPredictionPacUrl(predictionPacUrl)
     && APP_PATH_CANDIDATES.includes(predictionApp)
     ? ["--args", `--proxy-pac-url=${predictionPacUrl}`] : [];
   if (extraArgs.length) {

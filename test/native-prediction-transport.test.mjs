@@ -110,10 +110,10 @@ async function writeChunks(stream, total, byte) {
 }
 
 test("prediction PAC routes only two HTTPS origins and falls back to direct", () => {
-  const scope = {};
+  const scope = { Date: { now: () => 0 } };
   vm.runInNewContext(predictionPac(12345), scope);
   for (const host of ["chatgpt.com", "ab.chatgpt.com"]) {
-    assert.equal(scope.FindProxyForURL(`https://${host}/anything`, host), "PROXY 127.0.0.1:12345; DIRECT");
+    assert.equal(scope.FindProxyForURL(`https://${host}/anything`, host), "PROXY 127.0.0.1:12345; PROXY ccdx-0.localhost:12345; DIRECT");
     assert.equal(scope.FindProxyForURL(`http://${host}/anything`, host), "DIRECT");
   }
   for (const host of ["api.openai.com", "example.test", "chatgpt.com.example.test", "other.chatgpt.com"]) {
@@ -175,9 +175,9 @@ test("CONNECT allowlist and PAC endpoint reject other authorities and browser or
     req.once("connect", (res, socket) => { socket.destroy();resolve(res.statusCode); });req.once("error", reject);req.end();
   });
   assert.equal(originStatus, 403);
-  for (const [headers, expected] of [[{}, 200], [{ origin: "https://example.test" }, 403], [{ host: "example.test" }, 403]]) {
+  for (const pathname of ["/proxy.pac", "/proxy.pac?v=2", "/proxy.pac?v=3"]) for (const [headers, expected] of [[{}, pathname.endsWith("v=3") ? 403 : 200], [{ origin: "https://example.test" }, 403], [{ host: "example.test" }, 403]]) {
     const result = await new Promise((resolve, reject) => {
-      http.get({ host: "127.0.0.1", port: f.bridge.port, path: "/proxy.pac", headers }, res => {
+      http.get({ host: "127.0.0.1", port: f.bridge.port, path: pathname, headers }, res => {
         const parts = [];res.on("data", part => parts.push(part));res.on("end", () => resolve({ status: res.statusCode, text: Buffer.concat(parts).toString() }));
       }).once("error", reject);
     });

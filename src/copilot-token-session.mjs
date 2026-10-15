@@ -15,6 +15,7 @@ import {
   normalizeGithubIdentity,
 } from "./github-identity.mjs";
 import { status } from "./status.mjs";
+import { cancelResponseBody } from "./auth-device-flow.mjs";
 
 const GITHUB_API = "https://api.github.com";
 
@@ -251,6 +252,7 @@ export function createCopilotTokenSession({
       throw error;
     }
     if (!response.ok) {
+      cancelResponseBody(response);
       if ((response.status === 401 || response.status === 403) && allowTokenDiscovery) {
         const imported = await importDiscoveredGithubToken({
           home: resolvedHome,
@@ -272,9 +274,23 @@ export function createCopilotTokenSession({
       }
       if (response.status === 401 || response.status === 403) {
         const prefix = profile === "codex" ? "Failed to get Copilot token" : `Failed to get Copilot token for ${profile} profile`;
-        throw refreshError(formatReauth(`${prefix}: ${response.status}. The saved GitHub token may be expired, revoked, or missing Copilot access.`, resolvedHome), {
-          statusCode: response.status,
-        });
+        const reason = `${prefix}: ${response.status}.`;
+        if (!usesDefaultTokenStore || typeof reauthMessage === "function") {
+          throw refreshError(formatReauth(`${reason} The saved GitHub token may be expired, revoked, or missing Copilot access.`, resolvedHome), {
+            statusCode: response.status,
+          });
+        }
+        // A Copilot denial is not proof that the underlying GitHub credential
+        // expired. Only GitHub's own 401 can justify reauthorization guidance.
+        const identity = response.status === 401
+          ? await fetchGithubIdentity(credentials.token, { fetchImpl, signal, timeoutMs: 4000 }) : null;
+        if (signal?.aborted) throw abortError(signal);
+        const message = identity?.status === 401
+          ? formatReauth(`${reason} GitHub also rejected the saved credential.`, resolvedHome)
+          : `${reason} The saved GitHub credential was preserved. ${response.status === 403 || identity?.ok
+            ? "Check Copilot account access and network policy; this response does not establish that a new login is needed."
+            : "GitHub credential validity could not be confirmed; check network access before changing authentication."}`;
+        throw refreshError(message, { statusCode: response.status });
       }
       const prefix = profile === "codex" ? "Failed to get Copilot token" : `Failed to get Copilot token for ${profile} profile`;
       throw refreshError(`${prefix}: ${response.status}`, {

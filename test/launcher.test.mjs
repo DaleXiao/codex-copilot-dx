@@ -119,6 +119,22 @@ test("macOS prediction reuse verifies the current route without spawning or stop
   assert.equal(await openCodex({ ...options, macAppProcesses() { throw new Error("process access unavailable"); } }), false);
 });
 
+test("macOS recognizes the stable revision URL but never mistakes a cached legacy route for it", async () => {
+  const app = "/Applications/ChatGPT.app", pac = "http://127.0.0.1:12345/proxy.pac?v=2";
+  const [row] = macPredictionAppProcesses(app, { exec(_command, args) {
+    return args[0] === "-axo" ? `101 ${app}/Contents/MacOS/ChatGPT\n`
+      : `${app}/Contents/MacOS/ChatGPT --proxy-pac-url="${pac}"`;
+  } });
+  assert.equal(row.route, pac);
+  const logs = [];
+  assert.equal(await openCodex({ env: {}, platform: "darwin", predictionApp: app, predictionPacUrl: pac,
+    macAppProcesses: () => [{ pid: 101, readable: true, route: pac.replace("?v=2", "") }],
+    spawnImpl() { assert.fail("running legacy App must not be restarted"); }, log: text => logs.push(text) }), false);
+  assert.match(logs.join("\n"), /old or unverified/);
+  assert.equal(await openCodex({ env: {}, platform: "darwin", predictionApp: app, predictionPacUrl: pac,
+    macAppProcesses: () => [row], spawnImpl() { assert.fail("matching App must be reused"); }, log() {} }), true);
+});
+
 test("macOS prediction launch does not report success when the active App drops its route", async () => {
   const pac = "http://127.0.0.1:12345/proxy.pac";
   const args = ["/Applications/ChatGPT.app", "--args", `--proxy-pac-url=${pac}`];

@@ -26,8 +26,9 @@ test("prediction PAC retains original proxy paths and never embeds proxy credent
   const pac = networkPredictionPac(12345, plan);
   assert.ok(!pac.includes("alice") && !pac.includes("secret"));
   const context = { shExpMatch: (s, rule) => new RegExp(`^${rule.replaceAll(".", "\\.").replaceAll("*", ".*")}$`).test(s), dnsDomainIs: (s, suffix) => s.endsWith(suffix) };
+  context.Date = { now: () => 0 };
   vm.runInNewContext(pac, context);
-  assert.equal(context.FindProxyForURL("https://chatgpt.com/", "chatgpt.com"), "PROXY 127.0.0.1:12345; PROXY proxy.test:8080");
+  assert.equal(context.FindProxyForURL("https://chatgpt.com/", "chatgpt.com"), "PROXY 127.0.0.1:12345; PROXY ccdx-0.localhost:12345; PROXY proxy.test:8080");
   assert.equal(context.FindProxyForURL("https://other.test/", "other.test"), "PROXY proxy.test:8080");
   assert.equal(context.FindProxyForURL("http://other.test/", "other.test"), "SOCKS5 socks.test:1080");
   assert.equal(context.FindProxyForURL("https://a.direct.test/", "a.direct.test"), "DIRECT");

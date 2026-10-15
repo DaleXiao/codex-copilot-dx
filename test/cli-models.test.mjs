@@ -188,7 +188,7 @@ test("fetchLiveCopilotModels reports local and upstream failures", async (t) => 
         home,
         fetchImpl: async () => new Response("forbidden", { status: 403 }),
       }),
-      /authentication failed: github_token_invalid \(HTTP 403\)/,
+      /authentication failed: github_access_denied \(HTTP 403\)/,
     );
   });
 

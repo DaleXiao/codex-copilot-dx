@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { PassThrough, Writable } from "node:stream";
 import { Script } from "node:vm";
 import { windowsPowerShellEnvironment } from "./native-prediction-windows.mjs";
+import { predictionProxyExpression } from "./prediction-pac.mjs";
 
 function failure(code) {
   return Object.assign(new Error(`Windows prediction network failed (${code}); existing company routes were preserved`), { code });
@@ -12,7 +13,7 @@ function failure(code) {
 export function companyPredictionPac(script, port) {
   if (typeof script !== "string" || Buffer.byteLength(script) > 1024 * 1024 || !Number.isInteger(port) || port < 1 || port > 65535) throw failure("proxy_pac_invalid");
   // Compile only for syntax validation; never execute a downloaded PAC in Node.
-  const combined = `var ccdxCompanyRoute=(function(){\n${script}\n;return FindProxyForURL;})();\nfunction FindProxyForURL(url,host){var original=ccdxCompanyRoute(url,host);if(url.indexOf('https:')===0&&(host==='chatgpt.com'||host==='ab.chatgpt.com'))return 'PROXY 127.0.0.1:${port}; '+original;return original;}\n`;
+  const combined = `var ccdxCompanyRoute=(function(){\n${script}\n;return FindProxyForURL;})();\nfunction FindProxyForURL(url,host){var original=ccdxCompanyRoute(url,host);if(url.indexOf('https:')===0&&(host==='chatgpt.com'||host==='ab.chatgpt.com'))return ${predictionProxyExpression(port)}+'; '+original;return original;}\n`;
   try { new Script(combined); } catch { throw failure("proxy_pac_invalid"); }
   return combined;
 }

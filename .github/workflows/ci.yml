@@ -68,6 +68,27 @@ jobs:
       - run: npm test
       - run: npm run test:smoke
       - run: npm run test:package
+  prediction-browsers:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - name: Provision test-only Chromium
+        run: |
+          npm install --prefix "${{ runner.temp }}/ccdx-browser" playwright@1.62.1
+          node "${{ runner.temp }}/ccdx-browser/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Verify repeated recovery in the same browser process and preserve company fallback
+        run: node scripts/prediction-browser-replay.mjs --playwright "${{ runner.temp }}/ccdx-browser/node_modules/playwright/index.js"
+      - name: Verify revised PAC and default credential denial handling
+        run: node --test test/prediction-pac.test.mjs test/copilot-auth-recovery.test.mjs
   test:
     runs-on: ubuntu-latest
     strategy:

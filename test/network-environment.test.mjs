@@ -18,7 +18,7 @@ import { runPredictionCommand, startNativePrediction } from "../src/native-predi
 const proxy = "http://proxy.test:8080";
 const reported = ["172.16.0.0/12", "10.0.0.0/8", "198.18.0.0/15", "192.168.0.0/16"];
 function pac(plan) {
-  const context = { dnsResolve() { assert.fail("CIDRs must not trigger DNS"); }, dnsResolveEx() { assert.fail("CIDRs must not trigger DNS"); } };
+  const context = { Date: { now: () => 0 }, dnsResolve() { assert.fail("CIDRs must not trigger DNS"); }, dnsResolveEx() { assert.fail("CIDRs must not trigger DNS"); } };
   vm.runInNewContext(networkPredictionPac(23456, plan), context);return context.FindProxyForURL;
 }
 
@@ -34,7 +34,7 @@ test("reported macOS CIDR exceptions are accepted from either source with identi
       assert.equal(networkProxyFor(url, plan) === null, direct, host);
       assert.equal(find(url.href, url.hostname), direct ? "DIRECT" : "PROXY proxy.test:8080", host);
     }
-    assert.equal(find("https://chatgpt.com/", "chatgpt.com"), "PROXY 127.0.0.1:23456; PROXY proxy.test:8080");
+    assert.equal(find("https://chatgpt.com/", "chatgpt.com"), "PROXY 127.0.0.1:23456; PROXY ccdx-0.localhost:23456; PROXY proxy.test:8080");
   }
   assert.equal(networkProxyFor(new URL("https://chatgpt.com"), resolveNetworkRoute({ env: { NO_PROXY: reported.join(",") } })), null);
 });

@@ -382,6 +382,11 @@ try {
     process.exit(0);
   }
 
+  // Restore the opted-in listener alongside authentication/model initialization;
+  // a slow company-proxy setup must not delay the core listener.
+  const earlyIntegration = await clientIntegrations();
+  const predictionSetup = runInBackground(() => earlyIntegration.start());
+
   // Ensure GitHub login, using device flow if no token exists.
   await ensureAuth({ log: startupLogger("Auth") });
 
@@ -430,7 +435,7 @@ try {
   const { compressionSetup, imageEnabled, imageMcpSkipped } = await configureCodexClient();
 
   // Optional native prediction setup must never prevent the core adapter from running.
-  nativePrediction = await (await clientIntegrations()).start();
+  nativePrediction = await predictionSetup;
   const persistentRoute = await nativePrediction?.prepareRoute();
 
   // Launch Codex when available. A running App is never forcibly restarted.

@@ -55,7 +55,10 @@ export async function fetchGithubIdentity(token, {
       headers: { Authorization: `token ${token.trim()}`, Accept: "application/json" },
       signal: controller.signal,
     }), controller.signal);
-    if (!resp.ok) return { ok: false, status: resp.status, reason: "github_user_failed" };
+    if (!resp.ok) {
+      cancelResponseBody(resp);
+      return { ok: false, status: resp.status, reason: "github_user_failed" };
+    }
     const data = await awaitWithSignal(() => resp.json(), controller.signal);
     const identity = normalizeGithubIdentity(data);
     return identity ? { ok: true, ...identity } : { ok: false, reason: "github_identity_missing" };
@@ -120,8 +123,9 @@ async function validateGithubTokenRequest(token, { fetchImpl, signal }) {
     return {
       ok: false,
       status: userResp.status,
+      accessDenied: userResp.status === 403,
       transient: userResp.status === 429 || userResp.status >= 500 || userResp.headers?.get?.("x-ratelimit-remaining") === "0",
-      reason: userResp.status === 401 || userResp.status === 403 ? "github_token_invalid" : "github_user_failed",
+      reason: userResp.status === 401 ? "github_token_invalid" : userResp.status === 403 ? "github_access_denied" : "github_user_failed",
     };
   }
 
@@ -145,6 +149,7 @@ async function validateGithubTokenRequest(token, { fetchImpl, signal }) {
     return {
       ok: false,
       status: copilotResp.status,
+      accessDenied: copilotResp.status === 403,
       transient: copilotResp.status === 429 || copilotResp.status >= 500,
       reason: copilotResp.status === 401 || copilotResp.status === 403 ? "copilot_access_denied" : "copilot_token_failed",
       login,
@@ -222,6 +227,9 @@ export async function discoverGithubToken({
     failures.push({ source, validation });
   }
 
+  if (failures.some(item => item.validation?.accessDenied)) {
+    return { ok: false, accessDenied: true, failures };
+  }
   if (sources.incomplete || boundedSignal.aborted || failures.some(item => item.validation?.transient)) {
     return { ok: false, incomplete: true, transient: true, failures };
   }
@@ -287,6 +295,7 @@ export async function importDiscoveredGithubToken({
       const logins = [...new Set(discovered.candidates.map((candidate) => candidate.login || candidate.id || "unknown"))];
       throw new Error(`Multiple GitHub Copilot accounts were found (${logins.join(", ")}). Set CCDX_GITHUB_LOGIN or CCDX_GITHUB_TOKEN_PATH to select one explicitly.`);
     }
+    if (discovered.accessDenied) throw new Error("GitHub or Copilot denied access to an existing credential. Check account access and network policy; credentials were preserved and no new login was started.");
     if (discovered.transient) throw new Error("Local GitHub credentials could not be fully checked. Check network access and retry; no new login was started.");
     if (!discovered.ok) return null;
     writeToken(discovered.token, home, discovered.validation);

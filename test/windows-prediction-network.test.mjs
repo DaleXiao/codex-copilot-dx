@@ -31,9 +31,9 @@ function fixture(t, { ready = pac, respond = true } = {}) {
 }
 
 test("company PAC preserves direct/proxy/backup decisions and routes only the two HTTPS hosts", () => {
-  const route = runInNewContext(companyPredictionPac(pac, 12345) + "\nFindProxyForURL;");
-  assert.equal(route("https://chatgpt.com/x", "chatgpt.com"), "PROXY 127.0.0.1:12345; PROXY company.test:8080; PROXY backup.test:8080");
-  assert.equal(route("https://ab.chatgpt.com/x", "ab.chatgpt.com").startsWith("PROXY 127.0.0.1:12345;"), true);
+  const route = runInNewContext(companyPredictionPac(pac, 12345) + "\nFindProxyForURL;", { Date: { now: () => 0 } });
+  assert.equal(route("https://chatgpt.com/x", "chatgpt.com"), "PROXY 127.0.0.1:12345; PROXY ccdx-0.localhost:12345; PROXY company.test:8080; PROXY backup.test:8080");
+  assert.equal(route("https://ab.chatgpt.com/x", "ab.chatgpt.com").startsWith("PROXY 127.0.0.1:12345; PROXY ccdx-0.localhost:12345;"), true);
   for (const [url, host] of [["https://copilot.test/x", "copilot.test"], ["http://chatgpt.com/x", "chatgpt.com"], ["wss://chatgpt.com/x", "chatgpt.com"]]) {
     assert.equal(route(url, host), "PROXY company.test:8080; PROXY backup.test:8080");
   }

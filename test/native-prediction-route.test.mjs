@@ -38,6 +38,21 @@ test("company routing is skipped without creating even a settings lock or callin
   assert.deepEqual(fs.readFileSync(f.file), before);assert.equal(fs.existsSync(f.directory), false);
 });
 
+test("one-time route revision migration requires a closed App and preserves original rollback ownership", async t => {
+  const f = fixture(t, { mode: "system" });
+  await updatePredictionRoute(f.options);
+  const next = { ...f.options, pacUrl: `${f.options.pacUrl}?v=2` };
+  const before = fs.readFileSync(f.file);
+  await assert.rejects(updatePredictionRoute({ ...next, assertClosed() { throw new Error("App running"); } }), /App running/);
+  assert.deepEqual(fs.readFileSync(f.file), before);
+  assert.equal((await updatePredictionRoute(next)).status, "installed");
+  assert.equal(hasInstalledPredictionRoute(next), true);
+  assert.equal(hasInstalledPredictionRoute(f.options), false);
+  assert.equal((await updatePredictionRoute(next)).status, "installed");
+  await updatePredictionRoute({ ...next, remove: true });
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.file)).proxy, { mode: "system" });
+});
+
 test("explicit or unknown user proxies are never adopted or replaced", async t => {
   for (const proxy of [{ mode: "direct" }, { mode: "fixed_servers", server: "company.test:8080" },
     { mode: "pac_script", pac_url: "http://127.0.0.1:12345/proxy.pac" }, { mode: "future" }]) {

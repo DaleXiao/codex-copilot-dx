@@ -4,9 +4,9 @@ import { isDeepStrictEqual } from "node:util";
 import { readBoundedFileSync } from "./bounded-file.mjs";
 import { atomicWriteFileSync } from "./atomic-file.mjs";
 import { withFileLock } from "./lock.mjs";
+import { isPredictionPacUrl } from "./prediction-pac.mjs";
 
-const validPac = value => typeof value === "string" && /^http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac$/.test(value)
-  && Number(new URL(value).port) >= 1024 && Number(new URL(value).port) <= 65535;
+const validPac = isPredictionPacUrl;
 const object = value => value && typeof value === "object" && !Array.isArray(value);
 
 function regularFile(file) {

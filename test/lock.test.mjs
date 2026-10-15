@@ -25,7 +25,16 @@ test("sync lock repeatedly releases real file handles without retaining a live-o
   const lock = path.join(dir, "state.lock");
   for (let i = 0; i < 100; i++) {
     withFileLockSync(lock, () => {});
-    assert.equal(fs.existsSync(lock), false, `iteration ${i}`);
+    let diagnostic = "";
+    if (fs.existsSync(lock)) {
+      const before = fs.lstatSync(lock), fd = fs.openSync(lock, "r");
+      try {
+        const opened = fs.fstatSync(fd), select = stat => ({ dev: stat.dev, ino: stat.ino, size: stat.size,
+          regular: stat.isFile(), mtime: stat.mtimeMs, ctime: stat.ctimeMs });
+        diagnostic = JSON.stringify({ path: select(before), descriptor: select(opened), symlink: before.isSymbolicLink() });
+      } finally { fs.closeSync(fd); }
+    }
+    assert.equal(fs.existsSync(lock), false, `iteration ${i}: ${diagnostic}`);
   }
 });
 

@@ -48,7 +48,7 @@ jobs:
       - name: Verify startup presentation and bounded prediction recovery on Windows
         run: node --test test/startup-ui.test.mjs test/native-prediction-route.test.mjs test/native-prediction-recovery.test.mjs test/native-prediction-protocol.test.mjs test/prediction-fix.test.mjs test/network-route.test.mjs test/network-environment.test.mjs
       - name: Verify command ownership, credential discovery and bounded doctor repairs
-        run: node --test test/windows-command.test.mjs test/auth-sources.test.mjs test/doctor-repair.test.mjs test/cli-options.test.mjs test/codex-config-doctor.test.mjs
+        run: node --test test/windows-command.test.mjs test/auth-sources.test.mjs test/doctor-repair.test.mjs test/cli-options.test.mjs test/codex-config-doctor.test.mjs test/lock.test.mjs
       - name: Verify streaming delivery and Chat semantic validation on Windows
         run: node --test test/stream-delivery.test.mjs test/responses-bridge.test.mjs test/responses-chat-http.test.mjs
       - run: npm run test:package

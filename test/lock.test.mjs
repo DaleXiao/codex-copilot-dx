@@ -3,7 +3,46 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { withFileLock } from "../src/lock.mjs";
+import { withFileLock, withFileLockSync } from "../src/lock.mjs";
+
+test("sync lock releases its own owner despite timestamp finalization and supports repeated repairs", t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-sync-timestamp-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const lock = path.join(dir, "state.lock"), original = fs.fstatSync;
+  let reads = 0;
+  fs.fstatSync = (...args) => { const stat = original(...args);stat.mtimeMs += ++reads;stat.ctimeMs += reads;return stat; };
+  try {
+    for (let i = 0; i < 5; i++) {
+      withFileLockSync(lock, () => {});
+      assert.equal(fs.existsSync(lock), false);
+    }
+  } finally { fs.fstatSync = original; }
+});
+
+test("sync lock repeatedly releases real file handles without retaining a live-owner marker", t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-sync-repeat-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const lock = path.join(dir, "state.lock");
+  for (let i = 0; i < 100; i++) {
+    withFileLockSync(lock, () => {});
+    assert.equal(fs.existsSync(lock), false, `iteration ${i}`);
+  }
+});
+
+test("sync release never removes a replacement owner or a symlink", t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-sync-replacement-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const lock = path.join(dir, "state.lock"), replacement = JSON.stringify({ pid: process.pid, owner: "replacement" });
+  withFileLockSync(lock, () => { fs.unlinkSync(lock);fs.writeFileSync(lock, replacement); });
+  assert.equal(fs.readFileSync(lock, "utf8"), replacement);
+  if (process.platform !== "win32") {
+    fs.unlinkSync(lock);
+    const target = path.join(dir, "other.lock");fs.writeFileSync(target, replacement);
+    withFileLockSync(lock, () => { fs.unlinkSync(lock);fs.symlinkSync(target, lock); });
+    assert.equal(fs.lstatSync(lock).isSymbolicLink(), true);
+    assert.equal(fs.readFileSync(target, "utf8"), replacement);
+  }
+});
 
 test("withFileLock: serializes concurrent lock holders", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-lock-"));

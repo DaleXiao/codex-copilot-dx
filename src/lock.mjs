@@ -61,7 +61,7 @@ function processIsAlive(pid) {
   }
 }
 
-function readStaleLockSnapshot(lockPath, io) {
+function readStaleLockSnapshot(lockPath, io, { checkTimestamps = true } = {}) {
   const before = io.lstatSync(lockPath);
   if (!before.isFile() || before.isSymbolicLink()) return { safe: false };
 
@@ -81,8 +81,8 @@ function readStaleLockSnapshot(lockPath, io) {
     if (after.dev !== opened.dev
       || after.ino !== opened.ino
       || after.size !== opened.size
-      || after.mtimeMs !== opened.mtimeMs
-      || after.ctimeMs !== opened.ctimeMs) {
+      || (checkTimestamps && (after.mtimeMs !== opened.mtimeMs
+        || after.ctimeMs !== opened.ctimeMs))) {
       return { safe: false };
     }
     let record = {};
@@ -137,7 +137,10 @@ function writeLockRecord(lockPath, record, io) {
 
 function removeOwnedLock(lockPath, owner, io) {
   try {
-    const snapshot = readStaleLockSnapshot(lockPath, io);
+    // Own-lock release is identified by its random owner and unchanged regular
+    // file identity/size. Windows may finalize timestamps while closing a write;
+    // timestamp stability belongs to stale reclamation, not releasing our lock.
+    const snapshot = readStaleLockSnapshot(lockPath, io, { checkTimestamps: false });
     if (snapshot.safe && snapshot.owner === owner) io.unlinkSync(lockPath);
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;

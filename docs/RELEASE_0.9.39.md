@@ -64,6 +64,13 @@ The first Windows CI exposed a source-checkout classification error: no global
 shim in a checkout was incorrectly labelled a warning. It is now informational;
 real installed-shim failures remain warnings. A platform-independent regression
 test protects this distinction without weakening installation acceptance.
+Windows Node 22 also exposed a retained synchronous owner lock on immediately
+repeating repair. Own-lock release no longer requires stable timestamps across
+descriptor reads, while retaining regular-file identity/size and exact random
+owner checks. Stale-lock reclamation retains its stricter timestamp checks.
+Tests inject timestamp finalization, repeat real release 100 times, and preserve
+replacement owners and symlinks. No live-owner lock is stolen or stale threshold
+reduced.
 
 The local configured npm mirror returned ETARGET for the old 0.9.31 package before
 the lifecycle upgrade began. No mirror/policy override or fallback was applied.

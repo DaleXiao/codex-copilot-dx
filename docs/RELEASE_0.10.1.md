@@ -2,6 +2,8 @@
 
 Date: 2026-10-17. Follow-up to [0.10.0](RELEASE_0.10.0.md).
 
+Status: published to npm `latest` and GitHub; publication receipts follow.
+
 The final port-isolation fixture reproduced a startup-order conflict when the
 existing core service is configured with `ADAPTER_PORT=2027`, which is also the
 new Claude gateway's fixed port. An early M365 setup could reserve it before the
@@ -39,3 +41,16 @@ and publication receipts are appended below after completion.
 Publication receipts are appended on the repository's main branch after the
 immutable tag/package is published. Windows M365 real-tenant validation remains
 pending user feedback, rather than being inferred from the CI results.
+
+## Publication
+
+- Tag `v0.10.1` targets `f0ffb2a0ec068afb0e5fc16e8d1fc1b2471644ee`.
+- [npm publishing run 38942724743](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38942724743)
+  completed successfully. It reported `+ codex-copilot-dx@0.10.1` on
+  `https://registry.npmjs.org/` with tag `latest`.
+- [GitHub release v0.10.1](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.10.1)
+  is public and latest, with the tested package attached. Asset SHA-256:
+  `46bd95d792bc9a3365ac306dd3440ab3383d948f1b656ab5f25b28a8ce25d7f8`.
+- GitHub used the previously verified historical PAT; npm used the existing
+  repository secret. No new interactive authentication or credential replacement
+  was requested. The existing local service was left running for the user to update.

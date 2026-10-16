@@ -88,7 +88,7 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
 Startup checks GitHub's latest-release web redirect, not npm or the anonymous REST quota, and suggests `ccdx update github`.
 Updates install the exact stable tag; dependencies still use npm's configured registry. Lookup errors identify HTTP refusal, timeout, network failure or invalid redirects. For npm `EALLOWREMOTE`, only if policy permits and the update is trusted, use `ccdx update github --allow-remote`: explicit URL-download permission for that installation's whole dependency tree, not a hostname allowlist. Persistent npm settings stay unchanged.
 Updates warn about mismatched npm targets without changing PATH/prefix and verify the installed target version (exact tag for GitHub). Restart the adapter separately. Full `ccdx doctor` reports this target and readonly credential permissions; it never changes ACLs.
-Recent errors separate HTTP and model failures. HTTP metadata retains status, source and IDs, not error bodies or prompts; original errors still reach Codex unchanged.
+Recent errors separate HTTP and model failures. By default HTTP metadata retains status, source and IDs, not error bodies or prompts; original errors still reach Codex unchanged. Explicit, bounded error-excerpt collection is described in the [reference](docs/REFERENCE.md#http-error-diagnostics).
 
 The dashboard and CLI separate prediction preference, bridge state and observed config traffic; candidate visibility stays unknown. See [architecture boundaries](docs/ARCHITECTURE.md) for separate inference, integration, image and management ownership.
 

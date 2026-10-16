@@ -89,3 +89,25 @@ boundary/empty-error distinctions (`0a8d064`), and Floway provider-owned policie
 and faithful input translation (`f117981`). Existing correct CCDX behaviors are
 protected by regressions; full-body archives, multi-account routing, quota
 polling and a generic plugin architecture are outside this release.
+
+## Cross-platform acceptance and package
+
+All fourteen jobs passed for runtime source commit
+`c8b23a008fb0e060cead8878b2f693fece3e801a` in
+[candidate CI](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38838969627).
+This includes Node 22.15/24 on macOS/Linux, Windows native/profile/repair/stream
+checks on both Node versions, strict npm 12 real installation/upgrade on all three
+platforms, full Chromium repeated recovery in all three platforms, the official
+Codex synthetic-provider replay and the bilingual Chromium/WebKit dashboard
+matrix. No failed job was skipped or retried. Final changes after the frozen
+runtime only clarify README/reference privacy wording and this audit receipt;
+the six documentation-contract checks passed for those clarifications.
+
+The final tarball has 155 files, 395,804 bytes, SHA-1
+`fdeca052f07073c839f9d345c892e09027595ccd`, SHA-256
+`7d65df1bbdc5300374f7c02a391de42e9fb5737ac633f56e458e472576ffd0ec`.
+It adds approximately 5 KiB compressed over 0.9.40. Direct dependencies remain
+sharp 0.35.3 and smol-toml 1.8.0; no install hook is added. Tests, experiments,
+temporary release helpers, keys and credentials are excluded. This report is
+not packed and does not change published package bytes. Publication receipts
+follow only after GitHub and npm confirm success.

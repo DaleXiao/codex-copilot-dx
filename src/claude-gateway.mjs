@@ -75,7 +75,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
     const tracker = countTokens ? null : performance.begin("messages", { requestId });
     tracker?.setProvider("m365");
     const abort = createRequestAbort(req, res);
-    let release = () => {}, outcome = "failed", model = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false;
+    let release = () => {}, outcome = "failed", model = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
     if (!countTokens) { stats.total++;stats.active++;stats.last_request_at = new Date().toISOString(); }
     await runWithRequestContext({ requestId, provider: "m365", route: "messages", streamPerformance: tracker }, async () => {
       try {
@@ -108,12 +108,12 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
           abort.setTimeout(config.streamIdleTimeoutMs, "stream_idle_timeout");
           res.writeHead(upstream.status, { ...headers, "Cache-Control": "no-cache" });
           const observer = createMessagesObserver(event => {
-            if (sawStop) return;
+            if (event.type === "error") { failedEvent = true;outcome = "failed";return; }
+            if (sawStop || failedEvent) return;
             if (event.type === "message_start") { responseId = event.message?.id;model = event.message?.model || model;usage = event.message?.usage || {}; }
             if (event.type === "content_block_delta") tracker?.firstOutput(event.delta?.type === "input_json_delta" ? "tool_arguments" : "output_text");
             if (event.type === "message_delta") { usage = { ...usage, ...event.usage };stopReason = event.delta?.stop_reason || stopReason; }
             if (event.type === "message_stop") { sawStop = true;outcome = stopReason === "max_tokens" ? "incomplete" : "completed"; }
-            if (event.type === "error" && !sawStop) outcome = "failed";
           }, config.maxSseBufferBytes);
           const reader = upstream.body.getReader();
           try {
@@ -122,10 +122,10 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
               tracker?.upstreamActivity();abort.setTimeout(config.streamIdleTimeoutMs, "stream_idle_timeout");
               observer.write(value);
               if (!await writeOrDrain(res, value, { signal: abort.signal })) break;
-              if (sawStop) break;
+              if (sawStop || failedEvent) break;
             }
             observer.finish();
-            if (!sawStop) throw new Error("Claude stream ended before message_stop");
+            if (!sawStop && !failedEvent) throw new Error("Claude stream ended before message_stop");
             if (!res.writableEnded) res.end();
           } finally { await reader.cancel().catch(() => {});reader.releaseLock(); }
         }
@@ -140,7 +140,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
         if (!countTokens) {
           stats.active--;stats[outcome]++;
           tracker?.setModel(model);tracker?.setOutputTokens(usage?.output_tokens);
-          tracker?.terminal(outcome, { origin: "upstream_response", reason: stopReason === "max_tokens" ? "max_output_tokens" : undefined });
+          tracker?.terminal(outcome, { origin: failedEvent ? "upstream_event" : "upstream_response", reason: stopReason === "max_tokens" ? "max_output_tokens" : undefined });
           tracker?.finish({ failed: outcome === "failed" || outcome === "cancelled", aborted: outcome === "cancelled", statusCode: res.statusCode });
           const client = req.headers["x-ccdx-client"] === "claude-app" ? "claude_app" : req.headers["x-ccdx-client"] === "claude-code" ? "claude_code" : "claude";
           try { void Promise.resolve(record(buildMessagesUsageRecord({ model, responseId, usage, mode: streamed ? "stream" : "json", client }))).catch(() => {}); } catch {}

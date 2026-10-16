@@ -175,3 +175,10 @@ test PATH omitted the current Node directory. The harness now includes that exac
 runtime directory, without inheriting credentials or the user's full environment.
 This was a test-harness startup failure, not an observed image-provider failure;
 the complete matrix is being rechecked on the corrected commit.
+
+The corrected matrix `38936038411` passed all fourteen jobs. A final failure-only
+Claude fixture then reproduced an error event followed by `message_stop` being
+counted as completed. Error events now remain authoritative failures, retain their
+original stream bytes, close the upstream reader and use the `upstream_event`
+diagnostic origin. This extends the existing HTTP-success/model-completion rule
+to the new protocol; it does not add inference retry or change valid replies.

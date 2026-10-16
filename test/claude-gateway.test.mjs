@@ -68,6 +68,19 @@ test("HTTP 200 without a Claude terminal is failed, and truncation remains incom
   assert.equal(g.server.snapshot().active, 0);
 });
 
+test("a Claude error event cannot become a completed reply after message_stop", async t => {
+  const bytes = Buffer.from([
+    { type: "message_start", message },
+    { type: "error", error: { type: "overloaded_error", message: "Synthetic upstream failure" } },
+    { type: "message_stop" },
+  ].map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""));
+  const g = await gateway(t, async () => new Response(bytes, { headers: { "Content-Type": "text/event-stream" } }));
+  const response = await g.request({ model: "claude-opus-5.5", messages: [], stream: true });
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+  assert.equal(g.server.snapshot().completed, 0);assert.equal(g.server.snapshot().failed, 1);
+  assert.equal(g.server.snapshot().performance.by_route.messages.terminal_outcomes.by_origin.upstream_event.failed, 1);
+});
+
 test("browser requests and invalid local keys never reach the M365 provider", async t => {
   const g = await gateway(t, async () => Response.json(message));
   for (const [headers, status] of [[{ Origin: "http://evil.test" }, 403], [{ Authorization: "Bearer wrong" }, 401]]) {

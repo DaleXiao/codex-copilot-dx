@@ -337,7 +337,7 @@ function streamHeaders(resp) {
 async function selectStreamFailureRetry(reqContext, failure, usedRetryPolicies, options) {
   if (!failure) return null;
   const errorText = responseFailureText(failure.event, failure.eventType);
-  if (!hasCopilotResponseRetryPolicy(400, errorText, usedRetryPolicies)) return null;
+  if (!(options.compatibility?.hasRetry || hasCopilotResponseRetryPolicy)(400, errorText, usedRetryPolicies)) return null;
   const preparation = await options.acquireRetryPreparation?.(reqContext);
   let keepReservation = false;
   try {
@@ -345,7 +345,7 @@ async function selectStreamFailureRetry(reqContext, failure, usedRetryPolicies, 
       assertActive: options.assertPrepareActive,
       historySnapshot: preparation?.historySnapshot,
     });
-    const retry = await selectCopilotResponseRetryWithHistory(restored, 400, errorText, usedRetryPolicies, {
+    const retry = await (options.compatibility?.selectRetry || selectCopilotResponseRetryWithHistory)(restored, 400, errorText, usedRetryPolicies, {
       ...options, reserveHistory: preparation?.reserveHistory || options.reserveHistory,
     });
     options.assertPrepareActive?.();
@@ -489,7 +489,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       if (retry) {
         console.warn(status("warn", retry.warning));
         try {
-          opened = await openCopilotResponse(retry.reqContext, upstream, {
+          opened = await (options.compatibility?.openResponse || openCopilotResponse)(retry.reqContext, upstream, {
             ...options,
             usedRetryPolicies: retry.usedPolicies,
           });
@@ -537,7 +537,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
 export async function proxyCopilotResponses(reqContext, req, res, upstream = copilotResponses, options = {}) {
   let opened;
   try {
-    opened = await openCopilotResponse(reqContext, upstream, options);
+    opened = await (options.compatibility?.openResponse || openCopilotResponse)(reqContext, upstream, options);
     opened.streamRetryEligible = opened.reqContext.body.stream === true
       && hasEncryptedResponseState(opened.reqContext.body?.input);
   } finally {
@@ -609,7 +609,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
         if (retry) {
           console.warn(status("warn", retry.warning));
           try {
-            opened = await openCopilotResponse(retry.reqContext, upstream, {
+            opened = await (options.compatibility?.openResponse || openCopilotResponse)(retry.reqContext, upstream, {
               ...options,
               usedRetryPolicies: retry.usedPolicies,
             });

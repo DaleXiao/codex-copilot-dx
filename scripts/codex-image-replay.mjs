@@ -19,6 +19,7 @@ import { parseImageToolArgs } from "../src/image-tool-client.mjs";
 const args = process.argv.slice(2);
 let codex = process.env.CCDX_CODEX_BINARY;
 let liveModel;
+let adapterUrl = "http://127.0.0.1:2026";
 let withoutMcp = false;
 let editing = false;
 for (let index = 0; index < args.length; index += 1) {
@@ -27,10 +28,15 @@ for (let index = 0; index < args.length; index += 1) {
   assert.ok(args[index + 1], `Missing value for ${args[index]}`);
   if (args[index] === "--codex") codex = args[index + 1];
   else if (args[index] === "--live-model") liveModel = args[index + 1];
+  else if (args[index] === "--adapter-url") adapterUrl = args[index + 1];
   else assert.fail(`Unknown argument: ${args[index]}`);
   index += 1;
 }
 assert.ok(!withoutMcp || liveModel, "--without-mcp requires --live-model");
+const adapter = new URL(adapterUrl);
+assert.ok(adapter.protocol === "http:" && ["127.0.0.1", "[::1]"].includes(adapter.hostname)
+  && !adapter.username && !adapter.password && adapter.pathname === "/" && !adapter.search && !adapter.hash, "Use a plain loopback adapter URL");
+adapterUrl = adapter.origin;
 assert.ok(codex && path.isAbsolute(codex), "Supply --codex /absolute/path/to/codex or CCDX_CODEX_BINARY");
 const loopbackFetch = fetch;
 globalThis.fetch = async () => { throw new Error("Network fetch is forbidden in this offline replay"); };
@@ -323,7 +329,7 @@ const server = http.createServer((req, res) => {
     if (liveModel && (scenario.image || scenario.redisplay)) {
       assert.ok(step < 12, "Live replay exceeded its bounded model request budget");
       assert.ok(JSON.stringify(body.input).includes("ccdx-image"), "Managed skill missing from live model context");
-      const upstream = await loopbackFetch("http://127.0.0.1:2026/v1/responses", {
+      const upstream = await loopbackFetch(`${adapterUrl}/v1/responses`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -554,7 +560,7 @@ try {
       await runTurn(fresh.thread.id, "natural_language_second_edit", true, false, 2);
       assert.equal(editCount, 2, "Natural-language edit chain must issue exactly two edits");
     }
-    console.log(JSON.stringify({ version, liveModel, withoutMcp, editing, localAdapter: "127.0.0.1:2026", syntheticPixels: true, builtinSkillCoexists: true, upstreamCount, generationCount, editCount, fixtureApprovals, helperApprovals, summaries }, null, 2));
+    console.log(JSON.stringify({ version, liveModel, withoutMcp, editing, localAdapter: adapterUrl, syntheticPixels: true, builtinSkillCoexists: true, upstreamCount, generationCount, editCount, fixtureApprovals, helperApprovals, summaries }, null, 2));
     console.log(editing
       ? "PASS: real model delivered and edited CCDX images with final chat Markdown, correct handles, and zero-call original redisplay."
       : "PASS: real model selected CCDX once, embedded its saved image in final chat Markdown, and redisplayed the original without an image call.");

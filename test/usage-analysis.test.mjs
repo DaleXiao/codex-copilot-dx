@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { analyzeUsageLogs } from "../src/usage-analysis.mjs";
+import { summarizeUsageLogs } from "../src/usage-store.mjs";
 
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-usage-analysis-"));
@@ -18,6 +19,22 @@ function fixture(t) {
   const row = (model = "gpt-test", ts = "2026-10-11T01:00:00Z") => JSON.stringify({ ts, model, usage: { input_tokens: 100, output_tokens: 20, cached_input_tokens: 80 } }) + "\n";
   return { file, now, row, reads: () => reads, realTime: () => { Date.now = oldNow; } };
 }
+
+test("source filters isolate same-name models in both settled summaries and daily analytics", async t => {
+  const f = fixture(t), legacy = JSON.parse(f.row("same-model"));
+  const m365 = { ...legacy, provider: "m365", usage: { input_tokens: 20, output_tokens: 2, cached_input_tokens: 0 } };
+  fs.writeFileSync(f.file, JSON.stringify(legacy) + "\n" + JSON.stringify(m365) + "\n");
+  for (const provider of ["github", "m365", "github"]) {
+    const result = await analyzeUsageLogs(f.file, { now: f.now, provider });
+    const expected = provider === "github" ? 100 : 20;
+    assert.equal(result.summary.requests, 1);assert.equal(result.summary.totals.input_tokens, expected);
+    assert.equal(result.analytics.days.at(-1).input_tokens, expected);
+    assert.equal((await summarizeUsageLogs(f.file, { provider })).totals.input_tokens, expected);
+  }
+  f.realTime();
+  assert.equal((await summarizeUsageLogs(f.file, { provider: "m365" })).requests, 1, "unsettled files must still apply the filter");
+  await assert.rejects(summarizeUsageLogs(f.file, { provider: "other" }), /provider/);
+});
 
 test("usage analysis shares one settled scan and returns independent bounded aggregates", async t => {
   const f = fixture(t); fs.writeFileSync(f.file, f.row());

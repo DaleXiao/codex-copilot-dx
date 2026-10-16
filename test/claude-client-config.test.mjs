@@ -1,0 +1,86 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { configureClaudeClients, restoreClaudeClients, claudeClientPaths, M365_CLAUDE_PROFILE_ID } from "../src/claude-client-config.mjs";
+import { m365Paths } from "../src/m365-settings.mjs";
+
+function fixture(t) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-claude-config-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const options = { home, env: {}, platform: "darwin", desktopInstalled: true, desktopManaged: false,
+    baseUrl: "http://127.0.0.1:2027", apiKey: "ccdx_m365_" + "a".repeat(64), models: [{ id: "claude-opus-5.5" }] };
+  return { options, paths: claudeClientPaths(options) };
+}
+function write(file, value) { fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, JSON.stringify(value)); }
+const read = file => JSON.parse(fs.readFileSync(file));
+
+test("Claude configuration is idempotent, private and restores only its own fields", t => {
+  const { options, paths } = fixture(t);
+  const original = { permissions: { allow: ["Read"] }, env: { USER_CHOICE: "kept" } };
+  write(paths.code, original);write(paths.normal, { deploymentMode: "1p", mcpServers: { own: { command: "custom" } } });
+  const first = configureClaudeClients(options);assert.equal(first.code, "configured");assert.equal(first.app, "configured");
+  assert.deepEqual(read(paths.normal), { deploymentMode: "1p", mcpServers: { own: { command: "custom" } } });
+  assert.equal(read(paths.code).env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, "1");
+  const before = fs.readFileSync(paths.code), metaBefore = fs.readFileSync(paths.meta);
+  assert.equal(configureClaudeClients(options).changed, false);
+  assert.deepEqual(fs.readFileSync(paths.code), before);assert.deepEqual(fs.readFileSync(paths.meta), metaBefore);
+  if (process.platform !== "win32") assert.equal(fs.statSync(paths.code).mode & 0o777, 0o600);
+  const meta = read(paths.meta);meta.entries.push({ id: "another-profile", name: "Keep" });write(paths.meta, meta);
+  const result = restoreClaudeClients(options);assert.equal(result.preserved, 0);assert.equal(result.remaining, 0);
+  assert.deepEqual(read(paths.code), original);
+  assert.deepEqual(read(paths.normal), { deploymentMode: "1p", mcpServers: { own: { command: "custom" } } });
+  assert.deepEqual(read(paths.meta).entries, [{ id: "another-profile", name: "Keep" }]);
+});
+
+test("Windows third-party config uses LocalAppData while first-party detection uses roaming AppData", () => {
+  const paths = claudeClientPaths({ home: "/fixture", platform: "win32", env: { LOCALAPPDATA: "/fixture/local", APPDATA: "/fixture/roaming" } });
+  assert.equal(paths.normal, path.join("/fixture/roaming", "Claude", "claude_desktop_config.json"));
+  assert.equal(paths.threep, path.join("/fixture/local", "Claude-3p", "claude_desktop_config.json"));
+});
+
+test("existing gateway, foreign token and managed Desktop routes are never partially replaced", t => {
+  const { options, paths } = fixture(t);
+  const existing = { env: { ANTHROPIC_AUTH_TOKEN: "foreign-token" }, permissions: { allow: [] } };
+  write(paths.code, existing);write(paths.meta, { appliedId: "other", entries: [{ id: "other", name: "Corporate" }] });
+  const before = fs.readFileSync(paths.code), meta = fs.readFileSync(paths.meta);
+  const result = configureClaudeClients(options);assert.equal(result.code, "preserved");assert.equal(result.app, "preserved");
+  assert.deepEqual(fs.readFileSync(paths.code), before);assert.deepEqual(fs.readFileSync(paths.meta), meta);
+  assert.equal(fs.existsSync(paths.profile), false);
+  assert.equal(configureClaudeClients({ ...options, desktopManaged: true }).app, "preserved");
+});
+
+test("user edits survive refresh and removal, while unchanged owned fields are restored", t => {
+  const { options, paths } = fixture(t);configureClaudeClients(options);
+  const code = read(paths.code);code.env.ANTHROPIC_MODEL = "user-chosen-model";code.env.USER_CHOICE = "kept";write(paths.code, code);
+  configureClaudeClients({ ...options, models: [...options.models, { id: "claude-sonnet-5.5" }] });
+  assert.equal(read(paths.code).env.ANTHROPIC_MODEL, "user-chosen-model");
+  assert.deepEqual(JSON.parse(read(paths.profile).inferenceModels), ["claude-opus-5.5", "claude-sonnet-5.5"]);
+  const result = restoreClaudeClients(options);assert.ok(result.preserved > 0);
+  assert.deepEqual(read(paths.code).env, { ANTHROPIC_MODEL: "user-chosen-model", USER_CHOICE: "kept" });
+});
+
+test("explicit API keys, credential helpers and cloud routes keep their existing Code destination", t => {
+  const { options, paths } = fixture(t);
+  for (const existing of [{ env: { ANTHROPIC_API_KEY: "existing-private-key" } }, { apiKeyHelper: "existing-helper" },
+    { env: { CLAUDE_CODE_USE_ANTHROPIC_AWS: "1" } }, { env: { CLAUDE_CODE_USE_GATEWAY: "1" } }]) {
+    write(paths.code, existing);const before = fs.readFileSync(paths.code);
+    assert.equal(configureClaudeClients({ ...options, desktopInstalled: false }).code, "preserved");
+    assert.deepEqual(fs.readFileSync(paths.code), before);
+  }
+});
+
+test("damaged Code settings do not prevent independent Desktop setup", t => {
+  const { options, paths } = fixture(t);fs.mkdirSync(path.dirname(paths.code), { recursive: true });fs.writeFileSync(paths.code, Buffer.from([0xff]));
+  const result = configureClaudeClients(options);assert.equal(result.code, "configuration_unavailable");assert.equal(result.app, "configured");
+  assert.deepEqual(fs.readFileSync(paths.code), Buffer.from([0xff]));assert.equal(read(paths.meta).appliedId, M365_CLAUDE_PROFILE_ID);
+});
+
+test("untrusted cleanup ownership cannot edit arbitrary Claude fields", t => {
+  const { options, paths } = fixture(t);configureClaudeClients(options);
+  const journal = m365Paths(options).ownership, value = read(journal);
+  value.operations.push({ file: paths.code, keys: ["permissions"], before: { exists: false }, after: {} });write(journal, value);
+  const before = fs.readFileSync(paths.code);
+  assert.throws(() => restoreClaudeClients(options), /ownership is invalid/);assert.deepEqual(fs.readFileSync(paths.code), before);
+});

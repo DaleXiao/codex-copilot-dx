@@ -51,6 +51,16 @@
             <div class="panel-heading"><h2 data-i18n>IMAGE GENERATION</h2><span data-i18n>OPTIONAL</span></div>
             <strong id="image">—</strong><p id="image-detail" class="hint">—</p>
           </article>
+          <article class="panel">
+            <div class="panel-heading"><h2>Microsoft 365</h2><span data-i18n>SEPARATE PROFILE</span></div>
+            <strong id="m365-state">—</strong>
+            <p id="m365-account" class="hint">—</p>
+            <p id="m365-models" class="hint">—</p>
+            <p id="m365-claude" class="hint">—</p>
+            <p id="m365-requests" class="hint">—</p>
+            <p id="m365-clients" class="hint">—</p>
+            <p id="m365-codex" class="hint">—</p>
+          </article>
         </section>
 
         <details class="panel dashboard-section" id="client-features" open>
@@ -77,7 +87,7 @@
 
         <details class="panel dashboard-section" id="model-usage" open>
           <summary class="panel-heading"><h2 data-i18n>USAGE</h2><span id="usage-state" data-i18n>READING LOG</span></summary>
-          <div class="section-actions"><button id="clear-usage-day" type="button" hidden data-i18n>All history</button><button id="refresh-usage" type="button" data-i18n>Refresh</button></div>
+          <div class="section-actions"><label><span data-i18n>Source</span> <select id="usage-provider"><option value="" data-i18n>All providers</option><option value="github">GitHub Copilot</option><option value="m365">Microsoft 365</option></select></label><button id="clear-usage-day" type="button" hidden data-i18n>All history</button><button id="refresh-usage" type="button" data-i18n>Refresh</button></div>
           <p id="usage-note" class="table-note" data-i18n>Aggregating local usage metadata…</p>
           <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col" data-i18n>MODEL</th><th scope="col" data-i18n>CALLS</th><th scope="col" data-i18n>INPUT</th><th scope="col" data-i18n>CACHE READ</th><th scope="col" data-i18n>OUTPUT</th><th scope="col" data-i18n>TOTAL</th><th scope="col" data-i18n>CACHE HIT</th></tr></thead><tbody id="usage-body"><tr><td colspan="7" data-i18n>Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n>Cache hit = recorded cached / input tokens. ~ = incomplete history. — = unavailable or invalid counts.</p>

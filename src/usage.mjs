@@ -7,6 +7,8 @@ export {
   usageLogPath,
   usageLogMaxBytes,
   buildResponsesUsageRecord,
+  buildMessagesUsageRecord,
+  usageProvider,
   recordUsage,
   recordResponsesUsage,
   flushUsageWritesForTests,
@@ -33,6 +35,8 @@ function cacheHitPercent(usage) {
 
 function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {
   const lines = [`Usage log: ${filePath}`];
+  if (summary.provider_filter) lines.push(`Provider: ${summary.provider_filter}`);
+  else if (summary.providers?.m365) lines.push(`Providers: GitHub ${fmt(summary.providers.github)} / M365 ${fmt(summary.providers.m365)} (combined totals; use --provider to separate)`);
   if (summary.requests === 0) {
     lines.push("No usage records yet.");
     return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
@@ -103,7 +107,8 @@ function formatTableUsageSummary(summary, filePath, output) {
   } else {
     table.compact = false;
   }
-  const lines = [`Usage log: ${safePath}`, "", table.output];
+  const lines = [`Usage log: ${safePath}`, ...(summary.provider_filter ? [`Provider: ${summary.provider_filter}`]
+    : summary.providers?.m365 ? [`Providers: GitHub ${fmt(summary.providers.github)} / M365 ${fmt(summary.providers.m365)} (combined totals; use --provider to separate)`] : []), "", table.output];
   if (table.compact) {
     lines.push(
       "",
@@ -137,7 +142,8 @@ export async function printUsageSummary({
   output = process.stdout,
   log = console.log,
   warn = console.error,
+  provider = "",
 } = {}) {
-  const summary = await summarizeUsageLogs(filePath, { warn });
+  const summary = await summarizeUsageLogs(filePath, { warn, provider });
   log(formatUsageSummary(summary, { filePath, format, output }));
 }

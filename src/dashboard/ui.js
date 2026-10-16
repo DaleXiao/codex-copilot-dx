@@ -246,7 +246,7 @@ function applyModels(data, { changed }) {
     }
     if (!data.models.length) emptyTable("live-models-body", 4, "No selectable GPT models advertised.");
   }
-  text("models-note", "{selectable} selectable / {advertised} advertised / {host} / {time}", { selectable: number(data.selectable), advertised: number(data.advertised), host: data.upstream_host, time: new Date(data.checked_at).toLocaleTimeString() });
+  text("models-note", "{selectable} selectable / {advertised} advertised / {host} / {time}", { selectable: number(data.selectable), advertised: number(data.advertised), host: data.upstream_host, time: data.checked_at ? new Date(data.checked_at).toLocaleTimeString() : phrase("Unknown") });
 }
 
 async function loadUsage() { return dashboardRefresh.refresh("usage", { force: true }); }
@@ -255,7 +255,7 @@ async function readDashboard(url, { signal, timeout = 15000, source } = {}) {
   const response = await fetch(url, { cache: "no-store", headers: { "X-CCDX-Dashboard": "1", Accept: "application/json" },
     signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)]) });
   const data = await response.json();
-  if (!response.ok || (source && data.source !== source)) throw new Error(data.error || `HTTP ${response.status}`);
+  if (!response.ok || (source && !(Array.isArray(source) ? source : [source]).includes(data.source))) throw new Error(data.error || `HTTP ${response.status}`);
   return data;
 }
 
@@ -312,7 +312,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
     models: {
       visible: () => element("upstream-models").open,
       load: async ({ signal }) => {
-        const data = await readDashboard("/_ccdx/ui/models/live", { signal, source: "live" });
+        const data = await readDashboard("/_ccdx/ui/models/live", { signal, source: ["live", "catalog"] });
         if (!Array.isArray(data.models) || data.models.some(model => !model || typeof model.id !== "string" || !Array.isArray(model.endpoints))) throw new Error("Invalid model snapshot");
         return data;
       },
@@ -320,7 +320,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       apply: applyModels,
       state: state => {
         element("refresh-models").disabled = Boolean(state.pending);
-        text("models-state", state.pending ? "CHECKING LIVE" : state.error ? "LIVE LOOKUP FAILED" : "LIVE SNAPSHOT");
+        text("models-state", state.pending ? "CHECKING LIVE" : state.error ? "LIVE LOOKUP FAILED" : state.value?.source === "catalog" ? "CATALOG SNAPSHOT" : "LIVE SNAPSHOT");
         if (state.error) {
           const message = String(state.error.message || state.error).slice(0, 240);
           const httpError = /^Live model lookup failed \(HTTP (\d{3})\)\. Run ccdx models for details\.$/.exec(message);
@@ -333,15 +333,23 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
     },
     usage: {
       visible: () => element("model-usage").open,
-      variant: () => ((element("model-usage").open && element("usage-analytics").open) || Boolean(usageView.selectedDate)) ? "analytics" : "summary",
+      variant: () => {
+        const mode = ((element("model-usage").open && element("usage-analytics").open) || Boolean(usageView.selectedDate)) ? "analytics" : "summary";
+        const provider = element("usage-provider")?.value || "";
+        return mode + (provider ? `:${provider}` : "");
+      },
       load: async ({ variant, signal }) => {
-        const data = await readDashboard(`/_ccdx/ui/usage${variant === "analytics" ? `?analytics=1&time_zone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}` : ""}`, { signal, source: "local_usage_log" });
-        if (!data.total || !Array.isArray(data.rows) || (variant === "analytics" && (!Array.isArray(data.analytics?.days) || !data.analytics.days.length))) throw new Error("Invalid usage snapshot");
+        const [mode, provider = ""] = variant.split(":"), query = new URLSearchParams();
+        if (mode === "analytics") { query.set("analytics", "1");query.set("time_zone", Intl.DateTimeFormat().resolvedOptions().timeZone); }
+        if (provider) query.set("provider", provider);
+        const data = await readDashboard(`/_ccdx/ui/usage${query.size ? `?${query}` : ""}`, { signal, source: "local_usage_log" });
+        if (!data.total || !Array.isArray(data.rows) || (mode === "analytics" && (!Array.isArray(data.analytics?.days) || !data.analytics.days.length))) throw new Error("Invalid usage snapshot");
         return data;
       },
       apply: applyUsage,
       state: state => {
         element("refresh-usage").disabled = Boolean(state.pending);
+        if (element("usage-provider")) element("usage-provider").disabled = Boolean(state.pending);
         if (state.pending) text("usage-state", "READING LOG");
         else if (state.error) {
           text("usage-state", "LOG UNAVAILABLE");
@@ -415,6 +423,7 @@ for (const id of ["analytics-model", "analytics-range", "analytics-metric"]) ele
   if (usageView.data && usageView.selectedDate) renderUsageTable();
 });
 element("clear-usage-day").addEventListener("click", () => selectUsageDay(""));
+element("usage-provider")?.addEventListener("change", () => { dashboardRefresh.invalidate("usage");dashboardRefresh.refresh("usage", { force: true }); });
 element("refresh-models").addEventListener("click", loadModels);
 element("refresh-usage").addEventListener("click", loadUsage);
 loadAnimation();

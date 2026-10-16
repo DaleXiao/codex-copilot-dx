@@ -1,8 +1,8 @@
 # codex-copilot-dx
 
-Use Codex App with GitHub Copilot through a local adapter.
+Use Codex App with GitHub Copilot through a local adapter, with isolated Microsoft 365 access where authorized.
 
-CCDX targets Codex App: Copilot discovery, adapted model catalogs, Responses streaming, tool calls and conversation history.
+CCDX keeps GitHub Copilot as the default Codex source: discovery, adapted model catalogs, Responses streaming, tool calls and conversation history. Eligible Microsoft 365 environments can also use a separate Claude gateway and manually select M365 as a Codex backup.
 Default Auto-review: **GPT-6.1 Sol / low**. Image generation is **off by default**. Native predictions are also **off by default**.
 
 ## Install and run
@@ -39,6 +39,10 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
 | `ccdx auth status` | Saved account; add `--online` to verify access |
 | `ccdx models` | Fresh upstream model list |
 | `ccdx usage` | Recorded tokens and upstream prompt-cache hit rate |
+| `ccdx usage --provider github` / `m365` | Separate source-specific usage |
+| `ccdx m365 status` / `models` | M365 authorization, Claude gateway and Claude models |
+| `ccdx m365 switch` | Choose the Codex source; default remains GitHub |
+| `ccdx m365 on` / `off` / `remove` | Enable discovery, restore owned client settings, or remove owned M365 state |
 | `ccdx auto-review-model` | Select model, then reasoning effort; `0` follows client |
 | `ccdx animation` | Preview and select terminal animation |
 | `ccdx prediction fix` | Recheck system routing and repair enabled predictions; report required restarts |
@@ -49,6 +53,23 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
 | `ccdx image-status` / `ccdx disable-image` | Check or disable optional images |
 | `ccdx prediction on` / `off` / `status` | Opt in to native predictions (macOS and Windows) |
 | `ccdx update` | Update the global package |
+
+## Microsoft 365 access
+
+Eligible macOS/Windows machines attempt silent Microsoft authorization at startup,
+without Copilot CLI or a browser login. MDM alone is insufficient: account, tenant,
+device policy and Loki entitlement must permit access. Optional failure does not block GitHub.
+
+Claude clients use the separate, keyed `127.0.0.1:2027` gateway and Claude-only catalog.
+Existing custom/managed settings are preserved; already-running clients may need a normal restart.
+`ccdx m365 off` restores unchanged owned fields; `remove` also clears owned M365 state.
+
+Codex stays on GitHub until `ccdx m365 switch`. Select available GPT/review models;
+there is no automatic failover or missing-model substitution. Use **Standard** on M365:
+Fast is unverified. Tokens, accounts and review choices are isolated; prediction and images remain independent.
+
+The optional native broker adds a **14.6 MB download**, with no install hook. Linux retains core support without M365.
+See the [M365 reference](docs/REFERENCE.md#microsoft-365-provider) for ownership, cache/experimental-feature limits and cleanup.
 
 ## Compatibility and safety
 

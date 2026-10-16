@@ -1,6 +1,160 @@
 # CCDX command, configuration and compatibility reference
 
-Use Codex App with GPT models available to your **GitHub Copilot** account.
+Use Codex App with GPT models available to your **GitHub Copilot** account by default.
+The optional [Microsoft 365 provider](#microsoft-365-provider) supplies a separate
+Claude gateway and an explicitly selected Codex backup.
+
+## Microsoft 365 provider
+
+Starting with 0.10.0, CCDX can discover authorized M365 models independently of
+Copilot CLI. This is not restoration of the retired personal-GitHub Claude profile
+or PM Studio patch. The core Codex provider remains GitHub until explicitly changed.
+
+```bash
+ccdx m365 status
+ccdx m365 models
+ccdx m365 switch
+ccdx m365 switch m365 --model gpt-6-sol --auto-review-model gpt-6-sol
+ccdx m365 switch github
+ccdx m365 off
+ccdx m365 on
+ccdx m365 remove
+ccdx usage --provider m365
+ccdx usage --provider github
+```
+
+The model IDs above are examples, not guaranteed entitlement. `switch` checks the
+current M365 catalog before committing. Interactive mode asks for the provider,
+Codex GPT model and Auto-review model; scripts must supply available IDs (or reuse
+previously saved valid choices). Switching requires the running updated adapter.
+It affects subsequent requests, not in-flight streams. Existing Codex threads keep
+their selected model: choose an available M365 model in the App. Unavailable
+models return a clear error instead of being aliased. There is no automatic
+cross-provider failover, quota borrowing or organization/account substitution.
+
+Startup uses the official optional `@azure/msal-node-runtime` 0.20.6 package in a
+short-lived Node helper. It discovers OS broker accounts and calls silent token
+acquisition only. It neither launches a login UI nor reads Copilot CLI tokens.
+macOS requires MDM enrollment and a working Microsoft Enterprise SSO broker;
+Windows uses its Microsoft account broker. Tenant policy, device compliance,
+account authorization and Loki entitlement still decide access. Multiple accounts
+without a prior binding, interaction requirements, policy refusal or a missing
+native package leave M365 unavailable. None of these invalidate GitHub credentials.
+The GitHub-selected Codex path retains its existing first-run GitHub login flow.
+
+The optional package download is approximately 14.6 MB, contains prebuilt binaries
+and has no install script or runtime dependencies. It is not bundled Copilot CLI.
+If this optional broker alone is unavailable, core GitHub/prediction/image behavior
+remains available with the existing dependencies installed. Do not use a blanket
+`--omit=optional` workaround: sharp still needs its platform-specific optional binaries.
+M365 is enabled automatically only on macOS/Windows; Linux reports it
+unsupported. The `CCDX_M365` environment control accepts `0` to suppress M365 startup for that process. It does not
+restore existing client settings; use `m365 off` for that explicit operation.
+
+Entra tokens are retained in memory until renewal/close, never saved in a CCDX
+credential file. Renewal is silent and single-flight, with a 28-second helper
+deadline and one-minute failure backoff. The provider uses only
+`https://df.loki.delve.office.com/api/v1/llmapi`; discovery uses `/models` and
+inference uses its advertised native Responses or Messages endpoints. This is a
+dogfood service, not a promised public SLA. No request is redirected to another
+origin. Explicit proxy/trust settings are preserved. Windows delegates system
+PAC/WPAD and integrated authentication to its own isolated WinHTTP worker;
+unsupported macOS dynamic PAC is reported rather than bypassed.
+
+The M365 profile under `~/.local/share/codex-copilot-dx/profiles/m365/` contains
+`settings.json`, nonsecret `account.json`, account-bound `models.json`, a private
+local `gateway.json` key, and `client-config.json` field ownership. JSON reads are
+bounded at 4 MiB and regular files only; new owned files use private permissions.
+Codex source and M365 review choices live separately in
+`~/.config/codex-copilot-dx/providers.json` (or under `XDG_CONFIG_HOME`). Existing
+GitHub auth/cache/preferences, Codex auth, prediction trust and image keys are not
+copied into the M365 profile. The system's Microsoft SSO account is never deleted.
+
+M365 catalogs refresh at startup and on the existing background model interval.
+Request-time catalog reads use the account-bound cache, trigger refresh after two
+hours and reject disk caches older than seven days. `ccdx models`, Auto-review's
+selector and dashboard models follow the selected Codex source. Under M365 they
+use the running provider's catalog, labeled as a catalog rather than a fresh
+per-command GitHub lookup. Disabled/hidden models and wrong publisher/protocol
+families are not exposed. A catalog listing is not proof that inference will pass
+quota or policy checks. M365 Fast is unverified and `priority` requests fail
+explicitly; choose Standard. This does not change GitHub Fast behavior.
+
+M365 Auto-review has its own required model choice and defaults to low reasoning.
+`ccdx auto-review-model` changes that provider's model/effort without touching the
+GitHub preference or falling back to its cached catalog. Native prediction still
+uses the conversation's selected model through the normal Codex endpoint. The
+optional image MCP/skill/API remains separately configured and off by default.
+
+### Claude gateway and client ownership
+
+The gateway is a second listener in the same Node service, on `127.0.0.1:2027`.
+It accepts a private local Bearer key or `x-api-key`, rejects browser Origin
+headers and exposes Claude only: `GET /v1/models`, `POST /v1/messages` and
+`POST /v1/messages/count_tokens` (upstream support remains authoritative).
+Messages tools, thinking, cache breakpoints, image blocks, beta headers and native
+SSE are relayed without OpenAI-format conversion. Cancellation and downstream
+backpressure are preserved. Upstream and local gateway credentials are distinct;
+the local key is never forwarded upstream. The legacy Claude URL on port 2026
+remains retired. Claude requests never reach GitHub.
+
+Loki explicitly rejects one-hour prompt-cache retention. M365's request policy
+caps standard `cache_control: {type: "ephemeral", ttl: "1h"}` fields to `5m`,
+logs that limitation once and counts adjustments in its status. Prompt bytes,
+breakpoint positions, tool input, thinking and approval settings do not change.
+This is a retention/cost limitation of the new M365 path, not an equivalent
+one-hour cache guarantee. GitHub caching is unchanged.
+
+For Claude Code, CCDX owns only its gateway environment fields in
+`CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`. For Claude App it
+uses the installed client's third-party config library, with one named
+`CCDX Microsoft 365` profile and the normal third-party deployment setting.
+macOS stores the owned App configuration below `~/Library/Application Support/Claude-3p`;
+Windows uses `%LOCALAPPDATA%/Claude-3p`. First-party Claude configuration is not modified.
+See the [official desktop configuration contract](https://claude.com/docs/third-party/claude-desktop/configuration).
+Existing foreign gateways,
+cloud-provider choices, other selected App profiles and detected managed desktop
+policies are preserved. No binary patch, system certificate, execution-policy
+change or forced App restart is performed. An already-running client can require
+its normal restart to read the saved settings; “configured” is not proof of a
+visible chat or successful reply.
+
+Claude Code 2.1.295 emits experimental fields that this Loki API rejects with
+`invalid_body`. Owned gateway setup therefore supplies the documented
+`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` compatibility option when no explicit
+environment override exists. Existing user values are preserved. This leaves
+standard tools, thinking and prompt-cache fields available; first-party-only beta
+features are not promised. CCDX does not silently delete conversation content,
+disable approval checks, or retry inference with reduced semantics. See the
+[official variable reference](https://code.claude.com/docs/en/env-vars).
+For Codex, both verified providers reject native image-generation declarations;
+their explicit request policy retains CCDX image function/MCP tools instead.
+
+`off` selects GitHub, stops M365 and restores only unchanged owned Claude fields.
+`remove` additionally removes CCDX's account/catalog/gateway/ownership files,
+while retaining the disabled preference and historical usage. Active M365 requests
+block removal; user-modified fields block full cleanup and are reported, not
+deleted. Neither operation clears Codex transcripts or shared image output.
+
+### Isolation and measurements
+
+Each request is pinned to its provider. Response IDs/history are namespaced by
+provider and account inside the existing shared history-byte limit; this is not a
+second unbounded history cache. Explicit switching can replay complete visible
+history. Foreign encrypted reasoning is not forwarded; opaque tool/compaction
+state requires verified local plaintext recovery, otherwise the request fails
+without discarding earlier context. No automatic cross-source retry is performed.
+
+CLI usage and WebUI include source filtering; historical records without a source
+are treated as GitHub. Claude's cache-read/cache-write input is included in its
+normalized total input, with raw reported usage retained. Missing counts remain
+unknown. Combined totals are labeled; identical model names across providers can
+be separated with the filter. The M365 status card separates auth/catalog state,
+gateway availability, client configuration and selected Codex source. Observed
+client requests are not claimed to prove the App's UI state. `doctor --online`
+checks the selected provider; `doctor --fix` does not reimport inactive GitHub auth.
+Claude gateway outcomes are displayed separately; core HTTP totals retain their
+existing main-listener meaning rather than mixing in another protocol's counts.
 
 CCDX is a local compatibility adapter for Codex App. It configures Codex to use an OpenAI Responses API on loopback while GitHub authentication, model discovery, and inference stay backed by GitHub Copilot.
 
@@ -493,7 +647,7 @@ Interactive image setup rereads the shared config after prompts and network vali
 
 ## Version 0.7.0 migration
 
-CCDX 0.7.0 retires the former Claude App, Claude Code, Anthropic Messages API, isolated Claude account, and PM Studio patch integrations. Their setup, status, restore, profile, and routing commands are no longer supported.
+CCDX 0.7.0 retired the former personal-GitHub Claude App, Claude Code, Anthropic Messages API, isolated Claude account, and PM Studio patch integrations. Their old setup, status, restore, profile, and routing commands remain unsupported. Version 0.10.0 adds a separate M365-only Claude gateway; it does not reactivate these old routes or PM Studio support.
 
 If PM Studio is still patched by an older CCDX release, update or reinstall PM Studio to restore its official application bundle. CCDX 0.7.0 does not patch PM Studio and does not provide a restore workflow.
 
@@ -524,7 +678,7 @@ does not wait for optional update/compression work or add online doctor/model pr
 ccdx models
 ```
 
-This performs a fresh, read-only GitHub Copilot model-directory lookup without starting the adapter, opening Device Flow, reading the local model cache, or consuming an inference request. It lists selectable GPT model IDs, providers, advertised APIs, and preview status. Catalog availability does not guarantee that a later inference request will avoid quota, rate-limit, or policy enforcement.
+With GitHub selected, this performs a fresh, read-only GitHub Copilot model-directory lookup without starting the adapter, opening Device Flow, reading the local model cache, or consuming an inference request. It lists selectable GPT model IDs, providers, advertised APIs, and preview status. With M365 selected it reads the running provider's isolated GPT catalog. Catalog availability does not guarantee that a later inference request will avoid quota, rate-limit, or policy enforcement.
 
 Concurrent identical live lookups share only the active request. Caller
 cancellation is independent; results are not retained as a fresh catalog after
@@ -540,7 +694,7 @@ Interactive terminals use aligned tables for `models`, `auth status`, and `usage
 ccdx auto-review-model
 ```
 
-The selector first queries the running adapter, including its last-known-good model list when live refresh is unavailable, then falls back to a local model cache no older than seven days. It offers model IDs that advertise a Responses endpoint and are not explicitly hidden from the model picker. This selection does not itself verify policy or inference access.
+With GitHub selected, the selector first queries the running adapter, including its last-known-good model list when live refresh is unavailable, then falls back to a local model cache no older than seven days. It offers model IDs that advertise a Responses endpoint and are not explicitly hidden from the model picker. M365 selection uses only that running provider's catalog and separate saved preference, with no GitHub cache fallback. This selection does not itself verify policy or inference access.
 
 Enter a model number, then a reasoning-effort number. The second menu reuses the same model-directory lookup and lists only advertised efforts. GPT-6.1 Sol excludes `none` and `minimal`, even if upstream metadata incorrectly lists them. Enter keeps the current valid effort or selects `low` for a new selection when advertised; `0` follows the client (or `low` if the request omits effort). If effort metadata is absent, only `0` is offered. Enter `q` at either step to cancel without saving either choice.
 

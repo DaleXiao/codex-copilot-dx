@@ -155,11 +155,16 @@ function insertByPriority(models, model) {
   else models.splice(index, 0, model);
 }
 
-export function buildCodexModelResponse({ copilotModels, codexCatalog } = {}) {
+export function buildCodexModelResponse({ copilotModels, codexCatalog, restrictToUpstream = false } = {}) {
   if (!copilotModelData(copilotModels) || !codexCatalogIsValid(codexCatalog)) return null;
 
   const bundledSlugs = new Set(codexCatalog.models.map(({ slug }) => slug));
   const models = codexCatalog.models.map((model) => {
+    if (restrictToUpstream) {
+      return isEligibleCopilotGpt6(copilotModels, model.slug)
+        ? { ...catalogModelForCopilot(model, copilotModels, { filterReasoning: true }), upgrade: null }
+        : { ...model, visibility: "hide", upgrade: null };
+    }
     if (!MANAGED_GPT6_MODELS.has(model.slug)) return model;
     if (!isEligibleCopilotGpt6(copilotModels, model.slug)) return { ...model, visibility: "hide" };
     return catalogModelForCopilot(model, copilotModels, { filterReasoning: model.slug === "gpt-6.1-sol" });
@@ -168,7 +173,7 @@ export function buildCodexModelResponse({ copilotModels, codexCatalog } = {}) {
     if (bundledSlugs.has(slug) || !isEligibleCopilotGpt6(copilotModels, slug)) continue;
     const model = compatibilityModel(codexCatalog, slug);
     if (!model) continue;
-    insertByPriority(models, catalogModelForCopilot(model, copilotModels, { filterReasoning: true }));
+    insertByPriority(models, { ...catalogModelForCopilot(model, copilotModels, { filterReasoning: true }), ...(restrictToUpstream ? { upgrade: null } : {}) });
   }
 
   return { ...copilotModels, object: copilotModels.object || "list", models };

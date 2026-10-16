@@ -30,6 +30,7 @@ export function responseFailureDetails(event, eventType = event?.type, {
   retried = false,
   retryPolicy = null,
   retrySkipped = null,
+  provider = currentRequestContext()?.provider,
 } = {}) {
   const response = event?.response && typeof event.response === "object" ? event.response : event;
   const error = response?.error && typeof response.error === "object"
@@ -40,6 +41,7 @@ export function responseFailureDetails(event, eventType = event?.type, {
   return {
     at: new Date().toISOString(),
     request_id: currentRequestContext()?.requestId || null,
+    ...(["github", "m365"].includes(provider) ? { provider } : {}),
     event_type: safeIdentifier(eventType || "response.failed"),
     model: safeIdentifier(response?.model || model),
     code: safeIdentifier(error?.code || "unknown_error"),
@@ -152,9 +154,9 @@ export function createHttpFailureDiagnostics({ maxEntries = 20, now } = {}) {
 }
 
 export function buildHttpFailureDetails({ statusCode, route, requestId, model, code, origin, headers,
-  error_body, error_type, parameter, diagnostic_message, method, target, request_options, upstream_attempts, attempt_timings, requested_model }) {
+  error_body, error_type, parameter, diagnostic_message, method, target, request_options, upstream_attempts, attempt_timings, requested_model, provider }) {
   const details = responseFailureDetails({ model, error: { code: typeof code === "string" && /^[a-z\d_.:-]{1,80}$/i.test(code) ? code : `http_${statusCode}`,
-    message: error_body === "empty" ? "Upstream returned no error details." : "HTTP request failed; original response was preserved." } }, "http.error", { headers });
+    message: error_body === "empty" ? "Upstream returned no error details." : "HTTP request failed; original response was preserved." } }, "http.error", { headers, provider });
   return { ...details, request_id: requestId, http_status: statusCode, route,
     origin: origin || (route === "not_found" ? "route" : "unclassified"), local_message: true,
     ...(error_body ? { error_body } : {}), ...(error_type ? { error_type } : {}), ...(parameter ? { parameter } : {}),

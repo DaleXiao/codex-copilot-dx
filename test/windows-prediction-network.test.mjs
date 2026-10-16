@@ -6,6 +6,7 @@ import { runInNewContext } from "node:vm";
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import { companyPredictionPac, startWindowsPredictionNetwork } from "../src/windows-prediction-network.mjs";
+import { startWindowsHttpNetwork } from "../src/windows-http-network.mjs";
 
 const pac = "function FindProxyForURL(url,host){if(host==='intranet')return 'DIRECT';return 'PROXY company.test:8080; PROXY backup.test:8080';}";
 function fixture(t, { ready = pac, respond = true } = {}) {
@@ -65,6 +66,29 @@ test("persistent worker streams uploads and replies, preserves cookies, and clos
   assert.ok(f.received.filter(event => event.op === "upload").every(event => Buffer.from(event.body, "base64").length <= 65536));
   network.close();assert.equal(f.child.killed, true);
   assert.equal(network.healthy(), false);
+});
+
+test("M365 WinHTTP worker accepts only its inference origin and cannot send credentials to prediction hosts", async t => {
+  const f = fixture(t, { ready: null });
+  const network = await startWindowsHttpNetwork({ target: "m365", settings: {}, spawnImpl: f.spawnImpl, timeoutMs: 120000 });
+  t.after(() => network.close());assert.equal(f.received[0].target, "m365");assert.equal(f.received[0].timeoutMs, 120000);
+  for (const [hostname, pathname] of [["chatgpt.com", "/backend-api/test"], ["df.loki.delve.office.com", "/other"]]) {
+    const req = network.requestImpl({ hostname, path: pathname, headers: { authorization: "synthetic_secret" } }, () => assert.fail());
+    const rejected = once(req, "error");req.end();assert.match((await rejected)[0].message, /proxy_target_invalid/);
+  }
+  assert.equal(f.received.some(event => event.op === "request"), false);
+  const result = new Promise((resolve, reject) => {
+    const req = network.requestImpl({ hostname: "df.loki.delve.office.com", path: "/api/v1/llmapi/models", headers: {} }, res => {
+      const chunks = [];res.on("data", chunk => chunks.push(chunk));res.on("end", () => resolve(Buffer.concat(chunks).toString()));res.on("error", reject);
+    });req.on("error", reject);req.end();
+  });assert.equal(await result, "fixture reply");
+});
+
+test("cancelling native worker initialization terminates the owned process", async t => {
+  const f = fixture(t);f.child.stdin = new Writable({ write(_bytes, _encoding, next) { next(); } });
+  const controller = new AbortController();
+  const pending = startWindowsHttpNetwork({ target: "m365", settings: {}, spawnImpl: f.spawnImpl, signal: controller.signal });
+  controller.abort();await assert.rejects(pending, /proxy_worker_cancelled/);assert.equal(f.child.killed, true);
 });
 
 test("worker failures, invalid targets and detection timeouts are bounded and redacted", async t => {

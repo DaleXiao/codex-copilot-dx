@@ -8,7 +8,7 @@ import {
   createRequestMetrics,
   runtimeStatusPayload,
 } from "./observability.mjs";
-import { createRequestId, runWithRequestContext } from "./request-context.mjs";
+import { createRequestId, runWithRequestContext, currentRequestContext } from "./request-context.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { status } from "./status.mjs";
 import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
@@ -27,6 +27,7 @@ import {
 } from "./http-transport.mjs";
 import { httpError } from "./http-errors.mjs";
 import { createRequestAdmission } from "./request-admission.mjs";
+import { PROVIDER_MANAGEMENT_PATH, handleProviderManagement } from "./provider-management.mjs";
 
 export {
   abortErrorStatusCode,
@@ -73,7 +74,7 @@ function sendRetiredClaudeSurface(res) {
     error: {
       type: "not_found_error",
       code: "ccdx_claude_retired",
-      message: "Claude App and Claude Code support was retired in ccdx 0.7.0.",
+      message: "The GitHub Claude endpoint was retired in ccdx 0.7.0. Microsoft 365 Claude uses the separate gateway; run ccdx m365 status.",
     },
   }));
 }
@@ -96,13 +97,14 @@ async function sendModelList(res, models, {
   headers = {},
   rawBody,
   statusCode = 200,
+  restrictToUpstream = false,
 } = {}) {
   let body = rawBody || JSON.stringify(models);
   if (clientVersion && typeof codexModelCatalog?.load === "function") {
     let response = null;
     try {
       const codexCatalog = await codexModelCatalog.load({ clientVersion });
-      response = buildCodexModelResponse({ copilotModels: models, codexCatalog });
+      response = buildCodexModelResponse({ copilotModels: models, codexCatalog, restrictToUpstream });
     } catch {}
     if (!response) {
       if (res.destroyed || res.writableEnded) return false;
@@ -164,17 +166,27 @@ export function createAdapterHandler(options = {}) {
   const imagePressure = options.imagePressure || createResponsesImagePressureController();
   const responseFailures = options.responseFailures || createResponseFailureDiagnostics();
   const httpErrors = createHttpFailureDiagnostics();
-  const optionalRoutes = createOptionalRoutes(options);
+  const optionalRoutes = createOptionalRoutes({ ...options, dashboardOptions: { ...options.dashboardOptions,
+    ...(options.providerRuntime ? { providerCatalogFn: () => options.providerRuntime.dashboardCatalog() } : {}) } });
   const managementHandler = createManagementHandler({
     nativePredictionPac: options.nativePredictionPac, fixPrediction: options.fixPrediction, requestBodyTimeoutMs,
-    statusSnapshot: () => ({ ...runtimeStatusPayload({
-      metrics: requestMetrics, streamPerformance: streamPerformanceMetrics, admission: acquireRequest,
-      imagePressure, responseFailures, imageGeneration: optionalRoutes.imageStats(),
-      modelRegistry: codexModelRegistry, codexClient, codexModelRegistry, codexModelCatalog,
-      clientIntegrations: options.clientIntegrationSnapshot?.(),
-    }), http_errors: httpErrors.snapshot() }),
+    statusSnapshot: () => {
+      const snapshot = runtimeStatusPayload({ metrics: requestMetrics, streamPerformance: streamPerformanceMetrics, admission: acquireRequest,
+        imagePressure, responseFailures, imageGeneration: optionalRoutes.imageStats(),
+        modelRegistry: codexModelRegistry, codexClient, codexModelRegistry, codexModelCatalog,
+        clientIntegrations: options.clientIntegrationSnapshot?.() });
+      const providers = options.providerRuntime?.snapshot();
+      if (providers?.codex_provider === "m365") {
+        snapshot.routing = { ...snapshot.routing, responses: "m365" };
+        snapshot.models = { ...snapshot.models, models: providers.m365.models?.gpt || 0,
+          source: providers.m365.models?.source || "unavailable", provider: "m365",
+          refresh_in_flight: providers.m365.refresh_in_flight === true };
+      }
+      return { ...snapshot, http_errors: httpErrors.snapshot(), ...(providers ? { providers } : {}) };
+    },
   });
   const responsesHandler = createResponsesHandler({
+    provider: options.provider || options.providerRuntime?.github,
     acquireRequest,
     autoReviewModelResolver: options.autoReviewModelResolver,
     chatCompletionsFn,
@@ -193,6 +205,7 @@ export function createAdapterHandler(options = {}) {
     upstreamTimeoutMs,
   });
   const responsesCompactHandler = createResponsesCompactHandler({
+    provider: options.provider || options.providerRuntime?.github,
     acquireRequest,
     autoReviewModelResolver: options.autoReviewModelResolver,
     imagePressure,
@@ -205,6 +218,24 @@ export function createAdapterHandler(options = {}) {
     streamIdleTimeoutMs,
     upstreamTimeoutMs,
   });
+  const providerHandlers = new WeakMap();
+  function handlersFor(provider) {
+    if (!provider || provider.id === "github") return { responses: responsesHandler, compact: responsesCompactHandler };
+    if (!providerHandlers.has(provider)) {
+      const common = { provider, acquireRequest, imagePressure, keepaliveIntervalMs: options.keepaliveIntervalMs,
+        modelRegistry: provider.registry, now: options.now, openAIModelEnv: { ...openAIModelEnv, CCDX_AUTO_REVIEW_MODEL: "" },
+        autoReviewModelResolver: () => { const preference = options.providerRuntime.selection().m365;
+          return { model: preference.auto_review_model, reasoningEffort: preference.auto_review_effort === undefined ? "low" : preference.auto_review_effort }; },
+        requestBodyTimeoutMs, responsesPayloadOptions: options.responsesPayloadOptions, responseFailures,
+        streamHandshakeTimeoutMs, streamIdleTimeoutMs, upstreamTimeoutMs };
+      providerHandlers.set(provider, {
+        responses: createResponsesHandler({ ...common, responsesFn: provider.client.responses, chatCompletionsFn: provider.client.chatCompletions,
+          getCachedModelEndpointsFn: provider.client.getCachedModelEndpoints }),
+        compact: createResponsesCompactHandler({ ...common, responsesCompactFn: provider.client.responsesCompact }),
+      });
+    }
+    return providerHandlers.get(provider);
+  }
   const dispatch = async (req, res, pathname) => {
     if (req.method === "POST" && ["/v1/responses", "/v1/responses/compact"].includes(pathname)
       && Object.hasOwn(req.headers || {}, "origin")) {
@@ -215,54 +246,72 @@ export function createAdapterHandler(options = {}) {
     }
     if (isOptionalRoute(req.method, pathname)) return optionalRoutes.handle(req, res, pathname);
     if (isManagementRoute(req.method, pathname)) return managementHandler(req, res, pathname);
+    if (pathname === PROVIDER_MANAGEMENT_PATH) return handleProviderManagement(req, res, options.providerRuntime);
+
+    let target;
+    if (["/v1/responses", "/v1/responses/compact", "/v1/models"].includes(pathname) && options.providerRuntime) {
+      try { target = options.providerRuntime.current(); }
+      catch (error) { sendJsonError(res, error, 503);return; }
+      const context = currentRequestContext();
+      if (context) {
+        context.provider = target.id;
+        context.streamPerformance?.setProvider?.(target.id);
+        context.finishProvider = options.providerRuntime.track?.(target);
+        Object.assign(context, options.providerRuntime.historyContext?.(req.headers, target));
+        context.clientHeaders = Object.fromEntries(["session_id", "session-id", "x-conversation-id"].filter(key => typeof req.headers[key] === "string")
+          .map(key => [key, req.headers[key]]));
+      }
+    }
 
     if (req.method === "POST" && pathname === "/v1/responses") {
-      return responsesHandler(req, res);
+      return handlersFor(target).responses(req, res);
     }
 
     if (req.method === "POST" && pathname === "/v1/responses/compact") {
-      return responsesCompactHandler(req, res);
+      return handlersFor(target).compact(req, res);
     }
 
     if (req.method === "GET" && pathname === "/v1/models") {
       const clientVersion = modelClientVersion(req.url);
+      const selectedRegistry = target?.registry || codexModelRegistry;
+      const selectedListModels = target?.id === "m365" ? target.client.listModels : listModelsFn;
+      const modelOptions = { codexModelCatalog, clientVersion, restrictToUpstream: target?.id === "m365" };
       const abort = createRequestAbort(req, res);
       // Keep live discovery and explicit auth failures authoritative, but do
       // not make a usable cached picker wait the full inference timeout.
-      const modelTimeoutMs = isValidModelList(codexModelRegistry?.models)
+      const modelTimeoutMs = isValidModelList(selectedRegistry?.models)
         ? Math.min(upstreamTimeoutMs, parsePositiveInteger(options.cachedModelsTimeoutMs, 1500))
         : upstreamTimeoutMs;
       abort.setTimeout(modelTimeoutMs);
-      listModelsFn({ signal: abort.signal })
+      selectedListModels({ signal: abort.signal })
         .then(async ({ status, body }) => {
           abort.clearTimeout();
           if (status >= 200 && status < 300) {
             let models;
             try { models = JSON.parse(body); } catch {}
             if (isValidModelList(models)) {
-              if (codexModelRegistry) {
-                codexModelRegistry.models = models;
+              if (selectedRegistry) {
+                selectedRegistry.models = models;
               }
               await sendModelList(res, models, {
-                codexModelCatalog,
-                clientVersion,
+                ...modelOptions,
                 rawBody: body,
                 statusCode: status,
               });
               return;
             }
-            if (await sendLastKnownGoodModels(res, codexModelRegistry, { codexModelCatalog, clientVersion })) return;
+            if (await sendLastKnownGoodModels(res, selectedRegistry, modelOptions)) return;
             sendJsonError(res, httpError("Copilot models response contained no valid models", 502), 502);
             return;
           }
           if (modelListCanUseLastKnownGood(status)
-            && await sendLastKnownGoodModels(res, codexModelRegistry, { codexModelCatalog, clientVersion })) return;
+            && await sendLastKnownGoodModels(res, selectedRegistry, modelOptions)) return;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(body);
         })
         .catch(async (e) => {
           logRequestFailure("Models", e, abort);
-          if (await sendLastKnownGoodModels(res, codexModelRegistry, { codexModelCatalog, clientVersion })) return;
+          if (await sendLastKnownGoodModels(res, selectedRegistry, modelOptions)) return;
           if (!res.destroyed && !res.writableEnded) {
             if (!res.headersSent) res.writeHead(e?.statusCode || 502);
             res.end(JSON.stringify({ error: e.message }));
@@ -307,6 +356,7 @@ export function createAdapterHandler(options = {}) {
       && pathname !== ADAPTER_STATUS_PATH
       && pathname !== ADAPTER_CACHE_PATH
       && pathname !== ADAPTER_PREDICTION_FIX_PATH
+      && pathname !== PROVIDER_MANAGEMENT_PATH
       && !DASHBOARD_API_PATHS.has(pathname)
       && !((req.method === "GET" || req.method === "HEAD") && DASHBOARD_PATHS.has(pathname));
     const routeName = classifyAdapterRoute(req.method, pathname);
@@ -330,12 +380,13 @@ export function createAdapterHandler(options = {}) {
           target: ["/v1/responses", "/v1/responses/compact", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",
           request_options: context?.requestOptions, upstream_attempts: streamPerformance?.attemptCount?.(),
           attempt_timings: streamPerformance?.attemptTimings?.(),
-          requested_model: context?.requestedModel,
+          requested_model: context?.requestedModel, provider: context?.provider,
         })); } catch {}
       }
       try { complete({ statusCode, aborted }); } catch {}
       try { streamPerformance?.finish({ failed: aborted || statusCode >= 400, aborted, statusCode }); } catch {}
       try { finishTerminalActivity(); } catch {}
+      try { context?.finishProvider?.(); } catch {}
     };
     const containUnexpectedError = (error) => {
       try { finishRequest({ statusCode: res.statusCode >= 400 ? res.statusCode : 500 }); } catch {}

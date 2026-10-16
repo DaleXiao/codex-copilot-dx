@@ -78,7 +78,7 @@
           error_type: failure.error_type, parameter: failure.parameter, error_body: failure.error_body,
           diagnostic_message: failure.diagnostic_message, method: failure.method, target: failure.target,
           request_options: failure.request_options ? JSON.stringify(failure.request_options) : undefined,
-          requested_model: failure.requested_model, request_kind: failure.request_kind,
+          requested_model: failure.requested_model, request_kind: failure.request_kind, provider: failure.provider || timeline?.provider,
           attempt_timings: failure.attempt_timings || timeline?.attempts ? JSON.stringify(failure.attempt_timings || timeline.attempts) : undefined,
           timings_ms: timingText };
         const diagnostic = document.createElement("dl");
@@ -150,6 +150,20 @@
       text("image-detail", image
         ? "active {active} / failed {failed} / delivery failures {delivery}"
         : "Setup state unknown / ccdx image-status", { active: number(image?.active), failed: number(image?.failed), delivery: number(image?.delivery_failures) });
+
+      if (element("m365-state")) {
+        const providers = data.providers || {}, m365 = providers.m365 || {}, claude = m365.claude || {};
+        const state = { ready: "M365 READY", checking: "M365 CHECKING", disabled: "M365 OFF", unsupported: "M365 UNSUPPORTED", unavailable: "M365 UNAVAILABLE", idle: "M365 CHECKING" };
+        text("m365-state", state[m365.state] || "M365 UNKNOWN");
+        text("m365-account", m365.account?.login || "Account unavailable");
+        text("m365-models", "Claude {claude} / GPT {gpt}", { claude: number(m365.models?.claude), gpt: number(m365.models?.gpt) });
+        text("m365-claude", claude.gateway === "running" ? "Claude gateway running" : "Claude gateway unavailable");
+        if (element("m365-requests")) text("m365-requests", claude.requests ? "Claude: {done} done / {incomplete} incomplete / {failed} failed" : "Claude requests unavailable",
+          { done: number(claude.requests?.completed), incomplete: number(claude.requests?.incomplete), failed: number(claude.requests?.failed) });
+        const labels = { configured: "Configured", preserved: "Existing settings kept", partially_preserved: "Existing settings kept", restored: "Restored", not_installed: "Not installed", configuration_unavailable: "Setup unavailable", not_configured: "Not configured" };
+        text("m365-clients", "Code: {code} / App: {app}", { code: phrase(labels[claude.clients?.code] || "Unknown"), app: phrase(labels[claude.clients?.app] || "Unknown") });
+        text("m365-codex", providers.codex_provider === "m365" ? "Codex source: Microsoft 365" : "Codex source: GitHub Copilot");
+      }
     
       renderFailures([...(data.response_failures?.recent || []), ...(data.http_errors?.actionable_recent || data.http_errors?.recent || [])]
         .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0)), data.stream_performance?.recent_requests);
@@ -187,7 +201,7 @@
           ? request.outcome[0].toUpperCase() + request.outcome.slice(1) : "Unknown";
         const ratio = finite(context.input_tokens) && finite(context.context_window_tokens) && Number(context.context_window_tokens) > 0
           ? `${(100 * Number(context.input_tokens) / Number(context.context_window_tokens)).toFixed(1)}%` : "—";
-        body.append(tableRow([String(request.model || "unknown").slice(0, 80),
+        body.append(tableRow([String(request.model || "unknown").slice(0, 80) + (request.provider === "m365" ? " / M365" : ""),
           finite(context.payload_bytes) ? (Number(context.payload_bytes) / 1048576).toFixed(2) : "—",
           number(context.images), number(context.input_tokens), number(context.context_window_tokens), ratio,
           outcome], { labels: [6] }));

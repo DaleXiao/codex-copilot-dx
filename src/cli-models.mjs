@@ -21,7 +21,7 @@ function liveCatalogHeader(catalog, { commandName, models }) {
   const chat = models.filter((model) => model.endpoints.includes("chat")).length;
   return [
     `${commandName} models`,
-    status("ok", `Live catalog from ${safeText(catalog?.upstreamHost, "GitHub Copilot")}: ${models.length} selectable GPT models of ${Number(catalog?.advertised) || 0} advertised`),
+    status("ok", `${catalog?.source === "catalog" ? "Available catalog" : "Live catalog"} from ${safeText(catalog?.upstreamHost, "GitHub Copilot")}: ${models.length} selectable GPT models of ${Number(catalog?.advertised) || 0} advertised`),
     status("info", `Responses: ${responses}; Chat: ${chat}`),
   ];
 }

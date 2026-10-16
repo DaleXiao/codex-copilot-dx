@@ -6,6 +6,7 @@ import readline from "node:readline";
 import { appendRotatingLines, parseByteLimit, rotatedFilePath } from "./file-rotation.mjs";
 import { withFileLock } from "./lock.mjs";
 import { terminalCell } from "./terminal-text.mjs";
+import { currentRequestContext } from "./request-context.mjs";
 
 const DEFAULT_USAGE_PATH = path.join(os.homedir(), ".local", "share", "codex-copilot-dx", "usage.jsonl");
 const DEFAULT_USAGE_MAX_BYTES = 32 * 1024 * 1024;
@@ -108,7 +109,23 @@ export function buildResponsesUsageRecord({ surface = "responses", mode, model, 
     response_id: responseObj?.id,
     usage,
     copilot_usage: copilotUsage,
+    ...(currentRequestContext()?.provider ? { provider: currentRequestContext().provider } : {}),
   });
+}
+
+export function buildMessagesUsageRecord({ model, responseId, usage, mode, client = "claude" } = {}) {
+  if (!usage || typeof usage !== "object") return null;
+  const count = key => Number.isFinite(usage[key]) && usage[key] >= 0 ? usage[key] : undefined;
+  const uncached = count("input_tokens"), read = count("cache_read_input_tokens"), written = count("cache_creation_input_tokens");
+  const input = uncached === undefined ? undefined : uncached + (read || 0) + (written || 0);
+  const output = count("output_tokens");
+  if (input === undefined && output === undefined) return null;
+  return compactObject({ ts: new Date().toISOString(), provider: "m365", surface: "messages", client, mode, model, response_id: responseId,
+    usage: compactObject({ input_tokens: input, output_tokens: output, cached_input_tokens: read,
+      cache_write_input_tokens: written, total_tokens: input !== undefined && output !== undefined ? input + output : undefined,
+      reasoning_output_tokens: numberOrUndefined(usage.output_tokens_details?.thinking_tokens) }),
+    anthropic_usage: compactObject({ input_tokens: uncached, cache_read_input_tokens: read,
+      cache_creation_input_tokens: written, output_tokens: output }) });
 }
 
 function takePendingWrites(filePath, maxBytes) {
@@ -260,9 +277,17 @@ function addUsageTotals(target, usage = {}) {
   }
 }
 
-export function summarizeUsage(records) {
-  const summary = { requests: 0, totals: {}, byModel: {} };
+export function usageProvider(record) {
+  return record.provider === undefined || record.provider === "github" ? "github" : record.provider === "m365" ? "m365" : "unknown";
+}
+
+export function summarizeUsage(records, { provider = "" } = {}) {
+  if (provider && !["github", "m365"].includes(provider)) throw new Error("Usage provider must be github or m365");
+  const summary = { requests: 0, totals: {}, byModel: {}, providers: { github: 0, m365: 0, unknown: 0 }, ...(provider ? { provider_filter: provider } : {}) };
   for (const record of records) {
+    const source = usageProvider(record);
+    if (provider && provider !== source) continue;
+    summary.providers[source] += 1;
     summary.requests += 1;
     addUsageTotals(summary.totals, record.usage);
     if (record.copilot_usage) {
@@ -270,7 +295,7 @@ export function summarizeUsage(records) {
       summary.totals.total_nano_aiu = (summary.totals.total_nano_aiu || 0) + (record.copilot_usage.total_nano_aiu || 0);
     }
     const model = record.model || "unknown";
-    if (!summary.byModel[model]) summary.byModel[model] = { requests: 0 };
+    if (!Object.hasOwn(summary.byModel, model)) Object.defineProperty(summary.byModel, model, { value: { requests: 0 }, enumerable: true, configurable: true, writable: true });
     const modelTotals = summary.byModel[model];
     modelTotals.requests += 1;
     addUsageTotals(modelTotals, record.usage);
@@ -291,16 +316,18 @@ export function summarizeUsage(records) {
   return summary;
 }
 
-async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord } = {}) {
-  const summary = { requests: 0, totals: {}, byModel: {} };
+async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord, provider = "" } = {}) {
+  const summary = summarizeUsage([], { provider });
   for (const candidate of [rotatedFilePath(filePath), filePath]) {
     for await (const record of iterateUsageRecords(candidate, { warn })) {
+      if (provider && provider !== usageProvider(record)) continue;
       const one = summarizeUsage([record]);
       onRecord?.(record, one);
       summary.requests += one.requests;
       addUsageTotals(summary.totals, one.totals);
+      addUsageTotals(summary.providers, one.providers);
       for (const [model, values] of Object.entries(one.byModel)) {
-        if (!summary.byModel[model]) summary.byModel[model] = { requests: 0 };
+        if (!Object.hasOwn(summary.byModel, model)) Object.defineProperty(summary.byModel, model, { value: { requests: 0 }, enumerable: true, configurable: true, writable: true });
         addUsageTotals(summary.byModel[model], values);
       }
     }
@@ -330,21 +357,23 @@ export async function usageSummaryVersion(filePath) {
   } catch { return null; } // Uncacheable metadata never replaces the normal read/error path.
 }
 
-export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord } = {}) {
-  if (onRecord || warn !== console.error) return summarizeUsageLogFiles(filePath, { warn, onRecord });
-  const version = await usageSummaryVersion(filePath);
+export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord, provider = "" } = {}) {
+  if (provider && !["github", "m365"].includes(provider)) throw new Error("Usage provider must be github or m365");
+  if (onRecord || warn !== console.error) return summarizeUsageLogFiles(filePath, { warn, onRecord, provider });
+  const fileVersion = await usageSummaryVersion(filePath);
+  const version = fileVersion === null ? null : `${fileVersion}\0${provider}`;
   if (version === null) {
     cachedSummary = null;
-    return summarizeUsageLogFiles(filePath, { warn });
+    return summarizeUsageLogFiles(filePath, { warn, provider });
   }
   if (cachedSummary?.version === version) return structuredClone(await cachedSummary.promise);
   const entry = { version, promise: null };
   cachedSummary = entry;
   entry.promise = (async () => {
     let warned = false;
-    const summary = await summarizeUsageLogFiles(filePath, { warn(message) { warned = true; warn(message); } });
+    const summary = await summarizeUsageLogFiles(filePath, { provider, warn(message) { warned = true; warn(message); } });
     const after = await usageSummaryVersion(filePath);
-    const retain = !warned && after === version && Object.keys(summary.byModel).length <= 128
+    const retain = !warned && after === fileVersion && Object.keys(summary.byModel).length <= 128
       && Buffer.byteLength(JSON.stringify(summary)) <= SUMMARY_CACHE_MAX_BYTES;
     if (!retain && cachedSummary === entry) cachedSummary = null;
     return summary;

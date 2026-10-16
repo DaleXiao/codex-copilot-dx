@@ -73,6 +73,8 @@ export function createProfileModelRuntime({
     : DEFAULT_TIMEOUT_MS;
   let refreshFlight = null;
   let refreshGeneration = 0;
+  const credentialFingerprint = () => String((typeof codexCredentialFingerprint === "function"
+    ? codexCredentialFingerprint() : codexCredentialFingerprint) || "").trim();
 
   function emit(kind, message) {
     if (typeof log === "function") log(kind, message);
@@ -90,7 +92,7 @@ export function createProfileModelRuntime({
     const cached = loadModelCacheEntry({
       home,
       profile: "codex",
-      credentialFingerprint: String(codexCredentialFingerprint || "").trim(),
+      credentialFingerprint: credentialFingerprint(),
     });
     if (!cached) return false;
     try {
@@ -133,7 +135,7 @@ export function createProfileModelRuntime({
       const saved = saveModelCache(models, {
         home,
         profile: "codex",
-        credentialFingerprint: String(codexCredentialFingerprint || "").trim(),
+        credentialFingerprint: credentialFingerprint(),
         isCurrent: () => refreshGeneration === generation,
       });
       if (saved) {

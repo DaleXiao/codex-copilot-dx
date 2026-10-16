@@ -145,7 +145,9 @@
     }
     
     function applyUsage(data, { changed }) {
-      usageData = { ...data, ...(!data.analytics && usageData?.analytics ? { analytics: usageData.analytics } : {}) };
+      const sameProvider = (data.provider || "all") === (usageData?.provider || "all");
+      if (!sameProvider) selectedUsageDate = "";
+      usageData = { ...data, ...(!data.analytics && sameProvider && usageData?.analytics ? { analytics: usageData.analytics } : {}) };
       if (changed) {
         if (data.analytics) updateAnalyticsModels();
         renderUsageTable();

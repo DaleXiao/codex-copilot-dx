@@ -1,9 +1,24 @@
 import { httpError } from "./http-errors.mjs";
 import { clearResponsesToolOutputPartsCache } from "./responses-content.mjs";
 import { loadRuntimeConfig, parsePositiveInteger, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
+import { currentRequestContext } from "./request-context.mjs";
 
 const DEFAULT_MAX_BYTES = RUNTIME_DEFAULTS.responseHistoryMaxBytes;
 const DEFAULT_MAX_ENTRIES = RUNTIME_DEFAULTS.responseHistoryMaxEntries;
+
+function historyKey(id, namespace = currentRequestContext()?.historyNamespace) {
+  if (typeof id === "string" && id.includes("\0")) throw httpError("Invalid previous_response_id", 400);
+  return namespace && id ? `\0${namespace}\0${id}` : id;
+}
+
+function readableHistoryKey(id) {
+  const current = historyKey(id), transfer = currentRequestContext()?.historyTransferNamespace;
+  if (!transfer) return current;
+  const previous = historyKey(id, transfer);
+  if (previous === current) return current;
+  if (histories.has(current) && histories.has(previous)) throw httpError("previous_response_id is ambiguous across providers; replay the full plaintext conversation", 400);
+  return histories.has(current) ? current : previous;
+}
 
 function cloneJson(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -278,13 +293,13 @@ export function responseHistoryStats() {
 }
 
 export function responseHistoryRootId(responseId) {
-  return histories.get(responseId)?.rootId || null;
+  return histories.get(readableHistoryKey(responseId))?.rootId || null;
 }
 
 function responseHistoryChain(responseId) {
   const chain = [];
   const seen = new Set();
-  let currentId = responseId;
+  let currentId = readableHistoryKey(responseId);
   while (currentId) {
     if (seen.has(currentId)) throw httpError(`Cycle detected in local response history: ${currentId}`, 500);
     seen.add(currentId);
@@ -294,7 +309,7 @@ function responseHistoryChain(responseId) {
       const wasEvicted = evictedIds.has(currentId);
       if (wasEvicted) evictedLookupMisses += 1;
       const reason = wasEvicted ? " was evicted after reaching the local history limit" : " is not available";
-      throw httpError(`previous_response_id${reason}: ${currentId}`, 400);
+      throw httpError(`previous_response_id${reason}: ${String(currentId).split("\0").at(-1)}`, 400);
     }
     chain.push(entry);
     currentId = entry.parentId;
@@ -381,6 +396,8 @@ export function rememberResponseHistoryNode({
   takeOwnership = false,
 }) {
   if (!id || !Array.isArray(inputItems)) return false;
+  id = historyKey(id);
+  parentId = parentId ? historyKey(parentId) : null;
   const existing = histories.get(id);
   const parentEntry = parentId ? histories.get(parentId) : null;
   if (parentId && !parentEntry) {

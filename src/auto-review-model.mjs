@@ -88,13 +88,15 @@ export async function runAutoReviewModelCommand({
   loadCatalog = loadAutoReviewModelCatalog,
   output = process.stdout,
   prompt,
+  getPreference = autoReviewPreference,
+  savePreference = (model, options) => writeAutoReviewModel(model === DEFAULT_CODEX_AUTO_REVIEW_MODEL ? "" : model, options),
 } = {}) {
   if (!prompt && (!input.isTTY || !output.isTTY)) {
     throw new Error(`${commandName} auto-review-model requires an interactive terminal`);
   }
 
   readUserSettings({ env, home, strict: true });
-  const current = autoReviewPreference({ env, home });
+  const current = getPreference({ env, home });
   const catalog = await loadCatalog({ env, fetchImpl, home });
   const modelIds = sortedModelIds(catalog.modelIds, current.model);
   if (!modelIds.length) throw new Error("No selectable Responses models are available");
@@ -167,8 +169,7 @@ export async function runAutoReviewModelCommand({
     readline?.close();
   }
 
-  const savedModel = selectedModel === DEFAULT_CODEX_AUTO_REVIEW_MODEL ? "" : selectedModel;
-  const result = writeAutoReviewModel(savedModel, { env, home, reasoningEffort: selectedEffort });
+  const result = await savePreference(selectedModel, { env, home, reasoningEffort: selectedEffort });
   output.write(`${result.changed ? "Saved" : "Kept"} Auto Review model: ${selectedModel}\n`);
   output.write(`Reasoning: ${selectedEffort || "follow client (low when omitted)"}\n`);
   if (String(env.CCDX_AUTO_REVIEW_MODEL || "").trim()) {

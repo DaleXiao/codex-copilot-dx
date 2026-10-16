@@ -141,7 +141,8 @@ test("cli --help exits without validating runtime configuration", async () => {
   assert.match(stdout, /ccdx auth status/);
   assert.match(stdout, /ccdx animation/);
   assert.match(stdout, /doctor \[--online\] \[--compat\]/);
-  assert.doesNotMatch(stdout, /Claude|Anthropic|pms|pm-studio/i);
+  assert.match(stdout, /ccdx m365/);
+  assert.doesNotMatch(stdout, /pms|pm-studio/i);
   assert.equal(stderr, "");
 });
 
@@ -168,7 +169,8 @@ test("deprecated cli help and argument errors use the canonical command name wit
   assert.match(stdout, /ccdx auto-review-model/);
   assert.match(stdout, /ccdx animation/);
   assert.match(stdout, /ccdx update \[npm\|github\]/);
-  assert.doesNotMatch(stdout, /Claude|Anthropic|pms|pm-studio/i);
+  assert.match(stdout, /ccdx m365/);
+  assert.doesNotMatch(stdout, /pms|pm-studio/i);
   assertNoCompatibilityWarning(stderr);
 
   await assert.rejects(
@@ -193,7 +195,8 @@ test("both CLI entrypoints expose the same complete subcommand help", async () =
   for (const command of ["auth", "doctor", "status", "models", "usage", "animation", "enable-image", "disable-image", "image-status", "auto-review-model", "update"]) {
     assert.match(primary.stdout, new RegExp(`ccdx ${command}`));
   }
-  assert.doesNotMatch(primary.stdout, /Claude|Anthropic|pms|pm-studio/i);
+  assert.match(primary.stdout, /ccdx m365/);
+  assert.doesNotMatch(primary.stdout, /pms|pm-studio/i);
 });
 
 test("both CLI entrypoints keep nested help and argument errors byte-for-byte equivalent", async () => {

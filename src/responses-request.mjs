@@ -8,6 +8,8 @@ import {
 import { isResponsesToolOutputItem, readResponsesToolOutputParts } from "./responses-content.mjs";
 import { enforceResponsesImageLimit } from "./responses-image-limit.mjs";
 import { routePlanAffinity, sameRoutePlanAffinity } from "./route-plan.mjs";
+import { currentRequestContext } from "./request-context.mjs";
+import { httpError } from "./http-errors.mjs";
 
 export {
   isEncryptedContentVerificationError,
@@ -301,6 +303,24 @@ export function finalizeEncryptedHistoryRebase(reqContext) {
 export function applyResponseHistoryRoutePlan(reqContext, routePlan) {
   const next = reqContext;
   next.routePlan = routePlan;
+  const affinity = routePlanAffinity(routePlan), context = currentRequestContext();
+  const routeMetadata = next.historyRouteMetadata || [];
+  const knownHistory = routeMetadata.length > 0 && routeMetadata.every(metadata => metadata.affinity && affinity);
+  const providerChanged = (Boolean(context?.historyTransferNamespace) && !knownHistory)
+    || routeMetadata.some(metadata => metadata.affinity && affinity
+      && (metadata.affinity.origin !== affinity.origin || metadata.affinity.profile !== affinity.profile));
+  if (providerChanged) {
+    const input = next.body.input || [];
+    if (input.some(item => item?.type !== "reasoning" && hasEncryptedResponseState(item))) {
+      const message = "This conversation contains opaque state owned by another provider. Restore complete plaintext history before switching; earlier context was preserved.";
+      throw Object.assign(httpError(message, 400), { code: "ccdx_provider_history_rebuild_required", jsonBody: {
+        error: { message, type: "invalid_request_error", code: "ccdx_provider_history_rebuild_required", recovery: { action: "restore_plaintext_history" } },
+      } });
+    }
+    const plaintext = input.filter(item => !(item?.type === "reasoning" && item.encrypted_content));
+    return { ...next, body: { ...next.body, input: plaintext }, historyParentId: null, historyRootId: null,
+      inputItems: plaintext, historyInputItems: plaintext, currentInputStart: 0 };
+  }
   if (!next.historyParentId) return next;
   const currentAffinity = routePlanAffinity(routePlan);
   const historyMetadata = next.historyRouteMetadata;
@@ -457,4 +477,7 @@ export function rememberResponseHistory(reqContext, responseJson) {
     routeAffinity: routePlanAffinity(reqContext.routePlan),
     takeOwnership: reqContext.takeHistoryOwnership,
   });
+  if (responseJson.status === "completed" || compacted) {
+    try { currentRequestContext()?.onHistoryStored?.(); } catch {}
+  }
 }

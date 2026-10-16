@@ -1,4 +1,6 @@
-// App-only worker. Windows owns PAC/WPAD, proxy authentication and TLS trust.
+// Consumer-scoped worker. Keep the filename/class compatible with an older
+// still-running prediction bridge during package replacement.
+// Windows owns PAC/WPAD, proxy authentication and TLS trust.
 // Requests and response chunks exist only in anonymous pipes, never files.
 using System;
 using System.Collections.Generic;
@@ -28,6 +30,8 @@ public static class CCDXPredictionNetwork {
   static readonly Dictionary<int, Work> active = new Dictionary<int, Work>();
   static readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength=2*1024*1024 };
   static IntPtr session;
+  static string target = "prediction";
+  static int requestTimeout = 30000;
   class Work { public IntPtr handle; public ManualResetEventSlim ack = new ManualResetEventSlim(false); public BlockingCollection<byte[]> upload = new BlockingCollection<byte[]>(2); public bool cancelled; }
   static void Check(bool ok) { if(!ok) throw new IOException("winhttp_" + Marshal.GetLastWin32Error()); }
   static void Emit(object value) { lock(outputLock) { Console.Out.WriteLine(json.Serialize(value)); Console.Out.Flush(); } }
@@ -73,7 +77,7 @@ public static class CCDXPredictionNetwork {
     IntPtr connection=IntPtr.Zero;
     try {
       var uri=new Uri((string)data["url"]);
-      if(uri.Scheme!="https" || uri.Port!=443 || uri.UserInfo.Length!=0 || uri.Fragment.Length!=0 || (uri.Host!="chatgpt.com"&&uri.Host!="ab.chatgpt.com")) throw new IOException("winhttp_target_invalid");
+      if(uri.Scheme!="https" || uri.Port!=443 || uri.UserInfo.Length!=0 || uri.Fragment.Length!=0 || (target=="m365" ? (uri.Host!="df.loki.delve.office.com" || !uri.AbsolutePath.StartsWith("/api/v1/llmapi/",StringComparison.Ordinal)) : (uri.Host!="chatgpt.com"&&uri.Host!="ab.chatgpt.com"))) throw new IOException("winhttp_target_invalid");
       var method=(string)data["method"];
       if(method!="GET"&&method!="POST"&&method!="HEAD"&&method!="PUT"&&method!="DELETE"&&method!="OPTIONS"&&method!="PATCH")throw new IOException("winhttp_method_invalid");
       var headers=(string)data["headers"];
@@ -107,7 +111,7 @@ public static class CCDXPredictionNetwork {
       while(true) {
         Check(WinHttpReadData(request,buffer,(uint)buffer.Length,out read));if(read==0)break;
         work.ack.Reset();Emit(new {id=id,type="data",body=Convert.ToBase64String(buffer,0,(int)read)});
-        if(!work.ack.Wait(30000))throw new IOException("winhttp_consumer_timeout");
+        if(!work.ack.Wait(requestTimeout))throw new IOException("winhttp_consumer_timeout");
         if(work.cancelled)return;
       }
       Emit(new {id=id,type="end"});
@@ -122,11 +126,14 @@ public static class CCDXPredictionNetwork {
   }
   public static void Run() {
     Console.InputEncoding=new UTF8Encoding(false);Console.OutputEncoding=new UTF8Encoding(false);
-    session=WinHttpOpen("CCDX native prediction",4,null,null,0);
     try {
-      Check(session!=IntPtr.Zero);Check(WinHttpSetTimeouts(session,10000,10000,30000,30000));
-      uint protocols=0x800;Check(WinHttpSetOption(session,84,ref protocols,4));
       var initial=json.Deserialize<Dictionary<string,object>>(Console.ReadLine());
+      if(initial.ContainsKey("target")) target=(string)initial["target"];
+      if(target!="prediction"&&target!="m365")throw new IOException("winhttp_target_invalid");
+      if(target=="m365" && initial.ContainsKey("timeoutMs")) requestTimeout=(int)Math.Max(1000,Math.Min(int.MaxValue,Convert.ToInt64(initial["timeoutMs"])));
+      session=target=="m365"?WinHttpOpen("CCDX Microsoft 365",4,null,null,0):WinHttpOpen("CCDX native prediction",4,null,null,0);
+      Check(session!=IntPtr.Zero);Check(WinHttpSetTimeouts(session,10000,10000,requestTimeout,requestTimeout));
+      uint protocols=0x800;Check(WinHttpSetOption(session,84,ref protocols,4));
       string pac=(string)initial["pac"];
       if(string.IsNullOrWhiteSpace(pac)&&(bool)initial["autoDetect"]) {
         IntPtr address;

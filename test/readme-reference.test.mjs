@@ -12,7 +12,9 @@ test("quick-start command table and full reference retain active CLI and safety 
   assert.ok(fs.existsSync(new URL("../docs/ARCHITECTURE.md", import.meta.url)));
   assert.match(reference, /Startup, image setup, config doctor, compression and legacy prediction cleanup share this path/);
   assert.doesNotMatch(reference, /does not redirect it through `CODEX_HOME`/);
-  assert.ok(readme.split("\n").length < 110);
+  assert.ok(readme.trimEnd().split("\n").length <= 130, "keep the expanded two-provider quick start concise");
+  assert.match(readme, /ccdx m365 switch/);
+  assert.match(reference, /## Microsoft 365 provider/);
   for (const command of ["start", "status", "doctor", "models", "usage", "auto-review-model", "animation", "cache", "limits", "enable-image", "image-status", "disable-image", "update"]) {
     assert.ok(readme.includes(`ccdx ${command}`), command);
     assert.ok(cliHelp().includes(command), command);

@@ -1,0 +1,132 @@
+import { createInterface } from "node:readline/promises";
+import { readM365Settings, updateM365Settings } from "./m365-settings.mjs";
+import { readProviderSettings } from "./provider-settings.mjs";
+import { autoReviewPreference } from "./user-settings.mjs";
+import { PROVIDER_MANAGEMENT_PATH } from "./provider-management.mjs";
+import { adapterBaseUrl } from "./running-adapter.mjs";
+import { isLoopbackHost } from "./security.mjs";
+import { terminalCell } from "./terminal-text.mjs";
+import { readBoundedResponseText } from "./upstream-body.mjs";
+import { parseAdapterAddressOptions } from "./cli-options.mjs";
+import { autoReviewReasoningEfforts } from "./models.mjs";
+
+export async function fetchActiveProviderModels({ control = providerControl, ...options } = {}) {
+  if (readProviderSettings(options).codex !== "m365") {
+    const { fetchLiveCopilotModels } = await import("./live-models.mjs");
+    return fetchLiveCopilotModels(options);
+  }
+  const address = parseAdapterAddressOptions(options.env || process.env);
+  const result = await control({ host: address.adapterHost, port: address.adapterPort, ...options, action: { action: "models", family: "gpt" } });
+  return { source: "catalog", upstreamHost: "Microsoft 365", advertised: result.models.length,
+    models: result.models.map(model => ({ id: model.id, vendor: model.publisher, endpoints: ["responses"], preview: false })) };
+}
+
+export async function providerControl({ host = "127.0.0.1", port = 2026, action, fetchImpl = fetch, timeoutMs = 35000 } = {}) {
+  const url = `${adapterBaseUrl(isLoopbackHost(host) ? host : "127.0.0.1", port)}${PROVIDER_MANAGEMENT_PATH}`;
+  const response = await fetchImpl(url, { method: action ? "POST" : "GET", headers: { Accept: "application/json", ...(action ? { "Content-Type": "application/json" } : {}) },
+    ...(action ? { body: JSON.stringify(action) } : {}), redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
+  const value = JSON.parse(await readBoundedResponseText(response, { maxBytes: 4 * 1024 * 1024, label: "Provider status" }));
+  if (!response.ok) throw Object.assign(new Error(value.error?.message || "Provider management is unavailable; restart the updated CCDX service"), { code: value.error?.code || "ccdx_provider_management_unavailable" });
+  return value;
+}
+
+export function formatM365Status(state) {
+  const m = state.m365 || {}, claude = m.claude || {}, models = m.models || {};
+  return [
+    `Microsoft 365: ${terminalCell(m.state || "not running")}${m.reason ? ` (${terminalCell(m.reason)})` : ""}`,
+    ...(m.account?.login ? [`Account: ${terminalCell(m.account.login)}`] : []),
+    `Models: ${models.claude || 0} Claude / ${models.gpt || 0} GPT (${models.source || "unavailable"})`,
+    `Claude gateway: ${claude.gateway || "not running"}${claude.port ? ` / http://127.0.0.1:${claude.port}` : ""}`,
+    ...(claude.requests ? [`Claude requests: ${claude.requests.completed} completed / ${claude.requests.incomplete} incomplete / ${claude.requests.failed} failed / ${claude.requests.active} active`] : []),
+    `Claude Code: ${claude.clients?.code || "unknown"}; Claude App: ${claude.clients?.app || "unknown"}`,
+    `Codex provider: ${state.codex_provider || "github"} (default: github)`,
+  ].join("\n");
+}
+
+export async function runProviderAutoReviewCommand(options = {}) {
+  const { runAutoReviewModelCommand } = await import("./auto-review-model.mjs");
+  const settings = readProviderSettings(options);
+  if (settings.codex !== "m365") return runAutoReviewModelCommand(options);
+  const state = await providerControl(options);
+  if (state.codex_provider !== "m365") throw new Error("The running provider does not match the saved selection; restart ccdx before changing Auto-review");
+  const preference = state.m365?.preference || settings.m365;
+  return runAutoReviewModelCommand({ ...options, env: { ...(options.env || process.env), CCDX_AUTO_REVIEW_MODEL: "" },
+    loadCatalog: async () => {
+      const result = await providerControl({ ...options, action: { action: "models", family: "gpt" } });
+      return { modelIds: result.models.map(model => model.id), source: "Microsoft 365",
+        reasoningEfforts: Object.fromEntries(result.models.map(model => [model.id, autoReviewReasoningEfforts(model)])) };
+    },
+    getPreference: () => ({ model: preference.auto_review_model, source: "m365", reasoningEffort: preference.auto_review_effort === undefined ? "low" : preference.auto_review_effort }),
+    savePreference: (model, { reasoningEffort }) => providerControl({ ...options, action: { action: "auto-review", model, effort: reasoningEffort } }),
+  });
+}
+
+export async function runM365Command({ action = "status", provider, model, autoReviewModel, host, port, home,
+  env = process.env, input = process.stdin, output = process.stdout, prompt, control = providerControl } = {}) {
+  const options = { home, env };
+  let readline;
+  const ask = prompt || (question => { if (!input.isTTY || !output.isTTY) throw new Error("Use explicit provider/model arguments outside an interactive terminal");
+    readline ||= createInterface({ input, output });return readline.question(question); });
+  const request = value => control({ host, port, action: value });
+  try {
+    if (action === "status") {
+      try { const state = await request();output.write(formatM365Status(state) + "\n");return state; }
+      catch (error) {
+        const saved = readM365Settings(options), selected = readProviderSettings(options);
+        output.write(`Microsoft 365 preference: ${saved.enabled ? "auto" : "off"}\nCodex provider: ${selected.codex}\nRuntime status unavailable; start or restart ccdx to inspect it.\n`);
+        return { saved: true, runtime: "unavailable" };
+      }
+    }
+    if (action === "switch") {
+      if (!provider) {
+        output.write("Codex provider:\n  1. GitHub Copilot (default)\n  2. Microsoft 365 (backup)\n");
+        const answer = String(await ask("Select 1 or 2, or q to cancel: ")).trim();
+        if (answer === "q") return { cancelled: true };
+        if (!["1", "2"].includes(answer)) throw new Error("Select 1 or 2");provider = answer === "1" ? "github" : "m365";
+      }
+      if (provider === "m365") {
+        const available = await request({ action: "models", family: "gpt" });
+        const models = available.models || [], ids = models.map(entry => entry.id);
+        if (!ids.length) throw new Error("No M365 GPT models are available; the current provider was retained");
+        const saved = readProviderSettings(options).m365;
+        const choose = async (label, supplied, preferred) => {
+          if (supplied) { if (!ids.includes(supplied)) throw new Error(`${label} model is not available: ${terminalCell(supplied)}`);return supplied; }
+          const current = ids.includes(preferred) ? preferred : null;
+          if (!prompt && (!input.isTTY || !output.isTTY)) {
+            if (current) return current;
+            throw new Error(`Specify --${label === "Auto-review" ? "auto-review-model" : "model"} with an available M365 model: ${ids.join(", ")}`);
+          }
+          output.write(`${label} model:\n${ids.map((id, index) => `  ${index + 1}. ${id}${id === current ? " [current]" : ""}`).join("\n")}\n`);
+          const answer = String(await ask(`Select a model${current ? ` [${ids.indexOf(current) + 1}]` : ""}, or q to cancel: `)).trim();
+          if (answer === "q") return null;
+          const index = answer === "" && current ? ids.indexOf(current) : Number(answer) - 1;
+          if (!Number.isInteger(index) || !ids[index]) throw new Error("Invalid model selection");return ids[index];
+        };
+        model = await choose("Codex", model, saved?.model);if (!model) return { cancelled: true };
+        autoReviewModel = await choose("Auto-review", autoReviewModel, saved?.auto_review_model || autoReviewPreference(options).model);
+        if (!autoReviewModel) return { cancelled: true };
+        output.write("M365 fast tier is not verified. Use Standard in Codex; existing threads keep their selected model until you change it.\n");
+      }
+      const state = await request({ action: "switch", provider, model, auto_review_model: autoReviewModel });
+      output.write(formatM365Status(state) + "\n");
+      if (provider === "m365") output.write(`Select ${model} in Codex. Auto-review uses ${autoReviewModel} / low on this provider.\n`);
+      return state;
+    }
+    if (action === "models") {
+      const value = await request({ action: "models", family: "claude" });
+      output.write((value.models || []).map(model => terminalCell(model.id)).join("\n") + "\n");return value;
+    }
+    if (["on", "off", "remove"].includes(action)) {
+      try { const state = await request({ action });output.write(formatM365Status(state) + "\n");return state; }
+      catch (error) {
+        if (error.cause?.code !== "ECONNREFUSED") throw error;
+        if (action === "on") { updateM365Settings({ enabled: true }, options);output.write("M365 auto-discovery enabled. Run ccdx to start it.\n");return; }
+        const { createProviderRuntime } = await import("./provider-runtime.mjs");
+        const runtime = createProviderRuntime({ ...options });
+        try { const state = await runtime.action({ action });output.write(formatM365Status(state) + "\n");return state; }
+        finally { await runtime.close(); }
+      }
+    }
+    throw new Error("Unknown M365 action");
+  } finally { readline?.close(); }
+}

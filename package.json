@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "0.9.41",
+  "version": "0.10.0",
   "description": "Use Codex App with GitHub Copilot",
   "author": "Dale Xiao",
   "type": "module",
@@ -53,5 +53,8 @@
   "dependencies": {
     "sharp": "0.35.3",
     "smol-toml": "1.8.0"
+  },
+  "optionalDependencies": {
+    "@azure/msal-node-runtime": "0.20.6"
   }
 }

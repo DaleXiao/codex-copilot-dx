@@ -22,6 +22,7 @@ import { inspectPredictionEnvironment } from "./native-prediction-environment.mj
 import { formatPredictionEnvironment } from "./native-prediction-state.mjs";
 import { readImageProviderConfig } from "./image-provider-config.mjs";
 import { inspectAdapterCompatibility } from "./doctor-compat.mjs";
+import { readProviderSettings } from "./provider-settings.mjs";
 export { selectCompatibilityModels, inspectAdapterCompatibility } from "./doctor-compat.mjs";
 
 export { inspectCodexConfig };
@@ -196,14 +197,20 @@ export async function collectDoctorChecks({
   readPredictionSettingsFn = readPredictionSettings,
   inspectPredictionEnvironmentFn = inspectPredictionEnvironment,
   readImageProviderConfigFn = readImageProviderConfig,
+  providerControlFn,
 } = {}) {
   if (configOnly) return inspectCodexConfig({ home, env, host, port });
   checkedDoctorProfile(profile);
+  let source = "github", sourceError = null;
+  try { source = readProviderSettings({ home, env }).codex; } catch (error) { sourceError = error.message; }
   const checks = [
-    ...inspectAuthProfiles({ home }).map(check => ({ ...check, id: "github-auth" })),
+    ...inspectAuthProfiles({ home }).map(check => ({ ...check, id: "github-auth",
+      ...(source === "m365" ? { kind: "info", message: `Inactive GitHub provider: ${check.message}` } : {}) })),
     ...inspectCodexConfig({ home, env, host, port }).map(check => ({ ...check, id: "codex-config" })),
     { kind: "info", message: `Runtime: Node ${process.version}, ${platform}/${process.arch}` },
   ];
+  if (sourceError) checks.push({ kind: "err", id: "provider", message: sourceError });
+  else if (source === "m365") checks.push({ kind: "info", id: "provider", message: "Codex provider: Microsoft 365; GitHub credentials are retained independently" });
   if (platform === "win32") {
     const command = inspectWindowsCommandFn({ platform });
     checks.push({ kind: command.status === "ready" ? "ok" : ["checkout", "not_applicable"].includes(command.status) ? "info" : "warn", id: "windows-command",
@@ -237,7 +244,16 @@ export async function collectDoctorChecks({
   }
 
   if (online) {
-    checks.push(...await inspectAuthProfilesOnline({
+    if (source === "m365") {
+      try {
+        const control = providerControlFn || (await import("./cli-m365.mjs")).providerControl;
+        const result = await control({ host, port, fetchImpl, action: { action: "models", family: "gpt" }, timeoutMs: onlineTimeoutMs });
+        const ready = result.state?.m365?.state === "ready" && result.models?.length > 0;
+        checks.push({ kind: ready ? "ok" : "warn", id: "provider", message: ready
+          ? `Microsoft 365 is ready; ${result.models.length} GPT models available`
+          : "Microsoft 365 is not ready; inspect ccdx m365 status. No GitHub fallback was selected" });
+      } catch { checks.push({ kind: "warn", id: "provider", message: "Microsoft 365 could not be checked through the running adapter; start ccdx and inspect ccdx m365 status" }); }
+    } else if (!sourceError) checks.push(...await inspectAuthProfilesOnline({
       home,
       profile,
       fetchImpl,

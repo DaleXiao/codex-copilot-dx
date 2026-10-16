@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import * as transport from "../src/http-transport.mjs";
 import * as upstreamBody from "../src/upstream-body.mjs";
 import * as admission from "../src/request-admission.mjs";
@@ -59,6 +60,9 @@ test("shared data and foundation modules do not depend on presentation or compos
     "prediction-pac.mjs": ["node:fs", "node:dns", "node:child_process", "native-prediction.mjs", "adapter.mjs", "network-route.mjs"],
     "startup-ui.mjs": ["adapter.mjs", "native-prediction.mjs", "copilot.mjs", "dashboard-api.mjs"],
     "windows-prediction-network.mjs": ["responses-handler.mjs", "copilot.mjs", "dashboard-api.mjs", "config.mjs"],
+    "windows-http-network.mjs": ["adapter.mjs", "provider-runtime.mjs", "native-prediction.mjs", "copilot.mjs"],
+    "providers/m365.mjs": ["github.mjs", "../native-prediction.mjs", "../config.mjs", "../image-provider-config.mjs", "../claude-client-config.mjs"],
+    "providers/m365-auth.mjs": ["../copilot.mjs", "../auth.mjs", "../config.mjs"],
     "codex-paths.mjs": ["config.mjs", "cli-image.mjs", "native-prediction.mjs"],
     "package-update.mjs": ["adapter.mjs", "responses-handler.mjs", "native-prediction.mjs", "image-provider.mjs", "dashboard-api.mjs", "config.mjs"],
     "auth-sources.mjs": ["auth.mjs", "adapter.mjs", "dashboard-api.mjs", "cli-auth.mjs"],
@@ -71,7 +75,7 @@ test("shared data and foundation modules do not depend on presentation or compos
   for (const [file, forbidden] of Object.entries(rules)) {
     const source = fs.readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
     for (const dependency of forbidden) {
-      assert.ok(!source.includes(`"${dependency.startsWith("node:") ? dependency : `./${dependency}`}"`), `${file} must not depend on ${dependency}`);
+      assert.ok(!source.includes(`"${dependency.startsWith("node:") || dependency.startsWith("../") ? dependency : `./${dependency}`}"`), `${file} must not depend on ${dependency}`);
     }
   }
 });
@@ -87,10 +91,10 @@ test("optional handlers remain lazy and HTTP dispatch no longer owns their imple
 test("static source imports remain acyclic after extraction", () => {
   const directory = new URL("../src/", import.meta.url);
   const graph = new Map();
-  for (const file of fs.readdirSync(directory).filter((name) => name.endsWith(".mjs"))) {
+  for (const file of fs.readdirSync(directory, { recursive: true }).filter((name) => name.endsWith(".mjs"))) {
     const source = fs.readFileSync(new URL(file, directory), "utf8");
-    const imports = [...source.matchAll(/^\s*(?:import\s+(?:[^;]*?\s+from\s*)?|export\s+(?:\{[^}]*\}|\*)\s+from\s*)["']\.\/([^"']+)["']/gm)];
-    graph.set(file, imports.map((match) => match[1]));
+    const imports = [...source.matchAll(/^\s*(?:import\s+(?:[^;]*?\s+from\s*)?|export\s+(?:\{[^}]*\}|\*)\s+from\s*)["'](\.{1,2}\/[^"']+)["']/gm)];
+    graph.set(file, imports.map((match) => path.normalize(path.join(path.dirname(file), match[1]))));
   }
   const visited = new Set();
   function visit(file, trail) {

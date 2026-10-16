@@ -71,6 +71,7 @@ function profileSummary(label, profile = {}) {
 
 function routingTarget(value) {
   if (value === "codex") return "Codex";
+  if (value === "m365") return "Codex (Microsoft 365 backup)";
   return "unknown";
 }
 
@@ -212,6 +213,11 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
   }
   if (data.routing?.responses) {
     lines.push(status("info", `Routing: /v1/responses -> ${routingTarget(data.routing.responses)}`));
+  }
+  if (data.providers?.m365) {
+    const m365 = data.providers.m365;
+    lines.push(status("info", `Microsoft 365: ${terminalCell(m365.state)}; ${count(m365.models?.claude)} Claude, ${count(m365.models?.gpt)} GPT; gateway ${terminalCell(m365.claude?.gateway || "unavailable")}`));
+    if (m365.reason) lines.push(status("info", `Microsoft 365 detail: ${terminalCell(m365.reason)}`));
   }
   lines.push(status("info", `Limits: request body ${mebibytes(limits.max_body_bytes)}, decoded body ${mebibytes(limits.max_decoded_body_bytes)}`));
   const recentContext = data.stream_performance?.recent_requests?.at(-1)?.context;

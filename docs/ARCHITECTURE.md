@@ -1,17 +1,61 @@
 # Architecture boundaries
 
-CCDX is one local Node service for Codex App. Client integration, image tools and
-the dashboard are optional parts of that service, not a general plugin framework.
+CCDX is one local Node service with client-specific protocol surfaces and isolated
+upstream providers. GitHub is the default Codex provider; Microsoft 365 is optional.
+Client integration, image tools and the dashboard are not a general plugin framework.
 
 | Responsibility | Ownership | Boundary |
 | --- | --- | --- |
-| Core inference | `adapter.mjs`, Responses modules, model catalog, history | Copilot requests, streaming and recovery |
+| Core inference | `adapter.mjs`, Responses modules, model catalog, history | Codex wire contracts, streaming and recovery |
+| Providers | `providers/github.mjs`, `providers/m365*.mjs` | Source-owned auth, discovery, routing, capabilities and transport |
+| Provider composition | `provider-runtime.mjs`, `provider-settings.mjs` | Explicit selection, lifecycle, history namespaces and snapshots |
+| Claude clients | `claude-gateway.mjs`, `claude-client-config.mjs` | Native Messages relay and field-owned reversible client setup |
 | Client integration | `client-integration.mjs`, Codex config, native prediction | Client setup, optional start/stop, diagnostic snapshots |
 | Optional images | Image provider, CLI setup, image MCP and skill | Opt-in API access and image delivery; failures do not block core startup |
 | Management | CLI, dashboard, observability, package updates | Bounded metadata and explicit user actions |
 | Shared foundations | Codex paths, file locks, atomic files, network routes | No dependency on inference or dashboard rendering |
 
 ## Composition and lifecycle
+
+### Provider boundary
+
+Each provider supplies its client, model registry, route plan, model/request policy
+and compatibility opener. The existing GitHub implementation remains the default;
+its Fast mapping, retries and recovery are not applied blindly to M365. Protocol
+adaptation belongs to the client boundary. There is no generic intermediate message
+format that would erase native Responses or Anthropic semantics.
+
+`provider-runtime.mjs` owns source selection, not the providers themselves. Each
+request pins a provider before admission. An explicit change affects later requests;
+it does not reroute an in-flight stream or retry it through another account. Core
+`providers.json` stores Codex selection separately from the optional M365 profile.
+History lookup keys include source/account namespaces; the existing global byte
+budget remains shared. Explicit source transfer can restore visible history but
+cannot silently discard encrypted tool or compaction state. Existing verified local
+plaintext recovery is attempted at that boundary; failure remains explicit.
+
+M365 discovery is background-only when GitHub is selected. On supported platforms,
+a bounded short-lived Node helper loads the official optional Microsoft broker
+runtime, discovers an unambiguous/matching account and requests a token silently.
+Private pipes carry the result; no token is saved or logged. Cached tokens refresh
+within two minutes of expiry, with single-flight cancellation and bounded failure
+backoff. Device management is not inferred to be sufficient authorization.
+
+The fixed Loki target, account-bound catalog and dedicated network agent belong
+to M365. No GitHub token, image credential or browser Cookie is reused. Windows can
+use a separate OS WinHTTP worker for M365 company routing; macOS preserves static
+system/environment routing and reports unsupported dynamic PAC. Native runtime
+absence, policy refusal and gateway-port conflicts do not disable GitHub.
+
+The Claude gateway listens on loopback only, requires its private local key and
+rejects browser-origin requests. It preserves native Messages/SSE bytes, observes
+bounded usage/terminal metadata and honors downstream backpressure. The client
+writer records field-level ownership before applying changes and restores only
+fields that still match its own values. Foreign gateways and managed desktop
+policies are not overwritten. Removing M365 does not remove shared management,
+GitHub auth, prediction, image configuration or historical usage.
+
+### Existing service composition
 
 The CLI composes the service. Client integration owns its `configure`, `start`,
 `snapshot` and `close` operations. It does not forward inference requests or
@@ -102,12 +146,19 @@ The existing PEM reader, App-profile trust schema and transactional activation
 remain shared. Issuance requires neither external OpenSSL nor a Windows
 certificate store. Valid existing credentials skip issuance; default-off startup
 does not invoke it. macOS keeps the existing system OpenSSL implementation.
-Windows automatic-proxy support has one isolated native WinHTTP worker
-(`windows-prediction-network.mjs` / `.cs`) for company routing, authentication and
-TLS trust. Its private, credit-based pipes stream data without transcript files.
+Windows automatic-proxy support uses an isolated native WinHTTP worker
+(`windows-http-network.mjs` / `windows-prediction-network.cs`) for company routing, authentication and
+TLS trust. `windows-prediction-network.mjs` preserves the existing prediction
+interface. Each worker is restricted to one fixed target group: prediction hosts
+or M365 Loki, never an arbitrary URL supplied by a client. Its private,
+credit-based pipes stream data without transcript files.
+The existing C# filename and entry class remain available for an older running
+prediction bridge during package replacement; there is no duplicate worker source.
 The App PAC delegates unrelated URLs to the company script; Node never executes
-that script. This worker is not a shared inference/image network backend and is
-not started for disabled predictions or static/direct configurations.
+that script. Prediction and M365 never share a worker or its lifecycle. GitHub and
+image networking are unchanged; disabled prediction does not start its worker.
+M365 starts its own worker only after successful authorization when explicit
+environment routing does not take precedence.
 Bridge-port ownership is shared across macOS and Windows in the existing
 prediction lifecycle, with locked first-start persistence and no replacement
 on conflict. OS process inspection stays in the launcher/platform boundary;

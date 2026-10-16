@@ -4,6 +4,7 @@ import { readSavedGithubToken } from "./auth-credentials.mjs";
 import { importDiscoveredGithubToken } from "./auth.mjs";
 import { readPredictionSettings } from "./native-prediction-profile.mjs";
 import { requestPredictionFix } from "./native-prediction-fix.mjs";
+import { readProviderSettings } from "./provider-settings.mjs";
 
 // Explicit invocation only. One repair and one affected recheck per operation.
 export async function repairDoctor({ home, env = process.env, host, port, platform = process.platform, fetchImpl = fetch,
@@ -31,6 +32,7 @@ export async function repairDoctor({ home, env = process.env, host, port, platfo
         : "Codex configuration preserved; review invalid or custom settings manually" };
   });
   await run("github-auth", async () => {
+    if (readProviderSettings({ home, env }).codex === "m365") return { kind: "info", result: "preserved_existing", message: "GitHub credentials preserved; Codex currently uses Microsoft 365" };
     if (savedToken(home)) return { kind: "info", result: "preserved_existing", message: "Saved GitHub credential retained; use doctor --online to verify access" };
     const imported = await importToken({ home, env, fetchImpl, log: () => {} });
     const verified = imported?.ok && Boolean(savedToken(home));

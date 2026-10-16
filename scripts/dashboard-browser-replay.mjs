@@ -19,11 +19,13 @@ process.env.CCDX_DISABLE_USAGE = "1";
 globalThis.fetch = async () => { throw Error("Real provider calls are forbidden"); };
 let models = 0, summaries = 0;
 const records = Array.from({ length: 10 }, (_, index) => ({ ts: new Date(Date.now() - index * 86400000).toISOString(),
-  model: "gpt-6.1-sol", usage: { input_tokens: 100 * (index + 1), cached_input_tokens: 50, output_tokens: 20, total_tokens: 120 + 100 * index } }));
+  provider: index % 2 ? "m365" : "github", model: index % 2 ? "claude-opus-5.5" : "gpt-6.1-sol",
+  usage: { input_tokens: 100 * (index + 1), cached_input_tokens: 50, output_tokens: 20, total_tokens: 120 + 100 * index } }));
 const handler = createAdapterHandler({ dashboardOptions: {
   liveModelsFn: async () => { models++; return { models: [{ id: "gpt-6.1-sol", vendor: "OpenAI", endpoints: ["responses"], preview: false }], advertised: 1, upstreamHost: "synthetic.local" }; },
   authStatusFn: () => ({ profiles: { codex: { configured: true, valid: true, login: "synthetic_user" } } }),
-  usageSummaryFn: async options => { summaries++; for (const record of records) options?.onRecord?.(record, summarizeUsage([record])); return summarizeUsage(records); },
+  usageSummaryFn: async options => { summaries++; const selected = records.filter(record => !options?.provider || record.provider === options.provider);
+    for (const record of selected) options?.onRecord?.(record, summarizeUsage([record])); return summarizeUsage(selected, { provider: options?.provider }); },
 } });
 const server = http.createServer((req, res) => {
   if (req.url.startsWith("/_ccdx/ui/animation")) {
@@ -42,6 +44,8 @@ const server = http.createServer((req, res) => {
         ttft_ms: { avg: 1250, samples: 3 }, output_tokens_per_second: { avg: 123.4, samples: 2, unit: "token/s" },
       } } },
       http_errors: { by_category: { inference: 1, protocol: 2, route: 3, other: 0 } },
+      providers: { codex_provider: "github", m365: { state: "ready", account: { login: "synthetic@example.test" }, models: { claude: 10, gpt: 5 },
+        claude: { gateway: "running", requests: { completed: 3, incomplete: 1, failed: 2 }, clients: { code: "configured", app: "configured" } } } },
       response_history: { bytes: 0, maxBytes: 67108864 }, client_integrations: { prediction: { configured: false, bridge: "stopped" } } }));
     return;
   }
@@ -75,6 +79,9 @@ try {
         assert.equal(await page.locator("html").getAttribute("lang"), language === "zh" ? "zh-CN" : "en");
         assert.match(await page.locator("#ttft").innerText(), /1250\.0 ms/);
         assert.match(await page.locator("#tpot").innerText(), /123\.4 token\/s/);
+        assert.equal(await page.locator("#m365-account").innerText(), "synthetic@example.test");
+        assert.match(await page.locator("#m365-requests").innerText(), language === "zh" ? /完成 3.*未完成 1.*失败 2/ : /3 done.*1 incomplete.*2 failed/);
+        assert.equal(await page.locator("#m365-models").innerText(), language === "zh" ? "Claude 10个 / GPT 5个" : "Claude 10 / GPT 5");
         assert.doesNotMatch(await page.locator("#http-error-breakdown").innerText(), /undefined|NaN/);
         const icon = decodeURIComponent(await page.locator("#favicon").getAttribute("href"));
         assert.equal((icon.match(/<ellipse /g) || []).length, 3);
@@ -84,6 +91,11 @@ try {
         await page.waitForFunction(() => document.querySelectorAll(".calendar-day").length === 365);
         await page.waitForFunction(() => !document.getElementById("refresh-usage").disabled);
         assert.equal(await page.evaluate(() => dashboardRefresh.state("usage").error?.message || null), null, "Analytics read/apply must succeed");
+        await page.locator("#usage-provider").selectOption("m365");
+        await page.waitForFunction(() => !document.getElementById("refresh-usage").disabled && !document.getElementById("usage-body").textContent.includes("gpt-6.1-sol"));
+        assert.match(await page.locator("#usage-body").innerText(), /claude-opus-5\.5/);
+        await page.locator("#usage-provider").selectOption("");
+        await page.waitForFunction(() => !document.getElementById("refresh-usage").disabled && document.getElementById("usage-body").textContent.includes("gpt-6.1-sol"));
         await page.locator("#animation-settings > summary").click();
         await page.locator(".theme-option").nth(1).click();
         await page.locator("#analytics-range").selectOption("90");

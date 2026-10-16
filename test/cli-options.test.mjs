@@ -81,7 +81,8 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.match(cliHelp("ccdx", "animation"), /next time the adapter starts/);
   assert.match(cliHelp("ccdx", "enable-image"), /HTTPS image API endpoint/);
   assert.match(cliHelp("ccdx", "doctor"), /consumes a small amount of Copilot usage/);
-  assert.doesNotMatch(cliHelp(), /Claude|Anthropic|pms|pm-studio/i);
+  assert.match(cliHelp(), /m365\s+Manage M365 Claude access/);
+  assert.doesNotMatch(cliHelp(), /pms|pm-studio/i);
   assert.equal(cliHelp("ccdx"), cliHelp("codex-copilot-dx"));
 });
 

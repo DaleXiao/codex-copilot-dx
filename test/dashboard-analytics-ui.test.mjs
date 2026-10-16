@@ -58,7 +58,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   let observer;
   const context = createContext({
     document, window: { matchMedia: () => ({ matches: reduced, addEventListener() {} }), addEventListener: on }, navigator: { clipboard: { writeText: clipboard } },
-    Date: ClockDate, performance: { now: () => 0 }, AbortSignal, AbortController, Intl, setTimeout(fn, ms) { scheduled.set(fn, ms); if (ms < 1800000) timers.add(fn); return fn; }, clearTimeout(fn) { timers.delete(fn); scheduled.delete(fn); },
+    Date: ClockDate, performance: { now: () => 0 }, AbortSignal, AbortController, Intl, URLSearchParams, setTimeout(fn, ms) { scheduled.set(fn, ms); if (ms < 1800000) timers.add(fn); return fn; }, clearTimeout(fn) { timers.delete(fn); scheduled.delete(fn); },
     localStorage: { getItem: key => key === "ccdx.dashboard.autoRefresh" ? savedAutomatic : savedLanguage, setItem() {} },
     IntersectionObserver: class { constructor(fn) { observer = fn; } observe() {} },
     fetch: async (url, options) => {
@@ -94,6 +94,16 @@ test("atom rotates once on load/manual refresh, not background refresh; reduced 
   const reduced = harness({ reduced: true });await flush();
   reduced.nodes.get("refresh").listeners.click();await flush();
   assert.equal(reduced.motions.length, 0);
+});
+
+test("source selection refreshes usage and its analytics without touching other resources", async () => {
+  const h = harness();await flush();
+  const before = h.requests.length;
+  const selector = h.nodes.get("usage-provider");selector.value = "m365";selector.listeners.change();await flush();
+  assert.equal(h.requests.length, before + 1);assert.match(h.requests.at(-1), /provider=m365/);
+  const analytics = h.nodes.get("usage-analytics");analytics.open = true;analytics.listeners.toggle();await flush();
+  assert.match(h.requests.at(-1), /analytics=1/);assert.match(h.requests.at(-1), /provider=m365/);
+  const calls = h.requests.length;h.nodes.get("analytics-range").listeners.change();assert.equal(h.requests.length, calls);
 });
 
 test("language switch preserves unsaved animation, chart nodes/selection and expanded failures without fetching", async () => {

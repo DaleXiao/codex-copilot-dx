@@ -1,5 +1,4 @@
-import { getCachedModelEndpoints } from "./copilot.mjs";
-import { applyCopilotResponsesRequestPolicies, stripUnsupportedGpt6ServiceTier } from "./copilot-responses-policy.mjs";
+import { defaultGithubProvider } from "./providers/github.mjs";
 import {
   createRequestAbort,
   logRequestFailure,
@@ -13,15 +12,11 @@ import {
   writeOrDrain,
 } from "./http-transport.mjs";
 import {
-  CODEX_GPT6_MODEL,
   CODEX_AUTO_REVIEW_MODEL,
-  modelIsResponsesOnly,
-  modelSupportsChatCompletions,
   modelContextWindowTokens,
-  resolveCopilotPriorityTierModel,
   resolveOpenAIModel,
 } from "./models.mjs";
-import { chatToResponses, forwardToChat, responsesBodyUsesCustomTools } from "./responses-bridge.mjs";
+import { chatToResponses, forwardToChat } from "./responses-bridge.mjs";
 import { prepareResponsesChatPayload } from "./responses-chat-payload.mjs";
 import { prepareResponsesCompactionRequest } from "./responses-compaction.mjs";
 import { clearResponsesToolOutputPartsCache } from "./responses-content.mjs";
@@ -34,7 +29,6 @@ import {
   rememberResponseHistory,
   responseHistoryPressureRootId,
 } from "./responses-request.mjs";
-import { createRoutePlan } from "./route-plan.mjs";
 import { status } from "./status.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
 import { createSseKeepalive } from "./sse-keepalive.mjs";
@@ -50,49 +44,6 @@ import {
   measureRequestStageAsync,
 } from "./stream-performance.mjs";
 
-const RESPONSES_ONLY_FALLBACK = new Set([
-  "gpt-5.6-luna",
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
-  "gpt-5.5",
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.3-codex",
-  "gpt-5.2-codex",
-]);
-
-function isResponsesOnlyModel(model, getCachedModelEndpointsFn = getCachedModelEndpoints) {
-  const endpoints = getCachedModelEndpointsFn(model);
-  if (endpoints) {
-    const fakeModel = { supported_endpoints: endpoints };
-    if (modelSupportsChatCompletions(fakeModel)) return false;
-    if (modelIsResponsesOnly(fakeModel)) return true;
-  }
-  return RESPONSES_ONLY_FALLBACK.has(model);
-}
-
-function cachedModelSupportsResponses(model, getCachedModelEndpointsFn = getCachedModelEndpoints) {
-  const endpoints = getCachedModelEndpointsFn(model);
-  return Array.isArray(endpoints)
-    && (endpoints.includes("/responses") || endpoints.includes("/v1/responses"));
-}
-
-function unsupportedCustomToolsError(model) {
-  const message = `Model ${model} has custom tool items that cannot be represented by Chat Completions, and cached endpoint metadata does not confirm Responses support`;
-  const error = new Error(message);
-  error.statusCode = 400;
-  error.code = "ccdx_custom_tools_require_responses";
-  error.jsonBody = {
-    error: {
-      message,
-      type: "invalid_request_error",
-      code: error.code,
-      model,
-    },
-  };
-  return error;
-}
-
 function resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver) {
   const preference = model === CODEX_AUTO_REVIEW_MODEL && typeof autoReviewModelResolver === "function"
     ? autoReviewModelResolver() : undefined;
@@ -103,12 +54,29 @@ function resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver) {
     ? preference.reasoningEffort : undefined };
 }
 
+async function applySelectedRoute(prepared, routePlan, { req, env, signal, assertActive, reserveHistory }) {
+  try { return applyResponseHistoryRoutePlan(prepared, routePlan); }
+  catch (error) {
+    if (error.code !== "ccdx_provider_history_rebuild_required") throw error;
+    try {
+      const { recoverLocalCompaction } = await import("./local-compaction-recovery.mjs");
+      const restored = await recoverLocalCompaction(prepared, { request: req, env, signal, assertActive, reserveHistory, maxBytes: MAX_DECODED_BODY_BYTES });
+      return applyResponseHistoryRoutePlan(restored, routePlan);
+    } catch (failure) {
+      assertActive?.();
+      error.jsonBody.error.recovery.local_status = /^[a-z][a-z_]{1,60}$/.test(failure.code || "") ? failure.code : "local_history_unavailable";
+      throw error;
+    }
+  }
+}
+
 export function createResponsesHandler(options) {
+  const provider = options.provider || defaultGithubProvider;
   const {
     acquireRequest,
     autoReviewModelResolver,
     chatCompletionsFn,
-    getCachedModelEndpointsFn = getCachedModelEndpoints,
+    getCachedModelEndpointsFn = provider.client.getCachedModelEndpoints,
     imagePressure,
     keepaliveIntervalMs,
     modelRegistry,
@@ -262,15 +230,7 @@ export function createResponsesHandler(options) {
       const streaming = prepared.body.stream === true;
       const resolvedModel = resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver);
       const { requestedModel } = resolvedModel;
-      let { upstreamModel } = resolvedModel;
-      const priorityTierModel = requestedModel === upstreamModel
-        ? resolveCopilotPriorityTierModel(upstreamModel, prepared.body.service_tier, modelRegistry?.models)
-        : null;
-      if (priorityTierModel) {
-        upstreamModel = priorityTierModel;
-        delete prepared.body.service_tier;
-      }
-      stripUnsupportedGpt6ServiceTier(prepared.body, requestedModel, upstreamModel, priorityTierModel);
+      const { upstreamModel, forceResponses } = provider.selectModel(prepared.body, resolvedModel, modelRegistry?.models);
       if (requestedModel === CODEX_AUTO_REVIEW_MODEL) {
         delete prepared.body.service_tier;
         if (resolvedModel.reasoningEffort || prepared.body.reasoning?.effort === undefined) {
@@ -282,23 +242,12 @@ export function createResponsesHandler(options) {
       markRequestObservation({ context_window_tokens: modelContextWindowTokens(modelRegistry?.models, upstreamModel) });
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${streaming}`));
-      const usesCustomTools = responsesBodyUsesCustomTools(prepared.body);
-      const useNativeResponses = Boolean(priorityTierModel)
-        || requestedModel === CODEX_AUTO_REVIEW_MODEL
-        || isResponsesOnlyModel(upstreamModel, getCachedModelEndpointsFn)
-        || (usesCustomTools && cachedModelSupportsResponses(upstreamModel, getCachedModelEndpointsFn));
-      if (usesCustomTools && !useNativeResponses) throw unsupportedCustomToolsError(upstreamModel);
-      const routePlan = createRoutePlan({
-        disposition: "relay",
-        origin: "ccdx",
-        profile: "codex",
-        protocol: useNativeResponses ? "openai-responses" : "openai-chat-completions",
-        model: upstreamModel,
-        surface: "responses",
-      });
-      prepared = applyResponseHistoryRoutePlan(prepared, routePlan);
+      const routePlan = provider.route(prepared.body, { requestedModel, upstreamModel, forceResponses,
+        surface: "responses", getCachedModelEndpoints: getCachedModelEndpointsFn });
+      prepared = await applySelectedRoute(prepared, routePlan, { req, env: openAIModelEnv, signal: abort.signal,
+        assertActive: assertPrepareActive, reserveHistory: releaseRequest.reserveResponseHistory });
       if (prepared.historyParentId === null) releaseHistorySnapshot();
-      applyCopilotResponsesRequestPolicies(prepared.body);
+      provider.applyRequestPolicies(prepared.body);
       if (routePlan.protocol === "openai-responses") {
         const restorePlaintextHistory = async (context, { reserveHistory } = {}) => {
           assertPrepareActive();
@@ -307,6 +256,7 @@ export function createResponsesHandler(options) {
             signal: abort.signal, assertActive: assertPrepareActive, reserveHistory, maxBytes: MAX_DECODED_BODY_BYTES });
         };
         const result = await proxyCopilotResponses(prepared, req, res, responsesFn, {
+          compatibility: provider.compatibility,
           acquireRetryPreparation,
           assertPrepareActive,
           signal: abort.signal,
@@ -446,6 +396,7 @@ export function createResponsesHandler(options) {
 }
 
 export function createResponsesCompactHandler(options) {
+  const provider = options.provider || defaultGithubProvider;
   const {
     acquireRequest,
     autoReviewModelResolver,
@@ -547,15 +498,7 @@ export function createResponsesCompactHandler(options) {
       const model = parsed.model || "unknown";
       const resolvedModel = resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver);
       const { requestedModel } = resolvedModel;
-      let { upstreamModel } = resolvedModel;
-      const priorityTierModel = requestedModel === upstreamModel
-        ? resolveCopilotPriorityTierModel(upstreamModel, prepared.body.service_tier, modelRegistry?.models)
-        : null;
-      if (priorityTierModel) {
-        upstreamModel = priorityTierModel;
-        delete prepared.body.service_tier;
-      }
-      stripUnsupportedGpt6ServiceTier(prepared.body, requestedModel, upstreamModel, priorityTierModel);
+      const { upstreamModel, forceResponses } = provider.selectModel(prepared.body, resolvedModel, modelRegistry?.models);
       if (requestedModel === CODEX_AUTO_REVIEW_MODEL) {
         delete prepared.body.service_tier;
         if (resolvedModel.reasoningEffort || prepared.body.reasoning?.effort === undefined) {
@@ -567,17 +510,13 @@ export function createResponsesCompactHandler(options) {
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=false`));
       markResponseModel(upstreamModel, { requestedModel });
-      prepared = applyResponseHistoryRoutePlan(prepared, createRoutePlan({
-        disposition: "relay",
-        origin: "ccdx",
-        profile: "codex",
-        protocol: "openai-responses",
-        model: upstreamModel,
-        surface: "responses-compact",
-      }));
+      prepared = await applySelectedRoute(prepared, provider.route(prepared.body, {
+        requestedModel, upstreamModel, forceResponses, surface: "responses-compact" }), { req, env: openAIModelEnv,
+        signal: abort.signal, assertActive: assertPrepareActive, reserveHistory: releaseRequest.reserveResponseHistory });
       releaseHistorySnapshot();
-      applyCopilotResponsesRequestPolicies(prepared.body);
+      provider.applyRequestPolicies(prepared.body);
       const result = await proxyCopilotResponses(prepared, req, res, responsesCompactFn, {
+        compatibility: provider.compatibility,
         assertPrepareActive,
         signal: abort.signal,
         abort,

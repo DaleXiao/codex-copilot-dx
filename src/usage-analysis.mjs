@@ -6,11 +6,11 @@ const MAX_BYTES = 2 * 1024 * 1024;
 const cache = new Map();
 
 // Only bounded, settled-file aggregates survive. No record index or payload cache.
-export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "UTC", now = Date.now(), warn = console.error } = {}) {
+export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "UTC", now = Date.now(), warn = console.error, provider = "" } = {}) {
   const analytics = createUsageAnalytics({ timeZone, now });
   const zone = new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
   const version = warn === console.error ? await usageSummaryVersion(filePath) : null;
-  const key = version === null ? null : `${version}\0${zone.resolvedOptions().timeZone}\0${zone.format(new Date(now))}`;
+  const key = version === null ? null : `${version}\0${provider}\0${zone.resolvedOptions().timeZone}\0${zone.format(new Date(now))}`;
   if (key && cache.has(key)) return structuredClone(await cache.get(key).promise);
   if (key) {
     for (const [old, entry] of cache) if (entry.version !== version) cache.delete(old);
@@ -20,6 +20,7 @@ export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "
   entry.promise = (async () => {
     let warned = false;
     const summary = await summarizeUsageLogs(filePath, {
+      provider,
       onRecord: analytics.record,
       warn(message) { warned = true; warn(message); },
     });

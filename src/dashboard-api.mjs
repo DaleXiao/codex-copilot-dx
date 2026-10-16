@@ -114,6 +114,7 @@ export async function handleDashboardApi(req, res, pathname, {
   liveModelsFn = options => fetchLiveCopilotModels({ home, ...options }),
   usageSummaryFn,
   authStatusFn = () => authStatus({ home }),
+  providerCatalogFn,
 } = {}) {
   if (!isLoopbackAddress(req.socket?.remoteAddress)
     || req.headers?.host === undefined
@@ -193,21 +194,21 @@ export async function handleDashboardApi(req, res, pathname, {
   if (pathname === MODELS_PATH && req.method === "GET") {
     const abort = createRequestAbort(req, res);
     try {
-      const catalog = await liveModelsFn({ signal: abort.signal });
+      const catalog = providerCatalogFn?.() || await liveModelsFn({ signal: abort.signal });
       if (!Array.isArray(catalog?.models) || !Number.isFinite(catalog?.advertised)) {
         throw new Error("Invalid live model catalog");
       }
       const models = catalog.models;
       sendJson(res, 200, {
-        source: "live",
-        checked_at: new Date().toISOString(),
+        source: catalog.source === "catalog" ? "catalog" : "live",
+        checked_at: catalog.source === "catalog" ? catalog.checkedAt : new Date().toISOString(),
         upstream_host: safeText(catalog?.upstreamHost || "GitHub Copilot", 120),
         advertised: finite(catalog?.advertised),
         selectable: models.length,
         models: models.slice(0, 500).map((model) => ({
           id: safeText(model.id, 100),
           vendor: safeText(model.vendor, 80),
-          endpoints: Array.isArray(model.endpoints) ? model.endpoints.filter((value) => value === "responses" || value === "chat") : [],
+          endpoints: Array.isArray(model.endpoints) ? model.endpoints.filter((value) => ["responses", "chat", "messages"].includes(value)) : [],
           preview: model.preview === true,
         })),
       });
@@ -219,6 +220,8 @@ export async function handleDashboardApi(req, res, pathname, {
 
   if (pathname === USAGE_PATH && req.method === "GET") {
     const query = new URL(req.url, "http://localhost").searchParams;
+    const provider = query.get("provider") || "";
+    if (provider && !["github", "m365"].includes(provider)) { sendJson(res, 400, { error: "Select GitHub or Microsoft 365" });return; }
     let analytics = null;
     if (query.get("analytics") === "1") {
       try {
@@ -232,9 +235,9 @@ export async function handleDashboardApi(req, res, pathname, {
     }
     try {
       const analysis = analytics && !usageSummaryFn
-        ? await analyzeUsageLogs(undefined, { timeZone: query.get("time_zone") || "UTC" }) : null;
-      const summary = analysis?.summary || await (usageSummaryFn || (options => summarizeUsageLogs(undefined, options)))(analytics ? { onRecord: analytics.record } : undefined);
-      sendJson(res, 200, { source: "local_usage_log", ...usageTable(summary), ...(analytics ? { analytics: analysis?.analytics || analytics.snapshot() } : {}) });
+        ? await analyzeUsageLogs(undefined, { timeZone: query.get("time_zone") || "UTC", provider }) : null;
+      const summary = analysis?.summary || await (usageSummaryFn || (options => summarizeUsageLogs(undefined, options)))({ provider, ...(analytics ? { onRecord: analytics.record } : {}) });
+      sendJson(res, 200, { source: "local_usage_log", provider: provider || "all", providers: summary.providers, ...usageTable(summary), ...(analytics ? { analytics: analysis?.analytics || analytics.snapshot() } : {}) });
     } catch {
       sendJson(res, 500, { error: "Could not read local usage summary" });
     }

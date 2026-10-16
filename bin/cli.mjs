@@ -14,13 +14,13 @@ import { runInBackground } from "../src/startup.mjs";
 import { cliCommandName, cliHelp, parseAdapterAddressOptions, parseAdapterProbeOptions, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
 import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
-import { runAutoReviewModelCommand } from "../src/auto-review-model.mjs";
 import { autoReviewModelPreference, autoReviewPreference, responseHistoryLimitPreference, terminalAnimationPreference } from "../src/user-settings.mjs";
-import { fetchLiveCopilotModels, formatLiveCopilotModels } from "../src/cli-models.mjs";
+import { formatLiveCopilotModels } from "../src/cli-models.mjs";
 import { runAuthCommand } from "../src/cli-auth.mjs";
 import { createProfileRuntime } from "../src/profile-runtime.mjs";
 import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
 import { createCodexModelCatalog } from "../src/codex-model-catalog.mjs";
+import { createProviderRuntime } from "../src/provider-runtime.mjs";
 import { setResponseHistoryMaxBytes } from "../src/response-history.mjs";
 import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck } from "../src/startup-ui.mjs";
 
@@ -44,6 +44,14 @@ if (CLI.command === "help") {
 if (CLI.command === "version") {
   console.log(CLI_BANNER);
   process.exit(0);
+}
+if (CLI.command === "m365") {
+  try {
+    const { runM365Command } = await import("../src/cli-m365.mjs");
+    const address = parseAdapterAddressOptions(process.env);
+    await runM365Command({ ...CLI, host: address.adapterHost, port: address.adapterPort });
+    process.exit(0);
+  } catch (error) { console.error(status("err", error.message));process.exit(1); }
 }
 if (CLI.command === "animation") {
   try {
@@ -107,6 +115,7 @@ if (CLI.command === "usage") {
   try {
     await printUsageSummary({
       format: CLI.outputFormat || "auto",
+      provider: CLI.provider || "",
       output: process.stdout,
     });
     process.exit(0);
@@ -204,7 +213,8 @@ if (CLI.command === "status") {
 }
 if (CLI.command === "models") {
   try {
-    const catalog = await fetchLiveCopilotModels({ profile: CLI.profile });
+    const { fetchActiveProviderModels } = await import("../src/cli-m365.mjs");
+    const catalog = await fetchActiveProviderModels();
     console.log(formatLiveCopilotModels(catalog, {
       commandName: CLI_NAME,
       format: CLI.outputFormat || "auto",
@@ -218,7 +228,9 @@ if (CLI.command === "models") {
 }
 if (CLI.command === "auto-review-model") {
   try {
-    await runAutoReviewModelCommand({ commandName: CLI_NAME });
+    const { runProviderAutoReviewCommand } = await import("../src/cli-m365.mjs");
+    const address = parseAdapterAddressOptions(process.env);
+    await runProviderAutoReviewCommand({ commandName: CLI_NAME, host: address.adapterHost, port: address.adapterPort });
     process.exit(0);
   } catch (e) {
     console.error(status("err", e.message));
@@ -271,6 +283,7 @@ let modelRefreshTimer = null;
 let shuttingDown = false;
 let nativePrediction = null;
 let clientIntegration = null;
+let providerRuntime = null;
 
 async function clientIntegrations() {
   if (!clientIntegration) {
@@ -387,23 +400,32 @@ try {
   const earlyIntegration = await clientIntegrations();
   const predictionSetup = runInBackground(() => earlyIntegration.start());
 
-  // Ensure GitHub login, using device flow if no token exists.
-  await ensureAuth({ log: startupLogger("Auth") });
-
-  const profileRuntime = createProfileRuntime({ codexClient: defaultCopilotClient });
+  let profileRuntime = createProfileRuntime({ codexClient: defaultCopilotClient });
   let startupComplete = false;
   const profileModels = createProfileModelRuntime({
     codexClient: profileRuntime.codexClient,
-    codexCredentialFingerprint: profileRuntime.codexCredentialFingerprint,
+    codexCredentialFingerprint: () => profileRuntime.codexCredentialFingerprint,
     timeoutMs: MODEL_REFRESH_TIMEOUT_MS,
     commandName: CLI_NAME,
     autoReviewModelResolver: () => autoReviewModelPreference().model,
     log: (kind, message) => console.log(startupComplete ? status(kind, message) : startupCheck(kind, "Models", message)),
   });
+  providerRuntime = createProviderRuntime({ githubClient: profileRuntime.codexClient, githubRegistry: profileModels.codexRegistry,
+    githubCredentialFingerprint: () => profileRuntime.codexCredentialFingerprint,
+    log: (kind, message) => console.log(startupComplete ? status(kind, message) : startupCheck(kind, "M365", message)) });
+  const m365Setup = runInBackground(() => providerRuntime.start());
+  if (providerRuntime.selection().codex === "github") {
+    try { await ensureAuth({ log: startupLogger("Auth") }); }
+    catch (error) { if (!await m365Setup) throw error;console.warn(startupCheck("warn", "Auth", "GitHub authorization is unavailable; Microsoft 365 Claude remains available")); }
+  } else {
+    await m365Setup;
+    console.log(startupCheck("info", "Provider", "Codex uses the explicitly selected Microsoft 365 backup"));
+  }
+  profileRuntime = createProfileRuntime({ codexClient: defaultCopilotClient });
 
   // Refresh the VS Code version in the background; fallback is non-blocking.
   void refreshVSCodeVersion();
-  await profileModels.initialize();
+  if (providerRuntime.selection().codex === "github") await profileModels.initialize();
   if (profileModels.codexRegistry.source !== "live") {
     console.log(startupCheck("info", "Models", `${profileModels.codexRegistry.source} list loaded${profileModels.codexRegistry.refreshInFlight ? "; refreshing" : ""}`));
   }
@@ -421,6 +443,7 @@ try {
     codexClient: profileRuntime.codexClient,
     codexModelCatalog,
     codexModelRegistry: profileModels.codexRegistry,
+    providerRuntime,
     showRequestId: CLI.showRequestId,
     upstreamTimeoutMs: RUNTIME.upstreamTimeoutMs,
     streamHandshakeTimeoutMs: RUNTIME.streamHandshakeTimeoutMs,
@@ -451,7 +474,8 @@ try {
   const refreshIntervalMs = RUNTIME.modelRefreshIntervalMs;
   if (Number.isFinite(refreshIntervalMs) && refreshIntervalMs > 0) {
     modelRefreshTimer = setInterval(() => {
-      profileModels.refreshAll().catch(() => {});
+      if (providerRuntime.selection().codex === "github") profileModels.refreshAll().catch(() => {});
+      providerRuntime.refresh().catch(() => {});
     }, refreshIntervalMs);
     modelRefreshTimer.unref?.();
   }
@@ -467,6 +491,7 @@ try {
     try {
       if (modelRefreshTimer) clearInterval(modelRefreshTimer);
       await clientIntegration?.close();
+      await providerRuntime?.close();
       const result = await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs });
       if (result.forced) console.warn(status("warn", "Forced remaining adapter connections closed"));
       await flushUsageWrites();
@@ -484,6 +509,7 @@ try {
 } catch (e) {
   console.error(status("err", e.message));
   await clientIntegration?.close().catch(() => {});
+  await providerRuntime?.close().catch(() => {});
   await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs }).catch(() => {});
   await flushUsageWrites();
   await LOGGING.cleanup();

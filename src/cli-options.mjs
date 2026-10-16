@@ -29,6 +29,7 @@ const HELP_TOPICS = new Set([
   "auto-review-model",
   "suggestion",
   "prediction",
+  "m365",
   "update",
   "version",
 ]);
@@ -151,13 +152,23 @@ export function parseCliArgs(args = []) {
     return baseCommand("version");
   }
   if (command === "start") return parseStartOptions(rest);
+  if (command === "m365") {
+    const [action = "status", ...args] = rest;
+    if (!["status", "models", "switch", "on", "off", "remove"].includes(action)) throw new Error("M365 action must be status, models, switch, on, off or remove");
+    let provider, remaining = args;
+    if (action === "switch" && args[0] && !args[0].startsWith("--")) { provider = args[0];remaining = args.slice(1); }
+    if (provider && !["github", "m365"].includes(provider)) throw new Error("Provider must be github or m365");
+    const values = parseOptions(remaining, new Map(action === "switch" ? [["--model", "value"], ["--auto-review-model", "value"]] : []));
+    return baseCommand("m365", { action, provider, model: values["--model"], autoReviewModel: values["--auto-review-model"] });
+  }
   if (command === "status" || command === "--status") {
     if (rest.length) unexpectedArgs(rest);
     return baseCommand("status");
   }
   if (command === "usage") {
-    const options = parseOptions(rest, new Map([["--format", "value"]]));
-    return baseCommand("usage", outputFormatOption(options["--format"]));
+    const options = parseOptions(rest, new Map([["--format", "value"], ["--provider", "value"]]));
+    if (options["--provider"] && !["github", "m365"].includes(options["--provider"])) throw new Error("Usage provider must be github or m365");
+    return baseCommand("usage", { ...outputFormatOption(options["--format"]), ...(options["--provider"] ? { provider: options["--provider"] } : {}) });
   }
   if (command === "cache") {
     let cacheArgs = rest;
@@ -370,8 +381,8 @@ function topicHelp(name, topic) {
     doctor: `Usage:\n  ${name} doctor [--online] [--compat] [--fix] [--json]\n  ${name} doctor config\n\nChecks credentials, managed configuration, command launchers, adapter, enabled optional features and observed client catalog. Default is read-only; no inference requests. --online validates account entitlement; --compat sends minimal inference requests and consumes a small amount of Copilot usage, requiring successful model completion rather than HTTP 200 alone. --fix repairs owned Windows launchers and managed config, imports a verified existing credential only if none is saved, and asks the running adapter to repair enabled predictions once. No interactive login, client program edits, forced App restarts, policy changes or optional feature activation. Missing-credential repair can contact GitHub without --online. Changed existing config is backed up to config.toml.ccdx-doctor.bak. Partial repairs exit 1. --json emits a redacted report, including before_checks for repairs. App-internal cache and visible predictions are not externally verified. The config subcommand remains strictly read-only.`,
     "doctor config": `Usage:\n  ${name} doctor config\n\nReads ~/.codex/config.toml, checks TOML syntax and CCDX-managed settings, and previews the existing startup writer's changes. Does not merge Codex profiles or validate the complete installed Codex schema. No authentication, network requests, file writes, or adapter/GUI startup. Existing context_management=false is valid. Exit 1 for errors, 0 for OK/warnings; unsupported arguments exit 2.`,
     status: `Usage:\n  ${name} status\n\nShows bounded runtime, routing, performance, queue, and cache metrics from a running adapter.`,
-    models: `Usage:\n  ${name} models [--format table|plain]\n\nPerforms a fresh, read-only Copilot model-directory lookup for the saved account. Interactive terminals use a table by default.`,
-    usage: `Usage:\n  ${name} usage [--format table|plain]\n\nSummarizes local token usage metadata without reading prompt or completion content. Interactive terminals use a table by default.`,
+    models: `Usage:\n  ${name} models [--format table|plain]\n\nShows GPT models for the selected Codex provider. GitHub performs a fresh read-only lookup; M365 uses its isolated catalog in the running service. Interactive terminals use a table by default.`,
+    usage: `Usage:\n  ${name} usage [--format table|plain] [--provider github|m365]\n\nSummarizes local token usage metadata without reading prompt or completion content. Optional provider filtering separates sources; default totals include both. Interactive terminals use a table by default.`,
     cache: `Usage:\n  ${name} cache\n  ${name} cache --limit <MiB|default>\n  ${name} cache --clean [--history] [--yes]\n\nShows runtime cache use, saves and applies the shared response-history limit, or clears the rebuildable image-transform cache. --history also clears in-memory response history for all tasks and can make their next continuation fail, so interactive confirmation or --yes is required. Generated image files and saved Codex transcripts are never deleted. Short aliases: -128 sets 128 MiB and -clean equals --clean.`,
     limits: `Usage:\n  ${name} limits\n  ${name} limits --decoded <MiB|default>\n\nShows configured and running request-body limits, or saves a decoded request-body limit from 128 to 512 MiB. The raw-body limit is unchanged. Restart ccdx to apply a saved change; no conversation or cache is cleared. Short alias: -256 sets 256 MiB.`,
     animation: `Usage:\n  ${name} animation\n\nPreviews all terminal activity animations together and selects the theme used the next time the adapter starts.`,
@@ -380,6 +391,7 @@ function topicHelp(name, topic) {
     "image-status": `Usage:\n  ${name} image-status\n\nShows provider configuration and locally advertised generation/editing tools without generating an image or exposing its API key.`,
     "auto-review-model": `Usage:\n  ${name} auto-review-model\n\nSelect a Responses model, then an advertised reasoning effort. Enter keeps the default/current choice; q cancels both steps without saving. Effort 0 follows the client (low when omitted). Settings apply only to Auto-review on the next request; no client patch or restart is required for adapters running 0.9.13 or newer.`,
     "suggestion": `The CCDX prediction panel has been retired. Run ${name} suggestion off to safely remove unchanged CCDX registrations. This cleanup does not change native predictions; see ${name} prediction --help for that separate opt-in feature.`,
+    m365: `Usage:\n  ${name} m365 [status|models|on|off|remove]\n  ${name} m365 switch [github|m365] [--model ID] [--auto-review-model ID]\n\nM365 is discovered silently at startup on supported managed environments. Claude uses its separate local gateway. Codex stays on GitHub unless you explicitly switch. M365 switching requires a running compatible adapter and available GPT/Auto-review choices; it never substitutes unavailable models. Select an available model in Codex after switching an existing thread. Off restores only owned Claude settings and selects GitHub. Remove also clears the CCDX M365 profile, retaining a disabled preference and historical usage. System Microsoft sign-in, GitHub credentials, predictions and images are preserved.`,
     prediction: `Usage:\n  ${name} prediction [status|on|off|fix]\n\nOptional native next-message predictions; off by default. macOS and Windows. Windows requires the registered official MSIX App, an initialized profile, Windows PowerShell and .NET Framework 4.7.2+; Git/OpenSSL is not required for prediction setup. Quit Codex before on/off, then restart ccdx. On adds private App-profile certificate trust and an App-only route for chatgpt.com and ab.chatgpt.com. HTTPS on those hosts is decrypted locally; only prediction configuration is changed. No client program files, OS trust, account permissions, MCP or Hooks are changed. Static HTTP/HTTPS/SOCKS5 proxies and bypass rules are preserved. Windows supports company PAC/WPAD; macOS dynamic PAC/WPAD remains unsupported. Static IPv4/IPv6 CIDRs match URL IP literals without DNS. The bridge port persists across restarts/updates; a busy saved port disables only predictions. Launch/reuse checks the App's actual route; an older random or missing route may require one full App quit. Official prediction configuration is preserved; the conversation's model is used. App updates require another compatibility check. Status distinguishes saved preference and observed config traffic from unverified candidate visibility.\n\nFix asks a compatible running CCDX adapter to repair the enabled bridge once on its saved port. It never enables predictions, renews certificates or force-restarts Codex. Healthy unchanged bridges are retained. Fix rechecks system proxy settings. Changed routes may need a normal App relaunch to reload cached PAC; failed rechecks preserve the previous bridge with a nonzero exit. Process environment variables and Node trust are not hot-reloaded; changed trust inputs need a CCDX service restart. Startup, status and doctor share sanitized environment diagnostics. Missing App routes require a normal full quit and ccdx launch; partial repair exits 1. An older adapter must first be upgraded and restarted once to gain this repair endpoint.`,
     update: `Usage:\n  ${name} update [npm|github] [--allow-remote]\n\nUpdates the global package from the configured npm registry or the latest stable GitHub release. With no source, an interactive terminal prompts for one. Windows uses system cmd.exe to run npm.cmd without changing PowerShell policy; use the .cmd entrypoint if scripts are blocked. GitHub installs require Git on PATH and dependencies may still use the configured npm registry. By default npm's remote-download policy is preserved. If npm reports EALLOWREMOTE for a trusted mirror tarball, --allow-remote explicitly permits URL dependencies for this one installation's entire dependency tree; it is not a hostname allowlist. No .npmrc, registry or persistent policy is changed, and failed installations are not retried automatically. Use this only if company policy permits it. Restart the running adapter after installation.`,
     version: `Usage:\n  ${name} --version`,
@@ -398,7 +410,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} doctor config
   ${name} status
   ${name} models [--format table|plain]
-  ${name} usage [--format table|plain]
+  ${name} usage [--format table|plain] [--provider github|m365]
   ${name} cache [--limit <MiB|default> | --clean [--history] [--yes]]
   ${name} limits [--decoded <MiB|default>]
   ${name} animation
@@ -407,6 +419,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} image-status
   ${name} auto-review-model
   ${name} prediction [status|on|off|fix]
+  ${name} m365 [status|models|switch|on|off|remove]
   ${name} update [npm|github] [--allow-remote]
   ${name} --version
   ${name} --help
@@ -416,7 +429,7 @@ Commands:
   auth               Inspect the saved GitHub Copilot account
   doctor             Diagnose local config; optional live and inference checks
   status             Show runtime routing, performance, queue, and cache health
-  models             Query a saved account's live Copilot model catalog
+  models             Show the selected Codex provider's GPT model catalog
   usage              Summarize locally recorded token usage
   cache              Inspect, size, or clear bounded runtime caches
   limits             Inspect or configure the decoded request-body limit
@@ -426,6 +439,7 @@ Commands:
   image-status       Show the optional image provider status
   auto-review-model  Select the Codex Auto-review model and reasoning effort
   prediction         Toggle optional native next-message predictions
+  m365               Manage M365 Claude access and the optional Codex backup
   update             Update the global package from npm or GitHub
 
 Run ${name} <command> --help for command details.`;

@@ -18,10 +18,12 @@ const runNpm = args => execFileSync(process.execPath, [npm, ...args], {
 });
 const packageRoot = path.join(prefix, ...(process.platform === "win32" ? [] : ["lib"]), "node_modules", "codex-copilot-dx");
 const version = () => execFileSync(process.execPath, [path.join(packageRoot, "bin", "cli.mjs"), "version"], { encoding: "utf8", timeout: 10000 }).trim();
+const args = process.argv.slice(2);
+if (args.length && (args.length !== 2 || args[0] !== "--baseline" || !path.isAbsolute(args[1]) || !fs.statSync(args[1]).isFile())) throw new Error("Use --baseline /absolute/path/to/0.9.41.tgz for a local baseline artifact");
 try {
   const install = spec => runNpm(["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", spec]);
-  install("codex-copilot-dx@0.9.31");
-  assert.match(version(), /ccdx v0\.9\.31 /);
+  install(args[1] || "codex-copilot-dx@0.9.41");
+  assert.match(version(), /ccdx v0\.9\.41 /);
   const expected = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")).version;
   const result = JSON.parse(runNpm(["pack", "--json", "--ignore-scripts", "--pack-destination", root]));
   // npm 10/11 return an array; npm 12 keys pack results by package name.
@@ -71,7 +73,11 @@ try {
   }
   const checkNative = `const {createRequire}=require('node:module');const sharp=createRequire(${JSON.stringify(path.join(packageRoot, "package.json"))})('sharp');sharp({create:{width:8,height:8,channels:3,background:'white'}}).png().toBuffer({resolveWithObject:true}).then(({info})=>{if(info.width!==8)process.exit(1)}).catch(()=>process.exit(1));`;
   execFileSync(process.execPath, ["-e", checkNative], { encoding: "utf8", timeout: 30000 });
-  console.log(`Package lifecycle: 0.9.31 -> ${expected}; isolated prefix; installed sharp works (${process.platform}/${process.arch}).`);
+  if (["darwin", "win32"].includes(process.platform)) {
+    const checkBroker = `const {createRequire}=require('node:module');const sdk=createRequire(${JSON.stringify(path.join(packageRoot, "package.json"))})('@azure/msal-node-runtime');if(!sdk.msalNodeRuntime)process.exit(1);`;
+    execFileSync(process.execPath, ["-e", checkBroker], { encoding: "utf8", timeout: 30000 });
+  }
+  console.log(`Package lifecycle: 0.9.41 -> ${expected}; isolated prefix; installed sharp and supported broker load work (${process.platform}/${process.arch}).`);
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }

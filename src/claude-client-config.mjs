@@ -1,0 +1,217 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { readBoundedFileSync } from "./bounded-file.mjs";
+import { atomicWriteFileSync } from "./atomic-file.mjs";
+import { withFileLockSync } from "./lock.mjs";
+import { m365Paths, readM365Json, writeM365Json } from "./m365-settings.mjs";
+
+export const M365_CLAUDE_PROFILE_ID = "00000000-0000-4000-8000-000000202700";
+const M365_CLAUDE_PROFILE_NAME = "CCDX Microsoft 365";
+
+export function claudeClientPaths({ home = os.homedir(), platform = process.platform, env = process.env } = {}) {
+  const base = platform === "win32" ? env.LOCALAPPDATA || path.join(home, "AppData", "Local")
+    : platform === "darwin" ? path.join(home, "Library", "Application Support") : env.XDG_CONFIG_HOME || path.join(home, ".config");
+  const normalBase = platform === "win32" ? env.APPDATA || path.join(home, "AppData", "Roaming") : base;
+  const library = path.join(base, "Claude-3p", "configLibrary");
+  return { code: path.join(env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"), "settings.json"),
+    normal: path.join(normalBase, "Claude", "claude_desktop_config.json"),
+    threep: path.join(base, "Claude-3p", "claude_desktop_config.json"),
+    meta: path.join(library, "_meta.json"), profile: path.join(library, `${M365_CLAUDE_PROFILE_ID}.json`) };
+}
+
+function read(file) {
+  try {
+    if (!fs.lstatSync(file).isFile()) throw Error();
+    const bytes = readBoundedFileSync(file, { maxBytes: 1024 * 1024 });
+    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw Error();
+    return { exists: true, bytes, value };
+  } catch (error) {
+    if (error.code === "ENOENT") return { exists: false, bytes: null, value: {} };
+    throw Object.assign(new Error("Claude configuration is unreadable; existing files were preserved"), { code: "claude_config_unreadable" });
+  }
+}
+function valueAt(object, keys) {
+  const parent = keys.slice(0, -1).reduce((v, k) => v && Object.hasOwn(v, k) ? v[k] : undefined, object);
+  return parent && typeof parent === "object" && Object.hasOwn(parent, keys.at(-1)) ? { exists: true, value: parent[keys.at(-1)] } : { exists: false };
+}
+function setAt(object, keys, value) {
+  let parent = object;
+  for (const key of keys.slice(0, -1)) {
+    if (parent[key] === undefined) parent[key] = {};
+    if (!parent[key] || typeof parent[key] !== "object" || Array.isArray(parent[key])) throw new Error("Claude configuration has a conflicting parent field");
+    parent = parent[key];
+  }
+  if (value.exists) parent[keys.at(-1)] = value.value;
+  else {
+    delete parent[keys.at(-1)];
+    if (keys.length === 2 && Object.keys(parent).length === 0) delete object[keys[0]];
+  }
+}
+
+export async function inspectClaudeDesktopPolicy({ platform = process.platform, home = os.homedir(), env = process.env,
+  execFileImpl = promisify(execFile) } = {}) {
+  if (platform === "darwin") {
+    const files = ["/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+      path.join("/Library/Managed Preferences", os.userInfo().username, "com.anthropic.claudefordesktop.plist"),
+      path.join(home, "Library", "Managed Preferences", "com.anthropic.claudefordesktop.plist")];
+    return files.some(file => fs.existsSync(file));
+  }
+  if (platform === "win32") {
+    const reg = path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "reg.exe");
+    for (const key of ["HKLM\\SOFTWARE\\Policies\\Claude", "HKCU\\SOFTWARE\\Policies\\Claude"]) {
+      try { await execFileImpl(reg, ["query", key], { encoding: "utf8", timeout: 3000, maxBuffer: 32768, windowsHide: true });return true; }
+      catch (error) { if (error.code !== 1) return true; }
+    }
+  }
+  return false;
+}
+
+function operationValue(snapshot, operation) {
+  const field = valueAt(snapshot, operation.keys);
+  if (!operation.itemId) return field;
+  const item = Array.isArray(field.value) ? field.value.find(value => value?.id === operation.itemId) : undefined;
+  return item ? { exists: true, value: item } : { exists: false };
+}
+function setOperation(snapshot, operation, value) {
+  if (!operation.itemId) { setAt(snapshot, operation.keys, value);return; }
+  const current = valueAt(snapshot, operation.keys);
+  if (current.exists && !Array.isArray(current.value)) throw new Error("Claude profile list is invalid");
+  const next = (current.value || []).filter(item => item?.id !== operation.itemId);
+  if (value.exists) next.push(value.value);
+  setAt(snapshot, operation.keys, { exists: true, value: next });
+}
+
+function reconcile(operations, { restore = false, ...options } = {}) {
+  const paths = claudeClientPaths(options), allowed = new Set(Object.values(paths)), journalPath = m365Paths(options).ownership;
+  fs.mkdirSync(path.dirname(journalPath), { recursive: true, mode: 0o700 });
+  return withFileLockSync(`${journalPath}.lock`, () => {
+    const journal = readM365Json(journalPath, { version: 1, operations: [] });
+    const keys = new Map([
+      [paths.code, new Set(["env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN", "env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "env.ANTHROPIC_CUSTOM_HEADERS", "env.ANTHROPIC_MODEL"])],
+      [paths.normal, new Set(["deploymentMode"])], [paths.threep, new Set(["deploymentMode"])],
+      [paths.meta, new Set(["entries", "appliedId"])],
+      [paths.profile, new Set(["inferenceProvider", "inferenceGatewayBaseUrl", "inferenceGatewayApiKey", "inferenceGatewayAuthScheme", "inferenceModels", "inferenceCustomHeaders"])],
+    ]);
+    if (journal.version !== 1 || !Array.isArray(journal.operations) || journal.operations.some(op => !allowed.has(op.file)
+      || !Array.isArray(op.keys) || !keys.get(op.file)?.has(op.keys.join("."))
+      || op.itemId !== undefined && (op.file !== paths.meta || op.keys.join(".") !== "entries" || op.itemId !== M365_CLAUDE_PROFILE_ID))) {
+      throw new Error("Claude configuration ownership is invalid; files were preserved");
+    }
+    const states = new Map(), pending = [], nextJournal = structuredClone(journal), skipped = [];
+    const list = restore ? journal.operations : operations;
+    for (const operation of list) {
+      if (!allowed.has(operation.file)) throw new Error("Unexpected Claude configuration path");
+      if (!states.has(operation.file)) states.set(operation.file, read(operation.file));
+      const state = states.get(operation.file);state.next ||= structuredClone(state.value);
+      const previous = journal.operations.find(op => op.file === operation.file && isDeepStrictEqual(op.keys, operation.keys) && op.itemId === operation.itemId);
+      const current = operationValue(state.next, operation), desired = restore ? operation.before : { exists: true, value: operation.value };
+      if (restore) {
+        if (!isDeepStrictEqual(current, { exists: true, value: operation.after })) { skipped.push(operation.file);continue; }
+        setOperation(state.next, operation, desired);
+        nextJournal.operations = nextJournal.operations.filter(op => !(op.file === operation.file && isDeepStrictEqual(op.keys, operation.keys) && op.itemId === operation.itemId));
+      } else {
+        if (isDeepStrictEqual(current, desired)) continue;
+        const replaceMode = operation.keys.join(".") === "deploymentMode" && [paths.normal, paths.threep].includes(operation.file)
+          && current.value === "1p";
+        if (current.exists && !replaceMode && (!previous || !isDeepStrictEqual(current, { exists: true, value: previous.after }))) { skipped.push(operation.file);continue; }
+        const entry = { file: operation.file, keys: operation.keys, ...(operation.itemId ? { itemId: operation.itemId } : {}),
+          before: previous?.before || current, after: operation.value };
+        setOperation(state.next, operation, desired);
+        nextJournal.operations = nextJournal.operations.filter(op => !(op.file === operation.file && isDeepStrictEqual(op.keys, operation.keys) && op.itemId === operation.itemId));
+        nextJournal.operations.push(entry);
+      }
+    }
+    // Record ownership before client writes so interruption remains recoverable.
+    const oldJournal = journal;
+    if (!restore) writeM365Json(journalPath, nextJournal);
+    try {
+      for (const [file, state] of states) {
+        if (isDeepStrictEqual(state.value, state.next)) continue;
+        const latest = read(file);
+        if (latest.exists !== state.exists || latest.bytes?.equals(state.bytes) === false) throw new Error("Claude configuration changed during setup; retry after the other writer finishes");
+        const bytes = Buffer.from(`${JSON.stringify(state.next, null, 2)}\n`);
+        atomicWriteFileSync(file, bytes, { mode: 0o600, preserveMode: false });pending.push({ file, state, bytes });
+      }
+      if (restore) writeM365Json(journalPath, nextJournal);
+    } catch (error) {
+      for (const entry of pending.reverse()) {
+        const latest = read(entry.file);
+        if (!latest.bytes?.equals(entry.bytes)) continue;
+        if (entry.state.exists) atomicWriteFileSync(entry.file, entry.state.bytes, { mode: 0o600 });
+        else fs.unlinkSync(entry.file);
+      }
+      writeM365Json(journalPath, oldJournal);throw error;
+    }
+    return { changed: pending.length > 0, preserved: [...new Set(skipped)].length, remaining: nextJournal.operations.length };
+  });
+}
+
+export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstalled, desktopManaged, ...options } = {}) {
+  const paths = claudeClientPaths(options), ids = models.map(model => model.id), operations = [], result = {};
+  const endpoint = new URL(baseUrl);
+  if (endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1" || endpoint.pathname !== "/" || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) throw new Error("Claude gateway must use a local root URL");
+  const add = (file, keys, value, itemId) => operations.push({ file, keys, value, ...(itemId ? { itemId } : {}) });
+  const env = options.env || process.env;
+  let code;
+  try { code = read(paths.code).value; } catch { result.code = "configuration_unavailable"; }
+  const codeEnv = code?.env || {};
+  const envConflict = env.ANTHROPIC_BASE_URL && env.ANTHROPIC_BASE_URL !== baseUrl
+    || env.ANTHROPIC_AUTH_TOKEN && env.ANTHROPIC_AUTH_TOKEN !== apiKey
+    || codeEnv.ANTHROPIC_AUTH_TOKEN && codeEnv.ANTHROPIC_AUTH_TOKEN !== apiKey
+    || env.ANTHROPIC_API_KEY && env.ANTHROPIC_API_KEY !== apiKey
+    || codeEnv.ANTHROPIC_API_KEY && codeEnv.ANTHROPIC_API_KEY !== apiKey
+    || code?.apiKeyHelper
+    || ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_GATEWAY"].some(key => /^(1|true)$/i.test(env[key] || codeEnv[key] || ""));
+  if (!code) { /* Keep independent App setup available when Code settings are damaged. */ }
+  else if (envConflict || codeEnv.ANTHROPIC_BASE_URL && codeEnv.ANTHROPIC_BASE_URL !== baseUrl) result.code = "preserved";
+  else {
+    add(paths.code, ["env", "ANTHROPIC_BASE_URL"], baseUrl);
+    add(paths.code, ["env", "ANTHROPIC_AUTH_TOKEN"], apiKey);
+    add(paths.code, ["env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"], "1");
+    if (env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS === undefined) add(paths.code, ["env", "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"], "1");
+    add(paths.code, ["env", "ANTHROPIC_CUSTOM_HEADERS"], "X-CCDX-Client: claude-code");
+    if (!codeEnv.ANTHROPIC_MODEL && ids.length) add(paths.code, ["env", "ANTHROPIC_MODEL"], ids[0]);
+    result.code = "configured";
+  }
+  const installed = desktopInstalled ?? (fs.existsSync(path.dirname(paths.normal)) || fs.existsSync(path.dirname(paths.threep))
+    || (options.platform || process.platform) === "darwin" && fs.existsSync("/Applications/Claude.app"));
+  if (!installed) result.app = "not_installed";
+  else if (desktopManaged !== false || env.CLAUDE_USER_DATA_DIR) result.app = "preserved";
+  else {
+    let meta, profile;
+    try { meta = read(paths.meta).value;profile = read(paths.profile).value; } catch { result.app = "configuration_unavailable"; }
+    if (!meta) { /* Code setup remains independent. */ }
+    else if (meta.hybridPointer || meta.appliedId && meta.appliedId !== M365_CLAUDE_PROFILE_ID
+      || profile.inferenceProvider && profile.inferenceProvider !== "gateway"
+      || profile.inferenceGatewayBaseUrl && profile.inferenceGatewayBaseUrl !== baseUrl
+      || profile.inferenceGatewayApiKey && profile.inferenceGatewayApiKey !== apiKey) result.app = "preserved";
+    else {
+      add(paths.profile, ["inferenceProvider"], "gateway");
+      add(paths.profile, ["inferenceGatewayBaseUrl"], baseUrl);
+      add(paths.profile, ["inferenceGatewayApiKey"], apiKey);
+      add(paths.profile, ["inferenceGatewayAuthScheme"], "bearer");
+      add(paths.profile, ["inferenceModels"], JSON.stringify(ids));
+      add(paths.profile, ["inferenceCustomHeaders"], JSON.stringify({ "X-CCDX-Client": "claude-app" }));
+      add(paths.meta, ["entries"], { id: M365_CLAUDE_PROFILE_ID, name: M365_CLAUDE_PROFILE_NAME }, M365_CLAUDE_PROFILE_ID);
+      add(paths.meta, ["appliedId"], M365_CLAUDE_PROFILE_ID);
+      add(paths.threep, ["deploymentMode"], "3p");
+      result.app = "configured";
+    }
+  }
+  const applied = reconcile(operations, options);
+  if (applied.preserved) {
+    if (result.code === "configured") result.code = "partially_preserved";
+    if (result.app === "configured") result.app = "partially_preserved";
+  }
+  return { ...result, changed: applied.changed };
+}
+
+export function restoreClaudeClients(options = {}) {
+  if (!fs.existsSync(m365Paths(options).ownership)) return { changed: false, preserved: 0, remaining: 0 };
+  return reconcile([], { ...options, restore: true });
+}

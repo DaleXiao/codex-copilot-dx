@@ -125,7 +125,7 @@ function emptyOutcomes() {
 
 function modelLabel(value) {
   const model = String(value || "").trim();
-  return model === "codex-auto-review" || /^gpt-[A-Za-z0-9._-]{1,72}$/.test(model)
+  return model === "codex-auto-review" || /^(?:gpt|claude)-[A-Za-z0-9._-]{1,72}$/.test(model)
     ? model : "other";
 }
 
@@ -180,8 +180,8 @@ function routeSnapshot(route) {
   };
 }
 
-export function createStreamPerformanceMetrics({ now = () => performance.now(), wallNow = () => new Date().toISOString() } = {}) {
-  const routes = Object.fromEntries(PERFORMANCE_ROUTES.map((name) => [name, createRoutePerformance()]));
+export function createStreamPerformanceMetrics({ now = () => performance.now(), wallNow = () => new Date().toISOString(), routeNames = PERFORMANCE_ROUTES } = {}) {
+  const routes = Object.fromEntries(routeNames.map((name) => [name, createRoutePerformance()]));
   const recentRequests = [];
 
   return {
@@ -196,6 +196,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       let failed = false;
       let finished = false;
       let model = "other";
+      let provider = null;
       let terminalOutcome = null;
       let terminalOrigin = null;
       let incompleteReason = null;
@@ -266,6 +267,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         setModel(value) {
           model = modelLabel(value);
         },
+        setProvider(value) { if (["github", "m365"].includes(value)) provider = value; },
         attemptCount() { return attempts; },
         attemptTimings() { return attemptTimings.map(attempt => ({ ...attempt })); },
         observeContext(values) {
@@ -312,6 +314,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           recentRequests.push({
             request_id: typeof requestId === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(requestId) ? requestId : null,
             at, route: routeName, model, outcome, origin, phase,
+            ...(provider ? { provider } : {}),
             empty_stream_completion: emptyStreamCompletion,
             failed: failed || aborted || (terminalOutcome !== null && terminalOutcome !== "completed"),
             http_status: Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599 ? statusCode : null,
@@ -355,7 +358,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
     },
     snapshot() {
       return {
-        by_route: Object.fromEntries(PERFORMANCE_ROUTES.map((name) => [name, routeSnapshot(routes[name])])),
+        by_route: Object.fromEntries(routeNames.map((name) => [name, routeSnapshot(routes[name])])),
         recent_requests: recentRequests.map((entry) => ({ ...entry, attempts: entry.attempts.map(attempt => ({ ...attempt })), context: { ...entry.context }, timings_ms: { ...entry.timings_ms } })),
       };
     },

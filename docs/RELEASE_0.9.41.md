@@ -111,3 +111,20 @@ sharp 0.35.3 and smol-toml 1.8.0; no install hook is added. Tests, experiments,
 temporary release helpers, keys and credentials are excluded. This report is
 not packed and does not change published package bytes. Publication receipts
 follow only after GitHub and npm confirm success.
+
+## Publication receipts
+
+- GitHub stable [v0.9.41](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v0.9.41),
+  release ID 414466313, draft false, prerelease false. Asset 645856391 reports the
+  same 395,804-byte size and SHA-256 above.
+- [npm publication workflow](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38839641469)
+  succeeded for tag source `e0502eda3cce91d4148b8190ed583375cb982b11`.
+  Its log confirms version 0.9.41, the matching SHA-1 above, publication to
+  registry.npmjs.org with tag latest, and `+ codex-copilot-dx@0.9.41` at
+  2026-10-16 02:17:44 UTC. No second publication or credential fallback was used.
+- Publication used the same identity-verified owner PAT as the preceding
+  release, held in process memory only; the existing npm workflow used its
+  repository secret. No browser login or local credential/config change occurred.
+- Temporary benchmark/baseline/package/publishing material is removed after
+  verification. Pre-existing `experiments/` is retained. The live adapter and
+  Codex App are not restarted or upgraded by this release procedure.

@@ -219,8 +219,9 @@ export function createAdapterHandler(options = {}) {
     upstreamTimeoutMs,
   });
   const providerHandlers = new WeakMap();
+  const githubHandlers = { responses: responsesHandler, compact: responsesCompactHandler };
   function handlersFor(provider) {
-    if (!provider || provider.id === "github") return { responses: responsesHandler, compact: responsesCompactHandler };
+    if (!provider || provider.id === "github") return githubHandlers;
     if (!providerHandlers.has(provider)) {
       const common = { provider, acquireRequest, imagePressure, keepaliveIntervalMs: options.keepaliveIntervalMs,
         modelRegistry: provider.registry, now: options.now, openAIModelEnv: { ...openAIModelEnv, CCDX_AUTO_REVIEW_MODEL: "" },
@@ -258,8 +259,11 @@ export function createAdapterHandler(options = {}) {
         context.streamPerformance?.setProvider?.(target.id);
         context.finishProvider = options.providerRuntime.track?.(target);
         Object.assign(context, options.providerRuntime.historyContext?.(req.headers, target));
-        context.clientHeaders = Object.fromEntries(["session_id", "session-id", "x-conversation-id"].filter(key => typeof req.headers[key] === "string")
-          .map(key => [key, req.headers[key]]));
+        context.clientHeaders = {
+          session_id: typeof req.headers.session_id === "string" ? req.headers.session_id : undefined,
+          "session-id": typeof req.headers["session-id"] === "string" ? req.headers["session-id"] : undefined,
+          "x-conversation-id": typeof req.headers["x-conversation-id"] === "string" ? req.headers["x-conversation-id"] : undefined,
+        };
       }
     }
 
@@ -421,6 +425,12 @@ export function createAdapterHandler(options = {}) {
         showRequestId: options.showRequestId === true,
         includeHttpErrorDetails: options.includeHttpErrorDetails === true || process.env.CCDX_HTTP_ERROR_DETAILS === "1",
         streamPerformance,
+        provider: undefined,
+        finishProvider: undefined,
+        historyNamespace: undefined,
+        historyTransferNamespace: undefined,
+        onHistoryStored: undefined,
+        clientHeaders: undefined,
         onHttpError: evidence => { httpEvidence = evidence; },
       };
       const result = runWithRequestContext(context, () => dispatchRequest(req, res, pathname));

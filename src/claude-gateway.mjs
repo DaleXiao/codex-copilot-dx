@@ -65,7 +65,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
     if (!authenticated(req.headers, apiKey)) { send(res, 401, apiError("ccdx_gateway_auth", "Invalid local gateway credential"));return; }
     let pathname;try { pathname = new URL(req.url, "http://localhost").pathname; } catch { send(res, 400, apiError("ccdx_invalid_path", "Invalid request path"));return; }
     if (req.method === "GET" && pathname === "/v1/models") {
-      const models = provider.models("claude").map(model => ({ id: model.id, type: "model", display_name: model.name || model.id }));
+      const models = provider.models("claude").map(model => ({ id: model.id, type: "model", display_name: typeof model.name === "string" && model.name || model.id }));
       send(res, 200, { data: models, has_more: false, first_id: models[0]?.id || null, last_id: models.at(-1)?.id || null });return;
     }
     if (!["/v1/messages", "/v1/messages/count_tokens"].includes(pathname)) { send(res, 404, apiError("ccdx_not_found", "Not found"));return; }

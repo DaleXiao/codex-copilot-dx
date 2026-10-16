@@ -87,6 +87,7 @@ test("M365 header and conversation mapping use fixed fields and isolated stable 
 test("M365 rejects invalid catalogs and unsupported fast without a silent downgrade", async t => {
   assert.throws(() => m365Catalog({ data: [catalog.data[0], catalog.data[0]] }), { code: "m365_catalog_invalid" });
   assert.deepEqual(m365Models({ data: [{ id: "claude-injected", publisher: "OpenAI", supported_endpoints: ["/v1/messages"] }] }, "claude"), []);
+  assert.deepEqual(m365Models({ data: [{ ...catalog.data[0], publisher: 42 }] }, "claude"), []);
   for (const denied of [{ policy: { state: "disabled" } }, { model_picker_enabled: false }]) {
     assert.deepEqual(m365Models({ data: [{ ...catalog.data[0], ...denied }] }, "claude"), []);
   }

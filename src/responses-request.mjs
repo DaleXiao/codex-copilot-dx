@@ -303,7 +303,9 @@ export function finalizeEncryptedHistoryRebase(reqContext) {
 export function applyResponseHistoryRoutePlan(reqContext, routePlan) {
   const next = reqContext;
   next.routePlan = routePlan;
-  const affinity = routePlanAffinity(routePlan), context = currentRequestContext();
+  const context = currentRequestContext();
+  if (!next.historyParentId && !context?.historyTransferNamespace && !next.historyRouteMetadata?.length) return next;
+  const affinity = routePlanAffinity(routePlan);
   const routeMetadata = next.historyRouteMetadata || [];
   const knownHistory = routeMetadata.length > 0 && routeMetadata.every(metadata => metadata.affinity && affinity);
   const providerChanged = (Boolean(context?.historyTransferNamespace) && !knownHistory)

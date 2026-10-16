@@ -54,19 +54,23 @@ function resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver) {
     ? preference.reasoningEffort : undefined };
 }
 
-async function applySelectedRoute(prepared, routePlan, { req, env, signal, assertActive, reserveHistory }) {
+function applySelectedRoute(prepared, routePlan, options) {
   try { return applyResponseHistoryRoutePlan(prepared, routePlan); }
   catch (error) {
     if (error.code !== "ccdx_provider_history_rebuild_required") throw error;
-    try {
-      const { recoverLocalCompaction } = await import("./local-compaction-recovery.mjs");
-      const restored = await recoverLocalCompaction(prepared, { request: req, env, signal, assertActive, reserveHistory, maxBytes: MAX_DECODED_BODY_BYTES });
-      return applyResponseHistoryRoutePlan(restored, routePlan);
-    } catch (failure) {
-      assertActive?.();
-      error.jsonBody.error.recovery.local_status = /^[a-z][a-z_]{1,60}$/.test(failure.code || "") ? failure.code : "local_history_unavailable";
-      throw error;
-    }
+    return recoverSelectedRoute(prepared, routePlan, error, options);
+  }
+}
+
+async function recoverSelectedRoute(prepared, routePlan, error, { req, env, signal, assertActive, reserveHistory }) {
+  try {
+    const { recoverLocalCompaction } = await import("./local-compaction-recovery.mjs");
+    const restored = await recoverLocalCompaction(prepared, { request: req, env, signal, assertActive, reserveHistory, maxBytes: MAX_DECODED_BODY_BYTES });
+    return applyResponseHistoryRoutePlan(restored, routePlan);
+  } catch (failure) {
+    assertActive?.();
+    error.jsonBody.error.recovery.local_status = /^[a-z][a-z_]{1,60}$/.test(failure.code || "") ? failure.code : "local_history_unavailable";
+    throw error;
   }
 }
 
@@ -244,8 +248,9 @@ export function createResponsesHandler(options) {
       console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${streaming}`));
       const routePlan = provider.route(prepared.body, { requestedModel, upstreamModel, forceResponses,
         surface: "responses", getCachedModelEndpoints: getCachedModelEndpointsFn });
-      prepared = await applySelectedRoute(prepared, routePlan, { req, env: openAIModelEnv, signal: abort.signal,
+      const selected = applySelectedRoute(prepared, routePlan, { req, env: openAIModelEnv, signal: abort.signal,
         assertActive: assertPrepareActive, reserveHistory: releaseRequest.reserveResponseHistory });
+      prepared = selected instanceof Promise ? await selected : selected;
       if (prepared.historyParentId === null) releaseHistorySnapshot();
       provider.applyRequestPolicies(prepared.body);
       if (routePlan.protocol === "openai-responses") {
@@ -510,9 +515,10 @@ export function createResponsesCompactHandler(options) {
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=false`));
       markResponseModel(upstreamModel, { requestedModel });
-      prepared = await applySelectedRoute(prepared, provider.route(prepared.body, {
+      const selected = applySelectedRoute(prepared, provider.route(prepared.body, {
         requestedModel, upstreamModel, forceResponses, surface: "responses-compact" }), { req, env: openAIModelEnv,
         signal: abort.signal, assertActive: assertPrepareActive, reserveHistory: releaseRequest.reserveResponseHistory });
+      prepared = selected instanceof Promise ? await selected : selected;
       releaseHistorySnapshot();
       provider.applyRequestPolicies(prepared.body);
       const result = await proxyCopilotResponses(prepared, req, res, responsesCompactFn, {

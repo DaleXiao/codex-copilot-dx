@@ -16,7 +16,7 @@ const catalog = { data: [
   { id: "gpt-6-sol", publisher: "OpenAI", supported_endpoints: ["/responses"], capabilities: { supports: { reasoning_effort: ["low", "medium"] } } },
 ] };
 function completed(model, id) { return Response.json({ id, model, status: "completed", output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }); }
-function setup(t, { failM365 = false, githubRequest, acquireM365 } = {}) {
+function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, modelCatalog = catalog } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-providers-")), calls = [], lifecycle = [];
   const githubClient = { getCachedModelEndpoints: () => ["/responses"], listModels: async () => ({ status: 200, body: JSON.stringify({ data: [] }) }),
     responses: async body => { calls.push({ provider: "github", body: structuredClone(body) });return githubRequest ? githubRequest(body) : completed(body.model, "resp_github"); },
@@ -25,10 +25,10 @@ function setup(t, { failM365 = false, githubRequest, acquireM365 } = {}) {
     createM365: options => createM365Provider({ ...options, auth: {
       getToken: async () => { if (acquireM365) await acquireM365();if (failM365) throw Object.assign(Error("denied"), { code: "m365_interaction_required" });return { token: "test_entra", expiresAt: Date.now() + 3600000, account: { id: "id", tenant: "tenant", login: "user@example.test" } }; }, snapshot: () => ({}), reset() {},
     }, fetchImpl: async (_url, options) => {
-      if (options.method === "GET") return Response.json(catalog);
+      if (options.method === "GET") return Response.json(modelCatalog);
       const body = JSON.parse(options.body);calls.push({ provider: "m365", body });return completed(body.model, "resp_m365");
     } }),
-    startGateway: async () => { lifecycle.push("start");return { port: 2027, snapshot: () => ({ active: 0 }), close: async () => lifecycle.push("close") }; },
+    startGateway: async () => { lifecycle.push("start");if (gatewayError) throw Object.assign(Error("Synthetic gateway failure"), { code: gatewayError });return { port: 2027, snapshot: () => ({ active: 0 }), close: async () => lifecycle.push("close") }; },
     configureClients: () => ({ code: "configured", app: "configured" }), restoreClients: () => ({ remaining: 0, preserved: 0 }),
   });
   const options = { providerRuntime: runtime, codexClient: githubClient, openAIModelEnv: {} };
@@ -37,6 +37,20 @@ function setup(t, { failM365 = false, githubRequest, acquireM365 } = {}) {
   return { runtime, calls, lifecycle, home, options };
 }
 const choose = runtime => runtime.action({ action: "switch", provider: "m365", model: "gpt-6-sol", auto_review_model: "gpt-6-sol" });
+
+test("a Claude gateway failure cannot prevent the independent M365 Codex backup", async t => {
+  const s = setup(t, { gatewayError: "EADDRINUSE" });await s.runtime.start();
+  await choose(s.runtime);
+  assert.equal(s.runtime.snapshot().m365.claude.reason, "m365_gateway_port_busy");
+  const result = await invokeAdapter(s.options, { body: { model: "gpt-6-sol", input: "GPT stays available" } });
+  assert.equal(result.status, 200);assert.equal(s.calls[0].provider, "m365");assert.deepEqual(s.lifecycle, ["start"]);
+});
+
+test("a GPT-only M365 catalog does not configure or launch Claude clients", async t => {
+  const s = setup(t, { modelCatalog: { data: [catalog.data[1]] } });await s.runtime.start();
+  assert.deepEqual(s.lifecycle, []);assert.equal(s.runtime.snapshot().m365.claude.clients.app, "not_configured");
+  await choose(s.runtime);assert.equal(s.runtime.current().id, "m365");
+});
 
 test("a slow optional M365 authorization does not hold GitHub inference", async t => {
   let release;const blocked = new Promise(resolve => { release = resolve; });

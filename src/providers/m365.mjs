@@ -57,7 +57,7 @@ export function m365Catalog(payload) {
 }
 
 export function m365Models(catalog, family) {
-  return (catalog?.data || []).filter(model => model.model_picker_enabled !== false
+  return (catalog?.data || []).filter(model => typeof model?.publisher === "string" && model.model_picker_enabled !== false
     && (!model.policy?.state || model.policy.state === "enabled")).filter(model => family === "claude"
     ? model.id.startsWith("claude-") && model.publisher?.toLowerCase() === "anthropic" && model.supported_endpoints.includes("/v1/messages")
     : model.id.startsWith("gpt-") && model.publisher?.toLowerCase() === "openai"

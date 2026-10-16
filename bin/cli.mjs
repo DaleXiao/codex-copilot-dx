@@ -416,7 +416,7 @@ try {
   const m365Setup = runInBackground(() => providerRuntime.start());
   if (providerRuntime.selection().codex === "github") {
     try { await ensureAuth({ log: startupLogger("Auth") }); }
-    catch (error) { if (!await m365Setup) throw error;console.warn(startupCheck("warn", "Auth", "GitHub authorization is unavailable; Microsoft 365 Claude remains available")); }
+    catch (error) { if (!await m365Setup) throw error;console.warn(startupCheck("warn", "Auth", "GitHub authorization is unavailable; Microsoft 365 is independent. Check ccdx m365 status or switch")); }
   } else {
     await m365Setup;
     console.log(startupCheck("info", "Provider", "Codex uses the explicitly selected Microsoft 365 backup"));

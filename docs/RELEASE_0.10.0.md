@@ -134,3 +134,32 @@ No further scope expansion is planned. Remaining gates: cross-platform CI,
 final paired measurements, publication verification and owned scratch cleanup.
 Real Windows MDM authorization/App inference still requires an eligible machine;
 CI loading and native-network tests are not equivalent to tenant entitlement.
+
+## Final fault and performance gates
+
+Two explicit fault-injection tests first reproduced coupling between Claude setup
+and M365 GPT selection. Both now pass: a busy Claude port does not prevent the
+Codex backup, and a GPT-only catalog does not configure or launch Claude clients.
+Unknown publisher metadata is excluded without breaking the core status path.
+
+An initial paired loopback comparison measured a 3.86% throughput reduction. This
+was retained as a failed performance observation, not declared equivalent. A
+bounded hot-path pass removed unnecessary async hops, duplicate affinity work,
+ephemeral correlation hashing, header-array construction and context-shape churn.
+Source/account isolation and exact wire behavior remain covered by the same tests.
+
+Final medians from four alternating baseline/candidate pairs, same Node 22.20.0
+arm64 host, 800 measured requests per run, eight concurrent synthetic streams:
+
+| Metric | 0.9.41 baseline | 0.10.0 candidate |
+| --- | --- | --- |
+| Requests/s | 3,484.826 | 3,527.237 |
+| P50 | 1.868 ms | 1.873 ms |
+| P95 | 3.027 ms | 2.975 ms |
+| Post-GC heap | 19.311 MiB | 19.593 MiB |
+| RSS | 141.305 MiB | 140.820 MiB |
+
+Throughput is +1.22% in this synthetic gate; latency is effectively stable, not
+evidence of faster upstream inference. Provider metadata has a small memory cost.
+The optional 14.6 MB broker download and supported-platform helper/worker costs
+remain disclosed; they are not hidden behind this core-path benchmark.

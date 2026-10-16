@@ -46,6 +46,9 @@ to M365. No GitHub token, image credential or browser Cookie is reused. Windows 
 use a separate OS WinHTTP worker for M365 company routing; macOS preserves static
 system/environment routing and reports unsupported dynamic PAC. Native runtime
 absence, policy refusal and gateway-port conflicts do not disable GitHub.
+Claude listener/configuration readiness is also separate from M365 provider
+readiness. A busy Claude port or a GPT-only catalog cannot block the explicitly
+selected Codex backup; a catalog without Claude models does not install Claude settings.
 
 The Claude gateway listens on loopback only, requires its private local key and
 rejects browser-origin requests. It preserves native Messages/SSE bytes, observes

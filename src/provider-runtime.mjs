@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import { createHash } from "node:crypto";
 import { createGithubProvider } from "./providers/github.mjs";
 import { readProviderSettings, writeProviderSettings } from "./provider-settings.mjs";
 import { readM365Settings, updateM365Settings, m365Paths, ensureM365GatewayKey } from "./m365-settings.mjs";
@@ -15,7 +14,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
     profileId: () => { const value = typeof githubCredentialFingerprint === "function" ? githubCredentialFingerprint() : githubCredentialFingerprint;
       return value ? `codex:${value}` : "codex"; } }), registry: githubRegistry };
   let selection = readProviderSettings(options), m365 = null, gateway = null, pending = null, closed = false, serial = null;
-  let reason = null, clients = { code: "not_configured", app: "not_configured" }, lastClients = {};
+  let reason = null, claudeReason = null, clients = { code: "not_configured", app: "not_configured" }, lastClients = {};
   const sessions = new Map();let priorNamespace = null, requestOrder = 0, activeM365Requests = 0;
   let enabled;
   try { enabled = readM365Settings(options).enabled && env.CCDX_M365 !== "0"; }
@@ -24,7 +23,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
   async function startM365(forceRefresh = false) {
     if (closed || !enabled || !["darwin", "win32"].includes(platform)) return null;
     if (pending) return pending;
-    if (!forceRefresh && gateway && m365?.snapshot().state === "ready") return m365;
+    if (!forceRefresh && m365?.snapshot().state === "ready") return m365;
     const operation = (async () => {
       if (!m365) {
         const factory = createM365 || (await import("./providers/m365.mjs")).createM365Provider;
@@ -32,22 +31,29 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
         m365 = factory({ home, env, log });
       }
       await m365.refresh();if (closed || !enabled) return null;
-      const apiKey = ensureM365GatewayKey(options);
-      if (!gateway) {
-        const start = startGateway || (await import("./claude-gateway.mjs")).startClaudeGateway;
-        const opened = await start({ provider: m365, apiKey, env, log,
-          onRequest({ client }) { lastClients[client] = new Date().toISOString(); } });
-        if (closed || !enabled) { await opened.close();return null; }
-        gateway = opened;
+      const claudeModels = m365.models("claude");
+      claudeReason = claudeModels.length ? null : "m365_no_claude_models";
+      if (claudeModels.length) try {
+        const apiKey = ensureM365GatewayKey(options);
+        if (!gateway) {
+          const start = startGateway || (await import("./claude-gateway.mjs")).startClaudeGateway;
+          const opened = await start({ provider: m365, apiKey, env, log,
+            onRequest({ client }) { lastClients[client] = new Date().toISOString(); } });
+          if (closed || !enabled) { await opened.close();return null; }
+          gateway = opened;
+        }
+        try {
+          const integration = configureClients ? null : await import("./claude-client-config.mjs");
+          const configure = configureClients || integration.configureClaudeClients;
+          const desktopManaged = integration ? await integration.inspectClaudeDesktopPolicy(options) : false;
+          if (closed || !enabled) return null;
+          clients = configure({ ...options, desktopManaged, baseUrl: `http://127.0.0.1:${gateway.port}`, apiKey, models: claudeModels });
+        } catch { clients = { code: "configuration_unavailable", app: "configuration_unavailable" };claudeReason = "m365_claude_config_unavailable"; }
+      } catch (error) {
+        claudeReason = error.code === "EADDRINUSE" ? "m365_gateway_port_busy" : "m365_claude_setup_unavailable";
+        log("warn", `Claude setup unavailable: ${claudeReason}; M365 GPT routing is independent`);
       }
-      try {
-        const integration = configureClients ? null : await import("./claude-client-config.mjs");
-        const configure = configureClients || integration.configureClaudeClients;
-        const desktopManaged = integration ? await integration.inspectClaudeDesktopPolicy(options) : false;
-        if (closed || !enabled) return null;
-        clients = configure({ ...options, desktopManaged, baseUrl: `http://127.0.0.1:${gateway.port}`, apiKey, models: m365.models("claude") });
-      } catch { clients = { code: "configuration_unavailable", app: "configuration_unavailable" }; }
-      reason = null;log("ok", `Microsoft 365 ready: ${m365.models("claude").length} Claude models; gateway at http://127.0.0.1:${gateway.port}`);
+      reason = null;log("ok", `Microsoft 365 ready: ${claudeModels.length} Claude, ${m365.models("gpt").length} GPT models${gateway ? `; Claude gateway at http://127.0.0.1:${gateway.port}` : ""}`);
       return m365;
     })().catch(error => {
       reason = /^m365_[a-z0-9_]+$/.test(error.code || "") ? error.code : error.code === "EADDRINUSE" ? "m365_gateway_port_busy" : "m365_unavailable";
@@ -63,7 +69,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
       reason: reason || m365?.snapshot().reason || null,
       preference: selection.m365 || null,
       active_requests: activeM365Requests,
-      claude: { gateway: gateway ? "running" : "unavailable", port: gateway?.port || null, clients: { ...clients },
+      claude: { gateway: gateway ? "running" : "unavailable", reason: claudeReason, port: gateway?.port || null, clients: { ...clients },
         observed_clients: { ...lastClients }, requests: gateway?.snapshot?.() || null } } });
 
   function current() {
@@ -126,17 +132,22 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
           endpoints: model.supported_endpoints.includes("/v1/messages") ? ["messages"] : ["responses"], preview: false })) };
     },
     track(target) {
-      if (target.id !== "m365") return () => {};
+      if (target.id !== "m365") return undefined;
       activeM365Requests++;let finished = false;
       return () => { if (!finished) { finished = true;activeM365Requests--; } };
     },
     historyContext(headers, target) {
       const namespace = target.profileId(), raw = headers.session_id || headers["session-id"];
-      const key = typeof raw === "string" && raw.length <= 512 ? createHash("sha256").update(raw).digest("hex") : null;
+      // Internal bounded correlation only; IDs are never exposed or persisted.
+      const key = typeof raw === "string" && raw.length <= 512 ? raw : null;
       const previous = key && sessions.get(key)?.namespace || priorNamespace, order = ++requestOrder;
       return { historyNamespace: namespace, historyTransferNamespace: previous && previous !== namespace ? previous : undefined,
         onHistoryStored() {
-          if (!key || sessions.get(key)?.order > order) return;sessions.delete(key);sessions.set(key, { namespace, order });
+          if (!key) return;
+          const record = sessions.get(key);
+          if (record?.order > order) return;
+          if (record) { record.namespace = namespace;record.order = order; }
+          sessions.delete(key);sessions.set(key, record || { namespace, order });
           while (sessions.size > 1024) sessions.delete(sessions.keys().next().value);
         } };
     },

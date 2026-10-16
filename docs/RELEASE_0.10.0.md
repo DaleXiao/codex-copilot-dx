@@ -163,3 +163,15 @@ Throughput is +1.22% in this synthetic gate; latency is effectively stable, not
 evidence of faster upstream inference. Provider metadata has a small memory cost.
 The optional 14.6 MB broker download and supported-platform helper/worker costs
 remain disclosed; they are not hidden behind this core-path benchmark.
+
+Final local verification after these fixes: 1,325 passed, nine platform skips,
+zero failures. The packaged CLI and synthetic GitHub inference also passed with
+only the optional Microsoft broker removed (`m365_broker_missing`), while the
+existing image-processing dependencies remained installed.
+
+First CI run `38934430168` passed thirteen of fourteen jobs. The added official
+Codex image replay could not start npm's Node-based wrapper because its isolated
+test PATH omitted the current Node directory. The harness now includes that exact
+runtime directory, without inheriting credentials or the user's full environment.
+This was a test-harness startup failure, not an observed image-provider failure;
+the complete matrix is being rechecked on the corrected commit.

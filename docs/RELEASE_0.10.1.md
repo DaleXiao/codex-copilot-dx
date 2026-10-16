@@ -17,3 +17,25 @@ restart or new option/dependency is introduced.
 This is a scoped follow-up, not another architecture pass. The M365 eligibility
 and platform-validation limits in the 0.10.0 report still apply. Final verification
 and publication receipts are appended below after completion.
+
+## Verification
+
+- Focused port/routing/CLI/provider/documentation checks: 64 passed.
+- Full local verification: 1,327 passed, nine platform skips, zero failures;
+  offline HTTP/SSE, package inspection and performance/resource gates passed.
+- The running pre-update service remained 0.9.41 / PID 54407 with HTTP 200 status,
+  prediction bridge running and client route observed. It was not restarted or
+  reconfigured during release work.
+- Default-path paired performance and real-client evidence from 0.10.0 still
+  apply: this patch changes startup port ownership only, plus the version stamp.
+  It does not change per-request model routing or add an inference call.
+- Production commit: `af720412e761312bc948e75dd05f469496ec37ba`.
+- [Final CI 38941944155](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38941944155):
+  all fourteen jobs passed across Linux, Windows and macOS, including native
+  workers, npm 12 installation/upgrade, browser recovery and official Codex image replay.
+- Package: 171 files, 432,933 bytes. Local artifact integrity:
+  `sha512-o2W1XuBwYiOPtgN7SabKv3aDevmYosbi92jJgirNAtPQB1pVbRhFXyqWpUMte3aVh5wpE81LE+QBDI3dwdyTZw==`.
+
+Publication receipts are appended on the repository's main branch after the
+immutable tag/package is published. Windows M365 real-tenant validation remains
+pending user feedback, rather than being inferred from the CI results.

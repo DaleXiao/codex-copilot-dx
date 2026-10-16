@@ -1,6 +1,6 @@
 # Provider migration — 0.10.0 candidate
 
-Status: release verification passed; publication in progress.
+Status: published to GitHub and npm; superseded by the scoped [0.10.1 correction](RELEASE_0.10.1.md).
 
 ## Scope and acceptance
 
@@ -204,3 +204,13 @@ feedback; they are not claimed as live-tested. macOS real-client results above a
 confirmed. M365 remains entitlement-dependent, and optional-provider failure must
 not change the default GitHub route. Known new-provider limits remain Standard-only
 GPT service tier, five-minute Claude cache retention and gateway-compatible Code betas.
+
+## Publication
+
+- Tag `v0.10.0` targets `45c975a995f4c79db07b0f244697ca42592c086e`.
+- npm publication [38940447545](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38940447545)
+  completed successfully and reported `+ codex-copilot-dx@0.10.0` on the official
+  registry with `latest`. GitHub release `v0.10.0` was published with its package asset.
+- An additional core-port fixture then found the `ADAPTER_PORT=2027` startup-order
+  conflict described in the 0.10.1 report. The immutable npm version/tag was not
+  rewritten; the correction is a new patch version.

@@ -411,6 +411,7 @@ try {
     log: (kind, message) => console.log(startupComplete ? status(kind, message) : startupCheck(kind, "Models", message)),
   });
   providerRuntime = createProviderRuntime({ githubClient: profileRuntime.codexClient, githubRegistry: profileModels.codexRegistry,
+    corePort: ADAPTER_PORT,
     githubCredentialFingerprint: () => profileRuntime.codexCredentialFingerprint,
     log: (kind, message) => console.log(startupComplete ? status(kind, message) : startupCheck(kind, "M365", message)) });
   const m365Setup = runInBackground(() => providerRuntime.start());

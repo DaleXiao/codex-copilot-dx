@@ -89,6 +89,9 @@ optional image MCP/skill/API remains separately configured and off by default.
 ### Claude gateway and client ownership
 
 The gateway is a second listener in the same Node service, on `127.0.0.1:2027`.
+If the core service itself is configured on 2027, CCDX reserves that port for the
+core and skips only the Claude listener/setup. M365 GPT backup still works. Select
+a different core `ADAPTER_PORT` if both client surfaces are needed; no port is moved automatically.
 It accepts a private local Bearer key or `x-api-key`, rejects browser Origin
 headers and exposes Claude only: `GET /v1/models`, `POST /v1/messages` and
 `POST /v1/messages/count_tokens` (upstream support remains authoritative).

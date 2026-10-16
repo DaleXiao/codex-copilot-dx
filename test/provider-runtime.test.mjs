@@ -16,12 +16,12 @@ const catalog = { data: [
   { id: "gpt-6-sol", publisher: "OpenAI", supported_endpoints: ["/responses"], capabilities: { supports: { reasoning_effort: ["low", "medium"] } } },
 ] };
 function completed(model, id) { return Response.json({ id, model, status: "completed", output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }); }
-function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, modelCatalog = catalog } = {}) {
+function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, corePort, modelCatalog = catalog } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-providers-")), calls = [], lifecycle = [];
   const githubClient = { getCachedModelEndpoints: () => ["/responses"], listModels: async () => ({ status: 200, body: JSON.stringify({ data: [] }) }),
     responses: async body => { calls.push({ provider: "github", body: structuredClone(body) });return githubRequest ? githubRequest(body) : completed(body.model, "resp_github"); },
     responsesCompact: async body => completed(body.model, "resp_compact"), runtimeStatus: () => ({}), chatCompletions: () => assert.fail("Unexpected Chat fallback") };
-  const runtime = createProviderRuntime({ githubClient, githubRegistry: { models: { data: [] } }, home, env: {}, platform: "darwin",
+  const runtime = createProviderRuntime({ githubClient, githubRegistry: { models: { data: [] } }, home, env: {}, platform: "darwin", corePort,
     createM365: options => createM365Provider({ ...options, auth: {
       getToken: async () => { if (acquireM365) await acquireM365();if (failM365) throw Object.assign(Error("denied"), { code: "m365_interaction_required" });return { token: "test_entra", expiresAt: Date.now() + 3600000, account: { id: "id", tenant: "tenant", login: "user@example.test" } }; }, snapshot: () => ({}), reset() {},
     }, fetchImpl: async (_url, options) => {
@@ -37,6 +37,13 @@ function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, 
   return { runtime, calls, lifecycle, home, options };
 }
 const choose = runtime => runtime.action({ action: "switch", provider: "m365", model: "gpt-6-sol", auto_review_model: "gpt-6-sol" });
+
+test("the optional Claude gateway never reserves the configured core service port", async t => {
+  const s = setup(t, { corePort: 2027 });await s.runtime.start();
+  assert.deepEqual(s.lifecycle, []);
+  assert.equal(s.runtime.snapshot().m365.claude.reason, "m365_gateway_core_port_conflict");
+  await choose(s.runtime);assert.equal(s.runtime.current().id, "m365");
+});
 
 test("a Claude gateway failure cannot prevent the independent M365 Codex backup", async t => {
   const s = setup(t, { gatewayError: "EADDRINUSE" });await s.runtime.start();

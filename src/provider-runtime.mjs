@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { createGithubProvider } from "./providers/github.mjs";
 import { readProviderSettings, writeProviderSettings } from "./provider-settings.mjs";
-import { readM365Settings, updateM365Settings, m365Paths, ensureM365GatewayKey } from "./m365-settings.mjs";
+import { readM365Settings, updateM365Settings, m365Paths, ensureM365GatewayKey, M365_GATEWAY_PORT } from "./m365-settings.mjs";
 
 const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavailable (${reason}); GitHub routing was not substituted`),
   { code: reason, statusCode: 503 });
@@ -9,7 +9,7 @@ const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavaila
 // Composition owns source selection. Providers never modify Codex, prediction,
 // image configuration or each other's credentials.
 export function createProviderRuntime({ githubClient, githubRegistry, githubCredentialFingerprint = "", home, env = process.env, platform = process.platform,
-  log = () => {}, createM365, startGateway, configureClients, restoreClients } = {}) {
+  corePort = Number(env.ADAPTER_PORT || 2026), log = () => {}, createM365, startGateway, configureClients, restoreClients } = {}) {
   const options = { home, env, platform }, github = { ...createGithubProvider({ client: githubClient,
     profileId: () => { const value = typeof githubCredentialFingerprint === "function" ? githubCredentialFingerprint() : githubCredentialFingerprint;
       return value ? `codex:${value}` : "codex"; } }), registry: githubRegistry };
@@ -32,8 +32,9 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
       }
       await m365.refresh();if (closed || !enabled) return null;
       const claudeModels = m365.models("claude");
-      claudeReason = claudeModels.length ? null : "m365_no_claude_models";
-      if (claudeModels.length) try {
+      claudeReason = !claudeModels.length ? "m365_no_claude_models" : corePort === M365_GATEWAY_PORT ? "m365_gateway_core_port_conflict" : null;
+      if (claudeReason === "m365_gateway_core_port_conflict") log("warn", `Claude gateway skipped: port ${M365_GATEWAY_PORT} belongs to the configured core service; M365 GPT routing remains available`);
+      if (claudeModels.length && !claudeReason) try {
         const apiKey = ensureM365GatewayKey(options);
         if (!gateway) {
           const start = startGateway || (await import("./claude-gateway.mjs")).startClaudeGateway;

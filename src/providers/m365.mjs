@@ -23,7 +23,7 @@ const protocolError = (code, message, statusCode = 400) => Object.assign(new Err
 
 export function m365Headers(token, { headers = {}, conversationId, stream = false } = {}) {
   const out = { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: stream ? "text/event-stream" : "application/json",
-    "X-ClientType": "GitHub", "X-ClientVersion": "0.10.0", "X-Llm-Api-Version": "2026-09-28", "X-ClientScenario": "Code",
+    "X-ClientType": "GitHub", "X-ClientVersion": "0.10.1", "X-Llm-Api-Version": "2026-09-28", "X-ClientScenario": "Code",
     "X-ClientFeature": "LlmApiProxy", "X-ClientCorrelationId": randomUUID(), "X-ClientCallId": randomUUID() };
   if (conversationId) out["X-ConversationId"] = conversationId;
   for (const name of ["anthropic-version", "anthropic-beta"]) {

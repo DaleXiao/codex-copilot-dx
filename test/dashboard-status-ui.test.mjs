@@ -95,12 +95,15 @@ test("dashboard timing shows its own sample counts and estimation boundary", () 
   const node = () => ({ textContent: "", children: [], open: false, querySelectorAll() { return []; }, replaceChildren() {}, append() {} });
   const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); }, createElement: node };
   const render = runInNewContext(`${renderScript}\nrender;`, { document });
-  render({ stream_performance: { by_route: { responses: { ttft_ms: { avg: 125, samples: 2 }, tpot_us: { avg: 5600, samples: 1, unit: "us" } } } } });
+  render({ stream_performance: { by_route: { responses: { ttft_ms: { avg: 125, samples: 2 }, output_tokens_per_second: { avg: 178.6, samples: 1, unit: "token/s" } } } } });
   assert.equal(nodes.get("ttft").textContent, "125.0 ms / 2 samples");
-  assert.equal(nodes.get("tpot").textContent, "5.6 ms/token / 1 samples");
+  assert.equal(nodes.get("tpot").textContent, "178.6 token/s / 1 samples");
   render({});
   assert.match(nodes.get("ttft").textContent, /^—/);
-  assert.match(html, /Gateway timing\. Token time is estimated\./);
+  assert.match(nodes.get("tpot").textContent, /^—/);
+  render({ stream_performance: { by_route: { responses: { tpot_us: { avg: 5600, samples: 1 } } } } });
+  assert.match(nodes.get("tpot").textContent, /^—/); // Never invert a legacy average.
+  assert.match(html, /Gateway timing\. Output speed is estimated\./);
 });
 
 test("native prediction dashboard distinguishes bridge readiness from candidate visibility", () => {

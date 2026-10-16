@@ -39,11 +39,14 @@ function mebibytes(value) {
   return bytes === null ? "n/a" : `${(bytes / (1024 * 1024)).toFixed(1)}MiB`;
 }
 
-function tpot(metric) {
-  const average = finiteNumber(metric?.avg);
-  if (average === null) return "n/a";
-  const milliseconds = metric?.unit === "us" ? average / 1000 : average;
-  return `${milliseconds.toFixed(2)}ms/token`;
+function outputRate(metric) {
+  const average = metric?.avg === null ? null : finiteNumber(metric?.avg);
+  return metric?.samples > 0 && average !== null ? `${average.toFixed(1)}token/s` : "n/a";
+}
+
+function firstOutputLatency(metric) {
+  const average = metric?.avg === null ? null : finiteNumber(metric?.avg);
+  return metric?.samples > 0 && average !== null ? `${average.toFixed(1)}ms` : "n/a";
 }
 
 function cacheHitRate(cache = {}) {
@@ -151,7 +154,7 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
     `${commandName} status`,
     adapterLine,
     status("info", `Requests: ${count(requests.completed)}/${count(requests.total)} completed, ${count(requests.active)} active, ${count(requests.status_4xx)} 4xx, ${count(requests.status_5xx)} 5xx, ${count(requests.aborted)} aborted`),
-    status("info", `Responses stream: TTFT avg ${latency(performance.ttft_ms?.avg)} (${count(performance.ttft_ms?.samples)} samples), TPOT avg ${tpot(performance.tpot_us)} (${count(performance.tpot_us?.samples)} samples; gateway estimate)`),
+    status("info", `Responses stream: TTFT avg ${firstOutputLatency(performance.ttft_ms)} (${count(performance.ttft_ms?.samples)} samples), output avg ${outputRate(performance.output_tokens_per_second)} (${count(performance.output_tokens_per_second?.samples)} samples; gateway estimate)`),
     ...(terminalOutcomes ? [status("info", `Model outcomes: ${count(terminalOutcomes.completed)} completed, ${count(terminalOutcomes.incomplete)} incomplete, ${count(terminalOutcomes.failed)} failed, ${count(terminalOutcomes.cancelled)} cancelled, ${count(terminalOutcomes.unknown)} without terminal`)] : []),
     status("info", `Admission: ${count(admission.activeRequests)} active, ${count(admission.queued)} queued, ${count(admission.rejected)} rejected, ${count(admission.timedOut)} timed out, wait avg ${latency(admission.waitMsAvg)}`),
     status("info", `Memory: RSS ${mebibytes(processStats.rss_bytes)}, heap ${mebibytes(processStats.heap_used_bytes)}`),
@@ -188,7 +191,14 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
       lines.push(status("warn", `  ${model} ${code}: ${message}${failure.retried ? ` [retried:${retryPolicy}]` : ""}`));
     }
   }
-  if (data.http_errors) lines.push(status("info", `HTTP failures: ${count(data.http_errors.total)} observed (separate from model terminal events)`));
+  if (data.http_errors) {
+    lines.push(status("info", `HTTP failures: ${count(data.http_errors.total)} observed (separate from model terminal events)`));
+    const categories = data.http_errors.by_category;
+    if (categories) lines.push(status("info", `HTTP categories: ${count(categories.inference)} inference, ${count(categories.protocol)} unsupported MCP methods, ${count(categories.route)} unmatched routes, ${count(categories.other)} other`));
+    for (const failure of (data.http_errors.actionable_recent || []).slice(-3).reverse()) {
+      lines.push(status("warn", `HTTP ${count(failure.http_status)} ${terminalCell(failure.model)} ${terminalCell(failure.code)}${failure.parameter ? ` param=${terminalCell(failure.parameter)}` : ""}; ${terminalCell(failure.origin)}; ${count(failure.upstream_attempts)} attempts`));
+    }
+  }
   lines.push(status("info", `Models: ${count(models.models)} total; Copilot token ${copilot.token_cached ? `cached (${duration(copilot.token_expires_in_ms)} remaining)` : "not cached"}`));
   const prediction = data.client_integrations?.prediction;
   if (prediction) {

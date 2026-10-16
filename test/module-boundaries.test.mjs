@@ -65,6 +65,8 @@ test("shared data and foundation modules do not depend on presentation or compos
     "windows-command.mjs": ["adapter.mjs", "auth.mjs", "native-prediction.mjs", "doctor.mjs"],
     "doctor-compat.mjs": ["doctor.mjs", "doctor-repair.mjs", "adapter.mjs"],
     "doctor-repair.mjs": ["doctor.mjs", "adapter.mjs", "dashboard-api.mjs"],
+    "management-routes.mjs": ["adapter.mjs", "copilot.mjs", "responses-handler.mjs", "native-prediction.mjs", "image-mcp.mjs", "dashboard-api.mjs"],
+    "optional-routes.mjs": ["adapter.mjs", "copilot.mjs", "responses-handler.mjs", "native-prediction.mjs", "management-routes.mjs"],
   };
   for (const [file, forbidden] of Object.entries(rules)) {
     const source = fs.readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
@@ -72,6 +74,14 @@ test("shared data and foundation modules do not depend on presentation or compos
       assert.ok(!source.includes(`"${dependency.startsWith("node:") ? dependency : `./${dependency}`}"`), `${file} must not depend on ${dependency}`);
     }
   }
+});
+
+test("optional handlers remain lazy and HTTP dispatch no longer owns their implementations", () => {
+  const adapter = fs.readFileSync(new URL("../src/adapter.mjs", import.meta.url), "utf8");
+  const optional = fs.readFileSync(new URL("../src/optional-routes.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(adapter, /import\("\.\/(?:dashboard|dashboard-api|image-mcp)\.mjs"\)/);
+  assert.doesNotMatch(optional, /^import .*(?:image-mcp|dashboard-api|dashboard\.mjs)/m);
+  for (const name of ["dashboard", "dashboard-api", "image-mcp"]) assert.ok(optional.includes(`import("./${name}.mjs")`));
 });
 
 test("static source imports remain acyclic after extraction", () => {

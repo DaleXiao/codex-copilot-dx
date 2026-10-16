@@ -4,6 +4,20 @@ import path from "node:path";
 import { prepareResponsesChatPayload } from "../src/responses-chat-payload.mjs";
 import { forwardToChat, responsesToChat } from "../src/responses-bridge.mjs";
 
+test("truncated Chat DONE is incomplete once, and ignores a late transport reset", async () => {
+  const events = []; let reads = 0, cancelled = false;
+  const source = new ReadableStream({ pull(controller) {
+    if (++reads > 1) return controller.error(new Error("late reset"));
+    controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}\n\ndata: [DONE]\n\n'));
+  }, cancel() { cancelled = true; } }, { highWaterMark: 0 });
+  const result = await forwardToChat({ model: "gpt-test", stream: true, messages: [] },
+    async (type, data) => events.push({ type, data }), () => {}, () => assert.fail("late reset after DONE"),
+    { chatCompletionsFn: async () => new Response(source, { headers: { "Content-Type": "text/event-stream" } }) });
+  assert.equal(result, false); assert.equal(reads, 1); assert.equal(cancelled, true);
+  assert.equal(events.filter(event => event.type === "response.incomplete").length, 1);
+  assert.equal(events.filter(event => event.type === "response.completed" || event.type === "response.failed").length, 0);
+});
+
 test("Chat DONE is a hard boundary even with trailing errors or a source that never closes", async () => {
   for (const trailing of ["", 'data: {"error":{"message":"late error"}}\n\n']) {
     const events = [];let cancelled = false;

@@ -33,6 +33,7 @@ function statusPayload(overrides = {}) {
         responses: {
           ttft_ms: { avg: 1605.8, samples: 12 },
           tpot_us: { avg: 5621.6, samples: 11, unit: "us" },
+          output_tokens_per_second: { avg: 177.9, samples: 11, unit: "token/s" },
         },
       },
     },
@@ -95,7 +96,7 @@ test("formatAdapterStatus: summarizes runtime health with invocation-aware ident
   assert.match(output, /^codex-copilot-dx status/m);
   assert.match(output, /Adapter 0\.5\.0.*PID 1234.*uptime 2m 5s/);
   assert.match(output, /19\/20 completed, 1 active, 2 4xx, 0 5xx, 1 aborted/);
-  assert.match(output, /TTFT avg 1\.61s \(12 samples\), TPOT avg 5\.62ms\/token/);
+  assert.match(output, /TTFT avg 1605\.8ms \(12 samples\), output avg 177\.9token\/s/);
   assert.match(output, /History: 64\.0MiB \/ 64\.0MiB, 116 entries, 89 evicted/);
   assert.match(output, /Image cache: 5 entries, 99\.2% hits/);
   assert.match(output, /Visual history: 1 recovery trees, 7 adapted requests, 42 older images omitted, 2 timeouts/);
@@ -189,7 +190,7 @@ test("formatAdapterStatus: tolerates absent optional metrics", () => {
   });
 
   assert.match(output, /Requests: n\/a\/n\/a completed/);
-  assert.match(output, /TTFT avg n\/a \(n\/a samples\), TPOT avg n\/a/);
+  assert.match(output, /TTFT avg n\/a \(n\/a samples\), output avg n\/a/);
   assert.match(output, /Memory: RSS n\/a, heap n\/a/);
   assert.match(output, /Copilot token not cached/);
 });

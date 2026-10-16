@@ -74,7 +74,12 @@
           recovery: failure.recovery ? JSON.stringify(failure.recovery) : undefined,
           request_id: failure.request_id, outcome: timeline?.outcome, origin: failure.origin || timeline?.origin,
           phase: timeline?.phase, http_status: failure.http_status ?? timeline?.http_status, route: failure.route,
-          upstream_attempts: timeline?.upstream_attempts,
+          upstream_attempts: failure.upstream_attempts ?? timeline?.upstream_attempts,
+          error_type: failure.error_type, parameter: failure.parameter, error_body: failure.error_body,
+          diagnostic_message: failure.diagnostic_message, method: failure.method, target: failure.target,
+          request_options: failure.request_options ? JSON.stringify(failure.request_options) : undefined,
+          requested_model: failure.requested_model, request_kind: failure.request_kind,
+          attempt_timings: failure.attempt_timings || timeline?.attempts ? JSON.stringify(failure.attempt_timings || timeline.attempts) : undefined,
           timings_ms: timingText };
         const diagnostic = document.createElement("dl");
         diagnostic.className = "failure-detail";
@@ -120,12 +125,15 @@
       const requests = data.requests || {};
       text("requests", number(requests.total));
       text("request-errors", "4xx {client} / 5xx {server} / active {active}", { client: number(requests.status_4xx), server: number(requests.status_5xx), active: number(requests.active) });
+      const categories = data.http_errors?.by_category;
+      text("http-error-breakdown", categories ? "Inference {inference} / method {protocol} / route {route} / other {other}" : "—",
+        categories ? Object.fromEntries(Object.entries(categories).map(([key, value]) => [key, number(value)])) : {});
       text("body-limits", "raw {raw} / decoded {decoded}", { raw: mib(data.limits?.max_body_bytes), decoded: mib(data.limits?.max_decoded_body_bytes) });
     
       const outcomes = data.stream_performance?.by_route?.responses?.terminal_outcomes?.totals || {};
       for (const key of ["completed", "incomplete", "failed", "cancelled"]) text(key, number(outcomes[key]));
       const timing = data.stream_performance?.by_route?.responses || {};
-      for (const [id, metric, scale, unit] of [["ttft", timing.ttft_ms, 1, "ms"], ["tpot", timing.tpot_us, timing.tpot_us?.unit === "us" ? 1000 : 1, "ms/token"]]) {
+      for (const [id, metric, scale, unit] of [["ttft", timing.ttft_ms, 1, "ms"], ["tpot", timing.output_tokens_per_second, 1, "token/s"]]) {
         const value = metric?.samples > 0 && finite(metric.avg) ? `${(Number(metric.avg) / scale).toFixed(1)} ${unit}` : "—";
         text(id, "{value} / {samples} samples", { value, samples: number(metric?.samples) });
       }
@@ -143,7 +151,7 @@
         ? "active {active} / failed {failed} / delivery failures {delivery}"
         : "Setup state unknown / ccdx image-status", { active: number(image?.active), failed: number(image?.failed), delivery: number(image?.delivery_failures) });
     
-      renderFailures([...(data.response_failures?.recent || []), ...(data.http_errors?.recent || [])]
+      renderFailures([...(data.response_failures?.recent || []), ...(data.http_errors?.actionable_recent || data.http_errors?.recent || [])]
         .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0)), data.stream_performance?.recent_requests);
       renderContext(data.stream_performance);
       if (element("prediction-preference")) {

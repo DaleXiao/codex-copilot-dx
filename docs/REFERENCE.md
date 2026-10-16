@@ -793,8 +793,16 @@ output is observed at the gateway from generated deltas, hidden-reasoning/tool
 announcements or content snapshots; a runtime-only result is marked separately.
 Empty message/envelope frames, client tool results and compaction are excluded.
 `first_output_sources` and each recent request's `first_output_source` describe
-that evidence, not internal model decode or prefill timing. Per-token time is a
-gateway estimate and can include hosted-tool and downstream delays. The new
+that evidence, not internal model decode or prefill timing. First output is
+displayed in ms, and output speed in token/s. The additive
+`output_tokens_per_second` metric divides the sum of reported output-token
+intervals (`output_tokens - 1`) by their summed first-output-to-finish durations.
+It is a time-weighted per-request estimate, not the inverse of average TPOT, an
+unweighted average of request speeds, or concurrent system throughput. At least
+two integral output tokens and a positive duration are required; missing usage
+is unknown, not zero speed. The existing TPOT histogram remains unchanged for
+API consumers, including its partial-failure samples. Both estimates can
+include hosted-tool and downstream delays. The new
 timing classifier does not change stream forwarding or the existing output
 commitment that gates compatibility retries.
 
@@ -960,14 +968,42 @@ selection. Isolated/custom credential clients retain their own recovery contract
 
 After an account is selected, automatic `401`/`403` recovery and in-process token rotation accept only that same GitHub account. Concurrent callers share token refresh work without sharing cancellation, and a still-valid Copilot token may be used briefly after a transient refresh failure. Explicit token variables remain the intentional way to select another account.
 
-If refresh still fails with `401` or `403`, the saved GitHub OAuth credential may be expired, revoked, or missing Copilot access. After stopping the adapter, remove that exact saved token and start again to rerun authentication recovery:
+If refresh still fails with Copilot `401` or `403`, preserve the saved credential.
+Run `ccdx auth status --online` only when you explicitly want an online diagnosis;
+check account entitlement and company routing policy separately. Reauthorization
+is appropriate only after independent GitHub identity rejection or an explicit
+account-change decision, not merely a Copilot denial, package update, or failed
+network probe. Existing same-account recovery and explicit source selection are
+unchanged.
 
-```bash
-rm ~/.local/share/copilot-api/github_token
-ccdx
-```
+## HTTP error diagnostics
 
-Recovery first tries compatible local credentials and starts Device Flow only when none can be imported. Set `CCDX_DISABLE_TOKEN_DISCOVERY=1` for that launch if a fresh Device Flow is intended after removing the saved token.
+`http_errors.recent` keeps its 20-record rolling view. Independent
+`actionable_recent` (20 inference/other failures) and `protocol_recent` (eight
+image-MCP HTTP 405 records) prevent route/method noise from erasing inference
+evidence. `by_category` counts inference, protocol, route and other HTTP failures;
+classification does not discard errors, grant access or retry requests.
+The WebUI prioritizes actionable records; raw HTTP counters remain visible.
+
+New records retain safe error code/type/parameter paths, method, an allowlisted
+endpoint without a query, and upstream attempt count. Requested/served model
+IDs are distinct; only the explicit Auto-review alias identifies that request
+purpose. Other purposes remain unknown, not guessed from a model name.
+Known enum/numeric options
+include reasoning effort, service tier, output format, max output tokens and
+input/tool counts; no prompt, schema or tool values are kept. `error_body` says
+whether the upstream provided empty, structured or unstructured error details.
+Recent request `attempts` and HTTP `attempt_timings` retain the first and last two
+provider dispatch/header offsets and statuses; these are not TCP-retry counts.
+
+By default arbitrary upstream error prose is not copied into HTTP diagnostics.
+For a specific investigation, start a **new** service with
+`CCDX_HTTP_ERROR_DETAILS=1` to retain a redacted error-message excerpt, capped at
+500 characters, in those bounded in-memory records. In Windows PowerShell set
+`$env:CCDX_HTTP_ERROR_DETAILS='1'` before `ccdx.cmd`. This does not reconfigure an
+already-running service, enable file logging, retain whole requests, or guarantee
+that arbitrary upstream prose contains no private context. Review before sharing;
+unset the variable after the investigation. Records disappear on service exit.
 
 ## Security
 
@@ -1004,6 +1040,7 @@ Recovery first tries compatible local credentials and starts Device Flow only wh
 | `CCDX_AUTO_REVIEW_MODEL` | saved selection or `gpt-6.1-sol` | Copilot Responses model used for Codex Auto-review; overrides the interactive selection |
 | `CCDX_LOG_PATH` | unset | Mirror terminal logs to a file; set to `1` for `~/.local/share/codex-copilot-dx/debug.log` |
 | `CCDX_LOG_LEVEL` | `info` | Set to `debug` for upstream attempts, status codes, retry causes, and timings |
+| `CCDX_HTTP_ERROR_DETAILS` | unset | Set to `1` on a new service to retain redacted HTTP error excerpts (500 characters) in bounded memory; review before sharing, no file logging is enabled |
 | `CCDX_LOG_MAX_BYTES` | `16777216` | Rotate the debug log at this size and retain one `.1` backup; set to `0` to disable rotation |
 | `CCDX_TERMINAL_ANIMATION` | auto | Show the selected transient animation while an interactive terminal has active requests and no output for 800 ms; set to `0`, `false`, `no`, or `off` to disable |
 | `CCDX_IMG_MAX_DIM` | `2048` | Maximum long edge in pixels for image downscaling |

@@ -36,6 +36,9 @@ test("HTTP diagnostics distinguish upstream refusal and local validation without
   assert.equal(status.response_failures.total, 0);
   assert.doesNotMatch(JSON.stringify(status.http_errors), /secret prompt|private original error|private=query|invalid json/);
   assert.equal(status.http_errors.recent[0].http_status, 404);
+  assert.equal(status.http_errors.actionable_recent.length, 2);
+  assert.equal(status.http_errors.actionable_recent[0].code, "quota_exceeded");
+  assert.deepEqual(status.http_errors.by_category, { inference: 2, protocol: 0, route: 23, other: 0 });
 });
 
 function jsonRequest(body, contentEncoding, headers = {}) {
@@ -44,6 +47,38 @@ function jsonRequest(body, contentEncoding, headers = {}) {
   if (contentEncoding) req.headers["content-encoding"] = contentEncoding;
   return req;
 }
+
+test("HTTP parameter diagnostics preserve upstream errors and opt into bounded prose only explicitly", async () => {
+  const body = JSON.stringify({ error: { code: "unsupported_value", type: "invalid_request_error", param: "reasoning.effort", message: 'Wrong value. prompt="private prompt" Bearer private-token' } });
+  for (const includeHttpErrorDetails of [false, true]) {
+    const handler = createAdapterHandler({ includeHttpErrorDetails, getCachedModelEndpointsFn: () => ["/responses"], responsesFn: async () => new Response(body, { status: 400 }) });
+    const request = jsonRequest(Buffer.from(JSON.stringify({ model: "gpt-5.6-luna", stream: false, input: "private input" })));
+    Object.assign(request, { url: "/v1/responses", method: "POST", socket: { remoteAddress: "127.0.0.1" } });
+    const result = await invokeAdapterRequest({}, request, handler);
+    assert.equal(result.status, 400); assert.equal(result.text, body);
+    const statusRequest = jsonRequest(Buffer.alloc(0));
+    Object.assign(statusRequest, { url: "/_ccdx/status", method: "GET", socket: { remoteAddress: "127.0.0.1" } });
+    const state = JSON.parse((await invokeAdapterRequest({}, statusRequest, handler)).text);
+    const error = state.http_errors.actionable_recent[0];
+    assert.equal(error.parameter, "reasoning.effort"); assert.equal(error.error_type, "invalid_request_error");
+    assert.equal(error.error_body, "structured"); assert.equal(error.method, "POST");
+    assert.equal(error.requested_model, "gpt-5.6-luna"); assert.equal(error.request_kind, "unknown");
+    assert.equal(typeof error.diagnostic_message === "string", includeHttpErrorDetails);
+    assert.doesNotMatch(JSON.stringify(state), /private prompt|private-token|private input/);
+  }
+});
+
+test("optional image route failure cannot block the following inference or management request", async () => {
+  const handler = createAdapterHandler({ imageMcpHandler: () => { throw new Error("optional fixture failed"); },
+    getCachedModelEndpointsFn: () => ["/responses"], responsesFn: async () => Response.json({ id: "resp_healthy", status: "completed", output: [] }) });
+  for (const [url, expected] of [["/mcp/image", 500], ["/v1/responses", 200], ["/_ccdx/status", 200]]) {
+    const req = jsonRequest(Buffer.from(JSON.stringify({ model: "gpt-5.6-sol", input: "fixture", stream: false })));
+    Object.assign(req, { url, method: url === "/_ccdx/status" ? "GET" : "POST", socket: { remoteAddress: "127.0.0.1" } });
+    const result = await invokeAdapterRequest({}, req, handler);
+    assert.equal(result.status, expected);
+    assert.doesNotMatch(result.text, /optional fixture failed/);
+  }
+});
 
 test("inference rejects browser origins before reading bodies while native and LAN clients remain usable", async () => {
   for (const url of ["/v1/responses", "/v1/responses/compact"]) {

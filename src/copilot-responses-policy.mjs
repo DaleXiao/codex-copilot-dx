@@ -4,6 +4,15 @@ function cloneJson(value) {
   return value === undefined ? undefined : structuredClone(value);
 }
 
+export function stripUnsupportedGpt6ServiceTier(body, requestedModel, upstreamModel, priorityTierModel) {
+  if (requestedModel.startsWith("gpt-6-")
+    && upstreamModel === requestedModel
+    && !priorityTierModel
+    && body.service_tier === "priority") {
+    delete body.service_tier;
+  }
+}
+
 export function isConnectionOwnedInputError(statusCode, text) {
   if (statusCode !== 400 || !text) return false;
   try {

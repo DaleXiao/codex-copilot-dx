@@ -21,7 +21,7 @@ is needed. On Windows, open the App manually unless native prediction setup is
 enabled. In restricted Windows PowerShell, use `npm.cmd` to install and `ccdx.cmd` for the first launch, or run `ccdx.cmd doctor --fix`. Startup, updates and explicit repair remove only CCDX's exact npm-generated `.ps1` launchers so later calls can use `ccdx`. No install script, alias or policy change is added; custom launchers are preserved. npm's own script is untouched. The configured `dummy` API key is a placeholder, not a credential.
 
 Open [the local dashboard](http://127.0.0.1:2026/) for status, model discovery,
-usage, cache/limits, recent failures, request context and animation settings.
+usage, cache/limits, recent failures, request context and animation settings. First output uses **ms**; estimated output speed uses **token/s**. Inference HTTP failures are retained separately from route and MCP-method errors.
 Auto refresh runs every 30 minutes while visible and can be switched off. Hidden pages pause; opening sections and manual refresh still work. The atom rotates once on page load and manual refresh, respecting reduced motion. Startup uses a compact six-line atom and aligned checks; `Ready` refers to the core service. Narrow/non-color terminals use a plain title.
 
 ## Commands

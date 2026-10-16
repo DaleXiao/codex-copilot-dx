@@ -38,6 +38,10 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: true, name: "codex-copilot-dx", version: "synthetic", pid: 1, uptime_ms: 1000,
       requests: { total: 1, active: 0 }, models: { models: 1, source: "synthetic" },
+      stream_performance: { by_route: { responses: {
+        ttft_ms: { avg: 1250, samples: 3 }, output_tokens_per_second: { avg: 123.4, samples: 2, unit: "token/s" },
+      } } },
+      http_errors: { by_category: { inference: 1, protocol: 2, route: 3, other: 0 } },
       response_history: { bytes: 0, maxBytes: 67108864 }, client_integrations: { prediction: { configured: false, bridge: "stopped" } } }));
     return;
   }
@@ -69,6 +73,9 @@ try {
         assert.equal(await page.evaluate(() => atomMotions[0].options.duration), 450);
         assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
         assert.equal(await page.locator("html").getAttribute("lang"), language === "zh" ? "zh-CN" : "en");
+        assert.match(await page.locator("#ttft").innerText(), /1250\.0 ms/);
+        assert.match(await page.locator("#tpot").innerText(), /123\.4 token\/s/);
+        assert.doesNotMatch(await page.locator("#http-error-breakdown").innerText(), /undefined|NaN/);
         const icon = decodeURIComponent(await page.locator("#favicon").getAttribute("href"));
         assert.equal((icon.match(/<ellipse /g) || []).length, 3);
         assert.ok(icon.includes(theme === "dark" ? "#a6f5a8" : "#176b3a"));

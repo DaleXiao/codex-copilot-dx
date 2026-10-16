@@ -50,7 +50,7 @@ jobs:
       - name: Verify command ownership, credential discovery and bounded doctor repairs
         run: node --test test/windows-command.test.mjs test/auth-sources.test.mjs test/doctor-repair.test.mjs test/cli-options.test.mjs test/codex-config-doctor.test.mjs test/lock.test.mjs
       - name: Verify streaming delivery and Chat semantic validation on Windows
-        run: node --test test/stream-delivery.test.mjs test/responses-bridge.test.mjs test/responses-chat-http.test.mjs
+        run: node --test test/stream-delivery.test.mjs test/responses-bridge.test.mjs test/responses-chat-http.test.mjs test/responses-native-http.test.mjs test/stream-performance.test.mjs test/cli-status.test.mjs
       - run: npm run test:package
   macos:
     runs-on: macos-latest

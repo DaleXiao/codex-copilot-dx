@@ -273,7 +273,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
         bodyText,
         onUpstreamStart,
       });
-      markUpstreamHeaders();
+      markUpstreamHeaders(resp.status);
     } finally {
       bodyText = undefined;
       chatReq = undefined;

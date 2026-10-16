@@ -110,7 +110,7 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
           payloadPrepared,
         });
       } finally { releaseRecovery?.();releaseRecovery = null; }
-      markUpstreamHeaders();
+      markUpstreamHeaders(resp.status);
       options.assertPrepareActive?.();
       payloadPrepared = true;
       if (resp.ok) {

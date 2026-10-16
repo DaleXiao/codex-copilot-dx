@@ -12,26 +12,21 @@ import { createRequestId, runWithRequestContext } from "./request-context.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { status } from "./status.mjs";
 import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
-import { ADAPTER_HEALTH_PATH, ADAPTER_PREDICTION_FIX_PATH, PREDICTION_FIX_CAPABILITY, adapterHealthPayload } from "./running-adapter.mjs";
+import { ADAPTER_HEALTH_PATH, ADAPTER_PREDICTION_FIX_PATH } from "./running-adapter.mjs";
+import { createManagementHandler, isManagementRoute } from "./management-routes.mjs";
+import { createOptionalRoutes, isOptionalRoute, DASHBOARD_PATHS, DASHBOARD_API_PATHS } from "./optional-routes.mjs";
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
 import { createResponsesImagePressureController } from "./responses-image-pressure.mjs";
-import { createResponseFailureDiagnostics, buildHttpFailureDetails } from "./response-failures.mjs";
-import {
-  ADAPTER_CACHE_PATH,
-  cacheRuntimeSnapshot,
-  cleanRuntimeCaches,
-  setHistoryCacheLimit,
-} from "./cache-control.mjs";
+import { createResponseFailureDiagnostics, createHttpFailureDiagnostics, buildHttpFailureDetails } from "./response-failures.mjs";
+import { ADAPTER_CACHE_PATH } from "./cache-control.mjs";
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
 import {
   createRequestAbort,
   logRequestFailure,
-  readJsonBody,
   sendJsonError,
 } from "./http-transport.mjs";
 import { httpError } from "./http-errors.mjs";
 import { createRequestAdmission } from "./request-admission.mjs";
-import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 
 export {
   abortErrorStatusCode,
@@ -63,8 +58,6 @@ export {
 } from "./responses-request.mjs";
 
 const ADAPTER_RUNTIME_CONFIG = loadRuntimeConfig();
-const DASHBOARD_PATHS = new Set(["/", "/ui.css", "/theme.js", "/language.js", "/refresh.js", "/status.js", "/usage.js", "/ui.js"]);
-const DASHBOARD_API_PATHS = new Set(["/_ccdx/ui/animation", "/_ccdx/ui/models/live", "/_ccdx/ui/usage", "/_ccdx/ui/auth"]);
 
 export function requestPath(reqUrl) {
   return new URL(reqUrl || "/", "http://localhost").pathname;
@@ -170,8 +163,17 @@ export function createAdapterHandler(options = {}) {
   const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics();
   const imagePressure = options.imagePressure || createResponsesImagePressureController();
   const responseFailures = options.responseFailures || createResponseFailureDiagnostics();
-  const httpErrors = createResponseFailureDiagnostics({ maxEntries: 20 });
-  let imageMcpHandler = options.imageMcpHandler || null;
+  const httpErrors = createHttpFailureDiagnostics();
+  const optionalRoutes = createOptionalRoutes(options);
+  const managementHandler = createManagementHandler({
+    nativePredictionPac: options.nativePredictionPac, fixPrediction: options.fixPrediction, requestBodyTimeoutMs,
+    statusSnapshot: () => ({ ...runtimeStatusPayload({
+      metrics: requestMetrics, streamPerformance: streamPerformanceMetrics, admission: acquireRequest,
+      imagePressure, responseFailures, imageGeneration: optionalRoutes.imageStats(),
+      modelRegistry: codexModelRegistry, codexClient, codexModelRegistry, codexModelCatalog,
+      clientIntegrations: options.clientIntegrationSnapshot?.(),
+    }), http_errors: httpErrors.snapshot() }),
+  });
   const responsesHandler = createResponsesHandler({
     acquireRequest,
     autoReviewModelResolver: options.autoReviewModelResolver,
@@ -211,132 +213,8 @@ export function createAdapterHandler(options = {}) {
       sendJsonError(res, error, 403);
       return;
     }
-    if (DASHBOARD_API_PATHS.has(pathname)) {
-      const { handleDashboardApi } = await import("./dashboard-api.mjs");
-      return handleDashboardApi(req, res, pathname, options.dashboardOptions);
-    }
-    if ((req.method === "GET" || req.method === "HEAD") && DASHBOARD_PATHS.has(pathname)) {
-      const { serveDashboard } = await import("./dashboard.mjs");
-      return serveDashboard(req, res, pathname);
-    }
-    if (pathname === "/mcp/image") {
-      if (imageMcpHandler) return imageMcpHandler(req, res);
-      return import("./image-mcp.mjs").then(({ createImageMcpHandler }) => {
-        imageMcpHandler ||= createImageMcpHandler({ localHostname: options.imageMcpHostname });
-        return imageMcpHandler(req, res);
-      });
-    }
-    if (req.method === "GET" && pathname === ADAPTER_STATUS_PATH) {
-      if (!isLoopbackAddress(req.socket?.remoteAddress) || !isLoopbackHostHeader(req.headers?.host)) {
-        res.writeHead(403, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Runtime status is available only from loopback" }));
-        return;
-      }
-      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      res.end(JSON.stringify({ ...runtimeStatusPayload({
-        metrics: requestMetrics,
-        streamPerformance: streamPerformanceMetrics,
-        admission: acquireRequest,
-        imagePressure,
-        responseFailures,
-        imageGeneration: imageMcpHandler?.stats?.(),
-        modelRegistry: codexModelRegistry,
-        codexClient,
-        codexModelRegistry,
-        codexModelCatalog,
-        clientIntegrations: options.clientIntegrationSnapshot?.(),
-      }), http_errors: httpErrors.snapshot() }));
-      return;
-    }
-
-    if (req.method === "GET" && pathname === ADAPTER_HEALTH_PATH) {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      const predictionPac = isLoopbackAddress(req.socket?.remoteAddress) && isLoopbackHostHeader(req.headers?.host)
-        ? options.nativePredictionPac?.() : null;
-      const health = adapterHealthPayload();
-      res.end(JSON.stringify({ ...health,
-        capabilities: [...health.capabilities, ...(typeof options.fixPrediction === "function" ? [PREDICTION_FIX_CAPABILITY] : [])],
-        ...(predictionPac ? { native_prediction_pac: predictionPac } : {}) }));
-      return;
-    }
-
-    if (pathname === ADAPTER_PREDICTION_FIX_PATH) {
-      if (!isLoopbackAddress(req.socket?.remoteAddress) || req.headers?.host === undefined
-        || !isLoopbackHostHeader(req.headers.host) || Object.hasOwn(req.headers, "origin")) {
-        sendJsonError(res, httpError("Prediction repair is available only to native loopback clients", 403));return;
-      }
-      if (req.method !== "POST") {
-        res.setHeader?.("Allow", "POST");sendJsonError(res, httpError("Prediction repair requires POST", 405));return;
-      }
-      if (String(req.headers["content-type"] || "").split(";", 1)[0].trim().toLowerCase() !== "application/json") {
-        sendJsonError(res, httpError("Prediction repair requires application/json", 415));return;
-      }
-      if (typeof options.fixPrediction !== "function") {
-        sendJsonError(res, httpError("This adapter does not support prediction repair; upgrade and restart CCDX once", 503));return;
-      }
-      const abort = createRequestAbort(req, res);abort.setTimeout(2000);
-      try {
-        const body = await readJsonBody(req, { maxBodyBytes: 1024, maxDecodedBodyBytes: 1024, signal: abort.signal });
-        if (!body || Object.keys(body).length !== 1 || body.action !== "fix") throw httpError("Expected prediction repair action: fix", 400);
-        abort.clearTimeout();
-        const result = await options.fixPrediction();
-        if (!res.destroyed && !res.writableEnded) {
-          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });res.end(JSON.stringify(result));
-        }
-      } catch (error) { sendJsonError(res, error, 503); }
-      finally { abort.cleanup(); }
-      return;
-    }
-
-    if (pathname === ADAPTER_CACHE_PATH) {
-      if (!isLoopbackAddress(req.socket?.remoteAddress) || !isLoopbackHostHeader(req.headers?.host)) {
-        res.writeHead(403, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Cache control is available only from loopback" }));
-        return;
-      }
-      if (req.method === "GET") {
-        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-        res.end(JSON.stringify(cacheRuntimeSnapshot()));
-        return;
-      }
-      if (req.method !== "POST") {
-        res.writeHead(405, { "Content-Type": "application/json", Allow: "GET, POST" });
-        res.end(JSON.stringify({ error: "Only GET and POST are supported" }));
-        return;
-      }
-      if (Object.hasOwn(req.headers || {}, "origin")) {
-        res.writeHead(403, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Browser origins are not allowed for cache control" }));
-        return;
-      }
-      const mediaType = String(req.headers?.["content-type"] || "").split(";", 1)[0].trim().toLowerCase();
-      if (mediaType !== "application/json") {
-        res.writeHead(415, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Cache control requires application/json" }));
-        return;
-      }
-      const abort = createRequestAbort(req, res);
-      abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
-      try {
-        const body = await readJsonBody(req, {
-          maxBodyBytes: 8 * 1024,
-          maxDecodedBodyBytes: 8 * 1024,
-          signal: abort.signal,
-        });
-        let result;
-        if (body?.action === "set_limit") result = setHistoryCacheLimit(body.max_bytes);
-        else if (body?.action === "clean") result = cleanRuntimeCaches({ history: body.history === true });
-        else throw httpError("Unknown cache action", 400);
-        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-        res.end(JSON.stringify(result));
-      } catch (error) {
-        if (["ccdx_cache_busy", "ccdx_cache_limit_below_usage"].includes(error?.code)) error.statusCode = 409;
-        sendJsonError(res, error, 400);
-      } finally {
-        abort.cleanup();
-      }
-      return;
-    }
+    if (isOptionalRoute(req.method, pathname)) return optionalRoutes.handle(req, res, pathname);
+    if (isManagementRoute(req.method, pathname)) return managementHandler(req, res, pathname);
 
     if (req.method === "POST" && pathname === "/v1/responses") {
       return responsesHandler(req, res);
@@ -447,7 +325,13 @@ export function createAdapterHandler(options = {}) {
       if (requestFinished) return;
       requestFinished = true;
       if (trackRequest && statusCode >= 400) {
-        try { httpErrors.record(buildHttpFailureDetails({ ...httpEvidence, statusCode, route: routeName, requestId, model: context?.model })); } catch {}
+        try { httpErrors.record(buildHttpFailureDetails({ ...httpEvidence, statusCode, route: routeName, requestId, model: context?.model,
+          method: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"].includes(req.method) ? req.method : "OTHER",
+          target: ["/v1/responses", "/v1/responses/compact", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",
+          request_options: context?.requestOptions, upstream_attempts: streamPerformance?.attemptCount?.(),
+          attempt_timings: streamPerformance?.attemptTimings?.(),
+          requested_model: context?.requestedModel,
+        })); } catch {}
       }
       try { complete({ statusCode, aborted }); } catch {}
       try { streamPerformance?.finish({ failed: aborted || statusCode >= 400, aborted, statusCode }); } catch {}
@@ -484,6 +368,7 @@ export function createAdapterHandler(options = {}) {
         requestId,
         pathname,
         showRequestId: options.showRequestId === true,
+        includeHttpErrorDetails: options.includeHttpErrorDetails === true || process.env.CCDX_HTTP_ERROR_DETAILS === "1",
         streamPerformance,
         onHttpError: evidence => { httpEvidence = evidence; },
       };

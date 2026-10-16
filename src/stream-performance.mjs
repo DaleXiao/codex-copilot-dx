@@ -133,6 +133,7 @@ function createRoutePerformance() {
   return {
     ttft: createHistogram(TTFT_EDGES_MS),
     tpot: createHistogram(TPOT_EDGES_US),
+    outputRate: { intervals: 0, milliseconds: 0, samples: 0 },
     requestTtft: createHistogram(TTFT_EDGES_MS),
     outputSources: { delta: 0, announcement: 0, snapshot: 0, runtime: 0 },
     preparation: Object.fromEntries(PREPARATION_STAGES.map((stage) => [stage, createHistogram(PREPARATION_EDGES_MS)])),
@@ -163,6 +164,14 @@ function routeSnapshot(route) {
     },
     ttft_ms: histogramSnapshot(route.ttft, "ms"),
     tpot_us: histogramSnapshot(route.tpot, "us"),
+    output_tokens_per_second: {
+      avg: route.outputRate.milliseconds > 0
+        ? Number((route.outputRate.intervals * 1000 / route.outputRate.milliseconds).toFixed(1)) : null,
+      samples: route.outputRate.samples,
+      unit: "token/s",
+      aggregation: "time_weighted_per_request",
+      estimated: true,
+    },
     request_ttft_ms: histogramSnapshot(route.requestTtft, "ms"),
     first_output_sources: { ...route.outputSources },
     timing_boundary: "gateway_observed",
@@ -195,6 +204,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       const preparationMs = Object.fromEntries(PREPARATION_STAGES.map((stage) => [stage, 0]));
       let phase = "received";
       let attempts = 0;
+      const attemptTimings = [];
       let firstAttemptAt = null;
       let headersAt = null;
       let lastActivityAt = null;
@@ -221,15 +231,22 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           if (finished) return;
           const time = now();
           attempts += 1;
+          if (attemptTimings.length === 3) attemptTimings.splice(1, 1);
+          attemptTimings.push({ attempt: attempts, started_ms: elapsed(time), headers_ms: null, http_status: null });
           firstAttemptAt ??= time;
           phase = "upstream_connection";
           if (streaming && upstreamStartedAt === null) upstreamStartedAt = time;
         },
-        upstreamHeaders() {
+        upstreamHeaders(statusCode) {
           if (finished) return;
           headersAt = now();
           lastActivityAt = headersAt;
           phase = "upstream_response";
+          const attempt = attemptTimings.at(-1);
+          if (attempt) {
+            attempt.headers_ms = elapsed(headersAt);
+            attempt.http_status = Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599 ? statusCode : null;
+          }
         },
         upstreamActivity() {
           if (finished) return;
@@ -249,6 +266,8 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         setModel(value) {
           model = modelLabel(value);
         },
+        attemptCount() { return attempts; },
+        attemptTimings() { return attemptTimings.map(attempt => ({ ...attempt })); },
         observeContext(values) {
           if (finished || !values || typeof values !== "object") return;
           for (const key of Object.keys(context)) {
@@ -297,6 +316,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
             failed: failed || aborted || (terminalOutcome !== null && terminalOutcome !== "completed"),
             http_status: Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599 ? statusCode : null,
             upstream_attempts: attempts,
+            attempts: attemptTimings.map(attempt => ({ ...attempt })),
             first_output_source: firstOutputSource,
             context: { ...context },
             timings_ms: {
@@ -321,6 +341,12 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           observe(route.ttft, Math.max(0, firstOutputAt - upstreamStartedAt));
           if (outputTokens !== null && outputTokens >= 2) {
             observe(route.tpot, Math.max(0, ((finishedAt - firstOutputAt) * 1_000) / (outputTokens - 1)));
+            const milliseconds = finishedAt - firstOutputAt;
+            if (Number.isSafeInteger(outputTokens) && milliseconds > 0) {
+              route.outputRate.intervals += outputTokens - 1;
+              route.outputRate.milliseconds += milliseconds;
+              route.outputRate.samples += 1;
+            }
           }
           if (failed) route.errors_with_output += 1;
           else route.success_with_output += 1;
@@ -330,7 +356,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
     snapshot() {
       return {
         by_route: Object.fromEntries(PERFORMANCE_ROUTES.map((name) => [name, routeSnapshot(routes[name])])),
-        recent_requests: recentRequests.map((entry) => ({ ...entry, context: { ...entry.context }, timings_ms: { ...entry.timings_ms } })),
+        recent_requests: recentRequests.map((entry) => ({ ...entry, attempts: entry.attempts.map(attempt => ({ ...attempt })), context: { ...entry.context }, timings_ms: { ...entry.timings_ms } })),
       };
     },
   };
@@ -362,8 +388,8 @@ export function markUpstreamStarted(streaming = true) {
   tracker()?.upstreamStarted(streaming);
 }
 
-export function markUpstreamHeaders() {
-  tracker()?.upstreamHeaders?.();
+export function markUpstreamHeaders(statusCode) {
+  tracker()?.upstreamHeaders?.(statusCode);
 }
 
 export function markUpstreamActivity() {
@@ -386,9 +412,12 @@ export function markStreamFailure() {
   tracker()?.fail();
 }
 
-export function markResponseModel(model) {
+export function markResponseModel(model, { requestedModel } = {}) {
   const context = currentRequestContext();
-  if (context) context.model = model;
+  if (context) {
+    context.model = model;
+    if (requestedModel !== undefined) context.requestedModel = modelLabel(requestedModel);
+  }
   tracker()?.setModel?.(model);
 }
 

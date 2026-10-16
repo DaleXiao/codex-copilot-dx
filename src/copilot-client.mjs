@@ -6,6 +6,8 @@ import { enforceResponsesPayloadByteBudget } from "./responses-byte-budget.mjs";
 import { status } from "./status.mjs";
 import { withChatStreamUsage } from "./stream-contract.mjs";
 import { markRequestObservation, markUpstreamStarted } from "./stream-performance.mjs";
+import { currentRequestContext } from "./request-context.mjs";
+import { requestOptionsEvidence } from "./response-failures.mjs";
 
 function abortError(signal) {
   if (signal?.reason instanceof Error) return signal.reason;
@@ -185,6 +187,8 @@ export function createCopilotClientRuntime({
     headers["Content-Length"] = String(bodyBytes);
     headers.Accept = reqBody.stream ? "text/event-stream" : "application/json";
     try {
+      const context = currentRequestContext();
+      if (context) context.requestOptions = requestOptionsEvidence(reqBody);
       onUpstreamStart?.();
       markUpstreamStarted(reqBody.stream === true);
       return await fetchCopilotUpstream(`${tokenSession.getApiBase()}${responsesEndpointPath()}`, {

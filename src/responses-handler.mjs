@@ -1,5 +1,5 @@
 import { getCachedModelEndpoints } from "./copilot.mjs";
-import { applyCopilotResponsesRequestPolicies } from "./copilot-responses-policy.mjs";
+import { applyCopilotResponsesRequestPolicies, stripUnsupportedGpt6ServiceTier } from "./copilot-responses-policy.mjs";
 import {
   createRequestAbort,
   logRequestFailure,
@@ -101,15 +101,6 @@ function resolveRequestModel(model, openAIModelEnv, autoReviewModelResolver) {
   });
   return { ...resolved, reasoningEffort: preference?.model === resolved.upstreamModel
     ? preference.reasoningEffort : undefined };
-}
-
-function stripUnsupportedGpt6ServiceTier(body, requestedModel, upstreamModel, priorityTierModel) {
-  if (requestedModel.startsWith("gpt-6-")
-    && upstreamModel === requestedModel
-    && !priorityTierModel
-    && body.service_tier === "priority") {
-    delete body.service_tier;
-  }
 }
 
 export function createResponsesHandler(options) {
@@ -287,7 +278,7 @@ export function createResponsesHandler(options) {
         }
       }
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
-      markResponseModel(upstreamModel);
+      markResponseModel(upstreamModel, { requestedModel });
       markRequestObservation({ context_window_tokens: modelContextWindowTokens(modelRegistry?.models, upstreamModel) });
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${streaming}`));
@@ -400,7 +391,7 @@ export function createResponsesHandler(options) {
               bodyText,
               onUpstreamStart: startUpstreamTimeout,
             });
-            markUpstreamHeaders();
+            markUpstreamHeaders(upstream.status);
             releaseChatPayload();
             const data = upstream.ok
               ? await readBoundedResponseText(upstream, {
@@ -575,6 +566,7 @@ export function createResponsesCompactHandler(options) {
       markRequestObservation({ context_window_tokens: modelContextWindowTokens(modelRegistry?.models, upstreamModel) });
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=false`));
+      markResponseModel(upstreamModel, { requestedModel });
       prepared = applyResponseHistoryRoutePlan(prepared, createRoutePlan({
         disposition: "relay",
         origin: "ccdx",

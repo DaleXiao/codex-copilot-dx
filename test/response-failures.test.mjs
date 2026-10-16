@@ -5,7 +5,41 @@ import {
   formatResponseFailureLog,
   responseFailureDetails,
   buildHttpFailureDetails,
+  upstreamErrorEvidence,
+  requestOptionsEvidence,
+  createHttpFailureDiagnostics,
 } from "../src/response-failures.mjs";
+
+test("HTTP evidence is bounded technical metadata; arbitrary prose requires explicit opt-in", () => {
+  const body = JSON.stringify({ error: { code: "unsupported_value", type: "invalid_request_error", param: "reasoning.effort", message: 'Rejected. prompt="private prompt" Bearer secret-token' } });
+  assert.deepEqual(upstreamErrorEvidence(body), { error_body: "structured", code: "unsupported_value", error_type: "invalid_request_error", parameter: "reasoning.effort" });
+  assert.doesNotMatch(JSON.stringify(upstreamErrorEvidence(body, { includeMessage: true })), /private prompt|secret-token/);
+  assert.deepEqual(upstreamErrorEvidence("  "), { error_body: "empty" });
+  assert.deepEqual(upstreamErrorEvidence("private html response"), { error_body: "unstructured" });
+  assert.doesNotMatch(JSON.stringify(upstreamErrorEvidence('error: prompt="private html response"', { includeMessage: true })), /private html response/);
+  for (const param of ['prompt=secret', 'input[0].content[1].text value', 'cookie', 'x'.repeat(300)]) {
+    assert.equal(upstreamErrorEvidence(JSON.stringify({ error: { param } })).parameter, undefined);
+  }
+  const options = requestOptionsEvidence({ reasoning: { effort: "low", summary: "private" }, text: { format: { type: "json_schema", schema: { private: "secret" } } }, input: ["private prompt"], tools: [{ name: "secret" }], max_output_tokens: 128 });
+  assert.deepEqual(options, { reasoning_effort: "low", output_format: "json_schema", max_output_tokens: 128, tools: 1, input_items: 1 });
+  assert.doesNotMatch(JSON.stringify(options), /private|secret/);
+});
+
+test("inference errors survive route and MCP method noise without unbounded retention", () => {
+  const diagnostics = createHttpFailureDiagnostics({ maxEntries: 2 });
+  diagnostics.record({ route: "responses", http_status: 400, code: "invalid_parameter" });
+  for (let i = 0; i < 30; i++) {
+    diagnostics.record({ route: "not_found", http_status: 404 });
+    diagnostics.record({ route: "image_mcp", http_status: 405 });
+  }
+  const result = diagnostics.snapshot();
+  assert.equal(result.total, 61); assert.equal(result.recent.length, 2);
+  assert.equal(result.actionable_recent[0].code, "invalid_parameter");
+  assert.equal(result.protocol_recent.length, 8);
+  assert.deepEqual(result.by_category, { inference: 1, protocol: 30, route: 30, other: 0 });
+  result.actionable_recent[0].code = "changed";
+  assert.equal(diagnostics.snapshot().actionable_recent[0].code, "invalid_parameter");
+});
 
 test("response failure diagnostics retain a bounded, redacted runtime history", () => {
   const diagnostics = createResponseFailureDiagnostics({ maxEntries: 2, now: () => "2026-09-14T00:00:00.000Z" });

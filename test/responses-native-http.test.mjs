@@ -23,6 +23,36 @@ function responsesSse(...events) {
   });
 }
 
+test("all native terminal outcomes survive late duplicate events and transport errors", async () => {
+  for (const outcome of ["completed", "incomplete", "failed"]) {
+    for (const late of ["event", "transport"]) {
+      let reads = 0, cancelled = false;
+      const terminal = { type: `response.${outcome}`, response: {
+        id: "resp_terminal_boundary", status: outcome, output: [],
+        ...(outcome === "failed" ? { error: { code: "fixture_failure", message: "fixture failure" } } : {}),
+        ...(outcome === "incomplete" ? { incomplete_details: { reason: "max_output_tokens" } } : {}),
+      } };
+      const prefix = `event: ${terminal.type}\ndata: ${JSON.stringify(terminal)}\n\n`;
+      const source = new ReadableStream({
+        pull(controller) {
+          reads++;
+          if (reads > 1) { controller.error(new Error("late-fixture-must-not-leak")); return; }
+          controller.enqueue(new TextEncoder().encode(prefix + (late === "event"
+            ? 'event: response.failed\ndata: {"type":"response.failed","response":{"error":{"message":"late-fixture-must-not-leak"}}}\n\n' : "")));
+        },
+        cancel() { cancelled = true; },
+      }, { highWaterMark: 0 });
+      const result = await invokeAdapter({ responsesFn: async () => new Response(source, { headers: { "Content-Type": "text/event-stream" } }) }, {
+        body: { model: "gpt-5.6-sol", stream: true, input: "terminal test" },
+      });
+      assert.equal(result.status, 200);
+      assert.equal((result.text.match(/event: response\.(?:completed|incomplete|failed)\n/g) || []).length, 1, `${outcome}/${late}`);
+      assert.doesNotMatch(result.text, /late-fixture-must-not-leak/);
+      assert.equal(cancelled, true); assert.equal(reads, 1);
+    }
+  }
+});
+
 function encryptedFailure(responseId = "resp_failed") {
   return {
     type: "response.failed",

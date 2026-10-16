@@ -17,6 +17,51 @@ import {
   measureRequestStageAsync,
 } from "../src/stream-performance.mjs";
 
+test("output speed sums token intervals and durations instead of inverting average TPOT", () => {
+  let time = 0;
+  const metrics = createStreamPerformanceMetrics({ now: () => time });
+  for (const [tokens, milliseconds] of [[11, 1000], [101, 100]]) {
+    const request = metrics.begin("responses");
+    request.upstreamStarted(); request.firstOutput(); request.setOutputTokens(tokens);
+    time += milliseconds; request.finish(); request.finish();
+  }
+  const result = metrics.snapshot().by_route.responses;
+  assert.equal(result.tpot_us.avg, 50500); // Original per-request TPOT remains unchanged.
+  assert.deepEqual(result.output_tokens_per_second, {
+    avg: 100, samples: 2, unit: "token/s", aggregation: "time_weighted_per_request", estimated: true,
+  });
+});
+
+test("output speed excludes missing usage, zero duration and invalid counts without inventing data", () => {
+  let time = 0;
+  const metrics = createStreamPerformanceMetrics({ now: () => time });
+  for (const tokens of [undefined, 0, 1, NaN, Infinity, -1, 2.5]) {
+    const request = metrics.begin("responses");
+    request.upstreamStarted(); request.firstOutput();
+    if (tokens !== undefined) request.setOutputTokens(tokens);
+    time += 10; request.finish();
+  }
+  const request = metrics.begin("responses");
+  request.upstreamStarted(); request.firstOutput(); request.setOutputTokens(10); request.finish();
+  assert.deepEqual(metrics.snapshot().by_route.responses.output_tokens_per_second, {
+    avg: null, samples: 0, unit: "token/s", aggregation: "time_weighted_per_request", estimated: true,
+  });
+});
+
+test("attempt timing retains the first and last two attempts as isolated technical metadata", () => {
+  let time = 0;
+  const metrics = createStreamPerformanceMetrics({ now: () => time });
+  const request = metrics.begin("responses");
+  for (let i = 0; i < 6; i++) {
+    request.upstreamStarted(); time += 5; request.upstreamHeaders(i < 5 ? 400 : 200); time += 5;
+  }
+  request.finish();
+  const attempts = metrics.snapshot().recent_requests[0].attempts;
+  assert.deepEqual(attempts.map(a => [a.attempt, a.http_status]), [[1, 400], [5, 400], [6, 200]]);
+  attempts[0].http_status = 999;
+  assert.equal(metrics.snapshot().recent_requests[0].attempts[0].http_status, 400);
+});
+
 test("request timings include preparation without changing upstream TTFT and TPOT", async () => {
   let time = 0;
   const metrics = createStreamPerformanceMetrics({ now: () => time });
@@ -261,6 +306,8 @@ test("request timeline records stages, retry attempts and activity without chang
       images: 0, serialization: 0, upstream_start: 10, upstream_headers: 45, first_output: 50,
       last_activity: 80, terminal: 90, finished: 95 },
     context: { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: null },
+    attempts: [{ attempt: 1, started_ms: 10, headers_ms: 20, http_status: null },
+      { attempt: 2, started_ms: 40, headers_ms: 45, http_status: null }],
   });
   snapshot.recent_requests[0].timings_ms.finished = 12345;
   assert.equal(metrics.snapshot().recent_requests[0].timings_ms.finished, 95);

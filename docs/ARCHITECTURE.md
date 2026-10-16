@@ -17,6 +17,15 @@ The CLI composes the service. Client integration owns its `configure`, `start`,
 `snapshot` and `close` operations. It does not forward inference requests or
 render the dashboard. The adapter exposes integration snapshots and keeps
 management/MCP routes separate from the Responses path.
+`management-routes.mjs` owns status, health, cache control and prediction repair
+HTTP checks. It receives a snapshot callback and the existing explicit repair
+action, not a model client or a second recovery lifecycle.
+`optional-routes.mjs` owns lazy WebUI/API and image-MCP dispatch and image stats.
+The adapter remains the HTTP composition root; neither extracted route module
+imports it. Native prediction belongs to client integration, WebUI to management,
+and terminal animation to presentation. Input-image optimization remains core
+multimodal inference, distinct from optional image generation. This is a module
+boundary, not a plugin framework, daemon, IPC protocol or package split.
 The HTTP dispatch boundary rejects browser Origin-bearing inference requests
 before body admission, credential use or provider dispatch; native LAN opt-in is unchanged.
 
@@ -226,11 +235,19 @@ Prediction preference, bridge readiness and observed configuration responses are
 different states. None proves that a candidate appeared in the App. The dashboard
 keeps that result unknown. Integration diagnostics retain bounded, redacted
 metadata, not conversation or image contents.
-HTTP failures have a separate 20-entry metadata ring (`http_errors`): status,
-safe technical code, model when observed, route, source and request IDs. Original
-HTTP error bodies are returned unchanged but not saved in that ring. Model
-terminal diagnostics and their counters retain their existing meaning. The
-dashboard merges recent HTTP, model and request-timeline failures for display.
+HTTP failures retain the original 20-entry metadata ring (`http_errors.recent`)
+plus independent 20-entry inference/other and eight-entry image-MCP method rings.
+Fixed categories distinguish inference, image-MCP HTTP 405, unmatched routes and
+other failures without treating every 404/405 as harmless. Status, safe technical
+code/type/parameter, method, allowlisted target, request IDs and numeric/enum
+request options survive; body/query/prompt/tool/schema values do not. Optional
+error prose requires `CCDX_HTTP_ERROR_DETAILS=1` at service creation, is redacted
+and capped at 500 characters, and still needs review before sharing.
+Original error responses are preserved. Per-request attempt timings retain only
+the first and last two provider calls, not unbounded stream events. All data is
+process-local and cleared on restart. The dashboard uses the independently
+retained actionable HTTP errors rather than letting route noise erase them.
+Model terminal diagnostics and HTTP counters retain their original meanings.
 
 Tests cover module dependency direction, default-off behavior, concurrent writers,
 proxy handshakes, TLS validation, streaming, history isolation and release lookup.

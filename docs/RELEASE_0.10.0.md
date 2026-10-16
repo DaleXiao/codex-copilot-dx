@@ -1,6 +1,6 @@
 # Provider migration — 0.10.0 candidate
 
-Status: implementation frozen for cross-platform CI; not published.
+Status: release verification passed; publication in progress.
 
 ## Scope and acceptance
 
@@ -182,3 +182,25 @@ counted as completed. Error events now remain authoritative failures, retain the
 original stream bytes, close the upstream reader and use the `upstream_event`
 diagnostic origin. This extends the existing HTTP-success/model-completion rule
 to the new protocol; it does not add inference retry or change valid replies.
+
+## Release acceptance
+
+- Final production commit: `0cf5d766bd7a4c3f1422e97e33a8f3a04fcb5c9f`.
+- Final local verification: 1,326 passed, nine platform-specific skips, zero failures.
+- Final CI: [38938690105](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38938690105),
+  all fourteen jobs passed: Linux/macOS/Windows, Node 22.15/24, strict npm 12
+  installation/upgrade, native Windows workers, browser recovery, bilingual
+  dashboard and official Codex image/tool/history replays.
+- Pack inspection: 171 files, no test logs, credentials, downloaded clients or
+  experimental files. The optional Microsoft dependency remains registry-resolved.
+- GitHub publication uses the same historical, owner-verified PAT as the preceding
+  release, in process memory only. npm uses the existing repository publishing
+  workflow and secret; no browser sign-in or credential replacement is involved.
+
+Platform distinction: existing Windows behavior and the new native-package,
+network, configuration and failure-isolation contracts passed CI. Actual Windows
+M365 tenant authorization and Claude App inference are still awaiting eligible-device
+feedback; they are not claimed as live-tested. macOS real-client results above are
+confirmed. M365 remains entitlement-dependent, and optional-provider failure must
+not change the default GitHub route. Known new-provider limits remain Standard-only
+GPT service tier, five-minute Claude cache retention and gateway-compatible Code betas.

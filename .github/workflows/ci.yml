@@ -88,10 +88,12 @@ jobs:
       - run: npm ci
       - name: Provision test-only Chromium
         run: |
-          npm install --prefix "${{ runner.temp }}/ccdx-browser" playwright@1.62.1
+          npm install --prefix "${{ runner.temp }}/ccdx-browser" playwright@1.62.1 @xterm/headless@6.0.0
           node "${{ runner.temp }}/ccdx-browser/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Verify repeated recovery in the same browser process and preserve company fallback
         run: node scripts/prediction-browser-replay.mjs --playwright "${{ runner.temp }}/ccdx-browser/node_modules/playwright/index.js"
+      - name: Verify terminal table, animation, cursor updates and resize in xterm
+        run: node scripts/terminal-console-replay.mjs --xterm "${{ runner.temp }}/ccdx-browser/node_modules/@xterm/headless/lib-headless/xterm-headless.js"
       - name: Verify revised PAC and default credential denial handling
         run: node --test test/prediction-pac.test.mjs test/copilot-auth-recovery.test.mjs
   test:

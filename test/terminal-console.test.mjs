@@ -5,6 +5,9 @@ import { configureLogging } from "../src/log.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { stripVTControlCharacters } from "node:util";
+import { displayWidth } from "../src/cli-table.mjs";
+import { EventEmitter } from "node:events";
 
 function fixture(tty = true) {
   const writes = [], errors = [], timers = new Map();let time = 1000;
@@ -18,8 +21,38 @@ test("terminal uses a fixed region, suppresses request detail and restores outpu
   const f = fixture();f.terminal.start();const finish = f.terminal.beginRequest();f.tick();
   for (let index = 0; index < 100; index++) f.terminal.log("log", ["responses model=private-request-detail"]);
   f.terminal.log("warn", ["Provider temporarily unavailable"]);f.tick();
-  assert.match(f.writes.join(""), /\x1b\[3A/);assert.doesNotMatch(f.writes.join(""), /private-request-detail/);
+  assert.match(f.writes.join(""), /\x1b\[1A/);assert.doesNotMatch(f.writes.join(""), /private-request-detail/);
   assert.equal(f.terminal.snapshot().notices, 1);finish();finish();f.terminal.cleanup();assert.equal(f.writes.at(-1), "\n");
+});
+
+test("status table fits supported widths, separates notices and motion, and redraws only the motion row between snapshots", () => {
+  for (const columns of [40, 80, 120]) {
+    const writes = [], scheduled = new Map(), output = new EventEmitter();let time = 1000;
+    Object.assign(output, { isTTY: true, columns, rows: 24, write: value => writes.push(value) });
+    const data = { runtime_usage: { records: 5, input_tokens: 1700000, cached_input_tokens: 1100000, output_tokens: 5600, partial_records: 2 },
+      requests: { by_route: { responses: { total: 5, active: 2 }, messages: { total: 2 }, models: { total: 99 }, image_mcp: { total: 9, active: 5 } } },
+      stream_performance: { by_route: { responses: { terminal_outcomes: { totals: { completed: 4, cancelled: 1 } } } } },
+      providers: { m365: { claude: { requests: { performance: { by_route: { messages: { terminal_outcomes: { totals: { completed: 1, failed: 1 } } } } } } } } } };
+    const terminal = createTerminalConsole({ env: { NO_COLOR: "" }, output, errorOutput: { isTTY: true }, snapshot: () => data,
+      now: () => time, timers: { setTimeout(fn, ms) { scheduled.set(fn, ms);return fn; }, clearTimeout(fn) { scheduled.delete(fn); } } });
+    const finish = terminal.beginRequest();terminal.log("warn", ["Synthetic notice"]);terminal.start();
+    const screen = stripVTControlCharacters(writes[0]).replace(/\r/g, "").split("\n");
+    assert.equal(screen.length, 15);
+    for (const line of screen) assert.ok(displayWidth(line.trim()) < columns, `${columns}: ${line}`);
+    const borders = screen.filter(line => /^[┌├└│]/.test(line));
+    assert.equal(borders.length, 10);assert.ok(borders.every(line => displayWidth(line.trim()) === columns - 1));
+    assert.match(screen.join("\n"), /Input total\s+1\.7M/);assert.match(screen.join("\n"), /Cache read\s+1\.1M/);
+    assert.match(screen.join("\n"), /HTTP calls\s+7/);assert.match(screen.join("\n"), /Completed\s+5/);assert.match(screen.join("\n"), /Failed\s+1/);
+    assert.match(screen.join("\n"), /Active\s+2/);
+    assert.match(screen.at(-2), /^\r?1 notices/);assert.match(screen.at(-1), /^\r?\[.*\] Working/);
+    assert.doesNotMatch(writes[0], /\x1b\[(?:97|38;5;)/);
+    const [tick, ms] = [...scheduled][0];scheduled.delete(tick);time += ms;tick();
+    assert.doesNotMatch(writes.at(-1), /Usage|│|notices|\n/);
+    finish();output.columns = 60;output.emit("resize");
+    const [next, delay] = [...scheduled][0];scheduled.delete(next);time += delay;next();
+    assert.match(stripVTControlCharacters(writes.at(-1)), /○ Idle/);assert.doesNotMatch(writes.at(-1), /\x1b\[\d+A/);
+    output.rows = 10;output.emit("resize");assert.equal(terminal.enabled, false);terminal.cleanup();
+  }
 });
 test("plain output has no cursor controls and coalesces repeated notices", () => {
   const f = fixture(false);f.terminal.start();f.terminal.log("log", ["request"]);

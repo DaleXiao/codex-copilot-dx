@@ -8,6 +8,7 @@ import {
   abortErrorStatusCode,
   createRequestAbort,
   isAbortLikeError,
+  logRequestFailure,
   readJsonBody,
   writeOrDrain,
 } from "../src/http-transport.mjs";
@@ -15,6 +16,19 @@ import { createRequestAdmission } from "../src/request-admission.mjs";
 
 const gzipAsync = promisify(zlib.gzip);
 const zstdCompressAsync = zlib.zstdCompress ? promisify(zlib.zstdCompress) : null;
+
+test("client cancellations are informational while timeouts and transport failures remain notices", t => {
+  const info = t.mock.method(console, "log", () => {}), warn = t.mock.method(console, "warn", () => {}), error = t.mock.method(console, "error", () => {});
+  for (const reason of ["client_aborted", "client_closed"]) {
+    const err = Object.assign(new Error("cancelled"), { name: "AbortError" });
+    logRequestFailure("Models", err, { reason });assert.equal(err.statusCode, 499);
+  }
+  assert.equal(info.mock.calls.length, 2);assert.equal(warn.mock.calls.length, 0);
+  const timeout = Object.assign(new Error("timeout"), { name: "AbortError" });
+  logRequestFailure("Models", timeout, { reason: "upstream_timeout" });
+  assert.equal(warn.mock.calls.length, 1);assert.equal(timeout.statusCode, 504);
+  logRequestFailure("Models", new Error("connection failed"));assert.equal(error.mock.calls.length, 1);
+});
 
 function jsonRequest(body, contentEncoding, headers = {}) {
   const req = Readable.from([body]);

@@ -102,6 +102,13 @@ try {
         await page.waitForFunction(() => !document.getElementById("refresh-models").disabled && !document.getElementById("refresh-usage").disabled);
         assert.equal(await page.evaluate(() => atomMotions.length), 1);
         assert.equal(await page.evaluate(() => atomMotions[0].options.duration), 450);
+        assert.equal(await page.locator(".sidebar-brand #status-icon").count(), 1);
+        assert.equal(await page.locator("h1 #status-icon").count(), 0);
+        const brandIcon = await page.locator(".sidebar-brand #status-icon").boundingBox();
+        assert.ok(brandIcon && brandIcon.width >= 40 && brandIcon.height >= 40 && brandIcon.x >= 0 && brandIcon.x + brandIcon.width <= width);
+        await page.locator("#refresh").click();
+        await page.waitForFunction(() => !document.getElementById("refresh").disabled);
+        assert.equal(await page.evaluate(() => atomMotions.length), 2);
         assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
         assert.equal(await page.locator("html").getAttribute("lang"), language === "zh" ? "zh-CN" : "en");
         const nav = async route => { await page.locator(`[data-route="${route}"]`).click();await page.locator(`[data-view="${route}"]`).waitFor({ state: "visible" }); };

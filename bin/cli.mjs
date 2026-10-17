@@ -22,7 +22,7 @@ import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
 import { createCodexModelCatalog } from "../src/codex-model-catalog.mjs";
 import { createProviderRuntime } from "../src/provider-runtime.mjs";
 import { setResponseHistoryMaxBytes } from "../src/response-history.mjs";
-import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck } from "../src/startup-ui.mjs";
+import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck, providerStartupChecks } from "../src/startup-ui.mjs";
 import { createTerminalConsole } from "../src/terminal-console.mjs";
 import { createServiceControl } from "../src/service-control.mjs";
 import { openDashboard } from "../src/browser-launch.mjs";
@@ -323,6 +323,7 @@ async function reuseRunningAdapterIfAvailable() {
   }
   if (!running.ok) return false;
 
+  const serviceStatus = readAdapterStatus({ host: ADAPTER_HOST, port: ADAPTER_PORT }).catch(() => null);
   console.log(startupCheck("ok", "Adapter", `Using existing service at ${running.baseUrl}`));
   console.log(startupCheck("info", "Auth", "Using existing service credentials; not rechecked"));
   const { compressionSetup, imageEnabled, imageMcpSkipped } = await configureCodexClient();
@@ -352,6 +353,7 @@ async function reuseRunningAdapterIfAvailable() {
   console.log(predictionStartupCheck({ configured: predictionConfigured, bridge: predictionPacUrl ? "running" : "unknown", launch_route: launchRoute }));
   console.log(startupCheck(imageEnabled && imageMcpSkipped ? "warn" : "info", "Images", imageEnabled
     ? imageMcpSkipped ? "Client setup skipped; see warning above" : "Configured; provider not tested" : "Off"));
+  console.log(providerStartupChecks((await serviceStatus)?.data));
   console.log(startupReady({ baseUrl: running.baseUrl, commandName: CLI_NAME, reused: true }));
   await launchDashboard();
   await compressionSetup;
@@ -486,6 +488,7 @@ try {
   console.log(predictionStartupCheck(clientIntegration?.snapshot().prediction));
   console.log(startupCheck(imageEnabled && imageMcpSkipped ? "warn" : "info", "Images", imageEnabled
     ? imageMcpSkipped ? "Client setup skipped; see warning above" : "Configured; provider not tested" : "Off"));
+  console.log(providerStartupChecks(activeServer.ccdxSnapshot?.()));
 
   // Periodically refresh the model list + endpoint cache so a long-running
   // adapter picks up newly released models without a restart.

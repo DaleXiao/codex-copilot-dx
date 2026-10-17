@@ -305,6 +305,11 @@ before-values, preserving foreign or edited fields. Saved allow gates are separa
 from provisioning; pausing never deletes the Provider key or prediction trust.
 
 `terminal-console.mjs` owns a bounded TTY status region and activity only.
+Its 15-line region has Provider/Claude summaries, a responsive line-framed table,
+then separate notice and activity rows. Snapshot data is read about once a second;
+animation ticks reuse the table and write only changed rows. Small viewports
+(under 40 columns or 16 rows) retain plain output. Client-originated cancellations
+are informational; timeouts and actual failures remain notices and file diagnostics.
 `log.mjs` routes terminal presentation independently from existing opt-in,
 redacted rotating file records. Returned usage accumulates scalar process-local
 totals in `usage-store.mjs`, without a historical-log scan or per-token callback.

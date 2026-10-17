@@ -107,11 +107,12 @@ test("explicit repair checks the environment once, keeps healthy unchanged bridg
   invalid = false;changed = true;route = "closed";assert.equal((await client.fix()).status, "ready");assert.equal(starts, 3);
 });
 
-test("startup, status, doctor and fix use the same sanitized environment summary without probing system policy", async t => {
+test("startup stays concise while status, doctor and fix retain sanitized environment details without policy probes", async t => {
   const state = createPredictionState();state.configure(true);state.running({});
   state.environment({ status: "adapted", network: { source: "system HTTPS", type: "http", bypass_rules: 4, cidr_rules: 4 }, tls: { extra_ca: "not_set" } });
   const prediction = state.snapshot(), summary = formatPredictionEnvironment(prediction.environment);
-  assert.ok(predictionStartupCheck(prediction).includes(summary));
+  assert.doesNotMatch(predictionStartupCheck(prediction), /Environment|proxy|TLS/);
+  assert.equal(predictionStartupCheck(prediction).split("\n").length, 1);
   assert.ok(formatAdapterStatus({ data: { client_integrations: { prediction } } }).includes(summary));
   const checks = await inspectCodexClient({ platform: "linux", running: { ok: true }, readStatus: async () => ({ data: { client_integrations: { prediction } } }), execFileFn() { assert.fail("no policy probe"); } });
   assert.ok(checks.some(check => check.message === summary));

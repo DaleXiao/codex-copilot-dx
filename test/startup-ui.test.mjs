@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { stripVTControlCharacters } from "node:util";
-import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck } from "../src/startup-ui.mjs";
+import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck, providerStartupChecks, providerStartupSummary } from "../src/startup-ui.mjs";
 import { status } from "../src/status.mjs";
 
 test("A atom banner is static, bounded and enabled only on a wide colored terminal", () => {
@@ -34,11 +34,32 @@ test("startup status, labels and footer share the left edge; reuse cannot advert
 test("self-check does not confuse disabled, unavailable, saved-route, launch and visible-candidate evidence", () => {
   assert.match(predictionStartupCheck(), /\[INFO\].*Off/);
   assert.match(predictionStartupCheck({ configured: true, bridge: "unavailable" }), /\[WARN\].*Bridge unavailable/);
-  assert.match(predictionStartupCheck({ configured: true, bridge: "running", launch_route: "verified" }), /route verified; suggestion not checked/);
+  const healthy = predictionStartupCheck({ configured: true, bridge: "running", launch_route: "verified", recovery: { attempts: 0 }, persistence: "installed", environment: { status: "adapted" } });
+  assert.match(healthy, /route verified; suggestion unchecked/);assert.equal(healthy.split("\n").length, 1);
+  assert.doesNotMatch(healthy, /Recovery|Environment|TLS|proxy/);
   for (const route of ["persisted", "unknown", "unverified"]) {
     const line = predictionStartupCheck({ configured: true, bridge: "running", launch_route: route });
-    assert.match(line, /route not verified; suggestion not checked/);assert.doesNotMatch(line, /\[OK\]/);
+    assert.match(line, /not verified; suggestion unchecked/);assert.doesNotMatch(line, /\[OK\]/);
   }
+  assert.match(predictionStartupCheck({ configured: true, bridge: "running", active: false }), /Paused; trust and route retained/);
+  assert.match(predictionStartupCheck({ configured: true, bridge: "running", environment: { status: "needs_service_restart" } }), /\[WARN\].*restart CCDX[\s\S]*ccdx prediction status/);
+  assert.match(predictionStartupCheck({ configured: true, bridge: "unavailable", reason: "synthetic certificate error" }), /synthetic certificate error[\s\S]*ccdx prediction status/);
+});
+
+test("startup counts discovered catalogs without claiming inference access or uninspected client configuration", () => {
+  const data = { profiles: { codex: { models: { source: "cache", models: 41 } } }, providers: { m365: { enabled: true, state: "checking", claude: { clients: { code: "not_configured", app: "not_configured" } } } } };
+  assert.match(providerStartupChecks(data), /1 catalog found.*GitHub 41 \(cache\); M365 checking/);
+  assert.match(providerStartupChecks(data), /Code: not checked.*App: not checked.*gateway off \(checking\)/);
+  data.providers.m365 = { enabled: true, state: "ready", models: { total: 15, source: "live" }, claude: { gateway: "running", clients: { code: "configured", app: "preserved" } } };
+  const summary = providerStartupSummary(data);
+  assert.match(summary.catalogs, /2 catalogs found.*M365 15 \(live\)/);
+  assert.match(summary.claude, /Code: configured.*App: custom\/managed settings kept.*gateway running/);
+  assert.doesNotMatch(providerStartupChecks(data), /\[OK\]|inference verified/);
+  data.profiles.codex.models.source = "built-in";data.providers.m365 = { enabled: false, state: "disabled" };
+  assert.match(providerStartupChecks(data), /0 catalogs found.*GitHub not discovered; M365 off/);
+  assert.match(providerStartupChecks(), /Status unavailable/);assert.doesNotMatch(providerStartupChecks(), /0 catalogs/);
+  data.providers.m365 = { state: "ready", claude: { clients: { code: "configuration_unavailable", app: "not_installed" } } };
+  assert.match(providerStartupChecks(data), /\[WARN\].*Claude.*Code: config unreadable.*App: not installed/);
 });
 
 test("startup formatting retains prompts and warnings without importing service modules", () => {

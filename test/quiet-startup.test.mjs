@@ -40,5 +40,7 @@ test("default startup keeps request details out of the terminal while opt-in fil
   try { assert.equal((await Promise.race([done, new Promise((_, reject) => { shutdownTimer = setTimeout(() => reject(new Error("Cooperative fixture shutdown timed out")), 10000); })]))[0], 0); }
   finally { clearTimeout(shutdownTimer); }
   assert.doesNotMatch(output, /responses model=|\x1b\[/);
+  assert.match(output, /Providers.*1 catalog found.*GitHub/);
+  assert.match(output, /Claude.*Code: not checked.*App: not checked.*gateway off \(off\)/);
   assert.match(await fs.readFile(log, "utf8"), /responses model=gpt-5.5/);
 });

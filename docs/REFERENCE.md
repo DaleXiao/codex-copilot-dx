@@ -1142,6 +1142,32 @@ Dark/light, English/Chinese and reduced motion remain supported. Language change
 translate page labels in place without fetching models or rebuilding charts;
 commands, identifiers and upstream error text retain their original values.
 
+The atom logo stays in the sidebar brand (compact top navigation on narrow screens).
+It rotates once on load and manual Refresh, never on scheduled reads, and respects
+reduced motion. Terminal animation settings are independent of the WebUI logo.
+
+Startup lists the number of discovered cached/live Provider catalogs, their model
+counts and source, and separate Claude Code/App configuration states. Checking,
+unavailable, preserved custom settings and uninspected configurations remain
+distinct. Background discovery does not delay core readiness; its latest state
+appears in the running terminal region. These observations do not prove inference
+access. Normal prediction startup uses one line; exceptions retain reasons and
+required restart guidance. `ccdx prediction status` retains environment/recovery
+details, including routing, CA and TLS verification state.
+
+After Ready, a supported TTY has a 15-line region: uptime, Provider/Claude state,
+a line-framed usage/inference table, one notice row and one activity row below it.
+Input includes cache read; partial records count returned usage with missing fields.
+Inference HTTP calls exclude catalog/count-tokens requests; model outcomes are
+separate protocol observations, not an HTTP-success total. Activity motion includes
+image MCP traffic; inference counters exclude it. Usage is process-local returned
+data, not a bill or pending estimate. Counts/tokens use compact display.
+Data refreshes about once a second; animation ticks reuse the table and redraw only
+changed rows. Historical notices do not turn a running service into a health verdict.
+Client cancellations remain in verbose/file diagnostics as informational records;
+timeouts and actual failures remain notices. Non-TTY, CI, dumb and terminals under
+40 columns or 16 rows retain plain output. No runtime terminal dependency is added.
+
 Terminal appearance lives in System/settings, with a sidebar shortcut on wide
 screens. Preview frames load on opening; closing, hiding the view/page or reduced
 motion stops preview timers. Saving changes the running supported status terminal.

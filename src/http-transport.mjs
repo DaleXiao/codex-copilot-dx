@@ -373,5 +373,6 @@ export function logRequestFailure(label, err, abort) {
 
   const reason = abort?.reason || "aborted";
   err.statusCode ||= abortErrorStatusCode(reason);
-  console.warn(status("warn", `${label} request aborted: ${reason}`));
+  const cancelled = reason === "client_aborted" || reason === "client_closed";
+  console[cancelled ? "log" : "warn"](status(cancelled ? "info" : "warn", `${label} request aborted: ${reason}`));
 }

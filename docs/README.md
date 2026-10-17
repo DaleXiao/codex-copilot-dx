@@ -1,5 +1,6 @@
 # Documentation index
 
+- [1.1.1: Clear startup checks and framed terminal status](RELEASE_1.1.1.md)
 - [1.1.0: Shared entry, control console and quiet terminal](RELEASE_1.1.0.md)
 - [1.0.0: Provider dashboard and Claude effort adaptation](RELEASE_1.0.0.md)
 

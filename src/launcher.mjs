@@ -83,10 +83,10 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
       const running = windowsAppProcesses(current.app, { env });
       if (running.length) {
         if (running.length === 1 && running[0].readable && running[0].route === predictionPacUrl) {
-          onPredictionRoute("verified");log(status("ok", "Running Codex App uses the current prediction route"));return true;
+          onPredictionRoute("verified");log(status("ok", "Codex already running"));return true;
         }
         if (running.length === 1 && running[0].readable && !running[0].route && persistedPredictionRoute) {
-          onPredictionRoute("persisted");log(status("info", "App route preference is saved; waiting for configuration traffic to confirm it"));return true;
+          onPredictionRoute("persisted");log(status("info", "Codex already running"));return true;
         }
         throw new Error("Running Codex App uses an old or unverified prediction route. Fully quit the App, then run ccdx again; no process was stopped");
       }
@@ -105,7 +105,7 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
       const routeRetained = actual.length === 1 && actual[0].readable && actual[0].route === predictionPacUrl;
       onPredictionRoute(routeRetained ? "verified" : "unverified");
       log(status(routeRetained ? "info" : "warn", routeRetained
-        ? "Codex launch route verified; prediction status will show when configuration traffic is observed"
+        ? "Codex opened"
         : "Codex launch requested, but the active App did not retain the current prediction route. Core adapter remains available"));
       return routeRetained;
     } catch (error) {
@@ -132,10 +132,10 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
       const running = macAppProcesses(predictionApp);
       if (running.length) {
         if (running.length === 1 && running[0].readable && running[0].route === predictionPacUrl) {
-          onPredictionRoute("verified");log(status("ok", "Running Codex App uses the current prediction route"));return true;
+          onPredictionRoute("verified");log(status("ok", "Codex already running"));return true;
         }
         if (running.length === 1 && running[0].readable && !running[0].route && persistedPredictionRoute) {
-          onPredictionRoute("persisted");log(status("info", "App route preference is saved; waiting for configuration traffic to confirm it"));return true;
+          onPredictionRoute("persisted");log(status("info", "Codex already running"));return true;
         }
         throw new Error("Running Codex App uses an old or unverified prediction route. Fully quit the App, then run ccdx again; no process was stopped");
       }
@@ -146,7 +146,7 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
       for (let attempt = 0; attempt < 10; attempt++) {
         const actual = macAppProcesses(predictionApp);
         if (actual.length === 1 && actual[0].readable && actual[0].route === predictionPacUrl) {
-          onPredictionRoute("verified");log(status("info", "Codex launch route verified; prediction status will show when configuration traffic is observed"));return true;
+          onPredictionRoute("verified");log(status("info", "Codex opened"));return true;
         }
         if (actual.length) break;
         if (attempt < 9) await new Promise(resolve => setTimeout(resolve, 100));

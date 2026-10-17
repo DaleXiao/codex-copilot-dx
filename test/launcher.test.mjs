@@ -153,7 +153,7 @@ test("a persisted App preference is reuse evidence, not a verified launch route 
     log: value => logs.push(value), preparePredictionRoute() { assert.fail("running App must not be edited"); },
     spawnImpl() { assert.fail("running App must not be restarted"); } });
   assert.equal(ok, true);assert.equal(route, "persisted");
-  assert.match(logs.join("\n"), /waiting for configuration traffic/);assert.doesNotMatch(logs.join("\n"), /route verified/);
+  assert.match(logs.join("\n"), /Codex already running/);assert.doesNotMatch(logs.join("\n"), /route verified/);
 });
 
 test("macOS prediction launch allows delayed main-process visibility without an unbounded watcher", async () => {

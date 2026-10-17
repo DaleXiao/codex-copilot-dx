@@ -755,7 +755,7 @@ ccdx cache --clean --history
 
 `ccdx cache` separates the shared in-memory Responses history from the rebuildable input-image transform cache. The history limit accepts 16–1024 MiB, is saved in the normal CCDX settings file, and applies immediately to a compatible running adapter. `CCDX_RESPONSE_HISTORY_MAX_BYTES` remains the higher-precedence environment override. Lowering the limit below current usage is rejected rather than evicting tasks silently. `ccdx cache -128` is a short alias for `--limit 128`; `-clean` aliases `--clean`.
 
-Plain `--clean` clears only completed image transforms; the next matching request may recompute them. Adding `--history` also invalidates all process-local `previous_response_id` chains and can make a task's next continuation fail, so it requires interactive confirmation or `--yes`. Cleanup waits for active cache users to finish and never deletes Codex transcripts, generated image files, provider credentials, image edit handles, model catalogs, or usage/debug logs. A stopped or older adapter must be restarted before runtime cleanup; a saved limit applies on the next start.
+Plain `--clean` clears only completed image transforms; the next matching request may recompute them. Adding `--history` also invalidates all process-local `previous_response_id` chains and can make a task's next continuation fail, so it requires interactive confirmation or `--yes`. Cleanup refuses active cache users; retry after current requests finish. It never deletes Codex transcripts, generated image files, provider credentials, image edit handles, model catalogs, or usage/debug logs. A stopped or older adapter must be restarted before runtime cleanup; a saved limit applies on the next start.
 
 ### Request-body limits
 
@@ -793,7 +793,7 @@ Failed reads show previous-data status and the last successful update time, or t
 are coalesced. File logging retains its existing explicit opt-in and redaction.
 In-memory usage still updates when `CCDX_DISABLE_USAGE=1` disables persistence. `runtime_usage.by_provider` separates returned process-local usage by source. The Usage and issues view adds Requests by source; `ccdx status` also lists source/protocol outcomes. Unknown outcomes and partial usage remain distinct. CLI remains English; WebUI keeps English/Chinese.
 
-The Clear conversation buffer action clears all process-local conversation continuation data after active cache users finish. Old chats may fail to continue; saved Codex transcripts remain. It invokes the existing image-transform/history cleanup operation, rather than an inactive-only selector.
+The Clear conversation buffer action clears all process-local conversation continuation data. If image optimization or conversation history is active, cleanup is refused; retry after current requests finish. Old chats may fail to continue; saved Codex transcripts remain. It invokes the existing image-transform/history cleanup operation, rather than an inactive-only selector.
 
 The settings API is local, requires the dashboard header, bounded JSON and
 same-origin POST. It invokes the same Provider, cache and integration operations;

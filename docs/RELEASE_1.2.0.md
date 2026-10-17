@@ -15,7 +15,7 @@ explicit source selection, network policies and installation dependencies remain
 - Drive dashboard source choices from bounded internal metadata; no plugin loader.
 - Separate cancellation, unknown abort, timeout and access-denial facts.
 - Add source/model/outcome aggregates and source-specific process usage.
-- Correct all-buffer cleanup wording and confirmation; preserve transcripts.
+- Correct all-buffer cleanup wording and confirmation; preserve transcripts. Busy cleanup is refused and must be retried after active requests finish.
 - Keep CLI English and WebUI bilingual, with stable message IDs and concise copy.
 - Preserve the atom logo, refresh motion, terminal themes and reduced motion.
 - Wrap terminal summaries, show stale reads and retain 40×16 compact usage tables.

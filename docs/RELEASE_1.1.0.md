@@ -85,3 +85,23 @@ construction was checked read-only in installed 2.42304.0; the real CLI engine
 was exercised, but this release validation did not change the user's App profile
 or repeat the earlier real-App effort test. Native visible prediction candidates
 remain unverified by these protocol/browser receipts.
+
+## Publication
+
+Published to npm `latest` by [workflow 38994103932](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38994103932).
+Its published SHA-1 `a1d2a88bdca9b1350cf4eaf1d516b4360cfd4da9` matches the
+verified 456,615-byte, 177-file artifact. The attached tarball has SHA-256
+`16e913f20f390e4d697a8d45899248c53e913db88f59df686054520f9623a4d3`.
+
+The configured local company mirror still reports 0.9.19. A direct npm-origin read
+from this Mac failed with a disconnected socket; the successful official publishing
+workflow and its matching artifact digest are the publication receipt. Neither
+registry nor proxy/policy settings were changed. Use `ccdx update github` if the
+configured mirror has not synchronized the version. Restart CCDX after upgrade;
+Claude clients using the old 2027 address also need a normal relaunch to reload
+the migrated configuration. Existing handwritten/managed routes stay preserved.
+
+GitHub reports the matching SHA-256 for the uploaded asset. A fresh download
+matched the same digest and exact 456,615-byte size. `main` records publication
+receipts separately from the immutable `v1.1.0` tag at
+`5ac0954aa14ce27c9d4420fef309efec0fddf3fc`.

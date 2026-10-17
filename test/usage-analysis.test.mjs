@@ -33,7 +33,7 @@ test("source filters isolate same-name models in both settled summaries and dail
   }
   f.realTime();
   assert.equal((await summarizeUsageLogs(f.file, { provider: "m365" })).requests, 1, "unsettled files must still apply the filter");
-  await assert.rejects(summarizeUsageLogs(f.file, { provider: "other" }), /provider/);
+  await assert.rejects(summarizeUsageLogs(f.file, { provider: "bad/provider" }), /provider/);
 });
 
 test("usage analysis shares one settled scan and returns independent bounded aggregates", async t => {

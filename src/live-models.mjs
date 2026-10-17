@@ -1,4 +1,5 @@
 import os from "node:os";
+import { publicModelCatalog } from "./provider-metadata.mjs";
 import { createAbortAwareSingleflight } from "./bounded-result-cache.mjs";
 import { githubTokenFingerprint } from "./github-identity.mjs";
 import { validateGithubToken } from "./auth.mjs";
@@ -82,16 +83,17 @@ export async function fetchLiveCopilotModels({
   timeoutMs = DEFAULT_MODELS_TIMEOUT_MS,
   vscodeVersion = FALLBACK_VSCODE_VERSION,
   signal,
+  includeAll = false,
 } = {}) {
   const credentials = readModelCredentials(home);
   let flights = modelFlights.get(fetchImpl);
   if (!flights) { flights = createAbortAwareSingleflight();modelFlights.set(fetchImpl, flights); }
-  const key = `${home}\0${githubTokenFingerprint(credentials.token)}\0${vscodeVersion}\0${timeoutMs}`;
-  const result = await flights.run(key, sharedSignal => lookupLiveModels(credentials, { fetchImpl, timeoutMs, vscodeVersion, signal: sharedSignal }), { signal });
+  const key = `${home}\0${githubTokenFingerprint(credentials.token)}\0${vscodeVersion}\0${timeoutMs}\0${includeAll}`;
+  const result = await flights.run(key, sharedSignal => lookupLiveModels(credentials, { fetchImpl, timeoutMs, vscodeVersion, includeAll, signal: sharedSignal }), { signal });
   return structuredClone(result); // Independent callers retain independent catalog values.
 }
 
-async function lookupLiveModels(credentials, { fetchImpl, timeoutMs, vscodeVersion, signal }) {
+async function lookupLiveModels(credentials, { fetchImpl, timeoutMs, vscodeVersion, includeAll, signal }) {
   const controller = new AbortController();
   const cancel = () => controller.abort(signal.reason);
   signal.addEventListener("abort", cancel, { once: true });
@@ -135,6 +137,12 @@ async function lookupLiveModels(credentials, { fetchImpl, timeoutMs, vscodeVersi
       throw new Error("Copilot models endpoint returned invalid JSON");
     }
     const catalog = selectableCopilotModels(payload);
+    if (includeAll) {
+      const selected = new Set(catalog.models.map(model => model.id));
+      catalog.models = publicModelCatalog(Array.isArray(payload) ? payload : payload.data, {
+        selectable: model => selected.has(model.id), clients: model => selected.has(model.id) ? ["codex"] : [],
+      });
+    }
     let upstreamHost = "GitHub Copilot";
     try { upstreamHost = new URL(apiBase).hostname; } catch {}
     return { ...catalog, profile: AUTH_PROFILE_CODEX, upstreamHost: safeText(upstreamHost, "GitHub Copilot") };

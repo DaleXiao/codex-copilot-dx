@@ -31,8 +31,8 @@ test("client features precede context and all lower dashboard regions are native
   assert.ok(html.indexOf('id="client-features"') < html.indexOf('id="request-context"'));
   const lower = html.slice(html.indexOf('id="client-features"'));
   assert.doesNotMatch(lower, /<section\b/);
-  assert.equal((html.match(/<article\b/g) || []).length, 8);
-  assert.match(html, /id="m365-state"/);
+  assert.equal((html.match(/<article\b/g) || []).length, 7);
+  assert.match(html, /id="provider-auth"/);
   assert.match(html, /id="usage-provider"/);
   for (const id of ["client-features", "upstream-models", "model-usage", "recent-failures"]) {
     assert.match(html, new RegExp(`<details[^>]*id="${id}"[^>]*open>`));

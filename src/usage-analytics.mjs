@@ -1,11 +1,11 @@
-import { cacheReadTokens, usageCacheHitRate } from "./usage-store.mjs";
+import { cacheReadTokens, usageCacheHitRate, usageProvider } from "./usage-store.mjs";
 
 const DAY_MS = 86400000;
 const DAYS = 365;
 const MAX_MODELS = 100;
 const TOKEN_FIELDS = ["input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "cache_read_input_tokens", "cache_hit_unknown_requests", "cache_hit_invalid_requests"];
 
-export function createUsageAnalytics({ timeZone = "UTC", now = Date.now() } = {}) {
+export function createUsageAnalytics({ timeZone = "UTC", now = Date.now(), qualifyProviders = false } = {}) {
   const formatter = new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
   const today = formatter.format(new Date(now));
   const end = Date.parse(`${today}T00:00:00Z`);
@@ -51,7 +51,7 @@ export function createUsageAnalytics({ timeZone = "UTC", now = Date.now() } = {}
       let point = dates.get(date);
       if (!point) { point = { requests: 0, byModel: new Map() }; dates.set(date, point); }
       add(point, summary.totals);
-      const model = String(record.model || "unknown").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 100);
+      const model = String(qualifyProviders ? `${usageProvider(record)} / ${record.model || "unknown"}` : record.model || "unknown").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 100);
       if (!models.has(model) && models.size >= MAX_MODELS) { modelsTruncated = true; return; }
       models.add(model);
       if (!point.byModel.has(model)) point.byModel.set(model, { requests: 0 });

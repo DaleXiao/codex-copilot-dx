@@ -55,7 +55,7 @@ jobs:
       - name: Verify streaming delivery and Chat semantic validation on Windows
         run: node --test test/stream-delivery.test.mjs test/responses-bridge.test.mjs test/responses-chat-http.test.mjs test/responses-native-http.test.mjs test/stream-performance.test.mjs test/cli-status.test.mjs
       - name: Verify isolated provider, broker, gateway, ownership and system network contracts
-        run: node --test test/m365-auth.test.mjs test/m365-provider.test.mjs test/m365-network.test.mjs test/provider-runtime.test.mjs test/claude-gateway.test.mjs test/claude-client-config.test.mjs test/cli-m365.test.mjs
+        run: node --test test/claude-models.test.mjs test/m365-auth.test.mjs test/m365-provider.test.mjs test/m365-network.test.mjs test/provider-runtime.test.mjs test/claude-gateway.test.mjs test/claude-client-config.test.mjs test/cli-m365.test.mjs
       - run: npm run test:package
   macos:
     runs-on: macos-latest
@@ -129,6 +129,10 @@ jobs:
         run: node scripts/codex-reasoning-header-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
       - name: Verify native Codex image discovery, delivery and edit handles without live generation
         run: node scripts/codex-image-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --edit
+      - name: Provision official Claude Code for isolated gateway replay
+        run: npm install --prefix "$RUNNER_TEMP/ccdx-claude" @anthropic-ai/claude-code
+      - name: Verify native Claude Code effort fields through the candidate Messages gateway
+        run: node scripts/claude-effort-replay.mjs --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
   dashboard-browsers:
     runs-on: ubuntu-latest
     steps:

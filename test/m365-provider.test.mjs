@@ -110,3 +110,18 @@ test("M365 failures preserve their diagnostic and redact upstream token echoes",
   await assert.rejects(p.refresh());assert.equal(p.snapshot().reason, "m365_catalog_http_403");
   p.close();
 });
+
+test("Claude aliases preserve effort and signed blocks; unsupported advertised efforts never dispatch", async t => {
+  const sent = [];
+  const entry = { ...catalog.data[0], capabilities: { supports: { reasoning_effort: ["low", "high", "future"] } } };
+  const p = createM365Provider({ home: fixture(t), auth: auth(), fetchImpl: async (_url, options) => {
+    if (options.method === "GET") return Response.json({ data: [entry] });
+    sent.push(JSON.parse(options.body));return Response.json({ type: "message", content: [], stop_reason: "end_turn" });
+  } });t.after(() => p.close());await p.refresh();
+  const content = [{ type: "thinking", thinking: "retained", signature: "stable-signature" }];
+  for (const effort of ["low", "high", "future"]) await p.client.messages({ model: "claude-opus-5-5", messages: [{ role: "assistant", content }], output_config: { effort }, thinking: { type: "adaptive" } });
+  assert.equal(sent.length, 3);
+  for (const body of sent) { assert.equal(body.model, entry.id);assert.deepEqual(body.messages[0].content, content); }
+  await assert.rejects(p.client.messages({ model: "claude-opus-5-5", messages: [], output_config: { effort: "medium" } }), { code: "m365_effort_unavailable" });
+  assert.equal(sent.length, 3);
+});

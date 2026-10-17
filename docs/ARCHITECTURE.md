@@ -9,7 +9,7 @@ Client integration, image tools and the dashboard are not a general plugin frame
 | Core inference | `adapter.mjs`, Responses modules, model catalog, history | Codex wire contracts, streaming and recovery |
 | Providers | `providers/github.mjs`, `providers/m365*.mjs` | Source-owned auth, discovery, routing, capabilities and transport |
 | Provider composition | `provider-runtime.mjs`, `provider-settings.mjs` | Explicit selection, lifecycle, history namespaces and snapshots |
-| Claude clients | `claude-gateway.mjs`, `claude-client-config.mjs` | Native Messages relay and field-owned reversible client setup |
+| Claude clients | `claude-gateway.mjs`, `claude-client-config.mjs`, `claude-models.mjs` | Native Messages relay and field-owned reversible client setup |
 | Client integration | `client-integration.mjs`, Codex config, native prediction | Client setup, optional start/stop, diagnostic snapshots |
 | Optional images | Image provider, CLI setup, image MCP and skill | Opt-in API access and image delivery; failures do not block core startup |
 | Management | CLI, dashboard, observability, package updates | Bounded metadata and explicit user actions |
@@ -250,14 +250,32 @@ settlement for two seconds; no successful plaintext cache or transcript index ex
 
 ## Dashboard reads
 
-`dashboard/refresh.js` owns the browser-only read lifecycle: one visible-page
-timer, per-group in-flight deduplication, attempt freshness, cancellation and
-last-good snapshots. `ui.js` composes the controls and refresh resources;
-`status.js` owns status/failure rendering, and `usage.js` owns usage rendering
-and date selection. Their state stays page-local. Models, usage,
-status/account and animation metadata remain independent resources; no timer
-or data watcher is added to the Node service. Animation frames load once per
-page when opened, and read refresh does not overwrite an unsaved choice.
+`provider-runtime.mjs` composes read-only Provider descriptors separately from
+source-selection actions. `provider-metadata.mjs` projects bounded model metadata
+without transport or credential dependencies. `dashboard-api.mjs` sanitizes public
+fields and keeps local credential validity separate from authorization evidence.
+A requested catalog Provider must be registered; unavailable sources never fall
+through to another source. The unchanged CLI model selector retains its GPT scope.
+
+`dashboard/refresh.js` owns one visible-page timer, in-flight deduplication,
+freshness, cancellation and last-good snapshots. `ui.js` generates Provider tabs
+and source filters from descriptors and retained history, with per-tab snapshots
+invalidated on profile generation/account changes. It cancels obsolete reads and
+prevents stale apply across tabs. `status.js` renders source-neutral authorization
+and client evidence; `usage.js` renders usage and date selection. View state remains
+page-local; only existing preferences and the viewed model Provider are saved in
+the browser. Expanded sections read on demand. There is no Node data watcher or
+new poller. Animation frames still load once per page when opened.
+
+`claude-models.mjs` owns exact ID spelling and capability-cap projection shared by
+configuration and model discovery. M365 resolves both canonical and existing raw
+IDs to the same catalog entry and checks explicit effort lists without modifying
+signed blocks. Successful refreshes schedule a coalesced client reconciliation;
+it checks current lifecycle/profile after policy inspection, preserves ownership
+and does not write in the inference serialization path. The Messages gateway uses
+its injected Provider ID for diagnostics/usage. App model knowledge remains under
+Anthropic's signed catalog and installed-client protocol, with its existing policy.
+
 `upstream-body.mjs` is the shared bounded response reader. The transport retains
 its existing exports; live model lookup uses the same 8 MiB catalog limit as
 core model discovery, without importing the request lifecycle or UI layer.

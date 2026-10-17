@@ -1,5 +1,5 @@
 import { cliOutputFormat, cliOutputWidth, formatResponsiveCliTable, terminalCell } from "./cli-table.mjs";
-import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate, usageLogPath } from "./usage-store.mjs";
+import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate, usageLogPath, usageModelGroups } from "./usage-store.mjs";
 
 export {
   usageSummaryVersion,
@@ -9,6 +9,7 @@ export {
   buildResponsesUsageRecord,
   buildMessagesUsageRecord,
   usageProvider,
+  usageModelGroups,
   recordUsage,
   recordResponsesUsage,
   flushUsageWritesForTests,
@@ -33,10 +34,16 @@ function cacheHitPercent(usage) {
   return rate === null ? "—" : `${usage.cache_hit_unknown_requests > 0 ? "~" : ""}${(rate * 100).toFixed(1)}%`;
 }
 
+function providerSummaryLines(summary) {
+  if (summary.provider_filter) return [`Provider: ${summary.provider_filter}`];
+  const sources = Object.entries(summary.providers || {}).filter(([, count]) => count > 0);
+  return sources.some(([id]) => id !== "github")
+    ? [`Providers: ${sources.map(([id, count]) => `${id} ${fmt(count)}`).join(" / ")} (combined totals; use --provider to separate)`] : [];
+}
+
 function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {
   const lines = [`Usage log: ${filePath}`];
-  if (summary.provider_filter) lines.push(`Provider: ${summary.provider_filter}`);
-  else if (summary.providers?.m365) lines.push(`Providers: GitHub ${fmt(summary.providers.github)} / M365 ${fmt(summary.providers.m365)} (combined totals; use --provider to separate)`);
+  lines.push(...providerSummaryLines(summary));
   if (summary.requests === 0) {
     lines.push("No usage records yet.");
     return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
@@ -48,7 +55,7 @@ function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {
     "",
     "By model:",
   );
-  for (const [model, row] of Object.entries(summary.byModel)) {
+  for (const [model, row] of Object.entries(usageModelGroups(summary))) {
     lines.push(`  ${model}: requests=${fmt(row.requests)} input=${fmt(row.input_tokens)} cache_read=${fmt(cacheReadTokens(row))} output=${fmt(row.output_tokens)} total=${fmt(row.total_tokens)} cache_hit=${cacheHitPercent(row)}`);
   }
   return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
@@ -89,7 +96,7 @@ function formatTableUsageSummary(summary, filePath, output) {
     { key: "total", label: "TOTAL", align: "right" },
   ];
   const compactColumns = [columns[0], columns[1], columns[5]];
-  const modelUsage = Object.entries(summary.byModel)
+  const modelUsage = Object.entries(usageModelGroups(summary))
     .map(([model, row]) => ({ model, row }))
     .sort(compareModelUsage);
   const totalUsage = { requests: summary.requests, ...summary.totals };
@@ -107,8 +114,7 @@ function formatTableUsageSummary(summary, filePath, output) {
   } else {
     table.compact = false;
   }
-  const lines = [`Usage log: ${safePath}`, ...(summary.provider_filter ? [`Provider: ${summary.provider_filter}`]
-    : summary.providers?.m365 ? [`Providers: GitHub ${fmt(summary.providers.github)} / M365 ${fmt(summary.providers.m365)} (combined totals; use --provider to separate)`] : []), "", table.output];
+  const lines = [`Usage log: ${safePath}`, ...providerSummaryLines(summary), "", table.output];
   if (table.compact) {
     lines.push(
       "",

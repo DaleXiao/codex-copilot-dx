@@ -82,7 +82,7 @@
         .map(key => refresh(key, { force })));
     }
 
-    function invalidate(key) {
+    function invalidate(key, { clear = false } = {}) {
       const entry = state(key);
       entry.generation += 1;
       entry.abort?.abort();
@@ -90,6 +90,7 @@
       entry.abort = null;
       entry.attemptedAt = null;
       entry.variant = undefined;
+      if (clear) { entry.value = undefined;entry.signature = undefined;entry.updatedAt = null;entry.error = null; }
       notify(key);
     }
 

@@ -546,3 +546,22 @@ test("printUsageSummary: uses the injected output only for format selection", as
   });
   assert.equal(logged, `Usage log: ${filePath}\nNo usage records yet.`);
 });
+
+test("historical provider identities and same-name model totals remain separate", () => {
+  const records = ["github", "retired", "third"].map((provider, i) => ({ provider, model: "same", usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: i, total_tokens: 10 + i } }));
+  const all = summarizeUsage(records);
+  assert.equal(all.requests, 3);assert.equal(all.byModel.same.requests, 3);
+  assert.equal(all.bySourceModel["retired / same"].requests, 1);
+  assert.equal(all.providers.third, 1);
+  assert.equal(summarizeUsage(records, { provider: "retired" }).requests, 1);
+  assert.throws(() => summarizeUsage(records, { provider: "constructor" }), /valid provider ID/);
+});
+
+test("source-qualified rows retain invalid cache-count evidence after aggregation", () => {
+  const summary = summarizeUsage([
+    { provider: "third", model: "same", usage: { input_tokens: 10, cached_input_tokens: 20 } },
+    { provider: "third", model: "same", usage: { input_tokens: 90, cached_input_tokens: 0 } },
+  ]);
+  assert.equal(summary.bySourceModel["third / same"].cache_hit_invalid_requests, 1);
+  assert.equal(usageCacheHitRate(summary.bySourceModel["third / same"]), null);
+});

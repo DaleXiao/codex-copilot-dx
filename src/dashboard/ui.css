@@ -140,3 +140,9 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; color: 
 @media (max-width: 460px) { .topbar { flex-wrap: wrap; padding: 12px 0; gap: 10px; } .topbar-actions { gap: 9px; } .panel-heading { flex-wrap: wrap; } .heading-actions { gap: 10px; } .failure-detail { grid-template-columns: 1fr; gap: 3px; } .failure-detail dd { margin-bottom: 7px; } select { max-width: 210px; } }
 .timing-stats { grid-template-columns: 1fr; }
 .timing-stats dt { white-space: nowrap; }
+
+.provider-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.provider-tabs [aria-selected="true"] { color: var(--accent); border-color: var(--accent-soft); background: var(--selected-bg); }
+#provider-auth td, #provider-clients td { overflow-wrap: anywhere; }
+.details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 700px) { .details { grid-template-columns: 1fr; } }

@@ -1,3 +1,4 @@
+import { isProviderId } from "./provider-metadata.mjs";
 import { MAX_TIMER_DELAY_MS } from "./runtime-config.mjs";
 
 const HELP_COMMANDS = new Set(["help", "--help", "-h"]);
@@ -167,7 +168,7 @@ export function parseCliArgs(args = []) {
   }
   if (command === "usage") {
     const options = parseOptions(rest, new Map([["--format", "value"], ["--provider", "value"]]));
-    if (options["--provider"] && !["github", "m365"].includes(options["--provider"])) throw new Error("Usage provider must be github or m365");
+    if (options["--provider"] && !isProviderId(options["--provider"])) throw new Error("Usage provider must be a valid provider ID");
     return baseCommand("usage", { ...outputFormatOption(options["--format"]), ...(options["--provider"] ? { provider: options["--provider"] } : {}) });
   }
   if (command === "cache") {
@@ -382,7 +383,7 @@ function topicHelp(name, topic) {
     "doctor config": `Usage:\n  ${name} doctor config\n\nReads ~/.codex/config.toml, checks TOML syntax and CCDX-managed settings, and previews the existing startup writer's changes. Does not merge Codex profiles or validate the complete installed Codex schema. No authentication, network requests, file writes, or adapter/GUI startup. Existing context_management=false is valid. Exit 1 for errors, 0 for OK/warnings; unsupported arguments exit 2.`,
     status: `Usage:\n  ${name} status\n\nShows bounded runtime, routing, performance, queue, and cache metrics from a running adapter.`,
     models: `Usage:\n  ${name} models [--format table|plain]\n\nShows GPT models for the selected Codex provider. GitHub performs a fresh read-only lookup; M365 uses its isolated catalog in the running service. Interactive terminals use a table by default.`,
-    usage: `Usage:\n  ${name} usage [--format table|plain] [--provider github|m365]\n\nSummarizes local token usage metadata without reading prompt or completion content. Optional provider filtering separates sources; default totals include both. Interactive terminals use a table by default.`,
+    usage: `Usage:\n  ${name} usage [--format table|plain] [--provider ID]\n\nSummarizes local token usage metadata without reading prompt or completion content. Optional provider filtering separates sources; default totals include all recorded sources. Interactive terminals use a table by default.`,
     cache: `Usage:\n  ${name} cache\n  ${name} cache --limit <MiB|default>\n  ${name} cache --clean [--history] [--yes]\n\nShows runtime cache use, saves and applies the shared response-history limit, or clears the rebuildable image-transform cache. --history also clears in-memory response history for all tasks and can make their next continuation fail, so interactive confirmation or --yes is required. Generated image files and saved Codex transcripts are never deleted. Short aliases: -128 sets 128 MiB and -clean equals --clean.`,
     limits: `Usage:\n  ${name} limits\n  ${name} limits --decoded <MiB|default>\n\nShows configured and running request-body limits, or saves a decoded request-body limit from 128 to 512 MiB. The raw-body limit is unchanged. Restart ccdx to apply a saved change; no conversation or cache is cleared. Short alias: -256 sets 256 MiB.`,
     animation: `Usage:\n  ${name} animation\n\nPreviews all terminal activity animations together and selects the theme used the next time the adapter starts.`,
@@ -410,7 +411,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   ${name} doctor config
   ${name} status
   ${name} models [--format table|plain]
-  ${name} usage [--format table|plain] [--provider github|m365]
+  ${name} usage [--format table|plain] [--provider ID]
   ${name} cache [--limit <MiB|default> | --clean [--history] [--yes]]
   ${name} limits [--decoded <MiB|default>]
   ${name} animation

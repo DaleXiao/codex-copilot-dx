@@ -58,10 +58,10 @@ export function requestM365Token({ account, signal, env = process.env, spawnImpl
 }
 
 export function createM365Auth({ home, env = process.env, acquire = requestM365Token, now = Date.now } = {}) {
-  let cached = null, flight = null, generation = 0, lastError = null, retryAt = 0;
+  let cached = null, flight = null, generation = 0, lastError = null, retryAt = 0, checkedAt = null;
   const snapshot = () => ({ token_cached: Boolean(cached && cached.expiresAt > now()),
     token_expires_in_ms: cached ? Math.max(0, cached.expiresAt - now()) : null,
-    token_refresh_in_flight: Boolean(flight), reason: lastError,
+    token_refresh_in_flight: Boolean(flight), token_checked_at: checkedAt, reason: lastError,
     account: cached ? { login: cached.account.login } : null });
   function getToken({ signal } = {}) {
     if (signal?.aborted) return Promise.reject(abortError(signal));
@@ -75,7 +75,7 @@ export function createM365Auth({ home, env = process.env, acquire = requestM365T
         .then(result => {
           if (current !== generation || controller.signal.aborted) throw abortError(controller.signal);
           m365AccountKey(result.account);
-          cached = result;lastError = null;retryAt = 0;return result;
+          cached = result;lastError = null;retryAt = 0;checkedAt = new Date(now()).toISOString();return result;
         }).catch(error => {
           if (current === generation && !controller.signal.aborted) {
             lastError = /^m365_[a-z_]+$/.test(error?.code || "") ? error.code : "m365_auth_failed";
@@ -101,5 +101,5 @@ export function createM365Auth({ home, env = process.env, acquire = requestM365T
       entry.promise.then(value => finish(resolve, value), error => finish(reject, error));
     });
   }
-  return { getToken, snapshot, reset() { generation += 1;flight?.controller.abort();flight = null;cached = null;lastError = null;retryAt = 0; } };
+  return { getToken, snapshot, reset() { generation += 1;flight?.controller.abort();flight = null;cached = null;lastError = null;retryAt = 0;checkedAt = null; } };
 }

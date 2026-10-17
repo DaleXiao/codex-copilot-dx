@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { publicModelCatalog } from "./provider-metadata.mjs";
 import { createGithubProvider } from "./providers/github.mjs";
 import { readProviderSettings, writeProviderSettings } from "./provider-settings.mjs";
 import { readM365Settings, updateM365Settings, m365Paths, ensureM365GatewayKey, M365_GATEWAY_PORT } from "./m365-settings.mjs";
@@ -15,10 +16,35 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
       return value ? `codex:${value}` : "codex"; } }), registry: githubRegistry };
   let selection = readProviderSettings(options), m365 = null, gateway = null, pending = null, closed = false, serial = null;
   let reason = null, claudeReason = null, clients = { code: "not_configured", app: "not_configured" }, lastClients = {};
+  const dashboardProfiles = new Map();
+  const dashboardGeneration = provider => {
+    const profile = provider.profileId(), previous = dashboardProfiles.get(provider.id);
+    if (!previous || previous.profile !== profile) dashboardProfiles.set(provider.id, { profile, generation: (previous?.generation || 0) + 1 });
+    return dashboardProfiles.get(provider.id).generation;
+  };
   const sessions = new Map();let priorNamespace = null, requestOrder = 0, activeM365Requests = 0;
   let enabled;
   try { enabled = readM365Settings(options).enabled && env.CCDX_M365 !== "0"; }
   catch { enabled = false;reason = "m365_config_invalid"; }
+
+  let clientSync = null;
+  async function syncClaudeClients() {
+    if (clientSync) return clientSync;
+    clientSync = (async () => {
+      const source = m365, profile = source?.profileId();
+      if (!source || !gateway || closed || !enabled) return;
+      try {
+        const integration = configureClients ? null : await import("./claude-client-config.mjs");
+        const configure = configureClients || integration.configureClaudeClients;
+        const desktopManaged = integration ? await integration.inspectClaudeDesktopPolicy(options) : false;
+        if (closed || !enabled || source !== m365 || source.profileId() !== profile || !gateway) return;
+        claudeReason = source.models("claude").length ? null : "m365_no_claude_models";
+        clients = configure({ ...options, desktopManaged, baseUrl: `http://127.0.0.1:${gateway.port}`,
+          apiKey: ensureM365GatewayKey(options), models: source.models("claude") });
+      } catch { clients = { code: "configuration_unavailable", app: "configuration_unavailable" };claudeReason = "m365_claude_config_unavailable"; }
+    })().finally(() => { clientSync = null; });
+    return clientSync;
+  }
 
   async function startM365(forceRefresh = false) {
     if (closed || !enabled || !["darwin", "win32"].includes(platform)) return null;
@@ -28,7 +54,10 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
       if (!m365) {
         const factory = createM365 || (await import("./providers/m365.mjs")).createM365Provider;
         if (closed || !enabled) return null;
-        m365 = factory({ home, env, log });
+        m365 = factory({ home, env, log, onCatalog() {
+          // Reconcile after refresh, outside inference serialization and without a watcher.
+          setImmediate(() => { if (!pending && gateway && !closed && enabled) void syncClaudeClients(); });
+        } });
       }
       await m365.refresh();if (closed || !enabled) return null;
       const claudeModels = m365.models("claude");
@@ -43,13 +72,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
           if (closed || !enabled) { await opened.close();return null; }
           gateway = opened;
         }
-        try {
-          const integration = configureClients ? null : await import("./claude-client-config.mjs");
-          const configure = configureClients || integration.configureClaudeClients;
-          const desktopManaged = integration ? await integration.inspectClaudeDesktopPolicy(options) : false;
-          if (closed || !enabled) return null;
-          clients = configure({ ...options, desktopManaged, baseUrl: `http://127.0.0.1:${gateway.port}`, apiKey, models: claudeModels });
-        } catch { clients = { code: "configuration_unavailable", app: "configuration_unavailable" };claudeReason = "m365_claude_config_unavailable"; }
+        await syncClaudeClients();
       } catch (error) {
         claudeReason = error.code === "EADDRINUSE" ? "m365_gateway_port_busy" : "m365_claude_setup_unavailable";
         log("warn", `Claude setup unavailable: ${claudeReason}; M365 GPT routing is independent`);
@@ -124,13 +147,37 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
   return {
     github, current, snapshot, start: startM365, refresh: () => startM365(true),
     selection: () => selection,
-    dashboardCatalog() {
-      if (selection.codex !== "m365") return null;
-      const models = [...(m365?.models("gpt") || []), ...(m365?.models("claude") || [])];
-      return { source: "catalog", checkedAt: m365?.snapshot().models.refreshed_at || null,
-        upstreamHost: "Microsoft 365", advertised: models.length,
-        models: models.map(model => ({ id: model.id, vendor: model.publisher,
-          endpoints: model.supported_endpoints.includes("/v1/messages") ? ["messages"] : ["responses"], preview: false })) };
+    dashboardProviders() {
+      const state = snapshot(), service = githubClient.runtimeStatus?.() || {}, ms = state.m365;
+      return [
+        { id: "github", name: "GitHub Copilot", generation: dashboardGeneration(github), enabled: true, state: service.token_cached ? "ready" : "unknown",
+          auth: { state: "unknown", token_cached: service.token_cached === true, expires_in_ms: service.token_expires_in_ms ?? null },
+          models: { count: githubRegistry?.models?.data?.length ?? null, source: githubRegistry?.source || "unknown" },
+          clients: [{ id: "codex", name: "Codex App", selected: selection.codex === "github", state: "configured" }] },
+        { id: "m365", name: "Microsoft 365", generation: m365 ? dashboardGeneration(m365) : 0, enabled, state: ms.state, reason: ms.reason,
+          auth: { state: ms.token_cached ? "authorized" : !enabled ? "disabled" : ms.reason ? "unavailable" : "unknown",
+            account: ms.account?.login || "", token_cached: ms.token_cached === true,
+            expires_in_ms: ms.token_expires_in_ms ?? null, checked_at: ms.token_checked_at || null },
+          models: { count: ms.models?.total ?? null, source: ms.models?.source || "unavailable", checked_at: ms.models?.refreshed_at || null },
+          clients: [{ id: "codex", name: "Codex App", selected: selection.codex === "m365", state: selection.codex === "m365" ? ms.state : "standby" },
+            ...[["code", "Claude Code"], ["app", "Claude App"]].map(([id, name]) => ({ id: `claude_${id}`, name,
+              selected: enabled, state: clients[id], gateway: gateway ? "running" : "unavailable", reason: claudeReason,
+              last_request_at: lastClients[`claude_${id}`] || null }))],
+          requests: ms.claude.requests },
+      ];
+    },
+    async dashboardCatalog({ provider = selection.codex } = {}) {
+      if (provider === "github") return null;
+      if (provider !== "m365") throw Object.assign(new Error("Unknown provider"), { statusCode: 400 });
+      if (!enabled || !["darwin", "win32"].includes(platform)) throw unavailable(!enabled ? "m365_disabled" : "m365_unsupported");
+      if (!m365) throw unavailable(reason || "m365_not_ready");
+      await m365.refresh();
+      const eligible = new Set([...m365.models("gpt"), ...m365.models("claude")]);
+      return { source: "catalog", checkedAt: m365.snapshot().models.refreshed_at, upstreamHost: "Microsoft 365",
+        advertised: m365.catalog().length, models: publicModelCatalog(m365.catalog(), {
+          selectable: model => eligible.has(model),
+          clients: model => !eligible.has(model) ? [] : model.publisher?.toLowerCase() === "anthropic" ? ["claude_code", "claude_app"] : ["codex"],
+        }) };
     },
     track(target) {
       if (target.id !== "m365") return undefined;

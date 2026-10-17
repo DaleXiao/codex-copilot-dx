@@ -7,7 +7,7 @@ const cache = new Map();
 
 // Only bounded, settled-file aggregates survive. No record index or payload cache.
 export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "UTC", now = Date.now(), warn = console.error, provider = "" } = {}) {
-  const analytics = createUsageAnalytics({ timeZone, now });
+  const analytics = createUsageAnalytics({ timeZone, now, qualifyProviders: !provider });
   const zone = new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
   const version = warn === console.error ? await usageSummaryVersion(filePath) : null;
   const key = version === null ? null : `${version}\0${provider}\0${zone.resolvedOptions().timeZone}\0${zone.format(new Date(now))}`;

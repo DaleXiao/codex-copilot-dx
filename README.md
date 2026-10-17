@@ -20,8 +20,8 @@ on `127.0.0.1:2026`, configures Codex, and opens the App. No client binary patch
 is needed. On Windows, open the App manually unless native prediction setup is
 enabled. In restricted Windows PowerShell, use `npm.cmd` to install and `ccdx.cmd` for the first launch, or run `ccdx.cmd doctor --fix`. Startup, updates and explicit repair remove only CCDX's exact npm-generated `.ps1` launchers so later calls can use `ccdx`. No install script, alias or policy change is added; custom launchers are preserved. npm's own script is untouched. The configured `dummy` API key is a placeholder, not a credential.
 
-Open [the local dashboard](http://127.0.0.1:2026/) for status, model discovery,
-usage, cache/limits, recent failures, request context and animation settings. First output uses **ms**; estimated output speed uses **token/s**. Inference HTTP failures are retained separately from route and MCP-method errors.
+Open [the local dashboard](http://127.0.0.1:2026/) for status, model discovery, usage, cache/limits, recent failures, request context and animation settings. First output uses **ms**; estimated output speed uses **token/s**. Inference HTTP failures are retained separately from route and MCP-method errors.
+Provider tabs browse sources without changing routing. Separate disclosures show authorization, clients, resources and optional capabilities. Saved credentials and catalog listings do not prove inference access; historical sources remain filterable.
 Auto refresh runs every 30 minutes while visible and can be switched off. Hidden pages pause; opening sections and manual refresh still work. The atom rotates once on page load and manual refresh, respecting reduced motion. Startup uses a compact six-line atom and aligned checks; `Ready` refers to the core service. Narrow/non-color terminals use a plain title.
 
 ## Commands
@@ -39,7 +39,7 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
 | `ccdx auth status` | Saved account; add `--online` to verify access |
 | `ccdx models` | Fresh upstream model list |
 | `ccdx usage` | Recorded tokens and upstream prompt-cache hit rate |
-| `ccdx usage --provider github` / `m365` | Separate source-specific usage |
+| `ccdx usage --provider ID` | Filter current or historical source-specific usage |
 | `ccdx m365 status` / `models` | M365 authorization, Claude gateway and Claude models |
 | `ccdx m365 switch` | Choose the Codex source; default remains GitHub |
 | `ccdx m365 on` / `off` / `remove` | Enable discovery, restore owned client settings, or remove owned M365 state |
@@ -62,6 +62,7 @@ device policy and Loki entitlement must permit access. Optional failure does not
 
 Claude clients use the separate, keyed `127.0.0.1:2027` gateway and Claude-only catalog.
 Existing custom/managed settings are preserved; already-running clients may need a normal restart.
+Canonical Claude IDs and advertised effort caps refresh only in unchanged CCDX-owned settings. User and managed choices are preserved; supported App versions can update model knowledge through Anthropic's signed catalog. New protocol semantics may require a client or CCDX update. See the [model reference](docs/REFERENCE.md#claude-gateway-and-client-ownership).
 `ccdx m365 off` restores unchanged owned fields; `remove` also clears owned M365 state.
 
 Codex stays on GitHub until `ccdx m365 switch`. Select available GPT/review models;

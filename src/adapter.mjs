@@ -167,7 +167,8 @@ export function createAdapterHandler(options = {}) {
   const responseFailures = options.responseFailures || createResponseFailureDiagnostics();
   const httpErrors = createHttpFailureDiagnostics();
   const optionalRoutes = createOptionalRoutes({ ...options, dashboardOptions: { ...options.dashboardOptions,
-    ...(options.providerRuntime ? { providerCatalogFn: () => options.providerRuntime.dashboardCatalog() } : {}) } });
+    ...(options.providerRuntime ? { providerCatalogFn: input => options.providerRuntime.dashboardCatalog(input),
+      providerStateFn: () => options.providerRuntime.dashboardProviders() } : {}) } });
   const managementHandler = createManagementHandler({
     nativePredictionPac: options.nativePredictionPac, fixPrediction: options.fixPrediction, requestBodyTimeoutMs,
     statusSnapshot: () => {

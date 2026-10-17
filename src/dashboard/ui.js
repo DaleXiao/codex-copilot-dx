@@ -16,7 +16,7 @@ const finite = (value) => value !== null && value !== undefined && Number.isFini
 const number = (value) => finite(value) ? Math.max(0, Math.round(Number(value))).toLocaleString() : "—";
 const mib = (value) => finite(value) ? `${(Number(value) / 1048576).toFixed(1)} MiB` : "—";
 const viewHelpers = { element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator: globalThis.navigator };
-const { render, renderAuth, renderFailures, renderContext } = globalThis.ccdxDashboardStatus.create(viewHelpers);
+const { render, renderProviders, renderFailures, renderContext } = globalThis.ccdxDashboardStatus.create(viewHelpers);
 const usageView = globalThis.ccdxDashboardUsage.create(viewHelpers);
 const { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay } = usageView;
 const loadAuth = () => dashboardRefresh.refresh("auth", { force: true });
@@ -235,16 +235,98 @@ function tableRow(values, { total = false, labels = [] } = {}) {
   return row;
 }
 
+let providerEntries = [];
+let usageProviders = {};
+let selectedProvider = "";
+const modelSnapshots = new Map();
+const providerTabs = new Map();
+try { selectedProvider = localStorage.getItem("ccdx.dashboard.modelProvider") || ""; } catch { /* Page-local choice still works. */ }
+
+function syncUsageProviders() {
+  const selector = element("usage-provider"), selected = selector.value;
+  const entries = new Map(providerEntries.map(provider => [provider.id, provider.name]));
+  for (const id of Object.keys(usageProviders)) if (usageProviders[id] > 0 && !entries.has(id)) entries.set(id, id);
+  const signature = JSON.stringify([...entries]);
+  if (selector.dataset.providers === signature) return;
+  selector.dataset.providers = signature;
+  selector.replaceChildren();
+  const all = document.createElement("option");all.value = "";localize(all, "All providers");selector.append(all);
+  for (const [id, name] of entries) { const option = document.createElement("option");option.value = id;option.textContent = name;selector.append(option); }
+  selector.value = entries.has(selected) ? selected : "";
+}
+
+function chooseProvider(id) {
+  if (selectedProvider === id) return;
+  selectedProvider = id;
+  try { localStorage.setItem("ccdx.dashboard.modelProvider", id); } catch { /* Keep the current choice. */ }
+  for (const [key, button] of providerTabs) { button.setAttribute("aria-selected", String(key === id));button.tabIndex = key === id ? 0 : -1; }
+  dashboardRefresh.invalidate("models", { clear: true });
+  const previous = modelSnapshots.get(id);
+  if (previous) applyModels(previous, { changed: true });
+  else { emptyTable("live-models-body", 6, "Reading provider catalog…");text("models-note", "Reading provider catalog…"); }
+  element("live-models-body").setAttribute("aria-labelledby", `model-provider-${id}`);
+  void loadModels();
+}
+
+function applyProviders(data, { changed }) {
+  const wasInitialized = providerEntries.length > 0, previousSelection = selectedProvider;
+  let reloadModels = false;
+  const previous = new Map(providerEntries.map(entry => [entry.id, JSON.stringify([entry.generation, entry.auth?.account])]));
+  providerEntries = data.providers;
+  for (const [id] of modelSnapshots) {
+    const provider = providerEntries.find(entry => entry.id === id);
+    if (!provider) {
+      modelSnapshots.delete(id);
+      if (id === selectedProvider) { reloadModels = true;dashboardRefresh.invalidate("models", { clear: true });emptyTable("live-models-body", 6, "Reading provider catalog…"); }
+    }
+  }
+  for (const provider of providerEntries) {
+    if (previous.has(provider.id) && previous.get(provider.id) !== JSON.stringify([provider.generation, provider.auth?.account])) {
+      modelSnapshots.delete(provider.id);
+      if (provider.id === selectedProvider) { reloadModels = true;dashboardRefresh.invalidate("models", { clear: true });emptyTable("live-models-body", 6, "Reading provider catalog…"); }
+    }
+  }
+  if (changed || dashboardRefresh.state("auth").error) renderProviders(data);
+  syncUsageProviders();
+  const available = providerEntries.some(provider => provider.id === selectedProvider);
+  if (!available) selectedProvider = providerEntries.find(provider => provider.clients?.some(client => client.id === "codex" && client.selected))?.id || providerEntries[0]?.id || "";
+  const container = element("model-providers");
+  for (const [id, button] of providerTabs) if (!providerEntries.some(provider => provider.id === id)) { button.remove();providerTabs.delete(id); }
+  for (const provider of providerEntries) {
+    let button = providerTabs.get(provider.id);
+    if (!button) {
+      button = document.createElement("button");button.type = "button";button.setAttribute("role", "tab");
+      button.id = `model-provider-${provider.id}`;button.setAttribute("aria-controls", "live-models-body");
+      button.addEventListener("click", () => chooseProvider(provider.id));
+      button.addEventListener("keydown", event => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const ids = [...providerTabs.keys()], index = ids.indexOf(provider.id);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? ids.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + ids.length) % ids.length;
+        chooseProvider(ids[next]);providerTabs.get(ids[next]).focus();
+      });
+      providerTabs.set(provider.id, button);container.append(button);
+    }
+    button.textContent = provider.name;button.setAttribute("aria-selected", String(provider.id === selectedProvider));button.tabIndex = provider.id === selectedProvider ? 0 : -1;
+  }
+  element("live-models-body").setAttribute("aria-labelledby", `model-provider-${selectedProvider}`);
+  if (wasInitialized && (reloadModels || selectedProvider !== previousSelection)) { dashboardRefresh.invalidate("models", { clear: true });void loadModels(); }
+}
+
 async function loadModels() { return dashboardRefresh.refresh("models", { force: true }); }
 
 function applyModels(data, { changed }) {
+  if (data.provider && data.provider !== selectedProvider) return;
+  modelSnapshots.set(selectedProvider, data);
   if (changed) {
-    const body = element("live-models-body");
-    body.replaceChildren();
+    const body = element("live-models-body");body.replaceChildren();
     for (const model of data.models) {
-      body.append(tableRow([model.id, model.vendor, model.endpoints.join(" / "), model.preview ? "preview" : "—"], { labels: [3] }));
+      const clients = (model.clients || []).map(id => ({ codex: "Codex App", claude_app: "Claude App", claude_code: "Claude Code" })[id] || id).join(" / ") || "—";
+      body.append(tableRow([model.id, model.vendor, model.endpoints.join(" / "), clients,
+        model.reasoning_efforts === null || model.reasoning_efforts === undefined ? "—" : model.reasoning_efforts.join(" / ") || "—",
+        model.preview ? "preview" : model.state || "listed"], { labels: [5] }));
     }
-    if (!data.models.length) emptyTable("live-models-body", 4, "No selectable GPT models advertised.");
+    if (!data.models.length) emptyTable("live-models-body", 6, "No models advertised.");
   }
   text("models-note", "{selectable} selectable / {advertised} advertised / {host} / {time}", { selectable: number(data.selectable), advertised: number(data.advertised), host: data.upstream_host, time: data.checked_at ? new Date(data.checked_at).toLocaleTimeString() : phrase("Unknown") });
 }
@@ -266,7 +348,7 @@ function refreshTime(target, state) {
 }
 
 const timestamps = new Map();
-for (const [key, ids] of [["status", ["client-features", "request-context", "recent-failures"]], ["models", ["upstream-models"]], ["usage", ["model-usage"]], ["animation", ["animation-settings"]]]) {
+for (const [key, ids] of [["auth", ["account-authorization"]], ["status", ["client-features", "request-context", "recent-failures", "runtime-resources", "additional-capabilities"]], ["models", ["upstream-models"]], ["usage", ["model-usage"]], ["animation", ["animation-settings"]]]) {
   timestamps.set(key, ids.map(id => {
     const node = document.createElement("p");
     node.className = "refresh-time";
@@ -301,22 +383,26 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
     },
     auth: {
       visible: () => true,
-      load: ({ signal }) => readDashboard("/_ccdx/ui/auth", { signal, timeout: 5000, source: "local_auth_status" }),
-      apply: renderAuth,
+      load: ({ signal }) => readDashboard("/_ccdx/ui/providers", { signal, timeout: 5000, source: "provider_status" }),
+      apply: applyProviders,
       state: state => {
-        if (state.value) renderAuth(state.value, { failed: Boolean(state.error) });
-        else text("auth-account", state.error ? "GitHub / UNAVAILABLE" : "GitHub / READING");
-        if (state.updatedAt !== null) localize(element("auth-account"), "Saved account / updated {time}", { time: new Date(state.updatedAt).toLocaleTimeString() }, "title");
+        if (state.error) {
+          if (state.value) localize(element("auth-account"), "Update failed / last {time}", { time: new Date(state.updatedAt).toLocaleTimeString() });
+          else text("auth-account", "UNAVAILABLE");
+        }
+        for (const node of timestamps.get("auth")) refreshTime(node, state);
       },
     },
     models: {
-      visible: () => element("upstream-models").open,
-      load: async ({ signal }) => {
-        const data = await readDashboard("/_ccdx/ui/models/live", { signal, source: ["live", "catalog"] });
+      visible: () => providerEntries.length > 0 && element("upstream-models").open,
+      variant: () => selectedProvider,
+      load: async ({ signal, variant }) => {
+        if (!variant) throw new Error("Reading provider catalog…");
+        const data = await readDashboard(`/_ccdx/ui/models/live?provider=${encodeURIComponent(variant)}`, { signal, source: ["live", "catalog"] });
         if (!Array.isArray(data.models) || data.models.some(model => !model || typeof model.id !== "string" || !Array.isArray(model.endpoints))) throw new Error("Invalid model snapshot");
-        return data;
+        return { ...data, provider: variant };
       },
-      project: data => [data.models, data.selectable, data.advertised, data.upstream_host],
+      project: data => [data.provider, data.models, data.selectable, data.advertised, data.upstream_host],
       apply: applyModels,
       state: state => {
         element("refresh-models").disabled = Boolean(state.pending);
@@ -327,7 +413,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
           if (httpError) text("models-note", "Live model lookup failed (HTTP {status}). Run ccdx models for details.", { status: httpError[1] });
           else text("models-note", message);
         }
-        if (state.error && !state.value) emptyTable("live-models-body", 4, "No live catalog available.");
+        if (state.error && !modelSnapshots.has(selectedProvider)) emptyTable("live-models-body", 6, "No catalog available.");
         for (const node of timestamps.get("models")) refreshTime(node, state);
       },
     },
@@ -346,7 +432,10 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
         if (!data.total || !Array.isArray(data.rows) || (mode === "analytics" && (!Array.isArray(data.analytics?.days) || !data.analytics.days.length))) throw new Error("Invalid usage snapshot");
         return data;
       },
-      apply: applyUsage,
+      apply: (data, options) => {
+        usageProviders = data.provider && data.provider !== "all" ? { ...usageProviders, ...data.providers } : data.providers || {};
+        syncUsageProviders();applyUsage(data, options);
+      },
       state: state => {
         element("refresh-usage").disabled = Boolean(state.pending);
         if (element("usage-provider")) element("usage-provider").disabled = Boolean(state.pending);
@@ -394,7 +483,7 @@ document.addEventListener("visibilitychange", () => dashboardRefresh.visibilityC
 window.addEventListener("pagehide", () => { dashboardRefresh.suspend(); stopAnimationPreview(); });
 window.addEventListener("pageshow", () => { dashboardRefresh.resume(); syncAnimationPreview(); });
 
-for (const [id, key] of [["client-features", "status"], ["request-context", "status"], ["recent-failures", "status"], ["upstream-models", "models"], ["model-usage", "usage"]]) {
+for (const [id, key] of [["account-authorization", "auth"], ["client-features", "status"], ["request-context", "status"], ["recent-failures", "status"], ["upstream-models", "models"], ["model-usage", "usage"]]) {
   element(id).addEventListener("toggle", () => {
     if (element(id).open) {
       if (id === "request-context") renderContext();
@@ -427,8 +516,7 @@ element("usage-provider")?.addEventListener("change", () => { dashboardRefresh.i
 element("refresh-models").addEventListener("click", loadModels);
 element("refresh-usage").addEventListener("click", loadUsage);
 loadAnimation();
-loadModels();
 loadUsage();
 refresh();
-loadAuth();
+loadAuth().then(() => loadModels());
 animateRefresh();

@@ -1,4 +1,5 @@
 import os from "node:os";
+import { isProviderId } from "./provider-metadata.mjs";
 import { fetchLiveCopilotModels } from "./live-models.mjs";
 import { authStatus } from "./auth-status.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
@@ -11,7 +12,7 @@ import {
   renderTerminalAnimationFrame,
   TERMINAL_ANIMATION_THEMES,
 } from "./terminal-animation.mjs";
-import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate } from "./usage-store.mjs";
+import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate, usageModelGroups } from "./usage-store.mjs";
 import { createUsageAnalytics } from "./usage-analytics.mjs";
 import { analyzeUsageLogs } from "./usage-analysis.mjs";
 import { readUserSettings, terminalAnimationPreference, writeTerminalAnimationTheme } from "./user-settings.mjs";
@@ -19,6 +20,7 @@ import { readUserSettings, terminalAnimationPreference, writeTerminalAnimationTh
 const ANIMATION_PATH = "/_ccdx/ui/animation";
 const MODELS_PATH = "/_ccdx/ui/models/live";
 const USAGE_PATH = "/_ccdx/ui/usage";
+const PROVIDERS_PATH = "/_ccdx/ui/providers";
 const AUTH_PATH = "/_ccdx/ui/auth";
 const DISABLED_ANIMATION = /^(0|false|no|off)$/i;
 
@@ -98,7 +100,7 @@ function usageRow(model, values) {
 }
 
 function usageTable(summary) {
-  const models = Object.entries(summary.byModel || {})
+  const models = Object.entries(usageModelGroups(summary))
     .sort(([leftName, left], [rightName, right]) => (right.total_tokens || 0) - (left.total_tokens || 0)
       || leftName.localeCompare(rightName, "en"));
   return {
@@ -108,6 +110,28 @@ function usageTable(summary) {
   };
 }
 
+function dashboardProviders(providerStateFn, authStatusFn) {
+  const local = authStatusFn()?.profiles?.codex || {};
+  const entries = providerStateFn?.() || [{ id: "github", name: "GitHub Copilot", enabled: true, state: "unknown",
+    clients: [{ id: "codex", name: "Codex App", selected: true, state: "configured" }] }];
+  return entries.slice(0, 16).filter(entry => isProviderId(entry.id)).map(entry => {
+    const auth = entry.id === "github" ? { ...entry.auth,
+      state: local.valid ? "saved" : local.configured ? "unavailable" : "unconfigured",
+      account: local.valid ? local.login || "" : "" } : entry.auth || {};
+    const label = value => safeText(redactDiagnosticText(value || ""), 160);
+    const code = value => typeof value === "string" && /^[a-z0-9_:-]{1,80}$/.test(value) ? value : null;
+    return { id: entry.id, name: label(entry.name) || entry.id, enabled: entry.enabled === true,
+      state: code(entry.state) || "unknown", reason: code(entry.reason), generation: finite(entry.generation),
+      auth: { state: code(auth.state) || "unknown", account: label(auth.account), token_cached: auth.token_cached === true,
+        expires_in_ms: finite(auth.expires_in_ms), checked_at: label(auth.checked_at) || null },
+      models: { count: finite(entry.models?.count), source: code(entry.models?.source) || "unknown", checked_at: label(entry.models?.checked_at) || null },
+      clients: (entry.clients || []).slice(0, 8).map(client => ({ id: code(client.id), name: label(client.name),
+        selected: client.selected === true, state: code(client.state) || "unknown", gateway: code(client.gateway),
+        reason: code(client.reason), last_request_at: label(client.last_request_at) || null })),
+      requests: entry.requests ? Object.fromEntries(["total", "active", "completed", "incomplete", "failed", "cancelled"].map(key => [key, finite(entry.requests[key])])) : null };
+  });
+}
+
 export async function handleDashboardApi(req, res, pathname, {
   env = process.env,
   home = os.homedir(),
@@ -115,6 +139,7 @@ export async function handleDashboardApi(req, res, pathname, {
   usageSummaryFn,
   authStatusFn = () => authStatus({ home }),
   providerCatalogFn,
+  providerStateFn,
 } = {}) {
   if (!isLoopbackAddress(req.socket?.remoteAddress)
     || req.headers?.host === undefined
@@ -124,6 +149,12 @@ export async function handleDashboardApi(req, res, pathname, {
   }
   if (req.headers?.["x-ccdx-dashboard"] !== "1") {
     sendJson(res, 403, { error: "Dashboard API requires a same-origin page request" });
+    return;
+  }
+
+  if (pathname === PROVIDERS_PATH && req.method === "GET") {
+    try { sendJson(res, 200, { source: "provider_status", providers: dashboardProviders(providerStateFn, authStatusFn) }); }
+    catch { sendJson(res, 500, { error: "Could not read provider status" }); }
     return;
   }
 
@@ -194,7 +225,12 @@ export async function handleDashboardApi(req, res, pathname, {
   if (pathname === MODELS_PATH && req.method === "GET") {
     const abort = createRequestAbort(req, res);
     try {
-      const catalog = providerCatalogFn?.() || await liveModelsFn({ signal: abort.signal });
+      const provider = new URL(req.url, "http://localhost").searchParams.get("provider") || "";
+      if (provider && (!isProviderId(provider) || !dashboardProviders(providerStateFn, authStatusFn).some(entry => entry.id === provider))) {
+        sendJson(res, 400, { error: "Select a registered provider" });return;
+      }
+      const catalog = await providerCatalogFn?.({ ...(provider ? { provider } : {}), signal: abort.signal })
+        || await liveModelsFn({ signal: abort.signal, includeAll: true });
       if (!Array.isArray(catalog?.models) || !Number.isFinite(catalog?.advertised)) {
         throw new Error("Invalid live model catalog");
       }
@@ -204,16 +240,21 @@ export async function handleDashboardApi(req, res, pathname, {
         checked_at: catalog.source === "catalog" ? catalog.checkedAt : new Date().toISOString(),
         upstream_host: safeText(catalog?.upstreamHost || "GitHub Copilot", 120),
         advertised: finite(catalog?.advertised),
-        selectable: models.length,
+        selectable: models.filter(model => model.selectable !== false).length,
         models: models.slice(0, 500).map((model) => ({
           id: safeText(model.id, 100),
           vendor: safeText(model.vendor, 80),
           endpoints: Array.isArray(model.endpoints) ? model.endpoints.filter((value) => ["responses", "chat", "messages"].includes(value)) : [],
           preview: model.preview === true,
+          selectable: model.selectable !== false,
+          clients: Array.isArray(model.clients) ? model.clients.filter(value => typeof value === "string").slice(0, 8).map(value => safeText(value, 40)) : [],
+          reasoning_efforts: Array.isArray(model.reasoning_efforts) ? model.reasoning_efforts.slice(0, 16).map(value => safeText(value, 16)) : null,
+          state: ["listed", "restricted", "hidden"].includes(model.state) ? model.state : "listed",
+          context_window: finite(model.context_window),
         })),
       });
     } catch (error) {
-      if (!res.destroyed && !res.writableEnded) sendJson(res, 502, { error: liveModelError(error) });
+      if (!res.destroyed && !res.writableEnded) sendJson(res, error.statusCode || 502, { error: /^m365_[a-z0-9_]+$/.test(error.code || "") ? `Model catalog unavailable / ${error.code}` : liveModelError(error) });
     } finally { abort.cleanup(); }
     return;
   }
@@ -221,13 +262,13 @@ export async function handleDashboardApi(req, res, pathname, {
   if (pathname === USAGE_PATH && req.method === "GET") {
     const query = new URL(req.url, "http://localhost").searchParams;
     const provider = query.get("provider") || "";
-    if (provider && !["github", "m365"].includes(provider)) { sendJson(res, 400, { error: "Select GitHub or Microsoft 365" });return; }
+    if (provider && !isProviderId(provider)) { sendJson(res, 400, { error: "Select a valid provider" });return; }
     let analytics = null;
     if (query.get("analytics") === "1") {
       try {
         const timeZone = query.get("time_zone") || "UTC";
         if (timeZone.length > 100) throw new Error("Invalid time zone");
-        analytics = createUsageAnalytics({ timeZone });
+        analytics = createUsageAnalytics({ timeZone, qualifyProviders: !provider });
       } catch {
         sendJson(res, 400, { error: "Select a valid usage time zone" });
         return;

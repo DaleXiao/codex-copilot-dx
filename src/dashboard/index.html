@@ -24,47 +24,26 @@
       <main>
         <section class="intro">
           <h1><svg id="status-icon" class="status-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><ellipse cx="32" cy="32" rx="26" ry="10"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(60 32 32)"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(120 32 32)"/></g><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg> ccdx status</h1>
-          <div class="snapshot-meta"><p id="auth-account" role="status" data-i18n data-i18n-title title="Saved GitHub Copilot account / local credentials only; not an online entitlement check.">GitHub / READING</p><p id="updated" data-i18n>Reading status…</p></div>
+          <div class="snapshot-meta"><p id="auth-account" role="status" data-i18n data-i18n-title title="Provider status / authorization and inference are separate.">READING</p><p id="updated" data-i18n>Reading status…</p></div>
         </section>
 
         <section class="overview" aria-label="Overview" data-i18n-label>
           <article class="card"><h2 data-i18n>ADAPTER</h2><strong id="version">—</strong><p id="uptime">—</p></article>
-          <article class="card"><h2>Copilot</h2><strong id="copilot">—</strong><p id="token">—</p></article>
-          <article class="card"><h2 data-i18n>KNOWN MODELS</h2><strong id="models">—</strong><p id="model-source">—</p></article>
-          <article class="card"><h2 data-i18n>REQUESTS</h2><strong id="requests">—</strong><p id="request-errors">—</p><p id="http-error-breakdown">—</p><p><span data-i18n>Per-request limits (active)</span><br><span id="body-limits">—</span></p></article>
+          <article class="card"><h2 data-i18n>SOURCES</h2><strong id="source-summary">—</strong><p id="source-detail">—</p></article>
+          <article class="card"><h2 data-i18n>CODEX MODELS</h2><strong id="models">—</strong><p id="model-source">—</p></article>
+          <article class="card"><h2 data-i18n>CODEX REQUESTS</h2><strong id="requests">—</strong><p id="request-errors">—</p><p id="http-error-breakdown">—</p><p><span data-i18n>Per-request limits (active)</span><br><span id="body-limits">—</span></p></article>
         </section>
 
-        <section class="details" aria-label="Runtime details" data-i18n-label>
-          <article class="panel">
-            <div class="panel-heading"><h2 data-i18n>MODEL OUTCOMES</h2><span>RESPONSES</span></div>
-            <dl class="stats"><div><dt data-i18n>Completed</dt><dd id="completed">—</dd></div><div><dt data-i18n>Incomplete</dt><dd id="incomplete">—</dd></div><div><dt data-i18n>Failed</dt><dd id="failed">—</dd></div><div><dt data-i18n>Cancelled</dt><dd id="cancelled">—</dd></div></dl>
-            <p class="hint" data-i18n>HTTP 2xx != model completed.</p>
-            <dl class="stats timing-stats"><div><dt data-i18n>First output</dt><dd id="ttft">—</dd></div><div><dt data-i18n>Output speed</dt><dd id="tpot">—</dd></div></dl>
-            <p class="hint" data-i18n>Gateway timing. Output speed is estimated.</p>
-          </article>
-          <article class="panel">
-            <div class="panel-heading"><h2 data-i18n>LOCAL HISTORY</h2><span data-i18n>ACTIVE LIMIT</span></div>
-            <strong id="history">—</strong><progress id="history-meter" class="meter" max="100" value="0" aria-label="History cache usage" data-i18n-label></progress>
-            <p id="history-detail" class="hint">—</p>
-          </article>
-          <article class="panel">
-            <div class="panel-heading"><h2 data-i18n>IMAGE GENERATION</h2><span data-i18n>OPTIONAL</span></div>
-            <strong id="image">—</strong><p id="image-detail" class="hint">—</p>
-          </article>
-          <article class="panel">
-            <div class="panel-heading"><h2>Microsoft 365</h2><span data-i18n>SEPARATE PROFILE</span></div>
-            <strong id="m365-state">—</strong>
-            <p id="m365-account" class="hint">—</p>
-            <p id="m365-models" class="hint">—</p>
-            <p id="m365-claude" class="hint">—</p>
-            <p id="m365-requests" class="hint">—</p>
-            <p id="m365-clients" class="hint">—</p>
-            <p id="m365-codex" class="hint">—</p>
-          </article>
-        </section>
+        <details class="panel dashboard-section" id="account-authorization">
+          <summary class="panel-heading"><h2 data-i18n>ACCOUNT AUTHORIZATION</h2><span data-i18n>BY PROVIDER</span></summary>
+          <p class="hint" data-i18n>Saved credentials, authorization, model access and client requests are separate evidence.</p>
+          <div class="table-wrap"><table><thead><tr><th data-i18n>Source</th><th data-i18n>ACCOUNT</th><th data-i18n>AUTHORIZATION</th><th data-i18n>SERVICE</th><th data-i18n>LAST VERIFIED</th><th>TTL</th></tr></thead><tbody id="provider-auth"></tbody></table></div>
+        </details>
 
         <details class="panel dashboard-section" id="client-features" open>
-          <summary class="panel-heading"><h2 data-i18n>CLIENT FEATURES</h2><span data-i18n>OBSERVED STATE</span></summary>
+          <summary class="panel-heading"><h2 data-i18n>CLIENT CONNECTIONS</h2><span data-i18n>OBSERVED STATE</span></summary>
+          <div class="table-wrap"><table><thead><tr><th data-i18n>Source</th><th data-i18n>CLIENT</th><th data-i18n>STATE</th><th data-i18n>GATEWAY</th><th data-i18n>LAST REQUEST</th></tr></thead><tbody id="provider-clients"></tbody></table></div>
+          <div id="provider-requests" class="hint"></div>
           <dl class="stats"><div><dt data-i18n>Native predictions</dt><dd id="prediction-preference">—</dd></div><div><dt data-i18n>Local bridge</dt><dd id="prediction-bridge">—</dd></div><div><dt data-i18n>Client route</dt><dd id="prediction-route">—</dd></div><div><dt data-i18n>Visible candidate</dt><dd id="prediction-candidate">—</dd></div></dl>
           <p id="prediction-note" class="hint">—</p>
           <p class="hint" data-i18n>Configured does not mean displayed. Use ccdx prediction status for details.</p>
@@ -78,16 +57,17 @@
         </details>
 
         <details class="panel dashboard-section" id="upstream-models" open>
-          <summary class="panel-heading"><h2 data-i18n>UPSTREAM GPT MODELS</h2><span id="models-state" data-i18n>CHECKING LIVE</span></summary>
+          <summary class="panel-heading"><h2 data-i18n>MODEL CATALOG</h2><span id="models-state" data-i18n>CHECKING LIVE</span></summary>
+          <div id="model-providers" class="provider-tabs" role="tablist" aria-label="Model providers" data-i18n-label></div>
           <div class="section-actions"><button id="refresh-models" type="button" data-i18n>Refresh</button></div>
-          <p id="models-note" class="table-note" data-i18n>Querying GitHub Copilot…</p>
-          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n>MODEL</th><th scope="col" data-i18n>VENDOR</th><th scope="col" data-i18n>API</th><th scope="col" data-i18n>FLAG</th></tr></thead><tbody id="live-models-body"><tr><td colspan="4" data-i18n>Loading…</td></tr></tbody></table></div>
+          <p id="models-note" class="table-note" data-i18n>Reading provider catalog…</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n>MODEL</th><th scope="col" data-i18n>VENDOR</th><th scope="col" data-i18n>API</th><th scope="col" data-i18n>CLIENT</th><th scope="col" data-i18n>REASONING</th><th scope="col" data-i18n>STATE</th></tr></thead><tbody id="live-models-body" role="tabpanel"><tr><td colspan="6" data-i18n>Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n>Catalog listing does not guarantee inference access.</p>
         </details>
 
         <details class="panel dashboard-section" id="model-usage" open>
           <summary class="panel-heading"><h2 data-i18n>USAGE</h2><span id="usage-state" data-i18n>READING LOG</span></summary>
-          <div class="section-actions"><label><span data-i18n>Source</span> <select id="usage-provider"><option value="" data-i18n>All providers</option><option value="github">GitHub Copilot</option><option value="m365">Microsoft 365</option></select></label><button id="clear-usage-day" type="button" hidden data-i18n>All history</button><button id="refresh-usage" type="button" data-i18n>Refresh</button></div>
+          <div class="section-actions"><label><span data-i18n>Source</span> <select id="usage-provider"><option value="" data-i18n>All providers</option></select></label><button id="clear-usage-day" type="button" hidden data-i18n>All history</button><button id="refresh-usage" type="button" data-i18n>Refresh</button></div>
           <p id="usage-note" class="table-note" data-i18n>Aggregating local usage metadata…</p>
           <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col" data-i18n>MODEL</th><th scope="col" data-i18n>CALLS</th><th scope="col" data-i18n>INPUT</th><th scope="col" data-i18n>CACHE READ</th><th scope="col" data-i18n>OUTPUT</th><th scope="col" data-i18n>TOTAL</th><th scope="col" data-i18n>CACHE HIT</th></tr></thead><tbody id="usage-body"><tr><td colspan="7" data-i18n>Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n>Cache hit = recorded cached / input tokens. ~ = incomplete history. — = unavailable or invalid counts.</p>
@@ -114,6 +94,29 @@
           <summary class="panel-heading"><h2 data-i18n>RECENT RESPONSE FAILURES</h2><span id="failure-count">requests + events</span></summary>
           <ol id="failures"><li class="empty" data-i18n>Reading…</li></ol>
           <p class="hint" data-i18n>Upstream messages may contain sensitive text.</p>
+        </details>
+
+        <details class="panel dashboard-section" id="runtime-resources" open>
+          <summary data-i18n>RUNTIME RESOURCES</summary>
+          <div class="details"><article class="panel">
+            <div class="panel-heading"><h2 data-i18n>MODEL OUTCOMES</h2><span>RESPONSES</span></div>
+            <dl class="stats"><div><dt data-i18n>Completed</dt><dd id="completed">—</dd></div><div><dt data-i18n>Incomplete</dt><dd id="incomplete">—</dd></div><div><dt data-i18n>Failed</dt><dd id="failed">—</dd></div><div><dt data-i18n>Cancelled</dt><dd id="cancelled">—</dd></div></dl>
+            <p class="hint" data-i18n>HTTP 2xx != model completed.</p>
+            <dl class="stats timing-stats"><div><dt data-i18n>First output</dt><dd id="ttft">—</dd></div><div><dt data-i18n>Output speed</dt><dd id="tpot">—</dd></div></dl>
+            <p class="hint" data-i18n>Gateway timing. Output speed is estimated.</p>
+          </article><article class="panel">
+            <div class="panel-heading"><h2 data-i18n>LOCAL HISTORY</h2><span data-i18n>ACTIVE LIMIT</span></div>
+            <strong id="history">—</strong><progress id="history-meter" class="meter" max="100" value="0" aria-label="History cache usage" data-i18n-label></progress>
+            <p id="history-detail" class="hint">—</p>
+          </article></div>
+        </details>
+
+        <details class="panel dashboard-section" id="additional-capabilities">
+          <summary data-i18n>ADDITIONAL CAPABILITIES</summary>
+          <article class="panel">
+            <div class="panel-heading"><h2 data-i18n>IMAGE GENERATION</h2><span data-i18n>OPTIONAL</span></div>
+            <strong id="image">—</strong><p id="image-detail" class="hint">—</p>
+          </article>
         </details>
 
         <details id="animation-settings" class="panel dashboard-section settings-panel">

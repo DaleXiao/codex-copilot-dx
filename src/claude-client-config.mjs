@@ -8,6 +8,7 @@ import { readBoundedFileSync } from "./bounded-file.mjs";
 import { atomicWriteFileSync } from "./atomic-file.mjs";
 import { withFileLockSync } from "./lock.mjs";
 import { m365Paths, readM365Json, writeM365Json } from "./m365-settings.mjs";
+import { claudeClientModelId, claudeModelEntries } from "./claude-models.mjs";
 
 export const M365_CLAUDE_PROFILE_ID = "00000000-0000-4000-8000-000000202700";
 const M365_CLAUDE_PROFILE_NAME = "CCDX Microsoft 365";
@@ -152,7 +153,8 @@ function reconcile(operations, { restore = false, ...options } = {}) {
 }
 
 export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstalled, desktopManaged, ...options } = {}) {
-  const paths = claudeClientPaths(options), ids = models.map(model => model.id), operations = [], result = {};
+  const entries = claudeModelEntries(models);
+  const paths = claudeClientPaths(options), ids = entries.map(model => model.name), operations = [], result = {};
   const endpoint = new URL(baseUrl);
   if (endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1" || endpoint.pathname !== "/" || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) throw new Error("Claude gateway must use a local root URL");
   const add = (file, keys, value, itemId) => operations.push({ file, keys, value, ...(itemId ? { itemId } : {}) });
@@ -175,7 +177,10 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
     add(paths.code, ["env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"], "1");
     if (env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS === undefined) add(paths.code, ["env", "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"], "1");
     add(paths.code, ["env", "ANTHROPIC_CUSTOM_HEADERS"], "X-CCDX-Client: claude-code");
-    if (!codeEnv.ANTHROPIC_MODEL && ids.length) add(paths.code, ["env", "ANTHROPIC_MODEL"], ids[0]);
+    if (ids.length && (!codeEnv.ANTHROPIC_MODEL || models.some(model => model.id === codeEnv.ANTHROPIC_MODEL))) {
+      const index = models.findIndex(model => model.id === codeEnv.ANTHROPIC_MODEL);
+      add(paths.code, ["env", "ANTHROPIC_MODEL"], ids[Math.max(0, index)]);
+    }
     result.code = "configured";
   }
   const installed = desktopInstalled ?? (fs.existsSync(path.dirname(paths.normal)) || fs.existsSync(path.dirname(paths.threep))
@@ -195,7 +200,14 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
       add(paths.profile, ["inferenceGatewayBaseUrl"], baseUrl);
       add(paths.profile, ["inferenceGatewayApiKey"], apiKey);
       add(paths.profile, ["inferenceGatewayAuthScheme"], "bearer");
-      add(paths.profile, ["inferenceModels"], JSON.stringify(ids));
+      let previousModels = [];
+      try { previousModels = JSON.parse(profile.inferenceModels || "[]"); } catch { /* Ownership reconciliation preserves a user-modified field. */ }
+      const order = new Map((Array.isArray(previousModels) ? previousModels : []).map((entry, index) => {
+        const name = typeof entry === "string" ? entry : entry?.name;
+        return [typeof name === "string" ? claudeClientModelId(name) : "", index];
+      }));
+      const orderedEntries = [...entries].sort((left, right) => (order.get(left.name) ?? Infinity) - (order.get(right.name) ?? Infinity));
+      add(paths.profile, ["inferenceModels"], JSON.stringify(orderedEntries));
       add(paths.profile, ["inferenceCustomHeaders"], JSON.stringify({ "X-CCDX-Client": "claude-app" }));
       add(paths.meta, ["entries"], { id: M365_CLAUDE_PROFILE_ID, name: M365_CLAUDE_PROFILE_NAME }, M365_CLAUDE_PROFILE_ID);
       add(paths.meta, ["appliedId"], M365_CLAUDE_PROFILE_ID);

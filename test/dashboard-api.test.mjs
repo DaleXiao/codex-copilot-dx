@@ -346,3 +346,31 @@ test("dashboard API rejects cross-site simple GETs before expensive lookups", as
   }
   assert.equal(lookups, 0);
 });
+
+test("provider status exports bounded evidence, with local GitHub credentials distinct from online access", async () => {
+  const handler = createAdapterHandler({ dashboardOptions: {
+    authStatusFn: () => ({ profiles: { codex: { valid: true, configured: true, login: "saved_user" } } }),
+    providerStateFn: () => [{ id: "github", name: "GitHub Copilot", enabled: true, state: "unavailable", auth: { state: "authorized", token: "private" }, clients: [] },
+      { id: "third", name: "Third source", enabled: false, state: "disabled", auth: { account: "person@example.test", token: "secret" }, clients: [] }],
+  } });
+  const result = await invoke(handler, { url: "/_ccdx/ui/providers" });
+  assert.equal(result.status, 200);assert.equal(result.body.providers.length, 2);
+  assert.equal(result.body.providers[0].auth.state, "saved");assert.equal(result.body.providers[0].state, "unavailable");
+  assert.equal(result.body.providers[0].auth.account, "saved_user");
+  assert.doesNotMatch(JSON.stringify(result.body), /private|secret/);
+  assert.equal((await invoke(handler, { url: "/_ccdx/ui/providers", dashboardHeader: "" })).status, 403);
+});
+
+test("model browsing selects a registered provider without changing routes or querying a fallback", async () => {
+  const calls = [];
+  const handler = createAdapterHandler({ dashboardOptions: {
+    authStatusFn: () => ({}), providerStateFn: () => [{ id: "third", name: "Third source", clients: [] }],
+    liveModelsFn: () => assert.fail("No fallback lookup"),
+    providerCatalogFn: async ({ provider }) => { calls.push(provider);return { source: "catalog", advertised: 1, models: [{ id: "model", endpoints: ["messages"], clients: [], reasoning_efforts: null, selectable: false }] }; },
+  } });
+  const result = await invoke(handler, { url: "/_ccdx/ui/models/live?provider=third" });
+  assert.equal(result.status, 200);assert.equal(result.body.selectable, 0);assert.equal(result.body.models[0].reasoning_efforts, null);
+  assert.deepEqual(calls, ["third"]);
+  for (const id of ["missing", "constructor", "https://example.test"]) assert.equal((await invoke(handler, { url: `/_ccdx/ui/models/live?provider=${encodeURIComponent(id)}` })).status, 400);
+  assert.deepEqual(calls, ["third"]);
+});

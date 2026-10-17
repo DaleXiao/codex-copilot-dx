@@ -1,5 +1,7 @@
 # Documentation index
 
+- [1.0.0: Provider dashboard and Claude effort adaptation](RELEASE_1.0.0.md)
+
 The [root README](../README.md) is the quick start; the [command/configuration
 reference](REFERENCE.md) preserves complete current behavior and limits. `ccdx --help` and
 `ccdx <command> --help` describe the installed package's CLI. Code and tests

@@ -70,15 +70,17 @@ Codex source and M365 review choices live separately in
 GitHub auth/cache/preferences, Codex auth, prediction trust and image keys are not
 copied into the M365 profile. The system's Microsoft SSO account is never deleted.
 
-M365 catalogs refresh at startup and on the existing background model interval.
-Request-time catalog reads use the account-bound cache, trigger refresh after two
-hours and reject disk caches older than seven days. `ccdx models`, Auto-review's
-selector and dashboard models follow the selected Codex source. Under M365 they
-use the running provider's catalog, labeled as a catalog rather than a fresh
-per-command GitHub lookup. Disabled/hidden models and wrong publisher/protocol
-families are not exposed. A catalog listing is not proof that inference will pass
-quota or policy checks. M365 Fast is unverified and `priority` requests fail
-explicitly; choose Standard. This does not change GitHub Fast behavior.
+M365 catalogs refresh at startup and on explicit lookups. Existing model-list
+reads and Claude Messages traffic start a background refresh after two hours;
+disk caches older than seven days are rejected. `ccdx models` and Auto-review's
+selector follow the selected Codex source. Dashboard tabs query a registered
+Provider independently of that selection; M365 uses a fresh provider catalog
+lookup and labels the returned catalog timestamp. Its disabled/hidden or
+ineligible models remain visible as directory metadata, with no eligible client.
+Client discovery and request validation still exclude wrong publishers/protocols
+and disabled/hidden models. A listing does not prove inference access or quota.
+M365 Fast is unverified and `priority` requests fail explicitly; choose Standard.
+GitHub Fast behavior is unchanged.
 
 M365 Auto-review has its own required model choice and defaults to low reasoning.
 `ccdx auto-review-model` changes that provider's model/effort without touching the
@@ -107,6 +109,33 @@ logs that limitation once and counts adjustments in its status. Prompt bytes,
 breakpoint positions, tool input, thinking and approval settings do not change.
 This is a retention/cost limitation of the new M365 path, not an equivalent
 one-hour cache guarantee. GitHub caching is unchanged.
+
+The gateway publishes canonical Claude version IDs such as `claude-opus-5-5`,
+while M365 receives its exact `claude-opus-5.5` ID. Existing raw IDs are still
+accepted. Only exact supported family/version spellings are normalized; alias
+collisions fail explicitly. Bodies, thinking signatures and native response bytes
+remain intact apart from the existing cache-TTL policy and the upstream model ID.
+
+`capabilities.supports.reasoning_effort` supplies deployment-specific effort
+metadata. App `inferenceModels` entries receive the highest recognized advertised
+`maxEffort`; Code discovery receives canonical IDs. A successful catalog refresh
+reconciles unchanged owned fields outside inference serialization. An owned legacy
+Code default can migrate to its matching canonical ID; valid user model/effort
+preferences are preserved. Reads after a profile change invalidate page catalogs.
+Unknown metadata stays unknown. Unknown effort names remain visible as upstream
+metadata and are not invented as App caps. When an explicit effort list exists,
+requests for absent efforts fail before inference, without dropping the field or
+substituting a lower level. Missing metadata leaves the upstream authoritative.
+
+App effort controls also depend on its model knowledge. Supported versions can
+read Anthropic's signed catalog under the App's existing network and management
+policy; CCDX neither replaces that signed document nor changes its URL/policy.
+`maxEffort` is a ceiling, not an arbitrary discrete allowlist: client-visible
+options may differ from an upstream's sparse list, while exact request validation
+remains authoritative. Unknown model identities or new protocol semantics can
+still need a client or CCDX update. A displayed control alone is not an inference
+verification. See [Claude model configuration](https://claude.com/docs/third-party/claude-desktop/configuration)
+and [gateway behavior](https://code.claude.com/docs/en/llm-gateway-protocol).
 
 For Claude Code, CCDX owns only its gateway environment fields in
 `CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`. For Claude App it
@@ -995,7 +1024,44 @@ JSON reply to a streaming request is still not silently converted to SSE.
 
 After starting `ccdx`, open [http://127.0.0.1:2026/](http://127.0.0.1:2026/) in a browser. If `ADAPTER_PORT` is customized, use that port instead. The dashboard shares the existing adapter listener; CCDX does not open a browser automatically or start another service. The page and its assets require both a loopback connection and a loopback Host header, even when LAN binding is enabled.
 
-The dashboard loads local status, a live GitHub Copilot model directory, and a summary of local usage metadata once when opened. The top Refresh updates status/account and expanded data groups; model and usage sections retain their own Refresh controls. Auto refresh is on by default, saved only in this browser, and updates status/account plus expanded groups every 30 minutes while the page is visible. Opening a data section updates its group unless it was attempted within 30 seconds. Hidden pages pause; returning after 30 minutes catches up once, without replaying missed intervals. Turning automatic updates off retains manual and open-section refresh. No server background task is added. In-flight reads are shared per group; failures retain the prior snapshot and success timestamp. Unchanged model rows and charts are retained rather than rebuilt. The appearance button switches between the default dark terminal theme (sun icon) and a light theme (moon icon); the choice is stored only in that browser. The Requests card shows the running adapter's active raw and decoded per-request body limits, not request-body usage; Local History shows its in-memory Responses history use and active limit. Limit changes remain CLI-only (`ccdx limits` and `ccdx cache`). The live model table uses the same fresh account validation and selectable GPT filtering as `ccdx models`, never labels cached fallback data as online, and makes no inference request. A catalog listing does not guarantee inference access. The Model Usage table combines the current and rotated local usage logs, shows totals and up to 100 model rows, and contains no prompt, response body, or credential fields. The animation selector previews the existing themes and saves through the same settings writer as `ccdx animation`; changes take effect on the next adapter start, and `CCDX_TERMINAL_ANIMATION=off` still disables terminal motion. Dashboard data requests require a custom header that cross-site simple requests cannot send; animation writes also require a matching same-origin `Origin`. The dashboard does not initialize the optional image handler. The overview's known-model count is the adapter's current in-memory catalog, not the live table. A missing image-generation status does not prove the feature is disabled: use `ccdx image-status` to check setup. Recent upstream error prose may contain sensitive details, so review the page before sharing screenshots.
+The dashboard reads local runtime/Provider snapshots and local usage metadata.
+Account Authorization lists saved identity, authorization evidence, service state,
+last successful token acquisition and TTL where known. GitHub local credential
+validity is labeled saved, never online entitlement. Client Connections separately
+shows configuration, gateway state, observed requests and Codex native prediction.
+Runtime Resources retains Responses outcomes/timing and local history; Additional
+Capabilities retains optional image status. Codex model/request overview counts
+are scoped to the Codex surface; Claude request counters remain separately labeled.
+
+Model Catalog tabs come from the backend Provider descriptors. Selecting a tab
+only selects a read resource, not the inference route. GitHub's dashboard view
+includes upstream directory entries beyond selectable Codex GPT models; the CLI's
+existing GPT filtering is unchanged. Rows show protocol, eligible clients,
+upstream-advertised reasoning and directory state. An unknown field is displayed
+as unknown, not unsupported. A directory listing is not inference verification.
+The header count is the active Codex in-memory catalog, not a sum of tab results.
+The usage selector combines registered Providers and retained historical sources.
+Mixed-source model rows and combined daily analytics retain source identity;
+source-filtered views show model names within that source. Legacy untagged records
+remain GitHub records. Current and rotated logs remain bounded metadata reads.
+
+Top Refresh updates local status/Provider evidence and expanded data groups.
+Auto refresh is browser-local, defaults on and runs every 30 minutes while visible.
+Opening a data section updates its group unless attempted within 30 seconds;
+hidden pages pause and returning catches up once. In-flight reads are deduplicated;
+tab changes cancel obsolete page requests and reject late responses. Each tab
+retains only its own last-good catalog; account/generation changes discard it.
+Errors preserve the successful timestamp and mark the read as failed. Provider
+lookups never enable a disabled source or open an interactive login. No server
+poller, event bus, extra inference call or runtime dependency is added.
+
+Dark/light themes, English/Chinese, reduced motion and unsaved animation choices
+are retained. Provider tabs support keyboard navigation. Data requests require the
+same loopback address/Host and custom dashboard header; animation writes also
+require a matching Origin. The page cannot switch Providers or manage credentials.
+Limit changes remain CLI-only. The dashboard does not initialize images; unknown
+image status still requires `ccdx image-status`. Review diagnostics before sharing
+screenshots: upstream error prose may contain sensitive details.
 
 The dashboard labels the upstream token cache hit metric **Reuse Rate** and cached input **Reused Input**, separate from **Local History**. Chinese uses short functional names such as “对话暂存”, “重用输入” and “重用比例”. English and Chinese preserve model IDs, commands, units, HTTP status codes and raw diagnostic values. Animation display names translate in place; theme IDs and CLI parameters do not change.
 

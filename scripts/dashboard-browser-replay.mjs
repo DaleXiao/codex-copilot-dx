@@ -21,7 +21,21 @@ let models = 0, summaries = 0;
 const records = Array.from({ length: 10 }, (_, index) => ({ ts: new Date(Date.now() - index * 86400000).toISOString(),
   provider: index % 2 ? "m365" : "github", model: index % 2 ? "claude-opus-5.5" : "gpt-6.1-sol",
   usage: { input_tokens: 100 * (index + 1), cached_input_tokens: 50, output_tokens: 20, total_tokens: 120 + 100 * index } }));
+const providerState = () => [
+  { id: "github", name: "GitHub Copilot", enabled: true, state: "ready", clients: [{ id: "codex", name: "Codex App", selected: true, state: "configured" }] },
+  { id: "m365", name: "Microsoft 365", enabled: true, state: "ready", auth: { state: "authorized", account: "synthetic@example.test" },
+    clients: [{ id: "claude_app", name: "Claude App", state: "configured", gateway: "running" }], requests: { completed: 3, incomplete: 1, failed: 2 } },
+  { id: "third", name: "Third source", enabled: false, state: "disabled", clients: [] },
+];
 const handler = createAdapterHandler({ dashboardOptions: {
+  providerStateFn: providerState,
+  providerCatalogFn: async ({ provider }) => {
+    if (provider === "github") return null;
+    if (provider === "third") throw Object.assign(Error("Unavailable"), { code: "m365_disabled", statusCode: 503 });
+    return { source: "catalog", checkedAt: new Date().toISOString(), advertised: 1, upstreamHost: "Microsoft 365", models: [
+      { id: "claude-opus-5.5", vendor: "Anthropic", endpoints: ["messages"], clients: ["claude_app", "claude_code"], reasoning_efforts: ["low", "high"], selectable: true },
+    ] };
+  },
   liveModelsFn: async () => { models++; return { models: [{ id: "gpt-6.1-sol", vendor: "OpenAI", endpoints: ["responses"], preview: false }], advertised: 1, upstreamHost: "synthetic.local" }; },
   authStatusFn: () => ({ profiles: { codex: { configured: true, valid: true, login: "synthetic_user" } } }),
   usageSummaryFn: async options => { summaries++; const selected = records.filter(record => !options?.provider || record.provider === options.provider);
@@ -79,9 +93,20 @@ try {
         assert.equal(await page.locator("html").getAttribute("lang"), language === "zh" ? "zh-CN" : "en");
         assert.match(await page.locator("#ttft").innerText(), /1250\.0 ms/);
         assert.match(await page.locator("#tpot").innerText(), /123\.4 token\/s/);
-        assert.equal(await page.locator("#m365-account").innerText(), "synthetic@example.test");
-        assert.match(await page.locator("#m365-requests").innerText(), language === "zh" ? /完成 3.*未完成 1.*失败 2/ : /3 done.*1 incomplete.*2 failed/);
-        assert.equal(await page.locator("#m365-models").innerText(), language === "zh" ? "Claude 10个 / GPT 5个" : "Claude 10 / GPT 5");
+        await page.locator("#account-authorization > summary").click();
+        assert.equal(await page.locator("#provider-auth tr").count(), 3);
+        assert.match(await page.locator("#provider-auth").innerText(), /synthetic@example.test/);
+        assert.match(await page.locator("#provider-requests").innerText(), language === "zh" ? /完成3.*未完成1.*失败2/ : /3 done.*1 incomplete.*2 failed/);
+        assert.equal(await page.locator("#model-providers [role=tab]").count(), 3);
+        await page.locator("#model-provider-m365").click();
+        await page.waitForFunction(() => document.getElementById("live-models-body").textContent.includes("claude-opus-5.5"));
+        assert.match(await page.locator("#live-models-body").innerText(), /low.*high/);
+        await page.locator("#model-provider-third").click();
+        await page.waitForFunction(() => document.getElementById("models-note").textContent.includes("m365_disabled"));
+        assert.doesNotMatch(await page.locator("#live-models-body").innerText(), /claude-opus/);
+        await page.locator("#model-provider-github").click();
+        await page.waitForFunction(() => document.getElementById("live-models-body").textContent.includes("gpt-6.1-sol"));
+        assert.match(await page.locator("#source-detail").innerText(), /Codex App.*GitHub Copilot/);
         assert.doesNotMatch(await page.locator("#http-error-breakdown").innerText(), /undefined|NaN/);
         const icon = decodeURIComponent(await page.locator("#favicon").getAttribute("href"));
         assert.equal((icon.match(/<ellipse /g) || []).length, 3);

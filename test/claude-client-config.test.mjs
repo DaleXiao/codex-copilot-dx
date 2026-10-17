@@ -56,7 +56,7 @@ test("user edits survive refresh and removal, while unchanged owned fields are r
   const code = read(paths.code);code.env.ANTHROPIC_MODEL = "user-chosen-model";code.env.USER_CHOICE = "kept";write(paths.code, code);
   configureClaudeClients({ ...options, models: [...options.models, { id: "claude-sonnet-5.5" }] });
   assert.equal(read(paths.code).env.ANTHROPIC_MODEL, "user-chosen-model");
-  assert.deepEqual(JSON.parse(read(paths.profile).inferenceModels), ["claude-opus-5.5", "claude-sonnet-5.5"]);
+  assert.deepEqual(JSON.parse(read(paths.profile).inferenceModels), [{ name: "claude-opus-5-5" }, { name: "claude-sonnet-5-5" }]);
   const result = restoreClaudeClients(options);assert.ok(result.preserved > 0);
   assert.deepEqual(read(paths.code).env, { ANTHROPIC_MODEL: "user-chosen-model", USER_CHOICE: "kept" });
 });
@@ -83,4 +83,28 @@ test("untrusted cleanup ownership cannot edit arbitrary Claude fields", t => {
   value.operations.push({ file: paths.code, keys: ["permissions"], before: { exists: false }, after: {} });write(journal, value);
   const before = fs.readFileSync(paths.code);
   assert.throws(() => restoreClaudeClients(options), /ownership is invalid/);assert.deepEqual(fs.readFileSync(paths.code), before);
+});
+
+test("owned legacy defaults migrate exactly; user effort and model choices survive later catalogs", t => {
+  const { options, paths } = fixture(t);
+  options.models[0].capabilities = { supports: { reasoning_effort: ["low", "high"] } };
+  configureClaudeClients(options);
+  let code = read(paths.code);code.env.ANTHROPIC_MODEL = "claude-opus-5.5";write(paths.code, code);
+  const journalPath = m365Paths(options).ownership, journal = read(journalPath);
+  journal.operations.find(op => op.file === paths.code && op.keys.join(".") === "env.ANTHROPIC_MODEL").after = "claude-opus-5.5";write(journalPath, journal);
+  configureClaudeClients(options);
+  assert.equal(read(paths.code).env.ANTHROPIC_MODEL, "claude-opus-5-5");
+  assert.deepEqual(JSON.parse(read(paths.profile).inferenceModels), [{ name: "claude-opus-5-5", maxEffort: "high" }]);
+  const profile = read(paths.profile);profile.inferenceModels = JSON.stringify([{ name: "claude-opus-5-5", maxEffort: "low" }]);write(paths.profile, profile);
+  options.models[0].capabilities.supports.reasoning_effort = ["low", "medium", "high", "max"];
+  configureClaudeClients(options);
+  assert.equal(JSON.parse(read(paths.profile).inferenceModels)[0].maxEffort, "low");
+  assert.equal(read(paths.code).env.ANTHROPIC_MODEL, "claude-opus-5-5");
+});
+
+test("upstream catalog ordering does not replace the surviving App default", t => {
+  const { options, paths } = fixture(t);
+  configureClaudeClients(options);
+  configureClaudeClients({ ...options, models: [{ id: "claude-sonnet-5.5" }, ...options.models] });
+  assert.deepEqual(JSON.parse(read(paths.profile).inferenceModels).map(entry => entry.name), ["claude-opus-5-5", "claude-sonnet-5-5"]);
 });

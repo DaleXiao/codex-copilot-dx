@@ -5,13 +5,40 @@
     let failureSignature;
     let contextSignature;
     
-    function renderAuth(data, { failed = false } = {}) {
-      const account = data.login ? `@${data.login}` : data.id ? `ID ${data.id}` : phrase("account unknown");
-      const label = data.reason === "credential_read_failed" ? "UNAVAILABLE"
-        : !data.configured ? "NOT CONFIGURED" : !data.valid ? "INVALID" : "SAVED";
-      text("auth-account", failed ? "GitHub / {account} / UPDATE FAILED" : label === "SAVED" ? "GitHub / {account} / SAVED" : `GitHub / ${label}`, { account });
+    function renderProviders(data) {
+      const providers = data.providers || [];
+      const states = { saved: "Saved locally", authorized: "Authorized", disabled: "Disabled", unavailable: "Unavailable",
+        unknown: "Unknown", unconfigured: "Not configured", ready: "Ready", checking: "Checking", unsupported: "Unsupported",
+        configured: "Configured", preserved: "Existing settings kept", partially_preserved: "Existing settings kept",
+        not_installed: "Not installed", configuration_unavailable: "Setup unavailable", not_configured: "Not configured", standby: "Standby" };
+      const auth = element("provider-auth"), clients = element("provider-clients"), requests = element("provider-requests");
+      auth.replaceChildren();clients.replaceChildren();requests.replaceChildren();
+      const routes = [];
+      for (const provider of providers) {
+        const identity = provider.auth || {};
+        const authRow = tableRow([provider.name, identity.account || "—", states[identity.state] || "Unknown",
+          states[provider.state] || "Unknown", identity.checked_at || "—", duration(identity.expires_in_ms)], { labels: [2, 3] });
+        if (provider.reason) localize(authRow.children[3], "{state} / {reason}", { state: phrase(states[provider.state] || "Unknown"), reason: provider.reason });
+        auth.append(authRow);
+        for (const client of provider.clients || []) {
+          const row = tableRow([provider.name, client.name, states[client.state] || client.state,
+            client.gateway || "—", client.last_request_at || "—"], { labels: [2, 3] });
+          if (client.reason) localize(row.children[2], "{state} / {reason}", { state: phrase(states[client.state] || "Unknown"), reason: client.reason });
+          clients.append(row);
+          if (client.selected && client.id === "codex") routes.push(`${client.name} → ${provider.name}`);
+        }
+        if (provider.requests) {
+          const item = document.createElement("p");
+          localize(item, "{provider}: {done} done / {incomplete} incomplete / {failed} failed", { provider: provider.name,
+            done: number(provider.requests.completed), incomplete: number(provider.requests.incomplete), failed: number(provider.requests.failed) });
+          requests.append(item);
+        }
+      }
+      text("source-summary", "{count} providers", { count: providers.filter(provider => provider.enabled).length });
+      element("source-detail").textContent = routes.join(" / ") || "—";
+      element("auth-account").textContent = routes.join(" / ") || "—";
     }
-    
+
     function duration(value) {
       if (!finite(value)) return "—";
       const seconds = Math.max(0, Math.round(Number(value) / 1000));
@@ -114,10 +141,6 @@
       text("version", `v${data.version || "?"}`);
       text("uptime", "pid {pid} / uptime {duration}", { pid: number(data.pid), duration: duration(data.uptime_ms) });
     
-      const copilot = data.copilot || {};
-      text("copilot", copilot.account_bound ? "BOUND" : "UNCONFIRMED");
-      text("token", copilot.token_cached ? "service token / TTL {duration}" : "service token not cached", { duration: duration(copilot.token_expires_in_ms) });
-    
       const models = data.models || {};
       text("models", number(models.models));
       text("model-source", "source {source} / live: ccdx models", { source: phrase(String(models.source || "unknown").slice(0, 80)) });
@@ -151,20 +174,6 @@
         ? "active {active} / failed {failed} / delivery failures {delivery}"
         : "Setup state unknown / ccdx image-status", { active: number(image?.active), failed: number(image?.failed), delivery: number(image?.delivery_failures) });
 
-      if (element("m365-state")) {
-        const providers = data.providers || {}, m365 = providers.m365 || {}, claude = m365.claude || {};
-        const state = { ready: "M365 READY", checking: "M365 CHECKING", disabled: "M365 OFF", unsupported: "M365 UNSUPPORTED", unavailable: "M365 UNAVAILABLE", idle: "M365 CHECKING" };
-        text("m365-state", state[m365.state] || "M365 UNKNOWN");
-        text("m365-account", m365.account?.login || "Account unavailable");
-        text("m365-models", "Claude {claude} / GPT {gpt}", { claude: number(m365.models?.claude), gpt: number(m365.models?.gpt) });
-        text("m365-claude", claude.gateway === "running" ? "Claude gateway running" : "Claude gateway unavailable");
-        if (element("m365-requests")) text("m365-requests", claude.requests ? "Claude: {done} done / {incomplete} incomplete / {failed} failed" : "Claude requests unavailable",
-          { done: number(claude.requests?.completed), incomplete: number(claude.requests?.incomplete), failed: number(claude.requests?.failed) });
-        const labels = { configured: "Configured", preserved: "Existing settings kept", partially_preserved: "Existing settings kept", restored: "Restored", not_installed: "Not installed", configuration_unavailable: "Setup unavailable", not_configured: "Not configured" };
-        text("m365-clients", "Code: {code} / App: {app}", { code: phrase(labels[claude.clients?.code] || "Unknown"), app: phrase(labels[claude.clients?.app] || "Unknown") });
-        text("m365-codex", providers.codex_provider === "m365" ? "Codex source: Microsoft 365" : "Codex source: GitHub Copilot");
-      }
-    
       renderFailures([...(data.response_failures?.recent || []), ...(data.http_errors?.actionable_recent || data.http_errors?.recent || [])]
         .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0)), data.stream_performance?.recent_requests);
       renderContext(data.stream_performance);
@@ -201,14 +210,14 @@
           ? request.outcome[0].toUpperCase() + request.outcome.slice(1) : "Unknown";
         const ratio = finite(context.input_tokens) && finite(context.context_window_tokens) && Number(context.context_window_tokens) > 0
           ? `${(100 * Number(context.input_tokens) / Number(context.context_window_tokens)).toFixed(1)}%` : "—";
-        body.append(tableRow([String(request.model || "unknown").slice(0, 80) + (request.provider === "m365" ? " / M365" : ""),
+        body.append(tableRow([String(request.model || "unknown").slice(0, 80) + (request.provider ? ` / ${request.provider}` : ""),
           finite(context.payload_bytes) ? (Number(context.payload_bytes) / 1048576).toFixed(2) : "—",
           number(context.images), number(context.input_tokens), number(context.context_window_tokens), ratio,
           outcome], { labels: [6] }));
       }
       if (!contextRequests.length) emptyTable("context-body", 7, "No observed request metadata.");
     }
-    return { render, renderAuth, renderFailures, renderContext };
+    return { render, renderProviders, renderFailures, renderContext };
   }
   globalThis.ccdxDashboardStatus = { create };
 })();

@@ -16,7 +16,7 @@ const catalog = { data: [
   { id: "gpt-6-sol", publisher: "OpenAI", supported_endpoints: ["/responses"], capabilities: { supports: { reasoning_effort: ["low", "medium"] } } },
 ] };
 function completed(model, id) { return Response.json({ id, model, status: "completed", output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }); }
-function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, corePort, modelCatalog = catalog } = {}) {
+function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, corePort, modelCatalog = catalog, onConfigure = () => {} } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-providers-")), calls = [], lifecycle = [];
   const githubClient = { getCachedModelEndpoints: () => ["/responses"], listModels: async () => ({ status: 200, body: JSON.stringify({ data: [] }) }),
     responses: async body => { calls.push({ provider: "github", body: structuredClone(body) });return githubRequest ? githubRequest(body) : completed(body.model, "resp_github"); },
@@ -29,7 +29,7 @@ function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, 
       const body = JSON.parse(options.body);calls.push({ provider: "m365", body });return completed(body.model, "resp_m365");
     } }),
     startGateway: async () => { lifecycle.push("start");if (gatewayError) throw Object.assign(Error("Synthetic gateway failure"), { code: gatewayError });return { port: 2027, snapshot: () => ({ active: 0 }), close: async () => lifecycle.push("close") }; },
-    configureClients: () => ({ code: "configured", app: "configured" }), restoreClients: () => ({ remaining: 0, preserved: 0 }),
+    configureClients: input => { onConfigure(input);return { code: "configured", app: "configured" }; }, restoreClients: () => ({ remaining: 0, preserved: 0 }),
   });
   const options = { providerRuntime: runtime, codexClient: githubClient, openAIModelEnv: {} };
   t.before(() => { process.env.CCDX_DISABLE_USAGE = "1";clearResponseHistoryForTests(); });
@@ -143,4 +143,29 @@ test("M365 profile removal waits for its active requests and does not stop the s
   assert.equal(s.runtime.current().id, "m365");release();
   await s.runtime.action({ action: "remove" });assert.equal(s.runtime.current().id, "github");
   assert.equal(s.runtime.snapshot().m365.enabled, false);assert.deepEqual(s.lifecycle, ["start", "close"]);
+});
+
+test("provider model browsing is independent of Codex selection and includes ineligible catalog entries", async t => {
+  const data = structuredClone(catalog);
+  data.data.push({ id: "other-model", publisher: "Other", supported_endpoints: ["/other"] });
+  const s = setup(t, { modelCatalog: data });await s.runtime.start();
+  const result = await s.runtime.dashboardCatalog({ provider: "m365" });
+  assert.equal(s.runtime.selection().codex, "github");
+  assert.equal(result.advertised, 3);assert.equal(result.models.find(model => model.id === "other-model").selectable, false);
+  assert.deepEqual(result.models.find(model => model.id.startsWith("claude")).clients, ["claude_code", "claude_app"]);
+  await s.runtime.action({ action: "off" });
+  await assert.rejects(s.runtime.dashboardCatalog({ provider: "m365" }), { code: "m365_disabled" });
+  assert.equal(s.runtime.selection().codex, "github");
+});
+
+test("successful background catalogs synchronize Claude configuration and stopping prevents later writes", async t => {
+  const data = structuredClone(catalog), configured = [];
+  const s = setup(t, { modelCatalog: data, onConfigure: input => configured.push(structuredClone(input.models)) });
+  await s.runtime.start();await choose(s.runtime);
+  const provider = s.runtime.current();
+  data.data[0].capabilities = { supports: { reasoning_effort: ["low", "high"] } };
+  await provider.refresh();await new Promise(resolve => setImmediate(resolve));await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(configured.at(-1)[0].capabilities.supports.reasoning_effort, ["low", "high"]);
+  const pending = provider.refresh();await s.runtime.action({ action: "off" });await pending.catch(() => {});
+  const count = configured.length;await new Promise(resolve => setImmediate(resolve));assert.equal(configured.length, count);
 });

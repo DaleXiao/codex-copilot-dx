@@ -1,3 +1,4 @@
+import { isProviderId } from "./provider-metadata.mjs";
 import fs from "node:fs";
 import { markRequestObservation } from "./stream-performance.mjs";
 import os from "node:os";
@@ -113,14 +114,14 @@ export function buildResponsesUsageRecord({ surface = "responses", mode, model, 
   });
 }
 
-export function buildMessagesUsageRecord({ model, responseId, usage, mode, client = "claude" } = {}) {
+export function buildMessagesUsageRecord({ model, responseId, usage, mode, client = "claude", provider = "m365" } = {}) {
   if (!usage || typeof usage !== "object") return null;
   const count = key => Number.isFinite(usage[key]) && usage[key] >= 0 ? usage[key] : undefined;
   const uncached = count("input_tokens"), read = count("cache_read_input_tokens"), written = count("cache_creation_input_tokens");
   const input = uncached === undefined ? undefined : uncached + (read || 0) + (written || 0);
   const output = count("output_tokens");
   if (input === undefined && output === undefined) return null;
-  return compactObject({ ts: new Date().toISOString(), provider: "m365", surface: "messages", client, mode, model, response_id: responseId,
+  return compactObject({ ts: new Date().toISOString(), provider, surface: "messages", client, mode, model, response_id: responseId,
     usage: compactObject({ input_tokens: input, output_tokens: output, cached_input_tokens: read,
       cache_write_input_tokens: written, total_tokens: input !== undefined && output !== undefined ? input + output : undefined,
       reasoning_output_tokens: numberOrUndefined(usage.output_tokens_details?.thinking_tokens) }),
@@ -278,16 +279,21 @@ function addUsageTotals(target, usage = {}) {
 }
 
 export function usageProvider(record) {
-  return record.provider === undefined || record.provider === "github" ? "github" : record.provider === "m365" ? "m365" : "unknown";
+  return record.provider === undefined ? "github" : isProviderId(record.provider) ? record.provider : "unknown";
+}
+
+export function usageModelGroups(summary) {
+  const mixed = !summary.provider_filter && Object.values(summary.providers || {}).filter(count => count > 0).length > 1;
+  return mixed ? summary.bySourceModel || summary.byModel || {} : summary.byModel || {};
 }
 
 export function summarizeUsage(records, { provider = "" } = {}) {
-  if (provider && !["github", "m365"].includes(provider)) throw new Error("Usage provider must be github or m365");
-  const summary = { requests: 0, totals: {}, byModel: {}, providers: { github: 0, m365: 0, unknown: 0 }, ...(provider ? { provider_filter: provider } : {}) };
+  if (provider && !isProviderId(provider)) throw new Error("Usage provider must be a valid provider ID");
+  const summary = { requests: 0, totals: {}, byModel: {}, bySourceModel: {}, providers: { github: 0, m365: 0, unknown: 0 }, ...(provider ? { provider_filter: provider } : {}) };
   for (const record of records) {
     const source = usageProvider(record);
     if (provider && provider !== source) continue;
-    summary.providers[source] += 1;
+    summary.providers[source] = (summary.providers[source] || 0) + 1;
     summary.requests += 1;
     addUsageTotals(summary.totals, record.usage);
     if (record.copilot_usage) {
@@ -301,16 +307,19 @@ export function summarizeUsage(records, { provider = "" } = {}) {
     addUsageTotals(modelTotals, record.usage);
     const input = record.usage?.input_tokens;
     const cached = cacheReadTokens(record.usage || {});
-    if (!Number.isFinite(input) || input < 0 || !Number.isFinite(cached) || cached < 0 || cached > input) {
-      summary.totals.cache_hit_unknown_requests = (summary.totals.cache_hit_unknown_requests || 0) + 1;
-      modelTotals.cache_hit_unknown_requests = (modelTotals.cache_hit_unknown_requests || 0) + 1;
-    }
     const cacheCounts = [record.usage?.cached_input_tokens, record.usage?.cache_read_input_tokens];
-    if ((input != null && (!Number.isFinite(input) || input < 0))
-      || cacheCounts.some((value) => value != null && (!Number.isFinite(value) || value < 0))
-      || (Number.isFinite(input) && Number.isFinite(cached) && cached > input)) {
-      summary.totals.cache_hit_invalid_requests = (summary.totals.cache_hit_invalid_requests || 0) + 1;
-      modelTotals.cache_hit_invalid_requests = (modelTotals.cache_hit_invalid_requests || 0) + 1;
+    const unknown = !Number.isFinite(input) || input < 0 || !Number.isFinite(cached) || cached < 0 || cached > input;
+    const invalid = (input != null && (!Number.isFinite(input) || input < 0))
+      || cacheCounts.some(value => value != null && (!Number.isFinite(value) || value < 0))
+      || (Number.isFinite(input) && Number.isFinite(cached) && cached > input);
+    const qualified = `${source} / ${model}`;
+    if (!Object.hasOwn(summary.bySourceModel, qualified)) summary.bySourceModel[qualified] = { requests: 0 };
+    const sourceTotals = summary.bySourceModel[qualified];
+    sourceTotals.requests++;
+    addUsageTotals(sourceTotals, record.usage);
+    for (const target of [summary.totals, modelTotals, sourceTotals]) {
+      if (unknown) target.cache_hit_unknown_requests = (target.cache_hit_unknown_requests || 0) + 1;
+      if (invalid) target.cache_hit_invalid_requests = (target.cache_hit_invalid_requests || 0) + 1;
     }
   }
   return summary;
@@ -329,6 +338,10 @@ async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord
       for (const [model, values] of Object.entries(one.byModel)) {
         if (!Object.hasOwn(summary.byModel, model)) Object.defineProperty(summary.byModel, model, { value: { requests: 0 }, enumerable: true, configurable: true, writable: true });
         addUsageTotals(summary.byModel[model], values);
+      }
+      for (const [model, values] of Object.entries(one.bySourceModel)) {
+        if (!Object.hasOwn(summary.bySourceModel, model)) summary.bySourceModel[model] = {};
+        addUsageTotals(summary.bySourceModel[model], values);
       }
     }
   }
@@ -358,7 +371,7 @@ export async function usageSummaryVersion(filePath) {
 }
 
 export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord, provider = "" } = {}) {
-  if (provider && !["github", "m365"].includes(provider)) throw new Error("Usage provider must be github or m365");
+  if (provider && !isProviderId(provider)) throw new Error("Usage provider must be a valid provider ID");
   if (onRecord || warn !== console.error) return summarizeUsageLogFiles(filePath, { warn, onRecord, provider });
   const fileVersion = await usageSummaryVersion(filePath);
   const version = fileVersion === null ? null : `${fileVersion}\0${provider}`;

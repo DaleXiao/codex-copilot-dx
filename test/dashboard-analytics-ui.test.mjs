@@ -13,7 +13,7 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 class Node {
   constructor(tag = "div") { this.tag = tag; this.children = []; this.dataset = {}; this.style = {}; this.listeners = {}; this.attributes = {}; this.open = false; this.value = ""; this.textContent = ""; }
-  append(...nodes) { this.children.push(...nodes); }
+  append(...nodes) { for (const node of nodes) node.parent = this;this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   setAttribute(key, value) { this.attributes[key] = value; }
   getAttribute(key) { return this.attributes[key] ?? null; }
@@ -23,6 +23,7 @@ class Node {
   querySelector() { return new Node("summary"); }
   scrollIntoView() {}
   focus() {}
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter(node => node !== this); }
 }
 
 function harness({ fetchFn, clipboard = async () => {}, reduced = false, language = false, savedLanguage = "en", savedAutomatic = "on" } = {}) {
@@ -58,14 +59,14 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   let observer;
   const context = createContext({
     document, window: { matchMedia: () => ({ matches: reduced, addEventListener() {} }), addEventListener: on }, navigator: { clipboard: { writeText: clipboard } },
-    Date: ClockDate, performance: { now: () => 0 }, AbortSignal, AbortController, Intl, URLSearchParams, setTimeout(fn, ms) { scheduled.set(fn, ms); if (ms < 1800000) timers.add(fn); return fn; }, clearTimeout(fn) { timers.delete(fn); scheduled.delete(fn); },
+    Date: ClockDate, performance: { now: () => 0 }, AbortSignal, AbortController, Intl, URLSearchParams, encodeURIComponent, setTimeout(fn, ms) { scheduled.set(fn, ms); if (ms < 1800000) timers.add(fn); return fn; }, clearTimeout(fn) { timers.delete(fn); scheduled.delete(fn); },
     localStorage: { getItem: key => key === "ccdx.dashboard.autoRefresh" ? savedAutomatic : savedLanguage, setItem() {} },
     IntersectionObserver: class { constructor(fn) { observer = fn; } observe() {} },
     fetch: async (url, options) => {
       requests.push(url);
       if (fetchFn) { const response = await fetchFn(url, options); if (response) return response; }
       const data = url === "/_ccdx/status" ? { ok: true, name: "codex-copilot-dx" }
-        : url === "/_ccdx/ui/auth" ? { source: "local_auth_status", configured: true, valid: true, login: "octocat" }
+        : url === "/_ccdx/ui/providers" ? { source: "provider_status", providers: [{ id: "github", name: "GitHub Copilot", enabled: true, state: "unknown", auth: { state: "saved", account: "octocat" }, clients: [{ id: "codex", name: "Codex App", selected: true, state: "configured" }] }] }
         : url.includes("/models/") ? { source: "live", models: [] }
         : url.includes("/usage") ? { ...usage, ...(url.includes("analytics=1") ? { analytics: collector.snapshot() } : {}) }
         : url.includes("frames=0") ? { ...themes, themes: themes.themes.map(({ id, label }) => ({ id, label })) } : themes;
@@ -74,7 +75,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   });
   if (language) runInContext(languageScript, context);
   runInContext(refreshScript, context);
-  const api = runInContext(`${viewScripts}\n${script}\n({ renderFailures, renderAuth, loadAuth, loadAnimation, loadUsage, renderAnalytics, selectUsageDay, dashboardRefresh, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, context);
+  const api = runInContext(`${viewScripts}\n${script}\n({ renderFailures, renderProviders, loadAuth, loadAnimation, loadUsage, renderAnalytics, selectUsageDay, dashboardRefresh, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, context);
   ready.forEach((fn) => fn());
   return { api, nodes, requests, timers, scheduled, motions,
     advance(ms) { now += ms; },
@@ -137,7 +138,7 @@ test("language switch preserves unsaved animation, chart nodes/selection and exp
   assert.equal(failure.open, true);
   assert.strictEqual(h.api.timer, timer);
   assert.equal(h.requests.length, requests);
-  assert.match(h.nodes.get("auth-account").textContent, /@octocat \/ 已保存/);
+  assert.equal(h.nodes.get("provider-auth").children[0].children[2].textContent, "本机已保存");
   assert.match(h.nodes.get("daily-bars").children.at(-1).attributes.title, /已计入输入用量/);
   await failure.children.at(-1).listeners.click();
   assert.match(copied, /message: <script>raw source<\/script>/);
@@ -152,7 +153,7 @@ test("saved Chinese applies to asynchronous data, counts and later refresh resul
   const h = harness({ language: true, savedLanguage: "zh" });
   await flush();
   assert.equal(h.nodes.get("connection").textContent, "本机正常");
-  assert.equal(h.nodes.get("auth-account").textContent, "GitHub / @octocat / 已保存");
+  assert.equal(h.nodes.get("provider-auth").children[0].children[2].textContent, "本机已保存");
   assert.equal(h.nodes.get("usage-body").children[0].children[0].textContent, "总用量");
   assert.equal(h.nodes.get("usage-body").children[0].children[2].textContent, "100");
   h.nodes.get("refresh").listeners.click();
@@ -227,38 +228,37 @@ test("model HTTP errors localize only the known CCDX message and retain status c
   assert.equal(h.nodes.get("models-note").textContent, message);
 });
 
-test("dashboard auth renders saved username and fallbacks without claiming online validation", async () => {
-  const h = harness();
-  await flush();
-  assert.equal(h.nodes.get("auth-account").textContent, "GitHub / @octocat / SAVED");
-  for (const [data, expected] of [
-    [{ configured: false }, "GitHub / NOT CONFIGURED"],
-    [{ configured: true, valid: false }, "GitHub / INVALID"],
-    [{ configured: true, valid: false, reason: "credential_read_failed" }, "GitHub / UNAVAILABLE"],
-    [{ configured: true, valid: true }, "GitHub / account unknown / SAVED"],
-    [{ configured: true, valid: true, id: "7" }, "GitHub / ID 7 / SAVED"],
-    [{ configured: true, valid: true, login: "dingxiao_microsoft", id: "7" }, "GitHub / @dingxiao_microsoft / SAVED"],
-  ]) { h.api.renderAuth(data); assert.equal(h.nodes.get("auth-account").textContent, expected); }
-  assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/auth").length, 1);
-  h.nodes.get("refresh").listeners.click();
-  await flush();
-  assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/auth").length, 2);
+test("provider authorization renders saved evidence independently of service availability", async () => {
+  const h = harness();await flush();
+  assert.equal(h.nodes.get("provider-auth").children[0].children[1].textContent, "octocat");
+  assert.equal(h.nodes.get("provider-auth").children[0].children[2].textContent, "Saved locally");
+  for (const state of ["unconfigured", "unavailable", "authorized", "saved"]) {
+    h.api.renderProviders({ providers: [{ id: "example", name: "Example", enabled: true, state: "unavailable",
+      auth: { state, account: "literal<script>" }, clients: [] }] });
+    const row = h.nodes.get("provider-auth").children[0];
+    assert.equal(row.children[1].textContent, "literal<script>");
+    assert.equal(row.children[3].textContent, "Unavailable");
+    assert.notEqual(row.children[2].textContent, "Ready");
+  }
+  assert.equal(h.requests.filter(url => url === "/_ccdx/ui/providers").length, 1);
+  h.nodes.get("refresh").listeners.click();await flush();
+  assert.equal(h.requests.filter(url => url === "/_ccdx/ui/providers").length, 2);
 });
 
 test("auth failure and slow auth do not block normal dashboard refresh or cause retry loops", async () => {
   let release;
-  const h = harness({ fetchFn: (url) => url === "/_ccdx/ui/auth" ? new Promise((resolve) => { release = resolve; }) : undefined });
+  const h = harness({ fetchFn: (url) => url === "/_ccdx/ui/providers" ? new Promise((resolve) => { release = resolve; }) : undefined });
   await flush();
   assert.equal(h.nodes.get("connection").textContent, "LOCAL OK");
   assert.equal(h.nodes.get("refresh").disabled, false);
   h.nodes.get("refresh").listeners.click();
   await flush();
-  assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/auth").length, 1);
+  assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/providers").length, 1);
   release({ ok: false, json: async () => ({ error: "secret-error" }) });
   await flush();
-  assert.equal(h.nodes.get("auth-account").textContent, "GitHub / UNAVAILABLE");
+  assert.equal(h.nodes.get("auth-account").textContent, "UNAVAILABLE");
   assert.equal(h.nodes.get("connection").textContent, "LOCAL OK");
-  assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/auth").length, 1);
+  assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/providers").length, 1);
 });
 
 test("animation is lazy, stops while collapsed, and keeps unsaved choices on reopen", async () => {
@@ -433,7 +433,7 @@ test("unchanged refresh keeps model, usage and chart nodes, filters, selected da
 
 test("failed refresh preserves prior rows and account without marking them as fresh", async () => {
   let failed = false;
-  const h = harness({ fetchFn: url => failed && (url.includes("/usage") || url.includes("/models/") || url.includes("/auth"))
+  const h = harness({ fetchFn: url => failed && (url.includes("/usage") || url.includes("/models/") || url.includes("/providers"))
     ? { ok: false, json: async () => ({ error: "offline" }) } : undefined }); await flush();
   const rows = [...h.nodes.get("usage-body").children];
   const models = [...h.nodes.get("live-models-body").children];
@@ -443,7 +443,7 @@ test("failed refresh preserves prior rows and account without marking them as fr
   assert.deepEqual(h.nodes.get("usage-body").children, rows);
   assert.deepEqual(h.nodes.get("live-models-body").children, models);
   assert.equal(h.api.dashboardRefresh.state("usage").updatedAt, time);
-  assert.match(h.nodes.get("auth-account").textContent, /@octocat \/ UPDATE FAILED/);
+  assert.match(h.nodes.get("auth-account").textContent, /Update failed/);
   assert.equal(h.nodes.get("models-state").textContent, "LIVE LOOKUP FAILED");
   assert.equal(h.nodes.get("connection").textContent, "LOCAL OK");
 });
@@ -490,4 +490,50 @@ test("failure timelines correlate recovered events and include transport failure
   assert.match(copied, /upstream_attempts: 2/);
   assert.match(copied, /upstream \{input\}/);
   assert.equal(h.requests.length, requestCount);
+});
+
+test("provider tabs abort stale responses, retain independent catalogs and survive provider removal", async () => {
+  let release, providers = ["github", "third"].map(id => ({ id, name: id, enabled: true, auth: {},
+    clients: [{ id: "codex", name: "Codex App", selected: id === "github", state: "configured" }] }));
+  const h = harness({ fetchFn: async url => {
+    if (url === "/_ccdx/ui/providers") return { ok: true, json: async () => ({ source: "provider_status", providers }) };
+    if (!url.includes("/models/")) return;
+    const id = url.includes("provider=third") ? "third" : "github";
+    if (id === "third") await new Promise(resolve => { release = resolve; });
+    return { ok: true, json: async () => ({ source: "live", selectable: 1, advertised: 1, models: [{ id: `${id}-model`, vendor: id, endpoints: [] }] }) };
+  } });await flush();
+  const buttons = h.nodes.get("model-providers").children;
+  buttons[1].listeners.click();await flush();
+  buttons[0].listeners.click();await flush();
+  assert.equal(h.nodes.get("live-models-body").children[0].children[0].textContent, "github-model");
+  release();await flush();
+  assert.equal(h.nodes.get("live-models-body").children[0].children[0].textContent, "github-model");
+  providers = providers.slice(0, 1);await h.api.loadAuth();
+  assert.equal(h.nodes.get("model-providers").children.length, 1);
+  assert.equal(h.nodes.get("source-detail").textContent, "Codex App → github");
+});
+
+test("account generation changes invalidate even a first in-flight catalog without a saved snapshot", async () => {
+  let generation = 1, releaseOld, calls = 0;
+  const h = harness({ fetchFn: async url => {
+    if (url === "/_ccdx/ui/providers") return { ok: true, json: async () => ({ source: "provider_status", providers: [
+      { id: "github", generation, name: "GitHub Copilot", enabled: true, auth: {}, clients: [{ id: "codex", name: "Codex App", selected: true }] },
+    ] }) };
+    if (!url.includes("/models/")) return;
+    const old = ++calls === 1;
+    if (old) await new Promise(resolve => { releaseOld = resolve; });
+    return { ok: true, json: async () => ({ source: "live", models: [{ id: old ? "old-account-model" : "new-account-model", endpoints: [] }] }) };
+  } });await flush();
+  generation = 2;await h.api.loadAuth();await flush();
+  releaseOld();await flush();
+  assert.equal(h.nodes.get("live-models-body").children[0].children[0].textContent, "new-account-model");
+  assert.equal(calls, 2);
+});
+
+test("filtering one historical source retains the other historical source options", async () => {
+  const h = harness({ fetchFn: async url => url.includes("/usage") ? { ok: true, json: async () => ({ source: "local_usage_log",
+    provider: url.includes("provider=retired_a") ? "retired_a" : "all", providers: url.includes("provider=retired_a") ? { retired_a: 1 } : { retired_a: 1, retired_b: 1 },
+    total: { requests: 1 }, rows: [], model_count: 0 }) } : undefined });await flush();
+  const selector = h.nodes.get("usage-provider");selector.value = "retired_a";selector.listeners.change();await flush();
+  assert.ok(selector.children.some(option => option.value === "retired_b"));
 });

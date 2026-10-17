@@ -12,6 +12,8 @@ import { requestOptionsEvidence } from "../response-failures.mjs";
 import { status } from "../status.mjs";
 import { redactDiagnosticText } from "../diagnostic-text.mjs";
 import { removeNativeImageTools } from "../responses-image-tools.mjs";
+import { resolveClaudeModel } from "../claude-models.mjs";
+import { modelReasoningEfforts } from "../provider-metadata.mjs";
 import { limitM365CacheTtl } from "./m365-messages-policy.mjs";
 
 export const M365_API_BASE = "https://df.loki.delve.office.com/api/v1/llmapi";
@@ -23,7 +25,7 @@ const protocolError = (code, message, statusCode = 400) => Object.assign(new Err
 
 export function m365Headers(token, { headers = {}, conversationId, stream = false } = {}) {
   const out = { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: stream ? "text/event-stream" : "application/json",
-    "X-ClientType": "GitHub", "X-ClientVersion": "0.10.1", "X-Llm-Api-Version": "2026-09-28", "X-ClientScenario": "Code",
+    "X-ClientType": "GitHub", "X-ClientVersion": "1.0.0", "X-Llm-Api-Version": "2026-09-28", "X-ClientScenario": "Code",
     "X-ClientFeature": "LlmApiProxy", "X-ClientCorrelationId": randomUUID(), "X-ClientCallId": randomUUID() };
   if (conversationId) out["X-ConversationId"] = conversationId;
   for (const name of ["anthropic-version", "anthropic-beta"]) {
@@ -160,7 +162,7 @@ export function createM365Provider({ home, env = process.env, auth = createM365A
 
   function selectedModel(id, family) {
     const models = m365Models(catalog, family);
-    const model = models.find(entry => entry.id === id || (family === "claude" && entry.id.replace(/(\d+)\.(\d+)$/, "$1-$2") === id));
+    const model = family === "claude" ? resolveClaudeModel(models, id) : models.find(entry => entry.id === id);
     if (!model) throw protocolError("m365_model_unavailable", `Model ${String(id).slice(0, 128)} is not available from Microsoft 365. Select a model from its current catalog.`);
     return model;
   }
@@ -193,7 +195,12 @@ export function createM365Provider({ home, env = process.env, auth = createM365A
     responsesCompact(body, options) { return client.responses(body, options); },
     chatCompletions() { throw protocolError("m365_protocol_unsupported", "Microsoft 365 Codex routing requires native Responses"); },
     async messages(body, options = {}) {
+      if (catalog && now() - catalogAt >= SOFT_TTL_MS && !flight) void refresh().catch(() => {});
       const model = selectedModel(body.model, "claude");
+      const efforts = modelReasoningEfforts(model);
+      if (body.output_config?.effort !== undefined && efforts && !efforts.includes(body.output_config.effort)) {
+        throw protocolError("m365_effort_unavailable", "The selected effort is not advertised by this model. Refresh its model list and select an available effort.");
+      }
       const adjusted = limitM365CacheTtl(body);
       if (adjusted.changed && !cacheTtlAdjustments) log("info", "Microsoft 365 supports 5m prompt caching; 1h cache retention is capped to 5m. Content and breakpoints are unchanged.");
       cacheTtlAdjustments += adjusted.changed;
@@ -205,6 +212,7 @@ export function createM365Provider({ home, env = process.env, auth = createM365A
   return {
     id: "m365", client, registry, auth, refresh, profileId: profile,
     models: family => m365Models(catalog, family),
+    catalog: () => catalog?.data || [],
     selectModel(body, { requestedModel, upstreamModel }) {
       selectedModel(upstreamModel, "gpt");
       if (requestedModel !== CODEX_AUTO_REVIEW_MODEL && body.service_tier === "priority") {

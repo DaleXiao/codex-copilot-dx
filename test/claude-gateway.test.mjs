@@ -11,7 +11,7 @@ const message = { id: "msg_synthetic", type: "message", role: "assistant", model
 async function gateway(t, messages, extra = {}) {
   const records = [], calls = [];
   const server = await startClaudeGateway({ port: 0, apiKey: key, provider: {
-    models: () => [{ id: "claude-opus-5.5", name: "Opus 5.5" }], client: { messages: async (body, options) => {
+    id: "m365", models: () => [{ id: "claude-opus-5.5", name: "Opus 5.5" }], client: { messages: async (body, options) => {
       calls.push(body);options.onUpstreamStart?.();return messages(body, options);
     } },
   }, record: value => records.push(value), ...extra });
@@ -94,7 +94,7 @@ test("browser requests and invalid local keys never reach the M365 provider", as
   assert.equal(invalidHost, 403);
   assert.equal(g.calls.length, 0);assert.equal(g.records.length, 0);
   const models = await fetch(`http://127.0.0.1:${g.server.port}/v1/models?limit=1000`, { headers: { "x-api-key": key } });
-  assert.deepEqual((await models.json()).data.map(x => x.id), ["claude-opus-5.5"]);
+  assert.deepEqual((await models.json()).data.map(x => x.id), ["claude-opus-5-5"]);
 });
 
 test("bounded Claude observation preserves UTF-8 and handles multiline events", () => {

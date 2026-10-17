@@ -58,3 +58,30 @@ CI/publication receipts are recorded after their checks complete. Local isolated
 this does not establish real-tenant Windows M365 entitlement or native visible
 prediction candidates. The user's running service/configuration is not silently
 replaced during release validation.
+
+## Cross-platform release gate
+
+All **14/14** jobs passed in [CI 38993624345](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38993624345),
+testing commit `73b99d737d5c219ec766ae0571609c88fd911eb8`. The gate includes
+Node 22.15/24 on Linux/macOS/Windows, strict npm 12 installs/upgrades on all three
+platforms, Windows launcher/native/network contracts, actual Chromium same-process
+prediction/PAC recovery on all three platforms, native Codex/Claude CLI synthetic
+replays, and Chromium/WebKit console behavior.
+
+The first run (38993204099) passed 12 jobs; the new quiet-startup test incorrectly
+expected a POSIX exit code after Windows terminateProcess. The isolated fixture
+now triggers the same production shutdown handler cooperatively and has an
+explicit timeout. Thirteen affected startup tests passed locally, followed by
+the complete successful CI run. This test-only correction did not change the
+177-file production package.
+
+The package is **456,615 bytes**, SHA-256
+`16e913f20f390e4d697a8d45899248c53e913db88f59df686054520f9623a4d3`.
+There is no new runtime dependency or installation hook. The 1.0.0 artifact was
+440,583 bytes; the additional console code/docs add 16,032 compressed bytes.
+No lower model latency, universal corporate-mirror availability or real-tenant
+Windows M365 access is claimed from synthetic tests. Claude App path-prefix
+construction was checked read-only in installed 2.42304.0; the real CLI engine
+was exercised, but this release validation did not change the user's App profile
+or repeat the earlier real-App effort test. Native visible prediction candidates
+remain unverified by these protocol/browser receipts.

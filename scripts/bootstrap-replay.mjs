@@ -71,11 +71,11 @@ try {
       const result = await run(windows ? path.join(process.env.SystemRoot, "System32", "cmd.exe") : path.join(installedPrefix, "bin", "ccdx"), args,
         { env, cwd: installedPrefix, encoding: "utf8", timeout: 15000, ...(windows ? { windowsVerbatimArguments: true } : {}) });
       assert.ok(result.stdout.includes(`ccdx v${version} `));
-      if (windows && mode === "no-node") {
+      if (windows) {
         const bare = await run(shell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Restricted", "-Command",
           "$env:PATH=$env:CCDX_REPLAY_PREFIX+';'+$env:PATH;ccdx version;if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}"],
           { env: { ...env, CCDX_REPLAY_PREFIX: installedPrefix }, cwd: home, timeout: 15000 });
-        assert.ok(bare.stdout.includes(`ccdx v${version} `), "Private command works directly in PowerShell without a ps1 shim");
+        assert.ok(bare.stdout.includes(`ccdx v${version} `), "Bootstrap command works directly in PowerShell without a ps1 shim");
       }
       corrupt = true;await assert.rejects(invoke(shell), /Command failed/);corrupt = false;
       const retained = await run(windows ? path.join(process.env.SystemRoot, "System32", "cmd.exe") : path.join(installedPrefix, "bin", "ccdx"), args,

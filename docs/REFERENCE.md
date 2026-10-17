@@ -1020,10 +1020,11 @@ ask the administrator to pre-stage these exact files and dependency cache or use
 an approved existing Node/npm distribution; CCDX does not bypass network policy.
 
 Private launchers bind the chosen Node and set `CCDX_PRIVATE_INSTALL_PREFIX` for
-future updates. They supply a private `npm_config_prefix` only when the caller has
+future updates. Windows bootstrap uses these validated commands even with an
+existing Node, so spaces and shell metacharacters in the prefix do not break npm's generated batch commands. Exact npm-owned PowerShell launchers are removed; custom scripts and script policy stay unchanged. They supply a private `npm_config_prefix` only when the caller has
 not set one. Updates preserve those launchers. PATH and shell profiles are not
 rewritten: the installer prints the full command path and the directory to add
-for `ccdx` shorthand. Existing compatible installations keep npm's normal commands.
+for `ccdx` shorthand. Compatible POSIX installations keep npm's normal commands.
 No install hook is added to the npm package.
 
 The scripts accept only `sh install.sh [--allow-remote]` or

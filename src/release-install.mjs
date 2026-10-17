@@ -180,7 +180,7 @@ async function bootstrap() {
     args.push(release.file);
     execFileSync(process.execPath, args, { stdio: "inherit", timeout: 300000 });
     verifyPackageRuntime(target, release.version, { brokerRequired: ["darwin", "win32"].includes(process.platform) });
-    if (privateRuntime) await writePrivateLaunchers({ prefix, target });
+    if (privateRuntime || process.platform === "win32") await writePrivateLaunchers({ prefix, target });
     transaction.commit();transaction = null;
     console.log(`Installed CCDX ${release.version}. Existing services keep running until restarted.`);
   } catch (error) {

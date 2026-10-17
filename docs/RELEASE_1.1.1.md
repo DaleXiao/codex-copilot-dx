@@ -44,4 +44,37 @@ fallback/restore. Image MCP active requests stay outside inference counters.
 Local real Chrome passed eight English/Chinese, light/dark and 420/1280px WebUI
 combinations, including brand placement, manual refresh and reduced motion.
 All upstream data in these presentation replays is synthetic; no paid model
-or image call is made. Cross-platform and publication receipts follow separately.
+or image call is made.
+
+The actual isolated **1.1.0 → 1.1.1** install/upgrade passed on darwin/arm64 using
+the configured company registry, including command entry, installed sharp and
+the supported optional broker. No global user installation was changed.
+
+All **14/14** jobs passed in [CI 38996147763](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38996147763)
+at `f1184730400334d2e4ee0af1b12ebdf33c5d37de`, the immutable `v1.1.1` tag.
+This includes Node 22.15/24 on Linux/macOS/Windows, strict npm 12 installation
+and upgrade, native Codex/Claude synthetic replays, Chromium/WebKit WebUI checks,
+and actual xterm cursor/resize replay alongside browser PAC recovery on all three
+platforms. These checks do not establish real-tenant M365 entitlement, live model
+latency or visible native prediction candidates.
+
+The npm package contains **177 files**, **458,900 bytes**, with no new runtime
+dependency or installation hook. SHA-256:
+`68aec6d2ee9ed81527b2c05c2670299390cf3993e45627911b41110e8b316e24`.
+
+## Publication
+
+Published to npm `latest` by [workflow 38996632401](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38996632401).
+Its SHA-1 `e80765f659e4e7208c07faae9286a5797fefb8e9` matches the locally verified
+artifact. [GitHub Release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.1.1)
+contains the matching tarball and portable checksum file. GitHub's asset digest
+and one fresh download both matched the SHA-256 and exact size recorded above.
+
+This Mac's npm origin is blocked by company IT; no direct-origin retry, registry,
+proxy, TLS or npm policy change was made. Publication is evidenced by the successful
+official workflow and matching artifact, not by local public-registry access.
+`ccdx update github` uses GitHub for the source package; dependencies still require
+the configured company registry and applicable npm policy. Restart the running
+CCDX service after upgrade; release validation did not stop or replace it.
+
+`main` records these receipts separately from the immutable tested tag.

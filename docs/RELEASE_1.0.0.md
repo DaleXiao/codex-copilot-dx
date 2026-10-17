@@ -2,8 +2,9 @@
 
 Date: 2026-10-17 (Asia/Shanghai). Baseline: 0.10.1 / `8609883`.
 
-Status: local candidate. Not published. Remote CI and publication require a normal
-GitHub login with repository write/workflow access. The existing Codex service was not replaced. Claude App used a temporary duplicated
+Status: release candidate; remote CI and publication receipts follow. GitHub uses
+the user-authorized, owner-verified historical CCDX 9 PAT in process memory only;
+npm uses the existing repository publishing workflow and secret. The existing Codex service was not replaced. Claude App used a temporary duplicated
 Profile for verification, followed by restoration of its original Profile.
 
 ## Resulting behavior

@@ -67,7 +67,7 @@ try {
     };
     for (const shell of shells) {
       const installed = await invoke(shell);assert.match(installed.stdout, new RegExp(`Installed CCDX ${version.replaceAll(".", "\\.")}`));
-      const args = windows ? ["/d", "/s", "/v:off", "/c", '"ccdx.cmd version"'] : ["version"];
+      const args = windows ? ["/d", "/s", "/v:off", "/c", '"chcp 437>nul & ccdx.cmd version"'] : ["version"];
       const result = await run(windows ? path.join(process.env.SystemRoot, "System32", "cmd.exe") : path.join(installedPrefix, "bin", "ccdx"), args,
         { env, cwd: installedPrefix, encoding: "utf8", timeout: 15000, ...(windows ? { windowsVerbatimArguments: true } : {}) });
       assert.ok(result.stdout.includes(`ccdx v${version} `));

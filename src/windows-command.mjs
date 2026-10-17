@@ -38,8 +38,13 @@ exit $ret
 }
 
 export function privateWindowsCommand({ node, cli, prefix }) {
-  const literal = value => value.replaceAll("%", "%%");
-  return `@echo off\r\nsetlocal DisableDelayedExpansion\r\nset "CCDX_PRIVATE_INSTALL_PREFIX=${literal(prefix)}"\r\nset "PATH=${literal(path.dirname(node))};%PATH%"\r\nif not defined npm_config_prefix set "npm_config_prefix=${literal(prefix)}"\r\n"${literal(node)}" "${literal(cli)}" %*\r\nexit /b %errorlevel%\r\n`;
+  const relativeNode = path.relative(prefix, node), relativeCli = path.relative(prefix, cli);
+  const privateNode = !path.isAbsolute(relativeNode) && !relativeNode.startsWith(`..${path.sep}`);
+  // Expand the native batch directory at run time. Embedding a UTF-8 absolute
+  // path in a .cmd file breaks Unicode profiles under legacy console code pages.
+  const binary = privateNode ? `%~dp0${relativeNode}` : "node.exe";
+  const nodePath = privateNode ? `set "PATH=%~dp0${path.dirname(relativeNode)};%PATH%"\r\n` : "";
+  return `@echo off\r\nsetlocal DisableDelayedExpansion\r\nset "CCDX_PRIVATE_INSTALL_PREFIX=%~dp0"\r\n${nodePath}if not defined npm_config_prefix set "npm_config_prefix=%~dp0"\r\n"${binary}" "%~dp0${relativeCli}" %*\r\nexit /b %errorlevel%\r\n`;
 }
 
 export function inspectWindowsCommand({ platform = process.platform,

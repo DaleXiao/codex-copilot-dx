@@ -235,7 +235,7 @@ export async function runPackageUpdateCommand({
   }
   installedVersion = verifyInstalledFn(environment?.target, { expectedVersion: release?.version });
   if (environment?.target && installedVersion) verifyRuntimeFn(environment.target, installedVersion, { brokerRequired });
-  if (env.CCDX_PRIVATE_INSTALL_PREFIX && env.CCDX_PRIVATE_INSTALL_PREFIX === environment?.prefix) await writePrivateLaunchers(environment);
+  if (env.CCDX_PRIVATE_INSTALL_PREFIX && environment?.prefix && (platform === "win32" ? path.win32.resolve(env.CCDX_PRIVATE_INSTALL_PREFIX).toLowerCase() === path.win32.resolve(environment.prefix).toLowerCase() : path.resolve(env.CCDX_PRIVATE_INSTALL_PREFIX) === path.resolve(environment.prefix))) await writePrivateLaunchers(environment);
   transaction.commit();
   } catch (error) { transaction.rollback();throw error; }
   if (installedVersion) {

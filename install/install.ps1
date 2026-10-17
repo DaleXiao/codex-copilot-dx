@@ -12,6 +12,9 @@ function FileHash($file) {
   try { [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }
   finally { $stream.Dispose(); $sha.Dispose() }
 }
+function CheckPrefix($value) {
+  if ($value.Contains('%')) { throw 'Windows PowerShell expands percent signs in batch paths. Set npm_config_prefix to a writable folder without % before installing. Existing CCDX was preserved.' }
+}
 $privateRuntime = $false
 try {
   $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
@@ -27,9 +30,11 @@ try {
     if (!(Test-Path -LiteralPath $npmCli)) { throw 'Cannot locate npm-cli.js beside npm.cmd. Keep this Node/npm setup and use npm.cmd install -g codex-copilot-dx.' }
     $prefix = (& $node $npmCli prefix --global).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Cannot read the configured npm prefix.' }
+    CheckPrefix $prefix
   } else {
     $privateRuntime = $true
     $prefix = if ($env:npm_config_prefix) { $env:npm_config_prefix } else { Join-Path $env:LOCALAPPDATA 'CCDX' }
+    CheckPrefix $prefix
     $architecture = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITEW6432')
     if (!$architecture) { $architecture = $env:PROCESSOR_ARCHITECTURE }
     switch ($architecture.ToUpperInvariant()) {

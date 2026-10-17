@@ -52,7 +52,7 @@ try {
   const shells = windows ? [path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
     path.join(process.env.ProgramFiles, "PowerShell", "7", "pwsh.exe")].filter(file => fs.existsSync(file)) : ["/bin/sh"];
   for (const mode of ["with-node", "no-node"]) {
-    const home = path.join(root, mode + " 中文 & ! %PATH%"), prefix = path.join(home, "global");fs.mkdirSync(home);
+    const home = path.join(root, mode + " 中文 & !"), prefix = path.join(home, "global");fs.mkdirSync(home);
     const env = { ...process.env, HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(home, "local"), XDG_DATA_HOME: path.join(home, "data"),
       CCDX_REPLAY_NODE: process.execPath, CCDX_REPLAY_NPM: actualNpm,
       npm_config_userconfig: config("userconfig"), npm_config_globalconfig: config("globalconfig"), npm_config_registry: config("registry"),
@@ -66,6 +66,12 @@ try {
       return run(shell, args, { env, cwd: home, timeout: 600000, maxBuffer: 2 * 1024 * 1024 });
     };
     for (const shell of shells) {
+      if (windows) {
+        const unsupportedPrefix = path.join(root, "unsupported%prefix");
+        await assert.rejects(run(shell, ["-NoProfile", "-NonInteractive", "-File", platformScript], {
+          env: { ...env, npm_config_prefix: unsupportedPrefix }, cwd: home, timeout: 15000 }), error => error.stderr?.includes("without %"));
+        assert.equal(fs.existsSync(unsupportedPrefix), false, "Unsupported batch prefix is refused before installation");
+      }
       const installed = await invoke(shell);assert.match(installed.stdout, new RegExp(`Installed CCDX ${version.replaceAll(".", "\\.")}`));
       const args = windows ? ["/d", "/s", "/v:off", "/c", '"chcp 437>nul & ccdx.cmd version"'] : ["version"];
       const result = await run(windows ? path.join(process.env.SystemRoot, "System32", "cmd.exe") : path.join(installedPrefix, "bin", "ccdx"), args,

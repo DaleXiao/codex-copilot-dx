@@ -1024,7 +1024,12 @@ future updates. Windows bootstrap uses these validated commands even with an
 existing Node, so spaces and shell metacharacters in the prefix do not break npm's generated batch commands. Exact npm-owned PowerShell launchers are removed; custom scripts and script policy stay unchanged. They supply a private `npm_config_prefix` only when the caller has
 not set one. Updates preserve those launchers. PATH and shell profiles are not
 rewritten: the installer prints the full command path and the directory to add
-for `ccdx` shorthand. Compatible POSIX installations keep npm's normal commands.
+for `ccdx` shorthand. Compatible POSIX installations keep npm's normal commands. Windows PowerShell
+expands percent signs in batch command filenames, before CCDX can run. The
+Windows bootstrap refuses an install prefix containing `%` before modifying it;
+choose a writable prefix without `%` using `npm_config_prefix`. Unicode, spaces,
+`&` and `!` are covered, including a legacy console code page. This avoids shipping
+an additional native executable just to bypass the shell's path parsing.
 No install hook is added to the npm package.
 
 The scripts accept only `sh install.sh [--allow-remote]` or

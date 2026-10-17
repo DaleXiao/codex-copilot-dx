@@ -54,6 +54,7 @@ const localFetch = globalThis.fetch;
 let finishImage;
 let finishUpdate;
 process.on("message", message => {
+  if (message === "shutdown-service-fixture") process.emit("SIGTERM");
   if (message === "release-image-fixture") finishImage?.();
   if (message === "release-update-fixture") finishUpdate?.();
   if (message === "release-compression-fixture") finishCompression?.();

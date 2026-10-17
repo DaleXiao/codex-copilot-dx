@@ -33,7 +33,12 @@ test("default startup keeps request details out of the terminal while opt-in fil
   }
   const status = await fetch(`http://127.0.0.1:${port}/_ccdx/status`).then(response => response.json());
   assert.equal(status.requests.by_route.responses.total, 2);
-  child.kill("SIGTERM");assert.equal((await done)[0], 0);
+  // Windows terminateProcess does not deliver POSIX SIGTERM; exercise the same
+  // production shutdown handler cooperatively through the isolated IPC fixture.
+  child.send("shutdown-service-fixture");
+  let shutdownTimer;
+  try { assert.equal((await Promise.race([done, new Promise((_, reject) => { shutdownTimer = setTimeout(() => reject(new Error("Cooperative fixture shutdown timed out")), 10000); })]))[0], 0); }
+  finally { clearTimeout(shutdownTimer); }
   assert.doesNotMatch(output, /responses model=|\x1b\[/);
   assert.match(await fs.readFile(log, "utf8"), /responses model=gpt-5.5/);
 });

@@ -7,7 +7,6 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { pathToFileURL } from "node:url";
 import { runPackageUpdateCommand, inspectNpmDownloadPolicy } from "../src/package-update.mjs";
 
 const npm = process.argv[process.argv.indexOf("--npm") + 1];
@@ -37,8 +36,6 @@ try {
   await artifact("codex-copilot-dx", oldVersion);
   const source = await artifact("codex-copilot-dx", version, { sharp: "0.35.3", "smol-toml": "1.8.0" });
   await artifact("sharp", "0.35.3", { "fixture-leaf": "1.0.0" });await artifact("smol-toml", "1.8.0");await artifact("fixture-leaf", "1.0.0");
-  for (const args of [["init", "--quiet"], ["add", "package.json", "index.js"], ["-c", "user.name=CCDX synthetic replay", "-c", "user.email=replay@example.invalid", "commit", "--quiet", "-m", "synthetic registry fixture"], ["tag", `v${version}`]]) await run("git", args, { cwd: source, timeout: 10000 });
-  const localGit = `git+${pathToFileURL(source).href}#v${version}`;
   const serve = (req, res, cdn) => {
     records.push({ url: req.url, cdn, authorization: req.headers.authorization });
     const decoded = decodeURIComponent(req.url.split("?")[0]);
@@ -82,13 +79,15 @@ try {
       assert.equal(inspectNpmDownloadPolicy({ env }).allowRemote, "none");
       const output = [];let launches = 0, stderr = "", childClosed;
       const update = () => runPackageUpdateCommand({ source: sourceType, allowRemote: mode.startsWith("explicit") || mode.startsWith("corrupt"), env,
-        output: { isTTY: false, write: value => output.push(value) }, fetchImpl: async () => new Response(null, { status: 302,
-          headers: { location: `/DaleXiao/codex-copilot-dx/releases/tag/v${version}` } }),
+        output: { isTTY: false, write: value => output.push(value) }, verifyRuntimeFn() {}, fetchImpl: async url => {
+          if (url.endsWith("/latest")) return new Response(null, { status: 302, headers: { location: `/DaleXiao/codex-copilot-dx/releases/tag/v${version}` } });
+          const bytes = artifacts.get(`codex-copilot-dx@${version}`).bytes;
+          return new Response(url.endsWith("SHA256SUMS") ? `${crypto.createHash("sha256").update(bytes).digest("hex")}  codex-copilot-dx-${version}.tgz\n` : bytes);
+        },
         spawnImpl(command, args, options) {
           launches++;
-          // Exercise actual npm Git extraction without any external network.
-          const replace = value => value.replace(`github:DaleXiao/codex-copilot-dx#v${version}`, localGit);
-          const child = spawn(command, args.map(replace), { ...options, stdio: ["ignore", "pipe", "pipe"] });
+          assert.ok(!args.some(value => /allow-git|github:Dale/.test(value)));
+          const child = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
           child.stdout.resume();child.stderr.on("data", bytes => { stderr = (stderr + bytes.toString()).slice(-65536); });
           childClosed = new Promise(resolve => child.once("close", resolve));return child;
         } });
@@ -109,7 +108,7 @@ try {
   assert.ok(records.some(record => !record.cdn && record.authorization === `Bearer ${registryToken}`));
   assert.ok(records.some(record => record.cdn));
   assert.ok(records.filter(record => record.cdn).every(record => record.authorization === undefined), "registry tokens must not reach the other origin");
-  console.log("Synthetic loopback registry/CDN/Git fixtures passed; this is not company-network or native-sharp acceptance.");
+  console.log("Synthetic loopback registry/CDN/Release fixtures passed; this is not company-network or native-sharp acceptance.");
 } finally {
   for (const server of servers) { server.closeAllConnections();await new Promise(resolve => server.close(resolve)); }
   fs.rmSync(root, { recursive: true, force: true });

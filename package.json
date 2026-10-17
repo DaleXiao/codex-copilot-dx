@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Local Codex adapter and optional Microsoft 365 Claude gateway",
   "author": "Dale Xiao",
   "type": "module",
@@ -48,7 +48,9 @@
     "bench:check": "node scripts/benchmark.mjs --check",
     "pack:check": "npm pack --dry-run --json",
     "verify": "npm test && npm run test:smoke && npm run bench:check && npm run pack:check",
-    "prepublishOnly": "npm run verify"
+    "prepublishOnly": "npm run verify",
+    "release:pack": "node scripts/release-artifacts.mjs",
+    "test:release-network": "node scripts/release-network-replay.mjs"
   },
   "dependencies": {
     "sharp": "0.35.3",

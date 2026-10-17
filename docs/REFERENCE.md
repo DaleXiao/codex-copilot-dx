@@ -263,7 +263,7 @@ certificate store is opened. Existing valid PEM credentials are reused without
 conversion or reauthorization. macOS retains its system OpenSSL setup path.
 CCDX does not download a runtime or bypass company PowerShell policy; unavailable
 system APIs fail the optional setup without preventing core service startup.
-This does not remove Git from the separate `ccdx update github` installation path.
+Git is also unnecessary for `ccdx update github` since 1.2.1; it uses a verified Release tarball.
 Run CCDX using Windows-native Node, not inside WSL. The App's agent may still use
 WSL independently. No administrator prompt or execution-policy change is added.
 AppData may be virtualized by MSIX: setup selects an existing `Codex/Local State`
@@ -770,7 +770,7 @@ ccdx limits --decoded default
 
 ### Control console and online settings
 
-The sidebar separates Overview, Codex/Claude Apps, Model sources, Usage and issues, and Settings. Codex owns optional image generation, native
+The sidebar separates Overview, indented Codex/Claude Apps, Model sources, Usage, Requests, and Settings. Codex owns optional image generation, native
 prediction adaptation and the temporary Responses conversation buffer. That
 buffer supports continuation; it is not a chat archive. Shared HTTP traffic and
 per-protocol model outcomes are distinct. Claude Messages metrics are not labeled
@@ -791,7 +791,7 @@ animation themes retain their timing/palette and cycle pauses. `--verbose`,
 `--show-request-id` or `CCDX_LOG_LEVEL=debug` restore detailed terminal output.
 Failed reads show previous-data status and the last successful update time, or that no data has been received. Narrow summaries wrap rather than hiding Claude App/Code state. Non-TTY/CI/dumb/too-small terminals use plain output; repeated identical notices
 are coalesced. File logging retains its existing explicit opt-in and redaction.
-In-memory usage still updates when `CCDX_DISABLE_USAGE=1` disables persistence. `runtime_usage.by_provider` separates returned process-local usage by source. The Usage and issues view adds Requests by source; `ccdx status` also lists source/protocol outcomes. Unknown outcomes and partial usage remain distinct. CLI remains English; WebUI keeps English/Chinese.
+In-memory usage still updates when `CCDX_DISABLE_USAGE=1` disables persistence. `runtime_usage.by_provider` separates returned process-local usage by source. The Requests view contains Requests by source, recent failures and request context; `ccdx status` also lists source/protocol outcomes. Unknown outcomes and partial usage remain distinct. CLI remains English; WebUI keeps English/Chinese.
 
 The Clear conversation buffer action clears all process-local conversation continuation data. If image optimization or conversation history is active, cleanup is refused; retry after current requests finish. Old chats may fail to continue; saved Codex transcripts remain. It invokes the existing image-transform/history cleanup operation, rather than an inactive-only selector.
 
@@ -911,97 +911,126 @@ ccdx update npm
 ccdx update github
 ```
 
-In Windows PowerShell, use `ccdx.cmd update github` (or `ccdx.cmd update npm`)
-when script policy blocks npm's `.ps1` shim. Since `0.9.31`, the updater runs
-`npm.cmd` through the system `cmd.exe`, with AutoRun and delayed expansion
-disabled, fixed installer arguments and a validated stable release tag.
-It does not enable Node's generic `shell` option, change PowerShell policy,
-rewrite npm configuration or add an external dependency. The caller's PATH,
-registry, proxy, prefix/cache settings and terminal streams are preserved.
-macOS/Linux retain direct `npm` execution and separate argument arrays.
+Since 1.2.1, the GitHub channel resolves the latest stable Release, downloads
+`codex-copilot-dx-VERSION.tgz` and `SHA256SUMS` from that exact release, checks
+SHA-256 and the packed package name/version, and gives the verified local file
+to npm. **Git is not required.** It never installs `main`, falls back to another
+channel or automatically grants remote-download permission. Each asset has a
+60-second download deadline and bounded size (64 KiB manifest, 16 MiB package,
+64 MiB decompressed metadata scan). The checksum comes from the same HTTPS
+release; it detects corrupt/mismatched files and is not a separate signature.
+Dependencies still use npm's configured registry, including a company mirror.
+This is not a fully offline or registry-free distribution.
 
-Versions through `0.9.30` can fail with `spawn EINVAL` before the Windows
-installer starts. To bootstrap this fix, run the installer directly:
+Windows runs `npm.cmd` through system `cmd.exe` with AutoRun and delayed expansion
+disabled. Its fixed tarball basename is passed separately from the temporary
+working directory, including when that path has spaces or shell metacharacters.
+Use `ccdx.cmd` if PowerShell blocks npm's `.ps1` entry. No PowerShell policy,
+registry, proxy, certificate setting or persistent npm permission is changed.
+macOS/Linux keep direct npm execution with separate argument arrays.
 
-```powershell
-npm.cmd install -g --allow-git=all 'github:DaleXiao/codex-copilot-dx#v0.9.33'
-ccdx.cmd version
-```
+Before npm changes a discovered global target, CCDX backs up only its package
+and two command entries and acquires an exclusive install lock. A linked target
+is preserved and refused. Installer or runtime-verification failure restores the
+old package/commands; successful installation removes the backup. A failed restore
+reports the retained backup and lock for manual recovery. A lock left by a killed
+installer requires checking that no installation is running before removing it.
+There is no promise of crash/power-loss atomicity. Other apps, credentials,
+settings, caches and the running service are not replaced. Readonly/busy Windows
+files can prevent installation; finish use of that installation and retry.
 
-This GitHub installation still requires Git on PATH. Stop/restart the running
-adapter after installation; installation alone does not update a running process.
-Installer errors and nonzero exits fail the update without a success message or
-automatic retry. Missing Git, blocked dependency downloads or npm cache-only
-settings remain npm/environment errors, not fixed by changing the launcher.
+The selected target must have the correct name/stable version (exact version for
+GitHub), a working version command and working sharp. A previously installed
+native M365 broker must remain loadable. A mismatched npm prefix warns and retains
+the caller's choice; if the target cannot be discovered, verification/rollback
+cannot be guaranteed and the command explicitly says so. Restart CCDX separately.
 
-After a zero installer exit, CCDX reads bounded metadata from npm's selected global
-target and verifies the package name and stable version. GitHub requires the exact
-selected release version. A missing/mismatched target fails verification without
-retrying installation; if the global target could not be discovered, the command
-explicitly reports that the installed version is unverified rather than announcing
-an update. This check neither changes PATH/prefix/registry nor restarts a running
-adapter, and it does not verify package-file integrity or npm's current latest tag.
+Normal startup still checks GitHub's `releases/latest` web redirect once in the
+background, with a two-second deadline and no npm/REST/PAT access. It validates
+only the redirect header, cancels the body and silently skips errors; it never
+installs, polls or retries. Explicit GitHub updates use a ten-second lookup.
+`ccdx update gh` is shorthand. `ccdx update npm` keeps the configured registry and
+installs `codex-copilot-dx@latest`; it never silently switches to GitHub.
 
-Normal startup checks the official GitHub `releases/latest` web endpoint once in
-the background, without accessing the npm registry or REST API. The anonymous
-check requires no PAT or Copilot credentials, has a two-second deadline, validates
-only the redirect header, cancels the response body without reading HTML, and
-silently skips errors. Redirects must use HTTPS, the exact GitHub repository and
-a stable version tag with no credentials, query or fragment. It never follows
-the redirect, retries, polls, installs or restarts. On adapter reuse, Ready is
-displayed before waiting for any remaining check budget.
-
-`ccdx update gh` is accepted as shorthand for the GitHub source. The npm source installs `codex-copilot-dx@latest` through the registry already configured for npm, including a company mirror. The GitHub source queries the latest stable published Release (ten-second deadline), validates its version tag, and installs that exact tag from `DaleXiao/codex-copilot-dx`, not `main`. Lookup failure stops before installation, without an npm fallback. It opts in to Git fetching only for that command and does not change npm's persistent `allow-git` setting.
-
-GitHub is the package source, not a replacement for the npm installer. Dependencies such as `sharp` may still need the configured npm registry during an explicit update; use a company-approved mirror/cache where required. GitHub updates do not promise an entirely registry-free installation.
-
-Since `0.9.38`, update reads the npm version and named global `allow-remote` and
-registry settings using bounded probes. It never reads the full configuration or
-prints registry credentials. The global context matches `npm install --global`;
-an unrelated project's `.npmrc` cannot silently grant update permission. Old npm
-versions without this restriction do not receive an unsupported option. Failed
-policy discovery does not block an ordinary installation; explicitly requesting
-an override with unknown support fails before installation.
-
-npm 12 normally sets `allow-remote=none`. A company registry may return a tarball
-URL on a different origin/path, which can trigger `EALLOWREMOTE` even for a named
-dependency such as sharp. The default update does not weaken this policy. When
-the installation fails under a restrictive policy, CCDX gives conditional guidance
-to check npm's actual error; it does not label every failure a remote-policy error.
-
-Only if permitted by company policy and you trust the package/dependency tree,
-grant URL downloads for one explicit update:
+npm policy is read using bounded named global fields, without printing credentials.
+An unrelated project's `.npmrc` cannot grant permission. npm 12's
+`allow-remote=none` can reject a mirror's cross-origin dependency URL with
+`EALLOWREMOTE`. Only if company policy permits and you trust this entire package
+tree, use the explicit one-install exception:
 
 ```sh
 ccdx update github --allow-remote
-# Or, for the configured npm registry:
 ccdx update npm --allow-remote
 ```
 
-The option permits URL dependencies throughout that one installation, including
-transitive dependencies. It is **not** an allowlist for one registry or tarball
-host. It neither changes `.npmrc`/registry/proxy/prefix nor automatically retries
-the failed install. npm still enforces package integrity and its other policies;
-this is not permission to run every package script. Windows uses the same fixed
-system `cmd.exe` launch; use `ccdx.cmd` if PowerShell blocks `.ps1` shims.
+This grants URL downloads throughout that installation's dependency tree, not a
+hostname allowlist. It does not change `.npmrc`, add a retry, allow every script
+or override other administrator policy. Older npm receives no unsupported flag.
+Unknown support prevents an explicitly requested exception from starting.
 
-An older CCDX executable cannot gain this option before it is upgraded. To
-bootstrap `0.9.38` from a version that fails with `EALLOWREMOTE`, the equivalent
-explicit per-install command is, only with the same policy/trust approval:
+For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g --allow-git=all --allow-remote=all 'github:DaleXiao/codex-copilot-dx#v0.9.38'
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.1/codex-copilot-dx-1.2.1.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
-Check `ccdx version`, then restart CCDX. This does not guarantee access through
-every company mirror: authentication, offline/cache-only rules, unsynchronized
-packages and administrator-enforced policies still apply. If URL permission
-cannot be granted, the registry must expose compatible allowed tarball URLs;
-CCDX does not bypass that boundary. The source lock pins versions and integrity
-without a developer-specific corporate smol-toml URL.
+This manual npm URL command relies on npm/HTTPS and does not perform CCDX's
+separate SHA-256 check. Under strict remote policy, use the verified bootstrap or
+an administrator-approved local package/cache; do not automatically broaden policy.
+A failed old `github:owner/repo#tag` install with `spawn git ENOENT` means npm
+could not launch Git, often because Git was absent from the terminal's PATH.
+It is unrelated to Wave styling; unknown-option warnings are separate.
 
-If a configured npm mirror has not synchronized the current release yet, use the GitHub source. A running adapter keeps its loaded version until it is stopped and restarted.
+### Install without Node or Git
+
+The Release also contains `install.sh`, `install.ps1`, `ccdx-install.mjs` and
+`SHA256SUMS`. Download the platform script from the intended release and run it
+with the current shell policy. The scripts reuse compatible Node/npm and the
+configured global prefix. If unavailable, they download **only official Node
+24.22.0 LTS** for the current platform, verify the pinned official SHA-256,
+and keep it inside CCDX's private directory. macOS arm64/x64, Windows arm64/x64
+and glibc Linux arm64/x64 archives are selected explicitly. Linux musl users can
+reuse an existing approved compatible Node; this bootstrap does not add libc.
+Unsupported platforms fail before installing a system runtime.
+
+Default private prefixes are `${XDG_DATA_HOME:-~/.local/share}/ccdx` and
+`%LOCALAPPDATA%\CCDX`; an explicit `npm_config_prefix` takes precedence. No global
+Node, Git, Python, compiler, Build Tools or package manager is installed. Native
+packages use prebuilt dependencies with install scripts disabled. The bootstrap
+verifies sharp and the native broker on macOS/Windows; a missing required prebuilt
+component fails and restores the old CCDX package. The private Node remains
+available for a retry if a later package download is blocked.
+
+The helper and package are verified against the release checksum list. The
+bootstrap script itself is initially trusted through the selected HTTPS release;
+review it or compare its checksum through an independent trusted copy if needed.
+The helper reuses the selected npm's bundled `make-fetch-happen` downloader and
+bounded named proxy/no-proxy/CA/TLS/offline settings, with no automatic retries.
+It adds no downloader dependency, forwards no registry credentials and refuses
+network downloads in npm offline mode. A nonstandard npm missing that component
+fails with local-package guidance. Outer platform-script downloads use curl or
+Windows' download tool under their existing network/certificate policy; managed
+PAC-only/offline environments may require administrator-provided Release files.
+The bootstrap keeps user/global npm configuration, proxy and certificate choices.
+Unavailable downloads or restrictive policy stop with no channel fallback.
+It still needs approved access to GitHub Release assets, Node downloads when
+needed, and the configured registry for dependencies. For offline/managed devices,
+ask the administrator to pre-stage these exact files and dependency cache or use
+an approved existing Node/npm distribution; CCDX does not bypass network policy.
+
+Private launchers bind the chosen Node and set `CCDX_PRIVATE_INSTALL_PREFIX` for
+future updates. They supply a private `npm_config_prefix` only when the caller has
+not set one. Updates preserve those launchers. PATH and shell profiles are not
+rewritten: the installer prints the full command path and the directory to add
+for `ccdx` shorthand. Existing compatible installations keep npm's normal commands.
+No install hook is added to the npm package.
+
+The scripts accept only `sh install.sh [--allow-remote]` or
+`./install.ps1 [-AllowRemote]`; the permission is explicit and applies to that
+one installation, with the same whole-tree meaning described above. Do not use
+it when company policy forbids it. Interrupted runtime downloads stay in a cleaned
+temporary directory; installed private runtime cleanup is a separate user choice.
 
 ## Diagnostics
 
@@ -1098,7 +1127,7 @@ once by default, using the configured main port when customized. See
 startup preferences, output modes and effective-state rules. Assets require both
 a loopback connection and loopback Host, including when the main listener uses LAN mode.
 
-The sidebar separates Overview, Codex/Claude Apps, Model sources, Usage and issues, and Settings. Codex-specific images, prediction integration
+The sidebar separates Overview, indented Codex/Claude Apps, Model sources, Usage, Requests, and Settings. Codex-specific images, prediction integration
 and conversation buffering stay under Codex. HTTP traffic counts include model
 catalogs and route errors; model outcomes and timing are named by protocol.
 Microsoft 365's Claude Messages summary is not a Provider-wide request total.
@@ -1113,7 +1142,7 @@ shows selected client-to-Provider routes; it is not an account label.
 Catalog tabs browse registered Provider directories without changing routing.
 Rows retain protocol, eligible clients, reasoning metadata and directory state.
 Unknown metadata stays unknown; listings are not verified inference access.
-A separate explicit source form validates and applies subsequent Codex routing.
+The source form lives under Codex and explicitly applies subsequent routing. GitHub conversation models are selected in Codex, so its conversation-model field is hidden rather than empty. Auto Review has its own model/effort form under Codex, for either source; choices use the same advertised-effort policy and preference storage as the CLI. First source setup initializes the review choices atomically; later conversation-model saves preserve the saved review choice, and review changes use their own Save button. The GitHub model environment override is shown and locked. Microsoft 365 enable/disable stays under Model sources; disabling confirms that Claude local access stops, unchanged CCDX-owned settings are restored and Codex returns to GitHub. Active requests still block disabling.
 Existing active streams keep their Provider binding. User/organization client
 configuration is not overwritten by browsing or by a pause operation.
 

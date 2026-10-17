@@ -382,3 +382,23 @@ Stream performance retains existing route totals and adds `by_route.<route>.by_p
 `operation-error.mjs` distinguishes client cancellation, unspecified abort, timeout, network/TLS/proxy, authentication and access denial. HTTP 403 is not proof of credential expiry. Claude and Codex cancellations are informational; request-body timeouts use 408, upstream/idle timeouts 504, and local client cancellation diagnostics 499. Original upstream error status/body and protocol-specific stream bytes retain their existing path.
 
 Byte-weighted request admission is not a simultaneous-stream limit. The 1.2.0 load replay exercises 16/64/128 small-body held streams, management responsiveness and downstream cancellation against 1.1.1. It does not establish a universal safe concurrency maximum. Existing defaults remain unchanged; see the release receipt for measured bounds.
+
+## Installation and release delivery
+
+`release-install.mjs` is a standalone helper with built-in static imports, shared by the updater
+and no-Node bootstraps. It bounds downloads/decompression, verifies the exact
+release package and checksum, backs up only this package/commands under an
+exclusive lock, restores on failure and validates the version/sharp/broker.
+It reuses the selected npm's bundled downloader with named proxy/CA/TLS/offline settings and no retries; no new download dependency is added. No installer work runs on startup or inference paths. `package-update.mjs` keeps
+source choice, named npm-policy probes and fixed platform launch arguments;
+verified filenames enter cmd.exe, while paths enter cwd. Private-runtime commands
+are regenerated before committing a successful update. This provides error
+rollback, not power-loss atomicity; failed restore retains a named backup/lock.
+
+The platform scripts reuse Node/npm or verify pinned official Node 24.22.0 inside
+a private prefix, without system installation or automatic Git/compiler setup.
+They verify the standalone helper before execution. `scripts/release-artifacts.mjs`
+builds one npm tarball plus checksummed platform scripts/helper; the npm publish
+workflow and GitHub Release must deliver those same package bytes. WebUI source
+selection and Auto Review remain under Codex; M365 lifecycle stays in source
+management. CLI and UI share advertised effort filtering and preference writes.

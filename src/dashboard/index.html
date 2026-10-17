@@ -22,13 +22,14 @@
         <nav aria-label="Navigation" data-i18n-label="main_navigation">
           <a href="#overview" data-route="overview" aria-current="page" data-i18n="overview">Overview</a>
           <span class="nav-group" data-i18n="clients">Apps</span>
-          <a href="#codex" data-route="codex">Codex</a>
-          <a href="#claude" data-route="claude">Claude</a>
+          <a class="nav-child" href="#codex" data-route="codex">Codex</a>
+          <a class="nav-child" href="#claude" data-route="claude">Claude</a>
           <a href="#models" data-route="models" data-i18n="model_services">Model sources</a>
-          <a href="#usage" data-route="usage" data-i18n="usage_and_diagnostics">Usage and issues</a>
+          <a href="#usage" data-route="usage" data-i18n="usage_and_diagnostics">Usage</a>
+          <a href="#requests" data-route="requests" data-i18n="request_records">Requests</a>
           <a href="#system" data-route="system" data-i18n="system_and_settings">Settings</a>
         </nav>
-        <div class="sidebar-bottom"><button id="open-animation" type="button" aria-controls="animation-settings" aria-expanded="false" data-i18n="terminal_appearance">Terminal appearance</button><p data-i18n="local_service_client_specific_capabilities_stay_with_their_clien">Runs on this computer. Each app has its own features.</p></div>
+        <div class="sidebar-bottom"><button id="open-animation" type="button" aria-controls="animation-settings" aria-expanded="false" data-i18n="terminal_appearance">Terminal appearance</button></div>
       </aside>
 
       <header class="topbar">
@@ -54,6 +55,27 @@
         <section class="panel dashboard-section"><h2 data-i18n="this_run_usage">THIS RUN</h2><p id="runtime-usage" class="table-note"></p><p class="hint" data-i18n="updated_from_returned_usage_not_a_live_bill_pending_usage_is_not">Counts returned usage only. Pending usage is not included. This is not a live bill.</p></section>
         </div>
         <div data-view="codex" hidden>
+        <section class="panel dashboard-section" aria-labelledby="routing-heading">
+          <h2 id="routing-heading" data-i18n="codex_model_source">CODEX MODEL SOURCE</h2>
+          <p class="hint" data-i18n="source_changes_new_requests">Changes apply to later Codex requests.</p>
+          <div class="section-actions">
+            <label><span data-i18n="source">Source</span><select id="source-provider"></select></label>
+            <label id="source-model-field" hidden><span data-i18n="conversation_model">Conversation model</span><select id="source-model"></select></label>
+            <button id="apply-source" type="button" data-i18n="apply_source">Use this source</button>
+          </div>
+          <p id="source-model-note" class="hint" data-i18n="github_model_in_codex">Choose your conversation model in Codex.</p>
+          <div id="source-control-note" class="hint" role="status"></div>
+        </section>
+        <section class="panel dashboard-section" aria-labelledby="review-heading">
+          <h2 id="review-heading" data-i18n="auto_review_settings">AUTO REVIEW</h2>
+          <p class="hint" data-i18n="review_uses_selected_source">Reviews use the source selected above. Save the source and review choices separately.</p>
+          <div class="section-actions">
+            <label><span data-i18n="auto_review_model">Review model</span><select id="source-review"></select></label>
+            <label><span data-i18n="thinking_level">Thinking level</span><select id="source-review-effort"></select></label>
+            <button id="save-review" type="button" data-i18n="save_review">Save review settings</button>
+          </div>
+          <p id="review-control-note" class="hint" role="status"></p>
+        </section>
         <section class="overview client-overview"><article class="card"><h2 data-i18n="codex_models">CODEX MODELS</h2><strong id="models">—</strong><p id="model-source">—</p></article></section>
         <details class="panel dashboard-section" id="runtime-resources" open>
           <summary data-i18n="codex_conversations">CODEX CONVERSATIONS</summary>
@@ -114,20 +136,15 @@
           <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="vendor">MODEL MAKER</th><th scope="col" data-i18n="api">CONNECTION TYPE</th><th scope="col" data-i18n="client">APP</th><th scope="col" data-i18n="reasoning">THINKING LEVEL</th><th scope="col" data-i18n="state">STATE</th></tr></thead><tbody id="live-models-body" role="tabpanel"><tr><td colspan="6" data-i18n="loading">Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n="catalog_listing_does_not_guarantee_inference_access">Listed does not mean your account can use it.</p>
         </details>
-        <section class="panel dashboard-section" aria-labelledby="routing-heading">
-          <h2 id="routing-heading" data-i18n="codex_model_source">CODEX MODEL SOURCE</h2>
-          <p class="hint" data-i18n="catalog_tabs_only_change_the_view_apply_explicitly_to_change_the">Tabs only browse models. Apply changes the source for later Codex requests.</p>
-          <div class="section-actions"><label><span data-i18n="source">Source</span> <select id="source-provider"></select></label><label><span data-i18n="model_5e2c6">Model</span> <select id="source-model" disabled></select></label><label><span data-i18n="auto_review_model">Review model</span> <select id="source-review" disabled></select></label><button id="apply-source" type="button" data-i18n="apply_source">Use this source</button></div>
-          <div class="section-actions"><span>Microsoft 365</span><button id="m365-on" type="button" data-i18n="enable_service">Enable source</button><button id="m365-off" type="button" data-i18n="disable_service">Disable source</button></div>
-          <div id="source-control-note" class="hint" role="status"></div>
+        <section class="panel dashboard-section" aria-labelledby="source-access-heading">
+          <h2 id="source-access-heading">Microsoft 365</h2>
+          <p class="hint" data-i18n="m365_source_access">Provides models for Codex and Claude on supported devices.</p>
+          <div class="section-actions"><button id="m365-on" type="button" data-i18n="enable_service">Enable source</button><button id="m365-off" type="button" data-i18n="disable_service">Disable source</button></div>
+          <div id="m365-control-note" class="hint" role="status"></div>
         </section>
         </div>
         <div data-view="usage" hidden>
-        <details class="panel dashboard-section" id="source-requests">
-          <summary data-i18n="requests_by_source">REQUESTS BY SOURCE</summary>
-          <p class="hint" data-i18n="results_since_startup_partial_usage_is_marked_separately">Results since startup. Partial usage is marked separately.</p>
-          <div class="table-wrap"><table><thead><tr><th data-i18n="source">Source</th><th data-i18n="protocol">Protocol</th><th data-i18n="active">Active</th><th data-i18n="completed">Completed</th><th data-i18n="incomplete">Incomplete</th><th data-i18n="failed">Failed</th><th data-i18n="cancelled">Cancelled</th><th data-i18n="unknown">Unknown</th></tr></thead><tbody id="source-requests-body"></tbody></table></div>
-        </details>
+
         <details class="panel dashboard-section" id="model-usage" open>
           <summary class="panel-heading"><h2 data-i18n="usage">MODEL USAGE</h2><span id="usage-state" data-i18n="reading_log">COUNTING</span></summary>
           <div class="section-actions"><label><span data-i18n="source">Source</span> <select id="usage-provider"><option value="" data-i18n="all_providers">All providers</option></select></label><button id="clear-usage-day" type="button" hidden data-i18n="all_history">Show all</button><button id="refresh-usage" type="button" data-i18n="refresh">Refresh</button></div>
@@ -152,6 +169,13 @@
             <div class="calendar-scroll"><div class="calendar-grid"><div id="calendar-months" class="calendar-months" aria-hidden="true"></div><div id="activity-calendar" class="activity-calendar" aria-label="Daily recorded activity over 365 days" data-i18n-label="daily_recorded_request_activity"></div></div></div>
             <p id="analytics-selection" class="hint" role="status" data-i18n="select_a_day_to_inspect_its_model_totals_no_history_is_distinct_">Select a day for its usage. No records does not mean zero requests.</p>
           </details>
+        </details>
+        </div>
+        <div data-view="requests" hidden>
+        <details class="panel dashboard-section" id="source-requests">
+          <summary data-i18n="requests_by_source">REQUESTS BY SOURCE</summary>
+          <p class="hint" data-i18n="results_since_startup_partial_usage_is_marked_separately">Results since startup. Partial usage is marked separately.</p>
+          <div class="table-wrap"><table><thead><tr><th data-i18n="source">Source</th><th data-i18n="protocol">Protocol</th><th data-i18n="active">Active</th><th data-i18n="completed">Completed</th><th data-i18n="incomplete">Incomplete</th><th data-i18n="failed">Failed</th><th data-i18n="cancelled">Cancelled</th><th data-i18n="unknown">Unknown</th></tr></thead><tbody id="source-requests-body"></tbody></table></div>
         </details>
         <details class="lower" id="recent-failures" open>
           <summary class="panel-heading"><h2 data-i18n="recent_inference_http_failures">RECENT REQUEST ISSUES</h2><span id="failure-count">requests + events</span></summary>

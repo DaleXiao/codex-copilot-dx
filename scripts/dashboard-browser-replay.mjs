@@ -22,10 +22,15 @@ globalThis.fetch = async () => { throw Error("Real provider calls are forbidden"
 let models = 0, summaries = 0;
 const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-dashboard-replay-"));
 let predictionActive = true, codexSource = "github", m365Enabled = true;
+let m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
 const serviceControl = createServiceControl({ home, env: {}, readImages: () => ({}), readPrediction: () => ({ enabled: true }),
   clientIntegration: { snapshot: () => ({ prediction: { configured: true, bridge: "running", active: predictionActive } }), setPredictionActive(value) { predictionActive = value; }, fix: async () => {} },
-  providerRuntime: { snapshot: () => ({ codex_provider: codexSource, m365: { preference: { model: "gpt-source", auto_review_model: "gpt-source" }, state: m365Enabled ? "ready" : "disabled", enabled: m365Enabled } }),
-    async action(input) { if (input.action === "switch") codexSource = input.provider;else m365Enabled = input.action === "on"; } },
+  providerRuntime: { snapshot: () => ({ codex_provider: codexSource, github: { preference: { model: "gpt-6.1-sol", reasoningEffort: "low" } }, m365: { preference: m365Preference, state: m365Enabled ? "ready" : "disabled", enabled: m365Enabled } }),
+    async action(input) {
+      if (input.action === "switch") { codexSource = input.provider;if (input.provider === "m365") m365Preference = { ...m365Preference, model: input.model, ...(input.auto_review_model ? { auto_review_model: input.auto_review_model, auto_review_effort: input.auto_review_effort } : {}) }; }
+      else if (input.action === "auto-review") m365Preference = { ...m365Preference, auto_review_model: input.model, auto_review_effort: input.effort };
+      else m365Enabled = input.action === "on";
+    } },
 });
 const records = Array.from({ length: 10 }, (_, index) => ({ ts: new Date(Date.now() - index * 86400000).toISOString(),
   provider: index % 2 ? "m365" : "github", model: index % 2 ? "claude-opus-5.5" : "gpt-6.1-sol",
@@ -43,11 +48,11 @@ const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, servic
     if (provider === "third") throw Object.assign(Error("Unavailable"), { code: "m365_disabled", statusCode: 503 });
     return { source: "catalog", checkedAt: new Date().toISOString(), advertised: 1, upstreamHost: "Microsoft 365", models: [
       { id: "claude-opus-5.5", vendor: "Anthropic", endpoints: ["messages"], clients: ["claude_app", "claude_code"], reasoning_efforts: ["low", "high"], selectable: true },
-          { id: "gpt-source", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], reasoning_efforts: ["low"], selectable: true },
-      { id: "gpt-second", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], reasoning_efforts: ["low"], selectable: true },
+          { id: "gpt-source", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], reasoning_efforts: ["low"], auto_review_efforts: ["low"], selectable: true },
+      { id: "gpt-second", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], reasoning_efforts: ["low"], auto_review_efforts: ["low"], selectable: true },
     ] };
   },
-  liveModelsFn: async () => { models++; return { models: [{ id: "gpt-6.1-sol", vendor: "OpenAI", endpoints: ["responses"], preview: false }], advertised: 1, upstreamHost: "synthetic.local" }; },
+  liveModelsFn: async () => { models++; return { models: [{ id: "gpt-6.1-sol", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], auto_review_efforts: ["low", "high"], preview: false }], advertised: 1, upstreamHost: "synthetic.local" }; },
   authStatusFn: () => ({ profiles: { codex: { configured: true, valid: true, login: "synthetic_user" } } }),
   usageSummaryFn: async options => { summaries++; const selected = records.filter(record => !options?.provider || record.provider === options.provider);
     for (const record of selected) options?.onRecord?.(record, summarizeUsage([record])); return summarizeUsage(selected, { provider: options?.provider }); },
@@ -86,6 +91,7 @@ try {
     try {
       for (const language of ["en", "zh"]) for (const theme of ["dark", "light"]) for (const width of [420, 1280]) {
         const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "no-preference" });
+        page.setDefaultTimeout(15000);
         const errors = [];
         page.on("pageerror", error => errors.push(error.message));
         await page.addInitScript(({ language, theme }) => { localStorage.setItem("ccdx.dashboard.language", language); localStorage.setItem("ccdx.dashboard.theme", theme); }, { language, theme });
@@ -98,7 +104,7 @@ try {
           };
         });
         await page.clock.install();
-        codexSource = "m365";
+        codexSource = "m365";m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
         await page.waitForFunction(() => !document.getElementById("refresh-models").disabled && !document.getElementById("refresh-usage").disabled);
         assert.equal(await page.evaluate(() => atomMotions.length), 1);
@@ -126,27 +132,41 @@ try {
         await page.waitForFunction(value => !document.getElementById("setting-image_enabled").disabled && document.getElementById("setting-image_enabled").checked === value, !imageBefore);
         await page.locator("#setting-image_enabled").setChecked(imageBefore);
         await page.waitForFunction(() => !document.getElementById("setting-image_enabled").disabled);
-        if (output && width === 1280 && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${theme}-codex.png`), fullPage: true });
+        if (output && width === 1280 && language === "zh") { await page.evaluate(() => window.scrollTo(0, 0));await page.screenshot({ path: path.join(output, `${engine}-${theme}-codex.png`), fullPage: true }); }
         await nav("claude");
         assert.match(await page.locator("#claude-route").innerText(), /\/anthropic/);
-        await nav("models");
+        await nav("codex");
         await page.waitForFunction(() => document.getElementById("source-provider").value === "m365" && document.getElementById("source-model").value === "gpt-source");
         assert.equal(await page.locator("#source-review").inputValue(), "gpt-source");
+        for (const selector of ["#source-model", "#source-review", "#source-review-effort", "#apply-source", "#save-review"]) {
+          const box = await page.locator(selector).boundingBox();assert.equal(box.height, 36, `${selector} height`);
+        }
+        const childIndent = await page.locator('[data-route="codex"]').evaluate(node => parseFloat(getComputedStyle(node).paddingLeft));
+        assert.ok(childIndent > 12);
         await page.locator("#source-model").selectOption("gpt-second");
         await page.evaluate(() => dashboardRefresh.refresh("auth", { force: true }));
         await page.locator("#refresh").click();
         await page.waitForFunction(() => !document.getElementById("refresh").disabled && !document.getElementById("apply-source").disabled);
         assert.equal(await page.locator("#source-model").inputValue(), "gpt-second", "Settings/auth refresh keeps the unsaved model choice");
+        await page.locator("#source-review").selectOption("gpt-second");
+        await page.locator("#apply-source").click();
+        await page.waitForFunction(() => !document.getElementById("save-review").disabled);
+        assert.equal(m365Preference.auto_review_model, "gpt-source", "Saving a conversation model does not save a pending review change");
+        assert.equal(await page.locator("#source-review").inputValue(), "gpt-second");
+        await page.locator("#save-review").click();
+        await page.waitForFunction(() => !document.getElementById("save-review").disabled);
+        assert.equal(m365Preference.auto_review_model, "gpt-second");
         await page.locator("#source-provider").selectOption("github");
         await page.route("**/_ccdx/ui/models/live?provider=m365", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "synthetic catalog unavailable" }) }));
         await page.locator("#source-provider").selectOption("m365");
-        await page.waitForFunction(() => document.getElementById("source-control-note").textContent.includes("synthetic catalog unavailable"));
+        await page.waitForFunction(() => document.getElementById("review-control-note").textContent.includes("synthetic catalog unavailable"));
         assert.equal(await page.locator("#apply-source").isEnabled(), false);
         await page.locator("#source-provider").selectOption("github");
         assert.equal(await page.locator("#apply-source").isEnabled(), true);
         await page.unroute("**/_ccdx/ui/models/live?provider=m365");
         await page.locator("#apply-source").click();
         await page.waitForFunction(() => document.getElementById("source-control-note").textContent.includes("GitHub Copilot") && !document.getElementById("apply-source").disabled);
+        await nav("models");
         await page.locator("#account-authorization > summary").click();
         assert.equal(await page.locator("#provider-auth tr").count(), 3);
         assert.match(await page.locator("#provider-auth").innerText(), /synthetic@example.test/);
@@ -163,6 +183,9 @@ try {
         assert.equal((icon.match(/<ellipse /g) || []).length, 3);
         assert.ok(icon.includes(theme === "dark" ? "#a6f5a8" : "#176b3a"));
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "No whole-page horizontal overflow");
+        await nav("requests");
+        assert.equal(await page.locator("#recent-failures").isVisible(), true);
+        assert.equal(await page.locator("#model-usage").isVisible(), false);
         await nav("usage");
         await page.locator("#usage-analytics > summary").click();
         await page.waitForFunction(() => document.querySelectorAll(".calendar-day").length === 365);

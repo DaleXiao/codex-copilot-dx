@@ -29,7 +29,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid setting action");
     const allowed = { preference: ["action", "key", "value"], animation: ["action", "theme"],
       history_limit: ["action", "mib"], history_clean: ["action"], prediction_fix: ["action"],
-      provider: ["action", "operation", "provider", "model", "auto_review_model"] }[input.action];
+      provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort"] }[input.action];
     if (!allowed || Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unknown setting action or field");
     if (input.action === "preference") {
       writeServicePreference(input.key, input.value, options);
@@ -49,9 +49,9 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
       try { writeResponseHistoryLimitMib(input.mib, options); } catch (error) { setHistoryCacheLimit(before);throw error; }
     } else if (input.action === "history_clean") cleanRuntimeCaches({ history: true });
     else {
-      if (!providerRuntime || !["on", "off", "switch"].includes(input.operation)) throw new Error("Invalid provider operation");
+      if (!providerRuntime || !["on", "off", "switch", "auto-review"].includes(input.operation)) throw new Error("Invalid provider operation");
       if (input.operation === "on" && env.CCDX_M365 === "0") throw new Error("Microsoft 365 is disabled by CCDX_M365=0");
-      await providerRuntime.action({ action: input.operation, provider: input.provider, model: input.model, auto_review_model: input.auto_review_model });
+      await providerRuntime.action({ action: input.operation, provider: input.provider, model: input.model, auto_review_model: input.auto_review_model, auto_review_effort: input.auto_review_effort, effort: input.auto_review_effort });
     }
     return snapshot();
   }

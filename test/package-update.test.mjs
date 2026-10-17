@@ -12,7 +12,7 @@ import {
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-const runPackageUpdateCommand = options => runActualUpdate({ inspectEnvironmentFn: () => ({ target: "/fixture/package" }), inspectPolicyFn: () => ({ supported: false }), verifyInstalledFn: () => "0.9.35", ...options });
+const runPackageUpdateCommand = options => runActualUpdate({ downloadReleaseFn: async tag => ({ name: `codex-copilot-dx-${tag.slice(1)}.tgz` }), verifyRuntimeFn() {}, inspectEnvironmentFn: () => ({ target: "/fixture/package" }), inspectPolicyFn: () => ({ supported: false }), verifyInstalledFn: () => "0.9.35", ...options });
 
 function outputBuffer(isTTY = true) {
   let value = "";
@@ -42,7 +42,7 @@ test("package update: builds fixed npm and GitHub global install commands", () =
   });
   assert.deepEqual(globalUpdateCommand("github", { platform: "win32", releaseTag: "v0.9.19" }), {
     command: "npm.cmd",
-    args: ["install", "--global", "--allow-git=all", "github:DaleXiao/codex-copilot-dx#v0.9.19"],
+    args: ["install", "--global", "https://github.com/DaleXiao/codex-copilot-dx/releases/download/v0.9.19/codex-copilot-dx-0.9.19.tgz"],
     source: "github",
   });
   assert.throws(() => globalUpdateCommand("other"), /Choose npm or github/);
@@ -90,7 +90,7 @@ test("package update: interactive selection retries and can choose GitHub", asyn
 
   assert.equal(result.source, "github");
   assert.equal(calls[0].command, "D:\\Windows\\System32\\cmd.exe");
-  assert.deepEqual(calls[0].args, ["/d", "/s", "/v:off", "/c", '"npm.cmd install --global --allow-git=all github:DaleXiao/codex-copilot-dx#v0.9.19"']);
+  assert.deepEqual(calls[0].args, ["/d", "/s", "/v:off", "/c", '"npm.cmd install --global ./codex-copilot-dx-0.9.19.tgz"']);
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.windowsVerbatimArguments, true);
   assert.equal(calls[0].options.windowsHide, true);
@@ -137,7 +137,7 @@ test("GitHub update resolves once and pins the tag without trusting returned dow
   });
   assert.equal(lookups, 1);
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].args, ["install", "--global", "--allow-git=all", "github:DaleXiao/codex-copilot-dx#v1.2.3"]);
+  assert.deepEqual(calls[0].args, ["install", "--global", "./codex-copilot-dx-1.2.3.tgz"]);
   assert.equal(calls[0].options.env, env);
   assert.equal(calls[0].options.shell, false);
   assert.match(output.text(), /GitHub release v1.2.3/);
@@ -176,8 +176,8 @@ test("POSIX sources retain exact argv and no Windows launcher flags", async () =
     await runPackageUpdateCommand({ env, platform, source, output: outputBuffer(false).stream,
       spawnImpl: successfulSpawn(calls), fetchImpl: fetchRelease });
     assert.equal(calls[0].command, "npm");
-    assert.deepEqual(calls[0].args, globalUpdateCommand(source, { platform, releaseTag: "v0.9.19" }).args);
-    assert.deepEqual(calls[0].options, { env, shell: false, stdio: "inherit" });
+    assert.deepEqual(calls[0].args, globalUpdateCommand(source, { platform, releaseTag: "v0.9.19", ...(source === "github" ? { releaseFile: "./codex-copilot-dx-0.9.19.tgz" } : {}) }).args);
+    assert.deepEqual({ ...calls[0].options, cwd: undefined }, { env, shell: false, stdio: "inherit", cwd: undefined });
   }
 });
 
@@ -223,7 +223,7 @@ test("update preflight detects a different global prefix without changing the ca
 
 test("a mismatched npm prefix warns but preserves an explicit user's installation choice", async () => {
   const calls = [], output = outputBuffer(false);
-  await runActualUpdate({ source: "npm", platform: "darwin", output: output.stream, spawnImpl: successfulSpawn(calls),
+  await runActualUpdate({ verifyRuntimeFn() {}, source: "npm", platform: "darwin", output: output.stream, spawnImpl: successfulSpawn(calls),
     verifyInstalledFn: () => "0.9.35",
     inspectEnvironmentFn: () => ({ state: "different", target: "/chosen", package_root: "/original" }) });
   assert.match(output.text(), /Existing PATH and prefix choices were preserved/);assert.equal(calls.length, 1);

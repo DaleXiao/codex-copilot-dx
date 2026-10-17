@@ -189,3 +189,16 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 #process-queues { overflow-wrap: anywhere; font-size: 11px; }
 @media (max-width: 900px) { .shell { grid-template-columns: 170px minmax(0, 1fr); column-gap: 20px; padding: 0 20px; } .topbar .brand { display: none; } .topbar { justify-content: flex-end; } .setting-row { grid-template-columns: minmax(0, 1fr) 44px; } .setting-row .hint { grid-column: 1 / -1; } .overview { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .shell { display: block; padding: 0 16px; } .sidebar { position: static; height: auto; padding: 20px 0 14px; border-right: 0; border-bottom: 1px solid var(--border); } .sidebar-brand { font-size: 20px; width: fit-content; } .sidebar-brand .brand-caption { margin-top: 4px; } .sidebar nav { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4px; margin-top: 16px; } .sidebar nav a { padding: 9px 10px; font-size: 12px; border-left: 0; border-bottom: 2px solid transparent; } .sidebar nav a[aria-current="page"] { border-bottom-color: var(--accent); } .nav-group, .sidebar-bottom { display: none; } .topbar { min-height: 62px; justify-content: flex-start; } .topbar-actions { justify-content: flex-start; gap: 9px; } .intro { padding: 24px 0 18px; } .panel, .lower { padding: 17px; } .section-actions > label { width: 100%; } .stats { gap: 12px; } }
+
+/* Keep forms aligned with the existing dashboard controls. */
+.dashboard-section + .client-overview { margin-top: 10px; }
+.sidebar nav .nav-child { padding-left: 28px; }
+.section-actions > label { min-width: 0; max-width: 100%; }
+.section-actions select { min-width: 180px; width: 100%; max-width: 320px; }
+.section-actions input:not([type="checkbox"]), .section-actions select, .section-actions button,
+.analytics-controls select { box-sizing: border-box; height: 36px; min-height: 36px; line-height: normal; }
+.section-actions button { padding-top: 0; padding-bottom: 0; }
+@media (max-width: 640px) {
+  .section-actions > label { flex: 1 1 180px; }
+  .section-actions select { max-width: 100%; }
+}

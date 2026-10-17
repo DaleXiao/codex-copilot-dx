@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { gzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 import { runPackageUpdateCommand } from "../src/package-update.mjs";
 
 const cli = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
@@ -24,16 +26,23 @@ const rows = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [
 rows.push({args: process.argv.slice(2), registry: process.env.npm_config_registry, marker: process.env.CCDX_UPDATE_TEST_MARKER});
 fs.writeFileSync(file, JSON.stringify(rows));process.exitCode = Number(process.env.CCDX_UPDATE_TEST_EXIT || 0);
 if (!process.exitCode) { const path = await import("node:path");const target = path.join(process.env.npm_config_prefix, "node_modules", "codex-copilot-dx");
-fs.mkdirSync(target, {recursive:true});fs.writeFileSync(path.join(target,"package.json"), JSON.stringify({name:"codex-copilot-dx",version:"0.9.31"})); }
+fs.mkdirSync(target, {recursive:true});fs.writeFileSync(path.join(target,"package.json"), JSON.stringify({name:"codex-copilot-dx",version:"0.9.31"}));
+fs.mkdirSync(path.join(target,"bin"),{recursive:true});fs.writeFileSync(path.join(target,"bin","cli.mjs"), "console.log('ccdx v0.9.31 by fixture');");
+fs.mkdirSync(path.join(target,"node_modules","sharp"),{recursive:true});fs.writeFileSync(path.join(target,"node_modules","sharp","index.js"), "module.exports=()=>({png(){return this},toBuffer(){return Promise.resolve(Buffer.alloc(1))}});"); }
 `);
   fs.writeFileSync(path.join(bin, "npm.cmd"), '@"%CCDX_UPDATE_TEST_NODE%" "%~dp0capture.mjs" %*\r\n@exit /b %errorlevel%\r\n');
+  const metadata = Buffer.from(JSON.stringify({ name: "codex-copilot-dx", version: "0.9.31" })), header = Buffer.alloc(512);
+  header.write("package/package.json");header.write(metadata.length.toString(8).padStart(11,"0"),124);header[156]=48;
+  const artifact = gzipSync(Buffer.concat([header, metadata, Buffer.alloc(512-metadata.length), Buffer.alloc(1024)]));
   fs.writeFileSync(preload, `globalThis.fetch = async url => {
+if (String(url).endsWith("/SHA256SUMS")) return new Response(${JSON.stringify(createHash("sha256").update(artifact).digest("hex") + "  codex-copilot-dx-0.9.31.tgz\n")});
+if (String(url).endsWith("/codex-copilot-dx-0.9.31.tgz")) return new Response(Buffer.from(${JSON.stringify(artifact.toString("base64"))}, "base64"));
 if (String(url) !== "https://github.com/DaleXiao/codex-copilot-dx/releases/latest") throw new Error("Non-fixture network request refused");
 return new Response(null, {status: 302, headers: {location: "/DaleXiao/codex-copilot-dx/releases/tag/v0.9.31"}});
 };\n`);
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.toLowerCase() === "path") delete env[key];
-  Object.assign(env, { PATH: `${bin};${process.env.PATH}`, CCDX_UPDATE_TEST_NODE: process.execPath,
+  Object.assign(env, { PATH: `${bin};${process.env.SystemRoot}\\System32`, CCDX_UPDATE_TEST_NODE: process.execPath,
     CCDX_UPDATE_TEST_RECORD: record, CCDX_UPDATE_TEST_MARKER: "space 中文 & ! %PATH%",
     npm_config_registry: "https://approved-mirror.example/npm?company=1&scope=test",
     npm_config_prefix: path.join(root, "global"), npm_config_cache: path.join(root, "cache"),
@@ -66,19 +75,26 @@ test("real Windows per-update remote consent keeps strict saved policy and does 
   assert.equal(f.env.npm_config_allow_remote, "none");
 });
 
-test("real Windows CLI npm/GitHub updates and installer failure use the same fixed process chain", windowsOnly, t => {
+test("real Windows CLI update failure and GitHub driver keep the fixed no-Git process chain", windowsOnly, async t => {
   const f = fixture(t);
-  for (const source of ["npm", "github"]) {
+  for (const source of ["npm"]) {
     const result = spawnSync(process.execPath, ["--import", pathToFileURL(f.preload).href, cli, "update", source],
       { env: f.env, encoding: "utf8", timeout: 20_000 });
     assert.equal(result.error, undefined);assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.match(result.stdout, /Updated codex-copilot-dx/);
   }
+  const metadata = Buffer.from(JSON.stringify({ name: "codex-copilot-dx", version: "0.9.31" })), header = Buffer.alloc(512);
+  header.write("package/package.json");header.write(metadata.length.toString(8).padStart(11,"0"),124);header[156]=48;
+  const bytes = gzipSync(Buffer.concat([header, metadata, Buffer.alloc(512-metadata.length), Buffer.alloc(1024)]));
+  await runPackageUpdateCommand({ source: "github", env: f.env, output: { write() {} }, fetchImpl: async url => {
+    if (url.endsWith("/latest")) return new Response(null, { status: 302, headers: { location: "/DaleXiao/codex-copilot-dx/releases/tag/v0.9.31" } });
+    return new Response(url.endsWith("SHA256SUMS") ? `${createHash("sha256").update(bytes).digest("hex")}  codex-copilot-dx-0.9.31.tgz\n` : bytes);
+  } });
   const calls = f.calls();
   assert.equal(calls.length, 2);
-  assert.deepEqual(calls[1].args, ["install", "--global", "--allow-git=all", "github:DaleXiao/codex-copilot-dx#v0.9.31"]);
+  assert.deepEqual(calls[1].args, ["install", "--global", "./codex-copilot-dx-0.9.31.tgz"]);
   for (const call of calls) assert.equal(call.registry, f.env.npm_config_registry);
-  const failed = spawnSync(process.execPath, ["--import", pathToFileURL(f.preload).href, cli, "update", "github"],
+  const failed = spawnSync(process.execPath, ["--import", pathToFileURL(f.preload).href, cli, "update", "npm"],
     { env: { ...f.env, CCDX_UPDATE_TEST_EXIT: "17" }, encoding: "utf8", timeout: 20_000 });
   assert.equal(failed.status, 1);assert.match(failed.stderr, /npm update exited with status 17/);
   assert.doesNotMatch(failed.stdout, /Updated codex-copilot-dx/);

@@ -7,19 +7,18 @@ Default Auto-review: **GPT-6.1 Sol / low**. Image generation is **off by default
 
 ## Install and run
 
-Requires macOS or Windows, Codex App, Node.js **22.15+**, and a GitHub account with Copilot access to the models you want to use.
+For Codex App, use macOS or Windows and a GitHub account with access to the desired Copilot models. With Node.js **22.15+** and npm already available:
 
 ```bash
 npm install -g codex-copilot-dx@latest
 ccdx
 ```
 
-CCDX reuses a compatible local credential or starts GitHub Device Flow, listens
-on `127.0.0.1:2026`, configures Codex, and opens the App. Interactive desktop starts also open the local WebUI once; use `ccdx --no-browser` or disable this in WebUI settings. No client binary patch
-is needed. On Windows, open the App manually unless native prediction setup is
-enabled. In restricted Windows PowerShell, use `npm.cmd` to install and `ccdx.cmd` for the first launch, or run `ccdx.cmd doctor --fix`. Startup, updates and explicit repair remove only CCDX's exact npm-generated `.ps1` launchers so later calls can use `ccdx`. No install script, alias or policy change is added; custom launchers are preserved. npm's own script is untouched. The configured `dummy` API key is a placeholder, not a credential.
+No Node or Git? Download [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.1/install.sh) (macOS/Linux) or [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.1/install.ps1) (Windows), then run `sh install.sh` or `./install.ps1` under your current shell policy. The bootstrap reuses compatible Node/npm or installs verified official Node 24.22.0 privately for CCDX. It adds no Git, compiler or system package manager. It keeps registry/proxy/certificate policy, verifies the Release package and installed runtime, and restores the prior CCDX package if installation fails. Dependencies still need your configured registry. See [installation limits and private command paths](docs/REFERENCE.md#install-without-node-or-git).
 
-The [local control console](http://127.0.0.1:2026/) has a sidebar for **Overview, Apps, Model sources, Usage and issues, Settings**. Codex image generation, input predictions and conversation buffering are explicitly Codex-specific. Provider authorization, model directories, retained usage and operations keep their own scopes. Browsing a catalog never switches the active source.
+CCDX reuses a compatible local credential or starts GitHub Device Flow, listens on `127.0.0.1:2026`, configures Codex, and opens the App. Interactive desktop starts also open the local WebUI once; use `ccdx --no-browser` or disable this in WebUI settings. No client binary patch is needed. On Windows, open the App manually unless native prediction setup is enabled. In restricted Windows PowerShell, use `npm.cmd` to install and `ccdx.cmd` for the first launch, or run `ccdx.cmd doctor --fix`. Startup, updates and explicit repair remove only CCDX's exact npm-generated `.ps1` launchers so later calls can use `ccdx`. The npm package adds no install hook or policy change; custom launchers are preserved. npm's own script is untouched. The configured `dummy` API key is a placeholder, not a credential.
+
+The [local control console](http://127.0.0.1:2026/) keeps indented Codex/Claude pages, Model sources, Usage, Requests and Settings. Codex owns source/model, Auto Review, images, input suggestions and conversation buffering; Model sources owns accounts, catalogs and Microsoft 365 access. Browsing a catalog never changes routing. The existing visual style, logo and motion remain.
 
 Startup shows bounded checks, sources with discovered model lists and Claude Code/App configuration. Prediction normally uses one summary line; `ccdx prediction status` retains recovery and environment details. After Ready, an interactive terminal shows current source/Claude state and a line-framed table of this process's returned usage and inference counters. Notices and activity each have their own line; individual requests do not scroll. Input includes reused input tokens. `ccdx --verbose` (also `--show-request-id`, or debug logging) retains detail output; optional file logging remains independently controlled. Source and Claude summaries wrap on narrow terminals. Failed reads show previous-data status and the last successful update time. Non-TTY, CI, dumb, or terminals too small for the full region use plain output (at least 40 columns / 16 rows are required). `Ready` only means the core service is available; discovered catalogs and configured clients do not prove inference access.
 
@@ -111,8 +110,8 @@ See the [M365 reference](docs/REFERENCE.md#microsoft-365-provider) for ownership
   for the API. Inference rejects browser Origin headers; native clients remain supported. Diagnostic errors may contain sensitive upstream text.
 
 Startup checks GitHub's latest-release web redirect, not npm or the anonymous REST quota, and suggests `ccdx update github`.
-Updates install the exact stable tag; dependencies still use npm's configured registry. Lookup errors identify HTTP refusal, timeout, network failure or invalid redirects. For npm `EALLOWREMOTE`, only if policy permits and the update is trusted, use `ccdx update github --allow-remote`: explicit URL-download permission for that installation's whole dependency tree, not a hostname allowlist. Persistent npm settings stay unchanged.
-Updates warn about mismatched npm targets without changing PATH/prefix and verify the installed target version (exact tag for GitHub). Restart the adapter separately. Full `ccdx doctor` reports this target and readonly credential permissions; it never changes ACLs.
+GitHub updates verify and install the exact Release tarball without Git; dependencies still use npm's configured registry. Lookup errors identify HTTP refusal, timeout, network failure or invalid redirects. For npm `EALLOWREMOTE`, only if policy permits and the update is trusted, use `ccdx update github --allow-remote`: explicit URL-download permission for that installation's whole dependency tree, not a hostname allowlist. Persistent npm settings stay unchanged.
+Updates back up the discovered CCDX package and commands, restore them on install/runtime-check failure, and verify the installed version (exact for GitHub). Mismatched npm targets warn without changing PATH/prefix. Restart the adapter separately. Full `ccdx doctor` reports this target and readonly credential permissions; it never changes ACLs.
 Recent errors separate HTTP and model failures. By default HTTP metadata retains status, source and IDs, not error bodies or prompts; original errors still reach Codex unchanged. Explicit, bounded error-excerpt collection is described in the [reference](docs/REFERENCE.md#http-error-diagnostics).
 
 See [architecture boundaries](docs/ARCHITECTURE.md) and the [complete reference](https://github.com/DaleXiao/codex-copilot-dx/blob/main/docs/REFERENCE.md) for authentication, configuration, limits, logging, images and compatibility. It is also included as `docs/REFERENCE.md` in the npm package.

@@ -1,3 +1,4 @@
+import { autoReviewReasoningEfforts } from "./models.mjs";
 // Public metadata only. Credentials and provider transport never enter this layer.
 export const isProviderId = value => typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(value)
   && !["constructor", "prototype"].includes(value);
@@ -13,7 +14,7 @@ export function publicModelCatalog(models, { clients = () => [], selectable = ()
     endpoints: [["responses", ["/responses", "/v1/responses"]], ["chat", ["/chat/completions", "/v1/chat/completions"]],
       ["messages", ["/v1/messages"]]].filter(([, paths]) => paths.some(path => model.supported_endpoints?.includes(path))).map(([label]) => label),
     preview: model.preview === true, selectable: selectable(model), clients: clients(model),
-    reasoning_efforts: modelReasoningEfforts(model),
+    reasoning_efforts: modelReasoningEfforts(model), auto_review_efforts: autoReviewReasoningEfforts(model),
     context_window: Number.isSafeInteger(model.capabilities?.limits?.max_context_window_tokens)
       && model.capabilities.limits.max_context_window_tokens > 0 ? model.capabilities.limits.max_context_window_tokens : null,
     state: model.policy?.state && model.policy.state !== "enabled" ? "restricted" : model.model_picker_enabled === false ? "hidden" : "listed",

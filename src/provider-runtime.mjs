@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import { autoReviewPreference, writeAutoReviewModel } from "./user-settings.mjs";
+import { autoReviewReasoningEfforts, DEFAULT_CODEX_AUTO_REVIEW_MODEL, responsesModelIdsFromCopilotModels } from "./models.mjs";
 import { publicModelCatalog } from "./provider-metadata.mjs";
 import { createGithubProvider } from "./providers/github.mjs";
 import { readProviderSettings, writeProviderSettings } from "./provider-settings.mjs";
@@ -80,7 +82,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
   }
 
   const snapshot = () => ({ codex_provider: selection.codex,
-    github: { state: "configured", profile: "codex" },
+    github: { state: "configured", profile: "codex", preference: autoReviewPreference(options) },
     m365: { ...(m365?.snapshot() || {}), enabled, state: !enabled ? "disabled" : pending ? "checking"
       : !["darwin", "win32"].includes(platform) ? "unsupported" : m365?.snapshot().state || (reason ? "unavailable" : "idle"),
       reason: reason || m365?.snapshot().reason || null,
@@ -108,8 +110,10 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
       if (!preference || !ids.has(preference.model) || !ids.has(preference.auto_review_model)) {
         throw Object.assign(new Error("Choose available M365 GPT and auto-review models before switching"), { code: "m365_model_selection_required", statusCode: 400 });
       }
-      if (!m365.models("gpt").find(model => model.id === preference.auto_review_model)?.capabilities?.supports?.reasoning_effort?.includes("low")) {
-        throw Object.assign(new Error("Choose an M365 Auto-review model that advertises low reasoning"), { code: "m365_review_effort_unavailable", statusCode: 400 });
+      const review = m365.models("gpt").find(model => model.id === preference.auto_review_model);
+      const effort = preference.auto_review_effort === undefined ? "low" : preference.auto_review_effort;
+      if (effort !== null && !autoReviewReasoningEfforts(review).includes(effort)) {
+        throw Object.assign(new Error("Choose an M365 review model with the selected thinking level"), { code: "m365_review_effort_unavailable", statusCode: 400 });
       }
     }
     if (closed) throw unavailable("m365_runtime_closed");
@@ -206,16 +210,26 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
         if (closed) throw unavailable("m365_runtime_closed");
         if (input.action === "models") { await startM365();return { state: snapshot(), models: m365?.models(input.family === "claude" ? "claude" : "gpt") || [] }; }
         if (input.action === "auto-review") {
-          if (selection.codex !== "m365" || !m365) throw unavailable("m365_not_selected");
+          if (input.provider && input.provider !== selection.codex) throw new Error("Save the source before changing review settings");
+          if (selection.codex === "github") {
+            if (String(env.CCDX_AUTO_REVIEW_MODEL || "").trim()) throw new Error("Review model is controlled by CCDX_AUTO_REVIEW_MODEL");
+            const models = githubRegistry?.models?.data || [];
+            const model = models.find(model => model.id === input.model);
+            if (!responsesModelIdsFromCopilotModels(models).includes(input.model)
+              || input.effort !== null && !autoReviewReasoningEfforts(model).includes(input.effort)) throw new Error("Choose an available review model and thinking level");
+            const result = writeAutoReviewModel(input.model === DEFAULT_CODEX_AUTO_REVIEW_MODEL ? "" : input.model, { ...options, reasoningEffort: input.effort });
+            return { changed: result.changed, ...snapshot() };
+          }
+          if (!m365) throw unavailable("m365_not_selected");
           const model = m365.models("gpt").find(model => model.id === input.model);
-          if (!model || input.effort !== null && !model.capabilities?.supports?.reasoning_effort?.includes(input.effort)) {
+          if (!model || input.effort !== null && !autoReviewReasoningEfforts(model).includes(input.effort)) {
             throw Object.assign(new Error("The selected M365 review model or effort is not available"), { statusCode: 400, code: "m365_review_effort_unavailable" });
           }
           const preference = { ...selection.m365, auto_review_model: input.model, auto_review_effort: input.effort };
           const changed = JSON.stringify(preference) !== JSON.stringify(selection.m365);
           selection = writeProviderSettings("m365", preference, options);return { changed, ...snapshot() };
         }
-        if (input.action === "switch") return switchSource(input.provider, { model: input.model, auto_review_model: input.auto_review_model });
+        if (input.action === "switch") return switchSource(input.provider, { model: input.model, auto_review_model: input.auto_review_model ?? selection.m365?.auto_review_model, ...(input.auto_review_effort !== undefined ? { auto_review_effort: input.auto_review_effort } : selection.m365?.auto_review_effort !== undefined ? { auto_review_effort: selection.m365.auto_review_effort } : {}) });
         if (input.action === "off" || input.action === "remove") return disable(input.action === "remove");
         if (input.action === "on") {
           updateM365Settings({ enabled: true }, options);enabled = env.CCDX_M365 !== "0";

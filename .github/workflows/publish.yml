@@ -28,6 +28,8 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
       - run: npm ci
-      - run: npm publish --tag latest
+      - run: npm run verify
+      - run: npm run release:pack -- "$RUNNER_TEMP/ccdx-release"
+      - run: npm publish "$RUNNER_TEMP/ccdx-release/codex-copilot-dx-${{ inputs.version }}.tgz" --tag latest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -170,3 +170,18 @@ test("successful background catalogs synchronize Claude configuration and stoppi
   const pending = provider.refresh();await s.runtime.action({ action: "off" });await pending.catch(() => {});
   const count = configured.length;await new Promise(resolve => setImmediate(resolve));assert.equal(configured.length, count);
 });
+
+test("GitHub review settings share CLI effort filtering and preserve environment ownership", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-review-ui-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const githubRegistry = { models: { data: [{ id: "gpt-6.1-sol", supported_endpoints: ["/responses"], model_picker_enabled: true,
+    capabilities: { supports: { reasoning_effort: ["none", "low", "high"] } } }] } };
+  const env = {}, runtime = createProviderRuntime({ home, env, githubRegistry });
+  await assert.rejects(runtime.action({ action: "auto-review", provider: "m365", model: "gpt-6.1-sol", effort: "low" }), /Save the source/);
+  await assert.rejects(runtime.action({ action: "auto-review", provider: "github", model: "gpt-6.1-sol", effort: "none" }), /available review/);
+  await runtime.action({ action: "auto-review", provider: "github", model: "gpt-6.1-sol", effort: "high" });
+  assert.equal(runtime.snapshot().github.preference.reasoningEffort, "high");
+  env.CCDX_AUTO_REVIEW_MODEL = "gpt-6.1-sol";
+  await assert.rejects(runtime.action({ action: "auto-review", provider: "github", model: "gpt-6.1-sol", effort: "low" }), /controlled by CCDX/);
+  assert.equal(runtime.snapshot().github.preference.reasoningEffort, "high");await runtime.close();
+});

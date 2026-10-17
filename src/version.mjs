@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { stableVersion as githubReleaseVersion } from "./release-install.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { operationError } from "./operation-error.mjs";
@@ -30,12 +31,7 @@ export function isVersionGreater(a, b) {
   return false;
 }
 
-export function githubReleaseVersion(tag) {
-  if (typeof tag !== "string" || tag.length > 64) return null;
-  const match = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(tag);
-  if (!match || !match.slice(1).every((part) => Number.isSafeInteger(Number(part)))) return null;
-  return match.slice(1).join(".");
-}
+export { stableVersion as githubReleaseVersion } from "./release-install.mjs";
 
 export async function lookupLatestRelease({ fetchImpl = fetch, timeoutMs = 2000 } = {}) {
   const controller = new AbortController();

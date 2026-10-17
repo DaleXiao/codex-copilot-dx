@@ -1,5 +1,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import { downloadRelease, protectInstallation, verifyPackageRuntime, writePrivateLaunchers, createNpmReleaseFetch } from "./release-install.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
@@ -10,7 +12,7 @@ import { readBoundedFileSync } from "./bounded-file.mjs";
 const PACKAGE_NAME = "codex-copilot-dx";
 const UPDATE_SPECS = {
   npm: `${PACKAGE_NAME}@latest`,
-  github: "github:DaleXiao/codex-copilot-dx",
+  github: "https://github.com/DaleXiao/codex-copilot-dx/releases/download",
 };
 
 function npmLaunch(args, { platform, env }) {
@@ -75,7 +77,7 @@ export function inspectNpmDownloadPolicy({ env = process.env, platform = process
   return result;
 }
 
-export function globalUpdateCommand(source, { platform = process.platform, releaseTag, allowRemote = false } = {}) {
+export function globalUpdateCommand(source, { platform = process.platform, releaseTag, releaseFile, allowRemote = false } = {}) {
   if (typeof allowRemote !== "boolean") throw new Error("Remote download permission must be a boolean");
   const normalized = normalizeUpdateSource(source);
   if (!normalized) throw new Error(`Choose npm or github. Received: ${source}`);
@@ -83,7 +85,9 @@ export function globalUpdateCommand(source, { platform = process.platform, relea
   if (allowRemote) args.push("--allow-remote=all");
   if (normalized === "github") {
     if (!githubReleaseVersion(releaseTag)) throw new Error("A valid stable GitHub release tag is required");
-    args.push("--allow-git=all", `${UPDATE_SPECS.github}#${releaseTag}`);
+    const version = githubReleaseVersion(releaseTag), name = `codex-copilot-dx-${version}.tgz`;
+    if (releaseFile !== undefined && releaseFile !== `./${name}`) throw new Error("Invalid verified release filename");
+    args.push(releaseFile || `${UPDATE_SPECS.github}/v${version}/${name}`);
   } else {
     args.push(UPDATE_SPECS[normalized]);
   }
@@ -137,6 +141,9 @@ export async function runPackageUpdateCommand({
   inspectPolicyFn = inspectNpmDownloadPolicy,
   verifyInstalledFn = verifyInstalledPackage,
   repairCommandFn,
+  downloadReleaseFn = downloadRelease,
+  protectInstallationFn = protectInstallation,
+  verifyRuntimeFn = verifyPackageRuntime,
 } = {}) {
   if (typeof allowRemote !== "boolean") throw new Error("Remote download permission must be a boolean");
   let selectedSource = normalizeUpdateSource(source);
@@ -172,6 +179,14 @@ export async function runPackageUpdateCommand({
     }
   }
 
+  const environment = inspectEnvironmentFn({ env, platform });
+  if (selectedSource === "github" && fetchImpl === globalThis.fetch) {
+    let npmCli;
+    try {
+      npmCli = platform === "win32" ? path.win32.join(path.win32.dirname(environment.npm), "node_modules", "npm", "bin", "npm-cli.js") : fs.realpathSync(environment.npm);
+    } catch { throw new Error("Cannot locate npm for verified Release downloads. Use an approved local package or the platform installer."); }
+    fetchImpl = createNpmReleaseFetch(npmCli, { env });
+  }
   let release;
   if (selectedSource === "github") {
     output.write("Checking the latest stable GitHub release...\n");
@@ -180,21 +195,33 @@ export async function runPackageUpdateCommand({
   const policy = inspectPolicyFn({ env, platform });
   if (allowRemote && policy.supported === null) throw new Error("Could not verify npm's remote-download option; no installation was started. Check npm --version and npm config get allow-remote.");
   const permitRemote = allowRemote && policy.supported === true;
-  const update = globalUpdateCommand(selectedSource, { platform, releaseTag: release?.tagName, allowRemote: permitRemote });
+  let directory, artifact;
+  if (release) {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-update-"));
+    try { artifact = await downloadReleaseFn(release.tagName, { fetchImpl, directory }); }
+    catch (error) { fs.rmSync(directory, { recursive: true, force: true });throw error; }
+    output.write("Release package verified; Git is not required. Dependencies use the configured npm registry.\n");
+  }
+  try {
+  const update = globalUpdateCommand(selectedSource, { platform, releaseTag: release?.tagName, releaseFile: artifact ? `./${artifact.name}` : undefined, allowRemote: permitRemote });
   const sourceLabel = selectedSource === "npm" ? "npm registry" : `GitHub release ${release.tagName}`;
   output.write(`Updating ${PACKAGE_NAME} from ${sourceLabel}...\n`);
   if (policy.allowRemote) output.write(`npm ${terminalCell(policy.version)}: saved allow-remote=${policy.allowRemote}${policy.registryOrigin ? `; registry ${terminalCell(policy.registryOrigin)}` : ""}.\n`);
   if (permitRemote) output.write("Explicit permission for this update only: npm may download URL dependencies throughout the selected package's dependency tree. Registry and persistent npm settings are unchanged.\n");
   else if (allowRemote) output.write("This npm does not expose the remote-download restriction; no unsupported permission flag was added.\n");
-  const environment = inspectEnvironmentFn({ env, platform });
   if (environment?.state === "different") {
     output.write(`Warning: npm targets ${terminalCell(environment.target)}, not the running package at ${terminalCell(environment.package_root)}. Existing PATH and prefix choices were preserved.\n`);
   }
-  // npm.cmd needs cmd.exe. Only fixed install arguments and a validated stable
-  // release tag enter this command line; no user-supplied command is evaluated.
+  // The verified tarball basename is fixed and safe for cmd.exe. Its directory
+  // is passed as cwd, never interpolated into the Windows command string.
   const launch = npmLaunch(update.args, { platform, env });
+  const brokerRequired = Boolean(environment?.target && fs.existsSync(path.join(environment.target, "node_modules", "@azure", "msal-node-runtime")));
+  const transaction = protectInstallationFn({ ...environment, platform });
+  let installedVersion;
+  try {
   const child = spawnImpl(launch.command, launch.args, {
     env,
+    ...(directory ? { cwd: directory } : {}),
     shell: false,
     stdio: "inherit",
     ...launch.options,
@@ -206,7 +233,11 @@ export async function runPackageUpdateCommand({
     }
     throw error;
   }
-  const installedVersion = verifyInstalledFn(environment?.target, { expectedVersion: release?.version });
+  installedVersion = verifyInstalledFn(environment?.target, { expectedVersion: release?.version });
+  if (environment?.target && installedVersion) verifyRuntimeFn(environment.target, installedVersion, { brokerRequired });
+  if (env.CCDX_PRIVATE_INSTALL_PREFIX && env.CCDX_PRIVATE_INSTALL_PREFIX === environment?.prefix) await writePrivateLaunchers(environment);
+  transaction.commit();
+  } catch (error) { transaction.rollback();throw error; }
   if (installedVersion) {
     output.write(`Updated ${PACKAGE_NAME}: installed v${terminalCell(installedVersion)} at ${terminalCell(environment.target)}.\n`);
     if (platform === "win32") {
@@ -221,4 +252,5 @@ export async function runPackageUpdateCommand({
   }
   output.write("Restart the running adapter to use the installed version; an existing service is not replaced automatically.\n");
   return { cancelled: false, source: selectedSource };
+  } finally { if (directory) fs.rmSync(directory, { recursive: true, force: true }); }
 }

@@ -37,6 +37,11 @@ exit $ret
 `;
 }
 
+export function privateWindowsCommand({ node, cli, prefix }) {
+  const literal = value => value.replaceAll("%", "%%");
+  return `@echo off\r\nsetlocal DisableDelayedExpansion\r\nset "CCDX_PRIVATE_INSTALL_PREFIX=${literal(prefix)}"\r\nset "PATH=${literal(path.dirname(node))};%PATH%"\r\nif not defined npm_config_prefix set "npm_config_prefix=${literal(prefix)}"\r\n"${literal(node)}" "${literal(cli)}" %*\r\nexit /b %errorlevel%\r\n`;
+}
+
 export function inspectWindowsCommand({ platform = process.platform,
   packageRoot = fileURLToPath(new URL("../", import.meta.url)), repair = false, locked = false } = {}) {
   if (platform !== "win32") return { status: "not_applicable", changed: false };
@@ -58,7 +63,9 @@ export function inspectWindowsCommand({ platform = process.platform,
     try {
       if (!fs.lstatSync(cmd).isFile() || fs.statSync(cmd).size > 8192) throw new Error();
       const batch = fs.readFileSync(cmd, "utf8");
-      if (!batch.startsWith("@ECHO off") || !batch.includes(`"%dp0%\\${target.replaceAll("/", "\\")}" %*`)) throw new Error();
+      const ownedNpm = batch.startsWith("@ECHO off") && batch.includes(`"%dp0%\\${target.replaceAll("/", "\\")}" %*`);
+      const ownedPrivate = batch === privateWindowsCommand({ node: process.execPath, cli: path.join(root, "bin", script), prefix });
+      if (!ownedNpm && !ownedPrivate) throw new Error();
       let stat;
       try { stat = fs.lstatSync(ps1); } catch (error) { if (error.code !== "ENOENT") throw error; }
       if (!stat) { results.push({ name, status: "ready", changed: false });continue; }

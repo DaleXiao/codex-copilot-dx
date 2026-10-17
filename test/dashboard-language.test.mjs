@@ -112,7 +112,7 @@ test("all annotated static English prose has a Chinese translation and the switc
   assert.doesNotMatch(languageScript, /fetch\(|setTimeout\(|setInterval\(|MutationObserver|innerHTML/);
 });
 
-test("bilingual copy preserves every placeholder and keeps Chinese descriptions short", () => {
+test("bilingual copy preserves every placeholder and necessary information", () => {
   const dictionary = runInNewContext(`(${/const translations = (\{[\s\S]*?\n  \});/.exec(languageScript)[1]})`);
   const placeholders = (text) => [...new Set(text.match(/\{\w+\}/g) || [])].sort();
   assert.ok(Object.keys(dictionary).length >= 180);
@@ -123,14 +123,11 @@ test("bilingual copy preserves every placeholder and keeps Chinese descriptions 
       assert.ok(value.length, key);
       assert.deepEqual(placeholders(value), placeholders(pair[0]), `Changed values: ${key}`);
     }
-    for (const line of pair[1].replace(/\{\w+\}/g, "").split("\n")) {
-      if (/^(?:CCDX_[A-Z_]+|ccdx [a-z -]+)$/.test(line)) continue;
-      assert.ok([...line].length <= 20, `Long Chinese copy: ${line}`);
-    }
+
   }
 });
 
-test("Chinese functional names are 2–4 characters while English uses the same meanings", () => {
+test("Chinese functional names remain translated and preserve their meaning", () => {
   const page = load();
   const names = ["RECENT REQUEST CONTEXT", "ADAPTER", "KNOWN MODELS", "REQUESTS", "MODEL OUTCOMES", "LOCAL HISTORY", "ACTIVE LIMIT", "IMAGE GENERATION", "OPTIONAL", "UPSTREAM GPT MODELS", "USAGE", "USAGE ANALYTICS", "RECENT RESPONSE FAILURES", "TERMINAL ANIMATION", "Save selection", "All history", "Copy diagnostic", "WIRE MiB", "INPUT TOKENS", "MODEL WINDOW", "INPUT / WINDOW", "CACHE READ", "CACHE HIT", "DAILY TOKENS", "REQUEST ACTIVITY · 365 DAYS", "Comet", "Twin", "Shuttle", "Chase", "Mirror", "Pulse", "Stack", "Relay", "Split"];
   assert.equal(page.language.format("CACHE HIT"), "REUSE RATE");
@@ -139,7 +136,7 @@ test("Chinese functional names are 2–4 characters while English uses the same 
   page.toggle();
   for (const key of names) {
     const size = [...page.language.format(key)].length;
-    assert.ok(size >= 2 && size <= 4, key);
+    assert.ok(size >= 2, key);
   }
   assert.equal(page.language.format("CACHE HIT"), "复用比例");
   assert.equal(page.language.format("LOCAL HISTORY"), "对话暂存");

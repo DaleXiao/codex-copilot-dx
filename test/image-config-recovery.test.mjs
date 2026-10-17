@@ -32,7 +32,7 @@ for (const [name, prefix, suffix] of [
     assert.deepEqual(computeUpdatedCodexConfig(before, 2026, "127.0.0.1", { imageProviderEnabled: true }), { content: before, changed: false });
     const disabled = computeImageMcpCodexConfig(before, { enabled: false });
     assert.equal(parse(disabled.content).mcp_servers.ccdx_image, undefined);
-    assert.deepEqual(parse(disabled.content).mcp_servers.other, { command: "keep" });
+    assert.deepEqual({ ...parse(disabled.content).mcp_servers.other }, { command: "keep" });
     assert.ok(disabled.content.includes(unrelated));
     assert.doesNotMatch(disabled.content, /ccdx:image-mcp/);
     assert.deepEqual(computeImageMcpCodexConfig(disabled.content, { enabled: false }), { content: disabled.content, changed: false });
@@ -51,7 +51,7 @@ test("quoted, dotted, inline-leaf, reordered and multiline declarations remain i
     assert.deepEqual(computeUpdatedCodexConfig(before, 2026, "127.0.0.1", { imageProviderEnabled: true }), { content: before, changed: false });
     const disabled = computeImageMcpCodexConfig(before, { enabled: false });
     assert.equal(parse(disabled.content).mcp_servers?.ccdx_image, undefined);
-    assert.deepEqual(parse(disabled.content).features, { context_management: true });
+    assert.deepEqual({ ...parse(disabled.content).features }, { context_management: true });
   }
 });
 

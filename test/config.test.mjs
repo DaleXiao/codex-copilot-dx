@@ -115,7 +115,7 @@ KEEP_ME = "untouched"
   assert.equal(parsed.openai_base_url, "http://127.0.0.1:2026/v1");
   assert.equal(parsed.model_context_window, 262144);
   assert.equal(parsed.model_auto_compact_token_limit, 200000);
-  assert.deepEqual(parsed.shell_environment_policy.set, {
+  assert.deepEqual({ ...parsed.shell_environment_policy.set }, {
     OPENAI_BASE_URL: "http://127.0.0.1:2026/v1", OPENAI_API_KEY: "dummy", KEEP_ME: "untouched",
   });
   assert.equal(parsed.features.context_management, false);
@@ -131,7 +131,7 @@ test("dotted shell settings are updated without redefining their tables", () => 
 ${prefix}KEEP_ME = "untouched"
 `;
     const { content } = computeUpdatedCodexConfig(before);
-    assert.deepEqual(parse(content).shell_environment_policy.set, {
+    assert.deepEqual({ ...parse(content).shell_environment_policy.set }, {
       OPENAI_BASE_URL: "http://127.0.0.1:2026/v1", KEEP_ME: "untouched", OPENAI_API_KEY: "dummy",
     });
     assert.match(content, /# keep/);

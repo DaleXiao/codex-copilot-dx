@@ -44,7 +44,7 @@ try {
     fs.writeFileSync(path.join(compatible, "npm.cmd"), '@"%CCDX_REPLAY_NODE%" "%CCDX_REPLAY_NPM%" %*\r\n');
     fs.symlinkSync(path.dirname(path.dirname(path.dirname(actualNpm))), path.join(compatible, "node_modules"), "junction");
   } else {
-    for (const name of ["curl", "mktemp", "rm", "cut", "shasum", "sha256sum", "uname", "head", "grep", "ldd", "tar", "mkdir", "mv", "awk", "sh"]) {
+    for (const name of ["curl", "mktemp", "rm", "cut", "shasum", "sha256sum", "uname", "head", "grep", "ldd", "tar", "gzip", "mkdir", "mv", "awk", "sh"]) {
       try { const file = execFileSync("/usr/bin/which", [name], { encoding: "utf8" }).trim();fs.symlinkSync(file, path.join(tools, name)); } catch {}
     }
     fs.symlinkSync(process.execPath, path.join(compatible, "node"));fs.symlinkSync(actualNpm, path.join(compatible, "npm"));

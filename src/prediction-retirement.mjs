@@ -14,12 +14,7 @@ const same = (left, right) => isDeepStrictEqual(left, right);
 
 export function computeRetiredPredictionConfig(content, filePath) {
   const before = parseCodexToml(content);
-  const expected = {
-    command: process.execPath,
-    args: [fileURLToPath(new URL("./suggestion-mcp.mjs", import.meta.url))],
-    env: { CCDX_SUGGESTION_CONFIG: filePath },
-    tool_timeout_sec: 40n,
-  };
+  const expected = parseCodexToml(`command = ${JSON.stringify(process.execPath)}\nargs = ${JSON.stringify([fileURLToPath(new URL("./suggestion-mcp.mjs", import.meta.url))])}\nenv = { CCDX_SUGGESTION_CONFIG = ${JSON.stringify(filePath)} }\ntool_timeout_sec = 40\n`);
   const existing = before.mcp_servers?.ccdx_suggestion;
   const owned = existing && typeof existing.enabled === "boolean"
     && same({ ...existing, enabled: undefined }, { ...expected, enabled: undefined });
@@ -46,7 +41,7 @@ export function computeRetiredPredictionConfig(content, filePath) {
   const after = parseCodexToml(updated);
   const remaining = [...(before.hooks?.Stop || [])];
   if (hookOwned) {
-    const index = remaining.findIndex(group => same(group, { hooks: [{ type: "command", command, async: true, timeout: 35n }] }));
+    const index = remaining.findIndex(group => same(group, parseCodexToml(block).hooks.Stop[0]));
     if (index < 0) throw new Error("Retired prediction hook could not be safely removed");
     remaining.splice(index, 1);
   }

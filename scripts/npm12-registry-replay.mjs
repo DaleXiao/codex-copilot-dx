@@ -34,8 +34,8 @@ try {
   const actualVersion = (await run(process.execPath, [npm, "--version"], { timeout: 10000 })).stdout.trim();
   assert.equal(actualVersion, "12.0.1");
   await artifact("codex-copilot-dx", oldVersion);
-  const source = await artifact("codex-copilot-dx", version, { sharp: "0.35.3", "smol-toml": "1.8.0" });
-  await artifact("sharp", "0.35.3", { "fixture-leaf": "1.0.0" });await artifact("smol-toml", "1.8.0");await artifact("fixture-leaf", "1.0.0");
+  const source = await artifact("codex-copilot-dx", version, { sharp: "0.35.5", "smol-toml": "1.9.1" });
+  await artifact("sharp", "0.35.5", { "fixture-leaf": "1.0.0" });await artifact("smol-toml", "1.9.1");await artifact("fixture-leaf", "1.0.0");
   const serve = (req, res, cdn) => {
     records.push({ url: req.url, cdn, authorization: req.headers.authorization });
     const decoded = decodeURIComponent(req.url.split("?")[0]);

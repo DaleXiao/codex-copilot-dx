@@ -6,13 +6,19 @@ $base = "https://github.com/DaleXiao/codex-copilot-dx/releases/download/v$versio
 $work = Join-Path ([IO.Path]::GetTempPath()) ('ccdx-bootstrap-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 function Download($url, $file) { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $file -TimeoutSec 300 }
+function FileHash($file) {
+  $stream = [IO.File]::OpenRead($file)
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }
+  finally { $stream.Dispose(); $sha.Dispose() }
+}
 $privateRuntime = $false
 try {
   $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
   $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
   $compatible = $false
   if ($nodeCommand -and $npmCommand) {
-    & $nodeCommand.Source -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||a===22&&b>=15?0:1)'
+    & $nodeCommand.Source -e 'const [a,b]=process.versions.node.split(String.fromCharCode(46)).map(Number);process.exit(a>22||a===22&&b>=15?0:1)'
     $compatible = $LASTEXITCODE -eq 0
   }
   if ($compatible) {
@@ -36,11 +42,12 @@ try {
     $node = Join-Path $runtime 'node.exe'
     $npmCli = Join-Path $runtime 'node_modules/npm/bin/npm-cli.js'
     if (!(Test-Path -LiteralPath $node)) {
-      Write-Host 'Downloading official Node 24.22.0 for CCDX only…'
+      Write-Host 'Downloading official Node 24.22.0 for CCDX only...'
       $archive = Join-Path $work 'node.zip'
       Download "https://nodejs.org/dist/v24.22.0/$runtimeName.zip" $archive
-      if ((Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant() -ne $hash) { throw 'Node checksum mismatch. Installation stopped.' }
-      Expand-Archive -LiteralPath $archive -DestinationPath $work
+      if ((FileHash $archive) -ne $hash) { throw 'Node checksum mismatch. Installation stopped.' }
+      Add-Type -AssemblyName System.IO.Compression.FileSystem
+      [IO.Compression.ZipFile]::ExtractToDirectory($archive, $work)
       & (Join-Path $work "$runtimeName/node.exe") --version | Out-Null
       if ($LASTEXITCODE -ne 0) { throw 'The downloaded Node cannot run on this device.' }
       New-Item -ItemType Directory -Path (Split-Path $runtime) -Force | Out-Null
@@ -52,7 +59,7 @@ try {
   Download "$base/SHA256SUMS" $manifest
   Download "$base/ccdx-install.mjs" $helper
   $lines = @(Get-Content -LiteralPath $manifest | Where-Object { $_ -match '^[a-f0-9]{64}  ccdx-install\.mjs$' })
-  if ($lines.Count -ne 1 -or (Get-FileHash -Algorithm SHA256 -LiteralPath $helper).Hash.ToLowerInvariant() -ne $lines[0].Substring(0,64)) { throw 'Installer checksum mismatch. Installation stopped.' }
+  if ($lines.Count -ne 1 -or (FileHash $helper) -ne $lines[0].Substring(0,64)) { throw 'Installer checksum mismatch. Installation stopped.' }
   $arguments = @($helper, "v$version", $prefix, $npmCli)
   if ($privateRuntime) { $arguments += '--private-runtime' }
   if ($AllowRemote) { $arguments += '--allow-remote' }

@@ -8,7 +8,7 @@ test("image MCP Codex config: is explicit, idempotent, and exactly reversible", 
   const enabled = computeImageMcpCodexConfig(before, { enabled: true, adapterPort: 2026 });
   assert.equal(enabled.changed, true);
   assert.match(enabled.content, /^\[mcp_servers\.ccdx_image\]$/m);
-  assert.deepEqual(parse(enabled.content).mcp_servers.ccdx_image, {
+  assert.deepEqual({ ...parse(enabled.content).mcp_servers.ccdx_image }, {
     url: "http://127.0.0.1:2026/mcp/image",
     enabled: true,
     tool_timeout_sec: 210,
@@ -70,13 +70,13 @@ command = "keep"
   const first = computeUpdatedCodexConfig(orphaned, 2026, "127.0.0.1", { imageProviderEnabled: true });
   assert.equal(first.changed, true);
   const config = parse(first.content);
-  assert.deepEqual(config.mcp_servers.ccdx_image, {
+  assert.deepEqual({ ...config.mcp_servers.ccdx_image }, {
     url: "http://127.0.0.1:2026/mcp/image",
     enabled: true,
     tool_timeout_sec: 210,
   });
-  assert.deepEqual(config.mcp_servers["computer-use"], { command: "keep" });
-  assert.deepEqual(config.mcp_servers.pencil, { command: "keep" });
+  assert.deepEqual({ ...config.mcp_servers["computer-use"] }, { command: "keep" });
+  assert.deepEqual({ ...config.mcp_servers.pencil }, { command: "keep" });
   assert.equal(first.content.split("[mcp_servers.ccdx_image]").length - 1, 1);
   assert.doesNotMatch(first.content, /ccdx:image-mcp/);
   assert.ok(first.content.includes(orphaned.slice(orphaned.indexOf("[mcp_servers.computer-use]"))));

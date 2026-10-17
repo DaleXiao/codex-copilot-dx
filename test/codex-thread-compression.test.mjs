@@ -96,7 +96,7 @@ test("optional compression setup preserves user edits during probe and unchanged
   assert.equal(fs.readFileSync(filePath, "utf8"), optedOut);
   fs.writeFileSync(filePath, before);
   await ensureCodexThreadCompression({ filePath, probe: async () => { fs.writeFileSync(filePath, `${before}[projects.new]\ntrust_level = "trusted"\n`); return true; } });
-  assert.deepEqual(parse(fs.readFileSync(filePath, "utf8")).projects, { new: { trust_level: "trusted" } });
+  assert.deepEqual(parse(fs.readFileSync(filePath, "utf8")).projects, parse('[projects.new]\ntrust_level = "trusted"\n').projects);
 });
 
 test("unsupported/default-on/failed probes and unsafe config cannot block optional setup", async t => {

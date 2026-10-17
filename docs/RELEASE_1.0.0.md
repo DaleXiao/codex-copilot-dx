@@ -103,7 +103,7 @@ options and explicit discovery failures on alias collisions. Regression
 checks cover these paths. Documentation separates fresh evidence, cached metadata,
 client configuration, upstream access and runtime outcomes.
 
-## Remaining release gates and limitations
+## Platform scope and limitations
 
 - [CI 38985554605](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38985554605)
   passed all fourteen jobs on candidate `5a97b3098fe8e3fdd24339a874c87369c0f61d4b`.
@@ -142,3 +142,30 @@ wanted. Account credentials, usage history and system SSO are not deleted.
 
 This verification snapshot precedes publication. Final publication receipts follow
 on the repository main branch; the existing runtime was left for an explicit update.
+
+## Publication receipts
+
+- Tag `v1.0.0` targets `80650b7ecd997ee38aa497cf9af8bc946daacc0d`.
+- [npm publishing run 38986014262](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38986014262)
+  completed successfully. Its normal `prepublishOnly` verification passed; npm
+  reported publication to `https://registry.npmjs.org/` with tag `latest` and
+  `+ codex-copilot-dx@1.0.0`.
+- Published package integrity matches the tested candidate:
+  `sha512-08oN8WzYTzMSS8eFCnJbKvS9WGlgqbmQsZZ+Q+t8Ec/0GMbMG7wpl6cf9Cah10DHeVVfjxMjwYIDb7jZA1B6Cg==`.
+- [GitHub release v1.0.0](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.0.0)
+  is public, latest and non-prerelease. The attached package is 440,583 bytes;
+  GitHub's asset digest matches the SHA-256 recorded above.
+- The existing user-configured enterprise npm mirror still returned `latest:
+  0.9.19` during verification. A direct Node/npm read of the origin failed with
+  `read ENOTCONN`. These local lookup limits do not replace the successful origin
+  publication receipt. Use the existing `ccdx update github` route while the mirror
+  is stale; npm registry, proxy and strict installation policy were not changed.
+- User authorization explicitly identified the historical CCDX 9 PAT. Its owner
+  and repository rights were verified before use; credentials were neither printed
+  nor persisted. npm reused the existing repository secret.
+
+The original Claude Profile/draft was restored and the temporary test Profile
+removed. The test session was archived; temporary test dependencies and directories
+were removed. Only the final package, manifest, evidence archive and receipt remain
+as delivery artifacts outside the clean repository worktree. The live Codex service
+was not restarted or silently upgraded.

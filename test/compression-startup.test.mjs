@@ -47,7 +47,7 @@ for (const mode of ["pending", "default-on", "removed", "timeout", "write-failur
       ADAPTER_HOST: "127.0.0.1", ADAPTER_PORT: String(port), CCDX_AUTO_LAUNCH: "0",
       CCDX_MODEL_REFRESH_INTERVAL_MS: "0", CCDX_DISABLE_TOKEN_DISCOVERY: "1", CCDX_TEST_COMPRESSION_MODE: mode };
     const start = () => {
-      const child = spawn(process.execPath, ["--require", preload, cli], { env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+      const child = spawn(process.execPath, ["--require", preload, cli, "--verbose"], { env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
       let output = "";
       child.stdout.on("data", chunk => { output += chunk; });
       child.stderr.on("data", chunk => { output += chunk; });

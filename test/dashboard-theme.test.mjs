@@ -87,5 +87,5 @@ test("status heading replaces the prompt with the favicon geometry and inherits 
   assert.deepEqual(geometry(heading), geometry(decodeURIComponent(favicon.href)));
   assert.match(heading, /stroke="currentColor" stroke-width="3" stroke-linecap="round"/);
   assert.match(css, /\.status-icon \{[^}]*width: 1em; height: 1em;[^}]*color: var\(--accent\);/);
-  assert.match(heading, /<\/svg> ccdx status$/);
+  assert.match(heading, /<\/svg> <span id="page-title" data-i18n>Overview<\/span>$/);
 });

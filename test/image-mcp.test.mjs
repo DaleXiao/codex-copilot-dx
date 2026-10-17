@@ -475,3 +475,17 @@ test("image MCP does not save a cancelled delivery or dispatch another image req
   assert.equal(handler.stats().succeeded, 0);
   assert.equal(handler.stats().active, 0);
 });
+
+test("pausing image calls retains prior edit handles across discovery and resume", async () => {
+  let enabled = true, calls = 0;
+  const config = { endpoint: "https://images.example/v1/images/generations", api_key: "secret", model: "qwen-image-3.0-pro", protocol: "qwen-messages" };
+  const handler = createImageMcpHandler({ configLoader: () => config, isEnabled: () => enabled,
+    generateImageFn: async () => { calls++;return { data: PNG, mimeType: "image/png", model: config.model }; } });
+  const first = (await rpc(handler, 1, "tools/call", { name: "generate_image", arguments: { prompt: "first" } })).body.result;
+  enabled = false;
+  assert.deepEqual((await rpc(handler, 2, "tools/list")).body.result.tools, []);
+  await rpc(handler, 3, "initialize", { protocolVersion: "2025-06-18" });
+  const edit = { name: "edit_image", arguments: { image_id: first._meta["ccdx/image_id"], prompt: "edit" } };
+  assert.equal((await rpc(handler, 4, "tools/call", edit)).body.result.isError, true);assert.equal(calls, 1);
+  enabled = true;assert.equal((await rpc(handler, 5, "tools/call", edit)).body.result.isError, undefined);assert.equal(calls, 2);
+});

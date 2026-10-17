@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { publicModelCatalog } from "./provider-metadata.mjs";
 import { createGithubProvider } from "./providers/github.mjs";
 import { readProviderSettings, writeProviderSettings } from "./provider-settings.mjs";
-import { readM365Settings, updateM365Settings, m365Paths, ensureM365GatewayKey, M365_GATEWAY_PORT } from "./m365-settings.mjs";
+import { readM365Settings, updateM365Settings, m365Paths, ensureM365GatewayKey } from "./m365-settings.mjs";
 
 const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavailable (${reason}); GitHub routing was not substituted`),
   { code: reason, statusCode: 503 });
@@ -39,7 +39,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
         const desktopManaged = integration ? await integration.inspectClaudeDesktopPolicy(options) : false;
         if (closed || !enabled || source !== m365 || source.profileId() !== profile || !gateway) return;
         claudeReason = source.models("claude").length ? null : "m365_no_claude_models";
-        clients = configure({ ...options, desktopManaged, baseUrl: `http://127.0.0.1:${gateway.port}`,
+        clients = configure({ ...options, desktopManaged, baseUrl: `http://127.0.0.1:${corePort}/anthropic`,
           apiKey: ensureM365GatewayKey(options), models: source.models("claude") });
       } catch { clients = { code: "configuration_unavailable", app: "configuration_unavailable" };claudeReason = "m365_claude_config_unavailable"; }
     })().finally(() => { clientSync = null; });
@@ -61,13 +61,12 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
       }
       await m365.refresh();if (closed || !enabled) return null;
       const claudeModels = m365.models("claude");
-      claudeReason = !claudeModels.length ? "m365_no_claude_models" : corePort === M365_GATEWAY_PORT ? "m365_gateway_core_port_conflict" : null;
-      if (claudeReason === "m365_gateway_core_port_conflict") log("warn", `Claude gateway skipped: port ${M365_GATEWAY_PORT} belongs to the configured core service; M365 GPT routing remains available`);
+      claudeReason = !claudeModels.length ? "m365_no_claude_models" : null;
       if (claudeModels.length && !claudeReason) try {
         const apiKey = ensureM365GatewayKey(options);
         if (!gateway) {
-          const start = startGateway || (await import("./claude-gateway.mjs")).startClaudeGateway;
-          const opened = await start({ provider: m365, apiKey, env, log,
+          const start = startGateway || (await import("./claude-gateway.mjs")).createClaudeGateway;
+          const opened = await start({ provider: m365, apiKey, port: corePort, env, log,
             onRequest({ client }) { lastClients[client] = new Date().toISOString(); } });
           if (closed || !enabled) { await opened.close();return null; }
           gateway = opened;
@@ -77,7 +76,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
         claudeReason = error.code === "EADDRINUSE" ? "m365_gateway_port_busy" : "m365_claude_setup_unavailable";
         log("warn", `Claude setup unavailable: ${claudeReason}; M365 GPT routing is independent`);
       }
-      reason = null;log("ok", `Microsoft 365 ready: ${claudeModels.length} Claude, ${m365.models("gpt").length} GPT models${gateway ? `; Claude gateway at http://127.0.0.1:${gateway.port}` : ""}`);
+      reason = null;log("ok", `Microsoft 365 ready: ${claudeModels.length} Claude, ${m365.models("gpt").length} GPT models${gateway ? `; Claude at http://127.0.0.1:${corePort}/anthropic` : ""}`);
       return m365;
     })().catch(error => {
       reason = /^m365_[a-z0-9_]+$/.test(error.code || "") ? error.code : error.code === "EADDRINUSE" ? "m365_gateway_port_busy" : "m365_unavailable";
@@ -93,7 +92,8 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
       reason: reason || m365?.snapshot().reason || null,
       preference: selection.m365 || null,
       active_requests: activeM365Requests,
-      claude: { gateway: gateway ? "running" : "unavailable", reason: claudeReason, port: gateway?.port || null, clients: { ...clients },
+      claude: { gateway: gateway ? "running" : "unavailable", reason: claudeReason, port: gateway ? corePort : null,
+        base_url: gateway ? `http://127.0.0.1:${corePort}/anthropic` : null, clients: { ...clients },
         observed_clients: { ...lastClients }, requests: gateway?.snapshot?.() || null } } });
 
   function current() {
@@ -125,12 +125,12 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
     selection = next;return snapshot();
   }
   async function disable(remove) {
-    if (remove && (activeM365Requests > 0 || gateway?.snapshot?.().active > 0)) {
-      throw Object.assign(new Error("Microsoft 365 requests are active; finish them before removing its profile"), { code: "m365_profile_busy", statusCode: 409 });
+    if (activeM365Requests > 0 || gateway?.snapshot?.().active > 0) {
+      throw Object.assign(new Error("Microsoft 365 requests are active; finish them before disabling or removing its profile"), { code: "m365_profile_busy", statusCode: 409 });
     }
     await switchSource("github");
     updateM365Settings({ enabled: false }, options);enabled = false;
-    m365?.close();await gateway?.close();gateway = null;
+    await gateway?.close();gateway = null;m365?.close();
     await pending;m365 = null;
     const restore = restoreClients || (await import("./claude-client-config.mjs")).restoreClaudeClients;
     const result = restore(options);clients = { code: result.preserved ? "preserved" : "restored", app: result.preserved ? "preserved" : "restored" };
@@ -146,6 +146,13 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
   }
   return {
     github, current, snapshot, start: startM365, refresh: () => startM365(true),
+    handleClaude(req, res) {
+      if (!enabled || !gateway?.handle) {
+        res.writeHead(503, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ type: "error", error: { type: "api_error", code: claudeReason || reason || "m365_claude_unavailable", message: "Claude is unavailable; check the model service settings." } }));return;
+      }
+      return gateway.handle(req, res);
+    },
     selection: () => selection,
     dashboardProviders() {
       const state = snapshot(), service = githubClient.runtimeStatus?.() || {}, ms = state.m365;
@@ -163,7 +170,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
             ...[["code", "Claude Code"], ["app", "Claude App"]].map(([id, name]) => ({ id: `claude_${id}`, name,
               selected: enabled, state: clients[id], gateway: gateway ? "running" : "unavailable", reason: claudeReason,
               last_request_at: lastClients[`claude_${id}`] || null }))],
-          requests: ms.claude.requests },
+          requests: ms.claude.requests, request_scope: "Claude Messages" },
       ];
     },
     async dashboardCatalog({ provider = selection.codex } = {}) {
@@ -222,6 +229,6 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
         throw new Error("Unknown M365 action");
       });
     },
-    async close() { closed = true;enabled = false;m365?.close();await gateway?.close();gateway = null;await pending; },
+    async close() { closed = true;enabled = false;await gateway?.close();gateway = null;m365?.close();await pending; },
   };
 }

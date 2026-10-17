@@ -12,50 +12,100 @@
     <script src="/status.js" defer></script>
     <script src="/usage.js" defer></script>
     <script src="/ui.js" defer></script>
+    <script src="/console.js" defer></script>
     <title data-i18n>CCDX · Local dashboard</title>
   </head>
   <body>
     <div class="shell">
+      <aside class="sidebar">
+        <a class="sidebar-brand" href="#overview">CCDX<span data-i18n>LOCAL CONTROL</span></a>
+        <nav aria-label="Main navigation" data-i18n-label>
+          <a href="#overview" data-route="overview" aria-current="page" data-i18n>Overview</a>
+          <span class="nav-group" data-i18n>Clients</span>
+          <a href="#codex" data-route="codex">Codex</a>
+          <a href="#claude" data-route="claude">Claude</a>
+          <a href="#models" data-route="models" data-i18n>Model services</a>
+          <a href="#usage" data-route="usage" data-i18n>Usage and diagnostics</a>
+          <a href="#system" data-route="system" data-i18n>System and settings</a>
+        </nav>
+        <div class="sidebar-bottom"><button id="open-animation" type="button" aria-controls="animation-settings" aria-expanded="false" data-i18n>Terminal appearance</button><p data-i18n>Local service. Client-specific capabilities stay with their client.</p></div>
+      </aside>
+
       <header class="topbar">
         <div class="brand">CCDX <span class="brand-detail" data-i18n>/ LOCAL STATUS</span></div>
-        <div class="topbar-actions"><span id="connection" class="badge neutral" role="status" data-i18n>READING</span><button id="theme-toggle" class="icon-button" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg><svg class="icon-moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 3A9 9 0 1 0 21 12 7 7 0 0 1 12 3Z"/></svg></button><button id="language-toggle" class="icon-button language-button" type="button" aria-label="Switch to Chinese" title="Switch to Chinese">中文</button><button id="open-animation" type="button" aria-controls="animation-settings" aria-expanded="false" data-i18n>Animation</button><button id="auto-refresh" type="button" aria-pressed="true" data-i18n data-i18n-title title="Every 30 minutes while visible. Open sections update on demand.">Auto refresh</button><button id="refresh" type="button" data-i18n>Refresh</button></div>
+        <div class="topbar-actions"><span id="connection" class="badge neutral" role="status" data-i18n>READING</span><button id="theme-toggle" class="icon-button" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg><svg class="icon-moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 3A9 9 0 1 0 21 12 7 7 0 0 1 12 3Z"/></svg></button><button id="language-toggle" class="icon-button language-button" type="button" aria-label="Switch to Chinese" title="Switch to Chinese">中文</button><button id="auto-refresh" type="button" aria-pressed="true" data-i18n data-i18n-title title="Visible status updates every 2 seconds. Catalogs and retained usage refresh on demand or every 30 minutes while open.">Auto refresh</button><button id="refresh" type="button" data-i18n>Refresh</button></div>
       </header>
 
-      <main>
+      <main id="main-content" tabindex="-1">
         <section class="intro">
-          <h1><svg id="status-icon" class="status-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><ellipse cx="32" cy="32" rx="26" ry="10"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(60 32 32)"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(120 32 32)"/></g><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg> ccdx status</h1>
+          <h1><svg id="status-icon" class="status-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><ellipse cx="32" cy="32" rx="26" ry="10"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(60 32 32)"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(120 32 32)"/></g><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg> <span id="page-title" data-i18n>Overview</span></h1>
           <div class="snapshot-meta"><p id="auth-account" role="status" data-i18n data-i18n-title title="Provider status / authorization and inference are separate.">READING</p><p id="updated" data-i18n>Reading status…</p></div>
+          <p id="page-settings-note" class="hint" role="status"></p>
         </section>
 
-        <section class="overview" aria-label="Overview" data-i18n-label>
-          <article class="card"><h2 data-i18n>ADAPTER</h2><strong id="version">—</strong><p id="uptime">—</p></article>
-          <article class="card"><h2 data-i18n>SOURCES</h2><strong id="source-summary">—</strong><p id="source-detail">—</p></article>
-          <article class="card"><h2 data-i18n>CODEX MODELS</h2><strong id="models">—</strong><p id="model-source">—</p></article>
-          <article class="card"><h2 data-i18n>CODEX REQUESTS</h2><strong id="requests">—</strong><p id="request-errors">—</p><p id="http-error-breakdown">—</p><p><span data-i18n>Per-request limits (active)</span><br><span id="body-limits">—</span></p></article>
-        </section>
 
+        <div data-view="overview">
+        <section class="overview" aria-label="Overview" data-i18n-label><article class="card"><h2 data-i18n>ADAPTER</h2><strong id="version">—</strong><p id="uptime">—</p></article><article class="card"><h2 data-i18n>SOURCES</h2><strong id="source-summary">—</strong><p id="source-detail">—</p></article></section>
+        <details class="panel dashboard-section" id="client-features" open>
+          <summary class="panel-heading"><h2 data-i18n>CLIENT CONNECTIONS</h2><span data-i18n>CONFIGURATION + OBSERVATION</span></summary>
+          <div class="table-wrap"><table><thead><tr><th data-i18n>Source</th><th data-i18n>CLIENT</th><th data-i18n>STATE</th><th data-i18n>GATEWAY</th><th data-i18n>LAST REQUEST</th></tr></thead><tbody id="provider-clients"></tbody></table></div>
+          <div id="provider-requests" class="hint"></div>
+        </details>
+        <section class="panel dashboard-section"><h2 data-i18n>THIS RUN USAGE</h2><p id="runtime-usage" class="table-note"></p><p class="hint" data-i18n>Updated from returned usage, not a live bill. Pending usage is not included.</p></section>
+        </div>
+        <div data-view="codex" hidden>
+        <section class="overview client-overview"><article class="card"><h2 data-i18n>CODEX MODELS</h2><strong id="models">—</strong><p id="model-source">—</p></article></section>
+        <details class="panel dashboard-section" id="runtime-resources" open>
+          <summary data-i18n>CODEX CONVERSATIONS</summary>
+          <div class="details"><article class="panel">
+            <div class="panel-heading"><h2 data-i18n>MODEL OUTCOMES</h2><span>RESPONSES</span></div>
+            <dl class="stats"><div><dt data-i18n>Completed</dt><dd id="completed">—</dd></div><div><dt data-i18n>Incomplete</dt><dd id="incomplete">—</dd></div><div><dt data-i18n>Failed</dt><dd id="failed">—</dd></div><div><dt data-i18n>Cancelled</dt><dd id="cancelled">—</dd></div></dl>
+            <p class="hint" data-i18n>HTTP 2xx != model completed.</p>
+            <dl class="stats timing-stats"><div><dt data-i18n>First output</dt><dd id="ttft">—</dd></div><div><dt data-i18n>Output speed</dt><dd id="tpot">—</dd></div></dl>
+            <p class="hint" data-i18n>Codex Responses timing since startup. Output speed is estimated.</p>
+          </article><article class="panel">
+            <div class="panel-heading"><h2 data-i18n>CODEX CONVERSATION BUFFER</h2><span data-i18n>ACTIVE LIMIT</span></div>
+            <strong id="history">—</strong><progress id="history-meter" class="meter" max="100" value="0" aria-label="History cache usage" data-i18n-label></progress>
+            <p id="history-detail" class="hint">—</p>
+          </article></div>
+          <p class="hint" data-i18n>Temporary local data for Responses continuation, not a conversation archive.</p>
+          <div class="section-actions"><label><span data-i18n>Buffer limit MiB</span> <input id="history-limit" type="number" min="1" max="65536" step="1"></label><button id="save-history" type="button" data-i18n>Apply limit</button><button id="clean-history" type="button" data-i18n>Clear inactive buffer</button></div>
+          <p id="effect-history" class="hint" role="status"></p>
+        </details>
+        <details class="panel dashboard-section" id="prediction-settings" open>
+          <summary class="panel-heading"><h2 data-i18n>CODEX INPUT PREDICTIONS</h2><span data-i18n>CODEX ONLY</span></summary>
+          <dl class="stats"><div><dt data-i18n>Prediction integration setup</dt><dd id="prediction-preference">—</dd></div><div><dt data-i18n>Local bridge</dt><dd id="prediction-bridge">—</dd></div><div><dt data-i18n>Client route</dt><dd id="prediction-route">—</dd></div><div><dt data-i18n>Visible candidate</dt><dd id="prediction-candidate">—</dd></div></dl>
+          <p id="prediction-note" class="hint">—</p>
+          <p class="hint" data-i18n>Configured does not mean displayed. Use ccdx prediction status for details.</p>
+          <div class="setting-row"><label for="setting-prediction_enabled" data-i18n>Allow prediction configuration</label><input id="setting-prediction_enabled" type="checkbox" role="switch" disabled><span id="effect-prediction_enabled" class="hint" role="status"></span></div>
+          <div class="section-actions"><button id="fix-prediction" type="button" data-i18n>Check and repair</button></div>
+          <p class="hint" data-i18n>Pause keeps the existing trust and route. Codex may retain cached suggestions. First-time setup: quit Codex, then ccdx prediction on.</p>
+        </details>
+        <details class="panel dashboard-section" id="additional-capabilities">
+          <summary data-i18n>CODEX IMAGE GENERATION</summary>
+          <article class="panel">
+            <div class="panel-heading"><h2 data-i18n>Image service</h2><span data-i18n>CODEX ONLY</span></div>
+            <strong id="image">—</strong><p id="image-detail" class="hint">—</p>
+          </article>
+          <div class="setting-row"><label for="setting-image_enabled" data-i18n>Allow new image calls</label><input id="setting-image_enabled" type="checkbox" role="switch" disabled><span id="effect-image_enabled" class="hint" role="status"></span></div>
+          <p class="hint" data-i18n>Pause keeps the provider configuration. Running calls can finish. First-time setup: ccdx enable-image.</p>
+        </details>
+        </div>
+        <div data-view="claude" hidden>
+        <section class="panel dashboard-section" aria-labelledby="claude-heading">
+          <div class="panel-heading"><h2 id="claude-heading">Claude App / Claude Code</h2><span>ANTHROPIC MESSAGES</span></div>
+          <p id="claude-route" class="table-note"></p>
+          <p id="claude-client-state" class="hint"></p>
+          <dl class="stats"><div><dt data-i18n>Completed</dt><dd id="claude-completed">—</dd></div><div><dt data-i18n>Incomplete</dt><dd id="claude-incomplete">—</dd></div><div><dt data-i18n>Failed</dt><dd id="claude-failed">—</dd></div><div><dt data-i18n>Cancelled</dt><dd id="claude-cancelled">—</dd></div><div><dt data-i18n>First output</dt><dd id="claude-ttft">—</dd></div><div><dt data-i18n>Output speed</dt><dd id="claude-speed">—</dd></div></dl>
+          <p class="hint" data-i18n>Since this service started. Configuration, authorization, model discovery and successful inference are separate evidence.</p>
+        </section>
+        </div>
+        <div data-view="models" hidden>
         <details class="panel dashboard-section" id="account-authorization">
           <summary class="panel-heading"><h2 data-i18n>ACCOUNT AUTHORIZATION</h2><span data-i18n>BY PROVIDER</span></summary>
           <p class="hint" data-i18n>Saved credentials, authorization, model access and client requests are separate evidence.</p>
           <div class="table-wrap"><table><thead><tr><th data-i18n>Source</th><th data-i18n>ACCOUNT</th><th data-i18n>AUTHORIZATION</th><th data-i18n>SERVICE</th><th data-i18n>LAST VERIFIED</th><th>TTL</th></tr></thead><tbody id="provider-auth"></tbody></table></div>
         </details>
-
-        <details class="panel dashboard-section" id="client-features" open>
-          <summary class="panel-heading"><h2 data-i18n>CLIENT CONNECTIONS</h2><span data-i18n>OBSERVED STATE</span></summary>
-          <div class="table-wrap"><table><thead><tr><th data-i18n>Source</th><th data-i18n>CLIENT</th><th data-i18n>STATE</th><th data-i18n>GATEWAY</th><th data-i18n>LAST REQUEST</th></tr></thead><tbody id="provider-clients"></tbody></table></div>
-          <div id="provider-requests" class="hint"></div>
-          <dl class="stats"><div><dt data-i18n>Native predictions</dt><dd id="prediction-preference">—</dd></div><div><dt data-i18n>Local bridge</dt><dd id="prediction-bridge">—</dd></div><div><dt data-i18n>Client route</dt><dd id="prediction-route">—</dd></div><div><dt data-i18n>Visible candidate</dt><dd id="prediction-candidate">—</dd></div></dl>
-          <p id="prediction-note" class="hint">—</p>
-          <p class="hint" data-i18n>Configured does not mean displayed. Use ccdx prediction status for details.</p>
-        </details>
-
-        <details class="panel dashboard-section" id="request-context">
-          <summary data-i18n>RECENT REQUEST CONTEXT</summary>
-          <p id="context-note" class="table-note">—</p>
-          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n>MODEL</th><th scope="col" data-i18n>WIRE MiB</th><th scope="col" data-i18n>IMAGES</th><th scope="col" data-i18n>INPUT TOKENS</th><th scope="col" data-i18n>MODEL WINDOW</th><th scope="col" data-i18n>INPUT / WINDOW</th><th scope="col" data-i18n>OUTCOME</th></tr></thead><tbody id="context-body"><tr><td colspan="7" data-i18n>No observed request metadata.</td></tr></tbody></table></div>
-          <p class="hint" data-i18n>Recent upstream request metadata, not exact live session occupancy. Missing values are unknown. No prompt or image content is retained.</p>
-        </details>
-
         <details class="panel dashboard-section" id="upstream-models" open>
           <summary class="panel-heading"><h2 data-i18n>MODEL CATALOG</h2><span id="models-state" data-i18n>CHECKING LIVE</span></summary>
           <div id="model-providers" class="provider-tabs" role="tablist" aria-label="Model providers" data-i18n-label></div>
@@ -64,7 +114,15 @@
           <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n>MODEL</th><th scope="col" data-i18n>VENDOR</th><th scope="col" data-i18n>API</th><th scope="col" data-i18n>CLIENT</th><th scope="col" data-i18n>REASONING</th><th scope="col" data-i18n>STATE</th></tr></thead><tbody id="live-models-body" role="tabpanel"><tr><td colspan="6" data-i18n>Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n>Catalog listing does not guarantee inference access.</p>
         </details>
-
+        <section class="panel dashboard-section" aria-labelledby="routing-heading">
+          <h2 id="routing-heading" data-i18n>CODEX MODEL SOURCE</h2>
+          <p class="hint" data-i18n>Catalog tabs only change the view. Apply explicitly to change the source for future Codex requests.</p>
+          <div class="section-actions"><label><span data-i18n>Source</span> <select id="source-provider"><option value="github">GitHub Copilot</option><option value="m365">Microsoft 365</option></select></label><label><span data-i18n>Model</span> <select id="source-model" disabled></select></label><label><span data-i18n>Auto-review model</span> <select id="source-review" disabled></select></label><button id="apply-source" type="button" data-i18n>Apply source</button></div>
+          <div class="section-actions"><span>Microsoft 365</span><button id="m365-on" type="button" data-i18n>Enable service</button><button id="m365-off" type="button" data-i18n>Disable service</button></div>
+          <p id="source-control-note" class="hint" role="status"></p>
+        </section>
+        </div>
+        <div data-view="usage" hidden>
         <details class="panel dashboard-section" id="model-usage" open>
           <summary class="panel-heading"><h2 data-i18n>USAGE</h2><span id="usage-state" data-i18n>READING LOG</span></summary>
           <div class="section-actions"><label><span data-i18n>Source</span> <select id="usage-provider"><option value="" data-i18n>All providers</option></select></label><button id="clear-usage-day" type="button" hidden data-i18n>All history</button><button id="refresh-usage" type="button" data-i18n>Refresh</button></div>
@@ -89,43 +147,35 @@
             <p id="analytics-selection" class="hint" role="status" data-i18n>Select a day to inspect its model totals. No history is distinct from zero recorded calls.</p>
           </details>
         </details>
-
         <details class="lower" id="recent-failures" open>
-          <summary class="panel-heading"><h2 data-i18n>RECENT RESPONSE FAILURES</h2><span id="failure-count">requests + events</span></summary>
+          <summary class="panel-heading"><h2 data-i18n>RECENT INFERENCE + HTTP FAILURES</h2><span id="failure-count">requests + events</span></summary>
           <ol id="failures"><li class="empty" data-i18n>Reading…</li></ol>
           <p class="hint" data-i18n>Upstream messages may contain sensitive text.</p>
         </details>
-
-        <details class="panel dashboard-section" id="runtime-resources" open>
-          <summary data-i18n>RUNTIME RESOURCES</summary>
-          <div class="details"><article class="panel">
-            <div class="panel-heading"><h2 data-i18n>MODEL OUTCOMES</h2><span>RESPONSES</span></div>
-            <dl class="stats"><div><dt data-i18n>Completed</dt><dd id="completed">—</dd></div><div><dt data-i18n>Incomplete</dt><dd id="incomplete">—</dd></div><div><dt data-i18n>Failed</dt><dd id="failed">—</dd></div><div><dt data-i18n>Cancelled</dt><dd id="cancelled">—</dd></div></dl>
-            <p class="hint" data-i18n>HTTP 2xx != model completed.</p>
-            <dl class="stats timing-stats"><div><dt data-i18n>First output</dt><dd id="ttft">—</dd></div><div><dt data-i18n>Output speed</dt><dd id="tpot">—</dd></div></dl>
-            <p class="hint" data-i18n>Gateway timing. Output speed is estimated.</p>
-          </article><article class="panel">
-            <div class="panel-heading"><h2 data-i18n>LOCAL HISTORY</h2><span data-i18n>ACTIVE LIMIT</span></div>
-            <strong id="history">—</strong><progress id="history-meter" class="meter" max="100" value="0" aria-label="History cache usage" data-i18n-label></progress>
-            <p id="history-detail" class="hint">—</p>
-          </article></div>
+        <details class="panel dashboard-section" id="request-context">
+          <summary data-i18n>RECENT REQUEST CONTEXT</summary>
+          <p id="context-note" class="table-note">—</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n>MODEL</th><th scope="col" data-i18n>WIRE MiB</th><th scope="col" data-i18n>IMAGES</th><th scope="col" data-i18n>INPUT TOKENS</th><th scope="col" data-i18n>MODEL WINDOW</th><th scope="col" data-i18n>INPUT / WINDOW</th><th scope="col" data-i18n>OUTCOME</th></tr></thead><tbody id="context-body"><tr><td colspan="7" data-i18n>No observed request metadata.</td></tr></tbody></table></div>
+          <p class="hint" data-i18n>Recent upstream request metadata, not exact live session occupancy. Missing values are unknown. No prompt or image content is retained.</p>
         </details>
-
-        <details class="panel dashboard-section" id="additional-capabilities">
-          <summary data-i18n>ADDITIONAL CAPABILITIES</summary>
-          <article class="panel">
-            <div class="panel-heading"><h2 data-i18n>IMAGE GENERATION</h2><span data-i18n>OPTIONAL</span></div>
-            <strong id="image">—</strong><p id="image-detail" class="hint">—</p>
-          </article>
-        </details>
-
+        </div>
+        <div data-view="system" hidden>
+        <section class="panel dashboard-section"><h2 data-i18n>PROCESS + LISTENER</h2><p id="process-state" class="table-note"></p><p id="process-memory" class="hint"></p><p id="process-queues" class="hint"></p><p id="process-notice" class="hint" role="status"></p></section>
+        <section class="overview client-overview"><article class="card"><h2 data-i18n>HTTP TRAFFIC</h2><strong id="requests">—</strong><p id="request-errors">—</p><p id="http-error-breakdown">—</p><p><span data-i18n>Per-request limits (active)</span><br><span id="body-limits">—</span></p></article></section>
+        <section class="panel dashboard-section" aria-labelledby="settings-heading">
+          <h2 id="settings-heading" data-i18n>SERVICE SETTINGS</h2>
+          <p class="hint" data-i18n>Saved preference and effective state are separate. Environment overrides and client restarts are shown explicitly.</p>
+          <div class="setting-row"><label for="setting-terminal_animation_enabled" data-i18n>Terminal animation</label><input id="setting-terminal_animation_enabled" type="checkbox" role="switch" disabled><span id="effect-terminal_animation_enabled" class="hint" role="status"></span></div>
+          <div class="setting-row"><label for="setting-open_webui" data-i18n>Open WebUI at startup</label><input id="setting-open_webui" type="checkbox" role="switch" disabled><span id="effect-open_webui" class="hint" role="status"></span></div>
+          <p id="settings-note" class="hint" role="status" data-i18n>Reading settings…</p>
+        </section>
         <details id="animation-settings" class="panel dashboard-section settings-panel">
           <summary class="panel-heading"><h2 data-i18n>TERMINAL ANIMATION</h2><span id="animation-state" data-i18n>READING</span></summary>
           <div id="animation-options" class="animation-options" role="group" aria-label="Animation theme" data-i18n-label></div>
-          <div class="section-actions"><button id="save-animation" type="button" disabled data-i18n>Save selection</button><span id="animation-note" role="status" data-i18n>Applies on next ccdx start.</span></div>
+          <div class="section-actions"><button id="save-animation" type="button" disabled data-i18n>Save selection</button><span id="animation-note" role="status" data-i18n>Applies to the running terminal.</span></div>
         </details>
+        </div>
       </main>
-
       <footer data-i18n>LOCAL ONLY / VISIBLE PAGE UPDATES</footer>
     </div>
   </body>

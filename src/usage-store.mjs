@@ -24,6 +24,9 @@ let pendingRecords = 0;
 let pendingBytes = 0;
 let droppedRecords = 0;
 let writeFailures = 0;
+const runtimeUsage = { since: new Date().toISOString(), records: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, partial_records: 0 };
+
+export function runtimeUsageSnapshot() { return { ...runtimeUsage }; }
 
 export function usageLoggingStats() {
   return { pending_records: pendingRecords, pending_bytes: pendingBytes, dropped_records: droppedRecords,
@@ -180,7 +183,14 @@ function scheduleUsageWriteDrain() {
 }
 
 export function recordUsage(record) {
-  if (!record || process.env.CCDX_DISABLE_USAGE === "1") return Promise.resolve();
+  if (!record) return Promise.resolve();
+  const usage = record.usage || {};
+  runtimeUsage.records++;
+  for (const [target, value] of [["input_tokens", usage.input_tokens], ["cached_input_tokens", cacheReadTokens(usage)], ["output_tokens", usage.output_tokens]]) {
+    if (Number.isFinite(value) && value >= 0) runtimeUsage[target] += value;
+  }
+  if (!Number.isFinite(usage.input_tokens) || !Number.isFinite(usage.output_tokens) || cacheReadTokens(usage) === undefined) runtimeUsage.partial_records++;
+  if (process.env.CCDX_DISABLE_USAGE === "1") return Promise.resolve();
   const filePath = usageLogPath();
   const line = `${JSON.stringify(record)}\n`;
   const bytes = Buffer.byteLength(line);

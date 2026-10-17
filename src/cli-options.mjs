@@ -5,6 +5,8 @@ const HELP_COMMANDS = new Set(["help", "--help", "-h"]);
 const VERSION_COMMANDS = new Set(["version", "--version", "-v"]);
 const START_OPTIONS = new Map([
   ["--show-request-id", "show-request-id"],
+  ["--no-browser", "no-browser"],
+  ["--verbose", "verbose"],
 ]);
 const RETIRED_CLAUDE_OPTIONS = new Set([
   "--configure-claude-desktop",
@@ -119,6 +121,8 @@ function parseStartOptions(args) {
   }
   return baseCommand("start", {
     showRequestId: seen.has("show-request-id"),
+    ...(seen.has("no-browser") ? { noBrowser: true } : {}),
+    ...(seen.has("verbose") ? { verbose: true } : {}),
   });
 }
 
@@ -376,7 +380,7 @@ export function cliCommandName() {
 
 function topicHelp(name, topic) {
   const sections = {
-    start: `Usage:\n  ${name} [start] [--show-request-id]\n\nStarts or reuses the local adapter, updates Codex configuration, and attempts to open Codex App when auto-launch is enabled and supported.`,
+    start: `Usage:\n  ${name} [start] [--show-request-id] [--no-browser] [--verbose]\n\nStarts or reuses the local adapter, updates Codex configuration, and attempts to open Codex App when auto-launch is enabled and supported. Interactive desktop starts also open WebUI once; --no-browser skips that attempt. After startup the terminal shows fixed status/returned usage; --verbose or --show-request-id retains request detail.`,
     auth: `Usage:\n  ${name} auth status [--online] [--format table|plain]\n\nShows the saved GitHub Copilot account without exposing credentials. --online also verifies its entitlement and model catalog.`,
     "auth status": `Usage:\n  ${name} auth status [--online] [--format table|plain]\n\nShows the saved GitHub Copilot account without exposing credentials. --online also verifies its entitlement and model catalog. Interactive terminals use a table by default.`,
     doctor: `Usage:\n  ${name} doctor [--online] [--compat] [--fix] [--json]\n  ${name} doctor config\n\nChecks credentials, managed configuration, command launchers, adapter, enabled optional features and observed client catalog. Default is read-only; no inference requests. --online validates account entitlement; --compat sends minimal inference requests and consumes a small amount of Copilot usage, requiring successful model completion rather than HTTP 200 alone. --fix repairs owned Windows launchers and managed config, imports a verified existing credential only if none is saved, and asks the running adapter to repair enabled predictions once. No interactive login, client program edits, forced App restarts, policy changes or optional feature activation. Missing-credential repair can contact GitHub without --online. Changed existing config is backed up to config.toml.ccdx-doctor.bak. Partial repairs exit 1. --json emits a redacted report, including before_checks for repairs. App-internal cache and visible predictions are not externally verified. The config subcommand remains strictly read-only.`,
@@ -386,7 +390,7 @@ function topicHelp(name, topic) {
     usage: `Usage:\n  ${name} usage [--format table|plain] [--provider ID]\n\nSummarizes local token usage metadata without reading prompt or completion content. Optional provider filtering separates sources; default totals include all recorded sources. Interactive terminals use a table by default.`,
     cache: `Usage:\n  ${name} cache\n  ${name} cache --limit <MiB|default>\n  ${name} cache --clean [--history] [--yes]\n\nShows runtime cache use, saves and applies the shared response-history limit, or clears the rebuildable image-transform cache. --history also clears in-memory response history for all tasks and can make their next continuation fail, so interactive confirmation or --yes is required. Generated image files and saved Codex transcripts are never deleted. Short aliases: -128 sets 128 MiB and -clean equals --clean.`,
     limits: `Usage:\n  ${name} limits\n  ${name} limits --decoded <MiB|default>\n\nShows configured and running request-body limits, or saves a decoded request-body limit from 128 to 512 MiB. The raw-body limit is unchanged. Restart ccdx to apply a saved change; no conversation or cache is cleared. Short alias: -256 sets 256 MiB.`,
-    animation: `Usage:\n  ${name} animation\n\nPreviews all terminal activity animations together and selects the theme used the next time the adapter starts.`,
+    animation: `Usage:\n  ${name} animation\n\nPreviews all terminal activity animations together and selects the saved theme. Running CCDX 1.1.0+ applies it live; older services need a restart.`,
     "enable-image": `Usage:\n  ${name} enable-image\n\nInteractively configures an HTTPS image API endpoint (base URLs are also accepted) and API key, detects its supported image model and protocol, installs CCDX image guidance, and checks the local image tool for Codex App without generating an image. A blank key preserves the saved key only for the same origin; a new origin requires explicit key entry. Concurrent unrelated config edits are preserved.`,
     "disable-image": `Usage:\n  ${name} disable-image\n\nDisables the local CCDX image tool and removes its stored API credential and unmodified CCDX image guidance.`,
     "image-status": `Usage:\n  ${name} image-status\n\nShows provider configuration and locally advertised generation/editing tools without generating an image or exposing its API key.`,
@@ -405,7 +409,7 @@ export function cliHelp(commandName = "ccdx", topic = "") {
   const normalizedTopic = checkedHelpTopic(topic ? topic.split(" ") : []);
   if (normalizedTopic) return topicHelp(name, normalizedTopic);
   return `Usage:
-  ${name} [start] [--show-request-id]
+  ${name} [start] [--show-request-id] [--no-browser] [--verbose]
   ${name} auth status [--online] [--format table|plain]
   ${name} doctor [--online] [--compat] [--fix] [--json]
   ${name} doctor config

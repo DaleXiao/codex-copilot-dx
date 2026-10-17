@@ -2,13 +2,12 @@
 
 Use Codex App with GitHub Copilot through a local adapter, with isolated Microsoft 365 access where authorized.
 
-CCDX keeps GitHub Copilot as the default Codex source: discovery, adapted model catalogs, Responses streaming, tool calls and conversation history. Eligible Microsoft 365 environments can also use a separate Claude gateway and manually select M365 as a Codex backup.
+CCDX keeps GitHub Copilot as the default Codex source: discovery, adapted model catalogs, Responses streaming, tool calls and conversation history. Eligible Microsoft 365 environments can also use a protocol-isolated Claude gateway on the main listener and manually select M365 as a Codex backup.
 Default Auto-review: **GPT-6.1 Sol / low**. Image generation is **off by default**. Native predictions are also **off by default**.
 
 ## Install and run
 
-Requires macOS or Windows, Codex App, Node.js **22.15+**, and a GitHub account with Copilot
-access to the models you want to use.
+Requires macOS or Windows, Codex App, Node.js **22.15+**, and a GitHub account with Copilot access to the models you want to use.
 
 ```bash
 npm install -g codex-copilot-dx@latest
@@ -16,20 +15,25 @@ ccdx
 ```
 
 CCDX reuses a compatible local credential or starts GitHub Device Flow, listens
-on `127.0.0.1:2026`, configures Codex, and opens the App. No client binary patch
+on `127.0.0.1:2026`, configures Codex, and opens the App. Interactive desktop starts also open the local WebUI once; use `ccdx --no-browser` or disable this in WebUI settings. No client binary patch
 is needed. On Windows, open the App manually unless native prediction setup is
 enabled. In restricted Windows PowerShell, use `npm.cmd` to install and `ccdx.cmd` for the first launch, or run `ccdx.cmd doctor --fix`. Startup, updates and explicit repair remove only CCDX's exact npm-generated `.ps1` launchers so later calls can use `ccdx`. No install script, alias or policy change is added; custom launchers are preserved. npm's own script is untouched. The configured `dummy` API key is a placeholder, not a credential.
 
-Open [the local dashboard](http://127.0.0.1:2026/) for status, model discovery, usage, cache/limits, recent failures, request context and animation settings. First output uses **ms**; estimated output speed uses **token/s**. Inference HTTP failures are retained separately from route and MCP-method errors.
-Provider tabs browse sources without changing routing. Separate disclosures show authorization, clients, resources and optional capabilities. Saved credentials and catalog listings do not prove inference access; historical sources remain filterable.
-Auto refresh runs every 30 minutes while visible and can be switched off. Hidden pages pause; opening sections and manual refresh still work. The atom rotates once on page load and manual refresh, respecting reduced motion. Startup uses a compact six-line atom and aligned checks; `Ready` refers to the core service. Narrow/non-color terminals use a plain title.
+The [local control console](http://127.0.0.1:2026/) has a sidebar for **Overview, Clients, Model services, Usage and diagnostics, System and settings**. Codex image generation, input predictions and conversation buffering are explicitly Codex-specific. Provider authorization, model directories, retained usage and operations keep their own scopes. Browsing a catalog never switches the active source.
+
+Startup shows bounded checks, existing owned-configuration reconciliation and enabled prediction recovery. After Ready, an interactive terminal has a fixed four-line status region with returned usage for this process, business activity and coalesced notices. It does not scroll individual requests. `ccdx --verbose` (also `--show-request-id`, or debug logging) retains detail output; optional file logging remains independently controlled. Non-TTY, CI, dumb or very narrow terminals use plain output. `Ready` only means the core service is available.
+
+WebUI settings apply animation choices live, pause/resume configured image calls and prediction adaptation without removing credentials/trust, change the Codex source explicitly, and manage the conversation-buffer limit. Saved preference and effective state are separate. First-time image/prediction setup still uses the existing CLI; trust, client routing and cached client capabilities may require a normal App relaunch. Busy M365 requests must finish before disabling that provider. See the [control reference](docs/REFERENCE.md#control-console-and-online-settings).
+
+While visible and auto-refresh is on, the console reads the small status snapshot about every two seconds and source/settings evidence about every 16 seconds. Catalogs and retained usage are fetched on demand and at most once per 30-minute refresh interval while their view is open. Hidden pages stop scheduled reads. First output uses **ms**, estimated speed **token/s**, and each protocol has its own samples. HTTP traffic includes catalog and routing requests; it is not a conversation count.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
 | `ccdx help` | Command help; use `ccdx help <command>` for details |
-| `ccdx start` | Start or reuse the adapter and open Codex when auto-launch is enabled |
+| `ccdx start` | Start/reuse the adapter, open Codex when enabled, and open WebUI on interactive desktop starts |
+| `ccdx --no-browser` / `ccdx --verbose` | Skip WebUI opening once / retain detailed terminal logs |
 | `ccdx status` | Runtime, limits and bounded request diagnostics |
 | `ccdx doctor` | Configuration, adapter and read-only App/catalog diagnostics |
 | `ccdx doctor --fix` | Repair owned launchers/config, recover existing auth and enabled prediction routing once |
@@ -56,11 +60,10 @@ Auto refresh runs every 30 minutes while visible and can be switched off. Hidden
 
 ## Microsoft 365 access
 
-Eligible macOS/Windows machines attempt silent Microsoft authorization at startup,
-without Copilot CLI or a browser login. MDM alone is insufficient: account, tenant,
+Eligible macOS/Windows machines attempt silent Microsoft authorization at startup, without Copilot CLI or a browser login. MDM alone is insufficient: account, tenant,
 device policy and Loki entitlement must permit access. Optional failure does not block GitHub.
 
-Claude clients use the separate, keyed `127.0.0.1:2027` gateway and Claude-only catalog.
+Claude clients use `http://127.0.0.1:2026/anthropic` (or the configured main port), a private local gateway key and a Claude-only catalog. No second Claude listener is opened. Existing unchanged CCDX-owned 2027 addresses migrate automatically; hand-written or managed addresses are preserved and need explicit migration. The optional prediction CONNECT/PAC bridge remains a separate transport.
 Existing custom/managed settings are preserved; already-running clients may need a normal restart.
 Canonical Claude IDs and advertised effort caps refresh only in unchanged CCDX-owned settings. User and managed choices are preserved; supported App versions can update model knowledge through Anthropic's signed catalog. New protocol semantics may require a client or CCDX update. See the [model reference](docs/REFERENCE.md#claude-gateway-and-client-ownership).
 `ccdx m365 off` restores unchanged owned fields; `remove` also clears owned M365 state.
@@ -112,9 +115,7 @@ Updates install the exact stable tag; dependencies still use npm's configured re
 Updates warn about mismatched npm targets without changing PATH/prefix and verify the installed target version (exact tag for GitHub). Restart the adapter separately. Full `ccdx doctor` reports this target and readonly credential permissions; it never changes ACLs.
 Recent errors separate HTTP and model failures. By default HTTP metadata retains status, source and IDs, not error bodies or prompts; original errors still reach Codex unchanged. Explicit, bounded error-excerpt collection is described in the [reference](docs/REFERENCE.md#http-error-diagnostics).
 
-The dashboard and CLI separate prediction preference, bridge state and observed config traffic; candidate visibility stays unknown. See [architecture boundaries](docs/ARCHITECTURE.md) for separate inference, integration, image and management ownership.
-
-See the [complete reference](https://github.com/DaleXiao/codex-copilot-dx/blob/main/docs/REFERENCE.md) for authentication, configuration, limits, logging, images and compatibility. It is also included as `docs/REFERENCE.md` in the npm package.
+See [architecture boundaries](docs/ARCHITECTURE.md) and the [complete reference](https://github.com/DaleXiao/codex-copilot-dx/blob/main/docs/REFERENCE.md) for authentication, configuration, limits, logging, images and compatibility. It is also included as `docs/REFERENCE.md` in the npm package.
 
 ## Development
 
@@ -124,7 +125,6 @@ npm run verify
 node scripts/config-startup-replay.mjs
 ```
 
-Verification covers unit tests, isolated HTTP/idle-stream replay, performance/resource gates and package contents—not an upstream service SLA.
-CI also tests Node 22.15/24 on Linux, Windows and macOS, temporary-prefix installation/upgrade and installed image processing.
+Verification covers unit tests, isolated HTTP/idle-stream replay, performance/resource gates and package contents—not an upstream service SLA. CI also tests Node 22.15/24 on Linux, Windows and macOS, temporary-prefix installation/upgrade and installed image processing.
 
 License: MIT.

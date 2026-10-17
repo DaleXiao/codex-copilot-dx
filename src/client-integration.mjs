@@ -116,7 +116,11 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
     }); },
     pacUrl() { return native?.pacUrl || null; },
     launched(route) { prediction.launch(route); },
-    snapshot() { return { prediction: prediction.snapshot() }; },
+    setPredictionActive(value) {
+      const active = native?.setActive?.(value) ?? false;
+      return { active, state: active ? "active" : native ? "paused" : "needs_setup" };
+    },
+    snapshot() { return { prediction: { ...prediction.snapshot(), active: native?.enabled?.() === true } }; },
     async close() { closed = true;try { await operation; } finally { await native?.close();native = null; } },
   };
 }

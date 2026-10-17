@@ -103,7 +103,7 @@ test("dashboard timing shows its own sample counts and estimation boundary", () 
   assert.match(nodes.get("tpot").textContent, /^—/);
   render({ stream_performance: { by_route: { responses: { tpot_us: { avg: 5600, samples: 1 } } } } });
   assert.match(nodes.get("tpot").textContent, /^—/); // Never invert a legacy average.
-  assert.match(html, /Gateway timing\. Output speed is estimated\./);
+  assert.match(html, /Codex Responses timing since startup\. Output speed is estimated\./);
 });
 
 test("native prediction dashboard distinguishes bridge readiness from candidate visibility", () => {
@@ -113,7 +113,7 @@ test("native prediction dashboard distinguishes bridge readiness from candidate 
   const render = runInNewContext(`${renderScript}\nrender;`, { document });
   const prediction = { configured: true, bridge: "running", client_route: "observed", candidate: "displayed" };
   render({ client_integrations: { prediction } });
-  assert.equal(nodes.get("prediction-preference").textContent, "Enabled");
+  assert.equal(nodes.get("prediction-preference").textContent, "Configured");
   assert.equal(nodes.get("prediction-bridge").textContent, "Running");
   assert.equal(nodes.get("prediction-route").textContent, "Observed");
   assert.equal(nodes.get("prediction-candidate").textContent, "Unknown");

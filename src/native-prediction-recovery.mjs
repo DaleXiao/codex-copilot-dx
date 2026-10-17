@@ -35,6 +35,7 @@ export function supervisePrediction({ native, restart, state, warning = () => {}
     check,
     healthy() { return !closed && current.healthy(); },
     enabled() { return !closed && current.enabled?.() !== false; },
+    setActive(value) { return !closed && (current.setActive?.(value) ?? false); },
     appCurrent() { return current.appCurrent?.() !== false; },
     inspectEnvironment() { return current.inspectEnvironment?.(); },
     routeProcessId() { return current.routeProcessId?.(); },

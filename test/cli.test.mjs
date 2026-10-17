@@ -219,7 +219,7 @@ test("both CLI entrypoints keep nested help and argument errors byte-for-byte eq
     }),
   ]);
   assert.equal(legacyAnimationHelp.stdout, primaryAnimationHelp.stdout);
-  assert.match(primaryAnimationHelp.stdout, /next time the adapter starts/);
+  assert.match(primaryAnimationHelp.stdout, /applies it live/);
   assert.equal(primaryAnimationHelp.stderr, "");
   assertNoCompatibilityWarning(legacyAnimationHelp.stderr);
 

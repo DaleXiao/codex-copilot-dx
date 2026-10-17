@@ -26,16 +26,16 @@ test("all native disclosures use one plus/minus rule without duplicate animation
   }
 });
 
-test("client features precede context and all lower dashboard regions are native disclosures", () => {
-  assert.match(css, /\.dashboard-section > summary\.panel-heading, \.lower > summary\.panel-heading \{ display: grid;/);
-  assert.ok(html.indexOf('id="client-features"') < html.indexOf('id="request-context"'));
-  const lower = html.slice(html.indexOf('id="client-features"'));
-  assert.doesNotMatch(lower, /<section\b/);
-  assert.equal((html.match(/<article\b/g) || []).length, 7);
-  assert.match(html, /id="provider-auth"/);
-  assert.match(html, /id="usage-provider"/);
-  for (const id of ["client-features", "upstream-models", "model-usage", "recent-failures"]) {
-    assert.match(html, new RegExp(`<details[^>]*id="${id}"[^>]*open>`));
+test("sidebar views keep dedicated business capabilities with their clients", () => {
+  assert.match(html, /<nav aria-label="Main navigation"/);
+  for (const route of ["overview", "codex", "claude", "models", "usage", "system"]) {
+    assert.match(html, new RegExp('data-route="' + route + '"'));
+    assert.match(html, new RegExp('data-view="' + route + '"'));
   }
+  const codex = html.slice(html.indexOf('data-view="codex"'), html.indexOf('data-view="claude"'));
+  for (const id of ["runtime-resources", "prediction-settings", "additional-capabilities"]) assert.ok(codex.includes('id="' + id + '"'));
+  assert.match(html, /HTTP TRAFFIC/);assert.doesNotMatch(html, /CODEX REQUESTS/);
+  assert.match(css, /\[hidden\] \{ display: none !important;/);
+  assert.match(css, /@media \(max-width: 640px\)/);
   assert.doesNotMatch(html, /<summary\b[^>]*>(?:(?!<\/summary>)[\s\S])*<button/);
 });

@@ -4,6 +4,7 @@ import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate, usageLogPath, u
 export {
   usageSummaryVersion,
   usageLoggingStats,
+  runtimeUsageSnapshot,
   usageLogPath,
   usageLogMaxBytes,
   buildResponsesUsageRecord,

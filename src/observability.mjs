@@ -5,7 +5,7 @@ import { responseHistoryStats } from "./response-history.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
 import { decodedBodyLimitPreference } from "./user-settings.mjs";
 import { profileRouting } from "./profile-routing.mjs";
-import { usageLoggingStats } from "./usage-store.mjs";
+import { usageLoggingStats, runtimeUsageSnapshot } from "./usage-store.mjs";
 import { debugLoggingStats } from "./log.mjs";
 
 export { ADAPTER_STATUS_PATH };
@@ -17,6 +17,9 @@ const ROUTE_NAMES = Object.freeze([
   "responses",
   "responses_compact",
   "models",
+  "messages",
+  "messages_count_tokens",
+  "claude_models",
   "image_mcp",
   "not_found",
 ]);
@@ -96,6 +99,9 @@ export function createRequestMetrics({ now = Date.now } = {}) {
 }
 
 export function classifyAdapterRoute(method, pathname) {
+  if (pathname === "/anthropic/v1/messages") return "messages";
+  if (pathname === "/anthropic/v1/messages/count_tokens") return "messages_count_tokens";
+  if (pathname === "/anthropic/v1/models") return "claude_models";
   if (method === "POST" && pathname === "/v1/responses") return "responses";
   if (method === "POST" && pathname === "/v1/responses/compact") return "responses_compact";
   if (method === "GET" && pathname === "/v1/models") return "models";
@@ -199,6 +205,7 @@ export function runtimeStatusPayload({
     image_generation: imageGeneration || null,
     client_integrations: clientIntegrations || null,
     logging: { usage: usageLoggingStats(), debug: debugLoggingStats() },
+    runtime_usage: runtimeUsageSnapshot(),
     image_history_pressure: imagePressure?.snapshot?.() || null,
     response_failures: responseFailures?.snapshot?.() || null,
     copilot: codexRuntime,

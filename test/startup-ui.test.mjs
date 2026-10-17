@@ -14,7 +14,7 @@ test("A atom banner is static, bounded and enabled only on a wide colored termin
   for (const override of [{ env: { NO_COLOR: "" } }, { env: { TERM: "dumb" } },
     { stream: { isTTY: false, columns: 120 } }, { stream: { isTTY: true, columns: 40 } }]) {
     const plain = startupBanner({ ...args, ...override });
-    assert.equal(plain, "ccdx v0.0.0 by Dale Xiao\nUse Codex App with GitHub Copilot");
+    assert.equal(plain, "ccdx v0.0.0 by Dale Xiao\nLocal model services for Codex and Claude");
   }
 });
 

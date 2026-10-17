@@ -35,7 +35,7 @@ function graphemeWidth(segment) {
   return width;
 }
 
-function displayWidth(value) {
+export function displayWidth(value) {
   if (SIMPLE_WIDTH.test(value)) return value.length;
   graphemeSegmenter ||= new Intl.Segmenter("en", { granularity: "grapheme" });
   let width = 0;

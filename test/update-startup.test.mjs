@@ -28,7 +28,7 @@ async function port() {
 }
 
 function start(env, executable) {
-  const child = spawn(process.execPath, ["--require", preload, executable], { env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  const child = spawn(process.execPath, ["--require", preload, executable, "--verbose"], { env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
   let output = "";
   child.stdout.on("data", value => { output += value; });
   child.stderr.on("data", value => { output += value; });

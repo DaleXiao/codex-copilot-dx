@@ -29,14 +29,15 @@
         }
         if (provider.requests) {
           const item = document.createElement("p");
-          localize(item, "{provider}: {done} done / {incomplete} incomplete / {failed} failed", { provider: provider.name,
+          localize(item, "{provider}: {done} done / {incomplete} incomplete / {failed} failed", { provider: `${provider.name} · ${provider.request_scope || "Claude Messages"}`,
             done: number(provider.requests.completed), incomplete: number(provider.requests.incomplete), failed: number(provider.requests.failed) });
           requests.append(item);
         }
       }
       text("source-summary", "{count} providers", { count: providers.filter(provider => provider.enabled).length });
       element("source-detail").textContent = routes.join(" / ") || "—";
-      element("auth-account").textContent = routes.join(" / ") || "—";
+      element("auth-account").textContent = providers.flatMap(provider => (provider.clients || [])
+        .filter(client => client.selected).map(client => `${client.name} → ${provider.name}`)).join(" / ") || "—";
     }
 
     function duration(value) {
@@ -174,12 +175,33 @@
         ? "active {active} / failed {failed} / delivery failures {delivery}"
         : "Setup state unknown / ccdx image-status", { active: number(image?.active), failed: number(image?.failed), delivery: number(image?.delivery_failures) });
 
+      const claude = data.providers?.m365?.claude, claudeMetrics = claude?.requests?.performance;
+      const recentRequests = [...(data.stream_performance?.recent_requests || []), ...(claudeMetrics?.recent_requests || [])]
+        .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
       renderFailures([...(data.response_failures?.recent || []), ...(data.http_errors?.actionable_recent || data.http_errors?.recent || [])]
-        .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0)), data.stream_performance?.recent_requests);
-      renderContext(data.stream_performance);
+        .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0)), recentRequests);
+      renderContext({ ...data.stream_performance, recent_requests: recentRequests });
+      if (element("claude-route")) {
+        element("claude-route").textContent = claude?.base_url || "—";
+        element("claude-client-state").textContent = Object.entries(claude?.clients || {}).map(([key, value]) => `${key}: ${value}`).join(" / ") || "—";
+        const totals = claudeMetrics?.by_route?.messages?.terminal_outcomes?.totals || claude?.requests || {};
+        for (const key of ["completed", "incomplete", "failed", "cancelled"]) text(`claude-${key}`, totals[key] === undefined ? "—" : number(totals[key]));
+        for (const [id, metric, unit] of [["claude-ttft", claudeMetrics?.by_route?.messages?.ttft_ms, "ms"], ["claude-speed", claudeMetrics?.by_route?.messages?.output_tokens_per_second, "token/s"]]) {
+          text(id, metric?.samples > 0 ? `${Number(metric.avg).toFixed(1)} ${unit} / ${metric.samples}` : "—");
+        }
+      }
+      if (element("runtime-usage")) {
+        const usage = data.runtime_usage;
+        text("runtime-usage", usage ? "{records} usage records / input {input} / cache read {cached} / output {output}{partial}" : "—",
+          usage ? { records: number(usage.records), input: number(usage.input_tokens), cached: number(usage.cached_input_tokens), output: number(usage.output_tokens), partial: usage.partial_records ? " ~" : "" } : {});
+        element("process-state").textContent = `PID ${data.pid || "—"} / ${globalThis.location?.origin || ""}`;
+        text("process-memory", "RSS {rss} / heap {heap}", { rss: mib(data.process?.rss_bytes), heap: mib(data.process?.heap_used_bytes) });
+        text("process-queues", "Codex body admission: active {active} / queued {queued} / queue limit {limit}", {
+          active: number(data.admission?.activeRequests), queued: number(data.admission?.queued), limit: number(data.admission?.maxQueued) });
+      }
       if (element("prediction-preference")) {
         const prediction = data.client_integrations?.prediction;
-        text("prediction-preference", prediction ? prediction.configured ? "Enabled" : "Disabled" : "Unknown");
+        text("prediction-preference", prediction ? prediction.configured ? "Configured" : "Not configured" : "Unknown");
         text("prediction-bridge", ({ running: "Running", recovering: "Recovering", stopped: "Stopped", unavailable: "Unavailable" })[prediction?.bridge] || "Unknown");
         text("prediction-route", prediction?.client_route === "observed" ? "Observed" : "Unknown");
         text("prediction-candidate", "Unknown");

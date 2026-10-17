@@ -54,18 +54,19 @@ export function configureLogging({
 } = {}) {
   const level = normalizeLogLevel(env.CCDX_LOG_LEVEL);
   const filePath = resolveLogPath(env.CCDX_LOG_PATH, { home });
-  if (!filePath) return { level, filePath: null, cleanup: () => {} };
   if (consoleObj === console && globalInstall) {
     return { level, ...globalInstall };
   }
 
-  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  if (filePath) fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  let terminalSink = null;
 
   const methods = ["log", "warn", "error", "debug"];
   const originals = Object.fromEntries(methods.map((method) => [
     method,
     typeof consoleObj[method] === "function" ? consoleObj[method].bind(consoleObj) : () => {},
   ]));
+  const present = (method, args) => terminalSink ? terminalSink(method, args) : originals[method](...args);
   let writeFailed = false;
   const pending = [];
   let drain = null;
@@ -73,7 +74,7 @@ export function configureLogging({
   let pendingRecords = 0;
   let droppedRecords = 0;
   let writeFailures = 0;
-  const stats = () => ({ enabled: true, pending_bytes: pendingBytes, pending_records: pendingRecords,
+  const stats = () => ({ enabled: Boolean(filePath), pending_bytes: pendingBytes, pending_records: pendingRecords,
     dropped_records: droppedRecords, write_failures: writeFailures,
     max_bytes: LOG_QUEUE_MAX_BYTES, max_records: LOG_QUEUE_MAX_RECORDS });
 
@@ -86,7 +87,7 @@ export function configureLogging({
           await appendLines(filePath, batch.map(({ payload }) => payload), debugLogMaxBytes(env));
         } catch (error) {
           writeFailures += 1;
-          if (!writeFailed) originals.error(`codex-copilot-dx log write failed: ${redactDiagnosticText(error.message)}`);
+          if (!writeFailed) present("error", [`codex-copilot-dx log write failed: ${redactDiagnosticText(error.message)}`]);
           writeFailed = true;
         } finally {
           pendingRecords -= batch.length;
@@ -102,7 +103,7 @@ export function configureLogging({
       const bytes = Buffer.byteLength(payload);
       if (pendingRecords >= LOG_QUEUE_MAX_RECORDS || pendingBytes + bytes > LOG_QUEUE_MAX_BYTES) {
         droppedRecords += 1;
-        if (droppedRecords === 1) originals.error("codex-copilot-dx log queue is full; excess file records are dropped, terminal output is unchanged (see ccdx status)");
+        if (droppedRecords === 1) present("error", ["codex-copilot-dx log queue is full; excess file records are dropped (see ccdx status)"]);
         return;
       }
       pending.push({ payload, bytes });
@@ -112,14 +113,14 @@ export function configureLogging({
     } catch (e) {
       if (writeFailed) return;
       writeFailed = true;
-      originals.error(`codex-copilot-dx log write failed: ${redactDiagnosticText(e.message)}`);
+      present("error", [`codex-copilot-dx log write failed: ${redactDiagnosticText(e.message)}`]);
     }
   }
 
   for (const method of methods) {
     consoleObj[method] = (...args) => {
-      originals[method](...args);
-      append(args);
+      present(method, args);
+      if (filePath) append(args);
     };
   }
 
@@ -130,7 +131,7 @@ export function configureLogging({
       new Promise((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs); }),
     ]);
     clearTimeout(timer);
-    if (!completed) originals.error(`codex-copilot-dx log flush timed out after ${timeoutMs}ms`);
+    if (!completed) present("error", [`codex-copilot-dx log flush timed out after ${timeoutMs}ms`]);
   };
   const cleanup = () => {
     for (const method of methods) consoleObj[method] = originals[method];
@@ -138,8 +139,9 @@ export function configureLogging({
     return flush();
   };
 
-  if (consoleObj === console) globalInstall = { filePath, cleanup, flush, stats };
-  return { level, filePath, cleanup, flush, stats };
+  const setTerminalSink = sink => { terminalSink = typeof sink === "function" ? sink : null; };
+  if (consoleObj === console) globalInstall = { filePath, cleanup, flush, stats, setTerminalSink };
+  return { level, filePath, cleanup, flush, stats, setTerminalSink };
 }
 
 export function debugLog(message, env = process.env) {

@@ -128,6 +128,7 @@ function dashboardProviders(providerStateFn, authStatusFn) {
       clients: (entry.clients || []).slice(0, 8).map(client => ({ id: code(client.id), name: label(client.name),
         selected: client.selected === true, state: code(client.state) || "unknown", gateway: code(client.gateway),
         reason: code(client.reason), last_request_at: label(client.last_request_at) || null })),
+      request_scope: label(entry.request_scope) || null,
       requests: entry.requests ? Object.fromEntries(["total", "active", "completed", "incomplete", "failed", "cancelled"].map(key => [key, finite(entry.requests[key])])) : null };
   });
 }
@@ -140,6 +141,8 @@ export async function handleDashboardApi(req, res, pathname, {
   authStatusFn = () => authStatus({ home }),
   providerCatalogFn,
   providerStateFn,
+  serviceControl,
+  applyAnimation,
 } = {}) {
   if (!isLoopbackAddress(req.socket?.remoteAddress)
     || req.headers?.host === undefined
@@ -155,6 +158,26 @@ export async function handleDashboardApi(req, res, pathname, {
   if (pathname === PROVIDERS_PATH && req.method === "GET") {
     try { sendJson(res, 200, { source: "provider_status", providers: dashboardProviders(providerStateFn, authStatusFn) }); }
     catch { sendJson(res, 500, { error: "Could not read provider status" }); }
+    return;
+  }
+
+  if (pathname === "/_ccdx/ui/settings") {
+    if (!serviceControl) { sendJson(res, 503, { error: "Settings require the running service; restart the updated CCDX" });return; }
+    if (req.method === "GET") {
+      try { sendJson(res, 200, serviceControl.snapshot()); } catch { sendJson(res, 409, { error: "Service settings are unreadable; existing settings were preserved" }); }
+      return;
+    }
+    if (req.method !== "POST") { sendJson(res, 405, { error: "Use GET or POST" });return; }
+    if (!sameOrigin(req)) { sendJson(res, 403, { error: "Settings require the same-origin dashboard" });return; }
+    if (!/^application\/json(?:\s*;|$)/i.test(req.headers["content-type"] || "")) { sendJson(res, 415, { error: "Expected application/json" });return; }
+    const abort = createRequestAbort(req, res);abort.setTimeout(5000, "request_body_timeout");
+    try {
+      const input = await readJsonBody(req, { maxBodyBytes: 4096, maxDecodedBodyBytes: 4096, signal: abort.signal });
+      abort.clearTimeout();const data = await serviceControl.action(input);
+      if (!res.destroyed && !res.writableEnded) sendJson(res, 200, data);
+    } catch (error) {
+      sendJson(res, error.statusCode || (error.code?.startsWith("ccdx_cache_") ? 409 : 400), { error: safeText(error.message, 300) });
+    } finally { abort.cleanup(); }
     return;
   }
 
@@ -215,6 +238,7 @@ export async function handleDashboardApi(req, res, pathname, {
     }
     try {
       const result = writeTerminalAnimationTheme(body.theme, { env, home });
+      applyAnimation?.(body.theme);
       sendJson(res, 200, { changed: result.changed, ...animationState(env, home) });
     } catch {
       sendJson(res, 409, { error: "Animation setting was not saved; check ccdx animation" });

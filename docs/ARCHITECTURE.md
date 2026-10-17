@@ -45,12 +45,12 @@ The fixed Loki target, account-bound catalog and dedicated network agent belong
 to M365. No GitHub token, image credential or browser Cookie is reused. Windows can
 use a separate OS WinHTTP worker for M365 company routing; macOS preserves static
 system/environment routing and reports unsupported dynamic PAC. Native runtime
-absence, policy refusal and gateway-port conflicts do not disable GitHub.
-Claude listener/configuration readiness is also separate from M365 provider
-readiness. A busy Claude port or a GPT-only catalog cannot block the explicitly
+absence and policy refusal do not disable GitHub.
+Claude handler/configuration readiness is also separate from M365 provider
+readiness. A Claude setup failure or a GPT-only catalog cannot block the explicitly
 selected Codex backup; a catalog without Claude models does not install Claude settings.
 
-The Claude gateway listens on loopback only, requires its private local key and
+The Claude gateway is mounted at /anthropic in the main listener, independently requires a loopback socket/Host and its private local key, and
 rejects browser-origin requests. It preserves native Messages/SSE bytes, observes
 bounded usage/terminal metadata and honors downstream backpressure. The client
 writer records field-level ownership before applying changes and restores only
@@ -264,8 +264,11 @@ invalidated on profile generation/account changes. It cancels obsolete reads and
 prevents stale apply across tabs. `status.js` renders source-neutral authorization
 and client evidence; `usage.js` renders usage and date selection. View state remains
 page-local; only existing preferences and the viewed model Provider are saved in
-the browser. Expanded sections read on demand. There is no Node data watcher or
-new poller. Animation frames still load once per page when opened.
+the browser. Expanded sections read on demand. There is no Node data watcher.
+The sidebar controller reads small process-local status snapshots every two seconds
+while visible/automatic, and source/settings evidence every eight status ticks.
+Catalog and retained-log reads retain their slower, view-scoped policy. Animation
+frames still load once per page when opened.
 
 `claude-models.mjs` owns exact ID spelling and capability-cap projection shared by
 configuration and model discovery. M365 resolves both canonical and existing raw
@@ -283,6 +286,31 @@ Overlapping live queries with the same credential fingerprint, home, fetch
 implementation and lookup parameters share one in-flight lookup. A waiter can
 cancel independently; the last cancellation aborts the lookup. Completed results
 are not cached as live, and each waiter receives its own snapshot.
+
+
+### Shared listener and service controls
+
+The main adapter counts each HTTP request once. /anthropic dispatch strips only
+the protocol mount prefix and preserves its query; the mounted handler retains
+native authentication, admission, Messages timing and response ownership. Closing
+Claude cannot close the main listener. Provider credentials/history namespaces and
+protocol-specific timing stay independent; the UI names the scope rather than
+summing incompatible counters. Root legacy Messages routes remain retired.
+
+`service-control.mjs` composes explicit preference/Provider/cache/integration
+actions with serialized writes and effective-state readback. It has no transport,
+UI or shell dependency. `dashboard-api.mjs` supplies the local/same-origin HTTP
+boundary. Client configuration migration reuses field ownership and its original
+before-values, preserving foreign or edited fields. Saved allow gates are separate
+from provisioning; pausing never deletes the Provider key or prediction trust.
+
+`terminal-console.mjs` owns a bounded TTY status region and activity only.
+`log.mjs` routes terminal presentation independently from existing opt-in,
+redacted rotating file records. Returned usage accumulates scalar process-local
+totals in `usage-store.mjs`, without a historical-log scan or per-token callback.
+`browser-launch.mjs` makes one bounded local desktop-open attempt after readiness;
+no headless/SSH launch, browser dependency, generic shell or background tab watcher
+is added. Neither terminal nor WebUI rendering is required for inference.
 
 ## Configuration ownership
 
@@ -330,7 +358,7 @@ Empty-stream diagnostics are additive scalar metadata, not a new retry policy.
 Release reports describe a specific environment, not an SLA or a guarantee of
 compatibility with every future client or corporate network policy.
 CI runs Node 22.15 and 24 on Linux, Windows and macOS. The owned temporary-prefix
-package smoke installs 0.9.31, upgrades to the packed candidate and exercises
+package smoke installs its 0.9.41 baseline (or an explicit local artifact), upgrades to the packed candidate and exercises
 installed sharp without provider calls. It does not claim a live Codex UI test
 or the GitHub updater's network installation; the Windows command chain has a
 separate actual-process fixture. Direct runtime dependencies are exact versions;

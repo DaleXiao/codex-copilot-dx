@@ -156,7 +156,10 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
   const entries = claudeModelEntries(models);
   const paths = claudeClientPaths(options), ids = entries.map(model => model.name), operations = [], result = {};
   const endpoint = new URL(baseUrl);
-  if (endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1" || endpoint.pathname !== "/" || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) throw new Error("Claude gateway must use a local root URL");
+  if (endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1" || !["/", "/anthropic"].includes(endpoint.pathname) || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) throw new Error("Claude gateway must use a local root or /anthropic URL");
+  const journal = readM365Json(m365Paths(options).ownership, { version: 1, operations: [] });
+  const owns = (file, keys, value) => journal.version === 1 && Array.isArray(journal.operations)
+    && journal.operations.some(op => op.file === file && isDeepStrictEqual(op.keys, keys) && isDeepStrictEqual(op.after, value));
   const add = (file, keys, value, itemId) => operations.push({ file, keys, value, ...(itemId ? { itemId } : {}) });
   const env = options.env || process.env;
   let code;
@@ -170,7 +173,8 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
     || code?.apiKeyHelper
     || ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_GATEWAY"].some(key => /^(1|true)$/i.test(env[key] || codeEnv[key] || ""));
   if (!code) { /* Keep independent App setup available when Code settings are damaged. */ }
-  else if (envConflict || codeEnv.ANTHROPIC_BASE_URL && codeEnv.ANTHROPIC_BASE_URL !== baseUrl) result.code = "preserved";
+  else if (envConflict || codeEnv.ANTHROPIC_BASE_URL && codeEnv.ANTHROPIC_BASE_URL !== baseUrl
+    && !owns(paths.code, ["env", "ANTHROPIC_BASE_URL"], codeEnv.ANTHROPIC_BASE_URL)) result.code = "preserved";
   else {
     add(paths.code, ["env", "ANTHROPIC_BASE_URL"], baseUrl);
     add(paths.code, ["env", "ANTHROPIC_AUTH_TOKEN"], apiKey);
@@ -194,6 +198,7 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
     else if (meta.hybridPointer || meta.appliedId && meta.appliedId !== M365_CLAUDE_PROFILE_ID
       || profile.inferenceProvider && profile.inferenceProvider !== "gateway"
       || profile.inferenceGatewayBaseUrl && profile.inferenceGatewayBaseUrl !== baseUrl
+        && !owns(paths.profile, ["inferenceGatewayBaseUrl"], profile.inferenceGatewayBaseUrl)
       || profile.inferenceGatewayApiKey && profile.inferenceGatewayApiKey !== apiKey) result.app = "preserved";
     else {
       add(paths.profile, ["inferenceProvider"], "gateway");

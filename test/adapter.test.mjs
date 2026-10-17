@@ -216,7 +216,7 @@ test("createAdapterHandler rejects a malformed request target without throwing",
   assert.deepEqual(JSON.parse(response.text), { error: "Invalid request target" });
 });
 
-test("createAdapterHandler: tracks terminal activity for one request lifecycle", () => {
+test("createAdapterHandler: tracks terminal activity for one business request lifecycle", () => {
   let started = 0;
   let finished = 0;
   const terminalActivity = {
@@ -227,7 +227,7 @@ test("createAdapterHandler: tracks terminal activity for one request lifecycle",
   };
   const req = Readable.from([]);
   req.method = "GET";
-  req.url = "/missing";
+  req.url = "/mcp/image";
   req.headers = {};
 
   const res = new EventEmitter();
@@ -242,7 +242,7 @@ test("createAdapterHandler: tracks terminal activity for one request lifecycle",
     res.emit("close");
   };
 
-  createAdapterHandler({ terminalActivity })(req, res);
+  createAdapterHandler({ terminalActivity, imageMcpHandler: (_req, response) => response.end() })(req, res);
   assert.equal(started, 1);
   assert.equal(finished, 1);
 });

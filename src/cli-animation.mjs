@@ -137,7 +137,7 @@ export async function runAnimationCommand({
     output.write(`CCDX_TERMINAL_ANIMATION=${disabledValue} remains effective until it is unset; terminal animation stays disabled.\n`);
     output.write("The saved animation will be used on the next ccdx start after the override is unset.\n");
   } else {
-    output.write("The next ccdx start will use this animation.\n");
+    output.write("Running CCDX 1.1.0+ picks up this animation without restart; older services need a restart.\n");
   }
   return { ...result, cancelled: false, theme: selectedTheme };
 }

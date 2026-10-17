@@ -6,14 +6,35 @@ import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { randomBytes } from "node:crypto";
 import { createM365Provider } from "../src/providers/m365.mjs";
-import { startClaudeGateway } from "../src/claude-gateway.mjs";
+import http from "node:http";
+import { createAdapterHandler } from "../src/adapter.mjs";
+import { createProviderRuntime } from "../src/provider-runtime.mjs";
+process.env.CCDX_DISABLE_USAGE = "1";
+async function startSharedGateway(provider) {
+  let handler;
+  const server = http.createServer((req, res) => handler(req, res));
+  await new Promise((resolve, reject) => { server.once("error", reject);server.listen(0, "127.0.0.1", resolve); });
+  const port = server.address().port;
+  const runtime = createProviderRuntime({ corePort: port, home, env: {}, platform: "darwin", githubClient: {},
+    createM365: () => provider, configureClients: () => ({ code: "configured", app: "configured" }) });
+  handler = createAdapterHandler({ providerRuntime: runtime, codexClient: {} });
+  try { await runtime.start(); }
+  catch (error) { await runtime.close();server.closeAllConnections();await new Promise(resolve => server.close(resolve));throw error; }
+  const state = runtime.snapshot();
+  assert.equal(state.m365.claude.port, port);assert.equal(state.m365.claude.base_url, `http://127.0.0.1:${port}/anthropic`);
+  // Use the real generated local key, kept entirely inside this isolated home.
+  const { ensureM365GatewayKey } = await import("../src/m365-settings.mjs");
+  const localKey = ensureM365GatewayKey({ home, env: {} });
+  const models = await fetch(`${state.m365.claude.base_url}/v1/models?limit=1000`, { headers: { "x-api-key": localKey } });
+  assert.equal(models.status, 200);assert.equal((await models.json()).data[0].id, "claude-opus-5-5");
+  return { port, key: localKey, close: async () => { await runtime.close();server.closeAllConnections();await new Promise(resolve => server.close(resolve)); } };
+}
 
 const [flag, executable] = process.argv.slice(2);
 assert.ok(flag === "--claude" && path.isAbsolute(executable), "Use --claude /absolute/path/to/claude");
 const run = promisify(execFile), home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-claude-replay-"));
-const key = randomBytes(32).toString("hex"), calls = [], marker = "CCDX_CAPABILITY_OK";
+const calls = [], marker = "CCDX_CAPABILITY_OK";
 const model = { id: "claude-opus-5.5", publisher: "Anthropic", supported_endpoints: ["/v1/messages"],
   capabilities: { supports: { reasoning_effort: ["low", "medium", "high", "xhigh", "max"] } } };
 const provider = createM365Provider({ home, log() {}, auth: {
@@ -33,9 +54,9 @@ const provider = createM365Provider({ home, log() {}, auth: {
 let gateway;
 try {
   await provider.refresh();
-  gateway = await startClaudeGateway({ provider, port: 0, apiKey: key, log() {}, record() {} });
+  gateway = await startSharedGateway(provider);
   const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
-    ANTHROPIC_BASE_URL: `http://127.0.0.1:${gateway.port}`, ANTHROPIC_AUTH_TOKEN: key,
+    ANTHROPIC_BASE_URL: `http://127.0.0.1:${gateway.port}/anthropic`, ANTHROPIC_AUTH_TOKEN: gateway.key,
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1", CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_AUTOUPDATER: "1", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" };
   delete env.ANTHROPIC_API_KEY;delete env.CLAUDE_CODE_OAUTH_TOKEN;

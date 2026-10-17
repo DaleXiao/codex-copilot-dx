@@ -9,6 +9,7 @@ import { terminalCell } from "./cli-table.mjs";
 import { computeImageMcpCodexConfig } from "./config.mjs";
 import { probeImageTool } from "./image-readiness.mjs";
 import { updateImageSkill } from "./image-skill.mjs";
+import { servicePreferences, writeServicePreference } from "./user-settings.mjs";
 import {
   imageProviderConfigPath,
   inspectImageProvider,
@@ -193,6 +194,7 @@ export async function runImageCommand({
     }
     const summary = configSummary(config);
     output.write(`Image generation: enabled\nEndpoint: ${terminalCell(summary.endpoint)}\nModel: ${terminalCell(summary.model)}\nProtocol: ${terminalCell(summary.protocol)}\n`);
+    if (!servicePreferences({ env, home }).image_enabled) output.write("New image calls: paused by the WebUI preference; provider configuration is retained.\n");
     const readiness = await probeImageTool(fileContent(codexPath), { fetchImpl: probeFetchImpl });
     printImageReadiness(readiness, output, commandName);
     return { enabled: true, ...summary, readiness };
@@ -249,6 +251,7 @@ export async function runImageCommand({
     adapterPort,
     adapterHost,
   });
+  if (!servicePreferences({ env, home }).image_enabled) writeServicePreference("image_enabled", true, { env, home });
   output.write(`Enabled image generation with ${terminalCell(model)}.\n`);
   const readiness = await probeImageTool(fileContent(codexPath), { fetchImpl: probeFetchImpl });
   printImageReadiness(readiness, output, commandName);

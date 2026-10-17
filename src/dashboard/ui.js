@@ -82,14 +82,14 @@ function stopAnimationPreview() {
 
 function tickAnimationPreview() {
   previewTimer = null;
-  if (!animationTimelines.length || !element("animation-settings").open || !previewVisible || document.visibilityState !== "visible" || reducedMotion.matches || previewDisabledByEnvironment) return;
+  if (!animationTimelines.length || !element("animation-settings").open || element("animation-settings").closest("[hidden]") || !previewVisible || document.visibilityState !== "visible" || reducedMotion.matches || previewDisabledByEnvironment) return;
   renderAnimationFrames(performance.now() - previewStarted);
   previewTimer = setTimeout(tickAnimationPreview, 32);
 }
 
 function syncAnimationPreview() {
   stopAnimationPreview();
-  if (!animationTimelines.length || !element("animation-settings").open || !previewVisible || document.visibilityState !== "visible" || reducedMotion.matches || previewDisabledByEnvironment) {
+  if (!animationTimelines.length || !element("animation-settings").open || element("animation-settings").closest("[hidden]") || !previewVisible || document.visibilityState !== "visible" || reducedMotion.matches || previewDisabledByEnvironment) {
     for (const timeline of animationTimelines) timeline.lastFrame = -2;
     renderAnimationFrames(0);
     return;
@@ -155,7 +155,7 @@ function buildAnimationOptions(data) {
 function animationNote(data) {
   return data.disabled_by_environment
     ? "Disabled by CCDX_TERMINAL_ANIMATION; saved choice applies after override removal and next start."
-    : "Saved choice applies on next ccdx start.";
+    : "Saved choice applies to the running terminal.";
 }
 
 function loadAnimation(options) {
@@ -375,7 +375,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       },
       apply: render,
       state: state => {
-        text("connection", state.pending || (!state.value && !state.error) ? "READING" : state.error ? "UNAVAILABLE" : "LOCAL OK");
+        text("connection", state.pending && !state.value ? "READING" : state.error ? "UNAVAILABLE" : "SERVICE REACHABLE");
         element("connection").className = `badge ${state.pending ? "neutral" : state.error ? "bad" : "good"}`;
         if (state.error) refreshTime(element("updated"), state);
         for (const node of timestamps.get("status")) refreshTime(node, state);
@@ -394,7 +394,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       },
     },
     models: {
-      visible: () => providerEntries.length > 0 && element("upstream-models").open,
+      visible: () => providerEntries.length > 0 && element("upstream-models").open && !element("upstream-models").closest("[hidden]"),
       variant: () => selectedProvider,
       load: async ({ signal, variant }) => {
         if (!variant) throw new Error("Reading provider catalog…");
@@ -418,7 +418,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       },
     },
     usage: {
-      visible: () => element("model-usage").open,
+      visible: () => element("model-usage").open && !element("model-usage").closest("[hidden]"),
       variant: () => {
         const mode = ((element("model-usage").open && element("usage-analytics").open) || Boolean(usageView.selectedDate)) ? "analytics" : "summary";
         const provider = element("usage-provider")?.value || "";
@@ -516,7 +516,6 @@ element("usage-provider")?.addEventListener("change", () => { dashboardRefresh.i
 element("refresh-models").addEventListener("click", loadModels);
 element("refresh-usage").addEventListener("click", loadUsage);
 loadAnimation();
-loadUsage();
 refresh();
-loadAuth().then(() => loadModels());
+loadAuth();
 animateRefresh();

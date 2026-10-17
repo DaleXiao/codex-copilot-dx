@@ -78,7 +78,7 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["cache", "--help"]).helpTopic, "cache");
   assert.equal(parseCliArgs(["limits", "--help"]).helpTopic, "limits");
   assert.match(cliHelp("ccdx", "limits"), /Restart ccdx to apply/);
-  assert.match(cliHelp("ccdx", "animation"), /next time the adapter starts/);
+  assert.match(cliHelp("ccdx", "animation"), /applies it live/);
   assert.match(cliHelp("ccdx", "enable-image"), /HTTPS image API endpoint/);
   assert.match(cliHelp("ccdx", "doctor"), /consumes a small amount of Copilot usage/);
   assert.match(cliHelp(), /m365\s+Manage M365 Claude access/);

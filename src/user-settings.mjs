@@ -22,6 +22,7 @@ const AUTO_REVIEW_REASONING_KEY = "auto_review_reasoning";
 const TERMINAL_ANIMATION_KEY = "terminal_animation";
 const RESPONSE_HISTORY_MAX_MIB_KEY = "response_history_max_mib";
 const DECODED_BODY_LIMIT_MIB_KEY = "decoded_body_limit_mib";
+const SERVICE_FLAGS = ["terminal_animation_enabled", "open_webui", "image_enabled", "prediction_enabled"];
 export const DECODED_BODY_LIMIT_MIN_MIB = RUNTIME_DEFAULTS.maxDecodedBodyBytes / MIB;
 export const DECODED_BODY_LIMIT_MAX_MIB = 512;
 export { RESPONSE_HISTORY_MAX_MIB, RESPONSE_HISTORY_MIN_MIB };
@@ -42,6 +43,12 @@ export function readUserSettings({ env = process.env, home = os.homedir(), stric
     const parsed = JSON.parse(readBoundedFileSync(filePath, { encoding: "utf8" }));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw invalidSettings(filePath, "expected a JSON object");
+    }
+    for (const key of SERVICE_FLAGS) {
+      if (Object.hasOwn(parsed, key) && typeof parsed[key] !== "boolean") {
+        if (strict) throw invalidSettings(filePath, `${key} must be a boolean`);
+        delete parsed[key];
+      }
     }
     if (Object.hasOwn(parsed, AUTO_REVIEW_MODEL_KEY)) {
       const value = parsed[AUTO_REVIEW_MODEL_KEY];
@@ -105,6 +112,20 @@ export function readUserSettings({ env = process.env, home = os.homedir(), stric
 export function savedAutoReviewModel(options = {}) {
   const settings = readUserSettings(options);
   return String(settings[AUTO_REVIEW_MODEL_KEY] || "").trim();
+}
+
+export function servicePreferences(options = {}) {
+  const settings = readUserSettings({ ...options, strict: true });
+  return Object.fromEntries(SERVICE_FLAGS.map(key => [key, settings[key] !== false]));
+}
+
+export function writeServicePreference(key, value, options = {}) {
+  if (!SERVICE_FLAGS.includes(key) || typeof value !== "boolean") throw new Error("Unknown service setting or invalid boolean");
+  return withFileLockSync(`${userSettingsPath(options)}.lock`, () => {
+    const settings = readUserSettings({ ...options, strict: true });
+    const changed = atomicWriteFileIfChangedSync(userSettingsPath(options), `${JSON.stringify({ ...settings, [key]: value }, null, 2)}\n`, { mode: 0o600 });
+    return { changed, ...servicePreferences(options) };
+  });
 }
 
 export function autoReviewModelPreference({ env = process.env, home = os.homedir() } = {}) {

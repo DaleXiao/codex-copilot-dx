@@ -36,7 +36,7 @@ export function formatM365Status(state) {
     `Microsoft 365: ${terminalCell(m.state || "not running")}${m.reason ? ` (${terminalCell(m.reason)})` : ""}`,
     ...(m.account?.login ? [`Account: ${terminalCell(m.account.login)}`] : []),
     `Models: ${models.claude || 0} Claude / ${models.gpt || 0} GPT (${models.source || "unavailable"})`,
-    `Claude gateway: ${claude.gateway || "not running"}${claude.port ? ` / http://127.0.0.1:${claude.port}` : ""}`,
+    `Claude gateway: ${claude.gateway || "not running"}${claude.base_url ? ` / ${claude.base_url}` : ""}`,
     ...(claude.reason ? [`Claude detail: ${terminalCell(claude.reason)}`] : []),
     ...(claude.requests ? [`Claude requests: ${claude.requests.completed} completed / ${claude.requests.incomplete} incomplete / ${claude.requests.failed} failed / ${claude.requests.active} active`] : []),
     `Claude Code: ${claude.clients?.code || "unknown"}; Claude App: ${claude.clients?.app || "unknown"}`,

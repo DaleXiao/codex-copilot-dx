@@ -14,7 +14,7 @@ import { runInBackground } from "../src/startup.mjs";
 import { cliCommandName, cliHelp, parseAdapterAddressOptions, parseAdapterProbeOptions, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
 import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
-import { autoReviewModelPreference, autoReviewPreference, responseHistoryLimitPreference, terminalAnimationPreference } from "../src/user-settings.mjs";
+import { autoReviewModelPreference, autoReviewPreference, responseHistoryLimitPreference, terminalAnimationPreference, servicePreferences } from "../src/user-settings.mjs";
 import { formatLiveCopilotModels } from "../src/cli-models.mjs";
 import { runAuthCommand } from "../src/cli-auth.mjs";
 import { createProfileRuntime } from "../src/profile-runtime.mjs";
@@ -23,6 +23,9 @@ import { createCodexModelCatalog } from "../src/codex-model-catalog.mjs";
 import { createProviderRuntime } from "../src/provider-runtime.mjs";
 import { setResponseHistoryMaxBytes } from "../src/response-history.mjs";
 import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck } from "../src/startup-ui.mjs";
+import { createTerminalConsole } from "../src/terminal-console.mjs";
+import { createServiceControl } from "../src/service-control.mjs";
+import { openDashboard } from "../src/browser-launch.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
 const CLI_NAME = cliCommandName();
@@ -284,6 +287,14 @@ let shuttingDown = false;
 let nativePrediction = null;
 let clientIntegration = null;
 let providerRuntime = null;
+let terminalConsole = null;
+const webUiUrl = `http://${ADAPTER_HOST === "::1" ? "[::1]" : "127.0.0.1"}:${ADAPTER_PORT}`;
+async function launchDashboard() {
+  try {
+    const result = await openDashboard(webUiUrl, { enabled: !CLI.noBrowser && servicePreferences().open_webui });
+    if (result.state === "unavailable") console.warn(startupCheck("warn", "WebUI", `Browser unavailable; open ${webUiUrl}`));
+  } catch (error) { console.warn(startupCheck("warn", "WebUI", error.message)); }
+}
 
 async function clientIntegrations() {
   if (!clientIntegration) {
@@ -342,6 +353,7 @@ async function reuseRunningAdapterIfAvailable() {
   console.log(startupCheck(imageEnabled && imageMcpSkipped ? "warn" : "info", "Images", imageEnabled
     ? imageMcpSkipped ? "Client setup skipped; see warning above" : "Configured; provider not tested" : "Off"));
   console.log(startupReady({ baseUrl: running.baseUrl, commandName: CLI_NAME, reused: true }));
+  await launchDashboard();
   await compressionSetup;
   return true;
 }
@@ -370,8 +382,7 @@ async function printUpdateNotice() {
   try {
     const { latestVersion, updateAvailable } = await checkForUpdate({ currentVersion: LOCAL_VERSION });
     if (!updateAvailable) return;
-    console.log(`\n${status("warn", `Update available: ${LOCAL_VERSION} -> ${latestVersion}`)}`);
-    console.log(`Run ${CLI_NAME} update github to update, then restart ${CLI_NAME}.\n`);
+    console.warn(`\n${status("warn", `Update available: ${LOCAL_VERSION} -> ${latestVersion}. Run ${CLI_NAME} update github to update, then restart ${CLI_NAME}.`)}\n`);
   } catch {
     // Never block startup on the update check.
   }
@@ -437,6 +448,10 @@ try {
 
   // Start the in-process adapter.
   const terminalAnimationTheme = terminalAnimationPreference().theme;
+  terminalConsole = createTerminalConsole({ baseUrl: webUiUrl, verbose: CLI.verbose === true || CLI.showRequestId === true || LOGGING.level === "debug",
+    snapshot: () => activeServer?.ccdxSnapshot?.() || {},
+    preferences: () => ({ ...servicePreferences(), theme: terminalAnimationPreference().theme }) });
+  const serviceControl = createServiceControl({ providerRuntime, clientIntegration: earlyIntegration, terminal: terminalConsole });
   const codexModelCatalog = createCodexModelCatalog();
   activeServer = await startAdapter(ADAPTER_PORT, ADAPTER_HOST, {
     log: startupLogger("Adapter"),
@@ -450,6 +465,8 @@ try {
     streamHandshakeTimeoutMs: RUNTIME.streamHandshakeTimeoutMs,
     streamIdleTimeoutMs: RUNTIME.streamIdleTimeoutMs,
     terminalAnimationTheme,
+    terminalActivity: terminalConsole,
+    dashboardOptions: { serviceControl, applyAnimation: theme => terminalConsole.apply({ theme }) },
     nativePredictionPac: () => clientIntegration?.pacUrl() || null,
     fixPrediction: async () => (await clientIntegrations()).fix(),
     clientIntegrationSnapshot: () => clientIntegration?.snapshot() || null,
@@ -483,10 +500,13 @@ try {
 
   startupComplete = true;
   console.log(startupReady({ baseUrl: adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT), commandName: CLI_NAME }));
+  await launchDashboard();
+  terminalConsole.start();LOGGING.setTerminalSink((method, args) => terminalConsole.log(method, args));
 
   const shutdown = async (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    LOGGING.setTerminalSink(null);terminalConsole?.cleanup();
     console.log(`\n${status("wait", `Shutting down on ${signal}...`)}`);
     let exitCode = 0;
     try {
@@ -508,6 +528,7 @@ try {
   process.once("SIGTERM", () => { void shutdown("SIGTERM"); });
   await compressionSetup;
 } catch (e) {
+  LOGGING.setTerminalSink(null);terminalConsole?.cleanup();
   console.error(status("err", e.message));
   await clientIntegration?.close().catch(() => {});
   await providerRuntime?.close().catch(() => {});

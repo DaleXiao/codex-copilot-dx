@@ -10,6 +10,7 @@ import { windowsProxyText, windowsPredictionAppProcesses } from "./native-predic
 import { updatePredictionRoute } from "./native-prediction-route.mjs";
 import { inspectPredictionEnvironment } from "./native-prediction-environment.mjs";
 import { formatPredictionEnvironment } from "./native-prediction-state.mjs";
+import { servicePreferences, writeServicePreference } from "./user-settings.mjs";
 
 function certificateDirectory(settings, paths) {
   if (!settings.credentialsDirectory) return paths.directory;
@@ -55,6 +56,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
   }
   if (action === "status") {
     output(`Native prediction preference: ${settings.enabled ? "on" : "off"} (default: off)`);
+    if (settings.enabled && !servicePreferences(opts).prediction_enabled) output("Prediction configuration adaptation: paused by the WebUI preference; trust and route are retained.");
     output("Uses the conversation's model.");
     if (settings.enabled && !predictionAppMatches(settings.app)) output("Codex App changed; bridge startup will recheck compatibility. Unsupported changes still require explicit setup.");
     if (runtimeSnapshot) {
@@ -142,6 +144,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
   }
   try { retirePredictionIntegration(opts); }
   catch (error) { output(`Legacy prediction cleanup skipped: ${error.message}`); }
+  if (!servicePreferences(opts).prediction_enabled) writeServicePreference("prediction_enabled", true, opts);
   output("Native predictions on. Restart ccdx to launch Codex with the local bridge.");
   output("Only chatgpt.com and ab.chatgpt.com use the App-only route. Their HTTPS traffic is decrypted locally; only prediction configuration is changed. No credentials are stored, no system certificate is installed, and client program files are unchanged.");
   output("Existing official prediction configuration is preserved. The conversation's model generates predictions through your configured CCDX API.");
@@ -189,9 +192,9 @@ export async function startNativePrediction({ env = process.env, platform = proc
   ]);
   // An in-memory switch is refreshed independently of request bodies and never
   // touches the model path. A failed read turns off this optional overlay.
-  let enabled = true;
+  let enabled = servicePreferences(opts).prediction_enabled;
   const timer = setInterval(() => {
-    try { enabled = readPredictionSettings(opts).enabled; state?.configure(enabled); }
+    try { const configured = readPredictionSettings(opts).enabled;enabled = configured && servicePreferences(opts).prediction_enabled;state?.configure(configured); }
     catch { enabled = false; }
   }, 1000);
   timer.unref();
@@ -248,6 +251,7 @@ export async function startNativePrediction({ env = process.env, platform = proc
     ...(platform === "win32" ? { profile: paths.profile } : {}),
     pacUrl: transport.pacUrl,
     enabled() { return enabled; },
+    setActive(value) { enabled = value === true && readPredictionSettings(opts).enabled;return enabled; },
     appCurrent() { return predictionAppMatches(settings.app); },
     inspectEnvironment() {
       const next = inspectPredictionEnvironment(opts);

@@ -108,3 +108,26 @@ test("upstream catalog ordering does not replace the surviving App default", t =
   configureClaudeClients({ ...options, models: [{ id: "claude-sonnet-5.5" }, ...options.models] });
   assert.deepEqual(JSON.parse(read(paths.profile).inferenceModels).map(entry => entry.name), ["claude-opus-5-5", "claude-sonnet-5-5"]);
 });
+
+test("owned 2027 endpoints migrate to the shared prefix and retain original restoration values", t => {
+  const { options, paths } = fixture(t);
+  const original = { env: { USER_CHOICE: "kept" } };write(paths.code, original);
+  configureClaudeClients(options);
+  const next = { ...options, baseUrl: "http://127.0.0.1:2026/anthropic" };
+  const result = configureClaudeClients(next);
+  assert.equal(result.code, "configured");assert.equal(result.app, "configured");
+  assert.equal(read(paths.code).env.ANTHROPIC_BASE_URL, next.baseUrl);
+  assert.equal(read(paths.profile).inferenceGatewayBaseUrl, next.baseUrl);
+  assert.equal(configureClaudeClients(next).changed, false);
+  assert.equal(restoreClaudeClients(next).remaining, 0);assert.deepEqual(read(paths.code), original);
+});
+
+test("prefix migration preserves user-edited routes and rejects arbitrary base paths", t => {
+  const { options, paths } = fixture(t);configureClaudeClients(options);
+  const code = read(paths.code);code.env.ANTHROPIC_BASE_URL = "http://127.0.0.1:3333";write(paths.code, code);
+  const profile = read(paths.profile);profile.inferenceGatewayBaseUrl = "http://127.0.0.1:4444";write(paths.profile, profile);
+  const result = configureClaudeClients({ ...options, baseUrl: "http://127.0.0.1:2026/anthropic" });
+  assert.equal(result.code, "preserved");assert.equal(result.app, "preserved");
+  assert.deepEqual(read(paths.code), code);assert.deepEqual(read(paths.profile), profile);
+  assert.throws(() => configureClaudeClients({ ...options, baseUrl: "http://127.0.0.1:2026/arbitrary" }), /gateway must use/);
+});

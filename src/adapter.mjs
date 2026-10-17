@@ -28,6 +28,7 @@ import {
 import { httpError } from "./http-errors.mjs";
 import { createRequestAdmission } from "./request-admission.mjs";
 import { PROVIDER_MANAGEMENT_PATH, handleProviderManagement } from "./provider-management.mjs";
+import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 
 export {
   abortErrorStatusCode,
@@ -169,9 +170,10 @@ export function createAdapterHandler(options = {}) {
   const optionalRoutes = createOptionalRoutes({ ...options, dashboardOptions: { ...options.dashboardOptions,
     ...(options.providerRuntime ? { providerCatalogFn: input => options.providerRuntime.dashboardCatalog(input),
       providerStateFn: () => options.providerRuntime.dashboardProviders() } : {}) } });
+  let statusSnapshot;
   const managementHandler = createManagementHandler({
     nativePredictionPac: options.nativePredictionPac, fixPrediction: options.fixPrediction, requestBodyTimeoutMs,
-    statusSnapshot: () => {
+    statusSnapshot: statusSnapshot = () => {
       const snapshot = runtimeStatusPayload({ metrics: requestMetrics, streamPerformance: streamPerformanceMetrics, admission: acquireRequest,
         imagePressure, responseFailures, imageGeneration: optionalRoutes.imageStats(),
         modelRegistry: codexModelRegistry, codexClient, codexModelRegistry, codexModelCatalog,
@@ -239,6 +241,16 @@ export function createAdapterHandler(options = {}) {
     return providerHandlers.get(provider);
   }
   const dispatch = async (req, res, pathname) => {
+    if (pathname.startsWith("/anthropic/")) {
+      if (!isLoopbackAddress(req.socket?.remoteAddress) || !req.headers?.host || !isLoopbackHostHeader(req.headers.host)
+        || Object.hasOwn(req.headers, "origin")) { sendJsonError(res, httpError("Claude requires native local clients", 403));return; }
+      if (!options.providerRuntime?.handleClaude) { sendJsonError(res, httpError("Claude is not configured", 503));return; }
+      const original = req.url;
+      const query = new URL(req.url, "http://localhost").search;
+      req.url = pathname.slice("/anthropic".length) + query;
+      try { return await options.providerRuntime.handleClaude(req, res); }
+      finally { req.url = original; }
+    }
     if (req.method === "POST" && ["/v1/responses", "/v1/responses/compact"].includes(pathname)
       && Object.hasOwn(req.headers || {}, "origin")) {
       const error = httpError("Browser origins are not allowed for inference", 403);
@@ -368,7 +380,7 @@ export function createAdapterHandler(options = {}) {
     const complete = trackRequest ? requestMetrics.begin(routeName) : () => {};
     const streamPerformance = trackRequest ? streamPerformanceMetrics.begin(routeName, { requestId }) : null;
     let finishTerminalActivity = () => {};
-    if (trackRequest) {
+    if (trackRequest && ["responses", "responses_compact", "messages", "image_mcp"].includes(routeName)) {
       try {
         const finish = options.terminalActivity?.beginRequest?.();
         if (typeof finish === "function") finishTerminalActivity = finish;
@@ -382,7 +394,7 @@ export function createAdapterHandler(options = {}) {
       if (trackRequest && statusCode >= 400) {
         try { httpErrors.record(buildHttpFailureDetails({ ...httpEvidence, statusCode, route: routeName, requestId, model: context?.model,
           method: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"].includes(req.method) ? req.method : "OTHER",
-          target: ["/v1/responses", "/v1/responses/compact", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",
+          target: ["/v1/responses", "/v1/responses/compact", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens", "/anthropic/v1/models", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",
           request_options: context?.requestOptions, upstream_attempts: streamPerformance?.attemptCount?.(),
           attempt_timings: streamPerformance?.attemptTimings?.(),
           requested_model: context?.requestedModel, provider: context?.provider,
@@ -445,6 +457,7 @@ export function createAdapterHandler(options = {}) {
       containUnexpectedError(error);
     }
   };
+  handler.snapshot = statusSnapshot;
   return handler;
 }
 
@@ -457,6 +470,7 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
     : options.terminalActivity;
   const handler = createAdapterHandler({ ...options, terminalActivity, imageMcpHostname: host });
   const server = http.createServer(handler);
+  server.ccdxSnapshot = handler.snapshot;
   const cleanupTerminalActivity = () => {
     if (ownsTerminalActivity) terminalActivity?.cleanup?.();
     handler.cleanup?.();

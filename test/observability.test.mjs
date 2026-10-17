@@ -69,7 +69,7 @@ async function invoke(handler, {
   };
 }
 
-test("request metrics use fixed Codex route buckets and complete exactly once", () => {
+test("request metrics use fixed protocol route buckets and complete exactly once", () => {
   let now = 100;
   const metrics = createRequestMetrics({ now: () => now });
   const finish = metrics.begin("responses");
@@ -91,6 +91,9 @@ test("request metrics use fixed Codex route buckets and complete exactly once", 
     "responses",
     "responses_compact",
     "models",
+    "messages",
+    "messages_count_tokens",
+    "claude_models",
     "image_mcp",
     "not_found",
   ]);

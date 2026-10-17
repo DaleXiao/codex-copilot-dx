@@ -7,7 +7,7 @@ import { createRequestAdmission } from "./request-admission.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
 import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
-import { runWithRequestContext } from "./request-context.mjs";
+import { runWithRequestContext, currentRequestContext } from "./request-context.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { buildMessagesUsageRecord, recordUsage } from "./usage-store.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
@@ -77,7 +77,9 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
     if (!["/v1/messages", "/v1/messages/count_tokens"].includes(pathname)) { send(res, 404, apiError("ccdx_not_found", "Not found"));return; }
     if (req.method !== "POST") { send(res, 405, apiError("ccdx_method", "Use POST"));return; }
     if (!/^application\/json(?:\s*;|$)/i.test(req.headers["content-type"] || "")) { send(res, 415, apiError("ccdx_media_type", "Expected application/json"));return; }
-    const countTokens = pathname.endsWith("/count_tokens"), requestId = randomUUID();
+    const parent = currentRequestContext();
+    if (parent) parent.provider = provider.id;
+    const countTokens = pathname.endsWith("/count_tokens"), requestId = parent?.requestId || randomUUID();
     const tracker = countTokens ? null : performance.begin("messages", { requestId });
     tracker?.setProvider(provider.id);
     const abort = createRequestAbort(req, res);
@@ -157,6 +159,20 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
   const handler = (req, res) => dispatch(req, res).catch(() => send(res, 500, apiError("ccdx_gateway_error", "Claude gateway request failed")));
   handler.snapshot = () => ({ ...stats, admission: acquireRequest.stats(), performance: performance.snapshot() });
   return handler;
+}
+
+// Mounted by the main dispatcher. Own only Claude responses, never the shared listener.
+export function createClaudeGateway(options = {}) {
+  const handler = createClaudeGatewayHandler(options), responses = new Set();
+  let closed = false;
+  return { port: options.port, snapshot: handler.snapshot,
+    handle(req, res) {
+      if (closed) { send(res, 503, apiError("ccdx_gateway_closed", "Claude is stopping"));return; }
+      responses.add(res);
+      return Promise.resolve(handler(req, res)).finally(() => responses.delete(res));
+    },
+    async close() { closed = true;for (const res of responses) res.destroy?.();responses.clear(); },
+  };
 }
 
 export async function startClaudeGateway(options = {}) {

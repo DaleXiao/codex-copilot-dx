@@ -67,7 +67,7 @@ test("animation selector: shows the fixed ordered menu and persists a numeric se
   assert.doesNotMatch(rendered, /braille/i);
   assert.equal((plain.match(/Enter a number from 1 to 9/g) || []).length, 2);
   assert.match(plain, /Saved terminal animation: Twin/);
-  assert.match(plain, /The next ccdx start will use this animation/);
+  assert.match(plain, /Running CCDX 1.1.0\+ picks up this animation without restart/);
 });
 
 test("animation selector: Enter keeps the saved choice and its current marker", async () => {
@@ -178,7 +178,7 @@ test("animation selector: preview failure does not hide or undo a saved choice",
   assert.equal(savedTerminalAnimationTheme({ env: {}, home }), "pulse");
   assert.match(output.text(), /\[WARN\]\s+Preview unavailable/);
   assert.match(output.text(), /Saved terminal animation: Pulse/);
-  assert.match(output.text(), /The next ccdx start will use this animation/);
+  assert.match(output.text(), /Running CCDX 1.1.0\+ picks up this animation without restart/);
 });
 
 test("animation selector: rejects non-interactive use without an injected prompt", async () => {

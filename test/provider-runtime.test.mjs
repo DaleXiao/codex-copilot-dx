@@ -38,10 +38,11 @@ function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, 
 }
 const choose = runtime => runtime.action({ action: "switch", provider: "m365", model: "gpt-6-sol", auto_review_model: "gpt-6-sol" });
 
-test("the optional Claude gateway never reserves the configured core service port", async t => {
+test("Claude shares a custom core service port without a conflicting listener", async t => {
   const s = setup(t, { corePort: 2027 });await s.runtime.start();
-  assert.deepEqual(s.lifecycle, []);
-  assert.equal(s.runtime.snapshot().m365.claude.reason, "m365_gateway_core_port_conflict");
+  assert.deepEqual(s.lifecycle, ["start"]);
+  assert.equal(s.runtime.snapshot().m365.claude.reason, null);
+  assert.equal(s.runtime.snapshot().m365.claude.base_url, "http://127.0.0.1:2027/anthropic");
   await choose(s.runtime);assert.equal(s.runtime.current().id, "m365");
 });
 

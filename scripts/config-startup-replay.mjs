@@ -31,7 +31,7 @@ async function reservePort() {
 }
 
 function start(env) {
-  const child = spawn(process.execPath, ["--require", preload, cli], { env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  const child = spawn(process.execPath, ["--require", preload, cli, "--verbose"], { env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
   let output = "";
   child.stdout.on("data", chunk => { output += chunk; });
   child.stderr.on("data", chunk => { output += chunk; });

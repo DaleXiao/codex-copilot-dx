@@ -141,7 +141,7 @@ export function createHttpFailureDiagnostics({ maxEntries = 20, now } = {}) {
   return {
     record(details) {
       all.record(details);
-      const category = ["responses", "responses_compact"].includes(details.route) ? "inference"
+      const category = ["responses", "responses_compact", "messages", "messages_count_tokens"].includes(details.route) ? "inference"
         : details.route === "image_mcp" && details.http_status === 405 ? "protocol"
           : details.route === "not_found" ? "route" : "other";
       counts[category]++;

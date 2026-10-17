@@ -6,8 +6,6 @@ import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { readBoundedFileSync } from "./bounded-file.mjs";
 import { withFileLockSync } from "./lock.mjs";
 
-export const M365_GATEWAY_PORT = 2027;
-
 export function m365Paths({ home = os.homedir() } = {}) {
   const directory = path.join(home, ".local", "share", "codex-copilot-dx", "profiles", "m365");
   return { directory, settings: path.join(directory, "settings.json"), account: path.join(directory, "account.json"),

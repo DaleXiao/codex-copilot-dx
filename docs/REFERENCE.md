@@ -1,7 +1,7 @@
 # CCDX command, configuration and compatibility reference
 
 Use Codex App with GPT models available to your **GitHub Copilot** account by default.
-The optional [Microsoft 365 provider](#microsoft-365-provider) supplies a separate
+The optional [Microsoft 365 provider](#microsoft-365-provider) supplies a protocol-isolated
 Claude gateway and an explicitly selected Codex backup.
 
 ## Microsoft 365 provider
@@ -90,18 +90,29 @@ optional image MCP/skill/API remains separately configured and off by default.
 
 ### Claude gateway and client ownership
 
-The gateway is a second listener in the same Node service, on `127.0.0.1:2027`.
-If the core service itself is configured on 2027, CCDX reserves that port for the
-core and skips only the Claude listener/setup. M365 GPT backup still works. Select
-a different core `ADAPTER_PORT` if both client surfaces are needed; no port is moved automatically.
-It accepts a private local Bearer key or `x-api-key`, rejects browser Origin
-headers and exposes Claude only: `GET /v1/models`, `POST /v1/messages` and
-`POST /v1/messages/count_tokens` (upstream support remains authoritative).
-Messages tools, thinking, cache breakpoints, image blocks, beta headers and native
-SSE are relayed without OpenAI-format conversion. Cancellation and downstream
-backpressure are preserved. Upstream and local gateway credentials are distinct;
-the local key is never forwarded upstream. The legacy Claude URL on port 2026
-remains retired. Claude requests never reach GitHub.
+Since 1.1.0, Claude mounts under the main HTTP listener at
+`http://127.0.0.1:<ADAPTER_PORT>/anthropic` (default main port 2026).
+It exposes `GET /anthropic/v1/models`, `POST /anthropic/v1/messages` and
+`POST /anthropic/v1/messages/count_tokens`. The Claude Base URL excludes the final `/v1`.
+The local socket, loopback Host, native-client Origin rejection and private Bearer
+or `x-api-key` checks remain independent of any main-listener LAN opt-in.
+Messages tools, thinking, signatures, image blocks, beta headers and SSE retain
+their native protocol and backpressure/cancellation handling. Provider-specific
+cache policy is described below; the local gateway key is never forwarded upstream.
+
+The protocol handler owns only its responses, never the shared server. Codex,
+WebUI and Claude share the main port; native prediction keeps its CONNECT/PAC
+transport and saved port. Root `/v1/messages` remains retired, including on a
+custom main port. Claude requests never reach GitHub. M365 GPT-only catalogs do
+not configure Claude. Optional Claude setup failure leaves the Codex backup independent.
+
+Unchanged CCDX-owned Code/App addresses migrate from 2027 to the shared prefix,
+with the original restoration values preserved. User-edited fields, managed
+settings and explicit environment routes remain preserved. CCDX does not keep
+a permanent 2027 compatibility listener; migrate hand-written old URLs explicitly.
+Already-running clients may need a normal restart to reload their base URL.
+Disabling/removing M365 is rejected while its Codex or Claude inference is active,
+so an accepted disable does not cut off those requests.
 
 Loki explicitly rejects one-hour prompt-cache retention. M365's request policy
 caps standard `cache_control: {type: "ephemeral", ttl: "1h"}` fields to `5m`,
@@ -698,8 +709,8 @@ Credentials found are not labeled online-authorized, cached model lists are not
 labeled fresh upstream data, and image configuration is not a provider test.
 Ready reports core readiness independently of optional prediction/image warnings.
 Model refresh logs show counts; `ccdx models` retains the complete live list.
-After Ready, background refresh uses the same two-column status/message layout as
-other runtime logs. Status messages remove terminal controls and collapse newlines;
+After Ready, the default foreground display becomes a fixed status region;
+request and background-refresh detail is available with `--verbose` or explicit file logging. Status messages remove terminal controls and collapse newlines;
 the static banner and multiline interactive prompts retain their own presentation.
 VS Code compatibility-version details remain available in debug logging. Startup
 does not wait for optional update/compression work or add online doctor/model probes.
@@ -757,6 +768,65 @@ ccdx limits --decoded default
 
 `ccdx limits` distinguishes the saved decoded request-body limit from the running adapter's active limit. The default is 128 MiB; the opt-in saved limit accepts 128–512 MiB. Changes take effect only after restarting the adapter, never restart it automatically, and do not clear conversations or caches. `CCDX_MAX_DECODED_BODY_BYTES` overrides the saved setting; unset it before changing the saved limit. The separate 64 MiB raw/compressed-body limit is not changed. Larger decoded requests can use substantially more process memory during JSON parsing and image preparation; raising this limit may enable a large thread to compact, but does not guarantee successful inference or compaction. Return to `default` after temporary use.
 
+### Control console and online settings
+
+The sidebar separates Overview, Codex/Claude clients, Model services, Usage and
+diagnostics, and System/settings. Codex owns optional image generation, native
+prediction adaptation and the temporary Responses conversation buffer. That
+buffer supports continuation; it is not a chat archive. Shared HTTP traffic and
+per-protocol model outcomes are distinct. Claude Messages metrics are not labeled
+as all Microsoft 365 traffic. Saved credentials, authorization, catalog discovery,
+client configuration and successful requests are separate evidence.
+
+Interactive desktop starts open the default browser once after core readiness.
+`--no-browser` skips this for one invocation; `open_webui:false` in
+`~/.config/codex-copilot-dx/config.json` disables subsequent automatic opening.
+Query commands do not open it. Headless/CI/SSH or noninteractive starts skip it;
+a browser-launch failure does not stop the service. This is an opening attempt,
+not a guarantee that every browser will reuse an existing tab.
+
+The default TTY display uses four bounded lines, without an alternate screen or
+raw keyboard input. It shows usage returned since this process began; pending
+usage is excluded, missing usage stays partial, and this is not an invoice.
+Business requests drive activity; status/catalog polling does not. Existing nine
+animation themes retain their timing/palette and cycle pauses. `--verbose`,
+`--show-request-id` or `CCDX_LOG_LEVEL=debug` restore detailed terminal output.
+Non-TTY/CI/dumb/very narrow terminals use plain output; repeated identical notices
+are coalesced. File logging retains its existing explicit opt-in and redaction.
+In-memory usage still updates when `CCDX_DISABLE_USAGE=1` disables persistence.
+
+The settings API is local, requires the dashboard header, bounded JSON and
+same-origin POST. It invokes the same Provider, cache and integration operations;
+it does not spawn a CLI or generic shell command. Settings reads do not reveal
+upstream keys. Each operation reads back saved and effective state. Corrupt saved
+service preferences fail closed for optional calls rather than reopening them.
+
+| Control | Effective scope |
+| --- | --- |
+| Terminal theme/animation | Live supported status terminal; plain/verbose/environment-disabled modes are reported separately |
+| Open WebUI | Next interactive desktop start |
+| Image calls | New local MCP calls; keeps provider credentials and allows an already-started call to finish |
+| Prediction adaptation | Subsequent configuration traffic on an already-provisioned bridge; keeps trust/route, and App caches can remain |
+| Model source | Explicit validated selection for subsequent Codex requests; existing requests retain their binding |
+| Conversation buffer | Live validated limit; cleanup refuses pinned/active data and can invalidate old unused continuation IDs |
+
+Boolean allow preferences `terminal_animation_enabled`, `image_enabled` and
+`prediction_enabled` default to true, preserving already configured features;
+they do not provision or enable the default-off image/prediction integrations.
+The existing explicit CLI enable commands resume the corresponding paused gate.
+`disable-image` and `prediction off` retain their documented full cleanup
+semantics, distinct from a WebUI pause. First-time setup and client trust/routing
+changes still use existing compatibility checks and may require a normal App
+relaunch. Environment-controlled limits cannot be overridden through the page.
+
+Visible auto-refresh reads the in-memory status approximately every two seconds,
+and Provider/settings evidence approximately every 16 seconds. Hidden pages stop
+scheduled reads. Catalogs and retained usage are fetched only for their open view
+or an explicit lookup; their normal refresh interval remains 30 minutes. Paused
+auto-refresh still permits manual refresh/settings retry. No history-log scan is
+performed at the status cadence. The atom moves on load/manual refresh only and
+respects reduced motion. Client attribution absent from older records stays unknown.
+
 ### Terminal animation
 
 Choose the terminal activity animation interactively:
@@ -781,7 +851,7 @@ All nine rows preview their animations together while you enter a number to sele
 
 All nine animations use the same 20-column colon track and cyan/blue palette. They indicate activity, not completion percentage. Braille was removed in 0.7.7. A saved `terminal_animation: "braille"` falls back to Comet without rewriting the settings file; choosing another animation replaces it, and explicitly choosing Comet clears it. Other settings remain intact.
 
-The selected theme is loaded once when a new adapter starts, so changing it does not restart or alter an adapter that is already running. Stop and start CCDX to apply the new theme. `CCDX_TERMINAL_ANIMATION=0` (also `false`, `no`, or `off`) remains the boolean gate that disables terminal animation regardless of the selected theme.
+Running 1.1.0+ services pick up a changed saved theme without restarting. The WebUI applies it directly; the CLI gallery save is picked up by the status renderer within about one second. Older services still need a restart after upgrade. `CCDX_TERMINAL_ANIMATION=0` (also `false`, `no`, or `off`) remains the boolean gate that disables terminal animation regardless of the selected theme.
 
 ### Optional image generation
 
@@ -1022,60 +1092,65 @@ JSON reply to a streaming request is still not silently converted to SSE.
 
 ### Local dashboard
 
-After starting `ccdx`, open [http://127.0.0.1:2026/](http://127.0.0.1:2026/) in a browser. If `ADAPTER_PORT` is customized, use that port instead. The dashboard shares the existing adapter listener; CCDX does not open a browser automatically or start another service. The page and its assets require both a loopback connection and a loopback Host header, even when LAN binding is enabled.
+Interactive desktop starts open [http://127.0.0.1:2026/](http://127.0.0.1:2026/)
+once by default, using the configured main port when customized. See
+[control console and online settings](#control-console-and-online-settings) for
+startup preferences, output modes and effective-state rules. Assets require both
+a loopback connection and loopback Host, including when the main listener uses LAN mode.
 
-The dashboard reads local runtime/Provider snapshots and local usage metadata.
-Account Authorization lists saved identity, authorization evidence, service state,
-last successful token acquisition and TTL where known. GitHub local credential
-validity is labeled saved, never online entitlement. Client Connections separately
-shows configuration, gateway state, observed requests and Codex native prediction.
-Runtime Resources retains Responses outcomes/timing and local history; Additional
-Capabilities retains optional image status. Codex model/request overview counts
-are scoped to the Codex surface; Claude request counters remain separately labeled.
+The sidebar separates Overview, Codex/Claude clients, Model services, Usage and
+diagnostics, and System/settings. Codex-specific images, prediction integration
+and conversation buffering stay under Codex. HTTP traffic counts include model
+catalogs and route errors; model outcomes and timing are named by protocol.
+Microsoft 365's Claude Messages summary is not a Provider-wide request total.
 
-Model Catalog tabs come from the backend Provider descriptors. Selecting a tab
-only selects a read resource, not the inference route. GitHub's dashboard view
-includes upstream directory entries beyond selectable Codex GPT models; the CLI's
-existing GPT filtering is unchanged. Rows show protocol, eligible clients,
-upstream-advertised reasoning and directory state. An unknown field is displayed
-as unknown, not unsupported. A directory listing is not inference verification.
-The header count is the active Codex in-memory catalog, not a sum of tab results.
-The usage selector combines registered Providers and retained historical sources.
-Mixed-source model rows and combined daily analytics retain source identity;
-source-filtered views show model names within that source. Legacy untagged records
-remain GitHub records. Current and rotated logs remain bounded metadata reads.
+The account table uses bounded local credential metadata and Provider snapshots.
+A locally saved GitHub credential is not online entitlement. Account names with
+underscores retain their exact display value; identity, keys and environment
+values are not inferred from model names. Client configuration, gateway state,
+recent requests and actual inference are separate observations. The top summary
+shows selected client-to-Provider routes; it is not an account label.
 
-Top Refresh updates local status/Provider evidence and expanded data groups.
-Auto refresh is browser-local, defaults on and runs every 30 minutes while visible.
-Opening a data section updates its group unless attempted within 30 seconds;
-hidden pages pause and returning catches up once. In-flight reads are deduplicated;
-tab changes cancel obsolete page requests and reject late responses. Each tab
-retains only its own last-good catalog; account/generation changes discard it.
-Errors preserve the successful timestamp and mark the read as failed. Provider
-lookups never enable a disabled source or open an interactive login. No server
-poller, event bus, extra inference call or runtime dependency is added.
+Catalog tabs browse registered Provider directories without changing routing.
+Rows retain protocol, eligible clients, reasoning metadata and directory state.
+Unknown metadata stays unknown; listings are not verified inference access.
+A separate explicit source form validates and applies subsequent Codex routing.
+Existing active streams keep their Provider binding. User/organization client
+configuration is not overwritten by browsing or by a pause operation.
 
-Dark/light themes, English/Chinese, reduced motion and unsaved animation choices
-are retained. Provider tabs support keyboard navigation. Data requests require the
-same loopback address/Host and custom dashboard header; animation writes also
-require a matching Origin. The page cannot switch Providers or manage credentials.
-Limit changes remain CLI-only. The dashboard does not initialize images; unknown
-image status still requires `ccdx image-status`. Review diagnostics before sharing
-screenshots: upstream error prose may contain sensitive details.
+Top Refresh updates local evidence and open data groups, plus current-page settings.
+Auto-refresh defaults on and is browser-local. Small status snapshots update about
+every two seconds; source/settings evidence updates every eight status ticks.
+Catalogs and retained usage load only on demand or in their open view, with the
+existing 30-minute cadence and short freshness gate. Hidden pages stop scheduled
+reads. Catalog requests are deduplicated, stale tab reads are cancelled and late
+results rejected. Failed reads preserve last-good data and label it as stale.
+Service-setting errors are visible on the current page and can be retried manually.
 
-The dashboard labels the upstream token cache hit metric **Reuse Rate** and cached input **Reused Input**, separate from **Local History**. Chinese uses short functional names such as “对话暂存”, “重用输入” and “重用比例”. English and Chinese preserve model IDs, commands, units, HTTP status codes and raw diagnostic values. Animation display names translate in place; theme IDs and CLI parameters do not change.
+The usage selector retains current and historical sources. Combined model rows
+and daily analytics preserve source identity; old records without a client label
+are not guessed into one. Legacy untagged Provider records retain their historical
+GitHub attribution. Cache-read tokens are included in input, not added twice.
+The separate current-run summary updates from returned usage in memory, without
+rescanning retained logs at the status cadence.
 
-The transparent, single-color atom-orbit favicon follows the dashboard's saved light/dark choice without a separate network request.
+Usage analytics remains collapsed until opened: 7/30/90-day bars and a bounded
+365-day calendar in the browser time zone. Model/range/day selection reuses its
+snapshot. Days outside retained history are distinct from zero recorded activity.
+Filters, chart nodes and unsaved animation selection survive unrelated refreshes.
+Dark/light, English/Chinese and reduced motion remain supported. Language changes
+translate page labels in place without fetching models or rebuilding charts;
+commands, identifiers and upstream error text retain their original values.
 
-The saved GitHub Copilot account appears immediately to the left of the Status updated time. It uses the same local credentials and fingerprint-bound identity metadata as `ccdx auth status`, with username (or numeric ID fallback) and a `SAVED` label; this is not an online entitlement check. Missing, invalid, unidentified, or unreadable credentials are shown explicitly. The account read runs on page load, top Refresh and visible-page automatic updates, independently of adapter status and without upstream authentication calls. Its timestamp is in the account tooltip; failed updates retain the prior account and explicitly label the failure. Its loopback-only, custom-header-protected API exposes no token, fingerprint, credential path, or raw metadata. The general status endpoint retains its existing identity-free contract.
+Terminal appearance lives in System/settings, with a sidebar shortcut on wide
+screens. Preview frames load on opening; closing, hiding the view/page or reduced
+motion stops preview timers. Saving changes the running supported status terminal.
 
-Account names containing underscores are supported, including `dingxiao_microsoft`. A numeric ID is a fallback, not a replacement for an available, safely displayable username; the existing length bounds and credential-shaped text suppression still apply.
-
-The language button immediately right of the appearance button switches between English and Simplified Chinese. English remains the default; the choice is saved only in the current browser, separately from light/dark mode. Switching translates the existing page in place: it does not fetch API data, rebuild charts, change selected filters, discard unsaved animation choices, or reset expanded failure details. Static labels, live status text, chart tooltips and accessibility labels follow the selected language. Model IDs, account names, dates, numeric values and upstream diagnostic prose stay unchanged; copied diagnostic fields retain their original names and values. The local translation asset adds no dependency, external service, polling or inference-path work.
-
-Usage Trends is collapsed by default. Opening it adds daily input/output token bars (7/30/90 days) and a 365-day calendar of recorded usage calls or tokens, grouped in the browser's time zone. Cache-read tokens are already part of input and are not added again. Model and range filters use the current snapshot without additional requests; selecting a day shows its filtered model totals in the Model Usage table, and Show all restores the original table. Analytics shares the existing current/rotated-log scan and exposes only bounded metadata (365 days, up to 100 model filters). Days before retained history are hatched, not presented as zero; the oldest retained day may be partial. Counts describe retained usage records, not messages, session time, or all HTTP requests. Open-section, manual and visible-page automatic refresh update the snapshot. Analytics are requested only while expanded inside the open usage section or while a day filter needs them. Filters and selected dates survive refresh; a closed unfiltered chart reuses its displayed data until reopened. There is no server background collection.
-
-Terminal Animation is collapsed at the bottom of the page, with an Animation shortcut in the header. Preview frames load only when opened; closing it, hiding the page, or requesting reduced motion stops the preview timer. Unsaved choices survive folding and reopening. Recent response failures expand to diagnostic fields (time, model, code, message, response/request IDs, and retry policy) with a Copy details control. The view combines the last 10 retained `response.failed` events with failures from the 20 most recently finished Responses/compact requests, showing at most 10 entries. Matching local request IDs attach the final outcome and timing metadata, so a recovered event can show `completed`; an uncorrelated retry attempt does not prove recovery. Transport failures and incomplete/cancelled requests can appear without a `response.failed` event. These are bounded runtime observations, not complete session histories. Diagnostic prose is redacted by the existing recorder but can still contain sensitive context: review before copying or sharing.
+The recent-failure view merges bounded Responses events, main-listener HTTP
+failures and recent Responses/compact/Messages request timelines, with at most ten
+visible entries. Request IDs correlate final outcomes; a retry alone is not proof
+of recovery. It is diagnostic metadata, not a session archive. Original error
+responses remain unchanged. Review upstream diagnostic prose before sharing.
 
 Inspect only the local Codex configuration:
 
@@ -1261,11 +1336,11 @@ unset the variable after the investigation. Records disappear on service exit.
 | `CCDX_UPSTREAM_RETRIES` | `2` | Retries for safe requests and clearly pre-connect POST failures; capped at `5` |
 | `CCDX_UPSTREAM_RETRY_DELAY_MS` | `300` | Initial upstream retry backoff in milliseconds; capped at `5000` |
 | `CCDX_AUTO_REVIEW_MODEL` | saved selection or `gpt-6.1-sol` | Copilot Responses model used for Codex Auto-review; overrides the interactive selection |
-| `CCDX_LOG_PATH` | unset | Mirror terminal logs to a file; set to `1` for `~/.local/share/codex-copilot-dx/debug.log` |
+| `CCDX_LOG_PATH` | unset | Record diagnostic logs independently of quiet terminal presentation; set to `1` for `~/.local/share/codex-copilot-dx/debug.log` |
 | `CCDX_LOG_LEVEL` | `info` | Set to `debug` for upstream attempts, status codes, retry causes, and timings |
 | `CCDX_HTTP_ERROR_DETAILS` | unset | Set to `1` on a new service to retain redacted HTTP error excerpts (500 characters) in bounded memory; review before sharing, no file logging is enabled |
 | `CCDX_LOG_MAX_BYTES` | `16777216` | Rotate the debug log at this size and retain one `.1` backup; set to `0` to disable rotation |
-| `CCDX_TERMINAL_ANIMATION` | auto | Show the selected transient animation while an interactive terminal has active requests and no output for 800 ms; set to `0`, `false`, `no`, or `off` to disable |
+| `CCDX_TERMINAL_ANIMATION` | auto | Allow the selected animation in the fixed interactive status region during business activity; set to `0`, `false`, `no`, or `off` to disable |
 | `CCDX_IMG_MAX_DIM` | `2048` | Maximum long edge in pixels for image downscaling |
 | `CCDX_IMG_QUALITY` | `82` | Initial WebP quality for image re-encoding |
 | `CCDX_IMG_MIN_BYTES` | `100000` | In-bounds images smaller than this skip re-encoding; oversized dimensions still trigger an optimization attempt |
@@ -1309,7 +1384,7 @@ Diagnostic redaction removes Basic authorization payloads and URL userinfo, and 
 
 ## Debug logging
 
-Set `CCDX_LOG_PATH=1` to mirror terminal logs to `~/.local/share/codex-copilot-dx/debug.log`, or provide a custom path. Add `CCDX_LOG_LEVEL=debug` for upstream attempts, retry causes, status codes, and timings. The adapter does not deliberately dump request/response bodies or authorization headers. File diagnostics redact common credential forms and labelled content echoes, but this cannot identify every secret in arbitrary external prose; review logs before sharing them. File writes are asynchronous and batched with a 4096-record / 2 MiB pending-and-in-flight ceiling. Overflow drops excess file records with one warning and a status counter; terminal output continues. CLI exit paths flush for at most 1.5 seconds. `ccdx doctor config` bypasses file logging entirely.
+Set `CCDX_LOG_PATH=1` to record diagnostic logs independently of quiet terminal presentation to `~/.local/share/codex-copilot-dx/debug.log`, or provide a custom path. Add `CCDX_LOG_LEVEL=debug` for upstream attempts, retry causes, status codes, and timings. The adapter does not deliberately dump request/response bodies or authorization headers. File diagnostics redact common credential forms and labelled content echoes, but this cannot identify every secret in arbitrary external prose; review logs before sharing them. File writes are asynchronous and batched with a 4096-record / 2 MiB pending-and-in-flight ceiling. Overflow drops excess file records with one warning and a status counter; terminal output continues. CLI exit paths flush for at most 1.5 seconds. `ccdx doctor config` bypasses file logging entirely.
 
 ## Large histories and images
 

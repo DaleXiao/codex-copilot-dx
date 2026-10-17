@@ -55,3 +55,9 @@ Windows PowerShell expands `%` in batch filenames before launching CCDX. The boo
 PATH, shell policy, company routing, certificates and persistent npm permissions are not changed. The installer prints the command path. A running service keeps its loaded code until restarted. Error rollback does not promise power-loss atomicity; a failed restore retains its backup and lock for recovery. Auth, entitlement, model listing and inference success remain separate facts.
 
 Security references: [sharp libheif](https://github.com/advisories/GHSA-rgj7-g3m4-5g8c), [sharp librsvg](https://github.com/advisories/GHSA-wq5f-xc86-pv6w), [smol-toml parsing](https://github.com/advisories/GHSA-r4xh-jqrq-34v2).
+
+## Published delivery
+
+- [npm 1.2.1](https://www.npmjs.com/package/codex-copilot-dx/v/1.2.1) published successfully through [the existing npm workflow](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/39013987120). Its reported package SHA-1 is `2b43a92c6eff183d880f309eb755e0b72c9322e5`, matching the verified local tarball.
+- [GitHub Release v1.2.1](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.2.1) is published with the tarball, SHA256SUMS, both platform scripts and the standalone helper. All five assets were downloaded again and matched local bytes and GitHub's SHA-256 digests.
+- The release tag points to `0d3aff05d7e621e0a165b82c9e1465b0aad72498`; it differs from the passed CI candidate only by this release verification report. Repacking produced the same package SHA-256 recorded above. The normal npm network settings resolved GitHub's latest stable release as v1.2.1 after publication.

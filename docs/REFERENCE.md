@@ -770,8 +770,7 @@ ccdx limits --decoded default
 
 ### Control console and online settings
 
-The sidebar separates Overview, Codex/Claude clients, Model services, Usage and
-diagnostics, and System/settings. Codex owns optional image generation, native
+The sidebar separates Overview, Codex/Claude Apps, Model sources, Usage and issues, and Settings. Codex owns optional image generation, native
 prediction adaptation and the temporary Responses conversation buffer. That
 buffer supports continuation; it is not a chat archive. Shared HTTP traffic and
 per-protocol model outcomes are distinct. Claude Messages metrics are not labeled
@@ -785,15 +784,16 @@ Query commands do not open it. Headless/CI/SSH or noninteractive starts skip it;
 a browser-launch failure does not stop the service. This is an opening attempt,
 not a guarantee that every browser will reuse an existing tab.
 
-The default TTY display uses four bounded lines, without an alternate screen or
-raw keyboard input. It shows usage returned since this process began; pending
+The default TTY display uses wrapping source/Claude summaries, a line-framed usage/inference table, and separate notice/activity rows, without an alternate screen or raw keyboard input. It shows usage returned since this process began; pending
 usage is excluded, missing usage stays partial, and this is not an invoice.
 Business requests drive activity; status/catalog polling does not. Existing nine
 animation themes retain their timing/palette and cycle pauses. `--verbose`,
 `--show-request-id` or `CCDX_LOG_LEVEL=debug` restore detailed terminal output.
-Non-TTY/CI/dumb/very narrow terminals use plain output; repeated identical notices
+Failed reads show previous-data status and the last successful update time, or that no data has been received. Narrow summaries wrap rather than hiding Claude App/Code state. Non-TTY/CI/dumb/too-small terminals use plain output; repeated identical notices
 are coalesced. File logging retains its existing explicit opt-in and redaction.
-In-memory usage still updates when `CCDX_DISABLE_USAGE=1` disables persistence.
+In-memory usage still updates when `CCDX_DISABLE_USAGE=1` disables persistence. `runtime_usage.by_provider` separates returned process-local usage by source. The Usage and issues view adds Requests by source; `ccdx status` also lists source/protocol outcomes. Unknown outcomes and partial usage remain distinct. CLI remains English; WebUI keeps English/Chinese.
+
+The Clear conversation buffer action clears all process-local conversation continuation data after active cache users finish. Old chats may fail to continue; saved Codex transcripts remain. It invokes the existing image-transform/history cleanup operation, rather than an inactive-only selector.
 
 The settings API is local, requires the dashboard header, bounded JSON and
 same-origin POST. It invokes the same Provider, cache and integration operations;
@@ -808,7 +808,7 @@ service preferences fail closed for optional calls rather than reopening them.
 | Image calls | New local MCP calls; keeps provider credentials and allows an already-started call to finish |
 | Prediction adaptation | Subsequent configuration traffic on an already-provisioned bridge; keeps trust/route, and App caches can remain |
 | Model source | Explicit validated selection for subsequent Codex requests; existing requests retain their binding |
-| Conversation buffer | Live validated limit; cleanup refuses pinned/active data and can invalidate old unused continuation IDs |
+| Conversation buffer | Live validated limit; cleanup refuses pinned/active data, then clears all buffered continuation IDs |
 
 Boolean allow preferences `terminal_animation_enabled`, `image_enabled` and
 `prediction_enabled` default to true, preserving already configured features;
@@ -1098,8 +1098,7 @@ once by default, using the configured main port when customized. See
 startup preferences, output modes and effective-state rules. Assets require both
 a loopback connection and loopback Host, including when the main listener uses LAN mode.
 
-The sidebar separates Overview, Codex/Claude clients, Model services, Usage and
-diagnostics, and System/settings. Codex-specific images, prediction integration
+The sidebar separates Overview, Codex/Claude Apps, Model sources, Usage and issues, and Settings. Codex-specific images, prediction integration
 and conversation buffering stay under Codex. HTTP traffic counts include model
 catalogs and route errors; model outcomes and timing are named by protocol.
 Microsoft 365's Claude Messages summary is not a Provider-wide request total.
@@ -1155,9 +1154,9 @@ access. Normal prediction startup uses one line; exceptions retain reasons and
 required restart guidance. `ccdx prediction status` retains environment/recovery
 details, including routing, CA and TLS verification state.
 
-After Ready, a supported TTY has a 15-line region: uptime, Provider/Claude state,
+After Ready, a supported TTY has a bounded region: uptime, source/Claude state,
 a line-framed usage/inference table, one notice row and one activity row below it.
-Input includes cache read; partial records count returned usage with missing fields.
+Input includes reused input; partial usage counts returned records with missing fields.
 Inference HTTP calls exclude catalog/count-tokens requests; model outcomes are
 separate protocol observations, not an HTTP-success total. Activity motion includes
 image MCP traffic; inference counters exclude it. Usage is process-local returned
@@ -1166,7 +1165,7 @@ Data refreshes about once a second; animation ticks reuse the table and redraw o
 changed rows. Historical notices do not turn a running service into a health verdict.
 Client cancellations remain in verbose/file diagnostics as informational records;
 timeouts and actual failures remain notices. Non-TTY, CI, dumb and terminals under
-40 columns or 16 rows retain plain output. No runtime terminal dependency is added.
+40 columns or 16 rows retain plain output. At 40×16 the compact table keeps all metrics and short source/Code/App states. Larger terminals wrap full state descriptions. No runtime terminal dependency is added.
 
 Terminal appearance lives in System/settings, with a sidebar shortcut on wide
 screens. Preview frames load on opening; closing, hiding the view/page or reduced

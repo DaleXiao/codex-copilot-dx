@@ -121,7 +121,7 @@ export async function inspectGitHubTokenOnline({
     const modelResp = await fetchImpl(`${apiBase}/models`, { headers, signal: controller.signal });
     if (!modelResp.ok) {
       return [
-        { kind: "ok", message: `GitHub Copilot access verified for ${validation.login || "current account"}` },
+        { kind: "ok", message: `Copilot access checked: ${validation.login || "current account"}` },
         { kind: "err", message: `Copilot models endpoint returned HTTP ${modelResp.status}` },
       ];
     }
@@ -129,12 +129,12 @@ export async function inspectGitHubTokenOnline({
     const data = Array.isArray(models) ? models : models?.data;
     const validModels = Array.isArray(data) ? data.filter(model => typeof model?.id === "string" && model.id.trim()) : [];
     if (!validModels.length) return [
-      { kind: "ok", message: `GitHub Copilot access verified for ${validation.login || "current account"}` },
+      { kind: "ok", message: `Copilot access checked: ${validation.login || "current account"}` },
       { kind: "err", message: "Copilot models endpoint returned no valid model directory despite HTTP 200" },
     ];
     return [
-      { kind: "ok", message: `GitHub Copilot access verified for ${validation.login || "current account"}` },
-      { kind: "ok", message: `Copilot models endpoint returned ${validModels.length} models` },
+      { kind: "ok", message: `Copilot access checked: ${validation.login || "current account"}` },
+      { kind: "ok", message: `Copilot listed ${validModels.length} models` },
     ];
   } catch (error) {
     const errorCode = error?.cause?.code || error?.code || "";

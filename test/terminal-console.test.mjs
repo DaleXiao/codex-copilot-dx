@@ -37,12 +37,12 @@ test("status table fits supported widths, separates notices and motion, and redr
       now: () => time, timers: { setTimeout(fn, ms) { scheduled.set(fn, ms);return fn; }, clearTimeout(fn) { scheduled.delete(fn); } } });
     const finish = terminal.beginRequest();terminal.log("warn", ["Synthetic notice"]);terminal.start();
     const screen = stripVTControlCharacters(writes[0]).replace(/\r/g, "").split("\n");
-    assert.equal(screen.length, 15);
+    assert.ok(screen.length >= 15 && screen.length < 24);
     for (const line of screen) assert.ok(displayWidth(line.trim()) < columns, `${columns}: ${line}`);
     const borders = screen.filter(line => /^[┌├└│]/.test(line));
     assert.equal(borders.length, 10);assert.ok(borders.every(line => displayWidth(line.trim()) === columns - 1));
-    assert.match(screen.join("\n"), /Input total\s+1\.7M/);assert.match(screen.join("\n"), /Cache read\s+1\.1M/);
-    assert.match(screen.join("\n"), /HTTP calls\s+7/);assert.match(screen.join("\n"), /Completed\s+5/);assert.match(screen.join("\n"), /Failed\s+1/);
+    assert.match(screen.join("\n"), /Input\s+1\.7M/);assert.match(screen.join("\n"), /Reused(?: input)?\s+1\.1M/);
+    assert.match(screen.join("\n"), /Requests\s+7/);assert.match(screen.join("\n"), /Completed\s+5/);assert.match(screen.join("\n"), /Failed\s+1/);
     assert.match(screen.join("\n"), /Active\s+2/);
     assert.match(screen.at(-2), /^\r?1 notices/);assert.match(screen.at(-1), /^\r?\[.*\] Working/);
     assert.doesNotMatch(writes[0], /\x1b\[(?:97|38;5;)/);
@@ -76,4 +76,32 @@ test("very narrow TTY uses plain mode, while supported themes retain their color
     timers: { setTimeout(fn, ms) { timers.push(ms);return 1; }, clearTimeout() {} } });
   colored.beginRequest();colored.start();assert.match(writes.join(""), /\x1b\[(?:97|38;5;)/);
   assert.ok(timers[0] > 0);colored.cleanup();
+});
+
+test("failed status reads retain prior data with an explicit timestamp and recover on the next read", () => {
+  const writes = [], scheduled = new Map();let time = 1000, fail = false;
+  const terminal = createTerminalConsole({ env: {}, output: { isTTY: true, columns: 40, rows: 24, write: value => writes.push(value) }, errorOutput: { isTTY: true },
+    now: () => time, snapshot() { if (fail) throw Error("fixture read failure");return { runtime_usage: { input_tokens: 17 } }; },
+    timers: { setTimeout(fn, ms) { scheduled.set(fn, ms);return fn; }, clearTimeout(fn) { scheduled.delete(fn); } } });
+  const tick = () => { const [fn, ms] = [...scheduled][0];scheduled.delete(fn);time += Math.max(ms, 1000);fn(); };
+  terminal.start();assert.equal(terminal.snapshot().data_state, "current");const updated = terminal.snapshot().updated_at;
+  fail = true;tick();assert.equal(terminal.snapshot().data_state, "stale");assert.equal(terminal.snapshot().updated_at, updated);
+  assert.match(writes.at(-1), /Previous data.*\d\d:\d\d:\d\d/);assert.doesNotMatch(writes.at(-1), /read failure/);
+  fail = false;tick();assert.equal(terminal.snapshot().data_state, "current");terminal.cleanup();
+});
+
+test("40 and 80 column terminals retain live usage at the supported 16-row height", () => {
+  for (const columns of [40, 80]) {
+    const writes = [], scheduled = new Map();let time = 1000;
+    const data = { runtime_usage: { records: 2, input_tokens: 500 }, profiles: { codex: { models: { source: "cache", models: 41 } } },
+      providers: { m365: { enabled: false, state: "disabled", claude: { clients: { code: "not_configured", app: "not_configured" } } } } };
+    const terminal = createTerminalConsole({ env: {}, output: { isTTY: true, columns, rows: 16, write: value => writes.push(value) }, errorOutput: { isTTY: true },
+      now: () => time, snapshot: () => data, timers: { setTimeout(fn, ms) { scheduled.set(fn, ms);return fn; }, clearTimeout(fn) { scheduled.delete(fn); } } });
+    terminal.start();const screen = stripVTControlCharacters(writes[0]).replace(/\r/g, "").split("\n");
+    assert.ok(screen.length < 16);assert.ok(screen.every(line => displayWidth(line) < columns));
+    assert.match(screen.join("\n"), /Input\s+500/);assert.match(screen.join("\n"), /Code: (?:unchecked|not checked) \/ App: (?:unchecked|not checked)/);
+    data.runtime_usage.input_tokens = 600;data.providers.m365.claude.clients = { code: "preserved", app: "configuration_unavailable" };
+    const [tick] = [...scheduled][0];time += 1000;tick();assert.match(stripVTControlCharacters(writes.at(-1)), /Input\s+600/);
+    assert.equal(terminal.snapshot().mode, "status");terminal.cleanup();
+  }
 });

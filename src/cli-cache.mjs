@@ -45,23 +45,23 @@ async function runningSnapshot(baseUrl, options) {
 async function confirmHistoryCleanup({ input, output, prompt, yes }) {
   if (yes) return;
   if (prompt) {
-    if (!await prompt()) throw new Error("History cache cleanup cancelled");
+    if (!await prompt()) throw new Error("Buffer cleanup cancelled");
     return;
   }
   if (!input.isTTY || !output.isTTY) {
-    throw new Error("History cleanup can break task continuation; rerun with --yes to confirm");
+    throw new Error("Clearing the buffer may prevent chats from continuing.\nUse --yes to confirm.");
   }
   const readline = createInterface({ input, output });
   try {
     const answer = String(await readline.question(
-      "Clear response history for all tasks? Their next continuation may fail [y/N]: ",
+      "Clear the buffer for all chats? They may not continue [y/N]: ",
     )).trim().toLowerCase();
-    if (!["y", "yes"].includes(answer)) throw new Error("History cache cleanup cancelled");
+    if (!["y", "yes"].includes(answer)) throw new Error("Buffer cleanup cancelled");
   } finally { readline.close(); }
 }
 
 function formatStatus(preference, runtime) {
-  const lines = ["ccdx cache", `Configured history limit: ${mib(preference.bytes)} (${preference.source})`];
+  const lines = ["ccdx cache", `Saved buffer limit: ${mib(preference.bytes)} (${preference.source})`];
   if (!runtime?.supported) {
     lines.push(runtime?.offline
       ? "Runtime cache: adapter is not running"

@@ -25,8 +25,9 @@ let pendingBytes = 0;
 let droppedRecords = 0;
 let writeFailures = 0;
 const runtimeUsage = { since: new Date().toISOString(), records: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, partial_records: 0 };
+const runtimeUsageByProvider = new Map();
 
-export function runtimeUsageSnapshot() { return { ...runtimeUsage }; }
+export function runtimeUsageSnapshot() { return { ...runtimeUsage, by_provider: Object.fromEntries([...runtimeUsageByProvider].map(([id, totals]) => [id, { ...totals }])) }; }
 
 export function usageLoggingStats() {
   return { pending_records: pendingRecords, pending_bytes: pendingBytes, dropped_records: droppedRecords,
@@ -185,11 +186,15 @@ function scheduleUsageWriteDrain() {
 export function recordUsage(record) {
   if (!record) return Promise.resolve();
   const usage = record.usage || {};
-  runtimeUsage.records++;
-  for (const [target, value] of [["input_tokens", usage.input_tokens], ["cached_input_tokens", cacheReadTokens(usage)], ["output_tokens", usage.output_tokens]]) {
-    if (Number.isFinite(value) && value >= 0) runtimeUsage[target] += value;
+  const provider = usageProvider(record), label = runtimeUsageByProvider.has(provider) || runtimeUsageByProvider.size < 16 ? provider : "other";
+  if (!runtimeUsageByProvider.has(label)) runtimeUsageByProvider.set(label, { records: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, partial_records: 0 });
+  for (const totals of [runtimeUsage, runtimeUsageByProvider.get(label)]) {
+    totals.records++;
+    for (const [target, value] of [["input_tokens", usage.input_tokens], ["cached_input_tokens", cacheReadTokens(usage)], ["output_tokens", usage.output_tokens]]) {
+      if (Number.isFinite(value) && value >= 0) totals[target] += value;
+    }
+    if (!Number.isFinite(usage.input_tokens) || !Number.isFinite(usage.output_tokens) || cacheReadTokens(usage) === undefined) totals.partial_records++;
   }
-  if (!Number.isFinite(usage.input_tokens) || !Number.isFinite(usage.output_tokens) || cacheReadTokens(usage) === undefined) runtimeUsage.partial_records++;
   if (process.env.CCDX_DISABLE_USAGE === "1") return Promise.resolve();
   const filePath = usageLogPath();
   const line = `${JSON.stringify(record)}\n`;

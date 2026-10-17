@@ -66,7 +66,7 @@ for (const [mode, executable] of [["new", cli], ["new", legacy], ["current", cli
       CCDX_AUTO_LAUNCH: "0", CCDX_MODEL_REFRESH_INTERVAL_MS: "0", CCDX_DISABLE_TOKEN_DISCOVERY: "1" };
     const cold = start(env, executable);
     runs.push(cold);
-    await marker(cold, "Ready       Core service available");
+    await marker(cold, "Ready       Local service ready");
     const health = await fetch(`${origin}/_ccdx/health`, { signal: AbortSignal.timeout(3000) }).then(response => response.json());
     assert.equal(health.version, localPackageVersion());
     assert.equal(health.ok, true);
@@ -88,7 +88,7 @@ for (const [mode, executable] of [["new", cli], ["new", legacy], ["current", cli
     const stamp = (await fs.stat(config)).mtimeMs;
     const reuse = start(env, executable);
     runs.push(reuse);
-    await marker(reuse, "Ready       Using the existing CCDX adapter");
+    await marker(reuse, "Ready       Using the running service");
     if (mode === "new") {
       assert.equal(reuse.child.exitCode, null, "Reuse must not exit with a pending notice");
       assert.doesNotMatch(reuse.output(), /Update available:/);

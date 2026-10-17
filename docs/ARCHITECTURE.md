@@ -8,8 +8,8 @@ Client integration, image tools and the dashboard are not a general plugin frame
 | --- | --- | --- |
 | Core inference | `adapter.mjs`, Responses modules, model catalog, history | Codex wire contracts, streaming and recovery |
 | Providers | `providers/github.mjs`, `providers/m365*.mjs` | Source-owned auth, discovery, routing, capabilities and transport |
-| Provider composition | `provider-runtime.mjs`, `provider-settings.mjs` | Explicit selection, lifecycle, history namespaces and snapshots |
-| Claude clients | `claude-gateway.mjs`, `claude-client-config.mjs`, `claude-models.mjs` | Native Messages relay and field-owned reversible client setup |
+| Provider composition | `provider-runtime.mjs`, `provider-registry.mjs`, `provider-settings.mjs` | Explicit selection, lifecycle, history namespaces and snapshots |
+| Claude clients | `claude-gateway.mjs`, `claude-client-lifecycle.mjs`, `claude-client-config.mjs`, `claude-models.mjs` | Native Messages relay and field-owned reversible client setup |
 | Client integration | `client-integration.mjs`, Codex config, native prediction | Client setup, optional start/stop, diagnostic snapshots |
 | Optional images | Image provider, CLI setup, image MCP and skill | Opt-in API access and image delivery; failures do not block core startup |
 | Management | CLI, dashboard, observability, package updates | Bounded metadata and explicit user actions |
@@ -24,6 +24,8 @@ and compatibility opener. The existing GitHub implementation remains the default
 its Fast mapping, retries and recovery are not applied blindly to M365. Protocol
 adaptation belongs to the client boundary. There is no generic intermediate message
 format that would erase native Responses or Anthropic semantics.
+
+`provider-registry.mjs` declares the bounded internal source metadata used by selection validation and dashboard source choices. It loads no external code; GitHub and M365 are the two production sources. Source-specific selection/model rules remain with composition. A third source is only a contract test fixture.
 
 `provider-runtime.mjs` owns source selection, not the providers themselves. Each
 request pins a provider before admission. An explicit change affects later requests;
@@ -46,6 +48,7 @@ to M365. No GitHub token, image credential or browser Cookie is reused. Windows 
 use a separate OS WinHTTP worker for M365 company routing; macOS preserves static
 system/environment routing and reports unsupported dynamic PAC. Native runtime
 absence and policy refusal do not disable GitHub.
+`claude-client-lifecycle.mjs` owns configuration reconciliation and restore state, independently from source auth/catalog code. It checks lifecycle/profile validity after asynchronous policy inspection and preserves the existing field-ownership writer.
 Claude handler/configuration readiness is also separate from M365 provider
 readiness. A Claude setup failure or a GPT-only catalog cannot block the explicitly
 selected Codex backup; a catalog without Claude models does not install Claude settings.
@@ -305,17 +308,20 @@ before-values, preserving foreign or edited fields. Saved allow gates are separa
 from provisioning; pausing never deletes the Provider key or prediction trust.
 
 `terminal-console.mjs` owns a bounded TTY status region and activity only.
-Its 15-line region has Provider/Claude summaries, a responsive line-framed table,
+Its region has wrapping source/Claude summaries, a responsive line-framed table,
 then separate notice and activity rows. Snapshot data is read about once a second;
-animation ticks reuse the table and write only changed rows. Small viewports
-(under 40 columns or 16 rows) retain plain output. Client-originated cancellations
+animation ticks reuse the table and write only changed rows. Small viewports (under 40 columns / 16 rows, or unable to fit the full region) retain plain output. Failed snapshot/preference reads preserve the last successful view with an explicit stale marker and timestamp; initial read failure is distinct. Client-originated cancellations
 are informational; timeouts and actual failures remain notices and file diagnostics.
 `log.mjs` routes terminal presentation independently from existing opt-in,
-redacted rotating file records. Returned usage accumulates scalar process-local
+redacted rotating file records. Returned usage accumulates bounded process-local/source
 totals in `usage-store.mjs`, without a historical-log scan or per-token callback.
 `browser-launch.mjs` makes one bounded local desktop-open attempt after readiness;
 no headless/SSH launch, browser dependency, generic shell or background tab watcher
 is added. Neither terminal nor WebUI rendering is required for inference.
+
+Dashboard messages have stable IDs independent of English and Chinese display text. Static HTML carries IDs and readable English; dynamic rendering uses the same catalog. Compatibility keys remain for runtime state/diagnostic messages. The synchronous catalog preserves language/theme initialization without an extra fetch.
+
+`serviceSettingsSnapshot` projects flags, animation and the history preference from one strict file read per update; no new persistence cache hides external edits or corrupt configuration.
 
 ## Configuration ownership
 
@@ -368,3 +374,11 @@ installed sharp without provider calls. It does not claim a live Codex UI test
 or the GitHub updater's network installation; the Windows command chain has a
 separate actual-process fixture. Direct runtime dependencies are exact versions;
 the lockfile fixes CI transitives, not consumers' future transitive resolution.
+
+### Source-level observations
+
+Stream performance retains existing route totals and adds `by_route.<route>.by_provider`. Each source has started/active/finished counts, terminal totals, bounded model outcomes, request-to-first-output timing and preparation histograms. Source assignment is pinned once. There are at most 16 source labels plus `other`, and 32 model labels plus `other` per source. Unassigned finished requests use `unknown`; request IDs, accounts and URLs never become metric labels. Recent requests remain capped at 20. `runtime_usage.by_provider` has at most 16 labels plus `other`; unknown usage stays partial and persisted historical records retain their source.
+
+`operation-error.mjs` distinguishes client cancellation, unspecified abort, timeout, network/TLS/proxy, authentication and access denial. HTTP 403 is not proof of credential expiry. Claude and Codex cancellations are informational; request-body timeouts use 408, upstream/idle timeouts 504, and local client cancellation diagnostics 499. Original upstream error status/body and protocol-specific stream bytes retain their existing path.
+
+Byte-weighted request admission is not a simultaneous-stream limit. The 1.2.0 load replay exercises 16/64/128 small-body held streams, management responsiveness and downstream cancellation against 1.1.1. It does not establish a universal safe concurrency maximum. Existing defaults remain unchanged; see the release receipt for measured bounds.

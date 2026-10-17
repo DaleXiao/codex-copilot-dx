@@ -565,3 +565,16 @@ test("source-qualified rows retain invalid cache-count evidence after aggregatio
   assert.equal(summary.bySourceModel["third / same"].cache_hit_invalid_requests, 1);
   assert.equal(usageCacheHitRate(summary.bySourceModel["third / same"]), null);
 });
+
+test("returned process usage separates source totals, partial evidence and snapshots without persistence", async t => {
+  const { runtimeUsageSnapshot } = await import("../src/usage-store.mjs");
+  const old = process.env.CCDX_DISABLE_USAGE;process.env.CCDX_DISABLE_USAGE = "1";
+  t.after(() => { if (old === undefined) delete process.env.CCDX_DISABLE_USAGE;else process.env.CCDX_DISABLE_USAGE = old; });
+  const before = runtimeUsageSnapshot();
+  await recordUsage({ provider: "usage_fixture", usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 2 } });
+  await recordUsage({ provider: "usage_fixture", usage: { input_tokens: 3 } });
+  const after = runtimeUsageSnapshot();assert.equal(after.records, before.records + 2);
+  assert.equal(after.by_provider.usage_fixture.records, 2);assert.equal(after.by_provider.usage_fixture.input_tokens, 13);
+  assert.equal(after.by_provider.usage_fixture.partial_records, 1);assert.equal(after.by_provider.usage_fixture.cached_input_tokens, 0);
+  after.by_provider.usage_fixture.records = 99;assert.equal(runtimeUsageSnapshot().by_provider.usage_fixture.records, 2);
+});

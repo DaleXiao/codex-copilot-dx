@@ -35,11 +35,11 @@ test("self-check does not confuse disabled, unavailable, saved-route, launch and
   assert.match(predictionStartupCheck(), /\[INFO\].*Off/);
   assert.match(predictionStartupCheck({ configured: true, bridge: "unavailable" }), /\[WARN\].*Bridge unavailable/);
   const healthy = predictionStartupCheck({ configured: true, bridge: "running", launch_route: "verified", recovery: { attempts: 0 }, persistence: "installed", environment: { status: "adapted" } });
-  assert.match(healthy, /route verified; suggestion unchecked/);assert.equal(healthy.split("\n").length, 1);
+  assert.match(healthy, /Running; suggestion display not verified/);assert.equal(healthy.split("\n").length, 1);
   assert.doesNotMatch(healthy, /Recovery|Environment|TLS|proxy/);
   for (const route of ["persisted", "unknown", "unverified"]) {
     const line = predictionStartupCheck({ configured: true, bridge: "running", launch_route: route });
-    assert.match(line, /not verified; suggestion unchecked/);assert.doesNotMatch(line, /\[OK\]/);
+    assert.match(line, /suggestion display not verified/);assert.doesNotMatch(line, /\[OK\]/);
   }
   assert.match(predictionStartupCheck({ configured: true, bridge: "running", active: false }), /Paused; trust and route retained/);
   assert.match(predictionStartupCheck({ configured: true, bridge: "running", environment: { status: "needs_service_restart" } }), /\[WARN\].*restart CCDX[\s\S]*ccdx prediction status/);
@@ -48,16 +48,16 @@ test("self-check does not confuse disabled, unavailable, saved-route, launch and
 
 test("startup counts discovered catalogs without claiming inference access or uninspected client configuration", () => {
   const data = { profiles: { codex: { models: { source: "cache", models: 41 } } }, providers: { m365: { enabled: true, state: "checking", claude: { clients: { code: "not_configured", app: "not_configured" } } } } };
-  assert.match(providerStartupChecks(data), /1 catalog found.*GitHub 41 \(cache\); M365 checking/);
-  assert.match(providerStartupChecks(data), /Code: not checked.*App: not checked.*gateway off \(checking\)/);
+  assert.match(providerStartupChecks(data), /1 source with model lists.*GitHub 41 \(cache\); M365 checking/);
+  assert.match(providerStartupChecks(data), /Code: not checked.*App: not checked.*local service off \(checking\)/);
   data.providers.m365 = { enabled: true, state: "ready", models: { total: 15, source: "live" }, claude: { gateway: "running", clients: { code: "configured", app: "preserved" } } };
   const summary = providerStartupSummary(data);
-  assert.match(summary.catalogs, /2 catalogs found.*M365 15 \(live\)/);
-  assert.match(summary.claude, /Code: configured.*App: custom\/managed settings kept.*gateway running/);
+  assert.match(summary.catalogs, /2 sources with model lists.*M365 15 \(live\)/);
+  assert.match(summary.claude, /Code: configured.*App: custom\/managed settings kept.*local service running/);
   assert.doesNotMatch(providerStartupChecks(data), /\[OK\]|inference verified/);
   data.profiles.codex.models.source = "built-in";data.providers.m365 = { enabled: false, state: "disabled" };
-  assert.match(providerStartupChecks(data), /0 catalogs found.*GitHub not discovered; M365 off/);
-  assert.match(providerStartupChecks(), /Status unavailable/);assert.doesNotMatch(providerStartupChecks(), /0 catalogs/);
+  assert.match(providerStartupChecks(data), /0 sources with model lists.*GitHub not discovered; M365 off/);
+  assert.match(providerStartupChecks(), /Status unavailable/);assert.doesNotMatch(providerStartupChecks(), /0 sources/);
   data.providers.m365 = { state: "ready", claude: { clients: { code: "configuration_unavailable", app: "not_installed" } } };
   assert.match(providerStartupChecks(data), /\[WARN\].*Claude.*Code: config unreadable.*App: not installed/);
 });
@@ -74,4 +74,9 @@ test("runtime status keeps one aligned line and cannot execute external terminal
   const line = status("info", "model=example\x1b[2J\nforged\r\u202e row");
   assert.equal(line, "[INFO]  model=example forged row");
   assert.doesNotMatch(line, /[\x00-\x1f\x7f-\x9f\u202e]/);
+});
+
+test("restored Claude settings are not reported as unchecked", () => {
+  const summary = providerStartupSummary({ providers: { m365: { enabled: false, state: "disabled", claude: { clients: { code: "restored", app: "preserved" } } } } });
+  assert.match(summary.claude, /Code: settings restored/);assert.match(summary.claude, /App: custom\/managed settings kept/);
 });

@@ -166,7 +166,7 @@ test("formatAuthStatus renders single-profile plain and responsive table output"
     format: "auto",
     output: { isTTY: true, columns: 120 },
   });
-  assert.match(table, /^PROFILE\s+ACCOUNT\s+LOCAL\s+ONLINE\s+MODELS$/m);
+  assert.match(table, /^APP\s+ACCOUNT\s+SAVED SIGN-IN\s+ACCESS CHECK\s+MODELS$/m);
   assert.match(table, /^Codex\s+octocat/m);
 
   const result = await runAuthCommand({ action: "status", home: tokenHome() });

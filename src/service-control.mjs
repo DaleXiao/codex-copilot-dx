@@ -1,4 +1,4 @@
-import { readUserSettings, servicePreferences, writeServicePreference, terminalAnimationPreference,
+import { serviceSettingsSnapshot, servicePreferences, writeServicePreference,
   writeTerminalAnimationTheme, responseHistoryLimitPreference, writeResponseHistoryLimitMib } from "./user-settings.mjs";
 import { readImageProviderConfig } from "./image-provider-config.mjs";
 import { readPredictionSettings } from "./native-prediction-profile.mjs";
@@ -10,12 +10,11 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
   const options = { env, home };
   let serial = Promise.resolve();
   function snapshot() {
-    readUserSettings({ ...options, strict: true });
-    const saved = servicePreferences(options), prediction = clientIntegration?.snapshot().prediction;
+    const { saved, theme, historyLimit } = serviceSettingsSnapshot(options), prediction = clientIntegration?.snapshot().prediction;
     let imageConfigured = false, predictionConfigured = false;
     try { imageConfigured = Boolean(readImages()); } catch {}
     try { predictionConfigured = readPrediction().enabled === true; } catch {}
-    return { source: "service_settings", saved, theme: terminalAnimationPreference(options).theme,
+    return { source: "service_settings", saved, theme,
       effective: {
         terminal_animation_enabled: { value: terminal?.enabled === true && saved.terminal_animation_enabled && !/^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || ""),
           state: terminal?.enabled === true ? "immediate" : "terminal_unavailable", locked: /^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || "") },
@@ -23,7 +22,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
         image_enabled: { value: saved.image_enabled && imageConfigured, state: imageConfigured ? "next_call" : "needs_setup", configured: imageConfigured },
         prediction_enabled: { value: prediction?.active === true, state: !predictionConfigured ? "needs_setup"
           : prediction?.environment?.status === "needs_app_relaunch" ? "needs_app_relaunch" : prediction?.bridge !== "running" ? "needs_service_restart" : "next_config_request", configured: predictionConfigured },
-      }, history: { ...responseHistoryLimitPreference(options), ...cacheRuntimeSnapshot().response_history },
+      }, history: { ...historyLimit, ...cacheRuntimeSnapshot().response_history },
       providers: providerRuntime?.snapshot() || null, terminal: terminal?.snapshot?.() || null };
   }
   async function apply(input) {

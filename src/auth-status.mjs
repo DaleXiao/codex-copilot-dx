@@ -13,7 +13,7 @@ function responseDetail(value) {
 
 function abortError(signal) {
   if (signal?.reason instanceof Error) return signal.reason;
-  const error = new Error("The operation was aborted");
+  const error = new Error("Cancelled");
   error.name = "AbortError";
   return error;
 }

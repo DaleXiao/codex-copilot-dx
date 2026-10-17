@@ -1,6 +1,7 @@
 import { terminalCell } from "./terminal-text.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { currentRequestContext } from "./request-context.mjs";
+import { isProviderId } from "./provider-metadata.mjs";
 
 const DEFAULT_RECENT_FAILURES = 10;
 
@@ -41,7 +42,7 @@ export function responseFailureDetails(event, eventType = event?.type, {
   return {
     at: new Date().toISOString(),
     request_id: currentRequestContext()?.requestId || null,
-    ...(["github", "m365"].includes(provider) ? { provider } : {}),
+    ...(isProviderId(provider) ? { provider } : {}),
     event_type: safeIdentifier(eventType || "response.failed"),
     model: safeIdentifier(response?.model || model),
     code: safeIdentifier(error?.code || "unknown_error"),

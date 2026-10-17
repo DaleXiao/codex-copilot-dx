@@ -300,7 +300,7 @@ test("request timeline records stages, retry attempts and activity without chang
   assert.equal(snapshot.by_route.responses.ttft_ms.avg, 40);
   assert.equal(snapshot.recent_requests.length, 1);
   assert.deepEqual(snapshot.recent_requests[0], {
-    request_id: "request-1", at: "2026-10-05T00:00:00Z", route: "responses", model: "gpt-6-astra",
+    request_id: "request-1", provider: "unknown", at: "2026-10-05T00:00:00Z", route: "responses", model: "gpt-6-astra",
     outcome: "completed", origin: "upstream_response", phase: "upstream_stream", failed: false, empty_stream_completion: false,
     http_status: 200, upstream_attempts: 2, first_output_source: "delta", timings_ms: { admission: 5, body: 0, history: 0,
       images: 0, serialization: 0, upstream_start: 10, upstream_headers: 45, first_output: 50,
@@ -472,4 +472,24 @@ test("native response.incomplete is not a successful stream despite HTTP 200 and
   assert.equal(route.terminal_outcomes.totals.incomplete, 1);
   assert.equal(route.terminal_outcomes.by_model["gpt-5.6-sol"].incomplete, 1);
   assert.equal(route.terminal_outcomes.incomplete_reasons.max_output_tokens, 1);
+});
+
+test("source metrics pin request identity, separate same-model outcomes and bound label growth", () => {
+  const metrics = createStreamPerformanceMetrics();
+  const github = metrics.begin("responses"), m365 = metrics.begin("responses");
+  github.setProvider("github");github.setModel("gpt-shared");m365.setProvider("m365");m365.setModel("gpt-shared");
+  assert.equal(metrics.snapshot().by_route.responses.by_provider.github.active, 1);
+  github.setProvider("m365");github.terminal("completed");github.finish();github.finish();
+  m365.terminal("cancelled", { origin: "client_disconnect" });m365.finish({ aborted: true });
+  let sources = metrics.snapshot().by_route.responses.by_provider;
+  assert.equal(sources.github.terminal_outcomes.by_model["gpt-shared"].completed, 1);
+  assert.equal(sources.m365.terminal_outcomes.by_model["gpt-shared"].cancelled, 1);
+  assert.equal(sources.github.active, 0);assert.equal(sources.m365.finished, 1);
+  sources.github.terminal_outcomes.totals.completed = 99;
+  assert.equal(metrics.snapshot().by_route.responses.by_provider.github.terminal_outcomes.totals.completed, 1);
+  for (let i = 0; i < 100; i++) { const request = metrics.begin("responses");request.setProvider(`fixture_${i}`);request.setModel(`gpt-fixture-${i}`);request.finish(); }
+  sources = metrics.snapshot().by_route.responses.by_provider;
+  assert.ok(Object.keys(sources).length <= 17);assert.ok(Object.keys(sources.other.terminal_outcomes.by_model).length <= 33);
+  const unknown = createStreamPerformanceMetrics();unknown.begin("responses").finish();
+  assert.equal(unknown.snapshot().by_route.responses.by_provider.unknown.terminal_outcomes.totals.unknown, 1);
 });

@@ -31,8 +31,8 @@ const records = Array.from({ length: 10 }, (_, index) => ({ ts: new Date(Date.no
   provider: index % 2 ? "m365" : "github", model: index % 2 ? "claude-opus-5.5" : "gpt-6.1-sol",
   usage: { input_tokens: 100 * (index + 1), cached_input_tokens: 50, output_tokens: 20, total_tokens: 120 + 100 * index } }));
 const providerState = () => [
-  { id: "github", name: "GitHub Copilot", enabled: true, state: "ready", clients: [{ id: "codex", name: "Codex App", selected: true, state: "configured" }] },
-  { id: "m365", name: "Microsoft 365", enabled: true, state: "ready", auth: { state: "authorized", account: "synthetic@example.test" },
+  { id: "github", name: "GitHub Copilot", selection: { codex: true, models_required: false }, enabled: true, state: "ready", clients: [{ id: "codex", name: "Codex App", selected: true, state: "configured" }] },
+  { id: "m365", name: "Microsoft 365", selection: { codex: true, models_required: true }, enabled: true, state: "ready", auth: { state: "authorized", account: "synthetic@example.test" },
     clients: [{ id: "claude_app", name: "Claude App", state: "configured", gateway: "running" }], requests: { completed: 3, incomplete: 1, failed: 2 } },
   { id: "third", name: "Third source", enabled: false, state: "disabled", clients: [] },
 ];
@@ -44,6 +44,7 @@ const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, servic
     return { source: "catalog", checkedAt: new Date().toISOString(), advertised: 1, upstreamHost: "Microsoft 365", models: [
       { id: "claude-opus-5.5", vendor: "Anthropic", endpoints: ["messages"], clients: ["claude_app", "claude_code"], reasoning_efforts: ["low", "high"], selectable: true },
           { id: "gpt-source", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], reasoning_efforts: ["low"], selectable: true },
+      { id: "gpt-second", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], reasoning_efforts: ["low"], selectable: true },
     ] };
   },
   liveModelsFn: async () => { models++; return { models: [{ id: "gpt-6.1-sol", vendor: "OpenAI", endpoints: ["responses"], preview: false }], advertised: 1, upstreamHost: "synthetic.local" }; },
@@ -131,6 +132,11 @@ try {
         await nav("models");
         await page.waitForFunction(() => document.getElementById("source-provider").value === "m365" && document.getElementById("source-model").value === "gpt-source");
         assert.equal(await page.locator("#source-review").inputValue(), "gpt-source");
+        await page.locator("#source-model").selectOption("gpt-second");
+        await page.evaluate(() => dashboardRefresh.refresh("auth", { force: true }));
+        await page.locator("#refresh").click();
+        await page.waitForFunction(() => !document.getElementById("refresh").disabled && !document.getElementById("apply-source").disabled);
+        assert.equal(await page.locator("#source-model").inputValue(), "gpt-second", "Settings/auth refresh keeps the unsaved model choice");
         await page.locator("#source-provider").selectOption("github");
         await page.route("**/_ccdx/ui/models/live?provider=m365", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "synthetic catalog unavailable" }) }));
         await page.locator("#source-provider").selectOption("m365");
@@ -140,7 +146,7 @@ try {
         assert.equal(await page.locator("#apply-source").isEnabled(), true);
         await page.unroute("**/_ccdx/ui/models/live?provider=m365");
         await page.locator("#apply-source").click();
-        await page.waitForFunction(() => document.getElementById("source-control-note").textContent.includes("Codex → github") && !document.getElementById("apply-source").disabled);
+        await page.waitForFunction(() => document.getElementById("source-control-note").textContent.includes("GitHub Copilot") && !document.getElementById("apply-source").disabled);
         await page.locator("#account-authorization > summary").click();
         assert.equal(await page.locator("#provider-auth tr").count(), 3);
         assert.match(await page.locator("#provider-auth").innerText(), /synthetic@example.test/);
@@ -180,7 +186,7 @@ try {
         const openBefore = await page.locator("#setting-open_webui").isChecked();
         await page.locator("#setting-open_webui").setChecked(!openBefore);
         await page.waitForFunction(() => !document.getElementById("setting-open_webui").disabled);
-        assert.match(await page.locator("#effect-open_webui").innerText(), language === "zh" ? /下次启动/ : /Next CCDX start/);
+        assert.match(await page.locator("#effect-open_webui").innerText(), language === "zh" ? /重启 CCDX 后生效/ : /Next CCDX start/);
         await page.locator("#setting-open_webui").setChecked(openBefore);
         await page.waitForFunction(() => !document.getElementById("setting-open_webui").disabled);
         assert.equal(await page.evaluate(() => window.savedCalendar === document.querySelector(".calendar-day") && window.savedModelRow === document.querySelector("#live-models-body tr")), true);

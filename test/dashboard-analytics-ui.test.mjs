@@ -59,7 +59,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   class ClockDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
   let observer;
   const context = createContext({
-    document, window: { matchMedia: () => ({ matches: reduced, addEventListener() {} }), addEventListener: on }, navigator: { clipboard: { writeText: clipboard } },
+    document, window: { matchMedia: () => ({ matches: reduced, addEventListener() {} }), addEventListener: on, dispatchEvent(event) { listeners.get(event.type)?.forEach(fn => fn(event)); } }, CustomEvent: class { constructor(type) { this.type = type; } }, navigator: { clipboard: { writeText: clipboard } },
     Date: ClockDate, performance: { now: () => 0 }, AbortSignal, AbortController, Intl, URLSearchParams, encodeURIComponent, setTimeout(fn, ms) { scheduled.set(fn, ms); if (ms < 1800000) timers.add(fn); return fn; }, clearTimeout(fn) { timers.delete(fn); scheduled.delete(fn); },
     localStorage: { getItem: key => key === "ccdx.dashboard.autoRefresh" ? savedAutomatic : savedLanguage, setItem() {} },
     IntersectionObserver: class { constructor(fn) { observer = fn; } observe() {} },
@@ -74,7 +74,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
       return { ok: true, json: async () => data };
     },
   });
-  if (language) runInContext(languageScript, context);
+  runInContext(languageScript, context);
   runInContext(refreshScript, context);
   const api = runInContext(`${viewScripts}\n${script}\n({ renderFailures, renderProviders, loadAuth, loadAnimation, loadUsage, loadModels, renderAnalytics, selectUsageDay, dashboardRefresh, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, context);
   // Component tests exercise opened data views; real navigation is replayed in browsers.
@@ -141,8 +141,8 @@ test("language switch preserves unsaved animation, chart nodes/selection and exp
   assert.equal(failure.open, true);
   assert.strictEqual(h.api.timer, timer);
   assert.equal(h.requests.length, requests);
-  assert.equal(h.nodes.get("provider-auth").children[0].children[2].textContent, "本机已保存");
-  assert.match(h.nodes.get("daily-bars").children.at(-1).attributes.title, /已计入输入用量/);
+  assert.equal(h.nodes.get("provider-auth").children[0].children[2].textContent, "登录已存");
+  assert.match(h.nodes.get("daily-bars").children.at(-1).attributes.title, /已计入输入/);
   await failure.children.at(-1).listeners.click();
   assert.match(copied, /message: <script>raw source<\/script>/);
   assert.match(copied, /retry: attempted \(outcome not recorded here\)/);
@@ -155,13 +155,13 @@ test("language switch preserves unsaved animation, chart nodes/selection and exp
 test("saved Chinese applies to asynchronous data, counts and later refresh results", async () => {
   const h = harness({ language: true, savedLanguage: "zh" });
   await flush();
-  assert.equal(h.nodes.get("connection").textContent, "服务可访问");
-  assert.equal(h.nodes.get("provider-auth").children[0].children[2].textContent, "本机已保存");
+  assert.equal(h.nodes.get("connection").textContent, "已连本机");
+  assert.equal(h.nodes.get("provider-auth").children[0].children[2].textContent, "登录已存");
   assert.equal(h.nodes.get("usage-body").children[0].children[0].textContent, "总用量");
   assert.equal(h.nodes.get("usage-body").children[0].children[2].textContent, "100");
   h.nodes.get("refresh").listeners.click();
   await flush();
-  assert.equal(h.nodes.get("connection").textContent, "服务可访问");
+  assert.equal(h.nodes.get("connection").textContent, "已连本机");
 });
 
 test("bilingual animation names preserve numbering, default marker and unsaved choices", async () => {
@@ -199,7 +199,7 @@ test("English copy and Chinese failures keep raw values, missing states and diag
   const h = harness({ language: true, clipboard: async (value) => { copied = value; } });
   await flush();
   assert.equal(h.nodes.get("usage-state").textContent, "LOCAL RECORDS");
-  assert.equal(h.nodes.get("connection").textContent, "SERVICE REACHABLE");
+  assert.equal(h.nodes.get("connection").textContent, "CONNECTED LOCALLY");
   h.api.renderFailures([{ at: "time", model: "Comet", code: "response.failed", message: "DEFAULT {input}", retried: false }, {}]);
   h.nodes.get("language-toggle").listeners.click();
   const rows = h.nodes.get("failures").children;
@@ -223,7 +223,7 @@ test("model HTTP errors localize only the known CCDX message and retain status c
   assert.match(h.nodes.get("models-note").textContent, /ccdx models/);
   const requests = h.requests.length;
   h.nodes.get("language-toggle").listeners.click();
-  assert.match(h.nodes.get("models-note").textContent, /Model check failed: HTTP 403/);
+  assert.match(h.nodes.get("models-note").textContent, /Model lookup failed: HTTP 403/);
   assert.equal(h.requests.length, requests);
   message = "Provider raw failure {status}: response.failed";
   h.nodes.get("refresh-models").listeners.click();
@@ -234,7 +234,7 @@ test("model HTTP errors localize only the known CCDX message and retain status c
 test("provider authorization renders saved evidence independently of service availability", async () => {
   const h = harness();await flush();
   assert.equal(h.nodes.get("provider-auth").children[0].children[1].textContent, "octocat");
-  assert.equal(h.nodes.get("provider-auth").children[0].children[2].textContent, "Saved locally");
+  assert.equal(h.nodes.get("provider-auth").children[0].children[2].textContent, "Sign-in saved");
   for (const state of ["unconfigured", "unavailable", "authorized", "saved"]) {
     h.api.renderProviders({ providers: [{ id: "example", name: "Example", enabled: true, state: "unavailable",
       auth: { state, account: "literal<script>" }, clients: [] }] });
@@ -252,7 +252,7 @@ test("auth failure and slow auth do not block normal dashboard refresh or cause 
   let release;
   const h = harness({ fetchFn: (url) => url === "/_ccdx/ui/providers" ? new Promise((resolve) => { release = resolve; }) : undefined });
   await flush();
-  assert.equal(h.nodes.get("connection").textContent, "SERVICE REACHABLE");
+  assert.equal(h.nodes.get("connection").textContent, "CONNECTED LOCALLY");
   assert.equal(h.nodes.get("refresh").disabled, false);
   h.nodes.get("refresh").listeners.click();
   await flush();
@@ -260,7 +260,7 @@ test("auth failure and slow auth do not block normal dashboard refresh or cause 
   release({ ok: false, json: async () => ({ error: "secret-error" }) });
   await flush();
   assert.equal(h.nodes.get("auth-account").textContent, "UNAVAILABLE");
-  assert.equal(h.nodes.get("connection").textContent, "SERVICE REACHABLE");
+  assert.equal(h.nodes.get("connection").textContent, "CONNECTED LOCALLY");
   assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/providers").length, 1);
 });
 
@@ -314,12 +314,12 @@ test("analytics loads only on opening; client filters and day selection do not r
   assert.equal(h.nodes.get("clear-usage-day").hidden, false);
   h.nodes.get("analytics-model").value = "missing-model";
   h.nodes.get("analytics-model").listeners.change();
-  assert.equal(h.nodes.get("usage-body").children[0].children[0].textContent, "No usage records.");
+  assert.equal(h.nodes.get("usage-body").children[0].children[0].textContent, "No usage records yet.");
   h.nodes.get("analytics-model").value = "test";
   h.nodes.get("analytics-model").listeners.change();
   assert.equal(h.nodes.get("usage-body").children.length, 2);
   h.nodes.get("clear-usage-day").listeners.click();
-  assert.equal(h.nodes.get("usage-state").textContent, "LOCAL LOG");
+  assert.equal(h.nodes.get("usage-state").textContent, "LOCAL RECORDS");
   assert.equal(h.requests.length, calls);
   panel.open = false;
   panel.listeners.toggle();
@@ -376,7 +376,7 @@ test("failure details are text-only, preserve expansion and copy only existing d
   assert.equal(list.children.length, 10);
   const details = list.children[0].children[0];
   details.open = true;
-  assert.match(details.children[0].textContent, /retry attempted/);
+  assert.match(details.children[0].textContent, /retried/);
   await details.children.at(-1).listeners.click();
   assert.match(copied, /<script>alert\(1\)<\/script>/);
   assert.match(copied, /outcome not recorded here/);
@@ -447,8 +447,8 @@ test("failed refresh preserves prior rows and account without marking them as fr
   assert.deepEqual(h.nodes.get("live-models-body").children, models);
   assert.equal(h.api.dashboardRefresh.state("usage").updatedAt, time);
   assert.match(h.nodes.get("auth-account").textContent, /Update failed/);
-  assert.equal(h.nodes.get("models-state").textContent, "LIVE LOOKUP FAILED");
-  assert.equal(h.nodes.get("connection").textContent, "SERVICE REACHABLE");
+  assert.equal(h.nodes.get("models-state").textContent, "CHECK FAILED");
+  assert.equal(h.nodes.get("connection").textContent, "CONNECTED LOCALLY");
 });
 
 test("saved auto-off stays off and sparse heatmap levels follow actual relative values", async () => {

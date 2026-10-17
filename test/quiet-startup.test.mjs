@@ -22,7 +22,7 @@ test("default startup keeps request details out of the terminal while opt-in fil
   const done = once(child, "exit");let output = "";child.stdout.on("data", value => { output += value; });child.stderr.on("data", value => { output += value; });
   t.after(async () => { if (child.exitCode === null && !child.signalCode) child.kill("SIGTERM");await done;await fs.rm(home, { recursive: true, force: true }); });
   const deadline = Date.now() + 10000;
-  while (!output.includes("Ready       Core service available")) {
+  while (!output.includes("Ready       Local service ready")) {
     if (Date.now() > deadline || child.exitCode !== null) throw new Error(`Quiet startup failed: ${output}`);
     await new Promise(resolve => setTimeout(resolve, 10));
   }
@@ -40,7 +40,7 @@ test("default startup keeps request details out of the terminal while opt-in fil
   try { assert.equal((await Promise.race([done, new Promise((_, reject) => { shutdownTimer = setTimeout(() => reject(new Error("Cooperative fixture shutdown timed out")), 10000); })]))[0], 0); }
   finally { clearTimeout(shutdownTimer); }
   assert.doesNotMatch(output, /responses model=|\x1b\[/);
-  assert.match(output, /Providers.*1 catalog found.*GitHub/);
-  assert.match(output, /Claude.*Code: not checked.*App: not checked.*gateway off \(off\)/);
+  assert.match(output, /Sources.*1 source with model lists.*GitHub/);
+  assert.match(output, /Claude.*Code: not checked.*App: not checked.*local service off \(off\)/);
   assert.match(await fs.readFile(log, "utf8"), /responses model=gpt-5.5/);
 });

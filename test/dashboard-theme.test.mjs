@@ -88,6 +88,6 @@ test("persistent sidebar brand uses the favicon geometry and inherits both theme
   assert.deepEqual(geometry(brand), geometry(decodeURIComponent(favicon.href)));
   assert.match(brand, /stroke="currentColor" stroke-width="3" stroke-linecap="round"/);
   assert.match(css, /\.status-icon \{[^}]*width: 44px; height: 44px;[^}]*color: var\(--accent\);/);
-  assert.equal(heading, '<span id="page-title" data-i18n>Overview</span>');
+  assert.equal(heading, '<span id="page-title" data-i18n="overview">Overview</span>');
   assert.equal(html.match(/id="status-icon"/g).length, 1);
 });

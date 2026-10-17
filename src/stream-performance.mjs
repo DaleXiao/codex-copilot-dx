@@ -1,5 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { currentRequestContext } from "./request-context.mjs";
+import { isProviderId } from "./provider-metadata.mjs";
 
 const PERFORMANCE_ROUTES = Object.freeze(["responses", "responses_compact"]);
 const PREPARATION_STAGES = Object.freeze(["admission", "body", "history", "images", "serialization"]);
@@ -11,6 +12,7 @@ const TERMINAL_ORIGINS = new Set([
 ]);
 const MAX_MODEL_OUTCOME_LABELS = 32;
 const MAX_RECENT_REQUESTS = 20;
+const MAX_PROVIDER_LABELS = 16;
 const PREPARATION_EDGES_MS = Object.freeze([1, 2, 5, 10, 20, 50, 100, 250, 500, 1_000, 5_000, 30_000, 120_000]);
 const TTFT_EDGES_MS = Object.freeze([
   100, 200, 300, 500, 700, 1_000, 1_400, 2_000, 2_800, 4_000,
@@ -146,6 +148,7 @@ function createRoutePerformance() {
     incompleteReasons: Object.create(null),
     terminalByModel: new Map(),
     terminalByOrigin: Object.create(null),
+    providers: new Map(),
   };
 }
 
@@ -162,6 +165,12 @@ function routeSnapshot(route) {
       by_model: Object.fromEntries([...route.terminalByModel].map(([model, counts]) => [model, { ...counts }])),
       by_origin: Object.fromEntries(Object.entries(route.terminalByOrigin).map(([origin, counts]) => [origin, { ...counts }])),
     },
+    by_provider: Object.fromEntries([...route.providers].map(([id, source]) => [id, {
+      requests: source.requests, active: source.active, finished: source.finished,
+      terminal_outcomes: { totals: { ...source.totals }, by_model: Object.fromEntries([...source.models].map(([model, counts]) => [model, { ...counts }])) },
+      request_ttft_ms: histogramSnapshot(source.ttft, "ms"),
+      preparation_ms: Object.fromEntries(PREPARATION_STAGES.map(stage => [stage, histogramSnapshot(source.preparation[stage], "ms")])),
+    }])),
     ttft_ms: histogramSnapshot(route.ttft, "ms"),
     tpot_us: histogramSnapshot(route.tpot, "us"),
     output_tokens_per_second: {
@@ -197,6 +206,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       let finished = false;
       let model = "other";
       let provider = null;
+      let sourceStats = null;
       let terminalOutcome = null;
       let terminalOrigin = null;
       let incompleteReason = null;
@@ -212,6 +222,14 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       let terminalAt = null;
       const context = { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: null };
       const elapsed = (time) => time === null ? null : Number(Math.max(0, time - requestStartedAt).toFixed(1));
+      const assignProvider = value => {
+        if (finished || sourceStats || !isProviderId(value)) return;
+        provider = value;
+        const label = route.providers.has(value) || route.providers.size < MAX_PROVIDER_LABELS ? value : "other";
+        if (!route.providers.has(label)) route.providers.set(label, { requests: 0, active: 0, finished: 0, totals: emptyOutcomes(), models: new Map(),
+          ttft: createHistogram(TTFT_EDGES_MS), preparation: Object.fromEntries(PREPARATION_STAGES.map(stage => [stage, createHistogram(PREPARATION_EDGES_MS)])) });
+        sourceStats = route.providers.get(label);sourceStats.requests++;sourceStats.active++;
+      };
 
       return {
         beginStage(stage) {
@@ -261,13 +279,14 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           }
         },
         setOutputTokens(value) {
+          if (value === null || value === undefined) return;
           const tokens = Number(value);
           if (Number.isFinite(tokens) && tokens >= 0) outputTokens = tokens;
         },
         setModel(value) {
           model = modelLabel(value);
         },
-        setProvider(value) { if (["github", "m365"].includes(value)) provider = value; },
+        setProvider: assignProvider,
         attemptCount() { return attempts; },
         attemptTimings() { return attemptTimings.map(attempt => ({ ...attempt })); },
         observeContext(values) {
@@ -294,6 +313,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         },
         finish({ failed: finishFailed = false, aborted = false, statusCode = 0 } = {}) {
           if (finished) return;
+          if (!sourceStats) assignProvider("unknown");
           finished = true;
           failed ||= finishFailed;
           const outcome = terminalOutcome || (aborted ? "cancelled" : "unknown");
@@ -309,6 +329,14 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           route.terminalByModel.get(label)[outcome] += 1;
           route.terminalByOrigin[origin] ||= emptyOutcomes();
           route.terminalByOrigin[origin][outcome] += 1;
+          if (sourceStats) {
+            sourceStats.active--;sourceStats.finished++;sourceStats.totals[outcome]++;
+            const sourceModel = sourceStats.models.has(model) || sourceStats.models.size < MAX_MODEL_OUTCOME_LABELS ? model : "other";
+            if (!sourceStats.models.has(sourceModel)) sourceStats.models.set(sourceModel, emptyOutcomes());
+            sourceStats.models.get(sourceModel)[outcome]++;
+            if (firstOutputAt !== null) observe(sourceStats.ttft, Math.max(0, firstOutputAt - requestStartedAt));
+            for (const stage of PREPARATION_STAGES) observe(sourceStats.preparation[stage], preparationMs[stage]);
+          }
           const finishedAt = now();
           // Only scalar, allowlisted metadata survives the request; never retain payloads.
           recentRequests.push({

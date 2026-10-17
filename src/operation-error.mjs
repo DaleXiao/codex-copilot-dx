@@ -4,19 +4,24 @@ export function operationError(code, message, { status = null, retryAt = null } 
   return Object.assign(new Error(message), { code, status, retryAt });
 }
 
-export function operationErrorDetails(error) {
-  const code = String(error?.code || error?.cause?.code || "unknown");
+export function operationErrorDetails(error, { reason } = {}) {
+  const code = String(reason || error?.code || error?.cause?.code || "unknown");
+  const status = Number.isInteger(error?.status) ? error.status : Number.isInteger(error?.statusCode) ? error.statusCode : null;
   let source = "unknown";
-  if (/proxy/i.test(code)) source = "proxy";
+  if (["client_aborted", "client_closed", "cancelled"].includes(code)) source = "cancelled";
+  else if (/proxy/i.test(code)) source = "proxy";
   else if (/cert|tls|ssl/i.test(code)) source = "tls";
-  else if (/timeout|abort/i.test(code) || error?.name === "AbortError" || error?.name === "TimeoutError") source = "timeout";
-  else if (/limit|429/.test(code)) source = "rate_limit";
+  else if (/timeout|timed_out/i.test(code) || error?.name === "TimeoutError") source = "timeout";
+  else if (/abort/i.test(code) || error?.name === "AbortError") source = "aborted";
+  else if (status === 429 || /limit|429/.test(code)) source = "rate_limit";
+  else if (status === 401) source = "authentication";
+  else if (status === 403) source = "access_denied";
   else if (/config|format|route|redirect/.test(code)) source = "configuration";
-  else if (/HTTP|http/.test(code)) source = "upstream";
   else if (/ENOTFOUND|ECONN|EAI_/.test(code)) source = "network";
+  else if (/HTTP|http/.test(code) || status >= 400) source = "upstream";
   return { code: /^[A-Za-z0-9_-]{1,80}$/.test(code) ? code : "unknown", source,
     message: redactDiagnosticText(String(error?.message || "Operation failed")).slice(0, 400),
-    status: Number.isInteger(error?.status) ? error.status : null };
+    status };
 }
 
 // Error classifiers consume decoded string fields; responses retain their

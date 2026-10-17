@@ -27,14 +27,14 @@ test("all native disclosures use one plus/minus rule without duplicate animation
 });
 
 test("sidebar views keep dedicated business capabilities with their clients", () => {
-  assert.match(html, /<nav aria-label="Main navigation"/);
+  assert.match(html, /<nav aria-label="Navigation"/);
   for (const route of ["overview", "codex", "claude", "models", "usage", "system"]) {
     assert.match(html, new RegExp('data-route="' + route + '"'));
     assert.match(html, new RegExp('data-view="' + route + '"'));
   }
   const codex = html.slice(html.indexOf('data-view="codex"'), html.indexOf('data-view="claude"'));
   for (const id of ["runtime-resources", "prediction-settings", "additional-capabilities"]) assert.ok(codex.includes('id="' + id + '"'));
-  assert.match(html, /HTTP TRAFFIC/);assert.doesNotMatch(html, /CODEX REQUESTS/);
+  assert.match(html, /SERVICE REQUESTS/);assert.doesNotMatch(html, /CODEX REQUESTS/);
   assert.match(css, /\[hidden\] \{ display: none !important;/);
   assert.match(css, /@media \(max-width: 640px\)/);
   assert.doesNotMatch(html, /<summary\b[^>]*>(?:(?!<\/summary>)[\s\S])*<button/);

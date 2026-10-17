@@ -49,7 +49,7 @@ export async function runProviderAutoReviewCommand(options = {}) {
   const settings = readProviderSettings(options);
   if (settings.codex !== "m365") return runAutoReviewModelCommand(options);
   const state = await providerControl(options);
-  if (state.codex_provider !== "m365") throw new Error("The running provider does not match the saved selection; restart ccdx before changing Auto-review");
+  if (state.codex_provider !== "m365") throw new Error("Saved and active sources differ.\nRestart CCDX before changing review settings.");
   const preference = state.m365?.preference || settings.m365;
   return runAutoReviewModelCommand({ ...options, env: { ...(options.env || process.env), CCDX_AUTO_REVIEW_MODEL: "" },
     loadCatalog: async () => {
@@ -66,7 +66,7 @@ export async function runM365Command({ action = "status", provider, model, autoR
   env = process.env, input = process.stdin, output = process.stdout, prompt, control = providerControl } = {}) {
   const options = { home, env };
   let readline;
-  const ask = prompt || (question => { if (!input.isTTY || !output.isTTY) throw new Error("Use explicit provider/model arguments outside an interactive terminal");
+  const ask = prompt || (question => { if (!input.isTTY || !output.isTTY) throw new Error("Choose the source and models with command arguments.");
     readline ||= createInterface({ input, output });return readline.question(question); });
   const request = value => control({ host, port, action: value });
   try {
@@ -81,14 +81,14 @@ export async function runM365Command({ action = "status", provider, model, autoR
     if (action === "switch") {
       if (!provider) {
         output.write("Codex provider:\n  1. GitHub Copilot (default)\n  2. Microsoft 365 (backup)\n");
-        const answer = String(await ask("Select 1 or 2, or q to cancel: ")).trim();
+        const answer = String(await ask("Choose 1 or 2; q cancels: ")).trim();
         if (answer === "q") return { cancelled: true };
-        if (!["1", "2"].includes(answer)) throw new Error("Select 1 or 2");provider = answer === "1" ? "github" : "m365";
+        if (!["1", "2"].includes(answer)) throw new Error("Choose 1 or 2");provider = answer === "1" ? "github" : "m365";
       }
       if (provider === "m365") {
         const available = await request({ action: "models", family: "gpt" });
         const models = available.models || [], ids = models.map(entry => entry.id);
-        if (!ids.length) throw new Error("No M365 GPT models are available; the current provider was retained");
+        if (!ids.length) throw new Error("No M365 GPT models available. The current source is unchanged.");
         const saved = readProviderSettings(options).m365;
         const choose = async (label, supplied, preferred) => {
           if (supplied) { if (!ids.includes(supplied)) throw new Error(`${label} model is not available: ${terminalCell(supplied)}`);return supplied; }

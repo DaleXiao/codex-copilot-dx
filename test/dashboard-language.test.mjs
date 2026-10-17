@@ -91,10 +91,10 @@ test("language and theme labels stay independent and switching language does not
   const favicon = page.nodes.get("favicon");
   const original = favicon.href;
   page.toggle();
-  assert.equal(button.getAttribute("aria-label"), "白天模式");
+  assert.equal(button.getAttribute("aria-label"), "浅色模式");
   assert.equal(favicon.href, original);
   button.click();
-  assert.equal(button.getAttribute("aria-label"), "夜间模式");
+  assert.equal(button.getAttribute("aria-label"), "深色模式");
   assert.equal(page.root.dataset.theme, "light");
   const light = favicon.href;
   page.toggle();
@@ -104,11 +104,7 @@ test("language and theme labels stay independent and switching language does not
 
 test("all annotated static English prose has a Chinese translation and the switch follows the theme button", () => {
   const page = load({ saved: new Map([["ccdx.dashboard.language", "zh"]]) });
-  const keys = [...html.matchAll(/<[^>]+\sdata-i18n(?=\s|>)[^>]*>([^<]+)<\//g)].map((match) => match[1]);
-  for (const tag of html.match(/<[^>]+>/g)) {
-    if (tag.includes("data-i18n-label")) keys.push(/aria-label="([^"]+)"/.exec(tag)[1]);
-    if (tag.includes("data-i18n-title")) keys.push(/title="([^"]+)"/.exec(tag)[1]);
-  }
+  const keys = [...html.matchAll(/\bdata-i18n(?:-title|-label)?="([^"]+)"/g)].map(match => match[1]);
   assert.ok(keys.length > 60);
   for (const key of keys) assert.notEqual(page.language.format(key), key, `Untranslated: ${key}`);
   assert.match(html, /id="theme-toggle"[\s\S]*?<\/button><button id="language-toggle"/);
@@ -125,10 +121,10 @@ test("bilingual copy preserves every placeholder and keeps Chinese descriptions 
     for (const value of pair) {
       assert.equal(typeof value, "string", key);
       assert.ok(value.length, key);
-      assert.deepEqual(placeholders(value), placeholders(key), `Changed values: ${key}`);
+      assert.deepEqual(placeholders(value), placeholders(pair[0]), `Changed values: ${key}`);
     }
     for (const line of pair[1].replace(/\{\w+\}/g, "").split("\n")) {
-      if (line === "CCDX_TERMINAL_ANIMATION") continue;
+      if (/^(?:CCDX_[A-Z_]+|ccdx [a-z -]+)$/.test(line)) continue;
       assert.ok([...line].length <= 20, `Long Chinese copy: ${line}`);
     }
   }
@@ -145,10 +141,10 @@ test("Chinese functional names are 2–4 characters while English uses the same 
     const size = [...page.language.format(key)].length;
     assert.ok(size >= 2 && size <= 4, key);
   }
-  assert.equal(page.language.format("CACHE HIT"), "重用比例");
+  assert.equal(page.language.format("CACHE HIT"), "复用比例");
   assert.equal(page.language.format("LOCAL HISTORY"), "对话暂存");
-  assert.match(page.language.format("HTTP 2xx != model completed."), /HTTP 2xx/);
-  assert.equal(page.language.format("NOT INITIALIZED"), "尚未确认");
+  assert.match(page.language.format("HTTP 2xx != model completed."), /请求成功不代表回复完整/);
+  assert.equal(page.language.format("NOT INITIALIZED"), "未确认");
   for (const literal of ["constructor", "toString", "__proto__", "gpt-6.1-sol", "upstream_response", "response.failed"]) {
     assert.equal(page.language.format(literal), literal);
   }

@@ -35,10 +35,10 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
   const settings = readPredictionSettings(opts);
   if (action === "fix") {
     if (!settings.enabled) {
-      output("Native predictions are off; nothing was enabled or changed. Run ccdx prediction on to opt in.");
+      output("Input suggestions are off. Nothing changed.\nTo enable: ccdx prediction on");
       return { status: "disabled", exitCode: 0 };
     }
-    if (!repairRuntime) throw new Error("Prediction repair needs a running CCDX adapter with prediction-fix support");
+    if (!repairRuntime) throw new Error("Start a CCDX version that supports suggestion repair.");
     const result = await repairRuntime();
     const prediction = result.prediction;
     output(`Prediction repair: ${result.status}; bridge: ${prediction.bridge}; candidate: ${prediction.candidate}`);
@@ -74,7 +74,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
     }
     return settings;
   }
-  if (!["on", "off"].includes(action)) throw new Error("Prediction action must be on, off, status, or fix");
+  if (!["on", "off"].includes(action)) throw new Error("Choose prediction on, off, status or fix.");
   if (!["darwin", "win32"].includes(platform)) throw new Error("Native prediction setup supports macOS and Windows only; no configuration changed");
   let paths = predictionPaths({ ...opts, app: settings.app });
   if (action === "off") {

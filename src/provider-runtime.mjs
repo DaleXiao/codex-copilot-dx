@@ -3,6 +3,8 @@ import { publicModelCatalog } from "./provider-metadata.mjs";
 import { createGithubProvider } from "./providers/github.mjs";
 import { readProviderSettings, writeProviderSettings } from "./provider-settings.mjs";
 import { readM365Settings, updateM365Settings, m365Paths, ensureM365GatewayKey } from "./m365-settings.mjs";
+import { providerRegistry } from "./provider-registry.mjs";
+import { createClaudeClientLifecycle } from "./claude-client-lifecycle.mjs";
 
 const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavailable (${reason}); GitHub routing was not substituted`),
   { code: reason, statusCode: 503 });
@@ -15,7 +17,9 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
     profileId: () => { const value = typeof githubCredentialFingerprint === "function" ? githubCredentialFingerprint() : githubCredentialFingerprint;
       return value ? `codex:${value}` : "codex"; } }), registry: githubRegistry };
   let selection = readProviderSettings(options), m365 = null, gateway = null, pending = null, closed = false, serial = null;
-  let reason = null, claudeReason = null, clients = { code: "not_configured", app: "not_configured" }, lastClients = {};
+  let reason = null, claudeReason = null, lastClients = {};
+  const clientLifecycle = createClaudeClientLifecycle({ options, configureClients, restoreClients });
+  const sources = new Map([[github.id, github]]);
   const dashboardProfiles = new Map();
   const dashboardGeneration = provider => {
     const profile = provider.profileId(), previous = dashboardProfiles.get(provider.id);
@@ -27,23 +31,12 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
   try { enabled = readM365Settings(options).enabled && env.CCDX_M365 !== "0"; }
   catch { enabled = false;reason = "m365_config_invalid"; }
 
-  let clientSync = null;
   async function syncClaudeClients() {
-    if (clientSync) return clientSync;
-    clientSync = (async () => {
-      const source = m365, profile = source?.profileId();
-      if (!source || !gateway || closed || !enabled) return;
-      try {
-        const integration = configureClients ? null : await import("./claude-client-config.mjs");
-        const configure = configureClients || integration.configureClaudeClients;
-        const desktopManaged = integration ? await integration.inspectClaudeDesktopPolicy(options) : false;
-        if (closed || !enabled || source !== m365 || source.profileId() !== profile || !gateway) return;
-        claudeReason = source.models("claude").length ? null : "m365_no_claude_models";
-        clients = configure({ ...options, desktopManaged, baseUrl: `http://127.0.0.1:${corePort}/anthropic`,
-          apiKey: ensureM365GatewayKey(options), models: source.models("claude") });
-      } catch { clients = { code: "configuration_unavailable", app: "configuration_unavailable" };claudeReason = "m365_claude_config_unavailable"; }
-    })().finally(() => { clientSync = null; });
-    return clientSync;
+    const source = m365, profile = source?.profileId();
+    if (!source || !gateway || closed || !enabled) return;
+    await clientLifecycle.sync({ source, baseUrl: `http://127.0.0.1:${corePort}/anthropic`, apiKey: () => ensureM365GatewayKey(options),
+      current: () => !closed && enabled && source === m365 && source.profileId() === profile && Boolean(gateway) });
+    claudeReason = clientLifecycle.snapshot().reason || (source.models("claude").length ? null : "m365_no_claude_models");
   }
 
   async function startM365(forceRefresh = false) {
@@ -58,6 +51,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
           // Reconcile after refresh, outside inference serialization and without a watcher.
           setImmediate(() => { if (!pending && gateway && !closed && enabled) void syncClaudeClients(); });
         } });
+        sources.set(m365.id, m365);
       }
       await m365.refresh();if (closed || !enabled) return null;
       const claudeModels = m365.models("claude");
@@ -93,20 +87,20 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
       preference: selection.m365 || null,
       active_requests: activeM365Requests,
       claude: { gateway: gateway ? "running" : "unavailable", reason: claudeReason, port: gateway ? corePort : null,
-        base_url: gateway ? `http://127.0.0.1:${corePort}/anthropic` : null, clients: { ...clients },
+        base_url: gateway ? `http://127.0.0.1:${corePort}/anthropic` : null, clients: clientLifecycle.snapshot().clients,
         observed_clients: { ...lastClients }, requests: gateway?.snapshot?.() || null } } });
 
   function current() {
-    if (selection.codex === "github") return github;
-    if (!m365 || !enabled || m365.snapshot().state === "disabled") throw unavailable(reason || "m365_not_ready");
-    return m365;
+    const source = sources.get(selection.codex);
+    if (!source || selection.codex === "m365" && (!enabled || source.snapshot().state === "disabled")) throw unavailable(reason || "m365_not_ready");
+    return source;
   }
   const serialize = task => {
     const next = (serial || Promise.resolve()).then(task);
     serial = next.catch(() => {});return next;
   };
   async function switchSource(provider, preference) {
-    if (!["github", "m365"].includes(provider)) throw new Error("Provider must be github or m365");
+    if (!providerRegistry.get(provider)?.codex) throw new Error("Choose a listed Codex source");
     if (provider === "m365") {
       if (!enabled) throw unavailable("m365_disabled");
       const ready = await startM365();if (!ready) throw unavailable(reason || "m365_not_ready");
@@ -131,9 +125,8 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
     await switchSource("github");
     updateM365Settings({ enabled: false }, options);enabled = false;
     await gateway?.close();gateway = null;m365?.close();
-    await pending;m365 = null;
-    const restore = restoreClients || (await import("./claude-client-config.mjs")).restoreClaudeClients;
-    const result = restore(options);clients = { code: result.preserved ? "preserved" : "restored", app: result.preserved ? "preserved" : "restored" };
+    await pending;sources.delete("m365");m365 = null;
+    const result = await clientLifecycle.restore();
     if (remove) {
       if (result.remaining) throw Object.assign(new Error("User-modified Claude settings were preserved; M365 profile cleanup is incomplete"), { code: "m365_cleanup_preserved" });
       const paths = m365Paths(options);
@@ -156,7 +149,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
     selection: () => selection,
     dashboardProviders() {
       const state = snapshot(), service = githubClient.runtimeStatus?.() || {}, ms = state.m365;
-      return [
+      const projections = [
         { id: "github", name: "GitHub Copilot", generation: dashboardGeneration(github), enabled: true, state: service.token_cached ? "ready" : "unknown",
           auth: { state: "unknown", token_cached: service.token_cached === true, expires_in_ms: service.token_expires_in_ms ?? null },
           models: { count: githubRegistry?.models?.data?.length ?? null, source: githubRegistry?.source || "unknown" },
@@ -168,10 +161,12 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
           models: { count: ms.models?.total ?? null, source: ms.models?.source || "unavailable", checked_at: ms.models?.refreshed_at || null },
           clients: [{ id: "codex", name: "Codex App", selected: selection.codex === "m365", state: selection.codex === "m365" ? ms.state : "standby" },
             ...[["code", "Claude Code"], ["app", "Claude App"]].map(([id, name]) => ({ id: `claude_${id}`, name,
-              selected: enabled, state: clients[id], gateway: gateway ? "running" : "unavailable", reason: claudeReason,
+              selected: enabled, state: clientLifecycle.snapshot().clients[id], gateway: gateway ? "running" : "unavailable", reason: claudeReason,
               last_request_at: lastClients[`claude_${id}`] || null }))],
           requests: ms.claude.requests, request_scope: "Claude Messages" },
       ];
+      return providerRegistry.list().map(definition => ({ ...projections.find(source => source.id === definition.id),
+        id: definition.id, name: definition.name, selection: { codex: definition.codex, models_required: definition.modelSelection } }));
     },
     async dashboardCatalog({ provider = selection.codex } = {}) {
       if (provider === "github") return null;

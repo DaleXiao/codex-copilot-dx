@@ -99,7 +99,7 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
         child.once("error", () => resolve(false));
         child.once("spawn", () => { child.unref(); resolve(true); });
       });
-      if (!launched) { onPredictionRoute("unverified");log(status("warn", "Could not launch the registered Windows Codex App"));return false; }
+      if (!launched) { onPredictionRoute("unverified");log(status("warn", "Could not open the registered Codex App"));return false; }
       await new Promise(resolve => setTimeout(resolve, 300));
       const actual = windowsAppProcesses(current.app, { env });
       const routeRetained = actual.length === 1 && actual[0].readable && actual[0].route === predictionPacUrl;
@@ -114,13 +114,13 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
     }
   }
   if (platform !== "darwin") {
-    log(status("warn", "Automatic launch requires macOS or an enabled Windows prediction setup"));
-    log(status("info", "Open Codex App manually; it will connect to the adapter."));
+    log(status("warn", "Auto-open needs macOS or Windows suggestion setup."));
+    log(status("info", "Open Codex App to use this service."));
     return false;
   }
 
   if (!autoLaunchEnabled(env)) {
-    log(status("info", "Auto-launch disabled (CCDX_AUTO_LAUNCH=0); open Codex App manually."));
+    log(status("info", "Auto-open is off. Open Codex App manually.\nCCDX_AUTO_LAUNCH=0"));
     return false;
   }
 
@@ -141,7 +141,7 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
       }
       await preparePredictionRoute?.();
       if (!await tryOpen([predictionApp, ...extraArgs], { spawnImpl })) {
-        onPredictionRoute("unverified");log(status("warn", "Could not launch the verified macOS Codex App"));return false;
+        onPredictionRoute("unverified");log(status("warn", "Could not open Codex App"));return false;
       }
       for (let attempt = 0; attempt < 10; attempt++) {
         const actual = macAppProcesses(predictionApp);
@@ -161,13 +161,13 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
   for (const attempt of attempts) {
     const args = [...attempt, ...extraArgs];
     if (await tryOpen(args, { spawnImpl })) {
-      log(status("ok", "Codex app launched"));
+      log(status("ok", "Codex opened"));
       return true;
     }
   }
 
-  log(status("warn", "Could not launch the Codex app (checked com.openai.codex, Codex.app, ChatGPT.app)"));
-  log(status("info", "Open Codex App manually; it will connect to the adapter."));
+  log(status("warn", "Could not find or open Codex App.\nChecked com.openai.codex, Codex.app and ChatGPT.app."));
+  log(status("info", "Open Codex App to use this service."));
   log(status("info", "Download it from https://openai.com/codex"));
   return false;
 }

@@ -64,7 +64,7 @@ for (const mode of ["pending", "default-on", "removed", "timeout", "write-failur
       assert.match(await response.text(), /startup fixture response/);
     };
     const cold = start();
-    await until(() => cold.output().includes("Ready       Core service available"), "cold Ready");
+    await until(() => cold.output().includes("Ready       Local service ready"), "cold Ready");
     await core();
     if (mode === "pending") {
       await until(() => cold.output().includes("Compression fixture probe received"), "probe");
@@ -73,7 +73,7 @@ for (const mode of ["pending", "default-on", "removed", "timeout", "write-failur
       await until(() => cold.output().includes("Enabled Codex local history compression"), "compression setup");
     } else if (mode === "write-failure") await until(() => cold.output().includes("Optional Codex history compression setup was skipped"), "optional warning");
     const reuse = start();
-    await until(() => reuse.output().includes("Ready       Using the existing CCDX adapter"), "reuse Ready");
+    await until(() => reuse.output().includes("Ready       Using the running service"), "reuse Ready");
     if (mode === "timeout") {
       assert.equal(reuse.child.exitCode, null);
       await core();

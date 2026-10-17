@@ -4,13 +4,14 @@ import { userSettingsPath } from "./user-settings.mjs";
 import { readBoundedFileSync } from "./bounded-file.mjs";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { withFileLockSync } from "./lock.mjs";
+import { providerRegistry } from "./provider-registry.mjs";
 
 export function providerSettingsPath(options = {}) {
   return path.join(path.dirname(userSettingsPath(options)), "providers.json");
 }
 const invalid = () => Object.assign(new Error("Provider selection is invalid; review providers.json before starting ccdx. The existing file was preserved"), { code: "ccdx_provider_selection_invalid" });
 function checked(value) {
-  if (!value || value.version !== 1 || !["github", "m365"].includes(value.codex)) throw invalid();
+  if (!value || value.version !== 1 || !providerRegistry.get(value.codex)?.codex) throw invalid();
   if (value.m365 !== undefined && (!value.m365 || typeof value.m365 !== "object"
     || ["model", "auto_review_model"].some(key => typeof value.m365[key] !== "string" || !/^gpt-[\w.-]{1,120}$/.test(value.m365[key])))) throw invalid();
   if (value.codex === "m365" && !value.m365) throw invalid();

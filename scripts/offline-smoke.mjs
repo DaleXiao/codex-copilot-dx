@@ -77,7 +77,7 @@ try {
   const dashboard = await fetch(`${baseUrl}/`);
   assert.equal(dashboard.status, 200);
   assert.match(dashboard.headers.get("content-type"), /^text\/html/);
-  assert.match(await dashboard.text(), /CCDX · Local dashboard/);
+  assert.match(await dashboard.text(), /CCDX · Dashboard/);
   const themeScript = await fetch(`${baseUrl}/theme.js`);
   assert.equal(themeScript.status, 200);
   assert.match(await themeScript.text(), /ccdx\.dashboard\.theme/);

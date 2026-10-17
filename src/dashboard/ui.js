@@ -128,11 +128,11 @@ function buildAnimationOptions(data) {
     const name = document.createElement("span");
     name.className = "theme-name";
     const label = document.createElement("span");
-    localize(label, "{index} {theme}", { index: String(index + 1).padStart(2, "0"), theme: phrase(theme.label) });
+    localize(label, "index_theme", { index: String(index + 1).padStart(2, "0"), theme: phrase(theme.label) });
     name.append(label);
     if (theme.default) {
       const marker = document.createElement("small");
-      localize(marker, "DEFAULT");
+      localize(marker, "default");
       name.append(marker);
     }
     const preview = document.createElement("span");
@@ -154,8 +154,8 @@ function buildAnimationOptions(data) {
 
 function animationNote(data) {
   return data.disabled_by_environment
-    ? "Disabled by CCDX_TERMINAL_ANIMATION; saved choice applies after override removal and next start."
-    : "Saved choice applies to the running terminal.";
+    ? "disabled_by_ccdx_terminal_animation_saved_choice_applies_after_o"
+    : "saved_choice_applies_to_the_running_terminal";
 }
 
 function loadAnimation(options) {
@@ -181,7 +181,7 @@ function applyAnimation(data, { changed } = {}) {
 }
 
 function updateAnimationState() {
-  text("animation-state", "CURRENT {theme}{unsaved}", { theme: phrase(savedAnimation.toUpperCase()), unsaved: selectedAnimation !== savedAnimation ? phrase(" / UNSAVED") : "" });
+  text("animation-state", "current_theme_unsaved", { theme: phrase(savedAnimation.toUpperCase()), unsaved: selectedAnimation !== savedAnimation ? phrase("unsaved") : "" });
 }
 
 async function saveAnimation() {
@@ -190,7 +190,7 @@ async function saveAnimation() {
   animationSaving = true;
   dashboardRefresh.invalidate("animation");
   button.disabled = true;
-  text("animation-note", "Saving…");
+  text("animation-note", "saving");
   try {
     const response = await fetch("/_ccdx/ui/animation", {
       method: "POST",
@@ -204,7 +204,7 @@ async function saveAnimation() {
     updateAnimationState();
     text("animation-note", animationNote(data));
   } catch (error) {
-    text("animation-note", "Not saved / {error}", { error: String(error.message || error).slice(0, 150) });
+    text("animation-note", "not_saved_error", { error: String(error.message || error).slice(0, 150) });
   } finally {
     animationSaving = false;
     button.disabled = selectedAnimation === savedAnimation;
@@ -250,7 +250,7 @@ function syncUsageProviders() {
   if (selector.dataset.providers === signature) return;
   selector.dataset.providers = signature;
   selector.replaceChildren();
-  const all = document.createElement("option");all.value = "";localize(all, "All providers");selector.append(all);
+  const all = document.createElement("option");all.value = "";localize(all, "all_providers");selector.append(all);
   for (const [id, name] of entries) { const option = document.createElement("option");option.value = id;option.textContent = name;selector.append(option); }
   selector.value = entries.has(selected) ? selected : "";
 }
@@ -263,27 +263,30 @@ function chooseProvider(id) {
   dashboardRefresh.invalidate("models", { clear: true });
   const previous = modelSnapshots.get(id);
   if (previous) applyModels(previous, { changed: true });
-  else { emptyTable("live-models-body", 6, "Reading provider catalog…");text("models-note", "Reading provider catalog…"); }
+  else { emptyTable("live-models-body", 6, "reading_provider_catalog");text("models-note", "reading_provider_catalog"); }
   element("live-models-body").setAttribute("aria-labelledby", `model-provider-${id}`);
   void loadModels();
 }
 
 function applyProviders(data, { changed }) {
   const wasInitialized = providerEntries.length > 0, previousSelection = selectedProvider;
+  const choices = entries => JSON.stringify(entries.map(source => [source.id, source.name, source.generation, source.selection]));
+  const sourceChoicesChanged = choices(providerEntries) !== choices(data.providers);
   let reloadModels = false;
   const previous = new Map(providerEntries.map(entry => [entry.id, JSON.stringify([entry.generation, entry.auth?.account])]));
   providerEntries = data.providers;
+  if (sourceChoicesChanged) window.dispatchEvent(new CustomEvent("ccdx:providers"));
   for (const [id] of modelSnapshots) {
     const provider = providerEntries.find(entry => entry.id === id);
     if (!provider) {
       modelSnapshots.delete(id);
-      if (id === selectedProvider) { reloadModels = true;dashboardRefresh.invalidate("models", { clear: true });emptyTable("live-models-body", 6, "Reading provider catalog…"); }
+      if (id === selectedProvider) { reloadModels = true;dashboardRefresh.invalidate("models", { clear: true });emptyTable("live-models-body", 6, "reading_provider_catalog"); }
     }
   }
   for (const provider of providerEntries) {
     if (previous.has(provider.id) && previous.get(provider.id) !== JSON.stringify([provider.generation, provider.auth?.account])) {
       modelSnapshots.delete(provider.id);
-      if (provider.id === selectedProvider) { reloadModels = true;dashboardRefresh.invalidate("models", { clear: true });emptyTable("live-models-body", 6, "Reading provider catalog…"); }
+      if (provider.id === selectedProvider) { reloadModels = true;dashboardRefresh.invalidate("models", { clear: true });emptyTable("live-models-body", 6, "reading_provider_catalog"); }
     }
   }
   if (changed || dashboardRefresh.state("auth").error) renderProviders(data);
@@ -326,9 +329,9 @@ function applyModels(data, { changed }) {
         model.reasoning_efforts === null || model.reasoning_efforts === undefined ? "—" : model.reasoning_efforts.join(" / ") || "—",
         model.preview ? "preview" : model.state || "listed"], { labels: [5] }));
     }
-    if (!data.models.length) emptyTable("live-models-body", 6, "No models advertised.");
+    if (!data.models.length) emptyTable("live-models-body", 6, "no_models_advertised");
   }
-  text("models-note", "{selectable} selectable / {advertised} advertised / {host} / {time}", { selectable: number(data.selectable), advertised: number(data.advertised), host: data.upstream_host, time: data.checked_at ? new Date(data.checked_at).toLocaleTimeString() : phrase("Unknown") });
+  text("models-note", "selectable_selectable_advertised_advertised_host_time", { selectable: number(data.selectable), advertised: number(data.advertised), host: data.upstream_host, time: data.checked_at ? new Date(data.checked_at).toLocaleTimeString() : phrase("unknown") });
 }
 
 async function loadUsage() { return dashboardRefresh.refresh("usage", { force: true }); }
@@ -343,8 +346,8 @@ async function readDashboard(url, { signal, timeout = 15000, source } = {}) {
 
 function refreshTime(target, state) {
   const time = state.updatedAt === null ? null : new Date(state.updatedAt).toLocaleTimeString();
-  if (state.error) localize(target, time ? "Update failed / last {time}" : "Update failed", { time });
-  else if (time) localize(target, "Updated {time}", { time });
+  if (state.error) localize(target, time ? "update_failed_last_time" : "update_failed", { time });
+  else if (time) localize(target, "updated_time", { time });
 }
 
 const timestamps = new Map();
@@ -375,7 +378,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       },
       apply: render,
       state: state => {
-        text("connection", state.pending && !state.value ? "READING" : state.error ? "UNAVAILABLE" : "SERVICE REACHABLE");
+        text("connection", state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable");
         element("connection").className = `badge ${state.pending ? "neutral" : state.error ? "bad" : "good"}`;
         if (state.error) refreshTime(element("updated"), state);
         for (const node of timestamps.get("status")) refreshTime(node, state);
@@ -387,8 +390,8 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       apply: applyProviders,
       state: state => {
         if (state.error) {
-          if (state.value) localize(element("auth-account"), "Update failed / last {time}", { time: new Date(state.updatedAt).toLocaleTimeString() });
-          else text("auth-account", "UNAVAILABLE");
+          if (state.value) localize(element("auth-account"), "update_failed_last_time", { time: new Date(state.updatedAt).toLocaleTimeString() });
+          else text("auth-account", "unavailable_eb0be");
         }
         for (const node of timestamps.get("auth")) refreshTime(node, state);
       },
@@ -397,7 +400,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       visible: () => providerEntries.length > 0 && element("upstream-models").open && !element("upstream-models").closest("[hidden]"),
       variant: () => selectedProvider,
       load: async ({ signal, variant }) => {
-        if (!variant) throw new Error("Reading provider catalog…");
+        if (!variant) throw new Error("reading_provider_catalog");
         const data = await readDashboard(`/_ccdx/ui/models/live?provider=${encodeURIComponent(variant)}`, { signal, source: ["live", "catalog"] });
         if (!Array.isArray(data.models) || data.models.some(model => !model || typeof model.id !== "string" || !Array.isArray(model.endpoints))) throw new Error("Invalid model snapshot");
         return { ...data, provider: variant };
@@ -406,14 +409,14 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       apply: applyModels,
       state: state => {
         element("refresh-models").disabled = Boolean(state.pending);
-        text("models-state", state.pending ? "CHECKING LIVE" : state.error ? "LIVE LOOKUP FAILED" : state.value?.source === "catalog" ? "CATALOG SNAPSHOT" : "LIVE SNAPSHOT");
+        text("models-state", state.pending ? "checking_live" : state.error ? "live_lookup_failed" : state.value?.source === "catalog" ? "catalog_snapshot" : "live_snapshot");
         if (state.error) {
           const message = String(state.error.message || state.error).slice(0, 240);
           const httpError = /^Live model lookup failed \(HTTP (\d{3})\)\. Run ccdx models for details\.$/.exec(message);
-          if (httpError) text("models-note", "Live model lookup failed (HTTP {status}). Run ccdx models for details.", { status: httpError[1] });
+          if (httpError) text("models-note", "live_model_lookup_failed_http_status_run_ccdx_models_for_details", { status: httpError[1] });
           else text("models-note", message);
         }
-        if (state.error && !modelSnapshots.has(selectedProvider)) emptyTable("live-models-body", 6, "No catalog available.");
+        if (state.error && !modelSnapshots.has(selectedProvider)) emptyTable("live-models-body", 6, "no_catalog_available");
         for (const node of timestamps.get("models")) refreshTime(node, state);
       },
     },
@@ -439,11 +442,11 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       state: state => {
         element("refresh-usage").disabled = Boolean(state.pending);
         if (element("usage-provider")) element("usage-provider").disabled = Boolean(state.pending);
-        if (state.pending) text("usage-state", "READING LOG");
+        if (state.pending) text("usage-state", "reading_log");
         else if (state.error) {
-          text("usage-state", "LOG UNAVAILABLE");
-          if (element("usage-analytics").open) text("analytics-note", "Analytics unavailable / refresh Usage to retry.");
-          if (!state.value) emptyTable("usage-body", 7, "No usage summary available.");
+          text("usage-state", "log_unavailable");
+          if (element("usage-analytics").open) text("analytics-note", "analytics_unavailable_refresh_usage_to_retry");
+          if (!state.value) emptyTable("usage-body", 7, "no_usage_summary_available");
         } else if (state.value) renderUsageState();
         for (const node of timestamps.get("usage")) refreshTime(node, state);
       },
@@ -456,7 +459,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       apply: applyAnimation,
       state: state => {
         if (state.error) {
-          text("animation-state", "UNAVAILABLE");
+          text("animation-state", "unavailable_eb0be");
           text("animation-note", String(state.error.message || state.error).slice(0, 180));
         }
         for (const node of timestamps.get("animation")) refreshTime(node, state);
@@ -468,7 +471,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
 const autoRefreshKey = "ccdx.dashboard.autoRefresh";
 const updateAutoRefresh = () => {
   element("auto-refresh").setAttribute("aria-pressed", String(dashboardRefresh.automatic));
-  text("auto-refresh", dashboardRefresh.automatic ? "Auto refresh / ON" : "Auto refresh / OFF");
+  text("auto-refresh", dashboardRefresh.automatic ? "auto_refresh_on" : "auto_refresh_off");
 };
 let automatic = true;
 try { automatic = localStorage.getItem(autoRefreshKey) !== "off"; } catch { /* Keep the default when browser storage is unavailable. */ }

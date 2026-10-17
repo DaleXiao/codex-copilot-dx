@@ -26,7 +26,7 @@ export function startupCheck(kind, name, detail) {
 }
 
 export function startupReady({ baseUrl, commandName = "ccdx", reused = false } = {}) {
-  return ["", startupCheck("ok", "Ready", reused ? "Using the existing CCDX adapter" : "Core service available"), "",
+  return ["", startupCheck("ok", "Ready", reused ? "Using the running service" : "Local service ready"), "",
     `Web UI  ${baseUrl}`, `Help    ${commandName} help`, ...(!reused ? ["Stop    Ctrl+C"] : []), ""].join("\n");
 }
 
@@ -40,15 +40,15 @@ export function startupLogger(name, output = console.log) {
 }
 
 export function predictionStartupCheck(prediction) {
-  if (!prediction?.configured) return startupCheck("info", "Prediction", "Off");
+  if (!prediction?.configured) return startupCheck("info", "Suggestions", "Off");
   const environment = prediction.environment?.status;
   const problem = ["unavailable", "needs_service_restart", "needs_app_relaunch"].includes(environment);
   let detail = prediction.bridge !== "running" ? prediction.bridge === "recovering" ? "Bridge recovering" : "Bridge unavailable"
     : prediction.active === false ? "Paused; trust and route retained"
-    : `Running; App route ${prediction.launch_route === "verified" ? "verified" : prediction.launch_route === "persisted" ? "saved, not verified" : "not verified"}; suggestion unchecked`;
+    : "Running; suggestion display not verified";
   if (problem) detail += environment === "needs_service_restart" ? "; restart CCDX" : environment === "needs_app_relaunch" ? "; relaunch Codex" : "; environment unavailable";
   const warning = prediction.bridge !== "running" || problem || prediction.launch_route === "unverified";
-  const lines = [startupCheck(warning ? "warn" : "info", "Prediction", detail)];
+  const lines = [startupCheck(warning ? "warn" : "info", "Suggestions", detail)];
   if (prediction.bridge !== "running" && prediction.reason) lines.push(startupCheck("warn", "Reason", prediction.reason));
   if (warning) lines.push(startupCheck("info", "Details", "ccdx prediction status"));
   return lines.join("\n");
@@ -64,16 +64,24 @@ export function providerStartupSummary(data = {}) {
   const catalog = (name, value) => `${name} ${value.models ?? value.total} (${value.source})`;
   const m365State = { disabled: "off", unsupported: "unsupported", checking: "checking", idle: "not checked", unavailable: "unavailable", ready: "ready" }[ms?.state] || "unknown";
   const count = Number(githubFound) + Number(m365Found);
-  const catalogs = `${count} catalog${count === 1 ? "" : "s"} found / ${githubFound ? catalog("GitHub", github) : github ? "GitHub not discovered" : "GitHub not checked"}; ${m365Found ? `${catalog("M365", ms.models)}${ms.state !== "ready" ? `, ${m365State}` : ""}` : `M365 ${m365State}`}`;
-  const states = { configured: "configured", partially_preserved: "partly configured; custom settings kept", preserved: "custom/managed settings kept", not_installed: "not installed", configuration_unavailable: "config unreadable", not_configured: "not checked" };
+  const sourceLines = [`${count} source${count === 1 ? "" : "s"} with model lists`,
+    githubFound ? catalog("GitHub", github) : github ? "GitHub not discovered" : "GitHub not checked",
+    m365Found ? `${catalog("M365", ms.models)}${ms.state !== "ready" ? `, ${m365State}` : ""}` : `M365 ${m365State}`];
+  const catalogs = `${sourceLines[0]} / ${sourceLines.slice(1).join("; ")}`;
+  const states = { configured: "configured", restored: "settings restored", partially_preserved: "partly configured; custom settings kept", preserved: "custom/managed settings kept", not_installed: "not installed", configuration_unavailable: "config unreadable", not_configured: "not checked" };
   const client = id => states[ms?.claude?.clients?.[id]] || "not checked";
   const gatewayReason = ms?.claude?.reason === "m365_no_claude_models" ? "no Claude models" : m365State;
-  const gateway = ms?.claude?.gateway === "running" ? "gateway running" : `gateway off (${gatewayReason})`;
+  const gateway = ms?.claude?.gateway === "running" ? "local service running" : `local service off (${gatewayReason})`;
   const claude = `Code: ${client("code")} / App: ${client("app")} / ${gateway}`;
-  return { catalogs, claude, warning: Object.values(ms?.claude?.clients || {}).includes("configuration_unavailable") };
+  const shortStates = { configured: "set", restored: "restored", partially_preserved: "partial", preserved: "custom kept", not_installed: "not installed", configuration_unavailable: "unreadable" };
+  return { catalogs, claude, sourceLines, claudeLines: [`Claude Code: ${client("code")}`, `Claude App: ${client("app")}`, gateway],
+    compactSources: [`Lists ${count} / ${githubFound ? catalog("GitHub", github) : "GitHub not checked"}`, m365Found ? catalog("M365", ms.models) : `M365 ${m365State}`],
+    compactClaude: [`Code: ${shortStates[ms?.claude?.clients?.code] || "unchecked"} / App: ${shortStates[ms?.claude?.clients?.app] || "unchecked"}`,
+      ms?.claude?.gateway === "running" ? "Claude service: running" : `Claude service: off (${gatewayReason})`],
+    warning: Object.values(ms?.claude?.clients || {}).includes("configuration_unavailable") };
 }
 
 export function providerStartupChecks(data) {
   const summary = providerStartupSummary(data);
-  return `${startupCheck("info", "Providers", summary.catalogs)}\n${startupCheck(summary.warning ? "warn" : "info", "Claude", summary.claude)}`;
+  return `${startupCheck("info", "Sources", summary.catalogs)}\n${startupCheck(summary.warning ? "warn" : "info", "Claude", summary.claude)}`;
 }

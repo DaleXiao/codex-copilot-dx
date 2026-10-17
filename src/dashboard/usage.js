@@ -20,17 +20,17 @@
       if (total.requests > 0) {
         body.append(tableRow(usageValues(total), { total: true }));
         for (const row of rows) body.append(tableRow(usageValues(row)));
-      } else { emptyTable("usage-body", 7, "No usage records."); }
+      } else { emptyTable("usage-body", 7, "no_usage_records"); }
       element("clear-usage-day").hidden = !day;
-      text("usage-state", day ? day.date : "LOCAL LOG");
-      text("usage-note", "{records} records / {shown} of {models} models shown{day}", {
+      text("usage-state", day ? day.date : "local_log");
+      text("usage-note", "records_records_shown_of_models_models_shown_day", {
         records: number(total.requests), shown: number(rows.length), models: number(day ? rows.length : usageData.model_count),
-        day: day ? phrase(" / {zone} / {model}", { zone: usageData.analytics.time_zone, model: model || phrase("All models") }) : "",
+        day: day ? phrase("zone_model", { zone: usageData.analytics.time_zone, model: model || phrase("all_models") }) : "",
       });
     }
     
     function renderUsageState() {
-      text("usage-state", selectedUsageDate && usageData.analytics?.days.some(day => day.date === selectedUsageDate) ? selectedUsageDate : "LOCAL LOG");
+      text("usage-state", selectedUsageDate && usageData.analytics?.days.some(day => day.date === selectedUsageDate) ? selectedUsageDate : "local_log");
     }
     
     function analyticsPoint(day, model) {
@@ -48,11 +48,11 @@
       button.type = "button";
       button.disabled = !day.available;
       button.setAttribute("aria-pressed", String(day.date === selectedUsageDate));
-      const description = !day.available ? phrase("no retained history")
-        : phrase("{calls} recorded calls / input {input} / output {output} / cached {cached} (included in input){partial}", {
-          calls: number(point.requests), input: number(point.input_tokens), output: number(point.output_tokens), cached: number(point.cache_read_tokens), partial: point.tokens_partial ? phrase(" / partial token counts") : "",
+      const description = !day.available ? phrase("no_retained_history")
+        : phrase("calls_recorded_calls_input_input_output_output_cached_cached_inc", {
+          calls: number(point.requests), input: number(point.input_tokens), output: number(point.output_tokens), cached: number(point.cache_read_tokens), partial: point.tokens_partial ? phrase("partial_token_counts") : "",
         });
-      for (const attribute of ["title", "aria-label"]) localize(button, "{date} / {description}", { date: day.date, description }, attribute);
+      for (const attribute of ["title", "aria-label"]) localize(button, "date_description", { date: day.date, description }, attribute);
       button.addEventListener("click", () => selectUsageDay(day.date));
       return button;
     }
@@ -92,7 +92,7 @@
         return metric === "tokens" ? point.input_tokens + point.output_tokens : point.requests;
       };
       const peak = Math.max(1, ...days.map(value));
-      text("activity-scale", "{metric} / PEAK {peak}", { metric: phrase(metric === "tokens" ? "INPUT + OUTPUT" : "RECORDED CALLS"), peak: number(peak === 1 && days.every((day) => value(day) === 0) ? 0 : peak) });
+      text("activity-scale", "metric_peak_peak", { metric: phrase(metric === "tokens" ? "input_output" : "recorded_calls"), peak: number(peak === 1 && days.every((day) => value(day) === 0) ? 0 : peak) });
       const calendar = element("activity-calendar");
       calendar.replaceChildren();
       const offset = (new Date(`${days[0].date}T00:00:00Z`).getUTCDay() + 6) % 7;
@@ -122,12 +122,12 @@
         button.dataset.level = String(count > 0 ? Math.min(4, Math.ceil(count / peak * 4)) : 0);
         calendar.append(button);
       }
-      text("analytics-note", "{zone} / {from} — {to} / retained history starts {first}; oldest day may be partial.{excluded}{limit}", {
+      text("analytics-note", "zone_from_to_retained_history_starts_first_oldest_day_may_be_par", {
         zone: analytics.time_zone, from: daily[0].date, to: analytics.to, first: analytics.first_date || phrase("unknown"),
-        excluded: analytics.undated_records ? phrase(" {count} records with invalid/future timestamps excluded.", { count: number(analytics.undated_records) }) : "",
-        limit: analytics.models_truncated ? phrase(" Model filters limited to 100; all-model totals include the remainder.") : "",
+        excluded: analytics.undated_records ? phrase("count_records_with_invalid_future_timestamps_excluded", { count: number(analytics.undated_records) }) : "",
+        limit: analytics.models_truncated ? phrase("model_filters_limited_to_100_all_model_totals_include_the_remain") : "",
       });
-      text("analytics-selection", selectedUsageDate ? "Selected {date} / {model}: totals in the Usage table above / All history resets the table." : "Select a day for model totals. Calls are usage records, not messages or time. Hatched cells: no retained history; empty cells: zero recorded calls.", { date: selectedUsageDate, model: model || phrase("All models") });
+      text("analytics-selection", selectedUsageDate ? "selected_date_model_totals_in_the_usage_table_above_all_history_" : "select_a_day_for_model_totals_calls_are_usage_records_not_messag", { date: selectedUsageDate, model: model || phrase("all_models") });
     }
     
     function updateAnalyticsModels() {
@@ -138,7 +138,7 @@
         const option = document.createElement("option");
         option.value = model;
         if (model) option.textContent = model;
-        else localize(option, "All models");
+        else localize(option, "all_models");
         select.append(option);
       }
       select.value = previous;
@@ -154,7 +154,7 @@
         if (data.analytics) renderAnalytics();
       }
       if (data.analytics) {
-        text("analytics-updated", "Updated {time}", { time: new Date().toLocaleTimeString() });
+        text("analytics-updated", "updated_time", { time: new Date().toLocaleTimeString() });
       }
     }
     return { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay, usageValues, get data() { return usageData; }, get selectedDate() { return selectedUsageDate; } };

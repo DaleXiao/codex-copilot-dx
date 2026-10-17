@@ -110,3 +110,29 @@ test("missing cache telemetry stays unknown rather than fabricating a zero hit r
   assert.equal(record.usage.total_tokens, 12);assert.equal(usageCacheHitRate(record.usage), null);
   assert.equal(buildMessagesUsageRecord({ usage: {} }), null);
 });
+
+test("Claude timeout and count_tokens preserve status facts; cancellation is an info notice", async t => {
+  const logs = [];
+  const g = await gateway(t, async (_body, { signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+  }), { env: { CCDX_UPSTREAM_TIMEOUT_MS: "30" }, log: (...args) => logs.push(args) });
+  const timedOut = await g.request();assert.equal(timedOut.status, 504);await timedOut.text();
+  const counts = await fetch(`http://127.0.0.1:${g.server.port}/v1/messages/count_tokens`, { method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": key }, body: JSON.stringify({ model: "claude-opus-5.5", messages: [] }), signal: AbortSignal.timeout(3000) });
+  assert.equal(counts.status, 504);await counts.text();assert.equal(g.server.snapshot().failed, 1);
+  assert.ok(logs.every(([level, text]) => level === "warn" && text.includes("upstream_timeout")));
+  const cancelled = await gateway(t, async (_body, { signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+  }), { log: (...args) => logs.push(args) });
+  const controller = new AbortController();
+  const pending = fetch(`http://127.0.0.1:${cancelled.server.port}/v1/messages`, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key },
+    body: JSON.stringify({ model: "claude-opus-5.5", messages: [] }), signal: controller.signal });
+  const deadline = Date.now() + 3000;
+  while (!cancelled.calls.length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(cancelled.calls.length, 1);controller.abort();await assert.rejects(pending, { name: "AbortError" });
+  while (cancelled.server.snapshot().active && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(cancelled.server.snapshot().cancelled, 1);assert.equal(cancelled.server.snapshot().failed, 0);
+  assert.equal(logs.at(-1)[0], "info");
+  const recent = cancelled.server.snapshot().performance.recent_requests.at(-1);
+  assert.equal(recent.http_status, 499);assert.equal(recent.origin, "client_disconnect");
+});

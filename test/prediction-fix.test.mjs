@@ -145,5 +145,5 @@ test("actual prediction fix CLI uses only the local management route and reports
   }
   assert.equal(calls, 4);
   writePredictionSettings({ version: 1, enabled: false }, { ...options, env });
-  assert.match((await run()).stdout, /nothing was enabled or changed/);assert.equal(calls, 4);
+  assert.match((await run()).stdout, /Nothing changed/);assert.equal(calls, 4);
 });

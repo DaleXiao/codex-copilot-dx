@@ -121,6 +121,7 @@ function dashboardProviders(providerStateFn, authStatusFn) {
     const label = value => safeText(redactDiagnosticText(value || ""), 160);
     const code = value => typeof value === "string" && /^[a-z0-9_:-]{1,80}$/.test(value) ? value : null;
     return { id: entry.id, name: label(entry.name) || entry.id, enabled: entry.enabled === true,
+      selection: { codex: entry.selection?.codex === true, models_required: entry.selection?.models_required === true },
       state: code(entry.state) || "unknown", reason: code(entry.reason), generation: finite(entry.generation),
       auth: { state: code(auth.state) || "unknown", account: label(auth.account), token_cached: auth.token_cached === true,
         expires_in_ms: finite(auth.expires_in_ms), checked_at: label(auth.checked_at) || null },

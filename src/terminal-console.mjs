@@ -15,7 +15,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
   timers = { setTimeout, clearTimeout }, now = Date.now } = {}) {
   let running = false, timer = null, lines = 0, active = 0, frame = 0, lastRead = 0, data = {};
   let notices = 0, lastNotice = "", lastPrintedNotice = "", previous = [];
-  let content = [], dirty = true;
+  let content = [], dirty = true, readFailed = false, updatedAt = null, fits = true;
   let current = { theme: DEFAULT_TERMINAL_ANIMATION_THEME, terminal_animation_enabled: true };
   let frameDelay = 1000;
   const tty = output.isTTY === true && errorOutput.isTTY === true && (!env.CI || flagOff(env.CI)) && env.TERM !== "dumb";
@@ -32,19 +32,29 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
   };
   const numbers = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
   const compact = value => numbers.format(Number(value) || 0);
-  function table(width, usage, requests, inferenceActive, sum) {
+  const wrap = (value, width) => {
+    const rows = [];let row = "";
+    for (const word of terminalCell(value, { fallback: "" }).split(/\s+/)) {
+      if (row && displayWidth(`${row} ${word}`) > width) { rows.push(row);row = ""; }
+      row += `${row ? " " : ""}${word}`;
+    }
+    if (row) rows.push(clip(row, width));return rows;
+  };
+  function table(width, usage, requests, inferenceActive, sum, compactTitle = false) {
     const left = Math.floor((width - 3) / 2), right = width - 3 - left;
     const cell = (label, value, size) => {
-      const number = value === undefined ? "" : compact(value), inner = size - 2;
+      const number = value === undefined ? "" : updatedAt === null && readFailed ? "—" : compact(value), inner = size - 2;
       const text = clip(label, Math.max(0, inner - displayWidth(number) - (number ? 1 : 0)));
       return ` ${text}${" ".repeat(Math.max(0, inner - displayWidth(text) - displayWidth(number)))}${number} `;
     };
     const row = (a, b) => `│${a}│${b}│`;
     const rule = (a, b, c) => `${a}${"─".repeat(left)}${b}${"─".repeat(right)}${c}`;
-    const usageRows = [["Records", usage.records || 0], ["Input total", usage.input_tokens], ["Cache read", usage.cached_input_tokens],
-      ["Output", usage.output_tokens], ["Partial records", usage.partial_records || 0], ["", undefined]];
-    const requestRows = [["HTTP calls", requests], ["Active", inferenceActive], ["Completed", sum("completed")], ["Incomplete", sum("incomplete")], ["Failed", sum("failed")], ["Cancelled", sum("cancelled")]];
-    return [rule("┌", "┬", "┐"), row(cell("Usage / this run", undefined, left), cell("Inference", undefined, right)), rule("├", "┼", "┤"),
+    const usageRows = [[left < 23 ? "Records" : "Usage records", usage.records || 0], ["Input", usage.input_tokens], [left < 23 ? "Reused" : "Reused input", usage.cached_input_tokens],
+      ["Output", usage.output_tokens], ["Partial usage", usage.partial_records || 0], ["", undefined]];
+    const requestRows = [["Requests", requests], ["Active", inferenceActive], ["Completed", sum("completed")], ["Incomplete", sum("incomplete")], ["Failed", sum("failed")], ["Cancelled", sum("cancelled")]];
+    const title = compactTitle ? [`┌─ Usage ${"─".repeat(left - 8)}┬─ Inference ${"─".repeat(right - 12)}┐`]
+      : [rule("┌", "┬", "┐"), row(cell("Usage / this run", undefined, left), cell("Inference", undefined, right)), rule("├", "┼", "┤")];
+    return [...title,
       ...usageRows.map(([label, value], index) => row(cell(label, value ?? (label ? 0 : undefined), left), cell(...requestRows[index], right))), rule("└", "┴", "┘")];
   }
   function render() {
@@ -68,16 +78,29 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
       const requests = ["responses", "responses_compact", "messages"].reduce((total, key) => total + (routes[key]?.total || 0), 0);
       const inferenceActive = ["responses", "responses_compact", "messages"].reduce((total, key) => total + (routes[key]?.active || 0), 0);
       const providers = providerStartupSummary(data);
-      content = [`CCDX RUNNING / uptime ${Math.floor((data.uptime_ms || 0) / 60000)}m / ${baseUrl}`,
-        `Providers / ${providers.catalogs}`, `Claude / ${providers.claude}`].map(line => clip(line, width));
+      const heading = readFailed ? updatedAt === null ? "CCDX / No data received" : `CCDX / ${width < 80 ? "Previous data" : "Showing previous data / updated"} / ${new Date(updatedAt).toLocaleTimeString("en-GB")}`
+        : `CCDX RUNNING / uptime ${Math.floor((data.uptime_ms || 0) / 60000)}m / ${baseUrl}`;
+      content = [clip(heading, width)];
+      for (const group of [[`Sources / ${providers.catalogs}`, providers.sourceLines], [`Claude / ${providers.claude}`, providers.claudeLines]]) {
+        content.push(...(displayWidth(group[0]) <= width ? [group[0]] : (group[1] || [group[0]]).flatMap(line => wrap(line, width))));
+      }
       content.push(...table(width, usage, requests, inferenceActive, sum));
-      content.push(clip(`${notices} notices${lastNotice ? ` / latest: ${lastNotice}` : " / details in WebUI"}`, width));
+      content.push(clip(`${notices} notices${lastNotice ? ` · latest: ${lastNotice}` : " / details in WebUI"}`, width));
+      if (content.length + 1 >= (Number(output.rows) || 24)) {
+        const summaries = [...(providers.compactSources || ["Sources: not checked"]), ...(providers.compactClaude || ["Claude: not checked"])];
+        content = [clip(heading, width), ...summaries.flatMap(line => wrap(line, width)), ...table(width, usage, requests, inferenceActive, sum, true), content.at(-1)];
+      }
       dirty = false;
     }
     const body = [...content, `${motion} ${active ? "Working" : "Idle"}`];
+    fits = body.length < (Number(output.rows) || 24);
+    if (!fits) { frameDelay = 1000;return; }
     // Animation ticks update only the final line; data stays on its 1s cadence.
     let update = "";
-    if (!lines) update = `${body.map(line => clear + line).join("\n")}\r`;
+    if (lines && lines !== body.length) {
+      update = `${lines > 1 ? `\x1b[${lines - 1}A` : ""}\r\x1b[J`;lines = 0;previous = [];
+    }
+    if (!lines) update += `${body.map(line => clear + line).join("\n")}\r`;
     else for (let index = 0; index < body.length; index++) {
       if (body[index] === previous[index]) continue;
       const offset = body.length - 1 - index;
@@ -89,7 +112,11 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
   function tick() {
     if (!running) return;
     if (now() - lastRead >= 1000 || !lastRead) {
-      try { data = snapshot();current = { ...current, ...preferences() };if (!isTerminalAnimationTheme(current.theme)) current.theme = DEFAULT_TERMINAL_ANIMATION_THEME; } catch {}
+      try {
+        const next = snapshot(), nextPreferences = preferences();
+        data = next;current = { ...current, ...nextPreferences };readFailed = false;updatedAt = now();
+        if (!isTerminalAnimationTheme(current.theme)) current.theme = DEFAULT_TERMINAL_ANIMATION_THEME;
+      } catch { readFailed = true; }
       lastRead = now();
       dirty = true;
     }
@@ -97,7 +124,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
     timer = timers.setTimeout(tick, frameDelay);timer?.unref?.();
   }
   return {
-    get enabled() { return supported() && !verbose; },
+    get enabled() { return supported() && fits && !verbose; },
     start() { if (running) return;running = true;tick(); },
     beginRequest() { active++;dirty = true;let done = false;return () => { if (!done) { done = true;active = Math.max(0, active - 1);dirty = true; } }; },
     log(method, args) {
@@ -105,9 +132,10 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
       if (verbose) { (method === "error" || method === "warn" ? errorOutput : output).write(`${message}\n`);return; }
       if (method !== "error" && method !== "warn" && !/^\[(WARN|ERR)\]/.test(message.trim())) return;
       notices++;lastNotice = message.replace(/\s+/g, " ").slice(0, 240);dirty = true;
-      if (!supported() && lastNotice !== lastPrintedNotice) { errorOutput.write(`${lastNotice}\n`);lastPrintedNotice = lastNotice; }
+      if ((!supported() || !fits) && lastNotice !== lastPrintedNotice) { errorOutput.write(`${lastNotice}\n`);lastPrintedNotice = lastNotice; }
     },
-    snapshot() { return { notices, last_notice: lastNotice || null, mode: verbose ? "verbose" : supported() ? "status" : "plain" }; },
+    snapshot() { return { notices, last_notice: lastNotice || null, mode: verbose ? "verbose" : supported() && fits ? "status" : "plain",
+      data_state: readFailed ? updatedAt === null ? "unavailable" : "stale" : updatedAt === null ? "unknown" : "current", updated_at: updatedAt === null ? null : new Date(updatedAt).toISOString() }; },
     apply(value) { if (value.theme && value.theme !== current.theme) frame = 0;current = { ...current, ...value };lastRead = 0; },
     cleanup() { running = false;if (timer) timers.clearTimeout(timer);timer = null;if (lines) output.write("\n");lines = 0;output.off?.("resize", resized); },
   };

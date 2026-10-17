@@ -160,7 +160,7 @@ test("image CLI: base URLs configure the existing generation endpoint without ex
       const enabled = await runImageCommand({
         action: "enable", home, env: {}, output,
         prompt: async (question) => {
-          assert.match(question, /^API base URL or endpoint/);
+          assert.match(question, /^Image service URL/);
           return baseUrl;
         },
         promptSecret: async () => "secret-value", probeFetchImpl: offlineProbe,
@@ -193,7 +193,7 @@ test("image CLI: blank answers preserve an existing full endpoint, key and chose
     const enabled = await runImageCommand({
       action: "enable", home, env: {}, output: capture(),
       prompt: async (question) => {
-        assert.equal(question, `API base URL or endpoint [${endpoint}]: `);
+        assert.equal(question, `Image service URL [${endpoint}]: `);
         return "";
       },
       promptSecret: async () => "", fetchImpl: providerFetch, probeFetchImpl: offlineProbe,

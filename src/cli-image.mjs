@@ -219,7 +219,7 @@ export async function runImageCommand({
   const askSecret = promptSecret || ((question) => hiddenQuestion(input, output, question));
   output.write(`${commandName} enable-image\n`);
   output.write("Enter an HTTPS base URL (for example, https://api.example/v1) or a full /images/generations endpoint.\n");
-  const endpointAnswer = String(await ask(`API base URL or endpoint${current ? ` [${current.endpoint}]` : ""}: `) || "").trim();
+  const endpointAnswer = String(await ask(`Image service URL${current ? ` [${current.endpoint}]` : ""}: `) || "").trim();
   if (!endpointAnswer && !current?.endpoint) throw new Error("Image API base URL or endpoint is required");
   const endpoint = normalizeImageEndpoint(endpointAnswer || current.endpoint);
   const sameOrigin = current && new URL(endpoint).origin === new URL(current.endpoint).origin;

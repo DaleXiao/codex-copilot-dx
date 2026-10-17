@@ -116,7 +116,15 @@ export function savedAutoReviewModel(options = {}) {
 
 export function servicePreferences(options = {}) {
   const settings = readUserSettings({ ...options, strict: true });
-  return Object.fromEntries(SERVICE_FLAGS.map(key => [key, settings[key] !== false]));
+  return serviceFlags(settings);
+}
+const serviceFlags = settings => Object.fromEntries(SERVICE_FLAGS.map(key => [key, settings[key] !== false]));
+
+// One strict read gives each status update a coherent view; no stale cache.
+export function serviceSettingsSnapshot(options = {}) {
+  const settings = readUserSettings({ ...options, strict: true });
+  return { saved: serviceFlags(settings), theme: animationPreference(settings).theme,
+    historyLimit: historyLimitPreference(settings, options.env || process.env) };
 }
 
 export function writeServicePreference(key, value, options = {}) {
@@ -150,17 +158,22 @@ export function savedTerminalAnimationTheme(options = {}) {
 }
 
 export function terminalAnimationPreference({ env = process.env, home = os.homedir() } = {}) {
-  const savedTheme = savedTerminalAnimationTheme({ env, home });
+  return animationPreference(readUserSettings({ env, home }));
+}
+function animationPreference(settings) {
+  const savedTheme = isTerminalAnimationTheme(settings[TERMINAL_ANIMATION_KEY]) ? settings[TERMINAL_ANIMATION_KEY] : "";
   if (savedTheme) return { theme: savedTheme, source: "settings" };
   return { theme: DEFAULT_TERMINAL_ANIMATION_THEME, source: "default" };
 }
 
 export function responseHistoryLimitPreference({ env = process.env, home = os.homedir() } = {}) {
+  return historyLimitPreference(readUserSettings({ env, home }), env);
+}
+function historyLimitPreference(settings, env) {
   const environment = String(env.CCDX_RESPONSE_HISTORY_MAX_BYTES || "").trim();
   if (environment) {
     return { bytes: loadRuntimeConfig(env).responseHistoryMaxBytes, source: "environment" };
   }
-  const settings = readUserSettings({ env, home });
   const mib = settings[RESPONSE_HISTORY_MAX_MIB_KEY];
   if (Number.isSafeInteger(mib)) return { bytes: mib * MIB, mib, source: "settings" };
   return { bytes: RESPONSE_HISTORY_DEFAULT_MIB * MIB, mib: RESPONSE_HISTORY_DEFAULT_MIB, source: "default" };

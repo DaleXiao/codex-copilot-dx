@@ -159,9 +159,14 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
     ...(terminalOutcomes ? [status("info", `Model outcomes: ${count(terminalOutcomes.completed)} completed, ${count(terminalOutcomes.incomplete)} incomplete, ${count(terminalOutcomes.failed)} failed, ${count(terminalOutcomes.cancelled)} cancelled, ${count(terminalOutcomes.unknown)} without terminal`)] : []),
     status("info", `Admission: ${count(admission.activeRequests)} active, ${count(admission.queued)} queued, ${count(admission.rejected)} rejected, ${count(admission.timedOut)} timed out, wait avg ${latency(admission.waitMsAvg)}`),
     status("info", `Memory: RSS ${mebibytes(processStats.rss_bytes)}, heap ${mebibytes(processStats.heap_used_bytes)}`),
-    status("info", `History: ${mebibytes(history.bytes)} / ${mebibytes(limits.response_history_max_bytes)}, ${count(history.entries)} entries, ${count(history.evicted)} evicted ID markers`),
+    status("info", `Conversation buffer: ${mebibytes(history.bytes)} / ${mebibytes(limits.response_history_max_bytes)}, ${count(history.entries)} entries, ${count(history.evicted)} evicted ID markers`),
     status("info", `Image cache: ${count(images.cache_entries)} entries, ${cacheHitRate(images)} hits, ${mebibytes(images.cache_bytes)} / ${mebibytes(images.cache_max_bytes)}`),
   ];
+  const sourceRoutes = { ...data.stream_performance?.by_route, ...data.providers?.m365?.claude?.requests?.performance?.by_route };
+  for (const [route, metrics] of Object.entries(sourceRoutes)) for (const [source, stats] of Object.entries(metrics.by_provider || {})) {
+    const totals = stats.terminal_outcomes.totals;
+    lines.push(status("info", `Source ${source} / ${route}: ${count(stats.active)} active, ${count(totals.completed)} completed, ${count(totals.incomplete)} incomplete, ${count(totals.failed)} failed, ${count(totals.cancelled)} cancelled, ${count(totals.unknown)} unknown`));
+  }
   if (Number.isFinite(history.tree_count)) {
     const limit = Number(limits.response_history_max_bytes || history.maxBytes);
     const nearLimit = Number.isFinite(limit) && limit > 0 && history.bytes / limit >= 0.9;

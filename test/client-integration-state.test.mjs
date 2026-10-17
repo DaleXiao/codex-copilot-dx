@@ -33,3 +33,14 @@ test("escaped JSON errors provide decoded evidence without rewriting their respo
   assert.match(errorEvidenceText(raw), /用量已用完/); assert.ok(errorEvidenceText(raw).startsWith(raw));
   for (const value of ["ordinary error", "{bad\\u", "x".repeat(17000) + "\\u1234"]) assert.equal(errorEvidenceText(value), value);
 });
+
+test("error facts separate cancellation, timeout, access denial and unknown aborts", () => {
+  for (const [error, options, source, status] of [
+    [{ name: "AbortError" }, { reason: "client_closed" }, "cancelled", null],
+    [{ name: "AbortError" }, { reason: "upstream_timeout" }, "timeout", null],
+    [{ name: "AbortError" }, {}, "aborted", null],
+    [{ code: "HTTP_403", statusCode: 403 }, {}, "access_denied", 403],
+    [{ code: "HTTP_401", status: 401 }, {}, "authentication", 401],
+    [{ code: "ECONNRESET" }, {}, "network", null],
+  ]) { const detail = operationErrorDetails(error, options);assert.equal(detail.source, source);assert.equal(detail.status, status); }
+});

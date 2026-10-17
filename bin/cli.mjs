@@ -14,7 +14,7 @@ import { runInBackground } from "../src/startup.mjs";
 import { cliCommandName, cliHelp, parseAdapterAddressOptions, parseAdapterProbeOptions, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
 import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
-import { autoReviewModelPreference, autoReviewPreference, responseHistoryLimitPreference, terminalAnimationPreference, servicePreferences } from "../src/user-settings.mjs";
+import { autoReviewModelPreference, autoReviewPreference, responseHistoryLimitPreference, terminalAnimationPreference, servicePreferences, serviceSettingsSnapshot } from "../src/user-settings.mjs";
 import { formatLiveCopilotModels } from "../src/cli-models.mjs";
 import { runAuthCommand } from "../src/cli-auth.mjs";
 import { createProfileRuntime } from "../src/profile-runtime.mjs";
@@ -36,7 +36,7 @@ try {
   CLI = parseCliArgs(process.argv.slice(2));
 } catch (e) {
   console.error(e.message);
-  console.error(`Run ${CLI_NAME} --help for usage.`);
+  console.error(`Help: ${CLI_NAME} --help`);
   process.exit(2);
 }
 
@@ -88,9 +88,9 @@ if (CLI.command === "suggestion") {
   try {
     const { retirePredictionIntegration } = await import("../src/prediction-retirement.mjs");
     const result = retirePredictionIntegration({ dryRun: CLI.action === "status" });
-    console.log("The CCDX prediction panel has been retired and cannot be enabled.");
+    console.log("The old suggestion panel is no longer supported.");
     if (CLI.action === "status" && result.changed) console.log(`Legacy settings remain; run ${CLI_NAME} suggestion off to clean them up.`);
-    if (result.preserved) console.warn("Modified prediction settings were preserved.");
+    if (result.preserved) console.warn("Your edited suggestion settings were kept.");
     process.exit(0);
   } catch (error) {
     console.error(status("err", error.message));
@@ -292,8 +292,8 @@ const webUiUrl = `http://${ADAPTER_HOST === "::1" ? "[::1]" : "127.0.0.1"}:${ADA
 async function launchDashboard() {
   try {
     const result = await openDashboard(webUiUrl, { enabled: !CLI.noBrowser && servicePreferences().open_webui });
-    if (result.state === "unavailable") console.warn(startupCheck("warn", "WebUI", `Browser unavailable; open ${webUiUrl}`));
-  } catch (error) { console.warn(startupCheck("warn", "WebUI", error.message)); }
+    if (result.state === "unavailable") console.warn(startupCheck("warn", "Dashboard", `Could not open browser. Open ${webUiUrl}`));
+  } catch (error) { console.warn(startupCheck("warn", "Dashboard", error.message)); }
 }
 
 async function clientIntegrations() {
@@ -301,14 +301,14 @@ async function clientIntegrations() {
     const { createClientIntegration } = await import("../src/client-integration.mjs");
     clientIntegration = createClientIntegration({ port: ADAPTER_PORT, host: ADAPTER_HOST,
       configLog: startupLogger("Config"),
-      info: (message) => console.log(startupCheck("info", "Client", message)), warning: (message) => console.warn(startupCheck("warn", "Client", message)) });
+      info: (message) => console.log(startupCheck("info", "App", message)), warning: (message) => console.warn(startupCheck("warn", "App", message)) });
   }
   return clientIntegration;
 }
 
 if (LOGGING.filePath) {
-  console.log(status("info", `Debug log: ${LOGGING.filePath}`));
-  if (LOGGING.level === "debug") console.log(status("debug", "Debug logging enabled"));
+  console.log(status("info", `Details log: ${LOGGING.filePath}`));
+  if (LOGGING.level === "debug") console.log(status("debug", "Detailed logging on"));
 }
 
 async function reuseRunningAdapterIfAvailable() {
@@ -324,8 +324,8 @@ async function reuseRunningAdapterIfAvailable() {
   if (!running.ok) return false;
 
   const serviceStatus = readAdapterStatus({ host: ADAPTER_HOST, port: ADAPTER_PORT }).catch(() => null);
-  console.log(startupCheck("ok", "Adapter", `Using existing service at ${running.baseUrl}`));
-  console.log(startupCheck("info", "Auth", "Using existing service credentials; not rechecked"));
+  console.log(startupCheck("ok", "Service", `Using running service: ${running.baseUrl}`));
+  console.log(startupCheck("info", "Sign-in", "Using saved sign-in; not rechecked"));
   const { compressionSetup, imageEnabled, imageMcpSkipped } = await configureCodexClient();
 
   let predictionPacUrl = null;
@@ -352,7 +352,7 @@ async function reuseRunningAdapterIfAvailable() {
     onPredictionRoute: route => { launchRoute = route; }, log: startupLogger("App") });
   console.log(predictionStartupCheck({ configured: predictionConfigured, bridge: predictionPacUrl ? "running" : "unknown", launch_route: launchRoute }));
   console.log(startupCheck(imageEnabled && imageMcpSkipped ? "warn" : "info", "Images", imageEnabled
-    ? imageMcpSkipped ? "Client setup skipped; see warning above" : "Configured; provider not tested" : "Off"));
+    ? imageMcpSkipped ? "App setup skipped; see warning" : "Configured; not tested" : "Off"));
   console.log(providerStartupChecks((await serviceStatus)?.data));
   console.log(startupReady({ baseUrl: running.baseUrl, commandName: CLI_NAME, reused: true }));
   await launchDashboard();
@@ -396,9 +396,9 @@ try {
     try {
       const { inspectWindowsCommand } = await import("../src/windows-command.mjs");
       const command = inspectWindowsCommand({ repair: true });
-      if (command.changed) console.log(startupCheck("ok", "Command", "Windows command entry updated; use ccdx next time"));
+      if (command.changed) console.log(startupCheck("ok", "Command", "Windows command ready; use ccdx"));
       else if (command.status === "preserved") console.warn(startupCheck("warn", "Command", "Existing launcher preserved; use ccdx.cmd doctor to inspect it"));
-    } catch { console.warn(startupCheck("warn", "Command", "Optional command setup skipped; core startup will continue")); }
+    } catch { console.warn(startupCheck("warn", "Command", "Command setup skipped; service will start")); }
   }
   const updateNotice = runInBackground(printUpdateNotice);
   if (await reuseRunningAdapterIfAvailable()) {
@@ -429,11 +429,11 @@ try {
     log: (kind, message) => console.log(startupComplete ? status(kind, message) : startupCheck(kind, "M365", message)) });
   const m365Setup = runInBackground(() => providerRuntime.start());
   if (providerRuntime.selection().codex === "github") {
-    try { await ensureAuth({ log: startupLogger("Auth") }); }
-    catch (error) { if (!await m365Setup) throw error;console.warn(startupCheck("warn", "Auth", "GitHub authorization is unavailable; Microsoft 365 is independent. Check ccdx m365 status or switch")); }
+    try { await ensureAuth({ log: startupLogger("Sign-in") }); }
+    catch (error) { if (!await m365Setup) throw error;console.warn(startupCheck("warn", "Sign-in", "GitHub authorization is unavailable; Microsoft 365 is independent. Check ccdx m365 status or switch")); }
   } else {
     await m365Setup;
-    console.log(startupCheck("info", "Provider", "Codex uses the explicitly selected Microsoft 365 backup"));
+    console.log(startupCheck("info", "Source", "Codex source: Microsoft 365"));
   }
   profileRuntime = createProfileRuntime({ codexClient: defaultCopilotClient });
 
@@ -452,11 +452,11 @@ try {
   const terminalAnimationTheme = terminalAnimationPreference().theme;
   terminalConsole = createTerminalConsole({ baseUrl: webUiUrl, verbose: CLI.verbose === true || CLI.showRequestId === true || LOGGING.level === "debug",
     snapshot: () => activeServer?.ccdxSnapshot?.() || {},
-    preferences: () => ({ ...servicePreferences(), theme: terminalAnimationPreference().theme }) });
+    preferences: () => { const { saved, theme } = serviceSettingsSnapshot();return { ...saved, theme }; } });
   const serviceControl = createServiceControl({ providerRuntime, clientIntegration: earlyIntegration, terminal: terminalConsole });
   const codexModelCatalog = createCodexModelCatalog();
   activeServer = await startAdapter(ADAPTER_PORT, ADAPTER_HOST, {
-    log: startupLogger("Adapter"),
+    log: startupLogger("Service"),
     autoReviewModelResolver: () => autoReviewPreference(),
     codexClient: profileRuntime.codexClient,
     codexModelCatalog,
@@ -487,7 +487,7 @@ try {
     onPredictionRoute: route => clientIntegration?.launched(route), log: startupLogger("App") });
   console.log(predictionStartupCheck(clientIntegration?.snapshot().prediction));
   console.log(startupCheck(imageEnabled && imageMcpSkipped ? "warn" : "info", "Images", imageEnabled
-    ? imageMcpSkipped ? "Client setup skipped; see warning above" : "Configured; provider not tested" : "Off"));
+    ? imageMcpSkipped ? "App setup skipped; see warning" : "Configured; not tested" : "Off"));
   console.log(providerStartupChecks(activeServer.ccdxSnapshot?.()));
 
   // Periodically refresh the model list + endpoint cache so a long-running
@@ -510,18 +510,18 @@ try {
     if (shuttingDown) return;
     shuttingDown = true;
     LOGGING.setTerminalSink(null);terminalConsole?.cleanup();
-    console.log(`\n${status("wait", `Shutting down on ${signal}...`)}`);
+    console.log(`\n${status("wait", `Stopping: ${signal}`)}`);
     let exitCode = 0;
     try {
       if (modelRefreshTimer) clearInterval(modelRefreshTimer);
       await clientIntegration?.close();
       await providerRuntime?.close();
       const result = await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs });
-      if (result.forced) console.warn(status("warn", "Forced remaining adapter connections closed"));
+      if (result.forced) console.warn(status("warn", "Remaining service connections closed"));
       await flushUsageWrites();
     } catch (e) {
       exitCode = 1;
-      console.error(status("err", `Shutdown failed: ${e.message}`));
+      console.error(status("err", `Could not stop: ${e.message}`));
     } finally {
       await LOGGING.cleanup();
       process.exit(exitCode);

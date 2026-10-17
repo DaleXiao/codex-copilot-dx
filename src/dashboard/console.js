@@ -1,9 +1,9 @@
 (() => {
   const el = id => document.getElementById(id);
   const label = (node, key, values = {}) => globalThis.ccdxLanguage.set(node, key, values);
-  const titles = { overview: "Overview", codex: "Codex", claude: "Claude", models: "Model services", usage: "Usage and diagnostics", system: "System and settings" };
+  const titles = { overview: "overview", codex: "Codex", claude: "Claude", models: "model_services", usage: "usage_and_diagnostics", system: "system_and_settings" };
   let current = "overview", settings = null, settingsPending = false, stopped = false, timer = null, ticks = 0;
-  let sourceDirty = false, sourceGeneration = 0;
+  let sourceDirty = false, sourceGeneration = 0, modelsSource = null;
   let settingsReadAt = null;
   function navigate() {
     const route = location.hash.slice(1), next = Object.hasOwn(titles, route) ? route : "overview";
@@ -25,28 +25,55 @@
       ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15000) });
     const data = await response.json();if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);return data;
   }
-  const states = { immediate: "Effective now", terminal_unavailable: "Terminal animation unavailable in this output mode", next_start: "Next CCDX start", next_call: "Applies to new calls", needs_setup: "Setup required",
-    next_config_request: "Next configuration request; cached suggestions may remain", needs_app_relaunch: "Reopen the client to finish", needs_service_restart: "Restart CCDX to finish" };
+  const states = { immediate: "effective_now", terminal_unavailable: "terminal_animation_unavailable_in_this_output_mode", next_start: "next_ccdx_start", next_call: "applies_to_new_calls", needs_setup: "setup_required",
+    next_config_request: "next_configuration_request_cached_suggestions_may_remain", needs_app_relaunch: "reopen_the_client_to_finish", needs_service_restart: "restart_ccdx_to_finish" };
+  const selectedSource = () => providerEntries.find(source => source.id === el("source-provider").value);
+  const sourceReady = () => Boolean(selectedSource()) && (!selectedSource().selection.models_required || Boolean(el("source-model").value && el("source-review").value));
+  function syncSources() {
+    const selector = el("source-provider"), selected = sourceDirty ? selector.value : settings?.providers?.codex_provider || selector.value;
+    const entries = providerEntries.filter(source => source.selection?.codex);
+    const signature = JSON.stringify(entries.map(source => [source.id, source.name]));
+    if (selector.dataset.sources !== signature) {
+      selector.replaceChildren(...entries.map(source => {
+        const option = document.createElement("option");option.value = source.id;option.textContent = source.name;return option;
+      }));selector.dataset.sources = signature;
+    }
+    if (entries.some(source => source.id === selected)) selector.value = selected;
+    el("apply-source").disabled = settingsPending || !sourceReady();
+  }
+  window.addEventListener("ccdx:providers", () => { syncSources();void loadSourceModels(); });
   function applySettings(data) {
     settings = data;
     for (const key of ["terminal_animation_enabled", "open_webui", "image_enabled", "prediction_enabled"]) {
       const input = el(`setting-${key}`), effective = data.effective[key];
       input.checked = data.saved[key];input.disabled = Boolean(effective.locked);
-      label(el(`effect-${key}`), "Saved {saved} / effective {effective} / {state}", {
-        saved: { key: data.saved[key] ? "On" : "Off" }, effective: { key: effective.value ? "On" : "Off" },
-        state: { key: effective.locked ? "Controlled by environment" : states[effective.state] || effective.state } });
+      label(el(`effect-${key}`), effective.state === "next_start" ? "saved_saved_state" : "saved_saved_effective_effective_state", {
+        saved: { key: data.saved[key] ? "on" : "off" }, effective: { key: effective.value ? "on" : "off" },
+        state: { key: effective.locked ? "controlled_by_environment" : states[effective.state] || effective.state } });
     }
     if (document.activeElement !== el("history-limit")) el("history-limit").value = data.history.maxBytes / 1048576;
     el("history-limit").disabled = data.history.source === "environment";
     el("save-history").disabled = data.history.source === "environment";
-    label(el("effect-history"), data.history.source === "environment" ? "Controlled by environment" : "Applies to new calls");
-    label(el("settings-note"), "Settings read from the running service.");
+    label(el("effect-history"), data.history.source === "environment" ? "controlled_by_environment" : "applies_to_new_calls");
+    label(el("settings-note"), "settings_read_from_the_running_service");
     el("page-settings-note").textContent = "";
-    const state = data.providers;
-    if (state && !sourceDirty && el("source-provider").value !== state.codex_provider) {
-      el("source-provider").value = state.codex_provider;void loadSourceModels();
+    const state = data.providers, previousSource = el("source-provider").value;
+    syncSources();
+    if (state && !sourceDirty && (previousSource !== state.codex_provider || selectedSource()?.selection.models_required && !el("source-model").value)) {
+      void loadSourceModels();
     }
-    el("source-control-note").textContent = state ? `Codex → ${state.codex_provider} / Microsoft 365: ${state.m365.state}${state.m365.reason ? ` / ${state.m365.reason}` : ""}` : "—";
+    el("source-control-note").replaceChildren();
+    if (state) {
+      const source = document.createElement("span"), m365 = document.createElement("span");
+      label(source, "codex_source_source", { source: providerEntries.find(entry => entry.id === state.codex_provider)?.name || state.codex_provider });
+      const status = { ready: "ready", checking: "checking", disabled: "disabled", unsupported: "unsupported", idle: "unknown", unavailable: "unavailable" }[state.m365?.state] || "unknown";
+      label(m365, "microsoft_365_state", { state: { key: status } });
+      el("source-control-note").append(source, document.createElement("br"), m365);
+      if (state.m365?.reason) {
+        const detail = document.createElement("details"), summary = document.createElement("summary"), code = document.createElement("code");
+        label(summary, "message");code.textContent = state.m365.reason;detail.append(summary, code);el("source-control-note").append(detail);
+      }
+    }
     el("process-notice").textContent = data.terminal?.last_notice || "";
   }
   async function loadSettings() {
@@ -54,17 +81,19 @@
     settingsPending = true;
     try { applySettings(await api());settingsReadAt = new Date().toLocaleTimeString(); }
     catch (error) {
-      const detail = `${error.message}${settingsReadAt ? ` / ${settingsReadAt}` : ""}`;
-      el("settings-note").textContent = detail;el("page-settings-note").textContent = detail;
+      for (const id of ["settings-note", "page-settings-note"]) {
+        label(el(id), settingsReadAt ? "showing_previous_data_updated_time" : "could_not_read_settings", { time: settingsReadAt });
+        el(id).title = error.message;
+      }
     }
-    finally { settingsPending = false; }
+    finally { settingsPending = false;el("apply-source").disabled = !sourceReady(); }
   }
   async function change(body, button) {
     if (settingsPending) return;
     settingsPending = true;
     const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #m365-on, #m365-off")];
     controls.forEach(input => { input.disabled = true; });
-    label(el("settings-note"), "Applying…");
+    label(el("settings-note"), "applying");
     if (button) button.setAttribute("aria-busy", "true");
     try {
       const data = await api(body);if (body.action === "provider" && body.operation === "switch") sourceDirty = false;
@@ -78,7 +107,7 @@
       settingsPending = false;controls.forEach(input => { input.disabled = false; });
       if (settings) for (const [key, value] of Object.entries(settings.effective)) if (value.locked) el(`setting-${key}`).disabled = true;
       if (settings?.history.source === "environment") el("save-history").disabled = true;
-      if (el("source-provider").value === "m365") el("apply-source").disabled = !el("source-model").value || !el("source-review").value;
+      el("apply-source").disabled = !selectedSource() || selectedSource()?.selection.models_required && (!el("source-model").value || !el("source-review").value);
       button?.removeAttribute("aria-busy");
     }
   }
@@ -87,27 +116,30 @@
   });
   el("save-history").addEventListener("click", () => void change({ action: "history_limit", mib: Number(el("history-limit").value) }, el("save-history")));
   el("clean-history").addEventListener("click", () => {
-    if (window.confirm(globalThis.ccdxLanguage.format("Clear inactive Codex conversation data? Older continuation IDs may stop working."))) void change({ action: "history_clean" }, el("clean-history"));
+    if (window.confirm(globalThis.ccdxLanguage.format("clear_inactive_codex_conversation_data_older_continuation_ids_ma"))) void change({ action: "history_clean" }, el("clean-history"));
   });
   el("fix-prediction").addEventListener("click", () => void change({ action: "prediction_fix" }, el("fix-prediction")));
   for (const operation of ["on", "off"]) el(`m365-${operation}`).addEventListener("click", () => void change({ action: "provider", operation }, el(`m365-${operation}`)));
   async function loadSourceModels() {
     const generation = ++sourceGeneration;
-    const m365 = el("source-provider").value === "m365";
-    el("source-model").disabled = el("source-review").disabled = !m365;
-    if (!m365) { el("apply-source").disabled = settingsPending;return; }
+    const source = selectedSource(), needsModels = source?.selection.models_required;
+    el("source-model").disabled = el("source-review").disabled = !needsModels;
+    if (!needsModels) { el("apply-source").disabled = settingsPending || !source;return; }
+    const unsaved = sourceDirty && modelsSource === source.id ? { model: el("source-model").value, auto_review_model: el("source-review").value } : null;
     el("apply-source").disabled = true;
     el("source-model").replaceChildren();el("source-review").replaceChildren();
     try {
-      const response = await fetch("/_ccdx/ui/models/live?provider=m365", { headers: { "X-CCDX-Dashboard": "1" }, cache: "no-store", signal: AbortSignal.timeout(15000) });
+      const response = await fetch(`/_ccdx/ui/models/live?provider=${encodeURIComponent(source.id)}`, { headers: { "X-CCDX-Dashboard": "1" }, cache: "no-store", signal: AbortSignal.timeout(15000) });
       const data = await response.json();if (!response.ok) throw new Error(data.error);
       if (generation !== sourceGeneration) return;
       const models = data.models.filter(model => model.selectable && model.clients.includes("codex"));
       for (const [id, list] of [["source-model", models], ["source-review", models.filter(model => model.reasoning_efforts?.includes("low"))]]) {
         el(id).replaceChildren(...list.map(model => { const option = document.createElement("option");option.value = model.id;option.textContent = model.id;return option; }));
-        const saved = settings?.providers?.m365?.preference?.[id === "source-model" ? "model" : "auto_review_model"];
-        if (!sourceDirty && saved && list.some(model => model.id === saved)) el(id).value = saved;
+        const saved = settings?.providers?.[source.id]?.preference?.[id === "source-model" ? "model" : "auto_review_model"];
+        const chosen = unsaved?.[id === "source-model" ? "model" : "auto_review_model"] || (!sourceDirty ? saved : null);
+        if (chosen && list.some(model => model.id === chosen)) el(id).value = chosen;
       }
+      modelsSource = source.id;
       el("apply-source").disabled = !el("source-model").value || !el("source-review").value;
     } catch (error) { if (generation === sourceGeneration) el("source-control-note").textContent = error.message; }
   }
@@ -115,7 +147,7 @@
   for (const id of ["source-model", "source-review"]) el(id).addEventListener("change", () => { sourceDirty = true; });
   el("apply-source").addEventListener("click", () => {
     const provider = el("source-provider").value;
-    void change({ action: "provider", operation: "switch", provider, ...(provider === "m365" ? { model: el("source-model").value, auto_review_model: el("source-review").value } : {}) }, el("apply-source"));
+    void change({ action: "provider", operation: "switch", provider, ...(selectedSource()?.selection.models_required ? { model: el("source-model").value, auto_review_model: el("source-review").value } : {}) }, el("apply-source"));
   });
   // Only the small in-memory status snapshot is read at this cadence. Catalogs
   // and retained usage keep their existing on-demand, bounded refresh policy.

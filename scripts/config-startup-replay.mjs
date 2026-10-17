@@ -38,7 +38,7 @@ function start(env) {
   return { child, output: () => output, done: once(child, "exit") };
 }
 
-async function ready(run, marker = "Ready       Core service available") {
+async function ready(run, marker = "Ready       Local service ready") {
   await bounded((async () => {
     while (!run.output().includes(marker)) {
       if (run.child.exitCode !== null || run.child.signalCode) throw new Error(`CLI exited before ready: ${run.output()}`);
@@ -110,7 +110,7 @@ try {
       await checkCore(origin);
       if (mode === "disabled") {
         await bounded((async () => {
-          while (!cold.output().slice(cold.output().indexOf("Ready       Core service available")).includes("[OK]    Model catalog refreshed: 1 GPT models")) {
+          while (!cold.output().slice(cold.output().indexOf("Ready       Local service ready")).includes("[OK]    Model catalog refreshed: 1 GPT models")) {
             await new Promise(resolve => setTimeout(resolve, 20));
           }
         })(), "background model log layout");
@@ -141,7 +141,7 @@ try {
       reused = start(env);
       const [code] = await bounded(reused.done, "existing-adapter reuse");
       assert.equal(code, 0, reused.output());
-      assert.match(reused.output(), /Using existing service/);
+      assert.match(reused.output(), /Using running service:/);
       assert.equal(await fs.readFile(codexPath, "utf8"), before);
       assert.equal((await fs.stat(codexPath)).mtimeMs, stat.mtimeMs);
       await checkCore(origin);

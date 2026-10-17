@@ -152,7 +152,7 @@ test("cli rejects unknown commands without starting the adapter", async () => {
     (error) => {
       assert.equal(error.code, 2);
       assert.match(error.stderr, /Unknown command or option: serve/);
-      assert.match(error.stderr, /Run ccdx --help for usage/);
+      assert.match(error.stderr, /Help: ccdx --help/);
       return true;
     },
   );
@@ -178,7 +178,7 @@ test("deprecated cli help and argument errors use the canonical command name wit
     (error) => {
       assert.equal(error.code, 2);
       assert.doesNotMatch(error.stderr, legacyWarning);
-      assert.match(error.stderr, /Run ccdx --help for usage/);
+      assert.match(error.stderr, /Help: ccdx --help/);
       return true;
     },
   );
@@ -329,7 +329,7 @@ test("both CLI entrypoints render the same explicit auth status table", async ()
       }),
     ]);
     assert.equal(legacy.stdout, primary.stdout);
-    assert.match(primary.stdout, /^PROFILE\s+ACCOUNT\s+LOCAL\s+ONLINE\s+MODELS$/m);
+    assert.match(primary.stdout, /^APP\s+ACCOUNT\s+SAVED SIGN-IN\s+ACCESS CHECK\s+MODELS$/m);
     assert.match(primary.stdout, /Routing: responses -> codex/);
     assert.doesNotMatch(primary.stdout, /Claude|Anthropic|messages ->/i);
     assert.equal(primary.stderr, "");

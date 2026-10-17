@@ -70,16 +70,16 @@ export function formatAuthStatus(snapshot = authStatus(), {
   }];
   const table = formatResponsiveCliTable({
     columns: [
-      { key: "profile", label: "PROFILE" },
+      { key: "profile", label: "APP" },
       { key: "account", label: "ACCOUNT" },
-      { key: "local", label: "LOCAL" },
-      { key: "online", label: "ONLINE" },
+      { key: "local", label: "SAVED SIGN-IN" },
+      { key: "online", label: "ACCESS CHECK" },
       { key: "models", label: "MODELS", align: "right" },
     ],
     compactColumns: [
-      { key: "profile", label: "PROFILE" },
-      { key: "local", label: "LOCAL" },
-      { key: "online", label: "ONLINE" },
+      { key: "profile", label: "APP" },
+      { key: "local", label: "SAVED SIGN-IN" },
+      { key: "online", label: "ACCESS CHECK" },
     ],
     rows,
     width,

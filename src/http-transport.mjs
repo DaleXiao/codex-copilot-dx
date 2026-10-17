@@ -9,6 +9,7 @@ import { httpError } from "./http-errors.mjs";
 import { admissionAbortError, contentEncodings, requestContentLength } from "./request-admission.mjs";
 import { currentRequestContext } from "./request-context.mjs";
 import { upstreamErrorEvidence } from "./response-failures.mjs";
+import { operationErrorDetails } from "./operation-error.mjs";
 
 export { httpError } from "./http-errors.mjs";
 export { createRequestAdmission } from "./request-admission.mjs";
@@ -366,13 +367,13 @@ export function createRequestAbort(req, res) {
 }
 
 export function logRequestFailure(label, err, abort) {
-  if (!isAbortLikeError(err)) {
+  if (!isAbortLikeError(err) && !abort?.reason) {
     console.error(status("err", `${label} request failed: ${redactDiagnosticText(err.message)}`));
     return;
   }
 
   const reason = abort?.reason || "aborted";
   err.statusCode ||= abortErrorStatusCode(reason);
-  const cancelled = reason === "client_aborted" || reason === "client_closed";
+  const cancelled = operationErrorDetails(err, { reason }).source === "cancelled";
   console[cancelled ? "log" : "warn"](status(cancelled ? "info" : "warn", `${label} request aborted: ${reason}`));
 }

@@ -28,7 +28,7 @@ test("cache CLI shows configured and live limits without changing settings", asy
   const output = outputCapture();
   try {
     await runCacheCommand({ home, env: {}, output, fetchImpl: async () => jsonResponse(runtime()) });
-    assert.match(output.value(), /Configured history limit: 64 MiB \(default\)/);
+    assert.match(output.value(), /Saved buffer limit: 64 MiB \(default\)/);
     assert.match(output.value(), /History: 32 MiB \/ 64 MiB, 4 entries, 1 evicted/);
     assert.match(output.value(), /Image transforms: 2 MiB \/ 64 MiB/);
     assert.deepEqual(readUserSettings({ home, env: {} }), {});
@@ -83,7 +83,7 @@ test("cache CLI clears rebuildable data by default and confirms history cleanup"
     await runCacheCommand({ action: "clean", home, env: {}, output: outputCapture(), fetchImpl });
     assert.deepEqual(calls.pop(), { action: "clean", history: false });
     await assert.rejects(runCacheCommand({ action: "clean", history: true, home, env: {},
-      output: outputCapture(), input: { isTTY: false }, fetchImpl }), /rerun with --yes/);
+      output: outputCapture(), input: { isTTY: false }, fetchImpl }), /Use --yes to confirm/);
     assert.equal(calls.length, 0);
     const output = outputCapture();
     await runCacheCommand({ action: "clean", history: true, yes: true, home, env: {}, output, fetchImpl });

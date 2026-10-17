@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 
+import { dashboardLanguage } from "../test-support/dashboard-language.mjs";
+
 const html = readFileSync(new URL("../src/dashboard/index.html", import.meta.url), "utf8");
 const script = readFileSync(new URL("../src/dashboard/ui.js", import.meta.url), "utf8");
 const viewScripts = ["status", "usage"].map(name => readFileSync(new URL(`../src/dashboard/${name}.js`, import.meta.url), "utf8")).join("\n");
@@ -14,7 +16,7 @@ test("request-context rows are lazy, bounded, text-only and distinguish missing 
   const createNode = () => ({ textContent: "", children: [], open: false,
     replaceChildren(...children) { this.children = children; }, append(...children) { this.children.push(...children); } });
   const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, createNode()); return nodes.get(id); }, createElement: createNode };
-  const renderContext = runInNewContext(`${renderScript}\nrenderContext;`, { document });
+  const renderContext = runInNewContext(`${renderScript}\nrenderContext;`, { document, ccdxLanguage: dashboardLanguage });
   renderContext({ recent_requests: [
     { model: "gpt-6.1-sol", outcome: "completed", context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000 } },
     { model: "<script>not-html</script>", outcome: "failed", context: { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: 1000 } },
@@ -30,7 +32,7 @@ test("request-context rows are lazy, bounded, text-only and distinguish missing 
   assert.equal(rows[1].children[5].textContent, "15.0%");
   assert.equal(rows[0].children[6].textContent, "Failed");
   assert.equal(rows[1].children[6].textContent, "Completed");
-  assert.match(nodes.get("context-note").textContent, /2 completed, 0 incomplete, 1 failed/);
+  assert.match(nodes.get("context-note").textContent, /2 completed · 0 incomplete · 1 failed/);
   renderContext({ recent_requests: Array.from({ length: 25 }, () => ({ context: {} })) });
   assert.equal(nodes.get("context-body").children.length, 20);
 });
@@ -47,12 +49,12 @@ test("dashboard usage renders percentages, zero hits and unknown rates in the se
   }
   assert.equal(usageValues({ ...row, cache_hit_rate_partial: true }).at(-1), "~80.0%");
   assert.equal(usageValues({ ...row, cache_hit_rate: null, cache_hit_rate_partial: true }).at(-1), "—");
-  assert.match(html, /<th scope="col" data-i18n>CACHE HIT<\/th>/);
-  assert.match(html, /id="usage-body"><tr><td colspan="7" data-i18n>Loading/);
+  assert.match(html, /<th scope="col" data-i18n="cache_hit">REUSE RATE<\/th>/);
+  assert.match(html, /id="usage-body"><tr><td colspan="7" data-i18n="loading">Loading/);
 });
 
 test("dashboard shows active per-request caps separately from history occupancy", () => {
-  assert.match(html, /Per-request limits \(active\)<\/span><br><span id="body-limits">/);
+  assert.match(html, /Per-request limits<\/span><br><span id="body-limits">/);
   assert.match(html, /<strong id="history">—<\/strong><progress id="history-meter"/);
   const nodes = new Map();
   const createNode = () => ({
@@ -76,25 +78,25 @@ test("dashboard shows active per-request caps separately from history occupancy"
     limits: { max_body_bytes: 64 * 1048576, max_decoded_body_bytes: 256 * 1048576 },
     response_history: { bytes: 32 * 1048576, maxBytes: 128 * 1048576, entries: 2 },
   };
-  const render = runInNewContext(`${renderScript}\nrender;`, { document });
+  const render = runInNewContext(`${renderScript}\nrender;`, { document, ccdxLanguage: dashboardLanguage });
   render(data);
-  assert.equal(nodes.get("body-limits").textContent, "raw 64.0 MiB / decoded 256.0 MiB");
+  assert.equal(nodes.get("body-limits").textContent, "Received limit: 64.0 MiB\nAfter unpacking: 256.0 MiB");
   assert.equal(nodes.get("history").textContent, "32.0 MiB / 128.0 MiB");
   assert.equal(nodes.get("history-meter").value, 25);
 
   data.limits.max_decoded_body_bytes = 128 * 1048576;
   render(data);
-  assert.equal(nodes.get("body-limits").textContent, "raw 64.0 MiB / decoded 128.0 MiB");
+  assert.equal(nodes.get("body-limits").textContent, "Received limit: 64.0 MiB\nAfter unpacking: 128.0 MiB");
   delete data.limits;
   render(data);
-  assert.equal(nodes.get("body-limits").textContent, "raw — / decoded —");
+  assert.equal(nodes.get("body-limits").textContent, "Received limit: —\nAfter unpacking: —");
 });
 
 test("dashboard timing shows its own sample counts and estimation boundary", () => {
   const nodes = new Map();
   const node = () => ({ textContent: "", children: [], open: false, querySelectorAll() { return []; }, replaceChildren() {}, append() {} });
   const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); }, createElement: node };
-  const render = runInNewContext(`${renderScript}\nrender;`, { document });
+  const render = runInNewContext(`${renderScript}\nrender;`, { document, ccdxLanguage: dashboardLanguage });
   render({ stream_performance: { by_route: { responses: { ttft_ms: { avg: 125, samples: 2 }, output_tokens_per_second: { avg: 178.6, samples: 1, unit: "token/s" } } } } });
   assert.equal(nodes.get("ttft").textContent, "125.0 ms / 2 samples");
   assert.equal(nodes.get("tpot").textContent, "178.6 token/s / 1 samples");
@@ -103,19 +105,19 @@ test("dashboard timing shows its own sample counts and estimation boundary", () 
   assert.match(nodes.get("tpot").textContent, /^—/);
   render({ stream_performance: { by_route: { responses: { tpot_us: { avg: 5600, samples: 1 } } } } });
   assert.match(nodes.get("tpot").textContent, /^—/); // Never invert a legacy average.
-  assert.match(html, /Codex Responses timing since startup\. Output speed is estimated\./);
+  assert.match(html, /Codex Responses timing since startup\. Speed is estimated\./);
 });
 
 test("native prediction dashboard distinguishes bridge readiness from candidate visibility", () => {
   const nodes = new Map();
   const node = () => ({ textContent: "", children: [], querySelectorAll() { return []; }, replaceChildren() {}, append() {} });
   const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); }, createElement: node };
-  const render = runInNewContext(`${renderScript}\nrender;`, { document });
+  const render = runInNewContext(`${renderScript}\nrender;`, { document, ccdxLanguage: dashboardLanguage });
   const prediction = { configured: true, bridge: "running", client_route: "observed", candidate: "displayed" };
   render({ client_integrations: { prediction } });
   assert.equal(nodes.get("prediction-preference").textContent, "Configured");
   assert.equal(nodes.get("prediction-bridge").textContent, "Running");
-  assert.equal(nodes.get("prediction-route").textContent, "Observed");
+  assert.equal(nodes.get("prediction-route").textContent, "Settings request received");
   assert.equal(nodes.get("prediction-candidate").textContent, "Unknown");
   prediction.bridge = "recovering";render({ client_integrations: { prediction } });
   assert.equal(nodes.get("prediction-bridge").textContent, "Recovering");

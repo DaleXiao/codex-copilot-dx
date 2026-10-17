@@ -45,7 +45,7 @@ test("package update: builds fixed npm and GitHub global install commands", () =
     args: ["install", "--global", "--allow-git=all", "github:DaleXiao/codex-copilot-dx#v0.9.19"],
     source: "github",
   });
-  assert.throws(() => globalUpdateCommand("other"), /must be npm or github/);
+  assert.throws(() => globalUpdateCommand("other"), /Choose npm or github/);
   for (const releaseTag of [undefined, "main", "v1.2.3-beta", "v1.2.3#main", "v1.2.3\n", 'v1.2.3"',
     "v1.2.3&echo injected", "v1.2.3|whoami", "v1.2.3%PATH%", "v1.2.3!injected!", "v1.2.3^&echo", "v1.2.3\r\n"]) {
     assert.throws(() => globalUpdateCommand("github", { releaseTag }), /valid stable GitHub release tag/);
@@ -183,7 +183,7 @@ test("POSIX sources retain exact argv and no Windows launcher flags", async () =
 
 test("Windows invalid source or hostile release metadata cannot reach the command interpreter", async () => {
   const spawnImpl = () => assert.fail("invalid metadata must not start an installer");
-  await assert.rejects(runPackageUpdateCommand({ platform: "win32", source: "npm & whoami", spawnImpl }), /must be npm or github/);
+  await assert.rejects(runPackageUpdateCommand({ platform: "win32", source: "npm & whoami", spawnImpl }), /Choose npm or github/);
   for (const tag_name of ['v1.2.3" & whoami', "v1.2.3%PATH%", "v1.2.3!var!", "v1.2.3\r\nwhoami"]) {
     await assert.rejects(runPackageUpdateCommand({ platform: "win32", source: "github", spawnImpl,
       output: outputBuffer(false).stream, fetchImpl: async () => Response.json({ tag_name, draft: false, prerelease: false }),

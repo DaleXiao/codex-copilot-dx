@@ -29,7 +29,7 @@ function liveCatalogHeader(catalog, { commandName, models }) {
 function formatLiveCopilotModelsPlain(catalog, { commandName, models }, { sanitize = false } = {}) {
   const lines = liveCatalogHeader(catalog, { commandName, models });
   if (!models.length) {
-    lines.push(status("warn", "No selectable GPT models were advertised for this account"));
+    lines.push(status("warn", "No selectable GPT models listed."));
     return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
   }
 
@@ -59,7 +59,7 @@ export function formatLiveCopilotModels(catalog, {
 
   const lines = liveCatalogHeader(catalog, context);
   if (!models.length) {
-    lines.push(status("warn", "No selectable GPT models were advertised for this account"));
+    lines.push(status("warn", "No selectable GPT models listed."));
     return lines.join("\n");
   }
 

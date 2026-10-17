@@ -78,7 +78,7 @@ export function inspectNpmDownloadPolicy({ env = process.env, platform = process
 export function globalUpdateCommand(source, { platform = process.platform, releaseTag, allowRemote = false } = {}) {
   if (typeof allowRemote !== "boolean") throw new Error("Remote download permission must be a boolean");
   const normalized = normalizeUpdateSource(source);
-  if (!normalized) throw new Error(`Update source must be npm or github: ${source}`);
+  if (!normalized) throw new Error(`Choose npm or github. Received: ${source}`);
   const args = ["install", "--global"];
   if (allowRemote) args.push("--allow-remote=all");
   if (normalized === "github") {
@@ -140,7 +140,7 @@ export async function runPackageUpdateCommand({
 } = {}) {
   if (typeof allowRemote !== "boolean") throw new Error("Remote download permission must be a boolean");
   let selectedSource = normalizeUpdateSource(source);
-  if (source && !selectedSource) throw new Error(`Update source must be npm or github: ${source}`);
+  if (source && !selectedSource) throw new Error(`Choose npm or github. Received: ${source}`);
 
   if (!selectedSource) {
     if (!prompt && (!input.isTTY || !output.isTTY)) {
@@ -158,7 +158,7 @@ export async function runPackageUpdateCommand({
     });
     try {
       while (!selectedSource) {
-        const answer = String(await ask("Select update source [1], or q to cancel: ") || "").trim().toLowerCase();
+        const answer = String(await ask("Choose update source [1], or q to cancel: ") || "").trim().toLowerCase();
         if (answer === "q" || answer === "quit") {
           output.write("No changes made.\n");
           return { cancelled: true, source: "" };

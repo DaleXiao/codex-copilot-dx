@@ -126,7 +126,7 @@ export async function runAutoReviewModelCommand({
   let selectedEffort;
   try {
     while (!selectedModel) {
-      const answer = String(await ask(`Select a model [${defaultIndex + 1}], or q to cancel: `) || "").trim();
+      const answer = String(await ask(`Choose a model [${defaultIndex + 1}], or q to cancel: `) || "").trim();
       if (answer.toLowerCase() === "q" || answer.toLowerCase() === "quit") {
         output.write("No changes made.\n");
         return { changed: false, cancelled: true, model: current.model };
@@ -153,7 +153,7 @@ export async function runAutoReviewModelCommand({
     });
     if (!efforts.length) output.write("No reasoning efforts are advertised; no override will be set.\n");
     while (selectedEffort === undefined) {
-      const answer = String(await ask(`Select reasoning [${effortIndex}], or q to cancel: `) || "").trim();
+      const answer = String(await ask(`Choose thinking level [${effortIndex}], or q to cancel: `) || "").trim();
       if (["q", "quit"].includes(answer.toLowerCase())) {
         output.write("No changes made.\n");
         return { changed: false, cancelled: true, model: current.model };

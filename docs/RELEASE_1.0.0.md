@@ -2,7 +2,8 @@
 
 Date: 2026-10-17 (Asia/Shanghai). Baseline: 0.10.1 / `8609883`.
 
-Status: release candidate; remote CI and publication receipts follow. GitHub uses
+Verification snapshot before publication: all fourteen cross-platform CI jobs passed.
+Publication receipts are appended on main after the immutable tag/package exists. GitHub uses
 the user-authorized, owner-verified historical CCDX 9 PAT in process memory only;
 npm uses the existing repository publishing workflow and secret. The existing Codex service was not replaced. Claude App used a temporary duplicated
 Profile for verification, followed by restoration of its original Profile.
@@ -104,9 +105,11 @@ client configuration, upstream access and runtime outcomes.
 
 ## Remaining release gates and limitations
 
-- Remote Linux/Windows/macOS CI has not run for this candidate. The existing matrix
-  is retained; new Claude identity tests are added to Windows and native CLI replay
-  to the Linux runtime job. This file must not be read as a remote CI receipt.
+- [CI 38985554605](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/38985554605)
+  passed all fourteen jobs on candidate `5a97b3098fe8e3fdd24339a874c87369c0f61d4b`.
+  The matrix covers Linux, Windows and macOS, Node 22.15/24, npm 12 strict
+  installation/upgrade, prediction browsers, native Windows, dashboard browsers,
+  official Codex image replay and the new native Claude Code effort replay.
 - Windows M365 enterprise-device authorization/App inference remains unverified
   for 1.0.0. Local macOS and synthetic cross-platform checks do not substitute for it.
 - App model knowledge remains subject to the installed version and Anthropic's
@@ -137,4 +140,5 @@ unchanged owned client fields; inspect preserved-user-edit notices. Install the
 verified 0.10.1 package/tag, restart separately, and explicitly re-enable M365 if
 wanted. Account credentials, usage history and system SSO are not deleted.
 
-No npm tag, GitHub release or public version has been changed by this candidate.
+This verification snapshot precedes publication. Final publication receipts follow
+on the repository main branch; the existing runtime was left for an explicit update.

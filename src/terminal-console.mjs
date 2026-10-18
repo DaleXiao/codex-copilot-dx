@@ -5,6 +5,7 @@ import { DEFAULT_TERMINAL_ANIMATION_THEME, TERMINAL_ANIMATION_THEMES, isTerminal
   getTerminalAnimationCycleLength, getTerminalAnimationFrameDelay } from "./terminal-animation.mjs";
 import { displayWidth } from "./cli-table.mjs";
 import { providerStartupSummary } from "./startup-ui.mjs";
+import { colorTerminalText, colorTerminalMotion } from "./terminal-colors.mjs";
 
 const clear = "\r\x1b[2K";
 const flagOff = value => /^(0|false|no|off)$/i.test(String(value || ""));
@@ -16,7 +17,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
   let running = false, timer = null, lines = 0, active = 0, frame = 0, lastRead = 0, data = {};
   let notices = 0, lastNotice = "", lastPrintedNotice = "", previous = [];
   let content = [], dirty = true, readFailed = false, updatedAt = null, fits = true;
-  let current = { theme: DEFAULT_TERMINAL_ANIMATION_THEME, terminal_animation_enabled: true };
+  let current = { theme: DEFAULT_TERMINAL_ANIMATION_THEME, color_theme: "green", terminal_animation_enabled: true };
   let frameDelay = 1000;
   const tty = output.isTTY === true && errorOutput.isTTY === true && (!env.CI || flagOff(env.CI)) && env.TERM !== "dumb";
   const supported = () => tty && (Number(output.columns) || 80) >= 40 && (Number(output.rows) || 24) >= 16;
@@ -66,6 +67,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
       frame %= getTerminalAnimationCycleLength(current.theme);
       const metadata = TERMINAL_ANIMATION_THEMES.find(theme => theme.id === current.theme), index = metadata.startFrame + frame;
       motion = renderTerminalAnimationFrame(current.theme, index);
+      motion = colorTerminalMotion(motion, current.color_theme, { output, env });
       if (Object.hasOwn(env, "NO_COLOR")) motion = stripVTControlCharacters(motion);
       frame = (frame + 1) % getTerminalAnimationCycleLength(current.theme);
       frameDelay = getTerminalAnimationFrameDelay(current.theme, index) + (frame === 0 ? metadata.loopPauseMs : 0);
@@ -92,7 +94,9 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
       }
       dirty = false;
     }
-    const body = [...content, `${motion} ${active ? "Working" : "Idle"}`];
+    // Apply color after clipping/layout so escape sequences never consume columns.
+    const body = [...content.map(line => current.color_theme === "klein" && /^[┌│├└]/.test(line)
+      ? colorTerminalText(line, current.color_theme, { output, env }) : line), `${motion} ${active ? "Working" : "Idle"}`];
     fits = body.length < (Number(output.rows) || 24);
     if (!fits) { frameDelay = 1000;return; }
     // Animation ticks update only the final line; data stays on its 1s cadence.

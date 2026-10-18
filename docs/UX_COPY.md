@@ -18,3 +18,16 @@ WebUI 使用固定消息标识，显示文字可以独立调整。旧消息别�
 | 客户端恢复后回退成未知 | Settings restored / 已恢复设置 | 恢复、用户配置保留、未检查分别呈现 |
 
 默认摘要保持简短；详细帮助、安全说明、原始状态码与诊断证据保留。来源选择始终由用户明确应用，浏览目录不会切换服务。
+
+## 1.2.2 appearance and check feedback
+
+| English | Chinese | Scope |
+| --- | --- | --- |
+| Web appearance | 网页外观 | Browser-local color |
+| Terminal appearance | 终端外观 | Local console color and existing motion |
+| Color theme | 颜色主题 | Classic green / Klein blue |
+| This tab only. Browser storage is unavailable. | 本次有效，浏览器未能保存。 | Failed browser persistence |
+| Table updated. Startup logo changes next launch. | 表格已换色，启动 Logo 下次生效。 | Successful live color save |
+| Check details | 检查详情 | Bounded model-list failure evidence |
+
+Names follow meaning rather than a fixed character limit. CLI remains English and WebUI bilingual.

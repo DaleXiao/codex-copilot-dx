@@ -12,7 +12,7 @@ assert.ok(path.isAbsolute(options.get("--xterm") || ""), "Supply --xterm /absolu
 const imported = await import(pathToFileURL(options.get("--xterm")));
 const { Terminal } = imported.default || imported;
 const results = [];
-for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const color of [false, true]) {
+for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const color of [false, true]) for (const palette of ["green", "klein"]) {
   const screen = new Terminal({ cols: columns, rows, allowProposedApi: true });
   const output = new EventEmitter(), pending = [], timers = new Map();let time = 1000, bytes = 0;
   Object.assign(output, { isTTY: true, columns, rows, write(value) { bytes += Buffer.byteLength(value);pending.push(value); } });
@@ -23,7 +23,7 @@ for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const col
     requests: { by_route: { responses: { total: 7, active: 2 }, image_mcp: { total: 9, active: 5 } } },
     stream_performance: { by_route: { responses: { terminal_outcomes: { totals: { completed: 5 } } } } } };
   const terminal = createTerminalConsole({ output, errorOutput: output, env: color ? { CI: "0" } : { NO_COLOR: "" },
-    baseUrl: "http://127.0.0.1:2026", now: () => time, snapshot: () => data,
+    preferences: () => ({ color_theme: palette }), baseUrl: "http://127.0.0.1:2026", now: () => time, snapshot: () => data,
     timers: { setTimeout(fn, ms) { timers.set(fn, ms);return fn; }, clearTimeout(fn) { timers.delete(fn); } } });
   const flush = async () => { while (pending.length) await new Promise(resolve => screen.write(pending.shift(), resolve)); };
   const lines = () => {
@@ -61,6 +61,6 @@ for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const col
   screen.resize(80, 24);Object.assign(output, { columns: 80, rows: 24 });output.emit("resize");await step();
   assert.ok(lines().some(line => /^┌.*┬.*┐$/.test(line)));assert.equal(lines().at(-1), "○ Idle");
   terminal.cleanup();await flush();screen.dispose();
-  results.push({ columns, rows, color, frames: 200, passed: true, written_bytes: bytes });
+  results.push({ columns, rows, color, palette, frames: 200, passed: true, written_bytes: bytes });
 }
 console.log(JSON.stringify({ emulator: "xterm", results }, null, 2));

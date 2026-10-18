@@ -59,3 +59,14 @@ test("animation effective state describes the actual terminal output mode", t =>
   assert.equal(f.control.snapshot().effective.terminal_animation_enabled.value, false);
   assert.equal(f.control.snapshot().effective.terminal_animation_enabled.state, "terminal_unavailable");
 });
+
+test("terminal palette saves atomically and applies independently of animation", async t => {
+  const f = fixture(t);
+  await f.control.action({ action:"animation",theme:"twin" });
+  const data=await f.control.action({action:"color_theme",theme:"klein"});
+  assert.equal(data.color_theme,"klein");assert.equal(data.theme,"twin");
+  assert.equal(f.themes.at(-1).color_theme,"klein");
+  await assert.rejects(f.control.action({action:"color_theme",theme:"unknown"}));
+  await assert.rejects(f.control.action({action:"color_theme",theme:"green",extra:true}));
+  assert.equal(f.control.snapshot().color_theme,"klein");
+});

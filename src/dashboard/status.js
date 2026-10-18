@@ -4,6 +4,7 @@
     let contextCompactions = {};
     let failureSignature;
     let contextSignature;
+    const sourceNames = new Map([["github", "GitHub Copilot"], ["m365", "Microsoft 365"]]);
     
     function renderProviders(data) {
       const providers = data.providers || [];
@@ -15,6 +16,7 @@
       auth.replaceChildren();clients.replaceChildren();requests.replaceChildren();
       const routes = [];
       for (const provider of providers) {
+        sourceNames.set(provider.id, provider.name);
         const identity = provider.auth || {};
         const authRow = tableRow([provider.name, identity.account || "—", states[identity.state] || "unknown",
           states[provider.state] || "unknown", identity.checked_at || "—", duration(identity.expires_in_ms)], { labels: [2, 3] });
@@ -92,6 +94,12 @@
           retry: phrase(failure.retried ? "retry_attempted" : "no_retry"),
         });
         const timeline = failure.timeline;
+        const provider = failure.provider || timeline?.provider;
+        if (provider) {
+          const source = sourceNames.get(provider) || provider;
+          const original = title.textContent;
+          localize(title, "source_failure_summary", { source, detail: original });
+        }
         const timings = timeline?.timings_ms || {};
         const timingText = ["admission", "body", "history", "images", "serialization", "upstream_start", "upstream_headers", "first_output", "last_activity", "terminal", "finished"]
           .filter((key) => finite(timings[key])).map((key) => `${key}=${Number(timings[key]).toFixed(1)}`).join(" / ");

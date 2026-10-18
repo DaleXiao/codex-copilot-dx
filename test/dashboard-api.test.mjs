@@ -374,3 +374,11 @@ test("model browsing selects a registered provider without changing routes or qu
   for (const id of ["missing", "constructor", "https://example.test"]) assert.equal((await invoke(handler, { url: `/_ccdx/ui/models/live?provider=${encodeURIComponent(id)}` })).status, 400);
   assert.deepEqual(calls, ["third"]);
 });
+
+test("model check diagnostics identify the source and keep upstream secrets out", async () => {
+  const options={dashboardOptions:{liveModelsFn:async()=>{throw Object.assign(Error("HTTP 429 Bearer NEVER_EXPOSE"),{retryAfterMs:5000,statusCode:429});}}};
+  const result=await invoke(createAdapterHandler(options),{url:"/_ccdx/ui/models/live?provider=github"});
+  assert.equal(result.status,429);
+  const data=result.body;assert.equal(data.diagnostic.provider,"github");assert.equal(data.diagnostic.http_status,429);assert.equal(data.diagnostic.retry_after_ms,5000);
+  assert.ok(Number.isFinite(Date.parse(data.diagnostic.checked_at)));assert.doesNotMatch(JSON.stringify(result.body),/NEVER_EXPOSE/);
+});

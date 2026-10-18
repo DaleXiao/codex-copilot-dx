@@ -340,7 +340,9 @@ async function readDashboard(url, { signal, timeout = 15000, source } = {}) {
   const response = await fetch(url, { cache: "no-store", headers: { "X-CCDX-Dashboard": "1", Accept: "application/json" },
     signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)]) });
   const data = await response.json();
-  if (!response.ok || (source && !(Array.isArray(source) ? source : [source]).includes(data.source))) throw new Error(data.error || `HTTP ${response.status}`);
+  if (!response.ok || (source && !(Array.isArray(source) ? source : [source]).includes(data.source))) {
+    throw Object.assign(new Error(data.error || `HTTP ${response.status}`), { diagnostic: data.diagnostic });
+  }
   return data;
 }
 
@@ -410,11 +412,32 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       state: state => {
         element("refresh-models").disabled = Boolean(state.pending);
         text("models-state", state.pending ? "checking_live" : state.error ? "live_lookup_failed" : state.value?.source === "catalog" ? "catalog_snapshot" : "live_snapshot");
+        element("model-check-details").hidden = !state.error;
         if (state.error) {
           const message = String(state.error.message || state.error).slice(0, 240);
           const httpError = /^Live model lookup failed \(HTTP (\d{3})\)\. Run ccdx models for details\.$/.exec(message);
           if (httpError) text("models-note", "live_model_lookup_failed_http_status_run_ccdx_models_for_details", { status: httpError[1] });
           else text("models-note", message);
+          const source = providerEntries.find(entry => entry.id === selectedProvider)?.name || selectedProvider;
+          const previous = modelSnapshots.get(selectedProvider);
+          element("models-note").replaceChildren();
+          const summary = document.createElement("span"), kept = document.createElement("span");
+          localize(summary, "source_check_failed", { source });
+          localize(kept, previous?.checked_at ? "source_check_previous" : "source_check_none", { time: previous?.checked_at ? new Date(previous.checked_at).toLocaleTimeString() : "" });
+          element("models-note").append(summary, document.createElement("br"), kept);
+          const fields = element("model-check-fields");fields.replaceChildren();
+          const diagnostic = state.error.diagnostic || {};
+          for (const [key, value] of [["source", source], ["source_check_time", diagnostic.checked_at], ["source_check_reason", phrase(message)], ["http_status", diagnostic.http_status]]) {
+            if (value === null || value === undefined || value === "") continue;
+            const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);
+            if (value?.key) localize(detail, value.key);else detail.textContent = String(value).slice(0, 300);
+            fields.append(term, detail);
+          }
+          if (Number.isFinite(diagnostic.retry_after_ms) && diagnostic.retry_after_ms > 0) {
+            const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, "retry");
+            const checked = Date.parse(diagnostic.checked_at);
+            if (Number.isFinite(checked)) { localize(detail, "source_retry_time", { time: new Date(checked + diagnostic.retry_after_ms).toLocaleTimeString() });fields.append(term, detail); }
+          }
         }
         if (state.error && !modelSnapshots.has(selectedProvider)) emptyTable("live-models-body", 6, "no_catalog_available");
         for (const node of timestamps.get("models")) refreshTime(node, state);

@@ -1,5 +1,7 @@
 import { status } from "./status.mjs";
 import { terminalCell } from "./terminal-text.mjs";
+import { colorTerminalText } from "./terminal-colors.mjs";
+import { terminalColorPreference } from "./user-settings.mjs";
 
 // The favicon's three ellipses, rasterized as terminal half-blocks. No runtime
 // graphics library or terminal cursor control is needed.
@@ -12,12 +14,13 @@ const ATOM = [
   "   ▀▄█▀ ▀█▄▀   ",
 ];
 
-export function startupBanner({ commandName = "ccdx", version, stream = process.stdout, env = process.env } = {}) {
+export function startupBanner({ commandName = "ccdx", version, stream = process.stdout, env = process.env, home, colorTheme } = {}) {
   const title = `${terminalCell(commandName)} v${terminalCell(version)} by Dale Xiao`;
   const color = stream.isTTY === true && !Object.hasOwn(env, "NO_COLOR") && env.TERM !== "dumb";
   if (!color || Number(stream.columns || 80) < 72) return `${title}\nLocal model services for Codex and Claude`;
   const labels = new Map([[1, `${terminalCell(commandName).toUpperCase()} v${terminalCell(version)}`], [2, "by Dale Xiao"], [4, "Codex + Claude / local services"]]);
-  return ATOM.map((line, i) => `\x1b[38;2;166;245;168m${line}\x1b[0m${labels.has(i) ? `  ${labels.get(i)}` : ""}`).join("\n");
+  const theme = colorTheme || terminalColorPreference({ env, home });
+  return ATOM.map((line, i) => `${colorTerminalText(line, theme, { output: stream, env })}${labels.has(i) ? `  ${labels.get(i)}` : ""}`).join("\n");
 }
 
 export function startupCheck(kind, name, detail) {

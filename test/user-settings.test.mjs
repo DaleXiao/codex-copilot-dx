@@ -317,3 +317,26 @@ test("user settings: retired Braille falls back without blocking settings reads 
   assert.equal(writeTerminalAnimationTheme("comet", options).changed, true);
   assert.deepEqual(readUserSettings(options), { auto_review_model: "gpt-5.6-luna", untouched: 42 });
 });
+
+test("terminal color is independent, preserves other keys and refuses damaged settings", async t => {
+  const { writeTerminalColorTheme, terminalColorPreference, serviceSettingsSnapshot, userSettingsPath } = await import("../src/user-settings.mjs");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-color-settings-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const options = { home, env: {} }, file = userSettingsPath(options);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ terminal_animation: "twin", image_enabled: false, custom: "keep" }));
+  writeTerminalColorTheme("klein", options);
+  assert.equal(terminalColorPreference(options), "klein");
+  assert.equal(serviceSettingsSnapshot(options).theme, "twin");
+  assert.equal(readUserSettings(options).image_enabled, false);
+  assert.equal(readUserSettings(options).custom, "keep");
+  assert.throws(() => writeTerminalColorTheme("unknown", options));
+  writeTerminalColorTheme("green", options);
+  assert.equal(terminalColorPreference(options), "green");
+  assert.equal(Object.hasOwn(readUserSettings(options), "terminal_color_theme"), false);
+  for (const damaged of ['{"terminal_color_theme":"invalid","image_enabled":false}', '{broken']) {
+    fs.writeFileSync(file, damaged);
+    assert.throws(() => writeTerminalColorTheme("klein", options));
+    assert.equal(fs.readFileSync(file, "utf8"), damaged);
+  }
+});

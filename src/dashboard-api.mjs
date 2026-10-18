@@ -249,8 +249,8 @@ export async function handleDashboardApi(req, res, pathname, {
 
   if (pathname === MODELS_PATH && req.method === "GET") {
     const abort = createRequestAbort(req, res);
+    const provider = new URL(req.url, "http://localhost").searchParams.get("provider") || "";
     try {
-      const provider = new URL(req.url, "http://localhost").searchParams.get("provider") || "";
       if (provider && (!isProviderId(provider) || !dashboardProviders(providerStateFn, authStatusFn).some(entry => entry.id === provider))) {
         sendJson(res, 400, { error: "Select a registered provider" });return;
       }
@@ -280,7 +280,11 @@ export async function handleDashboardApi(req, res, pathname, {
         })),
       });
     } catch (error) {
-      if (!res.destroyed && !res.writableEnded) sendJson(res, error.statusCode || 502, { error: /^m365_[a-z0-9_]+$/.test(error.code || "") ? `Model catalog unavailable / ${error.code}` : liveModelError(error) });
+      const message = /^m365_[a-z0-9_]+$/.test(error.code || "") ? `Model catalog unavailable / ${error.code}` : liveModelError(error);
+      if (!res.destroyed && !res.writableEnded) sendJson(res, error.statusCode || 502, { error: message,
+        diagnostic: { provider: provider || null, checked_at: new Date().toISOString(), message,
+          http_status: Number(/\bHTTP (\d{3})\b/.exec(message)?.[1]) || finite(error.statusCode),
+          retry_after_ms: finite(error.retryAfterMs) } });
     } finally { abort.cleanup(); }
     return;
   }

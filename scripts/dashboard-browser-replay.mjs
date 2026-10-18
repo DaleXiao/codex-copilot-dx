@@ -89,12 +89,12 @@ try {
   for (const engine of (options.get("--engines") || "chromium,webkit").split(",")) {
     const browser = await playwright[engine].launch({ headless: true, ...(options.get("--executable") ? { executablePath: options.get("--executable") } : {}) });
     try {
-      for (const language of ["en", "zh"]) for (const theme of ["dark", "light"]) for (const width of [420, 1280]) {
+      for (const language of ["en", "zh"]) for (const theme of ["dark", "light"]) for (const width of [420, 1280]) for (const palette of ["green", "klein"]) {
         const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "no-preference" });
         page.setDefaultTimeout(15000);
         const errors = [];
         page.on("pageerror", error => errors.push(error.message));
-        await page.addInitScript(({ language, theme }) => { localStorage.setItem("ccdx.dashboard.language", language); localStorage.setItem("ccdx.dashboard.theme", theme); }, { language, theme });
+        await page.addInitScript(({ language, theme, palette }) => { localStorage.setItem("ccdx.dashboard.palette", palette); localStorage.setItem("ccdx.dashboard.language", language); localStorage.setItem("ccdx.dashboard.theme", theme); }, { language, theme, palette });
         await page.addInitScript(() => {
           window.atomMotions = [];
           const animate = Element.prototype.animate;
@@ -132,7 +132,7 @@ try {
         await page.waitForFunction(value => !document.getElementById("setting-image_enabled").disabled && document.getElementById("setting-image_enabled").checked === value, !imageBefore);
         await page.locator("#setting-image_enabled").setChecked(imageBefore);
         await page.waitForFunction(() => !document.getElementById("setting-image_enabled").disabled);
-        if (output && width === 1280 && language === "zh") { await page.evaluate(() => window.scrollTo(0, 0));await page.screenshot({ path: path.join(output, `${engine}-${theme}-codex.png`), fullPage: true }); }
+        if (output && width === 1280 && language === "zh") { await page.evaluate(() => window.scrollTo(0, 0));await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-codex.png`), fullPage: true }); }
         await nav("claude");
         assert.match(await page.locator("#claude-route").innerText(), /\/anthropic/);
         await nav("codex");
@@ -175,13 +175,13 @@ try {
         await page.waitForFunction(() => document.getElementById("live-models-body").textContent.includes("claude-opus-5.5"));
         assert.match(await page.locator("#live-models-body").innerText(), /low.*high/);
         await page.locator("#model-provider-third").click();
-        await page.waitForFunction(() => document.getElementById("models-note").textContent.includes("m365_disabled"));
+        await page.waitForFunction(() => document.getElementById("model-check-fields").textContent.includes("m365_disabled"));
         assert.doesNotMatch(await page.locator("#live-models-body").innerText(), /claude-opus/);
         await page.locator("#model-provider-github").click();
         await page.waitForFunction(() => document.getElementById("live-models-body").textContent.includes("gpt-6.1-sol"));
         const icon = decodeURIComponent(await page.locator("#favicon").getAttribute("href"));
         assert.equal((icon.match(/<ellipse /g) || []).length, 3);
-        assert.ok(icon.includes(theme === "dark" ? "#a6f5a8" : "#176b3a"));
+        assert.ok(icon.includes(palette === "klein" ? theme === "dark" ? "#789aff" : "#002fa7" : theme === "dark" ? "#a6f5a8" : "#176b3a"));
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "No whole-page horizontal overflow");
         await nav("requests");
         assert.equal(await page.locator("#recent-failures").isVisible(), true);
@@ -198,6 +198,24 @@ try {
         await page.locator("#analytics-range").selectOption("90");
         await page.evaluate(() => { window.savedCalendar = document.querySelector(".calendar-day"); window.savedModelRow = document.querySelector("#live-models-body tr"); });
         await nav("system");
+        await page.waitForFunction(() => !document.getElementById("terminal-color-theme").disabled);
+        assert.equal(await page.locator("#web-color-theme").inputValue(), palette);
+        await page.locator("#terminal-color-theme").selectOption("klein");
+        await page.waitForFunction(() => !document.getElementById("terminal-color-theme").disabled);
+        assert.equal(await page.locator("html").getAttribute("data-palette"), palette);
+        assert.equal(await page.locator("#terminal-color-sample").getAttribute("data-terminal-palette"), "klein");
+        await page.locator("#web-color-theme").selectOption(palette === "green" ? "klein" : "green");
+        assert.equal(await page.locator("#terminal-color-theme").inputValue(), "klein");
+        await page.locator("#web-color-theme").selectOption(palette);
+        await page.route("**/_ccdx/ui/settings", async route => {
+          if (route.request().method() === "POST") return route.fulfill({status:409,contentType:"application/json",body:JSON.stringify({error:"synthetic save refused"})});
+          return route.continue();
+        });
+        await page.locator("#terminal-color-theme").selectOption("green");
+        await page.waitForFunction(() => document.getElementById("terminal-color-note").textContent.includes("synthetic save refused"));
+        assert.equal(await page.locator("#terminal-color-theme").inputValue(), "klein");
+        await page.unroute("**/_ccdx/ui/settings");
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         await page.locator("#animation-settings > summary").click();
         await page.waitForFunction(() => document.querySelectorAll(".theme-option").length === 2);
         await page.locator(".theme-option").nth(1).click();
@@ -214,7 +232,7 @@ try {
         await page.waitForFunction(() => !document.getElementById("setting-open_webui").disabled);
         assert.equal(await page.evaluate(() => window.savedCalendar === document.querySelector(".calendar-day") && window.savedModelRow === document.querySelector("#live-models-body tr")), true);
         assert.equal(await page.locator("#analytics-range").inputValue(), "90");
-        if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${theme}-${width}-settings.png`), fullPage: true });
+        if (output && language === "zh") { await page.evaluate(() => window.scrollTo(0, 0));await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-settings.png`), fullPage: true }); }
         const before = models;
         await page.clock.fastForward(1800000);
         assert.equal(models, before, "A hidden catalog is not polled");
@@ -230,8 +248,8 @@ try {
         await nav("overview");
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         assert.equal(errors.length, 0, errors.join("\n"));
-        if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${theme}-${width}-overview.png`), fullPage: true });
-        results.push({ engine, language, theme, width, passed: true });
+        if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-overview.png`), fullPage: true });
+        results.push({ engine, language, theme, palette, width, passed: true });
         await page.close();
       }
     } finally { await browser.close(); }

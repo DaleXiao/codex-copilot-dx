@@ -787,7 +787,7 @@ not a guarantee that every browser will reuse an existing tab.
 The default TTY display uses wrapping source/Claude summaries, a line-framed usage/inference table, and separate notice/activity rows, without an alternate screen or raw keyboard input. It shows usage returned since this process began; pending
 usage is excluded, missing usage stays partial, and this is not an invoice.
 Business requests drive activity; status/catalog polling does not. Existing nine
-animation themes retain their timing/palette and cycle pauses. `--verbose`,
+animation styles retain their timing and cycle pauses; the default green retains its original palette. `--verbose`,
 `--show-request-id` or `CCDX_LOG_LEVEL=debug` restore detailed terminal output.
 Failed reads show previous-data status and the last successful update time, or that no data has been received. Narrow summaries wrap rather than hiding Claude App/Code state. Non-TTY/CI/dumb/too-small terminals use plain output; repeated identical notices
 are coalesced. File logging retains its existing explicit opt-in and redaction.
@@ -803,7 +803,9 @@ service preferences fail closed for optional calls rather than reopening them.
 
 | Control | Effective scope |
 | --- | --- |
-| Terminal theme/animation | Live supported status terminal; plain/verbose/environment-disabled modes are reported separately |
+| Webpage color | Current browser, immediately; independent of the existing dark/light choice |
+| Terminal color | Live supported status table and animation; startup logo on the next launch |
+| Terminal animation | Live supported status terminal; plain/verbose/environment-disabled modes are reported separately |
 | Open WebUI | Next interactive desktop start |
 | Image calls | New local MCP calls; keeps provider credentials and allows an already-started call to finish |
 | Prediction adaptation | Subsequent configuration traffic on an already-provisioned bridge; keeps trust/route, and App caches can remain |
@@ -826,6 +828,18 @@ or an explicit lookup; their normal refresh interval remains 30 minutes. Paused
 auto-refresh still permits manual refresh/settings retry. No history-log scan is
 performed at the status cadence. The atom moves on load/manual refresh only and
 respects reduced motion. Client attribution absent from older records stays unknown.
+
+### Color themes
+
+Settings separates Web appearance and Terminal appearance. Each offers Classic green (default) and Klein blue. Green preserves the previous palette and terminal table's original text colors. Blue colors the terminal logo, full table and activity animation without changing glyphs, timing or metric definitions. Webpage color is independent of terminal color, and of the page header's dark/light switch.
+
+Web choices use `ccdx.dashboard.palette` (`green` / `klein`) and the existing `ccdx.dashboard.theme` (`dark` / `light`) in browser local storage. They are applied before the stylesheet, including the atom favicon. Same-origin tabs receive storage updates; other browsers retain their own choices. If storage is blocked, the current tab still changes and explicitly reports that the choice was not saved. No service request is needed to change webpage colors.
+
+Terminal color uses `terminal_color_theme: "klein"` in the normal CCDX user config. An absent value means `green`; choosing green removes the override. It does not change `terminal_animation` or any capability flag. The same bounded, strict settings read, file lock and atomic writer are reused. Invalid/unreadable existing config is not overwritten with defaults. A successful save applies to the supported live status table; the startup logo uses the saved choice next time. Previously printed terminal lines are not rewritten. Color codes are added after width calculation and clipping. Truecolor, 256-color and ANSI-blue fallbacks are supported; `NO_COLOR`, dumb terminals and redirected output preserve plain output. A terminal's own palette and background can affect the displayed blue.
+
+The terminal sample in Settings is labeled Preview and uses sample numbers, not current usage. Existing nine animation previews and their save operation remain available beneath the color choice. Red errors and amber warnings keep their meaning across webpage themes.
+
+Model-list failures name the selected source, retain its last successful list when available, and distinguish that list's timestamp from the failed check. Expand Check details for the bounded public reason, source, available HTTP status and check time. A retry time is shown only when the source supplies an actual retry delay; no new retry or automatic provider failover is added. Existing diagnostic redaction and size limits remain.
 
 ### Terminal animation
 
@@ -971,7 +985,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.1/codex-copilot-dx-1.2.1.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.2/codex-copilot-dx-1.2.2.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1202,7 +1216,7 @@ Client cancellations remain in verbose/file diagnostics as informational records
 timeouts and actual failures remain notices. Non-TTY, CI, dumb and terminals under
 40 columns or 16 rows retain plain output. At 40×16 the compact table keeps all metrics and short source/Code/App states. Larger terminals wrap full state descriptions. No runtime terminal dependency is added.
 
-Terminal appearance lives in System/settings, with a sidebar shortcut on wide
+Terminal appearance lives in Settings, with a sidebar shortcut on wide
 screens. Preview frames load on opening; closing, hiding the view/page or reduced
 motion stops preview timers. Saving changes the running supported status terminal.
 

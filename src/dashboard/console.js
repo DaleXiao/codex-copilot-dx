@@ -62,6 +62,12 @@
   window.addEventListener("ccdx:providers", () => { syncSources();if (current === "codex") void loadSourceModels(); });
   function applySettings(data) {
     settings = data;
+    el("terminal-color-theme").value = data.color_theme || "green";
+    el("terminal-color-theme").disabled = settingsPending;
+    el("terminal-color-sample").dataset.terminalPalette = data.color_theme || "green";
+    el("animation-settings").dataset.terminalPalette = data.color_theme || "green";
+    label(el("terminal-color-note"), data.terminal?.mode !== "status"
+      ? "terminal_theme_unavailable" : "terminal_theme_applied");
     for (const key of ["terminal_animation_enabled", "open_webui", "image_enabled", "prediction_enabled"]) {
       const input = el(`setting-${key}`), effective = data.effective[key];
       input.checked = data.saved[key];input.disabled = Boolean(effective.locked);
@@ -95,6 +101,7 @@
   async function loadSettings() {
     if (settingsPending) return;
     settingsPending = true;
+    el("terminal-color-theme").disabled = true;
     try { applySettings(await api());settingsReadAt = new Date().toLocaleTimeString(); }
     catch (error) {
       for (const id of ["settings-note", "page-settings-note"]) {
@@ -102,12 +109,12 @@
         el(id).title = error.message;
       }
     }
-    finally { settingsPending = false;el("apply-source").disabled = !sourceReady();syncReviewButton(); }
+    finally { settingsPending = false;el("terminal-color-theme").disabled = !settings;el("apply-source").disabled = !sourceReady();syncReviewButton(); }
   }
   async function change(body, button) {
     if (settingsPending) return;
     settingsPending = true;
-    const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #m365-on, #m365-off")];
+    const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-on, #m365-off")];
     controls.forEach(input => { input.disabled = true; });
     label(el("settings-note"), "applying");
     if (button) button.setAttribute("aria-busy", "true");
@@ -117,10 +124,12 @@
       if (body.action === "provider" && body.operation === "auto-review") reviewDirty = false;
       if (body.action === "provider" && body.operation === "off") { sourceDirty = false;reviewDirty = false; }
       el("review-control-note").textContent = "";
-      applySettings(data);await dashboardRefresh.refresh("status", { force: true });await dashboardRefresh.refresh("auth", { force: true });
+      applySettings(data);
+      if (body.action !== "color_theme") { await dashboardRefresh.refresh("status", { force: true });await dashboardRefresh.refresh("auth", { force: true }); }
     }
     catch (error) {
       if (settings) applySettings(settings);
+      if (body.action === "color_theme") { label(el("terminal-color-note"), "not_saved_error", { error: error.message });return; }
       el("settings-note").textContent = error.message;el("source-control-note").textContent = error.message;el("m365-control-note").textContent = error.message;el("review-control-note").textContent = error.message;el("effect-history").textContent = error.message;
       if (body.key) el(`effect-${body.key}`).textContent = error.message;
     } finally {
@@ -134,6 +143,7 @@
   for (const input of document.querySelectorAll("[role=switch]")) input.addEventListener("change", () => {
     void change({ action: "preference", key: input.id.slice("setting-".length), value: input.checked }, input);
   });
+  el("terminal-color-theme").addEventListener("change", () => void change({ action: "color_theme", theme: el("terminal-color-theme").value }, el("terminal-color-theme")));
   el("save-history").addEventListener("click", () => void change({ action: "history_limit", mib: Number(el("history-limit").value) }, el("save-history")));
   el("clean-history").addEventListener("click", () => {
     if (window.confirm(globalThis.ccdxLanguage.format("clear_inactive_codex_conversation_data_older_continuation_ids_ma"))) void change({ action: "history_clean" }, el("clean-history"));

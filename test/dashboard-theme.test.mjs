@@ -16,14 +16,16 @@ function loadTheme(storage) {
     setAttribute(name, value) { this[name] = value; },
     addEventListener(name, callback) { this[name] = callback; },
   };
+  const select = { value:"", addEventListener(name, fn) { this[name]=fn; } };
+  const note = { textContent:"" };
   const document = {
     documentElement: root,
     addEventListener(name, callback) { listeners.set(name, callback); },
-    getElementById(id) { return id === "favicon" ? favicon : button; },
+    getElementById(id) { return id === "favicon" ? favicon : id === "web-color-theme" ? select : id === "web-color-note" ? note : button; },
   };
   runInNewContext(script, { document, localStorage: storage, encodeURIComponent });
   listeners.get("DOMContentLoaded")();
-  return { root, button, favicon };
+  return { root, button, favicon, select, note };
 }
 
 test("dashboard defaults to the existing dark theme and switches without a server call", () => {
@@ -90,4 +92,17 @@ test("persistent sidebar brand uses the favicon geometry and inherits both theme
   assert.match(css, /\.status-icon \{[^}]*width: 44px; height: 44px;[^}]*color: var\(--accent\);/);
   assert.equal(heading, '<span id="page-title" data-i18n="overview">Overview</span>');
   assert.equal(html.match(/id="status-icon"/g).length, 1);
+});
+
+test("palette restores before paint, remains independent of mode and reports failed browser storage", () => {
+  const saved=new Map([["ccdx.dashboard.palette","klein"],["ccdx.dashboard.theme","light"]]);
+  const f=loadTheme({getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value)});
+  assert.equal(f.root.dataset.palette,"klein");assert.equal(f.root.dataset.theme,"light");
+  assert.match(decodeURIComponent(f.favicon.href),/#002fa7/);
+  f.button.click();assert.equal(f.root.dataset.palette,"klein");assert.match(decodeURIComponent(f.favicon.href),/#789aff/);
+  f.select.value="green";f.select.change({target:f.select});
+  assert.equal(f.root.dataset.theme,"dark");assert.equal(saved.get("ccdx.dashboard.palette"),"green");
+  const blocked=loadTheme({getItem:()=>null,setItem(){throw Error("denied");}});
+  blocked.select.value="klein";blocked.select.change({target:blocked.select});
+  assert.equal(blocked.root.dataset.palette,"klein");assert.equal(blocked.note.textContent,"theme_tab_only");
 });

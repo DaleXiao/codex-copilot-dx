@@ -452,7 +452,7 @@ try {
   const terminalAnimationTheme = terminalAnimationPreference().theme;
   terminalConsole = createTerminalConsole({ baseUrl: webUiUrl, verbose: CLI.verbose === true || CLI.showRequestId === true || LOGGING.level === "debug",
     snapshot: () => activeServer?.ccdxSnapshot?.() || {},
-    preferences: () => { const { saved, theme } = serviceSettingsSnapshot();return { ...saved, theme }; } });
+    preferences: () => { const { saved, theme, color_theme } = serviceSettingsSnapshot();return { ...saved, theme, color_theme }; } });
   const serviceControl = createServiceControl({ providerRuntime, clientIntegration: earlyIntegration, terminal: terminalConsole });
   const codexModelCatalog = createCodexModelCatalog();
   activeServer = await startAdapter(ADAPTER_PORT, ADAPTER_HOST, {

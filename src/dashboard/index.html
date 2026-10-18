@@ -133,6 +133,7 @@
           <div id="model-providers" class="provider-tabs" role="tablist" aria-label="Model providers" data-i18n-label="model_providers"></div>
           <div class="section-actions"><button id="refresh-models" type="button" data-i18n="refresh">Refresh</button></div>
           <p id="models-note" class="table-note" data-i18n="reading_provider_catalog">Loading model list…</p>
+          <details id="model-check-details" class="model-check-details" hidden><summary data-i18n="source_check_details">Check details</summary><dl id="model-check-fields" class="failure-detail"></dl><p class="hint" data-i18n="source_check_action">Use Refresh to check this source again.</p></details>
           <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="vendor">MODEL MAKER</th><th scope="col" data-i18n="api">CONNECTION TYPE</th><th scope="col" data-i18n="client">APP</th><th scope="col" data-i18n="reasoning">THINKING LEVEL</th><th scope="col" data-i18n="state">STATE</th></tr></thead><tbody id="live-models-body" role="tabpanel"><tr><td colspan="6" data-i18n="loading">Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n="catalog_listing_does_not_guarantee_inference_access">Listed does not mean your account can use it.</p>
         </details>
@@ -192,20 +193,67 @@ Missing data is unknown. This panel keeps no prompts or images.</p>
         </details>
         </div>
         <div data-view="system" hidden>
-        <section class="panel dashboard-section"><h2 data-i18n="process_listener">LOCAL SERVICE</h2><p id="process-state" class="table-note"></p><p id="process-memory" class="hint"></p><p id="process-queues" class="hint"></p><p id="process-notice" class="hint" role="status"></p></section>
-        <section class="overview client-overview"><article class="card"><h2 data-i18n="http_traffic">SERVICE REQUESTS</h2><strong id="requests">—</strong><p id="request-errors">—</p><p id="http-error-breakdown">—</p><p><span data-i18n="per_request_limits_active">Per-request limits</span><br><span id="body-limits">—</span></p></article></section>
-        <section class="panel dashboard-section" aria-labelledby="settings-heading">
-          <h2 id="settings-heading" data-i18n="service_settings">SERVICE SETTINGS</h2>
-          <p class="hint" data-i18n="saved_preference_and_effective_state_are_separate_environment_ov">Saved choices and current behavior are shown separately. Startup overrides and required restarts are listed.</p>
+  <section class="panel dashboard-section" aria-labelledby="web-appearance-title">
+    <h2 id="web-appearance-title" data-i18n="appearance_web_appearance">网页外观</h2>
+    <div class="appearance-row">
+      <div class="appearance-label"><label for="web-color-theme" data-i18n="appearance_color_theme">颜色主题</label><p data-i18n="appearance_browser_scope">只影响当前浏览器。</p></div>
+      <select id="web-color-theme" class="appearance-select"><option value="green" data-i18n="appearance_classic_green">经典绿（默认）</option><option value="klein" data-i18n="appearance_klein_blue">克莱因蓝</option></select>
+    </div>
+    <p id="web-color-note" class="appearance-note" role="status" data-i18n="theme_saved_browser">选择后，网页立即换色。</p>
+  </section>
+
+  <section class="panel dashboard-section" id="terminal-appearance" aria-labelledby="terminal-appearance-title">
+    <h2 id="terminal-appearance-title" data-i18n="terminal_appearance">终端外观</h2>
+    <div class="appearance-row">
+      <div class="appearance-label"><label for="terminal-color-theme" data-i18n="appearance_color_theme">颜色主题</label><p data-i18n="appearance_terminal_scope">与网页主题分别设置。</p></div>
+      <select id="terminal-color-theme" disabled class="appearance-select"><option value="green" data-i18n="appearance_classic_green">经典绿（默认）</option><option value="klein" data-i18n="appearance_klein_blue">克莱因蓝</option></select>
+    </div>
+    <p id="terminal-color-note" class="appearance-note" role="status" data-i18n="appearance_terminal_effect">表格即时换色，启动 Logo 下次生效。</p>
+
+    <div id="terminal-color-sample" class="terminal-sample" data-terminal-palette="green" aria-label="Terminal color preview" data-i18n-label="terminal_color_preview">
+      <div class="terminal-caption"><span>CCDX · Terminal</span><span data-i18n="appearance_sample">Sample data</span></div>
+      <div class="terminal-brand">
+        <pre class="terminal-logo" aria-hidden="true">   ▄▀█▄ ▄█▀▄
+   █ ▄███▄ █
+ ▄▀▀█▀ ▄ ▀█▀▀▄
+ ▀▄▄█▄ ▀ ▄█▄▄▀
+   █ ▀███▀ █
+   ▀▄█▀ ▀█▄▀   </pre>
+        <div><strong>CCDX</strong><span>by Dale Xiao</span></div>
+      </div>
+      <pre class="terminal-table terminal-wide">┌─────────────────────┬───────────────────┐
+│ Usage / this run    │ Inference         │
+├─────────────────────┼───────────────────┤
+│ Input          1.7M │ Requests       57 │
+│ Output         5.6K │ Active          2 │
+└─────────────────────┴───────────────────┘</pre>
+      <pre class="terminal-table terminal-compact">┌──────────────┬──────────────┐
+│ Usage        │ Inference    │
+├──────────────┼──────────────┤
+│ Input   1.7M │ Requests  57 │
+│ Output  5.6K │ Active     2 │
+└──────────────┴──────────────┘</pre>
+      <pre class="terminal-notices">0 notices / details in WebUI</pre>
+      <pre class="terminal-motion"><span id="terminal-sample-frame">[             :::::::]</span> <span id="terminal-sample-status">Working</span></pre>
+    </div>
+
           <div class="setting-row"><label for="setting-terminal_animation_enabled" data-i18n="terminal_animation">Terminal animation</label><input id="setting-terminal_animation_enabled" type="checkbox" role="switch" disabled><span id="effect-terminal_animation_enabled" class="hint" role="status"></span></div>
-          <div class="setting-row"><label for="setting-open_webui" data-i18n="open_webui_at_startup">Open dashboard on startup</label><input id="setting-open_webui" type="checkbox" role="switch" disabled><span id="effect-open_webui" class="hint" role="status"></span></div>
-          <p id="settings-note" class="hint" role="status" data-i18n="reading_settings">Reading settings…</p>
-        </section>
-        <details id="animation-settings" class="panel dashboard-section settings-panel">
+        <details id="animation-settings" class="appearance-animation settings-panel">
           <summary class="panel-heading"><h2 data-i18n="terminal_animation_9edf6">TERMINAL ANIMATION</h2><span id="animation-state" data-i18n="reading">READING</span></summary>
           <div id="animation-options" class="animation-options" role="group" aria-label="Animation style" data-i18n-label="animation_theme"></div>
           <div class="section-actions"><button id="save-animation" type="button" disabled data-i18n="save_selection">Save animation</button><span id="animation-note" role="status" data-i18n="applies_to_the_running_terminal">Updates the running terminal.</span></div>
         </details>
+  </section>
+
+        <section class="panel dashboard-section" aria-labelledby="settings-heading">
+          <h2 id="settings-heading" data-i18n="service_settings">SERVICE SETTINGS</h2>
+          <p class="hint" data-i18n="saved_preference_and_effective_state_are_separate_environment_ov">Saved choices and current behavior are shown separately. Startup overrides and required restarts are listed.</p>
+          <div class="setting-row"><label for="setting-open_webui" data-i18n="open_webui_at_startup">Open dashboard on startup</label><input id="setting-open_webui" type="checkbox" role="switch" disabled><span id="effect-open_webui" class="hint" role="status"></span></div>
+          <p id="settings-note" class="hint" role="status" data-i18n="reading_settings">Reading settings…</p>
+        </section>
+
+        <section class="panel dashboard-section"><h2 data-i18n="process_listener">LOCAL SERVICE</h2><p id="process-state" class="table-note"></p><p id="process-memory" class="hint"></p><p id="process-queues" class="hint"></p><p id="process-notice" class="hint" role="status"></p></section>
+        <section class="overview client-overview"><article class="card"><h2 data-i18n="http_traffic">SERVICE REQUESTS</h2><strong id="requests">—</strong><p id="request-errors">—</p><p id="http-error-breakdown">—</p><p><span data-i18n="per_request_limits_active">Per-request limits</span><br><span id="body-limits">—</span></p></article></section>
         </div>
       </main>
       <footer data-i18n="local_only_visible_page_updates">THIS COMPUTER ONLY / UPDATES WHILE VISIBLE</footer>

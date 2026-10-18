@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { withFileLockSync } from "./lock.mjs";
+import { isColorTheme } from "./terminal-colors.mjs";
 import { AUTO_REVIEW_REASONING_EFFORTS, DEFAULT_CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
 import { loadRuntimeConfig, RUNTIME_DEFAULTS } from "./runtime-config.mjs";
 import {
@@ -49,6 +50,10 @@ export function readUserSettings({ env = process.env, home = os.homedir(), stric
         if (strict) throw invalidSettings(filePath, `${key} must be a boolean`);
         delete parsed[key];
       }
+    }
+    if (Object.hasOwn(parsed, "terminal_color_theme") && !isColorTheme(parsed.terminal_color_theme)) {
+      if (strict) throw invalidSettings(filePath, "terminal_color_theme must be green or klein");
+      delete parsed.terminal_color_theme;
     }
     if (Object.hasOwn(parsed, AUTO_REVIEW_MODEL_KEY)) {
       const value = parsed[AUTO_REVIEW_MODEL_KEY];
@@ -123,8 +128,24 @@ const serviceFlags = settings => Object.fromEntries(SERVICE_FLAGS.map(key => [ke
 // One strict read gives each status update a coherent view; no stale cache.
 export function serviceSettingsSnapshot(options = {}) {
   const settings = readUserSettings({ ...options, strict: true });
-  return { saved: serviceFlags(settings), theme: animationPreference(settings).theme,
+  return { saved: serviceFlags(settings), theme: animationPreference(settings).theme, color_theme: settings.terminal_color_theme || "green",
     historyLimit: historyLimitPreference(settings, options.env || process.env) };
+}
+
+export function terminalColorPreference(options = {}) {
+  return readUserSettings(options).terminal_color_theme || "green";
+}
+
+export function writeTerminalColorTheme(theme, options = {}) {
+  if (!isColorTheme(theme)) throw new Error("Choose green or klein for the terminal color theme");
+  return withFileLockSync(`${userSettingsPath(options)}.lock`, () => {
+    const settings = readUserSettings({ ...options, strict: true });
+    const next = { ...settings };
+    if (theme === "green") delete next.terminal_color_theme;
+    else next.terminal_color_theme = theme;
+    const changed = atomicWriteFileIfChangedSync(userSettingsPath(options), `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+    return { changed, color_theme: theme };
+  });
 }
 
 export function writeServicePreference(key, value, options = {}) {

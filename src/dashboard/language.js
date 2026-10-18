@@ -1,5 +1,6 @@
 (() => {
   const translations = {
+    "source_catalog_unavailable": ["Model list unavailable: {code}", "模型列表不可用：{code}"],
     "terminal_color_preview": ["Terminal color preview", "终端配色预览"],
     "source_retry_time": ["Can retry after {time}.", "可在 {time} 后重试。"],
     "appearance_web_appearance": ["WEB APPEARANCE", "网页外观"],

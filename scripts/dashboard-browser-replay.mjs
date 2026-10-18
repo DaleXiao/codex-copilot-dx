@@ -73,6 +73,7 @@ const server = http.createServer((req, res) => {
       stream_performance: { by_route: { responses: {
         ttft_ms: { avg: 1250, samples: 3 }, output_tokens_per_second: { avg: 123.4, samples: 2, unit: "token/s" },
       } } },
+      response_failures: { recent:[{provider:"m365",code:"synthetic_error",model:"gpt-test",retried:false}] },
       http_errors: { by_category: { inference: 1, protocol: 2, route: 3, other: 0 } },
       providers: { codex_provider: "github", m365: { state: "ready", account: { login: "synthetic@example.test" }, models: { claude: 10, gpt: 5 },
         claude: { base_url: `http://127.0.0.1:${server.address().port}/anthropic`, gateway: "running", requests: { completed: 3, incomplete: 1, failed: 2 }, clients: { code: "configured", app: "configured" } } } },
@@ -185,6 +186,10 @@ try {
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "No whole-page horizontal overflow");
         await nav("requests");
         assert.equal(await page.locator("#recent-failures").isVisible(), true);
+        assert.match(await page.locator("#recent-failures li summary").innerText(), /Microsoft 365/);
+        await page.locator("#language-toggle").click();
+        assert.match(await page.locator("#recent-failures li summary").innerText(), language === "zh" ? /not retried/ : /未重试/);
+        await page.locator("#language-toggle").click();
         assert.equal(await page.locator("#model-usage").isVisible(), false);
         await nav("usage");
         await page.locator("#usage-analytics > summary").click();

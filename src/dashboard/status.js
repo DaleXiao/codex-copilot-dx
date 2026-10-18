@@ -85,19 +85,20 @@
         details.dataset.key = `${failure.at}/${failure.request_id || failure.response_id}/${failure.code}`;
         details.open = expanded.has(details.dataset.key);
         const title = document.createElement("summary");
-        localize(title, "detail_retry", {
+        const summary = {
           detail: phrase("time_model_code", {
             time: failure.at ? String(failure.at) : phrase("unknown_time"),
             model: failure.model ? String(failure.model).slice(0, 80) : phrase("unknown_model"),
             code: failure.code ? String(failure.code).slice(0, 80) : phrase("unknown_error"),
           }),
           retry: phrase(failure.retried ? "retry_attempted" : "no_retry"),
-        });
+        };
+        localize(title, "detail_retry", summary);
         const timeline = failure.timeline;
         const provider = failure.provider || timeline?.provider;
         if (provider) {
           const source = sourceNames.get(provider) || provider;
-          const original = title.textContent;
+          const original = phrase("detail_retry", summary);
           localize(title, "source_failure_summary", { source, detail: original });
         }
         const timings = timeline?.timings_ms || {};

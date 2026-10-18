@@ -418,6 +418,9 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
           const httpError = /^Live model lookup failed \(HTTP (\d{3})\)\. Run ccdx models for details\.$/.exec(message);
           if (httpError) text("models-note", "live_model_lookup_failed_http_status_run_ccdx_models_for_details", { status: httpError[1] });
           else text("models-note", message);
+          const sourceReason = /^Model catalog unavailable \/ (m365_[a-z0-9_]+)$/.exec(message);
+          const reason = httpError ? phrase("live_model_lookup_failed_http_status_run_ccdx_models_for_details", { status: httpError[1] })
+            : sourceReason ? phrase("source_catalog_unavailable", { code: sourceReason[1] }) : phrase(message);
           const source = providerEntries.find(entry => entry.id === selectedProvider)?.name || selectedProvider;
           const previous = modelSnapshots.get(selectedProvider);
           element("models-note").replaceChildren();
@@ -427,10 +430,10 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
           element("models-note").append(summary, document.createElement("br"), kept);
           const fields = element("model-check-fields");fields.replaceChildren();
           const diagnostic = state.error.diagnostic || {};
-          for (const [key, value] of [["source", source], ["source_check_time", diagnostic.checked_at], ["source_check_reason", phrase(message)], ["http_status", diagnostic.http_status]]) {
+          for (const [key, value] of [["source", source], ["source_check_time", diagnostic.checked_at], ["source_check_reason", reason], ["http_status", diagnostic.http_status]]) {
             if (value === null || value === undefined || value === "") continue;
             const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);
-            if (value?.key) localize(detail, value.key);else detail.textContent = String(value).slice(0, 300);
+            if (value?.key) localize(detail, value.key, value.values);else detail.textContent = String(value).slice(0, 300);
             fields.append(term, detail);
           }
           if (Number.isFinite(diagnostic.retry_after_ms) && diagnostic.retry_after_ms > 0) {

@@ -58,3 +58,10 @@ The package contains 181 files / 486800 bytes, 6162 bytes more than 1.2.1. Depen
 Package SHA-256: `480c7eea0c140b4c65f4ddf1c77f43709288ea27adecdfdfc4384e4324ff4b93`.
 
 Actual upstream entitlement, physical device/terminal palettes and visible native-client prediction remain outside synthetic test claims. The company registry, PATH, PAC/WPAD, certificates, npm policy, global CCDX installation and running user service were not replaced by local validation. Existing installation/platform limits in the reference remain.
+
+## Published delivery
+
+- [npm 1.2.2](https://www.npmjs.com/package/codex-copilot-dx/v/1.2.2) published successfully through [the existing publication workflow](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/39095757806). Its registry-reported SHA-1 `a0332d4381c9db0996f1e1a11d02988b5a15ff1d` matches the locally validated tarball.
+- [GitHub v1.2.2](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.2.2) is published as the latest stable Release with all five expected assets. Fresh downloads matched local bytes and the GitHub API SHA-256 digests.
+- Tag/source commit: `489dad9a774252053926843949481dc12ca644f5`. It differs from the final 17/17 CI commit only by this verification report. Repacking that tag produced identical tarball, helper, bootstrap and checksum files.
+- One post-publication check of the configured company npm registry returned E404 for 1.2.2; mirror synchronization is not verified. No registry or policy override was used. `ccdx update github` on compatible CCDX versions, or the Release bootstrap scripts, can use the published GitHub package while dependencies retain the configured registry. Restart CCDX after updating.

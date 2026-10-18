@@ -91,7 +91,15 @@ try {
     const browser = await playwright[engine].launch({ headless: true, ...(options.get("--executable") ? { executablePath: options.get("--executable") } : {}) });
     try {
       for (const language of ["en", "zh"]) for (const theme of ["dark", "light"]) for (const width of [420, 1280]) for (const palette of ["green", "klein"]) {
+        const caseName = JSON.stringify({ engine, language, theme, palette, width });
+        console.log(`Browser case: ${caseName}`);
         const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "no-preference" });
+        // Node's clock remains live when page.clock virtualizes browser timers.
+        const watchdog = setTimeout(() => {
+          console.error(`Browser case exceeded 120 seconds: ${caseName}`);
+          void page.close().catch(() => {});
+        }, 120000);
+        watchdog.unref();
         page.setDefaultTimeout(15000);
         const errors = [];
         page.on("pageerror", error => errors.push(error.message));
@@ -255,6 +263,7 @@ try {
         assert.equal(errors.length, 0, errors.join("\n"));
         if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-overview.png`), fullPage: true });
         results.push({ engine, language, theme, palette, width, passed: true });
+        clearTimeout(watchdog);
         await page.close();
       }
     } finally { await browser.close(); }

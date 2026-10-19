@@ -20,9 +20,11 @@
 - Synthetic held streams: 16/64/128 concurrency; status P95 at 128 was 0.786 ms; active work returned to zero.
 - Xterm: 24 palette/color/size combinations, 200 frames plus resize; existing terminal table and animation passed.
 - One native macOS account discovery found one account and matched the existing binding; zero token requests and zero model requests. This does not verify Windows Entra/Office behavior.
-- Browser verification and cross-platform CI receipts are recorded before publication below.
+- Chrome 16 and WebKit 16 combinations passed: English/Chinese, green/Klein, dark/light and 420/1280px; read-only discovery, explicit selection, failed-change preservation, aligned controls and existing settings behavior. Cross-platform CI receipts are recorded below before publication.
 
 The original baseline test run was constrained by the local sandbox. An isolated baseline rerun passed 1381 tests, with one pre-existing banner-test failure caused by this machine's saved blue theme and 9 skips. The candidate fixes that test's isolation; baseline product source remained 1.2.2 for comparison. The initial candidate gate found a documented placeholder rejected by the strict account parser and a README exceeding the existing line budget; the example and copy were corrected without weakening either check.
+
+The shared local browser cache disappeared during a later WebKit run, closing the browser before the next page opened. A second launch confirmed the missing executable. WebKit was then installed in this task's private temporary directory and all 16 final combinations passed; those failures are retained in the local evidence, with no product retry or fallback added.
 
 One bounded review fixed account-control timing while settings are read, strict account-ID types, atomic binding rollback and CLI selection deadlines. No open-ended optimization loop was added.
 
@@ -47,3 +49,9 @@ The package has 183 files / 494474 bytes, 7674 bytes more than 1.2.2, with no ne
 The Windows native component does not expose an explicit current-OS-account flag. `whoami.exe /upn` is a bounded lookup of the process's Windows user principal, not a SID/object-ID mapping, an enrollment/compliance assertion or a guarantee of model entitlement. Local/hybrid/Entra environments where a reliable unique UPN is unavailable require a choice. Office sign-in must be visible to the broker. Real company policy, MFA, entitlement and physical enterprise device behavior are not established by synthetic CI.
 
 Company registry/proxy/certificate/npm policy, system sign-in, GitHub credentials and the user's running installation remain unchanged. Browser tools and temporary credentials/helpers are removed after delivery; evidence and release artifacts are retained separately.
+
+## Cross-platform release gate
+
+[CI 39190021906](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/39190021906) passed **17/17 jobs** at `507dca44df3bd17df72bc071e67c1822bbeb4208`: Windows/macOS/Linux, Node 22.15/24, strict npm 12 installs and updates, bootstrap without Git/Node, Windows updater/native prediction/PAC and account contracts, actual official-client synthetic replays, Chromium/WebKit dashboard and xterm behavior. The later tag documentation commit changes only this verification report; runtime, dependency, workflow and test trees remain identical.
+
+This gate includes the previously reported Windows `npm.cmd` EINVAL regression: actual Windows subprocess tests remain in both Windows Node jobs. Users on affected old binaries still need a direct npm or Release-bootstrap installation to obtain the fixed updater.

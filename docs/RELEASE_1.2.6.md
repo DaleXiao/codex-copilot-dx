@@ -32,4 +32,11 @@ The isolated 1.2.5 → 1.2.6 upgrade retained the configured company registry an
 
 The release pack contains **186 files / 505904 bytes**, 2742 bytes more than 1.2.5, with unchanged runtime dependencies and no install hook. Tarball SHA-256: `bc2ee95c67cb16826afc56f097a4559d70add11d4b435fa038d12495d386cecc`.
 
-Cross-platform CI and publication receipts are recorded after completion. No real model request is used for validation. A successful local parsing fix does not establish the affected account's model entitlement or verify the user's physical device; after upgrade/restart, one model-directory read on that machine remains the end-to-end confirmation.
+## Published delivery
+
+- [CI 39225475881](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/39225475881) passed **17/17 jobs** at release source/tag `68d16ca9521497117f74400dd57fc969e623f750`: Windows/macOS/Linux, Node 22.15/24, strict npm 12 installs/upgrades, no-Git/no-Node bootstrap, Windows updater/prediction, official-client synthetic replays, Chromium/WebKit and terminal behavior.
+- [npm 1.2.6](https://www.npmjs.com/package/codex-copilot-dx/v/1.2.6) was published through [workflow 39226360279](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/39226360279). The immutable-tag workflow reran the complete release gate. Its tarball SHA-1 `d39690fa420537a67140224951fda17e9c3d3c0d` matches the locally verified artifact.
+- [GitHub v1.2.6](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.2.6) was published at `2026-10-19T08:55:54Z`. All five assets were downloaded fresh and matched local bytes, GitHub API SHA-256 digests and SHA256SUMS.
+- The configured company registry returned E404 for 1.2.6 after publication; mirror synchronization is unconfirmed. The GitHub Release channel is available; dependencies still use the configured registry.
+
+Existing registry/proxy/CA/npm policy and the user's running installation are preserved. Temporary test tools, private browser engines, third-party source-review copies and the release credential helper are removed after delivery; verified release artifacts and receipts remain outside the checkout. This publication-record follow-up changes only this report; the tag and published bytes remain unchanged. No real model request is used for validation. A successful local parsing fix does not establish the affected account's model entitlement or verify the user's physical device; after upgrade/restart, one model-directory read on that machine remains the end-to-end confirmation.

@@ -20,6 +20,7 @@ if (output) await fs.mkdir(output, { recursive: true });
 process.env.CCDX_DISABLE_USAGE = "1";
 globalThis.fetch = async () => { throw Error("Real provider calls are forbidden"); };
 let models = 0, summaries = 0;
+let updateReads = 0, updateState = "checked", latestVersion = "1.2.4";
 const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-dashboard-replay-"));
 let predictionActive = true, codexSource = "github", m365Enabled = true;
 const accountChoices = ["a", "b"].map(letter => ({ id: letter.repeat(64), login: `${letter}@example.test`, tenant: `company-${letter}` }));
@@ -49,6 +50,9 @@ const providerState = () => [
   { id: "third", name: "Third source", enabled: false, state: "disabled", clients: [] },
 ];
 const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, serviceControl,
+  updateStatusFn: async () => { updateReads++;return { source: "release_status", status: updateState,
+    current: { version: "1.2.3", published_at: "2026-10-19T02:36:27Z" }, latest: { version: latestVersion, published_at: "2026-10-19T10:00:00Z" },
+    update_available: updateState === "checked" && latestVersion !== "1.2.3", checked_at: "2026-10-19T10:00:00Z" }; },
   providerStateFn: providerState,
   providerAccountsFn: async () => { accountChecks++;return { accounts: accountChoices.map(value => ({ ...value, selected: value.id === companyAccount.id })) }; },
   providerCatalogFn: async ({ provider }) => {
@@ -122,6 +126,7 @@ try {
         });
         await page.clock.install();
         codexSource = "m365";m365Enabled = true;companyAccount = accountChoices[0];accountChecks = 0;accountChanges = 0;refuseAccountChange = false;
+        updateReads = 0;updateState = "checked";latestVersion = "1.2.4";
         m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
         await page.waitForFunction(() => !document.getElementById("refresh-models").disabled && !document.getElementById("refresh-usage").disabled);
@@ -129,6 +134,12 @@ try {
         assert.equal(await page.evaluate(() => atomMotions[0].options.duration), 450);
         assert.equal(await page.locator(".sidebar-brand #status-icon").count(), 1);
         assert.equal(await page.locator("h1 #status-icon").count(), 0);
+        assert.equal(await page.locator(".sidebar nav a .nav-icon").count(), 7);
+        assert.equal(await page.locator("#open-animation").count(), 0);
+        assert.match(await page.locator("#source-summary").innerText(), /3/);
+        assert.equal(await page.locator("#source-detail span").count(), 3);
+        assert.match(await page.locator("#source-detail").innerText(), /GitHub Copilot.*Microsoft 365.*Third source/s);
+        assert.doesNotMatch(await page.locator("#source-detail").innerText(), /→|Codex|Claude/);
         const brandIcon = await page.locator(".sidebar-brand #status-icon").boundingBox();
         assert.ok(brandIcon && brandIcon.width >= 40 && brandIcon.height >= 40 && brandIcon.x >= 0 && brandIcon.x + brandIcon.width <= width);
         await page.locator("#refresh").click();
@@ -235,7 +246,28 @@ try {
         await page.waitForFunction(() => !document.getElementById("refresh-usage").disabled && document.getElementById("usage-body").textContent.includes("gpt-6.1-sol"));
         await page.locator("#analytics-range").selectOption("90");
         await page.evaluate(() => { window.savedCalendar = document.querySelector(".calendar-day"); window.savedModelRow = document.querySelector("#live-models-body tr"); });
+        assert.equal(updateReads, 0, "Other views do not check releases");
         await nav("system");
+        await page.waitForFunction(() => document.getElementById("update-latest-version").textContent === "v1.2.4" && !document.getElementById("check-updates").disabled);
+        assert.equal(await page.locator("#update-current-version").innerText(), "v1.2.3");
+        assert.match(await page.locator("#update-current-date").innerText(), /2026-10-19/);
+        assert.equal(await page.locator(".terminal-animation-toggle").evaluate(node => getComputedStyle(node).borderBottomWidth), "0px");
+        assert.equal(await page.locator("#animation-settings").evaluate(node => getComputedStyle(node).borderTopWidth), "1px");
+        await page.locator(".update-install > summary").click();
+        assert.match(await page.locator("#install-command").innerText(), /v1\.2\.4\/install\.sh/);
+        await page.locator('[data-install-platform="windows"]').click();
+        assert.match(await page.locator("#install-command").innerText(), /v1\.2\.4\/install\.ps1/);
+        assert.doesNotMatch(await page.locator("#install-command").innerText(), /Bypass|allow-remote|ExecutionPolicy/);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Full Windows command wraps within the page");
+        latestVersion = "1.2.3";await page.locator("#check-updates").click();
+        await page.waitForFunction(() => !document.getElementById("check-updates").disabled && document.getElementById("update-latest-row").hidden);
+        assert.match(await page.locator("#update-state").innerText(), language === "zh" ? /已是最新/ : /up to date/);
+        updateState = "unavailable";await page.locator("#check-updates").click();
+        await page.waitForFunction(() => !document.getElementById("check-updates").disabled && document.getElementById("update-state").textContent.includes(document.documentElement.lang === "zh-CN" ? "最新版本未知" : "Latest version unknown"));
+        assert.equal(await page.locator("#update-command-row").isVisible(), true);
+        updateState = "checked";latestVersion = "1.2.4";
+        await page.locator("#check-updates").click();await page.waitForFunction(() => !document.getElementById("check-updates").disabled);
+        await page.locator(".update-install > summary").click();
         await page.waitForFunction(() => !document.getElementById("terminal-color-theme").disabled);
         assert.equal(await page.locator("#web-color-theme").inputValue(), palette);
         await page.locator("#terminal-color-theme").selectOption("klein");

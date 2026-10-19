@@ -51,6 +51,17 @@ async function invoke(handler, {
   return { status: res.statusCode, headers: res.headers, body: JSON.parse(text) };
 }
 
+test("update metadata is a protected local read with no install action", async () => {
+  let reads = 0;
+  const handler = createAdapterHandler({ dashboardOptions: { updateStatusFn: async () => { reads++;return { source: "release_status", status: "unavailable" }; } } });
+  const url = "/_ccdx/ui/updates";
+  for (const options of [{ dashboardHeader: "" }, { host: "example.com" }, { remoteAddress: "10.0.0.2" }]) assert.equal((await invoke(handler, { url, ...options })).status, 403);
+  assert.equal((await invoke(handler, { url, method: "POST", body: { action: "install" } })).status, 405);
+  assert.equal(reads, 0);
+  const result = await invoke(handler, { url });assert.equal(result.status, 200);assert.equal(reads, 1);
+  assert.equal(result.body.status, "unavailable");assert.equal(result.headers["Cache-Control"], "no-store");
+});
+
 test("company account discovery is a protected local read and exports only bounded public choices", async () => {
   let reads = 0;
   const handler = createAdapterHandler({ dashboardOptions: { providerAccountsFn: async () => { reads++;return { accounts: [{ id: "a".repeat(64), login: "name\u001b@example.test", tenant: "company", selected: true, native: "private", token: "secret" }] }; } } });

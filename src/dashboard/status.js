@@ -14,7 +14,6 @@
         restored: "settings_restored", not_installed: "not_installed", configuration_unavailable: "setup_unavailable", not_configured: "unknown", standby: "standby" };
       const auth = element("provider-auth"), clients = element("provider-clients"), requests = element("provider-requests");
       auth.replaceChildren();clients.replaceChildren();requests.replaceChildren();
-      const routes = [];
       for (const provider of providers) {
         sourceNames.set(provider.id, provider.name);
         const identity = provider.auth || {};
@@ -27,7 +26,6 @@
             client.gateway || "—", client.last_request_at || "—"], { labels: [2, 3] });
           if (client.reason) localize(row.children[2], "state_reason", { state: phrase(states[client.state] || "unknown"), reason: client.reason });
           clients.append(row);
-          if (client.selected && client.id === "codex") routes.push(`${client.name} → ${provider.name}`);
         }
         if (provider.requests) {
           const item = document.createElement("p");
@@ -36,10 +34,11 @@
           requests.append(item);
         }
       }
-      text("source-summary", "count_providers", { count: providers.filter(provider => provider.enabled).length });
-      element("source-detail").textContent = routes.join(" / ") || "—";
-      element("auth-account").textContent = providers.flatMap(provider => (provider.clients || [])
-        .filter(client => client.selected).map(client => `${client.name} → ${provider.name}`)).join(" / ") || "—";
+      text("source-summary", "count_providers", { count: providers.length });
+      element("source-detail").replaceChildren(...providers.map(provider => {
+        const item = document.createElement("span");item.textContent = provider.name;return item;
+      }));
+      text("auth-account", "provider_status_scope");
     }
 
     function duration(value) {

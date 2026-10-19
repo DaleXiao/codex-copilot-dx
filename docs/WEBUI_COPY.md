@@ -1,6 +1,6 @@
 # WebUI 文案对照
 
-此表保留历史文案对照，不作为当前功能说明。当前行为以 README 和 REFERENCE 为准；1.2.3 公司账号增量见文末。
+此表保留历史文案对照，不作为当前功能说明。当前行为以 README 和 REFERENCE 为准；1.2.3 公司账号和 1.2.4 版本信息增量见文末。
 基线：1.1.1。现文案：1.2.0。固定消息标识见 `src/dashboard/language.js`；中文和英文分别展示。保留产品名、模型 ID、命令、单位与错误码。动态原始数据不翻译、不截短来满足文案长度。
 
 | 固定标识 | 原英文 → 新英文 | 原中文 → 新中文 |
@@ -423,3 +423,33 @@
 | 无选择来源 → Windows sign-in / Only company account / Your choice / Saved account | Windows 登录账号／唯一公司账号／手动选择／已保存账号 |
 
 完整新增固定消息以 `src/dashboard/language.js` 的公司账号消息为准；账号邮箱与租户是原始身份数据，不作长度截断来冒充名称。
+
+## 1.2.4 导航与版本信息增量
+
+侧栏重复的 Terminal appearance 入口移除；设置页内的功能和中英文名称保留。来源摘要由应用映射改为完整来源名单，来源数量包括已发现但未启用的来源。
+
+| 固定标识 | 原英文 → 新英文 | 原中文 → 新中文 |
+| --- | --- | --- |
+| provider_status_scope | 新增 → Source and application status | 新增 → 模型来源与应用状态 |
+| version_updates | 新增 → VERSION & UPDATES | 新增 → 版本与更新 |
+| copy_command | 新增 → Copy command | 新增 → 复制指令 |
+| check_updates | 新增 → Check for updates | 新增 → 检查更新 |
+| checking_updates | 新增 → Checking… | 新增 → 正在检查… |
+| current_version | 新增 → Current version | 新增 → 当前版本 |
+| available_update | 新增 → Update available | 新增 → 可用更新 |
+| last_known_version | 新增 → Last known version | 新增 → 上次查到的版本 |
+| released_date | 新增 → Released {date} | 新增 → 发布于 {date} |
+| release_date_unknown | 新增 → Release date unknown | 新增 → 发布日期未知 |
+| new_version_available | 新增 → A new version is available. | 新增 → 发现新版本。 |
+| already_latest | 新增 → You’re up to date. | 新增 → 已是最新版本。 |
+| update_check_failed | 新增 → Could not check updates. Latest version unknown. | 新增 → 暂时无法检查，最新版本未知。 |
+| update_rate_limited | 新增 → GitHub limited update checks. Try again later. | 新增 → GitHub 限制了检查，请稍后再试。 |
+| update_restart | 新增 → Run in your terminal, then restart CCDX. | 新增 → 在终端运行，完成后重启 CCDX。 |
+| update_checked_time | 新增 → Last checked: {time} | 新增 → 上次检查：{time} |
+| update_attempted_time | 新增 → Last attempt: {time} | 新增 → 最近尝试：{time} |
+| update_install_help | 新增 → Update failed? View full installation commands | 新增 → 更新遇到问题？查看完整安装指令 |
+| installation_platform | 新增 → Installation platform | 新增 → 安装平台 |
+| update_install_hint | 新增 → Download the official installer. No Git required. | 新增 → 下载官方安装器，无需 Git。 |
+| update_install_policy | 新增 → Reuses compatible Node/npm or installs a private runtime. Keeps your registry, proxy, certificates and shell policy. | 新增 → 复用可用的 Node/npm，否则安装专用运行环境。<br>保留镜像、代理、证书和脚本策略。 |
+| update_windows_policy | 新增 → If scripts are blocked, use your company’s approved installation method. | 新增 → 若公司禁止运行脚本，请使用公司批准的安装方式。 |
+| update_copy_unavailable | 新增 → Clipboard unavailable. Select the command and copy it. | 新增 → 无法自动复制，请选中指令复制。 |

@@ -6,7 +6,7 @@ import { createUsageAnalytics } from "../src/usage-analytics.mjs";
 import { summarizeUsage } from "../src/usage.mjs";
 
 const script = readFileSync(new URL("../src/dashboard/ui.js", import.meta.url), "utf8");
-const viewScripts = ["status", "usage"].map(name => readFileSync(new URL(`../src/dashboard/${name}.js`, import.meta.url), "utf8")).join("\n");
+const viewScripts = ["status", "usage", "updates"].map(name => readFileSync(new URL(`../src/dashboard/${name}.js`, import.meta.url), "utf8")).join("\n");
 const refreshScript = readFileSync(new URL("../src/dashboard/refresh.js", import.meta.url), "utf8");
 const languageScript = readFileSync(new URL("../src/dashboard/language.js", import.meta.url), "utf8");
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -42,6 +42,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
     },
   };
   document.getElementById("analytics-range").value = "30";
+  document.getElementById("version-updates").closest = () => ({ hidden: true });
   const logo = document.getElementById("status-icon");
   logo.animate = (frames, options) => { const motion = { frames, options, cancelled: false, cancel() { this.cancelled = true; } };motions.push(motion); };
   logo.getAnimations = () => motions.filter(motion => !motion.cancelled);
@@ -511,9 +512,10 @@ test("provider tabs abort stale responses, retain independent catalogs and survi
   assert.equal(h.nodes.get("live-models-body").children[0].children[0].textContent, "github-model");
   release();await flush();
   assert.equal(h.nodes.get("live-models-body").children[0].children[0].textContent, "github-model");
+  assert.deepEqual(h.nodes.get("source-detail").children.map(node => node.textContent), ["github", "third"]);
   providers = providers.slice(0, 1);await h.api.loadAuth();
   assert.equal(h.nodes.get("model-providers").children.length, 1);
-  assert.equal(h.nodes.get("source-detail").textContent, "Codex App → github");
+  assert.deepEqual(h.nodes.get("source-detail").children.map(node => node.textContent), ["github"]);
 });
 
 test("account generation changes invalidate even a first in-flight catalog without a saved snapshot", async () => {

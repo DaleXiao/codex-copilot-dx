@@ -362,15 +362,22 @@ for (const [key, ids] of [["auth", ["account-authorization"]], ["status", ["clie
   }));
 }
 
+const updateView = globalThis.ccdxDashboardUpdates.create(viewHelpers);
 const dashboardRefresh = globalThis.ccdxRefresh.createController({
   visible: () => document.visibilityState === "visible",
   onState: ({ pendingKeys }) => {
-    // The account read remains independent; it must not block dashboard data.
-    const busy = pendingKeys.some(key => key !== "auth");
+    // Account and release reads must not block normal dashboard refreshes.
+    const busy = pendingKeys.some(key => key !== "auth" && key !== "updates");
     element("refresh").disabled = busy;
     element("refresh").setAttribute("aria-busy", String(busy));
   },
   resources: {
+    updates: {
+      visible: () => !element("version-updates").closest("[hidden]"),
+      load: ({ signal }) => readDashboard("/_ccdx/ui/updates", { signal, timeout: 20000, source: "release_status" }),
+      apply: updateView.render,
+      state: updateView.state,
+    },
     status: {
       visible: () => true,
       load: async ({ signal }) => {
@@ -522,16 +529,10 @@ for (const [id, key] of [["account-authorization", "auth"], ["client-features", 
 }
 
 element("save-animation").addEventListener("click", saveAnimation);
+element("check-updates").addEventListener("click", () => dashboardRefresh.refresh("updates", { force: true }));
 element("animation-settings").addEventListener("toggle", () => {
-  element("open-animation").setAttribute("aria-expanded", String(element("animation-settings").open));
   if (element("animation-settings").open) loadAnimation();
   syncAnimationPreview();
-});
-element("open-animation").addEventListener("click", () => {
-  const settings = element("animation-settings");
-  settings.open = true;
-  settings.scrollIntoView({ block: "center" });
-  settings.querySelector("summary").focus();
 });
 element("usage-analytics").addEventListener("toggle", () => {
   if (element("usage-analytics").open && element("model-usage").open) dashboardRefresh.refresh("usage");

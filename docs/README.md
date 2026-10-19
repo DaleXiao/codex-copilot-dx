@@ -17,6 +17,8 @@ effective Codex configuration or validate every field against the installed app.
 
 ## Historical release evidence
 
+- [1.2.4: Navigation clarity and bounded version discovery](RELEASE_1.2.4.md)
+
 These reports record a specific release and test environment. Their version,
 test counts, timings, live-provider observations, and limitations remain
 historical facts rather than current guarantees.

@@ -277,6 +277,8 @@ while visible/automatic, and source/settings evidence every eight status ticks.
 Catalog and retained-log reads retain their slower, view-scoped policy. Animation
 frames still load once per page when opened.
 
+`dashboard-updates.mjs` is loaded only by the protected update-information route. It projects bounded public stable-release metadata and publication dates, with process-local single-flight, five-minute success and one-minute failure caches. Its asynchronous npm network-configuration read reuses the installer's existing policy-preserving downloader; it adds no runtime dependency, credentials or synchronous child process on the service event loop. Metadata has a four-second per-request deadline and 128 KiB decoded-body bound. It never installs or restarts anything and does not alter startup's independent web-redirect lookup. `dashboard/updates.js` renders current/available/unknown states and validated, pinned installation command text; `refresh.js` owns its visible Settings refresh cadence. Failed checks preserve explicitly labeled prior metadata. No provider authentication or inference is involved.
+
 `claude-models.mjs` owns exact ID spelling and capability-cap projection shared by
 configuration and model discovery. M365 resolves both canonical and existing raw
 IDs to the same catalog entry and checks explicit effort lists without modifying

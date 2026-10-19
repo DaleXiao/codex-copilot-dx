@@ -848,6 +848,16 @@ Terminal color uses `terminal_color_theme: "klein"` in the normal CCDX user conf
 
 The terminal sample in Settings is labeled Preview and uses sample numbers, not current usage. Existing nine animation previews and their save operation remain available beneath the color choice. Red errors and amber warnings keep their meaning across webpage themes.
 
+### Version and update information
+
+Settings ends with Version & updates. The current version belongs to the running service, which can differ from a newly installed package until CCDX restarts. Dates are GitHub Release publication dates, not local installation dates; an unavailable date is explicitly unknown. A verified newer stable release shows its version/date and `ccdx update github`. Copying a command never executes it. No background installation or service restart is added.
+
+Opening Settings reads `GET /_ccdx/ui/updates`, protected by the existing loopback/Host/dashboard-header checks. It reads public GitHub REST release metadata without credentials, accepting stable, non-draft releases only. The first successful check needs at most two serial metadata requests: latest, and the exact current tag when different. The current publication date is retained in memory. Concurrent reads share one lookup; successful results are cached for five minutes and failures for one minute. The page reuses the visible-view 30-minute refresh controller, so the two-second status timer never polls GitHub. Manual checks also respect the service cache. Network configuration discovery is asynchronous and reads only npm's named proxy/CA/TLS/offline settings; no registry or policy is rewritten. Each metadata request has a four-second deadline and a 128 KiB decoded-body limit, with no automatic retry.
+
+Failed/rate-limited checks never claim that the installed version is latest. Last-known release details remain labeled as such, separate from the latest check attempt. A failed current-tag date lookup does not hide an otherwise verified available update. The startup web-redirect check remains unchanged and independent of this REST check. If npm/network settings cannot be read or company policy blocks GitHub, the version card reports the check as unavailable.
+
+Expand the recovery instructions to choose macOS Terminal or Windows PowerShell. Commands download the version-pinned Release installer into a unique temporary directory and remove that directory afterward. They use the latest known stable release, falling back to the running version if no release is known. Installers retain the documented no-Git, minimum-runtime, rollback and configured-registry behavior. Windows instructions keep the current execution policy; if company policy blocks scripts, use its approved installation method. Dependencies still require the configured npm registry.
+
 Model-list failures name the selected source, retain its last successful list when available, and distinguish that list's timestamp from the failed check. Expand Check details for the bounded public reason, source, available HTTP status and check time. A retry time is shown only when the source supplies an actual retry delay; no new retry or automatic provider failover is added. Existing diagnostic redaction and size limits remain.
 
 ### Terminal animation
@@ -994,7 +1004,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.3/codex-copilot-dx-1.2.3.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.4/codex-copilot-dx-1.2.4.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1166,7 +1176,7 @@ A locally saved GitHub credential is not online entitlement. Account names with
 underscores retain their exact display value; identity, keys and environment
 values are not inferred from model names. Client configuration, gateway state,
 recent requests and actual inference are separate observations. The top summary
-shows selected client-to-Provider routes; it is not an account label.
+describes source/application status without mapping arrows. The source card counts and lists every discovered registered source, including disabled sources; availability and account evidence remain in the detailed tables. Each sidebar tab has a decorative inline SVG icon, with application entries indented. Terminal appearance has one Settings entry, and the animation selector has one separating rule.
 
 Catalog tabs browse registered Provider directories without changing routing.
 Rows retain protocol, eligible clients, reasoning metadata and directory state.

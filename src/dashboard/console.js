@@ -48,7 +48,7 @@
     if (["codex", "models", "system"].includes(next)) void loadSettings();
     if (next === "models") { void dashboardRefresh.refresh("models");void dashboardRefresh.refresh("auth"); }
     if (next === "usage") void dashboardRefresh.refresh("usage");
-    if (next === "system") void dashboardRefresh.refresh("animation");
+    if (next === "system") { void dashboardRefresh.refresh("animation");void dashboardRefresh.refresh("updates"); }
     syncAnimationPreview();
   }
   async function api(body) {
@@ -266,6 +266,5 @@
   el("refresh").addEventListener("click", () => { if (["codex", "models", "system"].includes(current)) void loadSettings(); });
   window.addEventListener("pagehide", () => { stopped = true;clearTimeout(timer); });
   window.addEventListener("pageshow", () => { stopped = false;schedule(); });
-  el("open-animation").addEventListener("click", () => { location.hash = "system";navigate(); });
   navigate();schedule();
 })();

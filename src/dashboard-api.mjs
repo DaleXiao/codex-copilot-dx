@@ -143,6 +143,7 @@ export async function handleDashboardApi(req, res, pathname, {
   providerCatalogFn,
   providerStateFn,
   providerAccountsFn,
+  updateStatusFn,
   serviceControl,
   applyAnimation,
 } = {}) {
@@ -160,6 +161,14 @@ export async function handleDashboardApi(req, res, pathname, {
   if (pathname === PROVIDERS_PATH && req.method === "GET") {
     try { sendJson(res, 200, { source: "provider_status", providers: dashboardProviders(providerStateFn, authStatusFn) }); }
     catch { sendJson(res, 500, { error: "Could not read provider status" }); }
+    return;
+  }
+
+  if (pathname === "/_ccdx/ui/updates") {
+    if (req.method !== "GET") { sendJson(res, 405, { error: "Use GET" });return; }
+    const { dashboardUpdateStatus } = await import("./dashboard-updates.mjs");
+    try { sendJson(res, 200, await (updateStatusFn || dashboardUpdateStatus)()); }
+    catch { sendJson(res, 503, { error: "Could not check releases" }); }
     return;
   }
 

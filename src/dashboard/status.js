@@ -19,7 +19,13 @@
         const identity = provider.auth || {};
         const authRow = tableRow([provider.name, identity.account || "—", states[identity.state] || "unknown",
           states[provider.state] || "unknown", identity.checked_at || "—", duration(identity.expires_in_ms)], { labels: [2, 3] });
-        if (provider.reason) localize(authRow.children[3], "state_reason", { state: phrase(states[provider.state] || "unknown"), reason: provider.reason });
+        if (provider.reason) {
+          const network = provider.network_diagnostic;
+          localize(authRow.children[3], "state_reason", { state: phrase(states[provider.state] || "unknown"),
+            reason: network ? phrase(`network_cause_${network.cause_code}`) : provider.reason });
+          if (network) localize(authRow.children[3], "network_detail", { source: phrase(`network_source_${network.source}`),
+            stage: phrase(`network_stage_${network.stage}`), code: network.cause_code, category: provider.reason }, "title");
+        }
         auth.append(authRow);
         for (const client of provider.clients || []) {
           const row = tableRow([provider.name, client.name, states[client.state] || client.state,

@@ -10,13 +10,14 @@ import { readProviderSettings } from "../src/provider-settings.mjs";
 import { rememberResponseHistoryNode, materializeResponseHistory, clearResponseHistoryForTests } from "../src/response-history.mjs";
 import { invokeAdapter } from "../test-support/adapter.mjs";
 import { applyResponseHistoryRoutePlan } from "../src/responses-request.mjs";
+import { createM365Network } from "../src/providers/m365-network.mjs";
 
 const catalog = { data: [
   { id: "claude-opus-5.5", publisher: "Anthropic", supported_endpoints: ["/v1/messages"] },
   { id: "gpt-6-sol", publisher: "OpenAI", supported_endpoints: ["/responses"], capabilities: { supports: { reasoning_effort: ["low", "medium"] } } },
 ] };
 function completed(model, id) { return Response.json({ id, model, status: "completed", output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }); }
-function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, corePort, modelCatalog = catalog, onConfigure = () => {} } = {}) {
+function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, corePort, modelCatalog = catalog, onConfigure = () => {}, m365Network } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-providers-")), calls = [], lifecycle = [];
   const githubClient = { getCachedModelEndpoints: () => ["/responses"], listModels: async () => ({ status: 200, body: JSON.stringify({ data: [] }) }),
     responses: async body => { calls.push({ provider: "github", body: structuredClone(body) });return githubRequest ? githubRequest(body) : completed(body.model, "resp_github"); },
@@ -24,10 +25,10 @@ function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, 
   const runtime = createProviderRuntime({ githubClient, githubRegistry: { models: { data: [] } }, home, env: {}, platform: "darwin", corePort,
     createM365: options => createM365Provider({ ...options, auth: {
       getToken: async () => { if (acquireM365) await acquireM365();if (failM365) throw Object.assign(Error("denied"), { code: "m365_interaction_required" });return { token: "test_entra", expiresAt: Date.now() + 3600000, account: { id: "id", tenant: "tenant", login: "user@example.test" } }; }, snapshot: () => ({}), reset() {},
-    }, fetchImpl: async (_url, options) => {
+    }, ...(m365Network ? { createNetwork: m365Network } : { fetchImpl: async (_url, options) => {
       if (options.method === "GET") return Response.json(modelCatalog);
       const body = JSON.parse(options.body);calls.push({ provider: "m365", body });return completed(body.model, "resp_m365");
-    } }),
+    } }) }),
     startGateway: async () => { lifecycle.push("start");if (gatewayError) throw Object.assign(Error("Synthetic gateway failure"), { code: gatewayError });return { port: 2027, snapshot: () => ({ active: 0 }), close: async () => lifecycle.push("close") }; },
     configureClients: input => { onConfigure(input);return { code: "configured", app: "configured" }; }, restoreClients: () => ({ remaining: 0, preserved: 0 }),
   });
@@ -37,6 +38,28 @@ function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, 
   return { runtime, calls, lifecycle, home, options };
 }
 const choose = runtime => runtime.action({ action: "switch", provider: "m365", model: "gpt-6-sol", auto_review_model: "gpt-6-sol" });
+
+test("system proxy parse failures stay local to M365, retain the cause, and recover without replacing GitHub", async t => {
+  let rule = "169.254/33", catalogReads = 0;
+  const s = setup(t, { m365Network: async () => {
+    const network = await createM365Network({ platform: "darwin", env: {}, execFileImpl: async () => ({ stdout: `ExceptionsList : <array> {\n0 : ${rule}\n}` }),
+      requestImpl() { assert.fail("No real transport probe"); } });
+    network.close();
+    return { fetch: async () => { catalogReads++;return Response.json(catalog); }, snapshot: () => ({ source: "direct", type: "direct" }), healthy: () => true, close() {} };
+  } });
+  await s.runtime.start();
+  const state = s.runtime.snapshot();
+  assert.equal(state.m365.state, "unavailable");assert.equal(state.m365.reason, "m365_proxy_settings_unsupported");
+  assert.equal(state.m365.network_diagnostic.cause_code, "proxy_bypass_invalid");assert.equal(catalogReads, 0);
+  assert.equal(s.runtime.dashboardProviders().find(p => p.id === "m365").network_diagnostic.cause_code, "proxy_bypass_invalid");
+  const reply = await invokeAdapter(s.options, { body: { model: "gpt-6.1-sol", input: "still available" } });
+  assert.equal(reply.status, 200);assert.deepEqual(s.calls.map(call => call.provider), ["github"]);
+  await assert.rejects(s.runtime.dashboardCatalog({ provider: "m365" }), { code: "m365_proxy_settings_unsupported" });
+  assert.equal(s.runtime.snapshot().codex_provider, "github");assert.equal(catalogReads, 0);
+  rule = "169.254/16";await s.runtime.refresh();
+  assert.equal(s.runtime.snapshot().m365.state, "ready");assert.equal(s.runtime.snapshot().m365.network_diagnostic, null);
+  assert.equal(s.runtime.snapshot().codex_provider, "github");assert.equal(catalogReads, 1);
+});
 
 test("Claude shares a custom core service port without a conflicting listener", async t => {
   const s = setup(t, { corePort: 2027 });await s.runtime.start();

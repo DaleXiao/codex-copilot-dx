@@ -1,6 +1,6 @@
 # WebUI 文案对照
 
-此表保留历史文案对照，不作为当前功能说明。当前行为以 README 和 REFERENCE 为准；1.2.3 公司账号、1.2.4 版本信息和 1.2.5 用量图表增量见文末。
+此表保留历史文案对照，不作为当前功能说明。当前行为以 README 和 REFERENCE 为准；1.2.3 公司账号、1.2.4 版本信息和 1.2.5 用量图表和 1.2.6 网络诊断增量见文末。
 
 基线：1.1.1。现文案：1.2.0。固定消息标识见 `src/dashboard/language.js`；中文和英文分别展示。保留产品名、模型 ID、命令、单位与错误码。动态原始数据不翻译、不截短来满足文案长度。
 
@@ -464,3 +464,26 @@
 | line_chart | 新增 → Line chart | 新增 → 曲线图 |
 | approx_cache_hit_rate | 新增 → Approx. cache hit rate | 新增 → 粗略缓存命中率 |
 | runtime_cache_hit_basis | 新增 → Reused input / input tokens. ~ Partial counts. — Unknown or invalid. | 新增 → 复用输入 ÷ 输入 Token。<br>~：数据不完整。—：未知或无效。 |
+
+## 1.2.6 系统代理诊断增量
+
+原状态仅列 `Unavailable / m365_proxy_settings_unsupported`。已知代理设置错误改为状态加具体原因；原错误大类、具体原因码和阶段保留在详情。布局、配色和功能开关不变；CLI 继续英文。
+
+| 固定标识 | 新英文 | 新中文 |
+| --- | --- | --- |
+| network_route_source | Network settings | 网络设置来源 |
+| network_failure_stage | Failed at | 失败阶段 |
+| network_cause_code | Cause code | 原因代码 |
+| network_source_system | System settings | 系统设置 |
+| network_source_environment | Environment variables | 环境变量 |
+| network_stage_proxy_discovery | Read system proxy settings | 读取系统代理 |
+| network_stage_proxy_config | Interpret proxy rules | 解析代理规则 |
+| network_cause_proxy_discovery_failed | Could not read system proxy settings. Existing settings kept. | 无法读取系统代理。原设置已保留。 |
+| network_cause_proxy_bypass_invalid | Invalid proxy exception rule. Existing settings kept. | 代理例外规则无效。原设置已保留。 |
+| network_cause_proxy_system_invalid | Invalid system proxy address or port. Existing settings kept. | 系统代理地址或端口无效。原设置已保留。 |
+| network_cause_proxy_address_invalid | Invalid proxy address. Existing settings kept. | 代理地址无效。原设置已保留。 |
+| network_cause_proxy_address_unsupported | Unsupported proxy address format. Existing settings kept. | 代理地址格式不支持。原设置已保留。 |
+| network_cause_proxy_dynamic_unsupported | System PAC or WPAD is not supported. Existing settings kept. | 暂不支持系统自动代理。原设置已保留。 |
+| network_cause_proxy_settings_unsupported | Could not interpret proxy settings. Existing settings kept. | 无法解析代理设置。原设置已保留。 |
+
+技术提示 `network_detail` 保留四个占位符：`{source} / {stage} / {code} / {category}`，随语言切换重新翻译说明，技术码保持原值。

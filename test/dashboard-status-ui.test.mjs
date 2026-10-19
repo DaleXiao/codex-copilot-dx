@@ -11,6 +11,20 @@ const viewScripts = ["status", "usage"].map(name => readFileSync(new URL(`../src
 const renderScript = viewScripts + "\n" + script.split('\nelement("refresh").addEventListener(')[0]
   + script.slice(script.indexOf("function emptyTable("), script.indexOf("async function loadModels("));
 
+test("provider status explains a local proxy failure with technical codes in its details", () => {
+  const nodes = new Map();
+  const createNode = () => ({ textContent: "", children: [], attributes: {}, setAttribute(key, value) { this.attributes[key] = value; },
+    replaceChildren(...children) { this.children = children; }, append(...children) { this.children.push(...children); } });
+  const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, createNode());return nodes.get(id); }, createElement: createNode };
+  const renderProviders = runInNewContext(`${renderScript}\nrenderProviders;`, { document, ccdxLanguage: dashboardLanguage });
+  renderProviders({ providers: [{ id: "m365", name: "Microsoft 365", state: "unavailable", reason: "m365_proxy_settings_unsupported",
+    network_diagnostic: { source: "system", stage: "proxy_config", cause_code: "proxy_bypass_invalid" } }] });
+  const cell = nodes.get("provider-auth").children[0].children[3];
+  assert.match(cell.textContent, /Unavailable.*Invalid proxy exception rule/);
+  assert.match(cell.attributes.title, /System settings.*Interpret proxy rules.*proxy_bypass_invalid.*m365_proxy_settings_unsupported/);
+  assert.doesNotMatch(cell.textContent, /sign-in|permissions/);
+});
+
 test("Overview formats the current-run token ratio without turning unknown values into zero", () => {
   const nodes = new Map();
   const createNode = () => ({ textContent: "", children: [], querySelectorAll() { return []; }, replaceChildren(...children) { this.children = children; }, append(...children) { this.children.push(...children); } });

@@ -25,6 +25,8 @@ const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-dashboard-replay-"));
 let predictionActive = true, codexSource = "github", m365Enabled = true;
 const accountChoices = ["a", "b"].map(letter => ({ id: letter.repeat(64), login: `${letter}@example.test`, tenant: `company-${letter}` }));
 let companyAccount = accountChoices[0], accountChecks = 0, accountChanges = 0, refuseAccountChange = false;
+let proxyFailure = false;
+const networkDiagnostic = { source: "system", stage: "proxy_config", cause_code: "proxy_bypass_invalid" };
 let m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
 const serviceControl = createServiceControl({ home, env: {}, readImages: () => ({}), readPrediction: () => ({ enabled: true }),
   clientIntegration: { snapshot: () => ({ prediction: { configured: true, bridge: "running", active: predictionActive } }), setPredictionActive(value) { predictionActive = value; }, fix: async () => {} },
@@ -45,7 +47,8 @@ const records = Array.from({ length: 10 }, (_, index) => ({ ts: new Date(Date.no
   usage: { input_tokens: 100 * (index + 1), cached_input_tokens: 50, output_tokens: 20, total_tokens: 120 + 100 * index } }));
 const providerState = () => [
   { id: "github", name: "GitHub Copilot", selection: { codex: true, models_required: false }, enabled: true, state: "ready", clients: [{ id: "codex", name: "Codex App", selected: true, state: "configured" }] },
-  { id: "m365", name: "Microsoft 365", selection: { codex: true, models_required: true }, enabled: true, state: "ready", auth: { state: "authorized", account: "synthetic@example.test" },
+  { id: "m365", name: "Microsoft 365", selection: { codex: true, models_required: true }, enabled: true,
+    state: proxyFailure ? "unavailable" : "ready", ...(proxyFailure ? { reason: "m365_proxy_settings_unsupported", network_diagnostic: networkDiagnostic } : {}), auth: { state: "authorized", account: "synthetic@example.test" },
     clients: [{ id: "claude_app", name: "Claude App", state: "configured", gateway: "running" }], requests: { completed: 3, incomplete: 1, failed: 2 } },
   { id: "third", name: "Third source", enabled: false, state: "disabled", clients: [] },
 ];
@@ -58,6 +61,7 @@ const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, servic
   providerCatalogFn: async ({ provider }) => {
     if (provider === "github") return null;
     if (provider === "third") throw Object.assign(Error("Unavailable"), { code: "m365_disabled", statusCode: 503 });
+    if (proxyFailure) throw Object.assign(Error("Bearer NEVER_EXPOSE"), { code: "m365_proxy_settings_unsupported", statusCode: 502, network_diagnostic: { ...networkDiagnostic, raw: "NEVER_EXPOSE" } });
     return { source: "catalog", checkedAt: new Date().toISOString(), advertised: 1, upstreamHost: "Microsoft 365", models: [
       { id: "claude-opus-5.5", vendor: "Anthropic", endpoints: ["messages"], clients: ["claude_app", "claude_code"], reasoning_efforts: ["low", "high"], selectable: true },
           { id: "gpt-source", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], reasoning_efforts: ["low"], auto_review_efforts: ["low"], selectable: true },
@@ -127,6 +131,7 @@ try {
         });
         await page.clock.install();
         codexSource = "m365";m365Enabled = true;companyAccount = accountChoices[0];accountChecks = 0;accountChanges = 0;refuseAccountChange = false;
+        proxyFailure = false;
         updateReads = 0;updateState = "checked";latestVersion = "1.2.4";
         m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
@@ -221,6 +226,25 @@ try {
         await page.locator("#model-provider-m365").click();
         await page.waitForFunction(() => document.getElementById("live-models-body").textContent.includes("claude-opus-5.5"));
         assert.match(await page.locator("#live-models-body").innerText(), /low.*high/);
+        proxyFailure = true;await page.locator("#refresh-models").click();
+        await page.waitForFunction(() => document.getElementById("model-check-fields").textContent.includes("proxy_bypass_invalid"));
+        await page.locator("#model-check-details > summary").click();
+        assert.match(await page.locator("#live-models-body").innerText(), /claude-opus-5.5/, "Failed checks retain the previous catalog");
+        assert.match(await page.locator("#model-check-fields").innerText(), language === "zh" ? /代理例外规则无效/ : /Invalid proxy exception rule/);
+        assert.doesNotMatch(await page.locator("#model-check-fields").innerText(), /NEVER_EXPOSE/);
+        await page.locator("#refresh").click();
+        await page.waitForFunction(() => document.getElementById("provider-auth").textContent.includes(document.documentElement.lang === "zh-CN" ? "代理例外规则无效" : "Invalid proxy exception rule"));
+        assert.match(await page.locator("#provider-auth tr").nth(1).locator("td").nth(3).getAttribute("title"), /proxy_bypass_invalid.*m365_proxy_settings_unsupported/);
+        await page.locator("#language-toggle").click();
+        assert.match(await page.locator("#provider-auth").innerText(), language === "zh" ? /Invalid proxy exception rule/ : /代理例外规则无效/);
+        assert.match(await page.locator("#model-check-fields").innerText(), language === "zh" ? /Interpret proxy rules/ : /解析代理规则/);
+        assert.match(await page.locator("#models-note").innerText(), language === "zh" ? /Showing the list from/ : /当前显示/);
+        assert.doesNotMatch(await page.locator("#models-note").innerText(), /m365_proxy_settings_unsupported/);
+        await page.locator("#language-toggle").click();
+        if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-network-diagnostic.png`), fullPage: true });
+        proxyFailure = false;await page.locator("#refresh").click();
+        await page.waitForFunction(() => document.getElementById("model-check-details").hidden && !document.getElementById("refresh").disabled);
+        assert.doesNotMatch(await page.locator("#provider-auth").innerText(), /代理例外规则无效|Invalid proxy exception rule/);
         await page.locator("#model-provider-third").click();
         await page.waitForFunction(() => document.getElementById("model-check-fields").textContent.includes("m365_disabled"));
         assert.doesNotMatch(await page.locator("#live-models-body").innerText(), /claude-opus/);

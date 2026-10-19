@@ -21,6 +21,17 @@ function variable(env, lower, upper) {
   return { value: String(env[key] || "").trim(), source: key };
 }
 
+function systemBypassRule(value) {
+  const rule = value.trim().toLowerCase();
+  const match = /^(\d+(?:\.\d+){0,2})\/(\d{1,2})$/.exec(rule);
+  if (!match) return rule;
+  const octets = match[1].split("."), prefix = Number(match[2]);
+  if (!/^(0|[1-9]\d?)$/.test(match[2]) || prefix > octets.length * 8 || octets.some(part => !/^(0|[1-9]\d{0,2})$/.test(part) || Number(part) > 255)) {
+    throw routeError("proxy_bypass_invalid", "Invalid system proxy bypass CIDR rule; existing routes were preserved");
+  }
+  return `${[...octets, ...Array(4 - octets.length).fill("0")].join(".")}/${prefix}`;
+}
+
 export function resolveNetworkRoute({ env = process.env, systemProxy = "", checkApi = true } = {}) {
   const api = String(env.CODEX_API_BASE_URL || "").trim().replace(/\/+$/, "");
   if (checkApi && api && api !== OFFICIAL_API) {
@@ -44,7 +55,7 @@ export function resolveNetworkRoute({ env = process.env, systemProxy = "", check
   const https = proxy(httpsEnv.value, httpsEnv.source) || proxy(allEnv.value, allEnv.source) || system("HTTPS", "http") || system("SOCKS", "socks5");
   const noProxy = variable(env, "no_proxy", "NO_PROXY").value;
   const exceptions = /ExceptionsList\s*:\s*<array>\s*\{([^}]+)\}/.exec(systemProxy)?.[1] || "";
-  const bypass = [...new Set([...noProxy.split(","), ...[...exceptions.matchAll(/\d+\s*:\s*([^\n]+)/g)].map((m) => m[1])]
+  const bypass = [...new Set([...noProxy.split(","), ...[...exceptions.matchAll(/\d+\s*:\s*([^\n]+)/g)].map((m) => systemBypassRule(m[1]))]
     .map((s) => s.trim().toLowerCase()).filter(Boolean))];
   return { http, https, bypass, rules: compileBypassRules(bypass), excludeSimple: settings.ExcludeSimpleHostnames === "1" };
 }

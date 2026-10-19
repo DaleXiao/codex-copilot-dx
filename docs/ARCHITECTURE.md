@@ -48,6 +48,11 @@ to M365. No GitHub token, image credential or browser Cookie is reused. Windows 
 use a separate OS WinHTTP worker for M365 company routing; macOS preserves static
 system/environment routing and reports unsupported dynamic PAC. Native runtime
 absence and policy refusal do not disable GitHub.
+
+`network-route.mjs` canonicalizes abbreviated IPv4 CIDRs only while adapting system `ExceptionsList` input, before merging it with the unchanged strict `NO_PROXY` input. `network-bypass.mjs` remains the shared strict Node/PAC matcher; it performs no DNS lookup. This fixes no-proxy and static-proxy macOS configurations without dropping exception rules or weakening unsupported dynamic-PAC protection.
+
+`providers/m365-network-diagnostic.mjs` is a small pure projection of fixed proxy failure codes, source and stage, shared by transport, provider state, protected dashboard routes and CLI. Raw error chains/settings never cross that boundary. M365 retains existing outer error categories; the source runtime forwards the bounded diagnostic, and existing bilingual renderers expose a readable explanation with technical details. Startup uses the same fixed English explanation. Refresh failures retain last-good catalogs and never change the selected provider; successful transport creation clears the setup diagnostic. No new service, storage, dependency, route fallback or provider retry is introduced.
+
 `claude-client-lifecycle.mjs` owns configuration reconciliation and restore state, independently from source auth/catalog code. It checks lifecycle/profile validity after asynchronous policy inspection and preserves the existing field-ownership writer.
 Claude handler/configuration readiness is also separate from M365 provider
 readiness. A Claude setup failure or a GPT-only catalog cannot block the explicitly

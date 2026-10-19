@@ -6,6 +6,7 @@ import { resolveNetworkRoute, networkProxyFor, bypassNetworkProxy, networkRouteS
 import { createProxyAgent } from "../proxy-tunnel.mjs";
 import { loadRuntimeConfig } from "../runtime-config.mjs";
 import { m365HelperEnvironment } from "./m365-auth.mjs";
+import { m365ProxyFailure } from "./m365-network-diagnostic.mjs";
 
 const HOST = "df.loki.delve.office.com";
 const targetUrl = new URL(`https://${HOST}/api/v1/llmapi/models`);
@@ -47,7 +48,9 @@ export function requestFetch(requestImpl, agent) {
 
 export async function createM365Network({ env = process.env, platform = process.platform, signal,
   execFileImpl = promisify(execFile), startWindowsNetwork, requestImpl = https.request } = {}) {
-  const explicit = resolveNetworkRoute({ env, checkApi: false });
+  let explicit;
+  try { explicit = resolveNetworkRoute({ env, checkApi: false }); }
+  catch (error) { throw m365ProxyFailure(error, "environment", "network_error"); }
   const environmentRoute = networkProxyFor(targetUrl, explicit), bypass = bypassNetworkProxy(HOST, 443, explicit);
   const runtime = loadRuntimeConfig(env);
   if (platform === "win32" && !environmentRoute && !bypass) {
@@ -61,9 +64,9 @@ export async function createM365Network({ env = process.env, platform = process.
   if (platform === "darwin" && !environmentRoute && !bypass) {
     let systemProxy;
     try { ({ stdout: systemProxy } = await execFileImpl("/usr/sbin/scutil", ["--proxy"], { encoding: "utf8", timeout: 2500, maxBuffer: 65536, signal })); }
-    catch { throw fail("proxy_discovery_failed"); }
+    catch { throw m365ProxyFailure({ code: "proxy_discovery_failed" }, "system", "proxy_discovery_failed"); }
     try { plan = resolveNetworkRoute({ env, systemProxy, checkApi: false }); }
-    catch { throw fail("proxy_settings_unsupported"); }
+    catch (error) { throw m365ProxyFailure(error, "system"); }
   }
   const agent = createProxyAgent(plan, { timeoutMs: 30000 });
   agent.maxSockets = 8;agent.maxFreeSockets = 2;

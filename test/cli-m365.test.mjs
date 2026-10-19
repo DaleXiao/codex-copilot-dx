@@ -46,6 +46,13 @@ test("M365 CLI status cannot inject terminal controls through account metadata",
   assert.doesNotMatch(output, /\u001b/);
 });
 
+test("M365 CLI explains local proxy failures without suggesting another company sign-in", () => {
+  const output = formatM365Status({ m365: { state: "unavailable", reason: "m365_proxy_settings_unsupported",
+    network_diagnostic: { source: "system", cause_code: "proxy_bypass_invalid", raw: "NEVER_EXPOSE" } } });
+  assert.match(output, /system \/ proxy_config \/ proxy_bypass_invalid/);assert.match(output, /Invalid proxy exception rule/);
+  assert.doesNotMatch(output, /sign-in|permissions|NEVER_EXPOSE/);
+});
+
 test("company account listing is read only and interactive cancellation never changes the binding", async t => {
   const options = fixture(t), actions = [], lines = [], id = "a".repeat(64);
   const control = async ({ action }) => { actions.push(action);return { accounts: [{ id, login: "a@example.test", tenant: "company", current_windows: true }] }; };

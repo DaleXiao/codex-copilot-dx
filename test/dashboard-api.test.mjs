@@ -404,3 +404,17 @@ test("model check diagnostics identify the source and keep upstream secrets out"
   const data=result.body;assert.equal(data.diagnostic.provider,"github");assert.equal(data.diagnostic.http_status,429);assert.equal(data.diagnostic.retry_after_ms,5000);
   assert.ok(Number.isFinite(Date.parse(data.diagnostic.checked_at)));assert.doesNotMatch(JSON.stringify(result.body),/NEVER_EXPOSE/);
 });
+
+test("model and provider network diagnostics expose fixed cause codes without raw settings", async () => {
+  const network_diagnostic = { source: "system", cause_code: "proxy_bypass_invalid", stage: "private-stage", raw: "NEVER_EXPOSE" };
+  const handler = createAdapterHandler({ dashboardOptions: {
+    providerStateFn: () => [{ id: "m365", name: "Microsoft 365", state: "unavailable", network_diagnostic }],
+    providerCatalogFn: async () => { throw Object.assign(Error("Bearer NEVER_EXPOSE"), { code: "m365_proxy_settings_unsupported", statusCode: 502, network_diagnostic }); },
+  } });
+  const expected = { source: "system", stage: "proxy_config", cause_code: "proxy_bypass_invalid" };
+  const providers = await invoke(handler, { url: "/_ccdx/ui/providers" });
+  assert.deepEqual(providers.body.providers[0].network_diagnostic, expected);
+  const models = await invoke(handler, { url: "/_ccdx/ui/models/live?provider=m365" });
+  assert.equal(models.status, 502);assert.deepEqual(models.body.diagnostic.network, expected);
+  assert.doesNotMatch(JSON.stringify([providers.body, models.body]), /NEVER_EXPOSE|private-stage/);
+});

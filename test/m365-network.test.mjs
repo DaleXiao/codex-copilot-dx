@@ -3,8 +3,44 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { createM365Network, requestFetch } from "../src/providers/m365-network.mjs";
+import { m365NetworkDiagnostic, m365NetworkMessage, m365ProxyFailure } from "../src/providers/m365-network-diagnostic.mjs";
 
 const target = "https://df.loki.delve.office.com/api/v1/llmapi/models";
+test("reported macOS exceptions work without any proxy-enable flags or a real HTTP request", async () => {
+  const stdout = "<dictionary> {\n  ExceptionsList : <array> {\n    0 : *.local\n    1 : 169.254/16\n  }\n  FTPPassive : 1\n}\n";
+  for (const proxy of ["", "HTTPSEnable : 1\nHTTPSProxy : proxy.example.test\nHTTPSPort : 8080\n"]) {
+    const network = await createM365Network({ platform: "darwin", env: {}, execFileImpl: async () => ({ stdout: stdout + proxy }),
+      requestImpl() { assert.fail("Parsing must not send a probe"); } });
+    assert.equal(network.snapshot().type, proxy ? "http" : "direct");assert.equal(network.snapshot().bypass_rules, 2);network.close();
+  }
+});
+
+test("M365 proxy diagnostics retain compatible categories and only fixed causes, never raw settings or nested secrets", async () => {
+  for (const [stdout, code] of [["ProxyAutoConfigEnable : 1", "proxy_dynamic_unsupported"],
+    ["ProxyAutoDiscoveryEnable : 1", "proxy_dynamic_unsupported"],
+    ["HTTPSEnable : 1\nHTTPSProxy : proxy.example.test\nHTTPSPort : 0", "proxy_system_invalid"],
+    ["ExceptionsList : <array> {\n0 : 169.254/33\n}", "proxy_bypass_invalid"]]) {
+    await assert.rejects(createM365Network({ platform: "darwin", env: {}, execFileImpl: async () => ({ stdout }) }), error => {
+      assert.equal(error.code, "m365_proxy_settings_unsupported");
+      assert.deepEqual(error.network_diagnostic, { source: "system", stage: "proxy_config", cause_code: code });
+      assert.match(error.cause.message, /Existing settings kept/);return true;
+    });
+  }
+  await assert.rejects(createM365Network({ platform: "darwin", env: {}, execFileImpl: async () => { throw Error("Bearer NEVER_EXPOSE"); } }), error => {
+    assert.equal(error.code, "m365_proxy_discovery_failed");assert.equal(error.network_diagnostic.stage, "proxy_discovery");
+    assert.doesNotMatch(JSON.stringify(error), /NEVER_EXPOSE/);return true;
+  });
+  await assert.rejects(createM365Network({ platform: "darwin", env: { HTTPS_PROXY: "https://private:NEVER_EXPOSE@example.test/path" } }), error => {
+    assert.equal(error.code, "m365_network_error");assert.equal(error.network_diagnostic.source, "environment");
+    assert.equal(error.network_diagnostic.cause_code, "proxy_address_unsupported");assert.doesNotMatch(JSON.stringify(error), /NEVER_EXPOSE|example.test/);return true;
+  });
+  const diagnostic = { source: "system", cause_code: "proxy_bypass_invalid", stage: "private-stage", secret: "NEVER_EXPOSE" };
+  assert.deepEqual(m365NetworkDiagnostic(diagnostic), { source: "system", stage: "proxy_config", cause_code: "proxy_bypass_invalid" });
+  for (const value of [null, { ...diagnostic, source: "private-source" }, { ...diagnostic, cause_code: "toString" }]) assert.equal(m365NetworkDiagnostic(value), null);
+  const unknown = m365ProxyFailure({ code: "private-cause", message: "NEVER_EXPOSE" }, "system");
+  assert.equal(unknown.network_diagnostic.cause_code, "proxy_settings_unsupported");assert.doesNotMatch(JSON.stringify(unknown), /NEVER_EXPOSE|private-cause/);
+  assert.match(m365NetworkMessage(diagnostic), /Invalid proxy exception/);
+});
 test("M365 uses the Windows system worker only when explicit environment routing does not apply", async () => {
   let starts = 0, closes = 0;
   const startWindowsNetwork = async options => {

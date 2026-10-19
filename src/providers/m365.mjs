@@ -16,6 +16,7 @@ import { resolveClaudeModel } from "../claude-models.mjs";
 import { modelReasoningEfforts } from "../provider-metadata.mjs";
 import { limitM365CacheTtl } from "./m365-messages-policy.mjs";
 import { createM365ConversationGuard } from "./m365-conversation-accounts.mjs";
+import { m365NetworkDiagnostic } from "./m365-network-diagnostic.mjs";
 
 export const M365_API_BASE = "https://df.loki.delve.office.com/api/v1/llmapi";
 const SOFT_TTL_MS = 2 * 60 * 60 * 1000;
@@ -74,6 +75,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
   const guardConversation = createM365ConversationGuard({ home });
   let catalog = null, account = null, catalogAt = 0, state = "idle", reason = null, flight = null, controller = null, generation = 0;
   let network = null, networkFlight = null, cacheTtlAdjustments = 0;
+  let networkDiagnostic = null;
   const registry = { models: null, source: "unavailable", cacheState: "none", cacheSavedAtMs: null,
     refreshInFlight: false, generation: 0, lastError: null, lastErrorAtMs: null };
   const profile = () => account ? `m365:${m365AccountKey(account)}` : "m365:unavailable";
@@ -85,7 +87,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
         const start = createNetwork || (await import("./m365-network.mjs")).createM365Network;
         const opened = await start({ env, signal });
         if (state === "disabled") { opened.close();throw m365Error("m365_disabled"); }
-        network = opened;return opened.fetch;
+        network = opened;networkDiagnostic = null;return opened.fetch;
       })().finally(() => { if (networkFlight === pending) networkFlight = null; });
       networkFlight = pending;
     }
@@ -128,7 +130,8 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     } catch (error) {
       if (options.signal?.aborted) throw options.signal.reason || error;
       throw Object.assign(new Error(redactDiagnosticText(String(error.message).split(credential.token).join("[redacted]"))), {
-        code: /^m365_[a-z0-9_]+$/.test(error.code || "") ? error.code : "m365_network_error", statusCode: 502 });
+        code: /^m365_[a-z0-9_]+$/.test(error.code || "") ? error.code : "m365_network_error", statusCode: 502,
+        network_diagnostic: m365NetworkDiagnostic(error.network_diagnostic) });
     }
   }
 
@@ -156,6 +159,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     })().catch(error => {
       if (current === generation) {
         state = "unavailable";reason = /^m365_[a-z0-9_]+$/.test(error.code || "") ? error.code : "m365_unavailable";
+        networkDiagnostic = m365NetworkDiagnostic(error.network_diagnostic);
         registry.lastError = reason;registry.lastErrorAtMs = now();
       }
       throw error;
@@ -249,6 +253,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     },
     snapshot: () => ({ ...auth.snapshot(), state, reason: reason || auth.snapshot().reason, account: account ? { login: account.login, tenant: account.tenant, selection_source: account.selection_source || "legacy" } : null,
       network: network?.snapshot() || null,
+      network_diagnostic: networkDiagnostic ? { ...networkDiagnostic } : null,
       cache_ttl_adjustments: cacheTtlAdjustments,
       models: { total: catalog?.data.length || 0, claude: m365Models(catalog, "claude").length, gpt: m365Models(catalog, "gpt").length,
         source: registry.source, refreshed_at: catalogAt ? new Date(catalogAt).toISOString() : null }, refresh_in_flight: Boolean(flight) }),

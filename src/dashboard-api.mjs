@@ -1,5 +1,6 @@
 import os from "node:os";
 import { isProviderId } from "./provider-metadata.mjs";
+import { m365NetworkDiagnostic } from "./providers/m365-network-diagnostic.mjs";
 import { fetchLiveCopilotModels } from "./live-models.mjs";
 import { authStatus } from "./auth-status.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
@@ -123,6 +124,7 @@ function dashboardProviders(providerStateFn, authStatusFn) {
     return { id: entry.id, name: label(entry.name) || entry.id, enabled: entry.enabled === true,
       selection: { codex: entry.selection?.codex === true, models_required: entry.selection?.models_required === true },
       state: code(entry.state) || "unknown", reason: code(entry.reason), generation: finite(entry.generation),
+      network_diagnostic: m365NetworkDiagnostic(entry.network_diagnostic),
       auth: { state: code(auth.state) || "unknown", account: label(auth.account), token_cached: auth.token_cached === true,
         expires_in_ms: finite(auth.expires_in_ms), checked_at: label(auth.checked_at) || null },
       models: { count: finite(entry.models?.count), source: code(entry.models?.source) || "unknown", checked_at: label(entry.models?.checked_at) || null },
@@ -303,6 +305,7 @@ export async function handleDashboardApi(req, res, pathname, {
       const message = /^m365_[a-z0-9_]+$/.test(error.code || "") ? `Model catalog unavailable / ${error.code}` : liveModelError(error);
       if (!res.destroyed && !res.writableEnded) sendJson(res, error.statusCode || 502, { error: message,
         diagnostic: { provider: provider || null, checked_at: new Date().toISOString(), message,
+          network: m365NetworkDiagnostic(error.network_diagnostic),
           http_status: Number(/\bHTTP (\d{3})\b/.exec(message)?.[1]) || finite(error.statusCode),
           retry_after_ms: finite(error.retryAfterMs) } });
     } finally { abort.cleanup(); }

@@ -66,6 +66,10 @@ origin. Explicit proxy/trust settings are preserved. Windows delegates system
 PAC/WPAD and integrated authentication to its own isolated WinHTTP worker;
 unsupported macOS dynamic PAC is reported rather than bypassed.
 
+System `ExceptionsList` entries such as `169.254/16`, `10/8`, `172.16/12` and `192.168.1/24` are normalized to full four-octet IPv4 CIDRs before the existing shared Node/PAC matcher. Missing octets become zero only when the supplied octets cover the prefix; invalid octets, ambiguous leading zeros, out-of-range or underspecified prefixes remain errors. User-supplied `NO_PROXY` retains its existing strict syntax. No system setting, proxy bypass policy, DNS lookup or network probe is added. The shared system-input correction also applies to prediction environment parsing.
+
+M365 proxy-setup failures retain their existing outer category (`m365_proxy_settings_unsupported`, `m365_proxy_discovery_failed`, or the existing environment-failure category `m365_network_error`) and add an optional `network_diagnostic`: fixed `source` (`system`/`environment`), `stage` (`proxy_discovery`/`proxy_config`) and `cause_code`. Causes distinguish discovery, dynamic PAC/WPAD, invalid bypass rules, invalid static settings and invalid/unsupported proxy addresses; unknown causes stay generic. CLI/startup explain the specific cause without suggesting a new sign-in for a known network setup failure. WebUI shows the bilingual reason in source status (codes in its tooltip) and the existing model-check details, with source/stage/cause fields. Proxy URLs, credentials, raw settings and raw nested errors are never projected. These local setup failures happen before the model HTTP request; a local 502/503 does not establish a model-service denial. Successful transport setup or a later unrelated refresh failure clears the previous setup diagnostic. Failed catalog reads still remain failures and preserve last-good data; they are not successful empty catalogs. No automatic route substitution or extra polling is added.
+
 The M365 profile under `~/.local/share/codex-copilot-dx/profiles/m365/` contains
 `settings.json`, nonsecret `account.json`, account-bound `models.json`, a private
 local `gateway.json` key, and `client-config.json` field ownership. JSON reads are
@@ -1004,7 +1008,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.5/codex-copilot-dx-1.2.5.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.6/codex-copilot-dx-1.2.6.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 

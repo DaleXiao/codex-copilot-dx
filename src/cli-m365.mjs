@@ -10,6 +10,7 @@ import { readBoundedResponseText } from "./upstream-body.mjs";
 import { parseAdapterAddressOptions } from "./cli-options.mjs";
 import { autoReviewReasoningEfforts } from "./models.mjs";
 import { m365AccountMessage } from "./providers/m365-accounts.mjs";
+import { m365NetworkDiagnostic, m365NetworkMessage } from "./providers/m365-network-diagnostic.mjs";
 
 export async function fetchActiveProviderModels({ control = providerControl, ...options } = {}) {
   if (readProviderSettings(options).codex !== "m365") {
@@ -33,11 +34,12 @@ export async function providerControl({ host = "127.0.0.1", port = 2026, action,
 
 export function formatM365Status(state) {
   const m = state.m365 || {}, claude = m.claude || {}, models = m.models || {};
+  const network = m365NetworkDiagnostic(m.network_diagnostic);
   return [
     `Microsoft 365: ${terminalCell(m.state || "not running")}${m.reason ? ` (${terminalCell(m.reason)})` : ""}`,
     ...(m.account?.login ? [`Account: ${terminalCell(m.account.login)}`] : []),
     ...(m.account?.tenant ? [`Tenant: ${terminalCell(m.account.tenant)} / ${terminalCell(m.account.selection_source || "legacy")}`] : []),
-    ...(m.reason ? [m365AccountMessage(m.reason)] : []),
+    ...(network ? [`Network: ${network.source} / ${network.stage} / ${network.cause_code}`, m365NetworkMessage(network)] : m.reason ? [m365AccountMessage(m.reason)] : []),
     `Models: ${models.claude || 0} Claude / ${models.gpt || 0} GPT (${models.source || "unavailable"})`,
     `Claude gateway: ${claude.gateway || "not running"}${claude.base_url ? ` / ${claude.base_url}` : ""}`,
     ...(claude.reason ? [`Claude detail: ${terminalCell(claude.reason)}`] : []),

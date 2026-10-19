@@ -16,6 +16,7 @@ class Node {
   append(...nodes) { for (const node of nodes) node.parent = this;this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   setAttribute(key, value) { this.attributes[key] = value; }
+  removeAttribute(key) { delete this.attributes[key]; }
   getAttribute(key) { return this.attributes[key] ?? null; }
   hasAttribute(key) { return Object.hasOwn(this.attributes, key); }
   addEventListener(event, fn) { this.listeners[event] = fn; }
@@ -228,16 +229,20 @@ test("model HTTP errors localize only the known CCDX message and retain status c
     ? { ok: false, json: async () => ({ error: message }) } : undefined });
   await flush();
   assert.equal(h.nodes.get("models-state").textContent, "查询失败");
-  assert.match(h.nodes.get("models-note").textContent, /模型查询失败：HTTP 403/);
-  assert.match(h.nodes.get("models-note").textContent, /ccdx models/);
+  const reason = () => { const fields = h.nodes.get("model-check-fields").children;return fields[fields.findIndex(node => node.getAttribute("data-i18n") === "source_check_reason") + 1].textContent; };
+  assert.match(reason(), /模型查询失败：HTTP 403/);
+  assert.match(reason(), /ccdx models/);
+  assert.equal(h.nodes.get("models-note").hasAttribute("data-i18n"), false);
+  assert.match(h.nodes.get("models-note").children[2].textContent, /暂无可用的旧模型列表/);
   const requests = h.requests.length;
   h.nodes.get("language-toggle").listeners.click();
-  assert.match(h.nodes.get("models-note").textContent, /Model lookup failed: HTTP 403/);
+  assert.match(reason(), /Model lookup failed: HTTP 403/);
+  assert.match(h.nodes.get("models-note").children[2].textContent, /No previous model list/);
   assert.equal(h.requests.length, requests);
   message = "Provider raw failure {status}: response.failed";
   h.nodes.get("refresh-models").listeners.click();
   await flush();
-  assert.equal(h.nodes.get("models-note").textContent, message);
+  assert.equal(reason(), message);
 });
 
 test("provider authorization renders saved evidence independently of service availability", async () => {

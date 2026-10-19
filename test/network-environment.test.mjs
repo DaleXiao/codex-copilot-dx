@@ -22,6 +22,27 @@ function pac(plan) {
   vm.runInNewContext(networkPredictionPac(23456, plan), context);return context.FindProxyForURL;
 }
 
+test("system abbreviated IPv4 networks normalize before strict Node/PAC matching without relaxing NO_PROXY", () => {
+  for (const [rule, canonical, inside, outside] of [
+    ["169.254/16", "169.254.0.0/16", ["169.254.0.0", "169.254.255.255"], ["169.253.255.255", "169.255.0.0"]],
+    ["10/8", "10.0.0.0/8", ["10.0.0.0", "10.255.255.255"], ["9.255.255.255", "11.0.0.0"]],
+    ["172.16/12", "172.16.0.0/12", ["172.16.0.0", "172.31.255.255"], ["172.15.255.255", "172.32.0.0"]],
+    ["192.168.1/24", "192.168.1.0/24", ["192.168.1.0", "192.168.1.255"], ["192.168.0.255", "192.168.2.0"]],
+  ]) {
+    const plan = resolveNetworkRoute({ env: { HTTPS_PROXY: proxy }, systemProxy: `ExceptionsList : <array> {\n0 : *.local\n1 : ${rule}\n}` });
+    assert.deepEqual(plan.bypass, ["*.local", canonical]);const find = pac(plan);
+    for (const host of [...inside, ...outside, "model.example.test"]) {
+      const expected = inside.includes(host);
+      assert.equal(networkProxyFor(new URL(`https://${host}`), plan) === null, expected, host);
+      assert.equal(find(`https://${host}/`, host) === "DIRECT", expected, host);
+    }
+    assert.throws(() => resolveNetworkRoute({ env: { NO_PROXY: rule } }), { code: "proxy_bypass_invalid" });
+  }
+  for (const rule of ["999/8", "169.254/33", "10/16", "10.1/24", "010/8", "10/08", "1.2.003/24", "-1/8", "10/x", "10/8/2"]) {
+    assert.throws(() => resolveNetworkRoute({ env: {}, systemProxy: `ExceptionsList : <array> {\n0 : ${rule}\n}` }), { code: "proxy_bypass_invalid" });
+  }
+});
+
 test("reported macOS CIDR exceptions are accepted from either source with identical Node/PAC boundaries", () => {
   const settings = "ExceptionsList : <array> {\n" + reported.map((rule, i) => `${i} : ${rule}`).join("\n") + "\n}";
   const plans = [resolveNetworkRoute({ env: { HTTPS_PROXY: proxy, NO_PROXY: reported.join(",") } }), resolveNetworkRoute({ env: { HTTPS_PROXY: proxy }, systemProxy: settings })];

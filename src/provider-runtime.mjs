@@ -9,6 +9,7 @@ import { requestM365Accounts } from "./providers/m365-auth.mjs";
 import { publicM365Accounts, accountChoiceId, m365AccountMessage } from "./providers/m365-accounts.mjs";
 import { providerRegistry } from "./provider-registry.mjs";
 import { createClaudeClientLifecycle } from "./claude-client-lifecycle.mjs";
+import { m365NetworkMessage } from "./providers/m365-network-diagnostic.mjs";
 
 const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavailable (${reason}); GitHub routing was not substituted`),
   { code: reason, statusCode: 503 });
@@ -80,7 +81,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
       return m365;
     })().catch(error => {
       reason = /^m365_[a-z0-9_]+$/.test(error.code || "") ? error.code : error.code === "EADDRINUSE" ? "m365_gateway_port_busy" : "m365_unavailable";
-      log("info", m365AccountMessage(reason));return null;
+      log("info", m365NetworkMessage(m365?.snapshot().network_diagnostic) || m365AccountMessage(reason));return null;
     }).finally(() => { if (pending === operation) pending = null; });
     pending = operation;return operation;
   }
@@ -206,7 +207,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
           auth: { state: "unknown", token_cached: service.token_cached === true, expires_in_ms: service.token_expires_in_ms ?? null },
           models: { count: githubRegistry?.models?.data?.length ?? null, source: githubRegistry?.source || "unknown" },
           clients: [{ id: "codex", name: "Codex App", selected: selection.codex === "github", state: "configured" }] },
-        { id: "m365", name: "Microsoft 365", generation: m365 ? dashboardGeneration(m365) : 0, enabled, state: ms.state, reason: ms.reason,
+        { id: "m365", name: "Microsoft 365", generation: m365 ? dashboardGeneration(m365) : 0, enabled, state: ms.state, reason: ms.reason, network_diagnostic: ms.network_diagnostic,
           auth: { state: ms.token_cached ? "authorized" : !enabled ? "disabled" : ms.reason ? "unavailable" : "unknown",
             account: ms.account?.login || "", token_cached: ms.token_cached === true,
             tenant: ms.account?.tenant || "", selection_source: ms.account?.selection_source || null,

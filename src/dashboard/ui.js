@@ -427,21 +427,23 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
         if (state.error) {
           const message = String(state.error.message || state.error).slice(0, 240);
           const httpError = /^Live model lookup failed \(HTTP (\d{3})\)\. Run ccdx models for details\.$/.exec(message);
-          if (httpError) text("models-note", "live_model_lookup_failed_http_status_run_ccdx_models_for_details", { status: httpError[1] });
-          else text("models-note", message);
           const sourceReason = /^Model catalog unavailable \/ (m365_[a-z0-9_]+)$/.exec(message);
-          const reason = httpError ? phrase("live_model_lookup_failed_http_status_run_ccdx_models_for_details", { status: httpError[1] })
+          const diagnostic = state.error.diagnostic || {}, network = diagnostic.network;
+          const reason = network ? phrase(`network_cause_${network.cause_code}`) : httpError ? phrase("live_model_lookup_failed_http_status_run_ccdx_models_for_details", { status: httpError[1] })
             : sourceReason ? phrase("source_catalog_unavailable", { code: sourceReason[1] }) : phrase(message);
           const source = providerEntries.find(entry => entry.id === selectedProvider)?.name || selectedProvider;
           const previous = modelSnapshots.get(selectedProvider);
+          element("models-note").removeAttribute("data-i18n");
           element("models-note").replaceChildren();
           const summary = document.createElement("span"), kept = document.createElement("span");
           localize(summary, "source_check_failed", { source });
           localize(kept, previous?.checked_at ? "source_check_previous" : "source_check_none", { time: previous?.checked_at ? new Date(previous.checked_at).toLocaleTimeString() : "" });
           element("models-note").append(summary, document.createElement("br"), kept);
           const fields = element("model-check-fields");fields.replaceChildren();
-          const diagnostic = state.error.diagnostic || {};
-          for (const [key, value] of [["source", source], ["source_check_time", diagnostic.checked_at], ["source_check_reason", reason], ["http_status", diagnostic.http_status]]) {
+          for (const [key, value] of [["source", source], ["source_check_time", diagnostic.checked_at], ["source_check_reason", reason],
+            ["network_route_source", network ? phrase(`network_source_${network.source}`) : null],
+            ["network_failure_stage", network ? phrase(`network_stage_${network.stage}`) : null],
+            ["network_cause_code", network?.cause_code], ["http_status", diagnostic.http_status]]) {
             if (value === null || value === undefined || value === "") continue;
             const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);
             if (value?.key) localize(detail, value.key, value.values);else detail.textContent = String(value).slice(0, 300);

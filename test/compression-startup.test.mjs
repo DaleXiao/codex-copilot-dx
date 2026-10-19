@@ -14,7 +14,7 @@ const preload = fileURLToPath(new URL("../scripts/replay-fixtures/config-startup
 
 async function until(check, label) {
   const deadline = Date.now() + 8000;
-  while (!check()) {
+  while (!await check()) {
     if (Date.now() > deadline) throw new Error(`${label} timed out`);
     await new Promise(resolve => setTimeout(resolve, 10));
   }
@@ -88,7 +88,7 @@ for (const mode of ["pending", "default-on", "removed", "timeout", "write-failur
       if (mode === "opt-out" || (mode === "pending" && run === reuse)) assert.doesNotMatch(run.output(), /Compression fixture probe received/);
     }
     await assert.rejects(fs.stat(path.join(home, ".codex", "skills")));
-    assert.equal((await fs.readdir(home)).filter(name => name.startsWith("ccdx-compression-probe-")).length, 0);
+    await until(async () => !(await fs.readdir(home)).some(name => name.startsWith("ccdx-compression-probe-")), "compression probe cleanup");
     await core();
   });
 }

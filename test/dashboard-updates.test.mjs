@@ -84,6 +84,10 @@ test("fallback installation commands validate versions and preserve shell/npm se
     assert.match(text, /\/v1\.2\.4\/install\./);assert.doesNotMatch(text, /allow-remote|allow-git|--force|Bypass|ExecutionPolicy|registry\.npmjs|\biex\b|sudo/);
   }
   assert.match(mac, /mktemp -d/);assert.match(mac, /trap .*EXIT/);assert.match(windows, /finally/);
+  for (const [current, latest, target] of [["1.2.4", "1.2.3", "1.2.4"], ["1.2.3", "1.2.4", "1.2.4"], ["1.10.0", "1.9.9", "1.10.0"], ["2.0.0", "1.99.99", "2.0.0"]]) {
+    assert.ok(commands("macos", current, latest).includes(`/v${target}/install.sh`), "Recovery never chooses an older known release");
+    assert.ok(commands("windows", current, latest).includes(`/v${target}/install.ps1`));
+  }
   if (process.platform !== "win32") assert.equal(spawnSync("sh", ["-n"], { input: mac, encoding: "utf8" }).status, 0);
   if (process.platform === "win32") {
     const result = spawnSync("powershell.exe", ["-NoProfile", "-Command", "$source = [Console]::In.ReadToEnd(); $tokens = $null; $errors = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors); if ($errors.Count) { exit 1 }"], { input: windows, encoding: "utf8", windowsHide: true });

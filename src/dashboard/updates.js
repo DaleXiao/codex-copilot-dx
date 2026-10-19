@@ -1,6 +1,8 @@
 (() => {
   const stable = value => typeof value === "string" && /^(0|[1-9]\d{0,14})\.(0|[1-9]\d{0,14})\.(0|[1-9]\d{0,14})$/.test(value) ? value : null;
-  function installationCommand(platform, version) {
+  function installationCommand(platform, version, latestVersion) {
+    const current = stable(version), latest = stable(latestVersion);
+    if (latest && (!current || ([0, 1, 2].map(index => Number(latest.split(".")[index]) - Number(current.split(".")[index])).find(value => value !== 0) || 0) > 0)) version = latest;
     if (!stable(version)) return "";
     const base = `https://github.com/DaleXiao/codex-copilot-dx/releases/download/v${version}`;
     if (platform === "windows") return `$ccdxInstallDir = Join-Path ([IO.Path]::GetTempPath()) ("ccdx-install-" + [guid]::NewGuid().ToString("N"))
@@ -26,9 +28,9 @@ try {
     let snapshot = null, platform = "macos";
     const date = value => typeof value === "string" && Number.isFinite(Date.parse(value)) ? value.slice(0, 10) : null;
     function install() {
-      const version = stable(snapshot?.latest?.version) || stable(snapshot?.current?.version);
-      element("install-command").textContent = installationCommand(platform, version);
-      element("copy-install").disabled = !version;
+      const command = installationCommand(platform, snapshot?.current?.version, snapshot?.latest?.version);
+      element("install-command").textContent = command;
+      element("copy-install").disabled = !command;
       element("install-shell").textContent = platform === "windows" ? "Windows · PowerShell" : "macOS · Terminal";
       element("install-windows-policy").hidden = platform !== "windows";
     }

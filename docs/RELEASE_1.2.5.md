@@ -17,4 +17,11 @@ The final local `npm run verify` passed: 1,409 tests, 9 platform/optional skips,
 
 The release pack contains 185 files / 503162 bytes, 2940 bytes more than 1.2.4, with unchanged runtime dependencies and no install hook. Tarball SHA-256: `3e6fe0ebea5b00b0323b64bdf9a80ba0aa08587e806d6cbfef4fcd3e9f6deddd`.
 
-Cross-platform CI and publication receipts are recorded after completion. Local/synthetic/CI checks do not establish every physical enterprise device, network or live-model entitlement.
+## Published delivery
+
+- [CI 39209429228](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/39209429228) passed **17/17 jobs** at release source/tag `1c8fffb337973e38b67a9bf163289dd18f4a37f3`: Windows/macOS/Linux, Node 22.15/24, strict npm 12 install/upgrade, no-Git/no-Node bootstrap, Windows updater/prediction, official-client synthetic replays, Chromium/WebKit and terminal behavior.
+- [npm 1.2.5](https://www.npmjs.com/package/codex-copilot-dx/v/1.2.5) was published through [workflow 39210024269](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/39210024269). The immutable-tag workflow reran the complete release gate. Its tarball SHA-1 `58519895f95f0c34474f6e753424a3254cd70ac6` matches the locally verified artifact.
+- [GitHub v1.2.5](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.2.5) was published at `2026-10-19T06:27:15Z`. All five assets were downloaded fresh and matched local bytes, GitHub API SHA-256 digests and SHA256SUMS.
+- The configured company registry returned E404 for 1.2.5 after publication; mirror synchronization remains unconfirmed. The GitHub Release channel is available; dependencies still use the configured registry.
+
+Local/synthetic/CI checks do not establish every physical enterprise device, network or live-model entitlement. Existing registry/proxy/CA/npm policy and the user's running installation are preserved. The temporary preview service and release credential helper are removed after delivery; verified release artifacts and receipts remain outside the checkout. This publication-record follow-up changes only this report; the tag and published bytes remain unchanged.

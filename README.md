@@ -14,7 +14,7 @@ npm install -g codex-copilot-dx@latest
 ccdx
 ```
 
-No Node or Git? Download [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.2/install.sh) (macOS/Linux) or [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.2/install.ps1) (Windows), then run `sh install.sh` or `./install.ps1` under your current shell policy. The bootstrap reuses compatible Node/npm or installs verified official Node 24.22.0 privately for CCDX. It adds no Git, compiler or system package manager. It keeps registry/proxy/certificate policy, verifies the Release package and installed runtime, and restores the prior CCDX package if installation fails. Dependencies still need your configured registry. See [installation limits and private command paths](docs/REFERENCE.md#install-without-node-or-git).
+No Node or Git? Download [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.3/install.sh) (macOS/Linux) or [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.3/install.ps1) (Windows), then run `sh install.sh` or `./install.ps1` under your current shell policy. The bootstrap reuses compatible Node/npm or installs verified official Node 24.22.0 privately for CCDX. It adds no Git, compiler or system package manager. It keeps registry/proxy/certificate policy, verifies the Release package and installed runtime, and restores the prior CCDX package if installation fails. Dependencies still need your configured registry. See [installation limits and private command paths](docs/REFERENCE.md#install-without-node-or-git).
 
 CCDX reuses a compatible local credential or starts GitHub Device Flow, listens on `127.0.0.1:2026`, configures Codex, and opens the App. Interactive desktop starts also open the local WebUI once; use `ccdx --no-browser` or disable this in WebUI settings. No client binary patch is needed. On Windows, open the App manually unless native prediction setup is enabled. In restricted Windows PowerShell, use `npm.cmd` to install and `ccdx.cmd` for the first launch, or run `ccdx.cmd doctor --fix`. Startup, updates and explicit repair remove only CCDX's exact npm-generated `.ps1` launchers so later calls can use `ccdx`. The npm package adds no install hook or policy change; custom launchers are preserved. npm's own script is untouched. The configured `dummy` API key is a placeholder, not a credential.
 
@@ -44,6 +44,7 @@ The **Requests by source** section and `ccdx status` separate request outcomes b
 | `ccdx usage` | Recorded tokens and upstream prompt-cache hit rate |
 | `ccdx usage --provider ID` | Filter current or historical source-specific usage |
 | `ccdx m365 status` / `models` | M365 authorization, Claude gateway and Claude models |
+| `ccdx m365 accounts` / `account` | List local company accounts or select one; `account --id ID` supports scripts |
 | `ccdx m365 switch` | Choose the Codex source; default remains GitHub |
 | `ccdx m365 on` / `off` / `remove` | Enable discovery, restore owned client settings, or remove owned M365 state |
 | `ccdx auto-review-model` | Select model, then reasoning effort; `0` follows client |
@@ -60,7 +61,7 @@ The **Requests by source** section and `ccdx status` separate request outcomes b
 ## Microsoft 365 access
 
 Eligible macOS/Windows machines attempt silent Microsoft authorization at startup, without Copilot CLI or a browser login. MDM alone is insufficient: account, tenant,
-device policy and Loki entitlement must permit access. Optional failure does not block GitHub.
+device policy and Loki entitlement must permit access. Optional failure does not block GitHub. Saved bindings stay selected; unresolved company accounts can be chosen under **Model sources → Microsoft 365** or `ccdx m365 account` in the updated running service. Listing is local; changing accounts validates only the selected account, affects M365 in Codex/Claude and requires new conversations. See the reference for identity and history limits.
 
 Claude clients use `http://127.0.0.1:2026/anthropic` (or the configured main port), a private local gateway key and a Claude-only catalog. No second Claude listener is opened. Existing unchanged CCDX-owned 2027 addresses migrate automatically; hand-written or managed addresses are preserved and need explicit migration. The optional prediction CONNECT/PAC bridge remains a separate transport.
 Existing custom/managed settings are preserved; already-running clients may need a normal restart.

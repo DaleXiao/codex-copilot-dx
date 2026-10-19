@@ -12,7 +12,7 @@ export function m365HelperEnvironment(env = process.env) {
   return Object.fromEntries(Object.entries(env).filter(([key]) => keys.has(key.toUpperCase())));
 }
 
-export function requestM365Token({ account, signal, env = process.env, spawnImpl = spawn, timeoutMs = 28000 } = {}) {
+function requestM365Helper({ action = "token", account, signal, env = process.env, spawnImpl = spawn, timeoutMs = 28000 } = {}) {
   if (signal?.aborted) return Promise.reject(abortError(signal));
   return new Promise((resolve, reject) => {
     let child, timer, finished = false, bytes = 0;
@@ -46,6 +46,12 @@ export function requestM365Token({ account, signal, env = process.env, spawnImpl
         finish(m365Error(/^m365_[a-z_]+$/.test(result.error?.code || "") ? result.error.code : "m365_auth_failed"));return;
       }
       try {
+        if (action === "accounts") {
+          if (!Array.isArray(result.accounts) || result.accounts.length > 128) throw Error();
+          for (const value of result.accounts) m365AccountKey(value);
+          if (result.windowsLogin !== null && (typeof result.windowsLogin !== "string" || result.windowsLogin.length > 320 || /[\r\n\0]/.test(result.windowsLogin))) throw Error();
+          finish(null, result);return;
+        }
         m365AccountKey(result.account);
         if (typeof result.token !== "string" || !result.token || /\s/.test(result.token)
           || !Number.isFinite(result.expiresAt) || result.expiresAt <= Date.now()) throw Error();
@@ -53,11 +59,14 @@ export function requestM365Token({ account, signal, env = process.env, spawnImpl
       } catch { finish(m365Error("m365_auth_response_invalid"));return; }
       finish(null, result);
     });
-    child.stdin.end(JSON.stringify({ action: "token", account: account || null }));
+    child.stdin.end(JSON.stringify({ action, account: account || null }));
   });
 }
 
-export function createM365Auth({ home, env = process.env, acquire = requestM365Token, now = Date.now } = {}) {
+export const requestM365Token = options => requestM365Helper({ ...options, action: "token" });
+export const requestM365Accounts = options => requestM365Helper({ ...options, action: "accounts" });
+
+export function createM365Auth({ home, env = process.env, account, acquire = requestM365Token, now = Date.now } = {}) {
   let cached = null, flight = null, generation = 0, lastError = null, retryAt = 0, checkedAt = null;
   const snapshot = () => ({ token_cached: Boolean(cached && cached.expiresAt > now()),
     token_expires_in_ms: cached ? Math.max(0, cached.expiresAt - now()) : null,
@@ -71,7 +80,7 @@ export function createM365Auth({ home, env = process.env, acquire = requestM365T
     if (!flight) {
       const controller = new AbortController(), current = generation;
       const entry = { controller, waiters: 0, settled: false, promise: null };
-      entry.promise = Promise.resolve().then(() => acquire({ account: cached?.account || readM365Account({ home }), env, signal: controller.signal }))
+      entry.promise = Promise.resolve().then(() => acquire({ account: cached?.account || account || readM365Account({ home }), env, signal: controller.signal }))
         .then(result => {
           if (current !== generation || controller.signal.aborted) throw abortError(controller.signal);
           m365AccountKey(result.account);

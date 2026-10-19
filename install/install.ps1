@@ -1,7 +1,7 @@
 # CCDX release bootstrap. Uses current Windows proxy, certificate and script policy.
 param([switch]$AllowRemote)
 $ErrorActionPreference = 'Stop'
-$version = '1.2.2'
+$version = '1.2.3'
 $base = "https://github.com/DaleXiao/codex-copilot-dx/releases/download/v$version"
 $work = Join-Path ([IO.Path]::GetTempPath()) ('ccdx-bootstrap-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null

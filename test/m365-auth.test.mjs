@@ -26,7 +26,7 @@ function broker(accounts = [{ ...identity, accountId: "native-a", homeAccountId:
 test("native M365 authorization uses only silent broker acquisition and honors its account binding", async () => {
   const native = broker();
   const value = await acquireSilentM365Token({ account: identity }, { platform: "win32", loadBroker: () => native });
-  assert.equal(value.token, "synthetic_m365_secret");assert.deepEqual(value.account, identity);
+  assert.equal(value.token, "synthetic_m365_secret");assert.deepEqual(value.account, { ...identity, selection_source: "legacy" });
   assert.equal(native.calls.filter(([name]) => name === "silent").length, 1);
   assert.ok(native.calls.some(([name, uri]) => name === "redirect" && uri.startsWith("ms-appx-web://Microsoft.AAD.BrokerPlugin/")));
   await assert.rejects(acquireSilentM365Token({ account: { ...identity, id: "different" } }, { platform: "win32", loadBroker: () => native }), { code: "m365_account_unavailable" });
@@ -38,9 +38,20 @@ test("unmanaged or unsupported machines and ambiguous accounts never request a t
   await assert.rejects(acquireSilentM365Token({}, { platform: "darwin", execFileImpl: async () => ({ stdout: "MDM enrollment: No" }), loadBroker: () => { loads++; } }), { code: "m365_device_not_managed" });
   await assert.rejects(acquireSilentM365Token({}, { platform: "linux", loadBroker: () => { loads++; } }), { code: "m365_platform_unsupported" });
   assert.equal(loads, 0);
-  const native = broker();native.DiscoverAccountsAsync = (_c, _i, done) => done({ CheckError() {}, accounts: [1, 2].map(n => ({ accountId: `id${n}`, username: `user${n}`, realm: "tenant" })) });
+  const native = broker();native.DiscoverAccountsAsync = (_c, _i, done) => done({ CheckError() {}, accounts: [1, 2].map(n => ({ accountId: `id${n}`, homeAccountId: `home${n}`, username: `user${n}`, realm: "tenant" })) });
   await assert.rejects(acquireSilentM365Token({}, { platform: "win32", loadBroker: () => native }), { code: "m365_account_ambiguous" });
   assert.deepEqual(native.calls, []);
+});
+
+test("native discovery does not acquire tokens, and a unique trusted Windows UPN selects only its matching company identity", async () => {
+  const accounts = ["a", "b"].map(id => ({ accountId: `native-${id}`, homeAccountId: `home-${id}`, realm: "company", username: `${id}@example.test` }));
+  const native = broker(accounts);
+  const options = { platform: "win32", loadBroker: () => native, execFileImpl: async () => ({ stdout: "b@example.test\r\n" }) };
+  const result = await acquireSilentM365Token({ action: "accounts" }, options);
+  assert.equal(result.accounts.length, 2);assert.equal(result.windowsLogin, "b@example.test");assert.deepEqual(native.calls, []);
+  const authorized = await acquireSilentM365Token({}, options);
+  assert.equal(authorized.account.id, "home-b");assert.equal(authorized.account.selection_source, "windows");
+  assert.equal(native.calls.filter(([name]) => name === "silent").length, 1);
 });
 
 test("broker errors and helper environment do not expose or inherit unrelated secrets", () => {

@@ -142,6 +142,7 @@ export async function handleDashboardApi(req, res, pathname, {
   authStatusFn = () => authStatus({ home }),
   providerCatalogFn,
   providerStateFn,
+  providerAccountsFn,
   serviceControl,
   applyAnimation,
 } = {}) {
@@ -162,6 +163,15 @@ export async function handleDashboardApi(req, res, pathname, {
     return;
   }
 
+  if (pathname === "/_ccdx/ui/m365/accounts" && req.method === "GET") {
+    if (!providerAccountsFn) { sendJson(res, 503, { error: "Account selection requires the updated running service" });return; }
+    try {
+      const result = await providerAccountsFn();
+      sendJson(res, 200, { accounts: result.accounts.map(value => ({ id: value.id, login: safeText(value.login, 320), tenant: safeText(value.tenant, 128), selected: value.selected === true, current_windows: value.current_windows === true })) });
+    } catch (error) { sendJson(res, error.statusCode || 503, { error: "Could not read company accounts", code: /^m365_[a-z_]+$/.test(error.code || "") ? error.code : "m365_accounts_unavailable" }); }
+    return;
+  }
+
   if (pathname === "/_ccdx/ui/settings") {
     if (!serviceControl) { sendJson(res, 503, { error: "Settings require the running service; restart the updated CCDX" });return; }
     if (req.method === "GET") {
@@ -177,7 +187,8 @@ export async function handleDashboardApi(req, res, pathname, {
       abort.clearTimeout();const data = await serviceControl.action(input);
       if (!res.destroyed && !res.writableEnded) sendJson(res, 200, data);
     } catch (error) {
-      sendJson(res, error.statusCode || (error.code?.startsWith("ccdx_cache_") ? 409 : 400), { error: safeText(error.message, 300) });
+      sendJson(res, error.statusCode || (error.code?.startsWith("ccdx_cache_") ? 409 : 400), { error: safeText(error.message, 300),
+        ...(/^m365_[a-z_]+$/.test(error.code || "") ? { code: error.code } : {}) });
     } finally { abort.cleanup(); }
     return;
   }

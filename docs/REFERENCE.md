@@ -13,6 +13,9 @@ or PM Studio patch. The core Codex provider remains GitHub until explicitly chan
 ```bash
 ccdx m365 status
 ccdx m365 models
+ccdx m365 accounts
+ccdx m365 account
+ccdx m365 account --id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ccdx m365 switch
 ccdx m365 switch m365 --model gpt-6-sol --auto-review-model gpt-6-sol
 ccdx m365 switch github
@@ -37,9 +40,11 @@ short-lived Node helper. It discovers OS broker accounts and calls silent token
 acquisition only. It neither launches a login UI nor reads Copilot CLI tokens.
 macOS requires MDM enrollment and a working Microsoft Enterprise SSO broker;
 Windows uses its Microsoft account broker. Tenant policy, device compliance,
-account authorization and Loki entitlement still decide access. Multiple accounts
-without a prior binding, interaction requirements, policy refusal or a missing
-native package leave M365 unavailable. None of these invalidate GitHub credentials.
+account authorization and Loki entitlement still decide access. Saved bindings remain selected, including bindings created before account selection was added. Without a binding, Windows runs its system `whoami.exe /upn` once when multiple candidates exist (2.5-second limit) and accepts only a unique exact case-insensitive match with a discovered company account. It does not use the device enrollment identity, environment username, email suffix or list order. Local sign-ins, unsupported UPN lookup and shared UPNs fall back to a single company account or explicit selection. The Node broker has no explicit current-OS-account flag; a UPN match is not a SID/object-ID or device-compliance check. Entra/hybrid enterprise environments still need their own validation.
+
+Duplicate stable account/tenant records are merged only when their identity metadata agrees. Conflicts and multiple remaining accounts require user action. Personal Microsoft consumer-tenant accounts are excluded. Windows local sign-in with an Office company account works only when the broker can discover that account; Office's sign-in UI does not prove broker visibility or model entitlement.
+
+Use **Model sources → Microsoft 365 → Company account** or `ccdx m365 account` to choose. `ccdx m365 accounts` performs local discovery only; its opaque IDs can be passed as `ccdx m365 account --id ID`. These commands require the updated running service. Selection rediscovers accounts, rejects stale IDs, authorizes only the selected account and fetches its catalog once before committing. Failure retains the previous binding/catalog. Active M365 requests or startup work prevent selection; new M365 requests are refused during validation, while GitHub remains independent. Account changes apply to both M365 GPT and Claude; the selected Codex provider and saved model choices are not silently changed. Models missing from the new catalog require an explicit model choice. No interactive Microsoft sign-in UI is opened automatically. Interaction requirements, policy refusal or a missing native package leave M365 unavailable. None of these invalidate GitHub credentials.
 The GitHub-selected Codex path retains its existing first-run GitHub login flow.
 
 The optional package download is approximately 14.6 MB, contains prebuilt binaries
@@ -89,6 +94,10 @@ uses the conversation's selected model through the normal Codex endpoint. The
 optional image MCP/skill/API remains separately configured and off by default.
 
 ### Claude gateway and client ownership
+
+Company-account history is isolated. `conversations.json` stores at most 1024 hashes of conversation identifiers (or the first user item when no native identifier exists) and their account fingerprints; no messages, raw session IDs or tokens are stored there. Each new conversation writes its ownership once; known conversations use memory. After changing accounts, known foreign conversations are refused before forwarding. Unknown requests containing old history are also refused, including after restart; use a new conversation. Clients without stable conversation IDs can collide when their first user item is identical, so supply a unique native session ID. Evicted/unrecognized history fails closed after a switch. The history-isolation marker is saved with the binding and survives token renewal. Removing the M365 profile clears this ownership file, but never removes system sign-in or usage history.
+
+Account selection stages the new authorization/catalog before replacing the old provider. Catalog and binding writes use the existing locked atomic writer with restoration on failure; this is not a crash/power-loss transaction. Client configuration remains a separate readiness state: its failure does not claim that account authorization failed or overwrite custom/managed fields. Previously saved model preferences are not substituted when the new account lacks those models.
 
 Since 1.1.0, Claude mounts under the main HTTP listener at
 `http://127.0.0.1:<ADAPTER_PORT>/anthropic` (default main port 2026).
@@ -985,7 +994,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.2/codex-copilot-dx-1.2.2.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.3/codex-copilot-dx-1.2.3.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 

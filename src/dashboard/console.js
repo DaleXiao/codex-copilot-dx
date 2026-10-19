@@ -5,6 +5,38 @@
   let current = "overview", settings = null, settingsPending = false, stopped = false, timer = null, ticks = 0;
   let sourceDirty = false, reviewDirty = false, sourceModels = [], modelsPreference = null, sourceGeneration = 0, modelsSource = null;
   let settingsReadAt = null;
+  let accountsPending = false;
+  const accountReasons = new Set(["m365_account_ambiguous", "m365_account_unavailable", "m365_account_conflict", "m365_interaction_required", "m365_llm_permission_unavailable", "m365_account_busy", "m365_account_selection_stale"]);
+  function syncAccountControls() {
+    el("m365-accounts-refresh").disabled = accountsPending || settingsPending;
+    el("m365-account-choice").disabled = accountsPending || settingsPending;
+    el("m365-account-apply").disabled = accountsPending || settingsPending || !el("m365-account-choice").value || !settings?.providers?.m365?.enabled;
+  }
+  async function loadAccounts() {
+    if (accountsPending || settingsPending) return;
+    accountsPending = true;syncAccountControls();label(el("m365-account-note"), "checking");
+    try {
+      const response = await fetch("/_ccdx/ui/m365/accounts", { headers: { "X-CCDX-Dashboard": "1" }, cache: "no-store", signal: AbortSignal.timeout(30000) });
+      const data = await response.json();if (!response.ok || !Array.isArray(data.accounts)) throw Object.assign(new Error("Account discovery failed"), { code: data.code });
+      const previous = el("m365-account-choice").value;
+      const placeholder = document.createElement("option");placeholder.value = "";label(placeholder, "choose_company_account");
+      el("m365-account-choice").replaceChildren(placeholder, ...data.accounts.map(account => {
+        const option = document.createElement("option");option.value = account.id;
+        option.textContent = `${account.login} / ${account.tenant}`;return option;
+      }));
+      const selected = data.accounts.find(account => account.id === previous) || data.accounts.find(account => account.selected) || data.accounts.find(account => account.current_windows);
+      el("m365-account-choice").value = selected?.id || "";
+      el("m365-account-form").hidden = !data.accounts.length;
+      label(el("m365-account-note"), data.accounts.length ? "company_account_choose" : "company_account_empty");
+    } catch (error) { el("m365-account-form").hidden = true;label(el("m365-account-note"), accountReasons.has(error.code) ? error.code : "company_account_check_failed"); }
+    finally { accountsPending = false;syncAccountControls(); }
+  }
+  el("m365-accounts-refresh").addEventListener("click", () => void loadAccounts());
+  el("m365-account-choice").addEventListener("change", syncAccountControls);
+  el("m365-account-apply").addEventListener("click", () => {
+    if (settings?.providers?.m365?.account && !window.confirm(globalThis.ccdxLanguage.format("company_account_confirm"))) return;
+    void change({ action: "provider", operation: "account", account_id: el("m365-account-choice").value }, el("m365-account-apply"));
+  });
   function navigate() {
     const route = location.hash.slice(1), next = Object.hasOwn(titles, route) ? route : "overview";
     current = next;
@@ -22,8 +54,8 @@
   async function api(body) {
     const response = await fetch("/_ccdx/ui/settings", { method: body ? "POST" : "GET", cache: "no-store",
       headers: { "X-CCDX-Dashboard": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
-      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15000) });
-    const data = await response.json();if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);return data;
+      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(body?.operation === "account" ? 65000 : 15000) });
+    const data = await response.json();if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`), { code: data.code });return data;
   }
   const states = { immediate: "effective_now", terminal_unavailable: "terminal_animation_unavailable_in_this_output_mode", next_start: "next_ccdx_start", next_call: "applies_to_new_calls", needs_setup: "setup_required",
     next_config_request: "next_configuration_request_cached_suggestions_may_remain", needs_app_relaunch: "reopen_the_client_to_finish", needs_service_restart: "restart_ccdx_to_finish" };
@@ -82,6 +114,11 @@
     label(el("settings-note"), "settings_read_from_the_running_service");
     el("page-settings-note").textContent = "";
     const state = data.providers;
+    const account = state?.m365?.account;
+    if (account) label(el("m365-account-current"), "company_account_current", { login: account.login, tenant: account.tenant || "—", source: { key: `account_source_${account.selection_source || "legacy"}` } });
+    else label(el("m365-account-current"), "company_account_none");
+    if (accountReasons.has(state?.m365?.reason)) label(el("m365-account-note"), state.m365.reason);
+    syncAccountControls();
     syncSources();
     if (current === "codex" && state && (modelsSource !== el("source-provider").value || !sourceDirty && !reviewDirty && modelsPreference !== JSON.stringify(state[el("source-provider").value]?.preference))) void loadSourceModels();
     el("m365-control-note").replaceChildren();
@@ -102,6 +139,7 @@
     if (settingsPending) return;
     settingsPending = true;
     el("terminal-color-theme").disabled = true;
+    syncAccountControls();
     try { applySettings(await api());settingsReadAt = new Date().toLocaleTimeString(); }
     catch (error) {
       for (const id of ["settings-note", "page-settings-note"]) {
@@ -109,11 +147,12 @@
         el(id).title = error.message;
       }
     }
-    finally { settingsPending = false;el("terminal-color-theme").disabled = !settings;el("apply-source").disabled = !sourceReady();syncReviewButton(); }
+    finally { settingsPending = false;el("terminal-color-theme").disabled = !settings;el("apply-source").disabled = !sourceReady();syncReviewButton();syncAccountControls(); }
   }
   async function change(body, button) {
     if (settingsPending) return;
     settingsPending = true;
+    syncAccountControls();
     const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-on, #m365-off")];
     controls.forEach(input => { input.disabled = true; });
     label(el("settings-note"), "applying");
@@ -125,15 +164,22 @@
       if (body.action === "provider" && body.operation === "off") { sourceDirty = false;reviewDirty = false; }
       el("review-control-note").textContent = "";
       applySettings(data);
+      if (body.operation === "account") {
+        modelsPreference = null;modelsSource = null;
+        dashboardRefresh.invalidate("models", { clear: true });
+        label(el("m365-account-note"), "company_account_checked");
+      }
       if (body.action !== "color_theme") { await dashboardRefresh.refresh("status", { force: true });await dashboardRefresh.refresh("auth", { force: true }); }
     }
     catch (error) {
       if (settings) applySettings(settings);
+      if (body.operation === "account") { label(el("m365-account-note"), "company_account_not_saved", { reason: { key: accountReasons.has(error.code) ? error.code : error.message } });return; }
       if (body.action === "color_theme") { label(el("terminal-color-note"), "not_saved_error", { error: error.message });return; }
       el("settings-note").textContent = error.message;el("source-control-note").textContent = error.message;el("m365-control-note").textContent = error.message;el("review-control-note").textContent = error.message;el("effect-history").textContent = error.message;
       if (body.key) el(`effect-${body.key}`).textContent = error.message;
     } finally {
       settingsPending = false;controls.forEach(input => { input.disabled = false; });
+      syncAccountControls();
       if (settings) for (const [key, value] of Object.entries(settings.effective)) if (value.locked) el(`setting-${key}`).disabled = true;
       if (settings?.history.source === "environment") el("save-history").disabled = true;
       el("apply-source").disabled = !sourceReady();el("source-model").disabled = !selectedSource()?.selection.models_required;syncReviewButton();

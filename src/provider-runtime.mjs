@@ -4,7 +4,9 @@ import { autoReviewReasoningEfforts, DEFAULT_CODEX_AUTO_REVIEW_MODEL, responsesM
 import { publicModelCatalog } from "./provider-metadata.mjs";
 import { createGithubProvider } from "./providers/github.mjs";
 import { readProviderSettings, writeProviderSettings } from "./provider-settings.mjs";
-import { readM365Settings, updateM365Settings, m365Paths, ensureM365GatewayKey } from "./m365-settings.mjs";
+import { readM365Settings, updateM365Settings, m365Paths, ensureM365GatewayKey, readM365Account, m365AccountKey } from "./m365-settings.mjs";
+import { requestM365Accounts } from "./providers/m365-auth.mjs";
+import { publicM365Accounts, accountChoiceId, m365AccountMessage } from "./providers/m365-accounts.mjs";
 import { providerRegistry } from "./provider-registry.mjs";
 import { createClaudeClientLifecycle } from "./claude-client-lifecycle.mjs";
 
@@ -14,12 +16,14 @@ const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavaila
 // Composition owns source selection. Providers never modify Codex, prediction,
 // image configuration or each other's credentials.
 export function createProviderRuntime({ githubClient, githubRegistry, githubCredentialFingerprint = "", home, env = process.env, platform = process.platform,
-  corePort = Number(env.ADAPTER_PORT || 2026), log = () => {}, createM365, startGateway, configureClients, restoreClients } = {}) {
+  corePort = Number(env.ADAPTER_PORT || 2026), log = () => {}, createM365, startGateway, configureClients, restoreClients,
+  discoverM365 = requestM365Accounts } = {}) {
   const options = { home, env, platform }, github = { ...createGithubProvider({ client: githubClient,
     profileId: () => { const value = typeof githubCredentialFingerprint === "function" ? githubCredentialFingerprint() : githubCredentialFingerprint;
       return value ? `codex:${value}` : "codex"; } }), registry: githubRegistry };
   let selection = readProviderSettings(options), m365 = null, gateway = null, pending = null, closed = false, serial = null;
   let reason = null, claudeReason = null, lastClients = {};
+  let changingAccount = false;
   const clientLifecycle = createClaudeClientLifecycle({ options, configureClients, restoreClients });
   const sources = new Map([[github.id, github]]);
   const dashboardProfiles = new Map();
@@ -76,7 +80,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
       return m365;
     })().catch(error => {
       reason = /^m365_[a-z0-9_]+$/.test(error.code || "") ? error.code : error.code === "EADDRINUSE" ? "m365_gateway_port_busy" : "m365_unavailable";
-      log("info", `Microsoft 365 unavailable: ${reason}`);return null;
+      log("info", m365AccountMessage(reason));return null;
     }).finally(() => { if (pending === operation) pending = null; });
     pending = operation;return operation;
   }
@@ -86,6 +90,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
     m365: { ...(m365?.snapshot() || {}), enabled, state: !enabled ? "disabled" : pending ? "checking"
       : !["darwin", "win32"].includes(platform) ? "unsupported" : m365?.snapshot().state || (reason ? "unavailable" : "idle"),
       reason: reason || m365?.snapshot().reason || null,
+      account_change_in_flight: changingAccount,
       preference: selection.m365 || null,
       active_requests: activeM365Requests,
       claude: { gateway: gateway ? "running" : "unavailable", reason: claudeReason, port: gateway ? corePort : null,
@@ -93,6 +98,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
         observed_clients: { ...lastClients }, requests: gateway?.snapshot?.() || null } } });
 
   function current() {
+    if (selection.codex === "m365" && changingAccount) throw Object.assign(new Error(m365AccountMessage("m365_account_busy")), { code: "m365_account_busy", statusCode: 409 });
     const source = sources.get(selection.codex);
     if (!source || selection.codex === "m365" && (!enabled || source.snapshot().state === "disabled")) throw unavailable(reason || "m365_not_ready");
     return source;
@@ -101,6 +107,47 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
     const next = (serial || Promise.resolve()).then(task);
     serial = next.catch(() => {});return next;
   };
+  async function discoverAccounts() {
+    if (!["darwin", "win32"].includes(platform)) throw unavailable("m365_platform_unsupported");
+    const result = await discoverM365({ env });
+    return { ...result, binding: readM365Account(options) };
+  }
+  async function selectAccount(id) {
+    if (typeof id !== "string" || !/^[a-f0-9]{64}$/.test(id)) throw Object.assign(new Error("Use an account ID from ccdx m365 accounts"), { statusCode: 400 });
+    if (!enabled) throw unavailable("m365_disabled");
+    if (activeM365Requests > 0 || gateway?.snapshot?.().active > 0 || pending) {
+      throw Object.assign(new Error(m365AccountMessage("m365_account_busy")), { code: "m365_account_busy", statusCode: 409 });
+    }
+    changingAccount = true;
+    let candidate, opened;
+    try {
+      const discovered = await discoverAccounts();
+      const chosen = discovered.accounts.find(value => accountChoiceId(value) === id);
+      if (!chosen) throw Object.assign(new Error("Account list changed. Check again and select an available account."), { code: "m365_account_selection_stale", statusCode: 409 });
+      const switched = discovered.binding && m365AccountKey(discovered.binding) !== m365AccountKey(chosen);
+      const factory = createM365 || (await import("./providers/m365.mjs")).createM365Provider;
+      candidate = factory({ home, env, log, persist: false,
+        account: { ...chosen, selection_source: "manual", ...(switched || discovered.binding?.history_isolation ? { history_isolation: true } : {}) },
+        onCatalog() { if (candidate === m365 && !closed) setImmediate(() => { if (candidate === m365 && !closed) void syncClaudeClients(); }); } });
+      await candidate.refresh();
+      if (closed) throw unavailable("m365_runtime_closed");
+      if (candidate.models("claude").length) {
+        const start = startGateway || (await import("./claude-gateway.mjs")).createClaudeGateway;
+        opened = await start({ provider: candidate, apiKey: ensureM365GatewayKey(options), port: corePort, env, log,
+          onRequest({ client }) { lastClients[client] = new Date().toISOString(); } });
+      }
+      candidate.commitSelection(discovered.binding);
+      const previous = m365, previousGateway = gateway;
+      m365 = candidate;gateway = opened || null;sources.set("m365", m365);reason = null;
+      candidate = null;opened = null;
+      try { await previousGateway?.close();previous?.close(); }
+      catch { log("warn", "Previous Microsoft 365 connection cleanup failed; the selected account is active"); }
+      claudeReason = gateway ? null : "m365_no_claude_models";
+      await syncClaudeClients();
+      changingAccount = false;
+      return snapshot();
+    } finally { await opened?.close();candidate?.close();changingAccount = false; }
+  }
   async function switchSource(provider, preference) {
     if (!providerRegistry.get(provider)?.codex) throw new Error("Choose a listed Codex source");
     if (provider === "m365") {
@@ -134,7 +181,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
     if (remove) {
       if (result.remaining) throw Object.assign(new Error("User-modified Claude settings were preserved; M365 profile cleanup is incomplete"), { code: "m365_cleanup_preserved" });
       const paths = m365Paths(options);
-      for (const file of [paths.account, paths.catalog, paths.gateway, paths.ownership]) {
+      for (const file of [paths.account, paths.catalog, paths.gateway, paths.ownership, paths.conversations]) {
         try { if (!fs.lstatSync(file).isFile()) throw Error();fs.unlinkSync(file); }
         catch (error) { if (error.code !== "ENOENT") throw new Error("M365 cleanup preserved an unexpected file"); }
       }
@@ -144,6 +191,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
   return {
     github, current, snapshot, start: startM365, refresh: () => startM365(true),
     handleClaude(req, res) {
+      if (changingAccount) { res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });res.end(JSON.stringify({ error: { code: "m365_account_busy", message: m365AccountMessage("m365_account_busy") } }));return; }
       if (!enabled || !gateway?.handle) {
         res.writeHead(503, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify({ type: "error", error: { type: "api_error", code: claudeReason || reason || "m365_claude_unavailable", message: "Claude is unavailable; check the model service settings." } }));return;
@@ -161,6 +209,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
         { id: "m365", name: "Microsoft 365", generation: m365 ? dashboardGeneration(m365) : 0, enabled, state: ms.state, reason: ms.reason,
           auth: { state: ms.token_cached ? "authorized" : !enabled ? "disabled" : ms.reason ? "unavailable" : "unknown",
             account: ms.account?.login || "", token_cached: ms.token_cached === true,
+            tenant: ms.account?.tenant || "", selection_source: ms.account?.selection_source || null,
             expires_in_ms: ms.token_expires_in_ms ?? null, checked_at: ms.token_checked_at || null },
           models: { count: ms.models?.total ?? null, source: ms.models?.source || "unavailable", checked_at: ms.models?.refreshed_at || null },
           clients: [{ id: "codex", name: "Codex App", selected: selection.codex === "m365", state: selection.codex === "m365" ? ms.state : "standby" },
@@ -195,7 +244,8 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
       // Internal bounded correlation only; IDs are never exposed or persisted.
       const key = typeof raw === "string" && raw.length <= 512 ? raw : null;
       const previous = key && sessions.get(key)?.namespace || priorNamespace, order = ++requestOrder;
-      return { historyNamespace: namespace, historyTransferNamespace: previous && previous !== namespace ? previous : undefined,
+      return { historyNamespace: namespace, historyTransferNamespace: previous && previous !== namespace
+          && !(previous.startsWith("m365:") && namespace.startsWith("m365:")) ? previous : undefined,
         onHistoryStored() {
           if (!key) return;
           const record = sessions.get(key);
@@ -208,6 +258,11 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
     async action(input) {
       return serialize(async () => {
         if (closed) throw unavailable("m365_runtime_closed");
+        if (input.action === "accounts") {
+          const result = await discoverAccounts();
+          return { accounts: publicM365Accounts(result.accounts, result), state: snapshot() };
+        }
+        if (input.action === "account") return selectAccount(input.account_id);
         if (input.action === "models") { await startM365();return { state: snapshot(), models: m365?.models(input.family === "claude" ? "claude" : "gpt") || [] }; }
         if (input.action === "auto-review") {
           if (input.provider && input.provider !== selection.codex) throw new Error("Save the source before changing review settings");

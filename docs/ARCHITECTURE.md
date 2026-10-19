@@ -61,6 +61,10 @@ fields that still match its own values. Foreign gateways and managed desktop
 policies are not overwritten. Removing M365 does not remove shared management,
 GitHub auth, prediction, image configuration or historical usage.
 
+Company-account discovery and selection are separate from token acquisition. `providers/m365-accounts.mjs` normalizes/deduplicates broker identities, excludes consumer accounts and applies saved binding → unique exact system UPN → single-company-account selection. A bounded Windows system `whoami.exe /upn` lookup runs only for unbound multiple-account discovery; failure never guesses an identity. The short-lived native helper's `accounts` operation performs no token acquisition. `provider-runtime.mjs` owns explicit account changes: admission is paused for M365, a separate candidate validates one account/catalog, then the locked binding writer commits before provider/gateway replacement. GitHub is unaffected; failed candidates are discarded. CLI and the same-origin dashboard use this composition boundary rather than invoking authentication themselves.
+
+`providers/m365-conversation-accounts.mjs` bounds account ownership metadata to 1024 hashed conversation keys, writes only on first association, and refuses cross-account or unknown old history after account changes. Response-history transfer between M365 account namespaces is disabled. Binding metadata retains selection provenance and history isolation across restarts; it contains no token. Catalogs remain account-fingerprinted. These controls do not establish Windows enrollment, model entitlement or successful inference, and no account is tried merely because another was refused.
+
 ### Existing service composition
 
 The CLI composes the service. Client integration owns its `configure`, `start`,

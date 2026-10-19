@@ -5,7 +5,7 @@ import { startupBanner, startupCheck, startupReady, startupLogger, predictionSta
 import { status } from "../src/status.mjs";
 
 test("A atom banner is static, bounded and enabled only on a wide colored terminal", () => {
-  const args = { version: "0.0.0", env: {}, stream: { isTTY: true, columns: 80 } };
+  const args = { version: "0.0.0", env: {}, colorTheme: "green", stream: { isTTY: true, columns: 80 } };
   const colored = startupBanner(args);
   assert.match(colored, /\x1b\[38;2;166;245;168m/);assert.match(colored, /[▀▄█]/);
   assert.equal(colored.split("\n").length, 6);

@@ -10,7 +10,7 @@ export function m365Paths({ home = os.homedir() } = {}) {
   const directory = path.join(home, ".local", "share", "codex-copilot-dx", "profiles", "m365");
   return { directory, settings: path.join(directory, "settings.json"), account: path.join(directory, "account.json"),
     catalog: path.join(directory, "models.json"), gateway: path.join(directory, "gateway.json"),
-    ownership: path.join(directory, "client-config.json") };
+    ownership: path.join(directory, "client-config.json"), conversations: path.join(directory, "conversations.json") };
 }
 
 export function readM365Json(file, fallback = null) {
@@ -69,6 +69,28 @@ export function readM365Account(options = {}) {
   const account = readM365Json(m365Paths(options).account);
   if (account) m365AccountKey(account);
   return account;
+}
+
+export function writeM365Binding(account, catalog, { expectedAccount, ...options } = {}) {
+  const paths = m365Paths(options);m365AccountKey(account);
+  fs.mkdirSync(paths.directory, { recursive: true, mode: 0o700 });
+  return withFileLockSync(path.join(paths.directory, "binding.lock"), () => {
+    const previous = readM365Account(options), oldCatalog = readM365Json(paths.catalog);
+    if (expectedAccount !== undefined && (previous ? m365AccountKey(previous) : null) !== (expectedAccount ? m365AccountKey(expectedAccount) : null)) {
+      throw Object.assign(new Error("The company account changed. Refresh the account list."), { code: "m365_account_selection_stale", statusCode: 409 });
+    }
+    try {
+      writeM365Json(paths.catalog, catalog);
+      writeM365Json(paths.account, account);
+    } catch (error) {
+      try {
+        if (oldCatalog) writeM365Json(paths.catalog, oldCatalog);else fs.rmSync(paths.catalog, { force: true });
+        if (previous) writeM365Json(paths.account, previous);else fs.rmSync(paths.account, { force: true });
+      }
+      catch { throw Object.assign(new Error("Company account save failed; its model cache could not be restored. Existing account binding was preserved."), { code: "m365_account_save_failed", cause: error }); }
+      throw error;
+    }
+  });
 }
 
 export function ensureM365GatewayKey(options = {}) {

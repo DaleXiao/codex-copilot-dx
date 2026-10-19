@@ -142,6 +142,14 @@
           <p class="hint" data-i18n="m365_source_access">Provides models for Codex and Claude on supported devices.</p>
           <div class="section-actions"><button id="m365-on" type="button" data-i18n="enable_service">Enable source</button><button id="m365-off" type="button" data-i18n="disable_service">Disable source</button></div>
           <div id="m365-control-note" class="hint" role="status"></div>
+          <h3 data-i18n="company_account">Company account</h3>
+          <p id="m365-account-current" class="hint" role="status"></p>
+          <div class="section-actions"><button id="m365-accounts-refresh" type="button" data-i18n="check_accounts">Check accounts</button></div>
+          <div id="m365-account-form" hidden>
+            <div class="section-actions"><label><span data-i18n="choose_company_account">Choose a company account</span><select id="m365-account-choice"></select></label><button id="m365-account-apply" type="button" disabled data-i18n="use_this_account">Use this account</button></div>
+            <p class="hint" data-i18n="company_account_scope">Applies to Microsoft 365 in Codex and Claude. Start a new conversation after changing accounts.</p>
+          </div>
+          <p id="m365-account-note" class="hint" role="status" aria-live="polite"></p>
         </section>
         </div>
         <div data-view="usage" hidden>

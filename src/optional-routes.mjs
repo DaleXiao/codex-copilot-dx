@@ -1,5 +1,5 @@
 export const DASHBOARD_PATHS = new Set(["/", "/ui.css", "/theme.js", "/language.js", "/refresh.js", "/status.js", "/usage.js", "/ui.js", "/console.js"]);
-export const DASHBOARD_API_PATHS = new Set(["/_ccdx/ui/animation", "/_ccdx/ui/models/live", "/_ccdx/ui/usage", "/_ccdx/ui/auth", "/_ccdx/ui/providers", "/_ccdx/ui/settings"]);
+export const DASHBOARD_API_PATHS = new Set(["/_ccdx/ui/animation", "/_ccdx/ui/models/live", "/_ccdx/ui/usage", "/_ccdx/ui/auth", "/_ccdx/ui/providers", "/_ccdx/ui/settings", "/_ccdx/ui/m365/accounts"]);
 
 export function isOptionalRoute(method, pathname) {
   return DASHBOARD_API_PATHS.has(pathname) || pathname === "/mcp/image"

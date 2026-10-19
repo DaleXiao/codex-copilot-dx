@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { normalizeBrokerAccounts, chooseM365Account, windowsAccountHint } from "./m365-accounts.mjs";
 
 export const M365_CLIENT_ID = "aebc6443-996d-45c2-90f0-388ff96faa56";
 export const M365_RESOURCE = "42c8f7bd-c7a8-4ba9-bc1c-91edfb716247";
@@ -19,9 +20,9 @@ export function brokerFailure(error) {
   return { code, aadsts: [...new Set(String(error?.errorContext || "").match(/AADSTS\d+/g) || [])].slice(0, 3) };
 }
 
-export async function acquireSilentM365Token({ account = null } = {}, {
+export async function acquireSilentM365Token({ account = null, action = "token" } = {}, {
   platform = process.platform, loadBroker = () => createRequire(import.meta.url)("@azure/msal-node-runtime").msalNodeRuntime,
-  execFileImpl = promisify(execFile),
+  execFileImpl = promisify(execFile), env = process.env,
 } = {}) {
   if (!["darwin", "win32"].includes(platform)) throw fail("m365_platform_unsupported");
   if (platform === "darwin") {
@@ -39,18 +40,19 @@ export async function acquireSilentM365Token({ account = null } = {}, {
     catch (error) { reject(error); }
   });
   const discovered = await invoke("DiscoverAccountsAsync", M365_CLIENT_ID, randomUUID());
-  const accounts = (discovered.accounts || []).filter(value => value.accountId && value.username && value.realm);
-  const matching = account ? accounts.filter(value => value.homeAccountId === account.id && value.realm === account.tenant) : accounts;
-  if (!matching.length) throw fail("m365_account_unavailable");
-  if (matching.length !== 1) throw fail("m365_account_ambiguous");
-  const selected = matching[0], parameters = new broker.AuthParameters();
+  const accounts = normalizeBrokerAccounts(discovered.accounts || []);
+  const windowsLogin = (!account || action === "accounts") && accounts.length > 1
+    ? await windowsAccountHint({ platform, env, execFileImpl }) : null;
+  if (action === "accounts") return { accounts: accounts.map(({ native, ...value }) => value), windowsLogin };
+  const selected = chooseM365Account(accounts, { binding: account, windowsLogin }), parameters = new broker.AuthParameters();
   parameters.CreateAuthParameters(M365_CLIENT_ID, AUTHORITY);
   parameters.SetRedirectUri(platform === "darwin" ? "msauth.com.msauth.unsignedapp://auth" : `ms-appx-web://Microsoft.AAD.BrokerPlugin/${M365_CLIENT_ID}`);
   parameters.SetRequestedScopes(`${M365_RESOURCE}/.default`);
-  const result = await invoke("AcquireTokenSilentlyAsync", parameters, randomUUID(), selected);
+  const result = await invoke("AcquireTokenSilentlyAsync", parameters, randomUUID(), selected.native);
   if (!result.accessToken || !String(result.grantedScopes || "").split(" ").includes(`${M365_RESOURCE}/LLM.Read`)) throw fail("m365_llm_permission_unavailable");
+  if (result.account && (result.account.homeAccountId !== selected.id || result.account.realm !== selected.tenant)) throw fail("m365_account_changed");
   return { token: result.accessToken, expiresAt: Number(result.expiresOn) * 1000,
-    account: { id: selected.homeAccountId, tenant: selected.realm, login: selected.username } };
+    account: { id: selected.id, tenant: selected.tenant, login: selected.login, selection_source: selected.selection_source } };
 }
 
 async function main() {
@@ -63,7 +65,7 @@ async function main() {
       if (Buffer.byteLength(input) > 4096) throw fail("m365_auth_request_invalid");
     }
     const request = JSON.parse(input);
-    if (request.action !== "token") throw fail("m365_auth_request_invalid");
+    if (!["token", "accounts"].includes(request.action)) throw fail("m365_auth_request_invalid");
     const result = await acquireSilentM365Token(request);
     process.stdout.write(JSON.stringify(result), () => process.exit(0));
   } catch (error) { process.stdout.write(JSON.stringify({ error: brokerFailure(error) }), () => process.exit(1)); }

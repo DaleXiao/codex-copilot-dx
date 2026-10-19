@@ -43,7 +43,8 @@ test("M365 keeps full discovery isolated while exposing only each protocol's ver
   assert.equal(requests[0].options.headers["X-ClientType"], "GitHub");
   assert.equal(p.snapshot().state, "ready");
   for (const file of [m365Paths({ home }).catalog, m365Paths({ home }).account]) assert.doesNotMatch(fs.readFileSync(file, "utf8"), /synthetic_entra_secret/);
-  assert.doesNotMatch(JSON.stringify(p.snapshot()), /synthetic_entra_secret|tenant-a|id-a/);
+  assert.doesNotMatch(JSON.stringify(p.snapshot()), /synthetic_entra_secret|id-a/);
+  assert.equal(p.snapshot().account.tenant, account.tenant, "Tenant distinguishes accounts in the local selector");
   await assert.rejects(p.client.messages({ model: "gpt-6-sol", messages: [] }), { code: "m365_model_unavailable" });
   assert.equal(requests.length, 1);p.close();
 });

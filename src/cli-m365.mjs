@@ -9,6 +9,7 @@ import { terminalCell } from "./terminal-text.mjs";
 import { readBoundedResponseText } from "./upstream-body.mjs";
 import { parseAdapterAddressOptions } from "./cli-options.mjs";
 import { autoReviewReasoningEfforts } from "./models.mjs";
+import { m365AccountMessage } from "./providers/m365-accounts.mjs";
 
 export async function fetchActiveProviderModels({ control = providerControl, ...options } = {}) {
   if (readProviderSettings(options).codex !== "m365") {
@@ -35,6 +36,8 @@ export function formatM365Status(state) {
   return [
     `Microsoft 365: ${terminalCell(m.state || "not running")}${m.reason ? ` (${terminalCell(m.reason)})` : ""}`,
     ...(m.account?.login ? [`Account: ${terminalCell(m.account.login)}`] : []),
+    ...(m.account?.tenant ? [`Tenant: ${terminalCell(m.account.tenant)} / ${terminalCell(m.account.selection_source || "legacy")}`] : []),
+    ...(m.reason ? [m365AccountMessage(m.reason)] : []),
     `Models: ${models.claude || 0} Claude / ${models.gpt || 0} GPT (${models.source || "unavailable"})`,
     `Claude gateway: ${claude.gateway || "not running"}${claude.base_url ? ` / ${claude.base_url}` : ""}`,
     ...(claude.reason ? [`Claude detail: ${terminalCell(claude.reason)}`] : []),
@@ -62,14 +65,36 @@ export async function runProviderAutoReviewCommand(options = {}) {
   });
 }
 
-export async function runM365Command({ action = "status", provider, model, autoReviewModel, host, port, home,
+export async function runM365Command({ action = "status", provider, model, autoReviewModel, accountId, host, port, home,
   env = process.env, input = process.stdin, output = process.stdout, prompt, control = providerControl } = {}) {
   const options = { home, env };
   let readline;
   const ask = prompt || (question => { if (!input.isTTY || !output.isTTY) throw new Error("Choose the source and models with command arguments.");
     readline ||= createInterface({ input, output });return readline.question(question); });
-  const request = value => control({ host, port, action: value });
+  const request = value => control({ host, port, action: value, ...(value?.action === "account" ? { timeoutMs: 65000 } : {}) });
   try {
+    if (action === "accounts" || action === "account") {
+      const result = await request({ action: "accounts" });
+      const accounts = result.accounts || [];
+      if (!accounts.length) throw new Error("No company account found. Connect your work account in Windows or macOS, then check again.");
+      if (action === "accounts") {
+        output.write(accounts.map(value => `${terminalCell(value.login)} / ${terminalCell(value.tenant)}${value.selected ? " [selected]" : value.current_windows ? " [Windows sign-in]" : ""}\n  ID: ${value.id}`).join("\n") + "\n");
+        return result;
+      }
+      if (!accountId) {
+        if (!prompt && (!input.isTTY || !output.isTTY)) throw new Error("Use ccdx m365 account --id ID from ccdx m365 accounts.");
+        output.write(accounts.map((value, index) => `  ${index + 1}. ${terminalCell(value.login)} / ${terminalCell(value.tenant)}${value.selected ? " [selected]" : value.current_windows ? " [Windows sign-in]" : ""}`).join("\n") + "\n");
+        const answer = String(await ask("Choose an account, or q to cancel: ")).trim();
+        if (answer === "q") return { cancelled: true };
+        const index = Number(answer) - 1;
+        if (!Number.isInteger(index) || !accounts[index]) throw new Error("Choose a listed account");
+        accountId = accounts[index].id;
+      }
+      if (!accounts.some(value => value.id === accountId)) throw new Error("Account list changed. Check again and select a listed account.");
+      output.write("Applies to Microsoft 365 in Codex and Claude. Use a new conversation after changing accounts.\n");
+      const state = await request({ action: "account", account_id: accountId });
+      output.write(formatM365Status(state) + "\n");return state;
+    }
     if (action === "status") {
       try { const state = await request();output.write(formatM365Status(state) + "\n");return state; }
       catch (error) {

@@ -1,5 +1,6 @@
 # WebUI 文案对照
 
+此表保留历史文案对照，不作为当前功能说明。当前行为以 README 和 REFERENCE 为准；1.2.3 公司账号增量见文末。
 基线：1.1.1。现文案：1.2.0。固定消息标识见 `src/dashboard/language.js`；中文和英文分别展示。保留产品名、模型 ID、命令、单位与错误码。动态原始数据不翻译、不截短来满足文案长度。
 
 | 固定标识 | 原英文 → 新英文 | 原中文 → 新中文 |
@@ -403,3 +404,22 @@
 | active | 新增 → Active | 新增 → 进行中 |
 | results_since_startup_partial_usage_is_marked_separately | 新增 → Results since startup. Partial usage is marked separately. | 新增 → 统计本次运行的请求。<br>用量缺失会单独标明。 |
 | claude_code_code_claude_app_app | 新增 → Claude Code: {code} / Claude App: {app} | 新增 → Claude Code：{code}<br>Claude App：{app} |
+
+## 1.2.3 公司账号补充
+
+以下为新增交互，现有主题与布局保持。英文错误详情可保留，已知账号状态使用双语提示。
+
+| 原文案或状态 → 新英文 | 新中文 |
+| --- | --- |
+| 无账号区域 → Company account | 公司账号 |
+| 无发现操作 → Check accounts | 检查账号 |
+| 无选择入口 → Choose a company account | 选择公司账号 |
+| 无提交操作 → Use this account | 使用此账号 |
+| `m365_account_ambiguous` → Choose a company account below. | 请在下方选择公司账号。 |
+| 无列表说明 → Choose an account. Browsing does not change your connection. | 请选择账号。查看列表不会切换。 |
+| 无范围说明 → Applies to Microsoft 365 in Codex and Claude. Start a new conversation after changing accounts. | 影响 Codex 和 Claude 的 M365 服务。／更换账号后请新建对话。 |
+| 无成功状态 → Account connected. Model list checked; inference access is not tested. | 账号已连接，模型列表已检查。／尚未测试实际请求。 |
+| 无失败保留状态 → Account not changed. Previous connection kept. | 账号未更换，保留原连接。 |
+| 无选择来源 → Windows sign-in / Only company account / Your choice / Saved account | Windows 登录账号／唯一公司账号／手动选择／已保存账号 |
+
+完整新增固定消息以 `src/dashboard/language.js` 的公司账号消息为准；账号邮箱与租户是原始身份数据，不作长度截断来冒充名称。

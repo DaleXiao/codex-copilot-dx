@@ -169,7 +169,8 @@ export function createAdapterHandler(options = {}) {
   const httpErrors = createHttpFailureDiagnostics();
   const optionalRoutes = createOptionalRoutes({ ...options, dashboardOptions: { ...options.dashboardOptions,
     ...(options.providerRuntime ? { providerCatalogFn: input => options.providerRuntime.dashboardCatalog(input),
-      providerStateFn: () => options.providerRuntime.dashboardProviders() } : {}) } });
+      providerStateFn: () => options.providerRuntime.dashboardProviders(),
+      providerAccountsFn: () => options.providerRuntime.action({ action: "accounts" }) } : {}) } });
   let statusSnapshot;
   const managementHandler = createManagementHandler({
     nativePredictionPac: options.nativePredictionPac, fixPrediction: options.fixPrediction, requestBodyTimeoutMs,

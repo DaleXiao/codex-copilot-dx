@@ -51,6 +51,17 @@ async function invoke(handler, {
   return { status: res.statusCode, headers: res.headers, body: JSON.parse(text) };
 }
 
+test("company account discovery is a protected local read and exports only bounded public choices", async () => {
+  let reads = 0;
+  const handler = createAdapterHandler({ dashboardOptions: { providerAccountsFn: async () => { reads++;return { accounts: [{ id: "a".repeat(64), login: "name\u001b@example.test", tenant: "company", selected: true, native: "private", token: "secret" }] }; } } });
+  const url = "/_ccdx/ui/m365/accounts";
+  assert.equal((await invoke(handler, { url, dashboardHeader: "" })).status, 403);
+  assert.equal((await invoke(handler, { url, remoteAddress: "10.0.0.2" })).status, 403);assert.equal(reads, 0);
+  const result = await invoke(handler, { url });assert.equal(result.status, 200);assert.equal(reads, 1);
+  assert.equal(result.body.accounts[0].selected, true);assert.doesNotMatch(JSON.stringify(result.body), /private|secret|\\u001b/);
+  assert.equal(result.headers["Cache-Control"], "no-store");
+});
+
 
 test("dashboard auth matches local CLI identity, suppresses stale metadata and never exports credentials", async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-dashboard-auth-"));

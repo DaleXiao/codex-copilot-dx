@@ -73,7 +73,7 @@ jobs:
       - name: Verify streaming delivery and Chat semantic validation on Windows
         run: node --test test/stream-delivery.test.mjs test/responses-bridge.test.mjs test/responses-chat-http.test.mjs test/responses-native-http.test.mjs test/stream-performance.test.mjs test/cli-status.test.mjs
       - name: Verify isolated provider, broker, gateway, ownership and system network contracts
-        run: node --test test/claude-models.test.mjs test/m365-auth.test.mjs test/m365-provider.test.mjs test/m365-network.test.mjs test/provider-runtime.test.mjs test/provider-registry.test.mjs test/client-integration-state.test.mjs test/claude-gateway.test.mjs test/claude-client-config.test.mjs test/cli-m365.test.mjs test/shared-listener.test.mjs test/service-control.test.mjs test/terminal-console.test.mjs test/browser-launch.test.mjs
+        run: node --test test/claude-models.test.mjs test/m365-auth.test.mjs test/m365-accounts.test.mjs test/m365-account-selection.test.mjs test/m365-provider.test.mjs test/m365-network.test.mjs test/provider-runtime.test.mjs test/provider-registry.test.mjs test/client-integration-state.test.mjs test/claude-gateway.test.mjs test/claude-client-config.test.mjs test/cli-m365.test.mjs test/shared-listener.test.mjs test/service-control.test.mjs test/terminal-console.test.mjs test/browser-launch.test.mjs
       - run: npm run test:package
   macos:
     runs-on: macos-latest

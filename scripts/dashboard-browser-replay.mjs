@@ -22,13 +22,20 @@ globalThis.fetch = async () => { throw Error("Real provider calls are forbidden"
 let models = 0, summaries = 0;
 const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-dashboard-replay-"));
 let predictionActive = true, codexSource = "github", m365Enabled = true;
+const accountChoices = ["a", "b"].map(letter => ({ id: letter.repeat(64), login: `${letter}@example.test`, tenant: `company-${letter}` }));
+let companyAccount = accountChoices[0], accountChecks = 0, accountChanges = 0, refuseAccountChange = false;
 let m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
 const serviceControl = createServiceControl({ home, env: {}, readImages: () => ({}), readPrediction: () => ({ enabled: true }),
   clientIntegration: { snapshot: () => ({ prediction: { configured: true, bridge: "running", active: predictionActive } }), setPredictionActive(value) { predictionActive = value; }, fix: async () => {} },
-  providerRuntime: { snapshot: () => ({ codex_provider: codexSource, github: { preference: { model: "gpt-6.1-sol", reasoningEffort: "low" } }, m365: { preference: m365Preference, state: m365Enabled ? "ready" : "disabled", enabled: m365Enabled } }),
+  providerRuntime: { snapshot: () => ({ codex_provider: codexSource, github: { preference: { model: "gpt-6.1-sol", reasoningEffort: "low" } }, m365: { preference: m365Preference, state: m365Enabled ? "ready" : "disabled", enabled: m365Enabled, account: { ...companyAccount, selection_source: "manual" } } }),
     async action(input) {
       if (input.action === "switch") { codexSource = input.provider;if (input.provider === "m365") m365Preference = { ...m365Preference, model: input.model, ...(input.auto_review_model ? { auto_review_model: input.auto_review_model, auto_review_effort: input.auto_review_effort } : {}) }; }
       else if (input.action === "auto-review") m365Preference = { ...m365Preference, auto_review_model: input.model, auto_review_effort: input.effort };
+      else if (input.action === "account") {
+        accountChanges++;
+        if (refuseAccountChange) throw Object.assign(Error("Model access denied"), { code: "m365_llm_permission_unavailable", statusCode: 403 });
+        companyAccount = accountChoices.find(value => value.id === input.account_id);
+      }
       else m365Enabled = input.action === "on";
     } },
 });
@@ -43,6 +50,7 @@ const providerState = () => [
 ];
 const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, serviceControl,
   providerStateFn: providerState,
+  providerAccountsFn: async () => { accountChecks++;return { accounts: accountChoices.map(value => ({ ...value, selected: value.id === companyAccount.id })) }; },
   providerCatalogFn: async ({ provider }) => {
     if (provider === "github") return null;
     if (provider === "third") throw Object.assign(Error("Unavailable"), { code: "m365_disabled", statusCode: 503 });
@@ -113,7 +121,8 @@ try {
           };
         });
         await page.clock.install();
-        codexSource = "m365";m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
+        codexSource = "m365";m365Enabled = true;companyAccount = accountChoices[0];accountChecks = 0;accountChanges = 0;refuseAccountChange = false;
+        m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
         await page.waitForFunction(() => !document.getElementById("refresh-models").disabled && !document.getElementById("refresh-usage").disabled);
         assert.equal(await page.evaluate(() => atomMotions.length), 1);
@@ -180,6 +189,22 @@ try {
         assert.equal(await page.locator("#provider-auth tr").count(), 3);
         assert.match(await page.locator("#provider-auth").innerText(), /synthetic@example.test/);
         assert.equal(await page.locator("#model-providers [role=tab]").count(), 3);
+        assert.equal(accountChecks, 0, "Opening the page never enumerates accounts or acquires tokens");
+        await page.locator("#m365-accounts-refresh").click();
+        await page.waitForFunction(() => !document.getElementById("m365-account-form").hidden && !document.getElementById("m365-accounts-refresh").disabled);
+        assert.equal(accountChecks, 1);assert.equal(accountChanges, 0);
+        await page.locator("#m365-account-choice").selectOption(accountChoices[1].id);
+        for (const selector of ["#m365-account-choice", "#m365-account-apply"]) assert.equal((await page.locator(selector).boundingBox()).height, 36);
+        refuseAccountChange = true;page.once("dialog", dialog => dialog.accept());
+        await page.locator("#m365-account-apply").click();
+        await page.waitForFunction(() => !document.getElementById("m365-account-apply").disabled);
+        assert.equal(companyAccount.id, accountChoices[0].id);assert.equal(accountChanges, 1);
+        assert.match(await page.locator("#m365-account-note").innerText(), language === "zh" ? /账号未更换/ : /Account not changed/);
+        refuseAccountChange = false;page.once("dialog", dialog => dialog.accept());
+        await page.locator("#m365-account-apply").click();
+        await page.waitForFunction(() => document.getElementById("m365-account-current").textContent.includes("b@example.test") && !document.getElementById("m365-account-apply").disabled);
+        assert.equal(accountChanges, 2);assert.equal(accountChecks, 1);
+        if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-accounts.png`), fullPage: true });
         await page.locator("#model-provider-m365").click();
         await page.waitForFunction(() => document.getElementById("live-models-body").textContent.includes("claude-opus-5.5"));
         assert.match(await page.locator("#live-models-body").innerText(), /low.*high/);

@@ -45,3 +45,21 @@ test("M365 CLI status cannot inject terminal controls through account metadata",
   const output = formatM365Status({ m365: { state: "ready", account: { login: "name\u001b[2J" } } });
   assert.doesNotMatch(output, /\u001b/);
 });
+
+test("company account listing is read only and interactive cancellation never changes the binding", async t => {
+  const options = fixture(t), actions = [], lines = [], id = "a".repeat(64);
+  const control = async ({ action }) => { actions.push(action);return { accounts: [{ id, login: "a@example.test", tenant: "company", current_windows: true }] }; };
+  const output = { write: line => lines.push(line) };
+  await runM365Command({ ...options, action: "accounts", control, output });
+  assert.match(lines.join(""), /Windows sign-in/);assert.match(lines.join(""), new RegExp(id));
+  await runM365Command({ ...options, action: "account", control, output, prompt: async () => "q" });
+  assert.ok(actions.every(value => value.action === "accounts"));
+  await assert.rejects(runM365Command({ ...options, action: "account", control, output, input: { isTTY: false } }), /--id ID/);
+});
+
+test("company account selection uses the listed opaque ID and reports its scope before applying", async t => {
+  const options = fixture(t), actions = [], lines = [], id = "b".repeat(64);
+  await runM365Command({ ...options, action: "account", accountId: id, output: { write: line => lines.push(line) },
+    control: async ({ action }) => { actions.push(action);return action.action === "accounts" ? { accounts: [{ id, login: "b@example.test", tenant: "company" }] } : { m365: { state: "ready" } }; } });
+  assert.deepEqual(actions.at(-1), { action: "account", account_id: id });assert.match(lines.join(""), /Codex and Claude/);
+});

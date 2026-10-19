@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createM365Auth, m365Error } from "./m365-auth.mjs";
-import { m365Paths, m365AccountKey, readM365Account, readM365Json, writeM365Json } from "../m365-settings.mjs";
+import { m365Paths, m365AccountKey, readM365Account, readM365Json, writeM365Binding } from "../m365-settings.mjs";
 import { MAX_UPSTREAM_ERROR_BODY_BYTES, MAX_UPSTREAM_MODEL_CATALOG_BYTES, readBoundedResponseText } from "../http-transport.mjs";
 import { prepareResponsesPayload, summarizeReqBody } from "../image-optimization.mjs";
 import { enforceResponsesPayloadByteBudget } from "../responses-byte-budget.mjs";
@@ -15,6 +15,7 @@ import { removeNativeImageTools } from "../responses-image-tools.mjs";
 import { resolveClaudeModel } from "../claude-models.mjs";
 import { modelReasoningEfforts } from "../provider-metadata.mjs";
 import { limitM365CacheTtl } from "./m365-messages-policy.mjs";
+import { createM365ConversationGuard } from "./m365-conversation-accounts.mjs";
 
 export const M365_API_BASE = "https://df.loki.delve.office.com/api/v1/llmapi";
 const SOFT_TTL_MS = 2 * 60 * 60 * 1000;
@@ -66,9 +67,11 @@ export function m365Models(catalog, family) {
       && model.supported_endpoints.some(endpoint => endpoint === "/responses" || endpoint === "/v1/responses"));
 }
 
-export function createM365Provider({ home, env = process.env, auth = createM365Auth({ home, env }), fetchImpl,
+export function createM365Provider({ home, env = process.env, account: accountOverride, persist = true,
+  auth = createM365Auth({ home, env, account: accountOverride }), fetchImpl,
   createNetwork, now = Date.now, log = (kind, message) => console.log(status(kind, message)), onCatalog = () => {} } = {}) {
   const paths = m365Paths({ home });
+  const guardConversation = createM365ConversationGuard({ home });
   let catalog = null, account = null, catalogAt = 0, state = "idle", reason = null, flight = null, controller = null, generation = 0;
   let network = null, networkFlight = null, cacheTtlAdjustments = 0;
   const registry = { models: null, source: "unavailable", cacheState: "none", cacheSavedAtMs: null,
@@ -95,7 +98,7 @@ export function createM365Provider({ home, env = process.env, auth = createM365A
     registry.source = source;registry.cacheSavedAtMs = savedAt;registry.cacheState = now() - savedAt < SOFT_TTL_MS ? "fresh" : "stale";
   }
   try {
-    account = readM365Account({ home });
+    account = accountOverride || readM365Account({ home });
     const saved = readM365Json(paths.catalog);
     if (account && saved?.account_key === m365AccountKey(account) && Number.isFinite(saved.saved_at)
       && now() - saved.saved_at < HARD_TTL_MS) applyCatalog(saved.models, "cache", saved.saved_at);
@@ -143,10 +146,11 @@ export function createM365Provider({ home, env = process.env, auth = createM365A
       if (!response.ok) throw m365Error(`m365_catalog_http_${response.status}`);
       let value;try { value = m365Catalog(JSON.parse(raw)); } catch { throw m365Error("m365_catalog_invalid"); }
       if (current !== generation || signal.aborted) throw m365Error("m365_refresh_cancelled");
-      account = credential.account;
-      writeM365Json(paths.account, account);
-      writeM365Json(paths.catalog, { account_key: m365AccountKey(account), saved_at: now(), models: value });
-      applyCatalog(value, "live", now());state = "ready";reason = null;registry.lastError = null;registry.lastErrorAtMs = null;
+      const savedAt = now();
+      const nextAccount = { ...credential.account, ...(account?.history_isolation ? { history_isolation: true } : {}) };
+      if (persist) writeM365Binding(nextAccount, { account_key: m365AccountKey(nextAccount), saved_at: savedAt, models: value }, { home, expectedAccount: account });
+      account = nextAccount;
+      applyCatalog(value, "live", savedAt);state = "ready";reason = null;registry.lastError = null;registry.lastErrorAtMs = null;
       try { await onCatalog(value); } catch { log("warn", "M365 models are ready; optional client configuration could not be updated"); }
       return value;
     })().catch(error => {
@@ -180,6 +184,7 @@ export function createM365Provider({ home, env = process.env, auth = createM365A
     cacheModelEndpoints() {},
     async responses(body, options = {}) {
       const model = selectedModel(body.model, "gpt");
+      if (account) guardConversation(account, body, currentRequestContext()?.clientHeaders || options.headers);
       const prepared = await prepareResponsesPayload(body, { ...options.payloadOptions, assertActive: options.assertActive,
         currentInputStart: options.currentInputStart || 0, signal: options.signal,
         profiles: options.payloadPrepared ? [] : options.payloadOptions?.profiles,
@@ -197,6 +202,7 @@ export function createM365Provider({ home, env = process.env, auth = createM365A
     async messages(body, options = {}) {
       if (catalog && now() - catalogAt >= SOFT_TTL_MS && !flight) void refresh().catch(() => {});
       const model = selectedModel(body.model, "claude");
+      if (account) guardConversation(account, body, options.headers);
       const efforts = modelReasoningEfforts(model);
       if (body.output_config?.effort !== undefined && efforts && !efforts.includes(body.output_config.effort)) {
         throw protocolError("m365_effort_unavailable", "The selected effort is not advertised by this model. Refresh its model list and select an available effort.");
@@ -236,7 +242,12 @@ export function createM365Provider({ home, env = process.env, auth = createM365A
         return { resp, reqContext: context, errorText, usedRetryPolicies: new Set() };
       },
     },
-    snapshot: () => ({ ...auth.snapshot(), state, reason: reason || auth.snapshot().reason, account: account ? { login: account.login } : null,
+    commitSelection(expectedAccount) {
+      if (!catalog || state !== "ready" || !account) throw m365Error("m365_not_ready");
+      writeM365Binding(account, { account_key: m365AccountKey(account), saved_at: catalogAt, models: catalog }, { home, expectedAccount });
+      persist = true;
+    },
+    snapshot: () => ({ ...auth.snapshot(), state, reason: reason || auth.snapshot().reason, account: account ? { login: account.login, tenant: account.tenant, selection_source: account.selection_source || "legacy" } : null,
       network: network?.snapshot() || null,
       cache_ttl_adjustments: cacheTtlAdjustments,
       models: { total: catalog?.data.length || 0, claude: m365Models(catalog, "claude").length, gpt: m365Models(catalog, "gpt").length,

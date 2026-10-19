@@ -1,5 +1,6 @@
 # CLI 文案对照
 
+此表保留历史文案对照，不作为当前功能说明。当前行为以 README 和 REFERENCE 为准；1.2.3 公司账号增量见文末。
 基线：1.1.1；现文案：1.2.0。CLI 保持英文。以下 529 项是此前讨论的静态候选，包括帮助、提示和诊断片段；不是对所有动态错误内容的枚举。位置为基线文件与行号。帮助改为分条，保留限制、退出行为、命令与参数。未实施的建议列为原样保留。
 
 | 编号 | 基线位置 | 原文案 → 新文案 |
@@ -543,3 +544,15 @@
 | 读取失败时继续显示旧数据，没有标记 | Showing previous data / updated HH:MM:SS；窄终端 Previous data / HH:MM:SS |
 | 窄终端截掉来源和 Claude 状态 | 按宽度换行；40×16 使用紧凑表格，保留用量、来源、Code/App 状态 |
 | 混合来源的相同模型结果 | ccdx status 按 source / protocol 分列结果 |
+
+## 1.2.3 公司账号补充
+
+CLI 仍保持英文；原始错误码保留在诊断中。新增账号命令与 `m365 help` 一致。
+
+| 原文案或状态 → 新文案 | 行为 |
+| --- | --- |
+| `Microsoft 365 unavailable: m365_account_ambiguous` → `Choose a company account in Model sources or run ccdx m365 account.` | 明确选择入口，不申请其他账号令牌 |
+| 无账号列表 → `ccdx m365 accounts` | 只做本地发现，列出邮箱、租户、选择标识 |
+| 无账号选择 → `Choose an account, or q to cancel:` | 选择后验证该账号，取消不改变绑定 |
+| 无切换范围提示 → `Applies to Microsoft 365 in Codex and Claude. Use a new conversation after changing accounts.` | 切换前说明影响 |
+| 无跨账号历史提示 → `This conversation belongs to another company account. Start a new conversation.` | 拒绝跨账号转发历史 |

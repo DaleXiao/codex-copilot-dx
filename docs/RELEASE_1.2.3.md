@@ -55,3 +55,12 @@ Company registry/proxy/certificate/npm policy, system sign-in, GitHub credential
 [CI 39190021906](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/39190021906) passed **17/17 jobs** at `507dca44df3bd17df72bc071e67c1822bbeb4208`: Windows/macOS/Linux, Node 22.15/24, strict npm 12 installs and updates, bootstrap without Git/Node, Windows updater/native prediction/PAC and account contracts, actual official-client synthetic replays, Chromium/WebKit dashboard and xterm behavior. The later tag documentation commit changes only this verification report; runtime, dependency, workflow and test trees remain identical.
 
 This gate includes the previously reported Windows `npm.cmd` EINVAL regression: actual Windows subprocess tests remain in both Windows Node jobs. Users on affected old binaries still need a direct npm or Release-bootstrap installation to obtain the fixed updater.
+
+## Published delivery
+
+- [npm 1.2.3](https://www.npmjs.com/package/codex-copilot-dx/v/1.2.3) published through [workflow 39190597129](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/39190597129), which reran the complete release gate at the immutable tag. The publication log's tarball SHA-1 `ffd409a9e9cd4c7c9383494e25b38ade5a549d34` matches the locally validated artifact.
+- [GitHub v1.2.3](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.2.3) is the latest stable Release. All five assets were downloaded fresh and matched both local bytes and their GitHub API SHA-256 digests.
+- Tag/source: `ded1d5f7fc0a8f470b83149ca5234894015fa56d`. Repacking that tag produced identical tarball, bootstrap scripts, standalone installer and SHA256SUMS. It differs from the 17/17 CI source only in this verification report.
+- One check of the configured company npm registry at 2026-10-19 02:37 UTC returned E404 for 1.2.3. Mirror synchronization is unverified; registry, proxy, CA and npm policy were not changed. Use the GitHub Release channel while waiting, with dependencies still using the configured registry. Affected old Windows updaters need a direct npm install or the Release bootstrap; restart CCDX after updating.
+
+Publication receipts are a documentation-only follow-up. Release tags/artifacts are not moved or republished. Task-owned temporary tools, browser cache, credential helpers and branches are removed after delivery. Package artifacts and bounded verification evidence are retained separately; user configuration, sign-in, history, global installation and running service are preserved.

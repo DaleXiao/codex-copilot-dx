@@ -1,5 +1,10 @@
 (() => {
   const translations = {
+    "chart_view": ["Chart view", "图表视图"],
+    "bar_chart": ["Bar chart", "柱状图"],
+    "line_chart": ["Line chart", "曲线图"],
+    "approx_cache_hit_rate": ["Approx. cache hit rate", "粗略缓存命中率"],
+    "runtime_cache_hit_basis": ["Reused input / input tokens. ~ Partial counts. — Unknown or invalid.", "复用输入 ÷ 输入 Token。\n~：数据不完整。—：未知或无效。"],
     "provider_status_scope": ["Source and application status", "模型来源与应用状态"],
     "version_updates": ["VERSION & UPDATES", "版本与更新"],
     "copy_command": ["Copy command", "复制指令"],

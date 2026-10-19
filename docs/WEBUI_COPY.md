@@ -1,6 +1,7 @@
 # WebUI 文案对照
 
-此表保留历史文案对照，不作为当前功能说明。当前行为以 README 和 REFERENCE 为准；1.2.3 公司账号和 1.2.4 版本信息增量见文末。
+此表保留历史文案对照，不作为当前功能说明。当前行为以 README 和 REFERENCE 为准；1.2.3 公司账号、1.2.4 版本信息和 1.2.5 用量图表增量见文末。
+
 基线：1.1.1。现文案：1.2.0。固定消息标识见 `src/dashboard/language.js`；中文和英文分别展示。保留产品名、模型 ID、命令、单位与错误码。动态原始数据不翻译、不截短来满足文案长度。
 
 | 固定标识 | 原英文 → 新英文 | 原中文 → 新中文 |
@@ -453,3 +454,13 @@
 | update_install_policy | 新增 → Reuses compatible Node/npm or installs a private runtime. Keeps your registry, proxy, certificates and shell policy. | 新增 → 复用可用的 Node/npm，否则安装专用运行环境。<br>保留镜像、代理、证书和脚本策略。 |
 | update_windows_policy | 新增 → If scripts are blocked, use your company’s approved installation method. | 新增 → 若公司禁止运行脚本，请使用公司批准的安装方式。 |
 | update_copy_unavailable | 新增 → Clipboard unavailable. Select the command and copy it. | 新增 → 无法自动复制，请选中指令复制。 |
+
+## 1.2.5 用量图表与本次缓存复用
+
+| 固定标识 | 原英文 → 新英文 | 原中文 → 新中文 |
+| --- | --- | --- |
+| chart_view | 新增 → Chart view | 新增 → 图表视图 |
+| bar_chart | 新增 → Bar chart | 新增 → 柱状图 |
+| line_chart | 新增 → Line chart | 新增 → 曲线图 |
+| approx_cache_hit_rate | 新增 → Approx. cache hit rate | 新增 → 粗略缓存命中率 |
+| runtime_cache_hit_basis | 新增 → Reused input / input tokens. ~ Partial counts. — Unknown or invalid. | 新增 → 复用输入 ÷ 输入 Token。<br>~：数据不完整。—：未知或无效。 |

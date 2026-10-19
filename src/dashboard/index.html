@@ -52,7 +52,7 @@
           <div class="table-wrap"><table><thead><tr><th data-i18n="source">Source</th><th data-i18n="client">APP</th><th data-i18n="state">STATE</th><th data-i18n="gateway">LOCAL ACCESS</th><th data-i18n="last_request">LAST REQUEST</th></tr></thead><tbody id="provider-clients"></tbody></table></div>
           <div id="provider-requests" class="hint"></div>
         </details>
-        <section class="panel dashboard-section"><h2 data-i18n="this_run_usage">THIS RUN</h2><p id="runtime-usage" class="table-note"></p><p class="hint" data-i18n="updated_from_returned_usage_not_a_live_bill_pending_usage_is_not">Counts returned usage only. Pending usage is not included. This is not a live bill.</p></section>
+        <section class="panel dashboard-section"><h2 data-i18n="this_run_usage">THIS RUN</h2><p id="runtime-usage" class="table-note"></p><p class="table-note"><span data-i18n="approx_cache_hit_rate">Approx. cache hit rate</span>: <strong id="runtime-cache-hit" data-i18n-title="runtime_cache_hit_basis" title="Reused input / input tokens. ~ Partial counts. — Unknown or invalid.">—</strong></p><p class="hint" data-i18n="updated_from_returned_usage_not_a_live_bill_pending_usage_is_not">Counts returned usage only. Pending usage is not included. This is not a live bill.</p></section>
         </div>
         <div data-view="codex" hidden>
         <section class="panel dashboard-section" aria-labelledby="routing-heading">
@@ -166,6 +166,7 @@
             <div class="analytics-controls">
               <label><span data-i18n="model_5e2c6">Model</span> <select id="analytics-model"><option value="" data-i18n="all_models">All models</option></select></label>
               <label><span data-i18n="daily_range">Date range</span> <select id="analytics-range"><option value="7" data-i18n="7_days">Last 7 days</option><option value="30" selected data-i18n="30_days">Last 30 days</option><option value="90" data-i18n="90_days">Last 90 days</option></select></label>
+              <label><span data-i18n="chart_view">Chart view</span> <select id="analytics-view"><option value="bars" selected data-i18n="bar_chart">Bar chart</option><option value="line" data-i18n="line_chart">Line chart</option></select></label>
               <label><span data-i18n="activity">Measure</span> <select id="analytics-metric"><option value="requests" data-i18n="calls_b73a5">Requests</option><option value="tokens" data-i18n="tokens">Usage (Token)</option></select></label>
             </div>
             <p id="analytics-note" class="table-note" role="status" data-i18n="open_to_read_retained_usage_history">Open to view usage trends.</p>

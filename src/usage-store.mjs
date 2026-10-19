@@ -27,7 +27,12 @@ let writeFailures = 0;
 const runtimeUsage = { since: new Date().toISOString(), records: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, partial_records: 0 };
 const runtimeUsageByProvider = new Map();
 
-export function runtimeUsageSnapshot() { return { ...runtimeUsage, by_provider: Object.fromEntries([...runtimeUsageByProvider].map(([id, totals]) => [id, { ...totals }])) }; }
+export function runtimeUsageSnapshot() {
+  const snapshot = totals => ({ ...totals,
+    cache_hit_rate: totals.records > (totals.cache_hit_unknown_requests || 0) ? usageCacheHitRate(totals) : null,
+    cache_hit_rate_partial: (totals.cache_hit_unknown_requests || 0) > 0 });
+  return { ...snapshot(runtimeUsage), by_provider: Object.fromEntries([...runtimeUsageByProvider].map(([id, totals]) => [id, snapshot(totals)])) };
+}
 
 export function usageLoggingStats() {
   return { pending_records: pendingRecords, pending_bytes: pendingBytes, dropped_records: droppedRecords,
@@ -186,14 +191,17 @@ function scheduleUsageWriteDrain() {
 export function recordUsage(record) {
   if (!record) return Promise.resolve();
   const usage = record.usage || {};
+  const { cached, unknown, invalid } = usageCacheEvidence(usage);
   const provider = usageProvider(record), label = runtimeUsageByProvider.has(provider) || runtimeUsageByProvider.size < 16 ? provider : "other";
   if (!runtimeUsageByProvider.has(label)) runtimeUsageByProvider.set(label, { records: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, partial_records: 0 });
   for (const totals of [runtimeUsage, runtimeUsageByProvider.get(label)]) {
     totals.records++;
-    for (const [target, value] of [["input_tokens", usage.input_tokens], ["cached_input_tokens", cacheReadTokens(usage)], ["output_tokens", usage.output_tokens]]) {
+    for (const [target, value] of [["input_tokens", usage.input_tokens], ["cached_input_tokens", cached], ["output_tokens", usage.output_tokens]]) {
       if (Number.isFinite(value) && value >= 0) totals[target] += value;
     }
-    if (!Number.isFinite(usage.input_tokens) || !Number.isFinite(usage.output_tokens) || cacheReadTokens(usage) === undefined) totals.partial_records++;
+    if (!Number.isFinite(usage.input_tokens) || !Number.isFinite(usage.output_tokens) || cached === undefined) totals.partial_records++;
+    if (unknown) totals.cache_hit_unknown_requests = (totals.cache_hit_unknown_requests || 0) + 1;
+    if (invalid) totals.cache_hit_invalid_requests = (totals.cache_hit_invalid_requests || 0) + 1;
   }
   if (process.env.CCDX_DISABLE_USAGE === "1") return Promise.resolve();
   const filePath = usageLogPath();
@@ -320,13 +328,7 @@ export function summarizeUsage(records, { provider = "" } = {}) {
     const modelTotals = summary.byModel[model];
     modelTotals.requests += 1;
     addUsageTotals(modelTotals, record.usage);
-    const input = record.usage?.input_tokens;
-    const cached = cacheReadTokens(record.usage || {});
-    const cacheCounts = [record.usage?.cached_input_tokens, record.usage?.cache_read_input_tokens];
-    const unknown = !Number.isFinite(input) || input < 0 || !Number.isFinite(cached) || cached < 0 || cached > input;
-    const invalid = (input != null && (!Number.isFinite(input) || input < 0))
-      || cacheCounts.some(value => value != null && (!Number.isFinite(value) || value < 0))
-      || (Number.isFinite(input) && Number.isFinite(cached) && cached > input);
+    const { unknown, invalid } = usageCacheEvidence(record.usage || {});
     const qualified = `${source} / ${model}`;
     if (!Object.hasOwn(summary.bySourceModel, qualified)) summary.bySourceModel[qualified] = { requests: 0 };
     const sourceTotals = summary.bySourceModel[qualified];
@@ -423,4 +425,13 @@ export function usageCacheHitRate(usage = {}) {
   if (usage.cache_hit_invalid_requests > 0 || !Number.isFinite(input) || input <= 0
     || !Number.isFinite(cached) || cached < 0 || cached > input) return null;
   return cached / input;
+}
+
+function usageCacheEvidence(usage) {
+  const input = usage.input_tokens, cached = cacheReadTokens(usage);
+  const unknown = !Number.isFinite(input) || input < 0 || !Number.isFinite(cached) || cached < 0 || cached > input;
+  const invalid = (input != null && (!Number.isFinite(input) || input < 0))
+    || [usage.cached_input_tokens, usage.cache_read_input_tokens].some(value => value != null && (!Number.isFinite(value) || value < 0))
+    || (Number.isFinite(input) && Number.isFinite(cached) && cached > input);
+  return { cached, unknown, invalid };
 }

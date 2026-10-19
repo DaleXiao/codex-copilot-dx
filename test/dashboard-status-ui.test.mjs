@@ -11,6 +11,17 @@ const viewScripts = ["status", "usage"].map(name => readFileSync(new URL(`../src
 const renderScript = viewScripts + "\n" + script.split('\nelement("refresh").addEventListener(')[0]
   + script.slice(script.indexOf("function emptyTable("), script.indexOf("async function loadModels("));
 
+test("Overview formats the current-run token ratio without turning unknown values into zero", () => {
+  const nodes = new Map();
+  const createNode = () => ({ textContent: "", children: [], querySelectorAll() { return []; }, replaceChildren(...children) { this.children = children; }, append(...children) { this.children.push(...children); } });
+  const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, createNode());return nodes.get(id); }, createElement: createNode };
+  const render = runInNewContext(`${renderScript}\nrender;`, { document, ccdxLanguage: dashboardLanguage });
+  for (const [rate, partial, expected] of [[2 / 3, false, "66.7%"], [0, false, "0.0%"], [0.25, true, "~25.0%"], [null, true, "—"], [undefined, false, "—"], [1.01, false, "—"], [-0.1, false, "—"]]) {
+    render({ runtime_usage: { records: 2, input_tokens: 300, cached_input_tokens: 200, output_tokens: 10, cache_hit_rate: rate, cache_hit_rate_partial: partial } });
+    assert.equal(nodes.get("runtime-cache-hit").textContent, expected);
+  }
+});
+
 test("request-context rows are lazy, bounded, text-only and distinguish missing values from zero", () => {
   const nodes = new Map();
   const createNode = () => ({ textContent: "", children: [], open: false,

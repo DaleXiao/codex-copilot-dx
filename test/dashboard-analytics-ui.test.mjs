@@ -30,10 +30,17 @@ class Node {
 function harness({ fetchFn, clipboard = async () => {}, reduced = false, language = false, savedLanguage = "en", savedAutomatic = "on" } = {}) {
   const nodes = new Map();
   const motions = [];
+  const chartMotions = [], observers = new Map(), mediaListeners = [];
+  const media = { matches: reduced, addEventListener(event, fn) { mediaListeners.push(fn); } };
   const ready = [];
   const listeners = new Map();
   const on = (event, fn) => { if (!listeners.has(event)) listeners.set(event, []); listeners.get(event).push(fn); };
-  const document = { documentElement: { dataset: {} }, visibilityState: "visible", getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); }, createElement: (tag) => new Node(tag), createDocumentFragment: () => new Node(), addEventListener(event, fn) { if (event === "DOMContentLoaded") ready.push(fn); else on(event, fn); },
+  const createNode = tag => {
+    const node = new Node(tag);
+    node.animate = (frames, options) => { const motion = { frames, options, cancelled: false, cancel() { this.cancelled = true; } };chartMotions.push(motion);return motion; };
+    return node;
+  };
+  const document = { documentElement: { dataset: {} }, visibilityState: "visible", getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); }, createElement: createNode, createElementNS: (namespace, tag) => createNode(tag), createDocumentFragment: () => new Node(), addEventListener(event, fn) { if (event === "DOMContentLoaded") ready.push(fn); else on(event, fn); },
     querySelectorAll() {
       const found = new Set();
       const visit = (node) => { if (Object.keys(node.attributes).some((key) => key.startsWith("data-i18n"))) found.add(node); node.children.forEach(visit); };
@@ -58,12 +65,11 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   const scheduled = new Map();
   let now = Date.now();
   class ClockDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
-  let observer;
   const context = createContext({
-    document, window: { matchMedia: () => ({ matches: reduced, addEventListener() {} }), addEventListener: on, dispatchEvent(event) { listeners.get(event.type)?.forEach(fn => fn(event)); } }, CustomEvent: class { constructor(type) { this.type = type; } }, navigator: { clipboard: { writeText: clipboard } },
+    document, window: { matchMedia: () => media, addEventListener: on, dispatchEvent(event) { listeners.get(event.type)?.forEach(fn => fn(event)); } }, CustomEvent: class { constructor(type) { this.type = type; } }, navigator: { clipboard: { writeText: clipboard } },
     Date: ClockDate, performance: { now: () => 0 }, AbortSignal, AbortController, Intl, URLSearchParams, encodeURIComponent, setTimeout(fn, ms) { scheduled.set(fn, ms); if (ms < 1800000) timers.add(fn); return fn; }, clearTimeout(fn) { timers.delete(fn); scheduled.delete(fn); },
     localStorage: { getItem: key => key === "ccdx.dashboard.autoRefresh" ? savedAutomatic : savedLanguage, setItem() {} },
-    IntersectionObserver: class { constructor(fn) { observer = fn; } observe() {} },
+    IntersectionObserver: class { constructor(fn) { this.fn = fn; } observe(target) { observers.set(target, this.fn); } },
     fetch: async (url, options) => {
       requests.push(url);
       if (fetchFn) { const response = await fetchFn(url, options); if (response) return response; }
@@ -81,11 +87,13 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   // Component tests exercise opened data views; real navigation is replayed in browsers.
   api.loadUsage();api.loadAuth().then(() => api.loadModels());
   ready.forEach((fn) => fn());
-  return { api, nodes, requests, timers, scheduled, motions,
+  return { api, nodes, requests, timers, scheduled, motions, chartMotions,
     advance(ms) { now += ms; },
     event(name) { listeners.get(name)?.forEach(fn => fn()); },
     hidden(value) { document.visibilityState = value ? "hidden" : "visible"; listeners.get("visibilitychange")?.forEach(fn => fn()); },
-    visible(value) { observer([{ isIntersecting: value }]); } };
+    visible(value) { observers.get(nodes.get("animation-options"))([{ isIntersecting: value }]); },
+    chartVisible(value) { observers.get(nodes.get("daily-bars"))([{ isIntersecting: value }]); },
+    reduceMotion(value) { media.matches = value;mediaListeners.forEach(fn => fn()); } };
 }
 
 test("atom rotates once on load/manual refresh, not background refresh; reduced motion stays still", async () => {
@@ -308,8 +316,8 @@ test("analytics loads only on opening; client filters and day selection do not r
   h.nodes.get("analytics-range").listeners.change();
   assert.equal(h.nodes.get("daily-bars").children.length, 90);
   const button = h.nodes.get("daily-bars").children.at(-1);
-  assert.equal(button.children[0].style.height, `${10 / 110 * 100}%`);
-  assert.equal(button.children[1].style.height, `${100 / 110 * 100}%`);
+  assert.equal(button.children[0].children[0].style.height, `${10 / 110 * 100}%`);
+  assert.equal(button.children[0].children[1].style.height, `${100 / 110 * 100}%`);
   button.listeners.click();
   assert.equal(h.nodes.get("usage-state").textContent, "2026-10-01");
   assert.equal(h.nodes.get("clear-usage-day").hidden, false);
@@ -328,6 +336,73 @@ test("analytics loads only on opening; client filters and day selection do not r
   panel.listeners.toggle();
   await flush();
   assert.equal(h.requests.length, calls);
+});
+
+test("chart switching keeps filters/day selection, accessible daily controls and the same usage snapshot", async () => {
+  const h = harness();await flush();
+  h.nodes.get("usage-analytics").open = true;h.nodes.get("usage-analytics").listeners.toggle();await flush();
+  h.nodes.get("analytics-model").value = "test";
+  h.nodes.get("analytics-range").value = "7";
+  h.nodes.get("analytics-range").listeners.change();
+  h.nodes.get("daily-bars").children.at(-1).listeners.click();
+  const calls = h.requests.length;
+  const calendar = [...h.nodes.get("activity-calendar").children];
+  h.nodes.get("analytics-view").value = "line";h.nodes.get("analytics-view").listeners.change();
+  const chart = h.nodes.get("daily-bars"), plot = chart.children[0];
+  assert.equal(plot.tag, "svg");assert.equal(plot.attributes["aria-hidden"], "true");
+  assert.equal(plot.children.filter(node => node.tag === "circle").length, 2, "A single known day is a point, not an invented history");
+  assert.equal(chart.children.filter(node => node.tag === "button").length, 7);
+  assert.equal(chart.children.at(-1).attributes["aria-pressed"], "true");
+  assert.match(chart.children.at(-1).attributes["aria-label"], /2026-10-01/);
+  assert.equal(h.nodes.get("usage-state").textContent, "2026-10-01");
+  h.nodes.get("analytics-view").value = "bars";h.nodes.get("analytics-view").listeners.change();
+  assert.equal(chart.children.length, 7);assert.equal(chart.children[0].tag, "button");
+  assert.equal(chart.children.at(-1).attributes["aria-pressed"], "true");
+  assert.equal(h.nodes.get("analytics-model").value, "test");assert.equal(h.requests.length, calls);
+  assert.deepEqual(h.nodes.get("activity-calendar").children, calendar);
+});
+
+test("chart motion starts on visibility, does not replay on selection/unchanged refresh, and cancels when hidden or reduced", async () => {
+  const h = harness();await flush();
+  h.nodes.get("usage-analytics").open = true;h.nodes.get("usage-analytics").listeners.toggle();await flush();
+  assert.equal(h.chartMotions.length, 0);
+  h.chartVisible(false);
+  h.chartVisible(true);assert.equal(h.chartMotions.length, 30);
+  assert.equal(h.chartMotions[0].frames[0].transform, "scaleY(0)");
+  assert.equal(h.chartMotions[0].options.duration, 450);
+  h.nodes.get("daily-bars").children.at(-1).listeners.click();
+  assert.equal(h.chartMotions.length, 30);
+  await h.api.dashboardRefresh.refresh("usage", { force: true });await flush();
+  assert.equal(h.chartMotions.length, 30);
+  h.nodes.get("analytics-range").value = "7";h.nodes.get("analytics-range").listeners.change();
+  assert.equal(h.chartMotions.length, 37);
+  h.reduceMotion(true);assert.ok(h.chartMotions.every(motion => motion.cancelled));
+  h.nodes.get("analytics-view").value = "line";h.nodes.get("analytics-view").listeners.change();
+  assert.equal(h.chartMotions.length, 37);
+  h.reduceMotion(false);
+  h.nodes.get("analytics-view").value = "bars";h.nodes.get("analytics-view").listeners.change();
+  assert.equal(h.chartMotions.length, 44);
+  h.hidden(true);assert.ok(h.chartMotions.every(motion => motion.cancelled));
+  h.chartVisible(false);h.chartVisible(true);assert.equal(h.chartMotions.length, 44);
+});
+
+test("curves leave unavailable history disconnected and keep every visible day selectable", async () => {
+  const collector = createUsageAnalytics({ now: Date.parse("2026-10-05T12:00:00Z") });
+  for (let index = 1; index <= 5; index++) {
+    const record = { ts: `2026-10-0${index}T01:00:00Z`, model: "sample", usage: { input_tokens: index % 2 ? 10 : 100, output_tokens: 5 } };
+    collector.record(record, summarizeUsage([record]));
+  }
+  const analytics = collector.snapshot();analytics.days.at(-3).available = false;
+  const h = harness({ fetchFn: url => url.includes("analytics=1") ? { ok: true, json: async () => ({ source: "local_usage_log", total: { requests: 5 }, rows: [], model_count: 1, analytics }) } : null });
+  await flush();h.nodes.get("usage-analytics").open = true;h.nodes.get("usage-analytics").listeners.toggle();await flush();
+  h.nodes.get("analytics-range").value = "7";h.nodes.get("analytics-view").value = "line";h.nodes.get("analytics-view").listeners.change();
+  const chart = h.nodes.get("daily-bars"), paths = chart.children[0].children.filter(node => node.tag === "path");
+  assert.equal(paths.length, 4, "Each series has two disconnected retained-history segments");
+  assert.ok(paths.every(node => !/NaN|Infinity/.test(node.attributes.d)));
+  const buttons = chart.children.filter(node => node.tag === "button");
+  assert.equal(buttons.length, 7);assert.equal(buttons.at(-3).disabled, true);
+  h.chartVisible(true);assert.equal(h.chartMotions.length, 4);
+  assert.ok(h.chartMotions.every(motion => motion.options.duration === 600 && motion.frames[0].strokeDashoffset === 1));
 });
 
 test("reduced motion suppresses animation timers even with open and visible settings", async () => {

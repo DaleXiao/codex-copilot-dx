@@ -214,6 +214,8 @@
         const usage = data.runtime_usage;
         text("runtime-usage", usage ? "records_usage_records_input_input_cache_read_cached_output_outpu" : "—",
           usage ? { records: number(usage.records), input: number(usage.input_tokens), cached: number(usage.cached_input_tokens), output: number(usage.output_tokens), partial: usage.partial_records ? " ~" : "" } : {});
+        const rate = usage?.cache_hit_rate;
+        text("runtime-cache-hit", Number.isFinite(rate) && rate >= 0 && rate <= 1 ? `${usage.cache_hit_rate_partial ? "~" : ""}${(rate * 100).toFixed(1)}%` : "—");
         element("process-state").textContent = `PID ${data.pid || "—"} / ${globalThis.location?.origin || ""}`;
         text("process-memory", "rss_rss_heap_heap", { rss: mib(data.process?.rss_bytes), heap: mib(data.process?.heap_used_bytes) });
         text("process-queues", "codex_body_admission_active_active_queued_queued_queue_limit_lim", {

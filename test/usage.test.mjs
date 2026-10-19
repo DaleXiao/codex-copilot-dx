@@ -578,3 +578,26 @@ test("returned process usage separates source totals, partial evidence and snaps
   assert.equal(after.by_provider.usage_fixture.partial_records, 1);assert.equal(after.by_provider.usage_fixture.cached_input_tokens, 0);
   after.by_provider.usage_fixture.records = 99;assert.equal(runtimeUsageSnapshot().by_provider.usage_fixture.records, 2);
 });
+
+test("current-run cache rate is token-weighted and separates zero, missing, partial and invalid evidence", async t => {
+  const { runtimeUsageSnapshot } = await import("../src/usage-store.mjs");
+  const old = process.env.CCDX_DISABLE_USAGE;process.env.CCDX_DISABLE_USAGE = "1";
+  t.after(() => { if (old === undefined) delete process.env.CCDX_DISABLE_USAGE;else process.env.CCDX_DISABLE_USAGE = old; });
+  const add = (provider, usage) => recordUsage({ provider, usage });
+  await add("cache_weighted", { input_tokens: 100, cached_input_tokens: 90, output_tokens: 5 });
+  await add("cache_weighted", { input_tokens: 900, cache_read_input_tokens: 90, output_tokens: 5 });
+  await add("cache_zero", { input_tokens: 100, cached_input_tokens: 0, output_tokens: 5 });
+  await add("cache_missing", { input_tokens: 100, output_tokens: 5 });
+  await add("cache_partial", { input_tokens: 100, cached_input_tokens: 50, output_tokens: 5 });
+  await add("cache_partial", { input_tokens: 100, output_tokens: 5 });
+  await add("cache_bad", { input_tokens: 100, cached_input_tokens: 101, output_tokens: 5 });
+  await add("cache_no_output", { input_tokens: 100, cached_input_tokens: 50 });
+  const providers = runtimeUsageSnapshot().by_provider;
+  assert.equal(providers.cache_weighted.cache_hit_rate, 0.18);
+  assert.equal(providers.cache_weighted.cache_hit_rate_partial, false);
+  assert.equal(providers.cache_zero.cache_hit_rate, 0);
+  assert.equal(providers.cache_missing.cache_hit_rate, null);
+  assert.equal(providers.cache_partial.cache_hit_rate, 0.25);assert.equal(providers.cache_partial.cache_hit_rate_partial, true);
+  assert.equal(providers.cache_bad.cache_hit_rate, null);
+  assert.equal(providers.cache_no_output.cache_hit_rate, 0.5);assert.equal(providers.cache_no_output.cache_hit_rate_partial, false);
+});

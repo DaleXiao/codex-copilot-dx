@@ -47,7 +47,7 @@
     label(el("page-title"), titles[next]);
     if (["codex", "models", "system"].includes(next)) void loadSettings();
     if (next === "models") { void dashboardRefresh.refresh("models");void dashboardRefresh.refresh("auth"); }
-    if (next === "usage") void dashboardRefresh.refresh("usage");
+    if (next === "usage") { void dashboardRefresh.refresh("usage");usageView.revealChart(); } else usageView.stopMotion();
     if (next === "system") { void dashboardRefresh.refresh("animation");void dashboardRefresh.refresh("updates"); }
     syncAnimationPreview();
   }

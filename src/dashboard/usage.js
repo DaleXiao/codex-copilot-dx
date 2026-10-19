@@ -1,5 +1,13 @@
 (() => {
-  function create({ element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator }) {
+  function curvePath(points) {
+    return points.map(([x, y], index) => {
+      if (!index) return `M${x},${y}`;
+      const [previousX, previousY] = points[index - 1], middle = (previousX + x) / 2;
+      return `C${middle},${previousY} ${middle},${y} ${x},${y}`;
+    }).join(" ");
+  }
+
+  function create({ element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator, motionAllowed = () => false }) {
     function usageValues(row) {
       const rate = Number.isFinite(row.cache_hit_rate) && row.cache_hit_rate >= 0 && row.cache_hit_rate <= 1
         ? `${row.cache_hit_rate_partial ? "~" : ""}${(row.cache_hit_rate * 100).toFixed(1)}%` : "—";
@@ -7,8 +15,92 @@
     }
     
     let usageData = null;
-    let analyticsSignature;
+    let analyticsSignature, calendarSignature;
     let selectedUsageDate = "";
+    let dailySignature, dailySelection, chartVisible = false, motionPending = false;
+    let motionTargets = [];
+    const animations = new Set();
+
+    function stopMotion() {
+      for (const animation of animations) animation.cancel();
+      animations.clear();motionPending = false;
+    }
+
+    function playMotion() {
+      if (!motionPending || !chartVisible || !motionAllowed()) return;
+      stopMotion();
+      for (const { node, line, point } of motionTargets) {
+        if (!node.animate) continue;
+        const animation = node.animate(point ? [{ opacity: 0 }, { opacity: 1 }] : line
+          ? [{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }]
+          : [{ transform: "scaleY(0)" }, { transform: "scaleY(1)" }],
+        { duration: point ? 200 : line ? 600 : 450, easing: "cubic-bezier(0.25, 1, 0.5, 1)" });
+        animations.add(animation);
+        animation.finished?.then(() => animations.delete(animation), () => animations.delete(animation));
+      }
+    }
+
+    function revealChart() { motionPending = true;playMotion(); }
+    function setChartVisible(value) { chartVisible = value;if (value) playMotion();else if (animations.size) stopMotion(); }
+
+    function svgNode(tag, attributes) {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
+      return node;
+    }
+
+    function renderDaily(daily, model, maximum) {
+      const line = element("analytics-view").value === "line";
+      const signature = JSON.stringify([daily, model, line]);
+      if (signature === dailySignature && selectedUsageDate === dailySelection) return;
+      const changed = signature !== dailySignature;
+      dailySignature = signature;dailySelection = selectedUsageDate;
+      stopMotion();motionTargets = [];
+      const chart = element("daily-bars");
+      chart.className = line ? "daily-bars daily-lines" : "daily-bars";
+      chart.replaceChildren();
+      if (line) {
+        const plot = svgNode("svg", { class: "daily-line-plot", viewBox: "0 0 1000 130", preserveAspectRatio: "none", "aria-hidden": "true", focusable: "false" });
+        for (const key of ["input_tokens", "output_tokens"]) {
+          let segment = [];
+          const color = key === "input_tokens" ? "curve-input" : "curve-output";
+          const flush = () => {
+            if (segment.length > 1) {
+              const path = svgNode("path", { d: curvePath(segment), class: `daily-curve ${color}`, pathLength: 1, "vector-effect": "non-scaling-stroke" });
+              plot.append(path);motionTargets.push({ node: path, line: true });
+            } else if (segment.length === 1) {
+              const [x, y] = segment[0];
+              const circle = svgNode("circle", { cx: x, cy: y, r: 2, class: color, fill: "none", "stroke-width": 2, "vector-effect": "non-scaling-stroke" });
+              plot.append(circle);motionTargets.push({ node: circle, point: true });
+            }
+            segment = [];
+          };
+          daily.forEach((day, index) => {
+            if (!day.available) { flush();return; }
+            const point = analyticsPoint(day, model), x = (index + 0.5) / daily.length * 1000, y = 128 - point[key] / maximum * 124;
+            segment.push([x, y]);
+          });
+          flush();
+        }
+        chart.append(plot);
+      }
+      for (const day of daily) {
+        const point = analyticsPoint(day, model), button = dayButton(day, point);
+        button.className = "daily-bar";
+        if (!line) {
+          const stack = document.createElement("span");stack.className = "bar-stack";
+          for (const key of ["output_tokens", "input_tokens"]) {
+            const segment = document.createElement("span");
+            segment.className = key === "input_tokens" ? "bar-input" : "bar-output";
+            segment.style.height = `${point[key] / maximum * 100}%`;
+            stack.append(segment);
+          }
+          button.append(stack);motionTargets.push({ node: stack, line: false });
+        }
+        chart.append(button);
+      }
+      motionPending = changed;playMotion();
+    }
     
     function renderUsageTable() {
       const day = selectedUsageDate && usageData.analytics?.days.find((entry) => entry.date === selectedUsageDate);
@@ -61,7 +153,8 @@
       const analytics = usageData?.analytics;
       if (!analytics) return;
       const model = element("analytics-model").value;
-      const signature = JSON.stringify([analytics, model, element("analytics-range").value, element("analytics-metric").value, selectedUsageDate]);
+      const commonSignature = JSON.stringify([analytics, model, element("analytics-range").value, element("analytics-metric").value, selectedUsageDate]);
+      const signature = `${commonSignature}:${element("analytics-view").value}`;
       if (signature === analyticsSignature) return;
       analyticsSignature = signature;
       const days = analytics.days;
@@ -70,22 +163,11 @@
         const point = analyticsPoint(day, model);
         return point.input_tokens + point.output_tokens;
       }));
-      const bars = element("daily-bars");
-      bars.replaceChildren();
-      for (const day of daily) {
-        const point = analyticsPoint(day, model);
-        const button = dayButton(day, point);
-        button.className = "daily-bar";
-        for (const key of ["output_tokens", "input_tokens"]) {
-          const segment = document.createElement("span");
-          segment.className = key === "input_tokens" ? "bar-input" : "bar-output";
-          segment.style.height = `${point[key] / maximum * 100}%`;
-          button.append(segment);
-        }
-        bars.append(button);
-      }
+      renderDaily(daily, model, maximum);
       text("daily-from", daily[0].date);
       text("daily-to", analytics.to);
+      if (commonSignature === calendarSignature) return;
+      calendarSignature = commonSignature;
       const metric = element("analytics-metric").value;
       const value = (day) => {
         const point = analyticsPoint(day, model);
@@ -157,7 +239,7 @@
         text("analytics-updated", "updated_time", { time: new Date().toLocaleTimeString() });
       }
     }
-    return { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay, usageValues, get data() { return usageData; }, get selectedDate() { return selectedUsageDate; } };
+    return { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay, usageValues, setChartVisible, revealChart, stopMotion, get data() { return usageData; }, get selectedDate() { return selectedUsageDate; } };
   }
-  globalThis.ccdxDashboardUsage = { create };
+  globalThis.ccdxDashboardUsage = { create, curvePath };
 })();

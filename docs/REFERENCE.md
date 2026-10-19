@@ -1004,7 +1004,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.4/codex-copilot-dx-1.2.4.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.5/codex-copilot-dx-1.2.5.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1200,14 +1200,18 @@ are not guessed into one. Legacy untagged Provider records retain their historic
 GitHub attribution. Cache-read tokens are included in input, not added twice.
 The separate current-run summary updates from returned usage in memory, without
 rescanning retained logs at the status cadence.
+Overview adds an approximate token cache hit rate: returned reused input tokens divided by returned input tokens, weighted by tokens rather than request percentages. Missing evidence is distinct from an explicit zero; all-unknown cache evidence, zero input and invalid counts display `—`. Mixed complete/incomplete cache evidence displays `~` before the recorded aggregate ratio. This describes recorded input reuse, not a request success ratio, invoice or whole-account cache statistic. Missing output alone does not invalidate usable input/cache evidence.
 
-Usage analytics remains collapsed until opened: 7/30/90-day bars and a bounded
+Usage analytics remains collapsed until opened: 7/30/90-day charts and a bounded
 365-day calendar in the browser time zone. Model/range/day selection reuses its
 snapshot. Days outside retained history are distinct from zero recorded activity.
 Filters, chart nodes and unsaved animation selection survive unrelated refreshes.
 Dark/light, English/Chinese and reduced motion remain supported. Language changes
 translate page labels in place without fetching models or rebuilding charts;
 commands, identifiers and upstream error text retain their original values.
+Chart view defaults to Bar chart on each page load; its dropdown switches to Line chart without another request or log scan. Both views retain the same input/output values, scale, model/source/range filters and date selection. Lines show separate input/output series, pass through each known day's value, stay between neighboring values and break across unavailable history; a lone known day is a point. The calendar is unchanged by view switching.
+
+Visible bar stacks rise from the baseline once over 450 ms; curves draw left to right over 600 ms (a lone point fades in over 200 ms). Opening/revealing a chart and changing its data, filters or view can replay the entrance. Selecting a day, changing calendar measure and unchanged background refreshes do not replay it. Hidden/collapsed views, page suspension and reduced-motion preferences cancel active chart motion; reduced-motion or unsupported animation APIs retain the complete static chart. Chart motion adds no polling loop, chart library or runtime dependency.
 
 The atom logo stays in the sidebar brand (compact top navigation on narrow screens).
 It rotates once on load and manual Refresh, never on scheduled reads, and respects

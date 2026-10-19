@@ -15,7 +15,8 @@ const text = (id, key, values) => { localize(element(id), key, values); };
 const finite = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
 const number = (value) => finite(value) ? Math.max(0, Math.round(Number(value))).toLocaleString() : "—";
 const mib = (value) => finite(value) ? `${(Number(value) / 1048576).toFixed(1)} MiB` : "—";
-const viewHelpers = { element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator: globalThis.navigator };
+const viewHelpers = { element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator: globalThis.navigator,
+  motionAllowed: () => !reducedMotion.matches && document.visibilityState === "visible" && element("usage-analytics").open && element("model-usage").open && !element("model-usage").closest("[hidden]") };
 const { render, renderProviders, renderFailures, renderContext } = globalThis.ccdxDashboardStatus.create(viewHelpers);
 const usageView = globalThis.ccdxDashboardUsage.create(viewHelpers);
 const { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay } = usageView;
@@ -104,6 +105,9 @@ new IntersectionObserver(([entry]) => {
 }).observe(element("animation-options"));
 document.addEventListener("visibilitychange", syncAnimationPreview);
 reducedMotion.addEventListener("change", syncAnimationPreview);
+reducedMotion.addEventListener("change", () => { if (reducedMotion.matches) usageView.stopMotion(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "visible") usageView.stopMotion(); });
+new IntersectionObserver(([entry]) => usageView.setChartVisible(entry.isIntersecting)).observe(element("daily-bars"));
 
 function buildAnimationOptions(data) {
   const container = element("animation-options");
@@ -516,7 +520,7 @@ element("auto-refresh").addEventListener("click", () => {
   try { localStorage.setItem(autoRefreshKey, dashboardRefresh.automatic ? "on" : "off"); } catch { /* Keep the current choice. */ }
 });
 document.addEventListener("visibilitychange", () => dashboardRefresh.visibilityChanged());
-window.addEventListener("pagehide", () => { dashboardRefresh.suspend(); stopAnimationPreview(); });
+window.addEventListener("pagehide", () => { dashboardRefresh.suspend(); stopAnimationPreview();usageView.stopMotion(); });
 window.addEventListener("pageshow", () => { dashboardRefresh.resume(); syncAnimationPreview(); });
 
 for (const [id, key] of [["account-authorization", "auth"], ["client-features", "status"], ["request-context", "status"], ["recent-failures", "status"], ["upstream-models", "models"], ["model-usage", "usage"]]) {
@@ -535,9 +539,10 @@ element("animation-settings").addEventListener("toggle", () => {
   syncAnimationPreview();
 });
 element("usage-analytics").addEventListener("toggle", () => {
+  if (element("usage-analytics").open) usageView.revealChart();else usageView.stopMotion();
   if (element("usage-analytics").open && element("model-usage").open) dashboardRefresh.refresh("usage");
 });
-for (const id of ["analytics-model", "analytics-range", "analytics-metric"]) element(id).addEventListener("change", () => {
+for (const id of ["analytics-model", "analytics-range", "analytics-metric", "analytics-view"]) element(id).addEventListener("change", () => {
   renderAnalytics();
   if (usageView.data && usageView.selectedDate) renderUsageTable();
 });

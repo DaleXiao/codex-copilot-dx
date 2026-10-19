@@ -89,7 +89,7 @@ const server = http.createServer((req, res) => {
       http_errors: { by_category: { inference: 1, protocol: 2, route: 3, other: 0 } },
       providers: { codex_provider: "github", m365: { state: "ready", account: { login: "synthetic@example.test" }, models: { claude: 10, gpt: 5 },
         claude: { base_url: `http://127.0.0.1:${server.address().port}/anthropic`, gateway: "running", requests: { completed: 3, incomplete: 1, failed: 2 }, clients: { code: "configured", app: "configured" } } } },
-      runtime_usage: { records: 4, input_tokens: 100, cached_input_tokens: 20, output_tokens: 10 },
+      runtime_usage: { records: 4, input_tokens: 100, cached_input_tokens: 20, output_tokens: 10, cache_hit_rate: 0.2, cache_hit_rate_partial: false },
       process: { rss_bytes: 123456, heap_used_bytes: 34567 },
       response_history: { bytes: 0, maxBytes: 67108864 }, client_integrations: { prediction: { configured: false, bridge: "stopped" } } }));
     return;
@@ -117,10 +117,11 @@ try {
         page.on("pageerror", error => errors.push(error.message));
         await page.addInitScript(({ language, theme, palette }) => { localStorage.setItem("ccdx.dashboard.palette", palette); localStorage.setItem("ccdx.dashboard.language", language); localStorage.setItem("ccdx.dashboard.theme", theme); }, { language, theme, palette });
         await page.addInitScript(() => {
-          window.atomMotions = [];
+          window.atomMotions = [];window.chartMotions = [];
           const animate = Element.prototype.animate;
           Element.prototype.animate = function(frames, options) {
             if (this.id === "status-icon") window.atomMotions.push({ frames, options });
+            if (this.matches(".bar-stack, .daily-curve")) window.chartMotions.push({ frames, options });
             return animate.call(this, frames, options);
           };
         });
@@ -149,6 +150,7 @@ try {
         assert.equal(await page.locator("html").getAttribute("lang"), language === "zh" ? "zh-CN" : "en");
         const nav = async route => { await page.locator(`[data-route="${route}"]`).click();await page.locator(`[data-view="${route}"]`).waitFor({ state: "visible" }); };
         assert.match(await page.locator("#runtime-usage").innerText(), /100/);
+        assert.equal(await page.locator("#runtime-cache-hit").innerText(), "20.0%");
         assert.equal(await page.locator('[data-view]:visible').count(), 1);
         await nav("codex");
         assert.match(await page.locator("#ttft").innerText(), /1250\.0 ms/);
@@ -244,10 +246,30 @@ try {
         assert.match(await page.locator("#usage-body").innerText(), /claude-opus-5\.5/);
         await page.locator("#usage-provider").selectOption("");
         await page.waitForFunction(() => !document.getElementById("refresh-usage").disabled && document.getElementById("usage-body").textContent.includes("gpt-6.1-sol"));
+        assert.equal(await page.locator("#analytics-view").inputValue(), "bars");
+        await page.locator("#daily-bars").scrollIntoViewIfNeeded();
+        await page.waitForFunction(() => chartMotions.some(motion => motion.frames[0].transform === "scaleY(0)"));
+        const readsBeforeView = summaries;
+        await page.locator("#analytics-view").selectOption("line");
+        await page.waitForFunction(() => document.querySelectorAll("#daily-bars .daily-curve").length === 2);
+        await page.waitForFunction(() => chartMotions.some(motion => motion.frames[0].strokeDashoffset === 1 && motion.options.duration === 600));
+        const boxes = await page.locator("#daily-bars .daily-curve").evaluateAll(paths => paths.map(path => { const box = path.getBBox();return { min: box.y, max: box.y + box.height }; }));
+        assert.ok(boxes.every(box => box.min >= 3 && box.max <= 129), "Curves stay inside the data range and plot");
+        await page.locator("#daily-bars .daily-bar:not(:disabled)").last().click();
+        const selectedDay = await page.locator("#usage-state").innerText();
+        assert.match(selectedDay, /^\d{4}-\d{2}-\d{2}$/);
+        await page.locator("#analytics-view").selectOption("bars");
+        assert.equal(await page.locator("#usage-state").innerText(), selectedDay);
+        await page.locator("#analytics-view").selectOption("line");
+        assert.equal(await page.locator("#usage-state").innerText(), selectedDay);
+        assert.equal(summaries, readsBeforeView, "Switching charts/days does not scan usage again");
+        await page.locator("#clear-usage-day").click();
+        if (output && language === "zh") { await page.clock.fastForward(700);await page.locator("#usage-analytics").screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-curves.png`) }); }
         await page.locator("#analytics-range").selectOption("90");
         await page.evaluate(() => { window.savedCalendar = document.querySelector(".calendar-day"); window.savedModelRow = document.querySelector("#live-models-body tr"); });
         assert.equal(updateReads, 0, "Other views do not check releases");
         await nav("system");
+        assert.equal(await page.locator("#daily-bars .daily-curve").evaluateAll(paths => paths.every(path => path.getAnimations().length === 0)), true, "Leaving Usage cancels chart motion");
         await page.waitForFunction(() => document.getElementById("update-latest-version").textContent === "v1.2.4" && !document.getElementById("check-updates").disabled);
         assert.equal(await page.locator("#update-current-version").innerText(), "v1.2.3");
         assert.match(await page.locator("#update-current-date").innerText(), /2026-10-19/);
@@ -312,6 +334,11 @@ try {
         assert.equal(models, before);
         assert.equal(await page.evaluate(() => atomMotions.length), motionCount);
         await page.emulateMedia({ reducedMotion: "reduce" });
+        const chartMotionCount = await page.evaluate(() => chartMotions.length);
+        await nav("usage");
+        await page.locator("#analytics-view").selectOption("bars");
+        await page.locator("#analytics-view").selectOption("line");
+        assert.equal(await page.evaluate(() => chartMotions.length), chartMotionCount, "Reduced motion keeps both charts static");
         await page.locator("#refresh").click();
         await page.waitForFunction(() => !document.getElementById("refresh").disabled);
         assert.equal(await page.evaluate(() => atomMotions.length), motionCount, "Reduced motion suppresses new atom rotations");

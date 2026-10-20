@@ -304,6 +304,7 @@ export function createCopilotTokenSession({
       fetchImpl,
       signal,
     });
+    if (signal?.aborted) throw abortError(signal);
     const token = cacheTokenData(data, {
       sourceKey: credentials.sourceKey,
       githubToken: credentials.token,
@@ -384,10 +385,18 @@ export function createCopilotTokenSession({
     apiBase = defaultApiBase;
   }
 
+  function invalidateCredentials() {
+    refreshFlight?.controller.abort();
+    refreshFlight = null;
+    copilotToken = null;copilotTokenExpiry = 0;refreshRetryAt = 0;
+    // Keep the account binding. Switching accounts still requires a restart.
+  }
+
   return Object.freeze({
     getToken,
     getApiBase: () => apiBase,
     runtimeStatus,
+    invalidateCredentials,
     resetForTests,
   });
 }

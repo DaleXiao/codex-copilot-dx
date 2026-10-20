@@ -1008,7 +1008,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.6/codex-copilot-dx-1.2.6.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.7/codex-copilot-dx-1.2.7.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1375,6 +1375,26 @@ account-change decision, not merely a Copilot denial, package update, or failed
 network probe. Existing same-account recovery and explicit source selection are
 unchanged.
 
+## Account and repair tools
+
+`ccdx auth` defaults to local status. `auth check` is the explicit online alias: it checks GitHub identity, Copilot authorization and a bounded model directory without inference. `auth status --online` remains available. A saved file is not proof of online access. Copilot denial and network failures do not recommend reauthentication merely because access failed.
+
+`ccdx auth login` starts GitHub device authorization when no sign-in is saved. `ccdx auth reauth` / `ccdx reauth` explicitly replaces an existing sign-in. `auth login --reauth` is also accepted. The existing account binding is required by default; `--login ACCOUNT` explicitly requests a different account, which needs a service restart before it can become the running inference account. The device request has a 30-second deadline, GitHub's interval/slow-down responses govern polling, and the device lifetime is limited to 15 minutes. Candidate identity, entitlement and directory validation has a 15-second deadline. No candidate is saved before all checks pass. A final cross-process lock and comparison prevent overwriting a concurrently changed credential. Cancellation, denial, mismatch, expiration or validation failure preserves the prior sign-in. One WebUI flow runs per service, with a 30-second minimum between starts; connection checks coalesce and retain a same-credential result for 10 seconds.
+
+New explicit-tool sign-ins use `~/.local/share/ccdx/github_token` and fingerprint-bound `.account.json` metadata, with private permissions and the existing atomic paired writer. When present, this owned store takes precedence over `~/.local/share/copilot-api/github_token`; existing startup/discovery compatibility remains supported. `auth logout` requires interactive confirmation or `--yes`, writes an empty owned credential, and does not delete or revoke other apps' legacy credentials. This intentionally blocks inference's legacy fallback. New login or normal startup can perform the existing explicit discovery/sign-in process again. CLI changes notify a compatible running local service; if notification is unavailable, the CLI asks for a service restart. In-flight model requests are not replayed or forcibly stopped. A token cache invalidation preserves its running account binding, so switching accounts still requires a restart.
+
+Model sources uses one source selector for the account controls and catalog. Selecting a tab is browsing only. GitHub offers sign-in, independent connection checks and cancellation; sign-out is under More actions. The browser opens only the fixed GitHub device authorization URL after the user chooses Open GitHub. No token or password entry field is added. Microsoft 365 retains local account discovery/selection and source controls; its corporate SSO is not replaced with a GitHub-style login. Raw codes remain under details and last-good model lists retain their previous timestamp after failures.
+
+`ccdx web` opens an existing compatible dashboard or starts a management-only local listener without sign-in, app configuration, app launch, prediction setup or automatic M365 startup. It does not claim normal startup integrations are active. Stop that management listener with Ctrl+C before running normal `ccdx` for application routing and optional integrations. Opening the dashboard does not initiate a GitHub Device Flow or model inference.
+
+Checks & repairs performs the existing local doctor checks without adapter/client online checks. Configuration repair uses the existing owned-key writer: the preview lists scope and backup filename, a revision check rejects changes since preview, and the writer rechecks that revision under its existing config lock. It preserves unowned TOML and refuses invalid/unsafe configurations. A changed existing file is backed up as `config.toml.ccdx-doctor.bak`; an unchanged file or a missing original has no previous file to back up. The page does not expose arbitrary commands, forced restarts, certificate setup or an automatic repair loop. Compatibility probes remain the explicitly displayed `ccdx doctor --compat` command and consume usage.
+
+`ccdx doctor network` and the page's Network settings read proxy/trust summaries without external HTTP requests or policy edits. Linux reports environment routing; Windows/macOS also inspect their supported system settings. `ccdx doctor report` prints the local report as JSON; Export report downloads the same bounded redacted projection. Home paths and account email addresses are replaced, and credentials, arbitrary check fields, chats and request bodies are omitted. Reports include only local checks, not a full network trace or proof of provider entitlement.
+
+`ccdx image pause|resume` and `ccdx prediction pause|resume` use the existing service preference gates. They keep credentials, trust and routes and cannot provision a feature that has not been configured. Running image requests may finish. Offline changes apply on service startup; online prediction adaptation uses the running service's settings action. The existing full `disable-image` / `prediction off` cleanup semantics are unchanged. `ccdx source` is an alias for `ccdx m365 switch`, with the same model validation and explicit selection rules.
+
+The protected `/_ccdx/ui/account` and `/_ccdx/ui/checks` APIs require loopback, a local Host and `X-CCDX-Dashboard: 1`. POST actions additionally require the matching Origin and JSON content type; bodies are capped at 4 KiB with a five-second body deadline, and unknown actions/fields are rejected. GET reads only local/process state. Sign-in polling GETs read in-memory operation state and do not trigger extra GitHub polling. Device-flow controllers are cancelled when the owning listener closes. SVG state icons are shipped locally and load no external icon library; an empty circle means unknown/not checked, a circle-minus means unavailable, and running uses circle-play rather than the success check.
+
 ## HTTP error diagnostics
 
 `http_errors.recent` keeps its 20-record rolling view. Independent
@@ -1409,7 +1429,7 @@ unset the variable after the investigation. Records disappear on service exit.
 - CCDX binds to loopback by default. Non-loopback hosts are rejected unless `CCDX_ALLOW_LAN=1` is set explicitly.
 - Enabling LAN binding exposes a Copilot-backed API to other reachable machines. Provide your own host firewall and network isolation; do not expose the listener to an untrusted network.
 - Inference POSTs reject any browser `Origin` header before reading the body or contacting upstream, including simple `text/plain` requests. Native Codex/Node requests without Origin and deliberately enabled native LAN clients keep their existing access. This is not authentication or protection against untrusted local native programs.
-- The GitHub OAuth credential is stored locally at `~/.local/share/copilot-api/github_token`. Short-lived Copilot service tokens remain in process memory and are refreshed as needed.
+- Explicit auth tools store GitHub OAuth credentials at `~/.local/share/ccdx/github_token`, with precedence over the compatible legacy `~/.local/share/copilot-api/github_token` store. Short-lived Copilot service tokens remain in process memory and are refreshed as needed. See Account and repair tools for safe replacement/sign-out behavior.
 - The optional image API credential is stored separately with mode `0600` only after `ccdx enable-image`; it is never placed in Codex configuration or diagnostic output.
 - Runtime status and usage records retain metadata by default; explicitly enabled HTTP error excerpts can contain private context. Diagnostic logging records status and error messages; it is not a general redaction layer for arbitrary error text. See Debug logging before sharing logs.
 - Request/response bodies, request-admission queues, retained history, image work, SSE buffers, log queues, retries, and shutdown have explicit limits. These component limits are not a single process-wide memory ceiling; completed image files are persistent user artifacts, not an automatically evicted cache.

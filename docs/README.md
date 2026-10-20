@@ -17,6 +17,10 @@ effective Codex configuration or validate every field against the installed app.
 
 ## Historical release evidence
 
+- [1.2.7: Account tools, checks and repairs, consistent status icons](RELEASE_1.2.7.md)
+- [1.2.6: Abbreviated proxy networks and preserved diagnostics](RELEASE_1.2.6.md)
+- [1.2.5: Animated usage views and approximate cache hit rate](RELEASE_1.2.5.md)
+
 - [1.2.4: Navigation clarity and bounded version discovery](RELEASE_1.2.4.md)
 
 These reports record a specific release and test environment. Their version,

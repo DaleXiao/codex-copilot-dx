@@ -51,6 +51,25 @@ async function invoke(handler, {
   return { status: res.statusCode, headers: res.headers, body: JSON.parse(text) };
 }
 
+test("account and repair tools reject cross-origin, unknown fields and invalid methods before actions", async () => {
+  let reads = 0, starts = 0;
+  const accountTools = { snapshot() { reads++;return { source: "account_tools", saved: false }; },
+    async start() { starts++;return { source: "account_tools", operation: { state: "authorizing", user_code: "ABCD-EFGH" } }; }, dispose() {} };
+  const handler = createAdapterHandler({ dashboardOptions: { accountTools } });
+  for (const url of ["/_ccdx/ui/account", "/_ccdx/ui/checks"]) {
+    for (const options of [{ remoteAddress: "10.0.0.2" }, { host: "evil.example" }, { dashboardHeader: "" }]) assert.equal((await invoke(handler, { url, ...options })).status, 403);
+    assert.equal((await invoke(handler, { url, method: "DELETE" })).status, 405);
+    assert.equal((await invoke(handler, { url, method: "POST", body: { action: "start" } })).status, 403);
+    assert.equal((await invoke(handler, { url, method: "POST", origin: "http://evil.example", body: { action: "start" } })).status, 403);
+  }
+  const url = "/_ccdx/ui/account", origin = "http://127.0.0.1:2026";
+  for (const body of [{ action: "start", reauth: "yes" }, { action: "start", token: "never accept tokens" }, { action: "execute", command: "rm" }]) assert.equal((await invoke(handler, { url, origin, method: "POST", body })).status, 400);
+  assert.equal(reads, 0);assert.equal(starts, 0);
+  assert.equal((await invoke(handler, { url })).body.saved, false);
+  assert.equal((await invoke(handler, { url, origin, method: "POST", body: { action: "start", reauth: true } })).status, 200);
+  assert.equal(starts, 1);
+});
+
 test("update metadata is a protected local read with no install action", async () => {
   let reads = 0;
   const handler = createAdapterHandler({ dashboardOptions: { updateStatusFn: async () => { reads++;return { source: "release_status", status: "unavailable" }; } } });

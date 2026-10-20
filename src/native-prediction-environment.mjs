@@ -42,7 +42,7 @@ export function inspectPredictionEnvironment({ env = process.env, platform = pro
         network = { settings };
       }
     } else {
-      const systemProxy = exec("/usr/sbin/scutil", ["--proxy"], { encoding: "utf8", timeout: 2000, maxBuffer: 64 * 1024 });
+      const systemProxy = platform === "darwin" ? exec("/usr/sbin/scutil", ["--proxy"], { encoding: "utf8", timeout: 2000, maxBuffer: 64 * 1024 }) : "";
       network = { networkRoute: resolveNetworkRoute({ env, systemProxy }) };
     }
   } catch (error) {

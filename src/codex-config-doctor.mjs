@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { codexPaths } from "./codex-paths.mjs";
 import { isDeepStrictEqual } from "node:util";
+import { createHash } from "node:crypto";
 import { parse } from "smol-toml";
 import { computeUpdatedCodexConfig, initialCodexConfig } from "./config.mjs";
 import { adapterBaseUrl } from "./running-adapter.mjs";
@@ -177,6 +178,9 @@ export function repairCodexConfig(options = {}) {
     }
     let content = null;
     try { content = fs.readFileSync(file, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (options.expectedRevision !== undefined && options.expectedRevision !== (content === null ? "missing" : createHash("sha256").update(content).digest("hex"))) {
+      throw Object.assign(new Error("config_preview_changed"), { code: "config_preview_changed", statusCode: 409 });
+    }
     const next = content === null ? { content: initialCodexConfig(port, host), changed: true }
       : computeUpdatedCodexConfig(content, port, host);
     if (!next.changed) return { status: "unchanged", changed: false };

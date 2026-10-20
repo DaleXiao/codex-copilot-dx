@@ -26,11 +26,20 @@
           if (network) localize(authRow.children[3], "network_detail", { source: phrase(`network_source_${network.source}`),
             stage: phrase(`network_stage_${network.stage}`), code: network.cause_code, category: provider.reason }, "title");
         }
+        if (globalThis.ccdxIcons) {
+          globalThis.ccdxIcons.set(authRow.children[2], states[identity.state] || "unknown", globalThis.ccdxIcons.kind(identity.state));
+          globalThis.ccdxIcons.set(authRow.children[3], provider.reason ? "state_reason" : states[provider.state] || "unknown", globalThis.ccdxIcons.kind(provider.state),
+            provider.reason ? { state: phrase(states[provider.state] || "unknown"), reason: provider.network_diagnostic ? phrase(`network_cause_${provider.network_diagnostic.cause_code}`) : provider.reason } : {});
+        }
         auth.append(authRow);
         for (const client of provider.clients || []) {
           const row = tableRow([provider.name, client.name, states[client.state] || client.state,
             client.gateway || "—", client.last_request_at || "—"], { labels: [2, 3] });
           if (client.reason) localize(row.children[2], "state_reason", { state: phrase(states[client.state] || "unknown"), reason: client.reason });
+          if (globalThis.ccdxIcons) {
+            globalThis.ccdxIcons.set(row.children[2], client.reason ? "state_reason" : states[client.state] || client.state, globalThis.ccdxIcons.kind(client.state), client.reason ? { state: phrase(states[client.state] || "unknown"), reason: client.reason } : {});
+            if (["running", "unavailable"].includes(client.gateway)) globalThis.ccdxIcons.set(row.children[3], client.gateway, globalThis.ccdxIcons.kind(client.gateway));
+          }
           clients.append(row);
         }
         if (provider.requests) {

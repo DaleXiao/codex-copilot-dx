@@ -4,6 +4,7 @@ import { AUTH_PROFILE_CODEX, readAuthProfileCredentials } from "./auth-profile.m
 import { buildHeaders, FALLBACK_VSCODE_VERSION, parseApiBase } from "./copilot.mjs";
 import { MAX_UPSTREAM_MODEL_CATALOG_BYTES, readBoundedResponseText } from "./http-transport.mjs";
 import { profileRouting } from "./profile-routing.mjs";
+import { awaitWithSignal } from "./auth-device-flow.mjs";
 
 const DEFAULT_COPILOT_CATALOG_TIMEOUT_MS = 30 * 1000;
 
@@ -47,16 +48,16 @@ async function fetchCopilotCatalog(tokenData, {
       initiator: "user",
       vision: false,
     });
-    const response = await fetchImpl(`${apiBase}/models`, {
+    const response = await awaitWithSignal(() => fetchImpl(`${apiBase}/models`, {
       headers,
       redirect: "error",
       signal: controller.signal,
-    });
-    const modelText = await readBoundedResponseText(response, {
+    }), controller.signal);
+    const modelText = await awaitWithSignal(() => readBoundedResponseText(response, {
       maxBytes: MAX_UPSTREAM_MODEL_CATALOG_BYTES,
       label: "Copilot model catalog",
       signal: controller.signal,
-    });
+    }), controller.signal);
     if (!response.ok) {
       const detail = responseDetail(modelText);
       throw new Error(`Copilot model catalog failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
@@ -87,7 +88,7 @@ function publicProfile(credentials) {
     reason: credentials.reason,
     login: credentials.identity?.login || "",
     id: credentials.identity?.id || "",
-    source: "legacy",
+    source: credentials.paths?.tokenPath.replace(/\\/g, "/").split("/").at(-2) === "ccdx" ? "ccdx" : "legacy",
   };
 }
 
@@ -114,13 +115,17 @@ export function authStatus({ home = os.homedir() } = {}) {
   };
 }
 
-async function inspectProfileOnline(credentials, { fetchImpl, timeoutMs } = {}) {
+export async function inspectGithubAccess(credentials, { fetchImpl = fetch, timeoutMs = 10000, signal } = {}) {
   if (!credentials.valid) {
     return { checked: false, ok: false, reason: credentials.reason || "unconfigured" };
   }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
+  const cancel = () => controller.abort(signal.reason);
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
+  const stages = { identity: "not_checked", access: "not_checked", models: "not_checked" };
   try {
     const validation = await validateGithubToken(credentials.token, {
       fetchImpl,
@@ -128,13 +133,18 @@ async function inspectProfileOnline(credentials, { fetchImpl, timeoutMs } = {}) 
     });
     if (controller.signal.aborted) throw abortError(controller.signal);
     if (!validation.ok) {
+      stages.identity = validation.login ? "passed" : validation.reason === "github_token_invalid" ? "invalid" : "unavailable";
+      if (validation.login) stages.access = "unavailable";
       return {
         checked: true,
         ok: false,
         reason: validation.reason,
         httpStatus: validation.status || null,
+        stages,
       };
     }
+    stages.identity = "passed";stages.access = "passed";
+    stages.models = "unavailable";
     const { catalog, apiBase } = await fetchCopilotCatalog(validation.copilotTokenData, {
       fetchImpl,
       signal: controller.signal,
@@ -144,7 +154,9 @@ async function inspectProfileOnline(credentials, { fetchImpl, timeoutMs } = {}) 
     return {
       checked: true,
       ok: true,
+      stages: { ...stages, models: "passed" },
       login: validation.login || credentials.identity?.login || "",
+      id: validation.id || "",
       models: catalogModels(catalog).length,
       upstreamHost,
     };
@@ -153,9 +165,11 @@ async function inspectProfileOnline(credentials, { fetchImpl, timeoutMs } = {}) 
       checked: true,
       ok: false,
       reason: controller.signal.aborted ? `timed out after ${timeoutMs}ms` : error.message,
+      stages,
     };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
   }
 }
 
@@ -165,7 +179,7 @@ export async function authStatusOnline({
   timeoutMs = 10000,
 } = {}) {
   const local = authStatus({ home });
-  const online = await inspectProfileOnline(readStatusCredentials(home), { fetchImpl, timeoutMs });
+  const online = await inspectGithubAccess(readStatusCredentials(home), { fetchImpl, timeoutMs });
   return {
     ...local,
     profiles: {

@@ -148,6 +148,7 @@ export async function handleDashboardApi(req, res, pathname, {
   updateStatusFn,
   serviceControl,
   applyAnimation,
+  tools,
 } = {}) {
   if (!isLoopbackAddress(req.socket?.remoteAddress)
     || req.headers?.host === undefined
@@ -158,6 +159,10 @@ export async function handleDashboardApi(req, res, pathname, {
   if (req.headers?.["x-ccdx-dashboard"] !== "1") {
     sendJson(res, 403, { error: "Dashboard API requires a same-origin page request" });
     return;
+  }
+
+  if (["/_ccdx/ui/account", "/_ccdx/ui/checks"].includes(pathname)) {
+    return tools.handle(req, res, pathname, sendJson, sameOrigin);
   }
 
   if (pathname === PROVIDERS_PATH && req.method === "GET") {

@@ -48,6 +48,15 @@ if (CLI.command === "version") {
   console.log(CLI_BANNER);
   process.exit(0);
 }
+if (CLI.command === "web") {
+  try {
+    const { runWebCommand } = await import("../src/cli-web.mjs");
+    const address = parseAdapterAddressOptions(process.env);
+    const server = await runWebCommand({ host: address.adapterHost, port: address.adapterPort });
+    if (server) await server.ccdxWebClosed;
+    process.exit(0);
+  } catch (error) { console.error(status("err", error.message));process.exit(1); }
+}
 if (CLI.command === "m365") {
   try {
     const { runM365Command } = await import("../src/cli-m365.mjs");
@@ -68,6 +77,12 @@ if (CLI.command === "animation") {
 }
 if (CLI.command === "image") {
   try {
+    if (["pause", "resume"].includes(CLI.action)) {
+      const { pauseServiceFeature } = await import("../src/cli-tools.mjs");
+      const address = parseAdapterAddressOptions(process.env);
+      console.log(await pauseServiceFeature({ feature: "image", action: CLI.action, host: address.adapterHost, port: address.adapterPort }));
+      process.exit(0);
+    }
     const address = CLI.action === "enable"
       ? parseAdapterAddressOptions(process.env)
       : { adapterPort: 2026, adapterHost: "127.0.0.1" };
@@ -99,6 +114,12 @@ if (CLI.command === "suggestion") {
 }
 if (CLI.command === "prediction") {
   try {
+    if (["pause", "resume"].includes(CLI.action)) {
+      const { pauseServiceFeature } = await import("../src/cli-tools.mjs");
+      const address = parseAdapterAddressOptions(process.env);
+      console.log(await pauseServiceFeature({ feature: "prediction", action: CLI.action, host: address.adapterHost, port: address.adapterPort }));
+      process.exit(0);
+    }
     const { runPredictionCommand } = await import("../src/native-prediction.mjs");
     const result = await runPredictionCommand({ action: CLI.action, repairRuntime: async () => {
       const { requestPredictionFix } = await import("../src/native-prediction-fix.mjs");
@@ -182,6 +203,13 @@ if (CLI.command === "auth") {
       online: CLI.online,
       reauth: CLI.reauth,
       expectedLogin: CLI.expectedLogin,
+      yes: CLI.yes,
+      onChanged: async () => {
+        const { dashboardToolRequest } = await import("../src/cli-tools.mjs");
+        const address = parseAdapterAddressOptions(process.env);
+        try { await dashboardToolRequest({ host: address.adapterHost, port: address.adapterPort, body: { action: "reload" } }); }
+        catch { console.log("Restart the CCDX service to apply the sign-in change."); }
+      },
       commandName: CLI_NAME,
       format: CLI.outputFormat || "auto",
       output: process.stdout,
@@ -249,6 +277,16 @@ if (CLI.command === "update") {
     console.error(status("err", e.message));
     process.exit(1);
   }
+}
+if (CLI.command === "doctor" && CLI.tool) {
+  try {
+    const { createLocalTools } = await import("../src/local-tools.mjs");
+    const address = parseAdapterAddressOptions(process.env);
+    const tools = createLocalTools({ host: address.adapterHost, port: address.adapterPort });
+    if (CLI.tool === "network") console.log((await tools.network()).summary);
+    else { await tools.check();console.log(JSON.stringify(tools.report(), null, 2)); }
+    process.exit(0);
+  } catch (error) { console.error(status("err", error.message));process.exit(1); }
 }
 if (CLI.command === "doctor" && CLI.configOnly) {
   let probe;
@@ -430,7 +468,7 @@ try {
   const m365Setup = runInBackground(() => providerRuntime.start());
   if (providerRuntime.selection().codex === "github") {
     try { await ensureAuth({ log: startupLogger("Sign-in") }); }
-    catch (error) { if (!await m365Setup) throw error;console.warn(startupCheck("warn", "Sign-in", "GitHub authorization is unavailable; Microsoft 365 is independent. Check ccdx m365 status or switch")); }
+    catch (error) { console.warn(startupCheck("warn", "Sign-in", "Sign-in unavailable. Use the dashboard or ccdx auth login; saved credentials kept.")); }
   } else {
     await m365Setup;
     console.log(startupCheck("info", "Source", "Codex source: Microsoft 365"));
@@ -468,7 +506,9 @@ try {
     streamIdleTimeoutMs: RUNTIME.streamIdleTimeoutMs,
     terminalAnimationTheme,
     terminalActivity: terminalConsole,
-    dashboardOptions: { serviceControl, applyAnimation: theme => terminalConsole.apply({ theme }) },
+    dashboardOptions: { serviceControl, host: ADAPTER_HOST, port: ADAPTER_PORT,
+      credentialsChanged: () => { defaultCopilotClient.invalidateCredentials();profileRuntime = createProfileRuntime({ codexClient: defaultCopilotClient }); },
+      applyAnimation: theme => terminalConsole.apply({ theme }) },
     nativePredictionPac: () => clientIntegration?.pacUrl() || null,
     fixPrediction: async () => (await clientIntegrations()).fix(),
     clientIntegrationSnapshot: () => clientIntegration?.snapshot() || null,

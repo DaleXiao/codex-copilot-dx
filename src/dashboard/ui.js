@@ -269,6 +269,7 @@ function chooseProvider(id) {
   if (previous) applyModels(previous, { changed: true });
   else { emptyTable("live-models-body", 6, "reading_provider_catalog");text("models-note", "reading_provider_catalog"); }
   element("live-models-body").setAttribute("aria-labelledby", `model-provider-${id}`);
+  window.dispatchEvent(new CustomEvent("ccdx:source-view"));
   void loadModels();
 }
 
@@ -303,7 +304,7 @@ function applyProviders(data, { changed }) {
     let button = providerTabs.get(provider.id);
     if (!button) {
       button = document.createElement("button");button.type = "button";button.setAttribute("role", "tab");
-      button.id = `model-provider-${provider.id}`;button.setAttribute("aria-controls", "live-models-body");
+      button.id = `model-provider-${provider.id}`;button.setAttribute("aria-controls", "source-account-panel");
       button.addEventListener("click", () => chooseProvider(provider.id));
       button.addEventListener("keydown", event => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -393,6 +394,8 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       state: state => {
         text("connection", state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable");
         element("connection").className = `badge ${state.pending ? "neutral" : state.error ? "bad" : "good"}`;
+        globalThis.ccdxIcons?.set(element("connection"), state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable",
+          state.pending && !state.value ? "unknown" : state.error ? "unavailable" : "running");
         if (state.error) refreshTime(element("updated"), state);
         for (const node of timestamps.get("status")) refreshTime(node, state);
       },

@@ -26,6 +26,23 @@ let predictionActive = true, codexSource = "github", m365Enabled = true;
 const accountChoices = ["a", "b"].map(letter => ({ id: letter.repeat(64), login: `${letter}@example.test`, tenant: `company-${letter}` }));
 let companyAccount = accountChoices[0], accountChecks = 0, accountChanges = 0, refuseAccountChange = false;
 let proxyFailure = false;
+let signin = null, rejectIdentity = true;
+const accountTools = {
+  snapshot: () => structuredClone(signin), dispose() {},
+  async check() { signin.online = { checked: true, ok: false, reason: rejectIdentity ? "github_token_invalid" : "copilot_access_denied", http_status: rejectIdentity ? 401 : 403,
+    stages: { identity: rejectIdentity ? "invalid" : "passed", access: rejectIdentity ? "not_checked" : "unavailable", models: "not_checked" } };signin.checked_at = new Date().toISOString();return this.snapshot(); },
+  async start() { signin.operation = { id: "synthetic-operation", state: "authorizing", user_code: "ABCD-EFGH", verification_uri: "https://github.com/login/device", expires_at: new Date(Date.now() + 900000).toISOString() };return this.snapshot(); },
+  async cancel() { signin.operation = { id: "synthetic-operation", state: "cancelled", reason: "auth_cancelled" };return this.snapshot(); },
+  async logout() { signin.saved = false;signin.online = null;return this.snapshot(); },
+};
+const localTools = {
+  snapshot: () => ({ source: "local_tools" }),
+  async check() { return { source: "local_tools", checked_at: new Date().toISOString(), checks: [{ id: "codex-config", kind: "warn", message: "openai_base_url differs from CCDX" }] }; },
+  preview: () => ({ revision: "synthetic-revision", managed_keys: ["openai_base_url"], backup: "config.toml.ccdx-doctor.bak", checks: [{ message: "Update CCDX-managed address" }] }),
+  repair: () => ({ status: "verified", changed: true, local: { checked_at: new Date().toISOString(), checks: [{ id: "codex-config", kind: "ok", message: "Codex configuration checked" }] } }),
+  network: () => ({ summary: "Proxy rules retained. TLS verification required." }),
+  report: () => ({ source: "local_tools", checks: [], account: "[hidden]" }),
+};
 const networkDiagnostic = { source: "system", stage: "proxy_config", cause_code: "proxy_bypass_invalid" };
 let m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
 const serviceControl = createServiceControl({ home, env: {}, readImages: () => ({}), readPrediction: () => ({ enabled: true }),
@@ -52,7 +69,7 @@ const providerState = () => [
     clients: [{ id: "claude_app", name: "Claude App", state: "configured", gateway: "running" }], requests: { completed: 3, incomplete: 1, failed: 2 } },
   { id: "third", name: "Third source", enabled: false, state: "disabled", clients: [] },
 ];
-const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, serviceControl,
+const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, serviceControl, accountTools, localTools,
   updateStatusFn: async () => { updateReads++;return { source: "release_status", status: updateState,
     current: { version: "1.2.3", published_at: "2026-10-19T02:36:27Z" }, latest: { version: latestVersion, published_at: "2026-10-19T10:00:00Z" },
     update_available: updateState === "checked" && latestVersion !== "1.2.3", checked_at: "2026-10-19T10:00:00Z" }; },
@@ -119,6 +136,7 @@ try {
         page.setDefaultTimeout(15000);
         const errors = [];
         page.on("pageerror", error => errors.push(error.message));
+        signin = { source: "account_tools", configured: true, saved: true, login: "synthetic_user", store: "legacy", online: null, checked_at: null, operation: null };
         await page.addInitScript(({ language, theme, palette }) => { localStorage.setItem("ccdx.dashboard.palette", palette); localStorage.setItem("ccdx.dashboard.language", language); localStorage.setItem("ccdx.dashboard.theme", theme); }, { language, theme, palette });
         await page.addInitScript(() => {
           window.atomMotions = [];window.chartMotions = [];
@@ -140,7 +158,7 @@ try {
         assert.equal(await page.evaluate(() => atomMotions[0].options.duration), 450);
         assert.equal(await page.locator(".sidebar-brand #status-icon").count(), 1);
         assert.equal(await page.locator("h1 #status-icon").count(), 0);
-        assert.equal(await page.locator(".sidebar nav a .nav-icon").count(), 7);
+        assert.equal(await page.locator(".sidebar nav a .nav-icon").count(), 8);
         assert.equal(await page.locator("#open-animation").count(), 0);
         assert.match(await page.locator("#source-summary").innerText(), /3/);
         assert.equal(await page.locator("#source-detail span").count(), 3);
@@ -203,11 +221,32 @@ try {
         await page.locator("#apply-source").click();
         await page.waitForFunction(() => document.getElementById("source-control-note").textContent.includes("GitHub Copilot") && !document.getElementById("apply-source").disabled);
         await nav("models");
+        await page.waitForFunction(() => document.getElementById("github-account-name").textContent === "synthetic_user");
+        assert.equal(await page.locator("#m365-source-access").isVisible(), false);
+        assert.equal(await page.locator("#github-signin").isVisible(), false, "Saved sign-in alone does not recommend reauth");
+        rejectIdentity = false;await page.locator("#github-check").click();
+        await page.waitForFunction(() => document.getElementById("github-check-code").textContent === "copilot_access_denied");
+        assert.equal(await page.locator("#github-signin").isVisible(), false, "Copilot denial does not recommend reauth");
+        rejectIdentity = true;
+        await page.locator("#github-check").click();
+        await page.waitForFunction(() => document.getElementById("github-check-code").textContent === "github_token_invalid");
+        assert.equal(await page.locator("#github-account-state .state-warning .state-icon").count(), 1);
+        assert.equal(await page.locator("#connection .state-running .state-icon").count(), 1);
+        await page.locator("#github-signin").click();
+        await page.waitForFunction(() => !document.getElementById("github-login-flow").hidden);
+        assert.equal(await page.locator("#github-user-code").innerText(), "ABCD-EFGH");
+        await page.locator("#github-cancel").click();
+        await page.waitForFunction(() => document.getElementById("github-login-flow").hidden);
+        assert.match(await page.locator("#github-account-note").innerText(), language === "zh" ? /取消.*保留/ : /cancelled.*kept/);
+        if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-signin.png`), fullPage: true });
         await page.locator("#account-authorization > summary").click();
         assert.equal(await page.locator("#provider-auth tr").count(), 3);
         assert.match(await page.locator("#provider-auth").innerText(), /synthetic@example.test/);
         assert.equal(await page.locator("#model-providers [role=tab]").count(), 3);
         assert.equal(accountChecks, 0, "Opening the page never enumerates accounts or acquires tokens");
+        await page.locator("#model-provider-m365").click();
+        await page.waitForFunction(() => !document.getElementById("m365-source-access").hidden);
+        assert.equal(await page.locator("#github-account").isVisible(), false);
         await page.locator("#m365-accounts-refresh").click();
         await page.waitForFunction(() => !document.getElementById("m365-account-form").hidden && !document.getElementById("m365-accounts-refresh").disabled);
         assert.equal(accountChecks, 1);assert.equal(accountChanges, 0);
@@ -254,6 +293,19 @@ try {
         assert.equal((icon.match(/<ellipse /g) || []).length, 3);
         assert.ok(icon.includes(palette === "klein" ? theme === "dark" ? "#789aff" : "#002fa7" : theme === "dark" ? "#a6f5a8" : "#176b3a"));
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "No whole-page horizontal overflow");
+        await nav("checks");await page.locator("#check-local").click();
+        await page.waitForFunction(() => document.getElementById("checks-body").children.length > 0);
+        assert.equal(await page.locator("#checks-body .state-warning .state-icon").count(), 1);
+        await page.locator("#preview-config-repair").click();
+        await page.waitForFunction(() => !document.getElementById("config-repair-preview").hidden);
+        assert.match(await page.locator("#config-repair-fields").innerText(), /openai_base_url.*config.toml.ccdx-doctor.bak/s);
+        await page.locator("#apply-config-repair").click();
+        await page.waitForFunction(() => document.getElementById("config-repair-preview").hidden);
+        assert.match(await page.locator("#checks-note").innerText(), language === "zh" ? /已修复/ : /repaired/);
+        assert.equal(await page.locator("#checks-body .state-warning").count(), 0, "Repair results replace stale pre-repair warnings");
+        assert.equal(await page.locator("#checks-body .state-ok .state-icon").count(), 1);
+        if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-checks.png`), fullPage: true });
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Checks stay within the viewport");
         await nav("requests");
         assert.equal(await page.locator("#recent-failures").isVisible(), true);
         assert.match(await page.locator("#recent-failures li summary").innerText(), /Microsoft 365/);

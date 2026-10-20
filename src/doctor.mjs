@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import net from "node:net";
-import { githubTokenPath, readGithubTokenMetadata, validateGithubToken } from "./auth.mjs";
+import { githubTokenPath, managedGithubTokenPath, readGithubTokenMetadata, validateGithubToken } from "./auth.mjs";
 import {
   AUTH_PROFILE_CODEX,
   readAuthProfileCredentials,
@@ -65,7 +65,8 @@ export function inspectGitHubToken({ home = os.homedir() } = {}) {
 export function inspectAuthProfiles({ home = os.homedir() } = {}) {
   return [
     ...inspectGitHubToken({ home }),
-    { kind: "ok", message: "Codex authentication profile uses the legacy path" },
+    { kind: "info", message: githubTokenPath(home) === managedGithubTokenPath(home)
+      ? "Codex authentication profile uses the CCDX-owned store" : "Codex authentication profile uses the legacy path" },
   ];
 }
 

@@ -168,6 +168,7 @@ export function createAdapterHandler(options = {}) {
   const responseFailures = options.responseFailures || createResponseFailureDiagnostics();
   const httpErrors = createHttpFailureDiagnostics();
   const optionalRoutes = createOptionalRoutes({ ...options, dashboardOptions: { ...options.dashboardOptions,
+    credentialsChanged: options.dashboardOptions?.credentialsChanged || (() => codexClient.invalidateCredentials?.()),
     ...(options.providerRuntime ? { providerCatalogFn: input => options.providerRuntime.dashboardCatalog(input),
       providerStateFn: () => options.providerRuntime.dashboardProviders(),
       providerAccountsFn: () => options.providerRuntime.action({ action: "accounts" }) } : {}) } });
@@ -459,6 +460,7 @@ export function createAdapterHandler(options = {}) {
     }
   };
   handler.snapshot = statusSnapshot;
+  handler.cleanup = () => optionalRoutes.dispose();
   return handler;
 }
 

@@ -262,6 +262,12 @@ settlement for two seconds; no successful plaintext cache or transcript index ex
 
 ## Dashboard reads
 
+`account-tools.mjs` is the shared explicit GitHub sign-in/check/sign-out boundary for CLI and WebUI. It reuses bounded device polling and `auth-status.mjs` access checks, isolates candidate credentials until verification, compares the original credential under the existing cross-process auth lock, and atomically commits to the CCDX-owned store. It does not own Microsoft SSO. Public snapshots project fixed stages/codes and omit token material. A cancelled or failed candidate is never persisted; the service keeps one sign-in controller and one connection-check flight, with bounded lifetimes/cooldowns. Explicit cache invalidation aborts a pending token refresh while preserving the runtime's account binding. The CLI notifies a compatible local service after changes; account changes require a restart.
+
+`local-tools.mjs` reuses doctor and the existing config writer. It projects redacted local checks and a revision-bound config preview rather than wrapping arbitrary shell commands. The config writer validates the revision again inside its own lock, then preserves unmanaged settings and backs up changed originals. `dashboard-tools.mjs` owns the small strict action schema and bounded request-body transport; `optional-routes.mjs` creates these tools lazily per handler and disposes sign-in work when the listener closes. `dashboard/tools.js` owns the source-specific account view, user-triggered checks/preview and local progress polling; source selection does not change routing. `dashboard/icons.js` supplies fixed local circle SVGs and separate localized text nodes, preserving language changes without replacing the icons. No runtime dependency or per-stream instrumentation is added.
+
+`cli-web.mjs` provides an unauthenticated management bootstrap. It opens an existing compatible listener or composes the management listener and provider controls without app writes/launch, prediction setup or automatic M365 start. It is deliberately separate from normal launcher side effects; normal app startup follows after stopping this management-only process. CLI feature pause/resume delegates to the existing preference gates; full removal/setup remains in the original integration commands.
+
 `provider-runtime.mjs` composes read-only Provider descriptors separately from
 source-selection actions. `provider-metadata.mjs` projects bounded model metadata
 without transport or credential dependencies. `dashboard-api.mjs` sanitizes public

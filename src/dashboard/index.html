@@ -9,11 +9,13 @@
     <script src="/theme.js"></script>
     <link rel="stylesheet" href="/ui.css">
     <script src="/refresh.js" defer></script>
+    <script src="/icons.js" defer></script>
     <script src="/status.js" defer></script>
     <script src="/usage.js" defer></script>
     <script src="/updates.js" defer></script>
     <script src="/ui.js" defer></script>
     <script src="/console.js" defer></script>
+    <script src="/tools.js" defer></script>
     <title data-i18n="ccdx_local_dashboard">CCDX · Dashboard</title>
   </head>
   <body>
@@ -28,6 +30,7 @@
           <a href="#models" data-route="models"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 3 10 5-10 5L2 8Zm-10 9 10 5 10-5M2 16l10 5 10-5"/></svg><span data-i18n="model_services">Model sources</span></a>
           <a href="#usage" data-route="usage"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 3v18h18M7 16v-5m5 5V7m5 9V4"/></svg><span data-i18n="usage_and_diagnostics">Usage</span></a>
           <a href="#requests" data-route="requests"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span data-i18n="request_records">Requests</span></a>
+          <a href="#checks" data-route="checks"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m3 7 2 2 4-4m3 2h9M3 13l2 2 4-4m3 2h9M3 19l2 2 4-4m3 2h9"/></svg><span data-i18n="tools_checks_title">Checks &amp; repairs</span></a>
           <a href="#system" data-route="system"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h4m4 0h10M3 12h10m4 0h4M3 18h4m4 0h10"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="18" r="2"/></svg><span data-i18n="system_and_settings">Settings</span></a>
         </nav>
       </aside>
@@ -123,21 +126,27 @@
         </section>
         </div>
         <div data-view="models" hidden>
-        <details class="panel dashboard-section" id="account-authorization">
-          <summary class="panel-heading"><h2 data-i18n="account_authorization">ACCOUNT AUTHORIZATION</h2><span data-i18n="by_provider">BY SOURCE</span></summary>
-          <p class="hint" data-i18n="saved_credentials_authorization_model_access_and_client_requests">Saved sign-in, access, models and app requests are separate checks.</p>
-          <div class="table-wrap"><table><thead><tr><th data-i18n="source">Source</th><th data-i18n="account">ACCOUNT</th><th data-i18n="authorization">AUTHORIZATION</th><th data-i18n="service">SERVICE</th><th data-i18n="last_verified">LAST VERIFIED</th><th data-i18n="time_left">Time left</th></tr></thead><tbody id="provider-auth"></tbody></table></div>
-        </details>
-        <details class="panel dashboard-section" id="upstream-models" open>
-          <summary class="panel-heading"><h2 data-i18n="model_catalog">MODEL LIST</h2><span id="models-state" data-i18n="checking_live">CHECKING</span></summary>
-          <div id="model-providers" class="provider-tabs" role="tablist" aria-label="Model providers" data-i18n-label="model_providers"></div>
-          <div class="section-actions"><button id="refresh-models" type="button" data-i18n="refresh">Refresh</button></div>
-          <p id="models-note" class="table-note" data-i18n="reading_provider_catalog">Loading model list…</p>
-          <details id="model-check-details" class="model-check-details" hidden><summary data-i18n="source_check_details">Check details</summary><dl id="model-check-fields" class="failure-detail"></dl><p class="hint" data-i18n="source_check_action">Use Refresh to check this source again.</p></details>
-          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="vendor">MODEL MAKER</th><th scope="col" data-i18n="api">CONNECTION TYPE</th><th scope="col" data-i18n="client">APP</th><th scope="col" data-i18n="reasoning">THINKING LEVEL</th><th scope="col" data-i18n="state">STATE</th></tr></thead><tbody id="live-models-body" role="tabpanel"><tr><td colspan="6" data-i18n="loading">Loading…</td></tr></tbody></table></div>
-          <p class="hint" data-i18n="catalog_listing_does_not_guarantee_inference_access">Listed does not mean your account can use it.</p>
-        </details>
-        <section class="panel dashboard-section" aria-labelledby="source-access-heading">
+        <div id="model-providers" class="provider-tabs" role="tablist" aria-label="Model providers" data-i18n-label="model_providers"></div>
+        <p class="hint source-browse-note" data-i18n="tools_source_browse">Browsing a source does not change app settings.</p>
+        <div id="source-account-panel" role="tabpanel">
+        <section class="panel dashboard-section" id="github-account">
+          <div class="panel-heading"><h2>GitHub Copilot</h2><span id="github-account-state"></span></div>
+          <p id="github-account-name" class="account-name">—</p><p id="github-account-hint" class="hint"></p>
+          <dl id="github-account-fields" class="account-fields"></dl>
+          <div class="section-actions"><button id="github-signin" type="button" data-i18n="tools_login">Sign in to GitHub</button><button id="github-check" type="button" data-i18n="tools_check_connection">Check connection</button></div>
+          <p class="hint" data-i18n="tools_no_inference">Checks access and models. No chat request is sent.</p>
+          <section id="github-login-flow" class="tool-flow" hidden aria-label="GitHub sign-in">
+            <h3 id="github-flow-state" data-i18n="tools_waiting">Waiting for GitHub</h3>
+            <p class="hint" data-i18n="tools_device_instructions">Open GitHub, enter this code, and authorize CCDX.</p><code id="github-user-code" class="device-code">—</code>
+            <a id="github-authorize" class="tool-link" href="https://github.com/login/device" target="_blank" rel="noopener noreferrer" data-i18n="tools_open_github">Open GitHub</a>
+            <button id="github-cancel" type="button" data-i18n="cancel">Cancel</button>
+            <p class="hint" data-i18n="tools_keep_old_signin">Old sign-in is kept until verification succeeds.</p>
+          </section>
+          <p id="github-account-note" class="hint" role="status" aria-live="polite"></p>
+          <details class="tool-details"><summary data-i18n="tools_details">Check details</summary><dl class="failure-detail"><dt data-i18n="tools_storage">Saved sign-in</dt><dd id="github-store">—</dd><dt data-i18n="tools_error_code">Error code</dt><dd id="github-check-code">—</dd><dt>HTTP</dt><dd id="github-check-http">—</dd></dl></details>
+          <details class="tool-details"><summary data-i18n="tools_more_actions">More actions</summary><div class="section-actions"><button id="github-force-reauth" type="button" data-i18n="tools_reauth">Sign in again</button><button id="github-logout" type="button" data-i18n="tools_logout">Sign out of CCDX</button></div><p class="hint" data-i18n="tools_logout_scope">Other apps stay signed in.</p></details>
+        </section>
+        <section class="panel dashboard-section" id="m365-source-access" hidden aria-labelledby="source-access-heading">
           <h2 id="source-access-heading">Microsoft 365</h2>
           <p class="hint" data-i18n="m365_source_access">Provides models for Codex and Claude on supported devices.</p>
           <div class="section-actions"><button id="m365-on" type="button" data-i18n="enable_service">Enable source</button><button id="m365-off" type="button" data-i18n="disable_service">Disable source</button></div>
@@ -151,6 +160,39 @@
           </div>
           <p id="m365-account-note" class="hint" role="status" aria-live="polite"></p>
         </section>
+        <details class="panel dashboard-section" id="upstream-models" open>
+          <summary class="panel-heading"><h2 data-i18n="model_catalog">MODEL LIST</h2><span id="models-state" data-i18n="checking_live">CHECKING</span></summary>
+          <div class="section-actions"><button id="refresh-models" type="button" data-i18n="refresh">Refresh</button></div>
+          <p id="models-note" class="table-note" data-i18n="reading_provider_catalog">Loading model list…</p>
+          <details id="model-check-details" class="model-check-details" hidden><summary data-i18n="source_check_details">Check details</summary><dl id="model-check-fields" class="failure-detail"></dl><p class="hint" data-i18n="source_check_action">Use Refresh to check this source again.</p></details>
+          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="vendor">MODEL MAKER</th><th scope="col" data-i18n="api">CONNECTION TYPE</th><th scope="col" data-i18n="client">APP</th><th scope="col" data-i18n="reasoning">THINKING LEVEL</th><th scope="col" data-i18n="state">STATE</th></tr></thead><tbody id="live-models-body" role="tabpanel"><tr><td colspan="6" data-i18n="loading">Loading…</td></tr></tbody></table></div>
+          <p class="hint" data-i18n="catalog_listing_does_not_guarantee_inference_access">Listed does not mean your account can use it.</p>
+        </details>
+        <details class="panel dashboard-section" id="account-authorization">
+          <summary class="panel-heading"><h2 data-i18n="account_authorization">ACCOUNT AUTHORIZATION</h2><span data-i18n="by_provider">BY SOURCE</span></summary>
+          <p class="hint" data-i18n="saved_credentials_authorization_model_access_and_client_requests">Saved sign-in, access, models and app requests are separate checks.</p>
+          <div class="table-wrap"><table><thead><tr><th data-i18n="source">Source</th><th data-i18n="account">ACCOUNT</th><th data-i18n="authorization">AUTHORIZATION</th><th data-i18n="service">SERVICE</th><th data-i18n="last_verified">LAST VERIFIED</th><th data-i18n="time_left">Time left</th></tr></thead><tbody id="provider-auth"></tbody></table></div>
+        </details>
+        </div>
+        </div>
+        <div data-view="checks" hidden>
+          <section class="panel dashboard-section">
+            <h2 data-i18n="tools_checks_title">Checks &amp; repairs</h2>
+            <p class="hint" data-i18n="tools_local_scope">Local checks do not contact external services.</p>
+            <div class="section-actions"><button id="check-local" type="button" data-i18n="tools_check_local">Check this computer</button><button id="check-account-link" type="button" data-i18n="tools_check_connection">Check connection</button><button id="export-report" type="button" data-i18n="tools_export_report">Export report</button></div>
+            <p id="checks-note" class="table-note" role="status" aria-live="polite" data-i18n="tools_checks_empty">Run a check to see the results.</p>
+            <div class="table-wrap"><table class="checks-table"><thead><tr><th data-i18n="tools_check_item">Check</th><th data-i18n="state">State</th><th data-i18n="tools_details">Details</th></tr></thead><tbody id="checks-body"></tbody></table></div>
+          </section>
+          <section class="panel dashboard-section">
+            <h2 data-i18n="tools_codex_connection">Codex connection</h2><p class="hint" data-i18n="tools_config_scope">Review CCDX-managed fields before repair. Other settings are preserved.</p>
+            <div class="section-actions"><button id="preview-config-repair" type="button" data-i18n="tools_review_repair">Review repair</button></div>
+            <section id="config-repair-preview" class="tool-flow" hidden><h3 data-i18n="tools_repair_preview">Repair preview</h3><dl id="config-repair-fields" class="failure-detail"></dl><pre id="config-preview-details" class="tool-code"></pre><div class="section-actions"><button id="apply-config-repair" type="button" data-i18n="tools_apply_repair">Back up and repair</button><button id="cancel-config-repair" type="button" data-i18n="cancel">Cancel</button></div></section>
+          </section>
+          <details class="panel dashboard-section"><summary data-i18n="tools_more_checks">More checks</summary>
+            <div class="section-actions"><button id="check-network" type="button" data-i18n="tools_network_check">Network settings</button></div><p id="network-check-result" class="hint" role="status"></p>
+            <h3 data-i18n="tools_compatibility">Model compatibility</h3><p class="hint" data-i18n="tools_compatibility_scope">This test sends model requests and uses quota. Run it explicitly in your terminal:</p><pre class="tool-code">ccdx doctor --compat</pre>
+            <p class="hint" data-i18n="tools_report_scope">Reports omit credentials, account details and chat content.</p>
+          </details>
         </div>
         <div data-view="usage" hidden>
 

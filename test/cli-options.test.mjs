@@ -144,13 +144,13 @@ test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
   assert.throws(() => parseCliArgs(["models", "--profile"]), /Enter a value for --profile/);
   assert.throws(() => parseCliArgs(["models", "--profile", "all"]), /Profile must be codex: all/);
   assert.throws(() => parseCliArgs(["models", "--format", "wide"]), /Format must be table or plain: wide/);
-  assert.throws(() => parseCliArgs(["auth"]), /Choose auth status or auth login/);
-  assert.throws(() => parseCliArgs(["auth", "logout", "claude"]), /Unknown auth action: logout/);
+  assert.equal(parseCliArgs(["auth"]).action, "status");
+  assert.throws(() => parseCliArgs(["auth", "logout", "claude"]), /Unexpected argument: claude/);
   assert.throws(() => parseCliArgs(["auth", "status", "claude"]), /Unexpected argument: claude/);
   assert.throws(() => parseCliArgs(["auth", "status", "--online", "--online"]), /Unexpected argument: --online/);
   assert.throws(() => parseCliArgs(["auth", "status", "--format", "table", "--format", "plain"]), /Unexpected argument: --format/);
-  assert.throws(() => parseCliArgs(["auth", "login"]), /Choose the claude sign-in profile/);
-  assert.throws(() => parseCliArgs(["auth", "login", "codex"]), /Auth login profile must be claude: codex/);
+  assert.equal(parseCliArgs(["auth", "login"]).action, "login");
+  assert.equal(parseCliArgs(["auth", "login", "codex"]).action, "login");
   assert.throws(() => parseCliArgs(["auto-review-model", "gpt-5.6-sol"]), /Unexpected argument: gpt-5.6-sol/);
   assert.throws(() => parseCliArgs(["animation", "comet"]), /Unexpected argument: comet/);
   assert.throws(() => parseCliArgs(["update", "other"]), /Choose npm or github/);

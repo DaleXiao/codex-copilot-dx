@@ -66,7 +66,7 @@ test("only a GitHub identity 401 permits reauthorization guidance; the credentia
   const client = session(f.home, async () => new Response("denied", { status: 401 }));
   await assert.rejects(client.getToken(), error => {
     assert.match(error.message, /GitHub also rejected/);
-    assert.match(error.message, /log in/);return true;
+    assert.match(error.message, /ccdx auth reauth/);return true;
   });
   f.preserved();
 });

@@ -10,12 +10,23 @@ const DISABLE_TOKEN_DISCOVERY_VALUES = new Set(["1", "true", "yes"]);
 const MAX_AUTH_JSON_BYTES = 1024 * 1024;
 const pathKey = value => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
 
-export function githubTokenPath(home = os.homedir()) {
+export function managedGithubTokenPath(home = os.homedir()) {
+  return path.join(home, ".local", "share", "ccdx", "github_token");
+}
+
+export function legacyGithubTokenPath(home = os.homedir()) {
   return path.join(home, ".local", "share", "copilot-api", "github_token");
 }
 
+export function githubTokenPath(home = os.homedir()) {
+  const managed = managedGithubTokenPath(home);
+  try { fs.lstatSync(managed);return managed; }
+  catch (error) { if (error.code !== "ENOENT") return managed; }
+  return legacyGithubTokenPath(home);
+}
+
 export function githubTokenLockPath(home = os.homedir()) {
-  return `${githubTokenPath(home)}.lock`;
+  return `${legacyGithubTokenPath(home)}.lock`;
 }
 
 export function githubTokenMetadataPath(home = os.homedir()) {
@@ -23,11 +34,9 @@ export function githubTokenMetadataPath(home = os.homedir()) {
 }
 
 export function githubReauthMessage(reason, home = os.homedir()) {
-  const tokenPath = githubTokenPath(home);
   return `${reason}
-Delete the saved GitHub token, then run ccdx again to log in:
-  rm '${tokenPath}'
-  ccdx`;
+Run ccdx auth reauth to sign in again.
+The saved sign-in is kept until verification succeeds.`;
 }
 
 function expandHome(filePath, home = os.homedir()) {
@@ -243,15 +252,16 @@ export function writeToken(token, home = os.homedir(), identity = null, {
   now = () => new Date(),
   writeFile = atomicWriteFileSync,
   unlinkFile = fs.unlinkSync,
+  managed = false,
 } = {}) {
-  const GITHUB_TOKEN_PATH = githubTokenPath(home);
+  const GITHUB_TOKEN_PATH = managed ? managedGithubTokenPath(home) : githubTokenPath(home);
   const directory = path.dirname(GITHUB_TOKEN_PATH);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   fs.chmodSync(directory, 0o700);
   atomicWriteFilePairSync(
     GITHUB_TOKEN_PATH,
     token,
-    githubTokenMetadataPath(home),
+    `${GITHUB_TOKEN_PATH}.account.json`,
     githubTokenMetadataData(identity, token, now),
     { mode: 0o600, writeFile, unlinkFile },
   );

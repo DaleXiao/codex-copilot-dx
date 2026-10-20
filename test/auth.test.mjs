@@ -68,10 +68,11 @@ test("interpretPoll: empty access_token is not done", () => {
   assert.equal(interpretPoll({ access_token: "" }).state, "fail");
 });
 
-test("githubReauthMessage: points users to the token file and login command", () => {
+test("githubReauthMessage: recommends reauth without deleting saved credentials", () => {
   const message = githubReauthMessage("Saved token is invalid.", "/tmp/ccdx-home");
   assert.match(message, /Saved token is invalid\./);
-  assert.ok(message.includes(`rm '${githubTokenPath("/tmp/ccdx-home")}'`));
+  assert.match(message, /ccdx auth reauth/);
+  assert.doesNotMatch(message, /rm |Delete/);
   assert.match(message, /ccdx/);
 });
 

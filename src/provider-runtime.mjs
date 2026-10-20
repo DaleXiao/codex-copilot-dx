@@ -16,7 +16,7 @@ const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavaila
 
 // Composition owns source selection. Providers never modify Codex, prediction,
 // image configuration or each other's credentials.
-export function createProviderRuntime({ githubClient, githubRegistry, githubCredentialFingerprint = "", home, env = process.env, platform = process.platform,
+export function createProviderRuntime({ githubClient, githubRegistry, githubCredentialFingerprint = "", githubClientConfigured = true, home, env = process.env, platform = process.platform,
   corePort = Number(env.ADAPTER_PORT || 2026), log = () => {}, createM365, startGateway, configureClients, restoreClients,
   discoverM365 = requestM365Accounts } = {}) {
   const options = { home, env, platform }, github = { ...createGithubProvider({ client: githubClient,
@@ -206,7 +206,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
         { id: "github", name: "GitHub Copilot", generation: dashboardGeneration(github), enabled: true, state: service.token_cached ? "ready" : "unknown",
           auth: { state: "unknown", token_cached: service.token_cached === true, expires_in_ms: service.token_expires_in_ms ?? null },
           models: { count: githubRegistry?.models?.data?.length ?? null, source: githubRegistry?.source || "unknown" },
-          clients: [{ id: "codex", name: "Codex App", selected: selection.codex === "github", state: "configured" }] },
+          clients: [{ id: "codex", name: "Codex App", selected: selection.codex === "github", state: githubClientConfigured ? "configured" : "unknown" }] },
         { id: "m365", name: "Microsoft 365", generation: m365 ? dashboardGeneration(m365) : 0, enabled, state: ms.state, reason: ms.reason, network_diagnostic: ms.network_diagnostic,
           auth: { state: ms.token_cached ? "authorized" : !enabled ? "disabled" : ms.reason ? "unavailable" : "unknown",
             account: ms.account?.login || "", token_cached: ms.token_cached === true,

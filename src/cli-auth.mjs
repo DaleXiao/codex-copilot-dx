@@ -1,5 +1,8 @@
 import { authStatus, authStatusOnline } from "./auth-status.mjs";
 import { status } from "./status.mjs";
+import { createInterface } from "node:readline/promises";
+import { createAccountTools } from "./account-tools.mjs";
+import { terminalCell as safeCell } from "./terminal-text.mjs";
 import {
   cliOutputFormat,
   cliOutputWidth,
@@ -29,7 +32,7 @@ function onlineStatusLine(profile) {
 function authStatusPlainLines(snapshot, { commandName }) {
   return [
     `${commandName} auth status`,
-    status(snapshot.profiles.codex.valid ? "ok" : "warn", `Codex: ${accountLabel(snapshot.profiles.codex)} [legacy path]`),
+    status(snapshot.profiles.codex.valid ? "ok" : "warn", `Codex: ${accountLabel(snapshot.profiles.codex)} [${snapshot.profiles.codex.source === "ccdx" ? "CCDX store" : "legacy path"}]`),
     onlineStatusLine(snapshot.profiles.codex),
     status("info", `Routing: responses -> ${snapshot.routing.responses}`),
   ].filter(Boolean);
@@ -103,6 +106,40 @@ export async function runAuthCommand({
   output = process.stdout,
   ...options
 } = {}) {
+  if (["login", "reauth", "logout", "check"].includes(action)) {
+    const tools = options.tools || createAccountTools(options);
+    if (action === "check") {
+      const checked = await tools.check(), snapshot = authStatus(options);
+      snapshot.profiles.codex.online = checked.online ? { ...checked.online, httpStatus: checked.online.http_status } : null;
+      return { action, output: formatAuthStatus(snapshot, { commandName, format, output }), snapshot };
+    }
+    if (action === "logout") {
+      if (!options.yes) {
+        const input = options.input || process.stdin;
+        if (!input.isTTY || !output.isTTY) throw new Error("Use --yes to sign out of CCDX. Other apps stay signed in.");
+        const prompt = createInterface({ input, output });
+        try { if (!/^y(?:es)?$/i.test((await prompt.question("Sign out of CCDX? New requests will need a sign-in [y/N]: ")).trim())) return { action, output: "Sign-out cancelled." }; }
+        finally { prompt.close(); }
+      }
+      await tools.logout({ confirmed: true });
+      return { action, output: "Signed out of CCDX. Other apps stay signed in." };
+    }
+    const controller = new AbortController();
+    let id;
+    const cancel = () => { controller.abort();if (id) void tools.cancel(id);else tools.dispose(); };
+    process.once("SIGINT", cancel);
+    try {
+      const started = await tools.start({ reauth: action === "reauth" || options.reauth === true, expectedLogin: options.expectedLogin });
+      id = started.operation?.id;
+      if (controller.signal.aborted && id) await tools.cancel(id);
+      if (started.operation?.state === "authorizing") output.write(`Open ${started.operation.verification_uri}\nCode: ${started.operation.user_code}\nWaiting for GitHub. Ctrl+C cancels; saved sign-in is kept.\n`);
+      const result = await tools.wait();
+      if (result.operation?.state === "failed") throw new Error(`Sign-in failed: ${safeCell(result.operation.reason)}. Saved sign-in kept.`);
+      return { action, output: result.operation?.state === "cancelled" ? "Sign-in cancelled. Saved sign-in kept."
+        : result.operation?.state === "complete" ? "Signed in and verified. Use a new conversation; restart CCDX to change accounts."
+          : "A sign-in is saved. Run ccdx auth check to verify it, or ccdx auth reauth to replace it." };
+    } finally { process.removeListener("SIGINT", cancel);tools.dispose(); }
+  }
   if (action !== "status") throw new Error(`Unsupported auth action: ${action}`);
   const snapshot = online ? await authStatusOnline(options) : authStatus(options);
   return { action, output: formatAuthStatus(snapshot, { commandName, format, output }), snapshot };

@@ -171,7 +171,7 @@ test("formatAuthStatus renders single-profile plain and responsive table output"
 
   const result = await runAuthCommand({ action: "status", home: tokenHome() });
   assert.equal(result.action, "status");
-  await assert.rejects(runAuthCommand({ action: "login" }), /Unsupported auth action/);
+  await assert.rejects(runAuthCommand({ action: "invalid-action" }), /Unsupported auth action/);
 });
 
 test("formatAuthStatus neutralizes terminal-control and line injection", () => {

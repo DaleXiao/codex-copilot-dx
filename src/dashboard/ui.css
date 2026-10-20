@@ -285,3 +285,26 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 
 :root[data-theme="light"] #animation-settings { --ansi-white:#234231;--ansi-159:#116b64;--ansi-123:#0d7771;--ansi-87:#116b75;--ansi-51:#14697e;--ansi-45:#1a6183;--ansi-39:#265f8d;--ansi-33:#365a8d; }
 :root[data-theme="light"] #animation-settings[data-terminal-palette="klein"] { --ansi-white:#002fa7;--ansi-159:#002fa7;--ansi-123:#002fa7;--ansi-87:#002fa7;--ansi-51:#002fa7;--ansi-45:#002fa7;--ansi-39:#002fa7;--ansi-33:#002fa7; }
+
+.state-label { display:inline-flex; align-items:center; gap:8px; max-width:100%; vertical-align:middle; white-space:normal; }
+.state-icon { width:16px; height:16px; flex:none; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+.state-label.state-ok, .state-label.state-running { color:var(--accent); }
+.state-label.state-warning { color:var(--bad); }
+.state-label.state-unavailable, .state-label.state-unknown { color:var(--muted); }
+.state-label > span { color:inherit; white-space:normal; }
+.badge:has(.state-label)::before { display:none; }
+.source-browse-note { margin:12px 0 20px; }
+.account-name { margin:18px 0 6px; font-size:19px; color:var(--strong); font-weight:650; }
+.account-fields { display:grid; grid-template-columns:minmax(110px,150px) minmax(0,1fr); gap:10px 18px; margin:20px 0; font-size:12px; line-height:1.7; }
+.account-fields dt { color:var(--muted); }
+.account-fields dd { margin:0; min-width:0; }
+.tool-details, .tool-flow { margin-top:18px; padding-top:16px; border-top:1px solid var(--border); }
+.tool-details summary, .tool-flow h3 { color:var(--heading); font-size:12px; }
+.device-code { display:block; color:var(--accent); font-size:23px; letter-spacing:.1em; margin:16px 0; }
+.tool-link { display:inline-flex; min-height:36px; align-items:center; color:var(--accent); margin-right:16px; }
+.tool-code { background:var(--page); border:1px solid var(--border); padding:14px; font:inherit; font-size:12px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; }
+.checks-table td { vertical-align:top; white-space:normal; }
+.checks-table th:first-child { width:23%; }
+.checks-table th:nth-child(2) { width:21%; }
+.checks-table details p { margin:8px 0; }
+@media(max-width:640px) { .account-fields { grid-template-columns:100px minmax(0,1fr); gap:10px; } .checks-table { min-width:530px; } }

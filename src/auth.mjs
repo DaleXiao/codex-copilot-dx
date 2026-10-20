@@ -10,6 +10,7 @@ import { githubTokenPath, githubTokenLockPath, readGithubTokenMetadata, readSave
 import { requestGithubDeviceCode, pollGithubDeviceFlow, awaitWithSignal, abortError, cancelResponseBody,
   sleep, DEFAULT_DEVICE_CODE_TIMEOUT_MS } from "./auth-device-flow.mjs";
 export { githubTokenPath, githubTokenLockPath, githubTokenMetadataPath, githubReauthMessage,
+  managedGithubTokenPath, legacyGithubTokenPath,
   githubTokenSources, sourceDescription, extractGithubTokenFromAuthJson, readGithubTokenSource,
   readGithubTokenMetadata, writeGithubTokenMetadata, writeToken } from "./auth-credentials.mjs";
 export { interpretPoll, requestGithubDeviceCode, pollGithubDeviceFlow } from "./auth-device-flow.mjs";

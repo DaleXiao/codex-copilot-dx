@@ -1,6 +1,6 @@
 # CCDX 1.2.8
 
-This report describes the 1.2.8 candidate and its bounded verification. Publication receipts are added after delivery; synthetic checks do not establish every upstream account's entitlement or physical device's behavior.
+This report describes the 1.2.8 release and its bounded verification environment. It is historical evidence; synthetic checks do not establish every upstream account's entitlement or physical device's behavior.
 
 ## Changes
 
@@ -32,4 +32,11 @@ Three bounded, alternating small-body held-stream runs per version passed 16/64/
 
 The pack has **194 files / 527664 bytes**, 3048 bytes more than 1.2.7; dependencies are unchanged. Tarball SHA-256: `5867eeb4f83d05bd516c2a958dcddf551183d37e036b29635b0dfedebd2a8648`.
 
-CI and publication receipts are recorded after the remaining release gates complete. Enterprise registry/proxy/certificate policy remains unchanged.
+## Published delivery
+
+- [CI 39530938311](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/39530938311) passed **17/17 jobs** at source/tag commit `a92b15f57e872eb67eedee15db91c7de39f1ced7`: Windows/macOS/Linux, Node 22.15/24, strict npm installs/upgrades, no-Git/no-Node bootstrap, native prediction, official-client synthetic replay, 48 Chromium/WebKit cases and terminal behavior. An initial browser run timed out in an existing catalog-recovery assertion; the final commit passed the complete matrix with that assertion intact.
+- [npm 1.2.8](https://www.npmjs.com/package/codex-copilot-dx/v/1.2.8) was published through [workflow 39531725258](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/39531725258). The immutable-tag job reran the full release gate. Published tarball SHA-1 `d2165ea08254ad005684acbd3bc878dafbf85e96` matches the verified local package; publication succeeded with the `latest` tag.
+- [GitHub v1.2.8](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.2.8) was published at `2026-10-21T02:15:37Z`. All five assets were downloaded fresh and matched local bytes, GitHub API SHA-256 digests and SHA256SUMS. All 194 packed file contents also matched the final source checkout.
+- The configured company registry returned E404 for 1.2.8 after publication. Synchronization is unconfirmed; `ccdx update github` uses the available GitHub Release channel. Dependencies still use the configured registry.
+
+The user's running installation and enterprise registry/proxy/certificate settings are preserved. Temporary browser engines, extracted baseline and release tooling are removed after delivery; release artifacts and receipts remain outside the checkout. The tag and published bytes remain immutable. No physical enterprise account or real model inference is claimed by these synthetic checks.

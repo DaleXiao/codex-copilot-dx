@@ -2,6 +2,8 @@
   const el = id => document.getElementById(id);
   const label = (node, key, values = {}) => globalThis.ccdxLanguage.set(node, key, values);
   const titles = { overview: "overview", codex: "Codex", claude: "Claude", models: "model_services", usage: "usage_and_diagnostics", requests: "request_records", checks: "tools_checks_title", system: "system_and_settings" };
+  const descriptions = { overview: "page_overview_description", codex: "page_codex_description", claude: "page_claude_description", models: "page_models_description", usage: "page_usage_description", requests: "page_requests_description", checks: "page_checks_description", system: "page_settings_description" };
+  const settingsViews = ["codex", "models", "system", "checks"];
   let current = "overview", settings = null, settingsPending = false, stopped = false, timer = null, ticks = 0;
   let sourceDirty = false, reviewDirty = false, sourceModels = [], modelsPreference = null, sourceGeneration = 0, modelsSource = null;
   let settingsReadAt = null;
@@ -46,9 +48,14 @@
       if (item.dataset.route === next) item.setAttribute("aria-current", "page");else item.removeAttribute("aria-current");
     }
     label(el("page-title"), titles[next]);
-    if (["codex", "models", "system"].includes(next)) void loadSettings();
+    label(el("page-description"), descriptions[next]);
+    el("page-settings-note").textContent = "";
+    window.scrollTo(0, 0);
+    el("main-content").focus({ preventScroll: true });
+    if (settingsViews.includes(next)) void loadSettings();
     if (next === "models") { void dashboardRefresh.refresh("models");void dashboardRefresh.refresh("auth"); }
     if (next === "usage") { void dashboardRefresh.refresh("usage");usageView.revealChart(); } else usageView.stopMotion();
+    if (next === "requests") renderContext();
     if (next === "system") { void dashboardRefresh.refresh("animation");void dashboardRefresh.refresh("updates"); }
     syncAnimationPreview();
   }
@@ -143,7 +150,7 @@
     syncAccountControls();
     try { applySettings(await api());settingsReadAt = new Date().toLocaleTimeString(); }
     catch (error) {
-      for (const id of ["settings-note", "page-settings-note"]) {
+      for (const id of ["settings-note", ...(settingsViews.includes(current) ? ["page-settings-note"] : [])]) {
         label(el(id), settingsReadAt ? "showing_previous_data_updated_time" : "could_not_read_settings", { time: settingsReadAt });
         el(id).title = error.message;
       }
@@ -156,7 +163,11 @@
     syncAccountControls();
     const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-on, #m365-off")];
     controls.forEach(input => { input.disabled = true; });
-    label(el("settings-note"), "applying");
+    const note = el(body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
+      : body.action.startsWith("history_") ? "effect-history" : body.action === "prediction_fix" ? "prediction-note"
+        : body.operation === "switch" ? "source-control-note" : body.operation === "auto-review" ? "review-control-note"
+          : body.operation === "account" ? "m365-account-note" : "m365-control-note");
+    label(note, "applying");
     if (button) button.setAttribute("aria-busy", "true");
     try {
       const data = await api(body);
@@ -176,8 +187,7 @@
       if (settings) applySettings(settings);
       if (body.operation === "account") { label(el("m365-account-note"), "company_account_not_saved", { reason: { key: accountReasons.has(error.code) ? error.code : error.message } });return; }
       if (body.action === "color_theme") { label(el("terminal-color-note"), "not_saved_error", { error: error.message });return; }
-      el("settings-note").textContent = error.message;el("source-control-note").textContent = error.message;el("m365-control-note").textContent = error.message;el("review-control-note").textContent = error.message;el("effect-history").textContent = error.message;
-      if (body.key) el(`effect-${body.key}`).textContent = error.message;
+      note.textContent = error.message;
     } finally {
       settingsPending = false;controls.forEach(input => { input.disabled = false; });
       syncAccountControls();
@@ -257,14 +267,14 @@
         await dashboardRefresh.refresh("status", { force: true });
         if (++ticks % 8 === 0) {
           await dashboardRefresh.refresh("auth", { force: true });
-          if (["codex", "models", "system"].includes(current)) await loadSettings();
+          if (settingsViews.includes(current)) await loadSettings();
         }
       }
       schedule();
     }, 2000);
   }
   window.addEventListener("hashchange", navigate);
-  el("refresh").addEventListener("click", () => { if (["codex", "models", "system"].includes(current)) void loadSettings(); });
+  el("refresh").addEventListener("click", () => { if (settingsViews.includes(current)) void loadSettings(); });
   window.addEventListener("pagehide", () => { stopped = true;clearTimeout(timer); });
   window.addEventListener("pageshow", () => { stopped = false;schedule(); });
   navigate();schedule();

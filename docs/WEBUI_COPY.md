@@ -498,3 +498,49 @@
 | model_activity_unknown | Activity unknown | 活动状态未知 |
 
 活动状态使用既有状态快照。未知与空闲分别显示；空闲文字仅用于无障碍标签，页面只显示单颗呼吸灯。
+
+## 1.2.9 页面职责与层级
+
+保持现有主题、图标和业务能力。刷新与版本更新分别命名；来源详情跟随所选来源。CLI 文案不变。
+
+| 消息 | 原文案 → 新文案（English） | 原文案 → 新文案（中文） |
+| --- | --- | --- |
+| page_overview_description | 新增 → Service, app connections and usage this run. | 新增 → 查看服务、应用和本次用量。 |
+| page_codex_description | 新增 → Set up Codex connections and features. | 新增 → 配置 Codex 接入与专属功能。 |
+| page_claude_description | 新增 → Claude app connections and request performance. | 新增 → 查看 Claude 接入与请求表现。 |
+| page_models_description | 新增 → Accounts, access checks and model lists. | 新增 → 管理账号、访问权限和模型列表。 |
+| page_usage_description | 新增 → Usage totals, daily trends and annual activity. | 新增 → 查看用量汇总、趋势与年度活动。 |
+| page_requests_description | 新增 → Recent requests, outcomes and issues. | 新增 → 查看最近请求、处理结果和异常。 |
+| page_checks_description | 新增 → Check this computer and review connection repairs. | 新增 → 检查本机环境，排查接入问题。 |
+| page_settings_description | 新增 → Appearance, terminal, startup and version. | 新增 → 调整外观、启动行为和版本。 |
+| current_source | 新增 → Current source | 新增 → 当前来源 |
+| connection_setup | 新增 → Setup | 新增 → 接入配置 |
+| configured_not_successful | 新增 → Configured does not mean a request succeeded. | 新增 → 已配置，不代表请求已成功。 |
+| view_model_list | 新增 → View model list | 新增 → 查看模型列表 |
+| view_request_details | 新增 → View request details | 新增 → 查看请求详情 |
+| request_performance | 新增 → REQUEST PERFORMANCE | 新增 → 请求表现 |
+| status_and_repair | 新增 → Status and repair | 新增 → 状态与修复 |
+| local_service_not_app | 新增 → Local service status does not confirm the app is open. | 新增 → 本地服务运行，不代表应用已打开。 |
+| claude_shared_source | 新增 → Account and source settings apply to both Claude apps. | 新增 → 账号与来源设置供两个应用共用。 |
+| manage_source_account | 新增 → Manage source and account | 新增 → 管理来源与账号 |
+| connection_details | 新增 → Connection details | 新增 → 连接详情 |
+| messages_combined_since_start | 新增 → MESSAGES COMBINED / SINCE STARTUP | 新增 → Messages 合计 / 本次启动 |
+| claude_metrics_combined | 新增 → These metrics are not separated by Claude app. | 新增 → 当前统计不区分两个 Claude 应用。 |
+| source_access_details | 新增 → SOURCE ACCESS DETAILS | 新增 → 来源访问详情 |
+| account_access | 新增 → ACCOUNT AND ACCESS | 新增 → 账号与访问 |
+| account_management_location | 新增 → Manage sign-in, accounts and models under Model sources. | 新增 → 登录、账号和模型在来源页管理。 |
+| check_github_connection | 新增 → Check GitHub connection | 新增 → 检查 GitHub 连接 |
+| view_m365_account | 新增 → View M365 account | 新增 → 查看 M365 账号 |
+| more_checks_reports | 新增 → MORE CHECKS AND REPORTS | 新增 → 更多检查与报告 |
+| diagnostic_report | 新增 → Diagnostic report | 新增 → 诊断报告 |
+| startup_preferences | 新增 → STARTUP | 新增 → 启动行为 |
+| source_entire_page | 新增 → Source / entire page | 新增 → 来源 / 作用于整页 |
+| refresh_usage | 新增 → Refresh usage | 新增 → 刷新用量 |
+| usage_totals | 新增 → USAGE TOTALS | 新增 → 用量汇总 |
+| model_both_charts | 新增 → Model / both charts | 新增 → 模型 / 作用于两张图 |
+| calendar_measure | 新增 → Measure / calendar only | 新增 → 指标 / 仅作用于日历 |
+| source_summary_details | 新增 → Source summaries | 新增 → 来源摘要 |
+| request_metadata | 新增 → Request metadata | 新增 → 请求技术信息 |
+| auto_refresh | Auto refresh → Auto refresh | 自动更新 → 自动刷新 |
+| auto_refresh_on | Auto refresh · ON → Auto refresh · ON | 自动更新 · 开 → 自动刷新 · 开 |
+| auto_refresh_off | Auto refresh · OFF → Auto refresh · OFF | 自动更新 · 关 → 自动刷新 · 关 |

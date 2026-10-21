@@ -44,7 +44,7 @@
       <main id="main-content" tabindex="-1">
         <section class="intro">
           <h1><span id="page-title" data-i18n="overview">Overview</span></h1>
-          <div class="snapshot-meta"><p id="auth-account" role="status" data-i18n="reading" data-i18n-title="provider_status_authorization_and_inference_are_separate" title="Source status. Sign-in and successful requests are checked separately.">READING</p><p id="updated" data-i18n="reading_status">Reading status…</p></div>
+          <p id="page-description" class="page-description" data-i18n="page_overview_description">Service, app connections and usage this run.</p>
           <p id="page-settings-note" class="hint" role="status"></p>
         </section>
 
@@ -53,11 +53,11 @@
         <div id="model-activity" class="model-activity" data-state="unknown" role="status" aria-label="Activity unknown" data-i18n-label="model_activity_unknown">
           <span class="activity-lamp" aria-hidden="true"></span><span class="activity-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span id="model-activity-label" class="activity-label" data-i18n="model_activity_unknown">Activity unknown</span>
         </div>
-        <section class="overview" aria-label="Overview" data-i18n-label="overview"><article class="card"><h2 data-i18n="adapter">SERVICE</h2><strong id="version">—</strong><p id="uptime">—</p></article><article class="card"><h2 data-i18n="sources">SOURCES</h2><strong id="source-summary">—</strong><p id="source-detail">—</p></article></section>
+        <section class="overview" aria-label="Overview" data-i18n-label="overview"><article class="card"><h2 data-i18n="adapter">SERVICE</h2><strong id="version">—</strong><p id="uptime">—</p><p id="updated" class="refresh-time" data-i18n="reading_status">Reading status…</p></article><article class="card"><h2 data-i18n="sources">SOURCES</h2><strong id="source-summary">—</strong><p id="source-detail">—</p></article></section>
         <details class="panel dashboard-section" id="client-features" open>
           <summary class="panel-heading"><h2 data-i18n="client_connections">APP SETUP</h2><span data-i18n="configuration_observation">SETUP AND ACTIVITY</span></summary>
-          <div class="table-wrap"><table><thead><tr><th data-i18n="source">Source</th><th data-i18n="client">APP</th><th data-i18n="state">STATE</th><th data-i18n="gateway">LOCAL ACCESS</th><th data-i18n="last_request">LAST REQUEST</th></tr></thead><tbody id="provider-clients"></tbody></table></div>
-          <div id="provider-requests" class="hint"></div>
+          <div class="table-wrap"><table><thead><tr><th data-i18n="client">APP</th><th data-i18n="current_source">Current source</th><th data-i18n="connection_setup">Setup</th><th data-i18n="local_bridge">Local service</th><th data-i18n="last_request">LAST REQUEST</th></tr></thead><tbody id="provider-clients"></tbody></table></div>
+          <p class="hint" data-i18n="configured_not_successful">Configured does not mean a request succeeded.</p>
         </details>
         <section class="panel dashboard-section"><h2 data-i18n="this_run_usage">THIS RUN</h2><p id="runtime-usage" class="table-note"></p><p class="table-note"><span data-i18n="approx_cache_hit_rate">Approx. cache hit rate</span>: <strong id="runtime-cache-hit" data-i18n-title="runtime_cache_hit_basis" title="Reused input / input tokens. ~ Partial counts. — Unknown or invalid.">—</strong></p><p class="hint" data-i18n="updated_from_returned_usage_not_a_live_bill_pending_usage_is_not">Counts returned usage only. Pending usage is not included. This is not a live bill.</p></section>
         </div>
@@ -72,6 +72,8 @@
           </div>
           <p id="source-model-note" class="hint" data-i18n="github_model_in_codex">Choose your conversation model in Codex.</p>
           <div id="source-control-note" class="hint" role="status"></div>
+          <p class="table-note model-summary"><span data-i18n="codex_models">CODEX MODELS</span>: <strong id="models">—</strong> · <span id="model-source">—</span></p>
+          <a class="section-link" href="#models" data-source-link="codex" data-i18n="view_model_list">View model list</a>
         </section>
         <section class="panel dashboard-section" aria-labelledby="review-heading">
           <h2 id="review-heading" data-i18n="auto_review_settings">AUTO REVIEW</h2>
@@ -83,56 +85,68 @@
           </div>
           <p id="review-control-note" class="hint" role="status"></p>
         </section>
-        <section class="overview client-overview"><article class="card"><h2 data-i18n="codex_models">CODEX MODELS</h2><strong id="models">—</strong><p id="model-source">—</p></article></section>
-        <details class="panel dashboard-section" id="runtime-resources" open>
-          <summary data-i18n="codex_conversations">CODEX CONVERSATIONS</summary>
-          <div class="details"><article class="panel">
-            <div class="panel-heading"><h2 data-i18n="model_outcomes">REQUEST RESULTS</h2><span>RESPONSES</span></div>
-            <dl class="stats"><div><dt data-i18n="completed">Completed</dt><dd id="completed">—</dd></div><div><dt data-i18n="incomplete">Incomplete</dt><dd id="incomplete">—</dd></div><div><dt data-i18n="failed">Failed</dt><dd id="failed">—</dd></div><div><dt data-i18n="cancelled">Cancelled</dt><dd id="cancelled">—</dd></div></dl>
-            <p class="hint" data-i18n="http_2xx_model_completed">HTTP success does not mean a complete reply.</p>
-            <dl class="stats timing-stats"><div><dt data-i18n="first_output">First output</dt><dd id="ttft">—</dd></div><div><dt data-i18n="output_speed">Output speed</dt><dd id="tpot">—</dd></div></dl>
-            <p class="hint" data-i18n="codex_responses_timing_since_startup_output_speed_is_estimated">Codex Responses timing since startup. Speed is estimated.</p>
-          </article><article class="panel">
-            <div class="panel-heading"><h2 data-i18n="codex_conversation_buffer">CONVERSATION BUFFER</h2><span data-i18n="active_limit">STORAGE LIMIT</span></div>
+        <details class="panel dashboard-section" id="prediction-settings" open>
+          <summary class="panel-heading"><h2 data-i18n="codex_input_predictions">INPUT SUGGESTIONS</h2><span data-i18n="codex_only">CODEX ONLY</span></summary>
+          <div class="setting-row"><label for="setting-prediction_enabled" data-i18n="allow_prediction_configuration">Allow suggestion updates</label><input id="setting-prediction_enabled" type="checkbox" role="switch" disabled><span id="effect-prediction_enabled" class="hint" role="status"></span></div>
+          <details class="tool-details"><summary data-i18n="status_and_repair">Status and repair</summary>
+          <dl class="stats"><div><dt data-i18n="prediction_integration_setup">Suggestion setup</dt><dd id="prediction-preference">—</dd></div><div><dt data-i18n="local_bridge">Local service</dt><dd id="prediction-bridge">—</dd></div><div><dt data-i18n="client_route">App settings requests</dt><dd id="prediction-route">—</dd></div><div><dt data-i18n="visible_candidate">Suggestion displayed</dt><dd id="prediction-candidate">—</dd></div></dl>
+          <p id="prediction-note" class="hint">—</p>
+          <p class="hint" data-i18n="configured_does_not_mean_displayed_use_ccdx_prediction_status_fo">Enabled does not mean a suggestion appeared. Details: ccdx prediction status.</p>
+
+          <div class="section-actions"><button id="fix-prediction" type="button" data-i18n="check_and_repair">Check and repair</button></div>
+          <p class="hint" data-i18n="pause_keeps_the_existing_trust_and_route_codex_may_retain_cached">Pause keeps existing trust and routing. Cached suggestions may still appear. First quit Codex, then run ccdx prediction on.</p>
+          </details>
+        </details>
+        <details class="panel dashboard-section" id="additional-capabilities">
+          <summary class="panel-heading"><h2 data-i18n="codex_image_generation">IMAGE GENERATION</h2><span data-i18n="codex_only">CODEX ONLY</span></summary>
+          <strong id="image">—</strong><p id="image-detail" class="hint">—</p>
+          <div class="setting-row"><label for="setting-image_enabled" data-i18n="allow_new_image_calls">Allow image requests</label><input id="setting-image_enabled" type="checkbox" role="switch" disabled><span id="effect-image_enabled" class="hint" role="status"></span></div>
+          <p class="hint" data-i18n="pause_keeps_the_provider_configuration_running_calls_can_finish_">Pause keeps your setup. Running image requests can finish. First setup: ccdx enable-image.</p>
+        </details>
+        <details class="panel dashboard-section" id="runtime-resources">
+          <summary data-i18n="codex_conversation_buffer">CONVERSATION BUFFER</summary>
             <strong id="history">—</strong><progress id="history-meter" class="meter" max="100" value="0" aria-label="Local history usage" data-i18n-label="history_cache_usage"></progress>
             <p id="history-detail" class="hint">—</p>
-          </article></div>
+
           <p class="hint" data-i18n="temporary_local_data_for_responses_continuation_not_a_conversati">Keeps temporary data to continue replies. Does not save a chat archive.</p>
           <div class="section-actions"><label><span data-i18n="buffer_limit_mib">Buffer limit (MiB)</span> <input id="history-limit" type="number" min="1" max="65536" step="1"></label><button id="save-history" type="button" data-i18n="apply_limit">Save limit</button><button id="clean-history" type="button" data-i18n="clear_inactive_buffer">Clear conversation buffer</button></div>
           <p id="effect-history" class="hint" role="status"></p>
         </details>
-        <details class="panel dashboard-section" id="prediction-settings" open>
-          <summary class="panel-heading"><h2 data-i18n="codex_input_predictions">INPUT SUGGESTIONS</h2><span data-i18n="codex_only">CODEX ONLY</span></summary>
-          <dl class="stats"><div><dt data-i18n="prediction_integration_setup">Suggestion setup</dt><dd id="prediction-preference">—</dd></div><div><dt data-i18n="local_bridge">Local service</dt><dd id="prediction-bridge">—</dd></div><div><dt data-i18n="client_route">App settings requests</dt><dd id="prediction-route">—</dd></div><div><dt data-i18n="visible_candidate">Suggestion displayed</dt><dd id="prediction-candidate">—</dd></div></dl>
-          <p id="prediction-note" class="hint">—</p>
-          <p class="hint" data-i18n="configured_does_not_mean_displayed_use_ccdx_prediction_status_fo">Enabled does not mean a suggestion appeared. Details: ccdx prediction status.</p>
-          <div class="setting-row"><label for="setting-prediction_enabled" data-i18n="allow_prediction_configuration">Allow suggestion updates</label><input id="setting-prediction_enabled" type="checkbox" role="switch" disabled><span id="effect-prediction_enabled" class="hint" role="status"></span></div>
-          <div class="section-actions"><button id="fix-prediction" type="button" data-i18n="check_and_repair">Check and repair</button></div>
-          <p class="hint" data-i18n="pause_keeps_the_existing_trust_and_route_codex_may_retain_cached">Pause keeps existing trust and routing. Cached suggestions may still appear. First quit Codex, then run ccdx prediction on.</p>
-        </details>
-        <details class="panel dashboard-section" id="additional-capabilities">
-          <summary data-i18n="codex_image_generation">IMAGE GENERATION</summary>
-          <article class="panel">
-            <div class="panel-heading"><h2 data-i18n="image_service">Image service</h2><span data-i18n="codex_only">CODEX ONLY</span></div>
-            <strong id="image">—</strong><p id="image-detail" class="hint">—</p>
-          </article>
-          <div class="setting-row"><label for="setting-image_enabled" data-i18n="allow_new_image_calls">Allow image requests</label><input id="setting-image_enabled" type="checkbox" role="switch" disabled><span id="effect-image_enabled" class="hint" role="status"></span></div>
-          <p class="hint" data-i18n="pause_keeps_the_provider_configuration_running_calls_can_finish_">Pause keeps your setup. Running image requests can finish. First setup: ccdx enable-image.</p>
+        <details class="panel dashboard-section" id="codex-performance">
+          <summary data-i18n="request_performance">REQUEST PERFORMANCE</summary>
+            <dl class="stats"><div><dt data-i18n="completed">Completed</dt><dd id="completed">—</dd></div><div><dt data-i18n="incomplete">Incomplete</dt><dd id="incomplete">—</dd></div><div><dt data-i18n="failed">Failed</dt><dd id="failed">—</dd></div><div><dt data-i18n="cancelled">Cancelled</dt><dd id="cancelled">—</dd></div></dl>
+            <p class="hint" data-i18n="http_2xx_model_completed">HTTP success does not mean a complete reply.</p>
+            <dl class="stats timing-stats"><div><dt data-i18n="first_output">First output</dt><dd id="ttft">—</dd></div><div><dt data-i18n="output_speed">Output speed</dt><dd id="tpot">—</dd></div></dl>
+            <p class="hint" data-i18n="codex_responses_timing_since_startup_output_speed_is_estimated">Codex Responses timing since startup. Speed is estimated.</p>
+          <a class="section-link" href="#requests" data-i18n="view_request_details">View request details</a>
         </details>
         </div>
         <div data-view="claude" hidden>
-        <section class="panel dashboard-section" aria-labelledby="claude-heading">
-          <div class="panel-heading"><h2 id="claude-heading">Claude App / Claude Code</h2><span>ANTHROPIC MESSAGES</span></div>
-          <p id="claude-route" class="table-note"></p>
+        <section class="panel dashboard-section" id="claude-connections">
+          <h2 data-i18n="client_connections">APP SETUP</h2>
+          <div class="table-wrap"><table><thead><tr><th data-i18n="client">APP</th><th data-i18n="connection_setup">Setup</th><th data-i18n="local_bridge">Local service</th><th data-i18n="last_request">LAST REQUEST</th></tr></thead><tbody id="claude-clients"></tbody></table></div>
           <p id="claude-client-state" class="hint"></p>
+          <p class="hint" data-i18n="local_service_not_app">Local service status does not confirm the app is open.</p>
+        </section>
+        <section class="panel dashboard-section">
+          <h2 data-i18n="source">Source</h2><p class="table-note">Microsoft 365</p>
+          <p class="hint" data-i18n="claude_shared_source">Account and source settings apply to both Claude apps.</p>
+          <a class="section-link" href="#models" data-source-link="m365" data-i18n="manage_source_account">Manage source and account</a>
+          <details class="tool-details"><summary data-i18n="connection_details">Connection details</summary><p id="claude-route" class="table-note"></p><p>Anthropic Messages</p></details>
+        </section>
+        <section class="panel dashboard-section" id="claude-performance">
+          <div class="panel-heading"><h2 data-i18n="request_performance">REQUEST PERFORMANCE</h2><span data-i18n="messages_combined_since_start">MESSAGES COMBINED / SINCE STARTUP</span></div>
           <dl class="stats"><div><dt data-i18n="completed">Completed</dt><dd id="claude-completed">—</dd></div><div><dt data-i18n="incomplete">Incomplete</dt><dd id="claude-incomplete">—</dd></div><div><dt data-i18n="failed">Failed</dt><dd id="claude-failed">—</dd></div><div><dt data-i18n="cancelled">Cancelled</dt><dd id="claude-cancelled">—</dd></div><div><dt data-i18n="first_output">First output</dt><dd id="claude-ttft">—</dd></div><div><dt data-i18n="output_speed">Output speed</dt><dd id="claude-speed">—</dd></div></dl>
+          <p class="hint" data-i18n="claude_metrics_combined">These metrics are not separated by Claude app.</p>
           <p class="hint" data-i18n="since_this_service_started_configuration_authorization_model_dis">Counts start with this service. Setup, sign-in, listed models and successful requests are separate checks.</p>
+          <a class="section-link" href="#requests" data-i18n="view_request_details">View request details</a>
         </section>
         </div>
         <div data-view="models" hidden>
         <div id="model-providers" class="provider-tabs" role="tablist" aria-label="Model providers" data-i18n-label="model_providers"></div>
         <p class="hint source-browse-note" data-i18n="tools_source_browse">Browsing a source does not change app settings.</p>
         <div id="source-account-panel" role="tabpanel">
+        <p id="source-status-note" class="hint" role="status"></p>
         <section class="panel dashboard-section" id="github-account">
           <div class="panel-heading"><h2>GitHub Copilot</h2><span id="github-account-state"></span></div>
           <p id="github-account-name" class="account-name">—</p><p id="github-account-hint" class="hint"></p>
@@ -173,7 +187,7 @@
           <p class="hint" data-i18n="catalog_listing_does_not_guarantee_inference_access">Listed does not mean your account can use it.</p>
         </details>
         <details class="panel dashboard-section" id="account-authorization">
-          <summary class="panel-heading"><h2 data-i18n="account_authorization">ACCOUNT AUTHORIZATION</h2><span data-i18n="by_provider">BY SOURCE</span></summary>
+          <summary data-i18n="source_access_details">SOURCE ACCESS DETAILS</summary>
           <p class="hint" data-i18n="saved_credentials_authorization_model_access_and_client_requests">Saved sign-in, access, models and app requests are separate checks.</p>
           <div class="table-wrap"><table><thead><tr><th data-i18n="source">Source</th><th data-i18n="account">ACCOUNT</th><th data-i18n="authorization">AUTHORIZATION</th><th data-i18n="service">SERVICE</th><th data-i18n="last_verified">LAST VERIFIED</th><th data-i18n="time_left">Time left</th></tr></thead><tbody id="provider-auth"></tbody></table></div>
         </details>
@@ -183,26 +197,35 @@
           <section class="panel dashboard-section">
             <h2 data-i18n="tools_checks_title">Checks &amp; repairs</h2>
             <p class="hint" data-i18n="tools_local_scope">Local checks do not contact external services.</p>
-            <div class="section-actions"><button id="check-local" type="button" data-i18n="tools_check_local">Check this computer</button><button id="check-account-link" type="button" data-i18n="tools_check_connection">Check connection</button><button id="export-report" type="button" data-i18n="tools_export_report">Export report</button></div>
+            <div class="section-actions"><button id="check-local" type="button" data-i18n="tools_check_local">Check this computer</button></div>
             <p id="checks-note" class="table-note" role="status" aria-live="polite" data-i18n="tools_checks_empty">Run a check to see the results.</p>
             <div class="table-wrap"><table class="checks-table"><thead><tr><th data-i18n="tools_check_item">Check</th><th data-i18n="state">State</th><th data-i18n="tools_details">Details</th></tr></thead><tbody id="checks-body"></tbody></table></div>
+          </section>
+          <section class="panel dashboard-section">
+            <h2 data-i18n="account_access">ACCOUNT AND ACCESS</h2><p class="hint" data-i18n="account_management_location">Manage sign-in, accounts and models under Model sources.</p>
+            <div class="section-actions"><button id="check-account-link" type="button" data-i18n="check_github_connection">Check GitHub connection</button><a class="section-link" href="#models" data-source-link="m365" data-i18n="view_m365_account">View M365 account</a></div>
           </section>
           <section class="panel dashboard-section">
             <h2 data-i18n="tools_codex_connection">Codex connection</h2><p class="hint" data-i18n="tools_config_scope">Review CCDX-managed fields before repair. Other settings are preserved.</p>
             <div class="section-actions"><button id="preview-config-repair" type="button" data-i18n="tools_review_repair">Review repair</button></div>
             <section id="config-repair-preview" class="tool-flow" hidden><h3 data-i18n="tools_repair_preview">Repair preview</h3><dl id="config-repair-fields" class="failure-detail"></dl><pre id="config-preview-details" class="tool-code"></pre><div class="section-actions"><button id="apply-config-repair" type="button" data-i18n="tools_apply_repair">Back up and repair</button><button id="cancel-config-repair" type="button" data-i18n="cancel">Cancel</button></div></section>
           </section>
-          <details class="panel dashboard-section"><summary data-i18n="tools_more_checks">More checks</summary>
+          <details class="panel dashboard-section" id="runtime-diagnostics"><summary data-i18n="runtime_details">RUNTIME DETAILS</summary>
+        <section class="diagnostic-section"><h2 data-i18n="process_listener">LOCAL SERVICE</h2><p id="process-state" class="table-note"></p><p id="process-memory" class="hint"></p><p id="process-queues" class="hint"></p><p id="process-notice" class="hint" role="status"></p></section>
+        <section class="diagnostic-section"><h2 data-i18n="http_traffic">SERVICE REQUESTS</h2><strong id="requests">—</strong><p id="request-errors">—</p><p id="http-error-breakdown">—</p><p><span data-i18n="per_request_limits_active">Per-request limits</span><br><span id="body-limits">—</span></p></section>
+          </details>
+          <details class="panel dashboard-section"><summary data-i18n="more_checks_reports">MORE CHECKS AND REPORTS</summary>
             <div class="section-actions"><button id="check-network" type="button" data-i18n="tools_network_check">Network settings</button></div><p id="network-check-result" class="hint" role="status"></p>
             <h3 data-i18n="tools_compatibility">Model compatibility</h3><p class="hint" data-i18n="tools_compatibility_scope">This test sends model requests and uses quota. Run it explicitly in your terminal:</p><pre class="tool-code">ccdx doctor --compat</pre>
-            <p class="hint" data-i18n="tools_report_scope">Reports omit credentials, account details and chat content.</p>
+            <div class="tool-details"><h3 data-i18n="diagnostic_report">Diagnostic report</h3><p class="hint" data-i18n="tools_report_scope">Reports omit credentials, account details and chat content.</p><div class="section-actions"><button id="export-report" type="button" data-i18n="tools_export_report">Export report</button></div></div>
           </details>
         </div>
         <div data-view="usage" hidden>
+        <div class="section-actions usage-source-controls"><label><span data-i18n="source_entire_page">Source / entire page</span><select id="usage-provider"><option value="" data-i18n="all_providers">All providers</option></select></label><button id="refresh-usage" type="button" data-i18n="refresh_usage">Refresh usage</button></div>
 
         <details class="panel dashboard-section" id="model-usage" open>
-          <summary class="panel-heading"><h2 data-i18n="usage">MODEL USAGE</h2><span id="usage-state" data-i18n="reading_log">COUNTING</span></summary>
-          <div class="section-actions"><label><span data-i18n="source">Source</span> <select id="usage-provider"><option value="" data-i18n="all_providers">All providers</option></select></label><button id="clear-usage-day" type="button" hidden data-i18n="all_history">Show all</button><button id="refresh-usage" type="button" data-i18n="refresh">Refresh</button></div>
+          <summary class="panel-heading"><h2 data-i18n="usage_totals">USAGE TOTALS</h2><span id="usage-state" data-i18n="reading_log">COUNTING</span></summary>
+          <div class="section-actions"><button id="clear-usage-day" type="button" hidden data-i18n="all_history">Show all</button></div>
           <p id="usage-note" class="table-note" data-i18n="aggregating_local_usage_metadata">Counting local usage…</p>
           <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="calls">REQUESTS</th><th scope="col" data-i18n="input">INPUT USAGE</th><th scope="col" data-i18n="cache_read">REUSED INPUT</th><th scope="col" data-i18n="output">OUTPUT USAGE</th><th scope="col" data-i18n="total">TOTAL</th><th scope="col" data-i18n="cache_hit">REUSE RATE</th></tr></thead><tbody id="usage-body"><tr><td colspan="7" data-i18n="loading">Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n="cache_hit_recorded_cached_input_tokens_incomplete_history_unavai">Unit: Token. Reused input is part of input.
@@ -210,41 +233,40 @@
           <details id="usage-analytics" class="analytics-section">
             <summary data-i18n="usage_analytics">USAGE TRENDS</summary>
             <div class="analytics-controls">
-              <label><span data-i18n="model_5e2c6">Model</span> <select id="analytics-model"><option value="" data-i18n="all_models">All models</option></select></label>
-              <label><span data-i18n="daily_range">Date range</span> <select id="analytics-range"><option value="7" data-i18n="7_days">Last 7 days</option><option value="30" selected data-i18n="30_days">Last 30 days</option><option value="90" data-i18n="90_days">Last 90 days</option></select></label>
-              <label><span data-i18n="chart_view">Chart view</span> <select id="analytics-view"><option value="bars" selected data-i18n="bar_chart">Bar chart</option><option value="line" data-i18n="line_chart">Line chart</option></select></label>
-              <label><span data-i18n="activity">Measure</span> <select id="analytics-metric"><option value="requests" data-i18n="calls_b73a5">Requests</option><option value="tokens" data-i18n="tokens">Usage (Token)</option></select></label>
+              <label><span data-i18n="model_both_charts">Model / both charts</span> <select id="analytics-model"><option value="" data-i18n="all_models">All models</option></select></label>
             </div>
             <p id="analytics-note" class="table-note" role="status" data-i18n="open_to_read_retained_usage_history">Open to view usage trends.</p>
             <p id="analytics-updated" class="refresh-time"></p>
-            <div class="chart-heading"><h3 data-i18n="daily_tokens">DAILY USAGE</h3><span data-i18n="input_output_cache_included_in_input">INPUT + OUTPUT / REUSED INPUT IS PART OF INPUT</span></div>
+            <div class="chart-heading"><h3 data-i18n="daily_tokens">DAILY USAGE</h3><div class="analytics-controls"><label><span data-i18n="daily_range">Date range</span> <select id="analytics-range"><option value="7" data-i18n="7_days">Last 7 days</option><option value="30" selected data-i18n="30_days">Last 30 days</option><option value="90" data-i18n="90_days">Last 90 days</option></select></label>
+              <label><span data-i18n="chart_view">Chart view</span> <select id="analytics-view"><option value="bars" selected data-i18n="bar_chart">Bar chart</option><option value="line" data-i18n="line_chart">Line chart</option></select></label></div></div><p class="hint" data-i18n="input_output_cache_included_in_input">INPUT + OUTPUT / REUSED INPUT IS PART OF INPUT</p>
             <div id="daily-bars" class="daily-bars" aria-label="Daily usage in Token" data-i18n-label="daily_token_usage"></div>
             <div class="daily-axis"><span id="daily-from"></span><span id="daily-to"></span></div>
             <div class="chart-legend"><span class="legend-input" data-i18n="input_36ecb">Input usage</span><span class="legend-output" data-i18n="output_b2439">Output usage</span></div>
-            <div class="chart-heading"><h3 data-i18n="request_activity_365_days">ACTIVITY · LAST 365 DAYS</h3><span id="activity-scale">—</span></div>
+            <div class="chart-heading"><h3 data-i18n="request_activity_365_days">ACTIVITY · LAST 365 DAYS</h3><div class="analytics-controls"><label><span data-i18n="calendar_measure">Calendar measure</span> <select id="analytics-metric"><option value="requests" data-i18n="calls_b73a5">Requests</option><option value="tokens" data-i18n="tokens">Usage (Token)</option></select></label></div></div><p id="activity-scale" class="hint">—</p>
             <div class="calendar-scroll"><div class="calendar-grid"><div id="calendar-months" class="calendar-months" aria-hidden="true"></div><div id="activity-calendar" class="activity-calendar" aria-label="Daily recorded activity over 365 days" data-i18n-label="daily_recorded_request_activity"></div></div></div>
             <p id="analytics-selection" class="hint" role="status" data-i18n="select_a_day_to_inspect_its_model_totals_no_history_is_distinct_">Select a day for its usage. No records does not mean zero requests.</p>
           </details>
         </details>
         </div>
         <div data-view="requests" hidden>
-        <details class="panel dashboard-section" id="source-requests">
+        <details class="panel dashboard-section" id="source-requests" open>
           <summary data-i18n="requests_by_source">REQUESTS BY SOURCE</summary>
           <p class="hint" data-i18n="results_since_startup_partial_usage_is_marked_separately">Results since startup. Partial usage is marked separately.</p>
           <div class="table-wrap"><table><thead><tr><th data-i18n="source">Source</th><th data-i18n="protocol">Protocol</th><th data-i18n="active">Active</th><th data-i18n="completed">Completed</th><th data-i18n="incomplete">Incomplete</th><th data-i18n="failed">Failed</th><th data-i18n="cancelled">Cancelled</th><th data-i18n="unknown">Unknown</th></tr></thead><tbody id="source-requests-body"></tbody></table></div>
+          <details class="tool-details"><summary data-i18n="source_summary_details">Source summaries</summary><div id="provider-requests" class="hint"></div></details>
+        </details>
+        <details class="panel dashboard-section" id="request-context" open>
+          <summary data-i18n="recent_request_context">RECENT REQUESTS</summary>
+          <p id="context-note" class="table-note">—</p>
+          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="time">Time</th><th scope="col" data-i18n="source">Source</th><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="outcome">RESULT</th><th scope="col" data-i18n="input_tokens">INPUT USAGE</th><th scope="col" data-i18n="tools_details">Details</th></tr></thead><tbody id="context-body"><tr><td colspan="6" data-i18n="no_observed_request_metadata">No request records yet.</td></tr></tbody></table></div>
+          <p class="hint" data-i18n="recent_upstream_request_metadata_not_exact_live_session_occupanc">Size: MiB. Usage: Token.
+Request records do not show exact current-chat usage.
+Missing data is unknown. This panel keeps no prompts or images.</p>
         </details>
         <details class="lower" id="recent-failures" open>
           <summary class="panel-heading"><h2 data-i18n="recent_inference_http_failures">RECENT REQUEST ISSUES</h2><span id="failure-count">requests + events</span></summary>
           <ol id="failures"><li class="empty" data-i18n="reading_874bf">Reading…</li></ol>
           <p class="hint" data-i18n="upstream_messages_may_contain_sensitive_text">Error details may include private data.</p>
-        </details>
-        <details class="panel dashboard-section" id="request-context">
-          <summary data-i18n="recent_request_context">RECENT REQUESTS</summary>
-          <p id="context-note" class="table-note">—</p>
-          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="wire_mib">DATA SIZE</th><th scope="col" data-i18n="images">IMAGES</th><th scope="col" data-i18n="input_tokens">INPUT USAGE</th><th scope="col" data-i18n="model_window">MODEL LIMIT</th><th scope="col" data-i18n="input_window">CAPACITY USED</th><th scope="col" data-i18n="outcome">RESULT</th></tr></thead><tbody id="context-body"><tr><td colspan="7" data-i18n="no_observed_request_metadata">No request records yet.</td></tr></tbody></table></div>
-          <p class="hint" data-i18n="recent_upstream_request_metadata_not_exact_live_session_occupanc">Size: MiB. Usage: Token.
-Request records do not show exact current-chat usage.
-Missing data is unknown. This panel keeps no prompts or images.</p>
         </details>
         </div>
         <div data-view="system" hidden>
@@ -301,14 +323,12 @@ Missing data is unknown. This panel keeps no prompts or images.</p>
   </section>
 
         <section class="panel dashboard-section" aria-labelledby="settings-heading">
-          <h2 id="settings-heading" data-i18n="service_settings">SERVICE SETTINGS</h2>
+          <h2 id="settings-heading" data-i18n="startup_preferences">STARTUP</h2>
           <p class="hint" data-i18n="saved_preference_and_effective_state_are_separate_environment_ov">Saved choices and current behavior are shown separately. Startup overrides and required restarts are listed.</p>
           <div class="setting-row"><label for="setting-open_webui" data-i18n="open_webui_at_startup">Open dashboard on startup</label><input id="setting-open_webui" type="checkbox" role="switch" disabled><span id="effect-open_webui" class="hint" role="status"></span></div>
           <p id="settings-note" class="hint" role="status" data-i18n="reading_settings">Reading settings…</p>
         </section>
 
-        <section class="panel dashboard-section"><h2 data-i18n="process_listener">LOCAL SERVICE</h2><p id="process-state" class="table-note"></p><p id="process-memory" class="hint"></p><p id="process-queues" class="hint"></p><p id="process-notice" class="hint" role="status"></p></section>
-        <section class="overview client-overview"><article class="card"><h2 data-i18n="http_traffic">SERVICE REQUESTS</h2><strong id="requests">—</strong><p id="request-errors">—</p><p id="http-error-breakdown">—</p><p><span data-i18n="per_request_limits_active">Per-request limits</span><br><span id="body-limits">—</span></p></article></section>
         <section class="panel dashboard-section" id="version-updates" aria-labelledby="version-updates-title">
           <div class="version-heading"><h2 id="version-updates-title" data-i18n="version_updates">VERSION &amp; UPDATES</h2><button id="check-updates" type="button" data-i18n="check_updates">Check for updates</button></div>
           <dl class="version-list"><div><dt data-i18n="current_version">Current version</dt><dd id="update-current-version">—</dd><dd id="update-current-date" class="hint">—</dd></div><div id="update-latest-row" hidden><dt data-i18n="available_update">Update available</dt><dd id="update-latest-version">—</dd><dd id="update-latest-date" class="hint">—</dd></div></dl>

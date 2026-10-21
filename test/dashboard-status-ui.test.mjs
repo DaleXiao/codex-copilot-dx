@@ -50,16 +50,53 @@ test("request-context rows are lazy, bounded, text-only and distinguish missing 
   document.getElementById("request-context").open = true;
   renderContext();
   const rows = nodes.get("context-body").children;
-  assert.equal(rows[0].children[0].textContent, "<script>not-html</script>");
-  assert.equal(rows[0].children[2].textContent, "—");
-  assert.equal(rows[0].children[5].textContent, "—");
-  assert.equal(rows[1].children[2].textContent, "0");
-  assert.equal(rows[1].children[5].textContent, "15.0%");
-  assert.equal(rows[0].children[6].textContent, "Failed");
-  assert.equal(rows[1].children[6].textContent, "Completed");
+  assert.equal(rows[0].children[2].textContent, "<script>not-html</script>");
+  const fields = row => row.children[5].children[0].children[1].children;
+  assert.equal(fields(rows[0])[5].textContent, "—", "Unknown image count remains unknown in technical details");
+  assert.equal(fields(rows[0])[9].textContent, "—", "Unknown input occupancy remains unknown");
+  assert.equal(fields(rows[1])[5].textContent, "0");
+  assert.equal(fields(rows[1])[9].textContent, "15.0%");
+  assert.equal(rows[0].children[3].textContent, "Failed");
+  assert.equal(rows[1].children[3].textContent, "Completed");
+  assert.equal(rows[0].children[0].textContent, "—", "Missing timestamp is not guessed");
+  assert.equal(fields(rows[1])[3].textContent, "1.00 MiB", "Payload bytes remain available");
   assert.match(nodes.get("context-note").textContent, /2 completed · 0 incomplete · 1 failed/);
   renderContext({ recent_requests: Array.from({ length: 25 }, () => ({ context: {} })) });
   assert.equal(nodes.get("context-body").children.length, 20);
+  document.getElementById("request-context").closest = () => ({ hidden: true });
+  renderContext({ recent_requests: [{ model: "updated-while-hidden", context: {} }] });
+  assert.equal(nodes.get("context-body").children.length, 20, "Hidden modules defer rebuilding rows");
+  document.getElementById("request-context").closest = () => null;
+  renderContext();
+  assert.equal(nodes.get("context-body").children.length, 1);
+  assert.equal(nodes.get("context-body").children[0].children[2].textContent, "updated-while-hidden");
+});
+
+test("Overview groups apps by their selected source without hiding sources or guessing an ambiguous choice", () => {
+  const nodes = new Map();
+  const createNode = () => ({ textContent: "", children: [], attributes: {}, setAttribute(key, value) { this.attributes[key] = value; },
+    replaceChildren(...children) { this.children = children; }, append(...children) { this.children.push(...children); } });
+  const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, createNode());return nodes.get(id); }, createElement: createNode };
+  const renderProviders = runInNewContext(`${renderScript}\nrenderProviders;`, { document, ccdxLanguage: dashboardLanguage });
+  const providers = [
+    { id: "github", name: "GitHub Copilot", clients: [{ id: "codex", name: "Codex App", selected: false, state: "configured" }] },
+    { id: "m365", name: "Microsoft 365", clients: [{ id: "codex", name: "Codex App", selected: true, state: "unavailable" },
+      { id: "claude_app", name: "Claude App", selected: true, state: "preserved", gateway: "unavailable" }] },
+    { id: "third", name: "Third source", state: "disabled", clients: [] },
+  ];
+  renderProviders({ providers });
+  assert.equal(nodes.get("provider-clients").children.length, 2);
+  const row = nodes.get("provider-clients").children[0];
+  assert.equal(row.children[0].textContent, "Codex App");
+  assert.equal(row.children[1].textContent, "Microsoft 365");
+  assert.equal(row.children[2].textContent, "Unavailable", "Do not fall back to a configured but unselected source");
+  assert.equal(nodes.get("claude-clients").children.length, 1);
+  assert.equal(nodes.get("claude-clients").children[0].children[1].textContent, "Custom settings kept");
+  assert.equal(nodes.get("provider-auth").children.length, 3);
+  assert.equal(nodes.get("source-detail").children.length, 3);
+  providers[1].clients[0].selected = false;
+  renderProviders({ providers });
+  assert.equal(nodes.get("provider-clients").children[0].children[1].textContent, "—", "No source is invented when none is selected");
 });
 
 test("dashboard usage renders percentages, zero hits and unknown rates in the seventh column", () => {

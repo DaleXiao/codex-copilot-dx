@@ -42,7 +42,8 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
     return node;
   };
   const document = { documentElement: { dataset: {} }, visibilityState: "visible", getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); }, createElement: createNode, createElementNS: (namespace, tag) => createNode(tag), createDocumentFragment: () => new Node(), addEventListener(event, fn) { if (event === "DOMContentLoaded") ready.push(fn); else on(event, fn); },
-    querySelectorAll() {
+    querySelectorAll(selector) {
+      if (selector === "[data-source-link]") return [];
       const found = new Set();
       const visit = (node) => { if (Object.keys(node.attributes).some((key) => key.startsWith("data-i18n"))) found.add(node); node.children.forEach(visit); };
       nodes.forEach(visit);
@@ -273,7 +274,7 @@ test("auth failure and slow auth do not block normal dashboard refresh or cause 
   assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/providers").length, 1);
   release({ ok: false, json: async () => ({ error: "secret-error" }) });
   await flush();
-  assert.equal(h.nodes.get("auth-account").textContent, "UNAVAILABLE");
+  assert.equal(h.nodes.get("source-status-note").textContent, "UNAVAILABLE");
   assert.equal(h.nodes.get("connection").textContent, "CONNECTED LOCALLY");
   assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/providers").length, 1);
 });
@@ -527,7 +528,7 @@ test("failed refresh preserves prior rows and account without marking them as fr
   assert.deepEqual(h.nodes.get("usage-body").children, rows);
   assert.deepEqual(h.nodes.get("live-models-body").children, models);
   assert.equal(h.api.dashboardRefresh.state("usage").updatedAt, time);
-  assert.match(h.nodes.get("auth-account").textContent, /Update failed/);
+  assert.match(h.nodes.get("source-status-note").textContent, /Update failed/);
   assert.equal(h.nodes.get("models-state").textContent, "CHECK FAILED");
   assert.equal(h.nodes.get("connection").textContent, "CONNECTED LOCALLY");
 });

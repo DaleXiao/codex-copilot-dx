@@ -27,6 +27,7 @@ const accountChoices = ["a", "b"].map(letter => ({ id: letter.repeat(64), login:
 let companyAccount = accountChoices[0], accountChecks = 0, accountChanges = 0, refuseAccountChange = false;
 let proxyFailure = false;
 let modelActivity = 2;
+let extraRequests = [];
 let signin = null, rejectIdentity = true;
 const accountTools = {
   snapshot: () => structuredClone(signin), dispose() {},
@@ -64,10 +65,12 @@ const records = Array.from({ length: 10 }, (_, index) => ({ ts: new Date(Date.no
   provider: index % 2 ? "m365" : "github", model: index % 2 ? "claude-opus-5.5" : "gpt-6.1-sol",
   usage: { input_tokens: 100 * (index + 1), cached_input_tokens: 50, output_tokens: 20, total_tokens: 120 + 100 * index } }));
 const providerState = () => [
-  { id: "github", name: "GitHub Copilot", selection: { codex: true, models_required: false }, enabled: true, state: "ready", clients: [{ id: "codex", name: "Codex App", selected: true, state: "configured" }] },
+  { id: "github", name: "GitHub Copilot", selection: { codex: true, models_required: false }, enabled: true, state: "ready", clients: [{ id: "codex", name: "Codex App", selected: codexSource === "github", state: "configured" }] },
   { id: "m365", name: "Microsoft 365", selection: { codex: true, models_required: true }, enabled: true,
     state: proxyFailure ? "unavailable" : "ready", ...(proxyFailure ? { reason: "m365_proxy_settings_unsupported", network_diagnostic: networkDiagnostic } : {}), auth: { state: "authorized", account: "synthetic@example.test" },
-    clients: [{ id: "claude_app", name: "Claude App", state: "configured", gateway: "running" }], requests: { completed: 3, incomplete: 1, failed: 2 } },
+    clients: [{ id: "codex", name: "Codex App", selected: codexSource === "m365", state: "ready" },
+      { id: "claude_app", name: "Claude App", state: "configured", gateway: "running" },
+      { id: "claude_code", name: "Claude Code", state: "preserved", gateway: "running" }], requests: { completed: 3, incomplete: 1, failed: 2 } },
   { id: "third", name: "Third source", enabled: false, state: "disabled", clients: [] },
 ];
 const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, serviceControl, accountTools, localTools,
@@ -104,7 +107,9 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: true, name: "codex-copilot-dx", version: "synthetic", pid: 1, uptime_ms: 1000,
       requests: { total: 1, active: 0 }, model_activity: { active: modelActivity }, models: { models: 1, source: "synthetic" },
-      stream_performance: { by_route: { responses: {
+      stream_performance: { recent_requests: [...extraRequests, { at: "2026-10-21T05:51:08Z", request_id: "synthetic-recent", provider: "github", model: "gpt-test", outcome: "completed",
+        context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000 } },
+        { request_id: "synthetic-unknown", model: "<script>not-html</script>", outcome: "completed", context: {} }], by_route: { responses: {
         ttft_ms: { avg: 1250, samples: 3 }, output_tokens_per_second: { avg: 123.4, samples: 2, unit: "token/s" },
       } } },
       response_failures: { recent:[{provider:"m365",code:"synthetic_error",model:"gpt-test",retried:false}] },
@@ -124,7 +129,10 @@ try {
   for (const engine of (options.get("--engines") || "chromium,webkit").split(",")) {
     const browser = await playwright[engine].launch({ headless: true, ...(options.get("--executable") ? { executablePath: options.get("--executable") } : {}) });
     try {
-      for (const language of ["en", "zh"]) for (const theme of ["dark", "light"]) for (const width of [420, 1280]) for (const palette of ["green", "klein", "pink"]) {
+      for (const language of (options.get("--languages") || "en,zh").split(","))
+        for (const theme of (options.get("--themes") || "dark,light").split(","))
+          for (const width of (options.get("--widths") || "420,1280").split(",").map(Number))
+            for (const palette of (options.get("--palettes") || "green,klein,pink").split(",")) {
         const caseName = JSON.stringify({ engine, language, theme, palette, width });
         console.log(`Browser case: ${caseName}`);
         const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "no-preference" });
@@ -152,6 +160,7 @@ try {
         codexSource = "m365";m365Enabled = true;companyAccount = accountChoices[0];accountChecks = 0;accountChanges = 0;refuseAccountChange = false;
         proxyFailure = false;
         modelActivity = 2;
+        extraRequests = [];
         updateReads = 0;updateState = "checked";latestVersion = "1.2.4";
         m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
@@ -166,6 +175,8 @@ try {
         assert.equal(await page.locator("#source-detail span").count(), 3);
         assert.match(await page.locator("#source-detail").innerText(), /GitHub Copilot.*Microsoft 365.*Third source/s);
         assert.doesNotMatch(await page.locator("#source-detail").innerText(), /→|Codex|Claude/);
+        assert.equal(await page.locator("#provider-clients tr").count(), 3, "Each app has one row rather than one per source");
+        assert.match(await page.locator("#provider-clients tr").first().innerText(), /Codex App.*Microsoft 365/s);
         const brandIcon = await page.locator(".sidebar-brand #status-icon").boundingBox();
         assert.ok(brandIcon && brandIcon.width >= 40 && brandIcon.height >= 40 && brandIcon.x >= 0 && brandIcon.x + brandIcon.width <= width);
         await page.locator("#refresh").click();
@@ -174,6 +185,23 @@ try {
         assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
         assert.equal(await page.locator("html").getAttribute("lang"), language === "zh" ? "zh-CN" : "en");
         const nav = async route => { await page.locator(`[data-route="${route}"]`).click();await page.locator(`[data-view="${route}"]`).waitFor({ state: "visible" }); };
+        // Long/short modules, status labels and scrolling must not resize the shared shell.
+        const layout = await page.locator(".topbar").boundingBox();
+        const titleTop = (await page.locator(".intro").boundingBox()).y;
+        for (const route of ["codex", "claude", "usage", "requests", "checks", "overview"]) {
+          await nav(route);
+          const header = await page.locator(".topbar").boundingBox();
+          assert.equal(header.height, layout.height, `Header height is stable in ${route}`);
+          assert.equal(header.x, layout.x, `Header x is stable in ${route}`);
+          assert.equal((await page.locator(".intro").boundingBox()).y, titleTop, `Title y is stable in ${route}`);
+          assert.equal(await page.evaluate(() => scrollY), 0, `Navigation returns ${route} to the top`);
+        }
+        await page.evaluate(() => window.scrollTo(0, 200));
+        const beforeRefreshScroll = await page.evaluate(() => scrollY);
+        await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        assert.equal(await page.evaluate(() => scrollY), beforeRefreshScroll, "Status refresh preserves scroll");
+        assert.equal((await page.locator(".topbar").boundingBox()).y, Math.max(0, layout.y - beforeRefreshScroll), "Header sticks after reaching the viewport top");
+        await nav("overview");
         await page.waitForFunction(() => document.getElementById("model-activity").dataset.state === "active").catch(async error => {
           console.error("Activity diagnostics", { errors, state: await page.locator("#model-activity").getAttribute("data-state"), api: await page.evaluate(() => typeof globalThis.ccdxDashboardActivity), snapshot: await page.evaluate(async () => (await (await fetch("/_ccdx/status")).json()).model_activity) });
           throw error;
@@ -197,6 +225,7 @@ try {
         assert.equal(await page.locator("#runtime-cache-hit").innerText(), "20.0%");
         assert.equal(await page.locator('[data-view]:visible').count(), 1);
         await nav("codex");
+        await page.locator("#codex-performance > summary").click();
         assert.match(await page.locator("#ttft").innerText(), /1250\.0 ms/);
         assert.match(await page.locator("#tpot").innerText(), /123\.4 token\/s/);
         await page.locator("#additional-capabilities > summary").click();
@@ -209,7 +238,11 @@ try {
         await page.waitForFunction(() => !document.getElementById("setting-image_enabled").disabled);
         if (output && width === 1280 && language === "zh") { await page.evaluate(() => window.scrollTo(0, 0));await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-codex.png`), fullPage: true }); }
         await nav("claude");
-        assert.match(await page.locator("#claude-route").innerText(), /\/anthropic/);
+        assert.match(await page.locator("#claude-route").textContent(), /\/anthropic/);
+        assert.equal(await page.locator("#claude-clients tr").count(), 2);
+        await page.locator('[data-view="claude"] [data-source-link="m365"]').click();
+        await page.locator("#m365-source-access").waitFor({ state: "visible" });
+        assert.equal(codexSource, "m365", "Opening source management does not switch routing");
         await nav("codex");
         await page.waitForFunction(() => document.getElementById("source-provider").value === "m365" && document.getElementById("source-model").value === "gpt-source");
         assert.equal(await page.locator("#source-review").inputValue(), "gpt-source");
@@ -241,7 +274,18 @@ try {
         await page.unroute("**/_ccdx/ui/models/live?provider=m365");
         await page.locator("#apply-source").click();
         await page.waitForFunction(() => document.getElementById("source-control-note").textContent.includes("GitHub Copilot") && !document.getElementById("apply-source").disabled);
+        await page.route("**/_ccdx/ui/settings", route => route.request().method() === "POST" && route.request().postDataJSON()?.key === "prediction_enabled"
+          ? route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "synthetic prediction save refused" }) }) : route.continue());
+        const predictionBefore = await page.locator("#setting-prediction_enabled").isChecked();
+        await page.locator("#setting-prediction_enabled").setChecked(!predictionBefore);
+        await page.waitForFunction(() => document.getElementById("effect-prediction_enabled").textContent.includes("synthetic prediction save refused"));
+        assert.equal(await page.locator("#setting-prediction_enabled").isChecked(), predictionBefore, "A failed save restores the confirmed switch");
+        for (const id of ["source-control-note", "m365-control-note", "review-control-note", "effect-history", "settings-note"]) {
+          assert.doesNotMatch(await page.locator(`#${id}`).textContent(), /synthetic prediction save refused/, "Save errors stay beside the affected control");
+        }
+        await page.unroute("**/_ccdx/ui/settings");
         await nav("models");
+        await page.locator("#model-provider-github").click();
         await page.waitForFunction(() => document.getElementById("github-account-name").textContent === "synthetic_user");
         assert.equal(await page.locator("#m365-source-access").isVisible(), false);
         assert.equal(await page.locator("#github-signin").isVisible(), false, "Saved sign-in alone does not recommend reauth");
@@ -262,12 +306,15 @@ try {
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-signin.png`), fullPage: true });
         await page.locator("#account-authorization > summary").click();
         assert.equal(await page.locator("#provider-auth tr").count(), 3);
-        assert.match(await page.locator("#provider-auth").innerText(), /synthetic@example.test/);
+        assert.equal(await page.locator("#provider-auth tr:visible").count(), 1);
+        assert.doesNotMatch(await page.locator("#provider-auth").innerText(), /synthetic@example.test/);
         assert.equal(await page.locator("#model-providers [role=tab]").count(), 3);
         assert.equal(accountChecks, 0, "Opening the page never enumerates accounts or acquires tokens");
         await page.locator("#model-provider-m365").click();
         await page.waitForFunction(() => !document.getElementById("m365-source-access").hidden);
         assert.equal(await page.locator("#github-account").isVisible(), false);
+        assert.equal(await page.locator("#provider-auth tr:visible").count(), 1);
+        assert.match(await page.locator("#provider-auth").innerText(), /synthetic@example.test/);
         await page.locator("#m365-accounts-refresh").click();
         await page.waitForFunction(() => !document.getElementById("m365-account-form").hidden && !document.getElementById("m365-accounts-refresh").disabled);
         assert.equal(accountChecks, 1);assert.equal(accountChanges, 0);
@@ -329,6 +376,18 @@ try {
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-checks.png`), fullPage: true });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Checks stay within the viewport");
         await nav("requests");
+        assert.equal(await page.locator("#request-context").getAttribute("open"), "");
+        assert.equal(await page.locator("#context-body tr").count(), 2);
+        assert.equal(await page.locator("#context-body script").count(), 0);
+        assert.match(await page.locator("#context-body").innerText(), /<script>not-html<\/script>/);
+        const metadata = page.locator('#context-body .request-details[data-request-key="synthetic-recent"]');
+        await metadata.locator("summary").click();
+        assert.match(await metadata.innerText(), /1\.00 MiB.*0.*1,000.*15\.0%/s);
+        await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        assert.equal(await metadata.getAttribute("open"), "", "Unchanged reads keep request details open");
+        extraRequests = [{ at: "2026-10-21T06:51:08Z", request_id: "synthetic-new", provider: "github", model: "gpt-new", outcome: "completed", context: {} }];
+        await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        assert.equal(await metadata.getAttribute("open"), "", "A new request keeps retained request details open");
         assert.equal(await page.locator("#recent-failures").isVisible(), true);
         assert.match(await page.locator("#recent-failures li summary").innerText(), /Microsoft 365/);
         await page.locator("#language-toggle").click();

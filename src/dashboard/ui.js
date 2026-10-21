@@ -262,6 +262,7 @@ function syncUsageProviders() {
 function chooseProvider(id) {
   if (selectedProvider === id) return;
   selectedProvider = id;
+  syncProviderDetails();
   try { localStorage.setItem("ccdx.dashboard.modelProvider", id); } catch { /* Keep the current choice. */ }
   for (const [key, button] of providerTabs) { button.setAttribute("aria-selected", String(key === id));button.tabIndex = key === id ? 0 : -1; }
   dashboardRefresh.invalidate("models", { clear: true });
@@ -271,6 +272,10 @@ function chooseProvider(id) {
   element("live-models-body").setAttribute("aria-labelledby", `model-provider-${id}`);
   window.dispatchEvent(new CustomEvent("ccdx:source-view"));
   void loadModels();
+}
+
+function syncProviderDetails() {
+  for (const row of element("provider-auth").children) row.hidden = row.dataset.provider !== selectedProvider;
 }
 
 function applyProviders(data, { changed }) {
@@ -298,6 +303,7 @@ function applyProviders(data, { changed }) {
   syncUsageProviders();
   const available = providerEntries.some(provider => provider.id === selectedProvider);
   if (!available) selectedProvider = providerEntries.find(provider => provider.clients?.some(client => client.id === "codex" && client.selected))?.id || providerEntries[0]?.id || "";
+  syncProviderDetails();
   const container = element("model-providers");
   for (const [id, button] of providerTabs) if (!providerEntries.some(provider => provider.id === id)) { button.remove();providerTabs.delete(id); }
   for (const provider of providerEntries) {
@@ -358,7 +364,7 @@ function refreshTime(target, state) {
 }
 
 const timestamps = new Map();
-for (const [key, ids] of [["auth", ["account-authorization"]], ["status", ["client-features", "request-context", "recent-failures", "runtime-resources", "additional-capabilities"]], ["models", ["upstream-models"]], ["usage", ["model-usage"]], ["animation", ["animation-settings"]]]) {
+for (const [key, ids] of [["auth", ["account-authorization", "client-features", "claude-connections"]], ["status", ["source-requests", "request-context", "recent-failures", "runtime-resources", "additional-capabilities", "codex-performance", "claude-performance", "runtime-diagnostics"]], ["models", ["upstream-models"]], ["usage", ["model-usage"]], ["animation", ["animation-settings"]]]) {
   timestamps.set(key, ids.map(id => {
     const node = document.createElement("p");
     node.className = "refresh-time";
@@ -407,9 +413,9 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       apply: applyProviders,
       state: state => {
         if (state.error) {
-          if (state.value) localize(element("auth-account"), "update_failed_last_time", { time: new Date(state.updatedAt).toLocaleTimeString() });
-          else text("auth-account", "unavailable_eb0be");
-        }
+          if (state.value) localize(element("source-status-note"), "update_failed_last_time", { time: new Date(state.updatedAt).toLocaleTimeString() });
+          else text("source-status-note", "unavailable_eb0be");
+        } else element("source-status-note").textContent = "";
         for (const node of timestamps.get("auth")) refreshTime(node, state);
       },
     },
@@ -495,7 +501,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       },
     },
     animation: {
-      visible: () => element("animation-settings").open && !animationSaving,
+      visible: () => element("animation-settings").open && !element("animation-settings").closest("[hidden]") && !animationSaving,
       variant: () => element("animation-settings").open && !animationFramesLoaded ? "frames" : "metadata",
       project: data => [data.theme, data.source, data.disabled_by_environment, data.themes.map(theme => [theme.id, theme.label, theme.default, Boolean(theme.frames)])],
       load: ({ variant, signal }) => readDashboard(`/_ccdx/ui/animation${variant === "frames" ? "" : "?frames=0"}`, { signal, timeout: 8000 }),
@@ -556,6 +562,10 @@ element("clear-usage-day").addEventListener("click", () => selectUsageDay(""));
 element("usage-provider")?.addEventListener("change", () => { dashboardRefresh.invalidate("usage");dashboardRefresh.refresh("usage", { force: true }); });
 element("refresh-models").addEventListener("click", loadModels);
 element("refresh-usage").addEventListener("click", loadUsage);
+for (const link of document.querySelectorAll("[data-source-link]")) link.addEventListener("click", () => {
+  const id = link.dataset.sourceLink === "codex" ? providerEntries.find(provider => provider.clients?.some(client => client.id === "codex" && client.selected))?.id : link.dataset.sourceLink;
+  if (providerEntries.some(provider => provider.id === id)) chooseProvider(id);
+});
 loadAnimation();
 refresh();
 loadAuth();

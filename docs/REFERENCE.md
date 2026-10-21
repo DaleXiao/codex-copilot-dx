@@ -1174,17 +1174,17 @@ once by default, using the configured main port when customized. See
 startup preferences, output modes and effective-state rules. Assets require both
 a loopback connection and loopback Host, including when the main listener uses LAN mode.
 
-The sidebar separates Overview, indented Codex/Claude Apps, Model sources, Usage, Requests, and Settings. Codex-specific images, prediction integration
-and conversation buffering stay under Codex. HTTP traffic counts include model
+The sidebar separates Overview, indented Codex/Claude Apps, Model sources, Usage, Requests, Checks & repairs, and Settings. Desktop header rows have explicit heights, the header sticks when it reaches the viewport top, and stable scrollbar space prevents horizontal movement between long and short pages. Narrow screens keep compact navigation and a two-row toolbar. Page switches reset scroll and move keyboard focus to the main content; background/manual data refreshes preserve scroll. Each page has its own purpose description, and data groups carry their own update times rather than a shared page-wide freshness claim. Codex-specific images, prediction integration
+and conversation buffering stay under Codex. Buffer controls and request performance have separate groups. HTTP traffic counts include model
 catalogs and route errors; model outcomes and timing are named by protocol.
 Microsoft 365's Claude Messages summary is not a Provider-wide request total.
 
-The account table uses bounded local credential metadata and Provider snapshots.
+The source access table uses bounded local credential metadata and Provider snapshots, showing only the selected source. Switching source tabs also changes the account controls and catalog, never application routing. Overview groups client rows by app and uses an explicitly selected source; it does not substitute a configured but unselected source when the selected source is unavailable. The source card still lists every registered source. Claude App and Claude Code have separate setup/local-service rows, while Messages performance stays combined and is labeled accordingly. A running local service does not prove the app is open.
 A locally saved GitHub credential is not online entitlement. Account names with
 underscores retain their exact display value; identity, keys and environment
 values are not inferred from model names. Client configuration, gateway state,
 recent requests and actual inference are separate observations. The top summary
-describes source/application status without mapping arrows. The source card counts and lists every discovered registered source, including disabled sources; availability and account evidence remain in the detailed tables. Each sidebar tab has a decorative inline SVG icon, with application entries indented. Terminal appearance has one Settings entry, and the animation selector has one separating rule.
+describes source/application status without mapping arrows. The source card counts and lists every discovered registered source, including disabled sources; availability and account evidence remain in the detailed tables. Each sidebar tab has a decorative inline SVG icon, with application entries indented. Terminal appearance has one Settings entry, and the animation selector has one separating rule. Settings contains webpage/terminal appearance, startup preferences and version updates. Local memory, queues, notices, raw HTTP traffic and request-size caps live under Checks & repairs → Runtime details. Account-check links identify the source and lead to its existing account tools. Save failures appear beside the affected controls; configuration repair previews and destructive-action confirmations remain in place.
 
 Catalog tabs browse registered Provider directories without changing routing.
 Rows retain protocol, eligible clients, reasoning metadata and directory state.
@@ -1209,6 +1209,8 @@ GitHub attribution. Cache-read tokens are included in input, not added twice.
 The separate current-run summary updates from returned usage in memory, without
 rescanning retained logs at the status cadence.
 Overview adds an approximate token cache hit rate: returned reused input tokens divided by returned input tokens, weighted by tokens rather than request percentages. Missing evidence is distinct from an explicit zero; all-unknown cache evidence, zero input and invalid counts display `—`. Mixed complete/incomplete cache evidence displays `~` before the recorded aggregate ratio. This describes recorded input reuse, not a request success ratio, invoice or whole-account cache statistic. Missing output alone does not invalidate usable input/cache evidence.
+
+The usage source selector applies to the whole page. Model selection controls both daily trends and the calendar; 7/30/90-day range and bar/line view belong to daily trends, and request/Token measure belongs to the fixed annual calendar. These controls do not redefine the all-history model table; selecting a known day narrows the table and Show all restores retained-history totals.
 
 Usage analytics remains collapsed until opened: 7/30/90-day charts and a bounded
 365-day calendar in the browser time zone. Model/range/day selection reuses its
@@ -1247,8 +1249,7 @@ Client cancellations remain in verbose/file diagnostics as informational records
 timeouts and actual failures remain notices. Non-TTY, CI, dumb and terminals under
 40 columns or 16 rows retain plain output. At 40×16 the compact table keeps all metrics and short source/Code/App states. Larger terminals wrap full state descriptions. No runtime terminal dependency is added.
 
-Terminal appearance lives in Settings, with a sidebar shortcut on wide
-screens. Preview frames load on opening; closing, hiding the view/page or reduced
+Terminal appearance lives only in Settings. Preview frames load on opening; closing, hiding the view/page or reduced
 motion stops preview timers. Saving changes the running supported status terminal.
 
 The recent-failure view merges bounded Responses events, main-listener HTTP
@@ -1334,13 +1335,13 @@ ccdx --show-request-id
 
 ### Authentication recovery
 
-The dashboard's collapsed **RECENT REQUESTS** section reuses the same
-status snapshot. It shows at most 20 finished request observations: serialized
+The dashboard's **RECENT REQUESTS** section opens by default and reuses the same
+status snapshot. It shows at most 20 finished request observations: time, source, model, outcome and returned input tokens, with serialized
 upstream payload bytes, image count, reported input tokens, the advertised model
 window and terminal outcome, plus process-local compaction outcome counts. Missing
 fields are unknown, not zero; input/window is a reference ratio, not an exact live
 session measurement. No prompts, image bytes, files, tool results or extra session
-scan are retained. Rows render when opened, without another API call.
+scan are retained. Technical fields are folded into each row. Expanded fields survive unchanged reads and retained matching request observations; closed/hidden request groups defer row rebuilding without another API call.
 
 When the saved token is missing, `ccdx` looks for compatible local Copilot GitHub tokens, validates them with GitHub and Copilot, and imports a valid one before starting Device Flow. It checks explicit token sources (`CCDX_GITHUB_TOKEN`, `CCDX_GITHUB_TOKEN_PATH`, and `CCDX_GITHUB_TOKEN_PATHS`) plus common local `auth.json` layouts. Generic discovery refuses to choose silently when valid credentials for multiple GitHub accounts are found.
 

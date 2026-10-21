@@ -12,13 +12,15 @@
         unknown: "unknown", unconfigured: "not_configured", ready: "ready", checking: "checking", unsupported: "unsupported",
         configured: "configured", preserved: "existing_settings_kept", partially_preserved: "existing_settings_kept",
         restored: "settings_restored", not_installed: "not_installed", configuration_unavailable: "setup_unavailable", not_configured: "unknown", standby: "standby" };
-      const auth = element("provider-auth"), clients = element("provider-clients"), requests = element("provider-requests");
-      auth.replaceChildren();clients.replaceChildren();requests.replaceChildren();
+      const auth = element("provider-auth"), clients = element("provider-clients"), requests = element("provider-requests"), claudeClients = element("claude-clients");
+      auth.replaceChildren();clients.replaceChildren();requests.replaceChildren();claudeClients?.replaceChildren();
+      const applications = new Map();
       for (const provider of providers) {
         sourceNames.set(provider.id, provider.name);
         const identity = provider.auth || {};
         const authRow = tableRow([provider.name, identity.account || "—", states[identity.state] || "unknown",
           states[provider.state] || "unknown", identity.checked_at || "—", duration(identity.expires_in_ms)], { labels: [2, 3] });
+        authRow.setAttribute("data-provider", provider.id);
         if (provider.reason) {
           const network = provider.network_diagnostic;
           localize(authRow.children[3], "state_reason", { state: phrase(states[provider.state] || "unknown"),
@@ -33,14 +35,9 @@
         }
         auth.append(authRow);
         for (const client of provider.clients || []) {
-          const row = tableRow([provider.name, client.name, states[client.state] || client.state,
-            client.gateway || "—", client.last_request_at || "—"], { labels: [2, 3] });
-          if (client.reason) localize(row.children[2], "state_reason", { state: phrase(states[client.state] || "unknown"), reason: client.reason });
-          if (globalThis.ccdxIcons) {
-            globalThis.ccdxIcons.set(row.children[2], client.reason ? "state_reason" : states[client.state] || client.state, globalThis.ccdxIcons.kind(client.state), client.reason ? { state: phrase(states[client.state] || "unknown"), reason: client.reason } : {});
-            if (["running", "unavailable"].includes(client.gateway)) globalThis.ccdxIcons.set(row.children[3], client.gateway, globalThis.ccdxIcons.kind(client.gateway));
-          }
-          clients.append(row);
+          const id = client.id || client.name;
+          if (!applications.has(id)) applications.set(id, []);
+          applications.get(id).push({ provider, client });
         }
         if (provider.requests) {
           const item = document.createElement("p");
@@ -49,11 +46,32 @@
           requests.append(item);
         }
       }
+      for (const entries of applications.values()) {
+        const selected = entries.find(entry => entry.client.selected === true) || (entries.length === 1 ? entries[0] : null);
+        const client = selected?.client || { name: entries[0].client.name, state: "unknown" };
+        const row = tableRow([client.name, selected?.provider.name || "—", states[client.state] || "unknown",
+          client.gateway || "—", client.last_request_at || "—"], { labels: [2, 3] });
+        if (client.reason) localize(row.children[2], "state_reason", { state: phrase(states[client.state] || "unknown"), reason: client.reason });
+        if (globalThis.ccdxIcons) {
+          globalThis.ccdxIcons.set(row.children[2], client.reason ? "state_reason" : states[client.state] || "unknown", globalThis.ccdxIcons.kind(client.state), client.reason ? { state: phrase(states[client.state] || "unknown"), reason: client.reason } : {});
+          if (["running", "unavailable"].includes(client.gateway)) globalThis.ccdxIcons.set(row.children[3], client.gateway, globalThis.ccdxIcons.kind(client.gateway));
+        }
+        clients.append(row);
+        if (String(client.id || "").startsWith("claude_")) {
+          const detail = tableRow([client.name, states[client.state] || "unknown", client.gateway || "—", client.last_request_at || "—"], { labels: [1, 2] });
+          if (client.reason) localize(detail.children[1], "state_reason", { state: phrase(states[client.state] || "unknown"), reason: client.reason });
+          if (globalThis.ccdxIcons) {
+            globalThis.ccdxIcons.set(detail.children[1], client.reason ? "state_reason" : states[client.state] || "unknown", globalThis.ccdxIcons.kind(client.state), client.reason ? { state: phrase(states[client.state] || "unknown"), reason: client.reason } : {});
+            if (["running", "unavailable"].includes(client.gateway)) globalThis.ccdxIcons.set(detail.children[2], client.gateway, globalThis.ccdxIcons.kind(client.gateway));
+          }
+          claudeClients?.append(detail);
+        }
+      }
+      if (element("claude-client-state")) element("claude-client-state").hidden = Boolean(claudeClients?.children.length);
       text("source-summary", "count_providers", { count: providers.length });
       element("source-detail").replaceChildren(...providers.map(provider => {
         const item = document.createElement("span");item.textContent = provider.name;return item;
       }));
-      text("auth-account", "provider_status_scope");
     }
 
     function duration(value) {
@@ -259,10 +277,11 @@
       text("context-note", "20_latest_finished_requests_compactions_completed_completed_inco", {
         completed: number(contextCompactions.completed), incomplete: number(contextCompactions.incomplete), failed: number(contextCompactions.failed),
       });
-      if (element("request-context")?.open === false) return;
+      if (element("request-context")?.open === false || element("request-context")?.closest?.("[hidden]")) return;
       const signature = JSON.stringify(contextRequests);
       if (signature === contextSignature) return;
       contextSignature = signature;
+      const expanded = new Set([...(body.querySelectorAll?.("details[open]") || [])].map(details => details.getAttribute("data-request-key")));
       body.replaceChildren();
       for (const request of contextRequests) {
         const context = request.context || {};
@@ -270,12 +289,24 @@
           ? request.outcome[0].toUpperCase() + request.outcome.slice(1) : "unknown";
         const ratio = finite(context.input_tokens) && finite(context.context_window_tokens) && Number(context.context_window_tokens) > 0
           ? `${(100 * Number(context.input_tokens) / Number(context.context_window_tokens)).toFixed(1)}%` : "—";
-        body.append(tableRow([String(request.model || "unknown").slice(0, 80) + (request.provider ? ` / ${request.provider}` : ""),
-          finite(context.payload_bytes) ? (Number(context.payload_bytes) / 1048576).toFixed(2) : "—",
-          number(context.images), number(context.input_tokens), number(context.context_window_tokens), ratio,
-          outcome], { labels: [6] }));
+        const at = Date.parse(request.at);
+        const row = tableRow([Number.isFinite(at) ? new Date(at).toLocaleTimeString() : "—",
+          String(sourceNames.get(request.provider) || request.provider || "—").slice(0, 80),
+          String(request.model || "unknown").slice(0, 80), outcome, number(context.input_tokens), ""], { labels: [3] });
+        if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[3], outcome.toLowerCase(), globalThis.ccdxIcons.kind(outcome.toLowerCase()));
+        const details = document.createElement("details"), summary = document.createElement("summary"), fields = document.createElement("dl");
+        const key = String(request.request_id || `${request.at || ""}/${request.provider || ""}/${request.model || ""}`).slice(0, 256);
+        details.setAttribute?.("data-request-key", key);details.open = expanded.has(key);
+        details.className = "request-details";fields.className = "failure-detail";
+        localize(summary, "request_metadata");details.append(summary, fields);
+        for (const [key, value] of [["time", Number.isFinite(at) ? new Date(at).toLocaleString() : "—"],
+          ["wire_mib", finite(context.payload_bytes) ? `${(Number(context.payload_bytes) / 1048576).toFixed(2)} MiB` : "—"],
+          ["images", number(context.images)], ["model_window", number(context.context_window_tokens)], ["input_window", ratio]]) {
+          const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);detail.textContent = value;fields.append(term, detail);
+        }
+        row.children[5].append(details);body.append(row);
       }
-      if (!contextRequests.length) emptyTable("context-body", 7, "no_observed_request_metadata");
+      if (!contextRequests.length) emptyTable("context-body", 6, "no_observed_request_metadata");
     }
     return { render, renderProviders, renderFailures, renderContext };
   }

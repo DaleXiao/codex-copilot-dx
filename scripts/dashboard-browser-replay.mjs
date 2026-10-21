@@ -277,7 +277,7 @@ try {
         await page.route("**/_ccdx/ui/settings", route => route.request().method() === "POST" && route.request().postDataJSON()?.key === "prediction_enabled"
           ? route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "synthetic prediction save refused" }) }) : route.continue());
         const predictionBefore = await page.locator("#setting-prediction_enabled").isChecked();
-        await page.locator("#setting-prediction_enabled").setChecked(!predictionBefore);
+        await page.locator("#setting-prediction_enabled").click();
         await page.waitForFunction(() => document.getElementById("effect-prediction_enabled").textContent.includes("synthetic prediction save refused"));
         assert.equal(await page.locator("#setting-prediction_enabled").isChecked(), predictionBefore, "A failed save restores the confirmed switch");
         for (const id of ["source-control-note", "m365-control-note", "review-control-note", "effect-history", "settings-note"]) {

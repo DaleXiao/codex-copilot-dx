@@ -66,6 +66,10 @@ data and hidden-page scheduling. A focused final replay additionally checks
 that arriving requests retain expanded details and save errors stay local.
 Browser fixtures were updated to open the newly folded performance groups and
 select the intended source explicitly; existing access and network checks remain.
+The first CI pass exposed a test race in the new rejected-save check: WebKit saw
+the intended immediate rollback before Playwright's `setChecked` postcondition.
+The test now clicks the switch and asserts the refusal, restored value and local
+error scope directly. The production rollback and assertions were not relaxed.
 
 The isolated **1.2.8 → 1.2.9** real npm upgrade used the verified prior tarball
 (`5867eeb4f83d05bd516c2a958dcddf551183d37e036b29635b0dfedebd2a8648`).

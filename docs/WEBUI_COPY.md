@@ -1,6 +1,6 @@
 # WebUI 文案对照
 
-此表保留历史文案对照，不作为当前功能说明。当前行为以 README 和 REFERENCE 为准；1.2.3 公司账号、1.2.4 版本信息和 1.2.5 用量图表和 1.2.6 网络诊断增量见文末。
+此表保留历史文案对照，不作为当前功能说明。当前行为以 README 和 REFERENCE 为准；各版本增量见文末。
 
 基线：1.1.1。现文案：1.2.0。固定消息标识见 `src/dashboard/language.js`；中文和英文分别展示。保留产品名、模型 ID、命令、单位与错误码。动态原始数据不翻译、不截短来满足文案长度。
 
@@ -487,3 +487,14 @@
 | network_cause_proxy_settings_unsupported | Could not interpret proxy settings. Existing settings kept. | 无法解析代理设置。原设置已保留。 |
 
 技术提示 `network_detail` 保留四个占位符：`{source} / {stage} / {code} / {category}`，随语言切换重新翻译说明，技术码保持原值。
+
+## 1.2.8 增量
+
+| 固定标识 | English | 中文 |
+| --- | --- | --- |
+| appearance_soft_pink | Soft pink | 淡粉色 |
+| model_activity_active | Processing {count} requests | 正在处理 {count} 个请求 |
+| model_activity_idle | No model requests | 暂无模型请求 |
+| model_activity_unknown | Activity unknown | 活动状态未知 |
+
+活动状态使用既有状态快照。未知与空闲分别显示；空闲文字仅用于无障碍标签，页面只显示单颗呼吸灯。

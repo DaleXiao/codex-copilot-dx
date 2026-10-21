@@ -12,14 +12,14 @@ assert.ok(path.isAbsolute(options.get("--xterm") || ""), "Supply --xterm /absolu
 const imported = await import(pathToFileURL(options.get("--xterm")));
 const { Terminal } = imported.default || imported;
 const results = [];
-for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const color of [false, true]) for (const palette of ["green", "klein"]) {
+for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const color of [false, true]) for (const palette of ["green", "klein", "pink"]) {
   const screen = new Terminal({ cols: columns, rows, allowProposedApi: true });
   const output = new EventEmitter(), pending = [], timers = new Map();let time = 1000, bytes = 0;
   Object.assign(output, { isTTY: true, columns, rows, write(value) { bytes += Buffer.byteLength(value);pending.push(value); } });
   const data = { uptime_ms: 240000, profiles: { codex: { models: { source: "cache", models: 41 } } },
     providers: { m365: { enabled: true, state: "ready", models: { source: "live", total: 15 },
       claude: { gateway: "running", clients: { code: "configured", app: "configured" } } } },
-    runtime_usage: { records: 5, input_tokens: 1700000, cached_input_tokens: 1100000, output_tokens: 5600, partial_records: 0 },
+    runtime_usage: { records: 5, input_tokens: 1700000, cached_input_tokens: 1100000, output_tokens: 5600, partial_records: 0, cache_hit_rate: 11 / 17, cache_hit_rate_partial: false },
     requests: { by_route: { responses: { total: 7, active: 2 }, image_mcp: { total: 9, active: 5 } } },
     stream_performance: { by_route: { responses: { terminal_outcomes: { totals: { completed: 5 } } } } } };
   const terminal = createTerminalConsole({ output, errorOutput: output, env: color ? { CI: "0" } : { NO_COLOR: "" },
@@ -48,6 +48,7 @@ for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const col
   for (const detail of offset === 1 ? ["Code: set / App: set", "Claude service: running"] : ["Claude Code: configured", "Claude App: configured", "local service running"]) assert.ok(visible.join("\n").includes(detail) || (detail.startsWith("Claude") && visible.join("\n").includes("Claude / Code: configured / App: configured")), `${columns}: ${visible.join("\n")}`);
   assert.match(visible[tableStart + offset + 1], /Input\s+1\.7M.*Active\s+2/);
   assert.match(visible[tableStart + offset + 2], /Reused(?: input)?\s+1\.1M.*Completed\s+5/);
+  assert.match(visible[tableStart + offset + 5], /Cache hit\s+64\.7%.*Cancelled\s+0/);
   assert.match(visible.at(-2), /^11 notices/);assert.match(visible.at(-1), /^\[.*\] Working$/);
   if (columns === 80 && rows === 24 && !color && options.get("--output")) await fs.writeFile(options.get("--output"), visible.join("\n") + "\n");
   finish();finishSecond();data.runtime_usage.output_tokens = 6000;

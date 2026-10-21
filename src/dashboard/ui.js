@@ -392,6 +392,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       },
       apply: render,
       state: state => {
+        if (state.error || !state.value) globalThis.ccdxDashboardActivity?.unavailable();
         text("connection", state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable");
         element("connection").className = `badge ${state.pending ? "neutral" : state.error ? "bad" : "good"}`;
         globalThis.ccdxIcons?.set(element("connection"), state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable",

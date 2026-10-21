@@ -715,7 +715,7 @@ Run `ccdx <command> --help` for command-specific behavior and side-effect detail
 Startup uses aligned status/project/result columns and a left-aligned Ready footer
 with the Web UI URL and `ccdx help`. Ctrl+C is shown only for the foreground-owned
 service, never a short-lived command reusing another service. A static, favicon-style
-atom uses ANSI green and half-block characters only on interactive color terminals
+atom uses the saved terminal color (green by default) and half-block characters only on interactive color terminals
 at least 72 columns wide; narrow terminals, `NO_COLOR`, `TERM=dumb` and redirected
 output keep a plain title. No new graphics/font/runtime dependency is installed.
 Credentials found are not labeled online-authorized, cached model lists are not
@@ -799,7 +799,7 @@ not a guarantee that every browser will reuse an existing tab.
 
 The default TTY display uses wrapping source/Claude summaries, a line-framed usage/inference table, and separate notice/activity rows, without an alternate screen or raw keyboard input. It shows usage returned since this process began; pending
 usage is excluded, missing usage stays partial, and this is not an invoice.
-Business requests drive activity; status/catalog polling does not. Existing nine
+Business requests drive terminal activity; status/catalog polling does not. The live table fills its existing last usage row with Cache hit, using the same process-local cache_hit_rate and partial marker as Overview. Unknown/invalid rates display —; a known zero displays 0.0%. Existing nine
 animation styles retain their timing and cycle pauses; the default green retains its original palette. `--verbose`,
 `--show-request-id` or `CCDX_LOG_LEVEL=debug` restore detailed terminal output.
 Failed reads show previous-data status and the last successful update time, or that no data has been received. Narrow summaries wrap rather than hiding Claude App/Code state. Non-TTY/CI/dumb/too-small terminals use plain output; repeated identical notices
@@ -842,13 +842,17 @@ auto-refresh still permits manual refresh/settings retry. No history-log scan is
 performed at the status cadence. The atom moves on load/manual refresh only and
 respects reduced motion. Client attribution absent from older records stays unknown.
 
+### Overview activity
+
+Overview reserves a fixed-height row below its status summary. Six 4px theme-colored dots appear and retract in order while the status snapshot reports active Responses, compaction, Claude Messages or actual image generation. Catalog reads, token counting, image MCP discovery and management calls are excluded; retries do not add another logical request. Active dots have no halo. Idle shows one small dot with a breathing halo. Invalid/missing status or a read older than six seconds shows Activity unknown, without a halo. This reuses the existing two-second status polling; short requests between snapshots may not be shown. No model probing, stream connection or extra polling is added. Hidden pages/views pause motion; reduced motion shows static corresponding states.
+
 ### Color themes
 
-Settings separates Web appearance and Terminal appearance. Each offers Classic green (default) and Klein blue. Green preserves the previous palette and terminal table's original text colors. Blue colors the terminal logo, full table and activity animation without changing glyphs, timing or metric definitions. Webpage color is independent of terminal color, and of the page header's dark/light switch.
+Settings separates Web appearance and Terminal appearance. Each offers Classic green (default), Klein blue and Soft pink. Green preserves the previous palette and terminal table's original text colors. Blue and pink color the terminal logo, full table and activity animation without changing glyphs, timing or metric definitions. Webpage color is independent of terminal color, and of the page header's dark/light switch.
 
-Web choices use `ccdx.dashboard.palette` (`green` / `klein`) and the existing `ccdx.dashboard.theme` (`dark` / `light`) in browser local storage. They are applied before the stylesheet, including the atom favicon. Same-origin tabs receive storage updates; other browsers retain their own choices. If storage is blocked, the current tab still changes and explicitly reports that the choice was not saved. No service request is needed to change webpage colors.
+Web choices use `ccdx.dashboard.palette` (`green` / `klein` / `pink`) and the existing `ccdx.dashboard.theme` (`dark` / `light`) in browser local storage. They are applied before the stylesheet, including the atom favicon. Same-origin tabs receive storage updates; other browsers retain their own choices. If storage is blocked, the current tab still changes and explicitly reports that the choice was not saved. No service request is needed to change webpage colors.
 
-Terminal color uses `terminal_color_theme: "klein"` in the normal CCDX user config. An absent value means `green`; choosing green removes the override. It does not change `terminal_animation` or any capability flag. The same bounded, strict settings read, file lock and atomic writer are reused. Invalid/unreadable existing config is not overwritten with defaults. A successful save applies to the supported live status table; the startup logo uses the saved choice next time. Previously printed terminal lines are not rewritten. Color codes are added after width calculation and clipping. Truecolor, 256-color and ANSI-blue fallbacks are supported; `NO_COLOR`, dumb terminals and redirected output preserve plain output. A terminal's own palette and background can affect the displayed blue.
+Terminal color uses `terminal_color_theme: "klein"` or `"pink"` in the normal CCDX user config. An absent value means `green`; choosing green removes the override. It does not change `terminal_animation` or any capability flag. The same bounded, strict settings read, file lock and atomic writer are reused. Invalid/unreadable existing config is not overwritten with defaults. A successful save applies to the supported live status table; the startup logo uses the saved choice next time. Previously printed terminal lines are not rewritten. Color codes are added after width calculation and clipping. Truecolor, 256-color and ordinary ANSI fallbacks are supported; `NO_COLOR`, dumb terminals and redirected output preserve plain output. A terminal's own palette and background affect the displayed color. Pink uses a darker tone when COLORFGBG explicitly identifies a light background (7 or 15); otherwise its default tone is pale pink. CCDX does not query or change the terminal background.
 
 The terminal sample in Settings is labeled Preview and uses sample numbers, not current usage. Existing nine animation previews and their save operation remain available beneath the color choice. Red errors and amber warnings keep their meaning across webpage themes.
 
@@ -1008,7 +1012,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.7/codex-copilot-dx-1.2.7.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.8/codex-copilot-dx-1.2.8.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 

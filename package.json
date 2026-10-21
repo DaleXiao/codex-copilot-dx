@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "description": "Local Codex adapter and optional Microsoft 365 Claude gateway",
   "author": "Dale Xiao",
   "type": "module",

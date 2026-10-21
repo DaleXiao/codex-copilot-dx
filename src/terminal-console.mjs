@@ -44,14 +44,16 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
   function table(width, usage, requests, inferenceActive, sum, compactTitle = false) {
     const left = Math.floor((width - 3) / 2), right = width - 3 - left;
     const cell = (label, value, size) => {
-      const number = value === undefined ? "" : updatedAt === null && readFailed ? "—" : compact(value), inner = size - 2;
+      const number = value === undefined ? "" : updatedAt === null && readFailed ? "—" : typeof value === "string" ? value : compact(value), inner = size - 2;
       const text = clip(label, Math.max(0, inner - displayWidth(number) - (number ? 1 : 0)));
       return ` ${text}${" ".repeat(Math.max(0, inner - displayWidth(text) - displayWidth(number)))}${number} `;
     };
     const row = (a, b) => `│${a}│${b}│`;
     const rule = (a, b, c) => `${a}${"─".repeat(left)}${b}${"─".repeat(right)}${c}`;
+    const rate = usage.cache_hit_rate;
+    const cacheHit = Number.isFinite(rate) && rate >= 0 && rate <= 1 ? `${usage.cache_hit_rate_partial ? "~" : ""}${(rate * 100).toFixed(1)}%` : "—";
     const usageRows = [[left < 23 ? "Records" : "Usage records", usage.records || 0], ["Input", usage.input_tokens], [left < 23 ? "Reused" : "Reused input", usage.cached_input_tokens],
-      ["Output", usage.output_tokens], ["Partial usage", usage.partial_records || 0], ["", undefined]];
+      ["Output", usage.output_tokens], ["Partial usage", usage.partial_records || 0], ["Cache hit", cacheHit]];
     const requestRows = [["Requests", requests], ["Active", inferenceActive], ["Completed", sum("completed")], ["Incomplete", sum("incomplete")], ["Failed", sum("failed")], ["Cancelled", sum("cancelled")]];
     const title = compactTitle ? [`┌─ Usage ${"─".repeat(left - 8)}┬─ Inference ${"─".repeat(right - 12)}┐`]
       : [rule("┌", "┬", "┐"), row(cell("Usage / this run", undefined, left), cell("Inference", undefined, right)), rule("├", "┼", "┤")];
@@ -95,7 +97,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
       dirty = false;
     }
     // Apply color after clipping/layout so escape sequences never consume columns.
-    const body = [...content.map(line => current.color_theme === "klein" && /^[┌│├└]/.test(line)
+    const body = [...content.map(line => ["klein", "pink"].includes(current.color_theme) && /^[┌│├└]/.test(line)
       ? colorTerminalText(line, current.color_theme, { output, env }) : line), `${motion} ${active ? "Working" : "Idle"}`];
     fits = body.length < (Number(output.rows) || 24);
     if (!fits) { frameDelay = 1000;return; }

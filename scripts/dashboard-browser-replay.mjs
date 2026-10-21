@@ -26,6 +26,7 @@ let predictionActive = true, codexSource = "github", m365Enabled = true;
 const accountChoices = ["a", "b"].map(letter => ({ id: letter.repeat(64), login: `${letter}@example.test`, tenant: `company-${letter}` }));
 let companyAccount = accountChoices[0], accountChecks = 0, accountChanges = 0, refuseAccountChange = false;
 let proxyFailure = false;
+let modelActivity = 2;
 let signin = null, rejectIdentity = true;
 const accountTools = {
   snapshot: () => structuredClone(signin), dispose() {},
@@ -102,7 +103,7 @@ const server = http.createServer((req, res) => {
   if (req.url === "/_ccdx/status") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: true, name: "codex-copilot-dx", version: "synthetic", pid: 1, uptime_ms: 1000,
-      requests: { total: 1, active: 0 }, models: { models: 1, source: "synthetic" },
+      requests: { total: 1, active: 0 }, model_activity: { active: modelActivity }, models: { models: 1, source: "synthetic" },
       stream_performance: { by_route: { responses: {
         ttft_ms: { avg: 1250, samples: 3 }, output_tokens_per_second: { avg: 123.4, samples: 2, unit: "token/s" },
       } } },
@@ -123,7 +124,7 @@ try {
   for (const engine of (options.get("--engines") || "chromium,webkit").split(",")) {
     const browser = await playwright[engine].launch({ headless: true, ...(options.get("--executable") ? { executablePath: options.get("--executable") } : {}) });
     try {
-      for (const language of ["en", "zh"]) for (const theme of ["dark", "light"]) for (const width of [420, 1280]) for (const palette of ["green", "klein"]) {
+      for (const language of ["en", "zh"]) for (const theme of ["dark", "light"]) for (const width of [420, 1280]) for (const palette of ["green", "klein", "pink"]) {
         const caseName = JSON.stringify({ engine, language, theme, palette, width });
         console.log(`Browser case: ${caseName}`);
         const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "no-preference" });
@@ -150,6 +151,7 @@ try {
         await page.clock.install();
         codexSource = "m365";m365Enabled = true;companyAccount = accountChoices[0];accountChecks = 0;accountChanges = 0;refuseAccountChange = false;
         proxyFailure = false;
+        modelActivity = 2;
         updateReads = 0;updateState = "checked";latestVersion = "1.2.4";
         m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
@@ -172,6 +174,25 @@ try {
         assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
         assert.equal(await page.locator("html").getAttribute("lang"), language === "zh" ? "zh-CN" : "en");
         const nav = async route => { await page.locator(`[data-route="${route}"]`).click();await page.locator(`[data-view="${route}"]`).waitFor({ state: "visible" }); };
+        await page.waitForFunction(() => document.getElementById("model-activity").dataset.state === "active").catch(async error => {
+          console.error("Activity diagnostics", { errors, state: await page.locator("#model-activity").getAttribute("data-state"), api: await page.evaluate(() => typeof globalThis.ccdxDashboardActivity), snapshot: await page.evaluate(async () => (await (await fetch("/_ccdx/status")).json()).model_activity) });
+          throw error;
+        });
+        assert.equal(await page.locator("#model-activity .activity-dots i").count(), 5);
+        assert.equal(await page.locator(".activity-lamp").evaluate(node => getComputedStyle(node).width), "4px");
+        assert.equal(await page.locator(".activity-lamp").evaluate(node => getComputedStyle(node, "::before").content), "none");
+        const overviewTop = (await page.locator('[data-view="overview"] .overview').boundingBox()).y;
+        if (output && language === "zh" && width === 1280 && palette === "pink") await page.screenshot({ path: path.join(output, `${engine}-pink-${theme}-overview-active.png`), fullPage: true });
+        modelActivity = 0;await page.locator("#refresh").click();
+        await page.waitForFunction(() => document.getElementById("model-activity").dataset.state === "idle");
+        assert.equal((await page.locator('[data-view="overview"] .overview').boundingBox()).y, overviewTop);
+        assert.equal(await page.locator(".activity-lamp").evaluate(node => getComputedStyle(node, "::before").animationName), "activity-breathe");
+        await page.route("**/_ccdx/status", route => route.fulfill({ status: 503, contentType: "application/json", body: '{}' }));
+        await page.locator("#refresh").click();
+        await page.waitForFunction(() => document.getElementById("model-activity").dataset.state === "unknown");
+        assert.equal(await page.locator(".activity-lamp").evaluate(node => getComputedStyle(node, "::before").content), "none");
+        await page.unroute("**/_ccdx/status");await page.locator("#refresh").click();
+        await page.waitForFunction(() => document.getElementById("model-activity").dataset.state === "idle");
         assert.match(await page.locator("#runtime-usage").innerText(), /100/);
         assert.equal(await page.locator("#runtime-cache-hit").innerText(), "20.0%");
         assert.equal(await page.locator('[data-view]:visible').count(), 1);
@@ -291,7 +312,8 @@ try {
         await page.waitForFunction(() => document.getElementById("live-models-body").textContent.includes("gpt-6.1-sol"));
         const icon = decodeURIComponent(await page.locator("#favicon").getAttribute("href"));
         assert.equal((icon.match(/<ellipse /g) || []).length, 3);
-        assert.ok(icon.includes(palette === "klein" ? theme === "dark" ? "#789aff" : "#002fa7" : theme === "dark" ? "#a6f5a8" : "#176b3a"));
+        const iconColors = { green: ["#a6f5a8", "#176b3a"], klein: ["#789aff", "#002fa7"], pink: ["#f3a8c8", "#a83e68"] };
+        assert.ok(icon.includes(iconColors[palette][theme === "dark" ? 0 : 1]));
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "No whole-page horizontal overflow");
         await nav("checks");await page.locator("#check-local").click();
         await page.waitForFunction(() => document.getElementById("checks-body").children.length > 0);
@@ -368,12 +390,13 @@ try {
         await page.locator(".update-install > summary").click();
         await page.waitForFunction(() => !document.getElementById("terminal-color-theme").disabled);
         assert.equal(await page.locator("#web-color-theme").inputValue(), palette);
-        await page.locator("#terminal-color-theme").selectOption("klein");
+        const terminalPalette = palette === "pink" ? "pink" : "klein";
+        await page.locator("#terminal-color-theme").selectOption(terminalPalette);
         await page.waitForFunction(() => !document.getElementById("terminal-color-theme").disabled);
         assert.equal(await page.locator("html").getAttribute("data-palette"), palette);
-        assert.equal(await page.locator("#terminal-color-sample").getAttribute("data-terminal-palette"), "klein");
+        assert.equal(await page.locator("#terminal-color-sample").getAttribute("data-terminal-palette"), terminalPalette);
         await page.locator("#web-color-theme").selectOption(palette === "green" ? "klein" : "green");
-        assert.equal(await page.locator("#terminal-color-theme").inputValue(), "klein");
+        assert.equal(await page.locator("#terminal-color-theme").inputValue(), terminalPalette);
         await page.locator("#web-color-theme").selectOption(palette);
         await page.route("**/_ccdx/ui/settings", async route => {
           if (route.request().method() === "POST") return route.fulfill({status:409,contentType:"application/json",body:JSON.stringify({error:"synthetic save refused"})});
@@ -381,7 +404,7 @@ try {
         });
         await page.locator("#terminal-color-theme").selectOption("green");
         await page.waitForFunction(() => document.getElementById("terminal-color-note").textContent.includes("synthetic save refused"));
-        assert.equal(await page.locator("#terminal-color-theme").inputValue(), "klein");
+        assert.equal(await page.locator("#terminal-color-theme").inputValue(), terminalPalette);
         await page.unroute("**/_ccdx/ui/settings");
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         await page.locator("#animation-settings > summary").click();
@@ -419,6 +442,13 @@ try {
         await page.waitForFunction(() => !document.getElementById("refresh").disabled);
         assert.equal(await page.evaluate(() => atomMotions.length), motionCount, "Reduced motion suppresses new atom rotations");
         await nav("overview");
+        assert.equal(await page.locator(".activity-lamp").evaluate(node => getComputedStyle(node, "::before").animationName), "none", "Reduced motion keeps the idle halo static");
+        modelActivity = 2;await page.locator("#refresh").click();
+        await page.waitForFunction(() => document.getElementById("model-activity").dataset.state === "active");
+        assert.equal(await page.locator(".activity-dots i").first().evaluate(node => getComputedStyle(node).animationName), "none");
+        assert.equal(await page.locator(".activity-dots i").first().evaluate(node => getComputedStyle(node).opacity), "1");
+        await page.clock.fastForward(6001);
+        assert.equal(await page.locator("#model-activity").getAttribute("data-state"), "unknown", "Manual snapshots expire without extra network work");
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         assert.equal(errors.length, 0, errors.join("\n"));
         if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-overview.png`), fullPage: true });

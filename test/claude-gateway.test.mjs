@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { startClaudeGateway, createMessagesObserver } from "../src/claude-gateway.mjs";
 import { buildMessagesUsageRecord, usageCacheHitRate } from "../src/usage-store.mjs";
+import { currentRequestContext } from "../src/request-context.mjs";
 
 const key = "ccdx_m365_" + "a".repeat(64);
 const message = { id: "msg_synthetic", type: "message", role: "assistant", model: "claude-opus-5.5",
@@ -12,7 +13,7 @@ async function gateway(t, messages, extra = {}) {
   const records = [], calls = [];
   const server = await startClaudeGateway({ port: 0, apiKey: key, provider: {
     id: "m365", models: () => [{ id: "claude-opus-5.5", name: "Opus 5.5" }], client: { messages: async (body, options) => {
-      calls.push(body);options.onUpstreamStart?.();return messages(body, options);
+      calls.push(body);currentRequestContext()?.streamPerformance?.upstreamStarted();options.onUpstreamStart?.();return messages(body, options);
     } },
   }, record: value => records.push(value), ...extra });
   t.after(() => server.close());
@@ -51,6 +52,46 @@ test("Claude gateway preserves stream bytes, completes at message_stop and cance
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);assert.equal(cancelled, true);
   assert.equal(g.server.snapshot().completed, 1);assert.equal(g.records.length, 1);
   assert.equal(g.server.snapshot().performance.by_route.messages.terminal_outcomes.by_model["claude-opus-5.5"].completed, 1);
+});
+
+test("empty and signature-only Claude deltas do not count as first model output", async t => {
+  const events = [{ type: "message_start", message: { ...message, content: [] } },
+    { type: "content_block_delta", index: 4, delta: { type: "text_delta", text: "" } },
+    { type: "content_block_delta", index: 4, delta: { type: "signature_delta", signature: "opaque-signature" } },
+    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 0 } }, { type: "message_stop" }];
+  const bytes = Buffer.from(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""));
+  const g = await gateway(t, async () => new Response(bytes, { headers: { "Content-Type": "text/event-stream" } }));
+  assert.deepEqual(Buffer.from(await (await g.request({ model: "claude-opus-5.5", messages: [], stream: true })).arrayBuffer()), bytes);
+  const stats = g.server.snapshot();
+  assert.equal(stats.performance.by_route.messages.ttft_ms.samples, 0);
+  assert.equal(stats.completed, 1);assert.equal(stats.active, 0);
+});
+
+test("sparse interleaved Claude tool, thinking and text blocks retain byte order across fragments", async t => {
+  const events = [{ type: "message_start", message: { ...message, content: [] } },
+    { type: "content_block_start", index: 9, content_block: { type: "tool_use", id: "tool_a", name: "read", input: {} } },
+    { type: "content_block_start", index: 3, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 9, delta: { type: "input_json_delta", partial_json: '{"file":' } },
+    { type: "content_block_delta", index: 3, delta: { type: "text_delta", text: "测试 😀" } },
+    { type: "content_block_delta", index: 9, delta: { type: "input_json_delta", partial_json: '"a.txt"}' } },
+    { type: "content_block_stop", index: 3 }, { type: "content_block_stop", index: 9 },
+    { type: "content_block_start", index: 15, content_block: { type: "thinking", thinking: "" } },
+    { type: "content_block_delta", index: 15, delta: { type: "thinking_delta", thinking: "reasoning" } },
+    { type: "content_block_delta", index: 15, delta: { type: "signature_delta", signature: "opaque-kept" } },
+    { type: "content_block_stop", index: 15 },
+    { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 3 } }, { type: "message_stop" }];
+  const bytes = Buffer.from(events.map(event => `event: ${event.type}\r\ndata: ${JSON.stringify(event)}\r\n\r\n`).join(""));
+  for (const size of [1, 7, 64]) {
+    let offset = 0;
+    const g = await gateway(t, async () => new Response(new ReadableStream({ pull(controller) {
+      if (offset === bytes.length) { controller.close();return; }
+      controller.enqueue(bytes.subarray(offset, offset + size));offset = Math.min(bytes.length, offset + size);
+    } }), { headers: { "Content-Type": "text/event-stream" } }));
+    const response = await g.request({ model: "claude-opus-5.5", messages: [], stream: true });
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+    assert.equal(g.records.length, 1);assert.equal(g.server.snapshot().active, 0);
+    assert.equal(g.server.snapshot().performance.by_route.messages.ttft_ms.samples, 1);
+  }
 });
 
 test("Claude gateway applies configured body limits before upstream dispatch", async t => {

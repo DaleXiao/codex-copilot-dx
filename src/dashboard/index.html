@@ -11,6 +11,7 @@
     <script src="/refresh.js" defer></script>
     <script src="/icons.js" defer></script>
     <script src="/status.js" defer></script>
+    <script src="/activity.js" defer></script>
     <script src="/usage.js" defer></script>
     <script src="/updates.js" defer></script>
     <script src="/ui.js" defer></script>
@@ -49,6 +50,9 @@
 
 
         <div data-view="overview">
+        <div id="model-activity" class="model-activity" data-state="unknown" role="status" aria-label="Activity unknown" data-i18n-label="model_activity_unknown">
+          <span class="activity-lamp" aria-hidden="true"></span><span class="activity-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span id="model-activity-label" class="activity-label" data-i18n="model_activity_unknown">Activity unknown</span>
+        </div>
         <section class="overview" aria-label="Overview" data-i18n-label="overview"><article class="card"><h2 data-i18n="adapter">SERVICE</h2><strong id="version">—</strong><p id="uptime">—</p></article><article class="card"><h2 data-i18n="sources">SOURCES</h2><strong id="source-summary">—</strong><p id="source-detail">—</p></article></section>
         <details class="panel dashboard-section" id="client-features" open>
           <summary class="panel-heading"><h2 data-i18n="client_connections">APP SETUP</h2><span data-i18n="configuration_observation">SETUP AND ACTIVITY</span></summary>
@@ -248,7 +252,7 @@ Missing data is unknown. This panel keeps no prompts or images.</p>
     <h2 id="web-appearance-title" data-i18n="appearance_web_appearance">网页外观</h2>
     <div class="appearance-row">
       <div class="appearance-label"><label for="web-color-theme" data-i18n="appearance_color_theme">颜色主题</label><p data-i18n="appearance_browser_scope">只影响当前浏览器。</p></div>
-      <select id="web-color-theme" class="appearance-select"><option value="green" data-i18n="appearance_classic_green">经典绿（默认）</option><option value="klein" data-i18n="appearance_klein_blue">克莱因蓝</option></select>
+      <select id="web-color-theme" class="appearance-select"><option value="green" data-i18n="appearance_classic_green">经典绿（默认）</option><option value="klein" data-i18n="appearance_klein_blue">克莱因蓝</option><option value="pink" data-i18n="appearance_soft_pink">淡粉色</option></select>
     </div>
     <p id="web-color-note" class="appearance-note" role="status" data-i18n="theme_saved_browser">选择后，网页立即换色。</p>
   </section>
@@ -257,7 +261,7 @@ Missing data is unknown. This panel keeps no prompts or images.</p>
     <h2 id="terminal-appearance-title" data-i18n="terminal_appearance">终端外观</h2>
     <div class="appearance-row">
       <div class="appearance-label"><label for="terminal-color-theme" data-i18n="appearance_color_theme">颜色主题</label><p data-i18n="appearance_terminal_scope">与网页主题分别设置。</p></div>
-      <select id="terminal-color-theme" disabled class="appearance-select"><option value="green" data-i18n="appearance_classic_green">经典绿（默认）</option><option value="klein" data-i18n="appearance_klein_blue">克莱因蓝</option></select>
+      <select id="terminal-color-theme" disabled class="appearance-select"><option value="green" data-i18n="appearance_classic_green">经典绿（默认）</option><option value="klein" data-i18n="appearance_klein_blue">克莱因蓝</option><option value="pink" data-i18n="appearance_soft_pink">淡粉色</option></select>
     </div>
     <p id="terminal-color-note" class="appearance-note" role="status" data-i18n="appearance_terminal_effect">表格即时换色，启动 Logo 下次生效。</p>
 

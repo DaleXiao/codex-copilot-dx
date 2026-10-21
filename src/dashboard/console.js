@@ -41,6 +41,7 @@
     const route = location.hash.slice(1), next = Object.hasOwn(titles, route) ? route : "overview";
     current = next;
     for (const view of document.querySelectorAll("[data-view]")) view.hidden = view.dataset.view !== next;
+    globalThis.ccdxDashboardActivity?.visibilityChanged();
     for (const item of document.querySelectorAll("[data-route]")) {
       if (item.dataset.route === next) item.setAttribute("aria-current", "page");else item.removeAttribute("aria-current");
     }

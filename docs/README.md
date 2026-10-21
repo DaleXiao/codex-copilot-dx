@@ -17,6 +17,7 @@ effective Codex configuration or validate every field against the installed app.
 
 ## Historical release evidence
 
+- [1.2.8: Soft pink, accurate activity and terminal cache reuse](RELEASE_1.2.8.md)
 - [1.2.7: Account tools, checks and repairs, consistent status icons](RELEASE_1.2.7.md)
 - [1.2.6: Abbreviated proxy networks and preserved diagnostics](RELEASE_1.2.6.md)
 - [1.2.5: Animated usage views and approximate cache hit rate](RELEASE_1.2.5.md)

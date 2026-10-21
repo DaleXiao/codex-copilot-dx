@@ -106,3 +106,12 @@ test("palette restores before paint, remains independent of mode and reports fai
   blocked.select.value="klein";blocked.select.change({target:blocked.select});
   assert.equal(blocked.root.dataset.palette,"klein");assert.equal(blocked.note.textContent,"theme_tab_only");
 });
+
+test("pink restores before paint, changes mode independently and persists without service access", () => {
+  const saved = new Map([["ccdx.dashboard.palette", "pink"], ["ccdx.dashboard.theme", "light"]]);
+  const f = loadTheme({ getItem: key => saved.get(key), setItem: (key, value) => saved.set(key, value) });
+  assert.equal(f.root.dataset.palette, "pink");assert.match(decodeURIComponent(f.favicon.href), /#a83e68/);
+  f.button.click();assert.equal(f.root.dataset.palette, "pink");assert.match(decodeURIComponent(f.favicon.href), /#f3a8c8/);
+  f.select.value = "green";f.select.change({ target: f.select });
+  assert.equal(saved.get("ccdx.dashboard.palette"), "green");assert.equal(f.root.dataset.theme, "dark");
+});

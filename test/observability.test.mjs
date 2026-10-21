@@ -99,6 +99,17 @@ test("request metrics use fixed protocol route buckets and complete exactly once
   ]);
 });
 
+test("model activity excludes catalogs, token counting and image tool discovery and ends once", () => {
+  const metrics = createRequestMetrics();
+  for (const route of ["models", "messages_count_tokens", "claude_models", "image_mcp", "not_found"]) metrics.begin(route);
+  assert.equal(runtimeStatusPayload({ metrics }).model_activity.active, 0);
+  const finish = metrics.begin("responses"), compact = metrics.begin("responses_compact"), claude = metrics.begin("messages");
+  assert.equal(runtimeStatusPayload({ metrics, imageGeneration: { active: 2 } }).model_activity.active, 5);
+  finish({ aborted: true });finish({ aborted: true });compact();claude();
+  assert.equal(runtimeStatusPayload({ metrics, imageGeneration: { active: 0 } }).model_activity.active, 0);
+  assert.equal(runtimeStatusPayload({ metrics, imageGeneration: { active: -1 } }).model_activity.active, null);
+});
+
 test("route classification recognizes only supported Codex routes", () => {
   assert.equal(classifyAdapterRoute("POST", "/v1/responses"), "responses");
   assert.equal(classifyAdapterRoute("POST", "/v1/responses/compact"), "responses_compact");

@@ -187,6 +187,11 @@ export function runtimeStatusPayload({
     };
   }
   const history = responseHistoryStats();
+  const requests = metrics?.snapshot?.() || createRequestMetrics().snapshot();
+  const activityCounts = ["responses", "responses_compact", "messages"].map(route => requests.by_route[route].active);
+  activityCounts.push(imageGeneration?.active ?? 0);
+  const active = activityCounts.every(value => Number.isSafeInteger(value) && value >= 0)
+    && Number.isSafeInteger(activityCounts.reduce((sum, value) => sum + value, 0)) ? activityCounts.reduce((sum, value) => sum + value, 0) : null;
   return {
     ...adapterHealthPayload(),
     uptime_ms: Math.round(process.uptime() * 1000),
@@ -197,7 +202,8 @@ export function runtimeStatusPayload({
       external_bytes: memory.external,
       array_buffers_bytes: memory.arrayBuffers,
     },
-    requests: metrics?.snapshot?.() || createRequestMetrics().snapshot(),
+    requests,
+    model_activity: { active },
     stream_performance: streamPerformance?.snapshot?.() || null,
     admission: admission?.diagnostics?.() || admission?.stats?.() || null,
     response_history: history,

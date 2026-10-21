@@ -1,6 +1,6 @@
 (() => {
   const key = "ccdx.dashboard.theme", paletteKey = "ccdx.dashboard.palette";
-  const valid = value => value === "green" || value === "klein";
+  const valid = value => value === "green" || value === "klein" || value === "pink";
   let theme = "dark", palette = "green", saved = true;
   try {
     if (localStorage.getItem(key) === "light") theme = "light";
@@ -18,7 +18,8 @@
   const applyTheme = () => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.palette = palette;
-    const color = palette === "klein" ? theme === "dark" ? "#789aff" : "#002fa7" : theme === "dark" ? "#a6f5a8" : "#176b3a";
+    const colors = { green: ["#a6f5a8", "#176b3a"], klein: ["#789aff", "#002fa7"], pink: ["#f3a8c8", "#a83e68"] };
+    const color = colors[palette][theme === "dark" ? 0 : 1];
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><g fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round"><ellipse cx="32" cy="32" rx="26" ry="10"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(60 32 32)"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(120 32 32)"/></g><circle cx="32" cy="32" r="4.5" fill="${color}"/></svg>`;
     document.getElementById("favicon").href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
   };

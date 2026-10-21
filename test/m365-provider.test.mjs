@@ -49,6 +49,22 @@ test("M365 keeps full discovery isolated while exposing only each protocol's ver
   assert.equal(requests.length, 1);p.close();
 });
 
+test("a closed source cannot publish a delayed catalog or revive its last-good snapshot", async t => {
+  const home = fixture(t);let release, began, reads = 0, publications = 0;
+  const started = new Promise(resolve => { began = resolve; });
+  const p = createM365Provider({ home, auth: auth(), onCatalog: () => { publications++; }, fetchImpl: async () => {
+    if (++reads === 1) return Response.json(catalog);
+    began();return new Promise(resolve => { release = resolve; });
+  } });
+  await p.refresh();
+  const before = fs.readFileSync(m365Paths({ home }).catalog, "utf8");
+  const late = p.refresh();await started;p.close();
+  release(Response.json({ data: [{ id: "gpt-late", publisher: "OpenAI", supported_endpoints: ["/responses"] }] }));
+  await assert.rejects(late);
+  assert.equal(p.snapshot().state, "disabled");assert.equal(publications, 1);
+  assert.equal(fs.readFileSync(m365Paths({ home }).catalog, "utf8"), before);
+});
+
 test("M365 never reuses another account's model cache or opaque replay identity", async t => {
   const home = fixture(t), paths = m365Paths({ home });
   writeM365Json(paths.account, account);

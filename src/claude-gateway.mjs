@@ -8,7 +8,7 @@ import { loadRuntimeConfig } from "./runtime-config.mjs";
 import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { runWithRequestContext, currentRequestContext } from "./request-context.mjs";
-import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
+import { createStreamPerformanceMetrics, isMessagesOutputDelta } from "./stream-performance.mjs";
 import { buildMessagesUsageRecord, recordUsage } from "./usage-store.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { decodedBodyLimitPreference } from "./user-settings.mjs";
@@ -123,7 +123,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
             if (event.type === "error") { failedEvent = true;outcome = "failed";return; }
             if (sawStop || failedEvent) return;
             if (event.type === "message_start") { responseId = event.message?.id;model = event.message?.model || model;usage = event.message?.usage || {}; }
-            if (event.type === "content_block_delta") tracker?.firstOutput(event.delta?.type === "input_json_delta" ? "tool_arguments" : "output_text");
+            if (event.type === "content_block_delta" && isMessagesOutputDelta(event.delta)) tracker?.firstOutput();
             if (event.type === "message_delta") { usage = { ...usage, ...event.usage };stopReason = event.delta?.stop_reason || stopReason; }
             if (event.type === "message_stop") { sawStop = true;outcome = stopReason === "max_tokens" ? "incomplete" : "completed"; }
           }, config.maxSseBufferBytes);

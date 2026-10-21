@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createServiceControl } from "../src/service-control.mjs";
-import { readUserSettings } from "../src/user-settings.mjs";
+import { readUserSettings, writeServicePreference } from "../src/user-settings.mjs";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { invokeAdapter } from "../test-support/adapter.mjs";
 
@@ -69,4 +69,22 @@ test("terminal palette saves atomically and applies independently of animation",
   await assert.rejects(f.control.action({action:"color_theme",theme:"unknown"}));
   await assert.rejects(f.control.action({action:"color_theme",theme:"green",extra:true}));
   assert.equal(f.control.snapshot().color_theme,"klein");
+});
+
+test("queued UI changes preserve concurrent CLI preferences and recover after a refused action", async t => {
+  const f = fixture(t);let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const applied = [];
+  const control = createServiceControl({ home: f.home, env: {}, readImages: () => null, readPrediction: () => null,
+    terminal: { apply: value => applied.push(value) }, providerRuntime: { snapshot: () => ({}), async action() { entered();await gate; } } });
+  const provider = control.action({ action: "provider", operation: "on" });await started;
+  const refused = assert.rejects(control.action({ action: "color_theme", theme: "unknown" }));
+  const color = control.action({ action: "color_theme", theme: "pink" });
+  const paused = control.action({ action: "preference", key: "image_enabled", value: false });
+  writeServicePreference("open_webui", false, { home: f.home, env: {} });
+  assert.equal(readUserSettings({ home: f.home }).terminal_color_theme, undefined);
+  release();await Promise.all([provider, refused, color, paused]);
+  const saved = readUserSettings({ home: f.home });
+  assert.equal(saved.terminal_color_theme, "pink");assert.equal(saved.open_webui, false);assert.equal(saved.image_enabled, false);
+  assert.equal(applied[0].color_theme, "pink");
 });

@@ -556,3 +556,12 @@ CLI 仍保持英文；原始错误码保留在诊断中。新增账号命令与 
 | 无账号选择 → `Choose an account, or q to cancel:` | 选择后验证该账号，取消不改变绑定 |
 | 无切换范围提示 → `Applies to Microsoft 365 in Codex and Claude. Use a new conversation after changing accounts.` | 切换前说明影响 |
 | 无跨账号历史提示 → `This conversation belongs to another company account. Start a new conversation.` | 拒绝跨账号转发历史 |
+
+## 1.2.8 增量
+
+| 原文案 → 新文案 | 含义 |
+| --- | --- |
+| 用量表原有空行 → Cache hit | 本次运行复用输入 ÷ 输入 Token |
+| 无新增中文 CLI 文案 | CLI 继续英文 |
+
+百分比使用原始聚合值，与 Overview 同口径；不完整缓存证据加 `~`，未知或无效显示 `—`。淡粉主题保留全部既有状态标签和布局。

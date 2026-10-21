@@ -162,6 +162,7 @@
     }
     
     function render(data) {
+      globalThis.ccdxDashboardActivity?.update(data.model_activity);
       text("version", `v${data.version || "?"}`);
       text("uptime", "pid_pid_uptime_duration", { pid: number(data.pid), duration: duration(data.uptime_ms) });
     

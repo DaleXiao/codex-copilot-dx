@@ -17,6 +17,21 @@ function fixture(tty = true) {
     timers: { setTimeout(fn, ms) { timers.set(fn, ms);return fn; }, clearTimeout(fn) { timers.delete(fn); } } });
   return { terminal, writes, errors, tick() { const [fn, ms] = [...timers][0];timers.delete(fn);time += ms;fn(); } };
 }
+
+test("live cache hit keeps zero, partial and unknown evidence aligned without adding rows", () => {
+  for (const columns of [40, 80, 120]) for (const [rate, partial, expected] of [[0, false, "0.0%"], [2 / 3, true, "~66.7%"], [1, false, "100.0%"], [null, false, "—"], [undefined, true, "—"], [1.1, false, "—"]]) {
+    const writes = [];
+    const terminal = createTerminalConsole({ output: { isTTY: true, columns, rows: 24, write: value => writes.push(value) }, errorOutput: { isTTY: true }, env: {},
+      snapshot: () => ({ runtime_usage: { cache_hit_rate: rate, cache_hit_rate_partial: partial } }),
+      timers: { setTimeout() { return null; }, clearTimeout() {} } });
+    terminal.start();terminal.cleanup();
+    const lines = stripVTControlCharacters(writes.join("")).replace(/\r/g, "").split("\n");
+    const row = lines.find(line => line.includes("Cache hit"));
+    assert.ok(row.includes(expected), row);
+    assert.ok(lines.every(line => displayWidth(line) < columns));
+    assert.equal(lines.filter(line => line.startsWith("│") && !line.includes("Usage / this run")).length, 6);
+  }
+});
 test("terminal uses a fixed region, suppresses request detail and restores output on cleanup", () => {
   const f = fixture();f.terminal.start();const finish = f.terminal.beginRequest();f.tick();
   for (let index = 0; index < 100; index++) f.terminal.log("log", ["responses model=private-request-detail"]);

@@ -84,6 +84,13 @@ export function isChatOutputDelta(delta) {
     || nonEmptyString(delta.reasoning_text);
 }
 
+export function isMessagesOutputDelta(delta) {
+  if (!delta || typeof delta !== "object") return false;
+  return delta.type === "text_delta" && nonEmptyString(delta.text)
+    || delta.type === "thinking_delta" && nonEmptyString(delta.thinking)
+    || delta.type === "input_json_delta" && nonEmptyString(delta.partial_json);
+}
+
 function createHistogram(edges) {
   return {
     edges,

@@ -82,9 +82,9 @@ test("queued UI changes preserve concurrent CLI preferences and recover after a 
   const color = control.action({ action: "color_theme", theme: "pink" });
   const paused = control.action({ action: "preference", key: "image_enabled", value: false });
   writeServicePreference("open_webui", false, { home: f.home, env: {} });
-  assert.equal(readUserSettings({ home: f.home }).terminal_color_theme, undefined);
+  assert.equal(readUserSettings({ home: f.home, env: {} }).terminal_color_theme, undefined);
   release();await Promise.all([provider, refused, color, paused]);
-  const saved = readUserSettings({ home: f.home });
+  const saved = readUserSettings({ home: f.home, env: {} });
   assert.equal(saved.terminal_color_theme, "pink");assert.equal(saved.open_webui, false);assert.equal(saved.image_enabled, false);
   assert.equal(applied[0].color_theme, "pink");
 });

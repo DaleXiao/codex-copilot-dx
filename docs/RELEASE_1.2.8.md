@@ -22,7 +22,7 @@ No runtime dependency, installation hook, provider failover, model substitution 
 
 The verified 1.2.7 tarball (`3b0167d33132286a5067ae9a9d962abdaa5740be71242ec5b691eac3bbb32d68`) reproduced the empty/signature-only first-output bug. The regression passes with the fix. Native-stream replay covers 1/7/64-byte fragmentation and nonconsecutive, interleaved tool/text/thinking blocks with exact byte comparisons.
 
-The first real-browser pass caught an omitted optional-route registration for the new activity asset. It was corrected, and a real-dispatcher local/foreign-Host regression was added. A synthetic timing fixture was also corrected to record the upstream start, matching the production provider boundary.
+The first real-browser pass caught an omitted optional-route registration for the new activity asset. It was corrected, and a real-dispatcher local/foreign-Host regression was added. A synthetic timing fixture was also corrected to record the upstream start, matching the production provider boundary. The first CI pass exposed a new test fixture reading through the runner XDG_CONFIG_HOME instead of its isolated environment; an explicit-XDG replay reproduced it, and both reads now use the same isolated environment. Production path selection was unchanged.
 
 Local `npm run verify` passed: **1,455 tests, 1,446 passed, 9 platform/optional skips, zero failures**; HTTP smoke, SSE idle, performance/resource gates and package checks passed. Chromium/WebKit completed **48** theme/mode/language/viewport cases; xterm completed **36** palette/color/size cases including 200 animation frames and resize. Additional reduced-motion and manual-snapshot-expiry assertions are included in the committed browser replay.
 

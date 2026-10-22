@@ -268,7 +268,7 @@ settlement for two seconds; no successful plaintext cache or transcript index ex
 
 `cli-web.mjs` provides an unauthenticated management bootstrap. It opens an existing compatible listener or composes the management listener and provider controls without app writes/launch, prediction setup or automatic M365 start. It is deliberately separate from normal launcher side effects; normal app startup follows after stopping this management-only process. CLI feature pause/resume delegates to the existing preference gates; full removal/setup remains in the original integration commands.
 
-`provider-runtime.mjs` composes read-only Provider descriptors separately from
+`provider-descriptors.mjs` projects plain source/client evidence without transport, configuration writes or lifecycle ownership. `provider-runtime.mjs` supplies its existing snapshots and composes these descriptors separately from
 source-selection actions. `provider-metadata.mjs` projects bounded model metadata
 without transport or credential dependencies. `dashboard-api.mjs` sanitizes public
 fields and keeps local credential validity separate from authorization evidence.
@@ -276,13 +276,14 @@ A requested catalog Provider must be registered; unavailable sources never fall
 through to another source. The unchanged CLI model selector retains its GPT scope.
 
 `dashboard/refresh.js` owns one visible-page timer, in-flight deduplication,
-freshness, cancellation and last-good snapshots. `ui.js` generates Provider tabs
+freshness, cancellation and last-good snapshots. `animation.js` owns terminal animation selection, preview timing and saving, with injected view helpers and the shared refresh controller; it does not select providers. `time.js` formats local 24-hour timestamps in both UI languages.
+`ui.js` generates Provider tabs
 and source filters from descriptors and retained history, with per-tab snapshots
 invalidated on profile generation/account changes. It cancels obsolete reads and
 prevents stale apply across tabs. `status.js` renders source-neutral authorization
 and client evidence; `usage.js` renders usage and date selection. View state remains
 page-local; only existing preferences and the viewed model Provider are saved in
-the browser. Expanded sections read on demand. There is no Node data watcher.
+the browser. Expanded sections read on demand. The directory and Codex selectors share the same catalog resource, freshness and single-flight read. Changing sources cancels an obsolete waiter; generation checks reject late results. Account changes clear old-source drafts and snapshots; ordinary refreshes retain pending choices. There is no Node data watcher.
 The sidebar controller reads small process-local status snapshots every two seconds
 while visible/automatic, and source/settings evidence every eight status ticks.
 Catalog and retained-log reads retain their slower, view-scoped policy. Animation
@@ -441,3 +442,22 @@ The existing CSS grid reserves explicit header/body/footer tracks; the body owns
 The eight existing views remain. `status.js` groups Overview clients by application using explicit selected-source evidence, retains all registered sources and projects separate Claude setup rows without inventing per-app Messages metrics. Account controls, catalog and access rows share the selected source in `ui.js`; source-management shortcuts browse without switching inference routes. Existing resource generations, cancellation, last-good snapshots and refresh cadence remain unchanged. Timestamps follow their own status/source/catalog/usage resources. Animation reads also check that Settings is visible.
 
 HTML owns grouping: Codex buffer maintenance is separate from request performance, usage filters sit with the data they actually control, Requests prioritizes recent records and folds bounded technical fields into each row, and Checks & repairs owns runtime diagnostics. Settings owns preferences and updates. Request expansion is preserved by bounded request keys, and literal upstream values still use text nodes. Existing settings transactions, same-origin protections and confirmations remain in use; action failures target the affected controls. No framework, runtime dependency, endpoint, log scan, model call or installer policy is added.
+
+## Catalog failure evidence and controls (1.2.10)
+
+`providers/m365-catalog-diagnostic.mjs` classifies model-list HTTP failures using
+fixed causes. The one known Entra-disabled message is recognized exactly; other
+403 responses mean access denied, without inferring tenant-policy changes. Only
+cause, HTTP status, check/last-success timestamps and a bounded service request ID
+survive. The server body, credentials and account details are not retained in that
+diagnostic. CLI and protected dashboard routes share its projection. Successful
+refresh clears both source and composition failure state; delayed closed-source
+results cannot clear a newer source's state. Discovery still sends no inference.
+
+The eight WebUI views retain their scope, palettes, atom and circle status icons.
+Selection uses an opaque theme fill and centered text, without a check or radio
+mark; hover retains the selection. Native selects use square borders and retain a
+visible square keyboard focus outline. Model names and metadata use readable text
+roles rather than accent colors. The catalog's technical fields remain available
+in per-model details. Usage trends and summaries are peer panels, still loaded on
+demand. Saved/effective preference differences are shown only when relevant.

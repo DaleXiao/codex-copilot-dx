@@ -15,8 +15,9 @@ const text = (id, key, values) => { localize(element(id), key, values); };
 const finite = (value) => value !== null && value !== undefined && Number.isFinite(Number(value));
 const number = (value) => finite(value) ? Math.max(0, Math.round(Number(value))).toLocaleString() : "—";
 const mib = (value) => finite(value) ? `${(Number(value) / 1048576).toFixed(1)} MiB` : "—";
-const viewHelpers = { element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator: globalThis.navigator,
-  motionAllowed: () => !reducedMotion.matches && document.visibilityState === "visible" && element("usage-analytics").open && element("model-usage").open && !element("model-usage").closest("[hidden]") };
+const time = (value, options) => globalThis.ccdxTime?.format(value, options) ?? (value ? new Date(value).toLocaleTimeString() : "—");
+const viewHelpers = { time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator: globalThis.navigator,
+  motionAllowed: () => !reducedMotion.matches && document.visibilityState === "visible" && element("usage-analytics").open && !element("usage-analytics").closest("[hidden]") };
 const { render, renderProviders, renderFailures, renderContext } = globalThis.ccdxDashboardStatus.create(viewHelpers);
 const usageView = globalThis.ccdxDashboardUsage.create(viewHelpers);
 const { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay } = usageView;
@@ -36,185 +37,13 @@ element("refresh").addEventListener("click", () => {
   dashboardRefresh.refreshVisible({ force: true });
 });
 
-const animationRows = new Map();
-let animationTimelines = [];
-let savedAnimation = "";
-let selectedAnimation = "";
-let previewDisabledByEnvironment = false;
-let previewVisible = false;
-let previewTimer = null;
-let previewStarted = 0;
-let animationSaving = false;
-let animationFramesLoaded = false;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-
-function renderAnsiFrame(target, frame) {
-  const fragments = String(frame).split(/\u001b\[([0-9;]+)m/);
-  const content = document.createDocumentFragment();
-  let color = "";
-  for (let index = 0; index < fragments.length; index += 2) {
-    if (fragments[index]) {
-      const span = document.createElement("span");
-      span.className = color;
-      span.textContent = fragments[index];
-      content.append(span);
-    }
-    const code = fragments[index + 1];
-    color = code === "97" ? "ansi-white"
-      : /^38;5;(159|123|87|51|45|39|33)$/.test(code || "") ? `ansi-${code.slice(5)}` : "";
-  }
-  target.replaceChildren(content);
-}
-
-function renderAnimationFrames(elapsed) {
-  for (const timeline of animationTimelines) {
-    const position = timeline.id === selectedAnimation ? elapsed % timeline.duration : 0;
-    const frameIndex = timeline.frames.findIndex(({ until }) => position < until);
-    if (frameIndex === timeline.lastFrame) continue;
-    timeline.lastFrame = frameIndex;
-    renderAnsiFrame(timeline.target, frameIndex < 0 ? `[${" ".repeat(20)}]` : timeline.frames[frameIndex].ansi);
-  }
-}
-
-function stopAnimationPreview() {
-  if (previewTimer !== null) clearTimeout(previewTimer);
-  previewTimer = null;
-}
-
-function tickAnimationPreview() {
-  previewTimer = null;
-  if (!animationTimelines.length || !element("animation-settings").open || element("animation-settings").closest("[hidden]") || !previewVisible || document.visibilityState !== "visible" || reducedMotion.matches || previewDisabledByEnvironment) return;
-  renderAnimationFrames(performance.now() - previewStarted);
-  previewTimer = setTimeout(tickAnimationPreview, 32);
-}
-
-function syncAnimationPreview() {
-  stopAnimationPreview();
-  if (!animationTimelines.length || !element("animation-settings").open || element("animation-settings").closest("[hidden]") || !previewVisible || document.visibilityState !== "visible" || reducedMotion.matches || previewDisabledByEnvironment) {
-    for (const timeline of animationTimelines) timeline.lastFrame = -2;
-    renderAnimationFrames(0);
-    return;
-  }
-  previewStarted = performance.now();
-  tickAnimationPreview();
-}
-
-new IntersectionObserver(([entry]) => {
-  previewVisible = entry.isIntersecting;
-  syncAnimationPreview();
-}).observe(element("animation-options"));
-document.addEventListener("visibilitychange", syncAnimationPreview);
-reducedMotion.addEventListener("change", syncAnimationPreview);
+const animationView = globalThis.ccdxDashboardAnimation.create({ element, phrase, localize, text, reducedMotion,
+  getRefresh: () => dashboardRefresh, document });
+const { apply: applyAnimation, load: loadAnimation, save: saveAnimation, sync: syncAnimationPreview, stop: stopAnimationPreview } = animationView;
 reducedMotion.addEventListener("change", () => { if (reducedMotion.matches) usageView.stopMotion(); });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "visible") usageView.stopMotion(); });
 new IntersectionObserver(([entry]) => usageView.setChartVisible(entry.isIntersecting)).observe(element("daily-bars"));
-
-function buildAnimationOptions(data) {
-  const container = element("animation-options");
-  container.replaceChildren();
-  animationRows.clear();
-  animationTimelines = [];
-  savedAnimation = data.theme;
-  selectedAnimation = data.theme;
-  previewDisabledByEnvironment = data.disabled_by_environment === true;
-  for (const [index, theme] of data.themes.entries()) {
-    const option = document.createElement("button");
-    option.type = "button";
-    option.className = "theme-option";
-    option.setAttribute("aria-pressed", String(theme.id === data.theme));
-    option.addEventListener("click", () => {
-      selectedAnimation = theme.id;
-      for (const [id, row] of animationRows) row.setAttribute("aria-pressed", String(id === theme.id));
-      element("save-animation").disabled = selectedAnimation === savedAnimation;
-      updateAnimationState();
-      syncAnimationPreview();
-    });
-    const name = document.createElement("span");
-    name.className = "theme-name";
-    const label = document.createElement("span");
-    localize(label, "index_theme", { index: String(index + 1).padStart(2, "0"), theme: phrase(theme.label) });
-    name.append(label);
-    if (theme.default) {
-      const marker = document.createElement("small");
-      localize(marker, "default");
-      name.append(marker);
-    }
-    const preview = document.createElement("span");
-    preview.className = "theme-preview";
-    preview.setAttribute("aria-hidden", "true");
-    option.append(name, preview);
-    container.append(option);
-    animationRows.set(theme.id, option);
-    let until = 0;
-    const frames = theme.frames.map((frame) => {
-      until += frame.delay_ms;
-      return { ansi: frame.ansi, until };
-    });
-    animationTimelines.push({ id: theme.id, target: preview, frames, duration: until + theme.loop_pause_ms, lastFrame: -2 });
-  }
-  element("save-animation").disabled = true;
-  syncAnimationPreview();
-}
-
-function animationNote(data) {
-  return data.disabled_by_environment
-    ? "disabled_by_ccdx_terminal_animation_saved_choice_applies_after_o"
-    : "saved_choice_applies_to_the_running_terminal";
-}
-
-function loadAnimation(options) {
-  if (!animationSaving) return dashboardRefresh.refresh("animation", options);
-}
-
-function applyAnimation(data, { changed } = {}) {
-  if (changed === false) { updateAnimationState(); return; }
-  if (!animationFramesLoaded && data.themes.some(theme => theme.frames)) {
-    buildAnimationOptions(data);
-    animationFramesLoaded = true;
-  } else {
-    const dirty = selectedAnimation && selectedAnimation !== savedAnimation;
-    savedAnimation = data.theme;
-    if (!dirty) selectedAnimation = data.theme;
-    previewDisabledByEnvironment = data.disabled_by_environment === true;
-    for (const [id, row] of animationRows) row.setAttribute("aria-pressed", String(id === selectedAnimation));
-    element("save-animation").disabled = selectedAnimation === savedAnimation;
-    syncAnimationPreview();
-  }
-  updateAnimationState();
-  text("animation-note", animationNote(data));
-}
-
-function updateAnimationState() {
-  text("animation-state", "current_theme_unsaved", { theme: phrase(savedAnimation.toUpperCase()), unsaved: selectedAnimation !== savedAnimation ? phrase("unsaved") : "" });
-}
-
-async function saveAnimation() {
-  const button = element("save-animation");
-  if (!selectedAnimation || selectedAnimation === savedAnimation) return;
-  animationSaving = true;
-  dashboardRefresh.invalidate("animation");
-  button.disabled = true;
-  text("animation-note", "saving");
-  try {
-    const response = await fetch("/_ccdx/ui/animation", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CCDX-Dashboard": "1" },
-      body: JSON.stringify({ theme: selectedAnimation }),
-      signal: AbortSignal.timeout(8000),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    savedAnimation = data.theme;
-    updateAnimationState();
-    text("animation-note", animationNote(data));
-  } catch (error) {
-    text("animation-note", "not_saved_error", { error: String(error.message || error).slice(0, 150) });
-  } finally {
-    animationSaving = false;
-    button.disabled = selectedAnimation === savedAnimation;
-    loadAnimation({ force: true });
-  }
-}
 
 function emptyTable(bodyId, columns, message) {
   const body = element(bodyId);
@@ -268,10 +97,10 @@ function chooseProvider(id) {
   dashboardRefresh.invalidate("models", { clear: true });
   const previous = modelSnapshots.get(id);
   if (previous) applyModels(previous, { changed: true });
-  else { emptyTable("live-models-body", 6, "reading_provider_catalog");text("models-note", "reading_provider_catalog"); }
+  else { emptyTable("live-models-body", 3, "reading_provider_catalog");text("models-note", "reading_provider_catalog"); }
   element("live-models-body").setAttribute("aria-labelledby", `model-provider-${id}`);
   window.dispatchEvent(new CustomEvent("ccdx:source-view"));
-  void loadModels();
+  if (!element("upstream-models").closest("[hidden]")) void loadModels();
 }
 
 function syncProviderDetails() {
@@ -285,18 +114,18 @@ function applyProviders(data, { changed }) {
   let reloadModels = false;
   const previous = new Map(providerEntries.map(entry => [entry.id, JSON.stringify([entry.generation, entry.auth?.account])]));
   providerEntries = data.providers;
-  if (sourceChoicesChanged) window.dispatchEvent(new CustomEvent("ccdx:providers"));
   for (const [id] of modelSnapshots) {
     const provider = providerEntries.find(entry => entry.id === id);
     if (!provider) {
       modelSnapshots.delete(id);
-      if (id === selectedProvider) { reloadModels = true;dashboardRefresh.invalidate("models", { clear: true });emptyTable("live-models-body", 6, "reading_provider_catalog"); }
+      if (id === selectedProvider) { reloadModels = true;dashboardRefresh.invalidate("models", { clear: true });emptyTable("live-models-body", 3, "reading_provider_catalog"); }
     }
   }
   for (const provider of providerEntries) {
     if (previous.has(provider.id) && previous.get(provider.id) !== JSON.stringify([provider.generation, provider.auth?.account])) {
       modelSnapshots.delete(provider.id);
-      if (provider.id === selectedProvider) { reloadModels = true;dashboardRefresh.invalidate("models", { clear: true });emptyTable("live-models-body", 6, "reading_provider_catalog"); }
+      if (dashboardRefresh.state("models").attemptVariant === provider.id) dashboardRefresh.invalidate("models", { clear: true });
+      if (provider.id === selectedProvider) { reloadModels = true;dashboardRefresh.invalidate("models", { clear: true });emptyTable("live-models-body", 3, "reading_provider_catalog"); }
     }
   }
   if (changed || dashboardRefresh.state("auth").error) renderProviders(data);
@@ -324,25 +153,52 @@ function applyProviders(data, { changed }) {
     button.textContent = provider.name;button.setAttribute("aria-selected", String(provider.id === selectedProvider));button.tabIndex = provider.id === selectedProvider ? 0 : -1;
   }
   element("live-models-body").setAttribute("aria-labelledby", `model-provider-${selectedProvider}`);
-  if (wasInitialized && (reloadModels || selectedProvider !== previousSelection)) { dashboardRefresh.invalidate("models", { clear: true });void loadModels(); }
+  if (sourceChoicesChanged) window.dispatchEvent(new CustomEvent("ccdx:providers"));
+  if ((!wasInitialized || reloadModels || selectedProvider !== previousSelection) && !element("upstream-models").closest("[hidden]")) { dashboardRefresh.invalidate("models", { clear: true });void loadModels(); }
 }
 
-async function loadModels() { return dashboardRefresh.refresh("models", { force: true }); }
+function catalogProvider() {
+  return element("source-provider").closest('[data-view="codex"]')?.hidden === false ? element("source-provider").value : selectedProvider;
+}
+function refreshCatalog({ force = false } = {}) {
+  const entry = dashboardRefresh.state("models");
+  if (entry.attemptVariant && entry.attemptVariant !== catalogProvider()) dashboardRefresh.invalidate("models", { clear: true });
+  return dashboardRefresh.refresh("models", { force });
+}
+async function readModelCatalog(provider) {
+  const data = await refreshCatalog();
+  const entry = dashboardRefresh.state("models");
+  if (entry.attemptVariant === provider && entry.error) throw entry.error;
+  if (!data || data.provider !== provider) throw new Error("Model list unavailable");
+  return data;
+}
+async function loadModels() { return refreshCatalog({ force: true }); }
 
 function applyModels(data, { changed }) {
+  modelSnapshots.set(data.provider || selectedProvider, data);
   if (data.provider && data.provider !== selectedProvider) return;
-  modelSnapshots.set(selectedProvider, data);
   if (changed) {
-    const body = element("live-models-body");body.replaceChildren();
+    const body = element("live-models-body");
+    const expanded = new Set([...body.querySelectorAll("details[open]")].map(node => node.dataset.model));
+    body.replaceChildren();
     for (const model of data.models) {
       const clients = (model.clients || []).map(id => ({ codex: "Codex App", claude_app: "Claude App", claude_code: "Claude Code" })[id] || id).join(" / ") || "—";
-      body.append(tableRow([model.id, model.vendor, model.endpoints.join(" / "), clients,
-        model.reasoning_efforts === null || model.reasoning_efforts === undefined ? "—" : model.reasoning_efforts.join(" / ") || "—",
-        model.preview ? "preview" : model.state || "listed"], { labels: [5] }));
+      const row = tableRow([model.id, clients, ""]);row.children[0].className = "model-name";
+      const details = document.createElement("details"), summary = document.createElement("summary"), fields = document.createElement("dl");
+      details.dataset.model = model.id;details.open = expanded.has(model.id);fields.className = "failure-detail";
+      localize(summary, "model_details");details.append(summary, fields);
+      for (const [key, value, translated] of [["vendor", model.vendor || "—"], ["api", model.endpoints.join(" / ") || "—"],
+        ["reasoning", model.reasoning_efforts?.join(" / ") || "—"], ["state", model.preview ? "preview" : model.state || "listed", true],
+        ["model_window", number(model.context_window)]]) {
+        const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);
+        if (translated) localize(detail, value);else detail.textContent = value;
+        fields.append(term, detail);
+      }
+      row.children[2].append(details);body.append(row);
     }
-    if (!data.models.length) emptyTable("live-models-body", 6, "no_models_advertised");
+    if (!data.models.length) emptyTable("live-models-body", 3, "no_models_advertised");
   }
-  text("models-note", "selectable_selectable_advertised_advertised_host_time", { selectable: number(data.selectable), advertised: number(data.advertised), host: data.upstream_host, time: data.checked_at ? new Date(data.checked_at).toLocaleTimeString() : phrase("unknown") });
+  text("models-note", "selectable_selectable_advertised_advertised_host_time", { selectable: number(data.selectable), advertised: number(data.advertised), host: data.upstream_host, time: data.checked_at ? time(data.checked_at) : phrase("unknown") });
 }
 
 async function loadUsage() { return dashboardRefresh.refresh("usage", { force: true }); }
@@ -358,9 +214,9 @@ async function readDashboard(url, { signal, timeout = 15000, source } = {}) {
 }
 
 function refreshTime(target, state) {
-  const time = state.updatedAt === null ? null : new Date(state.updatedAt).toLocaleTimeString();
-  if (state.error) localize(target, time ? "update_failed_last_time" : "update_failed", { time });
-  else if (time) localize(target, "updated_time", { time });
+  const updated = state.updatedAt === null ? null : time(state.updatedAt);
+  if (state.error) localize(target, updated ? "update_failed_last_time" : "update_failed", { time: updated });
+  else if (updated) localize(target, "updated_time", { time: updated });
 }
 
 const timestamps = new Map();
@@ -413,15 +269,15 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       apply: applyProviders,
       state: state => {
         if (state.error) {
-          if (state.value) localize(element("source-status-note"), "update_failed_last_time", { time: new Date(state.updatedAt).toLocaleTimeString() });
+          if (state.value) localize(element("source-status-note"), "update_failed_last_time", { time: time(state.updatedAt) });
           else text("source-status-note", "unavailable_eb0be");
         } else element("source-status-note").textContent = "";
         for (const node of timestamps.get("auth")) refreshTime(node, state);
       },
     },
     models: {
-      visible: () => providerEntries.length > 0 && element("upstream-models").open && !element("upstream-models").closest("[hidden]"),
-      variant: () => selectedProvider,
+      visible: () => providerEntries.length > 0 && (element("source-provider").closest('[data-view="codex"]')?.hidden === false || element("upstream-models").open && !element("upstream-models").closest("[hidden]")),
+      variant: catalogProvider,
       load: async ({ signal, variant }) => {
         if (!variant) throw new Error("reading_provider_catalog");
         const data = await readDashboard(`/_ccdx/ui/models/live?provider=${encodeURIComponent(variant)}`, { signal, source: ["live", "catalog"] });
@@ -431,6 +287,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       project: data => [data.provider, data.models, data.selectable, data.advertised, data.upstream_host],
       apply: applyModels,
       state: state => {
+        if (state.attemptVariant !== selectedProvider) return;
         element("refresh-models").disabled = Boolean(state.pending);
         text("models-state", state.pending ? "checking_live" : state.error ? "live_lookup_failed" : state.value?.source === "catalog" ? "catalog_snapshot" : "live_snapshot");
         element("model-check-details").hidden = !state.error;
@@ -438,8 +295,8 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
           const message = String(state.error.message || state.error).slice(0, 240);
           const httpError = /^Live model lookup failed \(HTTP (\d{3})\)\. Run ccdx models for details\.$/.exec(message);
           const sourceReason = /^Model catalog unavailable \/ (m365_[a-z0-9_]+)$/.exec(message);
-          const diagnostic = state.error.diagnostic || {}, network = diagnostic.network;
-          const reason = network ? phrase(`network_cause_${network.cause_code}`) : httpError ? phrase("live_model_lookup_failed_http_status_run_ccdx_models_for_details", { status: httpError[1] })
+          const diagnostic = state.error.diagnostic || {}, network = diagnostic.network, catalog = diagnostic.catalog;
+          const reason = catalog ? phrase(`catalog_cause_${catalog.cause_code}`) : network ? phrase(`network_cause_${network.cause_code}`) : httpError ? phrase("live_model_lookup_failed_http_status_run_ccdx_models_for_details", { status: httpError[1] })
             : sourceReason ? phrase("source_catalog_unavailable", { code: sourceReason[1] }) : phrase(message);
           const source = providerEntries.find(entry => entry.id === selectedProvider)?.name || selectedProvider;
           const previous = modelSnapshots.get(selectedProvider);
@@ -447,13 +304,13 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
           element("models-note").replaceChildren();
           const summary = document.createElement("span"), kept = document.createElement("span");
           localize(summary, "source_check_failed", { source });
-          localize(kept, previous?.checked_at ? "source_check_previous" : "source_check_none", { time: previous?.checked_at ? new Date(previous.checked_at).toLocaleTimeString() : "" });
+          localize(kept, previous?.checked_at ? "source_check_previous" : "source_check_none", { time: previous?.checked_at ? time(previous.checked_at) : "" });
           element("models-note").append(summary, document.createElement("br"), kept);
           const fields = element("model-check-fields");fields.replaceChildren();
           for (const [key, value] of [["source", source], ["source_check_time", diagnostic.checked_at], ["source_check_reason", reason],
             ["network_route_source", network ? phrase(`network_source_${network.source}`) : null],
             ["network_failure_stage", network ? phrase(`network_stage_${network.stage}`) : null],
-            ["network_cause_code", network?.cause_code], ["http_status", diagnostic.http_status]]) {
+            ["network_cause_code", network?.cause_code], ["http_status", catalog?.http_status || diagnostic.http_status], ["last_success", catalog?.last_success_at], ["upstream_request_id", catalog?.request_id]]) {
             if (value === null || value === undefined || value === "") continue;
             const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);
             if (value?.key) localize(detail, value.key, value.values);else detail.textContent = String(value).slice(0, 300);
@@ -462,17 +319,17 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
           if (Number.isFinite(diagnostic.retry_after_ms) && diagnostic.retry_after_ms > 0) {
             const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, "retry");
             const checked = Date.parse(diagnostic.checked_at);
-            if (Number.isFinite(checked)) { localize(detail, "source_retry_time", { time: new Date(checked + diagnostic.retry_after_ms).toLocaleTimeString() });fields.append(term, detail); }
+            if (Number.isFinite(checked)) { localize(detail, "source_retry_time", { time: time(checked + diagnostic.retry_after_ms) });fields.append(term, detail); }
           }
         }
-        if (state.error && !modelSnapshots.has(selectedProvider)) emptyTable("live-models-body", 6, "no_catalog_available");
+        if (state.error && !modelSnapshots.has(selectedProvider)) emptyTable("live-models-body", 3, "no_catalog_available");
         for (const node of timestamps.get("models")) refreshTime(node, state);
       },
     },
     usage: {
-      visible: () => element("model-usage").open && !element("model-usage").closest("[hidden]"),
+      visible: () => (element("model-usage").open || element("usage-analytics").open) && !element("model-usage").closest("[hidden]"),
       variant: () => {
-        const mode = ((element("model-usage").open && element("usage-analytics").open) || Boolean(usageView.selectedDate)) ? "analytics" : "summary";
+        const mode = (element("usage-analytics").open || Boolean(usageView.selectedDate)) ? "analytics" : "summary";
         const provider = element("usage-provider")?.value || "";
         return mode + (provider ? `:${provider}` : "");
       },
@@ -501,8 +358,8 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       },
     },
     animation: {
-      visible: () => element("animation-settings").open && !element("animation-settings").closest("[hidden]") && !animationSaving,
-      variant: () => element("animation-settings").open && !animationFramesLoaded ? "frames" : "metadata",
+      visible: () => element("animation-settings").open && !element("animation-settings").closest("[hidden]") && !animationView.saving,
+      variant: () => element("animation-settings").open && !animationView.framesLoaded ? "frames" : "metadata",
       project: data => [data.theme, data.source, data.disabled_by_environment, data.themes.map(theme => [theme.id, theme.label, theme.default, Boolean(theme.frames)])],
       load: ({ variant, signal }) => readDashboard(`/_ccdx/ui/animation${variant === "frames" ? "" : "?frames=0"}`, { signal, timeout: 8000 }),
       apply: applyAnimation,
@@ -552,7 +409,7 @@ element("animation-settings").addEventListener("toggle", () => {
 });
 element("usage-analytics").addEventListener("toggle", () => {
   if (element("usage-analytics").open) usageView.revealChart();else usageView.stopMotion();
-  if (element("usage-analytics").open && element("model-usage").open) dashboardRefresh.refresh("usage");
+  if (element("usage-analytics").open) dashboardRefresh.refresh("usage");
 });
 for (const id of ["analytics-model", "analytics-range", "analytics-metric", "analytics-view"]) element(id).addEventListener("change", () => {
   renderAnalytics();

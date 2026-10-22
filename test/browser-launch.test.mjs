@@ -17,3 +17,15 @@ test("headless, query commands, SSH and opted-out starts do not launch a browser
       spawnImpl: () => assert.fail("must not launch") });assert.equal(result.state, "skipped");
   }
 });
+
+test("external launch inherits no pipes and does not wait indefinitely for the opened Windows app", async () => {
+  const child = new EventEmitter();let unrefs = 0;
+  child.unref = () => { unrefs++; };
+  const keepAlive = setTimeout(() => {}, 1000);
+  try {
+    const result = await openDashboard("http://127.0.0.1:2345", { platform: "win32", env: {}, interactive: true, timeoutMs: 5,
+      spawnImpl(_command, _args, options) { assert.equal(options.stdio, "ignore");assert.equal(options.windowsHide, true);return child; } });
+    assert.equal(result.state, "unavailable");assert.equal(unrefs, 1);
+    child.emit("exit", 0); // A late exit cannot extend or restart the completed launch.
+  } finally { clearTimeout(keepAlive); }
+});

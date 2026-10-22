@@ -1,6 +1,6 @@
 # 界面文案规则与交付对照
 
-CLI 保持英文；WebUI 保留中英双语。中文功能名以 2–4 字为主，按清晰程度调整长短；说明保持简短，必要信息可以分条。产品名、模型名、命令、错误码、占位符与单位保留。缩短说明不能改变业务事实。
+CLI 保持英文；WebUI 保留中英双语。名称和说明按表达需要决定长短，不设硬性字数；必要信息可以分条。产品名、模型名、命令、错误码、占位符与单位保留。缩短说明不能改变业务事实。
 
 - [CLI 原文案 → 新文案](CLI_COPY.md)：529 项静态候选与动态状态补充。
 - [WebUI 原文案 → 新文案](WEBUI_COPY.md)：固定消息与后续版本补充。
@@ -31,3 +31,18 @@ WebUI 使用固定消息标识，显示文字可以独立调整。旧消息别�
 | Check details | 检查详情 | Bounded model-list failure evidence |
 
 Names follow meaning rather than a fixed character limit. CLI remains English and WebUI bilingual.
+
+## 1.2.10 clarification
+
+| Previous | Current | 中文 |
+| --- | --- | --- |
+| Source / entire page | Source | 来源 |
+| Check GitHub connection (navigation) | Open GitHub checks | 前往 GitHub 检查 |
+| Saved in this browser. Changes apply now. | This browser only. Applies now. | 仅此浏览器，立即生效。 |
+| Saved: On / Active: On / Active now | On · Active now | 开启 · 立即生效 |
+| Unavailable / m365_catalog_http_403 | Fixed catalog cause with HTTP/check evidence | 目录拒绝原因及检查详情 |
+
+Saved/effective mismatches, startup overrides, installation policy and destructive
+action consequences retain their specific explanations. CLI stays English;
+WebUI keeps both languages. Selection marks are removed from buttons only; the
+existing circle status SVGs remain.

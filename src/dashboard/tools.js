@@ -34,14 +34,18 @@
     text("github-account-hint", !data.saved ? "tools_login_hint" : invalid ? "tools_saved_not_valid" : failed ? "tools_access_hint" : "tools_account_hint");
     const fields = el("github-account-fields");fields.replaceChildren();
     field(fields, "tools_saved_signin", data.saved ? "saved_locally" : "tools_not_signed_in", data.saved ? "ok" : "unavailable");
-    for (const [id, key] of [["identity", "tools_github_identity"], ["access", "tools_copilot_access"], ["models", "tools_catalog_read"]]) {
+    for (const [id, key] of [["access", "tools_copilot_access"], ["models", "tools_catalog_read"]]) {
       const result = online?.stages?.[id] || "not_checked";
       field(fields, key, result === "passed" ? "tools_verified" : result === "invalid" ? "tools_signin_invalid" : result === "unavailable" ? "tools_unavailable" : "tools_not_checked",
         result === "passed" ? "ok" : result === "invalid" ? "warning" : result === "unavailable" ? "unavailable" : "unknown");
     }
-    field(fields, "last_verified", data.checked_at ? new Date(data.checked_at).toLocaleString() : "—");
+    status("github-identity-detail", online?.stages?.identity === "passed" ? "tools_verified" : invalid ? "tools_signin_invalid" : "tools_not_checked",
+      online?.stages?.identity === "passed" ? "ok" : invalid ? "warning" : "unknown");
+    el("github-checked-at").textContent = data.checked_at ? time(data.checked_at, { date: true }) : "—";
     label(el("github-signin"), data.saved ? "tools_reauth" : "tools_login");
     el("github-signin").hidden = data.saved && !invalid;
+    el("github-force-reauth").hidden = !data.saved || invalid;
+    if (data.saved && !invalid && !failed) el("github-account-hint").textContent = "";
     el("github-signin").disabled = pending || activeFlow();el("github-check").disabled = pending || activeFlow() || !data.saved;
     el("github-logout").disabled = pending || activeFlow() || !data.saved;
     el("github-force-reauth").disabled = pending || activeFlow();
@@ -102,7 +106,7 @@
       details.append(disclosure);row.append(name, result, details);body.append(row);
     }
     if (!groups.size) text("checks-note", "tools_checks_empty");
-    else text("checks-note", "tools_checks_completed", { time: new Date(data.checked_at).toLocaleTimeString() });
+    else text("checks-note", "tools_checks_completed", { time: time(data.checked_at) });
   }
   async function localAction(action, button) {
     button.disabled = true;text("checks-note", "checking");

@@ -8,6 +8,15 @@ const root = fileURLToPath(new URL("../", import.meta.url)), output = process.ar
 if (!output || !path.isAbsolute(output)) throw Error("Supply an absolute artifact directory");
 fs.mkdirSync(output, { recursive: true });
 const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"))).version;
+for (const file of ["README.md", "docs/REFERENCE.md"]) {
+  const text = fs.readFileSync(path.join(root, file), "utf8");
+  for (const match of text.matchAll(/https:\/\/github\.com\/DaleXiao\/codex-copilot-dx\/releases\/download\/([^\s/)]+)\/([^\s)]+?)(?=[\s)]|$)/gi)) {
+    if (/^(?:install\.(?:sh|ps1)|codex-copilot-dx-[\d.]+\.tgz)$/.test(match[2])
+      && (match[1] !== `v${version}` || match[2].endsWith(".tgz") && match[2] !== `codex-copilot-dx-${version}.tgz`)) {
+      throw Error(`Current installation instructions in ${file} differ from package ${version}`);
+    }
+  }
+}
 const result = JSON.parse(execFileSync(process.execPath, [process.env.npm_execpath || fileURLToPath(new URL("../lib/node_modules/npm/bin/npm-cli.js", `file://${process.execPath}`)), "pack", "--ignore-scripts", "--json", "--pack-destination", output], { cwd: root, encoding: "utf8" }));
 const entries = Array.isArray(result) ? result : Object.values(result), name = `codex-copilot-dx-${version}.tgz`;
 if (entries.length !== 1 || entries[0].filename !== name) throw Error("Unexpected package artifact");

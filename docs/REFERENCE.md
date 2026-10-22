@@ -808,6 +808,31 @@ In-memory usage still updates when `CCDX_DISABLE_USAGE=1` disables persistence. 
 
 The Clear conversation buffer action clears all process-local conversation continuation data. If image optimization or conversation history is active, cleanup is refused; retry after current requests finish. Old chats may fail to continue; saved Codex transcripts remain. It invokes the existing image-transform/history cleanup operation, rather than an inactive-only selector.
 
+The source page groups account/access checks and the model list under the selected
+source. Selecting a source tab only browses it; application routing is changed from
+the application page. Model names remain in the main table; maker, protocol,
+reasoning levels, listing state and context limit are in each model's details.
+The Codex choices and source table share one catalog read with freshness,
+cancellation and account-generation checks. Explicit Refresh still checks again.
+
+Selection uses a solid theme fill with centered text, without a preceding check.
+Model-list text uses the normal text color. Selects have square borders and a
+visible keyboard focus indicator. Settings groups webpage appearance, independent
+terminal color/animation, startup and updates. The terminal preview is expandable;
+choosing an animation previews it, while Save applies it to the running terminal.
+Usage trends are separate from the model summary and remain on demand. Request
+rows show an observed HTTP failure separately from the model's terminal result;
+request IDs and attempt counts are available in the same bounded details. List
+timestamps use local 24-hour time in both UI languages.
+
+M365 catalog refusals expose a fixed reason, HTTP status, check/last-success time
+and service request ID when available. `entra_access_disabled` means the server
+reported that Copilot CLI Entra access is not enabled for that account; a generic
+403 does not establish why access changed. Sign-in, discovery and successful
+inference remain separate evidence. Failed discovery keeps the account-bound
+last-good list. A successful refresh clears old failure evidence. No automatic
+relogin, model call, source switch or policy exception is added.
+
 The settings API is local, requires the dashboard header, bounded JSON and
 same-origin POST. It invokes the same Provider, cache and integration operations;
 it does not spawn a CLI or generic shell command. Settings reads do not reveal
@@ -1012,7 +1037,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.8/codex-copilot-dx-1.2.8.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.10/codex-copilot-dx-1.2.10.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 

@@ -7,7 +7,7 @@
     }).join(" ");
   }
 
-  function create({ element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator, motionAllowed = () => false }) {
+  function create({ time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator, motionAllowed = () => false }) {
     function usageValues(row) {
       const rate = Number.isFinite(row.cache_hit_rate) && row.cache_hit_rate >= 0 && row.cache_hit_rate <= 1
         ? `${row.cache_hit_rate_partial ? "~" : ""}${(row.cache_hit_rate * 100).toFixed(1)}%` : "—";
@@ -236,7 +236,7 @@
         if (data.analytics) renderAnalytics();
       }
       if (data.analytics) {
-        text("analytics-updated", "updated_time", { time: new Date().toLocaleTimeString() });
+        text("analytics-updated", "updated_time", { time: time(Date.now()) });
       }
     }
     return { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay, usageValues, setChartVisible, revealChart, stopMotion, get data() { return usageData; }, get selectedDate() { return selectedUsageDate; } };

@@ -39,6 +39,17 @@ function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, 
 }
 const choose = runtime => runtime.action({ action: "switch", provider: "m365", model: "gpt-6-sol", auto_review_model: "gpt-6-sol" });
 
+test("an explicit recovered catalog clears the composition's old refusal without switching sources", async t => {
+  let refused = true;
+  const s = setup(t, { m365Network: async () => ({ healthy: () => true, close() {}, snapshot: () => ({ source: "direct", healthy: true }),
+    fetch: async () => refused ? Response.json({ error: { message: "Copilot CLI Entra access is not enabled for this user." } }, { status: 403 }) : Response.json(catalog) }) });
+  await s.runtime.action({ action: "on" });
+  assert.equal(s.runtime.snapshot().m365.reason, "m365_catalog_http_403");
+  refused = false;await s.runtime.dashboardCatalog({ provider: "m365" });
+  assert.equal(s.runtime.snapshot().m365.reason, null);assert.equal(s.runtime.snapshot().m365.state, "ready");
+  assert.equal(s.runtime.snapshot().codex_provider, "github");
+});
+
 test("system proxy parse failures stay local to M365, retain the cause, and recover without replacing GitHub", async t => {
   let rule = "169.254/33", catalogReads = 0;
   const s = setup(t, { m365Network: async () => {

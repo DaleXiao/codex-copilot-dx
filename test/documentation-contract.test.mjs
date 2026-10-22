@@ -12,6 +12,18 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8")
   + "\n" + fs.readFileSync(path.join(root, "docs/REFERENCE.md"), "utf8");
 
+test("current installation links and both bootstrap scripts target the shipped package", () => {
+  const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"))).version;
+  const links = [...readme.matchAll(/https:\/\/github\.com\/DaleXiao\/codex-copilot-dx\/releases\/download\/v([\d.]+)\/(install\.(?:sh|ps1)|codex-copilot-dx-[\d.]+\.tgz)/gi)];
+  assert.ok(links.length >= 3);
+  for (const [, tag, asset] of links) {
+    assert.equal(tag, version);
+    if (asset.endsWith(".tgz")) assert.equal(asset, `codex-copilot-dx-${version}.tgz`);
+  }
+  assert.ok(fs.readFileSync(path.join(root, "install/install.sh"), "utf8").includes(`version=${version}`));
+  assert.ok(fs.readFileSync(path.join(root, "install/install.ps1"), "utf8").includes(`$version = '${version}'`));
+});
+
 test("documented animation choices match the current selector order", () => {
   const section = readme.split("### Terminal animation\n")[1].split("### Update\n")[0];
   const labels = [...section.matchAll(/^\d+\. (\w+)/gm)].map((match) => match[1]);

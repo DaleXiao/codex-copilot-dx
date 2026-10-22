@@ -24,7 +24,7 @@ try {
   sh "$ccdx_install_dir/install.sh"
 )`;
   }
-  function create({ element, localize, navigator }) {
+  function create({ time = value => new Date(value).toLocaleString(), element, localize, navigator }) {
     let snapshot = null, platform = "macos";
     const date = value => typeof value === "string" && Number.isFinite(Date.parse(value)) ? value.slice(0, 10) : null;
     function install() {
@@ -46,8 +46,8 @@ try {
       localize(element("update-latest-date"), latestDate ? "released_date" : "release_date_unknown", { date: latestDate });
       localize(element("update-state"), checked ? data.update_available ? "new_version_available" : "already_latest" : data.status === "rate_limited" ? "update_rate_limited" : "update_check_failed");
       element("update-command-row").hidden = checked && !data.update_available;
-      const time = typeof data.checked_at === "string" && Number.isFinite(Date.parse(data.checked_at)) ? new Date(data.checked_at).toLocaleString() : "—";
-      localize(element("update-checked"), checked ? "update_checked_time" : "update_attempted_time", { time });
+      const checkedTime = typeof data.checked_at === "string" && Number.isFinite(Date.parse(data.checked_at)) ? time(data.checked_at, { date: true }) : "—";
+      localize(element("update-checked"), checked ? "update_checked_time" : "update_attempted_time", { time: checkedTime });
       install();
     }
     function state(value) {

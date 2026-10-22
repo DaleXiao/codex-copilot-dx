@@ -6,10 +6,34 @@ import { createUsageAnalytics } from "../src/usage-analytics.mjs";
 import { summarizeUsage } from "../src/usage.mjs";
 
 const script = readFileSync(new URL("../src/dashboard/ui.js", import.meta.url), "utf8");
-const viewScripts = ["status", "usage", "updates"].map(name => readFileSync(new URL(`../src/dashboard/${name}.js`, import.meta.url), "utf8")).join("\n");
+const viewScripts = ["status", "usage", "updates", "animation"].map(name => readFileSync(new URL(`../src/dashboard/${name}.js`, import.meta.url), "utf8")).join("\n");
 const refreshScript = readFileSync(new URL("../src/dashboard/refresh.js", import.meta.url), "utf8");
 const languageScript = readFileSync(new URL("../src/dashboard/language.js", import.meta.url), "utf8");
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test("Codex choices share catalog reads and cancel an obsolete source without accepting its late result", async () => {
+  let delayed = false, release, oldSignal;
+  const h = harness({ fetchFn: async (url, options) => {
+    if (delayed && url.includes("models/live?provider=github")) {
+      oldSignal = options.signal;
+      return new Promise(resolve => { release = resolve; });
+    }
+  } });
+  await flush();await flush();
+  const selector = h.nodes.get("source-provider");selector.closest = () => ({ hidden: false });selector.value = "github";
+  const before = h.requests.filter(url => url.includes("/models/")).length;
+  await Promise.all([h.api.readModelCatalog("github"), h.api.readModelCatalog("github")]);
+  assert.equal(h.requests.filter(url => url.includes("/models/")).length, before, "A fresh shared catalog is not fetched again for Codex");
+  h.advance(30001);delayed = true;
+  const obsolete = h.api.readModelCatalog("github").catch(error => error);await flush();
+  selector.value = "m365";
+  const current = await h.api.readModelCatalog("m365");
+  assert.equal(oldSignal.aborted, true);assert.equal(current.provider, "m365");
+  release({ ok: true, json: async () => ({ source: "live", models: [{ id: "late", endpoints: [] }] }) });
+  await obsolete;
+  assert.equal(h.api.dashboardRefresh.state("models").value.provider, "m365");
+  assert.equal(h.api.dashboardRefresh.state("models").value.models.length, 0);
+});
 
 class Node {
   constructor(tag = "div") { this.tag = tag; this.children = []; this.dataset = {}; this.style = {}; this.listeners = {}; this.attributes = {}; this.open = false; this.value = ""; this.textContent = ""; }
@@ -85,7 +109,11 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
   });
   runInContext(languageScript, context);
   runInContext(refreshScript, context);
-  const api = runInContext(`${viewScripts}\n${script}\n({ renderFailures, renderProviders, loadAuth, loadAnimation, loadUsage, loadModels, renderAnalytics, selectUsageDay, dashboardRefresh, get timer() { return previewTimer; }, get selection() { return selectedAnimation; } });`, context);
+  const api = runInContext(`${viewScripts}\n${script}\n({ renderFailures, renderProviders, loadAuth, loadAnimation, loadUsage, loadModels, readModelCatalog, renderAnalytics, selectUsageDay, dashboardRefresh });`, context);
+  Object.defineProperties(api, {
+    timer: { get: () => [...timers].find(fn => scheduled.get(fn) === 32) ?? null },
+    selection: { get: () => nodes.get("animation-options")?.children.find(node => node.attributes["aria-pressed"] === "true")?.dataset.theme },
+  });
   // Component tests exercise opened data views; real navigation is replayed in browsers.
   api.loadUsage();api.loadAuth().then(() => api.loadModels());
   ready.forEach((fn) => fn());
@@ -201,7 +229,7 @@ test("bilingual animation names preserve numbering, default marker and unsaved c
   h.nodes.get("language-toggle").listeners.click();
   assert.equal(caption.children[0].textContent, "01 Comet");
   assert.equal(marker.textContent, "DEFAULT");
-  assert.equal(h.nodes.get("animation-state").textContent, "SAVED COMET / UNSAVED");
+  assert.equal(h.nodes.get("animation-state").textContent, "SAVED Comet / UNSAVED");
   assert.equal(h.requests.length, requests);
 });
 

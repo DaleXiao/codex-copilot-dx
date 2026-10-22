@@ -10,6 +10,7 @@ import { readBoundedResponseText } from "./upstream-body.mjs";
 import { parseAdapterAddressOptions } from "./cli-options.mjs";
 import { autoReviewReasoningEfforts } from "./models.mjs";
 import { m365AccountMessage } from "./providers/m365-accounts.mjs";
+import { m365CatalogDiagnostic, m365CatalogMessage } from "./providers/m365-catalog-diagnostic.mjs";
 import { m365NetworkDiagnostic, m365NetworkMessage } from "./providers/m365-network-diagnostic.mjs";
 
 export async function fetchActiveProviderModels({ control = providerControl, ...options } = {}) {
@@ -35,6 +36,7 @@ export async function providerControl({ host = "127.0.0.1", port = 2026, action,
 export function formatM365Status(state) {
   const m = state.m365 || {}, claude = m.claude || {}, models = m.models || {};
   const network = m365NetworkDiagnostic(m.network_diagnostic);
+  const catalog = m365CatalogDiagnostic(m.catalog_diagnostic);
   return [
     `Microsoft 365: ${terminalCell(m.state || "not running")}${m.reason ? ` (${terminalCell(m.reason)})` : ""}`,
     ...(m.account?.login ? [`Account: ${terminalCell(m.account.login)}`] : []),
@@ -42,6 +44,9 @@ export function formatM365Status(state) {
     ...(network ? [`Network: ${network.source} / ${network.stage} / ${network.cause_code}`, m365NetworkMessage(network)] : m.reason ? [m365AccountMessage(m.reason)] : []),
     `Models: ${models.claude || 0} Claude / ${models.gpt || 0} GPT (${models.source || "unavailable"})`,
     `Claude gateway: ${claude.gateway || "not running"}${claude.base_url ? ` / ${claude.base_url}` : ""}`,
+    ...(catalog ? [`Catalog: ${m365CatalogMessage(catalog)} (HTTP ${catalog.http_status})`,
+      `Checked: ${catalog.checked_at || "unknown"} / Last success: ${catalog.last_success_at || "unknown"}`,
+      ...(catalog.request_id ? [`Service request: ${catalog.request_id}`] : [])] : []),
     ...(claude.reason ? [`Claude detail: ${terminalCell(claude.reason)}`] : []),
     ...(claude.requests ? [`Claude requests: ${claude.requests.completed} completed / ${claude.requests.incomplete} incomplete / ${claude.requests.failed} failed / ${claude.requests.active} active`] : []),
     `Claude Code: ${claude.clients?.code || "unknown"}; Claude App: ${claude.clients?.app || "unknown"}`,

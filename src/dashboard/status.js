@@ -1,5 +1,5 @@
 (() => {
-  function create({ element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator }) {
+  function create({ time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator }) {
     let contextRequests = [];
     let contextCompactions = {};
     let failureSignature;
@@ -19,19 +19,19 @@
         sourceNames.set(provider.id, provider.name);
         const identity = provider.auth || {};
         const authRow = tableRow([provider.name, identity.account || "—", states[identity.state] || "unknown",
-          states[provider.state] || "unknown", identity.checked_at || "—", duration(identity.expires_in_ms)], { labels: [2, 3] });
+          states[provider.state] || "unknown", time(identity.checked_at, { date: true }), duration(identity.expires_in_ms)], { labels: [2, 3] });
         authRow.setAttribute("data-provider", provider.id);
         if (provider.reason) {
-          const network = provider.network_diagnostic;
+          const network = provider.network_diagnostic, catalog = provider.catalog_diagnostic;
           localize(authRow.children[3], "state_reason", { state: phrase(states[provider.state] || "unknown"),
-            reason: network ? phrase(`network_cause_${network.cause_code}`) : provider.reason });
+            reason: catalog ? phrase(`catalog_cause_${catalog.cause_code}`) : network ? phrase(`network_cause_${network.cause_code}`) : provider.reason });
           if (network) localize(authRow.children[3], "network_detail", { source: phrase(`network_source_${network.source}`),
             stage: phrase(`network_stage_${network.stage}`), code: network.cause_code, category: provider.reason }, "title");
         }
         if (globalThis.ccdxIcons) {
           globalThis.ccdxIcons.set(authRow.children[2], states[identity.state] || "unknown", globalThis.ccdxIcons.kind(identity.state));
           globalThis.ccdxIcons.set(authRow.children[3], provider.reason ? "state_reason" : states[provider.state] || "unknown", globalThis.ccdxIcons.kind(provider.state),
-            provider.reason ? { state: phrase(states[provider.state] || "unknown"), reason: provider.network_diagnostic ? phrase(`network_cause_${provider.network_diagnostic.cause_code}`) : provider.reason } : {});
+            provider.reason ? { state: phrase(states[provider.state] || "unknown"), reason: provider.catalog_diagnostic ? phrase(`catalog_cause_${provider.catalog_diagnostic.cause_code}`) : provider.network_diagnostic ? phrase(`network_cause_${provider.network_diagnostic.cause_code}`) : provider.reason } : {});
         }
         auth.append(authRow);
         for (const client of provider.clients || []) {
@@ -50,7 +50,7 @@
         const selected = entries.find(entry => entry.client.selected === true) || (entries.length === 1 ? entries[0] : null);
         const client = selected?.client || { name: entries[0].client.name, state: "unknown" };
         const row = tableRow([client.name, selected?.provider.name || "—", states[client.state] || "unknown",
-          client.gateway || "—", client.last_request_at || "—"], { labels: [2, 3] });
+          client.gateway || "—", time(client.last_request_at)], { labels: [2, 3] });
         if (client.reason) localize(row.children[2], "state_reason", { state: phrase(states[client.state] || "unknown"), reason: client.reason });
         if (globalThis.ccdxIcons) {
           globalThis.ccdxIcons.set(row.children[2], client.reason ? "state_reason" : states[client.state] || "unknown", globalThis.ccdxIcons.kind(client.state), client.reason ? { state: phrase(states[client.state] || "unknown"), reason: client.reason } : {});
@@ -58,7 +58,7 @@
         }
         clients.append(row);
         if (String(client.id || "").startsWith("claude_")) {
-          const detail = tableRow([client.name, states[client.state] || "unknown", client.gateway || "—", client.last_request_at || "—"], { labels: [1, 2] });
+          const detail = tableRow([client.name, states[client.state] || "unknown", client.gateway || "—", time(client.last_request_at)], { labels: [1, 2] });
           if (client.reason) localize(detail.children[1], "state_reason", { state: phrase(states[client.state] || "unknown"), reason: client.reason });
           if (globalThis.ccdxIcons) {
             globalThis.ccdxIcons.set(detail.children[1], client.reason ? "state_reason" : states[client.state] || "unknown", globalThis.ccdxIcons.kind(client.state), client.reason ? { state: phrase(states[client.state] || "unknown"), reason: client.reason } : {});
@@ -119,7 +119,7 @@
         const title = document.createElement("summary");
         const summary = {
           detail: phrase("time_model_code", {
-            time: failure.at ? String(failure.at) : phrase("unknown_time"),
+            time: failure.at ? time(failure.at, { date: true }) : phrase("unknown_time"),
             model: failure.model ? String(failure.model).slice(0, 80) : phrase("unknown_model"),
             code: failure.code ? String(failure.code).slice(0, 80) : phrase("unknown_error"),
           }),
@@ -224,7 +224,7 @@
         const routes = { ...data.stream_performance?.by_route, ...claudeMetrics?.by_route };
         for (const [protocol, route] of Object.entries(routes)) for (const [source, stats] of Object.entries(route.by_provider || {})) {
           const totals = stats.terminal_outcomes.totals;
-          sourceBody.append(tableRow([source, protocol, number(stats.active), ...["completed", "incomplete", "failed", "cancelled", "unknown"].map(outcome => number(totals[outcome]))]));
+          sourceBody.append(tableRow([sourceNames.get(source) || source, protocol, number(stats.active), ...["completed", "incomplete", "failed", "cancelled", "unknown"].map(outcome => number(totals[outcome]))]));
         }
         if (!sourceBody.children.length) emptyTable("source-requests-body", 8, "no_requests_observed");
       }
@@ -264,7 +264,7 @@
         const note = element("prediction-note");
         if (note) note.textContent = prediction?.reason || "";
       }
-      text("updated", "snapshot_time", { time: new Date().toLocaleTimeString() });
+      text("updated", "snapshot_time", { time: time(Date.now()) });
     }
     
     function renderContext(performance) {
@@ -290,16 +290,20 @@
         const ratio = finite(context.input_tokens) && finite(context.context_window_tokens) && Number(context.context_window_tokens) > 0
           ? `${(100 * Number(context.input_tokens) / Number(context.context_window_tokens)).toFixed(1)}%` : "—";
         const at = Date.parse(request.at);
-        const row = tableRow([Number.isFinite(at) ? new Date(at).toLocaleTimeString() : "—",
+        const row = tableRow([Number.isFinite(at) ? time(at) : "—",
           String(sourceNames.get(request.provider) || request.provider || "—").slice(0, 80),
           String(request.model || "unknown").slice(0, 80), outcome, number(context.input_tokens), ""], { labels: [3] });
-        if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[3], outcome.toLowerCase(), globalThis.ccdxIcons.kind(outcome.toLowerCase()));
+        const wireFailure = Number.isInteger(request.http_status) && request.http_status >= 400;
+        if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[3], wireFailure ? "request_http_failure" : outcome.toLowerCase(),
+          wireFailure ? "warning" : globalThis.ccdxIcons.kind(outcome.toLowerCase()), wireFailure ? { status: request.http_status } : {});
+        else if (wireFailure) localize(row.children[3], "request_http_failure", { status: request.http_status });
         const details = document.createElement("details"), summary = document.createElement("summary"), fields = document.createElement("dl");
         const key = String(request.request_id || `${request.at || ""}/${request.provider || ""}/${request.model || ""}`).slice(0, 256);
         details.setAttribute?.("data-request-key", key);details.open = expanded.has(key);
         details.className = "request-details";fields.className = "failure-detail";
         localize(summary, "request_metadata");details.append(summary, fields);
-        for (const [key, value] of [["time", Number.isFinite(at) ? new Date(at).toLocaleString() : "—"],
+        for (const [key, value] of [["request_id", request.request_id || "—"], ["http_status", number(request.http_status)], ["attempts", number(request.upstream_attempts)], ["model_outcome", globalThis.ccdxLanguage?.format(outcome.toLowerCase()) || outcome],
+          ["time", Number.isFinite(at) ? time(at, { date: true }) : "—"],
           ["wire_mib", finite(context.payload_bytes) ? `${(Number(context.payload_bytes) / 1048576).toFixed(2)} MiB` : "—"],
           ["images", number(context.images)], ["model_window", number(context.context_window_tokens)], ["input_window", ratio]]) {
           const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);detail.textContent = value;fields.append(term, detail);

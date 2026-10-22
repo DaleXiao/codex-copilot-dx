@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { providerDescriptors } from "./provider-descriptors.mjs";
 import { autoReviewPreference, writeAutoReviewModel } from "./user-settings.mjs";
 import { autoReviewReasoningEfforts, DEFAULT_CODEX_AUTO_REVIEW_MODEL, responsesModelIdsFromCopilotModels } from "./models.mjs";
 import { publicModelCatalog } from "./provider-metadata.mjs";
@@ -201,34 +202,21 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
     },
     selection: () => selection,
     dashboardProviders() {
-      const state = snapshot(), service = githubClient.runtimeStatus?.() || {}, ms = state.m365;
-      const projections = [
-        { id: "github", name: "GitHub Copilot", generation: dashboardGeneration(github), enabled: true, state: service.token_cached ? "ready" : "unknown",
-          auth: { state: "unknown", token_cached: service.token_cached === true, expires_in_ms: service.token_expires_in_ms ?? null },
-          models: { count: githubRegistry?.models?.data?.length ?? null, source: githubRegistry?.source || "unknown" },
-          clients: [{ id: "codex", name: "Codex App", selected: selection.codex === "github", state: githubClientConfigured ? "configured" : "unknown" }] },
-        { id: "m365", name: "Microsoft 365", generation: m365 ? dashboardGeneration(m365) : 0, enabled, state: ms.state, reason: ms.reason, network_diagnostic: ms.network_diagnostic,
-          auth: { state: ms.token_cached ? "authorized" : !enabled ? "disabled" : ms.reason ? "unavailable" : "unknown",
-            account: ms.account?.login || "", token_cached: ms.token_cached === true,
-            tenant: ms.account?.tenant || "", selection_source: ms.account?.selection_source || null,
-            expires_in_ms: ms.token_expires_in_ms ?? null, checked_at: ms.token_checked_at || null },
-          models: { count: ms.models?.total ?? null, source: ms.models?.source || "unavailable", checked_at: ms.models?.refreshed_at || null },
-          clients: [{ id: "codex", name: "Codex App", selected: selection.codex === "m365", state: selection.codex === "m365" ? ms.state : "standby" },
-            ...[["code", "Claude Code"], ["app", "Claude App"]].map(([id, name]) => ({ id: `claude_${id}`, name,
-              selected: enabled, state: clientLifecycle.snapshot().clients[id], gateway: gateway ? "running" : "unavailable", reason: claudeReason,
-              last_request_at: lastClients[`claude_${id}`] || null }))],
-          requests: ms.claude.requests, request_scope: "Claude Messages" },
-      ];
-      return providerRegistry.list().map(definition => ({ ...projections.find(source => source.id === definition.id),
-        id: definition.id, name: definition.name, selection: { codex: definition.codex, models_required: definition.modelSelection } }));
+      return providerDescriptors({ state: snapshot(), githubRuntime: githubClient.runtimeStatus?.() || {}, githubRegistry,
+        githubClientConfigured, githubGeneration: dashboardGeneration(github), m365Generation: m365 ? dashboardGeneration(m365) : 0,
+        claudeClients: clientLifecycle.snapshot().clients, claudeReason, gatewayRunning: Boolean(gateway), lastClients,
+        definitions: providerRegistry.list() });
     },
     async dashboardCatalog({ provider = selection.codex } = {}) {
       if (provider === "github") return null;
       if (provider !== "m365") throw Object.assign(new Error("Unknown provider"), { statusCode: 400 });
       if (!enabled || !["darwin", "win32"].includes(platform)) throw unavailable(!enabled ? "m365_disabled" : "m365_unsupported");
       if (!m365) throw unavailable(reason || "m365_not_ready");
-      await m365.refresh();
-      const eligible = new Set([...m365.models("gpt"), ...m365.models("claude")]);
+      const source = m365;
+      await source.refresh();
+      if (closed || !enabled || source !== m365 || changingAccount) throw unavailable("m365_refresh_cancelled");
+      reason = null;
+      const eligible = new Set([...source.models("gpt"), ...source.models("claude")]);
       return { source: "catalog", checkedAt: m365.snapshot().models.refreshed_at, upstreamHost: "Microsoft 365",
         advertised: m365.catalog().length, models: publicModelCatalog(m365.catalog(), {
           selectable: model => eligible.has(model),

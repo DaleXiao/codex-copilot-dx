@@ -17,6 +17,19 @@ function fixture(t) { const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-m
 function auth(identity = account) { return { getToken: async () => ({ token: "synthetic_entra_secret", account: identity, expiresAt: Date.now() + 3600000 }),
   snapshot: () => ({ token_cached: true, reason: null }), reset() {} }; }
 
+test("a catalog refusal retains the last-good list, exposes its reason, and clears on recovery", async t => {
+  let refused = false, clock = Date.parse("2026-10-22T07:00:00Z");
+  const p = createM365Provider({ home: fixture(t), auth: auth(), now: () => clock,
+    fetchImpl: async () => refused ? Response.json({ error: { message: "Copilot CLI Entra access is not enabled for this user." }, extra: "private prompt" },
+      { status: 403, headers: { "request-id": "service-request-1" } }) : Response.json(catalog) });
+  t.after(() => p.close());await p.refresh();refused = true;clock += 1000;
+  await assert.rejects(p.refresh(), error => error.code === "m365_catalog_http_403" && error.catalog_diagnostic.cause_code === "entra_access_disabled");
+  const state = p.snapshot();assert.equal(state.catalog_diagnostic.last_success_at, "2026-10-22T07:00:00.000Z");
+  assert.equal(state.catalog_diagnostic.checked_at, "2026-10-22T07:00:01.000Z");assert.equal(p.models("claude").length, 1);
+  assert.doesNotMatch(JSON.stringify(state), /private prompt|synthetic_entra_secret/);
+  refused = false;await p.refresh();assert.equal(p.snapshot().state, "ready");assert.equal(p.snapshot().catalog_diagnostic, null);
+});
+
 test("M365 cache TTL adaptation preserves content, breakpoints and nested tool data", () => {
   const control = { type: "ephemeral", ttl: "1h" };
   const body = { model: "claude-opus-5.5", system: [{ type: "text", text: "kept", cache_control: control }],

@@ -16,6 +16,7 @@ import { resolveClaudeModel } from "../claude-models.mjs";
 import { modelReasoningEfforts } from "../provider-metadata.mjs";
 import { limitM365CacheTtl } from "./m365-messages-policy.mjs";
 import { createM365ConversationGuard } from "./m365-conversation-accounts.mjs";
+import { catalogFailure, m365CatalogDiagnostic } from "./m365-catalog-diagnostic.mjs";
 import { m365NetworkDiagnostic } from "./m365-network-diagnostic.mjs";
 
 export const M365_API_BASE = "https://df.loki.delve.office.com/api/v1/llmapi";
@@ -75,7 +76,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
   const guardConversation = createM365ConversationGuard({ home });
   let catalog = null, account = null, catalogAt = 0, state = "idle", reason = null, flight = null, controller = null, generation = 0;
   let network = null, networkFlight = null, cacheTtlAdjustments = 0;
-  let networkDiagnostic = null;
+  let networkDiagnostic = null, catalogDiagnostic = null;
   const registry = { models: null, source: "unavailable", cacheState: "none", cacheSavedAtMs: null,
     refreshInFlight: false, generation: 0, lastError: null, lastErrorAtMs: null };
   const profile = () => account ? `m365:${m365AccountKey(account)}` : "m365:unavailable";
@@ -146,20 +147,23 @@ export function createM365Provider({ home, env = process.env, account: accountOv
       const credential = await auth.getToken({ signal });
       const response = await request("/models", null, { signal });
       const raw = await readBoundedResponseText(response, { maxBytes: MAX_UPSTREAM_MODEL_CATALOG_BYTES, label: "M365 model catalog", signal });
-      if (!response.ok) throw m365Error(`m365_catalog_http_${response.status}`);
+      if (!response.ok) throw Object.assign(m365Error(`m365_catalog_http_${response.status}`), {
+        catalog_diagnostic: catalogFailure(response, raw, { checkedAt: new Date(now()).toISOString(),
+          lastSuccessAt: catalogAt ? new Date(catalogAt).toISOString() : null }) });
       let value;try { value = m365Catalog(JSON.parse(raw)); } catch { throw m365Error("m365_catalog_invalid"); }
       if (current !== generation || signal.aborted) throw m365Error("m365_refresh_cancelled");
       const savedAt = now();
       const nextAccount = { ...credential.account, ...(account?.history_isolation ? { history_isolation: true } : {}) };
       if (persist) writeM365Binding(nextAccount, { account_key: m365AccountKey(nextAccount), saved_at: savedAt, models: value }, { home, expectedAccount: account });
       account = nextAccount;
-      applyCatalog(value, "live", savedAt);state = "ready";reason = null;registry.lastError = null;registry.lastErrorAtMs = null;
+      applyCatalog(value, "live", savedAt);catalogDiagnostic = null;state = "ready";reason = null;registry.lastError = null;registry.lastErrorAtMs = null;
       try { await onCatalog(value); } catch { log("warn", "M365 models are ready; optional client configuration could not be updated"); }
       return value;
     })().catch(error => {
       if (current === generation) {
         state = "unavailable";reason = /^m365_[a-z0-9_]+$/.test(error.code || "") ? error.code : "m365_unavailable";
         networkDiagnostic = m365NetworkDiagnostic(error.network_diagnostic);
+        catalogDiagnostic = m365CatalogDiagnostic(error.catalog_diagnostic);
         registry.lastError = reason;registry.lastErrorAtMs = now();
       }
       throw error;
@@ -254,6 +258,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     snapshot: () => ({ ...auth.snapshot(), state, reason: reason || auth.snapshot().reason, account: account ? { login: account.login, tenant: account.tenant, selection_source: account.selection_source || "legacy" } : null,
       network: network?.snapshot() || null,
       network_diagnostic: networkDiagnostic ? { ...networkDiagnostic } : null,
+      catalog_diagnostic: m365CatalogDiagnostic(catalogDiagnostic),
       cache_ttl_adjustments: cacheTtlAdjustments,
       models: { total: catalog?.data.length || 0, claude: m365Models(catalog, "claude").length, gpt: m365Models(catalog, "gpt").length,
         source: registry.source, refreshed_at: catalogAt ? new Date(catalogAt).toISOString() : null }, refresh_in_flight: Boolean(flight) }),

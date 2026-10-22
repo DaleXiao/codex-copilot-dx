@@ -10,10 +10,12 @@
     <link rel="stylesheet" href="/ui.css">
     <script src="/refresh.js" defer></script>
     <script src="/icons.js" defer></script>
+    <script src="/time.js" defer></script>
     <script src="/status.js" defer></script>
     <script src="/activity.js" defer></script>
     <script src="/usage.js" defer></script>
     <script src="/updates.js" defer></script>
+    <script src="/animation.js" defer></script>
     <script src="/ui.js" defer></script>
     <script src="/console.js" defer></script>
     <script src="/tools.js" defer></script>
@@ -56,8 +58,7 @@
         <section class="overview" aria-label="Overview" data-i18n-label="overview"><article class="card"><h2 data-i18n="adapter">SERVICE</h2><strong id="version">—</strong><p id="uptime">—</p><p id="updated" class="refresh-time" data-i18n="reading_status">Reading status…</p></article><article class="card"><h2 data-i18n="sources">SOURCES</h2><strong id="source-summary">—</strong><p id="source-detail">—</p></article></section>
         <details class="panel dashboard-section" id="client-features" open>
           <summary class="panel-heading"><h2 data-i18n="client_connections">APP SETUP</h2><span data-i18n="configuration_observation">SETUP AND ACTIVITY</span></summary>
-          <div class="table-wrap"><table><thead><tr><th data-i18n="client">APP</th><th data-i18n="current_source">Current source</th><th data-i18n="connection_setup">Setup</th><th data-i18n="local_bridge">Local service</th><th data-i18n="last_request">LAST REQUEST</th></tr></thead><tbody id="provider-clients"></tbody></table></div>
-          <p class="hint" data-i18n="configured_not_successful">Configured does not mean a request succeeded.</p>
+          <div class="table-wrap"><table><thead><tr><th data-i18n="client">APP</th><th data-i18n="current_source">Current source</th><th data-i18n="connection_setup" data-i18n-title="configured_not_successful">Setup</th><th data-i18n="local_bridge">Local service</th><th data-i18n="last_request">LAST REQUEST</th></tr></thead><tbody id="provider-clients"></tbody></table></div>
         </details>
         <section class="panel dashboard-section"><h2 data-i18n="this_run_usage">THIS RUN</h2><p id="runtime-usage" class="table-note"></p><p class="table-note"><span data-i18n="approx_cache_hit_rate">Approx. cache hit rate</span>: <strong id="runtime-cache-hit" data-i18n-title="runtime_cache_hit_basis" title="Reused input / input tokens. ~ Partial counts. — Unknown or invalid.">—</strong></p><p class="hint" data-i18n="updated_from_returned_usage_not_a_live_bill_pending_usage_is_not">Counts returned usage only. Pending usage is not included. This is not a live bill.</p></section>
         </div>
@@ -124,7 +125,7 @@
         <div data-view="claude" hidden>
         <section class="panel dashboard-section" id="claude-connections">
           <h2 data-i18n="client_connections">APP SETUP</h2>
-          <div class="table-wrap"><table><thead><tr><th data-i18n="client">APP</th><th data-i18n="connection_setup">Setup</th><th data-i18n="local_bridge">Local service</th><th data-i18n="last_request">LAST REQUEST</th></tr></thead><tbody id="claude-clients"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th data-i18n="client">APP</th><th data-i18n="connection_setup" data-i18n-title="configured_not_successful">Setup</th><th data-i18n="local_bridge">Local service</th><th data-i18n="last_request">LAST REQUEST</th></tr></thead><tbody id="claude-clients"></tbody></table></div>
           <p id="claude-client-state" class="hint"></p>
           <p class="hint" data-i18n="local_service_not_app">Local service status does not confirm the app is open.</p>
         </section>
@@ -148,10 +149,10 @@
         <div id="source-account-panel" role="tabpanel">
         <p id="source-status-note" class="hint" role="status"></p>
         <section class="panel dashboard-section" id="github-account">
-          <div class="panel-heading"><h2>GitHub Copilot</h2><span id="github-account-state"></span></div>
+          <div class="panel-heading"><h2 data-i18n="account_access">Account &amp; access</h2><span id="github-account-state"></span></div>
           <p id="github-account-name" class="account-name">—</p><p id="github-account-hint" class="hint"></p>
-          <dl id="github-account-fields" class="account-fields"></dl>
-          <div class="section-actions"><button id="github-signin" type="button" data-i18n="tools_login">Sign in to GitHub</button><button id="github-check" type="button" data-i18n="tools_check_connection">Check connection</button></div>
+          <dl id="github-account-fields" class="account-summary"></dl>
+          <div class="section-actions"><button id="github-check" type="button" data-i18n="tools_check_connection">Check connection</button><button id="github-signin" type="button" data-i18n="tools_login">Sign in to GitHub</button><button id="github-force-reauth" type="button" data-i18n="tools_reauth">Sign in again</button></div>
           <p class="hint" data-i18n="tools_no_inference">Checks access and models. No chat request is sent.</p>
           <section id="github-login-flow" class="tool-flow" hidden aria-label="GitHub sign-in">
             <h3 id="github-flow-state" data-i18n="tools_waiting">Waiting for GitHub</h3>
@@ -161,16 +162,18 @@
             <p class="hint" data-i18n="tools_keep_old_signin">Old sign-in is kept until verification succeeds.</p>
           </section>
           <p id="github-account-note" class="hint" role="status" aria-live="polite"></p>
-          <details class="tool-details"><summary data-i18n="tools_details">Check details</summary><dl class="failure-detail"><dt data-i18n="tools_storage">Saved sign-in</dt><dd id="github-store">—</dd><dt data-i18n="tools_error_code">Error code</dt><dd id="github-check-code">—</dd><dt>HTTP</dt><dd id="github-check-http">—</dd></dl></details>
-          <details class="tool-details"><summary data-i18n="tools_more_actions">More actions</summary><div class="section-actions"><button id="github-force-reauth" type="button" data-i18n="tools_reauth">Sign in again</button><button id="github-logout" type="button" data-i18n="tools_logout">Sign out of CCDX</button></div><p class="hint" data-i18n="tools_logout_scope">Other apps stay signed in.</p></details>
+          <details class="tool-details"><summary data-i18n="tools_details">Check details</summary><dl class="failure-detail"><dt data-i18n="tools_storage">Saved sign-in</dt><dd id="github-store">—</dd><dt data-i18n="tools_error_code">Error code</dt><dd id="github-check-code">—</dd><dt>HTTP</dt><dd id="github-check-http">—</dd><dt data-i18n="tools_github_identity">GitHub identity</dt><dd id="github-identity-detail">—</dd><dt data-i18n="last_verified">Last checked</dt><dd id="github-checked-at">—</dd></dl></details>
+          <details class="tool-details"><summary data-i18n="tools_more_actions">More actions</summary><div class="section-actions"><button id="github-logout" type="button" data-i18n="tools_logout">Sign out of CCDX</button></div><p class="hint" data-i18n="tools_logout_scope">Other apps stay signed in.</p></details>
         </section>
         <section class="panel dashboard-section" id="m365-source-access" hidden aria-labelledby="source-access-heading">
-          <h2 id="source-access-heading">Microsoft 365</h2>
+          <h2 id="source-access-heading" data-i18n="account_access">Account &amp; access</h2>
           <p class="hint" data-i18n="m365_source_access">Provides models for Codex and Claude on supported devices.</p>
-          <div class="section-actions"><button id="m365-on" type="button" data-i18n="enable_service">Enable source</button><button id="m365-off" type="button" data-i18n="disable_service">Disable source</button></div>
+          <div class="setting-row"><label for="m365-enabled" data-i18n="enable_service">Enable source</label><input id="m365-enabled" type="checkbox" role="switch" disabled><span id="m365-source-effect" class="hint" role="status"></span></div>
           <div id="m365-control-note" class="hint" role="status"></div>
           <h3 data-i18n="company_account">Company account</h3>
-          <p id="m365-account-current" class="hint" role="status"></p>
+          <p id="m365-account-name" class="account-name">—</p>
+          <dl class="account-summary"><div><dt data-i18n="sign_in_status">Sign-in</dt><dd id="m365-signin-state">—</dd></div><div><dt data-i18n="model_catalog">Model list</dt><dd id="m365-catalog-state">—</dd></div><div><dt data-i18n="last_request">Last request</dt><dd id="m365-last-request">—</dd></div></dl>
+          <details class="tool-details"><summary data-i18n="account_details">Account details</summary><p id="m365-account-current" class="hint" role="status"></p></details>
           <div class="section-actions"><button id="m365-accounts-refresh" type="button" data-i18n="check_accounts">Check accounts</button></div>
           <div id="m365-account-form" hidden>
             <div class="section-actions"><label><span data-i18n="choose_company_account">Choose a company account</span><select id="m365-account-choice"></select></label><button id="m365-account-apply" type="button" disabled data-i18n="use_this_account">Use this account</button></div>
@@ -178,12 +181,12 @@
           </div>
           <p id="m365-account-note" class="hint" role="status" aria-live="polite"></p>
         </section>
-        <details class="panel dashboard-section" id="upstream-models" open>
+        <details class="panel dashboard-section model-catalog" id="upstream-models" open>
           <summary class="panel-heading"><h2 data-i18n="model_catalog">MODEL LIST</h2><span id="models-state" data-i18n="checking_live">CHECKING</span></summary>
           <div class="section-actions"><button id="refresh-models" type="button" data-i18n="refresh">Refresh</button></div>
           <p id="models-note" class="table-note" data-i18n="reading_provider_catalog">Loading model list…</p>
           <details id="model-check-details" class="model-check-details" hidden><summary data-i18n="source_check_details">Check details</summary><dl id="model-check-fields" class="failure-detail"></dl><p class="hint" data-i18n="source_check_action">Use Refresh to check this source again.</p></details>
-          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="vendor">MODEL MAKER</th><th scope="col" data-i18n="api">CONNECTION TYPE</th><th scope="col" data-i18n="client">APP</th><th scope="col" data-i18n="reasoning">THINKING LEVEL</th><th scope="col" data-i18n="state">STATE</th></tr></thead><tbody id="live-models-body" role="tabpanel"><tr><td colspan="6" data-i18n="loading">Loading…</td></tr></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="client">APP</th><th scope="col" data-i18n="tools_details">Details</th></tr></thead><tbody id="live-models-body" role="tabpanel"><tr><td colspan="3" data-i18n="loading">Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n="catalog_listing_does_not_guarantee_inference_access">Listed does not mean your account can use it.</p>
         </details>
         <details class="panel dashboard-section" id="account-authorization">
@@ -195,7 +198,7 @@
         </div>
         <div data-view="checks" hidden>
           <section class="panel dashboard-section">
-            <h2 data-i18n="tools_checks_title">Checks &amp; repairs</h2>
+            <h2 data-i18n="tools_check_local">Check this computer</h2>
             <p class="hint" data-i18n="tools_local_scope">Local checks do not contact external services.</p>
             <div class="section-actions"><button id="check-local" type="button" data-i18n="tools_check_local">Check this computer</button></div>
             <p id="checks-note" class="table-note" role="status" aria-live="polite" data-i18n="tools_checks_empty">Run a check to see the results.</p>
@@ -223,14 +226,7 @@
         <div data-view="usage" hidden>
         <div class="section-actions usage-source-controls"><label><span data-i18n="source_entire_page">Source / entire page</span><select id="usage-provider"><option value="" data-i18n="all_providers">All providers</option></select></label><button id="refresh-usage" type="button" data-i18n="refresh_usage">Refresh usage</button></div>
 
-        <details class="panel dashboard-section" id="model-usage" open>
-          <summary class="panel-heading"><h2 data-i18n="usage_totals">USAGE TOTALS</h2><span id="usage-state" data-i18n="reading_log">COUNTING</span></summary>
-          <div class="section-actions"><button id="clear-usage-day" type="button" hidden data-i18n="all_history">Show all</button></div>
-          <p id="usage-note" class="table-note" data-i18n="aggregating_local_usage_metadata">Counting local usage…</p>
-          <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="calls">REQUESTS</th><th scope="col" data-i18n="input">INPUT USAGE</th><th scope="col" data-i18n="cache_read">REUSED INPUT</th><th scope="col" data-i18n="output">OUTPUT USAGE</th><th scope="col" data-i18n="total">TOTAL</th><th scope="col" data-i18n="cache_hit">REUSE RATE</th></tr></thead><tbody id="usage-body"><tr><td colspan="7" data-i18n="loading">Loading…</td></tr></tbody></table></div>
-          <p class="hint" data-i18n="cache_hit_recorded_cached_input_tokens_incomplete_history_unavai">Unit: Token. Reused input is part of input.
-~ Partial records. — Unknown or invalid.</p>
-          <details id="usage-analytics" class="analytics-section">
+          <details id="usage-analytics" class="panel dashboard-section analytics-section">
             <summary data-i18n="usage_analytics">USAGE TRENDS</summary>
             <div class="analytics-controls">
               <label><span data-i18n="model_both_charts">Model / both charts</span> <select id="analytics-model"><option value="" data-i18n="all_models">All models</option></select></label>
@@ -246,6 +242,14 @@
             <div class="calendar-scroll"><div class="calendar-grid"><div id="calendar-months" class="calendar-months" aria-hidden="true"></div><div id="activity-calendar" class="activity-calendar" aria-label="Daily recorded activity over 365 days" data-i18n-label="daily_recorded_request_activity"></div></div></div>
             <p id="analytics-selection" class="hint" role="status" data-i18n="select_a_day_to_inspect_its_model_totals_no_history_is_distinct_">Select a day for its usage. No records does not mean zero requests.</p>
           </details>
+        <details class="panel dashboard-section" id="model-usage" open>
+          <summary class="panel-heading"><h2 data-i18n="usage_totals">USAGE TOTALS</h2><span id="usage-state" data-i18n="reading_log">COUNTING</span></summary>
+          <div class="section-actions"><button id="clear-usage-day" type="button" hidden data-i18n="all_history">Show all</button></div>
+          <p id="usage-note" class="table-note" data-i18n="aggregating_local_usage_metadata">Counting local usage…</p>
+          <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="calls">REQUESTS</th><th scope="col" data-i18n="input">INPUT USAGE</th><th scope="col" data-i18n="cache_read">REUSED INPUT</th><th scope="col" data-i18n="output">OUTPUT USAGE</th><th scope="col" data-i18n="total">TOTAL</th><th scope="col" data-i18n="cache_hit">REUSE RATE</th></tr></thead><tbody id="usage-body"><tr><td colspan="7" data-i18n="loading">Loading…</td></tr></tbody></table></div>
+          <p class="hint" data-i18n="cache_hit_recorded_cached_input_tokens_incomplete_history_unavai">Unit: Token. Reused input is part of input.
+~ Partial records. — Unknown or invalid.</p>
+
         </details>
         </div>
         <div data-view="requests" hidden>
@@ -273,21 +277,26 @@ Missing data is unknown. This panel keeps no prompts or images.</p>
   <section class="panel dashboard-section" aria-labelledby="web-appearance-title">
     <h2 id="web-appearance-title" data-i18n="appearance_web_appearance">网页外观</h2>
     <div class="appearance-row">
-      <div class="appearance-label"><label for="web-color-theme" data-i18n="appearance_color_theme">颜色主题</label><p data-i18n="appearance_browser_scope">只影响当前浏览器。</p></div>
+      <div class="appearance-label"><label for="web-color-theme" data-i18n="appearance_color_theme">颜色主题</label><p id="web-color-note" role="status" data-i18n="theme_saved_browser">This browser only. Applies now.</p></div>
       <select id="web-color-theme" class="appearance-select"><option value="green" data-i18n="appearance_classic_green">经典绿（默认）</option><option value="klein" data-i18n="appearance_klein_blue">克莱因蓝</option><option value="pink" data-i18n="appearance_soft_pink">淡粉色</option></select>
     </div>
-    <p id="web-color-note" class="appearance-note" role="status" data-i18n="theme_saved_browser">选择后，网页立即换色。</p>
   </section>
 
   <section class="panel dashboard-section" id="terminal-appearance" aria-labelledby="terminal-appearance-title">
     <h2 id="terminal-appearance-title" data-i18n="terminal_appearance">终端外观</h2>
     <div class="appearance-row">
-      <div class="appearance-label"><label for="terminal-color-theme" data-i18n="appearance_color_theme">颜色主题</label><p data-i18n="appearance_terminal_scope">与网页主题分别设置。</p></div>
+      <div class="appearance-label"><label for="terminal-color-theme" data-i18n="appearance_color_theme">颜色主题</label><p id="terminal-color-note" role="status" data-i18n="appearance_terminal_effect">Table updates now; startup logo next launch.</p></div>
       <select id="terminal-color-theme" disabled class="appearance-select"><option value="green" data-i18n="appearance_classic_green">经典绿（默认）</option><option value="klein" data-i18n="appearance_klein_blue">克莱因蓝</option><option value="pink" data-i18n="appearance_soft_pink">淡粉色</option></select>
     </div>
-    <p id="terminal-color-note" class="appearance-note" role="status" data-i18n="appearance_terminal_effect">表格即时换色，启动 Logo 下次生效。</p>
 
-    <div id="terminal-color-sample" class="terminal-sample" data-terminal-palette="green" aria-label="Terminal color preview" data-i18n-label="terminal_color_preview">
+          <div class="setting-row terminal-animation-toggle"><label for="setting-terminal_animation_enabled" data-i18n="terminal_animation">Terminal animation</label><input id="setting-terminal_animation_enabled" type="checkbox" role="switch" disabled><span id="effect-terminal_animation_enabled" class="hint" role="status"></span></div>
+        <details id="animation-settings" class="appearance-animation settings-panel">
+          <summary class="panel-heading"><h2 data-i18n="terminal_animation_9edf6">TERMINAL ANIMATION</h2><span id="animation-state" data-i18n="reading">READING</span></summary>
+          <div id="animation-options" class="animation-options" role="group" aria-label="Animation style" data-i18n-label="animation_theme"></div>
+          <div class="section-actions"><button id="save-animation" type="button" disabled data-i18n="save_selection">Save animation</button><span id="animation-note" role="status" data-i18n="applies_to_the_running_terminal">Updates the running terminal.</span></div>
+        </details>
+    <details class="tool-details"><summary data-i18n="terminal_color_preview">Terminal preview</summary>
+<div id="terminal-color-sample" class="terminal-sample" data-terminal-palette="green" aria-label="Terminal color preview" data-i18n-label="terminal_color_preview">
       <div class="terminal-caption"><span>CCDX · Terminal</span><span data-i18n="appearance_sample">Sample data</span></div>
       <div class="terminal-brand">
         <pre class="terminal-logo" aria-hidden="true">   ▄▀█▄ ▄█▀▄
@@ -313,18 +322,11 @@ Missing data is unknown. This panel keeps no prompts or images.</p>
       <pre class="terminal-notices">0 notices / details in WebUI</pre>
       <pre class="terminal-motion"><span id="terminal-sample-frame">[             :::::::]</span> <span id="terminal-sample-status">Working</span></pre>
     </div>
-
-          <div class="setting-row terminal-animation-toggle"><label for="setting-terminal_animation_enabled" data-i18n="terminal_animation">Terminal animation</label><input id="setting-terminal_animation_enabled" type="checkbox" role="switch" disabled><span id="effect-terminal_animation_enabled" class="hint" role="status"></span></div>
-        <details id="animation-settings" class="appearance-animation settings-panel">
-          <summary class="panel-heading"><h2 data-i18n="terminal_animation_9edf6">TERMINAL ANIMATION</h2><span id="animation-state" data-i18n="reading">READING</span></summary>
-          <div id="animation-options" class="animation-options" role="group" aria-label="Animation style" data-i18n-label="animation_theme"></div>
-          <div class="section-actions"><button id="save-animation" type="button" disabled data-i18n="save_selection">Save animation</button><span id="animation-note" role="status" data-i18n="applies_to_the_running_terminal">Updates the running terminal.</span></div>
-        </details>
+    </details>
   </section>
 
         <section class="panel dashboard-section" aria-labelledby="settings-heading">
           <h2 id="settings-heading" data-i18n="startup_preferences">STARTUP</h2>
-          <p class="hint" data-i18n="saved_preference_and_effective_state_are_separate_environment_ov">Saved choices and current behavior are shown separately. Startup overrides and required restarts are listed.</p>
           <div class="setting-row"><label for="setting-open_webui" data-i18n="open_webui_at_startup">Open dashboard on startup</label><input id="setting-open_webui" type="checkbox" role="switch" disabled><span id="effect-open_webui" class="hint" role="status"></span></div>
           <p id="settings-note" class="hint" role="status" data-i18n="reading_settings">Reading settings…</p>
         </section>

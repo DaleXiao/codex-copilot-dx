@@ -42,6 +42,8 @@
   function navigate() {
     const route = location.hash.slice(1), next = Object.hasOwn(titles, route) ? route : "overview";
     current = next;
+    if (next !== "codex") sourceGeneration++;
+    if (!["codex", "models"].includes(next) && dashboardRefresh.state("models").pending) dashboardRefresh.invalidate("models");
     for (const view of document.querySelectorAll("[data-view]")) view.hidden = view.dataset.view !== next;
     globalThis.ccdxDashboardActivity?.visibilityChanged();
     for (const item of document.querySelectorAll("[data-route]")) {
@@ -49,11 +51,12 @@
     }
     label(el("page-title"), titles[next]);
     label(el("page-description"), descriptions[next]);
+    el("page-description").hidden = ["models", "system"].includes(next);
     el("page-settings-note").textContent = "";
     window.scrollTo(0, 0);
     el("main-content").focus({ preventScroll: true });
     if (settingsViews.includes(next)) void loadSettings();
-    if (next === "models") { void dashboardRefresh.refresh("models");void dashboardRefresh.refresh("auth"); }
+    if (next === "models") { void refreshCatalog();void dashboardRefresh.refresh("auth"); }
     if (next === "usage") { void dashboardRefresh.refresh("usage");usageView.revealChart(); } else usageView.stopMotion();
     if (next === "requests") renderContext();
     if (next === "system") { void dashboardRefresh.refresh("animation");void dashboardRefresh.refresh("updates"); }
@@ -111,7 +114,7 @@
     for (const key of ["terminal_animation_enabled", "open_webui", "image_enabled", "prediction_enabled"]) {
       const input = el(`setting-${key}`), effective = data.effective[key];
       input.checked = data.saved[key];input.disabled = Boolean(effective.locked);
-      label(el(`effect-${key}`), effective.state === "next_start" ? "saved_saved_state" : "saved_saved_effective_effective_state", {
+      label(el(`effect-${key}`), data.saved[key] === effective.value && !effective.locked ? "preference_effect" : "saved_saved_effective_effective_state", {
         saved: { key: data.saved[key] ? "on" : "off" }, effective: { key: effective.value ? "on" : "off" },
         state: { key: effective.locked ? "controlled_by_environment" : states[effective.state] || effective.state } });
     }
@@ -119,10 +122,22 @@
     el("history-limit").disabled = data.history.source === "environment";
     el("save-history").disabled = data.history.source === "environment";
     label(el("effect-history"), data.history.source === "environment" ? "controlled_by_environment" : "applies_to_new_calls");
-    label(el("settings-note"), "settings_read_from_the_running_service");
+    el("settings-note").textContent = "";
     el("page-settings-note").textContent = "";
     const state = data.providers;
+    el("m365-enabled").checked = state?.m365?.enabled === true;
+    el("m365-enabled").disabled = settingsPending;
+    label(el("m365-source-effect"), state?.m365?.enabled ? "enabled" : "disabled");
     const account = state?.m365?.account;
+    el("m365-account-name").textContent = account?.login || "—";
+    const sourceState = state?.m365;
+    globalThis.ccdxIcons.set(el("m365-signin-state"), sourceState?.token_cached ? "authorized" : !sourceState?.enabled ? "disabled" : "tools_not_checked",
+      sourceState?.token_cached ? "ok" : "unknown");
+    const catalogFailed = Boolean(sourceState?.catalog_diagnostic) || sourceState?.state === "unavailable";
+    globalThis.ccdxIcons.set(el("m365-catalog-state"), catalogFailed ? "live_lookup_failed" : sourceState?.models?.refreshed_at ? sourceState.models.source === "cache" ? "catalog_snapshot" : "live_snapshot" : "tools_not_checked",
+      catalogFailed ? "warning" : sourceState?.models?.refreshed_at ? "ok" : "unknown");
+    const last = Object.values(sourceState?.claude?.observed_clients || {}).filter(value => typeof value === "string").sort().at(-1);
+    el("m365-last-request").textContent = last ? time(last) : "—";
     if (account) label(el("m365-account-current"), "company_account_current", { login: account.login, tenant: account.tenant || "—", source: { key: `account_source_${account.selection_source || "legacy"}` } });
     else label(el("m365-account-current"), "company_account_none");
     if (accountReasons.has(state?.m365?.reason)) label(el("m365-account-note"), state.m365.reason);
@@ -136,6 +151,9 @@
       const status = { ready: "ready", checking: "checking", disabled: "disabled", unsupported: "unsupported", idle: "unknown", unavailable: "unavailable" }[state.m365?.state] || "unknown";
       label(m365, "microsoft_365_state", { state: { key: status } });
       el("source-control-note").replaceChildren(source);el("m365-control-note").append(m365);
+      if (state.m365?.catalog_diagnostic) {
+        const cause = document.createElement("p");label(cause, `catalog_cause_${state.m365.catalog_diagnostic.cause_code}`);el("m365-control-note").append(cause);
+      }
       if (state.m365?.reason) {
         const detail = document.createElement("details"), summary = document.createElement("summary"), code = document.createElement("code");
         label(summary, "message");code.textContent = state.m365.reason;detail.append(summary, code);el("m365-control-note").append(detail);
@@ -148,20 +166,20 @@
     settingsPending = true;
     el("terminal-color-theme").disabled = true;
     syncAccountControls();
-    try { applySettings(await api());settingsReadAt = new Date().toLocaleTimeString(); }
+    try { applySettings(await api());settingsReadAt = time(Date.now()); }
     catch (error) {
       for (const id of ["settings-note", ...(settingsViews.includes(current) ? ["page-settings-note"] : [])]) {
         label(el(id), settingsReadAt ? "showing_previous_data_updated_time" : "could_not_read_settings", { time: settingsReadAt });
         el(id).title = error.message;
       }
     }
-    finally { settingsPending = false;el("terminal-color-theme").disabled = !settings;el("apply-source").disabled = !sourceReady();syncReviewButton();syncAccountControls(); }
+    finally { settingsPending = false;el("m365-enabled").disabled = !settings;el("terminal-color-theme").disabled = !settings;el("apply-source").disabled = !sourceReady();syncReviewButton();syncAccountControls(); }
   }
   async function change(body, button) {
     if (settingsPending) return;
     settingsPending = true;
     syncAccountControls();
-    const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-on, #m365-off")];
+    const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-enabled")];
     controls.forEach(input => { input.disabled = true; });
     const note = el(body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
       : body.action.startsWith("history_") ? "effect-history" : body.action === "prediction_fix" ? "prediction-note"
@@ -177,6 +195,7 @@
       el("review-control-note").textContent = "";
       applySettings(data);
       if (body.operation === "account") {
+        sourceDirty = false;reviewDirty = false;sourceGeneration++;
         modelsPreference = null;modelsSource = null;
         dashboardRefresh.invalidate("models", { clear: true });
         label(el("m365-account-note"), "company_account_checked");
@@ -197,7 +216,7 @@
       button?.removeAttribute("aria-busy");
     }
   }
-  for (const input of document.querySelectorAll("[role=switch]")) input.addEventListener("change", () => {
+  for (const input of document.querySelectorAll('[role=switch][id^="setting-"]')) input.addEventListener("change", () => {
     void change({ action: "preference", key: input.id.slice("setting-".length), value: input.checked }, input);
   });
   el("terminal-color-theme").addEventListener("change", () => void change({ action: "color_theme", theme: el("terminal-color-theme").value }, el("terminal-color-theme")));
@@ -206,9 +225,12 @@
     if (window.confirm(globalThis.ccdxLanguage.format("clear_inactive_codex_conversation_data_older_continuation_ids_ma"))) void change({ action: "history_clean" }, el("clean-history"));
   });
   el("fix-prediction").addEventListener("click", () => void change({ action: "prediction_fix" }, el("fix-prediction")));
-  for (const operation of ["on", "off"]) el(`m365-${operation}`).addEventListener("click", () => {
-    if (operation === "off" && !window.confirm(globalThis.ccdxLanguage.format("confirm_disable_m365"))) return;
-    void change({ action: "provider", operation }, el(`m365-${operation}`));
+  el("m365-enabled").addEventListener("change", () => {
+    const operation = el("m365-enabled").checked ? "on" : "off";
+    if (operation === "off" && !window.confirm(globalThis.ccdxLanguage.format("confirm_disable_m365"))) {
+      el("m365-enabled").checked = settings?.providers?.m365?.enabled === true;return;
+    }
+    void change({ action: "provider", operation }, el("m365-enabled"));
   });
   async function loadSourceModels() {
     const generation = ++sourceGeneration;
@@ -222,8 +244,7 @@
     el("apply-source").disabled = settingsPending || Boolean(needsModels);
     label(el("review-control-note"), "model_choices_loading");
     try {
-      const response = await fetch(`/_ccdx/ui/models/live?provider=${encodeURIComponent(source.id)}`, { headers: { "X-CCDX-Dashboard": "1" }, cache: "no-store", signal: AbortSignal.timeout(15000) });
-      const data = await response.json();if (!response.ok || !Array.isArray(data.models)) throw new Error(data.error || "Invalid model list");
+      const data = await readModelCatalog(source.id);
       if (generation !== sourceGeneration) return;
       const models = data.models.filter(model => model.selectable && model.clients.includes("codex"));
       sourceModels = models;

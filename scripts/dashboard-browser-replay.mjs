@@ -315,6 +315,20 @@ try {
         assert.equal(await page.locator("#github-account").isVisible(), false);
         assert.equal(await page.locator("#provider-auth tr:visible").count(), 1);
         assert.match(await page.locator("#provider-auth").innerText(), /synthetic@example.test/);
+        await page.waitForFunction(() => !document.getElementById("m365-enabled").disabled);
+        await page.locator("#m365-account-name").evaluate(node => { node.dataset.original = node.textContent;node.textContent = "long.company.account.with.several.parts@a-long-company-domain.example.test"; });
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Company account names wrap within narrow layouts");
+        await page.locator("#m365-account-name").evaluate(node => { node.textContent = node.dataset.original; });
+        const sourceEnabled = await page.locator("#m365-enabled").isChecked();
+        assert.equal(sourceEnabled, true);
+        page.once("dialog", dialog => dialog.dismiss());await page.locator("#m365-enabled").click();
+        assert.equal(await page.locator("#m365-enabled").isChecked(), true, "Cancelling source disable keeps the confirmed setting");
+        await page.route("**/_ccdx/ui/settings", route => route.request().method() === "POST" && route.request().postDataJSON()?.action === "provider"
+          ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "synthetic source save refused" }) }) : route.continue());
+        page.once("dialog", dialog => dialog.accept());await page.locator("#m365-enabled").click();
+        await page.waitForFunction(() => document.getElementById("m365-control-note").textContent.includes("synthetic source save refused"));
+        assert.equal(await page.locator("#m365-enabled").isChecked(), true, "A rejected source disable restores its confirmed switch");
+        await page.unroute("**/_ccdx/ui/settings");
         await page.locator("#m365-accounts-refresh").click();
         await page.waitForFunction(() => !document.getElementById("m365-account-form").hidden && !document.getElementById("m365-accounts-refresh").disabled);
         assert.equal(accountChecks, 1);assert.equal(accountChanges, 0);
@@ -332,7 +346,15 @@ try {
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-accounts.png`), fullPage: true });
         await page.locator("#model-provider-m365").click();
         await page.waitForFunction(() => document.getElementById("live-models-body").textContent.includes("claude-opus-5.5"));
+        await page.locator("#live-models-body tr").first().locator("summary").click();
         assert.match(await page.locator("#live-models-body").innerText(), /low.*high/);
+        const contrast = await page.locator("#live-models-body td").first().evaluate(node => {
+          const luminance = color => { const rgb = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => { value /= 255;return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4; });return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722; };
+          const text = luminance(getComputedStyle(node).color), surface = luminance(getComputedStyle(node.closest(".panel")).backgroundColor);
+          return (Math.max(text, surface) + 0.05) / (Math.min(text, surface) + 0.05);
+        });
+        assert.ok(contrast >= 4.5, `Model names must remain readable (${contrast})`);
+        assert.equal(await page.locator("#model-providers [aria-selected=true] svg").count(), 0);
         proxyFailure = true;await page.locator("#refresh-models").click();
         await page.waitForFunction(() => document.getElementById("model-check-fields").textContent.includes("proxy_bypass_invalid"));
         await page.locator("#model-check-details > summary").click();
@@ -434,6 +456,13 @@ try {
         assert.equal(await page.locator("#animation-settings").evaluate(node => getComputedStyle(node).borderTopWidth), "1px");
         await page.locator(".update-install > summary").click();
         assert.match(await page.locator("#install-command").innerText(), /v1\.2\.4\/install\.sh/);
+        const selectedPlatform = await page.locator('[data-install-platform="macos"]').evaluate(node => ({ color: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor }));
+        const otherPlatform = await page.locator('[data-install-platform="windows"]').evaluate(node => ({ color: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor }));
+        assert.notEqual(selectedPlatform.background, otherPlatform.background, "Selected platform must have an actual visible fill");
+        assert.equal(await page.locator('[data-install-platform="macos"] svg').count(), 0, "Selection does not displace centered text with an icon");
+        await page.locator("#web-color-theme").focus();
+        assert.deepEqual(await page.locator("#web-color-theme").evaluate(node => ({ radius: getComputedStyle(node).borderRadius, shadow: getComputedStyle(node).boxShadow, appearance: getComputedStyle(node).appearance })),
+          { radius: "0px", shadow: "none", appearance: "none" });
         await page.locator('[data-install-platform="windows"]').click();
         assert.match(await page.locator("#install-command").innerText(), /v1\.2\.4\/install\.ps1/);
         assert.doesNotMatch(await page.locator("#install-command").innerText(), /Bypass|allow-remote|ExecutionPolicy/);

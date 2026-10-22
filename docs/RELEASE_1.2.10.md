@@ -77,6 +77,14 @@ were **1.314 ms** for 1.2.9 and **0.687 ms** for this candidate on this host; ma
 sampled RSS was **114.8 / 112.5 MiB** respectively. These small synthetic samples
 are not evidence of a universal speedup. Existing performance/resource gates pass.
 
-Cross-platform CI and publication receipts are recorded after those gates finish.
+The release pack contains **198 files / 537,100 compressed bytes**, with unchanged
+runtime dependencies. Tarball SHA-256:
+`972e11b1a694100ce1bafeae36cdbb30011f9896b51dc15126e5606f6764356d`.
+All packed file contents were compared with the checkout.
+
+Final tagged-source CI, npm publication and downloaded-asset receipts are attached
+to [GitHub v1.2.10](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.2.10).
+The configured company registry may synchronize separately; it is not changed by
+this release.
 Synthetic browser/protocol/load checks do not prove every physical device,
 enterprise account entitlement or real upstream model's behavior.

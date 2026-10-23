@@ -10,10 +10,13 @@ function failure(code) {
 
 // Private, credit-based WinHTTP transport. Each consumer owns its worker and a
 // fixed target group; prediction and M365 cannot share credentials or requests.
-export async function startWindowsHttpNetwork({ settings = {}, target = "prediction", validatePac = () => {}, env = process.env, spawnImpl = spawn, timeoutMs = 30_000, onFailure = () => {}, signal } = {}) {
+export async function startWindowsHttpNetwork({ settings = {}, target = "prediction", apiTargets = [], validatePac = () => {}, env = process.env, spawnImpl = spawn, timeoutMs = 30_000, onFailure = () => {}, signal } = {}) {
   signal?.throwIfAborted();
-  if (!["prediction", "m365"].includes(target)) throw failure("proxy_target_invalid");
-  const allowedHosts = target === "m365" ? ["df.loki.delve.office.com"] : ["chatgpt.com", "ab.chatgpt.com"];
+  if (!["prediction", "m365", "api"].includes(target)) throw failure("proxy_target_invalid");
+  if (target === "api" && (!Array.isArray(apiTargets) || !apiTargets.length || apiTargets.length > 8 || apiTargets.some(raw => {
+    try { const url = new URL(raw);return url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.href !== raw; } catch { return true; }
+  }))) throw failure("proxy_target_invalid");
+  const allowedHosts = target === "api" ? apiTargets.map(raw => new URL(raw).hostname) : target === "m365" ? ["df.loki.delve.office.com"] : ["chatgpt.com", "ab.chatgpt.com"];
   const command = path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const source = fileURLToPath(new URL("./windows-prediction-network.cs", import.meta.url));
   const child = spawnImpl(command, ["-NoProfile", "-NonInteractive", "-Command",
@@ -54,7 +57,7 @@ export async function startWindowsHttpNetwork({ settings = {}, target = "predict
       req.frame(event);
     }
   });
-  write({autoDetect:settings.autoDetect===true,pac:settings.pac||"",...(target === "m365" ? {target,timeoutMs} : {})});
+  write({autoDetect:settings.autoDetect===true,pac:settings.pac||"",...(target !== "prediction" ? {target,timeoutMs} : {}),...(target === "api" ? {apiTargets} : {})});
   const timer=setTimeout(()=>stop(failure("proxy_wpad_timeout")),timeoutMs);
   let script;
   try{if(signal?.aborted)cancelled();script=await ready;}catch(error){stop(error);throw error;}finally{clearTimeout(timer);signal?.removeEventListener("abort",cancelled);}
@@ -66,8 +69,10 @@ export async function startWindowsHttpNetwork({ settings = {}, target = "predict
     const start=()=>{
       if(started)return;started=true;
       const host=options.hostname;
-      if(!allowedHosts.includes(host)||!String(options.path).startsWith("/")||String(options.path).startsWith("//"))throw failure("proxy_target_invalid");
+      if(!allowedHosts.includes(host)||!String(options.path).startsWith("/")||target !== "api" && String(options.path).startsWith("//"))throw failure("proxy_target_invalid");
       if(target === "m365" && !String(options.path).startsWith("/api/v1/llmapi/")) throw failure("proxy_target_invalid");
+      const requestUrl = `https://${host}${options.port && Number(options.port) !== 443 ? `:${options.port}` : ""}${options.path}`;
+      if(target === "api" && !apiTargets.includes(requestUrl)) throw failure("proxy_target_invalid");
       const headers=[];
       for(const [name,value]of Object.entries(options.headers||{})){
         if(!/^[!#$%&'*+.^_`|~0-9a-z-]+$/i.test(name))throw failure("proxy_headers_invalid");
@@ -81,7 +86,7 @@ export async function startWindowsHttpNetwork({ settings = {}, target = "predict
       const rawLength=options.headers?.["content-length"];
       const length=rawLength===undefined?(["GET","HEAD"].includes(options.method||"GET")?0:-1):Number(rawLength);
       if(!Number.isSafeInteger(length)||length < -1)throw failure("proxy_upload_length_invalid");
-      requests.set(id,req);write({op:"request",id,url:`https://${host}${options.path}`,method:options.method||"GET",headers:headerText,length});
+      requests.set(id,req);write({op:"request",id,url:requestUrl,method:options.method||"GET",headers:headerText,length});
     };
     const req=new Writable({highWaterMark:32*1024,autoDestroy:false,
       write(chunk,_encoding,complete){

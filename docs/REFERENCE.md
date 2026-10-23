@@ -4,6 +4,92 @@ Use Codex App with GPT models available to your **GitHub Copilot** account by de
 The optional [Microsoft 365 provider](#microsoft-365-provider) supplies a protocol-isolated
 Claude gateway and an explicitly selected Codex backup.
 
+## Manual APIs and client access
+
+`ccdx web` starts management without GitHub sign-in or automatic App launch.
+Use **Settings → Model sources → Add API**, save the HTTPS address/key, declare
+models and their native interfaces, allow clients, then choose each current
+source under **Settings → Clients**. Only Codex on GitHub needs the default
+GitHub sign-in path. To use Claude alone, disable Codex access. Stop the
+management-only process before normal `ccdx` startup for the live terminal.
+
+| Client | Local base path | Required upstream API |
+| --- | --- | --- |
+| Codex App / CLI | `/v1` | Responses |
+| Claude App / Claude Code | `/anthropic` | Messages |
+
+All paths share the main port, normally 2026. Manual Codex and explicitly managed
+Claude clients receive distinct private local credentials; never the upstream
+key. Display hints do not authorize requests. API addresses require HTTPS, no
+userinfo/query/fragment, and endpoint overrides on the base address's origin.
+Redirects are refused. Existing proxy/bypass/private-CA rules remain; unsupported
+dynamic macOS routing fails without a direct fallback. Windows delegates system
+routing to a target-pinned WinHTTP worker. Failed calls are not replayed; a dead
+worker can be recreated for a later request.
+
+Up to 16 uniquely named manual APIs and 500 unique models per API are supported. Model IDs are limited to 160 characters; `codex-auto-review` remains an internal alias. Custom model
+IDs are not filtered by a GPT/Claude prefix. Each model declares Messages,
+Responses and/or Chat Completions; optional stored `context_window` and
+`reasoning_efforts` metadata remain explicit. Chat-only records are catalog
+information, not converted into another client protocol. Saving makes no catalog
+or inference call. **Read models** performs one explicit catalog read, with a
+20-second deadline and 8 MiB body bound. An ID-only result has unknown protocol
+support until reviewed. Opening normal views reads saved models rather than
+probing every API. `ccdx models` labels manual models as configured, not live.
+
+`connections.json` beside user settings (respecting `XDG_CONFIG_HOME`) stores a
+strict version-one graph of provider switches, API metadata and each client's
+allowed/current sources. It stores only credential references or an environment
+variable name. Keys use macOS Keychain service `codex-copilot-dx.manual-api`,
+Windows CurrentUser DPAPI-protected bytes, or Linux Secret Service (`secret-tool`).
+Unavailable protection fails without plaintext fallback. Headless installations
+may use `key_env` under Addresses & authentication; set the variable before CCDX
+starts. Its value is never returned by management or copied into client config.
+Private helpers omit unrelated credentials and Node hooks. API error bodies are
+replaced with stable codes; valid Retry-After metadata is retained.
+
+`client-gateway-keys.json` holds local credentials separately. Disabled sources
+and clients leave normal lists/navigation and remain in collapsed **Disabled**.
+Closing a client stops CCDX access, not the app. Disabling an in-use source
+requires explicit replacements or pauses. Pinned API streams finish on their
+original provider; retired transports/keys are released afterwards. Legacy M365
+work is guarded before its old gateway is removed. Recovery preserves grants,
+configuration and historical usage without choosing a current source. With a
+managed graph, `m365 off` pauses affected bindings; `m365 remove` preserves shared
+Claude ownership records still needed by APIs.
+
+Claude's existing field-owned journal protects custom/managed edits. Manual
+clients use the existing profile with generic name CCDX; M365's beta restriction
+is not imposed on APIs. Only an unchanged owned restriction is restored. Adding
+an API alone does not migrate existing M365 client credentials. First explicit
+Claude connection management installs private client keys; reopen affected apps.
+Codex reconciliation owns only the provider/model/table and preserves user edits.
+Repeated identical setup does not rewrite its file.
+
+A manual Codex provider includes an authenticated `model_catalog_url` on the same
+listener. Supported native selectors list configured custom names. Unknown names
+use conservative metadata without borrowed model instructions, invented context,
+vision, web search or Fast claims. API-specific Auto Review uses its configured
+model and advertised efforts; following the client does not synthesize low.
+See the official [provider configuration](https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers)
+and [gateway catalog requirements](https://learn.chatgpt.com/docs/enterprise/roll-out-a-gateway#use-a-model-catalog-for-custom-names).
+
+Responses namespaces include API configuration/key identity. Managed native
+histories retain at most 1,024 HMAC-only correlation/owner pairs in
+`conversation-sources.json`. No prompt, raw session ID or key is stored. A known
+session or first-message correlation that changes source/key returns 409 before
+forwarding history. This is bounded observation, not proof of the provenance of
+unseen external history. Start a new conversation after source/key changes; do
+not transfer opaque reasoning, compaction or signed history between services.
+There is no automatic load balancing, fallback or cross-source history replay.
+
+`/_ccdx/ui/connections` requires loopback, the dashboard header, same-origin JSON
+POSTs and a 256 KiB body bound. It returns redacted configuration and explicit
+action results. Invalid/conflicting files are retained. The ordinary two-second
+status returns compact source/client summaries, not all model records. Metrics
+allow the two built-ins plus 16 APIs (18 labels plus bounded `other`). Aggregate
+Claude observation covers all Messages sources; M365 counts keep their own scope.
+
 ## Microsoft 365 provider
 
 Starting with 0.10.0, CCDX can discover authorized M365 models independently of
@@ -1037,7 +1123,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.12/codex-copilot-dx-1.2.12.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.13/codex-copilot-dx-1.2.13.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 

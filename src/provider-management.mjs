@@ -20,7 +20,7 @@ export async function handleProviderManagement(req, res, runtime) {
       || !["models", "switch", "on", "off", "remove", "auto-review", "accounts", "account"].includes(input.action)) throw httpError("Invalid provider action", 400);
     if (input.action === "account" && (typeof input.account_id !== "string" || !/^[a-f0-9]{64}$/.test(input.account_id))) throw httpError("Select an available company account", 400);
     if (input.effort !== undefined && input.effort !== null && (typeof input.effort !== "string" || input.effort.length > 16)) throw httpError("Invalid reasoning effort", 400);
-    for (const key of ["provider", "model", "auto_review_model", "family"]) if (input[key] !== undefined && (typeof input[key] !== "string" || input[key].length > 128)) throw httpError("Invalid provider selection", 400);
+    for (const key of ["provider", "model", "auto_review_model", "family"]) if (input[key] !== undefined && (typeof input[key] !== "string" || input[key].length > (key.includes("model") ? 160 : 128))) throw httpError("Invalid provider selection", 400);
     abort.clearTimeout();
     const result = await runtime.action(input);
     if (!res.destroyed && !res.writableEnded) { res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });res.end(JSON.stringify(result)); }

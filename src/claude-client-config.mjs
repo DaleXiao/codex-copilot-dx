@@ -104,7 +104,9 @@ function reconcile(operations, { restore = false, ...options } = {}) {
       throw new Error("Claude configuration ownership is invalid; files were preserved");
     }
     const states = new Map(), pending = [], nextJournal = structuredClone(journal), skipped = [];
-    const list = restore ? journal.operations : operations;
+    const forClient = op => (!options.client || (options.client === "claude_code" ? op.file === paths.code : op.file !== paths.code))
+      && (!options.fields || options.fields.includes(op.keys.join(".")));
+    const list = restore ? journal.operations.filter(forClient) : operations;
     for (const operation of list) {
       if (!allowed.has(operation.file)) throw new Error("Unexpected Claude configuration path");
       if (!states.has(operation.file)) states.set(operation.file, read(operation.file));
@@ -148,11 +150,11 @@ function reconcile(operations, { restore = false, ...options } = {}) {
       }
       writeM365Json(journalPath, oldJournal);throw error;
     }
-    return { changed: pending.length > 0, preserved: [...new Set(skipped)].length, remaining: nextJournal.operations.length };
+    return { changed: pending.length > 0, preserved: [...new Set(skipped)].length, remaining: nextJournal.operations.filter(forClient).length };
   });
 }
 
-export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstalled, desktopManaged, ...options } = {}) {
+export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstalled, desktopManaged, profileName = M365_CLAUDE_PROFILE_NAME, disableExperimentalBetas = true, ...options } = {}) {
   const entries = claudeModelEntries(models);
   const paths = claudeClientPaths(options), ids = entries.map(model => model.name), operations = [], result = {};
   const endpoint = new URL(baseUrl);
@@ -167,29 +169,32 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
   const codeEnv = code?.env || {};
   const envConflict = env.ANTHROPIC_BASE_URL && env.ANTHROPIC_BASE_URL !== baseUrl
     || env.ANTHROPIC_AUTH_TOKEN && env.ANTHROPIC_AUTH_TOKEN !== apiKey
-    || codeEnv.ANTHROPIC_AUTH_TOKEN && codeEnv.ANTHROPIC_AUTH_TOKEN !== apiKey
+    || codeEnv.ANTHROPIC_AUTH_TOKEN && codeEnv.ANTHROPIC_AUTH_TOKEN !== apiKey && !owns(paths.code, ["env", "ANTHROPIC_AUTH_TOKEN"], codeEnv.ANTHROPIC_AUTH_TOKEN)
     || env.ANTHROPIC_API_KEY && env.ANTHROPIC_API_KEY !== apiKey
     || codeEnv.ANTHROPIC_API_KEY && codeEnv.ANTHROPIC_API_KEY !== apiKey
     || code?.apiKeyHelper
     || ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_GATEWAY"].some(key => /^(1|true)$/i.test(env[key] || codeEnv[key] || ""));
-  if (!code) { /* Keep independent App setup available when Code settings are damaged. */ }
+  if (options.client === "claude_app") { /* The other client's configuration has a separate lifecycle. */ }
+  else if (!code) { /* Keep independent App setup available when Code settings are damaged. */ }
   else if (envConflict || codeEnv.ANTHROPIC_BASE_URL && codeEnv.ANTHROPIC_BASE_URL !== baseUrl
     && !owns(paths.code, ["env", "ANTHROPIC_BASE_URL"], codeEnv.ANTHROPIC_BASE_URL)) result.code = "preserved";
   else {
     add(paths.code, ["env", "ANTHROPIC_BASE_URL"], baseUrl);
     add(paths.code, ["env", "ANTHROPIC_AUTH_TOKEN"], apiKey);
     add(paths.code, ["env", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"], "1");
-    if (env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS === undefined) add(paths.code, ["env", "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"], "1");
+    if (disableExperimentalBetas && env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS === undefined) add(paths.code, ["env", "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"], "1");
     add(paths.code, ["env", "ANTHROPIC_CUSTOM_HEADERS"], "X-CCDX-Client: claude-code");
-    if (ids.length && (!codeEnv.ANTHROPIC_MODEL || models.some(model => model.id === codeEnv.ANTHROPIC_MODEL))) {
-      const index = models.findIndex(model => model.id === codeEnv.ANTHROPIC_MODEL);
+    if (ids.length && (!codeEnv.ANTHROPIC_MODEL || models.some(model => model.id === codeEnv.ANTHROPIC_MODEL)
+      || owns(paths.code, ["env", "ANTHROPIC_MODEL"], codeEnv.ANTHROPIC_MODEL))) {
+      const index = models.findIndex(model => model.id === codeEnv.ANTHROPIC_MODEL || claudeClientModelId(model.id) === codeEnv.ANTHROPIC_MODEL);
       add(paths.code, ["env", "ANTHROPIC_MODEL"], ids[Math.max(0, index)]);
     }
     result.code = "configured";
   }
   const installed = desktopInstalled ?? (fs.existsSync(path.dirname(paths.normal)) || fs.existsSync(path.dirname(paths.threep))
     || (options.platform || process.platform) === "darwin" && fs.existsSync("/Applications/Claude.app"));
-  if (!installed) result.app = "not_installed";
+  if (options.client === "claude_code") { /* The other client's configuration has a separate lifecycle. */ }
+  else if (!installed) result.app = "not_installed";
   else if (desktopManaged !== false || env.CLAUDE_USER_DATA_DIR) result.app = "preserved";
   else {
     let meta, profile;
@@ -199,7 +204,7 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
       || profile.inferenceProvider && profile.inferenceProvider !== "gateway"
       || profile.inferenceGatewayBaseUrl && profile.inferenceGatewayBaseUrl !== baseUrl
         && !owns(paths.profile, ["inferenceGatewayBaseUrl"], profile.inferenceGatewayBaseUrl)
-      || profile.inferenceGatewayApiKey && profile.inferenceGatewayApiKey !== apiKey) result.app = "preserved";
+      || profile.inferenceGatewayApiKey && profile.inferenceGatewayApiKey !== apiKey && !owns(paths.profile, ["inferenceGatewayApiKey"], profile.inferenceGatewayApiKey)) result.app = "preserved";
     else {
       add(paths.profile, ["inferenceProvider"], "gateway");
       add(paths.profile, ["inferenceGatewayBaseUrl"], baseUrl);
@@ -214,7 +219,7 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
       const orderedEntries = [...entries].sort((left, right) => (order.get(left.name) ?? Infinity) - (order.get(right.name) ?? Infinity));
       add(paths.profile, ["inferenceModels"], JSON.stringify(orderedEntries));
       add(paths.profile, ["inferenceCustomHeaders"], JSON.stringify({ "X-CCDX-Client": "claude-app" }));
-      add(paths.meta, ["entries"], { id: M365_CLAUDE_PROFILE_ID, name: M365_CLAUDE_PROFILE_NAME }, M365_CLAUDE_PROFILE_ID);
+      add(paths.meta, ["entries"], { id: M365_CLAUDE_PROFILE_ID, name: profileName }, M365_CLAUDE_PROFILE_ID);
       add(paths.meta, ["appliedId"], M365_CLAUDE_PROFILE_ID);
       add(paths.threep, ["deploymentMode"], "3p");
       result.app = "configured";

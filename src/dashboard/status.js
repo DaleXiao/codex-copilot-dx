@@ -225,7 +225,7 @@
         ? "active_active_failed_failed_delivery_failures_delivery"
         : "setup_state_unknown_ccdx_image_status", { active: number(image?.active), failed: number(image?.failed), delivery: number(image?.delivery_failures) });
 
-      const claude = data.providers?.m365?.claude, claudeMetrics = claude?.requests?.performance;
+      const claude = data.providers?.claude || data.providers?.m365?.claude, claudeMetrics = claude?.requests?.performance;
       percentiles("claude-ttft-percentiles", claudeMetrics?.by_route?.messages?.ttft_ms);
       const sourceBody = element("source-requests-body");
       if (sourceBody) {

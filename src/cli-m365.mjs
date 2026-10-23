@@ -12,9 +12,29 @@ import { autoReviewReasoningEfforts } from "./models.mjs";
 import { m365AccountMessage } from "./providers/m365-accounts.mjs";
 import { m365CatalogDiagnostic, m365CatalogMessage } from "./providers/m365-catalog-diagnostic.mjs";
 import { m365NetworkDiagnostic, m365NetworkMessage } from "./providers/m365-network-diagnostic.mjs";
+import fs from "node:fs";
+import { accessSettingsPath, readAccessSettings } from "./access-settings.mjs";
+
+function codexSelection(options) {
+  const settings = readProviderSettings(options), access = fs.existsSync(accessSettingsPath(options)) ? readAccessSettings(options) : null;
+  const client = access?.clients.codex, provider = client ? client.enabled ? client.source : null : settings.codex;
+  if (provider === null) throw new Error("Codex access is paused. Review Settings in the WebUI.");
+  return { settings, access, client, provider };
+}
 
 export async function fetchActiveProviderModels({ control = providerControl, ...options } = {}) {
-  if (readProviderSettings(options).codex !== "m365") {
+  const selected = codexSelection(options);
+  if (selected.access) {
+    const config = selected.access, client = selected.client;
+    if (client.source.startsWith("api_")) {
+      const api = config.apis.find(api => api.id === client.source && api.enabled);
+      if (!api) throw new Error("The selected API is disabled. Review Settings in the WebUI.");
+      const models = api.models.filter(model => model.protocols.includes("responses"));
+      return { source: "configured", upstreamHost: new URL(api.base_url).hostname, advertised: models.length,
+        models: models.map(model => ({ id: model.id, vendor: "Unknown", endpoints: ["responses"], preview: false })) };
+    }
+  }
+  if (selected.provider !== "m365") {
     const { fetchLiveCopilotModels } = await import("./live-models.mjs");
     return fetchLiveCopilotModels(options);
   }
@@ -50,17 +70,28 @@ export function formatM365Status(state) {
     ...(claude.reason ? [`Claude detail: ${terminalCell(claude.reason)}`] : []),
     ...(claude.requests ? [`Claude requests: ${claude.requests.completed} completed / ${claude.requests.incomplete} incomplete / ${claude.requests.failed} failed / ${claude.requests.active} active`] : []),
     `Claude Code: ${claude.clients?.code || "unknown"}; Claude App: ${claude.clients?.app || "unknown"}`,
-    `Codex provider: ${state.codex_provider || "github"} (default: github)`,
+    `Codex provider: ${state.codex_provider === null ? "off" : terminalCell(state.connections?.providers?.find(provider => provider.id === state.codex_provider)?.name || state.codex_provider || "github")} (default: github)`,
   ].join("\n");
 }
 
 export async function runProviderAutoReviewCommand(options = {}) {
   const { runAutoReviewModelCommand } = await import("./auto-review-model.mjs");
-  const settings = readProviderSettings(options);
-  if (settings.codex !== "m365") return runAutoReviewModelCommand(options);
+  const selected = codexSelection(options), settings = selected.settings;
+  if (selected.provider.startsWith("api_")) {
+    const api = selected.access.apis.find(api => api.id === selected.provider && api.enabled);
+    if (!api) throw new Error("The selected API is disabled. Review Settings in the WebUI.");
+    const state = await providerControl(options);if (state.codex_provider !== selected.provider) throw new Error("Saved and active sources differ. Restart CCDX before changing review settings.");
+    const preference = selected.client, models = api.models.filter(model => model.protocols.includes("responses"));
+    return runAutoReviewModelCommand({ ...options, env: { ...(options.env || process.env), CCDX_AUTO_REVIEW_MODEL: "" }, followClientLabel: "follow client (no override)",
+      loadCatalog: async () => ({ modelIds: models.map(model => model.id), source: api.name, reasoningEfforts: Object.fromEntries(models.map(model => [model.id, model.reasoning_efforts || []])) }),
+      getPreference: () => ({ model: preference.auto_review_model || preference.model, source: api.name, reasoningEffort: preference.auto_review_effort ?? null }),
+      savePreference: (model, { reasoningEffort }) => providerControl({ ...options, action: { action: "auto-review", provider: selected.provider, model, effort: reasoningEffort } }),
+    });
+  }
+  if (selected.provider !== "m365") return runAutoReviewModelCommand(options);
   const state = await providerControl(options);
   if (state.codex_provider !== "m365") throw new Error("Saved and active sources differ.\nRestart CCDX before changing review settings.");
-  const preference = state.m365?.preference || settings.m365;
+  const preference = selected.client?.auto_review_model ? selected.client : state.m365?.preference || settings.m365;
   return runAutoReviewModelCommand({ ...options, env: { ...(options.env || process.env), CCDX_AUTO_REVIEW_MODEL: "" },
     loadCatalog: async () => {
       const result = await providerControl({ ...options, action: { action: "models", family: "gpt" } });
@@ -112,10 +143,15 @@ export async function runM365Command({ action = "status", provider, model, autoR
     }
     if (action === "switch") {
       if (!provider) {
-        output.write("Codex provider:\n  1. GitHub Copilot (default)\n  2. Microsoft 365 (backup)\n");
-        const answer = String(await ask("Choose 1 or 2; q cancels: ")).trim();
+        const graph = fs.existsSync(accessSettingsPath(options)) ? readAccessSettings(options) : null;
+        const choices = graph ? [{ id: "github", name: "GitHub Copilot" }, { id: "m365", name: "Microsoft 365" }, ...graph.apis.filter(api => api.enabled && api.models.some(model => model.protocols.includes("responses")))
+          .map(api => ({ id: api.id, name: api.name }))].filter(source => graph.clients.codex.allowed.includes(source.id) && (source.id.startsWith("api_") || graph.providers[source.id]))
+          : [{ id: "github", name: "GitHub Copilot (default)" }, { id: "m365", name: "Microsoft 365 (backup)" }];
+        if (!choices.length) throw new Error("No enabled Codex source. Review Settings in the WebUI.");
+        output.write("Codex provider:\n" + choices.map((source, index) => `  ${index + 1}. ${terminalCell(source.name)}\n`).join(""));
+        const answer = String(await ask(choices.length === 2 ? "Choose 1 or 2; q cancels: " : "Choose a source, or q to cancel: ")).trim();
         if (answer === "q") return { cancelled: true };
-        if (!["1", "2"].includes(answer)) throw new Error("Choose 1 or 2");provider = answer === "1" ? "github" : "m365";
+        const index = Number(answer) - 1;if (!Number.isInteger(index) || !choices[index]) throw new Error("Choose a listed source");provider = choices[index].id;
       }
       if (provider === "m365") {
         const available = await request({ action: "models", family: "gpt" });
@@ -141,6 +177,10 @@ export async function runM365Command({ action = "status", provider, model, autoR
         output.write("M365 fast tier is not verified. Use Standard in Codex; existing threads keep their selected model until you change it.\n");
       }
       const state = await request({ action: "switch", provider, model, auto_review_model: autoReviewModel });
+      if (provider.startsWith("api_")) {
+        const api = state.connections?.providers.find(source => source.id === provider), client = state.connections?.clients.find(client => client.id === "codex");
+        output.write(`Codex source: ${terminalCell(api?.name || provider)}\nModel: ${terminalCell(client?.model)}\nReview: ${terminalCell(client?.auto_review_model)} / ${terminalCell(client?.auto_review_effort || "follow client")}\n`);return state;
+      }
       output.write(formatM365Status(state) + "\n");
       if (provider === "m365") output.write(`Select ${model} in Codex. Auto-review uses ${autoReviewModel} / low on this provider.\n`);
       return state;

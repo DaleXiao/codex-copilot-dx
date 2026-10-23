@@ -116,7 +116,7 @@ function dashboardProviders(providerStateFn, authStatusFn) {
   const local = authStatusFn()?.profiles?.codex || {};
   const entries = providerStateFn?.() || [{ id: "github", name: "GitHub Copilot", enabled: true, state: "unknown",
     clients: [{ id: "codex", name: "Codex App", selected: true, state: "configured" }] }];
-  return entries.slice(0, 16).filter(entry => isProviderId(entry.id)).map(entry => {
+  return entries.slice(0, 18).filter(entry => isProviderId(entry.id)).map(entry => {
     const auth = entry.id === "github" ? { ...entry.auth,
       state: local.valid ? "saved" : local.configured ? "unavailable" : "unconfigured",
       account: local.valid ? local.login || "" : "" } : entry.auth || {};
@@ -147,6 +147,7 @@ export async function handleDashboardApi(req, res, pathname, {
   providerCatalogFn,
   providerStateFn,
   providerAccountsFn,
+  connectionsFn,
   updateStatusFn,
   serviceControl,
   applyAnimation,
@@ -165,6 +166,20 @@ export async function handleDashboardApi(req, res, pathname, {
 
   if (["/_ccdx/ui/account", "/_ccdx/ui/checks"].includes(pathname)) {
     return tools.handle(req, res, pathname, sendJson, sameOrigin);
+  }
+
+  if (pathname === "/_ccdx/ui/connections") {
+    if (!connectionsFn) { sendJson(res, 503, { error: "ccdx_connections_unavailable" });return; }
+    if (req.method === "GET") { try { sendJson(res, 200, await connectionsFn()); } catch { sendJson(res, 409, { error: "ccdx_connections_invalid" }); }return; }
+    if (req.method !== "POST") { sendJson(res, 405, { error: "Use GET or POST" });return; }
+    if (!sameOrigin(req)) { sendJson(res, 403, { error: "Connections require the same-origin dashboard" });return; }
+    if (!/^application\/json(?:\s*;|$)/i.test(req.headers["content-type"] || "")) { sendJson(res, 415, { error: "Expected application/json" });return; }
+    const abort = createRequestAbort(req, res);abort.setTimeout(5000, "request_body_timeout");
+    try {
+      const input = await readJsonBody(req, { maxBodyBytes: 256 * 1024, maxDecodedBodyBytes: 256 * 1024, signal: abort.signal });
+      abort.clearTimeout();const result = await connectionsFn(input);if (!res.destroyed && !res.writableEnded) sendJson(res, 200, result);
+    } catch (error) { sendJson(res, error.statusCode || 400, { error: /^ccdx_[a-z0-9_]+$/.test(error.code || "") ? error.code : "ccdx_connections_action_failed" }); }
+    finally { abort.cleanup(); }return;
   }
 
   if (pathname === PROVIDERS_PATH && req.method === "GET") {
@@ -290,13 +305,13 @@ export async function handleDashboardApi(req, res, pathname, {
       }
       const models = catalog.models;
       sendJson(res, 200, {
-        source: catalog.source === "catalog" ? "catalog" : "live",
-        checked_at: catalog.source === "catalog" ? catalog.checkedAt : new Date().toISOString(),
+        source: ["catalog", "configured"].includes(catalog.source) ? catalog.source : "live",
+        checked_at: ["catalog", "configured"].includes(catalog.source) ? catalog.checkedAt : new Date().toISOString(),
         upstream_host: safeText(catalog?.upstreamHost || "GitHub Copilot", 120),
         advertised: finite(catalog?.advertised),
         selectable: models.filter(model => model.selectable !== false).length,
         models: models.slice(0, 500).map((model) => ({
-          id: safeText(model.id, 100),
+          id: safeText(model.id, 160),
           vendor: safeText(model.vendor, 80),
           endpoints: Array.isArray(model.endpoints) ? model.endpoints.filter((value) => ["responses", "chat", "messages"].includes(value)) : [],
           preview: model.preview === true,

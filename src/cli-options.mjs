@@ -174,7 +174,7 @@ export function parseCliArgs(args = []) {
     if (!["status", "models", "switch", "on", "off", "remove", "accounts", "account"].includes(action)) throw new Error("Choose status, models, accounts, account, switch, on, off or remove");
     let provider, remaining = args;
     if (action === "switch" && args[0] && !args[0].startsWith("--")) { provider = args[0];remaining = args.slice(1); }
-    if (provider && !["github", "m365"].includes(provider)) throw new Error("Choose github or m365");
+    if (provider && !["github", "m365"].includes(provider) && !/^api_[a-z0-9_-]{1,60}$/.test(provider)) throw new Error("Choose github, m365 or a listed API source ID");
     const values = parseOptions(remaining, new Map(action === "switch" ? [["--model", "value"], ["--auto-review-model", "value"]] : action === "account" ? [["--id", "value"]] : []));
     if (values["--id"] && !/^[a-f0-9]{64}$/.test(values["--id"])) throw new Error("Use an account ID from ccdx m365 accounts");
     return baseCommand("m365", { action, provider, model: values["--model"], autoReviewModel: values["--auto-review-model"], ...(values["--id"] ? { accountId: values["--id"] } : {}) });

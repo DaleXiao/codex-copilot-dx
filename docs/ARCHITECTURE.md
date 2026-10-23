@@ -1,14 +1,14 @@
 # Architecture boundaries
 
 CCDX is one local Node service with client-specific protocol surfaces and isolated
-upstream providers. GitHub is the default Codex provider; Microsoft 365 is optional.
+upstream providers. GitHub is the default Codex provider; Microsoft 365 and explicit manual API connections are optional.
 Client integration, image tools and the dashboard are not a general plugin framework.
 
 | Responsibility | Ownership | Boundary |
 | --- | --- | --- |
 | Core inference | `adapter.mjs`, Responses modules, model catalog, history | Codex wire contracts, streaming and recovery |
-| Providers | `providers/github.mjs`, `providers/m365*.mjs` | Source-owned auth, discovery, routing, capabilities and transport |
-| Provider composition | `provider-runtime.mjs`, `provider-registry.mjs`, `provider-settings.mjs` | Explicit selection, lifecycle, history namespaces and snapshots |
+| Providers | `providers/github.mjs`, `providers/m365*.mjs`, `providers/api*.mjs` | Source-owned auth, discovery, routing, capabilities and transport |
+| Provider composition | `provider-runtime.mjs`, `connection-runtime.mjs`, provider/access settings | Explicit selection, lifecycle, history namespaces and snapshots |
 | Claude clients | `claude-gateway.mjs`, `claude-client-lifecycle.mjs`, `claude-client-config.mjs`, `claude-models.mjs` | Native Messages relay and field-owned reversible client setup |
 | Client integration | `client-integration.mjs`, Codex config, native prediction | Client setup, optional start/stop, diagnostic snapshots |
 | Optional images | Image provider, CLI setup, image MCP and skill | Opt-in API access and image delivery; failures do not block core startup |
@@ -16,6 +16,49 @@ Client integration, image tools and the dashboard are not a general plugin frame
 | Shared foundations | Codex paths, file locks, atomic files, network routes | No dependency on inference or dashboard rendering |
 
 ## Composition and lifecycle
+
+### Manual connection graph (1.2.13)
+
+`provider-runtime.mjs` composes built-in lifecycle with `connection-runtime.mjs`,
+which owns grants, switches and explicit current bindings. `access-settings.mjs`
+validates strict versioned metadata and locked atomic writes; stale cross-process
+saves are rejected. Accepted inputs and public snapshots do not share mutable
+objects with the live graph. The built-in registry does not load external code.
+
+`providers/api.mjs` owns configured native clients, model capabilities,
+configuration/key history identity and explicit bounded discovery. It uses no
+Copilot/M365 retry or request-body policy. Its lazy transport is retained per
+configuration, not rebuilt or serialized against the whole catalog per request.
+`providers/api-network.mjs` preserves enterprise routing/TLS and pins exact HTTPS
+targets. The WinHTTP API mode checks its allowlist in JS and C#; prediction/M365
+retain their original host restrictions. A failed worker can be replaced only
+for a later request, without replaying the failed request.
+
+`api-secrets.mjs` owns OS-protected credentials and a private-pipe cache; no
+command argument contains an upstream key. Failed metadata commits remove their
+candidate key. Retired keys/transports wait for pinned requests. An environment
+reference provides headless operation without plaintext files or a new npm
+dependency. `private-helper-environment.mjs` retains OS credential-service and
+company-network inputs while omitting unrelated credentials and Node hooks.
+
+`client-gateway-keys.mjs` separates caller identity from display hints and upstream
+credentials. `codex-api-config.mjs` reconciles an owned provider/model/table with
+paired writes. Claude uses its existing mounted relay and field journal with
+independent app/code lifecycles. M365 beta policy is not imposed on API clients;
+adding a source alone never migrates old client credentials. Configuring clients
+does not patch/restart their binaries or override managed settings.
+
+`conversation-source-guard.mjs` retains bounded HMAC correlations for observed
+managed histories. Known source/key conflicts fail before forwarding. It does
+not establish provenance for an unseen history or implement dynamic affinity.
+The existing Responses route-plan boundary continues to own opaque-state checks.
+
+`dashboard/connections.js` owns settings forms; application source/review and
+account/catalog views keep their existing scopes and use the same backend graph.
+Full configuration is on-demand; ordinary status uses compact cached summaries.
+Shared Messages observation includes all sources, while M365-specific status
+projects M365 counts. Bounds cover two built-ins plus 16 APIs without unbounded
+labels, request histories, body logging or a new refresh loop.
 
 ### Provider boundary
 
@@ -25,7 +68,7 @@ its Fast mapping, retries and recovery are not applied blindly to M365. Protocol
 adaptation belongs to the client boundary. There is no generic intermediate message
 format that would erase native Responses or Anthropic semantics.
 
-`provider-registry.mjs` declares the bounded internal source metadata used by selection validation and dashboard source choices. It loads no external code; GitHub and M365 are the two production sources. Source-specific selection/model rules remain with composition. A third source is only a contract test fixture.
+`provider-registry.mjs` declares the bounded internal source metadata used by selection validation and dashboard source choices. It loads no external code; GitHub and M365 remain built-in sources. `access-settings.mjs` validates up to 16 user-defined API records; `providers/api.mjs` is their first-party implementation, not a third-party code loader. Client grants and the explicit current source remain in composition.
 
 `provider-runtime.mjs` owns source selection, not the providers themselves. Each
 request pins a provider before admission. An explicit change affects later requests;
@@ -397,7 +440,7 @@ the lockfile fixes CI transitives, not consumers' future transitive resolution.
 
 ### Source-level observations
 
-Stream performance retains existing route totals and adds `by_route.<route>.by_provider`. Each source has started/active/finished counts, terminal totals, bounded model outcomes, request-to-first-output timing and preparation histograms. Source assignment is pinned once. There are at most 16 source labels plus `other`, and 32 model labels plus `other` per source. Unassigned finished requests use `unknown`; request IDs, accounts and URLs never become metric labels. Recent requests remain capped at 20. `runtime_usage.by_provider` has at most 16 labels plus `other`; unknown usage stays partial and persisted historical records retain their source.
+Stream performance retains existing route totals and adds `by_route.<route>.by_provider`. Each source has started/active/finished counts, terminal totals, bounded model outcomes, request-to-first-output timing and preparation histograms. Source assignment is pinned once. There are at most 18 source labels (two built-ins and 16 APIs) plus `other`, and 32 model labels plus `other` per source. Unassigned finished requests use `unknown`; request IDs, accounts and URLs never become metric labels. Recent requests remain capped at 20. `runtime_usage.by_provider` has at most 18 labels plus `other`; unknown usage stays partial and persisted historical records retain their source.
 
 `operation-error.mjs` distinguishes client cancellation, unspecified abort, timeout, network/TLS/proxy, authentication and access denial. HTTP 403 is not proof of credential expiry. Claude and Codex cancellations are informational; request-body timeouts use 408, upstream/idle timeouts 504, and local client cancellation diagnostics 499. Original upstream error status/body and protocol-specific stream bytes retain their existing path.
 

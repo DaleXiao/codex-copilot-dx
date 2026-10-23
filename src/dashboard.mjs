@@ -18,6 +18,7 @@ const ASSETS = new Map([
   ["/refresh.js", ["./dashboard/refresh.js", "text/javascript; charset=utf-8"]],
   ["/icons.js", ["./dashboard/icons.js", "text/javascript; charset=utf-8"]],
   ["/tools.js", ["./dashboard/tools.js", "text/javascript; charset=utf-8"]],
+  ["/connections.js", ["./dashboard/connections.js", "text/javascript; charset=utf-8"]],
 ]);
 
 export async function serveDashboard(req, res, pathname) {

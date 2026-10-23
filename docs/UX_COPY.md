@@ -46,3 +46,22 @@ Saved/effective mismatches, startup overrides, installation policy and destructi
 action consequences retain their specific explanations. CLI stays English;
 WebUI keeps both languages. Selection marks are removed from buttons only; the
 existing circle status SVGs remain.
+
+## 1.2.13 API and client access
+
+| English | Chinese | Fact boundary |
+| --- | --- | --- |
+| Add API | 添加 API | Saves metadata/key; no automatic inference or client switch |
+| Allowed clients / Allowed sources | 允许使用的客户端 / 允许使用的来源 | Permission is separate from current selection |
+| Current source | 当前来源 | Exactly one chosen source, or paused access |
+| Configured models | 已配置的模型 | Saved declarations; not verified online entitlement |
+| Disable source / Pause access | 关闭来源 / 暂停接入 | New calls stop; existing API requests retain their source |
+| Disabled / Enable again | 已关闭 / 重新开启 | Configuration/grants remain; recovery does not choose a route |
+| CCDX access is off; the app stays open. | 接入已关闭，应用保持运行。 | Never quits the user's app |
+| Stored separately. Never sent to clients. | 独立保存，不会传给客户端。 | Upstream key is protected; clients receive local credentials |
+
+Only Messages/Responses-native clients are connected in this release. Header
+choices, environment references and model-interface declarations stay in their
+relevant forms. Key, URL, protocol, state-file, conflict and history errors retain
+necessary codes and bilingual explanations. First setup/reopen, user-preserved
+configuration and successful inference remain separate facts. CLI stays English.

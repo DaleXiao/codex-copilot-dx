@@ -12,7 +12,7 @@
   const visible = () => document.visibilityState === "visible" && !root.closest("[hidden]");
   const integer = value => Number.isSafeInteger(value) && value >= 0;
   const appName = id => format(`flow_app_${id}`);
-  const sourceName = id => id === "github" ? "GitHub Copilot" : id === "m365" ? "Microsoft 365" : format("flow_source_unknown");
+  const sourceName = id => id === "github" ? "GitHub Copilot" : id === "m365" ? "Microsoft 365" : globalThis.ccdxConnectionNames?.[id] || format("flow_source_unknown");
   const modelName = id => !id || id === "other" ? format("flow_model_unknown") : id;
   const modelKey = row => JSON.stringify([row.provider, row.model]);
   const related = row => !selected || (selected.type === "apps" ? row.application === selected.id : modelKey(row) === selected.id);
@@ -151,13 +151,13 @@
   new MutationObserver(() => { lastSignature = "";render(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
   globalThis.ccdxDashboardFlow = {
     update(data) {
-      const parts = [data?.stream_performance, data?.providers?.m365?.claude?.requests?.performance].filter(Boolean);
+      const parts = [data?.stream_performance, (data?.providers?.claude || data?.providers?.m365?.claude)?.requests?.performance].filter(Boolean);
       if (!parts.length || parts.some(part => !integer(part.active_total) || !Array.isArray(part.active_requests))) { unavailable();return; }
       const values = parts.flatMap(part => part.active_requests).slice(0, 128);
       rows = values.filter(row => row && typeof row.model === "string" && integer(row.upstream_attempts) && Number.isFinite(row.elapsed_ms) && row.elapsed_ms >= 0).map(row => ({
         request_id: typeof row.request_id === "string" ? row.request_id.slice(0, 80) : null,
-        application: clients.has(row.application) ? row.application : "api", provider: ["github", "m365"].includes(row.provider) ? row.provider : "unknown",
-        model: row.model.slice(0, 100), phase: String(row.phase || "").slice(0, 40), elapsed_ms: row.elapsed_ms,
+        application: clients.has(row.application) ? row.application : "api", provider: typeof row.provider === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(row.provider) ? row.provider : "unknown",
+        model: row.model.slice(0, 160), phase: String(row.phase || "").slice(0, 40), elapsed_ms: row.elapsed_ms,
         upstream_attempts: row.upstream_attempts, first_output_ms: Number.isFinite(row.first_output_ms) && row.first_output_ms >= 0 ? row.first_output_ms : null,
         terminal_outcome: ["completed", "incomplete", "failed", "cancelled", "unknown"].includes(row.terminal_outcome) ? row.terminal_outcome : null,
       }));

@@ -527,7 +527,7 @@ test("source metrics pin request identity, separate same-model outcomes and boun
   assert.equal(metrics.snapshot().by_route.responses.by_provider.github.terminal_outcomes.totals.completed, 1);
   for (let i = 0; i < 100; i++) { const request = metrics.begin("responses");request.setProvider(`fixture_${i}`);request.setModel(`gpt-fixture-${i}`);request.finish(); }
   sources = metrics.snapshot().by_route.responses.by_provider;
-  assert.ok(Object.keys(sources).length <= 17);assert.ok(Object.keys(sources.other.terminal_outcomes.by_model).length <= 33);
+  assert.ok(Object.keys(sources).length <= 19);assert.ok(Object.keys(sources.other.terminal_outcomes.by_model).length <= 33);
   const unknown = createStreamPerformanceMetrics();unknown.begin("responses").finish();
   assert.equal(unknown.snapshot().by_route.responses.by_provider.unknown.terminal_outcomes.totals.unknown, 1);
 });

@@ -74,6 +74,8 @@ jobs:
         run: node --test test/stream-delivery.test.mjs test/responses-bridge.test.mjs test/responses-chat-http.test.mjs test/responses-native-http.test.mjs test/stream-performance.test.mjs test/cli-status.test.mjs
       - name: Verify isolated provider, broker, gateway, ownership and system network contracts
         run: node --test test/claude-models.test.mjs test/m365-auth.test.mjs test/m365-accounts.test.mjs test/m365-account-selection.test.mjs test/m365-provider.test.mjs test/m365-catalog-diagnostic.test.mjs test/m365-network.test.mjs test/provider-runtime.test.mjs test/provider-registry.test.mjs test/client-integration-state.test.mjs test/claude-gateway.test.mjs test/claude-client-config.test.mjs test/cli-m365.test.mjs test/shared-listener.test.mjs test/service-control.test.mjs test/terminal-console.test.mjs test/browser-launch.test.mjs test/listener-lifecycle.test.mjs test/dashboard-activity.test.mjs
+      - name: Verify manual API, native credentials and client authorization boundaries
+        run: node --test test/connections.test.mjs test/connections-http.test.mjs test/api-network.test.mjs
       - run: npm run test:package
   macos:
     runs-on: macos-latest
@@ -155,9 +157,11 @@ jobs:
         run: npm install --prefix "$RUNNER_TEMP/ccdx-claude" @anthropic-ai/claude-code
       - name: Verify native Claude Code effort fields through the candidate Messages gateway
         run: node scripts/claude-effort-replay.mjs --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
+      - name: Verify native custom model catalogs and independent client credentials on one listener
+        run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
   dashboard-browsers:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -171,3 +175,5 @@ jobs:
           "$RUNNER_TEMP/ccdx-browser/node_modules/.bin/playwright" install --with-deps chromium webkit
       - name: Verify bilingual themes, small screens, timer and user-state preservation
         run: node scripts/dashboard-browser-replay.mjs --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js" --output "$RUNNER_TEMP/ccdx-dashboard-screenshots"
+      - name: Verify API creation, many-to-many access, disabling and recovery
+        run: node scripts/connections-browser-replay.mjs --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js" --output "$RUNNER_TEMP/ccdx-connection-screenshots"

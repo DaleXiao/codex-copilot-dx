@@ -1,5 +1,5 @@
 import { isProviderId } from "./provider-metadata.mjs";
-import { claudeModelEntries } from "./claude-models.mjs";
+import { claudeModelEntries, resolveClaudeModel } from "./claude-models.mjs";
 import http from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createRequestAbort, abortErrorStatusCode, readJsonBody, readBoundedResponseText, writeOrDrain, MAX_UPSTREAM_ERROR_BODY_BYTES } from "./http-transport.mjs";
@@ -57,10 +57,10 @@ export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024) {
     finish() { consume(decoder.decode());if (fragments.length) line(fragments.join(""));frame(); } };
 }
 
-export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, onRequest = () => {}, env = process.env,
+export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,
   record = recordUsage, acquireRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 }) } = {}) {
   if (!provider || !isProviderId(provider.id) || typeof apiKey !== "string" || apiKey.length < 32) throw new Error("Claude gateway requires a provider and private local key");
-  const config = loadRuntimeConfig(env), performance = createStreamPerformanceMetrics({ routeNames: ["messages"] });
+  const config = loadRuntimeConfig(env), performance = sharedPerformance || createStreamPerformanceMetrics({ routeNames: ["messages"] });
   const decodedLimit = decodedBodyLimitPreference({ env }).bytes;
   const stats = { total: 0, active: 0, completed: 0, incomplete: 0, failed: 0, cancelled: 0, last_request_at: null, last_model: null };
   async function dispatch(req, res) {
@@ -85,7 +85,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
     const tracker = countTokens ? null : performance.begin("messages", { requestId, application: requestApplication(req.headers, "claude") });
     tracker?.setProvider(provider.id);
     const abort = createRequestAbort(req, res);
-    let release = () => {}, outcome = "failed", model = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
+    let release = () => {}, outcome = "failed", model = null, configuredModel = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
     let terminalOrigin = "client_validation", failureStatus = null;
     if (!countTokens) { stats.total++;stats.active++;stats.last_request_at = new Date().toISOString(); }
     await runWithRequestContext({ requestId, provider: provider.id, route: "messages", streamPerformance: tracker }, async () => {
@@ -96,7 +96,10 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
         if (!body || typeof body.model !== "string" || !Array.isArray(body.messages)) {
           send(res, 400, apiError("ccdx_messages_invalid", "Expected a model and messages array"));return;
         }
-        model = body.model;stats.last_model = model;streamed = !countTokens && body.stream === true;tracker?.setModel(model);
+        model = body.model;stats.last_model = model;streamed = !countTokens && body.stream === true;
+        configuredModel = provider.configuredModels ? resolveClaudeModel(provider.models("claude"), model)?.id : null;
+        tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });
+        validateConversation?.(body, req.headers);
         terminalOrigin = "transport";
         const upstream = await provider.client.messages(body, { headers: req.headers, countTokens, signal: abort.signal,
           onUpstreamStart() { abort.setTimeout(streamed ? config.streamHandshakeTimeoutMs : config.upstreamTimeoutMs, "upstream_timeout"); } });
@@ -146,10 +149,10 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
         const detail = operationErrorDetails(error, { reason: abort.reason });
         outcome = detail.source === "cancelled" ? "cancelled" : "failed";
         const statusCode = detail.status || (abort.reason ? abortErrorStatusCode(abort.reason) : 502);
-        failureStatus = statusCode;terminalOrigin = outcome === "cancelled" ? "client_disconnect" : "transport";
+        failureStatus = statusCode;terminalOrigin = outcome === "cancelled" ? "client_disconnect" : statusCode < 500 && statusCode !== 429 ? "client_validation" : "transport";
         const message = redactDiagnosticText(error.message).split(apiKey).join("[redacted]").slice(0, 240);
         log(outcome === "cancelled" ? "info" : "warn", `Claude request ${requestId}: ${detail.code}`);
-        tracker?.setErrorOrigin(outcome === "cancelled" ? "client_disconnect" : "transport");
+        tracker?.setErrorOrigin(terminalOrigin);
         if (outcome === "cancelled") return;
         if (!res.headersSent) send(res, statusCode, apiError(error.code || abort.reason || "ccdx_gateway_error", message));
         else if (!res.destroyed && !res.writableEnded) res.end(`event: error\ndata: ${JSON.stringify(apiError("ccdx_gateway_error", message))}\n\n`);
@@ -157,7 +160,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
         release();abort.cleanup();
         if (!countTokens) {
           stats.active--;stats[outcome]++;
-          tracker?.setModel(model);tracker?.setOutputTokens(usage?.output_tokens);
+          tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });tracker?.setOutputTokens(usage?.output_tokens);
           tracker?.terminal(outcome, { origin: failedEvent ? "upstream_event" : terminalOrigin, reason: stopReason === "max_tokens" ? "max_output_tokens" : undefined });
           tracker?.finish({ failed: outcome === "failed" || outcome === "cancelled", aborted: outcome === "cancelled", statusCode: failureStatus || res.statusCode });
           const client = req.headers["x-ccdx-client"] === "claude-app" ? "claude_app" : req.headers["x-ccdx-client"] === "claude-code" ? "claude_code" : "claude";

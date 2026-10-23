@@ -162,7 +162,7 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
     status("info", `Conversation buffer: ${mebibytes(history.bytes)} / ${mebibytes(limits.response_history_max_bytes)}, ${count(history.entries)} entries, ${count(history.evicted)} evicted ID markers`),
     status("info", `Image cache: ${count(images.cache_entries)} entries, ${cacheHitRate(images)} hits, ${mebibytes(images.cache_bytes)} / ${mebibytes(images.cache_max_bytes)}`),
   ];
-  const sourceRoutes = { ...data.stream_performance?.by_route, ...data.providers?.m365?.claude?.requests?.performance?.by_route };
+  const sourceRoutes = { ...data.stream_performance?.by_route, ...(data.providers?.claude || data.providers?.m365?.claude)?.requests?.performance?.by_route };
   for (const [route, metrics] of Object.entries(sourceRoutes)) for (const [source, stats] of Object.entries(metrics.by_provider || {})) {
     const totals = stats.terminal_outcomes.totals;
     lines.push(status("info", `Source ${source} / ${route}: ${count(stats.active)} active, ${count(totals.completed)} completed, ${count(totals.incomplete)} incomplete, ${count(totals.failed)} failed, ${count(totals.cancelled)} cancelled, ${count(totals.unknown)} unknown`));

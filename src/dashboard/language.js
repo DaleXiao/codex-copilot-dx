@@ -1,5 +1,86 @@
 (() => {
   const translations = {
+    "api_add": ["Add API", "添加 API"],
+    "api_clients": ["Clients", "客户端"],
+    "api_disabled": ["Disabled", "已关闭"],
+    "api_name": ["Name", "名称"],
+    "api_base": ["API address", "API 地址"],
+    "api_key_private": ["Stored separately. Never sent to clients.", "独立保存，不会传给客户端。"],
+    "api_key_env": ["Read key from environment", "从环境变量读取 Key"],
+    "api_key_env_hint": ["Optional for servers without a credential service. Set before starting CCDX.", "无系统密钥库时可用，需在启动前设置。"],
+    "ccdx_api_environment_key_missing": ["Set the named environment variable, then restart CCDX.", "请设置对应环境变量，然后重启 CCDX。"],
+    "api_protocols": ["Available APIs", "可用接口"],
+    "api_endpoint_options": ["Addresses & authentication", "接口地址与认证"],
+    "api_messages_auth": ["Messages authentication", "Messages 认证"],
+    "api_allowed_clients": ["Allowed clients", "允许使用的客户端"],
+    "api_read_models": ["Read models", "读取模型"],
+    "api_discovery_save_first": ["Save the API first. No chat request is sent.", "先保存来源；只读取模型目录。"],
+    "api_add_model": ["Add model", "添加模型"],
+    "api_model_protocol_hint": ["Choose the APIs each model supports.", "为每个模型选择实际支持的接口。"],
+    "api_remove_model": ["Remove", "移除"],
+    "api_save": ["Save", "保存"],
+    "api_current_source": ["Current source", "当前来源"],
+    "api_allowed_sources": ["Allowed sources", "允许使用的来源"],
+    "api_existing_requests": ["Existing requests keep their source. Use a new conversation after switching.", "已有请求不变；切换后请新建对话。"],
+    "api_disable_source": ["Disable source", "关闭来源"],
+    "api_choose_replacements": ["Choose another source or pause each affected client.", "为受影响的客户端换源，或暂停接入。"],
+    "api_confirm_disable": ["Disable", "确认关闭"],
+    "api_pause": ["Pause access", "暂停接入"],
+    "api_builtin": ["Built in", "内置来源"],
+    "api_allowed_summary": ["Allowed: {clients}", "允许使用：{clients}"],
+    "api_none": ["Not assigned", "暂未分配"],
+    "api_account": ["Account", "查看账号"],
+    "api_manage": ["Manage", "管理"],
+    "api_restore": ["Enable again", "重新开启"],
+    "api_current_summary": ["Current source: {source}", "当前来源：{source}"],
+    "api_client_disabled": ["CCDX access is off; the app stays open.", "接入已关闭，应用保持运行。"],
+    "api_close_client": ["Disable client access", "关闭客户端接入"],
+    "api_no_disabled": ["No disabled items.", "没有已关闭的项目。"],
+    "api_saved": ["Saved. Reopen the app for first-time setup; existing requests stay unchanged.", "已保存。首次接入请重新打开应用。"],
+    "api_config_saved": ["API saved. Current client sources are unchanged.", "API 已保存，客户端来源未改变。"],
+    "api_provider_disabled": ["Source disabled. Its configuration was kept.", "来源已关闭，配置已保留。"],
+    "api_provider_enabled": ["Source enabled. Client selections are unchanged.", "来源已开启，客户端来源未改变。"],
+    "api_client_enabled": ["Client enabled. Choose a source to connect.", "客户端已开启，请选择来源。"],
+    "api_client_preserved": ["Saved. Existing custom or managed app settings were kept.", "已保存；已有自定义或托管配置已保留。"],
+    "api_client_config_failed": ["Source saved, but app configuration failed. Review Checks & repairs.", "来源已保存，客户端配置失败。请检查与修复。"],
+    "api_client_not_installed": ["Saved. The client app was not found.", "配置已保存，未发现客户端应用。"],
+    "api_key_keep": ["Saved; leave blank to keep", "已保存；留空不更换"],
+    "api_key_enter": ["Enter API key", "输入 API Key"],
+    "api_models_read": ["Models read. Review their APIs before saving.", "模型已读取；请确认接口后保存。"],
+    "api_configured_models": ["CONFIGURED MODELS", "已配置的模型"],
+    "api_no_enabled_sources": ["No source is enabled. Review Settings.", "暂无启用的来源，请查看设置。"],
+    "api_client_settings": ["Manage client access", "设置客户端接入"],
+    "api_claude_app_settings": ["Claude App settings", "设置 Claude App"],
+    "api_claude_code_settings": ["Claude Code settings", "设置 Claude Code"],
+    "ccdx_connections_unavailable": ["Restart the updated CCDX to manage connections.", "请重启更新后的 CCDX。"],
+    "ccdx_connections_invalid": ["Connection settings are unreadable; the file was kept.", "接入配置无法读取，原文件已保留。"],
+    "ccdx_connections_action_failed": ["Could not save connections. Try again.", "接入配置未保存，请重试。"],
+    "ccdx_connections_action_invalid": ["Review the selected clients and sources.", "请检查客户端与来源选择。"],
+    "ccdx_connections_conflict": ["Another process changed these settings. Restart CCDX before saving.", "其他进程已改动配置，请重启 CCDX。"],
+    "ccdx_api_url_invalid": ["Use a complete HTTPS address without credentials or query parameters.", "请用不含凭据或查询参数的 HTTPS 地址。"],
+    "ccdx_api_origin_mismatch": ["API addresses must use the same host and port.", "各接口须使用相同的主机和端口。"],
+    "ccdx_api_config_invalid": ["Review the API name, address and authentication.", "请检查 API 名称、地址和认证。"],
+    "ccdx_api_key_invalid": ["Enter a valid API key.", "请输入有效的 API Key。"],
+    "ccdx_api_secret_unavailable": ["The system credential store is unavailable. No plaintext fallback was used.", "系统凭据库不可用，未改用明文保存。"],
+    "ccdx_api_models_invalid": ["Use unique model IDs and choose a supported API for each.", "模型 ID 不能重复，且需选择可用接口。"],
+    "ccdx_api_name_exists": ["This source name is already used. Choose another name.", "来源名称已存在，请换一个名称。"],
+    "ccdx_api_model_reserved": ["codex-auto-review is reserved by CCDX. Enter the real upstream model ID.", "codex-auto-review 为内部名称，请填真实模型 ID。"],
+    "ccdx_connections_limit": ["Connection settings exceed the 8 MiB limit.", "接入配置超过 8 MiB 上限。"],
+    "ccdx_api_model_unavailable": ["Choose a configured model with the required API.", "请选择支持对应接口的已配置模型。"],
+    "ccdx_api_protocol_required": ["Claude needs Messages; Codex needs Responses.", "Claude 需 Messages；Codex 需 Responses。"],
+    "ccdx_api_effort_unavailable": ["Choose a reasoning level advertised by this model, or follow the client.", "请选择模型支持的推理档位，或跟随客户端。"],
+    "ccdx_source_in_use": ["Change the current source or pause its clients first.", "请先更换来源，或暂停相关客户端。"],
+    "ccdx_source_busy": ["A previous M365 request is still running. Let it finish before disabling.", "旧的 M365 请求仍在运行，请结束后关闭。"],
+    "ccdx_provider_environment_disabled": ["Microsoft 365 is disabled by CCDX_M365=0.", "Microsoft 365 已被环境设置关闭。"],
+    "ccdx_client_source_disabled": ["The client or source is disabled. Review Settings.", "客户端或来源已关闭，请查看设置。"],
+    "ccdx_client_source_mismatch": ["Save the selected source before changing its review model.", "请先保存来源，再修改审查模型。"],
+    "ccdx_conversation_source_changed": ["This history belongs to another source or key. Start a new conversation.", "此历史属于其他来源或 Key，请新建对话。"],
+    "ccdx_conversation_state_invalid": ["Conversation source records are unreadable. The existing file was kept.", "会话来源记录无法读取，原文件已保留。"],
+    "ccdx_api_catalog_invalid": ["The model list was invalid. Existing settings were kept.", "模型列表无效，已有配置已保留。"],
+    "ccdx_api_catalog_http_401": ["Model access was rejected (HTTP 401). Check the key.", "模型访问被拒绝（401），请检查 Key。"],
+    "ccdx_api_catalog_http_403": ["Model access was denied (HTTP 403). Check permissions.", "模型访问被拒绝（403），请检查权限。"],
+    "ccdx_api_network_unavailable": ["Could not reach the API. Proxy and TLS rules were kept.", "无法连接 API，代理和证书规则已保留。"],
+    "ccdx_api_limit": ["Up to 16 manual APIs are supported.", "最多可添加 16 个手工 API。"],
     "github_account_entry": ["GitHub account", "GitHub 账号"],
     "m365_account_entry": ["M365 account", "M365 账号"],
     "flow_count": ["{count} requests", "{count} 个请求"],
@@ -1086,7 +1167,7 @@
   try { if (localStorage.getItem(storageKey) === "zh") language = "zh"; } catch {}
   document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
   const messages = new WeakMap();
-  const attributes = { textContent: "data-i18n", title: "data-i18n-title", "aria-label": "data-i18n-label" };
+  const attributes = { textContent: "data-i18n", title: "data-i18n-title", "aria-label": "data-i18n-label", placeholder: "data-i18n-placeholder" };
 
   function format(key, values = {}) {
     const id = Object.hasOwn(translations, key) ? key : Object.hasOwn(legacyMessages, key) ? legacyMessages[key] : key;
@@ -1111,7 +1192,7 @@
 
   function apply() {
     document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
-    for (const target of document.querySelectorAll("[data-i18n], [data-i18n-title], [data-i18n-label]")) {
+    for (const target of document.querySelectorAll("[data-i18n], [data-i18n-title], [data-i18n-label], [data-i18n-placeholder]")) {
       for (const [attribute, marker] of Object.entries(attributes)) {
         if (!target.hasAttribute(marker)) continue;
         const saved = messages.get(target)?.[attribute];

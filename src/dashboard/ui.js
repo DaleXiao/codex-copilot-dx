@@ -114,6 +114,7 @@ function applyProviders(data, { changed }) {
   let reloadModels = false;
   const previous = new Map(providerEntries.map(entry => [entry.id, JSON.stringify([entry.generation, entry.auth?.account])]));
   providerEntries = data.providers;
+  if (!providerEntries.length) { text("models-state", "api_no_enabled_sources");emptyTable("live-models-body", 3, "api_no_enabled_sources"); }
   for (const [id] of modelSnapshots) {
     const provider = providerEntries.find(entry => entry.id === id);
     if (!provider) {
@@ -154,6 +155,7 @@ function applyProviders(data, { changed }) {
   }
   element("live-models-body").setAttribute("aria-labelledby", `model-provider-${selectedProvider}`);
   if (sourceChoicesChanged) window.dispatchEvent(new CustomEvent("ccdx:providers"));
+  if (!providerEntries.length) { text("models-state", "api_no_enabled_sources");emptyTable("live-models-body", 3, "api_no_enabled_sources");return; }
   if ((!wasInitialized || reloadModels || selectedProvider !== previousSelection) && !element("upstream-models").closest("[hidden]")) { dashboardRefresh.invalidate("models", { clear: true });void loadModels(); }
 }
 
@@ -281,7 +283,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       variant: catalogProvider,
       load: async ({ signal, variant }) => {
         if (!variant) throw new Error("reading_provider_catalog");
-        const data = await readDashboard(`/_ccdx/ui/models/live?provider=${encodeURIComponent(variant)}`, { signal, source: ["live", "catalog"] });
+        const data = await readDashboard(`/_ccdx/ui/models/live?provider=${encodeURIComponent(variant)}`, { signal, source: ["live", "catalog", "configured"] });
         if (!Array.isArray(data.models) || data.models.some(model => !model || typeof model.id !== "string" || !Array.isArray(model.endpoints))) throw new Error("Invalid model snapshot");
         return { ...data, provider: variant };
       },
@@ -290,7 +292,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       state: state => {
         if (state.attemptVariant !== selectedProvider) return;
         element("refresh-models").disabled = Boolean(state.pending);
-        text("models-state", state.pending ? "checking_live" : state.error ? "live_lookup_failed" : state.value?.source === "catalog" ? "catalog_snapshot" : "live_snapshot");
+        text("models-state", state.pending ? "checking_live" : state.error ? "live_lookup_failed" : state.value?.source === "configured" ? "api_configured_models" : state.value?.source === "catalog" ? "catalog_snapshot" : "live_snapshot");
         element("model-check-details").hidden = !state.error;
         if (state.error) {
           const message = String(state.error.message || state.error).slice(0, 240);

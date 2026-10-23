@@ -88,15 +88,17 @@
     syncReviewButton();
   }
   function syncSources() {
-    const selector = el("source-provider"), selected = sourceDirty ? selector.value : settings?.providers?.codex_provider || selector.value;
+    const selector = el("source-provider"), paused = settings?.providers?.connections?.managed && settings.providers.codex_provider === null;
+    const selected = sourceDirty ? selector.value : paused ? "" : settings?.providers?.codex_provider || selector.value;
     const entries = providerEntries.filter(source => source.selection?.codex);
-    const signature = JSON.stringify(entries.map(source => [source.id, source.name]));
+    const signature = JSON.stringify([paused, entries.map(source => [source.id, source.name])]);
     if (selector.dataset.sources !== signature) {
       selector.replaceChildren(...entries.map(source => {
         const option = document.createElement("option");option.value = source.id;option.textContent = source.name;return option;
       }));selector.dataset.sources = signature;
+      if (paused) { const option = document.createElement("option");option.value = "";label(option, "api_pause");selector.prepend(option); }
     }
-    if (entries.some(source => source.id === selected)) selector.value = selected;
+    if (paused && !sourceDirty || entries.some(source => source.id === selected)) selector.value = selected;
     el("apply-source").disabled = settingsPending || !sourceReady();
     syncReviewButton();
   }
@@ -145,7 +147,7 @@
     el("m365-control-note").replaceChildren();
     if (state) {
       const source = document.createElement("span"), m365 = document.createElement("span");
-      label(source, "codex_source_source", { source: providerEntries.find(entry => entry.id === state.codex_provider)?.name || state.codex_provider });
+      label(source, "codex_source_source", { source: providerEntries.find(entry => entry.id === state.codex_provider)?.name || (state.codex_provider === null ? { key: "api_pause" } : state.codex_provider) });
       const status = { ready: "ready", checking: "checking", disabled: "disabled", unsupported: "unsupported", idle: "unknown", unavailable: "unavailable" }[state.m365?.state] || "unknown";
       label(m365, "microsoft_365_state", { state: { key: status } });
       el("source-control-note").replaceChildren(source);el("m365-control-note").append(m365);

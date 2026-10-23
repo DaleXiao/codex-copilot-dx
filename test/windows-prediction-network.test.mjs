@@ -107,7 +107,7 @@ test("worker failures, invalid targets and detection timeouts are bounded and re
 
 test("native source uses Windows automatic routing and keeps credentials, TLS and cookie boundaries", () => {
   const source = readFileSync(new URL("../src/windows-prediction-network.cs", import.meta.url), "utf8");
-  assert.match(source, /WinHttpOpen\("CCDX native prediction",4,null,null,0\)/);
+  assert.match(source, /WinHttpOpen\([^;]+"CCDX native prediction",4,null,null,0\)/);
   assert.match(source, /WinHttpDetectAutoProxyConfigUrl\(3/);
   assert.match(source, /uint disable=3/);
   assert.match(source, /uint protocols=0x800/);

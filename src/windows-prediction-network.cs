@@ -31,6 +31,7 @@ public static class CCDXPredictionNetwork {
   static readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength=2*1024*1024 };
   static IntPtr session;
   static string target = "prediction";
+  static HashSet<string> apiTargets = new HashSet<string>(StringComparer.Ordinal);
   static int requestTimeout = 30000;
   class Work { public IntPtr handle; public ManualResetEventSlim ack = new ManualResetEventSlim(false); public BlockingCollection<byte[]> upload = new BlockingCollection<byte[]>(2); public bool cancelled; }
   static void Check(bool ok) { if(!ok) throw new IOException("winhttp_" + Marshal.GetLastWin32Error()); }
@@ -77,7 +78,7 @@ public static class CCDXPredictionNetwork {
     IntPtr connection=IntPtr.Zero;
     try {
       var uri=new Uri((string)data["url"]);
-      if(uri.Scheme!="https" || uri.Port!=443 || uri.UserInfo.Length!=0 || uri.Fragment.Length!=0 || (target=="m365" ? (uri.Host!="df.loki.delve.office.com" || !uri.AbsolutePath.StartsWith("/api/v1/llmapi/",StringComparison.Ordinal)) : (uri.Host!="chatgpt.com"&&uri.Host!="ab.chatgpt.com"))) throw new IOException("winhttp_target_invalid");
+      if(uri.Scheme!="https" || uri.UserInfo.Length!=0 || uri.Fragment.Length!=0 || (target=="api" ? !apiTargets.Contains(uri.AbsoluteUri) : (uri.Port!=443 || (target=="m365" ? (uri.Host!="df.loki.delve.office.com" || !uri.AbsolutePath.StartsWith("/api/v1/llmapi/",StringComparison.Ordinal)) : (uri.Host!="chatgpt.com"&&uri.Host!="ab.chatgpt.com"))))) throw new IOException("winhttp_target_invalid");
       var method=(string)data["method"];
       if(method!="GET"&&method!="POST"&&method!="HEAD"&&method!="PUT"&&method!="DELETE"&&method!="OPTIONS"&&method!="PATCH")throw new IOException("winhttp_method_invalid");
       var headers=(string)data["headers"];
@@ -129,9 +130,10 @@ public static class CCDXPredictionNetwork {
     try {
       var initial=json.Deserialize<Dictionary<string,object>>(Console.ReadLine());
       if(initial.ContainsKey("target")) target=(string)initial["target"];
-      if(target!="prediction"&&target!="m365")throw new IOException("winhttp_target_invalid");
-      if(target=="m365" && initial.ContainsKey("timeoutMs")) requestTimeout=(int)Math.Max(1000,Math.Min(int.MaxValue,Convert.ToInt64(initial["timeoutMs"])));
-      session=target=="m365"?WinHttpOpen("CCDX Microsoft 365",4,null,null,0):WinHttpOpen("CCDX native prediction",4,null,null,0);
+      if(target!="prediction"&&target!="m365"&&target!="api")throw new IOException("winhttp_target_invalid");
+      if(target=="api") { if(initial["apiTargets"] is string)throw new IOException("winhttp_target_invalid");foreach(object raw in (System.Collections.IEnumerable)initial["apiTargets"]) { var uri=new Uri((string)raw);if(uri.Scheme!="https"||uri.UserInfo.Length!=0||uri.Query.Length!=0||uri.Fragment.Length!=0)throw new IOException("winhttp_target_invalid");apiTargets.Add(uri.AbsoluteUri);if(apiTargets.Count>8)throw new IOException("winhttp_target_invalid"); }if(apiTargets.Count<1)throw new IOException("winhttp_target_invalid"); }
+      if(target!="prediction" && initial.ContainsKey("timeoutMs")) requestTimeout=(int)Math.Max(1000,Math.Min(int.MaxValue,Convert.ToInt64(initial["timeoutMs"])));
+      session=WinHttpOpen(target=="m365"?"CCDX Microsoft 365":target=="api"?"CCDX API":"CCDX native prediction",4,null,null,0);
       Check(session!=IntPtr.Zero);Check(WinHttpSetTimeouts(session,10000,10000,requestTimeout,requestTimeout));
       uint protocols=0x800;Check(WinHttpSetOption(session,84,ref protocols,4));
       string pac=(string)initial["pac"];

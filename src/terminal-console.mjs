@@ -76,7 +76,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
     }
     if (dirty) {
       const usage = data.runtime_usage || {}, routes = data.requests?.by_route || {};
-      const outcomes = [data.stream_performance?.by_route?.responses, data.stream_performance?.by_route?.responses_compact, data.providers?.m365?.claude?.requests?.performance?.by_route?.messages]
+      const outcomes = [data.stream_performance?.by_route?.responses, data.stream_performance?.by_route?.responses_compact, (data.providers?.claude || data.providers?.m365?.claude)?.requests?.performance?.by_route?.messages]
         .map(route => route?.terminal_outcomes?.totals || {});
       const sum = key => outcomes.reduce((total, item) => total + (Number(item[key]) || 0), 0);
       const requests = ["responses", "responses_compact", "messages"].reduce((total, key) => total + (routes[key]?.total || 0), 0);

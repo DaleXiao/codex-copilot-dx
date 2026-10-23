@@ -192,7 +192,7 @@ export function recordUsage(record) {
   if (!record) return Promise.resolve();
   const usage = record.usage || {};
   const { cached, unknown, invalid } = usageCacheEvidence(usage);
-  const provider = usageProvider(record), label = runtimeUsageByProvider.has(provider) || runtimeUsageByProvider.size < 16 ? provider : "other";
+  const provider = usageProvider(record), label = runtimeUsageByProvider.has(provider) || runtimeUsageByProvider.size < 18 ? provider : "other";
   if (!runtimeUsageByProvider.has(label)) runtimeUsageByProvider.set(label, { records: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, partial_records: 0 });
   for (const totals of [runtimeUsage, runtimeUsageByProvider.get(label)]) {
     totals.records++;

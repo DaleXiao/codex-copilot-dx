@@ -55,6 +55,27 @@ h1 { margin: 0; font-size: clamp(20px, 3vw, 27px); font-weight: 650; letter-spac
 .meter::-webkit-progress-value { background: var(--accent-soft); }
 .meter::-moz-progress-bar { background: var(--accent-soft); }
 .dashboard-section { min-height: 0; margin-top: 11px; }
+.connection-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.connection-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.connection-row > div:first-child { min-width: 0; }
+.connection-row h3 { margin: 0; color: var(--text); font-size: 13px; }
+.connection-row p { margin: 5px 0 0; overflow-wrap: anywhere; }
+.connection-actions, .connection-checks { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.connection-actions { flex: 0 0 auto; }
+.connection-checks label { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; white-space: nowrap; }
+.connection-checks input { flex: none; accent-color: var(--accent); }
+.connection-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 18px 0; }
+.connection-fields > label { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.connection-fields input, .connection-fields select { width: 100%; min-width: 0; min-height: 38px; }
+.connection-fields input, #connection-model-id { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--button-border); border-radius: 2px; padding: 7px 10px; }
+.connection-fields input:focus-visible, #connection-model-id:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+#connection-editor fieldset, #connection-client-editor fieldset { border: 0; padding: 0; margin: 22px 0; min-width: 0; }
+#connection-editor legend, #connection-client-editor legend { padding: 0; margin-bottom: 9px; color: var(--text); }
+#connection-models td { white-space: normal; overflow-wrap: anywhere; }
+#connection-models td:first-child { min-width: 140px; }
+.connection-disabled { padding: 8px 0 18px; color: var(--heading); }
+.connection-disabled .connection-row { padding: 13px 0; }
+@media (max-width: 650px) { .connection-fields { grid-template-columns: minmax(0, 1fr); } .connection-actions { gap: 9px; } .connection-row { gap: 10px; } }
 .heading-actions { display: flex; align-items: center; gap: 16px; }
 .heading-actions button { padding: 5px 9px; }
 .animation-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 18px; }

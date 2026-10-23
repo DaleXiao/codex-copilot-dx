@@ -100,9 +100,11 @@ async function sendModelList(res, models, {
   rawBody,
   statusCode = 200,
   restrictToUpstream = false,
+  providerCatalog,
 } = {}) {
   let body = rawBody || JSON.stringify(models);
-  if (clientVersion && typeof codexModelCatalog?.load === "function") {
+  if (clientVersion && typeof providerCatalog === "function") body = JSON.stringify(providerCatalog(models));
+  else if (clientVersion && typeof codexModelCatalog?.load === "function") {
     let response = null;
     try {
       const codexCatalog = await codexModelCatalog.load({ clientVersion });
@@ -172,7 +174,8 @@ export function createAdapterHandler(options = {}) {
     credentialsChanged: options.dashboardOptions?.credentialsChanged || (() => codexClient.invalidateCredentials?.()),
     ...(options.providerRuntime ? { providerCatalogFn: input => options.providerRuntime.dashboardCatalog(input),
       providerStateFn: () => options.providerRuntime.dashboardProviders(),
-      providerAccountsFn: () => options.providerRuntime.action({ action: "accounts" }) } : {}) } });
+      providerAccountsFn: () => options.providerRuntime.action({ action: "accounts" }),
+      connectionsFn: input => options.providerRuntime.manageConnections(input) } : {}) } });
   let statusSnapshot;
   const managementHandler = createManagementHandler({
     nativePredictionPac: options.nativePredictionPac, fixPrediction: options.fixPrediction, requestBodyTimeoutMs,
@@ -188,10 +191,16 @@ export function createAdapterHandler(options = {}) {
           source: providers.m365.models?.source || "unavailable", provider: "m365",
           refresh_in_flight: providers.m365.refresh_in_flight === true };
       }
+      if (providers?.codex_provider?.startsWith("api_")) {
+        const source = providers.connections.providers.find(entry => entry.id === providers.codex_provider);
+        snapshot.routing = { ...snapshot.routing, responses: providers.codex_provider };
+        snapshot.models = { ...snapshot.models, provider: providers.codex_provider, source: "configured", models: source?.codex_model_count || 0, refresh_in_flight: false };
+      }
       return { ...snapshot, http_errors: httpErrors.snapshot(), ...(providers ? { providers } : {}) };
     },
   });
   const responsesHandler = createResponsesHandler({
+    validateConversation: (body, headers, source) => options.providerRuntime?.validateConversation?.(body, headers, source),
     provider: options.provider || options.providerRuntime?.github,
     acquireRequest,
     autoReviewModelResolver: options.autoReviewModelResolver,
@@ -211,6 +220,7 @@ export function createAdapterHandler(options = {}) {
     upstreamTimeoutMs,
   });
   const responsesCompactHandler = createResponsesCompactHandler({
+    validateConversation: (body, headers, source) => options.providerRuntime?.validateConversation?.(body, headers, source),
     provider: options.provider || options.providerRuntime?.github,
     acquireRequest,
     autoReviewModelResolver: options.autoReviewModelResolver,
@@ -230,9 +240,10 @@ export function createAdapterHandler(options = {}) {
     if (!provider || provider.id === "github") return githubHandlers;
     if (!providerHandlers.has(provider)) {
       const common = { provider, acquireRequest, imagePressure, keepaliveIntervalMs: options.keepaliveIntervalMs,
+        validateConversation: (body, headers, source) => options.providerRuntime?.validateConversation?.(body, headers, source),
         modelRegistry: provider.registry, now: options.now, openAIModelEnv: { ...openAIModelEnv, CCDX_AUTO_REVIEW_MODEL: "" },
-        autoReviewModelResolver: () => { const preference = options.providerRuntime.selection().m365;
-          return { model: preference.auto_review_model, reasoningEffort: preference.auto_review_effort === undefined ? "low" : preference.auto_review_effort }; },
+        autoReviewModelResolver: () => { const preference = options.providerRuntime.providerPreference?.(provider.id) || options.providerRuntime.selection().m365;
+          return { model: preference?.auto_review_model, reasoningEffort: preference?.auto_review_effort === undefined ? Object.hasOwn(provider, "defaultReviewEffort") ? provider.defaultReviewEffort : "low" : preference.auto_review_effort }; },
         requestBodyTimeoutMs, responsesPayloadOptions: options.responsesPayloadOptions, responseFailures,
         streamHandshakeTimeoutMs, streamIdleTimeoutMs, upstreamTimeoutMs };
       providerHandlers.set(provider, {
@@ -252,6 +263,7 @@ export function createAdapterHandler(options = {}) {
       const query = new URL(req.url, "http://localhost").search;
       req.url = pathname.slice("/anthropic".length) + query;
       try { return await options.providerRuntime.handleClaude(req, res); }
+      catch (error) { sendJsonError(res, error, error.statusCode || 502); }
       finally { req.url = original; }
     }
     if (req.method === "POST" && ["/v1/responses", "/v1/responses/compact"].includes(pathname)
@@ -267,7 +279,7 @@ export function createAdapterHandler(options = {}) {
 
     let target;
     if (["/v1/responses", "/v1/responses/compact", "/v1/models"].includes(pathname) && options.providerRuntime) {
-      try { target = options.providerRuntime.current(); }
+      try { target = options.providerRuntime.current(req); }
       catch (error) { sendJsonError(res, error, 503);return; }
       const context = currentRequestContext();
       if (context) {
@@ -294,8 +306,8 @@ export function createAdapterHandler(options = {}) {
     if (req.method === "GET" && pathname === "/v1/models") {
       const clientVersion = modelClientVersion(req.url);
       const selectedRegistry = target?.registry || codexModelRegistry;
-      const selectedListModels = target?.id === "m365" ? target.client.listModels : listModelsFn;
-      const modelOptions = { codexModelCatalog, clientVersion, restrictToUpstream: target?.id === "m365" };
+      const selectedListModels = target && target.id !== "github" ? target.client.listModels : listModelsFn;
+      const modelOptions = { codexModelCatalog, clientVersion, providerCatalog: target?.codexCatalog, restrictToUpstream: Boolean(target && target.id !== "github") };
       const abort = createRequestAbort(req, res);
       // Keep live discovery and explicit auth failures authoritative, but do
       // not make a usable cached picker wait the full inference timeout.

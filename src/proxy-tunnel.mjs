@@ -26,6 +26,7 @@ function readSocket(socket, ready, maxBytes = 16 * 1024) {
 
 async function connectProxy(target, route, timeoutMs, pending) {
   const proxy = route.url;
+  const targetPort = Number(target.port || 443);
   const proxyHost = proxy.hostname.replace(/^\[|\]$/g, "");
   const socket = proxy.protocol === "https:"
     ? tls.connect({ host: proxyHost, port: Number(proxy.port || 443), servername: net.isIP(proxyHost) ? undefined : proxyHost, rejectUnauthorized: true })
@@ -52,21 +53,21 @@ async function connectProxy(target, route, timeoutMs, pending) {
         socket.write(Buffer.concat([Buffer.from([1, user.length]), user, Buffer.from([password.length]), password]));
         const result = await auth; if (result[0] !== 1 || result[1] !== 0) throw new Error("SOCKS5 proxy authentication failed");
       }
-      const host = Buffer.from(target.hostname);
+      const host = Buffer.from(target.hostname.replace(/^\[|\]$/g, ""));
       if (host.length > 255) throw new Error("Proxy target hostname is too long");
       const response = readSocket(socket, b => {
         if (b.length < 5) return null;
         const size = b[3] === 1 ? 10 : b[3] === 4 ? 22 : b[3] === 3 ? 7 + b[4] : 5;
         return b.length >= size ? size : null;
       });
-      socket.write(Buffer.concat([Buffer.from([5, 1, 0, 3, host.length]), host, Buffer.from([1, 187])]));
+      socket.write(Buffer.concat([Buffer.from([5, 1, 0, 3, host.length]), host, Buffer.from([targetPort >> 8, targetPort & 255])]));
       const result = await response;
       if (result[0] !== 5 || result[1] !== 0 || ![1, 3, 4].includes(result[3])) throw new Error("SOCKS5 proxy rejected the connection");
     } else {
       const response = readSocket(socket, b => { const end = b.indexOf("\r\n\r\n"); return end < 0 ? null : end + 4; });
       const credentials = proxy.username || proxy.password
         ? `Proxy-Authorization: Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString("base64")}\r\n` : "";
-      socket.write(`CONNECT ${target.hostname}:443 HTTP/1.1\r\nHost: ${target.hostname}:443\r\n${credentials}\r\n`);
+      socket.write(`CONNECT ${target.hostname}:${targetPort} HTTP/1.1\r\nHost: ${target.hostname}:${targetPort}\r\n${credentials}\r\n`);
       const headers = (await response).toString("latin1");
       const status = /^HTTP\/1\.[01] (\d{3})/.exec(headers)?.[1];
       if (status !== "200") throw new Error(`HTTP proxy rejected CONNECT (${status || "invalid response"})`);
@@ -83,7 +84,8 @@ export function createProxyAgent(plan, { timeoutMs = 30_000 } = {}) {
   const direct = agent.createConnection.bind(agent);
   agent.createConnection = (options, callback) => {
     if (closed) { queueMicrotask(() => callback(new Error("Proxy agent is closed"))); return undefined; }
-    const target = new URL(`https://${options.host}`), route = networkProxyFor(target, plan);
+    const host = options.hostname || options.host;
+    const target = new URL(`https://${net.isIP(host) === 6 ? `[${host}]` : host}:${options.port || 443}`), route = networkProxyFor(target, plan);
     if (!route) return direct(options, callback);
     void connectProxy(target, route, timeoutMs, pending).then(socket => {
       if (closed) { socket.destroy(); callback(new Error("Proxy agent is closed")); return; }

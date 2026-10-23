@@ -203,6 +203,7 @@ export function createResponsesHandler(options) {
       releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal }));
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
+      options.validateConversation?.(parsed, req.headers, provider);
       activeDeadline = now() + upstreamTimeoutMs;
       activeTimeoutReason = "responses_prepare_timeout";
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
@@ -237,12 +238,12 @@ export function createResponsesHandler(options) {
       const { upstreamModel, forceResponses } = provider.selectModel(prepared.body, resolvedModel, modelRegistry?.models);
       if (requestedModel === CODEX_AUTO_REVIEW_MODEL) {
         delete prepared.body.service_tier;
-        if (resolvedModel.reasoningEffort || prepared.body.reasoning?.effort === undefined) {
+        if (resolvedModel.reasoningEffort || provider.defaultReviewEffort !== null && prepared.body.reasoning?.effort === undefined) {
           prepared.body.reasoning = { ...prepared.body.reasoning, effort: resolvedModel.reasoningEffort || "low" };
         }
       }
       if (upstreamModel !== requestedModel) prepared.body.model = upstreamModel;
-      markResponseModel(upstreamModel, { requestedModel });
+      markResponseModel(upstreamModel, { requestedModel, configuredModel: provider.configuredModels === true });
       markRequestObservation({ context_window_tokens: modelContextWindowTokens(modelRegistry?.models, upstreamModel) });
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses model=${requestedModel}${upstreamLog} stream=${streaming}`));
@@ -474,6 +475,7 @@ export function createResponsesCompactHandler(options) {
       releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal }));
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       const parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
+      options.validateConversation?.(parsed, req.headers, provider);
       activeDeadline = now() + upstreamTimeoutMs;
       activeTimeoutReason = "responses_prepare_timeout";
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
@@ -506,7 +508,7 @@ export function createResponsesCompactHandler(options) {
       const { upstreamModel, forceResponses } = provider.selectModel(prepared.body, resolvedModel, modelRegistry?.models);
       if (requestedModel === CODEX_AUTO_REVIEW_MODEL) {
         delete prepared.body.service_tier;
-        if (resolvedModel.reasoningEffort || prepared.body.reasoning?.effort === undefined) {
+        if (resolvedModel.reasoningEffort || provider.defaultReviewEffort !== null && prepared.body.reasoning?.effort === undefined) {
           prepared.body.reasoning = { ...prepared.body.reasoning, effort: resolvedModel.reasoningEffort || "low" };
         }
       }
@@ -514,7 +516,7 @@ export function createResponsesCompactHandler(options) {
       markRequestObservation({ context_window_tokens: modelContextWindowTokens(modelRegistry?.models, upstreamModel) });
       const upstreamLog = upstreamModel === requestedModel ? "" : ` upstream_model=${upstreamModel}`;
       console.log(status("info", `responses compact model=${requestedModel}${upstreamLog} stream=false`));
-      markResponseModel(upstreamModel, { requestedModel });
+      markResponseModel(upstreamModel, { requestedModel, configuredModel: provider.configuredModels === true });
       const selected = applySelectedRoute(prepared, provider.route(prepared.body, {
         requestedModel, upstreamModel, forceResponses, surface: "responses-compact" }), { req, env: openAIModelEnv,
         signal: abort.signal, assertActive: assertPrepareActive, reserveHistory: releaseRequest.reserveResponseHistory });

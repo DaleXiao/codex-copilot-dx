@@ -20,6 +20,7 @@
     <script src="/ui.js" defer></script>
     <script src="/console.js" defer></script>
     <script src="/tools.js" defer></script>
+    <script src="/connections.js" defer></script>
     <title data-i18n="ccdx_local_dashboard">CCDX · Dashboard</title>
   </head>
   <body>
@@ -70,6 +71,7 @@
             <label><span data-i18n="source">Source</span><select id="source-provider"></select></label>
             <label id="source-model-field" hidden><span data-i18n="conversation_model">Conversation model</span><select id="source-model"></select></label>
             <button id="apply-source" type="button" data-i18n="apply_source">Use this source</button>
+            <button type="button" data-client-access="codex" data-i18n="api_client_settings">Manage client access</button>
           </div>
           <p id="source-model-note" class="hint" data-i18n="github_model_in_codex">Choose your conversation model in Codex.</p>
           <div id="source-control-note" class="hint" role="status"></div>
@@ -125,6 +127,7 @@
         </details>
         </div>
         <div data-view="claude" hidden>
+        <div class="section-actions"><button type="button" data-client-access="claude_app" data-i18n="api_claude_app_settings">Claude App settings</button><button type="button" data-client-access="claude_code" data-i18n="api_claude_code_settings">Claude Code settings</button></div>
         <section class="panel dashboard-section" id="claude-connections">
           <h2 data-i18n="client_connections">APP SETUP</h2>
           <div class="table-wrap"><table><thead><tr><th data-i18n="client">APP</th><th data-i18n="connection_setup" data-i18n-title="configured_not_successful">Setup</th><th data-i18n="local_bridge">Local service</th><th data-i18n="last_request">LAST REQUEST</th></tr></thead><tbody id="claude-clients"></tbody></table></div>
@@ -286,6 +289,46 @@
         </details>
         </div>
         <div data-view="system" hidden>
+  <section class="panel dashboard-section" id="connection-sources">
+    <div class="panel-heading"><h2 data-i18n="model_services">Model sources</h2><button id="connection-add" type="button" data-i18n="api_add">Add API</button></div>
+    <div id="connection-source-list"></div>
+  </section>
+  <section class="panel dashboard-section" id="connection-clients">
+    <h2 data-i18n="api_clients">Clients</h2><div id="connection-client-list"></div>
+  </section>
+  <details id="connection-disabled" class="connection-disabled"><summary data-i18n="api_disabled">Disabled</summary><div id="connection-disabled-list"></div></details>
+  <section class="panel dashboard-section" id="connection-editor" hidden aria-labelledby="connection-editor-title">
+    <div class="panel-heading"><h2 id="connection-editor-title" data-i18n="api_add">Add API</h2><button type="button" id="connection-cancel" data-i18n="cancel">Cancel</button></div>
+    <form id="connection-api-form">
+      <div class="connection-fields">
+        <label><span data-i18n="api_name">Name</span><input id="connection-name" name="name" type="text" maxlength="60" required autocomplete="off"></label>
+        <label><span data-i18n="api_base">API address</span><input id="connection-base" name="base" type="url" required autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1"></label>
+        <label><span>API Key</span><input id="connection-key" name="key" type="password" autocomplete="off" spellcheck="false"><span class="hint" data-i18n="api_key_private">Stored separately. Never sent to clients.</span></label>
+      </div>
+      <fieldset><legend data-i18n="api_protocols">Available APIs</legend><div class="connection-checks"><label><input type="checkbox" name="protocol" value="messages" checked>Messages</label><label><input type="checkbox" name="protocol" value="responses" checked>Responses</label><label><input type="checkbox" name="protocol" value="chat">Chat Completions</label></div></fieldset>
+      <details class="tool-details"><summary data-i18n="api_endpoint_options">Addresses &amp; authentication</summary><div class="connection-fields">
+        <label>Messages<input name="messages_url" type="url"></label><label>Responses<input name="responses_url" type="url"></label><label>Chat Completions<input name="chat_url" type="url"></label>
+        <label><span data-i18n="api_messages_auth">Messages authentication</span><select name="auth_header"><option value="x-api-key">x-api-key</option><option value="bearer">Bearer token</option></select></label>
+        <label><span data-i18n="api_key_env">Read key from environment</span><input name="key_env" type="text" autocomplete="off" spellcheck="false" placeholder="CCDX_COMPANY_API_KEY"><span class="hint" data-i18n="api_key_env_hint">Optional for servers without a credential service. Set before starting CCDX.</span></label>
+      </div></details>
+      <fieldset><legend data-i18n="api_allowed_clients">Allowed clients</legend><div class="connection-checks" id="connection-allowed-clients"></div></fieldset>
+      <fieldset><legend data-i18n="model_catalog">Model list</legend><div class="section-actions"><button type="button" id="connection-discover" data-i18n="api_read_models">Read models</button><span class="hint" data-i18n="api_discovery_save_first">Save the API first. No chat request is sent.</span></div>
+        <div class="section-actions"><input type="text" id="connection-model-id" spellcheck="false" autocomplete="off" aria-label="Model ID" placeholder="Model ID"><button type="button" id="connection-model-add" data-i18n="api_add_model">Add model</button></div>
+        <p class="hint" data-i18n="api_model_protocol_hint">Choose the APIs each model supports.</p><div class="table-wrap"><table><thead><tr><th data-i18n="model">Model</th><th data-i18n="api_protocols">Available APIs</th><th></th></tr></thead><tbody id="connection-models"></tbody></table></div>
+      </fieldset>
+      <div class="section-actions"><button type="submit" data-i18n="api_save">Save</button></div>
+    </form>
+  </section>
+  <section class="panel dashboard-section" id="connection-client-editor" hidden aria-labelledby="connection-client-title">
+    <div class="panel-heading"><h2 id="connection-client-title"></h2><button type="button" id="connection-client-cancel" data-i18n="cancel">Cancel</button></div>
+    <form id="connection-client-form"><div class="connection-fields"><label><span data-i18n="api_current_source">Current source</span><select id="connection-current"></select></label><label id="connection-current-model-row"><span data-i18n="model">Model</span><select id="connection-current-model"></select></label></div>
+      <fieldset><legend data-i18n="api_allowed_sources">Allowed sources</legend><div id="connection-client-allowed" class="connection-checks"></div></fieldset>
+      <p class="hint" data-i18n="api_existing_requests">Existing requests keep their source. Use a new conversation after switching.</p>
+      <div class="section-actions"><button type="submit" data-i18n="api_save">Save</button></div>
+    </form>
+  </section>
+  <section class="panel dashboard-section" id="connection-disable-editor" hidden aria-labelledby="connection-disable-title"><h2 id="connection-disable-title" data-i18n="api_disable_source">Disable source</h2><p class="hint" data-i18n="api_choose_replacements">Choose another source or pause each affected client.</p><form id="connection-disable-form"><div id="connection-replacements" class="connection-fields"></div><div class="section-actions"><button type="submit" data-i18n="api_confirm_disable">Disable</button><button type="button" id="connection-disable-cancel" data-i18n="cancel">Cancel</button></div></form></section>
+  <p id="connection-note" class="hint" role="status" aria-live="polite"></p>
   <section class="panel dashboard-section" aria-labelledby="web-appearance-title">
     <h2 id="web-appearance-title" data-i18n="appearance_web_appearance">网页外观</h2>
     <div class="appearance-row">

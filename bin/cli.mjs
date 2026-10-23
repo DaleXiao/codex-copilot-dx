@@ -364,7 +364,8 @@ async function reuseRunningAdapterIfAvailable() {
   const serviceStatus = readAdapterStatus({ host: ADAPTER_HOST, port: ADAPTER_PORT }).catch(() => null);
   console.log(startupCheck("ok", "Service", `Using running service: ${running.baseUrl}`));
   console.log(startupCheck("info", "Sign-in", "Using saved sign-in; not rechecked"));
-  const { compressionSetup, imageEnabled, imageMcpSkipped } = await configureCodexClient();
+  const codexEnabled = (await serviceStatus)?.data?.providers?.connections?.clients?.find(client => client.id === "codex")?.enabled !== false;
+  const { compressionSetup, imageEnabled, imageMcpSkipped } = codexEnabled ? await configureCodexClient() : { compressionSetup: Promise.resolve(), imageEnabled: false, imageMcpSkipped: false };
 
   let predictionPacUrl = null;
   let predictionApp = null;
@@ -376,7 +377,7 @@ async function reuseRunningAdapterIfAvailable() {
     const { readPredictionSettings } = await import("../src/native-prediction-profile.mjs");
     const preference = readPredictionSettings();
     predictionConfigured = preference.enabled;
-    if (preference.enabled) {
+    if (preference.enabled && codexEnabled) {
       predictionPacUrl = running.data?.native_prediction_pac || null;
       predictionApp = preference.app?.app;
       predictionProfile = preference.app?.profile;
@@ -386,7 +387,7 @@ async function reuseRunningAdapterIfAvailable() {
       if (!predictionPacUrl) console.warn(status("warn", "Restart ccdx to activate the newly enabled prediction bridge"));
     }
   } catch (error) { console.warn(status("warn", error.message)); }
-  await openCodex({ predictionPacUrl, predictionApp, predictionProfile, persistedPredictionRoute,
+  if (codexEnabled) await openCodex({ predictionPacUrl, predictionApp, predictionProfile, persistedPredictionRoute,
     onPredictionRoute: route => { launchRoute = route; }, log: startupLogger("App") });
   console.log(predictionStartupCheck({ configured: predictionConfigured, bridge: predictionPacUrl ? "running" : "unknown", launch_route: launchRoute }));
   console.log(startupCheck(imageEnabled && imageMcpSkipped ? "warn" : "info", "Images", imageEnabled
@@ -449,7 +450,6 @@ try {
   // Restore the opted-in listener alongside authentication/model initialization;
   // a slow company-proxy setup must not delay the core listener.
   const earlyIntegration = await clientIntegrations();
-  const predictionSetup = runInBackground(() => earlyIntegration.start());
 
   let profileRuntime = createProfileRuntime({ codexClient: defaultCopilotClient });
   let startupComplete = false;
@@ -463,15 +463,19 @@ try {
   });
   providerRuntime = createProviderRuntime({ githubClient: profileRuntime.codexClient, githubRegistry: profileModels.codexRegistry,
     corePort: ADAPTER_PORT,
+    clientAccessChanged: async enabled => { earlyIntegration.setPredictionActive(enabled && servicePreferences().prediction_enabled);if (enabled) await earlyIntegration.configure(); },
     githubCredentialFingerprint: () => profileRuntime.codexCredentialFingerprint,
     log: (kind, message) => console.log(startupComplete ? status(kind, message) : startupCheck(kind, "M365", message)) });
+  const codexEnabled = providerRuntime.connections().clients.find(client => client.id === "codex").enabled;
+  const predictionSetup = codexEnabled ? runInBackground(() => earlyIntegration.start()) : Promise.resolve(null);
   const m365Setup = runInBackground(() => providerRuntime.start());
   if (providerRuntime.selection().codex === "github") {
     try { await ensureAuth({ log: startupLogger("Sign-in") }); }
     catch (error) { console.warn(startupCheck("warn", "Sign-in", "Sign-in unavailable. Use the dashboard or ccdx auth login; saved credentials kept.")); }
   } else {
-    await m365Setup;
-    console.log(startupCheck("info", "Source", "Codex source: Microsoft 365"));
+    if (providerRuntime.selection().codex === "m365") await m365Setup;
+    const source = providerRuntime.connections().providers.find(source => source.id === providerRuntime.selection().codex);
+    console.log(startupCheck("info", "Source", source ? `Codex source: ${source.name}` : "Codex access off"));
   }
   profileRuntime = createProfileRuntime({ codexClient: defaultCopilotClient });
 
@@ -515,14 +519,14 @@ try {
   });
 
   // Point Codex App at the adapter.
-  const { compressionSetup, imageEnabled, imageMcpSkipped } = await configureCodexClient();
+  const { compressionSetup, imageEnabled, imageMcpSkipped } = codexEnabled ? await configureCodexClient() : { compressionSetup: Promise.resolve(), imageEnabled: false, imageMcpSkipped: false };
 
   // Optional native prediction setup must never prevent the core adapter from running.
   nativePrediction = await predictionSetup;
   const persistentRoute = await nativePrediction?.prepareRoute();
 
   // Launch Codex when available. A running App is never forcibly restarted.
-  await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app, predictionProfile: nativePrediction?.profile,
+  if (codexEnabled) await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app, predictionProfile: nativePrediction?.profile,
     preparePredictionRoute: () => nativePrediction?.prepareRoute(), persistedPredictionRoute: persistentRoute?.status === "installed",
     onPredictionRoute: route => clientIntegration?.launched(route), log: startupLogger("App") });
   console.log(predictionStartupCheck(clientIntegration?.snapshot().prediction));

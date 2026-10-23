@@ -11,15 +11,30 @@ import { publicM365Accounts, accountChoiceId, m365AccountMessage } from "./provi
 import { providerRegistry } from "./provider-registry.mjs";
 import { createClaudeClientLifecycle } from "./claude-client-lifecycle.mjs";
 import { m365NetworkMessage } from "./providers/m365-network-diagnostic.mjs";
+import { createConnectionRuntime } from "./connection-runtime.mjs";
+import { accessSettingsPath, readAccessSettings } from "./access-settings.mjs";
+import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 
 const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavailable (${reason}); GitHub routing was not substituted`),
   { code: reason, statusCode: 503 });
 
 // Composition owns source selection. Providers never modify Codex, prediction,
 // image configuration or each other's credentials.
-export function createProviderRuntime({ githubClient, githubRegistry, githubCredentialFingerprint = "", githubClientConfigured = true, home, env = process.env, platform = process.platform,
+export function createProviderRuntime(options = {}) {
+  options = { ...options, corePort: options.corePort ?? Number((options.env || process.env).ADAPTER_PORT || 2026) };
+  let connections;
+  const legacy = createBuiltinProviderRuntime({ ...options, managedClaude: () => {
+    if (!fs.existsSync(accessSettingsPath(options))) return false;
+    const graph = readAccessSettings(options);
+    return graph.claude_private_keys || !["claude_app", "claude_code"].every(id => graph.clients[id].enabled && graph.clients[id].source === "m365" && graph.clients[id].allowed.includes("m365"));
+  },
+    onClaudeReady: () => connections?.syncClients() });
+  connections = createConnectionRuntime({ ...options, legacy });return connections;
+}
+
+function createBuiltinProviderRuntime({ githubClient, githubRegistry, githubCredentialFingerprint = "", githubClientConfigured = true, home, env = process.env, platform = process.platform,
   corePort = Number(env.ADAPTER_PORT || 2026), log = () => {}, createM365, startGateway, configureClients, restoreClients,
-  discoverM365 = requestM365Accounts } = {}) {
+  discoverM365 = requestM365Accounts, managedClaude, onClaudeReady } = {}) {
   const options = { home, env, platform }, github = { ...createGithubProvider({ client: githubClient,
     profileId: () => { const value = typeof githubCredentialFingerprint === "function" ? githubCredentialFingerprint() : githubCredentialFingerprint;
       return value ? `codex:${value}` : "codex"; } }), registry: githubRegistry };
@@ -27,6 +42,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
   let reason = null, claudeReason = null, lastClients = {};
   let changingAccount = false;
   const clientLifecycle = createClaudeClientLifecycle({ options, configureClients, restoreClients });
+  const claudePerformance = createStreamPerformanceMetrics({ routeNames: ["messages"] });
   const sources = new Map([[github.id, github]]);
   const dashboardProfiles = new Map();
   const dashboardGeneration = provider => {
@@ -36,10 +52,11 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
   };
   const sessions = new Map();let priorNamespace = null, requestOrder = 0, activeM365Requests = 0;
   let enabled;
-  try { enabled = readM365Settings(options).enabled && env.CCDX_M365 !== "0"; }
+  try { enabled = readM365Settings(options).enabled && readAccessSettings(options).providers.m365 && env.CCDX_M365 !== "0"; }
   catch { enabled = false;reason = "m365_config_invalid"; }
 
   async function syncClaudeClients() {
+    if (managedClaude?.()) { await onClaudeReady?.();return; }
     const source = m365, profile = source?.profileId();
     if (!source || !gateway || closed || !enabled) return;
     await clientLifecycle.sync({ source, baseUrl: `http://127.0.0.1:${corePort}/anthropic`, apiKey: () => ensureM365GatewayKey(options),
@@ -68,7 +85,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
         const apiKey = ensureM365GatewayKey(options);
         if (!gateway) {
           const start = startGateway || (await import("./claude-gateway.mjs")).createClaudeGateway;
-          const opened = await start({ provider: m365, apiKey, port: corePort, env, log,
+          const opened = await start({ provider: m365, apiKey, port: corePort, env, log, performance: claudePerformance,
             onRequest({ client }) { lastClients[client] = new Date().toISOString(); } });
           if (closed || !enabled) { await opened.close();return null; }
           gateway = opened;
@@ -135,7 +152,7 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
       if (closed) throw unavailable("m365_runtime_closed");
       if (candidate.models("claude").length) {
         const start = startGateway || (await import("./claude-gateway.mjs")).createClaudeGateway;
-        opened = await start({ provider: candidate, apiKey: ensureM365GatewayKey(options), port: corePort, env, log,
+          opened = await start({ provider: candidate, apiKey: ensureM365GatewayKey(options), port: corePort, env, log, performance: claudePerformance,
           onRequest({ client }) { lastClients[client] = new Date().toISOString(); } });
       }
       candidate.commitSelection(discovered.binding);
@@ -191,6 +208,21 @@ export function createProviderRuntime({ githubClient, githubRegistry, githubCred
     return snapshot();
   }
   return {
+    claudePerformance,
+    source: id => sources.get(id),
+    async pauseM365() {
+      updateM365Settings({ enabled: false }, options);enabled = false;
+      // Existing handlers retain their source until their request finishes.
+      const previous = m365, oldGateway = gateway;m365 = null;gateway = null;sources.delete("m365");
+      await pending;await oldGateway?.close();return previous;
+    },
+    removeM365SavedProfile() {
+      if (activeM365Requests > 0) throw Object.assign(new Error("M365 requests are active; finish them before removing the account"), { code: "m365_profile_busy", statusCode: 409 });
+      const paths = m365Paths(options);
+      for (const file of [paths.account, paths.catalog, paths.gateway, paths.conversations]) {
+        try { if (!fs.lstatSync(file).isFile()) throw Error();fs.unlinkSync(file); } catch (error) { if (error.code !== "ENOENT") throw new Error("M365 cleanup preserved an unexpected file"); }
+      }
+    },
     github, current, snapshot, start: startM365, refresh: () => startM365(true),
     handleClaude(req, res) {
       if (changingAccount) { res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });res.end(JSON.stringify({ error: { code: "m365_account_busy", message: m365AccountMessage("m365_account_busy") } }));return; }

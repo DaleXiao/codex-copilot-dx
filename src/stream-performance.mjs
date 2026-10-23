@@ -14,7 +14,7 @@ const TERMINAL_ORIGINS = new Set([
 const MAX_MODEL_OUTCOME_LABELS = 32;
 const MAX_RECENT_REQUESTS = 20;
 const MAX_ACTIVE_REQUESTS = 64;
-const MAX_PROVIDER_LABELS = 16;
+const MAX_PROVIDER_LABELS = 18;
 const PREPARATION_EDGES_MS = Object.freeze([1, 2, 5, 10, 20, 50, 100, 250, 500, 1_000, 5_000, 30_000, 120_000]);
 const TTFT_EDGES_MS = Object.freeze([
   100, 200, 300, 500, 700, 1_000, 1_400, 2_000, 2_800, 4_000,
@@ -147,8 +147,9 @@ function emptyOutcomes() {
   return Object.fromEntries(TERMINAL_OUTCOMES.map((outcome) => [outcome, 0]));
 }
 
-function modelLabel(value) {
+function modelLabel(value, configured = false) {
   const model = String(value || "").trim();
+  if (configured && /^[\w][\w./:@+-]{0,159}$/.test(model)) return model;
   return model === "codex-auto-review" || /^(?:gpt|claude)-[A-Za-z0-9._-]{1,72}$/.test(model)
     ? model : "other";
 }
@@ -317,8 +318,8 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           const tokens = Number(value);
           if (Number.isFinite(tokens) && tokens >= 0) outputTokens = tokens;
         },
-        setModel(value) {
-          model = modelLabel(value);
+        setModel(value, { configured = false } = {}) {
+          model = modelLabel(value, configured);
         },
         setProvider: assignProvider,
         attemptCount() { return attempts; },
@@ -481,13 +482,13 @@ export function markStreamFailure() {
   tracker()?.fail();
 }
 
-export function markResponseModel(model, { requestedModel } = {}) {
+export function markResponseModel(model, { requestedModel, configuredModel = false } = {}) {
   const context = currentRequestContext();
   if (context) {
     context.model = model;
     if (requestedModel !== undefined) context.requestedModel = modelLabel(requestedModel);
   }
-  tracker()?.setModel?.(model);
+  tracker()?.setModel?.(model, { configured: configuredModel });
 }
 
 export function markResponseErrorOrigin(origin) {

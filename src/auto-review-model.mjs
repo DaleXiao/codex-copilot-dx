@@ -90,6 +90,7 @@ export async function runAutoReviewModelCommand({
   prompt,
   getPreference = autoReviewPreference,
   savePreference = (model, options) => writeAutoReviewModel(model === DEFAULT_CODEX_AUTO_REVIEW_MODEL ? "" : model, options),
+  followClientLabel = "follow client (low when omitted)",
 } = {}) {
   if (!prompt && (!input.isTTY || !output.isTTY)) {
     throw new Error(`${commandName} auto-review-model requires an interactive terminal`);
@@ -103,7 +104,7 @@ export async function runAutoReviewModelCommand({
 
   output.write(`${commandName} auto-review-model\n`);
   output.write(`Current: ${current.model} (${current.source})\n`);
-  output.write(`Reasoning: ${current.reasoningEffort || "follow client (low when omitted)"}\n`);
+  output.write(`Reasoning: ${current.reasoningEffort || followClientLabel}\n`);
   output.write(`Responses models from ${catalog.source}:\n`);
   modelIds.forEach((model, index) => {
     const markers = [];
@@ -144,7 +145,7 @@ export async function runAutoReviewModelCommand({
     const effortIndex = selectedModel === current.model && current.reasoningEffort === null
       ? 0 : currentEffort ? efforts.indexOf(currentEffort) + 1 : efforts.indexOf("low") + 1;
     output.write(`Reasoning for ${selectedModel}:\n`);
-    output.write("  0. Follow client (low when omitted)\n");
+    output.write(`  0. ${followClientLabel[0].toUpperCase() + followClientLabel.slice(1)}\n`);
     efforts.forEach((effort, index) => {
       const markers = [];
       if (effort === currentEffort) markers.push("current");
@@ -171,7 +172,7 @@ export async function runAutoReviewModelCommand({
 
   const result = await savePreference(selectedModel, { env, home, reasoningEffort: selectedEffort });
   output.write(`${result.changed ? "Saved" : "Kept"} Auto Review model: ${selectedModel}\n`);
-  output.write(`Reasoning: ${selectedEffort || "follow client (low when omitted)"}\n`);
+  output.write(`Reasoning: ${selectedEffort || followClientLabel}\n`);
   if (String(env.CCDX_AUTO_REVIEW_MODEL || "").trim()) {
     output.write(`CCDX_AUTO_REVIEW_MODEL=${current.model} remains the effective override until it is unset. Reasoning is bound to ${selectedModel}.\n`);
   } else {

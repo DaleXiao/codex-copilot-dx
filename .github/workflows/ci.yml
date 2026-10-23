@@ -160,7 +160,8 @@ jobs:
       - name: Verify native custom model catalogs and independent client credentials on one listener
         run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
   dashboard-browsers:
-    runs-on: ubuntu-latest
+    # Keep WebKit's system codec provisioning stable; runtime jobs cover ubuntu-latest.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

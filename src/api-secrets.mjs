@@ -27,7 +27,7 @@ export function createApiSecretStore({ platform = process.platform, env = proces
   const ref = id => { if (!/^[a-f0-9]{32}$/.test(id)) throw accessError("ccdx_api_key_invalid");return id; };
   const powershell = path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const ps = async (script, input) => run(powershell, ["-NoProfile", "-NonInteractive", "-Command",
-    "$ErrorActionPreference='Stop';" + script], input, windowsPowerShellEnvironment(env));
+    "$ErrorActionPreference='Stop';" + script], input + "\n", windowsPowerShellEnvironment(env));
   return {
     async get(id) {
       ref(id);if (cache.has(id)) return cache.get(id);
@@ -35,7 +35,7 @@ export function createApiSecretStore({ platform = process.platform, env = proces
       if (platform === "darwin") key = await run("/usr/bin/security", ["find-generic-password", "-s", SERVICE, "-a", id, "-w"], "", env);
       else if (platform === "win32") {
         let encrypted;try { encrypted = readBoundedFileSync(path.join(folder, id), { encoding: "utf8", maxBytes: 65536 }); } catch { throw accessError("ccdx_api_secret_unavailable", 503); }
-        key = await ps("$s=ConvertTo-SecureString ([Console]::In.ReadToEnd());[Console]::Write(([System.Net.NetworkCredential]::new('', $s)).Password)", encrypted);
+        key = await ps("$s=ConvertTo-SecureString ([Console]::In.ReadLine());[Console]::Write(([System.Net.NetworkCredential]::new('', $s)).Password)", encrypted);
       } else key = await run("/usr/bin/secret-tool", ["lookup", "service", SERVICE, "reference", id], "", env);
       checkedApiKey(key);cache.set(id, key);return key;
     },
@@ -44,8 +44,11 @@ export function createApiSecretStore({ platform = process.platform, env = proces
       if (platform === "darwin") {
         const quote = value => '"' + value.replace(/[\\"]/g, "\\$&") + '"';
         await run("/usr/bin/security", ["-i"], `add-generic-password -a ${quote(id)} -s ${quote(SERVICE)} -w ${quote(key)}\n`, env);
+        // Interactive security commands can exit zero after an individual failure.
+        const saved = await run("/usr/bin/security", ["find-generic-password", "-s", SERVICE, "-a", id, "-w"], "", env);
+        if (saved !== key) throw accessError("ccdx_api_secret_unavailable", 503);
       } else if (platform === "win32") {
-        const encrypted = await ps("$s=ConvertTo-SecureString ([Console]::In.ReadToEnd()) -AsPlainText -Force;[Console]::Write((ConvertFrom-SecureString $s))", key);
+        const encrypted = await ps("$s=ConvertTo-SecureString ([Console]::In.ReadLine()) -AsPlainText -Force;[Console]::Write((ConvertFrom-SecureString $s))", key);
         if (!/^[a-f0-9]{64,65536}$/i.test(encrypted)) throw accessError("ccdx_api_secret_unavailable", 503);
         fs.mkdirSync(folder, { recursive: true, mode: 0o700 });atomicWriteFileSync(path.join(folder, id), encrypted, { mode: 0o600 });
       } else await run("/usr/bin/secret-tool", ["store", "--label=CCDX API", "service", SERVICE, "reference", id], key, env);

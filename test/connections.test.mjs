@@ -35,7 +35,7 @@ function runtime(t, overrides = {}) {
       if (url.endsWith("messages")) return Response.json({ type: "message", id: "msg_local", model: body.model, role: "assistant", content: [{ type: "text", text: "synthetic" }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 2 } });
       return Response.json({ id: "resp_local", object: "response", status: "completed", model: body.model, output: [{ type: "message", id: "m1", role: "assistant", status: "completed", content: [{ type: "output_text", text: "synthetic", annotations: [] }] }], usage: { input_tokens: 10, output_tokens: 2 } });
     } }) }), ...overrides });
-  t.after(() => result.close());return { home, runtime: result, calls, stored, configured };
+  t.after(() => result.close());return { home, env: overrides.env || { CCDX_M365: "0" }, runtime: result, calls, stored, configured };
 }
 async function save(r, options = {}) {
   const { id, enabled, secret_ref, ...config } = structuredClone(apiConfig);
@@ -83,7 +83,7 @@ test("restoring M365 never selects paused legacy Claude clients and M365 counts 
   for (const [name, source] of [["claude_app", "m365"], ["claude_code", id], ["codex", "m365"]]) {
     const c = s.runtime.connections().clients.find(c => c.id === name);await s.runtime.manageConnections({ operation: "client", id: name, source, enabled: true, allowed: c.allowed });
   }
-  const local = readClientGatewayKeys({ home: s.home });
+  const local = readClientGatewayKeys({ home: s.home, env: s.env });
   assert.equal((await invoke(s.runtime.handleClaude, { headers: { authorization: `Bearer ${local.claude_app}` }, body: { model: "ms-message", messages: [{ role: "user", content: "m365-synthetic" }], max_tokens: 4 } })).status, 200);
   assert.equal((await invoke(s.runtime.handleClaude, { headers: { authorization: `Bearer ${local.claude_code}` } })).status, 200);
   const state = s.runtime.snapshot();assert.equal(state.claude.requests.completed, 2);assert.equal(state.m365.claude.requests.completed, 1);assert.equal(state.m365.claude.clients.code, "not_selected");
@@ -95,21 +95,26 @@ test("OS secrets use private stdin, cache reads, and fail without plaintext fall
   for (const platform of ["darwin", "linux", "win32"]) {
     const home = localHome(t), calls = [], key = "key-TEST-only-123", ref = "b".repeat(32);
     const store = createApiSecretStore({ home, env: {}, platform, run: async (command, args, input) => { calls.push({ command, args, input });
-      if (platform === "win32") return input === key ? "a".repeat(256) : key;return command.endsWith("security") && args.includes("-w") || args[0] === "lookup" ? key : ""; } });
+      if (platform === "win32") return input.trimEnd() === key ? "a".repeat(256) : key;return command.endsWith("security") && args.includes("-w") || args[0] === "lookup" ? key : ""; } });
     await store.set(ref, key);assert.equal(await store.get(ref), key);
     assert.ok(calls.every(call => !call.args.join(" ").includes(key)));assert.equal(calls[0].input.includes(key), true);
     store.close();assert.equal(await store.get(ref), key);store.close();
-    if (platform === "win32") assert.equal(fs.readFileSync(path.join(path.dirname(accessSettingsPath({ home })), "api-secrets", ref), "utf8").includes(key), false);
-    const blocked = createApiSecretStore({ home, platform, run: async () => { throw Error("private detail"); } });await assert.rejects(blocked.set("c".repeat(32), key));
-    assert.equal(fs.existsSync(accessSettingsPath({ home })), false);
+    if (platform === "win32") assert.equal(fs.readFileSync(path.join(path.dirname(accessSettingsPath({ home, env: {} })), "api-secrets", ref), "utf8").includes(key), false);
+    const blocked = createApiSecretStore({ home, env: {}, platform, run: async () => { throw Error("private detail"); } });await assert.rejects(blocked.set("c".repeat(32), key));
+    assert.equal(fs.existsSync(accessSettingsPath({ home, env: {} })), false);
   }
+});
+
+test("a successful interactive Keychain exit is not accepted until its stored value is confirmed", async t => {
+  const home = localHome(t), store = createApiSecretStore({ home, env: {}, platform: "darwin", run: async (_command, args) => args[0] === "-i" ? "" : "different-synthetic-value" });
+  await assert.rejects(store.set("f".repeat(32), "synthetic-key-only"), { code: "ccdx_api_secret_unavailable" });store.close();
 });
 
 test("manual APIs persist metadata only and do not activate a client or contact the service on save", async t => {
   const s = runtime(t), id = await save(s.runtime);
   assert.equal(s.calls.length, 0);assert.equal(s.runtime.selection().codex, "github");
   const publicData = JSON.stringify(s.runtime.connections());assert.equal(publicData.includes("synthetic-key-only"), false);assert.equal(publicData.includes("secret_ref"), false);
-  assert.equal(fs.readFileSync(accessSettingsPath({ home: s.home }), "utf8").includes("synthetic-key-only"), false);
+  assert.equal(fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env }), "utf8").includes("synthetic-key-only"), false);
   assert.deepEqual(s.runtime.connections().clients.find(c => c.id === "claude_app").allowed, ["m365", id]);
 });
 
@@ -174,7 +179,7 @@ test("upstream errors cannot echo the API key or leak vendor error bodies", asyn
 });
 
 test("public snapshots and save inputs cannot mutate the live connection graph", async t => {
-  const s = runtime(t), id = await save(s.runtime), before = fs.readFileSync(accessSettingsPath({ home: s.home }), "utf8");
+  const s = runtime(t), id = await save(s.runtime), before = fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env }), "utf8");
   const view = s.runtime.connections(), api = view.providers.find(p => p.id === id);
   api.models.length = 0;api.endpoints.responses = "https://other.test/responses";view.clients[0].allowed.length = 0;
   assert.equal(s.runtime.connections().providers.find(p => p.id === id).models.length, 2);
@@ -182,7 +187,7 @@ test("public snapshots and save inputs cannot mutate the live connection graph",
   await s.runtime.manageConnections({ operation: "save_api", id, config, allowed: ["codex", "claude_app", "claude_code"] });
   config.models.length = 0;
   assert.equal(s.runtime.connections().providers.find(p => p.id === id).models.length, 2);
-  assert.equal(fs.readFileSync(accessSettingsPath({ home: s.home }), "utf8").includes("other.test"), false);assert.ok(before.length > 0);
+  assert.equal(fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env }), "utf8").includes("other.test"), false);assert.ok(before.length > 0);
 });
 
 test("headless API keys can use an explicit environment reference without any credential utility", async t => {
@@ -191,7 +196,7 @@ test("headless API keys can use an explicit environment reference without any cr
     key_env: "CCDX_TEST_API_KEY", models: [{ id: "env-model", protocols: ["responses"] }] };
   const saved = await s.runtime.manageConnections({ operation: "save_api", config, allowed: ["codex"] });
   assert.equal(s.stored.values.size, 0);assert.equal(JSON.stringify(saved).includes(external), false);
-  assert.equal(fs.readFileSync(accessSettingsPath({ home: s.home }), "utf8").includes(external), false);
+  assert.equal(fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env }), "utf8").includes(external), false);
   const id = saved.providers.find(p => !p.builtin).id, c = saved.clients.find(c => c.id === "codex");
   await s.runtime.manageConnections({ operation: "client", id: c.id, enabled: true, allowed: c.allowed, source: id });
   assert.equal((await s.runtime.current().client.responses({ model: "env-model", input: [] })).status, 200);
@@ -208,8 +213,8 @@ test("a missing environment key can be configured but cannot activate a client",
 });
 
 test("conflicting external settings are preserved and a candidate key is rolled back", async t => {
-  const s = runtime(t), id = await save(s.runtime), file = accessSettingsPath({ home: s.home });
-  const next = readAccessSettings({ home: s.home });next.clients.codex.enabled = false;fs.writeFileSync(file, JSON.stringify(next));const bytes = fs.readFileSync(file);
+  const s = runtime(t), id = await save(s.runtime), file = accessSettingsPath({ home: s.home, env: s.env });
+  const next = readAccessSettings({ home: s.home, env: s.env });next.clients.codex.enabled = false;fs.writeFileSync(file, JSON.stringify(next));const bytes = fs.readFileSync(file);
   const { id: ignored, enabled, secret_ref, ...config } = structuredClone(apiConfig);
   await assert.rejects(s.runtime.manageConnections({ operation: "save_api", id, config, key: "replacement-synthetic-key", allowed: ["codex", "claude_app", "claude_code"] }), { code: "ccdx_connections_conflict" });
   assert.equal(fs.readFileSync(file).equals(bytes), true);assert.equal(s.stored.values.size, 1);assert.equal([...s.stored.values.values()][0], "synthetic-key-only");
@@ -224,15 +229,15 @@ test("Codex model selection survives repeated owned configuration updates and re
 });
 
 test("Windows CurrentUser credential protection round-trips without storing the plaintext", { skip: process.platform !== "win32" }, async t => {
-  const home = localHome(t), store = createApiSecretStore({ home }), ref = "e".repeat(32), key = "ccdx-synthetic-roundtrip-only";
+  const home = localHome(t), env = { ...process.env, XDG_CONFIG_HOME: path.join(home, ".config") }, store = createApiSecretStore({ home, env }), ref = "e".repeat(32), key = "ccdx-synthetic-roundtrip-only";
   await store.set(ref, key);store.close();assert.equal(await store.get(ref), key);
-  const file = path.join(path.dirname(accessSettingsPath({ home })), "api-secrets", ref);assert.equal(fs.readFileSync(file, "utf8").includes(key), false);await store.remove(ref);assert.equal(fs.existsSync(file), false);store.close();
+  const file = path.join(path.dirname(accessSettingsPath({ home, env })), "api-secrets", ref);assert.equal(fs.readFileSync(file, "utf8").includes(key), false);await store.remove(ref);assert.equal(fs.existsSync(file), false);store.close();
 });
 
 test("known Messages histories cannot cross an API key rotation and only hashes are retained", async t => {
   const s = runtime(t), id = await save(s.runtime), c = s.runtime.connections().clients.find(c => c.id === "claude_app");
   await s.runtime.manageConnections({ operation: "client", id: c.id, enabled: true, allowed: c.allowed, source: id });
-  const key = readClientGatewayKeys({ home: s.home }).claude_app, headers = { Authorization: `Bearer ${key}`, "x-conversation-id": "synthetic-session-only" };
+  const key = readClientGatewayKeys({ home: s.home, env: s.env }).claude_app, headers = { Authorization: `Bearer ${key}`, "x-conversation-id": "synthetic-session-only" };
   // IncomingMessage normalizes header names; use that same native shape here.
   headers.authorization = headers.Authorization;delete headers.Authorization;
   assert.equal((await invoke(s.runtime.handleClaude, { headers })).status, 200);
@@ -241,7 +246,7 @@ test("known Messages histories cannot cross an API key rotation and only hashes 
   const old = await invoke(s.runtime.handleClaude, { headers, body: { model: "any-message-model", messages: [{ role: "user", content: "synthetic" }, { role: "assistant", content: "old" }, { role: "user", content: "next" }], max_tokens: 4 } });
   assert.equal(old.status, 409);assert.equal(s.calls.length, 1);
   assert.equal((await invoke(s.runtime.handleClaude, { headers: { ...headers, "x-conversation-id": "fresh-session-only" } })).status, 200);
-  const owners = fs.readFileSync(path.join(path.dirname(accessSettingsPath({ home: s.home })), "conversation-sources.json"), "utf8");
+  const owners = fs.readFileSync(path.join(path.dirname(accessSettingsPath({ home: s.home, env: s.env })), "conversation-sources.json"), "utf8");
   for (const secret of ["synthetic-session-only", "fresh-session-only", "synthetic-key-only", "rotated-synthetic-key", "any-message-model"]) assert.equal(owners.includes(secret), false);
 });
 

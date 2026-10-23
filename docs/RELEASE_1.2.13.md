@@ -50,7 +50,7 @@ client replay.
 
 ## Verification
 
-Local `npm run verify` passed **1,496 tests: 1,486 passed, ten platform/optional
+Local `npm run verify` passed **1,497 tests: 1,487 passed, ten platform/optional
 skips, zero failures**, plus HTTP/SSE smoke, performance/resource and pack checks.
 The existing Chromium/WebKit replay passed 48 language/palette/mode/viewport cases;
 12 connection cases covered actual save/grant/bind/disable/restore flows, narrow

@@ -3,12 +3,13 @@ import { privateHelperEnvironment } from "../src/private-helper-environment.mjs"
 import path from "node:path";
 const command=path.win32.join(process.env.SystemRoot||"C:\\Windows","System32","WindowsPowerShell","v1.0","powershell.exe");
 async function probe(name,script,input,filtered=true){
- const start=Date.now();let output="",errors="",timeout=false;
+ const start=Date.now();let output="",errors="",timeout=false,exitCode=null,finish;
  const child=spawn(command,["-NoProfile","-NonInteractive","-Command",script],{env:filtered?privateHelperEnvironment(process.env):process.env,windowsHide:true,stdio:["pipe","pipe","pipe"],shell:false});
  child.stdin.on("error",()=>{});child.stdout.setEncoding("utf8");child.stderr.setEncoding("utf8");
  child.stdout.on("data",x=>{output+=x;if(output.length>4096)child.kill();});child.stderr.on("data",x=>{errors+=x;if(errors.length>4096)child.kill();});
- const timer=setTimeout(()=>{timeout=true;child.kill();},5000);
- const done=new Promise(resolve=>{child.once("error",()=>resolve({spawn_error:true}));child.once("close",(code,signal)=>resolve({code,signal}));});
+ child.once("exit",code=>{exitCode=code;});
+ const done=new Promise(resolve=>{finish=resolve;child.once("error",()=>resolve({spawn_error:true}));child.once("close",(code,signal)=>resolve({code,signal}));});
+ const timer=setTimeout(()=>{timeout=true;child.kill();child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();finish({exitCode});},5000);
  child.stdin.end(input);const result=await done;clearTimeout(timer);
  console.log(JSON.stringify({name,...result,timeout,elapsed_ms:Date.now()-start,stdout_bytes:output.length,stderr_bytes:errors.length,reply:output.trim()==="probe"?"probe":/^\d+$/.test(output.trim())?"number":output.length?"other":"empty",error_kind:/ParserError/.test(errors)?"parser":/Exception/.test(errors)?"exception":/module/i.test(errors)?"module":"none"}));
 }

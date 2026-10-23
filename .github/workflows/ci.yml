@@ -160,8 +160,11 @@ jobs:
       - name: Verify native custom model catalogs and independent client credentials on one listener
         run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
   dashboard-browsers:
-    # Keep WebKit's system codec provisioning stable; runtime jobs cover ubuntu-latest.
+    # Preinstalled browser dependencies avoid slow Azure Ubuntu archive downloads.
     runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+      options: --ipc=host
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -170,10 +173,8 @@ jobs:
           node-version: 24.x
           cache: npm
       - run: npm ci
-      - name: Provision test-only browser engines
-        run: |
-          npm install --prefix "$RUNNER_TEMP/ccdx-browser" playwright@1.62.1
-          "$RUNNER_TEMP/ccdx-browser/node_modules/.bin/playwright" install --with-deps chromium webkit
+      - name: Provision matching test-only Playwright package
+        run: npm install --prefix "$RUNNER_TEMP/ccdx-browser" playwright@1.62.1
       - name: Verify bilingual themes, small screens, timer and user-state preservation
         run: node scripts/dashboard-browser-replay.mjs --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js" --output "$RUNNER_TEMP/ccdx-dashboard-screenshots"
       - name: Verify API creation, many-to-many access, disabling and recovery

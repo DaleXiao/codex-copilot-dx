@@ -12,9 +12,10 @@ async function probe(name,script,input,filtered=true){
  const done=new Promise(resolve=>{finish=resolve;child.once("error",()=>resolve({spawn_error:true}));child.once("close",(code,signal)=>resolve({code,signal}));});
  const timer=setTimeout(()=>{timeout=true;child.kill();child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();finish({exitCode});},5000);
  child.stdin.end(input);const result=await done;clearTimeout(timer);
- console.log(JSON.stringify({name,...result,timeout,elapsed_ms:Date.now()-start,stdout_bytes:output.length,stderr_bytes:errors.length,reply:output.trim()==="probe"?"probe":/^\d+$/.test(output.trim())?"number":output.length?"other":"empty",error_kind:/ParserError/.test(errors)?"parser":/Exception/.test(errors)?"exception":/module/i.test(errors)?"module":"none"}));
+ console.log(JSON.stringify({name,...result,timeout,elapsed_ms:Date.now()-start,stdout_bytes:output.length,stderr_bytes:errors.length,stages:output.replace(/[^0-9;]/g,""),reply:output.trim()==="probe"?"probe":/^\d+$/.test(output.trim())?"number":output.length?"other":"empty",error_kind:/ParserError/.test(errors)?"parser":/Exception/.test(errors)?"exception":/module/i.test(errors)?"module":"none"}));
 }
-const utf8="[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false);[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);";
-const pure = "$ErrorActionPreference='Stop';$null=[Reflection.Assembly]::LoadWithPartialName('System.Security');$b=[Text.Encoding]::UTF8.GetBytes([Console]::In.ReadLine());$c=[Security.Cryptography.ProtectedData]::Protect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);[Console]::Write($c.Length)";
-await probe("dpapi_no_cmdlets_filtered",utf8+pure,"synthetic-probe-token\n");
-await probe("secure_string_windows_paths",utf8+"$ErrorActionPreference='Stop';$s=ConvertTo-SecureString ([Console]::In.ReadLine()) -AsPlainText -Force;$c=ConvertFrom-SecureString $s;[Console]::Write($c.Length)","synthetic-probe-token\n","windows");
+const pure = "$ErrorActionPreference='Stop';[Console]::Write('1;');$null=[Reflection.Assembly]::LoadWithPartialName('System.Security');[Console]::Write('2;');$s=[Console]::In.ReadLine();[Console]::Write('3;');$b=[Text.Encoding]::UTF8.GetBytes($s);[Console]::Write('4;');$c=[Security.Cryptography.ProtectedData]::Protect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);[Console]::Write('5;');[Console]::Write($c.Length)";
+await probe("dpapi_stages_filtered",pure,"synthetic-probe-token\n");
+await probe("dpapi_stages_full",pure,"synthetic-probe-token\n",false);
+const secure = "$ErrorActionPreference='Stop';[Console]::Write('1;');$s=[Console]::In.ReadLine();[Console]::Write('2;');$s=ConvertTo-SecureString $s -AsPlainText -Force;[Console]::Write('3;');$c=ConvertFrom-SecureString $s;[Console]::Write('4;');[Console]::Write($c.Length)";
+await probe("secure_stages_filtered",secure,"synthetic-probe-token\n","windows");

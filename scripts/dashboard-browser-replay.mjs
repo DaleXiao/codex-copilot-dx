@@ -193,6 +193,12 @@ try {
         assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
         assert.equal(await page.locator("html").getAttribute("lang"), language === "zh" ? "zh-CN" : "en");
         const nav = async route => { await page.locator(`[data-route="${route}"]`).click();await page.locator(`[data-view="${route}"]`).waitFor({ state: "visible" }); };
+        // A force refresh intentionally joins an in-flight poll. Drain its previous
+        // fixture response before requesting the newly installed synthetic state.
+        const refreshStatus = () => page.evaluate(async () => {
+          await dashboardRefresh.state("status").pending;
+          return dashboardRefresh.refresh("status", { force: true });
+        });
         // Long/short modules, status labels and scrolling must not resize the shared shell.
         const layout = await page.locator(".topbar").boundingBox();
         const titleTop = (await page.locator(".intro").boundingBox()).y;
@@ -214,7 +220,7 @@ try {
         }
         await page.evaluate(() => window.scrollTo(0, 200));
         const beforeRefreshScroll = await page.evaluate(() => scrollY);
-        await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        await refreshStatus();
         assert.equal(await page.evaluate(() => scrollY), beforeRefreshScroll, "Status refresh preserves scroll");
         assert.equal((await page.locator(".topbar").boundingBox()).y, Math.max(0, layout.y - beforeRefreshScroll), "Header sticks after reaching the viewport top");
         await nav("overview");
@@ -422,19 +428,19 @@ try {
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-checks.png`), fullPage: true });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Checks stay within the viewport");
         await nav("requests");
-        flowRequests = concurrentFlow().slice(0, 1);await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        flowRequests = concurrentFlow().slice(0, 1);await refreshStatus();
         const singlePaths = await page.locator("#flow-wires path").evaluateAll(nodes => nodes.map(node => node.getAttribute("d")));
         assert.equal(singlePaths.length, 2);assert.ok(singlePaths.every(d => !/[QV]/.test(d)), "A single route is straight");
         assert.equal(await page.locator("#flow-network .flow-count:visible").count(), 0);
         assert.match(await page.locator("#flow-apps").innerText(), /Codex App/);
         assert.equal(await page.locator("#flow-hub small").count(), 0, "Total is not repeated under the logo");
         flowRequests.push({ ...flowRequests[0], request_id: "shared-second", first_output_ms: null });
-        await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        await refreshStatus();
         assert.ok((await page.locator("#flow-wires path").evaluateAll(nodes => nodes.map(node => node.getAttribute("d")))).every(d => !/[QV]/.test(d)), "Shared concurrent route stays straight");
         assert.equal(await page.locator("#flow-network .flow-count:visible").count(), 2);
         assert.match(await page.locator("#flow-models .flow-count").innerText(), language === "zh" ? /2 个请求/ : /2 requests/);
         if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-shared-flow.png`), fullPage: true });
-        flowRequests = concurrentFlow();await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        flowRequests = concurrentFlow();await refreshStatus();
         assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "active");
         assert.equal(await page.locator("#flow-apps .flow-node").count(), 3);
         assert.equal(await page.locator("#flow-models .flow-node").count(), 3);
@@ -459,7 +465,7 @@ try {
         assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "unknown");
         assert.equal(await page.locator(".flow-packet").count(), 0, "Stale snapshots stop activity");
         await page.locator("#auto-refresh").click();
-        flowRequests = [];await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        flowRequests = [];await refreshStatus();
         assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "idle");
         assert.equal(await page.locator("#flow-state").evaluate(node => getComputedStyle(node, "::before").animationName), "flow-breathe");
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Flow remains inside the viewport");
@@ -470,10 +476,10 @@ try {
         const metadata = page.locator('#context-body .request-details[data-request-key="synthetic-recent"]');
         await metadata.locator("summary").click();
         assert.match(await metadata.innerText(), /1\.00 MiB.*0.*1,000.*15\.0%/s);
-        await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        await refreshStatus();
         assert.equal(await metadata.getAttribute("open"), "", "Unchanged reads keep request details open");
         extraRequests = [{ at: "2026-10-21T06:51:08Z", request_id: "synthetic-new", provider: "github", model: "gpt-new", outcome: "completed", context: {} }];
-        await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        await refreshStatus();
         assert.equal(await metadata.getAttribute("open"), "", "A new request keeps retained request details open");
         assert.equal(await page.locator("#recent-failures").isVisible(), true);
         assert.match(await page.locator("#recent-failures li summary").innerText(), /Microsoft 365/);

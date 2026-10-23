@@ -106,7 +106,8 @@ test("HTTP responses route retries large visual history in recovery mode without
   assert.equal(upstreamCalls, 1);
   assert.deepEqual(upstreamImageCounts, [16]);
 
-  const second = await invokeAdapter(options, {
+  // Only the deliberately stalled first request needs the 5ms handshake limit.
+  const second = await invokeAdapter({ ...options, streamHandshakeTimeoutMs: 1000 }, {
     body: {
       model: "gpt-5.6-sol",
       stream: true,

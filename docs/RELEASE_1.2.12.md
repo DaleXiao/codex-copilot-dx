@@ -68,3 +68,9 @@ file contents matched the checkout. SHA-256:
 Platform CI, package byte checks, npm publication and fresh GitHub asset receipts
 are recorded on [GitHub v1.2.12](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.2.12).
 Company mirror synchronization is checked separately from public publication.
+
+Post-release verification on main exposed a pre-existing test fixture that also
+gave the successful recovery request a 5ms handshake deadline. The fixture now
+keeps 5ms for the deliberately stalled first request and allows 1,000ms for the
+successful second request. Timeout, no-replay and reduced-image assertions remain.
+This test-only correction is on main; the published tag and package are unchanged.

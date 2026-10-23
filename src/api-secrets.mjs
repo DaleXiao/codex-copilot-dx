@@ -37,7 +37,8 @@ export function createApiSecretStore({ platform = process.platform, env = proces
       if (platform === "darwin") key = await run("/usr/bin/security", ["find-generic-password", "-s", SERVICE, "-a", id, "-w"], "", env);
       else if (platform === "win32") {
         let encrypted;try { encrypted = readBoundedFileSync(path.join(folder, id), { encoding: "utf8", maxBytes: 65536 }); } catch { throw accessError("ccdx_api_secret_unavailable", 503); }
-        key = await ps("$s=ConvertTo-SecureString ([Console]::In.ReadLine());[Console]::Write(([System.Net.NetworkCredential]::new('', $s)).Password)", encrypted);
+        if (!/^[A-Za-z0-9+/]{64,65536}={0,2}$/.test(encrypted) || encrypted.length % 4) throw accessError("ccdx_api_secret_unavailable", 503);
+        key = await ps("$null=[Reflection.Assembly]::LoadWithPartialName('System.Security');$b=[Convert]::FromBase64String([Console]::In.ReadLine());$p=[Security.Cryptography.ProtectedData]::Unprotect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);[Console]::Write([Text.Encoding]::UTF8.GetString($p))", encrypted);
       } else key = await run("/usr/bin/secret-tool", ["lookup", "service", SERVICE, "reference", id], "", env);
       checkedApiKey(key);cache.set(id, key);return key;
     },
@@ -50,8 +51,9 @@ export function createApiSecretStore({ platform = process.platform, env = proces
         const saved = await run("/usr/bin/security", ["find-generic-password", "-s", SERVICE, "-a", id, "-w"], "", env);
         if (saved !== key) throw accessError("ccdx_api_secret_unavailable", 503);
       } else if (platform === "win32") {
-        const encrypted = await ps("$s=ConvertTo-SecureString ([Console]::In.ReadLine()) -AsPlainText -Force;[Console]::Write((ConvertFrom-SecureString $s))", key);
-        if (!/^[a-f0-9]{64,65536}$/i.test(encrypted)) throw accessError("ccdx_api_secret_unavailable", 503);
+        // Use inbox .NET directly: cmdlet auto-discovery can stall in a private child environment.
+        const encrypted = await ps("$null=[Reflection.Assembly]::LoadWithPartialName('System.Security');$b=[Text.Encoding]::UTF8.GetBytes([Console]::In.ReadLine());$c=[Security.Cryptography.ProtectedData]::Protect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);[Console]::Write([Convert]::ToBase64String($c))", key);
+        if (!/^[A-Za-z0-9+/]{64,65536}={0,2}$/.test(encrypted) || encrypted.length % 4) throw accessError("ccdx_api_secret_unavailable", 503);
         fs.mkdirSync(folder, { recursive: true, mode: 0o700 });atomicWriteFileSync(path.join(folder, id), encrypted, { mode: 0o600 });
       } else await run("/usr/bin/secret-tool", ["store", "--label=CCDX API", "service", SERVICE, "reference", id], key, env);
       cache.set(id, key);

@@ -10,7 +10,9 @@ import { privateHelperEnvironment } from "./private-helper-environment.mjs";
 const SERVICE = "codex-copilot-dx.manual-api";
 export function secretProcess(command, args, input = "", env = process.env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { env: privateHelperEnvironment(env), shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    const privateEnv = privateHelperEnvironment(env);
+    const child = spawn(command, args, { env: process.platform === "win32" ? windowsPowerShellEnvironment(privateEnv) : privateEnv,
+      shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let output = "", settled = false;
     const finish = (error, value) => { if (settled) return;settled = true;clearTimeout(timer);error ? reject(accessError("ccdx_api_secret_unavailable", 503)) : resolve(value); };
     const timer = setTimeout(() => { child.kill();finish(true); }, 10000);

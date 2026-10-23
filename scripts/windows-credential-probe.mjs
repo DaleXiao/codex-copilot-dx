@@ -5,7 +5,7 @@ import { windowsPowerShellEnvironment } from "../src/windows-process.mjs";
 const command=path.win32.join(process.env.SystemRoot||"C:\\Windows","System32","WindowsPowerShell","v1.0","powershell.exe");
 async function probe(name,script,input,filtered=true){
  const start=Date.now();let output="",errors="",timeout=false,exitCode=null,finish;
- const child=spawn(command,["-NoProfile","-NonInteractive","-Command",script],{env:filtered==="fixed"?windowsPowerShellEnvironment(privateHelperEnvironment(process.env)):filtered?privateHelperEnvironment(process.env):process.env,windowsHide:true,stdio:["pipe","pipe","pipe"],shell:false});
+ const child=spawn(command,["-NoProfile","-NonInteractive","-Command",script],{env:filtered==="windows"?windowsPowerShellEnvironment(Object.fromEntries(Object.entries(process.env).filter(([k])=>Object.hasOwn(privateHelperEnvironment(process.env),k)||/^(?:USERNAME|USERDOMAIN|COMPUTERNAME|SYSTEMDRIVE|PROGRAMFILES(?:\(X86\))?|PROGRAMW6432|COMMONPROGRAMFILES(?:\(X86\))?|COMMONPROGRAMW6432|PROGRAMDATA|ALLUSERSPROFILE|OS|PROCESSOR_ARCHITECTURE|PATHEXT|COMSPEC)$/i.test(k)))):filtered?privateHelperEnvironment(process.env):process.env,windowsHide:true,stdio:["pipe","pipe","pipe"],shell:false});
  child.stdin.on("error",()=>{});child.stdout.setEncoding("utf8");child.stderr.setEncoding("utf8");
  child.stdout.on("data",x=>{output+=x;if(output.length>4096)child.kill();});child.stderr.on("data",x=>{errors+=x;if(errors.length>4096)child.kill();});
  child.once("exit",code=>{exitCode=code;});
@@ -15,19 +15,6 @@ async function probe(name,script,input,filtered=true){
  console.log(JSON.stringify({name,...result,timeout,elapsed_ms:Date.now()-start,stdout_bytes:output.length,stderr_bytes:errors.length,reply:output.trim()==="probe"?"probe":/^\d+$/.test(output.trim())?"number":output.length?"other":"empty",error_kind:/ParserError/.test(errors)?"parser":/Exception/.test(errors)?"exception":/module/i.test(errors)?"module":"none"}));
 }
 const utf8="[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false);[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);";
-await probe("write_filtered","[Console]::Write('probe')","");
-await probe("write_full","[Console]::Write('probe')","",false);
-await probe("read_line","$s=[Console]::In.ReadLine();[Console]::Write($s.Length)","synthetic-probe-token\n");
-await probe("read_utf8",utf8+"$s=[Console]::In.ReadLine();[Console]::Write($s.Length)","synthetic-probe-token\n");
-await probe("secure_string_utf8",utf8+"$s=ConvertTo-SecureString ([Console]::In.ReadLine()) -AsPlainText -Force;$c=ConvertFrom-SecureString $s;[Console]::Write($c.Length)","synthetic-probe-token\n");
-await probe("to_secure_filtered",utf8+"$s=ConvertTo-SecureString ([Console]::In.ReadLine()) -AsPlainText -Force;[Console]::Write($s.Length)","synthetic-probe-token\n");
-await probe("secure_string_full",utf8+"$s=ConvertTo-SecureString ([Console]::In.ReadLine()) -AsPlainText -Force;$c=ConvertFrom-SecureString $s;[Console]::Write($c.Length)","synthetic-probe-token\n",false);
-const dpapi="Add-Type -AssemblyName System.Security;$b=[Text.Encoding]::UTF8.GetBytes([Console]::In.ReadLine());$c=[Security.Cryptography.ProtectedData]::Protect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);[Console]::Write($c.Length)";
-await probe("dpapi_filtered",utf8+dpapi,"synthetic-probe-token\n");
-await probe("dpapi_full",utf8+dpapi,"synthetic-probe-token\n",false);
-await probe("secure_string_fixed",utf8+"$ErrorActionPreference='Stop';$s=ConvertTo-SecureString ([Console]::In.ReadLine()) -AsPlainText -Force;$c=ConvertFrom-SecureString $s;[Console]::Write($c.Length)","synthetic-probe-token\n","fixed");
-const { createApiSecretStore }=await import("../src/api-secrets.mjs");
-const fs=await import("node:fs"),os=await import("node:os"),crypto=await import("node:crypto");
-const home=fs.mkdtempSync(path.join(os.tmpdir(),"ccdx-credential-native-")),env={...process.env,XDG_CONFIG_HOME:path.join(home,"config")},store=createApiSecretStore({home,env}),ref=crypto.randomBytes(16).toString("hex");
-try{await store.set(ref,"synthetic-probe-token");store.close();const ok=(await store.get(ref))==="synthetic-probe-token";console.log(JSON.stringify({name:"store_fixed_roundtrip",ok}));if(!ok)process.exitCode=1;}
-finally{await store.remove(ref).catch(()=>{});store.close();fs.rmSync(home,{recursive:true,force:true});}
+const pure = "$ErrorActionPreference='Stop';$null=[Reflection.Assembly]::LoadWithPartialName('System.Security');$b=[Text.Encoding]::UTF8.GetBytes([Console]::In.ReadLine());$c=[Security.Cryptography.ProtectedData]::Protect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);[Console]::Write($c.Length)";
+await probe("dpapi_no_cmdlets_filtered",utf8+pure,"synthetic-probe-token\n");
+await probe("secure_string_windows_paths",utf8+"$ErrorActionPreference='Stop';$s=ConvertTo-SecureString ([Console]::In.ReadLine()) -AsPlainText -Force;$c=ConvertFrom-SecureString $s;[Console]::Write($c.Length)","synthetic-probe-token\n","windows");

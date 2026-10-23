@@ -1592,7 +1592,9 @@ MIT
 
 ### Live request flow and timing estimates
 
-Request flow is a read-only view of requests currently observed by CCDX. It groups
+Request flow is a read-only view of active Responses, Responses compaction and
+Claude Messages requests observed by CCDX; it excludes image-MCP, token counting,
+catalog and management calls. It groups
 apps and source/model pairs; a model used through two sources stays separate.
 `X-CCDX-Client` recognizes `codex-app`, `codex-cli`, `claude-app`, `claude-code`;
 known Codex `originator` values also provide labels. These are presentation hints,

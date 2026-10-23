@@ -53,7 +53,34 @@ entitlement or every upstream model's behavior.
 
 ## Verification
 
-Final local, platform CI, package-upgrade and publication receipts are attached
-to the GitHub release. Publication is gated on these checks and verified package
-bytes. The configured company registry, proxy, certificate and shell policy are
-preserved; mirror synchronization is verified separately from public publication.
+Local `npm run verify` passed **1,470 tests: 1,461 passed, nine platform/optional
+skips, zero failures**, plus HTTP smoke, SSE idle, performance/resource and pack
+checks. Chromium/WebKit passed **48** combinations of language, palette, light/dark
+mode and viewport with zero real provider calls. Concurrent app/model grouping,
+name-only selection, stale status, source tables, request retention, the removed
+focus frame, square selects, readable models, settings and reduced motion were
+covered. Two additional 360px/736px narrow-layout cases passed. Isolated
+configuration startup also passed.
+
+A real isolated **1.2.10 → 1.2.11** npm upgrade loaded sharp and the supported
+Microsoft broker on macOS arm64. The verified baseline tarball SHA-256 was
+`972e11b1a694100ce1bafeae36cdbb30011f9896b51dc15126e5606f6764356d`.
+No-Git and no-Node bootstrap, installed commands, corrupt-download retention and
+configured CONNECT proxy/private-CA download checks passed locally. TLS stayed
+strict and offline mode remained enforced.
+
+Three alternating held-stream runs per version covered 16/64/128 concurrency and
+returned active work to zero. At 128 streams, status-P95 medians were **1.478 ms**
+for 1.2.10 and **1.602 ms** for this candidate; maximum sampled RSS was
+**114.89 / 114.92 MiB**. Added observation has a small measured cost in this test;
+these synthetic results do not establish a universal speedup or real-model latency.
+Existing performance/resource budgets pass.
+
+The pack contains **200 files / 544,475 compressed bytes**, with unchanged runtime
+dependencies. All packed file contents matched the checkout. Tarball SHA-256:
+`422207f6cb1f7c0dcad1686573f691506b6d4f4f66531cc5d464db4960b59799`.
+
+Final platform CI, npm publication and freshly downloaded asset receipts are
+attached to [GitHub v1.2.11](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.2.11).
+The configured company registry, proxy, certificate and shell policy are
+preserved; mirror synchronization is checked separately from public publication.

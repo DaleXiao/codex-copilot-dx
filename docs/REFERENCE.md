@@ -1037,7 +1037,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.11/codex-copilot-dx-1.2.11.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.12/codex-copilot-dx-1.2.12.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1597,9 +1597,15 @@ Claude Messages requests observed by CCDX; it excludes image-MCP, token counting
 catalog and management calls. It groups
 apps and source/model pairs; a model used through two sources stays separate.
 `X-CCDX-Client` recognizes `codex-app`, `codex-cli`, `claude-app`, `claude-code`;
-known Codex `originator` values also provide labels. These are presentation hints,
-not verified identities. Unknown clients remain API client; unmarked Messages
-requests remain Claude (app unspecified). No user-agent inference is used.
+known Codex `originator` values also provide labels, including the actual
+`Codex Desktop` spelling. Explicit client hints take precedence, followed by known
+originators, then known versioned Codex User-Agent prefixes. A generic `codex`
+prefix identifies only the Codex family, not App versus CLI. Unknown clients are
+shown as Unidentified app (the existing `api` metadata ID is retained); unmarked
+Messages requests remain Claude (app unspecified). These are client-reported
+presentation hints, never verified identities, authorization or routing inputs.
+Only bounded scalar strings are inspected; no User-Agent/header text is retained.
+An unrelated agent containing the word Codex does not match.
 
 Only observed first output starts moving dots. A started attempt without output
 is waiting, a subsequent attempt is retrying, and terminal evidence awaiting
@@ -1613,6 +1619,13 @@ details are reported. With omitted details, observed group counts use ≥; retai
 nodes with no current detail use dashes, even while the exact total is active. Short requests between two status reads can appear only in
 the finished table; the diagram does not fabricate or replay them.
 
+A single app/source-model route has aligned name/hub anchors and straight paths,
+even when multiple requests share that route. Branches alone use rounded curves.
+Known singleton and idle-zero node counts are hidden. Concurrent counts read
+“2 requests” beside the name and outside its selected area; lower bounds retain ≥
+and missing/stale counts remain dashes. The exact active total appears once in
+the flow header, not again below the logo.
+
 Clicking an app or model name filters only active details. Counts, source totals,
 all five terminal outcomes (including unknown), last 20 finished requests and
 issues remain available. No prompt/image/credential is added to active telemetry.
@@ -1624,3 +1637,17 @@ not raw samples; the highest bucket uses the observed maximum. These are the
 upstream first-output observations already used for the mean, include failures
 after partial output, and do not measure user-perceived completion or promise a
 routing improvement. No samples displays a dash.
+
+
+### Account shortcuts and compact toolbar (1.2.12)
+
+Checks & repairs offers equal-height GitHub account / M365 account shortcuts.
+Both open the corresponding model-source page; neither starts a connection check,
+account enumeration, login or model call. Actual checks stay on that source page.
+The M365 shortcut retains link semantics and the shared button appearance.
+
+Auto refresh has content-based width, sized for the longer localized on/off label
+so toggling it does not shift nearby controls. The language control has a 40px
+minimum width, cannot flex-shrink and keeps 中文 / EN on one line. Compact toolbars
+wrap when required rather than compressing text; header position remains stable
+between modules in the same language and viewport.

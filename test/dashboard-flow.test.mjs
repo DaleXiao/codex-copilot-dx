@@ -44,7 +44,7 @@ test("flow groups concurrent work, selects only names and keeps the exact total 
   assert.equal(f.el("flow-apps").children.length, 3);
   const choice = f.el("flow-apps").children[0].children[0];choice.events.click();
   assert.equal(choice.attributes["aria-pressed"], "true");assert.equal(choice.children.length, 0);
-  assert.match(f.el("flow-total").textContent, /"count":3/);
+  assert.match(f.el("flow-state").textContent, /"count":3/);
   assert.equal(f.el("flow-active-body").children.length, 1);
   assert.equal(f.el("flow-active-body").children[0].children[3].textContent, "flow_responding");
   f.el("flow-clear").events.click();assert.equal(f.el("flow-active-body").children.length, 3);
@@ -52,12 +52,25 @@ test("flow groups concurrent work, selects only names and keeps the exact total 
   records[0].terminal_outcome = "failed";f.api.update(snapshot(records));
   assert.equal(f.el("flow-active-body").children[0].children[3].textContent, "flow_finishing");
   f.api.update(snapshot([]));assert.equal(f.el("request-flow").dataset.state, "idle");
-  assert.match(f.el("flow-apps").children[0].children[1].textContent, /^0$/);
+  assert.equal(f.el("flow-apps").children[0].children[1].hidden, true);
   f.api.update({ stream_performance: { active_requests: [records[0]], active_total: 65 } });
-  assert.equal(f.el("flow-apps").children[0].children[1].textContent, "≥1");
+  assert.match(f.el("flow-apps").children[0].children[1].textContent, /flow_count_lower.*"count":"1"/);
+  assert.equal(f.el("flow-apps").children[0].children[1].hidden, false);
   f.api.update({ stream_performance: { active_requests: [], active_total: 64 } });
   assert.equal(f.el("request-flow").dataset.state, "active");
   assert.equal(f.el("flow-apps").children[0].children[1].textContent, "—");
+});
+
+test("single observations hide counts; a shared route names the concurrent count without changing totals", () => {
+  const f = fixture(), records = [row("codex", "gpt-test"), row("codex", "gpt-test", { request_id: "second", first_output_ms: 2 })];
+  f.api.update(snapshot(records));
+  const node = f.el("flow-apps").children[0];
+  assert.equal(node.children[0].textContent, "flow_app_codex");
+  assert.equal(node.children[1].hidden, false);assert.match(node.children[1].textContent, /flow_count.*"count":"2"/);
+  assert.equal(node.children[0].children.length, 0);
+  f.api.update(snapshot([records[1]]));
+  assert.equal(node.children[1].hidden, true);assert.match(node.children[2].textContent, /^flow_responding/);
+  f.api.unavailable();assert.equal(node.children[1].hidden, false);assert.equal(node.children[1].textContent, "—");
 });
 
 test("stale, malformed and hidden flow never invent idle or replay work", () => {

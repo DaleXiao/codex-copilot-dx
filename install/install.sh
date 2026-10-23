@@ -1,7 +1,7 @@
 #!/bin/sh
 # CCDX release bootstrap. No administrator privileges or system package manager.
 set -eu
-version=1.2.11
+version=1.2.12
 base="https://github.com/DaleXiao/codex-copilot-dx/releases/download/v$version"
 permission=
 case "${1-}" in '' ) ;; --allow-remote) permission=--allow-remote ;; *) echo 'Use: sh install.sh [--allow-remote]' >&2; exit 2 ;; esac

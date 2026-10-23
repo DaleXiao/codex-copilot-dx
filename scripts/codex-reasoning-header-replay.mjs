@@ -11,6 +11,8 @@ import path from "node:path";
 process.env.CCDX_DISABLE_USAGE = "1";
 globalThis.fetch = async () => { throw Error("Real provider calls are forbidden"); };
 const { createAdapterHandler } = await import("../src/adapter.mjs");
+const { requestApplication } = await import("../src/request-application.mjs");
+const { createStreamPerformanceMetrics } = await import("../src/stream-performance.mjs");
 const args = process.argv.slice(2);
 const codex = args.length === 2 && args[0] === "--codex" ? args[1] : process.env.CCDX_CODEX_BINARY;
 assert.ok(codex && path.isAbsolute(codex), "Supply --codex /absolute/path/to/codex");
@@ -39,20 +41,26 @@ function syntheticResponse(index, compact, declaration) {
     { headers: { "content-type": "text/event-stream", ...(declaration ? { "x-reasoning-included": declaration } : {}) } });
 }
 
-async function replay(declaration, bundled) {
+async function replay(declaration, bundled, clientName, expectedApplication) {
   const home = path.join(root, declaration || "absent");
   await fs.mkdir(home);
   let requests = 0, compactions = 0, child, server;
   const forwarded = [];
   const pending = new Map(), events = [];
+  const metrics = createStreamPerformanceMetrics(), observed = new Set();
   try {
-    const handler = createAdapterHandler({ getCachedModelEndpointsFn: () => ["/responses"], responsesFn: async body => {
+    const handler = createAdapterHandler({ streamPerformanceMetrics: metrics, getCachedModelEndpointsFn: () => ["/responses"], responsesFn: async body => {
       assert.ok(++requests <= 8, "No replay/compaction loop");
       const compact = body.input.some(item => item.type === "compaction_trigger");
       if (compact) compactions += 1;
       return syntheticResponse(requests, compact, declaration);
     } });
     server = http.createServer((req, res) => {
+      if (req.url.split("?")[0] === "/v1/responses") {
+        const application = requestApplication(req.headers);
+        assert.equal(application, expectedApplication, "Classify actual official-client headers, not injected flow labels");
+        observed.add(application);
+      }
       const writeHead = res.writeHead;
       res.writeHead = function (status, headers) {
         forwarded.push(headers?.["X-Reasoning-Included"] || null);
@@ -85,7 +93,7 @@ async function replay(declaration, bundled) {
       const next = ++id; pending.set(next, { resolve, reject });
       child.stdin.write(JSON.stringify({ id: next, method, params }) + "\n");
     }), method);
-    await call("initialize", { clientInfo: { name: "ccdx-header-replay", version: "1.0" }, capabilities: { experimentalApi: true } });
+    await call("initialize", { clientInfo: { name: clientName, version: "1.0" }, capabilities: { experimentalApi: true } });
     child.stdin.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");
     const thread = await call("thread/start", { cwd: home, model: "gpt-5.5", modelProvider: "openai", approvalPolicy: "never", sandbox: "read-only" });
     for (let turn = 0; turn < 3; turn += 1) {
@@ -103,7 +111,11 @@ async function replay(declaration, bundled) {
     const messages = events.filter(event => event.method === "item/completed" && event.params.item.type === "agentMessage");
     assert.equal(messages.length, 3);
     assert.ok(messages.every(event => event.params.item.text === "Synthetic reasoning-header replay reply."));
-    return { declaration: declaration || "absent", normal_turns: 3, automatic_compactions: compactions, provider_requests: requests,
+    const identity = metrics.snapshot();
+    assert.equal(identity.active_total, 0);
+    assert.ok(identity.recent_requests.length > 0 && identity.recent_requests.every(row => row.application === expectedApplication));
+    assert.deepEqual([...observed], [expectedApplication]);
+    return { client_name: clientName, observed_application: expectedApplication, declaration: declaration || "absent", normal_turns: 3, automatic_compactions: compactions, provider_requests: requests,
       reasoning_declarations_forwarded: forwarded.filter(Boolean).length,
       last_usage: events.filter(event => /tokenUsage/.test(event.method || "")).at(-1)?.params.tokenUsage?.last };
   } finally {
@@ -122,7 +134,9 @@ try {
   const version = execFileSync(codex, ["--version"], { env: environment(root), encoding: "utf8", timeout: 10000 }).trim();
   const bundled = JSON.parse(execFileSync(codex, ["debug", "models", "--bundled"], { env: environment(root), encoding: "utf8", timeout: 10000, maxBuffer: 8 * 1024 * 1024 }));
   const results = [];
-  for (const header of [null, "true", "false"]) results.push(await replay(header, bundled));
+  for (const [header, clientName, application] of [[null, "Codex Desktop", "codex_app"], ["true", "codex_cli_rs", "codex_cli"], ["false", "codex", "codex"]]) {
+    results.push(await replay(header, bundled, clientName, application));
+  }
   assert.equal(results[1].reasoning_declarations_forwarded, results[1].provider_requests);
   assert.equal(results[0].reasoning_declarations_forwarded, 0);
   assert.equal(results[2].reasoning_declarations_forwarded, 0);

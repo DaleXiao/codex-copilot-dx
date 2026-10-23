@@ -8,6 +8,7 @@ import os from "node:os";
 import { createServiceControl } from "../src/service-control.mjs";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { summarizeUsage } from "../src/usage-store.mjs";
+import { requestApplication } from "../src/request-application.mjs";
 
 const args = process.argv.slice(2);
 const options = new Map();
@@ -30,7 +31,7 @@ let modelActivity = 2;
 let extraRequests = [];
 let flowRequests = [];
 const concurrentFlow = () => [
-  { request_id: "flow-codex", application: "codex_app", provider: "github", model: "gpt-test", first_output_ms: 100, upstream_attempts: 1, elapsed_ms: 1200 },
+  { request_id: "flow-codex", application: requestApplication({ originator: "Codex Desktop" }), provider: "github", model: "gpt-test", first_output_ms: 100, upstream_attempts: 1, elapsed_ms: 1200 },
   { request_id: "flow-code", application: "claude_code", provider: "m365", model: "claude-test", first_output_ms: 200, upstream_attempts: 1, elapsed_ms: 1000 },
   { request_id: "flow-app", application: "claude_app", provider: "m365", model: "claude-other", first_output_ms: null, upstream_attempts: 2, elapsed_ms: 900 },
 ];
@@ -195,6 +196,14 @@ try {
         // Long/short modules, status labels and scrolling must not resize the shared shell.
         const layout = await page.locator(".topbar").boundingBox();
         const titleTop = (await page.locator(".intro").boundingBox()).y;
+        const languageStyle = await page.locator("#language-toggle").evaluate(node => ({ whiteSpace: getComputedStyle(node).whiteSpace, shrink: getComputedStyle(node).flexShrink, width: node.getBoundingClientRect().width,
+          lines: (() => { const range = document.createRange();range.selectNodeContents(node);return range.getClientRects().length; })() }));
+        assert.equal(languageStyle.whiteSpace, "nowrap");assert.equal(languageStyle.shrink, "0");assert.ok(languageStyle.width >= 40);assert.equal(languageStyle.lines, 1, "中文 / EN stays on one line");
+        const automaticWidth = (await page.locator("#auto-refresh").boundingBox()).width;
+        assert.ok(automaticWidth <= (language === "zh" ? 125 : 160), "Auto refresh uses localized content width");
+        await page.locator("#auto-refresh").click();
+        assert.equal((await page.locator("#auto-refresh").boundingBox()).width, automaticWidth, "On/off does not change button width");
+        await page.locator("#auto-refresh").click();
         for (const route of ["codex", "claude", "usage", "requests", "checks", "overview"]) {
           await nav(route);
           const header = await page.locator(".topbar").boundingBox();
@@ -391,6 +400,14 @@ try {
         const iconColors = { green: ["#a6f5a8", "#176b3a"], klein: ["#789aff", "#002fa7"], pink: ["#f3a8c8", "#a83e68"] };
         assert.ok(icon.includes(iconColors[palette][theme === "dark" ? 0 : 1]));
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "No whole-page horizontal overflow");
+        await nav("checks");
+        const entries = page.locator('[data-view="checks"] .account-entry');
+        assert.equal(await entries.count(), 2);
+        const entryBoxes = await entries.evaluateAll(nodes => nodes.map(node => { const rect = node.getBoundingClientRect();return { height: rect.height, y: rect.y, decoration: getComputedStyle(node).textDecorationLine }; }));
+        assert.equal(entryBoxes[0].height, 36);assert.equal(entryBoxes[1].height, 36);assert.equal(entryBoxes[0].y, entryBoxes[1].y);assert.equal(entryBoxes[1].decoration, "none");
+        await entries.nth(1).click();await page.waitForFunction(() => !document.getElementById("m365-source-access").hidden);
+        assert.equal(accountChecks, 1, "Navigation does not silently enumerate accounts");
+        await nav("checks");await page.locator("#check-account-link").click();await page.waitForFunction(() => !document.getElementById("github-account").hidden);
         await nav("checks");await page.locator("#check-local").click();
         await page.waitForFunction(() => document.getElementById("checks-body").children.length > 0);
         assert.equal(await page.locator("#checks-body .state-warning .state-icon").count(), 1);
@@ -405,6 +422,18 @@ try {
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-checks.png`), fullPage: true });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Checks stay within the viewport");
         await nav("requests");
+        flowRequests = concurrentFlow().slice(0, 1);await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        const singlePaths = await page.locator("#flow-wires path").evaluateAll(nodes => nodes.map(node => node.getAttribute("d")));
+        assert.equal(singlePaths.length, 2);assert.ok(singlePaths.every(d => !/[QV]/.test(d)), "A single route is straight");
+        assert.equal(await page.locator("#flow-network .flow-count:visible").count(), 0);
+        assert.match(await page.locator("#flow-apps").innerText(), /Codex App/);
+        assert.equal(await page.locator("#flow-hub small").count(), 0, "Total is not repeated under the logo");
+        flowRequests.push({ ...flowRequests[0], request_id: "shared-second", first_output_ms: null });
+        await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        assert.ok((await page.locator("#flow-wires path").evaluateAll(nodes => nodes.map(node => node.getAttribute("d")))).every(d => !/[QV]/.test(d)), "Shared concurrent route stays straight");
+        assert.equal(await page.locator("#flow-network .flow-count:visible").count(), 2);
+        assert.match(await page.locator("#flow-models .flow-count").innerText(), language === "zh" ? /2 个请求/ : /2 requests/);
+        if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-shared-flow.png`), fullPage: true });
         flowRequests = concurrentFlow();await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
         assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "active");
         assert.equal(await page.locator("#flow-apps .flow-node").count(), 3);
@@ -416,8 +445,8 @@ try {
         assert.equal(await page.locator("#flow-active-body tr").count(), 1);
         const selectedName = page.locator('.flow-choice[aria-pressed="true"]');
         assert.equal(await selectedName.locator(".flow-count").count(), 0);
-        assert.ok((await selectedName.boundingBox()).width < (await selectedName.locator("..").boundingBox()).width);
-        assert.match(await page.locator("#flow-total").innerText(), /3/);
+        assert.equal(await page.locator("#flow-apps .flow-count:visible").count(), 0, "Known singleton counts are hidden");
+        assert.match(await page.locator("#flow-state").innerText(), /3/);
         await page.locator("#flow-clear").click();
         assert.equal(await page.locator("#flow-active-body tr").count(), 3);
         assert.match(await page.locator("#flow-active-body").innerText(), language === "zh" ? /正在重试/ : /Retrying/);

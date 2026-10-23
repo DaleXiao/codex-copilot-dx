@@ -378,7 +378,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
 const autoRefreshKey = "ccdx.dashboard.autoRefresh";
 const updateAutoRefresh = () => {
   element("auto-refresh").setAttribute("aria-pressed", String(dashboardRefresh.automatic));
-  text("auto-refresh", dashboardRefresh.automatic ? "auto_refresh_on" : "auto_refresh_off");
+  text("auto-refresh-label", dashboardRefresh.automatic ? "auto_refresh_on" : "auto_refresh_off");
 };
 let automatic = true;
 try { automatic = localStorage.getItem(autoRefreshKey) !== "off"; } catch { /* Keep the default when browser storage is unavailable. */ }

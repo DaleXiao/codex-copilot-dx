@@ -497,3 +497,30 @@ instructions are removed; operation scope, effect timing and privacy remain near
 the relevant controls or in details. Tables retain header/interior separators;
 the last row and following details use whitespace. Programmatic main-content
 focus has no frame; interactive keyboard focus remains visible.
+
+
+## Flow layout and client-hint correction (1.2.12)
+
+`request-application.mjs` normalizes bounded scalar hints using an explicit map.
+The map now recognizes `Codex Desktop`, observed in local desktop session metadata
+and replayed through the bundled official app-server, as well as existing compact
+names. A bounded, anchored, versioned Codex User-Agent is a fallback only. Generic
+Codex evidence maps to a new `codex` family label; the existing `api` value remains
+the unknown fallback. No raw hint is stored, and this classification does not
+participate in routing, security, credentials or provider affinity.
+
+Flow sources/status notes sit outside the name's layout height; both node columns
+share the same header track. The hub shares that track offset. SVG anchors use
+measured name-button centers, replacing fixed pixel assumptions. This keeps single
+and shared concurrent routes straight across locale/wrapping changes. Branches
+reuse the existing rounded-path geometry. Model counts are inline siblings of the
+name, with reserved narrow-layout space; singleton counts and duplicate hub totals
+are removed. Existing caps, freshness, pause/reduced-motion behavior, selection
+scope and global summary semantics are unchanged.
+
+The toolbar measures its longer localized on/off text with an inaccessible,
+visually hidden grid sibling; only its visible label is localized dynamically.
+Language controls have intrinsic width and no-wrap/no-shrink. Shared button-link
+styling keeps the M365 navigation link semantically a link while matching the
+existing GitHub shortcut; wording describes navigation rather than a silent check.
+No new polling, framework, runtime dependency, setting or endpoint is introduced.

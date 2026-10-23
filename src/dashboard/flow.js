@@ -2,7 +2,7 @@
   const root = document.getElementById("request-flow");
   if (!root) return;
   const el = id => document.getElementById(id), ns = "http://www.w3.org/2000/svg";
-  const clients = new Set(["codex_app", "codex_cli", "claude_app", "claude_code", "claude", "api"]);
+  const clients = new Set(["codex_app", "codex_cli", "codex", "claude_app", "claude_code", "claude", "api"]);
   const label = (node, key, values = {}) => globalThis.ccdxLanguage.set(node, key, values);
   const format = (key, values = {}) => globalThis.ccdxLanguage.format(key, values);
   const nodes = { apps: new Map(), models: new Map() };
@@ -35,18 +35,14 @@
       if (!map.has(id)) map.set(id, { id, provider: row.provider, model: row.model, rows: [] });
       map.get(id).rows.push(row);
     }
-    const order = ["codex_app", "codex_cli", "claude_code", "claude_app", "claude", "api"];
+    const order = ["codex_app", "codex_cli", "codex", "claude_code", "claude_app", "claude", "api"];
     return [...map.values()].sort((a, b) => type === "apps" ? order.indexOf(a.id) - order.indexOf(b.id) : a.id.localeCompare(b.id));
   }
   function project(type, groups) {
     const target = el(type === "apps" ? "flow-apps" : "flow-models"), cache = nodes[type], fragments = [];
     const ids = new Set(groups.map(group => group.id));
     for (const [id, node] of cache) if (!ids.has(id)) { node.remove();cache.delete(id); }
-    let priorSource = null;
     for (const group of groups) {
-      if (type === "models" && group.provider !== priorSource) {
-        const heading = entry("div", "flow-source");heading.textContent = sourceName(group.provider);fragments.push(heading);priorSource = group.provider;
-      }
       let node = cache.get(group.id);
       if (!node) {
         node = entry("div", "flow-node");
@@ -55,17 +51,21 @@
           selected = selected?.type === type && selected.id === group.id ? null : { type, id: group.id };
           el("flow-active").open = Boolean(selected);lastSignature = "";render();
         });
-        node.append(button, count, note);cache.set(group.id, node);
+        node.append(button, count, note);
+        if (type === "models") node.append(entry("span", "flow-source"));
+        cache.set(group.id, node);
       }
       const [button, count, note] = node.children;
       button.textContent = type === "apps" ? appName(group.id) : modelName(group.model);
       button.setAttribute("aria-pressed", String(selected?.type === type && selected.id === group.id));
-      count.textContent = fresh && (group.rows.length || total === 0)
-        ? `${omitted && group.rows.length ? "≥" : ""}${group.rows.length.toLocaleString()}` : "—";
+      count.hidden = fresh && omitted === 0 && group.rows.length < 2;
+      if (fresh && (group.rows.length || total === 0)) label(count, omitted ? "flow_count_lower" : "flow_count", { count: group.rows.length.toLocaleString() });
+      else count.textContent = "—";
+      if (type === "models") node.children[3].textContent = sourceName(group.provider);
       const output = group.rows.filter(responding).length;
       const phase = group.rows.every(row => row.terminal_outcome) ? "flow_finishing"
         : group.rows.every(row => row.upstream_attempts > 1) ? "flow_retrying" : "flow_waiting";
-      label(note, !fresh || total && !group.rows.length ? "flow_last_observed" : !group.rows.length ? "flow_idle" : output ? "flow_group_response" : phase, { count: output });
+      label(note, !fresh || total && !group.rows.length ? "flow_last_observed" : !group.rows.length ? "flow_idle" : output ? group.rows.length === 1 ? "flow_responding" : "flow_group_response" : phase, { count: output });
       node.dataset.related = String(!selected || group.rows.some(related));fragments.push(node);
     }
     // Keep existing buttons and their focus when counts or phases change.
@@ -102,7 +102,6 @@
     const state = el("flow-state");
     if (fresh && total === 0) label(state, "flow_idle");
     else globalThis.ccdxIcons?.set(state, !fresh ? "flow_status_unknown" : "flow_total", !fresh ? "unavailable" : "running", { count: total });
-    label(el("flow-total"), fresh ? "flow_total" : "flow_last_observed", { count: total });
     label(el("flow-caption"), !fresh ? "flow_status_unknown" : omitted ? "flow_omitted" : selected ? "flow_related_count" : total ? "flow_group_scope" : "flow_no_active",
       { count: rows.filter(related).length, omitted, apps: apps.length, models: allModels.length });
     el("flow-clear").hidden = !selected;
@@ -124,9 +123,9 @@
     if (!rect.width) return;
     for (const type of ["apps", "models"]) for (const [id, node] of nodes[type]) {
       if (!node.isConnected) continue;
-      const box = node.getBoundingClientRect(), left = type === "apps";
-      const x0 = (left ? box.right : hub.right) - rect.left + inset, y0 = (left ? box.top + 17 : hub.top + hub.height / 2) - rect.top;
-      const x1 = (left ? hub.left : box.left) - rect.left - inset, y1 = (left ? hub.top + hub.height / 2 : box.top + 17) - rect.top;
+      const box = node.getBoundingClientRect(), button = node.children[0].getBoundingClientRect(), left = type === "apps";
+      const x0 = (left ? box.right : hub.right) - rect.left + inset, y0 = (left ? button.top + button.height / 2 : hub.top + hub.height / 2) - rect.top;
+      const x1 = (left ? hub.left : box.left) - rect.left - inset, y1 = (left ? hub.top + hub.height / 2 : button.top + button.height / 2) - rect.top;
       if (x1 <= x0) continue;
       const matches = rows.filter(row => (left ? row.application : modelKey(row)) === id && related(row));
       edges.push({ d: rounded(x0, y0, x1, y1), active: fresh && matches.length > 0, moving: fresh && matches.some(responding), dim: node.dataset.related === "false", x: left ? x0 : x1, y: left ? y0 : y1, left });

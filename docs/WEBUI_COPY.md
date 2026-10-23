@@ -601,3 +601,17 @@
 | system | 下载官方安装器，无需 Git。 | 改为区域标签 | 完整安装指令 · 无需 Git；安装帮助展开项 | Full installation commands · No Git required |
 | system | 复用可用的 Node/npm，否则安装专用运行环境。 / 保留镜像、代理、证书和脚本策略。 | 保留并分条 | 缺少 Node/npm 时安装专用运行环境。保留镜像、代理、证书和脚本策略。；安装帮助内 | Installs a private runtime if Node/npm is missing. Keeps registry, proxy, certificates and script policy. |
 | system | 若公司禁止运行脚本，请使用公司批准的安装方式。 | 条件保留 | 脚本受限时，请使用公司批准的安装方式。；仅 Windows 安装帮助显示 | If scripts are blocked, use your company-approved installation method. |
+
+
+## 1.2.12 流向与入口纠正
+
+| 原文案 / 表现 | 新文案 / 表现 | 范围 |
+| --- | --- | --- |
+| 远离名称的裸数字 1 | 单请求隐藏；并发显示“2 个请求” / “2 requests” | 数量在选中名称之外；缺失保留 —，下限保留 ≥ |
+| API 客户端 / API client | 未识别应用 / Unidentified app | 未匹配标记时不声称已识别客户端 |
+| 无法区分 App / CLI 的 Codex | Codex | 仅确认家族，不猜具体应用 |
+| 检查 GitHub 连接 / Check GitHub connection | GitHub 账号 / GitHub account | 仅跳转到来源页 |
+| 查看 M365 账号 / View M365 account | M365 账号 / M365 account | 同级入口、同高按钮外观；保持链接语义 |
+| Logo 下重复请求总数 | 仅保留右上角总数 | 汇总表、活动详情和结果字段仍保留 |
+
+固定配色、命令行英文、网页双语及真实加载/失败/保存反馈保持原有语义。

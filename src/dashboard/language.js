@@ -1,5 +1,10 @@
 (() => {
   const translations = {
+    "github_account_entry": ["GitHub account", "GitHub 账号"],
+    "m365_account_entry": ["M365 account", "M365 账号"],
+    "flow_count": ["{count} requests", "{count} 个请求"],
+    "flow_count_lower": ["≥{count} requests", "≥{count} 个请求"],
+    "flow_app_codex": ["Codex", "Codex"],
     "prediction_first_setup": ["Quit Codex before first setup: ccdx prediction on", "首次配置前请退出 Codex：ccdx prediction on"],
     "image_first_setup": ["First setup: ccdx enable-image", "首次配置：ccdx enable-image"],
     "record_scope": ["Record scope", "记录范围"],
@@ -29,7 +34,7 @@
     "flow_app_claude_app": ["Claude App", "Claude App"],
     "flow_app_claude_code": ["Claude Code", "Claude Code"],
     "flow_app_claude": ["Claude (app unspecified)", "Claude（未区分应用）"],
-    "flow_app_api": ["API client", "API 客户端"],
+    "flow_app_api": ["Unidentified app", "未识别应用"],
     "flow_source_unknown": ["Source unknown", "来源未知"],
     "flow_model_unknown": ["Model not identified", "未识别模型"],
     "flow_responding": ["Responding", "响应中"],

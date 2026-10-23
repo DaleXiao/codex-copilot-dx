@@ -26,7 +26,6 @@
     "api_choose_replacements": ["Choose another source or pause each affected client.", "为受影响的客户端换源，或暂停接入。"],
     "api_confirm_disable": ["Disable", "确认关闭"],
     "api_pause": ["Pause access", "暂停接入"],
-    "api_builtin": ["Built in", "内置来源"],
     "api_allowed_summary": ["Allowed: {clients}", "允许使用：{clients}"],
     "api_none": ["Not assigned", "暂未分配"],
     "api_account": ["Account", "查看账号"],

@@ -99,7 +99,11 @@ test("OS secrets use private stdin, cache reads, and fail without plaintext fall
     await store.set(ref, key);assert.equal(await store.get(ref), key);
     assert.ok(calls.every(call => !call.args.join(" ").includes(key)));assert.equal(calls[0].input.includes(key), true);
     store.close();assert.equal(await store.get(ref), key);store.close();
-    if (platform === "win32") assert.equal(fs.readFileSync(path.join(path.dirname(accessSettingsPath({ home, env: {} })), "api-secrets", ref), "utf8").includes(key), false);
+    if (platform === "win32") {
+      const file = path.join(path.dirname(accessSettingsPath({ home, env: {} })), "api-secrets", ref);
+      assert.equal(fs.readFileSync(file, "utf8").includes(key), false);assert.ok(calls[0].args.at(-1).includes("ProtectedData]::Protect"));
+      const before = calls.length;fs.writeFileSync(file, "not encrypted bytes");await assert.rejects(store.get(ref), { code: "ccdx_api_secret_unavailable" });assert.equal(calls.length, before);
+    }
     const blocked = createApiSecretStore({ home, env: {}, platform, run: async () => { throw Error("private detail"); } });await assert.rejects(blocked.set("c".repeat(32), key));
     assert.equal(fs.existsSync(accessSettingsPath({ home, env: {} })), false);
   }

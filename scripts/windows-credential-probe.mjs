@@ -19,3 +19,8 @@ await probe("write_full","[Console]::Write('probe')","",false);
 await probe("read_line","$s=[Console]::In.ReadLine();[Console]::Write($s.Length)","synthetic-probe-token\n");
 await probe("read_utf8",utf8+"$s=[Console]::In.ReadLine();[Console]::Write($s.Length)","synthetic-probe-token\n");
 await probe("secure_string_utf8",utf8+"$s=ConvertTo-SecureString ([Console]::In.ReadLine()) -AsPlainText -Force;$c=ConvertFrom-SecureString $s;[Console]::Write($c.Length)","synthetic-probe-token\n");
+await probe("to_secure_filtered",utf8+"$s=ConvertTo-SecureString ([Console]::In.ReadLine()) -AsPlainText -Force;[Console]::Write($s.Length)","synthetic-probe-token\n");
+await probe("secure_string_full",utf8+"$s=ConvertTo-SecureString ([Console]::In.ReadLine()) -AsPlainText -Force;$c=ConvertFrom-SecureString $s;[Console]::Write($c.Length)","synthetic-probe-token\n",false);
+const dpapi="Add-Type -AssemblyName System.Security;$b=[Text.Encoding]::UTF8.GetBytes([Console]::In.ReadLine());$c=[Security.Cryptography.ProtectedData]::Protect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);[Console]::Write($c.Length)";
+await probe("dpapi_filtered",utf8+dpapi,"synthetic-probe-token\n");
+await probe("dpapi_full",utf8+dpapi,"synthetic-probe-token\n",false);

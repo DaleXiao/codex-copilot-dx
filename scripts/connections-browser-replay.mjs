@@ -13,10 +13,10 @@ const options = new Map();for (let i = 2; i < process.argv.length; i += 2) optio
 const module = await import(options.get("--playwright")), { chromium, webkit } = module.default || module;
 process.env.CCDX_DISABLE_USAGE = "1";globalThis.fetch = async () => { throw new Error("Live provider calls are forbidden"); };
 const report = [];let discoveries = 0;
-for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]]) {
+for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter(([name]) => !options.get("--engines") || options.get("--engines").split(",").includes(name))) {
   const browser = await type.launch({ headless: true });
   try {
-    for (const palette of ["green", "klein", "pink"]) for (const mode of ["light", "dark"]) {
+    for (const palette of (options.get("--palettes") || "green,klein,pink").split(",")) for (const mode of (options.get("--modes") || "light,dark").split(",")) {
       const width = mode === "light" ? 360 : 1280, language = palette === "klein" ? "en" : "zh";
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-connections-browser-")), env = { CCDX_M365: "0" }, values = new Map();
       let runtime, handler;
@@ -33,7 +33,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]]) {
           secretStore: { get: async id => values.get(id), set: async (id, key) => { values.set(id, key); }, remove: async id => { values.delete(id); }, close() {} },
           inspectDesktop: async () => false, configureClaude: input => ({ [input.client === "claude_app" ? "app" : "code"]: "configured" }), restoreClaude: () => ({ preserved: 0 }),
           createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, fetch: async (_url, init) => {
-            assert.equal(init.method, "GET");discoveries++;return Response.json({ data: [{ id: "catalog-only" }] });
+            assert.equal(init.method, "GET");discoveries++;return Response.json({ data: ["claude-replay", "response-replay", ...Array.from({ length: 6 }, (_, i) => "unselected-" + i)].map(id => ({ id })) });
           } }) }) });
         const serviceControl = createServiceControl({ home: root, env, providerRuntime: runtime });
         handler = createAdapterHandler({ providerRuntime: runtime, dashboardOptions: { home: root, env, serviceControl,
@@ -45,13 +45,35 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]]) {
         await page.locator("#connection-name").fill(sampleName);await page.locator("#connection-base").fill("https://api.example.test/v1");await page.locator("#connection-base").blur();
         await page.locator("#connection-key").fill("synthetic-key-no-network");
         for (const id of ["codex", "claude_app", "claude_code"]) await page.locator(`#connection-allowed-clients input[value="${id}"]`).check();
-        for (const [id, protocol] of [["claude-replay", "messages"], ["response-replay", "responses"]]) {
-          await page.locator("#connection-model-id").fill(id);await page.locator("#connection-model-add").click();
-          await page.locator("#connection-models tr").filter({ hasText: id }).locator(`input[value="${protocol}"]`).check();
-        }
         const fits = async () => assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "No horizontal page overflow");
         await fits();await page.locator('#connection-api-form button[type="submit"]').click();await page.locator("#connection-editor").waitFor({ state: "hidden" });
         const id = runtime.connections().providers.find(p => !p.builtin).id;
+        assert.equal(runtime.connections().providers.find(p => p.id === id).models.length, 0);
+        await page.locator("#connection-client-list .connection-row").filter({ hasText: "Claude App" }).locator("button").click();
+        assert.equal(await page.locator(`#connection-client-allowed input[value="${id}"]`).isChecked(), true, "Source grants remain intact before model setup");
+        assert.equal(await page.locator(`#connection-current option[value="${id}"]`).count(), 0, "A source with no compatible models cannot be selected yet");
+        await page.locator("#connection-client-cancel").click();
+        await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).locator("button").click();
+        await page.locator("#connection-discover").click();
+        await page.waitForFunction(() => document.querySelectorAll("#connection-models tr").length === 8);
+        assert.equal(await page.locator("#connection-manual-model").getAttribute("open"), null, "Manual IDs remain an optional collapsed entry");
+        const unconfigured = page.locator("#connection-models tr").filter({ hasText: "unselected-0" });
+        await unconfigured.locator('input[name="selected-model"]').check();await page.locator('#connection-api-form button[type="submit"]').click();
+        assert.equal(runtime.connections().providers.find(p => p.id === id).models.length, 0, "A selected model without APIs cannot overwrite saved data");
+        assert.match(await page.locator("#connection-note").innerText(), /unselected-0/);await unconfigured.locator('input[name="selected-model"]').uncheck();
+        await page.locator("#connection-models tr").filter({ hasText: "claude-replay" }).locator('input[name="selected-model"]').check();
+        for (const [model, protocol] of [["claude-replay", "messages"], ["response-replay", "responses"]]) {
+          await page.locator("#connection-models tr").filter({ hasText: model }).locator(`input[value="${protocol}"]`).check();
+        }
+        assert.equal(await page.locator('#connection-models input[name="selected-model"]:checked').count(), 2, "Checking an API selects its model");
+        assert.equal(await page.locator("#connection-model-id").inputValue(), "", "Catalog selection does not require typing an ID");
+        assert.equal(await page.locator('#connection-models tr').first().locator('input[value="chat"]').isDisabled(), true);
+        if (options.get("--output")) { fs.mkdirSync(options.get("--output"), { recursive: true });await page.locator("#connection-editor").screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}-model-selection.png`) }); }
+        await page.locator('#connection-api-form button[type="submit"]').click();
+        try { await page.locator("#connection-editor").waitFor({ state: "hidden" }); }
+        catch (error) { console.error("Model save message:", await page.locator("#connection-note").innerText());throw error; }
+        assert.deepEqual(runtime.connections().providers.find(p => p.id === id).models.map(m => m.id), ["claude-replay", "response-replay"]);
+
         assert.equal(fs.readFileSync(accessSettingsPath({ home: root, env }), "utf8").includes("synthetic-key-no-network"), false);
         assert.equal(await page.locator("#connection-key").inputValue(), "");assert.equal(await page.locator("#connection-source-list img").count(), 0);
         for (const name of ["Claude App", "Codex App"]) {
@@ -75,5 +97,5 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]]) {
     }
   } finally { await browser.close(); }
 }
-assert.equal(discoveries, 0, "Saving and assigning must not probe the upstream");
-console.log(JSON.stringify({ cases: report.length, results: report, live_provider_calls: 0, implicit_catalog_requests: discoveries }));
+assert.equal(discoveries, report.length, "Only one explicit catalog read per case; saving and assigning must not probe");
+console.log(JSON.stringify({ cases: report.length, results: report, live_provider_calls: 0, explicit_catalog_requests: discoveries, implicit_catalog_requests: 0 }));

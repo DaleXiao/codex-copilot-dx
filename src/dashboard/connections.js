@@ -1,12 +1,14 @@
 (() => {
   const el = id => document.getElementById(id), root = el("connection-sources");if (!root) return;
   const words = (node, key, args) => globalThis.ccdxLanguage.set(node, key, args), format = key => globalThis.ccdxLanguage.format(key);
-  let data = null, editing = null, editingClient = null, disabling = null, models = [], busy = false, generation = 0;
+  let data = null, editing = null, editingClient = null, disabling = null, models = [], selectedModels = new Set(), busy = false, generation = 0;
   const apiForm = el("connection-api-form"), clientForm = el("connection-client-form");
   const node = (tag, text, className) => { const item = document.createElement(tag);if (text !== undefined) item.textContent = text;if (className) item.className = className;return item; };
   const source = id => data.providers.find(item => item.id === id), client = id => data.clients.find(item => item.id === id);
   const compatible = (provider, id) => provider.protocols.includes(id === "codex" ? "responses" : "messages");
-  const message = key => words(el("connection-note"), key);
+  const selectableSource = (provider, id) => compatible(provider, id)
+    && (provider.builtin || provider.models?.some(model => model.protocols.includes(id === "codex" ? "responses" : "messages")));
+  const message = (key, values) => words(el("connection-note"), key, values);
   function button(key, action) { const item = node("button");item.type = "button";words(item, key);item.addEventListener("click", action);return item; }
   function check(name, value, checked, text) { const label = node("label"), input = node("input");input.type = "checkbox";input.name = name;input.value = value;input.checked = checked;label.append(input, node("span", text));return label; }
   async function api(input) {
@@ -81,12 +83,19 @@
   function modelRows() {
     const body = el("connection-models");body.replaceChildren();
     for (const model of models) {
-      const tr = node("tr"), name = node("td", model.id), apis = node("td"), actions = node("td"), group = node("div", undefined, "connection-checks");
+      const tr = node("tr"), name = node("td"), apis = node("td"), actions = node("td"), group = node("div", undefined, "connection-checks");
+      tr.dataset.model = model.id;
+      const selection = check("selected-model", model.id, selectedModels.has(model.id), model.id);
+      selection.firstChild.addEventListener("change", e => { if (e.target.checked) selectedModels.add(model.id);else selectedModels.delete(model.id); });name.append(selection);
       for (const protocol of ["messages", "responses", "chat"]) {
         const label = check("model-api", protocol, model.protocols.includes(protocol), protocol === "chat" ? "Chat" : protocol === "messages" ? "Messages" : "Responses");
-        label.firstChild.addEventListener("change", e => { model.protocols = [...new Set([...model.protocols.filter(api => api !== protocol), ...(e.target.checked ? [protocol] : [])])]; });group.append(label);
+        label.firstChild.disabled = !apiForm.querySelector(`[name="protocol"][value="${protocol}"]`).checked;
+        label.firstChild.addEventListener("change", e => {
+          model.protocols = [...new Set([...model.protocols.filter(api => api !== protocol), ...(e.target.checked ? [protocol] : [])])];
+          if (e.target.checked) { selectedModels.add(model.id);selection.firstChild.checked = true; }
+        });group.append(label);
       }
-      apis.append(group);actions.append(button("api_remove_model", () => { models = models.filter(item => item !== model);modelRows(); }));tr.append(name, apis, actions);body.append(tr);
+      apis.append(group);actions.append(button("api_remove_model", () => { models = models.filter(item => item !== model);selectedModels.delete(model.id);modelRows(); }));tr.append(name, apis, actions);body.append(tr);
     }
   }
   function setEndpoints(base, endpoints) { for (const [api, path] of [["messages", "messages"], ["responses", "responses"], ["chat", "chat/completions"]]) apiForm.elements[api + "_url"].value = endpoints?.[api] || base.replace(/\/+$/, "") + "/" + path; }
@@ -99,23 +108,33 @@
     for (const input of apiForm.querySelectorAll('[name="protocol"]')) input.checked = provider ? provider.protocols.includes(input.value) : input.value !== "chat";
     setEndpoints(provider?.base_url || "", provider?.endpoints);
     const allowed = el("connection-allowed-clients");allowed.replaceChildren(...data.clients.filter(c => c.enabled).map(c => check("allowed", c.id, c.allowed.includes(editing), c.name)));
-    models = structuredClone(provider?.models || []);modelRows();el("connection-discover").disabled = !editing;el("connection-model-id").value = "";
+    models = structuredClone(provider?.models || []);selectedModels = new Set(models.map(model => model.id));modelRows();el("connection-manual-model").open = false;el("connection-discover").disabled = !editing;el("connection-model-id").value = "";
   }
   apiForm.elements.base.addEventListener("change", () => setEndpoints(apiForm.elements.base.value));
+  for (const input of apiForm.querySelectorAll('[name="protocol"]')) input.addEventListener("change", () => {
+    const available = new Set([...apiForm.querySelectorAll('[name="protocol"]:checked')].map(item => item.value));
+    for (const model of models) model.protocols = model.protocols.filter(api => available.has(api));modelRows();
+  });
   function keyMode() { const external = Boolean(apiForm.elements.key_env.value.trim());apiForm.elements.key.disabled = external;apiForm.elements.key.required = !external && !editing;if (external) apiForm.elements.key.value = ""; }
   apiForm.elements.key_env.addEventListener("input", keyMode);
   apiForm.addEventListener("submit", e => {
     e.preventDefault();if (busy || !apiForm.reportValidity()) return;
+    const chosenModels = models.filter(model => selectedModels.has(model.id));
+    const invalid = chosenModels.find(model => !model.protocols.length);
+    if (invalid) {
+      message("api_model_protocol_required", { model: invalid.id });
+      [...el("connection-models").children].find(row => row.dataset.model === invalid.id)?.querySelector('input[name="model-api"]:not(:disabled)')?.focus();return;
+    }
     const endpoints = Object.fromEntries([...apiForm.querySelectorAll('[name="protocol"]:checked')].map(input => [input.value, apiForm.elements[input.value + "_url"].value.trim()]));
     const key = apiForm.elements.key.value;apiForm.elements.key.value = "";
     void change({ operation: "save_api", ...(editing ? { id: editing } : {}), key,
-      config: { name: apiForm.elements.name.value.trim(), base_url: apiForm.elements.base.value.trim().replace(/\/+$/, ""), endpoints, auth_header: apiForm.elements.auth_header.value, models,
+      config: { name: apiForm.elements.name.value.trim(), base_url: apiForm.elements.base.value.trim().replace(/\/+$/, ""), endpoints, auth_header: apiForm.elements.auth_header.value, models: chosenModels,
         ...(apiForm.elements.key_env.value.trim() ? { key_env: apiForm.elements.key_env.value.trim() } : {}) },
       allowed: [...apiForm.querySelectorAll('[name="allowed"]:checked')].map(input => input.value).concat(data.clients.filter(c => !c.enabled && c.allowed.includes(editing)).map(c => c.id)) });
   });
   el("connection-model-add").addEventListener("click", () => {
     const id = el("connection-model-id").value.trim();if (!id || models.some(model => model.id === id) || models.length >= 500) return;
-    models.push({ id, protocols: [] });el("connection-model-id").value = "";modelRows();
+    models.push({ id, protocols: [] });selectedModels.add(id);el("connection-model-id").value = "";modelRows();
   });
   el("connection-discover").addEventListener("click", () => void change({ operation: "discover", id: editing }, result => {
     const known = new Map(models.map(model => [model.id, model]));for (const model of result.discovered || []) if (!known.has(model.id)) known.set(model.id, model);
@@ -129,14 +148,14 @@
   }
   function clientSources() {
     const allowed = new Set([...el("connection-client-allowed").querySelectorAll("input:checked")].map(input => input.value));
-    const before = el("connection-current").value, replacement = choice(data.providers.filter(p => p.enabled && allowed.has(p.id) && compatible(p, editingClient)), before);
+    const before = el("connection-current").value, replacement = choice(data.providers.filter(p => p.enabled && allowed.has(p.id) && selectableSource(p, editingClient)), before);
     el("connection-current").replaceChildren(...replacement.childNodes);if ([...el("connection-current").options].some(option => option.value === before)) el("connection-current").value = before;clientModels();
   }
   function editClient(c) {
     editingClient = c.id;panels("client");el("connection-client-title").textContent = c.name;
     const allowed = el("connection-client-allowed");allowed.replaceChildren(...data.providers.filter(p => p.enabled && compatible(p, c.id)).map(p => check("source", p.id, c.allowed.includes(p.id), p.name)));
     allowed.querySelectorAll("input").forEach(input => input.addEventListener("change", clientSources));
-    const select = choice(data.providers.filter(p => p.enabled && c.allowed.includes(p.id) && compatible(p, c.id)), c.source);
+    const select = choice(data.providers.filter(p => p.enabled && c.allowed.includes(p.id) && selectableSource(p, c.id)), c.source);
     el("connection-current").replaceChildren(...select.childNodes);el("connection-current").value = c.source || "";clientModels();
   }
   el("connection-current").addEventListener("change", clientModels);
@@ -148,7 +167,7 @@
     const affected = data.clients.filter(c => c.enabled && c.source === provider.id);
     if (!affected.length) { void change({ operation: "provider", id: provider.id, enabled: false });return; }
     disabling = provider.id;panels("disable");const area = el("connection-replacements");area.replaceChildren();
-    for (const c of affected) { const label = node("label", c.name), select = choice(data.providers.filter(p => p.id !== provider.id && p.enabled && c.allowed.includes(p.id) && compatible(p, c.id)));select.name = c.id;label.append(select);area.append(label); }
+    for (const c of affected) { const label = node("label", c.name), select = choice(data.providers.filter(p => p.id !== provider.id && p.enabled && c.allowed.includes(p.id) && selectableSource(p, c.id)));select.name = c.id;label.append(select);area.append(label); }
   }
   el("connection-disable-form").addEventListener("submit", e => { e.preventDefault();void change({ operation: "provider", id: disabling, enabled: false,
     replacements: Object.fromEntries([...el("connection-replacements").querySelectorAll("select")].map(select => [select.name, select.value || null])) }); });

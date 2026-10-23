@@ -7,9 +7,13 @@ Claude gateway and an explicitly selected Codex backup.
 ## Manual APIs and client access
 
 `ccdx web` starts management without GitHub sign-in or automatic App launch.
-Use **Settings → Model sources → Add API**, save the HTTPS address/key, declare
-models and their native interfaces, allow clients, then choose each current
-source under **Settings → Clients**. Only Codex on GitHub needs the default
+Use **Settings → Model sources → Add API**, save the HTTPS API base address/key
+(including a required prefix such as `/v1`), then reopen **Manage → Read models**.
+Select the models to use and their supported interfaces, save, then choose each
+client's current source under **Settings → Clients**. Unselected catalog entries
+are not saved. A selected model needs at least one interface; choosing an
+interface also selects its model. Manual ID entry is an optional collapsed path
+for models absent from the catalog. Only Codex on GitHub needs the default
 GitHub sign-in path. To use Claude alone, disable Codex access. Stop the
 management-only process before normal `ccdx` startup for the live terminal.
 
@@ -1123,7 +1127,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.13/codex-copilot-dx-1.2.13.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.14/codex-copilot-dx-1.2.14.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 

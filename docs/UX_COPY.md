@@ -65,3 +65,15 @@ choices, environment references and model-interface declarations stay in their
 relevant forms. Key, URL, protocol, state-file, conflict and history errors retain
 necessary codes and bilingual explanations. First setup/reopen, user-preserved
 configuration and successful inference remain separate facts. CLI stays English.
+
+## 1.2.14 model selection
+
+| Previous | Current | 中文 |
+| --- | --- | --- |
+| Add model (always-visible ID field) | Add a model manually (collapsed, optional) | 手工添加模型 |
+| Choose the APIs each model supports. | Select the models to use and their supported APIs. | 勾选要使用的模型，再选择其支持的接口。 |
+| Generic model validation error after a partial selection | Choose an API for {model}, or deselect it. | 请为 {model} 选择接口，或取消勾选该模型。 |
+
+Catalog reads do not select every returned model. Protocol selection selects its
+model; unselected rows are omitted from the save. A client can choose the source
+after compatible models are saved. Manual ID entry remains optional.

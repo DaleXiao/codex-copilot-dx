@@ -292,3 +292,16 @@ test("the full declared source/model capacity reloads while live status stays co
   t.after(() => r.close());const state = r.snapshot(), text = JSON.stringify(state);assert.ok(Buffer.byteLength(text) < 20000);assert.equal(text.includes("vendor-15/499"), false);
   assert.equal(state.connections.providers.find(p => p.id === "api_bulk_15").model_count, 500);
 });
+
+
+test("saving model selections cannot remove models used by an active client", async t => {
+  for (const client of ["claude_app", "codex"]) {
+    const s = runtime(t), id = await save(s.runtime), c = s.runtime.connections().clients.find(c => c.id === client);
+    await s.runtime.manageConnections({ operation: "client", id: client, enabled: true, allowed: c.allowed, source: id });
+    const before = fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env }));
+    const { id: omitted, enabled, secret_ref, ...config } = structuredClone(apiConfig);
+    config.models = client === "claude_app" ? config.models.filter(model => !model.protocols.includes("messages")) : [...config.models.filter(model => !model.protocols.includes("responses")), { id: "replacement-response", protocols: ["responses"] }];
+    await assert.rejects(s.runtime.manageConnections({ operation: "save_api", id, config, allowed: ["codex", "claude_app", "claude_code"] }), { code: "ccdx_api_model_unavailable" });
+    assert.equal(fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env })).equals(before), true);
+  }
+});

@@ -34,6 +34,12 @@ targets. The WinHTTP API mode checks its allowlist in JS and C#; prediction/M365
 retain their original host restrictions. A failed worker can be replaced only
 for a later request, without replaying the failed request.
 
+The API editor separates catalog candidates from selected models. Only selected
+models enter the strict saved graph, with a required native protocol; unused
+ID-only catalog entries cannot invalidate a save. Client grants remain separate
+from route availability: manual sources need configured models for the client's
+protocol before they are offered as its current source.
+
 `api-secrets.mjs` owns OS-protected credentials and a private-pipe cache; no
 command argument contains an upstream key. Failed metadata commits remove their
 candidate key. Retired keys/transports wait for pinned requests. An environment

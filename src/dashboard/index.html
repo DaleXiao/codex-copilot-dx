@@ -313,7 +313,7 @@
       </div></details>
       <fieldset><legend data-i18n="api_allowed_clients">Allowed clients</legend><div class="connection-checks" id="connection-allowed-clients"></div></fieldset>
       <fieldset><legend data-i18n="model_catalog">Model list</legend><div class="section-actions"><button type="button" id="connection-discover" data-i18n="api_read_models">Read models</button><span class="hint" data-i18n="api_discovery_save_first">Save the API first. No chat request is sent.</span></div>
-        <div class="section-actions"><input type="text" id="connection-model-id" spellcheck="false" autocomplete="off" aria-label="Model ID" placeholder="Model ID"><button type="button" id="connection-model-add" data-i18n="api_add_model">Add model</button></div>
+        <details class="tool-details" id="connection-manual-model"><summary data-i18n="api_manual_model">Add a model manually</summary><div class="section-actions"><input type="text" id="connection-model-id" spellcheck="false" autocomplete="off" aria-label="Model ID" placeholder="Model ID"><button type="button" id="connection-model-add" data-i18n="api_add_model">Add model</button></div></details>
         <p class="hint" data-i18n="api_model_protocol_hint">Choose the APIs each model supports.</p><div class="table-wrap"><table><thead><tr><th data-i18n="model">Model</th><th data-i18n="api_protocols">Available APIs</th><th></th></tr></thead><tbody id="connection-models"></tbody></table></div>
       </fieldset>
       <div class="section-actions"><button type="submit" data-i18n="api_save">Save</button></div>

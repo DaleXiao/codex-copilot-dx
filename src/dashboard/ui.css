@@ -73,6 +73,9 @@ h1 { margin: 0; font-size: clamp(20px, 3vw, 27px); font-weight: 650; letter-spac
 #connection-editor legend, #connection-client-editor legend { padding: 0; margin-bottom: 9px; color: var(--text); }
 #connection-models td { white-space: normal; overflow-wrap: anywhere; }
 #connection-models td:first-child { min-width: 140px; }
+#connection-models td:first-child label { display: inline-flex; align-items: center; gap: 8px; }
+#connection-models td:first-child input { flex: none; accent-color: var(--accent); }
+#connection-models td:last-child button { white-space: nowrap; }
 .connection-disabled { padding: 8px 0 18px; color: var(--heading); }
 .connection-disabled .connection-row { padding: 13px 0; }
 @media (max-width: 650px) { .connection-fields { grid-template-columns: minmax(0, 1fr); } .connection-actions { gap: 9px; } .connection-row { gap: 10px; } }

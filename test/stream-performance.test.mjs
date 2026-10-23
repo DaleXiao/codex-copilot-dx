@@ -17,6 +17,44 @@ import {
   measureRequestStageAsync,
 } from "../src/stream-performance.mjs";
 
+test("active metadata is bounded, independent and removed on every completion path", () => {
+  let time = 0;
+  const metrics = createStreamPerformanceMetrics({ now: () => time });
+  const first = metrics.begin("responses", { requestId: "safe", application: "codex_app", prompt: "PRIVATE" });
+  first.setProvider("github");first.setModel("gpt-test");first.upstreamStarted();
+  time = 12;first.upstreamHeaders(429);first.upstreamStarted();time = 20;first.firstOutput();
+  const state = metrics.snapshot();
+  assert.equal(state.active_total, 1);assert.equal(state.active_requests[0].upstream_attempts, 2);
+  assert.equal(state.active_requests[0].application, "codex_app");
+  assert.equal(state.active_requests[0].first_output_ms, 20);
+  state.active_requests[0].attempts[0].http_status = 999;
+  assert.equal(metrics.snapshot().active_requests[0].attempts[0].http_status, 429);
+  first.terminal("failed", { origin: "transport" });
+  assert.equal(metrics.snapshot().active_requests[0].terminal_outcome, "failed");
+  const rest = Array.from({ length: 100 }, () => metrics.begin("responses_compact", { requestId: "not safe PRIVATE", application: "PRIVATE" }));
+  const bounded = metrics.snapshot();
+  assert.equal(bounded.active_total, 101);assert.equal(bounded.active_requests.length, 64);assert.equal(bounded.active_omitted, 37);
+  assert.doesNotMatch(JSON.stringify(bounded), /PRIVATE/);
+  first.finish({ failed: true });first.finish();
+  for (const [index, request] of rest.entries()) request.finish(index % 2 ? { aborted: true } : { statusCode: 400 });
+  assert.equal(metrics.snapshot().active_total, 0);assert.equal(metrics.snapshot().active_omitted, 0);
+  assert.deepEqual(metrics.snapshot().active_requests, []);
+  assert.equal(metrics.snapshot().by_route.responses.errors_with_output, 1);
+});
+
+test("histogram percentile estimates retain samples, partial failures and overflow without raw samples", () => {
+  let time = 0;
+  const metrics = createStreamPerformanceMetrics({ now: () => time });
+  assert.equal(metrics.snapshot().by_route.responses.ttft_ms.p50, null);
+  for (const wait of [20, 150, 350_000]) {
+    const request = metrics.begin("responses");request.upstreamStarted();time += wait;request.firstOutput();request.finish({ failed: true });
+  }
+  const metric = metrics.snapshot().by_route.responses.ttft_ms;
+  assert.equal(metric.samples, 3);assert.equal(metric.p50, 200);assert.equal(metric.p95, 350_000);
+  assert.equal(metric.percentiles_estimated, true);assert.equal(metric.max, 350_000);
+  assert.equal(metrics.snapshot().by_route.responses.errors_with_output, 3);
+});
+
 test("output speed sums token intervals and durations instead of inverting average TPOT", () => {
   let time = 0;
   const metrics = createStreamPerformanceMetrics({ now: () => time });
@@ -300,7 +338,7 @@ test("request timeline records stages, retry attempts and activity without chang
   assert.equal(snapshot.by_route.responses.ttft_ms.avg, 40);
   assert.equal(snapshot.recent_requests.length, 1);
   assert.deepEqual(snapshot.recent_requests[0], {
-    request_id: "request-1", provider: "unknown", at: "2026-10-05T00:00:00Z", route: "responses", model: "gpt-6-astra",
+    request_id: "request-1", application: "api", provider: "unknown", at: "2026-10-05T00:00:00Z", route: "responses", model: "gpt-6-astra",
     outcome: "completed", origin: "upstream_response", phase: "upstream_stream", failed: false, empty_stream_completion: false,
     http_status: 200, upstream_attempts: 2, first_output_source: "delta", timings_ms: { admission: 5, body: 0, history: 0,
       images: 0, serialization: 0, upstream_start: 10, upstream_headers: 45, first_output: 50,

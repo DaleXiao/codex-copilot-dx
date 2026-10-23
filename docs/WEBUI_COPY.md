@@ -544,3 +544,60 @@
 | auto_refresh | Auto refresh → Auto refresh | 自动更新 → 自动刷新 |
 | auto_refresh_on | Auto refresh · ON → Auto refresh · ON | 自动更新 · 开 → 自动刷新 · 开 |
 | auto_refresh_off | Auto refresh · OFF → Auto refresh · OFF | 自动更新 · 关 → 自动刷新 · 关 |
+
+
+## 1.2.11 页面说明与操作范围
+
+本轮按以下对照调整固定说明，中英同步；运行时的加载、失败、保存与生效反馈保留。八页标题下的开场说明移除，操作影响、统计口径与隐私信息就近保留或放入详情。CLI 仍为英文。请求流向使用明确状态，不根据 HTTP 成功猜测模型完成。
+
+| 页面 | 原文案 | 处理 | 新文案 / 位置 | English |
+|---|---|---|---|---|
+| global | 查看服务、应用和本次用量。 | 删除 | —；标题已说明页面用途 | — |
+| overview | 读取中 | 保留状态 | 读取中；仅加载期间显示 | Loading |
+| overview | 仅统计已返回的用量。 / 不含尚未返回的数据。 / 不代表实时账单。 | 合并 | 仅统计已返回用量。；用量统计口径，不再展开三行 | Returned usage only. |
+| codex | 保存后用于新的 Codex 请求。 | 保留并就近 | 保存后用于新的请求。；来源保存操作旁 | Applies to new requests after saving. |
+| codex | 在 Codex 中选择对话模型。 | 保留条件提示 | 在 Codex 中选择对话模型。；仅 GitHub 来源显示 | Choose the conversation model in Codex. |
+| codex | 审查使用上方所选来源。首次切入时一并保存初始审查设置，之后分别保存。 | 精简 | 使用上方选定的来源。；首次保存的联动影响在操作反馈中显示 | Uses the selected source above. |
+| codex | 开启不代表建议已显示。 / ccdx prediction status | 移入详情 | 检查建议状态：ccdx prediction status；状态与修复 | Check suggestion status: ccdx prediction status |
+| codex | 暂停后保留信任与连接设置。 / 已有建议可能仍会显示。 / 首次设置前请退出 Codex。 / ccdx prediction on | 拆分并按需显示 | 暂停保留设置；已有建议仍可能显示。首次配置前请退出 Codex。；暂停影响留在开关旁；首次配置步骤放详情 | Pausing keeps setup; cached suggestions may remain. Quit Codex before first setup. |
+| codex | 暂停后保留图片设置。 / 已开始的生成可继续完成。 / 首次设置： / ccdx enable-image | 精简并分层 | 关闭后，已开始的生成仍会完成。；开关旁；首次配置命令放详情 | Existing image requests can finish after pausing. |
+| codex | 临时保留续聊数据。 / 不作为聊天归档。 | 保留并精简 | 用于续接回复，不是聊天归档。；对话暂存内 | Temporary reply continuation, not a chat archive. |
+| codex | 请求成功不代表回复完整。 | 移入详情 | HTTP 状态与模型结果分别记录。；请求详情；保留两个结果字段 | HTTP status and model outcome are recorded separately. |
+| codex | 记录本次 Codex 耗时。 / 输出速度为估计值。 | 改为范围标签 | 本次运行 · 输出速度为估算；统计头部及速度字段旁 | This service run · Estimated output speed |
+| claude | 本地服务运行，不代表应用已打开。 | 删除重复解释 | —；表头区分接入配置与本地服务，应用是否打开不作推断 | — |
+| claude | 账号与来源设置供两个应用共用。 | 保留并精简 | Claude Code 与 Claude App 共用此来源。；来源面板内 | Shared by Claude Code and Claude App. |
+| claude | 当前统计不区分两个 Claude 应用。 | 改为范围标签 | 两款应用合计；统计面板标题旁，避免误读为单应用 | Both Claude apps |
+| claude | 从本次启动开始统计。 / 设置、登录、模型列表分别核实。 / 请求成功情况单独记录。 | 删除并保留结构 | 本次运行；配置、登录、目录、结果各自在对应区域展示 | This service run |
+| models | 切换标签只查看来源，不改变应用设置。 | 以标签替代 | 查看来源；来源选择器标题 | Browse source |
+| models | 只检查权限和模型，不发送对话。 | 保留并精简 | 不调用模型；检查授权按钮旁 | No model calls |
+| models | 打开 GitHub，输入代码并授权。 | 保留 | 打开 GitHub，输入代码并授权。；仅设备登录流程显示 | Open GitHub, enter the code, and authorize. |
+| models | 验证成功后才替换原登录。 | 保留 | 验证成功后才替换原登录。；仅重新登录流程显示 | The existing sign-in is replaced only after verification. |
+| models | 不会退出其他应用的登录。 | 移入确认 | 只退出 CCDX，其他应用保持登录。；退出确认 | Only CCDX signs out. Other apps stay signed in. |
+| models | 在支持的设备上为 Codex 和 Claude 提供模型。 | 删除 | —；适用应用已有明确字段，避免复述 | — |
+| models | 影响 Codex 和 Claude 的 M365 服务。 / 更换账号后请新建对话。 | 保留到操作处 | 供 Codex 和 Claude 共用。切换后请新建对话。；切换账号操作及确认 | Shared by Codex and Claude. Start a new conversation after switching. |
+| models | 读取模型中… | 保留状态 | 读取模型中…；仅目录读取期间显示 | Loading models… |
+| models | 点击刷新，重新检查此来源。 | 删除 | —；已有刷新按钮 | — |
+| models | 列出不代表账号可使用。 | 移入详情 | 模型已列出，推理权限尚未验证。；检查详情；不把已列出标成可用 | Models listed; inference access not verified. |
+| models | 登录信息、访问权限分别核实。 / 模型访问与应用请求单独记录。 | 删除 | —；区域和状态字段已表达区别 | — |
+| checks | 本机检查不访问外部服务。 | 改为范围标签 | 仅检查本机；本机检查标题旁 | Local checks only |
+| checks | 运行本机检查后显示结果。 | 保留空状态 | 运行本机检查后查看结果。；仅没有检查结果时显示 | Run a local check to see results. |
+| checks | 登录、账号和模型在来源页管理。 | 以入口替代 | 检查 GitHub 连接 / 查看 M365 账号；直接操作入口，不重复说明导航 | Check GitHub connection / View M365 account |
+| checks | 先查看 CCDX 管理的字段，再决定是否修复。其他设置保留。 | 精简并保留 | 先预览改动，再决定是否修复。；修复入口；预览列出变更和备份 | Review changes before repairing. |
+| checks | 此检查会调用模型并产生用量。请在终端明确执行： | 保留 | 会调用模型并消耗额度，请在终端执行。；兼容性命令前，保持可见 | Sends model requests and uses quota. Run in your terminal. |
+| checks | 报告不含凭据、账号详情和对话内容。 | 保留并精简 | 不含凭据、账号详情和对话内容。；诊断报告导出入口 | Excludes credentials, account details and chat content. |
+| usage | 展开查看用量趋势。 | 仅保留加载态 | 读取用量趋势中…；加载完成后不留重复说明 | Loading usage trends… |
+| usage | 输入与输出合计。 / 复用部分已计入输入。 | 合并脚注 | 复用已计入输入。；与 Token 单位和缺失标记合并一次 | Reuse is included in input. |
+| usage | 点击日期查看当天用量。 / 没有记录不等于零次请求。 | 精简 | 点击日期查看当天用量。空白表示无记录。；活动日历旁 | Select a day for usage. Blank means no records. |
+| usage | 正在统计本机用量。 | 保留状态 | 正在统计本机用量…；仅加载期间显示 | Counting local usage… |
+| usage | 用量单位：Token。 / 复用部分已计入输入。 / ~：记录不完整。 / —：数据未知或无效。 | 合并脚注 | 单位 Token；复用已计入输入。~ 为部分记录，— 为未知。；汇总表脚注一处 | Unit: Token. Reuse is included in input. ~ Partial; — Unknown. |
+| requests | 统计本次运行的请求。 / 用量缺失会单独标明。 | 改为范围标签 | 本次运行；请求来源表没有 Token 数据，不添加用量缺失描述 | This service run |
+| requests | 大小单位：MiB。 / 用量单位：Token。 / 不代表当前对话的精确占用。 / 缺失数据表示未知。 / 此面板不保存提问或图片。 | 移入记录范围 | 不保存提问或图片。— 表示数据未知。；记录范围展开项内；单位写在列名 | No prompts or images are stored. — means unavailable data. |
+| requests | 错误详情可能含隐私信息。 | 按需显示 | 分享错误详情前，请检查其中的隐私信息。；只在错误详情处显示 | Review private information before sharing error details. |
+| system | 仅此浏览器，立即生效。 | 保留并精简 | 仅当前浏览器，立即生效。；网页主题设置行 | This browser only. Applies immediately. |
+| system | 表格即时换色，启动 Logo 下次生效。 | 保留 | 表格即时换色；启动 Logo 下次生效。；终端主题设置行 | Table updates now. Startup logo changes next launch. |
+| system | 读取设置中… | 保留状态 | 读取设置中…；仅加载期间显示 | Loading settings… |
+| system | 读取中 | 保留状态 | 读取中…；仅加载期间显示 | Loading… |
+| system | 在终端运行，完成后重启 CCDX。 | 保留 | 在终端运行，完成后重启 CCDX。；更新指令旁 | Run in your terminal, then restart CCDX. |
+| system | 下载官方安装器，无需 Git。 | 改为区域标签 | 完整安装指令 · 无需 Git；安装帮助展开项 | Full installation commands · No Git required |
+| system | 复用可用的 Node/npm，否则安装专用运行环境。 / 保留镜像、代理、证书和脚本策略。 | 保留并分条 | 缺少 Node/npm 时安装专用运行环境。保留镜像、代理、证书和脚本策略。；安装帮助内 | Installs a private runtime if Node/npm is missing. Keeps registry, proxy, certificates and script policy. |
+| system | 若公司禁止运行脚本，请使用公司批准的安装方式。 | 条件保留 | 脚本受限时，请使用公司批准的安装方式。；仅 Windows 安装帮助显示 | If scripts are blocked, use your company-approved installation method. |

@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { currentRequestContext } from "./request-context.mjs";
 import { isProviderId } from "./provider-metadata.mjs";
+import { applicationLabel } from "./request-application.mjs";
 
 const PERFORMANCE_ROUTES = Object.freeze(["responses", "responses_compact"]);
 const PREPARATION_STAGES = Object.freeze(["admission", "body", "history", "images", "serialization"]);
@@ -12,6 +13,7 @@ const TERMINAL_ORIGINS = new Set([
 ]);
 const MAX_MODEL_OUTCOME_LABELS = 32;
 const MAX_RECENT_REQUESTS = 20;
+const MAX_ACTIVE_REQUESTS = 64;
 const MAX_PROVIDER_LABELS = 16;
 const PREPARATION_EDGES_MS = Object.freeze([1, 2, 5, 10, 20, 50, 100, 250, 500, 1_000, 5_000, 30_000, 120_000]);
 const TTFT_EDGES_MS = Object.freeze([
@@ -119,11 +121,24 @@ function histogramSnapshot(histogram, unit) {
     return bucket;
   });
   buckets.push({ lower, upper: null, count: histogram.counts.at(-1) });
+  const percentile = fraction => {
+    if (!histogram.samples) return null;
+    const rank = Math.ceil(histogram.samples * fraction);
+    let count = 0;
+    for (const bucket of buckets) {
+      count += bucket.count;
+      if (count >= rank) return Math.min(bucket.upper ?? histogram.max, histogram.max);
+    }
+    return null;
+  };
   return {
     unit,
     samples: histogram.samples,
     avg: histogram.samples > 0 ? Number((histogram.total / histogram.samples).toFixed(1)) : 0,
     max: histogram.max,
+    p50: percentile(0.5),
+    p95: percentile(0.95),
+    percentiles_estimated: true,
     buckets,
   };
 }
@@ -199,12 +214,18 @@ function routeSnapshot(route) {
 export function createStreamPerformanceMetrics({ now = () => performance.now(), wallNow = () => new Date().toISOString(), routeNames = PERFORMANCE_ROUTES } = {}) {
   const routes = Object.fromEntries(routeNames.map((name) => [name, createRoutePerformance()]));
   const recentRequests = [];
+  const activeRequests = new Map();
+  let activeTotal = 0, activeSequence = 0;
 
   return {
-    begin(routeName, { requestId } = {}) {
+    begin(routeName, { requestId, application } = {}) {
       const route = routes[routeName];
       if (!route) return null;
       const requestStartedAt = now();
+      const activeId = ++activeSequence;
+      const safeRequestId = typeof requestId === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(requestId) ? requestId : null;
+      const client = applicationLabel(application);
+      activeTotal++;
       let upstreamStartedAt = null;
       let firstOutputAt = null;
       let firstOutputSource = null;
@@ -229,6 +250,12 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       let terminalAt = null;
       const context = { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: null };
       const elapsed = (time) => time === null ? null : Number(Math.max(0, time - requestStartedAt).toFixed(1));
+      if (activeRequests.size < MAX_ACTIVE_REQUESTS) activeRequests.set(activeId, () => ({
+        request_id: safeRequestId, application: client, route: routeName, provider, model, phase,
+        started_at: at, elapsed_ms: elapsed(now()), first_output_ms: elapsed(firstOutputAt),
+        upstream_attempts: attempts, terminal_outcome: terminalOutcome,
+        attempts: attemptTimings.map(attempt => ({ ...attempt })),
+      }));
       const assignProvider = value => {
         if (finished || sourceStats || !isProviderId(value)) return;
         provider = value;
@@ -322,6 +349,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           if (finished) return;
           if (!sourceStats) assignProvider("unknown");
           finished = true;
+          activeTotal--;activeRequests.delete(activeId);
           failed ||= finishFailed;
           const outcome = terminalOutcome || (aborted ? "cancelled" : "unknown");
           const emptyStreamCompletion = outcome === "completed" && upstreamStartedAt !== null
@@ -347,7 +375,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           const finishedAt = now();
           // Only scalar, allowlisted metadata survives the request; never retain payloads.
           recentRequests.push({
-            request_id: typeof requestId === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(requestId) ? requestId : null,
+            request_id: safeRequestId, application: client,
             at, route: routeName, model, outcome, origin, phase,
             ...(provider ? { provider } : {}),
             empty_stream_completion: emptyStreamCompletion,
@@ -394,6 +422,9 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
     snapshot() {
       return {
         by_route: Object.fromEntries(routeNames.map((name) => [name, routeSnapshot(routes[name])])),
+        active_requests: [...activeRequests.values()].map(snapshot => snapshot()),
+        active_total: activeTotal,
+        active_omitted: Math.max(0, activeTotal - activeRequests.size),
         recent_requests: recentRequests.map((entry) => ({ ...entry, attempts: entry.attempts.map(attempt => ({ ...attempt })), context: { ...entry.context }, timings_ms: { ...entry.timings_ms } })),
       };
     },

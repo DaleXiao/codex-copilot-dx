@@ -804,7 +804,7 @@ animation styles retain their timing and cycle pauses; the default green retains
 `--show-request-id` or `CCDX_LOG_LEVEL=debug` restore detailed terminal output.
 Failed reads show previous-data status and the last successful update time, or that no data has been received. Narrow summaries wrap rather than hiding Claude App/Code state. Non-TTY/CI/dumb/too-small terminals use plain output; repeated identical notices
 are coalesced. File logging retains its existing explicit opt-in and redaction.
-In-memory usage still updates when `CCDX_DISABLE_USAGE=1` disables persistence. `runtime_usage.by_provider` separates returned process-local usage by source. The Requests view contains Requests by source, recent failures and request context; `ccdx status` also lists source/protocol outcomes. Unknown outcomes and partial usage remain distinct. CLI remains English; WebUI keeps English/Chinese.
+In-memory usage still updates when `CCDX_DISABLE_USAGE=1` disables persistence. `runtime_usage.by_provider` separates returned process-local usage by source. The Requests view contains live Request flow, Requests by source, recent failures and request context; `ccdx status` also lists source/protocol outcomes. Unknown outcomes and partial usage remain distinct. CLI remains English; WebUI keeps English/Chinese.
 
 The Clear conversation buffer action clears all process-local conversation continuation data. If image optimization or conversation history is active, cleanup is refused; retry after current requests finish. Old chats may fail to continue; saved Codex transcripts remain. It invokes the existing image-transform/history cleanup operation, rather than an inactive-only selector.
 
@@ -1037,7 +1037,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.10/codex-copilot-dx-1.2.10.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.11/codex-copilot-dx-1.2.11.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1588,3 +1588,37 @@ From a source checkout, `node scripts/codex-message-id-replay.mjs --codex /absol
 ## License
 
 MIT
+
+
+### Live request flow and timing estimates
+
+Request flow is a read-only view of requests currently observed by CCDX. It groups
+apps and source/model pairs; a model used through two sources stays separate.
+`X-CCDX-Client` recognizes `codex-app`, `codex-cli`, `claude-app`, `claude-code`;
+known Codex `originator` values also provide labels. These are presentation hints,
+not verified identities. Unknown clients remain API client; unmarked Messages
+requests remain Claude (app unspecified). No user-agent inference is used.
+
+Only observed first output starts moving dots. A started attempt without output
+is waiting, a subsequent attempt is retrying, and terminal evidence awaiting
+connection completion is finishing. No fresh status for six seconds means unknown,
+not idle or successful. Auto refresh off therefore expires the view. Hidden pages
+pause animation; reduced-motion uses static dots. Idle retains bounded last-known
+nodes with zero counts; unknown retained counts are dashes. Initially up to 12
+model groups are visible, with an explicit show-more control. Snapshots retain up
+to 64 details per metrics instance; exact active totals may be higher and omitted
+details are reported. With omitted details, observed group counts use ≥; retained
+nodes with no current detail use dashes, even while the exact total is active. Short requests between two status reads can appear only in
+the finished table; the diagram does not fabricate or replay them.
+
+Clicking an app or model name filters only active details. Counts, source totals,
+all five terminal outcomes (including unknown), last 20 finished requests and
+issues remain available. No prompt/image/credential is added to active telemetry.
+The existing local-dashboard host/origin protections apply to the new flow asset.
+
+Codex and Claude request-performance panels show approximate first-output P50/P95
+in milliseconds with sample counts. Values come from existing histogram buckets,
+not raw samples; the highest bucket uses the observed maximum. These are the
+upstream first-output observations already used for the mean, include failures
+after partial output, and do not measure user-perceived completion or promise a
+routing improvement. No samples displays a dash.

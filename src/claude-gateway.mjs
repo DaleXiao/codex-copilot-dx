@@ -13,6 +13,7 @@ import { buildMessagesUsageRecord, recordUsage } from "./usage-store.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { decodedBodyLimitPreference } from "./user-settings.mjs";
 import { operationErrorDetails } from "./operation-error.mjs";
+import { requestApplication } from "./request-application.mjs";
 
 function send(res, code, value) {
   if (res.destroyed || res.writableEnded) return;
@@ -81,7 +82,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
     const parent = currentRequestContext();
     if (parent) parent.provider = provider.id;
     const countTokens = pathname.endsWith("/count_tokens"), requestId = parent?.requestId || randomUUID();
-    const tracker = countTokens ? null : performance.begin("messages", { requestId });
+    const tracker = countTokens ? null : performance.begin("messages", { requestId, application: requestApplication(req.headers, "claude") });
     tracker?.setProvider(provider.id);
     const abort = createRequestAbort(req, res);
     let release = () => {}, outcome = "failed", model = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;

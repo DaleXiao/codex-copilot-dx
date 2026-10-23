@@ -28,6 +28,12 @@ let companyAccount = accountChoices[0], accountChecks = 0, accountChanges = 0, r
 let proxyFailure = false;
 let modelActivity = 2;
 let extraRequests = [];
+let flowRequests = [];
+const concurrentFlow = () => [
+  { request_id: "flow-codex", application: "codex_app", provider: "github", model: "gpt-test", first_output_ms: 100, upstream_attempts: 1, elapsed_ms: 1200 },
+  { request_id: "flow-code", application: "claude_code", provider: "m365", model: "claude-test", first_output_ms: 200, upstream_attempts: 1, elapsed_ms: 1000 },
+  { request_id: "flow-app", application: "claude_app", provider: "m365", model: "claude-other", first_output_ms: null, upstream_attempts: 2, elapsed_ms: 900 },
+];
 let signin = null, rejectIdentity = true;
 const accountTools = {
   snapshot: () => structuredClone(signin), dispose() {},
@@ -107,10 +113,10 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: true, name: "codex-copilot-dx", version: "synthetic", pid: 1, uptime_ms: 1000,
       requests: { total: 1, active: 0 }, model_activity: { active: modelActivity }, models: { models: 1, source: "synthetic" },
-      stream_performance: { recent_requests: [...extraRequests, { at: "2026-10-21T05:51:08Z", request_id: "synthetic-recent", provider: "github", model: "gpt-test", outcome: "completed",
+      stream_performance: { active_requests: flowRequests, active_total: flowRequests.length, recent_requests: [...extraRequests, { at: "2026-10-21T05:51:08Z", request_id: "synthetic-recent", provider: "github", model: "gpt-test", outcome: "completed",
         context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000 } },
         { request_id: "synthetic-unknown", model: "<script>not-html</script>", outcome: "completed", context: {} }], by_route: { responses: {
-        ttft_ms: { avg: 1250, samples: 3 }, output_tokens_per_second: { avg: 123.4, samples: 2, unit: "token/s" },
+        ttft_ms: { avg: 1250, samples: 3, p50: 1400, p95: 2000, percentiles_estimated: true }, output_tokens_per_second: { avg: 123.4, samples: 2, unit: "token/s" },
       } } },
       response_failures: { recent:[{provider:"m365",code:"synthetic_error",model:"gpt-test",retried:false}] },
       http_errors: { by_category: { inference: 1, protocol: 2, route: 3, other: 0 } },
@@ -161,6 +167,7 @@ try {
         proxyFailure = false;
         modelActivity = 2;
         extraRequests = [];
+        flowRequests = [];
         updateReads = 0;updateState = "checked";latestVersion = "1.2.4";
         m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
@@ -398,6 +405,35 @@ try {
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-checks.png`), fullPage: true });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Checks stay within the viewport");
         await nav("requests");
+        flowRequests = concurrentFlow();await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "active");
+        assert.equal(await page.locator("#flow-apps .flow-node").count(), 3);
+        assert.equal(await page.locator("#flow-models .flow-node").count(), 3);
+        assert.equal(await page.locator("#flow-wires .flow-packet").count(), 4);
+        assert.equal(await page.locator("#flow-wires .flow-wait").count(), 2);
+        assert.ok((await page.locator("#flow-wires path").evaluateAll(nodes => nodes.map(node => node.getAttribute("d")))).some(d => d.includes("Q")), "Connections have rounded turns");
+        await page.locator("#flow-apps .flow-choice").first().click();
+        assert.equal(await page.locator("#flow-active-body tr").count(), 1);
+        const selectedName = page.locator('.flow-choice[aria-pressed="true"]');
+        assert.equal(await selectedName.locator(".flow-count").count(), 0);
+        assert.ok((await selectedName.boundingBox()).width < (await selectedName.locator("..").boundingBox()).width);
+        assert.match(await page.locator("#flow-total").innerText(), /3/);
+        await page.locator("#flow-clear").click();
+        assert.equal(await page.locator("#flow-active-body tr").count(), 3);
+        assert.match(await page.locator("#flow-active-body").innerText(), language === "zh" ? /正在重试/ : /Retrying/);
+        assert.equal(await page.locator("#flow-active-body tr").last().locator("td").first().evaluate(node => getComputedStyle(node).borderBottomWidth), "0px");
+        assert.equal(await page.locator("#source-requests .tool-details").evaluate(node => getComputedStyle(node).borderTopWidth), "0px");
+        assert.equal(await page.locator("#main-content").evaluate(node => getComputedStyle(node).outlineStyle), "none");
+        if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-flow.png`), fullPage: true });
+        await page.locator("#auto-refresh").click();
+        await page.clock.fastForward(6001);
+        assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "unknown");
+        assert.equal(await page.locator(".flow-packet").count(), 0, "Stale snapshots stop activity");
+        await page.locator("#auto-refresh").click();
+        flowRequests = [];await page.evaluate(() => dashboardRefresh.refresh("status", { force: true }));
+        assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "idle");
+        assert.equal(await page.locator("#flow-state").evaluate(node => getComputedStyle(node, "::before").animationName), "flow-breathe");
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Flow remains inside the viewport");
         assert.equal(await page.locator("#request-context").getAttribute("open"), "");
         assert.equal(await page.locator("#context-body tr").count(), 2);
         assert.equal(await page.locator("#context-body script").count(), 0);
@@ -453,7 +489,7 @@ try {
         assert.equal(await page.locator("#update-current-version").innerText(), "v1.2.3");
         assert.match(await page.locator("#update-current-date").innerText(), /2026-10-19/);
         assert.equal(await page.locator(".terminal-animation-toggle").evaluate(node => getComputedStyle(node).borderBottomWidth), "0px");
-        assert.equal(await page.locator("#animation-settings").evaluate(node => getComputedStyle(node).borderTopWidth), "1px");
+        assert.equal(await page.locator("#animation-settings").evaluate(node => getComputedStyle(node).borderTopWidth), "0px");
         await page.locator(".update-install > summary").click();
         assert.match(await page.locator("#install-command").innerText(), /v1\.2\.4\/install\.sh/);
         const selectedPlatform = await page.locator('[data-install-platform="macos"]').evaluate(node => ({ color: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor }));

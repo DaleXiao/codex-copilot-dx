@@ -173,7 +173,9 @@
             localize(copy, "copied");
           } catch { localize(copy, "copy_unavailable"); }
         });
-        details.append(title, diagnostic, copy);
+        const privacy = document.createElement("p");privacy.className = "hint";
+        localize(privacy, "upstream_messages_may_contain_sensitive_text");
+        details.append(title, diagnostic, privacy, copy);
         item.append(details);
         list.append(item);
       }
@@ -181,6 +183,7 @@
     
     function render(data) {
       globalThis.ccdxDashboardActivity?.update(data.model_activity);
+      globalThis.ccdxDashboardFlow?.update(data);
       text("version", `v${data.version || "?"}`);
       text("uptime", "pid_pid_uptime_duration", { pid: number(data.pid), duration: duration(data.uptime_ms) });
     
@@ -199,6 +202,11 @@
       const outcomes = data.stream_performance?.by_route?.responses?.terminal_outcomes?.totals || {};
       for (const key of ["completed", "incomplete", "failed", "cancelled"]) text(key, number(outcomes[key]));
       const timing = data.stream_performance?.by_route?.responses || {};
+      function percentiles(id, metric) {
+        const valid = metric?.samples > 0 && metric.percentiles_estimated === true && finite(metric.p50) && finite(metric.p95);
+        text(id, valid ? "percentile_values" : "—", valid ? { p50: Number(metric.p50).toFixed(0), p95: Number(metric.p95).toFixed(0), samples: number(metric.samples) } : {});
+      }
+      percentiles("ttft-percentiles", timing.ttft_ms);
       for (const [id, metric, scale, unit] of [["ttft", timing.ttft_ms, 1, "ms"], ["tpot", timing.output_tokens_per_second, 1, "token/s"]]) {
         const value = metric?.samples > 0 && finite(metric.avg) ? `${(Number(metric.avg) / scale).toFixed(1)} ${unit}` : "—";
         text(id, "value_samples_samples", { value, samples: number(metric?.samples) });
@@ -218,6 +226,7 @@
         : "setup_state_unknown_ccdx_image_status", { active: number(image?.active), failed: number(image?.failed), delivery: number(image?.delivery_failures) });
 
       const claude = data.providers?.m365?.claude, claudeMetrics = claude?.requests?.performance;
+      percentiles("claude-ttft-percentiles", claudeMetrics?.by_route?.messages?.ttft_ms);
       const sourceBody = element("source-requests-body");
       if (sourceBody) {
         sourceBody.replaceChildren();

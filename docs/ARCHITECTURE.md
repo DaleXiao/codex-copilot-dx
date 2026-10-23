@@ -437,7 +437,7 @@ The Claude gateway still relays original native SSE bytes. `stream-performance.m
 
 ## Dashboard layout and information scopes (1.2.9)
 
-The existing CSS grid reserves explicit header/body/footer tracks; the body owns spare space from the full-height sidebar. The header uses an opaque themed sticky surface, stable action slots and a deliberate compact toolbar. Scrollbar space is stable, with an always-scroll fallback for older engines. `console.js` owns route titles/descriptions, scroll reset and main-content focus; refresh code does not navigate or reset scroll.
+The existing CSS grid reserves explicit header/body/footer tracks; the body owns spare space from the full-height sidebar. The header uses an opaque themed sticky surface, stable action slots and a deliberate compact toolbar. Scrollbar space is stable, with an always-scroll fallback for older engines. `console.js` owns route titles, scroll reset and main-content focus; refresh code does not navigate or reset scroll.
 
 The eight existing views remain. `status.js` groups Overview clients by application using explicit selected-source evidence, retains all registered sources and projects separate Claude setup rows without inventing per-app Messages metrics. Account controls, catalog and access rows share the selected source in `ui.js`; source-management shortcuts browse without switching inference routes. Existing resource generations, cancellation, last-good snapshots and refresh cadence remain unchanged. Timestamps follow their own status/source/catalog/usage resources. Animation reads also check that Settings is visible.
 
@@ -461,3 +461,39 @@ visible square keyboard focus outline. Model names and metadata use readable tex
 roles rather than accent colors. The catalog's technical fields remain available
 in per-model details. Usage trends and summaries are peer panels, still loaded on
 demand. Saved/effective preference differences are shown only when relevant.
+
+
+## Active request projection and restrained motion (1.2.11)
+
+`stream-performance.mjs` remains the timing/outcome owner. Each metrics instance
+retains at most 64 active snapshot closures; `finish` removes them idempotently.
+The exact active total and omitted-detail count remain separate. Snapshots copy
+only allowlisted application/source/model labels, request IDs, phase, elapsed
+values and up to three attempt records. No body, headers, credentials or account
+identity enters this projection. Existing recent records remain capped at 20.
+`request-application.mjs` shares pure presentation-only hint normalization between
+the adapter and Claude gateway. Hints are not authenticated identity or routing
+inputs. Unmarked Claude traffic is not assigned to a specific Claude app.
+
+The existing status snapshot carries this metadata; `dashboard/flow.js` adds no
+poller, model call or routing controller. It groups up to 128 active detail rows
+from the two metrics instances, initially shows at most 12 model groups, and
+keeps counts outside name selections. Selection filters only active details;
+source totals and finished records retain their scope. Rounded SVG path geometry
+is rebuilt only for meaningful group/state/layout changes. CSS packets indicate
+observed first output, waiting attempts are static, and idle has one breathing
+lamp. Hidden views pause motion, reduced-motion stays static, and six seconds
+without a fresh snapshot stops animation and labels retained data as last observed.
+There is no perpetual JavaScript animation loop.
+
+P50/P95 reuse existing fixed histograms. Estimates use the nearest-rank bucket
+upper bound capped by the observed maximum; the open-ended bucket uses that
+maximum. Empty histograms return null. Samples and the approximation label remain
+visible; partial-output failures are included in first-output timing. No raw
+sample list, new scoring, automatic failover or affinity policy is introduced.
+
+The eight views keep their established palettes and controls. Page-opening
+instructions are removed; operation scope, effect timing and privacy remain near
+the relevant controls or in details. Tables retain header/interior separators;
+the last row and following details use whitespace. Programmatic main-content
+focus has no frame; interactive keyboard focus remains visible.

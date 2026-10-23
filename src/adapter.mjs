@@ -9,6 +9,7 @@ import {
   runtimeStatusPayload,
 } from "./observability.mjs";
 import { createRequestId, runWithRequestContext, currentRequestContext } from "./request-context.mjs";
+import { requestApplication } from "./request-application.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { status } from "./status.mjs";
 import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
@@ -380,7 +381,7 @@ export function createAdapterHandler(options = {}) {
       && !((req.method === "GET" || req.method === "HEAD") && DASHBOARD_PATHS.has(pathname));
     const routeName = classifyAdapterRoute(req.method, pathname);
     const complete = trackRequest ? requestMetrics.begin(routeName) : () => {};
-    const streamPerformance = trackRequest ? streamPerformanceMetrics.begin(routeName, { requestId }) : null;
+    const streamPerformance = trackRequest ? streamPerformanceMetrics.begin(routeName, { requestId, application: requestApplication(req.headers) }) : null;
     let finishTerminalActivity = () => {};
     if (trackRequest && ["responses", "responses_compact", "messages", "image_mcp"].includes(routeName)) {
       try {

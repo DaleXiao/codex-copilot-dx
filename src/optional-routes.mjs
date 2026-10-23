@@ -1,4 +1,4 @@
-export const DASHBOARD_PATHS = new Set(["/", "/ui.css", "/theme.js", "/language.js", "/refresh.js", "/time.js", "/animation.js", "/status.js", "/activity.js", "/usage.js", "/ui.js", "/console.js", "/updates.js", "/icons.js", "/tools.js"]);
+export const DASHBOARD_PATHS = new Set(["/", "/ui.css", "/theme.js", "/language.js", "/refresh.js", "/time.js", "/animation.js", "/status.js", "/activity.js", "/flow.js", "/usage.js", "/ui.js", "/console.js", "/updates.js", "/icons.js", "/tools.js"]);
 export const DASHBOARD_API_PATHS = new Set(["/_ccdx/ui/animation", "/_ccdx/ui/models/live", "/_ccdx/ui/usage", "/_ccdx/ui/auth", "/_ccdx/ui/providers", "/_ccdx/ui/settings", "/_ccdx/ui/m365/accounts", "/_ccdx/ui/updates", "/_ccdx/ui/account", "/_ccdx/ui/checks"]);
 
 export function isOptionalRoute(method, pathname) {

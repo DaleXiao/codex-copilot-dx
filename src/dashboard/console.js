@@ -2,7 +2,6 @@
   const el = id => document.getElementById(id);
   const label = (node, key, values = {}) => globalThis.ccdxLanguage.set(node, key, values);
   const titles = { overview: "overview", codex: "Codex", claude: "Claude", models: "model_services", usage: "usage_and_diagnostics", requests: "request_records", checks: "tools_checks_title", system: "system_and_settings" };
-  const descriptions = { overview: "page_overview_description", codex: "page_codex_description", claude: "page_claude_description", models: "page_models_description", usage: "page_usage_description", requests: "page_requests_description", checks: "page_checks_description", system: "page_settings_description" };
   const settingsViews = ["codex", "models", "system", "checks"];
   let current = "overview", settings = null, settingsPending = false, stopped = false, timer = null, ticks = 0;
   let sourceDirty = false, reviewDirty = false, sourceModels = [], modelsPreference = null, sourceGeneration = 0, modelsSource = null;
@@ -46,12 +45,11 @@
     if (!["codex", "models"].includes(next) && dashboardRefresh.state("models").pending) dashboardRefresh.invalidate("models");
     for (const view of document.querySelectorAll("[data-view]")) view.hidden = view.dataset.view !== next;
     globalThis.ccdxDashboardActivity?.visibilityChanged();
+    globalThis.ccdxDashboardFlow?.visibilityChanged();
     for (const item of document.querySelectorAll("[data-route]")) {
       if (item.dataset.route === next) item.setAttribute("aria-current", "page");else item.removeAttribute("aria-current");
     }
     label(el("page-title"), titles[next]);
-    label(el("page-description"), descriptions[next]);
-    el("page-description").hidden = ["models", "system"].includes(next);
     el("page-settings-note").textContent = "";
     window.scrollTo(0, 0);
     el("main-content").focus({ preventScroll: true });
@@ -185,6 +183,7 @@
       : body.action.startsWith("history_") ? "effect-history" : body.action === "prediction_fix" ? "prediction-note"
         : body.operation === "switch" ? "source-control-note" : body.operation === "auto-review" ? "review-control-note"
           : body.operation === "account" ? "m365-account-note" : "m365-control-note");
+    const initialSourceSave = body.operation === "switch" && Boolean(body.auto_review_model);
     label(note, "applying");
     if (button) button.setAttribute("aria-busy", "true");
     try {
@@ -194,6 +193,7 @@
       if (body.action === "provider" && body.operation === "off") { sourceDirty = false;reviewDirty = false; }
       el("review-control-note").textContent = "";
       applySettings(data);
+      if (initialSourceSave) label(el("source-control-note"), "source_initial_review_saved");
       if (body.operation === "account") {
         sourceDirty = false;reviewDirty = false;sourceGeneration++;
         modelsPreference = null;modelsSource = null;

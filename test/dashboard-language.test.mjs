@@ -140,13 +140,13 @@ test("Chinese functional names remain translated and preserve their meaning", ()
   }
   assert.equal(page.language.format("CACHE HIT"), "复用比例");
   assert.equal(page.language.format("LOCAL HISTORY"), "对话暂存");
-  assert.match(page.language.format("HTTP 2xx != model completed."), /请求成功不代表回复完整/);
+  assert.match(page.language.format("HTTP 2xx != model completed."), /HTTP 状态与模型结果分别记录/);
   assert.equal(page.language.format("NOT INITIALIZED"), "未确认");
   for (const literal of ["constructor", "toString", "__proto__", "gpt-6.1-sol", "upstream_response", "response.failed"]) {
     assert.equal(page.language.format(literal), literal);
   }
   const reuseHint = page.language.format("Cache hit = recorded cached / input tokens. ~ = incomplete history. — = unavailable or invalid counts.");
   assert.match(reuseHint, /Token/);
-  assert.match(reuseHint, /~.*不完整/);
-  assert.match(reuseHint, /—.*未知或无效/);
+  assert.match(reuseHint, /~.*部分记录/);
+  assert.match(reuseHint, /—.*未知/);
 });

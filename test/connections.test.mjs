@@ -25,19 +25,19 @@ const apiConfig = { id: "api_example", name: "Example", enabled: true, base_url:
 const localHome = t => { const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-connections-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));return home; };
 const secrets = () => { const values = new Map();return { values, get: async id => values.get(id) || "synthetic-key-only", set: async (id, key) => { values.set(id, key); }, remove: async id => { values.delete(id); }, close() {} }; };
 function runtime(t, overrides = {}) {
-  const home = localHome(t), calls = [], stored = secrets(), configured = [];
+  const home = localHome(t), calls = [], catalogCalls = [], stored = secrets(), configured = [];
   overrides.prepareHome?.(home);
   const result = createProviderRuntime({ home, env: { CCDX_M365: "0" }, platform: "linux", secretStore: stored,
     githubClient: {}, githubRegistry: { models: { data: [] } }, inspectDesktop: async () => false,
     configureClaude: input => { configured.push(input);return { [input.client === "claude_app" ? "app" : "code"]: "configured" }; },
     restoreClaude: () => ({ preserved: 0 }),
     createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, async fetch(url, init) {
-      calls.push({ url, init });const body = init.body ? JSON.parse(init.body) : null;
+      const body = init.body ? JSON.parse(init.body) : null;(body ? calls : catalogCalls).push({ url, init });
       if (!body) return Response.json({ data: [{ id: "model-new" }] });
       if (url.endsWith("messages")) return Response.json({ type: "message", id: "msg_local", model: body.model, role: "assistant", content: [{ type: "text", text: "synthetic" }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 2 } });
       return Response.json({ id: "resp_local", object: "response", status: "completed", model: body.model, output: [{ type: "message", id: "m1", role: "assistant", status: "completed", content: [{ type: "output_text", text: "synthetic", annotations: [] }] }], usage: { input_tokens: 10, output_tokens: 2 } });
     } }) }), ...overrides });
-  t.after(() => result.close());return { home, env: overrides.env || { CCDX_M365: "0" }, runtime: result, calls, stored, configured };
+  t.after(() => result.close());return { home, env: overrides.env || { CCDX_M365: "0" }, runtime: result, calls, catalogCalls, stored, configured };
 }
 async function save(r, options = {}) {
   const { id, enabled, secret_ref, ...config } = structuredClone(apiConfig);
@@ -116,7 +116,7 @@ test("a successful interactive Keychain exit is not accepted until its stored va
   await assert.rejects(store.set("f".repeat(32), "synthetic-key-only"), { code: "ccdx_api_secret_unavailable" });store.close();
 });
 
-test("manual APIs persist metadata only and do not activate a client or contact the service on save", async t => {
+test("manual API save reads only the catalog and does not activate a client", async t => {
   const s = runtime(t), id = await save(s.runtime);
   assert.equal(s.calls.length, 0);assert.equal(s.runtime.selection().codex, "github");
   const publicData = JSON.stringify(s.runtime.connections());assert.equal(publicData.includes("synthetic-key-only"), false);assert.equal(publicData.includes("secret_ref"), false);
@@ -188,7 +188,7 @@ test("disable rejects new requests, retains in-flight providers and restores wit
 
 test("catalog discovery does not invent API support or make inference calls", async t => {
   const s = runtime(t), id = await save(s.runtime), result = await s.runtime.manageConnections({ operation: "discover", id });
-  assert.deepEqual(result.discovered, [{ id: "model-new", protocols: [] }]);assert.equal(s.calls.length, 1);assert.equal(s.calls[0].init.method, "GET");
+  assert.deepEqual(result.discovered.map(({ id, protocols, metadata }) => ({ id, protocols, state: metadata.state })), [{ id: "model-new", protocols: [], state: "missing" }]);assert.equal(s.calls.length, 0);assert.equal(s.catalogCalls.length, 1);assert.equal(s.catalogCalls[0].init.method, "GET");
 });
 
 test("Codex ownership preserves unrelated configuration and user edits", t => {
@@ -388,4 +388,60 @@ test("saving model selections cannot remove models used by an active client", as
     await assert.rejects(s.runtime.manageConnections({ operation: "save_api", id, config, allowed: ["codex", "claude_app", "claude_code"] }), { code: "ccdx_api_model_unavailable" });
     assert.equal(fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env })).equals(before), true);
   }
+});
+
+test("automatic catalog refresh preserves bindings, native sign-in, manual overrides and active snapshots", async t => {
+  let clock = Date.now(), output = 16000, failure = false, reads = 0, closes = 0;
+  const s = runtime(t, { now: () => clock, createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() { closes++; }, async fetch(_url, init) {
+    if (init.body) return Response.json(JSON.parse(init.body));
+    reads++;if (failure) return Response.json({ secret: "not-public" }, { status: 403 });
+    return Response.json({ data: [{ id: "any-message-model", type: "model", max_input_tokens: 128000, max_tokens: output, capabilities: {
+      thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true } },
+    } }] });
+  } }) }) });
+  const auth = path.join(s.home, ".codex", "auth.json");fs.mkdirSync(path.dirname(auth), { recursive: true });
+  fs.writeFileSync(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "synthetic-native-sign-in", refresh_token: "synthetic-refresh" } }));
+  const authBytes = fs.readFileSync(auth), id = await save(s.runtime);
+  assert.equal(reads, 1);const c = s.runtime.connections().clients.find(c => c.id === "claude_app");
+  await s.runtime.manageConnections({ operation: "client", id: c.id, enabled: true, allowed: c.allowed, deployments: [{ source: id, model: "any-message-model" }] });
+  const before = s.runtime.connections().clients.find(c => c.id === "claude_app"), old = s.runtime.source(id), finish = s.runtime.track(old);
+  const oldCloses = closes;
+  const api = readAccessSettings({ home: s.home, env: s.env }).apis.find(api => api.id === id);
+  assert.equal(api.models[0].metadata.protocols.messages.max_output_tokens, 16000);
+  await Promise.all(Array.from({ length: 12 }, () => s.runtime.refresh()));assert.equal(reads, 1);
+  clock += 31 * 60000;output = 8000;await s.runtime.refresh();assert.equal(reads, 2);
+  const current = s.runtime.connections().clients.find(c => c.id === "claude_app");
+  assert.deepEqual(current.deployments, before.deployments);assert.equal(current.default_model, before.default_model);
+  assert.equal(current.model_plan.models[0].capability.values.max_output_tokens, 8000);
+  assert.equal(s.configured.at(-1).models[0].capability.values.max_output_tokens, 8000);
+  assert.equal((await (await old.client.messages({ model: "any-message-model", max_tokens: 30000 })).json()).max_tokens, 16000);
+  assert.equal(closes, oldCloses, "Active source still owns its transport");finish();assert.equal(closes, oldCloses + 1);
+  const saved = fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env }));
+  clock += 31 * 60000;failure = true;await s.runtime.refresh();await s.runtime.refresh();assert.equal(reads, 3);
+  assert.equal(s.runtime.connections().providers.find(p => p.id === id).discovery.state, "stale");
+  assert.ok(fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env })).equals(saved));assert.ok(fs.readFileSync(auth).equals(authBytes));
+  assert.equal(JSON.stringify(s.runtime.connections()).includes("not-public"), false);
+});
+
+test("environment-key changes create isolated profiles while existing requests retain the old key", async t => {
+  const env = { CCDX_M365: "0", TEST_GATEWAY_KEY: "first-synthetic-key" }, seen = [];
+  const s = runtime(t, { env, createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, async fetch(_url, init) {
+    seen.push(init.headers.Authorization);return Response.json(init.body ? JSON.parse(init.body) : { data: [] });
+  } }) }) });
+  const { id: ignored, enabled, secret_ref, ...config } = structuredClone(apiConfig);config.key_env = "TEST_GATEWAY_KEY";
+  const id = await save(s.runtime, { config, key: undefined }), old = s.runtime.source(id), finish = s.runtime.track(old);
+  env.TEST_GATEWAY_KEY = "second-synthetic-key";const current = s.runtime.source(id);
+  assert.notEqual(current.profileId(), old.profileId());
+  await old.client.responses({ model: "custom/response", input: "synthetic" });await current.client.responses({ model: "custom/response", input: "synthetic" });
+  assert.deepEqual(seen.slice(-2), ["Bearer first-synthetic-key", "Bearer second-synthetic-key"]);finish();
+});
+
+test("legacy single-source Codex review choices use refreshed capability evidence", async t => {
+  const s = runtime(t, { createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, async fetch() {
+    return Response.json({ data: [{ id: "custom/response", capabilities: { supports: { reasoning_effort: ["low", "high"] } } }] });
+  } }) }) });
+  const id = await save(s.runtime), c = s.runtime.connections().clients.find(c => c.id === "codex");
+  await s.runtime.manageConnections({ operation: "client", id: c.id, enabled: true, allowed: c.allowed, source: id, auto_review_effort: "high" });
+  assert.equal(s.runtime.providerPreference(id).auto_review_effort, "high");
+  assert.deepEqual(s.runtime.dashboardCatalog({ provider: id }).models.find(m => m.id === "custom/response").auto_review_efforts, ["low", "high"]);
 });

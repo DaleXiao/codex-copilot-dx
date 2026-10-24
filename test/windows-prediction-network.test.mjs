@@ -91,6 +91,18 @@ test("cancelling native worker initialization terminates the owned process", asy
   controller.abort();await assert.rejects(pending, /proxy_worker_cancelled/);assert.equal(f.child.killed, true);
 });
 
+test("custom API worker accepts only a catalog cursor on its pinned origin", async t => {
+  const f = fixture(t, { ready: null }), network = await startWindowsHttpNetwork({ target: "api", apiTargets: ["https://api.test/v1/models", "https://api.test/v1/messages"], spawnImpl: f.spawnImpl });
+  t.after(() => network.close());
+  for (const path of ["/v1/models?after_id=a&key=x", "/v1/messages?after_id=a", "/v1/models?after_id=.."] ) {
+    const req = network.requestImpl({ hostname: "api.test", path, method: "GET" }, () => assert.fail());const failed = once(req, "error");req.end();assert.match((await failed)[0].message, /proxy_target_invalid/);
+  }
+  const result = new Promise((resolve, reject) => {
+    const req = network.requestImpl({ hostname: "api.test", path: "/v1/models?after_id=vendor%2Fmodel", method: "GET" }, res => { res.resume();res.on("end", resolve);res.on("error", reject); });req.on("error", reject);req.end();
+  });await result;
+  assert.equal(f.received.find(event => event.op === "request").url, "https://api.test/v1/models?after_id=vendor%2Fmodel");
+});
+
 test("worker failures, invalid targets and detection timeouts are bounded and redacted", async t => {
   const f = fixture(t, { respond: false });
   const network = await startWindowsPredictionNetwork({ settings: { pac: "https://company.test/proxy.pac" }, spawnImpl: f.spawnImpl, timeoutMs: 100 });

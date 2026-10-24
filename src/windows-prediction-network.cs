@@ -74,11 +74,17 @@ public static class CCDXPredictionNetwork {
       }
     } finally { if(request!=IntPtr.Zero)WinHttpCloseHandle(request);if(connection!=IntPtr.Zero)WinHttpCloseHandle(connection); }
   }
+  static bool ApiTargetAllowed(Uri uri, string method) {
+    if(apiTargets.Contains(uri.AbsoluteUri))return true;
+    if(method!="GET" || !uri.AbsolutePath.EndsWith("/models",StringComparison.Ordinal) || !uri.Query.StartsWith("?after_id=",StringComparison.Ordinal) || uri.Query.IndexOf('&')>=0)return false;
+    string cursor=Uri.UnescapeDataString(uri.Query.Substring(10));
+    return System.Text.RegularExpressions.Regex.IsMatch(cursor,"^[A-Za-z0-9_][A-Za-z0-9_./:@+\\-]{0,159}$") && !cursor.Contains("..") && !cursor.Contains("//") && apiTargets.Contains(uri.GetLeftPart(UriPartial.Path));
+  }
   static void Request(Dictionary<string,object> data, int id, Work work) {
     IntPtr connection=IntPtr.Zero;
     try {
       var uri=new Uri((string)data["url"]);
-      if(uri.Scheme!="https" || uri.UserInfo.Length!=0 || uri.Fragment.Length!=0 || (target=="api" ? !apiTargets.Contains(uri.AbsoluteUri) : (uri.Port!=443 || (target=="m365" ? (uri.Host!="df.loki.delve.office.com" || !uri.AbsolutePath.StartsWith("/api/v1/llmapi/",StringComparison.Ordinal)) : (uri.Host!="chatgpt.com"&&uri.Host!="ab.chatgpt.com"))))) throw new IOException("winhttp_target_invalid");
+      if(uri.Scheme!="https" || uri.UserInfo.Length!=0 || uri.Fragment.Length!=0 || (target=="api" ? !ApiTargetAllowed(uri,(string)data["method"]) : (uri.Port!=443 || (target=="m365" ? (uri.Host!="df.loki.delve.office.com" || !uri.AbsolutePath.StartsWith("/api/v1/llmapi/",StringComparison.Ordinal)) : (uri.Host!="chatgpt.com"&&uri.Host!="ab.chatgpt.com"))))) throw new IOException("winhttp_target_invalid");
       var method=(string)data["method"];
       if(method!="GET"&&method!="POST"&&method!="HEAD"&&method!="PUT"&&method!="DELETE"&&method!="OPTIONS"&&method!="PATCH")throw new IOException("winhttp_method_invalid");
       var headers=(string)data["headers"];

@@ -72,7 +72,7 @@ export async function startWindowsHttpNetwork({ settings = {}, target = "predict
       if(!allowedHosts.includes(host)||!String(options.path).startsWith("/")||target !== "api" && String(options.path).startsWith("//"))throw failure("proxy_target_invalid");
       if(target === "m365" && !String(options.path).startsWith("/api/v1/llmapi/")) throw failure("proxy_target_invalid");
       const requestUrl = `https://${host}${options.port && Number(options.port) !== 443 ? `:${options.port}` : ""}${options.path}`;
-      if(target === "api" && !apiTargets.includes(requestUrl)) throw failure("proxy_target_invalid");
+      if(target === "api" && !apiTargetAllowed(requestUrl, apiTargets, options.method || "GET")) throw failure("proxy_target_invalid");
       const headers=[];
       for(const [name,value]of Object.entries(options.headers||{})){
         if(!/^[!#$%&'*+.^_`|~0-9a-z-]+$/i.test(name))throw failure("proxy_headers_invalid");
@@ -125,3 +125,4 @@ export async function startWindowsHttpNetwork({ settings = {}, target = "predict
   };
   return {script,requestImpl,healthy:()=>!stopped,close(){closing=true;stop(failure("proxy_worker_closed"));}};
 }
+import { apiTargetAllowed } from "./api-target.mjs";

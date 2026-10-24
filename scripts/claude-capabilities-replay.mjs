@@ -22,7 +22,8 @@ const runtime = createProviderRuntime({ home, env, platform: "linux", corePort: 
   secretStore: { get: async id => stored.get(id), set: async (id, value) => stored.set(id, value), remove: async id => stored.delete(id), close() {} },
   createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, async fetch(url, init) {
     const body = init.body ? JSON.parse(init.body) : null;
-    if (!body) return Response.json({ data: [] });
+    if (!body) return Response.json({ data: [["small", 128000, 16000], ["large", 1000000, 64000]].map(([id, max_input_tokens, max_tokens]) => ({ id, type: "model", max_input_tokens, max_tokens,
+      capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true } } } })) });
     if (url.endsWith("count_tokens")) return Response.json({ input_tokens: 100 });
     calls.push({ model: body.model, max_tokens: body.max_tokens, effort: body.output_config?.effort, thinking: body.thinking?.type });
     const message = { id: "msg_replay_" + calls.length, type: "message", role: "assistant", model: body.model, content: [], usage: { input_tokens: 100, output_tokens: 1 } };
@@ -34,7 +35,7 @@ const runtime = createProviderRuntime({ home, env, platform: "linux", corePort: 
 handler = createAdapterHandler({ providerRuntime: runtime, codexClient: {} });
 try {
   const state = await runtime.manageConnections({ operation: "save_api", config: { name: "Native replay", base_url: "https://synthetic.test/v1", endpoints: { messages: "https://synthetic.test/v1/messages" }, auth_header: "bearer",
-    models: [["small", 128000, 16000], ["large", 1000000, 64000]].map(([id, context_window, max_output_tokens]) => ({ id, protocols: ["messages"], capabilities: { context_window, max_output_tokens, reasoning: true, reasoning_efforts: ["low", "medium", "high"] } })) }, key: "synthetic-only", allowed: ["claude_code"] });
+    models: ["small", "large"].map(id => ({ id, protocols: ["messages"] })) }, key: "synthetic-only", allowed: ["claude_code"] });
   const source = state.providers.find(p => !p.builtin).id, client = state.clients.find(c => c.id === "claude_code");
   await runtime.manageConnections({ operation: "client", id: "claude_code", enabled: true, allowed: client.allowed, deployments: ["small", "large"].map(model => ({ source, model })) });
   const compiled = runtime.connections().clients.find(c => c.id === "claude_code").model_plan.models;

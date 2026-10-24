@@ -29,8 +29,11 @@ objects with the live graph. The built-in registry does not load external code.
 strict manual values, per-field evidence and deployment revisions. It reads no
 credentials or client files. Explicit manual values override the current API's
 structured declarations; absent or generation-mismatched fields remain unknown.
-`client-model-plan.mjs` compiles immutable authorized catalogs, source-qualified
-routes and client metadata. Same-named models never collapse into one deployment.
+`client-model-plan.mjs` compiles immutable authorized catalogs and source-qualified
+routes. `clients/codex-models.mjs` projects native Codex catalogs and
+`clients/claude-models.mjs` owns desktop compatibility aliases. These adapters do
+not read upstream credentials, and API providers do not import client projections
+or configuration writers. Same-named models never collapse into one deployment.
 Legacy null bindings retain their original single-source catalog; explicit arrays
 expose only selected models. A v1 file is backed up byte-for-byte before the first
 atomic v2 write. Source grants are not silently promoted to model grants.
@@ -56,11 +59,23 @@ are public data, not fabricated capabilities. Output constraints are recorded as
 bounded revision/constraint labels in existing request context observations.
 
 `providers/api.mjs` owns configured native clients, model capabilities,
-configuration/key history identity and explicit bounded discovery. It uses no
+configuration/key history identity and bounded discovery. Its protocol-specific
+capability snapshots feed both request validation and application projections.
+`providers/api-model-metadata.mjs` interprets declared common/Anthropic catalog
+schemas without a model-name registry. Native thinking and effort stay distinct;
+Messages declarations do not leak into other protocols. `connection-runtime.mjs`
+serializes automatic refresh on save/start/existing refresh ticks, coalesces
+refresh batches and retains last-good data on failure. Normal reads use a
+30-minute cache; explicit reads/failures have a one-minute minimum interval.
+Catalog-only changes preserve grants, source identity and running requests;
+endpoint/credential changes create a new private revision. Environment credentials
+are captured per provider instance so an active request cannot adopt another key.
+It uses no
 Copilot/M365 retry or request-body policy. Its lazy transport is retained per
 configuration, not rebuilt or serialized against the whole catalog per request.
 `providers/api-network.mjs` preserves enterprise routing/TLS and pins exact HTTPS
-targets. The WinHTTP API mode checks its allowlist in JS and C#; prediction/M365
+targets, with a GET-only validated catalog cursor exception. The WinHTTP API mode
+checks the same allowlist/cursor boundary in JS and C#; prediction/M365
 retain their original host restrictions. A failure before response headers marks
 the transport unhealthy. The next request replaces it without replaying the
 failed call; retirement waits for unrelated active responses to drain. Shutdown

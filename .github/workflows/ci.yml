@@ -75,7 +75,7 @@ jobs:
       - name: Verify isolated provider, broker, gateway, ownership and system network contracts
         run: node --test test/claude-models.test.mjs test/m365-auth.test.mjs test/m365-accounts.test.mjs test/m365-account-selection.test.mjs test/m365-provider.test.mjs test/m365-catalog-diagnostic.test.mjs test/m365-network.test.mjs test/provider-runtime.test.mjs test/provider-registry.test.mjs test/client-integration-state.test.mjs test/claude-gateway.test.mjs test/claude-client-config.test.mjs test/cli-m365.test.mjs test/shared-listener.test.mjs test/service-control.test.mjs test/terminal-console.test.mjs test/browser-launch.test.mjs test/listener-lifecycle.test.mjs test/dashboard-activity.test.mjs
       - name: Verify manual API, native credentials and client authorization boundaries
-        run: node --test test/connections.test.mjs test/connections-http.test.mjs test/api-network.test.mjs
+        run: node --test test/connections.test.mjs test/connections-http.test.mjs test/api-network.test.mjs test/api-model-metadata.test.mjs test/model-capabilities.test.mjs
       - run: npm run test:package
   macos:
     runs-on: macos-latest

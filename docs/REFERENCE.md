@@ -42,11 +42,18 @@ Up to 16 uniquely named manual APIs and 500 unique models per API are supported.
 IDs are not filtered by a GPT/Claude prefix. Each model declares Messages,
 Responses and/or Chat Completions; optional stored `context_window` and
 `reasoning_efforts` metadata remain explicit. Chat-only records are catalog
-information, not converted into another client protocol. Saving makes no catalog
-or inference call. **Read models** performs one explicit catalog read, with a
-20-second deadline and 8 MiB body bound. An ID-only result has unknown protocol
-support until reviewed. Opening normal views reads saved models rather than
-probing every API. `ccdx models` labels manual models as configured, not live.
+information, not converted into another client protocol. Saving automatically
+reads the catalog; failure does not undo saved configuration. Startup and the
+existing periodic model-refresh cycle refresh enabled APIs serially, using a
+30-minute success cache and a one-minute failure cooldown. **Read models** can
+refresh sooner, but shares a one-minute cache with recent reads. Directory GETs
+use a 20-second total deadline, 8 MiB total body bound, 500 models and at most 25
+pages. Native `has_more`/`last_id` pagination uses only a validated `after_id`
+cursor on the configured catalog URL; arbitrary next URLs are never followed.
+An ID-only result has unknown protocol support until reviewed. Ordinary page
+reads use saved data; no discovery sends inference. `ccdx models` labels manual
+models as configured, not live. New catalog entries are candidates, never
+automatically granted to a client. An absent entry does not delete a saved model.
 
 For manual Messages APIs, CCDX writes Claude App's model configuration
 automatically. Standard Claude IDs keep their existing identity; other IDs use
@@ -163,13 +170,24 @@ model substitution, cross-source retry or automatic protocol conversion.
 
 Each custom model accepts an optional `capabilities` object with positive token
 limits (`context_window`, `max_input_tokens`, `max_output_tokens`), reasoning flags,
-`reasoning_efforts`, optional reasoning budget bounds/format, `input_modalities`,
+`reasoning_efforts`, optional reasoning budget bounds/format, `thinking_modes`, `input_modalities`,
 boolean tools/parallel tools/streaming/structured output and a `web_search` array
 of supported native protocols. Empty arrays mean an explicit empty set; in the
 editor enter `[]`. Blank fields follow the current deployment catalog. Known
 numeric limits, flags and enums are strictly validated; arbitrary JSON is rejected.
 
 Discovery retains recognized structured fields with per-deployment timestamps.
+The existing common catalog fields and Anthropic ModelInfo declarations are
+supported. Anthropic `max_input_tokens`/`max_tokens`, thinking types, effort
+levels, image input, structured output and native search are interpreted as
+Messages capabilities. They do not automatically apply to Responses or Chat.
+Effort and thinking modes remain distinct; declaring a server-side search tool
+does not prove support for client tool calls. The current upstream's declarations
+are authoritative for that deployment, not a model-name database or the original
+vendor's published limits. See the [Anthropic Models API](https://platform.claude.com/docs/en/api/http/models/list).
+Model details show values by interface, then optional manual overrides. ID-only
+catalogs say that upstream did not provide capabilities; unrecognized capability
+formats have a separate state. Parsed values are saved, not raw upstream JSON.
 Manual fields, including false/empty arrays, take priority over API declarations.
 ID-only results keep missing fields unknown. A failed refresh preserves saved
 metadata and records a bounded error; a changed endpoint/key invalidates prior
@@ -1246,7 +1264,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.18/codex-copilot-dx-1.2.18.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.19/codex-copilot-dx-1.2.19.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 

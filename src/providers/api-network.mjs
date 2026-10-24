@@ -7,6 +7,7 @@ import { createProxyAgent } from "../proxy-tunnel.mjs";
 import { apiUrl, accessError } from "../access-settings.mjs";
 import { privateHelperEnvironment } from "../private-helper-environment.mjs";
 import { transportErrorDetails } from "../operation-error.mjs";
+import { apiTargetAllowed } from "../api-target.mjs";
 
 export async function createApiNetwork({ targets, env = process.env, platform = process.platform, signal,
   requestImpl = https.request, exec = promisify(execFile), startWindowsNetwork } = {}) {
@@ -30,7 +31,7 @@ export async function createApiNetwork({ targets, env = process.env, platform = 
     fetch(raw, init = {}) {
       return new Promise((resolve, reject) => {
         let url;try { url = new URL(raw); } catch { reject(accessError("ccdx_api_url_invalid"));return; }
-        if (closed || retiring || !urls.has(url.href) || !["GET", "POST"].includes(init.method || "GET")) { reject(accessError("ccdx_api_url_invalid"));return; }
+        if (closed || retiring || !apiTargetAllowed(url.href, [...urls], init.method || "GET") || !["GET", "POST"].includes(init.method || "GET")) { reject(accessError("ccdx_api_url_invalid"));return; }
         if (init.signal?.aborted) { reject(init.signal.reason);return; }
         active++;
         let req, incoming, socket, phase = "request", handedOff = false, released = false;
@@ -52,7 +53,7 @@ export async function createApiNetwork({ targets, env = process.env, platform = 
         };
         const abort = () => { req?.destroy(init.signal.reason || accessError("ccdx_api_cancelled"));incoming?.destroy(); };
         try {
-          req = requestImpl({ hostname: worker ? url.hostname : url.hostname.replace(/^\[|\]$/g, ""), port: Number(url.port || 443), protocol: "https:", path: url.pathname,
+          req = requestImpl({ hostname: worker ? url.hostname : url.hostname.replace(/^\[|\]$/g, ""), port: Number(url.port || 443), protocol: "https:", path: url.pathname + url.search,
             method: init.method || "GET", headers: { ...Object.fromEntries(new Headers(init.headers)), "accept-encoding": "identity" }, agent, rejectUnauthorized: true }, res => {
             phase = "response";incoming = res;
             const finished = () => { cleanup();release(); };

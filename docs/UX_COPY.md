@@ -78,3 +78,11 @@ configuration and successful inference remain separate facts. CLI stays English.
 Catalog reads do not select every returned model. Protocol selection selects its
 model; unselected rows are omitted from the save. A client can choose the source
 after compatible models are saved. Manual ID entry remains optional.
+# Capability discovery (1.2.19)
+
+| Previous text | English | 中文 |
+| --- | --- | --- |
+| Not declared (all missing cases) | Upstream did not provide capabilities | 上游未提供能力资料 |
+| Not declared (unrecognized fields) | Upstream capability format not recognized | 暂未识别上游能力格式 |
+| Declared by this API | Read from upstream | 已从上游读取 |
+| Expanded manual capability form | Manual override (collapsed) | 手动设置（默认折叠） |

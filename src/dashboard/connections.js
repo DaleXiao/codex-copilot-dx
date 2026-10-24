@@ -83,19 +83,29 @@
     catch (error) { if (input.operation === "client") words(el("connection-client-note"), error.message);else message(error.message); }
     finally { busy = false;view?.removeAttribute("aria-busy"); }
   }
-  const resolved = model => ({ ...(model.metadata?.deployment === source(editing)?.deployment_revision ? model.metadata.values : {}), ...(model.context_window === undefined ? {} : { context_window: model.context_window }),
-    ...(model.reasoning_efforts === undefined ? {} : { reasoning_efforts: model.reasoning_efforts }), ...(model.capabilities || {}) });
+  const resolved = (model, protocol = model.protocols.includes("messages") ? "messages" : model.protocols[0]) => {
+    const metadata = model.metadata?.deployment === source(editing)?.deployment_revision ? model.metadata : null;
+    const values = { ...metadata?.values, ...metadata?.protocols?.[protocol], ...(model.context_window === undefined ? {} : { context_window: model.context_window }),
+      ...(model.reasoning_efforts === undefined ? {} : { reasoning_efforts: model.reasoning_efforts }), ...(model.capabilities || {}) };
+    if (values.reasoning_format && values.reasoning_format !== protocol) for (const key of Object.keys(values).filter(key => key.startsWith("reasoning"))) delete values[key];
+    if (values.reasoning === false) delete values.reasoning_efforts;
+    return values;
+  };
   const count = value => !value ? format("cap_unknown") : value >= 1000000 ? `${Number((value / 1000000).toFixed(2))}M` : value >= 1000 ? `${Number((value / 1000).toFixed(1))}K` : String(value);
   const reasoningText = values => values.reasoning === false ? format("cap_unsupported") : values.reasoning_efforts?.length ? values.reasoning_efforts.join(" / ") : values.reasoning === true ? format("cap_supported") : format("cap_unknown");
   const searchText = values => values.web_search === undefined ? format("cap_unknown") : values.web_search.length ? values.web_search.map(protocol => protocol === "messages" ? "Messages" : protocol === "responses" ? "Responses" : "Chat").join(" / ") : format("cap_unsupported");
   function modelDetail(model) {
     const detail = el("connection-model-detail");detail.hidden = false;detail.replaceChildren();
     const heading = node("div", undefined, "panel-heading");heading.append(node("h3", model.id), button("close", () => { detail.hidden = true; }));detail.append(heading);
-    const note = node("p", undefined, "hint");words(note, "cap_metadata_scope");detail.append(note);
-    const fields = node("div", undefined, "connection-fields"), values = resolved(model);
+    const protocol = choice(model.protocols.map(id => ({ id, name: id === "messages" ? "Messages" : id === "responses" ? "Responses" : "Chat" })), model.protocols.includes("messages") ? "messages" : model.protocols[0], false);
+    protocol.setAttribute("aria-label", format("cap_api"));detail.append(protocol);
+    const status = node("p", undefined, "hint"), table = node("table"), body = node("tbody");table.append(body);detail.append(status, table);
+    const advanced = node("details"), summary = node("summary");words(summary, "cap_manual");advanced.append(summary);detail.append(advanced);
+    const note = node("p", undefined, "hint");words(note, "cap_metadata_scope");advanced.append(note);
+    const fields = node("div", undefined, "connection-fields");
     const numeric = ["context_window", "max_input_tokens", "max_output_tokens", "reasoning_budget_min", "reasoning_budget_max"];
     const flags = ["reasoning", "reasoning_required", "reasoning_adaptive", "tools", "parallel_tools", "streaming", "structured_output"];
-    const arrays = ["reasoning_efforts", "input_modalities", "web_search"];
+    const arrays = ["reasoning_efforts", "thinking_modes", "input_modalities", "web_search"];
     for (const key of [...numeric, ...flags, ...arrays, "reasoning_format"]) {
       const label = node("label"), title = node("span");words(title, "cap_field_" + key);label.append(title);
       let input;
@@ -107,10 +117,22 @@
       input.dataset.capability = key;
       const manual = model.capabilities?.[key] ?? (key === "context_window" ? model.context_window : key === "reasoning_efforts" ? model.reasoning_efforts : undefined);
       input.value = manual === undefined ? "" : Array.isArray(manual) ? manual.length ? manual.join(", ") : "[]" : String(manual);
-      if (input.tagName === "INPUT") input.placeholder = values[key] === undefined ? format("cap_unknown") : Array.isArray(values[key]) ? values[key].join(", ") : String(values[key]);
-      const evidence = node("span", undefined, "hint");words(evidence, manual !== undefined ? "cap_manual" : model.metadata?.deployment === source(editing)?.deployment_revision && model.metadata?.values[key] !== undefined ? "cap_catalog" : "cap_unknown");label.append(input, evidence);fields.append(label);
+      const evidence = node("span", undefined, "hint");words(evidence, manual !== undefined ? "cap_manual" : "cap_follow_catalog");label.append(input, evidence);fields.append(label);
     }
-    detail.append(fields);
+    function showCapabilities() {
+      const values = resolved(model, protocol.value), fresh = model.metadata?.deployment === source(editing)?.deployment_revision;
+      words(status, fresh ? "cap_catalog_" + (model.metadata.state || "reported") : "cap_unknown");
+      if (fresh && model.metadata.checked_at) status.append(" · ", new Date(model.metadata.checked_at).toLocaleString());
+      body.replaceChildren();
+      for (const key of ["context_window", "max_input_tokens", "max_output_tokens", "reasoning_efforts", "reasoning_adaptive", "tools", "input_modalities", "web_search"]) {
+        const row = node("tr"), label = node("th");words(label, ({ reasoning_efforts: "cap_reasoning", input_modalities: "cap_input_types", web_search: "cap_search" })[key] || "cap_field_" + key);
+        const value = values[key], text = key === "reasoning_efforts" ? reasoningText(values) : key === "web_search" ? searchText(values)
+          : value === undefined ? format("cap_unknown") : typeof value === "boolean" ? format(value ? "cap_supported" : "cap_unsupported") : Array.isArray(value) ? value.join(" / ") || format("cap_unsupported") : count(value);
+        row.append(label, node("td", text));body.append(row);
+      }
+      for (const input of fields.querySelectorAll("input[data-capability]")) { const value = values[input.dataset.capability];input.placeholder = value === undefined ? format("cap_unknown") : Array.isArray(value) ? value.join(", ") : String(value); }
+    }
+    protocol.addEventListener("change", showCapabilities);showCapabilities();advanced.append(fields);
     const save = button("cap_apply_details", () => {
       const override = {};
       for (const input of fields.querySelectorAll("[data-capability]")) {
@@ -118,7 +140,7 @@
         override[key] = numeric.includes(key) ? Number(text) : flags.includes(key) ? text === "true" : arrays.includes(key) ? text === "[]" ? [] : text.split(/[,，]\s*/).filter(Boolean) : text;
       }
       model.capabilities = override;delete model.context_window;delete model.reasoning_efforts;modelRows();detail.hidden = true;message("cap_details_draft");
-    });detail.append(save);detail.scrollIntoView({ block: "nearest", behavior: "auto" });
+    });advanced.append(save);detail.scrollIntoView({ block: "nearest", behavior: "auto" });
   }
   function syncPreview(preview) {
     const c = client(editingClient), result = el("connection-sync-result");result.hidden = false;result.replaceChildren();

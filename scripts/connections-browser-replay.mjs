@@ -34,7 +34,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           secretStore: { get: async id => values.get(id), set: async (id, key) => { values.set(id, key); }, remove: async id => { values.delete(id); }, close() {} },
           inspectDesktop: async () => false, configureClaude: input => ({ [input.client === "claude_app" ? "app" : "code"]: "configured" }), restoreClaude: () => ({ preserved: 0 }),
           createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, fetch: async (_url, init) => {
-            assert.equal(init.method, "GET");discoveries++;return Response.json({ data: ["claude-replay", "response-replay", ...Array.from({ length: 6 }, (_, i) => "unselected-" + i)].map(id => ({ id, ...(id === "claude-replay" ? { capabilities: { limits: { max_context_window_tokens: 128000, max_output_tokens: 16000 }, supports: { reasoning_effort: ["low", "medium", "high"] } } } : {}) })) });
+            assert.equal(init.method, "GET");discoveries++;return Response.json({ data: ["claude-replay", "response-replay", ...Array.from({ length: 6 }, (_, i) => "unselected-" + i)].map(id => ({ id, ...(id === "claude-replay" ? { type: "model", max_input_tokens: 128000, max_tokens: 16000, capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true } } } } : {}) })) });
           } }) }) });
         const serviceControl = createServiceControl({ home: root, env, providerRuntime: runtime });
         handler = createAdapterHandler({ providerRuntime: runtime, dashboardOptions: { home: root, env, serviceControl,
@@ -62,14 +62,21 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         assert.equal(runtime.connections().providers.find(p => p.id === id).models.length, 0, "A selected model without APIs cannot overwrite saved data");
         assert.match(await page.locator("#connection-note").innerText(), /unselected-0/);await unconfigured.locator('input[name="selected-model"]').uncheck();
         await page.locator("#connection-models tr").filter({ hasText: "claude-replay" }).locator('input[name="selected-model"]').check();
-        for (const [model, protocol] of [["claude-replay", "messages"], ["response-replay", "responses"]]) {
+        for (const [model, protocol] of [["claude-replay", "messages"], ["claude-replay", "responses"], ["response-replay", "responses"]]) {
           await page.locator("#connection-models tr").filter({ hasText: model }).locator(`input[value="${protocol}"]`).check();
         }
         assert.equal(await page.locator('#connection-models input[name="selected-model"]:checked').count(), 2, "Checking an API selects its model");
         assert.equal(await page.locator("#connection-model-id").inputValue(), "", "Catalog selection does not require typing an ID");
         const modelRow = page.locator("#connection-models tr").filter({ hasText: "claude-replay" });
-        await modelRow.locator("button").first().click();await page.locator('#connection-model-detail select[data-capability="tools"]').selectOption("false");
-        await page.locator('#connection-model-detail > button').click();
+        await modelRow.locator("button").first().click();
+        assert.match(await page.locator('#connection-model-detail > table').innerText(), /128K/);
+        await page.locator('#connection-model-detail > select').selectOption("responses");
+        assert.doesNotMatch(await page.locator('#connection-model-detail > table').innerText(), /128K|low \/ medium/);
+        await page.locator('#connection-model-detail > select').selectOption("messages");
+        if (options.get("--output")) await page.locator('#connection-model-detail').screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}-capabilities.png`) });
+        assert.equal(await page.locator('#connection-model-detail > details').getAttribute('open'), null);
+        await page.locator('#connection-model-detail > details > summary').click();await page.locator('#connection-model-detail select[data-capability="tools"]').selectOption("false");
+        await page.locator('#connection-model-detail > details > button').click();
 
         assert.equal(await page.locator('#connection-models tr').first().locator('input[value="chat"]').isDisabled(), true);
         if (options.get("--output")) { fs.mkdirSync(options.get("--output"), { recursive: true });await page.locator("#connection-editor").screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}-model-selection.png`) }); }
@@ -138,5 +145,5 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
     }
   } finally { await browser.close(); }
 }
-assert.equal(discoveries, report.length, "Only one explicit catalog read per case; saving and assigning must not probe");
-console.log(JSON.stringify({ cases: report.length, results: report, live_provider_calls: 0, explicit_catalog_requests: discoveries, implicit_catalog_requests: 0 }));
+assert.equal(discoveries, report.length, "One automatic catalog read per case; explicit reads and model saves reuse its cache");
+console.log(JSON.stringify({ cases: report.length, results: report, live_provider_calls: 0, automatic_catalog_requests: discoveries, inference_requests: 0 }));

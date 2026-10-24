@@ -51,7 +51,9 @@ export function checkedApi(value) {
       || !Array.isArray(model.protocols) || !model.protocols.length || new Set(model.protocols).size !== model.protocols.length
       || model.protocols.some(api => !value.endpoints[api])
       || model.capabilities !== undefined && !validCapabilities(model.capabilities)
-      || model.metadata !== undefined && (!fields(model.metadata, ["values", "checked_at", "deployment"]) || !validCapabilities(model.metadata.values)
+      || model.metadata !== undefined && (!fields(model.metadata, ["values", "protocols", "state", "checked_at", "deployment"]) || !validCapabilities(model.metadata.values)
+        || model.metadata.protocols !== undefined && (!fields(model.metadata.protocols, APIS) || Object.values(model.metadata.protocols).some(value => !validCapabilities(value)))
+        || model.metadata.state !== undefined && !["reported", "missing", "unrecognized"].includes(model.metadata.state)
         || !/^[a-f0-9]{32}$/.test(model.metadata.deployment || "") || !Number.isFinite(Date.parse(model.metadata.checked_at)))
       || model.context_window !== undefined && (!Number.isSafeInteger(model.context_window) || model.context_window < 1)
       || model.reasoning_efforts !== undefined && (!Array.isArray(model.reasoning_efforts) || model.reasoning_efforts.length > 8

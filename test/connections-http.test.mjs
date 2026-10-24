@@ -57,6 +57,7 @@ test("same-port HTTP enforces management origin, native client keys and configur
     secretStore: { get: async id => keys.get(id), set: async (id, key) => { keys.set(id, key); }, remove: async id => { keys.delete(id); }, close() {} },
     inspectDesktop: async () => false, configureClaude: input => ({ [input.client === "claude_app" ? "app" : "code"]: "configured" }), restoreClaude: () => ({ preserved: 0 }),
     createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, fetch: async (url, init) => {
+      if (!init.body) return Response.json({ data: [] });
       calls.push({ url, init });const body = JSON.parse(init.body);
       return Response.json({ type: "message", role: "assistant", id: "msg_http", model: body.model, content: [{ type: "text", text: "synthetic" }], stop_reason: "end_turn", usage: { input_tokens: 5, output_tokens: 1 } });
     } }) }) });
@@ -101,6 +102,7 @@ test("the shared Claude route recovers on a later request while an earlier respo
       const network = await createApiNetwork({ ...input, env: {}, platform: "linux", requestImpl: (_options, reply) => {
         const req = new EventEmitter();req.destroy = () => {};
         req.end = () => queueMicrotask(() => {
+          if (_options.method === "GET") { const response = new PassThrough();response.statusCode = 200;response.headers = { "content-type": "application/json" };reply(response);response.end('{"data":[]}');return; }
           calls++;
           if (calls === 2) { req.emit("error", Object.assign(new Error("private fixture text"), { code: "ECONNRESET" }));return; }
           const response = new PassThrough();response.statusCode = 200;
@@ -127,7 +129,7 @@ test("the shared Claude route recovers on a later request while an earlier respo
   const failed = await send(false);assert.equal(failed.status, 502);const error = await failed.json();assert.equal(error.error.diagnostic.code, "ECONNRESET");
   assert.equal(calls, 2, "the failed inference is never replayed");
   const later = await send(false);assert.equal(later.status, 200);assert.equal((await later.json()).content[0].text, "OK");
-  assert.equal(calls, 3);assert.equal(created, 2);assert.equal(drained, false);assert.equal(held.destroyed, false);
+  assert.equal(calls, 3);assert.equal(created, 3);assert.equal(drained, false);assert.equal(held.destroyed, false);
   held.end('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n');
   assert.match(await firstBody, /message_stop/);await new Promise(resolve => setImmediate(resolve));assert.equal(drained, true);
 });

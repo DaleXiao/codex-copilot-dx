@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { createApiNetwork } from "../src/providers/api-network.mjs";
 import { privateHelperEnvironment } from "../src/private-helper-environment.mjs";
+import { apiTargetAllowed } from "../src/api-target.mjs";
 
 function transport(calls) {
   return (options, reply) => {
@@ -12,6 +13,14 @@ function transport(calls) {
     return request;
   };
 }
+test("catalog cursors preserve transport bounds and reach the request path", async t => {
+  const targets = ["https://api.test:8443/v1/models", "https://api.test:8443/v1/messages"], calls = [];
+  const network = await createApiNetwork({ targets, env: {}, platform: "linux", requestImpl: transport(calls) });t.after(() => network.close());
+  const url = targets[0] + "?after_id=vendor%2Fmodel%2B1";
+  assert.equal((await network.fetch(url)).status, 200);assert.equal(calls[0].path, "/v1/models?after_id=vendor%2Fmodel%2B1");
+  for (const raw of [targets[0] + "?after_id=..", targets[0] + "?after_id=a&after_id=b", targets[0] + "?after_id=a&key=x", targets[1] + "?after_id=a", "https://other.test/v1/models?after_id=a", targets[0] + "?after_id=a#x"]) assert.equal(apiTargetAllowed(raw, targets), false);
+  assert.equal(apiTargetAllowed(url, targets, "POST"), false);
+});
 test("API transport pins HTTPS targets and port, uses strict TLS and streams the response", async t => {
   const calls = [], network = await createApiNetwork({ targets: ["https://api.test:8443/v1/messages"], env: {}, platform: "linux", requestImpl: transport(calls) });t.after(() => network.close());
   const result = await network.fetch("https://api.test:8443/v1/messages", { method: "POST", headers: { Authorization: "Bearer synthetic" }, body: "{}" });assert.equal((await result.json()).ok, true);

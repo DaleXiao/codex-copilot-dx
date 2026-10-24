@@ -12,7 +12,7 @@ import { createStreamPerformanceMetrics, isMessagesOutputDelta } from "./stream-
 import { buildMessagesUsageRecord, recordUsage } from "./usage-store.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { decodedBodyLimitPreference } from "./user-settings.mjs";
-import { operationErrorDetails } from "./operation-error.mjs";
+import { operationErrorDetails, transportErrorDetails } from "./operation-error.mjs";
 import { requestApplication } from "./request-application.mjs";
 
 function send(res, code, value) {
@@ -151,10 +151,15 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
         const statusCode = detail.status || (abort.reason ? abortErrorStatusCode(abort.reason) : 502);
         failureStatus = statusCode;terminalOrigin = outcome === "cancelled" ? "client_disconnect" : statusCode < 500 && statusCode !== 429 ? "client_validation" : "transport";
         const message = redactDiagnosticText(error.message).split(apiKey).join("[redacted]").slice(0, 240);
-        log(outcome === "cancelled" ? "info" : "warn", `Claude request ${requestId}: ${detail.code}`);
+        const diagnostic = error.code === "ccdx_api_network_unavailable" ? transportErrorDetails(error) : null;
+        log(outcome === "cancelled" ? "info" : "warn", `Claude request ${requestId}: ${detail.code}${diagnostic ? ` (${diagnostic.code}, ${diagnostic.phase})` : ""}`);
         tracker?.setErrorOrigin(terminalOrigin);
         if (outcome === "cancelled") return;
-        if (!res.headersSent) send(res, statusCode, apiError(error.code || abort.reason || "ccdx_gateway_error", message));
+        if (!res.headersSent) {
+          const value = apiError(error.code || abort.reason || "ccdx_gateway_error", message);
+          if (diagnostic) value.error.diagnostic = diagnostic;
+          send(res, statusCode, value);
+        }
         else if (!res.destroyed && !res.writableEnded) res.end(`event: error\ndata: ${JSON.stringify(apiError("ccdx_gateway_error", message))}\n\n`);
       } finally {
         release();abort.cleanup();

@@ -28,8 +28,15 @@ key. Display hints do not authorize requests. API addresses require HTTPS, no
 userinfo/query/fragment, and endpoint overrides on the base address's origin.
 Redirects are refused. Existing proxy/bypass/private-CA rules remain; unsupported
 dynamic macOS routing fails without a direct fallback. Windows delegates system
-routing to a target-pinned WinHTTP worker. Failed calls are not replayed; a dead
-worker can be recreated for a later request.
+routing to a target-pinned WinHTTP worker. Failed calls are not replayed. A
+transport failure before response headers marks that transport unhealthy; a
+later request creates a new transport and rereads the existing routing policy.
+Other responses already using the old transport finish before it is released.
+HTTP denials and deliberate cancellation do not trigger this recovery.
+Network failures retain `ccdx_api_network_unavailable` and include a bounded
+`error.diagnostic`: a recognized local error `code`, observed `phase`, and
+`reused_socket` (boolean or unknown). Unknown codes/phases remain `unknown`.
+Diagnostics omit raw error text, endpoints, headers, keys and request content.
 
 Up to 16 uniquely named manual APIs and 500 unique models per API are supported. Model IDs are limited to 160 characters; `codex-auto-review` remains an internal alias. Custom model
 IDs are not filtered by a GPT/Claude prefix. Each model declares Messages,
@@ -40,6 +47,11 @@ or inference call. **Read models** performs one explicit catalog read, with a
 20-second deadline and 8 MiB body bound. An ID-only result has unknown protocol
 support until reviewed. Opening normal views reads saved models rather than
 probing every API. `ccdx models` labels manual models as configured, not live.
+
+These are CCDX's routing rules, not a guarantee that every installed client
+accepts arbitrary model names. Some Claude App versions reject non-Anthropic
+model route IDs even when their upstream supports Messages. A saved connection
+or successful model-list read does not prove an App conversation works.
 
 `connections.json` beside user settings (respecting `XDG_CONFIG_HOME`) stores a
 strict version-one graph of provider switches, API metadata and each client's
@@ -1127,7 +1139,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.14/codex-copilot-dx-1.2.14.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.15/codex-copilot-dx-1.2.15.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 

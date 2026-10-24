@@ -31,8 +31,16 @@ Copilot/M365 retry or request-body policy. Its lazy transport is retained per
 configuration, not rebuilt or serialized against the whole catalog per request.
 `providers/api-network.mjs` preserves enterprise routing/TLS and pins exact HTTPS
 targets. The WinHTTP API mode checks its allowlist in JS and C#; prediction/M365
-retain their original host restrictions. A failed worker can be replaced only
-for a later request, without replaying the failed request.
+retain their original host restrictions. A failure before response headers marks
+the transport unhealthy. The next request replaces it without replaying the
+failed call; retirement waits for unrelated active responses to drain. Shutdown
+still closes all current/retiring transports. HTTP error statuses and intentional
+cancellation do not invalidate the transport. Node response streams are pulled
+on demand to avoid eager delivery into an already-cancelled Web stream.
+`operation-error.mjs` projects fixed transport phases, a local error-code
+allowlist and socket-reuse evidence. API errors preserve their private cause,
+but client diagnostics/logs expose only those bounded fields, not raw causes,
+addresses, credentials, headers or prompts.
 
 The API editor separates catalog candidates from selected models. Only selected
 models enter the strict saved graph, with a required native protocol; unused

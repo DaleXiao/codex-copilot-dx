@@ -35,6 +35,16 @@ test("Claude gateway delivers Messages JSON and normalizes cache accounting once
   assert.equal(g.server.snapshot().completed, 1);assert.equal(g.server.snapshot().active, 0);
 });
 
+test("Claude API failures expose safe transport facts without raw causes or extra diagnostic fields", async t => {
+  const logs = [], error = Object.assign(new Error("ccdx_api_network_unavailable"), { code: "ccdx_api_network_unavailable", statusCode: 502,
+    cause: new Error("synthetic-private-upstream-key"), transport: { code: "ECONNRESET", phase: "tls", reused_socket: true, key: "synthetic-private-upstream-key" } });
+  const g = await gateway(t, async () => { throw error; }, { log: (...args) => logs.push(args) });
+  const response = await g.request();assert.equal(response.status, 502);const value = await response.json();
+  assert.deepEqual(value.error.diagnostic, { code: "ECONNRESET", phase: "tls", reused_socket: true });
+  assert.equal(JSON.stringify(value).includes("synthetic-private-upstream-key"), false);
+  assert.match(logs[0][1], /ECONNRESET, tls/);assert.equal(JSON.stringify(logs).includes("synthetic-private-upstream-key"), false);
+});
+
 test("Claude gateway preserves stream bytes, completes at message_stop and cancels its upstream reader", async t => {
   const events = [
     { type: "message_start", message: { ...message, content: [], stop_reason: null } },

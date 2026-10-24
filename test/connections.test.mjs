@@ -14,6 +14,7 @@ import { readClientGatewayKeys } from "../src/client-gateway-keys.mjs";
 import { configureCodexApi } from "../src/codex-api-config.mjs";
 import { runWithRequestContext } from "../src/request-context.mjs";
 import { updateM365Settings } from "../src/m365-settings.mjs";
+import { transportErrorDetails } from "../src/operation-error.mjs";
 
 process.env.CCDX_DISABLE_USAGE = "1";
 
@@ -262,6 +263,26 @@ test("API worker recovery is deferred to a later request and never replays a fai
   try { await assert.rejects(provider.client.messages({ model: "any-message-model", messages: [] }), { code: "ccdx_api_network_unavailable" });assert.equal(requests, 1);
     assert.equal((await provider.client.messages({ model: "any-message-model", messages: [] })).status, 200);assert.equal(created, 2);assert.equal(requests, 2);
   } finally { provider.close(); }
+});
+
+test("API transport errors preserve only bounded diagnostic fields without exposing upstream secrets", async () => {
+  const cause = Object.assign(new Error("https://private.test synthetic-key-only private prompt"), { code: "ECONNRESET",
+    transport: { code: "ECONNRESET", phase: "tls", reused_socket: true, hostname: "private.test", key: "synthetic-key-only" } });
+  const provider = createApiProvider({ config: apiConfig, secrets: { get: async () => "synthetic-key-only" },
+    networkFactory: async () => ({ close() {}, fetch: async () => { throw cause; } }) });
+  try {
+    await assert.rejects(provider.client.messages({ model: "any-message-model", messages: [] }), error => {
+      assert.equal(error.code, "ccdx_api_network_unavailable");assert.equal(error.cause, cause);
+      assert.deepEqual(error.transport, { code: "ECONNRESET", phase: "tls", reused_socket: true });
+      const json = JSON.stringify(error.jsonBody);assert.equal(json.includes("private"), false);assert.equal(json.includes("synthetic-key-only"), false);return true;
+    });
+  } finally { provider.close(); }
+});
+
+test("unrecognized transport codes and phases cannot carry arbitrary diagnostic content", () => {
+  assert.deepEqual(transportErrorDetails({ code: "synthetic-private-key", message: "private prompt", transport: { code: "synthetic-private-key", phase: "https://private.test", reused_socket: "private" } }),
+    { code: "unknown", phase: "unknown", reused_socket: null });
+  assert.equal(transportErrorDetails({ code: "HPE_INVALID_CONSTANT" }).code, "HPE_INVALID_CONSTANT");
 });
 
 test("catalog and display edits refresh metadata without changing existing Responses history identity", () => {

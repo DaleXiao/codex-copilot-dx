@@ -8,6 +8,9 @@ import { createProviderRuntime } from "../src/provider-runtime.mjs";
 import { createApiProvider } from "../src/providers/api.mjs";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { readClientGatewayKeys } from "../src/client-gateway-keys.mjs";
+import { createApiNetwork } from "../src/providers/api-network.mjs";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 
 process.env.CCDX_DISABLE_USAGE = "1";
 test("same-port HTTP enforces management origin, native client keys and configured model scopes", async t => {
@@ -48,4 +51,48 @@ test("same-port HTTP enforces management origin, native client keys and configur
   assert.equal((await fetch(base + "/anthropic/v1/messages", { ...native, headers: { ...native.headers, Authorization: `Bearer ${credentials.claude_code}` } })).status, 503);
   const summary = runtime.snapshot();assert.equal(summary.claude.requests.performance.recent_requests[0].application, "claude_app");
   assert.equal(summary.m365.claude.requests, null, "Custom API messages must not be attributed to M365");
+});
+
+test("the shared Claude route recovers on a later request while an earlier response keeps streaming", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-api-recovery-")), stored = new Map(), env = { CCDX_M365: "0" };
+  let handler, calls = 0, created = 0, held, drained = false;
+  const server = http.createServer((req, res) => handler(req, res));await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const runtime = createProviderRuntime({ home, env, corePort: server.address().port, githubClient: {}, githubRegistry: { models: { data: [] } },
+    secretStore: { get: async id => stored.get(id), set: async (id, key) => { stored.set(id, key); }, remove: async id => { stored.delete(id); }, close() {} },
+    inspectDesktop: async () => false, configureClaude: () => ({ app: "configured" }), restoreClaude: () => ({ preserved: 0 }),
+    createApi: options => createApiProvider({ ...options, networkFactory: async input => {
+      created++;
+      const network = await createApiNetwork({ ...input, env: {}, platform: "linux", requestImpl: (_options, reply) => {
+        const req = new EventEmitter();req.destroy = () => {};
+        req.end = () => queueMicrotask(() => {
+          calls++;
+          if (calls === 2) { req.emit("error", Object.assign(new Error("private fixture text"), { code: "ECONNRESET" }));return; }
+          const response = new PassThrough();response.statusCode = 200;
+          if (calls === 1) {
+            held = response;response.headers = { "content-type": "text/event-stream" };reply(response);
+            response.write('event: message_start\ndata: {"type":"message_start","message":{"id":"held","model":"vendor-model","usage":{}}}\n\n');return;
+          }
+          response.headers = { "content-type": "application/json" };reply(response);
+          response.end(JSON.stringify({ type: "message", id: "later", model: "vendor-model", content: [{ type: "text", text: "OK" }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }));
+        });return req;
+      } });
+      return { ...network, async retire() { await network.retire();drained = true; } };
+    } }) });
+  handler = createAdapterHandler({ providerRuntime: runtime, dashboardOptions: { home, env } });
+  t.after(async () => { held?.destroy();handler.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const saved = await runtime.manageConnections({ operation: "save_api", config: { name: "Recovery", base_url: "https://api.test/v1", endpoints: { messages: "https://api.test/v1/messages" }, auth_header: "bearer",
+    models: [{ id: "vendor-model", protocols: ["messages"] }] }, key: "synthetic-key-only", allowed: ["claude_app"] });
+  const id = saved.providers.find(value => !value.builtin).id, client = saved.clients.find(value => value.id === "claude_app");
+  await runtime.manageConnections({ operation: "client", id: "claude_app", source: id, allowed: client.allowed, enabled: true });
+  const key = readClientGatewayKeys({ home, env }).claude_app;
+  const send = stream => fetch(base + "/anthropic/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model: "vendor-model", messages: [{ role: "user", content: "fixture" }], stream, max_tokens: 4 }), signal: AbortSignal.timeout(5000) });
+  const first = await send(true), firstBody = first.text();
+  const failed = await send(false);assert.equal(failed.status, 502);const error = await failed.json();assert.equal(error.error.diagnostic.code, "ECONNRESET");
+  assert.equal(calls, 2, "the failed inference is never replayed");
+  const later = await send(false);assert.equal(later.status, 200);assert.equal((await later.json()).content[0].text, "OK");
+  assert.equal(calls, 3);assert.equal(created, 2);assert.equal(drained, false);assert.equal(held.destroyed, false);
+  held.end('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n');
+  assert.match(await firstBody, /message_stop/);await new Promise(resolve => setImmediate(resolve));assert.equal(drained, true);
 });

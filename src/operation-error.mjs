@@ -1,5 +1,22 @@
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 
+const TRANSPORT_CODES = new Set([
+  "ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "EPIPE", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "EPERM", "EACCES",
+  "EPROTO", "ERR_SSL_WRONG_VERSION_NUMBER", "ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR", "ERR_TLS_CERT_ALTNAME_INVALID", "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "SELF_SIGNED_CERT_IN_CHAIN", "DEPTH_ZERO_SELF_SIGNED_CERT", "CERT_HAS_EXPIRED", "CERT_NOT_YET_VALID",
+  "ERR_INVALID_ARG_TYPE", "ERR_INVALID_CHAR", "ERR_INVALID_PROTOCOL", "ERR_HTTP_INVALID_HEADER_VALUE", "ERR_HTTP_CONTENT_LENGTH_MISMATCH", "ERR_STREAM_PREMATURE_CLOSE",
+  "HPE_INVALID_CONSTANT", "HPE_INVALID_STATUS", "HPE_INVALID_HEADER_TOKEN", "HPE_UNEXPECTED_CONTENT_LENGTH", "HPE_INVALID_CONTENT_LENGTH", "HPE_INVALID_CHUNK_SIZE", "HPE_HEADER_OVERFLOW",
+]);
+const TRANSPORT_PHASES = new Set(["request", "dns", "connect", "tls", "response", "unknown"]);
+
+// Project only local error codes and fixed phases, never raw errors, URLs or headers.
+export function transportErrorDetails(error) {
+  const value = error?.transport;
+  const code = [value?.code, error?.code, error?.cause?.code].find(code => TRANSPORT_CODES.has(code)) || "unknown";
+  return { code, phase: TRANSPORT_PHASES.has(value?.phase) ? value.phase : "unknown",
+    reused_socket: typeof value?.reused_socket === "boolean" ? value.reused_socket : null };
+}
+
 export function operationError(code, message, { status = null, retryAt = null } = {}) {
   return Object.assign(new Error(message), { code, status, retryAt });
 }

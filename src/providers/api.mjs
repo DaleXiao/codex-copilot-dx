@@ -9,6 +9,7 @@ import { MAX_UPSTREAM_MODEL_CATALOG_BYTES, readBoundedResponseText } from "../ht
 import { markUpstreamHeaders } from "../stream-performance.mjs";
 import { createApiNetwork } from "./api-network.mjs";
 import { checkedApiKey } from "../api-secrets.mjs";
+import { transportErrorDetails } from "../operation-error.mjs";
 
 const paths = { messages: "/v1/messages", responses: "/v1/responses", chat: "/v1/chat/completions" };
 export function apiCatalog(config) {
@@ -28,11 +29,16 @@ export function createApiProvider({ config, secrets, env = process.env, platform
   if (config.endpoints.messages) targets.push(config.endpoints.messages.replace(/\/+$/, "") + "/count_tokens");
   if (config.endpoints.responses) targets.push(config.endpoints.responses.replace(/\/+$/, "") + "/compact");
   let network, flight, closed = false;
+  const retiring = new Set();
   const registry = { models: { data: catalog.filter(model => model.supported_endpoints.includes(paths.responses)) }, source: "configured", generation };
   const getNetwork = async signal => {
     if (closed) throw accessError("ccdx_api_closed", 503);
     if (network && (network.healthy?.() ?? true)) return network;
-    network?.close();network = null;
+    const previous = network;network = null;
+    if (previous?.retire) {
+      retiring.add(previous);
+      void Promise.resolve(previous.retire()).then(() => retiring.delete(previous), () => { previous.close();retiring.delete(previous); });
+    } else previous?.close();
     flight ||= networkFactory({ targets, env, platform, signal }).then(value => { if (closed) { value.close();throw accessError("ccdx_api_closed", 503); }network = value;return value; }).finally(() => { flight = null; });
     return flight;
   };
@@ -63,7 +69,14 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         return new Response(JSON.stringify({ type: "error", error: { type: "api_error", code, message: code } }), { status: result.status, headers: safeHeaders });
       }
       return result;
-    } catch (error) { if (options.signal?.aborted) throw error;throw accessError(error.code === "ccdx_api_redirect_refused" ? error.code : "ccdx_api_network_unavailable", 502); }
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      if (error.code === "ccdx_api_redirect_refused") throw error;
+      const failure = accessError("ccdx_api_network_unavailable", 502);
+      Object.defineProperty(failure, "cause", { value: error });
+      failure.transport = transportErrorDetails(error);failure.jsonBody.error.diagnostic = failure.transport;
+      throw failure;
+    }
   }
   const client = {
     listModels: async () => ({ status: 200, body: JSON.stringify(registry.models) }),
@@ -124,6 +137,6 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         if (!resp.ok) { await resp.body?.cancel();const code = `ccdx_api_http_${resp.status}`;return { resp: new Response(JSON.stringify({ error: { code, message: code } }), { status: resp.status, headers: { "Content-Type": "application/json" } }), reqContext: context, errorText: code, usedRetryPolicies: new Set() }; }
         return { resp, reqContext: context, errorText: undefined, usedRetryPolicies: new Set() };
       } },
-    close() { closed = true;network?.close(); },
+    close() { closed = true;network?.close();for (const previous of retiring) previous.close();retiring.clear(); },
   };
 }

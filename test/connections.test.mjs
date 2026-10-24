@@ -133,6 +133,7 @@ test("Claude clients route independently and hints cannot impersonate another cr
   assert.equal(s.calls[0].init.headers["X-ClientType"], undefined);
   assert.ok(s.configured.every(input => input.client === "claude_app"));
   assert.ok(s.configured.every(input => input.desktopAliases === true));
+  assert.ok(s.configured.every(input => input.defaultModel === undefined), "Legacy bindings preserve client defaults and model order");
   await assert.rejects(invoke(s.runtime.handleClaude, { headers: { authorization: `Bearer ${keys.claude_code}`, "x-ccdx-client": "claude-app" } }), { code: "ccdx_client_source_disabled" });
   await assert.rejects(invoke(s.runtime.handleClaude, { headers: { authorization: "Bearer invalid", "x-ccdx-client": "claude-app" } }), { statusCode: 401 });
   const stats = s.runtime.snapshot().claude.requests.performance.recent_requests;

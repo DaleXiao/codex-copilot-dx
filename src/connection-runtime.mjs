@@ -127,7 +127,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
         const m365Only = compiled.models.every(model => model.source_id === "m365");
         if (id === "claude_code" && !m365Only) restoreClaude({ ...options, client: id, fields: ["env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] });
         const result = configureClaude({ ...options, client: id, profileName: "CCDX", desktopAliases: id === "claude_app" && source?.id.startsWith("api_"), disableExperimentalBetas: m365Only, desktopManaged: id === "claude_app" ? desktopManaged : false,
-          baseUrl: `http://127.0.0.1:${corePort}/anthropic`, apiKey: identities()[id], models: compiled.models, defaultModel: compiled.defaultModel });
+          baseUrl: `http://127.0.0.1:${corePort}/anthropic`, apiKey: identities()[id], models: compiled.models, defaultModel: Array.isArray(selected.deployments) ? compiled.defaultModel : undefined });
         setup[id] = result[id === "claude_app" ? "app" : "code"] || "not_configured";
       } catch { setup[id] = "configuration_unavailable"; }
     }

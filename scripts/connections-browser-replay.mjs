@@ -24,7 +24,8 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
       const base = `http://127.0.0.1:${server.address().port}`;
       const context = await browser.newContext({ viewport: { width, height: 1000 } });
-      await context.addInitScript(({ palette, mode, language }) => { localStorage.setItem("ccdx.dashboard.palette", palette);localStorage.setItem("ccdx.dashboard.theme", mode);localStorage.setItem("ccdx.dashboard.language", language); }, { palette, mode, language });
+      // Binding edits are explicit; periodic refresh behavior has its own replay.
+      await context.addInitScript(({ palette, mode, language }) => { localStorage.setItem("ccdx.dashboard.palette", palette);localStorage.setItem("ccdx.dashboard.theme", mode);localStorage.setItem("ccdx.dashboard.language", language);localStorage.setItem("ccdx.dashboard.autoRefresh", "off"); }, { palette, mode, language });
       const page = await context.newPage(), errors = [];page.on("pageerror", error => errors.push(error.message));page.setDefaultTimeout(10000);
       const sampleName = 'API <img src=x onerror="alert(1)">';
       console.log("Connections case:", JSON.stringify({ engine, palette, mode, language, width }));
@@ -95,7 +96,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: codexClient.allowed,
           deployments: githubRegistry.models.data.map(model => ({ source: "github", model: model.id })) });
         githubRegistry.models = { data: [githubRegistry.models.data[0]] };
-        await page.goto(base + "/#codex");await page.reload();await page.locator("#connection-bindings tr").filter({ hasText: "gpt-retained" }).locator('input[name="binding-model"]:checked').waitFor();
+        await page.waitForLoadState("networkidle");await page.goto(base + "/?binding-replay=missing#codex");await page.locator("#connection-bindings tr").filter({ hasText: "gpt-retained" }).locator('input[name="binding-model"]:checked').waitFor();
         const beforeMissing = fs.readFileSync(accessSettingsPath({ home: root, env }), "utf8");
         const failedSave = page.waitForResponse(response => response.url().endsWith("/_ccdx/ui/connections") && response.request().method() === "POST");
         await page.locator('#connection-client-form button[type="submit"]').click();assert.equal((await failedSave).status(), 400);
@@ -108,7 +109,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         assert.deepEqual(runtime.connections().clients.find(c => c.id === "codex").deployments, [{ source: "github", model: "gpt-retained" }]);
         await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: codexClient.allowed, deployments: [{ source: id, model: "response-replay" }] });
         githubRegistry.models = { data: [] };
-        await page.goto(base + "/#models");await page.reload();await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).waitFor();
+        await page.waitForLoadState("networkidle");await page.goto(base + "/?binding-replay=restored#models");await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).waitFor();
         await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).locator('input[role="switch"]').click();
         await page.locator("#connection-disable-editor").waitFor({ state: "visible" });await fits();
         await page.locator('#connection-disable-form button[type="submit"]').click();await page.locator("#connection-disable-editor").waitFor({ state: "hidden" });

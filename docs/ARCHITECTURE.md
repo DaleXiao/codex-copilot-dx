@@ -648,3 +648,31 @@ Language controls have intrinsic width and no-wrap/no-shrink. Shared button-link
 styling keeps the M365 navigation link semantically a link while matching the
 existing GitHub shortcut; wording describes navigation rather than a silent check.
 No new polling, framework, runtime dependency, setting or endpoint is introduced.
+
+## Catalog transactions and default identity (1.2.20)
+
+`api-catalog-refresh.mjs` owns bounded catalog I/O, same-source single-flight,
+existing success/failure cooldowns, cancellation and deployment-version checks.
+It receives source/config/commit callbacks; it does not write configuration or
+client files. `connection-runtime.mjs` serializes only management changes and
+result publication. A cancelled or obsolete read cannot publish; pinned source
+instances drain through the existing reference tracking. The existing refresh
+cycle remains the scheduler; no extra timer or background process is added.
+
+Metadata commits merge only matching configured model IDs into the current
+configuration and sync affected clients. Shared Claude capability projection
+continues to consider both consumers and ownership journals. Metadata never
+changes the selected model set, grants, default identity or native sign-in.
+
+`client-model-plan.mjs` distinguishes an unspecified default from an unavailable
+explicit default and indexes each source catalog once per compilation. Native
+catalog projection does not depend on finding a default provider. Request
+resolution still checks the selected source-qualified model before opening an
+upstream call; no substitute model, cross-source fallback or auth recovery is
+introduced. Builtin raw capability structures pass through normalization only;
+validated manual fields belong to manual API configurations.
+
+The existing dashboard connection controller owns one draft per client and
+local operation feedback. Source browsing is one shared selection for management,
+account and catalog. Presentation retains existing palettes, motion and native
+controls; it adds no runtime UI dependency or protocol abstraction framework.

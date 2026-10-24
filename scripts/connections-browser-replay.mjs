@@ -29,6 +29,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
       const page = await context.newPage(), errors = [];page.on("pageerror", error => errors.push(error.message));page.setDefaultTimeout(10000);
       const sampleName = 'API <img src=x onerror="alert(1)">';
       console.log("Connections case:", JSON.stringify({ engine, palette, mode, language, width }));
+      const watchdog = setTimeout(() => { console.error("Connection browser case exceeded 120 seconds");process.exit(124); }, 120000);watchdog.unref();
       try {
         runtime = createProviderRuntime({ home: root, env, corePort: server.address().port, githubClient: { runtimeStatus: () => ({ token_cached: false }) }, githubRegistry,
           secretStore: { get: async id => values.get(id), set: async (id, key) => { values.set(id, key); }, remove: async id => { values.delete(id); }, close() {} },
@@ -42,7 +43,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           liveModelsFn: async () => ({ models: [], advertised: 0, upstreamHost: "synthetic" }),
           updateStatusFn: async () => ({ source: "release_status", status: "unavailable", current: { version: "synthetic" } }) } });
         await page.goto(base + "/#models");await page.locator("#connection-source-list .connection-row").waitFor();assert.equal(await page.locator("html").getAttribute("data-palette"), palette);
-        await page.locator("#connection-add").click();
+        await page.locator("#connection-add").focus();await page.keyboard.press("Enter");assert.equal(await page.locator("#connection-name").evaluate(node => node === document.activeElement), true, "Add API focuses its first field");
         await page.locator("#connection-name").fill(sampleName);await page.locator("#connection-base").fill("https://api.example.test/v1");await page.locator("#connection-base").blur();
         await page.locator("#connection-key").fill("synthetic-key-no-network");
         for (const id of ["codex", "claude_app", "claude_code"]) await page.locator(`#connection-allowed-clients input[value="${id}"]`).check();
@@ -90,14 +91,25 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         for (const [route, model, idClient] of [["claude", "claude-replay", "claude_app"], ["codex", "response-replay", "codex"]]) {
           await page.locator(`[data-route="${route}"]`).click();
           await page.locator("#connection-bindings tr").filter({ hasText: model }).locator('input[name="binding-model"]').check();
-          await page.locator('#connection-client-form button[type="submit"]').click();
-          await page.waitForFunction(() => !document.querySelector(`[data-view="${location.hash.slice(1)}"][aria-busy="true"]`));
+          assert.equal(await page.locator('#connection-bindings input[name="binding-model"]:checked').evaluate(node => node === document.activeElement), true, "Model selection retains keyboard focus");
+          const savedBinding = page.waitForResponse(response => response.url().endsWith("/_ccdx/ui/connections") && response.request().method() === "POST");
+          await page.locator('#connection-client-form button[type="submit"]').click();assert.equal((await savedBinding).status(), 200);
           assert.equal(runtime.connections().clients.find(c => c.id === idClient).deployments[0].model, model);
           const beforePreview = fs.readFileSync(accessSettingsPath({ home: root, env }), "utf8");
-          await page.locator("#connection-sync-preview").click();await page.locator("#connection-sync-result").waitFor({ state: "visible" });assert.match(await page.locator("#connection-sync-result").innerText(), new RegExp(model));await fits();
+          await page.locator("#connection-sync-preview").click();await page.locator("#connection-sync-result").waitFor({ state: "visible" });assert.match(await page.locator("#connection-sync-result").innerText(), new RegExp(model));await page.locator('#connection-client-form button[type="submit"]:enabled').waitFor();await fits();
           assert.equal(fs.readFileSync(accessSettingsPath({ home: root, env }), "utf8"), beforePreview, "Sync preview never writes configuration");
           if (options.get("--output")) await page.screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}-${route}-bindings.png`), fullPage: true });
         }
+        await page.locator('[data-route="claude"]').click();
+        await page.locator("#claude-model-management #connection-bindings tr").filter({ hasText: "claude-replay" }).locator('input[name="binding-model"]').uncheck();
+        await page.locator('[data-claude-client="claude_code"]').click();
+        await page.locator('#connection-bindings input[name="binding-model"]').first().check();
+        await page.locator('[data-claude-client="claude_app"]').click();assert.equal(await page.locator('#connection-bindings input:checked').count(), 0, "App draft survives a Code edit");
+        await page.evaluate(() => globalThis.ccdxConnections.load());assert.equal(await page.locator('#connection-bindings input:checked').count(), 0, "Refresh preserves the active draft");
+        await page.locator('[data-route="codex"]').click();await page.locator('#codex-model-management #connection-bindings').waitFor();await page.locator('[data-route="claude"]').click();await page.locator('#claude-model-management #connection-bindings').waitFor();assert.equal(await page.locator('#connection-bindings input:checked').count(), 0, "Navigation preserves the draft");
+        await page.locator('#connection-client-cancel').click();assert.equal(await page.locator('#connection-bindings input:checked').count(), 1);
+        await page.locator('[data-claude-client="claude_code"]').click();assert.equal(await page.locator('#connection-bindings input:checked').count(), 1, "Discard affects only the active client");
+        await page.locator('#connection-client-cancel').click();await page.locator('[data-claude-client="claude_app"]').click();
         githubRegistry.models = { data: ["gpt-retained", "gpt-temporarily-missing"].map(id => ({ id, supported_endpoints: ["/responses"] })) };
         const codexClient = runtime.connections().clients.find(c => c.id === "codex");
         await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: codexClient.allowed,
@@ -141,7 +153,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         await page.locator("#connection-disabled-clients").waitFor({ state: "hidden" });
         if (options.get("--output")) { fs.mkdirSync(options.get("--output"), { recursive: true });await page.screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}.png`), fullPage: true }); }
         assert.deepEqual(errors, []);report.push({ engine, palette, mode, language, width, saved: true, assigned: true, disabled: true, restored: true });
-      } catch (error) { console.error("Browser details:", errors, await page.locator("#connection-client-note").textContent());throw error; } finally { await context.close();handler?.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime?.close();fs.rmSync(root, { recursive: true, force: true }); }
+      } catch (error) { console.error("Browser details:", errors, await page.locator("#connection-client-note").textContent());throw error; } finally { await context.close();handler?.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime?.close();fs.rmSync(root, { recursive: true, force: true });clearTimeout(watchdog); }
     }
   } finally { await browser.close(); }
 }

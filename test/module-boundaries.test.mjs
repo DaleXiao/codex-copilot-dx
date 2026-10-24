@@ -62,6 +62,7 @@ test("shared data and foundation modules do not depend on presentation or compos
     "windows-prediction-network.mjs": ["responses-handler.mjs", "copilot.mjs", "dashboard-api.mjs", "config.mjs"],
     "windows-http-network.mjs": ["adapter.mjs", "provider-runtime.mjs", "native-prediction.mjs", "copilot.mjs"],
     "provider-descriptors.mjs": ["provider-runtime.mjs", "providers/m365.mjs", "dashboard-api.mjs", "node:fs", "node:child_process"],
+    "api-catalog-refresh.mjs": ["connection-runtime.mjs", "codex-api-config.mjs", "claude-client-config.mjs", "dashboard-api.mjs", "node:fs"],
     "providers/m365-catalog-diagnostic.mjs": ["../provider-runtime.mjs", "m365.mjs", "../dashboard-api.mjs", "node:fs", "node:child_process"],
     "provider-registry.mjs": ["provider-runtime.mjs", "claude-client-config.mjs", "copilot.mjs", "dashboard-api.mjs"],
     "claude-client-lifecycle.mjs": ["providers/m365.mjs", "providers/m365-auth.mjs", "provider-runtime.mjs", "dashboard-api.mjs"],

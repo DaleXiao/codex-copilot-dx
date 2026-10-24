@@ -16,11 +16,11 @@ process.env.CCDX_DISABLE_USAGE = "1";
 test("GitHub-only bindings retain an open native client's auth and expose only selected models", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-github-bindings-")), env = { CCDX_M365: "0" };
   const registry = { models: { data: ["gpt-5.5", "gpt-5.4"].map(id => ({ id, supported_endpoints: ["/responses"] })) } };
-  let handler, catalogs = 0, responses = 0;
+  let handler, catalogs = 0, responses = 0, expectedModel = "gpt-5.5";
   const server = http.createServer((req, res) => handler(req, res));await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   const client = { getCachedModelEndpoints: () => ["/responses"], listModels: async () => { catalogs++;throw new Error("Unexpected implicit catalog refresh"); },
-    responses: async body => { responses++;assert.equal(body.model, "gpt-5.5");return Response.json({ id: "resp_binding", object: "response", status: "completed", model: body.model, output: [] }); } };
+    responses: async body => { responses++;assert.equal(body.model, expectedModel);return Response.json({ id: "resp_binding", object: "response", status: "completed", model: body.model, output: [] }); } };
   const runtime = createProviderRuntime({ home, env, corePort: server.address().port, githubClient: client, githubRegistry: registry,
     secretStore: { close() {} }, inspectDesktop: async () => false });
   handler = createAdapterHandler({ providerRuntime: runtime, codexClient: client, modelRegistry: registry,
@@ -35,6 +35,19 @@ test("GitHub-only bindings retain an open native client's auth and expose only s
   assert.equal(reply.status, 200, await reply.text());assert.equal(responses, 1);assert.equal(catalogs, 0);
   const denied = await fetch(base + "/v1/responses", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.4", input: "synthetic", stream: false }) });
   assert.equal(denied.status, 400);assert.equal(responses, 1, "The transition never reopens an unselected model");
+  await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github", "m365"],
+    deployments: [{ source: "github", model: "gpt-5.5" }, { source: "github", model: "gpt-5.4" }], default_model: model });
+  registry.models = { data: registry.models.data.slice(1) };await runtime.syncClients();
+  const missingDefault = runtime.connections().clients.find(c => c.id === "codex");
+  assert.equal(missingDefault.setup, "default_unavailable");assert.equal(missingDefault.default_model, model);
+  assert.equal(missingDefault.model_plan.default_model, null);assert.equal(missingDefault.model_plan.default_unavailable, true);
+  const remaining = await fetch(base + "/v1/models?client_version=0.163.0", { headers });assert.equal(remaining.status, 200);assert.equal((await remaining.json()).models.length, 1);
+  const unavailable = await fetch(base + "/v1/responses", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.5", input: "synthetic" }) });
+  assert.equal(unavailable.status, 400);assert.equal(unavailable.headers.get("www-authenticate"), null);assert.equal(responses, 1);
+  expectedModel = "gpt-5.4";
+  const availableReply = await fetch(base + "/v1/responses", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.4", input: "synthetic", stream: false }) });
+  assert.equal(availableReply.status, 200, await availableReply.text());assert.equal(responses, 2);
+  registry.models = { data: [{ id: "gpt-5.5", supported_endpoints: ["/responses"] }, ...registry.models.data] };await runtime.syncClients();assert.equal(runtime.connections().clients.find(c => c.id === "codex").model_plan.default_model, model);
   env.SYNTHETIC_TEST_API_KEY = "synthetic-only";
   const saved = await runtime.manageConnections({ operation: "save_api", allowed: ["codex"], config: { name: "Mixed source", base_url: "https://synthetic.test/v1",
     endpoints: { responses: "https://synthetic.test/v1/responses" }, auth_header: "bearer", key_env: "SYNTHETIC_TEST_API_KEY", models: [{ id: "api-model", protocols: ["responses"] }] } });
@@ -45,7 +58,7 @@ test("GitHub-only bindings retain an open native client's auth and expose only s
   assert.equal((await fetch(base + "/v1/responses", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.5", input: "synthetic" }) })).status, 403);
   const credential = readClientGatewayKeys({ home, env }).codex;
   const mixed = await fetch(base + "/v1/models", { headers: { Authorization: `Bearer ${credential}` } });assert.equal(mixed.status, 200);assert.equal((await mixed.json()).data.length, 2);
-  assert.equal(responses, 1);assert.equal(catalogs, 0);
+  assert.equal(responses, 2);assert.equal(catalogs, 0);
 });
 
 test("same-port HTTP enforces management origin, native client keys and configured model scopes", async t => {

@@ -72,3 +72,24 @@ test("Codex keeps GitHub's existing Chat bridge without opening Chat-only manual
   assert.equal(sourceModels({ id: "github", models }, "codex").length, 1);
   assert.equal(sourceModels({ id: "api_chat", models }, "codex").length, 0);
 });
+
+test("builtin capability declarations stay normalized and never become manual overrides", () => {
+  const result = resolveModelCapabilities({ capabilities: { type: "chat", tokenizer: "vendor", supports: {
+    tool_calls: false, structured_outputs: true, vision: true, reasoning_effort: ["low", "high"],
+  } } }, { builtin: true });
+  assert.equal(validCapabilities(result.values), true);
+  assert.equal(result.values.tools, false);assert.equal(result.values.structured_output, true);
+  assert.deepEqual(result.values.input_modalities, ["text", "image"]);
+  assert.equal(result.values.supports, undefined);assert.equal(result.values.tokenizer, undefined);
+  assert.ok(Object.values(result.fields).every(field => field.source === "catalog"));
+});
+
+test("a missing explicit default never falls back and recovers when its catalog entry returns", () => {
+  let reads = 0, entries = ["other"];
+  const provider = { id: "github", models: () => { reads++;return entries.map(id => ({ id, supported_endpoints: ["/responses"] })); } };
+  const binding = { enabled: true, allowed: ["github"], deployments: [{ source: "github", model: "default" }, { source: "github", model: "other" }], default_model: deploymentModelId("github", "default") };
+  const compile = () => compileClientModels({ client: "codex", binding, source: () => provider, enabled: () => true });
+  const missing = compile();assert.equal(missing.defaultModel, null);assert.equal(missing.defaultUnavailable, true);assert.equal(missing.models.length, 1);assert.equal(reads, 1);
+  entries = ["default", "other"];assert.equal(compile().defaultModel, binding.default_model);
+  delete binding.default_model;assert.equal(compile().defaultModel, binding.default_model || deploymentModelId("github", "default"));
+});

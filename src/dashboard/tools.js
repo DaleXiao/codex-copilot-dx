@@ -16,7 +16,7 @@
   function field(list, key, value, kind) {
     const term = document.createElement("dt"), detail = document.createElement("dd");label(term, key);
     if (kind) globalThis.ccdxIcons.set(detail, value, kind);else detail.textContent = value;
-    list.append(term, detail);
+    if (list.classList.contains("account-summary")) { const pair = document.createElement("div");pair.append(term, detail);list.append(pair); }else list.append(term, detail);
   }
   function syncSource() {
     const github = selectedProvider === "github";

@@ -86,3 +86,19 @@ after compatible models are saved. Manual ID entry remains optional.
 | Not declared (unrecognized fields) | Upstream capability format not recognized | 暂未识别上游能力格式 |
 | Declared by this API | Read from upstream | 已从上游读取 |
 | Expanded manual capability form | Manual override (collapsed) | 手动设置（默认折叠） |
+
+## 1.2.20 model editing and read feedback
+
+| Previous / ambiguity | English | Chinese |
+| --- | --- | --- |
+| Not declared / 待确认 | Not provided | 未提供 |
+| No feedback while saving | Saving… | 保存中… |
+| Whole view blocked during catalog read | Reading… | 读取中… |
+| Lost client draft | Unsaved changes | 尚未保存 |
+| Silent default replacement | Default model unavailable. Choose a default before saving. | 默认模型暂不可用，请选择默认后保存。 |
+| Cancelled read | Read cancelled. Saved metadata is kept. | 已取消读取，保留已存资料。 |
+| Save waits for catalog | API saved. Metadata refresh runs separately. | API 已保存，模型资料另行刷新。 |
+
+Unknown capabilities still differ from explicit unsupported values and an
+unrecognized upstream format. No wording claims that a catalog proves inference
+entitlement or native client support.

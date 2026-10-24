@@ -6,11 +6,12 @@
     let contextSignature;
     const sourceNames = new Map([["github", "GitHub Copilot"], ["m365", "Microsoft 365"]]);
     
+    const sourceLabel = id => globalThis.ccdxConnectionNames?.[id] || sourceNames.get(id) || id;
     function renderProviders(data) {
       const providers = data.providers || [];
       const states = { saved: "saved_locally", authorized: "authorized", disabled: "disabled", unavailable: "unavailable_ca184",
         unknown: "unknown", unconfigured: "not_configured", ready: "ready", checking: "checking", unsupported: "unsupported",
-        configured: "configured", preserved: "existing_settings_kept", partially_preserved: "existing_settings_kept",
+        configured: "configured", default_unavailable: "cap_default_unavailable", preserved: "existing_settings_kept", partially_preserved: "existing_settings_kept",
         restored: "settings_restored", not_installed: "not_installed", configuration_unavailable: "setup_unavailable", not_configured: "unknown", standby: "standby" };
       const auth = element("provider-auth"), clients = element("provider-clients"), requests = element("provider-requests"), claudeClients = element("claude-clients");
       auth.replaceChildren();clients.replaceChildren();requests.replaceChildren();claudeClients?.replaceChildren();
@@ -129,7 +130,7 @@
         const timeline = failure.timeline;
         const provider = failure.provider || timeline?.provider;
         if (provider) {
-          const source = sourceNames.get(provider) || provider;
+          const source = sourceLabel(provider);
           const original = phrase("detail_retry", summary);
           localize(title, "source_failure_summary", { source, detail: original });
         }
@@ -182,6 +183,7 @@
     }
     
     function render(data) {
+      for (const source of data.providers?.connections?.providers || []) sourceNames.set(source.id, source.name);
       globalThis.ccdxDashboardActivity?.update(data.model_activity);
       globalThis.ccdxDashboardFlow?.update(data);
       text("version", `v${data.version || "?"}`);
@@ -233,7 +235,7 @@
         const routes = { ...data.stream_performance?.by_route, ...claudeMetrics?.by_route };
         for (const [protocol, route] of Object.entries(routes)) for (const [source, stats] of Object.entries(route.by_provider || {})) {
           const totals = stats.terminal_outcomes.totals;
-          sourceBody.append(tableRow([sourceNames.get(source) || source, protocol, number(stats.active), ...["completed", "incomplete", "failed", "cancelled", "unknown"].map(outcome => number(totals[outcome]))]));
+          sourceBody.append(tableRow([sourceLabel(source), protocol, number(stats.active), ...["completed", "incomplete", "failed", "cancelled", "unknown"].map(outcome => number(totals[outcome]))]));
         }
         if (!sourceBody.children.length) emptyTable("source-requests-body", 8, "no_requests_observed");
       }
@@ -300,7 +302,7 @@
           ? `${(100 * Number(context.input_tokens) / Number(context.context_window_tokens)).toFixed(1)}%` : "—";
         const at = Date.parse(request.at);
         const row = tableRow([Number.isFinite(at) ? time(at) : "—",
-          String(sourceNames.get(request.provider) || request.provider || "—").slice(0, 80),
+          String(sourceLabel(request.provider) || "—").slice(0, 80),
           String(request.model || "unknown").slice(0, 80), outcome, number(context.input_tokens), ""], { labels: [3] });
         const wireFailure = Number.isInteger(request.http_status) && request.http_status >= 400;
         if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[3], wireFailure ? "request_http_failure" : outcome.toLowerCase(),

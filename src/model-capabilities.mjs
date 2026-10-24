@@ -38,9 +38,9 @@ export function catalogCapabilities(model) {
     max_output_tokens: first(model.max_output_tokens, window.max_output_tokens),
     reasoning: first(typeof caps.reasoning === "boolean" ? caps.reasoning : undefined, supports.reasoning),
     reasoning_efforts: first(model.reasoning_efforts, supports.reasoning_effort),
-    input_modalities: first(model.input_modalities, caps.input_modalities),
-    tools: supports.tools, parallel_tools: supports.parallel_tool_calls, streaming: supports.streaming,
-    structured_output: supports.structured_output, web_search: first(model.web_search, caps.web_search), thinking_modes: first(model.thinking_modes, caps.thinking_modes),
+    input_modalities: first(model.input_modalities, caps.input_modalities, supports.vision === true ? ["text", "image"] : undefined),
+    tools: first(supports.tools, supports.tool_calls), parallel_tools: supports.parallel_tool_calls, streaming: supports.streaming,
+    structured_output: first(supports.structured_output, supports.structured_outputs), web_search: first(model.web_search, caps.web_search), thinking_modes: first(model.thinking_modes, caps.thinking_modes),
     ...Object.fromEntries(["reasoning_required", "reasoning_adaptive", "reasoning_budget_min", "reasoning_budget_max", "reasoning_format"].map(key => [key, first(model[key], caps[key])])),
   };
   for (const [key, value] of Object.entries(candidate)) if (value !== undefined && validCapabilities({ [key]: value })) values[key] = value;
@@ -54,9 +54,11 @@ export function resolveModelCapabilities(model, { revision, checkedAt = null, bu
   const fields = {}, declared = builtin ? catalogCapabilities(model) : { ...metadata?.values, ...metadata?.protocols?.[protocol] };
   const put = (values, source, time) => { for (const [key, value] of Object.entries(values || {})) fields[key] = { value, source, checked_at: time }; };
   put(declared, "catalog", builtin ? checkedAt : model.metadata?.checked_at || null);
-  put({ ...(model.context_window === undefined ? {} : { context_window: model.context_window }),
-    ...(model.reasoning_efforts === undefined ? {} : { reasoning_efforts: model.reasoning_efforts }) }, "manual", null);
-  put(model.capabilities, "manual", null);
+  if (!builtin) {
+    put({ ...(model.context_window === undefined ? {} : { context_window: model.context_window }),
+      ...(model.reasoning_efforts === undefined ? {} : { reasoning_efforts: model.reasoning_efforts }) }, "manual", null);
+    put(Object.fromEntries(Object.entries(model.capabilities || {}).filter(([key, value]) => validCapabilities({ [key]: value }))), "manual", null);
+  }
   const values = Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, field.value]));
   if (protocol && values.reasoning_format && values.reasoning_format !== protocol) {
     for (const key of ["reasoning", "reasoning_efforts", "reasoning_required", "reasoning_adaptive", "reasoning_budget_min", "reasoning_budget_max", "reasoning_format", "thinking_modes"]) delete values[key];

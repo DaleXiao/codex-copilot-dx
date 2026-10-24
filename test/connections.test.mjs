@@ -42,7 +42,7 @@ function runtime(t, overrides = {}) {
 async function save(r, options = {}) {
   const { id, enabled, secret_ref, ...config } = structuredClone(apiConfig);
   const state = await r.manageConnections({ operation: "save_api", config, allowed: ["codex", "claude_app", "claude_code"], key: "synthetic-key-only", ...options });
-  return state.providers.find(p => !p.builtin).id;
+  const savedId = state.providers.find(p => !p.builtin).id;await r.manageConnections({ operation: "discover", id: savedId });return savedId;
 }
 function invoke(handler, { url = "/v1/messages", headers = {}, body = { model: "any-message-model", messages: [{ role: "user", content: "synthetic" }], max_tokens: 4 } } = {}) {
   return new Promise((resolve, reject) => {
@@ -122,6 +122,24 @@ test("manual API save reads only the catalog and does not activate a client", as
   const publicData = JSON.stringify(s.runtime.connections());assert.equal(publicData.includes("synthetic-key-only"), false);assert.equal(publicData.includes("secret_ref"), false);
   assert.equal(fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env }), "utf8").includes("synthetic-key-only"), false);
   assert.deepEqual(s.runtime.connections().clients.find(c => c.id === "claude_app").allowed, ["m365", id]);
+});
+
+test("a slow catalog cannot block unrelated configuration and disabling aborts its publication", async t => {
+  let release, signal;
+  const s = runtime(t, { createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, fetch: async (_url, init) => {
+    signal = init.signal;return new Promise(resolve => { release = resolve; });
+  } }) }) });
+  const { id: _id, enabled: _enabled, secret_ref: _secret, ...config } = structuredClone(apiConfig);
+  const saved = await s.runtime.manageConnections({ operation: "save_api", config, key: "synthetic-key-only", allowed: [] });
+  const id = saved.providers.find(p => !p.builtin).id;
+  await new Promise(resolve => setImmediate(resolve));assert.ok(release);
+  const pending = s.runtime.manageConnections({ operation: "discover", id });const failed = assert.rejects(pending, { code: "ccdx_connections_conflict" });
+  const changed = await Promise.race([s.runtime.manageConnections({ operation: "client", id: "codex", enabled: false, source: null, allowed: ["github", "m365"] }),
+    new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error("Catalog blocked configuration")), 1000);timer.unref(); })]);
+  assert.equal(changed.clients.find(c => c.id === "codex").enabled, false);
+  await s.runtime.manageConnections({ operation: "provider", id, enabled: false });assert.equal(signal.aborted, true);
+  release(Response.json({ data: [{ id: "late", context_window: 1000000 }] }));await failed;
+  assert.equal(s.runtime.connections().providers.find(p => p.id === id).checked_at, undefined);
 });
 
 test("Claude clients route independently and hints cannot impersonate another credential", async t => {

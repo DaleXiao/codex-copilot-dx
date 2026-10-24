@@ -15,10 +15,12 @@ export function compileClientModels({ client, binding, source, enabled, names = 
   if (!binding.enabled) return { models: [], routes: new Map(), defaultModel: null, revision: "disabled" };
   const explicit = Array.isArray(binding.deployments), selected = explicit ? binding.deployments : binding.source
     ? sourceModels(source(binding.source), client).map(model => ({ source: binding.source, model: model.id })) : [];
-  const models = [], routes = new Map(), raw = new Map();
+  const models = [], routes = new Map(), raw = new Map(), catalogs = new Map();
   for (const item of selected) {
     if (!binding.allowed.includes(item.source) || !enabled(item.source)) continue;
-    const provider = source(item.source), model = sourceModels(provider, client).find(model => model.id === item.model);
+    const provider = source(item.source);
+    if (!catalogs.has(provider)) catalogs.set(provider, new Map(sourceModels(provider, client).map(model => [model.id, model])));
+    const model = catalogs.get(provider).get(item.model);
     if (!model || model.policy?.state && model.policy.state !== "enabled" || model.model_picker_enabled === false) continue;
     const route = deploymentModelId(item.source, model.id), capability = model.capability || resolveModelCapabilities(model, { builtin: true });
     const entry = { ...model, capability, source_id: item.source, route_id: route,
@@ -43,7 +45,8 @@ export function compileClientModels({ client, binding, source, enabled, names = 
       }
     }
   }
-  const fallback = models.find(model => model.id === binding.model || model.route_id === binding.default_model) || models[0];
-  return { models, routes, defaultModel: routes.get(binding.default_model)?.publicId || fallback?.public_id || null,
+  const requested = explicit ? binding.default_model : binding.model;
+  const chosen = routes.get(requested) || (!requested ? models[0] && routes.get(models[0].public_id) : null);
+  return { models, routes, defaultModel: chosen?.publicId || null, defaultUnavailable: Boolean(requested && !chosen),
     revision: models.map(model => model.route_id + ":" + model.capability.revision).join(";") };
 }

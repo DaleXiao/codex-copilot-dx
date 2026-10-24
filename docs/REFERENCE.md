@@ -155,6 +155,22 @@ Claude observation covers all Messages sources; M365 counts keep their own scope
 
 ## Model capabilities and Claude synchronization
 
+An explicitly selected default keeps its identity when its catalog entry becomes
+unavailable. CCDX does not substitute the first model or rewrite that client's
+existing configuration. Other authorized models remain in the catalog and can be
+requested explicitly; an unavailable model produces a model error rather than a
+sign-in challenge. The application page retains the unavailable selection and
+asks for a valid default before saving. Catalog recovery restores the same route.
+
+API saves complete independently of metadata reads. Catalog network work runs
+outside the configuration transaction; only a version-checked result commit
+holds that queue. Same-source, same-deployment reads join the active request.
+Changing its endpoint/key, disabling the source, cancelling the read or stopping
+the service prevents obsolete results from publishing. Failed reads retain saved
+metadata and selections. Capability commits synchronize only affected clients;
+shared Claude settings still respect both consumers and manual ownership.
+
+
 Model sources owns source credentials, native interface declarations and model details.
 Codex/Claude own the selected deployment set, default and automatic synchronization.
 Claude App and Claude Code have separate segments and local keys. Settings retains
@@ -1264,7 +1280,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.19/codex-copilot-dx-1.2.19.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.20/codex-copilot-dx-1.2.20.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1640,7 +1656,7 @@ unchanged.
 
 New explicit-tool sign-ins use `~/.local/share/ccdx/github_token` and fingerprint-bound `.account.json` metadata, with private permissions and the existing atomic paired writer. When present, this owned store takes precedence over `~/.local/share/copilot-api/github_token`; existing startup/discovery compatibility remains supported. `auth logout` requires interactive confirmation or `--yes`, writes an empty owned credential, and does not delete or revoke other apps' legacy credentials. This intentionally blocks inference's legacy fallback. New login or normal startup can perform the existing explicit discovery/sign-in process again. CLI changes notify a compatible running local service; if notification is unavailable, the CLI asks for a service restart. In-flight model requests are not replayed or forcibly stopped. A token cache invalidation preserves its running account binding, so switching accounts still requires a restart.
 
-Model sources uses one source selector for the account controls and catalog. Selecting a tab is browsing only. GitHub offers sign-in, independent connection checks and cancellation; sign-out is under More actions. The browser opens only the fixed GitHub device authorization URL after the user chooses Open GitHub. No token or password entry field is added. Microsoft 365 retains local account discovery/selection and source controls; its corporate SSO is not replaced with a GitHub-style login. Raw codes remain under details and last-good model lists retain their previous timestamp after failures.
+Model sources uses one source selector for the selected source controls, account and catalog. Disabled sources remain under its collapsed list; there is no second list of enabled source cards. Selecting a tab is browsing only. GitHub offers sign-in, independent connection checks and cancellation; sign-out is under More actions. The browser opens only the fixed GitHub device authorization URL after the user chooses Open GitHub. No token or password entry field is added. Microsoft 365 retains local account discovery/selection and source controls; its corporate SSO is not replaced with a GitHub-style login. Raw codes remain under details and last-good model lists retain their previous timestamp after failures.
 
 `ccdx web` opens an existing compatible dashboard or starts a management-only local listener without sign-in, app configuration, app launch, prediction setup or automatic M365 startup. It does not claim normal startup integrations are active. Stop that management listener with Ctrl+C before running normal `ccdx` for application routing and optional integrations. Opening the dashboard does not initiate a GitHub Device Flow or model inference.
 
@@ -1878,3 +1894,20 @@ so toggling it does not shift nearby controls. The language control has a 40px
 minimum width, cannot flex-shrink and keeps 中文 / EN on one line. Compact toolbars
 wrap when required rather than compressing text; header position remains stable
 between modules in the same language and viewport.
+
+### Application editing and keyboard behavior (1.2.20)
+
+Codex, Claude App and Claude Code keep separate page-local model/default/sync
+drafts. Switching clients, navigating within the dashboard or reading current
+settings preserves unsaved drafts. Save and Discard changes affect that client
+only; reloading the browser discards page-local drafts. Model selection restores
+focus to the corresponding checkbox/default button. Add API focuses its first
+field; Cancel restores the entry control. Narrow layouts stack source, context
+and reasoning below each model while retaining the same table semantics.
+
+Reading a catalog marks only its Read models button busy and offers Cancel.
+Cancelling leaves the editor and its draft intact. No inference is sent. Source
+saves report persistence separately from subsequent metadata refresh. Background
+read failures retain existing messages; key read/save states use polite live
+announcements. Account labels and values stay paired, and request summaries use
+configured source names. Technical IDs remain available in request details.

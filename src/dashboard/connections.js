@@ -221,17 +221,20 @@
   function bindingRows() {
     el("connection-client-cancel").disabled = !bindingDirty;
     const body = el("connection-bindings"), c = client(editingClient);body.replaceChildren();
-    for (const item of c.model_plan?.available || []) {
+    const available = c.model_plan?.available || [], availableKeys = new Set(available.map(item => bindingKey(item.source, item.id)));
+    const missing = [...bindingSelection].filter(key => !availableKeys.has(key)).map(key => { const [source, id] = key.split("\0");return { source, id, unavailable: true }; });
+    for (const item of [...available, ...missing]) {
       const key = bindingKey(item.source, item.id), row = node("tr"), name = node("td"), capability = item.capability?.values || {};
       const selection = check("binding-model", key, bindingSelection.has(key), item.id);
       selection.firstChild.addEventListener("change", event => {
         bindingDirty = true;if (event.target.checked) { bindingSelection.add(key);bindingDefault ||= routeId(item); }
-        else { bindingSelection.delete(key);if (bindingDefault === routeId(item)) bindingDefault = (c.model_plan.available || []).find(entry => bindingSelection.has(bindingKey(entry.source, entry.id)))?.route_id || null; }
+        else { bindingSelection.delete(key);if (bindingDefault === routeId(item) || !available.some(entry => routeId(entry) === bindingDefault)) bindingDefault = available.find(entry => bindingSelection.has(bindingKey(entry.source, entry.id)))?.route_id || null; }
         bindingRows();
       });name.append(selection);
       const action = button(bindingDefault === routeId(item) && bindingSelection.has(key) ? "cap_default" : "cap_set_default", () => { bindingDirty = true;bindingSelection.add(key);bindingDefault = routeId(item);bindingRows(); });
       action.setAttribute("aria-pressed", String(bindingDefault === routeId(item) && bindingSelection.has(key)));
-      const cell = node("td");cell.append(action);row.append(name, node("td", source(item.source)?.name || item.source), node("td", count(capability.context_window)), node("td", reasoningText(capability)), cell);body.append(row);
+      const cell = node("td");if (item.unavailable) words(cell, "cap_model_unavailable");else cell.append(action);
+      row.append(name, node("td", source(item.source)?.name || item.source), node("td", count(capability.context_window)), node("td", reasoningText(capability)), cell);body.append(row);
     }
     if (!body.children.length) { const row = node("tr"), cell = node("td");cell.colSpan = 5;words(cell, "cap_no_models");const link = node("a");link.href = "#models";words(link, "model_services");cell.append(" ", link);row.append(cell);body.append(row); }
   }
@@ -244,7 +247,7 @@
   el("connection-client-cancel").addEventListener("click", () => mountClient(true));
   function bindingInput(operation) {
     const c = client(editingClient);return { operation, id: c.id, enabled: true, allowed: c.allowed,
-      deployments: (c.model_plan?.available || []).filter(item => bindingSelection.has(bindingKey(item.source, item.id))).map(item => ({ source: item.source, model: item.id })),
+      deployments: [...bindingSelection].map(key => { const [source, model] = key.split("\0");return { source, model }; }),
       default_model: bindingDefault, auto_sync: el("connection-auto-sync").checked };
   }
   clientForm.addEventListener("submit", event => { event.preventDefault();void change(bindingInput("client")); });

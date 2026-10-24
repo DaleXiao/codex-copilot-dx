@@ -102,6 +102,23 @@ an API alone does not migrate existing M365 client credentials. First explicit
 Claude connection management installs private client keys; reopen affected apps.
 Codex reconciliation owns only the provider/model/table and preserves user edits.
 Repeated identical setup does not rewrite its file.
+When an existing native sign-in or credential-store policy is present, the owned
+provider keeps `requires_openai_auth = true`. Native account operations keep their
+own authentication; model traffic uses only CCDX's local bearer credential. A fresh
+API-only profile without native authentication remains usable without a ChatGPT
+login. Reconciliation never writes `auth.json` or deletes/replaces native credentials.
+Reopen Codex after an owned provider/authentication configuration change.
+
+GitHub-only explicit bindings preserve the legacy native loopback access contract,
+including requests from a process that has not yet reloaded its configuration.
+Their catalog comes from the selected deployments, not a second live Copilot read.
+Adding any non-GitHub deployment requires the private Codex key for the entire
+catalog and all bound inference requests. Unselected models remain refused.
+A supplied non-Codex bearer receives a local 403, not a ChatGPT 401 refresh
+challenge. Missing credentials still receive 401; neither denial reaches upstream.
+Temporarily unavailable selected models remain visible in the application editor.
+Saving them fails without changing prior settings; refresh the catalog or explicitly
+clear the affected selection. A missing directory entry never means deselection.
 
 A manual Codex provider includes an authenticated `model_catalog_url` on the same
 listener. Supported native selectors list configured custom names. Unknown names
@@ -1227,7 +1244,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.17/codex-copilot-dx-1.2.17.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.18/codex-copilot-dx-1.2.18.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 

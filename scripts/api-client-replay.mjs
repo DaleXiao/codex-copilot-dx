@@ -14,6 +14,17 @@ const args = new Map();for (let index = 2; index < process.argv.length; index +=
 const binary = args.get("--codex");assert.ok(path.isAbsolute(binary || ""), "Supply --codex /absolute/path/to/codex");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-api-client-")), profile = path.join(root, "codex"), model = "vendor/replay-model";
 const env = { CCDX_M365: "0", CODEX_HOME: profile, CCDX_DISABLE_USAGE: "1" };process.env.CCDX_DISABLE_USAGE = "1";
+const signedIn = args.get("--signed-in") === "chatgpt";
+let authBytes;
+if (signedIn) {
+  fs.mkdirSync(profile, { recursive: true });
+  const encode = value => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const token = `${encode({ alg: "none" })}.${encode({ email: "synthetic@example.test", exp: 4102444800,
+    "https://api.openai.com/auth": { chatgpt_account_id: "synthetic-account", chatgpt_plan_type: "plus" } })}.synthetic`;
+  authBytes = JSON.stringify({ auth_mode: "chatgpt", OPENAI_API_KEY: null, tokens: { id_token: token, access_token: "synthetic-access",
+    refresh_token: "synthetic-refresh", account_id: "synthetic-account" }, last_refresh: new Date().toISOString() });
+  fs.writeFileSync(path.join(profile, "auth.json"), authBytes, { mode: 0o600 });
+}
 const secretValues = new Map(), calls = [], authenticated = [], notices = [];
 let child, runtime, clientModel = model;
 function response(body) {
@@ -31,6 +42,11 @@ function response(body) {
   return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
 }
 const server = http.createServer((req, res) => {
+  if (new URL(req.url, "http://localhost").pathname === "/api/codex/accounts/check") {
+    assert.ok(signedIn);assert.equal(req.headers.authorization, "Bearer synthetic-access");
+    res.writeHead(200, { "Content-Type": "application/json" });res.end(JSON.stringify({ accounts: [{ id: "synthetic-account", name: "Synthetic",
+      plan_type: "plus", workspace_backend_origin: "https://chatgpt.com", account_routing_override: "NO_CONSTRAINT" }] }));return;
+  }
   authenticated.push({ method: req.method, route: new URL(req.url, "http://localhost").pathname, authorized: req.headers.authorization === `Bearer ${readClientGatewayKeys({ home: root, env }).codex}` });
   handler(req, res);
 });
@@ -67,10 +83,13 @@ try {
   }
   handler = createAdapterHandler({ providerRuntime: runtime, env, modelRegistry: { models: { data: [] } } });
   const childEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => ["PATH", "SystemRoot", "WINDIR", "TMPDIR", "TEMP", "TMP", "LANG"].includes(key)));
-  childEnv.CODEX_HOME = profile;
+  childEnv.CODEX_HOME = profile;childEnv.HOME = root;
+  // No real credentials or external HTTPS are available to this isolated child.
+  childEnv.HTTPS_PROXY = "http://127.0.0.1:1";childEnv.HTTP_PROXY = "http://127.0.0.1:1";childEnv.NO_PROXY = "127.0.0.1,localhost";
   const overrides = { "features.shell_snapshot": false, "features.plugins": false, "features.remote_plugin": false, "features.apps": false,
     "features.skill_search": false, "features.skill_mcp_dependency_install": false, "analytics.enabled": false, "feedback.enabled": false, check_for_update_on_startup: false,
-    "model_providers.ccdx_gateway.request_max_retries": 0, "model_providers.ccdx_gateway.stream_max_retries": 0, "model_providers.ccdx_gateway.supports_websockets": false };
+    "model_providers.ccdx_gateway.request_max_retries": 0, "model_providers.ccdx_gateway.stream_max_retries": 0, "model_providers.ccdx_gateway.supports_websockets": false,
+    ...(signedIn ? { chatgpt_base_url: `http://127.0.0.1:${server.address().port}` } : {}) };
   child = spawn(binary, [...Object.entries(overrides).flatMap(([key, value]) => ["-c", `${key}=${JSON.stringify(value)}`]), "app-server", "--stdio"], { cwd: root, env: childEnv, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"] });
   child.stderr.on("data", () => {});child.stdin.on("error", () => {});
   child.on("error", error => { for (const p of pending.values()) p.reject(error); });
@@ -87,11 +106,16 @@ try {
   });
   await call("initialize", { clientInfo: { name: "Codex Desktop", version: "1.0" }, capabilities: { experimentalApi: true } });child.stdin.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");
   const configuration = await call("config/read", { includeLayers: false });assert.equal(configuration.config.model, clientModel);assert.equal(configuration.config.model_provider, "ccdx_gateway");
+  const account = await call("account/read", { refreshToken: false }), authStatus = await call("getAuthStatus", { includeToken: false, refreshToken: false });
+  assert.equal(account.requiresOpenaiAuth, signedIn);assert.equal(authStatus.authMethod, signedIn ? "chatgpt" : null);
+  assert.equal(account.account?.type || null, signedIn ? "chatgpt" : null);
+  if (signedIn) assert.equal(fs.readFileSync(path.join(profile, "auth.json"), "utf8"), authBytes);
   const catalog = await call("model/list", {});assert.ok(catalog.data.some(entry => entry.id === clientModel), "The native model selector must include the configured API model");
   const thread = await call("thread/start", { cwd: root, model: clientModel, modelProvider: "ccdx_gateway", approvalPolicy: "never", sandbox: "read-only" });
   await call("turn/start", { threadId: thread.thread.id, input: [{ type: "text", text: "Synthetic API replay. Reply with a short marker.", text_elements: [] }] });
   const completed = await bounded(turn, "native turn");assert.equal(completed.turn.status, "completed", JSON.stringify(completed.turn.error));
   const read = await call("thread/read", { threadId: thread.thread.id, includeTurns: true });assert.ok(JSON.stringify(read).includes("SYNTHETIC_API_OK"));
+  if (signedIn) assert.equal(fs.readFileSync(path.join(profile, "auth.json"), "utf8"), authBytes);
   assert.ok(calls.length > 0);assert.ok(calls.every(call => call.model === model));assert.ok(authenticated.filter(r => r.route.startsWith("/v1/")).every(r => r.authorized));
   let claudeCode = false, claudeApp = false;
   if (args.get("--claude")) {
@@ -112,7 +136,7 @@ try {
     assert.equal(resultApp.status, 200);assert.ok((await resultApp.text()).includes("SYNTHETIC_API_OK"));claudeApp = true;
     const recent = runtime.snapshot().claude.requests.performance.recent_requests;assert.ok(recent.some(row => row.application === "claude_app"));assert.ok(recent.some(row => row.application === "claude_code"));
   }
-  console.log(JSON.stringify({ native_client: true, qualified_model_routes: clientModel !== model, configured_model: true, catalog_contains_custom_model: catalog.data.some(entry => entry.id === clientModel), completed: true,
+  console.log(JSON.stringify({ native_client: true, existing_chatgpt_signin_preserved: signedIn, qualified_model_routes: clientModel !== model, configured_model: true, catalog_contains_custom_model: catalog.data.some(entry => entry.id === clientModel), completed: true,
     claude_code: claudeCode, claude_app_protocol: claudeApp, upstream_calls: calls.length, authenticated_requests: authenticated.filter(r => r.authorized).length, notices: notices.length, live_provider_calls: 0 }));
 } finally {
   if (child && child.exitCode === null) { child.stdin.end();if (process.platform !== "win32") { try { process.kill(-child.pid, "SIGTERM"); } catch {} }else child.kill();await Promise.race([new Promise(resolve => child.once("exit", resolve)), new Promise(resolve => setTimeout(resolve, 1000))]); }

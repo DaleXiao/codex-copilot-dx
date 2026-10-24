@@ -8,6 +8,17 @@ import { atomicWriteFilePairSync } from "./atomic-file.mjs";
 import { withFileLockSync } from "./lock.mjs";
 
 const ID = "ccdx_gateway";
+function retainsCodexSignIn(config, directory, env) {
+  if (["keyring", "auto"].includes(config.cli_auth_credentials_store) || config.forced_login_method
+    || config.forced_chatgpt_workspace_id || ["CODEX_ACCESS_TOKEN", "CODEX_API_KEY", "OPENAI_API_KEY"].some(key => env[key])) return true;
+  try {
+    const auth = JSON.parse(readBoundedFileSync(path.join(directory, "auth.json"), { encoding: "utf8", maxBytes: 1024 * 1024 }));
+    return Boolean(auth?.auth_mode || auth?.tokens || auth?.OPENAI_API_KEY);
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw accessError("ccdx_codex_config_invalid", 409);
+  }
+}
 // Only the provider, selected model and private provider table are owned.
 export function configureCodexApi({ baseUrl, apiKey, model, restore = false, ...options } = {}) {
   if (!restore) {
@@ -36,7 +47,9 @@ export function configureCodexApi({ baseUrl, apiKey, model, restore = false, ...
       if (owner.model !== undefined) root = root.replace(/^model\s*=.*(?:\r?\n|$)/m, owner.beforeModel || "");
       next = root + tail.replace(sectionPattern, owner.beforeSection || "");
     } else {
-      const section = `[model_providers.${ID}]\nname = "CCDX"\nbase_url = ${JSON.stringify(baseUrl)}\nmodel_catalog_url = ${JSON.stringify(baseUrl + "/models")}\nwire_api = "responses"\nexperimental_bearer_token = ${JSON.stringify(apiKey)}\n\n`;
+      // Account identity remains native; only model traffic uses the local key.
+      const requiresAuth = retainsCodexSignIn(config, path.dirname(file), options.env || process.env);
+      const section = `[model_providers.${ID}]\nname = "CCDX"\nbase_url = ${JSON.stringify(baseUrl)}\nmodel_catalog_url = ${JSON.stringify(baseUrl + "/models")}\nwire_api = "responses"\nrequires_openai_auth = ${requiresAuth}\nexperimental_bearer_token = ${JSON.stringify(apiKey)}\n\n`;
       let root = head;
       if (model) root = root.match(/^model\s*=/m) ? root.replace(/^model\s*=.*(?:\r?\n|$)/m, `model = ${JSON.stringify(model)}\n`) : `model = ${JSON.stringify(model)}\n` + root;
       next = (root.match(/^model_provider\s*=/m) ? root.replace(/^model_provider\s*=.*(?:\r?\n|$)/m, `model_provider = "${ID}"\n`) : `model_provider = "${ID}"\n` + root)

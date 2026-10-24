@@ -315,7 +315,7 @@ export function createAdapterHandler(options = {}) {
     if (req.method === "GET" && pathname === "/v1/models") {
       const clientVersion = modelClientVersion(req.url);
       const selectedRegistry = target?.registry || codexModelRegistry;
-      const selectedListModels = target && target.id !== "github" ? target.client.listModels : listModelsFn;
+      const selectedListModels = target && (target.id !== "github" || options.providerRuntime.hasModelBindings?.()) ? target.client.listModels : listModelsFn;
       const modelOptions = { codexModelCatalog, clientVersion, providerCatalog: target?.codexCatalog, restrictToUpstream: Boolean(target && target.id !== "github") };
       const abort = createRequestAbort(req, res);
       // Keep live discovery and explicit auth failures authoritative, but do

@@ -642,3 +642,12 @@
 | API metadata error | Refresh failed. Last saved metadata is shown. | 刷新失败，保留上次保存的资料。 |
 
 能力说明只出现在模型详情和同步限制中。协议名、真实模型 ID、单位与错误码保持原样。选中按钮不加前缀勾，正文模型名保持正常对比度。
+
+## 1.2.18：保留不可用模型的选择
+
+| 原文案 | 新英文 | 新中文 |
+| --- | --- | --- |
+| Choose a configured model with the required API. | Selected model unavailable. Refresh or clear its selection. | 所选模型暂不可用，请刷新或取消选择。 |
+| 缺少目录记录时不显示 | Unavailable | 暂不可用 |
+
+暂缺的已选模型仍显示复选框。刷新失败不表示用户取消了选择，保存失败保留原设置。

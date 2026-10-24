@@ -163,6 +163,8 @@ jobs:
         run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
       - name: Verify native Codex source-qualified deployment routes
         run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --bindings models
+      - name: Verify native ChatGPT sign-in survives model binding changes
+        run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --bindings models --signed-in chatgpt
   dashboard-browsers:
     # Preinstalled browser dependencies avoid slow Azure Ubuntu archive downloads.
     runs-on: ubuntu-24.04

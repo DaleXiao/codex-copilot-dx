@@ -164,7 +164,7 @@ test("custom Responses requires the Codex credential and exposes only configured
   const s = runtime(t), id = await save(s.runtime), c = s.runtime.connections().clients.find(c => c.id === "codex");
   await s.runtime.manageConnections({ operation: "client", id: c.id, enabled: true, allowed: c.allowed, source: id, model: "custom/response", auto_review_model: "custom/response" });
   const keys = readClientGatewayKeys({ home: s.home, env: {} });
-  assert.throws(() => s.runtime.current({ headers: { authorization: `Bearer ${keys.claude_app}` } }), { statusCode: 401 });
+  assert.throws(() => s.runtime.current({ headers: { authorization: `Bearer ${keys.claude_app}` } }), { statusCode: 403 });
   const target = s.runtime.current({ headers: { authorization: `Bearer ${keys.codex}` } });assert.equal(target.id, id);
   assert.deepEqual(JSON.parse((await target.client.listModels()).body).data.map(m => m.id), ["custom/response"]);
   const config = parse(fs.readFileSync(path.join(s.home, ".codex", "config.toml"), "utf8"));
@@ -199,6 +199,33 @@ test("Codex ownership preserves unrelated configuration and user edits", t => {
   configureCodexApi({ home, env: {}, restore: true });assert.equal(parse(fs.readFileSync(file, "utf8")).model, "chosen");assert.equal(parse(fs.readFileSync(file, "utf8")).model_provider, undefined);
   configureCodexApi({ home, env: {}, baseUrl: "http://127.0.0.1:2026/v1", apiKey: "d".repeat(64) });fs.appendFileSync(file, "# custom provider edit\n");
   assert.equal(configureCodexApi({ home, env: {}, restore: true }).state, "preserved");
+});
+
+test("Codex gateway retains existing sign-in without changing its credentials", t => {
+  const home = localHome(t), directory = path.join(home, ".codex"), file = path.join(directory, "config.toml"), authFile = path.join(directory, "auth.json");
+  fs.mkdirSync(directory);const before = 'model = "original"\n';fs.writeFileSync(file, before);
+  const options = { home, env: {}, baseUrl: "http://127.0.0.1:2026/v1", apiKey: "d".repeat(64) };
+  for (const auth of [{ auth_mode: "chatgpt", tokens: { access_token: "synthetic-only" } }, { OPENAI_API_KEY: "synthetic-only" }]) {
+    const bytes = JSON.stringify(auth);fs.writeFileSync(authFile, bytes);const modified = fs.statSync(authFile).mtimeMs;
+    configureCodexApi(options);assert.equal(parse(fs.readFileSync(file, "utf8")).model_providers.ccdx_gateway.requires_openai_auth, true);
+    if (auth.auth_mode === "chatgpt") {
+      const journal = path.join(path.dirname(accessSettingsPath({ home, env: {} })), "codex-gateway-owner.json");
+      const owner = JSON.parse(fs.readFileSync(journal, "utf8")), oldSection = owner.section.replace(/^requires_openai_auth = true\n/m, "");
+      fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(owner.section, oldSection));owner.section = oldSection;fs.writeFileSync(journal, JSON.stringify(owner));
+      configureCodexApi(options);assert.equal(parse(fs.readFileSync(file, "utf8")).model_providers.ccdx_gateway.requires_openai_auth, true, "An unchanged 1.2.17 owned section is repaired");
+    }
+    assert.equal(fs.readFileSync(authFile, "utf8"), bytes);assert.equal(fs.statSync(authFile).mtimeMs, modified);
+    configureCodexApi({ ...options, restore: true });assert.equal(parse(fs.readFileSync(file, "utf8")).model, "original");
+    assert.equal(parse(fs.readFileSync(file, "utf8")).model_provider, undefined);
+  }
+  fs.rmSync(authFile);configureCodexApi(options);
+  assert.equal(parse(fs.readFileSync(file, "utf8")).model_providers.ccdx_gateway.requires_openai_auth, false, "A fresh API-only installation needs no OpenAI sign-in");
+  configureCodexApi({ ...options, restore: true });
+  fs.writeFileSync(file, before + 'cli_auth_credentials_store = "keyring"\n');configureCodexApi(options);
+  assert.equal(parse(fs.readFileSync(file, "utf8")).model_providers.ccdx_gateway.requires_openai_auth, true, "Keychain sign-in must not be masked when no auth.json exists");
+  configureCodexApi({ ...options, restore: true });
+  fs.writeFileSync(file, before);fs.writeFileSync(authFile, "invalid synthetic auth");
+  assert.throws(() => configureCodexApi(options), { code: "ccdx_codex_config_invalid" });assert.equal(fs.readFileSync(file, "utf8"), before);
 });
 
 test("upstream errors cannot echo the API key or leak vendor error bodies", async () => {

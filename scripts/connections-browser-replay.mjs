@@ -19,7 +19,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
     for (const palette of (options.get("--palettes") || "green,klein,pink").split(",")) for (const mode of (options.get("--modes") || "light,dark").split(",")) {
       const width = mode === "light" ? 360 : 1280, language = palette === "klein" ? "en" : "zh";
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-connections-browser-")), env = { CCDX_M365: "0" }, values = new Map();
-      let runtime, handler;
+      let runtime, handler;const githubRegistry = { models: { data: [] } };
       const server = http.createServer((req, res) => handler(req, res));
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
       const base = `http://127.0.0.1:${server.address().port}`;
@@ -29,7 +29,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
       const sampleName = 'API <img src=x onerror="alert(1)">';
       console.log("Connections case:", JSON.stringify({ engine, palette, mode, language, width }));
       try {
-        runtime = createProviderRuntime({ home: root, env, corePort: server.address().port, githubClient: { runtimeStatus: () => ({ token_cached: false }) }, githubRegistry: { models: { data: [] } },
+        runtime = createProviderRuntime({ home: root, env, corePort: server.address().port, githubClient: { runtimeStatus: () => ({ token_cached: false }) }, githubRegistry,
           secretStore: { get: async id => values.get(id), set: async (id, key) => { values.set(id, key); }, remove: async id => { values.delete(id); }, close() {} },
           inspectDesktop: async () => false, configureClaude: input => ({ [input.client === "claude_app" ? "app" : "code"]: "configured" }), restoreClaude: () => ({ preserved: 0 }),
           createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, fetch: async (_url, init) => {
@@ -90,7 +90,25 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           assert.equal(fs.readFileSync(accessSettingsPath({ home: root, env }), "utf8"), beforePreview, "Sync preview never writes configuration");
           if (options.get("--output")) await page.screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}-${route}-bindings.png`), fullPage: true });
         }
-        await page.locator('[data-route="models"]').click();
+        githubRegistry.models = { data: ["gpt-retained", "gpt-temporarily-missing"].map(id => ({ id, supported_endpoints: ["/responses"] })) };
+        const codexClient = runtime.connections().clients.find(c => c.id === "codex");
+        await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: codexClient.allowed,
+          deployments: githubRegistry.models.data.map(model => ({ source: "github", model: model.id })) });
+        githubRegistry.models = { data: [githubRegistry.models.data[0]] };
+        await page.goto(base + "/#codex");await page.reload();await page.locator("#connection-bindings tr").filter({ hasText: "gpt-retained" }).locator('input[name="binding-model"]:checked').waitFor();
+        const beforeMissing = fs.readFileSync(accessSettingsPath({ home: root, env }), "utf8");
+        const failedSave = page.waitForResponse(response => response.url().endsWith("/_ccdx/ui/connections") && response.request().method() === "POST");
+        await page.locator('#connection-client-form button[type="submit"]').click();assert.equal((await failedSave).status(), 400);
+        assert.equal(fs.readFileSync(accessSettingsPath({ home: root, env }), "utf8"), beforeMissing, "A missing catalog entry cannot silently remove a saved selection");
+        assert.equal(runtime.connections().clients.find(c => c.id === "codex").deployments.length, 2);
+        const missingRow = page.locator("#connection-bindings tr").filter({ hasText: "gpt-temporarily-missing" });
+        assert.match(await missingRow.innerText(), /Unavailable|暂不可用/);await missingRow.locator('input[name="binding-model"]').click();
+        const correctedSave = page.waitForResponse(response => response.url().endsWith("/_ccdx/ui/connections") && response.request().method() === "POST");
+        await page.locator('#connection-client-form button[type="submit"]').click();assert.equal((await correctedSave).status(), 200);
+        assert.deepEqual(runtime.connections().clients.find(c => c.id === "codex").deployments, [{ source: "github", model: "gpt-retained" }]);
+        await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: codexClient.allowed, deployments: [{ source: id, model: "response-replay" }] });
+        githubRegistry.models = { data: [] };
+        await page.goto(base + "/#models");await page.reload();await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).waitFor();
         await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).locator('input[role="switch"]').click();
         await page.locator("#connection-disable-editor").waitFor({ state: "visible" });await fits();
         await page.locator('#connection-disable-form button[type="submit"]').click();await page.locator("#connection-disable-editor").waitFor({ state: "hidden" });

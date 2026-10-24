@@ -38,6 +38,16 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
   const identities = () => keys ||= readClientGatewayKeys(options);
   const enabled = id => id?.startsWith("api_") ? settings.apis.find(api => api.id === id)?.enabled === true : settings.providers[id] === true;
   const binding = id => managed ? settings.clients[id] : { ...settings.clients[id], source: id === "codex" ? legacy.selection().codex : legacy.snapshot().m365.enabled ? "m365" : null };
+  // GitHub-only selections retain the existing native loopback access contract.
+  // Any other deployment still requires the private per-client credential.
+  const codexRequiresKey = () => !Array.isArray(binding("codex").deployments)
+    || !binding("codex").deployments.length || binding("codex").deployments.some(item => item.source !== "github");
+  function requireCodexKey(req) {
+    if (gatewayClient(req.headers, identities()) === "codex") return;
+    // An old native process may still send its ChatGPT bearer. A local access
+    // denial must not trigger recovery/replacement of that unrelated sign-in.
+    throw accessError("ccdx_client_credential_required", req.headers?.authorization ? 403 : 401);
+  }
   const permitted = (id, source) => binding(id)?.enabled && binding(id).allowed.includes(source) && enabled(source);
   function getSource(id) {
     if (!id?.startsWith("api_")) return legacy.source(id);
@@ -311,18 +321,18 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
       const c = binding("codex"), compiled = plan("codex");
       const source = requireSource("codex", Array.isArray(c.deployments) ? compiled.routes.get(compiled.defaultModel)?.source : c.source);
       if (Array.isArray(c.deployments) && req?.method === "GET") {
-        if (gatewayClient(req.headers, identities()) !== "codex") throw accessError("ccdx_client_credential_required", 401);
+        if (codexRequiresKey()) requireCodexKey(req);
         return { ...source, registry: { models: { data: compiled.models.map(model => ({ ...model, id: model.public_id })) } },
           client: { ...source.client, listModels: async () => ({ status: 200, body: JSON.stringify({ data: compiled.models.map(model => ({ ...model, id: model.public_id })) }) }) },
           codexCatalog: codexClientCatalog(compiled, getSource) };
       }
-      if (source?.id.startsWith("api_") && req && gatewayClient(req.headers, identities()) !== "codex") throw accessError("ccdx_client_credential_required", 401);
+      if (source?.id.startsWith("api_") && req) requireCodexKey(req);
       return source;
     },
     hasModelBindings(client = "codex") { return managed && Array.isArray(binding(client).deployments); },
     resolveCodex(body, req) {
       if (!managed || !Array.isArray(binding("codex").deployments)) return null;
-      if (gatewayClient(req.headers, identities()) !== "codex") throw accessError("ccdx_client_credential_required", 401);
+      if (codexRequiresKey()) requireCodexKey(req);
       const requested = body.model === "codex-auto-review" ? binding("codex").auto_review_model || plan("codex").defaultModel : body.model;
       if (body.model === "codex-auto-review") {
         delete body.service_tier;

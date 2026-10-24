@@ -1,5 +1,9 @@
 # CCDX 1.2.17
 
+Superseded by 1.2.18: saving Codex model bindings in this version could hide an
+existing native sign-in and interrupt model discovery. See the 1.2.18 regression
+fix and the added signed-in native-client verification.
+
 This patch adds deployment-specific model capabilities and explicit multi-source
 model sets for Codex, Claude App and Claude Code on the existing port 2026.
 

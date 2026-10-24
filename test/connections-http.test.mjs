@@ -13,6 +13,41 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
 process.env.CCDX_DISABLE_USAGE = "1";
+test("GitHub-only bindings retain an open native client's auth and expose only selected models", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-github-bindings-")), env = { CCDX_M365: "0" };
+  const registry = { models: { data: ["gpt-5.5", "gpt-5.4"].map(id => ({ id, supported_endpoints: ["/responses"] })) } };
+  let handler, catalogs = 0, responses = 0;
+  const server = http.createServer((req, res) => handler(req, res));await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const client = { getCachedModelEndpoints: () => ["/responses"], listModels: async () => { catalogs++;throw new Error("Unexpected implicit catalog refresh"); },
+    responses: async body => { responses++;assert.equal(body.model, "gpt-5.5");return Response.json({ id: "resp_binding", object: "response", status: "completed", model: body.model, output: [] }); } };
+  const runtime = createProviderRuntime({ home, env, corePort: server.address().port, githubClient: client, githubRegistry: registry,
+    secretStore: { close() {} }, inspectDesktop: async () => false });
+  handler = createAdapterHandler({ providerRuntime: runtime, codexClient: client, modelRegistry: registry,
+    codexModelCatalog: { load: async () => ({ models: [{ slug: "gpt-5.5", supported_reasoning_levels: [{ effort: "low", description: "Low" }] }] }) } });
+  t.after(async () => { handler.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime.close();fs.rmSync(home, { recursive: true, force: true }); });
+  await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github", "m365"], deployments: [{ source: "github", model: "gpt-5.5" }] });
+  const model = runtime.connections().clients.find(c => c.id === "codex").model_plan.models[0].public_id;
+  const headers = { Authorization: "Bearer synthetic-existing-chatgpt-token" };
+  const raw = await fetch(base + "/v1/models", { headers });assert.equal(raw.status, 200);assert.deepEqual((await raw.json()).data.map(m => m.id), [model]);
+  const native = await fetch(base + "/v1/models?client_version=0.163.0", { headers });assert.equal(native.status, 200);assert.deepEqual((await native.json()).models.map(m => m.slug), [model]);
+  const reply = await fetch(base + "/v1/responses", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.5", input: "synthetic", stream: false }) });
+  assert.equal(reply.status, 200, await reply.text());assert.equal(responses, 1);assert.equal(catalogs, 0);
+  const denied = await fetch(base + "/v1/responses", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.4", input: "synthetic", stream: false }) });
+  assert.equal(denied.status, 400);assert.equal(responses, 1, "The transition never reopens an unselected model");
+  env.SYNTHETIC_TEST_API_KEY = "synthetic-only";
+  const saved = await runtime.manageConnections({ operation: "save_api", allowed: ["codex"], config: { name: "Mixed source", base_url: "https://synthetic.test/v1",
+    endpoints: { responses: "https://synthetic.test/v1/responses" }, auth_header: "bearer", key_env: "SYNTHETIC_TEST_API_KEY", models: [{ id: "api-model", protocols: ["responses"] }] } });
+  const api = saved.providers.find(source => !source.builtin).id;
+  await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github", "m365", api],
+    deployments: [{ source: "github", model: "gpt-5.5" }, { source: api, model: "api-model" }] });
+  assert.equal((await fetch(base + "/v1/models", { headers })).status, 403, "An old ChatGPT bearer is refused without an authentication-refresh challenge");
+  assert.equal((await fetch(base + "/v1/responses", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.5", input: "synthetic" }) })).status, 403);
+  const credential = readClientGatewayKeys({ home, env }).codex;
+  const mixed = await fetch(base + "/v1/models", { headers: { Authorization: `Bearer ${credential}` } });assert.equal(mixed.status, 200);assert.equal((await mixed.json()).data.length, 2);
+  assert.equal(responses, 1);assert.equal(catalogs, 0);
+});
+
 test("same-port HTTP enforces management origin, native client keys and configured model scopes", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-api-http-")), keys = new Map(), calls = [];
   const env = { CCDX_M365: "0" };let handler;

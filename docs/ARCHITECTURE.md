@@ -85,7 +85,13 @@ company-network inputs while omitting unrelated credentials and Node hooks.
 
 `client-gateway-keys.mjs` separates caller identity from display hints and upstream
 credentials. `codex-api-config.mjs` reconciles an owned provider/model/table with
-paired writes. Claude uses its existing mounted relay and field journal with
+paired writes. Native sign-in material/store policy keeps OpenAI authentication
+enabled for account operations; the static local bearer still takes precedence
+for model requests. No native credential writer is added. GitHub-only bindings
+retain legacy loopback callers but expose only selected models; any mixed or
+non-GitHub binding requires the private Codex key. Bound catalog reads use their
+compiled facade even when the default source is GitHub, without a live refresh.
+Claude uses its existing mounted relay and field journal with
 independent app/code lifecycles. M365 beta policy is not imposed on API clients;
 adding a source alone never migrates old client credentials. Configuring clients
 does not patch/restart their binaries or override managed settings.
@@ -111,6 +117,8 @@ The existing Responses route-plan boundary continues to own opaque-state checks.
 
 `dashboard/connections.js` owns settings forms; application source/review and
 account/catalog views keep their existing scopes and use the same backend graph.
+Its binding draft retains selected identities independently from current catalog
+availability. Missing selections stay visible and cannot be silently dropped on save.
 Full configuration is on-demand; ordinary status uses compact cached summaries.
 Disabled sources and clients have separate restore lists inside their owning
 Settings cards, hidden when empty.

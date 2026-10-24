@@ -380,7 +380,7 @@ const server = http.createServer((req, res) => {
 
 async function startClient() {
   stderr = "";
-  child = spawn(codex, ["app-server", "--stdio"], { cwd, env: runtimeEnv(), stdio: ["pipe", "pipe", "pipe"] });
+  child = spawn(codex, ["app-server", "--stdio"], { cwd, env: runtimeEnv(), detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"] });
   child.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
   client = createClient(child);
   await client.call("initialize", { clientInfo: { name: "ccdx-image-replay", version: "1.0" }, capabilities: { experimentalApi: true } });
@@ -390,9 +390,10 @@ async function startClient() {
 async function stopClient() {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   const exited = once(child, "exit");
-  child.kill("SIGTERM");
+  const signal = value => { if (process.platform === "win32") child.kill(value);else { try { process.kill(-child.pid, value); } catch (error) { if (error.code !== "ESRCH") throw error; } } };
+  signal("SIGTERM");
   try { await bounded(exited, "Codex shutdown", 2_000); } catch {
-    child.kill("SIGKILL");
+    signal("SIGKILL");
     await bounded(exited, "Codex forced shutdown", 2_000);
   }
 }
@@ -530,7 +531,7 @@ try {
   catalog = JSON.parse(execFileSync(codex, ["debug", "models", "--bundled"], { ...options, maxBuffer: 8 * 1024 * 1024 }));
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   const port = server.address().port;
-  const base = `model = ${JSON.stringify(model)}\nmodel_provider = "replay"\ncheck_for_update_on_startup = false\n[model_providers.replay]\nname = "CCDX image replay"\nbase_url = "http://127.0.0.1:${port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\nsupports_websockets = false\nrequest_max_retries = 0\nstream_max_retries = 0\n[features]\nshell_snapshot = false\n[analytics]\nenabled = false\n[feedback]\nenabled = false\n`;
+  const base = `model = ${JSON.stringify(model)}\nmodel_provider = "replay"\ncheck_for_update_on_startup = false\n[model_providers.replay]\nname = "CCDX image replay"\nbase_url = "http://127.0.0.1:${port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\nsupports_websockets = false\nrequest_max_retries = 0\nstream_max_retries = 0\n[features]\nshell_snapshot = false\nplugins = false\nremote_plugin = false\napps = false\n[analytics]\nenabled = false\n[feedback]\nenabled = false\n`;
   await fs.writeFile(codexPath, withoutMcp ? `${base}[sandbox_workspace_write]\nwritable_roots = [${JSON.stringify(cwd)}]\nnetwork_access = false\nexclude_tmpdir_env_var = true\nexclude_slash_tmp = true\n` : base);
   if (liveModel) {
     // Reproduce the installed App skill alongside the CCDX skill without modifying either installed location.
@@ -610,6 +611,6 @@ try {
   try { await stopClient(); } finally {
     server.closeAllConnections();
     if (server.listening) await new Promise((resolve) => server.close(resolve));
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }

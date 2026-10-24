@@ -38,7 +38,9 @@ export function configureCodexApi({ baseUrl, apiKey, model, restore = false, ...
     const firstTable = content.search(/^\s*\[/m), head = firstTable < 0 ? content : content.slice(0, firstTable), tail = firstTable < 0 ? "" : content.slice(firstTable);
     const sectionPattern = /^\[model_providers\.ccdx_gateway\]\r?\n[^]*?(?=^\[|$(?![^]))/m;
     const currentSection = tail.match(sectionPattern)?.[0] || null;
-    if (owner && (config.model_provider !== ID || currentSection !== owner.section || owner.model !== undefined && config.model !== owner.model)) return { state: "preserved" };
+    if (owner && (config.model_provider !== ID || currentSection !== owner.section)) return { state: "preserved" };
+    const modelEdited = owner?.model !== undefined && config.model !== owner.model;
+    if (restore && modelEdited) return { state: "preserved" };
     if (!owner && (config.model_provider && config.model_provider !== "openai" || config.model_providers?.[ID])) return { state: "preserved" };
     let next, nextOwner = null;
     if (restore) {
@@ -51,14 +53,15 @@ export function configureCodexApi({ baseUrl, apiKey, model, restore = false, ...
       const requiresAuth = retainsCodexSignIn(config, path.dirname(file), options.env || process.env);
       const section = `[model_providers.${ID}]\nname = "CCDX"\nbase_url = ${JSON.stringify(baseUrl)}\nmodel_catalog_url = ${JSON.stringify(baseUrl + "/models")}\nwire_api = "responses"\nrequires_openai_auth = ${requiresAuth}\nexperimental_bearer_token = ${JSON.stringify(apiKey)}\n\n`;
       let root = head;
-      if (model) root = root.match(/^model\s*=/m) ? root.replace(/^model\s*=.*(?:\r?\n|$)/m, `model = ${JSON.stringify(model)}\n`) : `model = ${JSON.stringify(model)}\n` + root;
+      if (model && !modelEdited) root = root.match(/^model\s*=/m) ? root.replace(/^model\s*=.*(?:\r?\n|$)/m, `model = ${JSON.stringify(model)}\n`) : `model = ${JSON.stringify(model)}\n` + root;
       next = (root.match(/^model_provider\s*=/m) ? root.replace(/^model_provider\s*=.*(?:\r?\n|$)/m, `model_provider = "${ID}"\n`) : `model_provider = "${ID}"\n` + root)
         + (currentSection ? tail.replace(sectionPattern, section) : tail + (tail && !tail.endsWith("\n") ? "\n" : "") + "\n" + section);
       nextOwner = { version: 1, beforeProvider: owner ? owner.beforeProvider : head.match(/^model_provider\s*=.*(?:\r?\n|$)/m)?.[0] || null,
         beforeSection: owner ? owner.beforeSection : currentSection, section,
-        ...(model ? { model, beforeModel: owner && Object.hasOwn(owner, "beforeModel") ? owner.beforeModel : head.match(/^model\s*=.*(?:\r?\n|$)/m)?.[0] || null } : {}) };
+        ...(modelEdited ? { model: owner.model, beforeModel: owner.beforeModel }
+          : model ? { model, beforeModel: owner && Object.hasOwn(owner, "beforeModel") ? owner.beforeModel : head.match(/^model\s*=.*(?:\r?\n|$)/m)?.[0] || null } : {}) };
     }
     parse(next);if (next !== content || JSON.stringify(nextOwner) !== JSON.stringify(owner)) atomicWriteFilePairSync(file, next, journal, nextOwner ? JSON.stringify(nextOwner) + "\n" : null, { mode: 0o600 });
-    return { state: "configured", changed: next !== content };
+    return { state: modelEdited ? "preserved" : "configured", changed: next !== content };
   });
 }

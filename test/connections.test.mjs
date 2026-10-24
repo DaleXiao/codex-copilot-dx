@@ -228,6 +228,19 @@ test("Codex gateway retains existing sign-in without changing its credentials", 
   assert.throws(() => configureCodexApi(options), { code: "ccdx_codex_config_invalid" });assert.equal(fs.readFileSync(file, "utf8"), before);
 });
 
+test("a native model choice does not block repair of the separately owned Codex auth section", t => {
+  const home = localHome(t), directory = path.join(home, ".codex"), file = path.join(directory, "config.toml");fs.mkdirSync(directory);
+  fs.writeFileSync(file, 'model = "original"\n');
+  const options = { home, env: {}, baseUrl: "http://127.0.0.1:2026/v1", apiKey: "d".repeat(64), model: "gateway-default" };
+  configureCodexApi(options);
+  fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace('model = "gateway-default"', 'model = "user-chosen-model"'));
+  const auth = JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "synthetic-only" } });fs.writeFileSync(path.join(directory, "auth.json"), auth);
+  assert.equal(configureCodexApi(options).state, "preserved");
+  const result = parse(fs.readFileSync(file, "utf8"));assert.equal(result.model, "user-chosen-model");assert.equal(result.model_providers.ccdx_gateway.requires_openai_auth, true);
+  assert.equal(fs.readFileSync(path.join(directory, "auth.json"), "utf8"), auth);
+  const before = fs.readFileSync(file, "utf8");assert.equal(configureCodexApi({ ...options, restore: true }).state, "preserved");assert.equal(fs.readFileSync(file, "utf8"), before);
+});
+
 test("upstream errors cannot echo the API key or leak vendor error bodies", async () => {
   const p = createApiProvider({ config: apiConfig, secrets: { get: async () => "synthetic-key-only" }, networkFactory: async () => ({ close() {}, fetch: async () => Response.json({ error: { message: "synthetic-key-only private vendor body" } }, { status: 403 }) }) });
   try { const response = await p.client.messages({ model: "any-message-model", messages: [] });assert.equal(response.status, 403);const text = await response.text();assert.equal(text.includes("synthetic-key-only"), false);assert.match(text, /ccdx_api_http_403/); } finally { p.close(); }

@@ -107,7 +107,9 @@ provider keeps `requires_openai_auth = true`. Native account operations keep the
 own authentication; model traffic uses only CCDX's local bearer credential. A fresh
 API-only profile without native authentication remains usable without a ChatGPT
 login. Reconciliation never writes `auth.json` or deletes/replaces native credentials.
-Reopen Codex after an owned provider/authentication configuration change.
+A changed default model is preserved independently; it does not prevent repair
+of an otherwise unchanged owned provider table. Reopen Codex after an owned
+provider/authentication configuration change.
 
 GitHub-only explicit bindings preserve the legacy native loopback access contract,
 including requests from a process that has not yet reloaded its configuration.

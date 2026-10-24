@@ -13,6 +13,8 @@ The prior native replay covered a fresh API-only profile and missed this case.
   copied, replaced, refreshed or deleted by configuration reconciliation.
 - Keep a fresh API-only Codex profile usable without a ChatGPT login. Preserve
   user edits and migrate unchanged 1.2.17 owned provider sections on reconciliation.
+  A user-selected default model is preserved independently and does not block
+  repairing the still-owned authentication section.
 - GitHub-only selected models accept existing native loopback callers that have
   not reloaded configuration. Mixed/non-GitHub sets still require the private
   Codex key for the whole catalog and inference scope. Unselected models fail.
@@ -32,7 +34,7 @@ credential deletion or automatic sign-in is introduced.
 
 ## Verification
 
-Local `npm run verify` passed: 1,520 tests, 1,510 passed, ten optional/platform
+Local `npm run verify` passed: 1,521 tests, 1,511 passed, ten optional/platform
 skips and zero failures; HTTP/SSE smoke, performance budgets and pack checks
 also passed. Twelve Chromium/WebKit cases covered all three palettes, both
 appearance modes, missing-selection preservation and explicit removal. An

@@ -457,7 +457,11 @@ try {
         assert.equal(await page.locator("#flow-active-body tr").count(), 3);
         assert.match(await page.locator("#flow-active-body").innerText(), language === "zh" ? /正在重试/ : /Retrying/);
         assert.equal(await page.locator("#flow-active-body tr").last().locator("td").first().evaluate(node => getComputedStyle(node).borderBottomWidth), "0px");
-        assert.equal(await page.locator("#source-requests .tool-details").evaluate(node => getComputedStyle(node).borderTopWidth), "0px");
+        // A status refresh can replace this table between locator resolution and evaluation.
+        await page.waitForFunction(() => {
+          const node = document.querySelector("#source-requests .tool-details");
+          return node?.isConnected && getComputedStyle(node).borderTopWidth === "0px";
+        });
         assert.equal(await page.locator("#main-content").evaluate(node => getComputedStyle(node).outlineStyle), "none");
         if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-flow.png`), fullPage: true });
         await page.locator("#auto-refresh").click();

@@ -96,3 +96,63 @@ test("the shared Claude route recovers on a later request while an earlier respo
   held.end('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n');
   assert.match(await firstBody, /message_stop/);await new Promise(resolve => setImmediate(resolve));assert.equal(drained, true);
 });
+
+test("one client selects same-named models from two APIs on the shared port without cross-source retry", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-many-http-")), env = { CCDX_M365: "0" }, stored = new Map(), calls = [];
+  let handler;
+  const server = http.createServer((req, res) => handler(req, res));await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const runtime = createProviderRuntime({ home, env, corePort: server.address().port, githubClient: {}, githubRegistry: { models: { data: [] } },
+    secretStore: { get: async id => stored.get(id), set: async (id, key) => stored.set(id, key), remove: async id => stored.delete(id), close() {} },
+    configureClaude: () => ({ app: "configured", code: "configured" }), inspectDesktop: async () => false, restoreClaude: () => ({ preserved: 0 }),
+    createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, async fetch(url, init) {
+      const body = JSON.parse(init.body);calls.push({ url, model: body.model, max_tokens: body.max_tokens, auth: init.headers.Authorization });
+      if (url.includes("two.test") && body.messages?.[0]?.content === "fail") return Response.json({ secret: "upstream-key-must-not-leak" }, { status: 500 });
+      return url.endsWith("/messages") ? Response.json({ id: "msg_" + calls.length, type: "message", role: "assistant", model: body.model, content: [{ type: "text", text: "OK" }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } })
+        : Response.json({ id: "resp_" + calls.length, object: "response", model: body.model, status: "completed", output: [{ id: "msg", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "OK", annotations: [] }] }], usage: { input_tokens: 1, output_tokens: 1 } });
+    } }) }) });
+  handler = createAdapterHandler({ providerRuntime: runtime, dashboardOptions: { home, env } });
+  t.after(async () => { handler.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const ids = [];
+  for (const name of ["one", "two"]) {
+    const state = await runtime.manageConnections({ operation: "save_api", config: { name, base_url: `https://${name}.test/v1`, auth_header: "bearer",
+      endpoints: { messages: `https://${name}.test/v1/messages`, responses: `https://${name}.test/v1/responses` },
+      models: [{ id: "same-model", protocols: ["messages", "responses"], capabilities: { context_window: name === "one" ? 128000 : 1000000, max_output_tokens: 100 } }] }, key: `synthetic-${name}`, allowed: ["claude_app", "codex"] });
+    ids.push(state.providers.find(p => p.name === name).id);
+  }
+  for (const id of ["claude_app", "codex"]) {
+    const c = runtime.connections().clients.find(c => c.id === id);
+    await runtime.manageConnections({ operation: "client", id, enabled: true, allowed: c.allowed, deployments: ids.map(source => ({ source, model: "same-model" })), auto_sync: true });
+  }
+  // Editing capability metadata after Codex stores a qualified review route
+  // must not mistake that route for an absent upstream model ID.
+  const api = runtime.connections().providers.find(p => p.id === ids[0]);
+  const { id: ignored, enabled: ignoredEnabled, builtin, key_saved, model_count, codex_model_count, protocols, deployment_revision, discovery, ...config } = api;
+  await runtime.manageConnections({ operation: "save_api", id: ids[0], config, allowed: ["claude_app", "codex"] });
+  const beforePreview = JSON.stringify(runtime.connections());
+  const client = runtime.connections().clients.find(c => c.id === "claude_app");
+  const preview = await runtime.manageConnections({ operation: "preview_client", id: "claude_app", enabled: true, allowed: client.allowed, deployments: [{ source: ids[0], model: "same-model" }] });
+  assert.equal(preview.preview.saved, false);assert.equal(preview.preview.models.length, 1);assert.equal(JSON.stringify(runtime.connections()), beforePreview);
+  const keys = readClientGatewayKeys({ home, env }), headers = client => ({ "Content-Type": "application/json", Authorization: `Bearer ${keys[client]}` });
+  const list = await (await fetch(base + "/anthropic/v1/models", { headers: headers("claude_app") })).json();assert.equal(list.data.length, 2);assert.notEqual(list.data[0].id, list.data[1].id);assert.equal(list.data[1].supports_1m, true);assert.equal(list.data[0].supports_1m, undefined);
+  for (let i = 0; i < 2; i++) {
+    const response = await fetch(base + "/anthropic/v1/messages", { method: "POST", headers: headers("claude_app"), body: JSON.stringify({ model: list.data[i].id, messages: [{ role: "user", content: "unique-" + i }], max_tokens: 1000 }) });
+    assert.equal(response.status, 200);assert.equal((await response.json()).model, list.data[i].id);assert.equal(calls.at(-1).url, `https://${["one", "two"][i]}.test/v1/messages`);assert.equal(calls.at(-1).max_tokens, 100);
+  }
+  const ambiguous = await fetch(base + "/anthropic/v1/messages", { method: "POST", headers: headers("claude_app"), body: JSON.stringify({ model: "same-model", messages: [], max_tokens: 4 }) });assert.equal(ambiguous.status, 400);assert.equal(calls.length, 2);
+  const failed = await fetch(base + "/anthropic/v1/messages", { method: "POST", headers: headers("claude_app"), body: JSON.stringify({ model: list.data[1].id, messages: [{ role: "user", content: "fail" }], max_tokens: 4 }) });assert.equal(failed.status, 500);assert.equal((await failed.text()).includes("must-not-leak"), false);assert.equal(calls.length, 3);
+  const catalog = await (await fetch(base + "/v1/models?client_version=0.163.0", { headers: headers("codex") })).json();assert.equal(catalog.models.length, 2);
+  for (let i = 0; i < 2; i++) {
+    const response = await fetch(base + "/v1/responses", { method: "POST", headers: headers("codex"), body: JSON.stringify({ model: catalog.models[i].slug, input: "response-" + i }) });
+    assert.equal(response.status, 200, await response.text());assert.equal(calls.at(-1).url, `https://${["one", "two"][i]}.test/v1/responses`);assert.equal(calls.at(-1).model, "same-model");
+  }
+  const recent = runtime.snapshot().claude.requests.performance.recent_requests;
+  assert.ok(recent.some(row => row.provider === ids[0]));assert.ok(recent.some(row => row.provider === ids[1]));
+  assert.equal(calls.length, 5);
+  const codexClient = runtime.connections().clients.find(c => c.id === "codex");
+  await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: codexClient.allowed, deployments: [] });
+  assert.equal(runtime.connections().clients.find(c => c.id === "codex").model_plan.models.length, 0);
+  await runtime.action({ action: "switch", provider: ids[0] });
+  assert.equal(runtime.selection().codex, ids[0]);assert.equal(runtime.connections().clients.find(c => c.id === "codex").deployments, null);
+  assert.equal(calls.length, 5, "Empty selection and legacy switching make no upstream request");
+});

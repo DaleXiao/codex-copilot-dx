@@ -96,6 +96,9 @@ export function createResponsesHandler(options) {
   const now = options.now || Date.now;
 
   return async function handleResponses(req, res) {
+    let provider = options.provider || defaultGithubProvider;
+    let { modelRegistry, responsesFn, responsesCompactFn, chatCompletionsFn, autoReviewModelResolver, openAIModelEnv } = options;
+    let getCachedModelEndpointsFn = options.getCachedModelEndpointsFn || provider.client.getCachedModelEndpoints;
     const abort = createRequestAbort(req, res);
     let releaseRequest = () => {};
     let prepared = null;
@@ -203,6 +206,14 @@ export function createResponsesHandler(options) {
       releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal }));
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
+      const selectedProvider = options.resolveProvider?.(parsed, req);
+      if (selectedProvider) {
+        provider = selectedProvider;modelRegistry = provider.registry;
+        responsesFn = provider.client.responses;responsesCompactFn = provider.client.responsesCompact;chatCompletionsFn = provider.client.chatCompletions;
+        getCachedModelEndpointsFn = provider.client.getCachedModelEndpoints;
+        autoReviewModelResolver = () => options.providerPreference?.(provider.id);
+        if (provider.id !== "github") openAIModelEnv = { ...openAIModelEnv, CCDX_AUTO_REVIEW_MODEL: "" };
+      }
       options.validateConversation?.(parsed, req.headers, provider);
       activeDeadline = now() + upstreamTimeoutMs;
       activeTimeoutReason = "responses_prepare_timeout";
@@ -416,6 +427,9 @@ export function createResponsesCompactHandler(options) {
   const now = options.now || Date.now;
 
   return async function handleResponsesCompact(req, res) {
+    let provider = options.provider || defaultGithubProvider;
+    let { modelRegistry, responsesFn, responsesCompactFn, chatCompletionsFn, autoReviewModelResolver, openAIModelEnv } = options;
+    let getCachedModelEndpointsFn = options.getCachedModelEndpointsFn || provider.client.getCachedModelEndpoints;
     const abort = createRequestAbort(req, res);
     let releaseRequest = () => {};
     let prepared = null;
@@ -475,6 +489,14 @@ export function createResponsesCompactHandler(options) {
       releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal }));
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       const parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
+      const selectedProvider = options.resolveProvider?.(parsed, req);
+      if (selectedProvider) {
+        provider = selectedProvider;modelRegistry = provider.registry;
+        responsesFn = provider.client.responses;responsesCompactFn = provider.client.responsesCompact;chatCompletionsFn = provider.client.chatCompletions;
+        getCachedModelEndpointsFn = provider.client.getCachedModelEndpoints;
+        autoReviewModelResolver = () => options.providerPreference?.(provider.id);
+        if (provider.id !== "github") openAIModelEnv = { ...openAIModelEnv, CCDX_AUTO_REVIEW_MODEL: "" };
+      }
       options.validateConversation?.(parsed, req.headers, provider);
       activeDeadline = now() + upstreamTimeoutMs;
       activeTimeoutReason = "responses_prepare_timeout";

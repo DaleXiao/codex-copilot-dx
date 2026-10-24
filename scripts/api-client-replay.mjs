@@ -15,7 +15,7 @@ const binary = args.get("--codex");assert.ok(path.isAbsolute(binary || ""), "Sup
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-api-client-")), profile = path.join(root, "codex"), model = "vendor/replay-model";
 const env = { CCDX_M365: "0", CODEX_HOME: profile, CCDX_DISABLE_USAGE: "1" };process.env.CCDX_DISABLE_USAGE = "1";
 const secretValues = new Map(), calls = [], authenticated = [], notices = [];
-let child, runtime;
+let child, runtime, clientModel = model;
 function response(body) {
   const item = { type: "message", id: "msg_api", role: "assistant", status: "completed", content: [{ type: "output_text", text: "SYNTHETIC_API_OK", annotations: [] }] };
   const complete = { id: "resp_api", object: "response", status: "completed", model: body.model, output: [item], usage: { input_tokens: 10, output_tokens: 4, total_tokens: 14 } };
@@ -61,6 +61,10 @@ try {
     endpoints: { responses: "https://api.synthetic.test/v1/responses" }, auth_header: "bearer", models: [{ id: model, protocols: ["responses"] }] } });
   const id = saved.providers.find(source => !source.builtin).id, c = saved.clients.find(c => c.id === "codex");
   await runtime.manageConnections({ operation: "client", id: c.id, source: id, enabled: true, allowed: c.allowed, model, auto_review_model: model });
+  if (args.get("--bindings") === "models") {
+    await runtime.manageConnections({ operation: "client", id: c.id, enabled: true, allowed: c.allowed, deployments: [{ source: id, model }] });
+    clientModel = runtime.connections().clients.find(c => c.id === "codex").model_plan.models[0].public_id;
+  }
   handler = createAdapterHandler({ providerRuntime: runtime, env, modelRegistry: { models: { data: [] } } });
   const childEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => ["PATH", "SystemRoot", "WINDIR", "TMPDIR", "TEMP", "TMP", "LANG"].includes(key)));
   childEnv.CODEX_HOME = profile;
@@ -82,16 +86,16 @@ try {
     }
   });
   await call("initialize", { clientInfo: { name: "Codex Desktop", version: "1.0" }, capabilities: { experimentalApi: true } });child.stdin.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");
-  const configuration = await call("config/read", { includeLayers: false });assert.equal(configuration.config.model, model);assert.equal(configuration.config.model_provider, "ccdx_gateway");
-  const catalog = await call("model/list", {});assert.ok(catalog.data.some(entry => entry.id === model), "The native model selector must include the configured API model");
-  const thread = await call("thread/start", { cwd: root, model, modelProvider: "ccdx_gateway", approvalPolicy: "never", sandbox: "read-only" });
+  const configuration = await call("config/read", { includeLayers: false });assert.equal(configuration.config.model, clientModel);assert.equal(configuration.config.model_provider, "ccdx_gateway");
+  const catalog = await call("model/list", {});assert.ok(catalog.data.some(entry => entry.id === clientModel), "The native model selector must include the configured API model");
+  const thread = await call("thread/start", { cwd: root, model: clientModel, modelProvider: "ccdx_gateway", approvalPolicy: "never", sandbox: "read-only" });
   await call("turn/start", { threadId: thread.thread.id, input: [{ type: "text", text: "Synthetic API replay. Reply with a short marker.", text_elements: [] }] });
   const completed = await bounded(turn, "native turn");assert.equal(completed.turn.status, "completed", JSON.stringify(completed.turn.error));
   const read = await call("thread/read", { threadId: thread.thread.id, includeTurns: true });assert.ok(JSON.stringify(read).includes("SYNTHETIC_API_OK"));
   assert.ok(calls.length > 0);assert.ok(calls.every(call => call.model === model));assert.ok(authenticated.filter(r => r.route.startsWith("/v1/")).every(r => r.authorized));
   let claudeCode = false, claudeApp = false;
   if (args.get("--claude")) {
-    const api = runtime.connections().providers.find(p => p.id === id), { id: ignored, builtin, key_saved, protocols, model_count, codex_model_count, enabled, ...config } = api;
+    const api = runtime.connections().providers.find(p => p.id === id), { id: ignored, builtin, key_saved, protocols, model_count, codex_model_count, enabled, deployment_revision, discovery, ...config } = api;
     config.endpoints.messages = "https://api.synthetic.test/v1/messages";config.models.push({ id: "claude-sonnet-4.6", protocols: ["messages"] });
     await runtime.manageConnections({ operation: "save_api", id, config, allowed: ["codex", "claude_code", "claude_app"] });
     for (const name of ["claude_code", "claude_app"]) {
@@ -108,7 +112,7 @@ try {
     assert.equal(resultApp.status, 200);assert.ok((await resultApp.text()).includes("SYNTHETIC_API_OK"));claudeApp = true;
     const recent = runtime.snapshot().claude.requests.performance.recent_requests;assert.ok(recent.some(row => row.application === "claude_app"));assert.ok(recent.some(row => row.application === "claude_code"));
   }
-  console.log(JSON.stringify({ native_client: true, configured_model: true, catalog_contains_custom_model: catalog.data.some(entry => entry.id === model), completed: true,
+  console.log(JSON.stringify({ native_client: true, qualified_model_routes: clientModel !== model, configured_model: true, catalog_contains_custom_model: catalog.data.some(entry => entry.id === clientModel), completed: true,
     claude_code: claudeCode, claude_app_protocol: claudeApp, upstream_calls: calls.length, authenticated_requests: authenticated.filter(r => r.authorized).length, notices: notices.length, live_provider_calls: 0 }));
 } finally {
   if (child && child.exitCode === null) { child.stdin.end();if (process.platform !== "win32") { try { process.kill(-child.pid, "SIGTERM"); } catch {} }else child.kill();await Promise.race([new Promise(resolve => child.once("exit", resolve)), new Promise(resolve => setTimeout(resolve, 1000))]); }

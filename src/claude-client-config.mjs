@@ -87,28 +87,32 @@ function setOperation(snapshot, operation, value) {
   setAt(snapshot, operation.keys, { exists: true, value: next });
 }
 
-function reconcile(operations, { restore = false, ...options } = {}) {
+export function reconcileClaudeConfiguration(operations, { restore = false, ...options } = {}) {
   const paths = claudeClientPaths(options), allowed = new Set(Object.values(paths)), journalPath = m365Paths(options).ownership;
   fs.mkdirSync(path.dirname(journalPath), { recursive: true, mode: 0o700 });
   return withFileLockSync(`${journalPath}.lock`, () => {
     const journal = readM365Json(journalPath, { version: 1, operations: [] });
     const keys = new Map([
-      [paths.code, new Set(["env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN", "env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "env.ANTHROPIC_CUSTOM_HEADERS", "env.ANTHROPIC_MODEL"])],
+      [paths.code, new Set(["env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN", "env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "env.ANTHROPIC_CUSTOM_HEADERS", "env.ANTHROPIC_MODEL", "env.CLAUDE_CODE_MAX_CONTEXT_TOKENS", "env.CLAUDE_CODE_MAX_OUTPUT_TOKENS", "env.CLAUDE_CODE_MODEL_CAPABILITIES"])],
       [paths.normal, new Set(["deploymentMode"])], [paths.threep, new Set(["deploymentMode"])],
       [paths.meta, new Set(["entries", "appliedId"])],
       [paths.profile, new Set(["inferenceProvider", "inferenceGatewayBaseUrl", "inferenceGatewayApiKey", "inferenceGatewayAuthScheme", "inferenceModels", "inferenceCustomHeaders"])],
     ]);
+    const safeKeys = op => Array.isArray(op.keys) && !op.keys.some(key => ["__proto__", "constructor", "prototype"].includes(key))
+      && (keys.get(op.file)?.has(op.keys.join(".")) || op.file === paths.code && op.keys.length === 3 && op.keys[0] === "modelSettings"
+        && /^[\w][\w./:@+\[\]-]{0,200}$/.test(op.keys[1]) && op.keys[2] === "autoCompactWindow");
     if (journal.version !== 1 || !Array.isArray(journal.operations) || journal.operations.some(op => !allowed.has(op.file)
-      || !Array.isArray(op.keys) || !keys.get(op.file)?.has(op.keys.join("."))
+      || !safeKeys(op)
       || op.itemId !== undefined && (op.file !== paths.meta || op.keys.join(".") !== "entries" || op.itemId !== M365_CLAUDE_PROFILE_ID))) {
       throw new Error("Claude configuration ownership is invalid; files were preserved");
     }
     const states = new Map(), pending = [], nextJournal = structuredClone(journal), skipped = [];
-    const forClient = op => (!options.client || (options.client === "claude_code" ? op.file === paths.code : op.file !== paths.code))
+    const sharedOperation = op => op.file === paths.code && (op.keys[0] === "modelSettings" || ["CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MODEL_CAPABILITIES"].includes(op.keys[1]));
+    const forClient = op => (!options.selectOperation || options.selectOperation(op)) && (!options.client || (options.client === "claude_code" ? op.file === paths.code && !sharedOperation(op) : op.file !== paths.code))
       && (!options.fields || options.fields.includes(op.keys.join(".")));
     const list = restore ? journal.operations.filter(forClient) : operations;
     for (const operation of list) {
-      if (!allowed.has(operation.file)) throw new Error("Unexpected Claude configuration path");
+      if (!allowed.has(operation.file) || !safeKeys(operation)) throw new Error("Unexpected Claude configuration path");
       if (!states.has(operation.file)) states.set(operation.file, read(operation.file));
       const state = states.get(operation.file);state.next ||= structuredClone(state.value);
       const previous = journal.operations.find(op => op.file === operation.file && isDeepStrictEqual(op.keys, operation.keys) && op.itemId === operation.itemId);
@@ -154,7 +158,7 @@ function reconcile(operations, { restore = false, ...options } = {}) {
   });
 }
 
-export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstalled, desktopManaged, desktopAliases = false, profileName = M365_CLAUDE_PROFILE_NAME, disableExperimentalBetas = true, ...options } = {}) {
+export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstalled, desktopManaged, desktopAliases = false, profileName = M365_CLAUDE_PROFILE_NAME, disableExperimentalBetas = true, defaultModel, ...options } = {}) {
   const entries = claudeModelEntries(models);
   const paths = claudeClientPaths(options), ids = entries.map(model => model.name), operations = [], result = {};
   const endpoint = new URL(baseUrl);
@@ -187,7 +191,7 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
     if (ids.length && (!codeEnv.ANTHROPIC_MODEL || models.some(model => model.id === codeEnv.ANTHROPIC_MODEL)
       || owns(paths.code, ["env", "ANTHROPIC_MODEL"], codeEnv.ANTHROPIC_MODEL))) {
       const index = models.findIndex(model => model.id === codeEnv.ANTHROPIC_MODEL || claudeClientModelId(model.id) === codeEnv.ANTHROPIC_MODEL);
-      add(paths.code, ["env", "ANTHROPIC_MODEL"], ids[Math.max(0, index)]);
+      add(paths.code, ["env", "ANTHROPIC_MODEL"], defaultModel && ids.includes(defaultModel) ? defaultModel : ids[Math.max(0, index)]);
     }
     result.code = "configured";
   }
@@ -221,7 +225,8 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
         const old = order.get(claudeClientModelId(models[index].id));
         if (old !== undefined && !order.has(desktopEntries[index].name)) order.set(desktopEntries[index].name, old);
       }
-      const orderedEntries = [...desktopEntries].sort((left, right) => (order.get(left.name) ?? Infinity) - (order.get(right.name) ?? Infinity));
+      const orderedEntries = [...desktopEntries].sort((left, right) => defaultModel && (left.name === defaultModel || right.name === defaultModel)
+        ? left.name === defaultModel ? -1 : 1 : (order.get(left.name) ?? Infinity) - (order.get(right.name) ?? Infinity));
       add(paths.profile, ["inferenceModels"], JSON.stringify(orderedEntries));
       add(paths.profile, ["inferenceCustomHeaders"], JSON.stringify({ "X-CCDX-Client": "claude-app" }));
       add(paths.meta, ["entries"], { id: M365_CLAUDE_PROFILE_ID, name: profileName }, M365_CLAUDE_PROFILE_ID);
@@ -230,7 +235,7 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
       result.app = "configured";
     }
   }
-  const applied = reconcile(operations, options);
+  const applied = reconcileClaudeConfiguration(operations, options);
   if (applied.preserved) {
     if (result.code === "configured") result.code = "partially_preserved";
     if (result.app === "configured") result.app = "partially_preserved";
@@ -240,5 +245,5 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
 
 export function restoreClaudeClients(options = {}) {
   if (!fs.existsSync(m365Paths(options).ownership)) return { changed: false, preserved: 0, remaining: 0 };
-  return reconcile([], { ...options, restore: true });
+  return reconcileClaudeConfiguration([], { ...options, restore: true });
 }

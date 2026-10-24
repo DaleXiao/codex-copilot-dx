@@ -88,12 +88,13 @@ export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clie
 }
 
 export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = false, log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,
-  record = recordUsage, acquireRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 }) } = {}) {
+  resolveRequest, record = recordUsage, acquireRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 }) } = {}) {
   if (!provider || !isProviderId(provider.id) || typeof apiKey !== "string" || apiKey.length < 32) throw new Error("Claude gateway requires a provider and private local key");
   const config = loadRuntimeConfig(env), performance = sharedPerformance || createStreamPerformanceMetrics({ routeNames: ["messages"] });
   const decodedLimit = decodedBodyLimitPreference({ env }).bytes;
   const stats = { total: 0, active: 0, completed: 0, incomplete: 0, failed: 0, cancelled: 0, last_request_at: null, last_model: null };
   async function dispatch(req, res) {
+    let selectedProvider = provider, finishProvider = () => {};
     if (!isLoopbackAddress(req.socket?.remoteAddress) || req.headers.host === undefined || !isLoopbackHostHeader(req.headers.host)
       || Object.hasOwn(req.headers, "origin")) { send(res, 403, apiError("ccdx_local_only", "The Claude gateway accepts native local clients only"));return; }
     if (!authenticated(req.headers, apiKey)) { send(res, 401, apiError("ccdx_gateway_auth", "Invalid local gateway credential"));return; }
@@ -101,7 +102,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     if (req.method === "GET" && pathname === "/v1/models") {
       try {
         const entries = provider.models("claude");
-        const models = claudeModelEntries(entries, { desktopAliases }).map((entry, index) => ({ id: entry.name, type: "model", display_name: entry.labelOverride || typeof entries[index].name === "string" && entries[index].name || entry.name }));
+        const models = claudeModelEntries(entries, { desktopAliases }).map((entry, index) => ({ id: entry.name, type: "model", ...(entry.supports1m ? { supports_1m: true } : {}), display_name: entry.labelOverride || typeof entries[index].name === "string" && entries[index].name || entry.name }));
         send(res, 200, { data: models, has_more: false, first_id: models[0]?.id || null, last_id: models.at(-1)?.id || null });
       } catch (error) { send(res, 503, apiError(error.code || "ccdx_catalog_unavailable", "Claude model discovery is unavailable; refresh the provider catalog.")); }
       return;
@@ -113,12 +114,12 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     if (parent) parent.provider = provider.id;
     const countTokens = pathname.endsWith("/count_tokens"), requestId = parent?.requestId || randomUUID();
     const tracker = countTokens ? null : performance.begin("messages", { requestId, application: requestApplication(req.headers, "claude") });
-    tracker?.setProvider(provider.id);
+    if (!resolveRequest) tracker?.setProvider(provider.id);
     const abort = createRequestAbort(req, res);
     let release = () => {}, outcome = "failed", model = null, configuredModel = null, clientModel = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
     let terminalOrigin = "client_validation", failureStatus = null;
     if (!countTokens) { stats.total++;stats.active++;stats.last_request_at = new Date().toISOString(); }
-    await runWithRequestContext({ requestId, provider: provider.id, route: "messages", streamPerformance: tracker }, async () => {
+    await runWithRequestContext({ requestId, provider: selectedProvider.id, route: "messages", streamPerformance: tracker }, async () => {
       try {
         release = await acquireRequest(req, { signal: abort.signal });
         abort.setTimeout(config.requestBodyTimeoutMs, "request_body_timeout");
@@ -126,16 +127,23 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (!body || typeof body.model !== "string" || !Array.isArray(body.messages)) {
           send(res, 400, apiError("ccdx_messages_invalid", "Expected a model and messages array"));return;
         }
+        if (resolveRequest) {
+          const resolved = await resolveRequest(body, req);
+          selectedProvider = resolved.provider;finishProvider = resolved.finish || finishProvider;
+          configuredModel = resolved.model;clientModel = body.model === configuredModel ? null : body.model;
+          body = { ...body, model: configuredModel };tracker?.setProvider(selectedProvider.id);
+          const context = currentRequestContext();if (context) context.provider = selectedProvider.id;
+        }
         if (desktopAliases) body = desktopMessages(body);
         model = body.model;streamed = !countTokens && body.stream === true;
-        configuredModel = provider.configuredModels || desktopAliases ? resolveClaudeModel(provider.models("claude"), model, { desktopAliases })?.id : null;
+        if (!resolveRequest) configuredModel = provider.configuredModels || desktopAliases ? resolveClaudeModel(provider.models("claude"), model, { desktopAliases })?.id : null;
         if (desktopAliases && !configuredModel) throw Object.assign(new Error("The selected model is unavailable"), { code: "ccdx_api_model_unavailable", statusCode: 400 });
         if (desktopAliases && configuredModel !== model) { clientModel = model;model = configuredModel;body = { ...body, model }; }
         stats.last_model = model;
         tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });
-        validateConversation?.(body, req.headers);
+        validateConversation?.(body, req.headers, selectedProvider);
         terminalOrigin = "transport";
-        const upstream = await provider.client.messages(body, { headers: req.headers, countTokens, signal: abort.signal,
+        const upstream = await selectedProvider.client.messages(body, { headers: req.headers, countTokens, signal: abort.signal,
           onUpstreamStart() { abort.setTimeout(streamed ? config.streamHandshakeTimeoutMs : config.upstreamTimeoutMs, "upstream_timeout"); } });
         body = null;
         terminalOrigin = upstream.ok ? "upstream_response" : "upstream_http";
@@ -199,14 +207,14 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         }
         else if (!res.destroyed && !res.writableEnded) res.end(`event: error\ndata: ${JSON.stringify(apiError("ccdx_gateway_error", message))}\n\n`);
       } finally {
-        release();abort.cleanup();
+        release();abort.cleanup();finishProvider();
         if (!countTokens) {
           stats.active--;stats[outcome]++;
           tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });tracker?.setOutputTokens(usage?.output_tokens);
           tracker?.terminal(outcome, { origin: failedEvent ? "upstream_event" : terminalOrigin, reason: stopReason === "max_tokens" ? "max_output_tokens" : undefined });
           tracker?.finish({ failed: outcome === "failed" || outcome === "cancelled", aborted: outcome === "cancelled", statusCode: failureStatus || res.statusCode });
           const client = req.headers["x-ccdx-client"] === "claude-app" ? "claude_app" : req.headers["x-ccdx-client"] === "claude-code" ? "claude_code" : "claude";
-          try { void Promise.resolve(record(buildMessagesUsageRecord({ model: configuredModel || model, responseId, usage, mode: streamed ? "stream" : "json", client, provider: provider.id }))).catch(() => {}); } catch {}
+          try { void Promise.resolve(record(buildMessagesUsageRecord({ model: configuredModel || model, responseId, usage, mode: streamed ? "stream" : "json", client, provider: selectedProvider.id }))).catch(() => {}); } catch {}
         }
       }
     });

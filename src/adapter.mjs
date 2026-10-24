@@ -103,7 +103,10 @@ async function sendModelList(res, models, {
   providerCatalog,
 } = {}) {
   let body = rawBody || JSON.stringify(models);
-  if (clientVersion && typeof providerCatalog === "function") body = JSON.stringify(providerCatalog(models));
+  if (clientVersion && typeof providerCatalog === "function") {
+    const catalog = providerCatalog.needsNativeCatalog && codexModelCatalog?.load ? await codexModelCatalog.load({ clientVersion }) : null;
+    body = JSON.stringify(providerCatalog(models, catalog));
+  }
   else if (clientVersion && typeof codexModelCatalog?.load === "function") {
     let response = null;
     try {
@@ -201,6 +204,8 @@ export function createAdapterHandler(options = {}) {
   });
   const responsesHandler = createResponsesHandler({
     validateConversation: (body, headers, source) => options.providerRuntime?.validateConversation?.(body, headers, source),
+    resolveProvider: (body, req) => options.providerRuntime?.resolveCodex?.(body, req),
+    providerPreference: id => options.providerRuntime?.providerPreference?.(id),
     provider: options.provider || options.providerRuntime?.github,
     acquireRequest,
     autoReviewModelResolver: options.autoReviewModelResolver,
@@ -221,6 +226,8 @@ export function createAdapterHandler(options = {}) {
   });
   const responsesCompactHandler = createResponsesCompactHandler({
     validateConversation: (body, headers, source) => options.providerRuntime?.validateConversation?.(body, headers, source),
+    resolveProvider: (body, req) => options.providerRuntime?.resolveCodex?.(body, req),
+    providerPreference: id => options.providerRuntime?.providerPreference?.(id),
     provider: options.provider || options.providerRuntime?.github,
     acquireRequest,
     autoReviewModelResolver: options.autoReviewModelResolver,
@@ -241,6 +248,8 @@ export function createAdapterHandler(options = {}) {
     if (!providerHandlers.has(provider)) {
       const common = { provider, acquireRequest, imagePressure, keepaliveIntervalMs: options.keepaliveIntervalMs,
         validateConversation: (body, headers, source) => options.providerRuntime?.validateConversation?.(body, headers, source),
+    resolveProvider: (body, req) => options.providerRuntime?.resolveCodex?.(body, req),
+    providerPreference: id => options.providerRuntime?.providerPreference?.(id),
         modelRegistry: provider.registry, now: options.now, openAIModelEnv: { ...openAIModelEnv, CCDX_AUTO_REVIEW_MODEL: "" },
         autoReviewModelResolver: () => { const preference = options.providerRuntime.providerPreference?.(provider.id) || options.providerRuntime.selection().m365;
           return { model: preference?.auto_review_model, reasoningEffort: preference?.auto_review_effort === undefined ? Object.hasOwn(provider, "defaultReviewEffort") ? provider.defaultReviewEffort : "low" : preference.auto_review_effort }; },
@@ -282,7 +291,7 @@ export function createAdapterHandler(options = {}) {
       try { target = options.providerRuntime.current(req); }
       catch (error) { sendJsonError(res, error, 503);return; }
       const context = currentRequestContext();
-      if (context) {
+      if (context && !(req.method === "POST" && options.providerRuntime.hasModelBindings?.())) {
         context.provider = target.id;
         context.streamPerformance?.setProvider?.(target.id);
         context.finishProvider = options.providerRuntime.track?.(target);

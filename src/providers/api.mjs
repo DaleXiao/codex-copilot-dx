@@ -10,15 +10,19 @@ import { markUpstreamHeaders } from "../stream-performance.mjs";
 import { createApiNetwork } from "./api-network.mjs";
 import { checkedApiKey } from "../api-secrets.mjs";
 import { transportErrorDetails } from "../operation-error.mjs";
+import { catalogCapabilities, resolveModelCapabilities, deploymentRevision, constrainModelRequest } from "../model-capabilities.mjs";
+import { codexModelEntry } from "../client-model-plan.mjs";
+import { markRequestObservation } from "../stream-performance.mjs";
 
 const paths = { messages: "/v1/messages", responses: "/v1/responses", chat: "/v1/chat/completions" };
-export function apiCatalog(config) {
-  return config.models.map(model => ({ id: model.id, name: model.id, publisher: "Unknown",
+export function apiCatalog(config, env = process.env) {
+  return config.models.map(model => { const capability = resolveModelCapabilities(model, { revision: deploymentRevision(config, env) });return ({ id: model.id, name: model.id, publisher: "Unknown",
     supported_endpoints: model.protocols.map(api => paths[api]), model_picker_enabled: true, policy: { state: "enabled" },
-    capabilities: { limits: { max_context_window_tokens: model.context_window }, supports: { reasoning_effort: model.reasoning_efforts || [] } } }));
+    capability, capabilities: { limits: { max_context_window_tokens: capability.values.context_window, max_output_tokens: capability.values.max_output_tokens },
+      supports: { reasoning_effort: capability.values.reasoning_efforts || [] } } }); });
 }
 export function createApiProvider({ config, secrets, env = process.env, platform = process.platform, networkFactory = createApiNetwork } = {}) {
-  const catalog = apiCatalog(config), declarations = new Map(config.models.map(model => [model.id, model]));
+  const catalog = apiCatalog(config, env);
   const fingerprint = config.key_env ? createHash("sha256").update(env[config.key_env] || "").digest("hex") : "";
   const generation = parseInt(createHash("sha256").update(JSON.stringify(config) + fingerprint).digest("hex").slice(0, 8), 16);
   const profiles = Object.fromEntries(["messages", "responses", "chat"].map(protocol => [protocol, `api:${config.id}:${createHash("sha256").update(JSON.stringify({
@@ -54,6 +58,12 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     if (api === "messages") {
       headers["anthropic-version"] = "2023-06-01";
       for (const name of ["anthropic-version", "anthropic-beta"]) { const value = options.headers?.[name];if (typeof value === "string" && value.length < 8192 && !/[\r\n]/.test(value)) headers[name] = value; }
+    }
+    if (body && !options.countTokens) {
+      const capability = catalog.find(model => model.id === body.model)?.capability;
+      const constrained = constrainModelRequest(body, capability, api);
+      if (constrained.body !== body) { body = constrained.body;options = { ...options, bodyText: undefined }; }
+      markRequestObservation({ capability_revision: capability?.revision, capability_constraints: constrained.applied.join(",") || "none" });
     }
     const serialized = body ? options.bodyText ?? JSON.stringify(body) : undefined;
     if (serialized !== undefined) headers["Content-Length"] = String(Buffer.byteLength(serialized));
@@ -99,21 +109,13 @@ export function createApiProvider({ config, secrets, env = process.env, platform
   return {
     id: config.id, client, registry, configuredModels: true, defaultReviewEffort: null, profileId: (protocol = "responses") => profiles[protocol] || profile, models: family => catalog.filter(model => model.supported_endpoints.includes(family === "claude" ? paths.messages : paths.responses)),
     codexCatalog(models) {
-      return { ...models, models: config.models.filter(model => model.protocols.includes("responses")).map((model, priority) => ({
-        slug: model.id, display_name: model.id, description: config.name, visibility: "list", supported_in_api: true, priority,
-        default_reasoning_level: model.reasoning_efforts?.[0] || null, supported_reasoning_levels: (model.reasoning_efforts || []).map(effort => ({ effort, description: effort })),
-        shell_type: "unified_exec", availability_nux: null, upgrade: null, additional_speed_tiers: [], service_tiers: [],
-        // Neutral metadata for a native Responses API. Never borrow another model's instructions or capabilities.
-        base_instructions: "", support_verbosity: false, default_verbosity: null, apply_patch_tool_type: null,
-        supports_reasoning_summary_parameter: false, default_reasoning_summary: "none", truncation_policy: { mode: "bytes", limit: 10000 },
-        context_window: model.context_window || null, max_context_window: model.context_window || null, experimental_supported_tools: [], input_modalities: ["text"],
-      })) };
+      return { ...models, models: catalog.filter(model => model.supported_endpoints.includes(paths.responses)).map((model, priority) => codexModelEntry(model, { priority, name: config.name })) };
     },
     catalog: () => catalog,
     publicCatalog(allowed = []) { return { source: "configured", checkedAt: config.checked_at || null, upstreamHost: new URL(config.base_url).hostname,
       advertised: catalog.length, models: publicModelCatalog(catalog, { selectable: model => allowed.some(id => model.supported_endpoints.includes(id === "codex" ? paths.responses : paths.messages)),
         clients: model => allowed.filter(id => model.supported_endpoints.includes(id === "codex" ? paths.responses : paths.messages)) }).map(model => ({ ...model,
-          auto_review_efforts: [...(declarations.get(model.id)?.reasoning_efforts || [])] })) }; },
+          capability: catalog.find(entry => entry.id === model.id)?.capability, auto_review_efforts: [...(catalog.find(entry => entry.id === model.id)?.capability.values.reasoning_efforts || [])] })) }; },
     async discover({ signal } = {}) {
       const response = await request(modelsUrl, undefined, { signal }, config.endpoints.responses ? "responses" : "messages");
       if (!response.ok) { await response.body?.cancel();throw accessError(`ccdx_api_catalog_http_${response.status}`, response.status === 401 || response.status === 403 ? response.status : 502); }
@@ -123,7 +125,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       const ids = new Set();
       for (const model of value.data) { if (!model || typeof model.id !== "string" || !/^[\w][\w./:@+-]{0,159}$/.test(model.id) || ids.has(model.id)) throw accessError("ccdx_api_catalog_invalid", 502);ids.add(model.id); }
       // A catalog listing is not evidence that every model supports every API.
-      return value.data.map(model => ({ id: model.id, protocols: Array.isArray(model.supported_endpoints)
+      return value.data.map(model => ({ id: model.id, ...(Object.keys(catalogCapabilities(model)).length ? { metadata: { values: catalogCapabilities(model), checked_at: new Date().toISOString(), deployment: deploymentRevision(config, env) } } : {}), protocols: Array.isArray(model.supported_endpoints)
         ? Object.entries(paths).filter(([, endpoint]) => model.supported_endpoints.includes(endpoint) || model.supported_endpoints.includes(endpoint.slice(3))).map(([api]) => api).filter(api => config.endpoints[api]) : [] }));
     },
     selectModel(_body, { upstreamModel }) { selected(upstreamModel, "responses");return { upstreamModel, forceResponses: true }; },

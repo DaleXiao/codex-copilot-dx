@@ -326,8 +326,11 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         attemptTimings() { return attemptTimings.map(attempt => ({ ...attempt })); },
         observeContext(values) {
           if (finished || !values || typeof values !== "object") return;
-          for (const key of Object.keys(context)) {
+          for (const key of [...Object.keys(context), "capability_revision", "capability_constraints"]) {
             const value = values[key];
+            if (["capability_revision", "capability_constraints"].includes(key)) {
+              if (typeof value === "string" && /^[a-z0-9_,]{1,80}$/.test(value)) context[key] = value;continue;
+            }
             if (Number.isSafeInteger(value) && value >= 0 && (key !== "context_window_tokens" || value > 0)) context[key] = value;
           }
         },

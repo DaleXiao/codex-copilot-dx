@@ -20,10 +20,40 @@ Client integration, image tools and the dashboard are not a general plugin frame
 ### Manual connection graph (1.2.13)
 
 `provider-runtime.mjs` composes built-in lifecycle with `connection-runtime.mjs`,
-which owns grants, switches and explicit current bindings. `access-settings.mjs`
+which owns grants, switches, versioned model-deployment bindings and lifecycle. `access-settings.mjs`
 validates strict versioned metadata and locked atomic writes; stale cross-process
 saves are rejected. Accepted inputs and public snapshots do not share mutable
 objects with the live graph. The built-in registry does not load external code.
+
+`model-capabilities.mjs` owns neutral limits, reasoning/tool/input/search fields,
+strict manual values, per-field evidence and deployment revisions. It reads no
+credentials or client files. Explicit manual values override the current API's
+structured declarations; absent or generation-mismatched fields remain unknown.
+`client-model-plan.mjs` compiles immutable authorized catalogs, source-qualified
+routes and client metadata. Same-named models never collapse into one deployment.
+Legacy null bindings retain their original single-source catalog; explicit arrays
+expose only selected models. A v1 file is backed up byte-for-byte before the first
+atomic v2 write. Source grants are not silently promoted to model grants.
+
+Compiled plans are cached by immutable binding/source/catalog identities and
+generation, not serialized on each request. The control plane refreshes metadata;
+the data plane resolves a model once after its admitted bounded body read, then
+pins the real provider, history namespace and capability snapshot through the
+stream. Responses and Messages keep their existing admission, cancellation,
+backpressure and history paths. A shared Messages admission pool spans client
+handlers. Failed calls do not select another provider.
+
+`claude-capability-config.mjs` plans shared App Code/Code host fields once for all
+managed consumers, then uses `claude-client-config.mjs`'s existing field journal.
+Per-model compact budgets are distinct from the largest shared host window.
+Unknown/unsupported consumers prevent unsafe global context overrides; unowned
+Code base settings, explicit environment values and manual fields are preserved.
+Shared operations have a separate restore selector, so pausing Code cannot tear
+down active App budgets. Sync work coalesces and reruns once for newer control
+state rather than letting concurrent App/Code writes race. No permission or
+safety-review field is owned by this adapter. Native version/schema limitations
+are public data, not fabricated capabilities. Output constraints are recorded as
+bounded revision/constraint labels in existing request context observations.
 
 `providers/api.mjs` owns configured native clients, model capabilities,
 configuration/key history identity and explicit bounded discovery. It uses no
@@ -44,9 +74,7 @@ addresses, credentials, headers or prompts.
 
 The API editor separates catalog candidates from selected models. Only selected
 models enter the strict saved graph, with a required native protocol; unused
-ID-only catalog entries cannot invalidate a save. Client grants remain separate
-from route availability: manual sources need configured models for the client's
-protocol before they are offered as its current source.
+ID-only catalog entries cannot invalidate a save. Client grants remain separate from model visibility and protocol reachability. Source CRUD/capability details live on Model sources; application pages select deployments/defaults and review synchronization; Settings retains common preferences. The App and Code use separate segments and keys.
 
 `api-secrets.mjs` owns OS-protected credentials and a private-pipe cache; no
 command argument contains an upstream key. Failed metadata commits remove their
@@ -98,7 +126,7 @@ its Fast mapping, retries and recovery are not applied blindly to M365. Protocol
 adaptation belongs to the client boundary. There is no generic intermediate message
 format that would erase native Responses or Anthropic semantics.
 
-`provider-registry.mjs` declares the bounded internal source metadata used by selection validation and dashboard source choices. It loads no external code; GitHub and M365 remain built-in sources. `access-settings.mjs` validates up to 16 user-defined API records; `providers/api.mjs` is their first-party implementation, not a third-party code loader. Client grants and the explicit current source remain in composition.
+`provider-registry.mjs` declares the bounded internal source metadata used by selection validation and dashboard source choices. It loads no external code; GitHub and M365 remain built-in sources. `access-settings.mjs` validates up to 16 user-defined API records; `providers/api.mjs` is their first-party implementation, not a third-party code loader. Client grants, selected deployment sets and defaults remain in composition.
 
 `provider-runtime.mjs` owns source selection, not the providers themselves. Each
 request pins a provider before admission. An explicit change affects later requests;

@@ -476,3 +476,19 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
  .flow-logo { width:26px;height:26px; }
 }
 @media(prefers-reduced-motion:reduce) { .flow-packet,#request-flow[data-state="idle"] #flow-state::before { animation:none; } }
+
+/* Model capability and application binding controls share the existing palette. */
+.client-segments { margin-bottom: 18px; }
+.client-segments button[aria-pressed="true"], .binding-table button[aria-pressed="true"] { color: var(--page); background: var(--accent); border-color: var(--accent); }
+#connection-model-detail { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+#connection-model-detail h3 { overflow-wrap: anywhere; }
+#connection-model-detail .connection-fields { margin-bottom: 18px; }
+#connection-models td:last-child { min-width: 130px; }
+#connection-models td:last-child button { margin: 3px; }
+#connection-models td:first-child label, .binding-table td:first-child label { display: inline-flex; gap: 8px; align-items: center; min-height: 44px; }
+.binding-table input { accent-color: var(--accent); flex: none; }
+.binding-table td { white-space: normal; overflow-wrap: anywhere; }
+.binding-table td:first-child { min-width: 180px; }
+.binding-table td:last-child button { min-width: 102px; white-space: nowrap; }
+#connection-sync-result { margin-top: 20px; }
+#connection-sync-result tr:last-child td { border-bottom: 0; }

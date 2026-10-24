@@ -262,40 +262,21 @@ try {
         await nav("claude");
         assert.match(await page.locator("#claude-route").textContent(), /\/anthropic/);
         assert.equal(await page.locator("#claude-clients tr").count(), 2);
-        await page.locator('[data-view="claude"] [data-source-link="m365"]').click();
+        await nav("models");await page.locator("#model-provider-m365").click();
         await page.locator("#m365-source-access").waitFor({ state: "visible" });
         assert.equal(codexSource, "m365", "Opening source management does not switch routing");
         await nav("codex");
         await page.waitForFunction(() => document.getElementById("source-provider").value === "m365" && document.getElementById("source-model").value === "gpt-source");
         assert.equal(await page.locator("#source-review").inputValue(), "gpt-source");
-        for (const selector of ["#source-model", "#source-review", "#source-review-effort", "#apply-source", "#save-review"]) {
-          const box = await page.locator(selector).boundingBox();assert.equal(box.height, 36, `${selector} height`);
-        }
-        const childIndent = await page.locator('[data-route="codex"]').evaluate(node => parseFloat(getComputedStyle(node).paddingLeft));
-        assert.ok(childIndent > 12);
-        await page.locator("#source-model").selectOption("gpt-second");
-        await page.evaluate(() => dashboardRefresh.refresh("auth", { force: true }));
-        await page.locator("#refresh").click();
-        await page.waitForFunction(() => !document.getElementById("refresh").disabled && !document.getElementById("apply-source").disabled);
-        assert.equal(await page.locator("#source-model").inputValue(), "gpt-second", "Settings/auth refresh keeps the unsaved model choice");
+        assert.equal(await page.locator("#legacy-source-controls").isHidden(), true, "Source selection moved to application model bindings");
+        for (const selector of ["#source-review", "#source-review-effort", "#save-review"]) assert.equal((await page.locator(selector).boundingBox()).height, 36);
+        const childIndent = await page.locator('[data-route="codex"]').evaluate(node => parseFloat(getComputedStyle(node).paddingLeft));assert.ok(childIndent > 12);
         await page.locator("#source-review").selectOption("gpt-second");
-        await page.locator("#apply-source").click();
-        await page.waitForFunction(() => !document.getElementById("save-review").disabled);
-        assert.equal(m365Preference.auto_review_model, "gpt-source", "Saving a conversation model does not save a pending review change");
-        assert.equal(await page.locator("#source-review").inputValue(), "gpt-second");
-        await page.locator("#save-review").click();
-        await page.waitForFunction(() => !document.getElementById("save-review").disabled);
+        await page.evaluate(() => dashboardRefresh.refresh("auth", { force: true }));await page.locator("#refresh").click();
+        await page.waitForFunction(() => !document.getElementById("refresh").disabled && !document.getElementById("save-review").disabled);
+        assert.equal(await page.locator("#source-review").inputValue(), "gpt-second", "Refresh keeps the unsaved review choice");
+        await page.locator("#save-review").click();await page.waitForFunction(() => !document.getElementById("save-review").disabled);
         assert.equal(m365Preference.auto_review_model, "gpt-second");
-        await page.locator("#source-provider").selectOption("github");
-        await page.route("**/_ccdx/ui/models/live?provider=m365", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "synthetic catalog unavailable" }) }));
-        await page.locator("#source-provider").selectOption("m365");
-        await page.waitForFunction(() => document.getElementById("review-control-note").textContent.includes("synthetic catalog unavailable"));
-        assert.equal(await page.locator("#apply-source").isEnabled(), false);
-        await page.locator("#source-provider").selectOption("github");
-        assert.equal(await page.locator("#apply-source").isEnabled(), true);
-        await page.unroute("**/_ccdx/ui/models/live?provider=m365");
-        await page.locator("#apply-source").click();
-        await page.waitForFunction(() => document.getElementById("source-control-note").textContent.includes("GitHub Copilot") && !document.getElementById("apply-source").disabled);
         await page.route("**/_ccdx/ui/settings", route => route.request().method() === "POST" && route.request().postDataJSON()?.key === "prediction_enabled"
           ? route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "synthetic prediction save refused" }) }) : route.continue());
         const predictionBefore = await page.locator("#setting-prediction_enabled").isChecked();

@@ -6,6 +6,7 @@ import { atomicWriteFileSync } from "./atomic-file.mjs";
 import { withFileLockSync } from "./lock.mjs";
 import { isProviderId } from "./provider-metadata.mjs";
 import { CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
+import { validCapabilities } from "./model-capabilities.mjs";
 
 export const CLIENT_IDS = Object.freeze(["codex", "claude_app", "claude_code"]);
 export const CLIENT_NAMES = Object.freeze({ codex: "Codex App", claude_app: "Claude App", claude_code: "Claude Code" });
@@ -46,9 +47,12 @@ export function checkedApi(value) {
   const seen = new Set();
   for (const model of value.models) {
     if (model?.id === CODEX_AUTO_REVIEW_MODEL) throw accessError("ccdx_api_model_reserved");
-    if (!fields(model, ["id", "protocols", "context_window", "reasoning_efforts"]) || !modelId(model.id) || seen.has(model.id)
+    if (!fields(model, ["id", "protocols", "context_window", "reasoning_efforts", "capabilities", "metadata"]) || !modelId(model.id) || seen.has(model.id)
       || !Array.isArray(model.protocols) || !model.protocols.length || new Set(model.protocols).size !== model.protocols.length
       || model.protocols.some(api => !value.endpoints[api])
+      || model.capabilities !== undefined && !validCapabilities(model.capabilities)
+      || model.metadata !== undefined && (!fields(model.metadata, ["values", "checked_at", "deployment"]) || !validCapabilities(model.metadata.values)
+        || !/^[a-f0-9]{32}$/.test(model.metadata.deployment || "") || !Number.isFinite(Date.parse(model.metadata.checked_at)))
       || model.context_window !== undefined && (!Number.isSafeInteger(model.context_window) || model.context_window < 1)
       || model.reasoning_efforts !== undefined && (!Array.isArray(model.reasoning_efforts) || model.reasoning_efforts.length > 8
         || model.reasoning_efforts.some(effort => !["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(effort)))) throw accessError("ccdx_api_models_invalid");
@@ -58,11 +62,11 @@ export function checkedApi(value) {
   return value;
 }
 export function defaultAccessSettings() {
-  return { version: 1, claude_private_keys: false, providers: { github: true, m365: true }, apis: [], clients: Object.fromEntries(CLIENT_IDS.map(id => [id,
+  return { version: 2, claude_private_keys: false, providers: { github: true, m365: true }, apis: [], clients: Object.fromEntries(CLIENT_IDS.map(id => [id,
     { enabled: true, allowed: id === "codex" ? ["github", "m365"] : ["m365"], source: null }])) };
 }
 export function checkedAccessSettings(value) {
-  if (!fields(value, ["version", "claude_private_keys", "providers", "apis", "clients"]) || value.version !== 1 || typeof value.claude_private_keys !== "boolean"
+  if (!fields(value, ["version", "claude_private_keys", "providers", "apis", "clients"]) || ![1, 2].includes(value.version) || typeof value.claude_private_keys !== "boolean"
     || !fields(value.providers, ["github", "m365"]) || ["github", "m365"].some(id => typeof value.providers[id] !== "boolean")
     || !Array.isArray(value.apis) || value.apis.length > 16 || !fields(value.clients, CLIENT_IDS)) throw accessError("ccdx_connections_invalid");
   const ids = new Set(["github", "m365"]), names = new Set(["github copilot", "microsoft 365"]);
@@ -71,16 +75,25 @@ export function checkedAccessSettings(value) {
   }
   for (const id of CLIENT_IDS) {
     const client = value.clients[id];
-    if (!fields(client, ["enabled", "allowed", "source", "model", "auto_review_model", "auto_review_effort", "history_isolation"])
+    if (!fields(client, ["enabled", "allowed", "source", "model", "auto_review_model", "auto_review_effort", "history_isolation", "deployments", "default_model", "auto_sync"])
       || typeof client.enabled !== "boolean" || !Array.isArray(client.allowed) || client.allowed.length > 18 || new Set(client.allowed).size !== client.allowed.length
       || client.allowed.some(source => !ids.has(source)) || client.source !== null && !client.allowed.includes(client.source)
       || ["model", "auto_review_model"].some(key => client[key] !== undefined && !modelId(client[key]))
+      || client.auto_sync !== undefined && typeof client.auto_sync !== "boolean"
+      || client.default_model !== undefined && client.default_model !== null && !modelId(client.default_model)
+      || client.deployments !== undefined && client.deployments !== null && (!Array.isArray(client.deployments) || client.deployments.length > 1000
+        || client.deployments.some(item => !fields(item, ["source", "model"]) || !client.allowed.includes(item.source) || !modelId(item.model))
+        || new Set(client.deployments.map(item => item.source + "\0" + item.model)).size !== client.deployments.length)
       || client.history_isolation !== undefined && typeof client.history_isolation !== "boolean"
       || client.auto_review_effort !== undefined && client.auto_review_effort !== null && !["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(client.auto_review_effort)) throw accessError("ccdx_connections_invalid");
     for (const source of client.allowed) {
       const apis = source === "github" ? ["responses"] : source === "m365" ? ["messages", "responses"] : Object.keys(value.apis.find(api => api.id === source).endpoints);
       if (!apis.includes(id === "codex" ? "responses" : "messages")) throw accessError("ccdx_api_protocol_required");
     }
+  }
+  if (value.version === 1) {
+    value = structuredClone(value);value.version = 2;
+    for (const client of Object.values(value.clients)) { client.deployments = null;client.auto_sync = true; }
   }
   return value;
 }
@@ -93,6 +106,11 @@ export function updateAccessSettings(change, options = {}) {
   return withFileLockSync(`${file}.lock`, () => {
     const next = checkedAccessSettings(change(readAccessSettings(options)));
     const text = JSON.stringify(next, null, 2) + "\n";if (Buffer.byteLength(text) > 8 * 1024 * 1024) throw accessError("ccdx_connections_limit", 413);
+    // Preserve the original v1 bytes once, before the first v2 write.
+    try {
+      const original = readBoundedFileSync(file, { maxBytes: 8 * 1024 * 1024, encoding: "utf8" });
+      if (JSON.parse(original).version === 1 && !fs.existsSync(`${file}.v1-backup`)) atomicWriteFileSync(`${file}.v1-backup`, original, { mode: 0o600 });
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
     atomicWriteFileSync(file, text, { mode: 0o600 });return next;
   });
 }

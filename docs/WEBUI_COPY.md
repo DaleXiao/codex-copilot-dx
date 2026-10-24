@@ -623,3 +623,22 @@
 关闭接入明确表示应用继续运行；恢复不会自动选源。首次连接、手工配置
 保留与配置失败分别说明。Key 不回读、不放入浏览器存储。错误码保留，
 说明中英同步；详细口径见 `UX_COPY.md` 与 `REFERENCE.md`。
+
+
+## 1.2.17：模型能力与应用绑定
+
+| 原文案 | 新英文 | 新中文 |
+| --- | --- | --- |
+| Settings → Model sources | Model sources | 模型来源 |
+| Settings → Clients | Codex / Claude → Available models | Codex / Claude → 可用模型 |
+| Current source | Available models / Default | 可用模型／默认 |
+| Model capabilities | Details | 能力详情 |
+| Unknown capability | Not declared | 待确认 |
+| Metadata override | Manual override | 手动设置 |
+| Upstream metadata | Declared by this API | 此 API 目录声明 |
+| Automatic client projection | Sync model settings | 同步模型设置 |
+| Projection preview | Review sync | 查看同步 |
+| Use inherited metadata | Use catalog value | 跟随目录 |
+| API metadata error | Refresh failed. Last saved metadata is shown. | 刷新失败，保留上次保存的资料。 |
+
+能力说明只出现在模型详情和同步限制中。协议名、真实模型 ID、单位与错误码保持原样。选中按钮不加前缀勾，正文模型名保持正常对比度。

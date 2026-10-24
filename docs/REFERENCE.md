@@ -7,10 +7,10 @@ Claude gateway and an explicitly selected Codex backup.
 ## Manual APIs and client access
 
 `ccdx web` starts management without GitHub sign-in or automatic App launch.
-Use **Settings → Model sources → Add API**, save the HTTPS API base address/key
+Use **Model sources → Add API**, save the HTTPS API base address/key
 (including a required prefix such as `/v1`), then reopen **Manage → Read models**.
 Select the models to use and their supported interfaces, save, then choose each
-client's current source under **Settings → Clients**. Unselected catalog entries
+client's visible models and default on **Codex** or **Claude**. Unselected catalog entries
 are not saved. A selected model needs at least one interface; choosing an
 interface also selects its model. Manual ID entry is an optional collapsed path
 for models absent from the catalog. Only Codex on GitHub needs the default
@@ -62,8 +62,7 @@ upstream for Messages and token counting, and returns the requested route in
 JSON messages or SSE `message_start.message.model`. Other SSE frames, tool data
 and signatures are retained. Alias SSE framing is bounded by the existing event
 limit and follows client backpressure. Usage and request diagnostics keep real
-model IDs. Codex, Claude Code, M365 routes, source/key history boundaries and
-declared model capabilities retain their existing behavior.
+model IDs. Explicit multi-source bindings use source-qualified routes for Codex and both Claude clients. Unqualified legacy IDs resolve only when exactly one authorized deployment matches. Source/key history boundaries and native protocol semantics remain enforced.
 
 Some App requests include `system` messages as well as a top-level `system`
 field, including system notes after user content. For manual App connections,
@@ -77,8 +76,7 @@ successful model-list read or connection check does not prove complete App
 conversation, tool or thinking support for every upstream model.
 
 `connections.json` beside user settings (respecting `XDG_CONFIG_HOME`) stores a
-strict version-one graph of provider switches, API metadata and each client's
-allowed/current sources. It stores only credential references or an environment
+strict version-two graph of provider switches, API metadata, source grants and per-client model deployments/defaults. Version one is read with its original single-source visibility; the first write preserves original bytes in `connections.json.v1-backup`. A null deployment list retains the legacy source catalog; an explicit array exposes only its selected deployments. Migration never expands an old `allowed` grant into model visibility. It stores only credential references or an environment
 variable name. Keys use macOS Keychain service `codex-copilot-dx.manual-api`,
 Windows CurrentUser DPAPI-protected bytes, or Linux Secret Service (`secret-tool`).
 Unavailable protection fails without plaintext fallback. Headless installations
@@ -87,9 +85,7 @@ starts. Its value is never returned by management or copied into client config.
 Private helpers omit unrelated credentials and Node hooks. API error bodies are
 replaced with stable codes; valid Retry-After metadata is retained.
 
-`client-gateway-keys.json` holds local credentials separately. Disabled sources
-and clients leave normal lists/navigation. Settings keeps **Disabled sources**
-inside **Model sources**, and **Disabled clients** inside **Clients**. Each
+`client-gateway-keys.json` holds local credentials separately. Disabled sources leave normal source lists. **Model sources** owns **Disabled sources**; application access cards own **Disabled clients**. App navigation remains available while access is closed, so its restoration control stays reachable. Each
 collapsed list appears only when it has entries and provides **Enable again**.
 Closing a client stops CCDX access, not the app. Disabling an in-use source
 requires explicit replacements or pauses. Pinned API streams finish on their
@@ -130,6 +126,73 @@ action results. Invalid/conflicting files are retained. The ordinary two-second
 status returns compact source/client summaries, not all model records. Metrics
 allow the two built-ins plus 16 APIs (18 labels plus bounded `other`). Aggregate
 Claude observation covers all Messages sources; M365 counts keep their own scope.
+
+## Model capabilities and Claude synchronization
+
+Model sources owns source credentials, native interface declarations and model details.
+Codex/Claude own the selected deployment set, default and automatic synchronization.
+Claude App and Claude Code have separate segments and local keys. Settings retains
+appearance, startup and updates; source/client editors are not duplicated there.
+
+A deployment is identified by source plus actual model ID. Its stable public route
+is independent of catalog order and key rotation; its private history/evidence
+identity includes endpoint, authentication and credential generation. Same-named
+models from two sources remain separate. Old unqualified IDs/aliases resolve only
+when unambiguous. A closed source removes its selected bindings; restoring the
+source alone does not reopen model access. There is no intent router, load balancing,
+model substitution, cross-source retry or automatic protocol conversion.
+
+Each custom model accepts an optional `capabilities` object with positive token
+limits (`context_window`, `max_input_tokens`, `max_output_tokens`), reasoning flags,
+`reasoning_efforts`, optional reasoning budget bounds/format, `input_modalities`,
+boolean tools/parallel tools/streaming/structured output and a `web_search` array
+of supported native protocols. Empty arrays mean an explicit empty set; in the
+editor enter `[]`. Blank fields follow the current deployment catalog. Known
+numeric limits, flags and enums are strictly validated; arbitrary JSON is rejected.
+
+Discovery retains recognized structured fields with per-deployment timestamps.
+Manual fields, including false/empty arrays, take priority over API declarations.
+ID-only results keep missing fields unknown. A failed refresh preserves saved
+metadata and records a bounded error; a changed endpoint/key invalidates prior
+catalog evidence. A listing or minimal successful reply is not a capability test.
+Ordinary page reads use saved data and never probe each model. No public model-name
+heuristic or original-vendor limit is applied to an arbitrary relay deployment.
+
+Claude configuration and gateway catalogs use the same compiled model plan.
+Explicit App bindings use opaque source-qualified aliases and actual model/source
+labels. Verified 3.x App adapters can use a reasoning-compatible route when the
+advertised levels form a client-expressible contiguous set. Older compatibility
+routes remain resolvable for that authorized deployment. Gapped or unexpressible
+levels are reported as limited; unsupported effort requests fail explicitly.
+No tool permission or safety-review setting is disabled for compatibility.
+
+The App Code host and independent Code share some settings. CCDX plans them once,
+then applies field-owned changes through the existing rollback journal. A known
+managed set entirely within 100K–1M can use the largest shared host window and
+per-model `modelSettings.<route>.autoCompactWindow` budgets. The shared display
+window is not each model's context limit. Unknown, 64K, above-1M or unverified
+consumers prevent this global context override. Existing manual/managed values
+remain unchanged. Unknown client builds retain working catalogs and report the
+advanced host limitation. Code package/native-path version detection is read-only;
+it does not install or run a version probe at startup.
+
+The host output override is written only when all managed consumers declare an
+output limit and is capped at 128K by the adapter. The gateway also clamps each
+custom Messages/Responses request to that deployment's declared maximum, records
+`capability_revision`/`capability_constraints`, and never deletes conversation
+history to fit a budget. Reasoning-budget conflicts and unsupported declared
+levels fail locally. Native search is recorded per protocol: Responses support
+does not imply Messages support. Native tool/citation/replay data remains on the
+existing protocol path; no shared search executor or external search account is
+added. Exact input counting and compression thresholds are not proven by a small
+reply; the upstream still enforces its actual limits.
+
+Automatic sync can be disabled per client. Shared Claude fields are preserved
+when a shared consumer has disabled automatic sync. Closing access restores owned
+client connection fields; other active consumers retain shared planning. Review
+sync shows declared capabilities, supported budgets and limitations. Reopen the
+client after its owned configuration changes. All tests using sample capabilities
+are isolated; they do not assign sample limits to a user's real models.
 
 ## Microsoft 365 provider
 
@@ -1164,7 +1227,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.16/codex-copilot-dx-1.2.16.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.17/codex-copilot-dx-1.2.17.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 

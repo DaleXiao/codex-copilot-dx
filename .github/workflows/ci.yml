@@ -157,8 +157,12 @@ jobs:
         run: npm install --prefix "$RUNNER_TEMP/ccdx-claude" @anthropic-ai/claude-code
       - name: Verify native Claude Code effort fields through the candidate Messages gateway
         run: node scripts/claude-effort-replay.mjs --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
+      - name: Verify native custom model context budgets, reasoning and output limits
+        run: node scripts/claude-capabilities-replay.mjs --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
       - name: Verify native custom model catalogs and independent client credentials on one listener
         run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
+      - name: Verify native Codex source-qualified deployment routes
+        run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --bindings models
   dashboard-browsers:
     # Preinstalled browser dependencies avoid slow Azure Ubuntu archive downloads.
     runs-on: ubuntu-24.04

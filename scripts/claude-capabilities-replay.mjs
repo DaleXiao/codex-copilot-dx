@@ -37,6 +37,9 @@ try {
   const state = await runtime.manageConnections({ operation: "save_api", config: { name: "Native replay", base_url: "https://synthetic.test/v1", endpoints: { messages: "https://synthetic.test/v1/messages" }, auth_header: "bearer",
     models: ["small", "large"].map(id => ({ id, protocols: ["messages"] })) }, key: "synthetic-only", allowed: ["claude_code"] });
   const source = state.providers.find(p => !p.builtin).id, client = state.clients.find(c => c.id === "claude_code");
+  // Saving is independent of the catalog read; join it before inspecting the
+  // capability plan used to configure the isolated native client.
+  await runtime.manageConnections({ operation: "discover", id: source });
   await runtime.manageConnections({ operation: "client", id: "claude_code", enabled: true, allowed: client.allowed, deployments: ["small", "large"].map(model => ({ source, model })) });
   const compiled = runtime.connections().clients.find(c => c.id === "claude_code").model_plan.models;
   const models = compiled.map(model => ({ id: model.id, public_id: model.public_id, client_id: model.public_id, capability: model.capability }));

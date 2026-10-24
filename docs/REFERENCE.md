@@ -65,6 +65,13 @@ limit and follows client backpressure. Usage and request diagnostics keep real
 model IDs. Codex, Claude Code, M365 routes, source/key history boundaries and
 declared model capabilities retain their existing behavior.
 
+Some App requests include `system` messages as well as a top-level `system`
+field, including system notes after user content. For manual App connections,
+CCDX appends their text blocks to the top-level field in system-message order,
+retaining system priority, block metadata and the order/content of conversation
+messages. Non-text system content fails locally. Other clients and providers
+keep their existing payload paths.
+
 Compatibility routes address Claude App's model-name filter. A saved connection,
 successful model-list read or connection check does not prove complete App
 conversation, tool or thinking support for every upstream model.

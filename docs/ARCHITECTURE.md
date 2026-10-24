@@ -73,6 +73,8 @@ JSON model field or SSE message-start model field. Bounded SSE observation
 retains other frames and applies client backpressure without a separate tee.
 Usage and performance continue to identify the upstream model. A route cannot
 authorize a model outside its source's Messages catalog.
+For this same manual App boundary, system-role text is collected into the native
+top-level system field in order; conversation blocks and their order are retained.
 
 `conversation-source-guard.mjs` retains bounded HMAC correlations for observed
 managed histories. Known source/key conflicts fail before forwarding. It does

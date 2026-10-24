@@ -197,6 +197,24 @@ test("App aliases cover JSON and count_tokens while bounded framing rejects over
   assert.throws(() => { for (let i = 0; i < 8; i++) observer.write(Buffer.from(": comment\n")); }, /limit/);
 });
 
+test("custom App system messages become ordered top-level text without changing conversation blocks", async t => {
+  const calls = [], models = [{ id: "vendor-model" }], alias = claudeModelEntries(models, { desktopAliases: true })[0].name;
+  const g = await gateway(t, null, { desktopAliases: true, provider: { id: "api_test", configuredModels: true, models: () => models,
+    client: { messages: async body => { calls.push(body);return Response.json({ ...message, model: body.model }); } } } });
+  const cache = { type: "text", text: "second", cache_control: { type: "ephemeral" } }, conversation = [{ role: "user", content: [{ type: "text", text: "request" }] }];
+  const input = { model: alias, system: "original", messages: [{ role: "system", content: "first" }, { role: "system", content: [cache] }, ...conversation], max_tokens: 8 };
+  assert.equal((await g.request(input)).status, 200);
+  assert.deepEqual(calls[0].system, [{ type: "text", text: "original" }, { type: "text", text: "first" }, cache]);
+  assert.deepEqual(calls[0].messages, conversation);assert.equal(calls[0].model, models[0].id);
+  assert.equal((await g.request({ ...input, messages: [...conversation, { role: "system", content: "late" }] })).status, 200);
+  assert.deepEqual(calls[1].messages, conversation);assert.deepEqual(calls[1].system, [{ type: "text", text: "original" }, { type: "text", text: "late" }]);
+  assert.equal((await g.request({ ...input, messages: [{ role: "system", content: [{ type: "image" }] }, ...conversation] })).status, 400);
+  assert.equal(calls.length, 2, "invalid system content fails before inference");
+  const legacy = await gateway(t, async body => Response.json({ ...message, echoed_roles: body.messages.map(message => message.role) }));
+  const reply = await legacy.request({ model: "claude-opus-5.5", messages: [{ role: "system", content: "legacy" }, ...conversation] });
+  assert.deepEqual((await reply.json()).echoed_roles, ["system", "user"], "other gateway paths keep their existing behavior");
+});
+
 test("missing cache telemetry stays unknown rather than fabricating a zero hit rate", () => {
   const record = buildMessagesUsageRecord({ model: "claude-test", usage: { input_tokens: 10, output_tokens: 2 } });
   assert.equal(record.usage.total_tokens, 12);assert.equal(usageCacheHitRate(record.usage), null);

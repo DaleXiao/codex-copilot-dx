@@ -20,6 +20,19 @@ function send(res, code, value) {
   res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });res.end(JSON.stringify(value));
 }
 const apiError = (code, message) => ({ type: "error", error: { type: "api_error", code, message } });
+function desktopMessages(body) {
+  const messages = [], instructions = [];
+  const blocks = content => {
+    if (typeof content === "string") return [{ type: "text", text: content }];
+    if (Array.isArray(content) && content.every(block => block?.type === "text" && typeof block.text === "string")) return content;
+    throw Object.assign(new Error("System instructions must contain text"), { code: "ccdx_messages_system_invalid", statusCode: 400 });
+  };
+  for (const message of body.messages) {
+    if (message?.role === "system") instructions.push(...blocks(message.content));
+    else messages.push(message);
+  }
+  return instructions.length ? { ...body, system: [...(body.system === undefined ? [] : blocks(body.system)), ...instructions], messages } : body;
+}
 function authenticated(headers, key) {
   const candidates = [headers["x-api-key"], typeof headers.authorization === "string" ? /^Bearer (.+)$/i.exec(headers.authorization)?.[1] : null];
   const expected = Buffer.from(key);
@@ -113,6 +126,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (!body || typeof body.model !== "string" || !Array.isArray(body.messages)) {
           send(res, 400, apiError("ccdx_messages_invalid", "Expected a model and messages array"));return;
         }
+        if (desktopAliases) body = desktopMessages(body);
         model = body.model;streamed = !countTokens && body.stream === true;
         configuredModel = provider.configuredModels || desktopAliases ? resolveClaudeModel(provider.models("claude"), model, { desktopAliases })?.id : null;
         if (desktopAliases && !configuredModel) throw Object.assign(new Error("The selected model is unavailable"), { code: "ccdx_api_model_unavailable", statusCode: 400 });

@@ -85,12 +85,23 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         await page.locator("#connection-disable-editor").waitFor({ state: "visible" });await fits();
         await page.locator('#connection-disable-form button[type="submit"]').click();await page.locator("#connection-disable-editor").waitFor({ state: "hidden" });
         assert.equal(runtime.selection().codex, null);assert.equal(runtime.dashboardProviders().some(p => p.id === id), false);
-        await page.locator("#connection-disabled > summary").click();
-        await page.locator("#connection-disabled-list .connection-row").filter({ hasText: sampleName }).locator("button").click();await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).waitFor();
+        assert.equal(await page.locator("#connection-sources #connection-disabled-sources").count(), 1);
+        assert.equal(await page.locator("#connection-clients #connection-disabled-source-list").count(), 0);
+        await page.locator("#connection-disabled-sources > summary").click();
+        await page.locator("#connection-disabled-source-list .connection-row").filter({ hasText: sampleName }).locator("button").click();await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).waitFor();
+        assert.equal(await page.locator("#connection-disabled-source-list .connection-row").filter({ hasText: sampleName }).count(), 0);
+        assert.equal(await page.locator("#connection-disabled-sources").isHidden(), !runtime.connections().providers.some(p => !p.enabled));
         assert.equal(runtime.selection().codex, null);assert.equal(values.size, 1);
         await page.locator("#connection-client-list .connection-row").filter({ hasText: "Claude App" }).locator('input[role="switch"]').click();
         await page.locator("#connection-client-list .connection-row").filter({ hasText: "Claude App" }).waitFor({ state: "hidden" });
         assert.equal(runtime.connections().clients.find(c => c.id === "claude_app").enabled, false);await fits();
+        assert.equal(await page.locator("#connection-clients #connection-disabled-clients").count(), 1);
+        await page.locator("#connection-disabled-clients > summary").click();
+        assert.equal(await page.locator("#connection-disabled-client-list .connection-row").count(), 1);
+        await page.locator("#connection-disabled-client-list .connection-row").filter({ hasText: "Claude App" }).locator("button").click();
+        await page.locator("#connection-client-list .connection-row").filter({ hasText: "Claude App" }).waitFor();
+        assert.equal(runtime.connections().clients.find(c => c.id === "claude_app").source, null);
+        assert.equal(await page.locator("#connection-disabled-clients").isHidden(), true);
         if (options.get("--output")) { fs.mkdirSync(options.get("--output"), { recursive: true });await page.screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}.png`), fullPage: true }); }
         assert.deepEqual(errors, []);report.push({ engine, palette, mode, language, width, saved: true, assigned: true, disabled: true, restored: true });
       } finally { await context.close();handler?.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime?.close();fs.rmSync(root, { recursive: true, force: true }); }

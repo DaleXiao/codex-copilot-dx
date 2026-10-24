@@ -2,7 +2,8 @@
   const translations = {
     "api_add": ["Add API", "添加 API"],
     "api_clients": ["Clients", "客户端"],
-    "api_disabled": ["Disabled", "已关闭"],
+    "api_disabled_sources": ["Disabled sources", "已关闭的模型来源"],
+    "api_disabled_clients": ["Disabled clients", "已关闭的客户端"],
     "api_name": ["Name", "名称"],
     "api_base": ["API address", "API 地址"],
     "api_key_private": ["Stored separately. Never sent to clients.", "独立保存，不会传给客户端。"],
@@ -36,7 +37,6 @@
     "api_current_summary": ["Current source: {source}", "当前来源：{source}"],
     "api_client_disabled": ["CCDX access is off; the app stays open.", "接入已关闭，应用保持运行。"],
     "api_close_client": ["Disable client access", "关闭客户端接入"],
-    "api_no_disabled": ["No disabled items.", "没有已关闭的项目。"],
     "api_saved": ["Saved. Reopen the app for first-time setup; existing requests stay unchanged.", "已保存。首次接入请重新打开应用。"],
     "api_config_saved": ["API saved. Current client sources are unchanged.", "API 已保存，客户端来源未改变。"],
     "api_provider_disabled": ["Source disabled. Its configuration was kept.", "来源已关闭，配置已保留。"],

@@ -48,10 +48,26 @@ or inference call. **Read models** performs one explicit catalog read, with a
 support until reviewed. Opening normal views reads saved models rather than
 probing every API. `ccdx models` labels manual models as configured, not live.
 
-These are CCDX's routing rules, not a guarantee that every installed client
-accepts arbitrary model names. Some Claude App versions reject non-Anthropic
-model route IDs even when their upstream supports Messages. A saved connection
-or successful model-list read does not prove an App conversation works.
+For manual Messages APIs, CCDX writes Claude App's model configuration
+automatically. Standard Claude IDs keep their existing identity; other IDs use
+a stable `ccdx/claude-compatible-<digits>` route with `labelOverride` set to the
+real model ID. Reordering or adding models does not renumber existing routes.
+The App's model catalog advertises the same routes and real display names.
+Users do not need to add aliases manually. Owned configuration migrates through
+the existing field journal; custom or managed settings remain protected.
+
+Only the authenticated Claude App binding enables this translation. The gateway
+resolves routes against that source's allowed Messages models, sends real IDs
+upstream for Messages and token counting, and returns the requested route in
+JSON messages or SSE `message_start.message.model`. Other SSE frames, tool data
+and signatures are retained. Alias SSE framing is bounded by the existing event
+limit and follows client backpressure. Usage and request diagnostics keep real
+model IDs. Codex, Claude Code, M365 routes, source/key history boundaries and
+declared model capabilities retain their existing behavior.
+
+Compatibility routes address Claude App's model-name filter. A saved connection,
+successful model-list read or connection check does not prove complete App
+conversation, tool or thinking support for every upstream model.
 
 `connections.json` beside user settings (respecting `XDG_CONFIG_HOME`) stores a
 strict version-one graph of provider switches, API metadata and each client's
@@ -65,7 +81,9 @@ Private helpers omit unrelated credentials and Node hooks. API error bodies are
 replaced with stable codes; valid Retry-After metadata is retained.
 
 `client-gateway-keys.json` holds local credentials separately. Disabled sources
-and clients leave normal lists/navigation and remain in collapsed **Disabled**.
+and clients leave normal lists/navigation. Settings keeps **Disabled sources**
+inside **Model sources**, and **Disabled clients** inside **Clients**. Each
+collapsed list appears only when it has entries and provides **Enable again**.
 Closing a client stops CCDX access, not the app. Disabling an in-use source
 requires explicit replacements or pauses. Pinned API streams finish on their
 original provider; retired transports/keys are released afterwards. Legacy M365
@@ -1139,7 +1157,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.15/codex-copilot-dx-1.2.15.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.16/codex-copilot-dx-1.2.16.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 

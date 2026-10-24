@@ -4,6 +4,7 @@ import http from "node:http";
 import { startClaudeGateway, createMessagesObserver } from "../src/claude-gateway.mjs";
 import { buildMessagesUsageRecord, usageCacheHitRate } from "../src/usage-store.mjs";
 import { currentRequestContext } from "../src/request-context.mjs";
+import { claudeModelEntries } from "../src/claude-models.mjs";
 
 const key = "ccdx_m365_" + "a".repeat(64);
 const message = { id: "msg_synthetic", type: "message", role: "assistant", model: "claude-opus-5.5",
@@ -154,6 +155,46 @@ test("bounded Claude observation preserves UTF-8 and handles multiline events", 
   for (const byte of bytes) observer.write(Uint8Array.of(byte));observer.finish();
   assert.deepEqual(events, [{ type: "ping", text: "😀" }]);
   assert.throws(() => createMessagesObserver(() => {}, 8).write(Buffer.from("data: "+"a".repeat(9))), /limit/);
+});
+
+test("App alias streaming changes only the model event across fragmented multiline SSE", async t => {
+  const actual = "deepseek-v4.1-flash-1017", models = [{ id: actual }], alias = claudeModelEntries(models, { desktopAliases: true })[0].name;
+  const first = { type: "message_start", message: { ...message, model: actual, content: [], vendor: { untouched: true } } };
+  const tail = 'event: content_block_delta\r\ndata: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"测试 😀"}}\r\n\r\n'
+    + 'event: content_block_delta\ndata: {"type":"content_block_delta","index":9,"delta":{"type":"signature_delta","signature":"opaque-signature"}}\n\n'
+    + 'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":3}}\n\n'
+    + 'event: message_stop\ndata: {"type":"message_stop"}\n\n';
+  const bytes = Buffer.from(': keep comment\r\nevent: message_start\r\nid: frame-1\r\ndata: {"type":"message_start",\r\ndata: "message":' + JSON.stringify(first.message) + '}\r\n\r\n' + tail);
+  for (const size of [1, 7, 65536]) {
+    let offset = 0;const calls = [];
+    const g = await gateway(t, null, { desktopAliases: true, provider: { id: "api_test", configuredModels: true, models: () => models,
+      client: { messages: async body => { calls.push(body);return new Response(new ReadableStream({ pull(controller) {
+        if (offset === bytes.length) { controller.close();return; }
+        controller.enqueue(bytes.subarray(offset, offset + size));offset = Math.min(bytes.length, offset + size);
+      } }), { headers: { "Content-Type": "text/event-stream" } }); } } } });
+    const response = await g.request({ model: alias, messages: [], stream: true });assert.equal(response.status, 200);
+    const wire = await response.text();assert.ok(wire.endsWith(tail), "non-model frames, signatures and UTF-8 keep their bytes");
+    assert.ok(wire.startsWith(': keep comment\r\nevent: message_start\r\nid: frame-1\r\n'));
+    const observed = [], observer = createMessagesObserver(event => observed.push(event));observer.write(Buffer.from(wire));observer.finish();
+    assert.deepEqual(observed[0], { ...first, message: { ...first.message, model: alias } });
+    assert.equal(calls[0].model, actual);assert.equal(g.records[0].model, actual);assert.equal(g.server.snapshot().last_model, actual);
+    assert.equal(g.server.snapshot().completed, 1);
+    const catalog = await fetch(`http://127.0.0.1:${g.server.port}/v1/models`, { headers: { "x-api-key": key } });
+    assert.deepEqual((await catalog.json()).data, [{ id: alias, type: "model", display_name: actual }]);
+  }
+});
+
+test("App aliases cover JSON and count_tokens while bounded framing rejects oversized comments", async t => {
+  const actual = "qwen3.8-max", models = [{ id: actual }], alias = claudeModelEntries(models, { desktopAliases: true })[0].name, calls = [];
+  const g = await gateway(t, null, { desktopAliases: true, provider: { id: "api_test", configuredModels: true, models: () => models, client: {
+    messages: async (body, options) => { calls.push({ body, options });return Response.json(options.countTokens ? { input_tokens: 42 } : { ...message, model: actual }); },
+  } } });
+  assert.equal((await (await g.request({ model: alias, messages: [] })).json()).model, alias);
+  const counts = await fetch(`http://127.0.0.1:${g.server.port}/v1/messages/count_tokens`, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key }, body: JSON.stringify({ model: alias, messages: [] }) });
+  assert.deepEqual(await counts.json(), { input_tokens: 42 });assert.ok(calls.every(call => call.body.model === actual));assert.equal(calls[1].options.countTokens, true);
+  assert.equal(g.records.length, 1);assert.equal(g.records[0].model, actual);
+  const observer = createMessagesObserver(() => {}, 64, alias);
+  assert.throws(() => { for (let i = 0; i < 8; i++) observer.write(Buffer.from(": comment\n")); }, /limit/);
 });
 
 test("missing cache telemetry stays unknown rather than fabricating a zero hit rate", () => {

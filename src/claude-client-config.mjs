@@ -154,7 +154,7 @@ function reconcile(operations, { restore = false, ...options } = {}) {
   });
 }
 
-export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstalled, desktopManaged, profileName = M365_CLAUDE_PROFILE_NAME, disableExperimentalBetas = true, ...options } = {}) {
+export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstalled, desktopManaged, desktopAliases = false, profileName = M365_CLAUDE_PROFILE_NAME, disableExperimentalBetas = true, ...options } = {}) {
   const entries = claudeModelEntries(models);
   const paths = claudeClientPaths(options), ids = entries.map(model => model.name), operations = [], result = {};
   const endpoint = new URL(baseUrl);
@@ -216,7 +216,12 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
         const name = typeof entry === "string" ? entry : entry?.name;
         return [typeof name === "string" ? claudeClientModelId(name) : "", index];
       }));
-      const orderedEntries = [...entries].sort((left, right) => (order.get(left.name) ?? Infinity) - (order.get(right.name) ?? Infinity));
+      const desktopEntries = desktopAliases ? claudeModelEntries(models, { desktopAliases }) : entries;
+      for (let index = 0; index < models.length; index++) {
+        const old = order.get(claudeClientModelId(models[index].id));
+        if (old !== undefined && !order.has(desktopEntries[index].name)) order.set(desktopEntries[index].name, old);
+      }
+      const orderedEntries = [...desktopEntries].sort((left, right) => (order.get(left.name) ?? Infinity) - (order.get(right.name) ?? Infinity));
       add(paths.profile, ["inferenceModels"], JSON.stringify(orderedEntries));
       add(paths.profile, ["inferenceCustomHeaders"], JSON.stringify({ "X-CCDX-Client": "claude-app" }));
       add(paths.meta, ["entries"], { id: M365_CLAUDE_PROFILE_ID, name: profileName }, M365_CLAUDE_PROFILE_ID);

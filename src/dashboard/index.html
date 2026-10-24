@@ -292,11 +292,12 @@
   <section class="panel dashboard-section" id="connection-sources">
     <div class="panel-heading"><h2 data-i18n="model_services">Model sources</h2><button id="connection-add" type="button" data-i18n="api_add">Add API</button></div>
     <div id="connection-source-list"></div>
+    <details id="connection-disabled-sources" class="connection-disabled" hidden><summary data-i18n="api_disabled_sources">Disabled sources</summary><div id="connection-disabled-source-list"></div></details>
   </section>
   <section class="panel dashboard-section" id="connection-clients">
     <h2 data-i18n="api_clients">Clients</h2><div id="connection-client-list"></div>
+    <details id="connection-disabled-clients" class="connection-disabled" hidden><summary data-i18n="api_disabled_clients">Disabled clients</summary><div id="connection-disabled-client-list"></div></details>
   </section>
-  <details id="connection-disabled" class="connection-disabled"><summary data-i18n="api_disabled">Disabled</summary><div id="connection-disabled-list"></div></details>
   <section class="panel dashboard-section" id="connection-editor" hidden aria-labelledby="connection-editor-title">
     <div class="panel-heading"><h2 id="connection-editor-title" data-i18n="api_add">Add API</h2><button type="button" id="connection-cancel" data-i18n="cancel">Cancel</button></div>
     <form id="connection-api-form">

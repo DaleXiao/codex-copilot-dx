@@ -62,6 +62,18 @@ independent app/code lifecycles. M365 beta policy is not imposed on API clients;
 adding a source alone never migrates old client credentials. Configuring clients
 does not patch/restart their binaries or override managed settings.
 
+`claude-models.mjs` owns deterministic desktop compatibility routes for manual
+Messages sources. The same mapping feeds the App field writer, authenticated
+App catalog and gateway resolver; Code/Codex and M365 do not adopt these aliases.
+Standard Claude IDs retain their native family identity. Other model routes use
+opaque digits with the real ID as `labelOverride`, without asserting Anthropic
+capabilities. The gateway canonicalizes the request before history validation
+and upstream dispatch, then projects the requested alias only into the returned
+JSON model field or SSE message-start model field. Bounded SSE observation
+retains other frames and applies client backpressure without a separate tee.
+Usage and performance continue to identify the upstream model. A route cannot
+authorize a model outside its source's Messages catalog.
+
 `conversation-source-guard.mjs` retains bounded HMAC correlations for observed
 managed histories. Known source/key conflicts fail before forwarding. It does
 not establish provenance for an unseen history or implement dynamic affinity.
@@ -70,6 +82,8 @@ The existing Responses route-plan boundary continues to own opaque-state checks.
 `dashboard/connections.js` owns settings forms; application source/review and
 account/catalog views keep their existing scopes and use the same backend graph.
 Full configuration is on-demand; ordinary status uses compact cached summaries.
+Disabled sources and clients have separate restore lists inside their owning
+Settings cards, hidden when empty.
 Shared Messages observation includes all sources, while M365-specific status
 projects M365 counts. Bounds cover two built-ins plus 16 APIs without unbounded
 labels, request histories, body logging or a new refresh loop.

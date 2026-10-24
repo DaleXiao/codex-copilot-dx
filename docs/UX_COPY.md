@@ -56,7 +56,8 @@ existing circle status SVGs remain.
 | Current source | 当前来源 | Exactly one chosen source, or paused access |
 | Configured models | 已配置的模型 | Saved declarations; not verified online entitlement |
 | Disable source / Pause access | 关闭来源 / 暂停接入 | New calls stop; existing API requests retain their source |
-| Disabled / Enable again | 已关闭 / 重新开启 | Configuration/grants remain; recovery does not choose a route |
+| Disabled sources / Enable again | 已关闭的模型来源 / 重新开启 | Inside Model sources; configuration/grants remain; recovery does not choose a route |
+| Disabled clients / Enable again | 已关闭的客户端 / 重新开启 | Inside Clients; restoring access does not select a source or open the app |
 | CCDX access is off; the app stays open. | 接入已关闭，应用保持运行。 | Never quits the user's app |
 | Stored separately. Never sent to clients. | 独立保存，不会传给客户端。 | Upstream key is protected; clients receive local credentials |
 

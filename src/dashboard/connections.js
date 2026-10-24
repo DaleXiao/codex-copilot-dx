@@ -18,7 +18,7 @@
     if (result.source !== "connections" || !Array.isArray(result.providers) || !Array.isArray(result.clients)) throw new Error("ccdx_connections_unavailable");return result;
   }
   function panels(which = "list") {
-    root.hidden = el("connection-clients").hidden = el("connection-disabled").hidden = which !== "list";
+    root.hidden = el("connection-clients").hidden = which !== "list";
     el("connection-editor").hidden = which !== "api";el("connection-client-editor").hidden = which !== "client";el("connection-disable-editor").hidden = which !== "disable";
     apiForm.elements.key.value = "";
   }
@@ -27,8 +27,8 @@
     for (const value of options) { const item = node("option", value.name);item.value = value.id;select.append(item); }select.value = selected || "";return select;
   }
   function list() {
-    const providerList = el("connection-source-list"), clientList = el("connection-client-list"), disabledList = el("connection-disabled-list");
-    providerList.replaceChildren();clientList.replaceChildren();disabledList.replaceChildren();
+    const providerList = el("connection-source-list"), clientList = el("connection-client-list"), disabledSources = el("connection-disabled-source-list"), disabledClients = el("connection-disabled-client-list");
+    providerList.replaceChildren();clientList.replaceChildren();disabledSources.replaceChildren();disabledClients.replaceChildren();
     for (const provider of data.providers) {
       const row = node("div", undefined, "connection-row"), info = node("div"), actions = node("div", undefined, "connection-actions");info.append(node("h3", provider.name));
       if (!provider.builtin) info.append(node("p", provider.base_url, "hint"));
@@ -39,7 +39,7 @@
         const toggle = node("input");toggle.type = "checkbox";toggle.checked = true;toggle.setAttribute("role", "switch");toggle.setAttribute("aria-label", format("api_disable_source") + " " + provider.name);
         toggle.addEventListener("change", () => { toggle.checked = true;disableSource(provider); });actions.append(toggle);
       } else actions.append(button("api_restore", () => void change({ operation: "provider", id: provider.id, enabled: true })));
-      row.append(info, actions);(provider.enabled ? providerList : disabledList).append(row);
+      row.append(info, actions);(provider.enabled ? providerList : disabledSources).append(row);
     }
     for (const c of data.clients) {
       const row = node("div", undefined, "connection-row"), info = node("div"), actions = node("div", undefined, "connection-actions");info.append(node("h3", c.name));
@@ -49,9 +49,10 @@
         const toggle = node("input");toggle.type = "checkbox";toggle.checked = true;toggle.setAttribute("role", "switch");toggle.setAttribute("aria-label", format("api_close_client") + " " + c.name);
         toggle.addEventListener("change", () => { toggle.checked = true;void change({ operation: "client", id: c.id, enabled: false, source: null, allowed: c.allowed }); });actions.append(toggle);
       } else actions.append(button("api_restore", () => void change({ operation: "client", id: c.id, enabled: true, source: null, allowed: c.allowed })));
-      row.append(info, actions);(c.enabled ? clientList : disabledList).append(row);
+      row.append(info, actions);(c.enabled ? clientList : disabledClients).append(row);
     }
-    if (!disabledList.children.length) { const empty = node("p", undefined, "hint");words(empty, "api_no_disabled");disabledList.append(empty); }
+    el("connection-disabled-sources").hidden = !disabledSources.children.length;
+    el("connection-disabled-clients").hidden = !disabledClients.children.length;
     for (const route of ["codex", "claude"]) {
       const visible = route === "codex" ? client("codex").enabled : data.clients.some(c => c.enabled && c.id.startsWith("claude_"));
       const link = document.querySelector(`[data-route="${route}"]`);if (link) link.hidden = !visible;

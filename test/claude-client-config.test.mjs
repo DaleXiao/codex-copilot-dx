@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { configureClaudeClients, restoreClaudeClients, claudeClientPaths, M365_CLAUDE_PROFILE_ID } from "../src/claude-client-config.mjs";
 import { m365Paths } from "../src/m365-settings.mjs";
+import { claudeModelEntries } from "../src/claude-models.mjs";
 
 function fixture(t) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-claude-config-"));
@@ -15,6 +16,24 @@ function fixture(t) {
 }
 function write(file, value) { fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, JSON.stringify(value)); }
 const read = file => JSON.parse(fs.readFileSync(file));
+
+test("compatibility aliases migrate owned App models on each platform without renaming Code models", t => {
+  for (const platform of ["darwin", "win32", "linux"]) {
+    const { options } = fixture(t), input = { ...options, platform, models: [{ id: "deepseek-v4.1-flash-1017" }, { id: "qwen3.8-max" }] }, paths = claudeClientPaths(input);
+    configureClaudeClients(input);
+    const before = read(paths.profile);before.inferenceModels = JSON.stringify(JSON.parse(before.inferenceModels).toReversed());write(paths.profile, before);
+    // Reordering is a user edit: ownership reconciliation must preserve it.
+    assert.equal(configureClaudeClients({ ...input, desktopAliases: true }).app, "partially_preserved");
+    assert.equal(read(paths.profile).inferenceModels, before.inferenceModels);
+    restoreClaudeClients(input);fs.rmSync(paths.profile, { force: true });
+    configureClaudeClients(input);
+    const result = configureClaudeClients({ ...input, desktopAliases: true });assert.equal(result.app, "configured");
+    assert.deepEqual(JSON.parse(read(paths.profile).inferenceModels), claudeModelEntries(input.models, { desktopAliases: true }));
+    assert.equal(read(paths.code).env.ANTHROPIC_MODEL, input.models[0].id);
+    assert.equal(configureClaudeClients({ ...input, desktopAliases: true }).changed, false);
+    assert.equal(restoreClaudeClients(input).preserved, 0);
+  }
+});
 
 test("Claude configuration is idempotent, private and restores only its own fields", t => {
   const { options, paths } = fixture(t);

@@ -93,7 +93,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
         if (!source?.models?.("claude").length) { setup[id] = "unavailable";continue; }
         if (id === "claude_app") desktopManaged ??= await inspectDesktop(options);
         if (id === "claude_code" && source.id !== "m365") restoreClaude({ ...options, client: id, fields: ["env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] });
-        const result = configureClaude({ ...options, client: id, profileName: "CCDX", disableExperimentalBetas: source.id === "m365", desktopManaged: id === "claude_app" ? desktopManaged : false,
+        const result = configureClaude({ ...options, client: id, profileName: "CCDX", desktopAliases: id === "claude_app" && source.id.startsWith("api_"), disableExperimentalBetas: source.id === "m365", desktopManaged: id === "claude_app" ? desktopManaged : false,
           baseUrl: `http://127.0.0.1:${corePort}/anthropic`, apiKey: identities()[id], models: source.models("claude") });
         setup[id] = result[id === "claude_app" ? "app" : "code"] || "not_configured";
       } catch { setup[id] = "configuration_unavailable"; }
@@ -238,6 +238,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
       const source = requireSource(id, binding(id).source);let byClient = handlers.get(source);
       if (!byClient) { byClient = new Map();handlers.set(source, byClient); }
       if (!byClient.has(id)) byClient.set(id, createClaudeGatewayHandler({ provider: source, apiKey: identities()[id], env, log, performance: legacy.claudePerformance,
+        desktopAliases: id === "claude_app" && source.id.startsWith("api_"),
         validateConversation: (body, headers) => validateConversation(body, headers, source, id),
         onRequest() { lastClients[id] = new Date().toISOString(); } }));
       const finish = track(source), headers = req.headers;

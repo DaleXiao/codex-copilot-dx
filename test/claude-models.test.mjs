@@ -28,3 +28,20 @@ test("effort metadata remains model-bound and unknown values are not invented as
   assert.deepEqual(exported[0].reasoning_efforts, ["future"]);
   assert.doesNotMatch(JSON.stringify(exported), /credential|private/);
 });
+
+test("Desktop compatibility routes are stable, opaque and retain real display identities", () => {
+  const models = [model("deepseek-v4.1-flash-1017"), model("qwen/large"), model("claude-sonnet-4.6"), model("claude-3-7-sonnet-20250219")];
+  const entries = claudeModelEntries(models, { desktopAliases: true });
+  for (let index = 0; index < 2; index++) {
+    assert.match(entries[index].name, /^ccdx\/claude-compatible-\d+$/);
+    assert.equal(entries[index].labelOverride, models[index].id);
+    assert.equal(resolveClaudeModel(models, entries[index].name, { desktopAliases: true }), models[index]);
+    assert.equal(resolveClaudeModel(models, entries[index].name), undefined, "Code does not accept App-only aliases");
+    assert.equal(resolveClaudeModel(models, models[index].id, { desktopAliases: true }), models[index]);
+  }
+  assert.deepEqual(entries.slice(2).map(entry => entry.name), ["claude-sonnet-4-6", "claude-3-7-sonnet-20250219"]);
+  assert.equal(entries[2].labelOverride, undefined);
+  assert.deepEqual(claudeModelEntries([model("new-model"), ...models.toReversed()], { desktopAliases: true }).slice(1).toReversed(), entries);
+  assert.equal(resolveClaudeModel(models, "ccdx/claude-compatible-0", { desktopAliases: true }), undefined);
+  assert.throws(() => claudeModelEntries([...models, model(entries[0].name)], { desktopAliases: true }), { code: "claude_model_alias_collision" });
+});

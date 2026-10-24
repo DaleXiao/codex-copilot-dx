@@ -15,6 +15,7 @@ import { configureCodexApi } from "../src/codex-api-config.mjs";
 import { runWithRequestContext } from "../src/request-context.mjs";
 import { updateM365Settings } from "../src/m365-settings.mjs";
 import { transportErrorDetails } from "../src/operation-error.mjs";
+import { claudeModelEntries } from "../src/claude-models.mjs";
 
 process.env.CCDX_DISABLE_USAGE = "1";
 
@@ -131,10 +132,31 @@ test("Claude clients route independently and hints cannot impersonate another cr
   assert.equal(result.status, 200);assert.equal(s.calls.length, 1);assert.equal(s.calls[0].init.headers["x-api-key"], "synthetic-key-only");
   assert.equal(s.calls[0].init.headers["X-ClientType"], undefined);
   assert.ok(s.configured.every(input => input.client === "claude_app"));
+  assert.ok(s.configured.every(input => input.desktopAliases === true));
   await assert.rejects(invoke(s.runtime.handleClaude, { headers: { authorization: `Bearer ${keys.claude_code}`, "x-ccdx-client": "claude-app" } }), { code: "ccdx_client_source_disabled" });
   await assert.rejects(invoke(s.runtime.handleClaude, { headers: { authorization: "Bearer invalid", "x-ccdx-client": "claude-app" } }), { statusCode: 401 });
   const stats = s.runtime.snapshot().claude.requests.performance.recent_requests;
   assert.equal(stats[0].application, "claude_app");assert.equal(stats[0].provider, id);
+});
+
+test("App aliases stay source-bound and cannot be activated by a Code request header", async t => {
+  const s = runtime(t), id = await save(s.runtime), keys = readClientGatewayKeys({ home: s.home, env: {} });
+  for (const name of ["claude_app", "claude_code"]) {
+    const c = s.runtime.connections().clients.find(c => c.id === name);
+    await s.runtime.manageConnections({ operation: "client", id: name, enabled: true, allowed: c.allowed, source: id });
+  }
+  const alias = claudeModelEntries([{ id: "any-message-model" }], { desktopAliases: true })[0].name;
+  const body = { model: alias, messages: [{ role: "user", content: "synthetic" }], max_tokens: 4 };
+  const reply = await invoke(s.runtime.handleClaude, { headers: { authorization: `Bearer ${keys.claude_app}` }, body });
+  assert.equal(reply.status, 200);assert.equal(JSON.parse(reply.body).model, alias);
+  assert.equal(JSON.parse(s.calls[0].init.body).model, "any-message-model");
+  assert.equal((await invoke(s.runtime.handleClaude, { headers: { authorization: `Bearer ${keys.claude_code}`, "x-ccdx-client": "claude-app" }, body })).status, 400);
+  assert.equal(s.calls.length, 1);
+  assert.equal((await invoke(s.runtime.handleClaude, { headers: { authorization: `Bearer ${keys.claude_code}` } })).status, 200);
+  assert.equal(s.configured.findLast(input => input.client === "claude_code").desktopAliases, false);
+  const unavailable = claudeModelEntries([{ id: "custom/response" }], { desktopAliases: true })[0].name;
+  assert.equal((await invoke(s.runtime.handleClaude, { headers: { authorization: `Bearer ${keys.claude_app}` }, body: { ...body, model: unavailable } })).status, 400);
+  assert.equal(s.calls.length, 2, "App aliases cannot grant Messages access to a Responses-only model");
 });
 
 test("custom Responses requires the Codex credential and exposes only configured models", async t => {

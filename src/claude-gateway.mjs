@@ -26,15 +26,32 @@ function authenticated(headers, key) {
   return candidates.some(value => typeof value === "string" && Buffer.byteLength(value) === expected.length && timingSafeEqual(Buffer.from(value), expected));
 }
 
-// Observe bounded SSE frames while retaining the original wire bytes for the
-// client. A slow client controls upstream reads; there is no independent tee.
-export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024) {
-  const decoder = new TextDecoder();let fragments = [], lineBytes = 0, data = [], frameBytes = 0;
+// Observe bounded SSE frames. Alias clients rewrite only message_start.model;
+// other frames retain their wire text. Client backpressure controls upstream reads.
+export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clientModel = null) {
+  const decoder = new TextDecoder("utf-8", { fatal: Boolean(clientModel) });let fragments = [], lineBytes = 0, data = [], frameBytes = 0, wire = [], wireBytes = 0, output = [];
   const frame = () => {
-    if (data.length) { let value;try { value = JSON.parse(data.join("\n")); } catch { throw new Error("Invalid Claude stream event"); }onEvent(value); }
+    let value;
+    if (data.length) { try { value = JSON.parse(data.join("\n")); } catch { throw new Error("Invalid Claude stream event"); }onEvent(value); }
+    if (clientModel && wire.length) {
+      if (value?.type === "message_start" && value.message && typeof value.message === "object" && !Array.isArray(value.message)) {
+        const replacement = JSON.stringify({ ...value, message: { ...value.message, model: clientModel } });let replaced = false;
+        wire = wire.map(line => {
+          if (!line.startsWith("data:")) return line;
+          if (replaced) return "";replaced = true;
+          return `data: ${replacement}${line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : ""}`;
+        });
+      }
+      output.push(Buffer.from(wire.join("")));wire = [];wireBytes = 0;
+    }
     data = [];frameBytes = 0;
   };
-  const line = value => {
+  const line = (value, newline = true) => {
+    if (clientModel) {
+      wireBytes += Buffer.byteLength(value) + (newline ? 1 : 0);
+      if (wireBytes > maxBytes) throw new Error("Claude stream event exceeds its limit");
+      wire.push(value + (newline ? "\n" : ""));
+    }
     if (value.endsWith("\r")) value = value.slice(0, -1);
     if (!value) frame();
     else if (value.startsWith("data:")) {
@@ -47,17 +64,17 @@ export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024) {
     while (start < text.length) {
       const newline = text.indexOf("\n", start), end = newline < 0 ? text.length : newline, part = text.slice(start, end);
       lineBytes += Buffer.byteLength(part);
-      if (lineBytes > maxBytes) throw new Error("Claude stream line exceeds its limit");
+      if (lineBytes > maxBytes || clientModel && wireBytes + lineBytes > maxBytes) throw new Error("Claude stream line exceeds its limit");
       fragments.push(part);
       if (newline < 0) break;
       line(fragments.join(""));fragments = [];lineBytes = 0;start = newline + 1;
     }
   }
-  return { write(chunk) { consume(decoder.decode(chunk, { stream: true })); },
-    finish() { consume(decoder.decode());if (fragments.length) line(fragments.join(""));frame(); } };
+  return { write(chunk) { output = [];consume(decoder.decode(chunk, { stream: true }));return output; },
+    finish() { output = [];consume(decoder.decode());if (fragments.length) line(fragments.join(""), false);frame();return output; } };
 }
 
-export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,
+export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = false, log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,
   record = recordUsage, acquireRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 }) } = {}) {
   if (!provider || !isProviderId(provider.id) || typeof apiKey !== "string" || apiKey.length < 32) throw new Error("Claude gateway requires a provider and private local key");
   const config = loadRuntimeConfig(env), performance = sharedPerformance || createStreamPerformanceMetrics({ routeNames: ["messages"] });
@@ -71,7 +88,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
     if (req.method === "GET" && pathname === "/v1/models") {
       try {
         const entries = provider.models("claude");
-        const models = claudeModelEntries(entries).map((entry, index) => ({ id: entry.name, type: "model", display_name: typeof entries[index].name === "string" && entries[index].name || entry.name }));
+        const models = claudeModelEntries(entries, { desktopAliases }).map((entry, index) => ({ id: entry.name, type: "model", display_name: entry.labelOverride || typeof entries[index].name === "string" && entries[index].name || entry.name }));
         send(res, 200, { data: models, has_more: false, first_id: models[0]?.id || null, last_id: models.at(-1)?.id || null });
       } catch (error) { send(res, 503, apiError(error.code || "ccdx_catalog_unavailable", "Claude model discovery is unavailable; refresh the provider catalog.")); }
       return;
@@ -85,7 +102,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
     const tracker = countTokens ? null : performance.begin("messages", { requestId, application: requestApplication(req.headers, "claude") });
     tracker?.setProvider(provider.id);
     const abort = createRequestAbort(req, res);
-    let release = () => {}, outcome = "failed", model = null, configuredModel = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
+    let release = () => {}, outcome = "failed", model = null, configuredModel = null, clientModel = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
     let terminalOrigin = "client_validation", failureStatus = null;
     if (!countTokens) { stats.total++;stats.active++;stats.last_request_at = new Date().toISOString(); }
     await runWithRequestContext({ requestId, provider: provider.id, route: "messages", streamPerformance: tracker }, async () => {
@@ -96,8 +113,11 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
         if (!body || typeof body.model !== "string" || !Array.isArray(body.messages)) {
           send(res, 400, apiError("ccdx_messages_invalid", "Expected a model and messages array"));return;
         }
-        model = body.model;stats.last_model = model;streamed = !countTokens && body.stream === true;
-        configuredModel = provider.configuredModels ? resolveClaudeModel(provider.models("claude"), model)?.id : null;
+        model = body.model;streamed = !countTokens && body.stream === true;
+        configuredModel = provider.configuredModels || desktopAliases ? resolveClaudeModel(provider.models("claude"), model, { desktopAliases })?.id : null;
+        if (desktopAliases && !configuredModel) throw Object.assign(new Error("The selected model is unavailable"), { code: "ccdx_api_model_unavailable", statusCode: 400 });
+        if (desktopAliases && configuredModel !== model) { clientModel = model;model = configuredModel;body = { ...body, model }; }
+        stats.last_model = model;
         tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });
         validateConversation?.(body, req.headers);
         terminalOrigin = "transport";
@@ -118,7 +138,8 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
             model = value.model || model;responseId = value.id;usage = value.usage;stopReason = value.stop_reason;
             sawStop = typeof stopReason === "string";outcome = stopReason === "max_tokens" ? "incomplete" : sawStop ? "completed" : "failed";
           } else if (countTokens && upstream.ok) outcome = "completed";
-          if (!res.destroyed && !res.writableEnded) { res.writeHead(upstream.status, headers);res.end(raw); }
+          const outgoing = clientModel && !countTokens && upstream.ok && value?.type === "message" ? JSON.stringify({ ...value, model: clientModel }) : raw;
+          if (!res.destroyed && !res.writableEnded) { res.writeHead(upstream.status, headers);res.end(outgoing); }
         } else {
           if (!/^text\/event-stream(?:\s*;|$)/i.test(upstream.headers.get("content-type") || "")) throw new Error("Expected a Claude event stream");
           abort.setTimeout(config.streamIdleTimeoutMs, "stream_idle_timeout");
@@ -130,17 +151,19 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
             if (event.type === "content_block_delta" && isMessagesOutputDelta(event.delta)) tracker?.firstOutput();
             if (event.type === "message_delta") { usage = { ...usage, ...event.usage };stopReason = event.delta?.stop_reason || stopReason; }
             if (event.type === "message_stop") { sawStop = true;outcome = stopReason === "max_tokens" ? "incomplete" : "completed"; }
-          }, config.maxSseBufferBytes);
+          }, config.maxSseBufferBytes, clientModel);
           const reader = upstream.body.getReader();
           try {
             while (true) {
               const { value, done } = await reader.read();if (done) break;
               tracker?.upstreamActivity();abort.setTimeout(config.streamIdleTimeoutMs, "stream_idle_timeout");
-              observer.write(value);
-              if (!await writeOrDrain(res, value, { signal: abort.signal })) break;
+              const frames = observer.write(value);
+              let writable = true;
+              for (const chunk of clientModel ? frames : [value]) if (!await writeOrDrain(res, chunk, { signal: abort.signal })) { writable = false;break; }
+              if (!writable) break;
               if (sawStop || failedEvent) break;
             }
-            observer.finish();
+            for (const chunk of observer.finish()) if (!await writeOrDrain(res, chunk, { signal: abort.signal })) break;
             if (!sawStop && !failedEvent) throw new Error("Claude stream ended before message_stop");
             if (!res.writableEnded) res.end();
           } finally { await reader.cancel().catch(() => {});reader.releaseLock(); }
@@ -169,7 +192,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, log = () => {}, o
           tracker?.terminal(outcome, { origin: failedEvent ? "upstream_event" : terminalOrigin, reason: stopReason === "max_tokens" ? "max_output_tokens" : undefined });
           tracker?.finish({ failed: outcome === "failed" || outcome === "cancelled", aborted: outcome === "cancelled", statusCode: failureStatus || res.statusCode });
           const client = req.headers["x-ccdx-client"] === "claude-app" ? "claude_app" : req.headers["x-ccdx-client"] === "claude-code" ? "claude_code" : "claude";
-          try { void Promise.resolve(record(buildMessagesUsageRecord({ model, responseId, usage, mode: streamed ? "stream" : "json", client, provider: provider.id }))).catch(() => {}); } catch {}
+          try { void Promise.resolve(record(buildMessagesUsageRecord({ model: configuredModel || model, responseId, usage, mode: streamed ? "stream" : "json", client, provider: provider.id }))).catch(() => {}); } catch {}
         }
       }
     });

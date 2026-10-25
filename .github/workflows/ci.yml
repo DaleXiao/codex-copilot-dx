@@ -165,6 +165,8 @@ jobs:
         run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --bindings models
       - name: Verify native ChatGPT sign-in survives model binding changes
         run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --bindings models --signed-in chatgpt
+      - name: Verify native OpenAI mode and complete first catalog across cold and warm starts
+        run: node scripts/codex-native-provider-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
   dashboard-browsers:
     # Preinstalled browser dependencies avoid slow Azure Ubuntu archive downloads.
     runs-on: ubuntu-24.04

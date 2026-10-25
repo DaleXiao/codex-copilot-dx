@@ -131,12 +131,18 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
   }
   async function performClientSync(targets) {
     if (!managed || closed) return;
-    const codex = binding("codex");
-    try { if (!targets.has("codex")) { /* Unrelated source metadata does not write Codex settings. */ }
-      else if (codex.enabled && plan("codex").defaultUnavailable) setup.codex = "default_unavailable";
-      else if (codex.enabled && codex.auto_sync === false) setup.codex = "manual_sync";else setup.codex = configureCodex({ ...options, ...(codex.enabled && (Array.isArray(codex.deployments) || codex.source?.startsWith("api_"))
-      ? { baseUrl: `http://127.0.0.1:${corePort}/v1`, apiKey: identities().codex, model: plan("codex").defaultModel || codex.model } : { restore: true }) }).state; }
-    catch { setup.codex = "configuration_unavailable"; }
+    const codex = binding("codex"), compiledCodex = plan("codex");
+    const explicit = Array.isArray(codex.deployments), native = explicit ? codex.deployments.length > 0 && codex.deployments.every(item => item.source === "github") : codex.source === "github";
+    if (targets.has("codex")) try {
+      if (codex.enabled && codex.auto_sync === false) setup.codex = "manual_sync";
+      else if (codex.enabled && compiledCodex.defaultUnavailable && !native) setup.codex = "default_unavailable";
+      else {
+        setup.codex = configureCodex({ ...options, ...(codex.enabled && (native || explicit && codex.deployments.length || codex.source?.startsWith("api_"))
+          ? { baseUrl: `http://127.0.0.1:${corePort}/v1`, native, ...(!native ? { apiKey: identities().codex } : {}),
+            ...(explicit || !native ? { model: compiledCodex.defaultModel || (!compiledCodex.defaultUnavailable ? codex.model : undefined) } : {}) } : { restore: true }) }).state;
+        if (codex.enabled && compiledCodex.defaultUnavailable && setup.codex === "configured") setup.codex = "default_unavailable";
+      }
+    } catch { setup.codex = "configuration_unavailable"; }
     if (!settings.claude_private_keys || !["claude_app", "claude_code"].some(id => targets.has(id))) return;
     let desktopManaged;
     for (const id of ["claude_app", "claude_code"]) {

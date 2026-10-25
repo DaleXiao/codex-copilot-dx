@@ -107,16 +107,27 @@ clients use the existing profile with generic name CCDX; M365's beta restriction
 is not imposed on APIs. Only an unchanged owned restriction is restored. Adding
 an API alone does not migrate existing M365 client credentials. First explicit
 Claude connection management installs private client keys; reopen affected apps.
-Codex reconciliation owns only the provider/model/table and preserves user edits.
-Repeated identical setup does not rewrite its file.
-When an existing native sign-in or credential-store policy is present, the owned
-provider keeps `requires_openai_auth = true`. Native account operations keep their
-own authentication; model traffic uses only CCDX's local bearer credential. A fresh
-API-only profile without native authentication remains usable without a ChatGPT
-login. Reconciliation never writes `auth.json` or deletes/replaces native credentials.
-A changed default model is preserved independently; it does not prevent repair
-of an otherwise unchanged owned provider table. Reopen Codex after an owned
-provider/authentication configuration change.
+Codex reconciliation owns provider selection, the selected model, the private
+provider table and, in native mode, `openai_base_url`. GitHub-only selections use
+this base URL with the built-in `openai` provider; fresh native setups create no
+custom provider table. The App therefore keeps its native provider branch.
+An unchanged old `ccdx_gateway` table is retained inactive during migration so
+existing sessions can still resume their recorded provider. New sessions use
+`openai`; existing session files are never rewritten to disguise their provider.
+
+The versioned ownership journal records exact prior/owned declarations and
+supports native/private switching and restoration. Startup defers an owned base
+URL to this reconciliation instead of overwriting preserved user edits. Identical
+setup does not rewrite the file. A missing default keeps its identity and does
+not prevent a safe native route repair. User model/base edits remain protected.
+Reconciliation never writes `auth.json` or replaces native credentials.
+
+Non-GitHub deployments retain the private provider/local-key route. Existing
+native sign-in or credential-store policy keeps `requires_openai_auth = true`;
+a fresh API-only profile remains usable without ChatGPT login. Native account
+operations retain their own authentication. App custom-provider controls can
+differ from native OpenAI controls; CLI catalogs do not prove App UI parity.
+Reopen Codex after an owned provider/authentication configuration change.
 
 GitHub-only explicit bindings preserve the legacy native loopback access contract,
 including requests from a process that has not yet reloaded its configuration.
@@ -130,7 +141,8 @@ Saving them fails without changing prior settings; refresh the catalog or explic
 clear the affected selection. A missing directory entry never means deselection.
 
 A manual Codex provider includes an authenticated `model_catalog_url` on the same
-listener. Supported native selectors list configured custom names. Unknown names
+listener. Native app-server catalogs list configured names; the App may still use
+its custom-provider UI for non-GitHub selections. Unknown names
 use conservative metadata without borrowed model instructions, invented context,
 vision, web search or Fast claims. API-specific Auto Review uses its configured
 model and advertised efforts; following the client does not synthesize low.
@@ -175,6 +187,12 @@ Model sources owns source credentials, native interface declarations and model d
 Codex/Claude own the selected deployment set, default and automatic synchronization.
 Claude App and Claude Code have separate segments and local keys. Settings retains
 appearance, startup and updates; source/client editors are not duplicated there.
+
+Codex catalogs and its `model` setting use an unambiguous upstream ID. Source
+suffixes appear only for same-named authorized deployments; friendly upstream
+names/descriptions are retained. Internal defaults and route aliases remain
+source-qualified, so adding another same-named source cannot move an existing
+default. Existing qualified IDs continue to resolve to their original source.
 
 A deployment is identified by source plus actual model ID. Its stable public route
 is independent of catalog order and key rotation; its private history/evidence
@@ -1280,7 +1298,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.20/codex-copilot-dx-1.2.20.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.21/codex-copilot-dx-1.2.21.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1911,3 +1929,18 @@ saves report persistence separately from subsequent metadata refresh. Background
 read failures retain existing messages; key read/save states use polite live
 announcements. Account labels and values stay paired, and request summaries use
 configured source names. Technical IDs remain available in request details.
+
+### Codex App updates and model selection
+
+After an App update, completely quit and reopen the App once if the model list is
+empty, then inspect `ccdx doctor`. On macOS, doctor reads bundled CLI package
+metadata and the optional model-cache version without executing a binary or
+altering the cache. A version mismatch is a diagnostic hint; it does not prove
+that the cache caused a failed catalog. HTTP catalog `models` and app-server RPC
+`model/list.data` are different layers, not evidence by themselves of a format
+regression between client versions.
+
+The Responses WebSocket protocol is not implemented by CCDX. Upgrade requests
+are refused promptly so supported native clients can fall back to HTTP/SSE.
+This is tested separately from model-directory and provider-identity behavior;
+SSE events are not relabeled as a WebSocket protocol.

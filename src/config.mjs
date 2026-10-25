@@ -5,6 +5,7 @@ import { adapterBaseUrl } from "./running-adapter.mjs";
 import { isLoopbackHost } from "./security.mjs";
 import { codexTomlStatements, configValue, parseCodexToml, validateManagedConfigEdit } from "./config-toml.mjs";
 import { codexPaths } from "./codex-paths.mjs";
+import { codexBaseUrlManaged } from "./codex-api-config.mjs";
 import { withFileLockSync } from "./lock.mjs";
 
 const MODEL_CONTEXT_WINDOW = 1_000_000;
@@ -204,7 +205,7 @@ export function computeUpdatedCodexConfig(
   content,
   adapterPort = 2026,
   adapterHost = "127.0.0.1",
-  { imageProviderEnabled } = {},
+  { imageProviderEnabled, preserveBaseUrl = false } = {},
 ) {
   const config = parseCodexToml(content);
   const baseUrl = `${adapterBaseUrl(adapterHost, adapterPort)}/v1`;
@@ -213,7 +214,8 @@ export function computeUpdatedCodexConfig(
 
   let changed = false;
   const openaiLine = `openai_base_url = "${baseUrl}"`;
-  if (!Object.hasOwn(config, "openai_base_url")) {
+  if (preserveBaseUrl) { /* The gateway journal owns this field, including preserved user edits. */ }
+  else if (!Object.hasOwn(config, "openai_base_url")) {
     lines.unshift(openaiLine);
     changed = true;
   } else {
@@ -287,6 +289,7 @@ function ensureCodexConfigUnlocked(adapterPort = 2026, {
   host = "127.0.0.1",
   imageProviderEnabled = false,
   log = console.log,
+  ...options
 } = {}) {
   const baseUrl = `${adapterBaseUrl(host, adapterPort)}/v1`;
 
@@ -303,12 +306,12 @@ function ensureCodexConfigUnlocked(adapterPort = 2026, {
   // failures must not roll it back or close an otherwise usable GPT adapter.
   const core = content === undefined
     ? { content: initialCodexConfig(adapterPort, host), changed: true }
-    : computeUpdatedCodexConfig(content, adapterPort, host);
+    : computeUpdatedCodexConfig(content, adapterPort, host, { preserveBaseUrl: codexBaseUrlManaged({ ...options, filePath }) });
   if (!core.changed) {
-    log(status("ok", `Codex already points to ${baseUrl}`));
+    log(status("ok", parseCodexToml(core.content).openai_base_url === baseUrl ? `Codex already points to ${baseUrl}` : "Codex configuration unchanged; existing base URL preserved"));
   } else {
     atomicWriteFileIfChangedSync(filePath, core.content);
-    log(status("ok", content === undefined ? `Created Codex configuration: ${filePath}` : `Configured Codex base URL: ${baseUrl}`));
+    log(status("ok", content === undefined ? `Created Codex configuration: ${filePath}` : parseCodexToml(core.content).openai_base_url === baseUrl ? `Configured Codex base URL: ${baseUrl}` : "Codex startup settings updated; existing base URL preserved"));
   }
   // Disabled means no image maintenance, including no implicit removal of old
   // or user-owned entries. Explicit disable-image owns the cleanup operation.

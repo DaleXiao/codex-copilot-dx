@@ -15,16 +15,23 @@ export function compileClientModels({ client, binding, source, enabled, names = 
   if (!binding.enabled) return { models: [], routes: new Map(), defaultModel: null, revision: "disabled" };
   const explicit = Array.isArray(binding.deployments), selected = explicit ? binding.deployments : binding.source
     ? sourceModels(source(binding.source), client).map(model => ({ source: binding.source, model: model.id })) : [];
-  const models = [], routes = new Map(), raw = new Map(), catalogs = new Map();
+  const models = [], routes = new Map(), raw = new Map(), catalogs = new Map(), available = [], counts = new Map();
   for (const item of selected) {
     if (!binding.allowed.includes(item.source) || !enabled(item.source)) continue;
     const provider = source(item.source);
     if (!catalogs.has(provider)) catalogs.set(provider, new Map(sourceModels(provider, client).map(model => [model.id, model])));
     const model = catalogs.get(provider).get(item.model);
     if (!model || model.policy?.state && model.policy.state !== "enabled" || model.model_picker_enabled === false) continue;
-    const route = deploymentModelId(item.source, model.id), capability = model.capability || resolveModelCapabilities(model, { builtin: true });
-    const entry = { ...model, capability, source_id: item.source, route_id: route,
-      ...(explicit ? { client_id: route, display_name: `${model.id} · ${names[item.source] || item.source}` } : {}) };
+    available.push({ item, provider, model, route: deploymentModelId(item.source, model.id) });counts.set(model.id, (counts.get(model.id) || 0) + 1);
+  }
+  const routeIds = new Set(available.map(entry => entry.route));
+  for (const { item, provider, model, route } of available) {
+    const capability = model.capability || resolveModelCapabilities(model, { builtin: true });
+    const sourceName = names[item.source] || provider.name || ({ github: "GitHub Copilot", m365: "Microsoft 365" })[item.source] || item.source;
+    const ambiguous = counts.get(model.id) > 1;
+    const entry = { ...model, capability, source_id: item.source, source_name: sourceName, route_id: route,
+      ...(explicit ? { client_id: client === "codex" && !ambiguous && !routeIds.has(model.id) ? model.id : route,
+        ...(ambiguous ? { display_name: `${model.display_name || model.name || model.id} · ${sourceName}` } : {}) } : {}) };
     if (client === "claude_app" && explicit) entry.client_id = claudeDeploymentId(entry, route, { desktopEffortAliases });
     const publicId = explicit ? entry.client_id : client === "codex" ? model.id : claudeModelEntries([entry], { desktopAliases: client === "claude_app" && provider.id.startsWith("api_") })[0].name;
     entry.public_id = publicId;

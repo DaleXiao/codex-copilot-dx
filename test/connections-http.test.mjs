@@ -27,7 +27,7 @@ test("GitHub-only bindings retain an open native client's auth and expose only s
     codexModelCatalog: { load: async () => ({ models: [{ slug: "gpt-5.5", supported_reasoning_levels: [{ effort: "low", description: "Low" }] }] }) } });
   t.after(async () => { handler.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime.close();fs.rmSync(home, { recursive: true, force: true }); });
   await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github", "m365"], deployments: [{ source: "github", model: "gpt-5.5" }] });
-  const model = runtime.connections().clients.find(c => c.id === "codex").model_plan.models[0].public_id;
+  const selectedModel = runtime.connections().clients.find(c => c.id === "codex").model_plan.models[0], model = selectedModel.public_id, route = selectedModel.route_id;
   const headers = { Authorization: "Bearer synthetic-existing-chatgpt-token" };
   const raw = await fetch(base + "/v1/models", { headers });assert.equal(raw.status, 200);assert.deepEqual((await raw.json()).data.map(m => m.id), [model]);
   const native = await fetch(base + "/v1/models?client_version=0.163.0", { headers });assert.equal(native.status, 200);assert.deepEqual((await native.json()).models.map(m => m.slug), [model]);
@@ -39,7 +39,7 @@ test("GitHub-only bindings retain an open native client's auth and expose only s
     deployments: [{ source: "github", model: "gpt-5.5" }, { source: "github", model: "gpt-5.4" }], default_model: model });
   registry.models = { data: registry.models.data.slice(1) };await runtime.syncClients();
   const missingDefault = runtime.connections().clients.find(c => c.id === "codex");
-  assert.equal(missingDefault.setup, "default_unavailable");assert.equal(missingDefault.default_model, model);
+  assert.equal(missingDefault.setup, "default_unavailable");assert.equal(missingDefault.default_model, route);
   assert.equal(missingDefault.model_plan.default_model, null);assert.equal(missingDefault.model_plan.default_unavailable, true);
   const remaining = await fetch(base + "/v1/models?client_version=0.163.0", { headers });assert.equal(remaining.status, 200);assert.equal((await remaining.json()).models.length, 1);
   const unavailable = await fetch(base + "/v1/responses", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.5", input: "synthetic" }) });

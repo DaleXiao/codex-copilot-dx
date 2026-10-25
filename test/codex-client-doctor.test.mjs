@@ -48,3 +48,16 @@ test("older adapters without catalog diagnostics are not labelled as having no c
   assert.match(text, /upgrade and restart CCDX/);
   assert.doesNotMatch(text, /No client model-catalog request observed/);
 });
+
+
+test("client diagnosis compares optional cache and bundled CLI metadata without executing a binary", async () => {
+  const run = async version => inspectCodexClient({ platform: "darwin", home: "/fixture", env: {}, execFileFn: async () => ({ stdout: "" }),
+    readFileFn: file => {
+      if (file === "/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-package.json") return JSON.stringify({ version: "0.164.0-alpha.11.1" });
+      if (file === "/fixture/.codex/models_cache.json") return JSON.stringify({ client_version: version, models: [{ prompt: "never report" }] });
+      throw Error("missing");
+    } });
+  const changed = await run("0.163.0");assert.ok(changed.some(check => check.kind === "warn" && /Model cache client 0.163.0/.test(check.message)));
+  assert.doesNotMatch(JSON.stringify(changed), /never report/);
+  assert.ok(!(await run("0.164.0")).some(check => check.kind === "warn"));
+});

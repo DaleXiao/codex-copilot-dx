@@ -1,9 +1,10 @@
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readAdapterStatus } from "./cli-status.mjs";
+import { codexPaths } from "./codex-paths.mjs";
+import { readBoundedFileSync } from "./bounded-file.mjs";
 import { formatPredictionEnvironment } from "./native-prediction-state.mjs";
 
 export function parseRunningCodexApps(stdout) {
@@ -20,13 +21,13 @@ export function parseRunningCodexApps(stdout) {
 }
 
 export async function inspectCodexClient({
-  home = os.homedir(), platform = process.platform, running,
-  host, port, fetchImpl = fetch, readFileFn = fs.readFileSync,
+  home = os.homedir(), env = process.env, platform = process.platform, running,
+  host, port, fetchImpl = fetch, readFileFn = (file, encoding) => readBoundedFileSync(file, { encoding, maxBytes: 8 * 1024 * 1024 }),
   execFileFn = promisify(execFile), readStatus = readAdapterStatus,
 } = {}) {
   const checks = [];
   if (platform === "darwin") {
-    const seen = new Set();
+    const seen = new Set(), versions = new Set();
     for (const root of ["/Applications", path.join(home, "Applications")]) {
       for (const name of ["ChatGPT.app", "Codex.app"]) {
         try {
@@ -37,8 +38,21 @@ export async function inspectCodexClient({
             seen.add(`${name}/${version}`);
           }
         } catch {}
+        try {
+          const metadata = JSON.parse(readFileFn(path.join(root, name, "Contents", "Resources", "codex-cli", "codex-package.json"), "utf8"));
+          if (/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+_-]+)?$/.test(metadata.version || "")) versions.add(metadata.version);
+        } catch { /* Older app bundles may not publish CLI package metadata. */ }
       }
     }
+    for (const version of versions) checks.push({ kind: "info", message: `Bundled Codex CLI: ${version}` });
+    try {
+      const cache = JSON.parse(readFileFn(path.join(codexPaths({ home, env }).directory, "models_cache.json"), "utf8"));
+      const core = value => /^(\d+\.\d+\.\d+)/.exec(String(value || ""))?.[1];
+      const current = new Set([...versions].map(core));
+      if (current.size === 1 && core(cache.client_version) && !current.has(core(cache.client_version))) {
+        checks.push({ kind: "warn", message: `Model cache client ${core(cache.client_version)} differs from bundled CLI ${[...current][0]}; fully quit and reopen the App once after updating. This does not prove a failed catalog.` });
+      }
+    } catch { /* Cache contents are optional and never repaired by this read-only check. */ }
     try {
       // comm contains executable names, never command-line arguments or environments.
       const { stdout } = await execFileFn("ps", ["-axo", "pid=,comm="], { timeout: 1500, maxBuffer: 256 * 1024, encoding: "utf8" });
@@ -65,6 +79,6 @@ export async function inspectCodexClient({
       } else checks.push({ kind: "info", message: "No client model-catalog request observed by this adapter" });
     } catch { checks.push({ kind: "info", message: "Client model-catalog diagnostics unavailable from the running adapter" }); }
   }
-  checks.push({ kind: "info", message: "App-internal model cache is not externally verified; process age alone does not prove a stale catalog" });
+  checks.push({ kind: "info", message: "App adoption of the model cache is not externally verified; process age alone does not prove a stale catalog" });
   return checks;
 }

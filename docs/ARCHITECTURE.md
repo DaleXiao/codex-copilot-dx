@@ -676,3 +676,22 @@ The existing dashboard connection controller owns one draft per client and
 local operation feedback. Source browsing is one shared selection for management,
 account and catalog. Presentation retains existing palettes, motion and native
 controls; it adds no runtime UI dependency or protocol abstraction framework.
+
+## Native Codex provider identity
+
+GitHub-only managed bindings use the built-in OpenAI provider and a journal-owned
+`openai_base_url`. Non-GitHub bindings retain the private keyed provider. Provider
+identity is a client UI/auth boundary, not merely a transport setting; a native
+app-server catalog does not establish the App's custom-provider rendering path.
+The Codex reconciliation journal migrates v1 entries, records/restores root base
+URLs, shares the startup configuration lock and protects user edits. Startup
+leaves journal-owned base URLs to that writer. An unchanged inactive legacy
+provider table remains available to sessions that recorded its ID; session files
+and native authentication are not migrated or rewritten.
+
+Codex exposes unambiguous upstream IDs and friendly metadata. Qualified defaults
+and legacy route aliases stay internal and source-bound. Same-named deployments
+remain distinct, with suffixes only where needed. Native replay covers a legacy
+session, first model/list after cold/warm/old-cache starts, authMethod, effective
+provider, model visibility and synthetic inference. Real App UI acceptance remains
+separate from this RPC evidence.

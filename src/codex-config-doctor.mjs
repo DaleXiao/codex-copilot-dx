@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import { codexPaths } from "./codex-paths.mjs";
+import { codexBaseUrlManaged } from "./codex-api-config.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
 import { parse } from "smol-toml";
@@ -53,12 +54,12 @@ function unmanagedSettings(config) {
   return remaining;
 }
 
-function startupPreview(content, config, host, port) {
+function startupPreview(content, config, host, port, preserveBaseUrl = false) {
   let updated;
   try {
     updated = content === null
       ? { content: initialCodexConfig(port, host), changed: true }
-      : computeUpdatedCodexConfig(content, port, host);
+      : computeUpdatedCodexConfig(content, port, host, { preserveBaseUrl });
   } catch {
     return { kind: "err", message: "Startup configuration cannot be edited safely; review the file before starting ccdx" };
   }
@@ -165,7 +166,8 @@ export function inspectCodexConfig({ home = os.homedir(), env: processEnv = proc
   } else {
     checks.push({ kind: "err", message: "features.context_management must be a boolean for the basic feature flag" });
   }
-  checks.push(startupPreview(content, config, host, port));
+  try { checks.push(startupPreview(content, config, host, port, codexBaseUrlManaged({ home, env: processEnv }))); }
+  catch { checks.push({ kind: "err", message: "Codex gateway ownership cannot be read; startup base URL changes are blocked" }); }
   return checks;
 }
 
@@ -182,7 +184,7 @@ export function repairCodexConfig(options = {}) {
       throw Object.assign(new Error("config_preview_changed"), { code: "config_preview_changed", statusCode: 409 });
     }
     const next = content === null ? { content: initialCodexConfig(port, host), changed: true }
-      : computeUpdatedCodexConfig(content, port, host);
+      : computeUpdatedCodexConfig(content, port, host, { preserveBaseUrl: codexBaseUrlManaged(options) });
     if (!next.changed) return { status: "unchanged", changed: false };
     const before = content === null ? {} : parseConfig(content);
     if (!isDeepStrictEqual(unmanagedSettings(before), unmanagedSettings(parseConfig(next.content)))) {

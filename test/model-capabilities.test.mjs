@@ -90,6 +90,19 @@ test("a missing explicit default never falls back and recovers when its catalog 
   const binding = { enabled: true, allowed: ["github"], deployments: [{ source: "github", model: "default" }, { source: "github", model: "other" }], default_model: deploymentModelId("github", "default") };
   const compile = () => compileClientModels({ client: "codex", binding, source: () => provider, enabled: () => true });
   const missing = compile();assert.equal(missing.defaultModel, null);assert.equal(missing.defaultUnavailable, true);assert.equal(missing.models.length, 1);assert.equal(reads, 1);
-  entries = ["default", "other"];assert.equal(compile().defaultModel, binding.default_model);
-  delete binding.default_model;assert.equal(compile().defaultModel, binding.default_model || deploymentModelId("github", "default"));
+  entries = ["default", "other"];const recovered = compile();assert.equal(recovered.defaultModel, "default");assert.equal(recovered.routes.get(recovered.defaultModel).model.route_id, binding.default_model);
+  delete binding.default_model;assert.equal(compile().defaultModel, "default");
+});
+
+
+test("Codex exposes unambiguous names while keeping qualified routes and source-bound defaults", () => {
+  const providers = Object.fromEntries(["github", "api_two"].map(id => [id, { id, models: () => [{ id: "same", name: "Friendly model", supported_endpoints: ["/responses"] }] }]));
+  const binding = { enabled: true, allowed: Object.keys(providers), deployments: [{ source: "github", model: "same" }], default_model: deploymentModelId("github", "same") };
+  const compile = () => compileClientModels({ client: "codex", binding, source: id => providers[id], enabled: () => true, names: { github: "GitHub Copilot", api_two: "Work API" } });
+  const single = compile();assert.equal(single.defaultModel, "same");assert.equal(single.models[0].display_name, undefined);assert.equal(single.models[0].name, "Friendly model");
+  assert.equal(single.routes.get(binding.default_model), single.routes.get("same"));
+  binding.deployments.push({ source: "api_two", model: "same" });const mixed = compile();assert.equal(mixed.routes.has("same"), false);
+  assert.equal(mixed.routes.get(mixed.defaultModel).source, "github");assert.equal(mixed.defaultModel, binding.default_model);
+  assert.deepEqual(mixed.models.map(model => model.display_name), ["Friendly model · GitHub Copilot", "Friendly model · Work API"]);
+  binding.deployments.pop();assert.equal(compile().defaultModel, "same");
 });

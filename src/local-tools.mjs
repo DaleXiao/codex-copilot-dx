@@ -48,6 +48,6 @@ export function createLocalTools({ home = os.homedir(), env = process.env, host 
     const value = inspectNetwork({ env, platform });
     return { source: "network_check", checked_at: new Date().toISOString(), summary: safe(formatPredictionEnvironment(value.summary)) };
   }
-  return { snapshot, check, preview, repair, network, report: () => ({ version: localPackageVersion(),
+  return { snapshot, check, preview, repair, network, busy: () => Boolean(flight), report: () => ({ version: localPackageVersion(),
     exported_at: new Date().toISOString(), scope: "local checks only; accounts and credentials omitted", ...snapshot() }) };
 }

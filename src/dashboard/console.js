@@ -105,6 +105,10 @@
   window.addEventListener("ccdx:providers", () => { syncSources();if (current === "codex") void loadSourceModels(); });
   function applySettings(data) {
     settings = data;
+    const nightly = data.nightly_update;
+    el("nightly-update").checked = nightly?.enabled === true;el("nightly-update").disabled = false;
+    el("nightly-rules").hidden = nightly?.enabled !== true;
+    label(el("nightly-state"), !nightly?.enabled ? "nightly_off" : nightly.effect === "next_start" ? "nightly_next_start" : `nightly_${nightly.phase || "watching"}`);
     el("terminal-color-theme").value = data.color_theme || "green";
     el("terminal-color-theme").disabled = settingsPending;
     el("terminal-color-sample").dataset.terminalPalette = data.color_theme || "green";
@@ -181,7 +185,7 @@
     syncAccountControls();
     const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-enabled")];
     controls.forEach(input => { input.disabled = true; });
-    const note = el(body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
+    const note = el(body.action === "nightly_update" ? "nightly-state" : body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
       : body.action.startsWith("history_") ? "effect-history" : body.action === "prediction_fix" ? "prediction-note"
         : body.operation === "switch" ? "source-control-note" : body.operation === "auto-review" ? "review-control-note"
           : body.operation === "account" ? "m365-account-note" : "m365-control-note");
@@ -279,6 +283,7 @@
       model: el("source-model").value, ...(settings?.providers?.codex_provider === provider ? {} : {
         auto_review_model: el("source-review").value, auto_review_effort: el("source-review-effort").value || null }) } : {}) }, el("apply-source"));
   });
+  el("nightly-update").addEventListener("change", () => void change({ action: "nightly_update", enabled: el("nightly-update").checked }, el("nightly-update")));
   el("save-review").addEventListener("click", () => void change({ action: "provider", operation: "auto-review", provider: el("source-provider").value,
     model: el("source-review").value, auto_review_effort: el("source-review-effort").value || null }, el("save-review")));
   // Only the small in-memory status snapshot is read at this cadence. Catalogs

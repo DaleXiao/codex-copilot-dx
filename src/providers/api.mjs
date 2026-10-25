@@ -13,6 +13,7 @@ import { transportErrorDetails } from "../operation-error.mjs";
 import { resolveModelCapabilities, deploymentRevision, constrainModelRequest } from "../model-capabilities.mjs";
 import { apiModelMetadata } from "./api-model-metadata.mjs";
 import { markRequestObservation } from "../stream-performance.mjs";
+import { createAbortAwareSingleflight } from "../bounded-result-cache.mjs";
 
 const paths = { messages: "/v1/messages", responses: "/v1/responses", chat: "/v1/chat/completions" };
 export function apiCatalog(config, env = process.env) {
@@ -33,7 +34,8 @@ export function createApiProvider({ config, secrets, env = process.env, platform
   const modelsUrl = config.base_url.replace(/\/+$/, "") + "/models", targets = [...Object.values(config.endpoints), modelsUrl];
   if (config.endpoints.messages) targets.push(config.endpoints.messages.replace(/\/+$/, "") + "/count_tokens");
   if (config.endpoints.responses) targets.push(config.endpoints.responses.replace(/\/+$/, "") + "/compact");
-  let network, flight, closed = false;
+  let network, closed = false;
+  const initialization = createAbortAwareSingleflight(), lifetime = new AbortController();
   const retiring = new Set();
   const registry = { models: { data: catalog.filter(model => model.supported_endpoints.includes(paths.responses)) }, source: "configured", generation };
   const getNetwork = async signal => {
@@ -44,8 +46,8 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       retiring.add(previous);
       void Promise.resolve(previous.retire()).then(() => retiring.delete(previous), () => { previous.close();retiring.delete(previous); });
     } else previous?.close();
-    flight ||= networkFactory({ targets, env, platform, signal }).then(value => { if (closed) { value.close();throw accessError("ccdx_api_closed", 503); }network = value;return value; }).finally(() => { flight = null; });
-    return flight;
+    return initialization.run("network", sharedSignal => networkFactory({ targets, env, platform, signal: AbortSignal.any([sharedSignal, lifetime.signal]) })
+      .then(value => { if (closed || sharedSignal.aborted) { value.close();throw accessError("ccdx_api_closed", 503); }network = value;return value; }), { signal });
   };
   const selected = (id, api) => {
     const model = api === "messages" ? resolveClaudeModel(catalog, id) : catalog.find(model => model.id === id);
@@ -147,6 +149,6 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         if (!resp.ok) { await resp.body?.cancel();const code = `ccdx_api_http_${resp.status}`;return { resp: new Response(JSON.stringify({ error: { code, message: code } }), { status: resp.status, headers: { "Content-Type": "application/json" } }), reqContext: context, errorText: code, usedRetryPolicies: new Set() }; }
         return { resp, reqContext: context, errorText: undefined, usedRetryPolicies: new Set() };
       } },
-    close() { closed = true;network?.close();for (const previous of retiring) previous.close();retiring.clear(); },
+    close() { closed = true;lifetime.abort();network?.close();for (const previous of retiring) previous.close();retiring.clear(); },
   };
 }

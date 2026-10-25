@@ -7,6 +7,7 @@ export function createDashboardTools(options = {}) {
   const accounts = options.accountTools || createAccountTools({ ...options, onChanged: options.credentialsChanged });
   const local = options.localTools || createLocalTools(options);
   return {
+    busy: () => accounts.busy?.() === true || local.busy?.() === true,
     dispose() { accounts.dispose(); },
     async handle(req, res, pathname, sendJson, sameOrigin) {
       const account = pathname === "/_ccdx/ui/account";

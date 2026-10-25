@@ -121,6 +121,9 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
       return { active, state: active ? "active" : native ? "paused" : "needs_setup" };
     },
     snapshot() { return { prediction: { ...prediction.snapshot(), active: native?.enabled?.() === true } }; },
+    busy: () => Boolean(operation),
+    bridgeHealthy: () => native?.healthy?.() === true,
+    pauseForUpdate() { return serialize("pause", async () => { await native?.close();native = null; }); },
     async close() { closed = true;try { await operation; } finally { await native?.close();native = null; } },
   };
 }

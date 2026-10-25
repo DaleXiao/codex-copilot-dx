@@ -51,6 +51,10 @@ export function readUserSettings({ env = process.env, home = os.homedir(), stric
         delete parsed[key];
       }
     }
+    if (Object.hasOwn(parsed, "nightly_updates") && typeof parsed.nightly_updates !== "boolean") {
+      if (strict) throw invalidSettings(filePath, "nightly_updates must be a boolean");
+      delete parsed.nightly_updates;
+    }
     if (Object.hasOwn(parsed, "terminal_color_theme") && !isColorTheme(parsed.terminal_color_theme)) {
       if (strict) throw invalidSettings(filePath, "terminal_color_theme must be green, klein or pink");
       delete parsed.terminal_color_theme;
@@ -122,6 +126,17 @@ export function savedAutoReviewModel(options = {}) {
 export function servicePreferences(options = {}) {
   const settings = readUserSettings({ ...options, strict: true });
   return serviceFlags(settings);
+}
+export function nightlyUpdatePreference(options = {}) {
+  return readUserSettings({ ...options, strict: true }).nightly_updates === true;
+}
+export function writeNightlyUpdatePreference(enabled, options = {}) {
+  if (typeof enabled !== "boolean") throw new Error("Nightly updates require a boolean");
+  return withFileLockSync(`${userSettingsPath(options)}.lock`, () => {
+    const settings = readUserSettings({ ...options, strict: true });
+    atomicWriteFileIfChangedSync(userSettingsPath(options), `${JSON.stringify({ ...settings, nightly_updates: enabled }, null, 2)}\n`, { mode: 0o600 });
+    return enabled;
+  });
 }
 const serviceFlags = settings => Object.fromEntries(SERVICE_FLAGS.map(key => [key, settings[key] !== false]));
 

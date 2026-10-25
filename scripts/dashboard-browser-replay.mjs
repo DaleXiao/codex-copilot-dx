@@ -415,6 +415,14 @@ try {
         assert.equal(await page.locator("#flow-network .flow-count:visible").count(), 0);
         assert.match(await page.locator("#flow-apps").innerText(), /Codex App/);
         assert.equal(await page.locator("#flow-hub small").count(), 0, "Total is not repeated under the logo");
+        assert.equal(await page.locator(".flow-halo-turn").evaluate(node => getComputedStyle(node).animationPlayState), "running");
+        assert.equal(await page.locator(".flow-logo").evaluate(node => getComputedStyle(node).animationName), "none");
+        if (await page.locator("#flow-active").getAttribute("open") === null) await page.locator("#flow-active > summary").click();
+        await page.locator("#flow-active-body tr").first().waitFor({ state: "visible" });
+        await page.evaluate(() => { window.keptFlowRow = document.querySelector("#flow-active-body tr"); });
+        flowRequests[0].elapsed_ms += 1000;await refreshStatus();
+        assert.equal(await page.evaluate(() => keptFlowRow === document.querySelector("#flow-active-body tr")), true, "Elapsed time updates keep the original row");
+
         flowRequests.push({ ...flowRequests[0], request_id: "shared-second", first_output_ms: null });
         await refreshStatus();
         assert.ok((await page.locator("#flow-wires path").evaluateAll(nodes => nodes.map(node => node.getAttribute("d")))).every(d => !/[QV]/.test(d)), "Shared concurrent route stays straight");
@@ -453,6 +461,8 @@ try {
         flowRequests = [];await refreshStatus();
         assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "idle");
         assert.equal(await page.locator("#flow-state").evaluate(node => getComputedStyle(node, "::before").animationName), "flow-breathe");
+        assert.equal(await page.locator(".flow-halo-turn").evaluate(node => getComputedStyle(node).animationPlayState), "paused");
+
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Flow remains inside the viewport");
         assert.equal(await page.locator("#request-context").getAttribute("open"), "");
         assert.equal(await page.locator("#context-body tr").count(), 2);
@@ -516,6 +526,17 @@ try {
         const otherPlatform = await page.locator('[data-install-platform="windows"]').evaluate(node => ({ color: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor }));
         assert.notEqual(selectedPlatform.background, otherPlatform.background, "Selected platform must have an actual visible fill");
         assert.equal(await page.locator('[data-install-platform="macos"] svg').count(), 0, "Selection does not displace centered text with an icon");
+        await page.locator("#nightly-update").waitFor({ state: "visible" });
+        await page.waitForFunction(() => !document.getElementById("nightly-update").disabled);
+        assert.equal(await page.locator("#nightly-update").isChecked(), false);
+        assert.match(await page.locator("#nightly-risk").innerText(), language === "zh" ? /重启.*会话/ : /restart.*conversation/);
+        await page.locator("#nightly-update").check();
+        await page.waitForFunction(() => !document.getElementById("nightly-update").disabled);
+        assert.equal(await page.locator("#nightly-rules").isVisible(), true);
+        assert.match(await page.locator("#nightly-state").innerText(), language === "zh" ? /下次启动/ : /next time/);
+        await page.locator("#nightly-update").uncheck();
+        await page.waitForFunction(() => !document.getElementById("nightly-update").disabled);
+        assert.equal(await page.locator("#nightly-rules").isVisible(), false);
         await page.locator("#web-color-theme").focus();
         assert.deepEqual(await page.locator("#web-color-theme").evaluate(node => ({ radius: getComputedStyle(node).borderRadius, shadow: getComputedStyle(node).boxShadow, appearance: getComputedStyle(node).appearance })),
           { radius: "0px", shadow: "none", appearance: "none" });
@@ -594,6 +615,18 @@ try {
         await page.clock.fastForward(6001);
         assert.equal(await page.locator("#model-activity").getAttribute("data-state"), "unknown", "Manual snapshots expire without extra network work");
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        if (palette === "green" && language === "en" && theme === "light" && width === 1280) {
+          const brokenUsage = await fs.readFile(new URL("../src/dashboard/usage.js", import.meta.url), "utf8");
+          await page.route("**/usage.js*", route => route.fulfill({ status: 200, contentType: "text/javascript", body: brokenUsage + "\nwindow.workingUsageCreate=ccdxDashboardUsage.create;ccdxDashboardUsage.create=()=>{throw Error('synthetic optional-view failure')};" }));
+          await page.reload();await nav("usage");
+          if (await page.locator("#usage-analytics").getAttribute("open") === null) await page.locator("#usage-analytics > summary").click();
+          await page.locator("#usage-analytics .view-error").waitFor();
+          await nav("system");await page.waitForFunction(() => !document.getElementById("nightly-update").disabled);
+          assert.equal(await page.locator("#nightly-update").isVisible(), true, "Optional chart failure does not break settings");
+          await page.evaluate(() => { ccdxDashboardUsage.create = window.workingUsageCreate; });
+          await nav("usage");await page.locator("#usage-analytics .view-error button").click();
+          await page.locator("#usage-analytics .view-error").waitFor({ state: "hidden" });
+        }
         assert.equal(errors.length, 0, errors.join("\n"));
         if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-overview.png`), fullPage: true });
         results.push({ engine, language, theme, palette, width, passed: true });

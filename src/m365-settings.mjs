@@ -95,6 +95,11 @@ export function writeM365Binding(account, catalog, { expectedAccount, ...options
 
 export function ensureM365GatewayKey(options = {}) {
   const file = m365Paths(options).gateway;
+  if (options.create === false) {
+    const saved = readM365Json(file);
+    if (!/^ccdx_m365_[a-f0-9]{64}$/.test(saved?.key || "")) throw Object.assign(new Error("Saved M365 gateway key is unavailable"), { code: "m365_gateway_key_invalid" });
+    return saved.key;
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   return withFileLockSync(`${file}.lock`, () => {
     const saved = readM365Json(file);

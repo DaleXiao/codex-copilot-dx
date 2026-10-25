@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "1.2.21",
+  "version": "1.2.22",
   "description": "Local gateway for Codex and Claude with Copilot, Microsoft 365 and custom APIs",
   "author": "Dale Xiao",
   "type": "module",
@@ -42,6 +42,7 @@
     "test": "node --test",
     "test:smoke": "node scripts/offline-smoke.mjs && node scripts/sse-idle-replay.mjs",
     "test:package": "node scripts/package-lifecycle-smoke.mjs",
+    "test:nightly-package": "node scripts/nightly-package-replay.mjs",
     "test:e2e": "bash test/e2e.sh",
     "bench": "node scripts/benchmark.mjs",
     "bench:payload": "node scripts/benchmark.mjs --large-payload",

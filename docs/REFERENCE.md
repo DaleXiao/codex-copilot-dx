@@ -1302,7 +1302,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.21/codex-copilot-dx-1.2.21.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.22/codex-copilot-dx-1.2.22.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1806,7 +1806,7 @@ Set `CCDX_LOG_PATH=1` to record diagnostic logs independently of quiet terminal 
 
 Long computer-use sessions can accumulate screenshots that are sent again on later turns. This can increase local preparation time, upstream handshake latency, and the chance of a `413 Payload Too Large` response.
 
-The response-history cache is process-local and byte/entry bounded. Restarting the adapter discards it; a `previous_response_id` stored only in that process becomes unavailable. CCDX does not persist conversation history to disk. Near-limit status diagnostics report the largest tree and actual lookup misses, but do not recover an already evicted ID or change the cache budget. Clients can still submit explicit history in the request body, subject to the same limits.
+The response-history cache is process-local and byte/entry bounded. Ordinary adapter restarts discard it; verified opt-in nightly handoff is the exception described below. Without such a handoff, a `previous_response_id` stored only in that process becomes unavailable. CCDX does not persist conversation history to disk. Near-limit status diagnostics report the largest tree and actual lookup misses, but do not recover an already evicted ID or change the cache budget. Clients can still submit explicit history in the request body, subject to the same limits.
 
 CCDX attempts to downsample inline base64 images to model-appropriate pixel bounds, with a 2048 px long-edge fallback, and initially encodes them as WebP quality 82. It never replaces an image with a larger encoding and uses one global concurrency limit across direct images and function/custom-tool outputs. GIFs and non-inline references are not re-encoded. An encoding/decode failure keeps the original image; the final request-byte limit still applies.
 
@@ -1948,3 +1948,101 @@ The Responses WebSocket protocol is not implemented by CCDX. Upgrade requests
 are refused promptly so supported native clients can fall back to HTTP/SSE.
 This is tested separately from model-directory and provider-identity behavior;
 SSE events are not relabeled as a WebSocket protocol.
+
+
+### Nightly updates (opt-in)
+
+Available from 1.2.22 after one manual upgrade. Settings → Version & updates →
+Update overnight writes the boolean `nightly_updates`, false when absent. Enabling
+it requires a normal CCDX restart; disabling it cancels pending automatic work in
+a supervised service. Management-only `ccdx web` never installs updates. The risk
+text explains that automatic installation/restart can affect conversation
+continuation. The feature does not promise zero downtime or infallible rollback.
+
+Only an owned, writable npm installation with recognized command launchers can
+use the supervisor. Standard execution stays unchanged when disabled. When enabled,
+a foreground parent runs the gateway from an immutable private package tree;
+Ctrl+C stops both, and no launchd/systemd/Windows service or boot task is installed.
+Stopping CCDX, sleeping or powering off does not start a separate updater. After
+a long observation gap, a new ten-minute idle interval is required.
+
+The parent observes bounded local state once a minute. A release check occurs at
+most once per local calendar day, within 00:00–04:00, after ten observed idle
+minutes. The new version must be a stable patch in the same major/minor series
+and have been published at least 24 hours earlier. No prerelease or automatic
+minor/major migration is accepted. Active inference, image work, configuration
+operations, discovery or sign-in defer the update. New work during preparation
+also defers it. Checks do not invoke models.
+
+Preparation uses the official pinned GitHub Release tarball and checksum, an
+independent npm prefix, the configured registry/proxy/CA/TLS/offline policy and
+ignored lifecycle scripts. Existing private-runtime launchers are regenerated;
+custom launchers are not silently claimed. No Git, new Node installation,
+permission override, certificate change or public-registry fallback is added.
+A policy refusal, unavailable dependency or runtime check failure leaves the
+current service running. The supported native broker is checked when already
+present in the original installation.
+
+Before switching, the parent compares client/configuration fingerprints and
+authorized model/default selections, backs up the global package and commands,
+and validates the candidate on an internal loopback-only ephemeral listener while
+the current instance continues serving. Previously healthy selected sources must remain healthy, every previously
+published model must remain available, and defaults/credential scopes must match.
+Additional upstream models are allowed. API discovery publication and client
+writers are paused during this warmup. Only then is the old gateway quiesced.
+A bounded private IPC message transfers Responses
+history, source-scoped parent links/opaque items, image-edit references and
+already-cached API keys limited to unchanged configured references.
+Conversation payloads, image references and cached keys are never written to a
+handoff file or diagnostics. Ordinary process-local counters begin a new run;
+retained usage files remain available.
+The combined serialized state is limited to 64 MiB; oversized/busy state defers
+the update without eviction. New requests during the brief switching interval
+can receive a temporary failure with `Retry-After: 1`.
+
+The warmed replacement imports state before taking over the same main port. Its
+maintenance startup preserves client configuration, skips interactive GitHub
+login, and opens neither browser nor client. Model/default selections and
+configuration fingerprints must match before it accepts normal traffic. Failed
+startup, discovery or a mismatched candidate leaves the original instance
+alive. A failed port/prediction handover attempts package rollback and resumes
+that same instance with its original caches. Cleanup of a retired runtime is
+best-effort; pending cleanup suspends further automatic transitions. The old
+process is retired only
+after the replacement has acknowledged acceptance. A deliberate Ctrl+C
+never starts another worker. Unexpected later worker exits are reported once;
+this is not a general crash-respawn mechanism.
+
+The private `nightly-update-state.json` beside settings stores only the attempted
+local day and paused version. Installed candidates that fail verification are
+not repeatedly attempted; a newer version or explicit manual update is needed.
+Unreadable records pause automatic updates without stopping the gateway. A
+failed package rollback or failed restoration can require manual recovery;
+Settings retains the full platform installation commands.
+
+### Web resilience and resource versions
+
+Optional status/usage/animation views contain local initialization/render errors,
+retain the surrounding shell and expose a local retry. Retry replays only the
+latest bounded call state per view method. Network errors retain their existing
+last-successful snapshots and explicit unknown/error status. Request-flow detail
+rows are keyed and updated in place, retaining selection and DOM identity.
+
+The flow atom's thin ring is static while idle and rotates once per five seconds
+while fresh active requests are observed, including waits/retries. The atom itself
+does not rotate; counts do not accelerate the ring. Hidden/stale views stop it,
+and reduced motion disables rotation. Existing curves, tables, palettes,
+client identification and authorization remain unchanged.
+
+Static dashboard bytes are snapshotted together on first use and reused by the
+process. HTML remains `no-store` and stamps script/style URLs with the service
+version. Other assets use content-derived ETags and `no-cache` revalidation;
+matching validators return 304. A mismatched version query returns 409 rather
+than mixing resources, requiring a page reload. If the installed package changed
+before a coherent bundle could be loaded, the optional page fails explicitly;
+inference remains separate. Protected JSON/account/settings routes stay
+`no-store`. No API-body caching, compression worker or new dependency is added.
+
+`CCDX_SUPERVISED_SERVICE` is an internal inherited worker marker. It is used only
+with a private parent IPC channel; do not set it as a user preference. It grants
+no network action and is not a replacement for the saved nightly-update opt-in.

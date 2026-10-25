@@ -212,7 +212,7 @@ boundary, not a plugin framework, daemon, IPC protocol or package split.
 The HTTP dispatch boundary rejects browser Origin-bearing inference requests
 before body admission, credential use or provider dispatch; native LAN opt-in is unchanged.
 
-Package installation is an explicit management operation in `package-update.mjs`,
+Manual package installation is an explicit management operation in `package-update.mjs`,
 not part of inference or optional client integration. Windows uses the system
 command interpreter only for the fixed `npm.cmd` installer command; stable-tag
 validation remains upstream of launch. macOS/Linux use direct npm argv. There
@@ -231,7 +231,7 @@ The source lock retains exact versions/integrities without binding smol-toml to 
 developer's corporate feed; omitted registry resolution is delegated to npm.
 Readonly update preflight reports Node/npm, the running package and npm's selected
 global target. A different target warns, but never changes PATH or prefix. Its
-bounded npm probe is limited to explicit update and full doctor commands.
+bounded npm probe is limited to explicit update/full doctor commands and opted-in supervisor startup, never inference.
 Its stdout/stderr are captured separately; npm configuration warnings do not
 leak into doctor output. The real installer's inherited streams are unchanged.
 After installation, the updater verifies bounded package metadata at that same
@@ -533,7 +533,7 @@ Byte-weighted request admission is not a simultaneous-stream limit. The 1.2.0 lo
 and no-Node bootstraps. It bounds downloads/decompression, verifies the exact
 release package and checksum, backs up only this package/commands under an
 exclusive lock, restores on failure and validates the version/sharp/broker.
-It reuses the selected npm's bundled downloader with named proxy/CA/TLS/offline settings and no retries; no new download dependency is added. No installer work runs on startup or inference paths. `package-update.mjs` keeps
+It reuses the selected npm's bundled downloader with named proxy/CA/TLS/offline settings and no retries; no new download dependency is added. No network installation runs on ordinary startup or inference paths. Opted-in supervisor startup copies/verifies its current immutable runtime; its separate night scheduler is described below. `package-update.mjs` keeps
 source choice, named npm-policy probes and fixed platform launch arguments;
 verified filenames enter cmd.exe, while paths enter cwd. Private-runtime commands
 are regenerated before committing a successful update. This provides error
@@ -701,3 +701,70 @@ backup during native reconciliation, before the config transaction commits.
 Unknown/partial caches are not claimed. On config commit failure, the old cache
 is restored only if the client has not created a new cache. This is a bounded
 schema migration, not a periodic cache purge or a credential/session reset.
+
+
+## Optional supervised nightly updates
+
+`nightly-update.mjs` owns local-window/version eligibility, bounded public Release
+lookup, policy-preserving staging and real runtime checks. It reuses
+`release-install.mjs` package transactions, checksum checks and private command
+writers. Rollback restores launcher symlinks by link text; it never follows a
+relative symlink from its backup location. Completed rollback is idempotent and
+cleanup errors do not conceal a successful restoration.
+
+`service-supervisor.mjs` is loaded by normal `start` only after an explicit saved
+opt-in and recognized/writable npm preflight. It keeps a foreground controller
+and one active gateway worker, briefly warming a second candidate on an internal
+loopback port. It stages beside the active immutable tree and serializes
+one version transition. The controller carries no request-forwarding hot path.
+Manual startup and all other commands retain their existing process model.
+An unsupported copy/verification setup falls back to ordinary startup.
+
+`service-worker.mjs` is the version-one private process protocol. It is enabled
+only on an inherited IPC channel plus the worker marker, not by a WebUI request.
+It exposes bounded inspect/quiesce/import/release/promote/resume/commit operations
+to its parent and
+forwards preference changes and notices; notices use the worker's existing
+terminal sink. Source/model defaults, client files and sign-in fingerprints are
+compared around the transition. Maintenance startup defers client synchronizers,
+skips interactive login and client writes, checks selected GitHub discovery
+without inference, and imports history before taking the original public port.
+The old instance retains its provider state until the warmed replacement passes
+validation; rollback resumes it rather than rebuilding a cold directory. GitHub
+identity comparisons ignore refreshed verification timestamps.
+
+`response-history.mjs` validates complete acyclic source-namespaced history and
+its byte/entry budget before publication. `image-references.mjs` validates
+provider-scoped image handles before importing its bounded LRU. `api-secrets.mjs` permits private transfer only of cached references still allowed
+by the unchanged configuration. Those plaintext in-memory values remain confined
+to inherited IPC; they are never written to a checkpoint, UI snapshot or log. The snapshot is consumed and released during
+private handoff; no plaintext disk checkpoint or key-store rewrite is added.
+`optional-routes.mjs` also counts pending optional requests so management/sign-in
+work cannot be mistaken for an idle gateway. Ordinary shutdown drains HTTP
+requests before closing providers. User stop/disconnect takes precedence over
+updates; fallback is attempted once, not an unbounded restart loop.
+
+The schema and failure limits, local schedule, install-owner checks and recovery
+boundaries are normative in REFERENCE.md. Future patch releases accepted by this
+channel must preserve private protocol v1 and the native client contracts.
+
+## Incremental Web rendering and cold-start sharing
+
+`dashboard/view-boundary.js` contains optional view failures without introducing
+a plugin runtime. Only a fixed set of view methods is wrapped; a failed view
+keeps the latest arguments per method for explicit retry. Shared refresh
+generation checks and request cancellation remain in `refresh.js`.
+`dashboard/flow.js` retains active detail rows by request ID. CSS alone rotates
+the theme ring, with visibility/staleness and reduced-motion gates.
+
+`dashboard.mjs` snapshots the static bundle lazily, checks its package version,
+stamps HTML resource URLs, and computes byte-specific ETags once. Sensitive and
+dynamic endpoints remain uncached. No shell/provider dependency is added to
+rendering, and no content-bearing response is reused across credential scopes.
+
+`api-secrets.mjs` joins concurrent reads of one reference and prevents late
+reads from republishing after clear/set/remove. `providers/api.mjs` reuses the
+existing cancellation-aware single-flight for transport initialization: one
+waiter cannot abort another, while the last cancellation or provider closure
+stops the shared setup. Existing native stream validation, byte admission,
+connection reuse, bounded metrics/logging and pinned source semantics remain.

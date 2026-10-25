@@ -1,11 +1,13 @@
 import { serviceSettingsSnapshot, servicePreferences, writeServicePreference,
-  writeTerminalAnimationTheme, writeTerminalColorTheme, responseHistoryLimitPreference, writeResponseHistoryLimitMib } from "./user-settings.mjs";
+  writeTerminalAnimationTheme, writeTerminalColorTheme, responseHistoryLimitPreference, writeResponseHistoryLimitMib,
+  nightlyUpdatePreference, writeNightlyUpdatePreference } from "./user-settings.mjs";
 import { readImageProviderConfig } from "./image-provider-config.mjs";
 import { readPredictionSettings } from "./native-prediction-profile.mjs";
 import { cacheRuntimeSnapshot, cleanRuntimeCaches, setHistoryCacheLimit } from "./cache-control.mjs";
 import { isTerminalAnimationTheme } from "./terminal-animation.mjs";
 
 export function createServiceControl({ env = process.env, home, providerRuntime, clientIntegration, terminal,
+  nightlyStatus = () => null, nightlyChanged = () => {},
   readImages = () => readImageProviderConfig({ env, home }), readPrediction = () => readPredictionSettings({ env, home }) } = {}) {
   const options = { env, home };
   let serial = Promise.resolve();
@@ -14,7 +16,9 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     let imageConfigured = false, predictionConfigured = false;
     try { imageConfigured = Boolean(readImages()); } catch {}
     try { predictionConfigured = readPrediction().enabled === true; } catch {}
+    const enabled = nightlyUpdatePreference(options), nightly = nightlyStatus();
     return { source: "service_settings", saved, theme, color_theme,
+      nightly_update: { enabled, ...nightly, effect: enabled && !nightly ? "next_start" : "immediate" },
       effective: {
         terminal_animation_enabled: { value: terminal?.enabled === true && saved.terminal_animation_enabled && !/^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || ""),
           state: terminal?.enabled === true ? "immediate" : "terminal_unavailable", locked: /^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || "") },
@@ -27,11 +31,13 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
   }
   async function apply(input) {
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid setting action");
-    const allowed = { preference: ["action", "key", "value"], animation: ["action", "theme"], color_theme: ["action", "theme"],
+    const allowed = { preference: ["action", "key", "value"], nightly_update: ["action", "enabled"], animation: ["action", "theme"], color_theme: ["action", "theme"],
       history_limit: ["action", "mib"], history_clean: ["action"], prediction_fix: ["action"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
     if (!allowed || Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unknown setting action or field");
-    if (input.action === "preference") {
+    if (input.action === "nightly_update") {
+      writeNightlyUpdatePreference(input.enabled, options);nightlyChanged(input.enabled);
+    } else if (input.action === "preference") {
       writeServicePreference(input.key, input.value, options);
       if (input.key === "prediction_enabled") clientIntegration?.setPredictionActive(input.value);
       terminal?.apply?.({ ...servicePreferences(options) });

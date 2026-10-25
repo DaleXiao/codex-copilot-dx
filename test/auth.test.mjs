@@ -837,3 +837,11 @@ test("writeToken: a token without identity removes stale metadata last", () => {
   assert.equal(fs.existsSync(githubTokenMetadataPath(home)), false);
   if (process.platform !== "win32") assert.equal(fs.statSync(githubTokenPath(home)).mode & 0o777, 0o600);
 });
+
+test('unattended startup never discovers credentials or opens interactive sign-in', async t => {
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'ccdx-unattended-auth-'));t.after(()=>fs.rmSync(home,{recursive:true,force:true}));let calls=0;
+ await assert.rejects(ensureAuth({home,env:{},interactive:false,fetchImpl:async()=>{calls++;throw Error('unexpected');},openAndCopyFn:()=>{calls++;},log:()=>{}}),/unattended/);
+ assert.equal(calls,0);assert.equal(fs.existsSync(githubTokenLockPath(home)),false);
+ const file=githubTokenPath(home);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'synthetic-existing-token');
+ await ensureAuth({home,env:{},interactive:false,fetchImpl:async()=>{calls++;throw Error('unexpected');},log:()=>{}});assert.equal(calls,0);
+});

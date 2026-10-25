@@ -61,6 +61,18 @@ export function createByteLruCache({ maxBytes }) {
       misses = 0;
       evictions = 0;
     },
+    exportEntries() { return [...entries].map(([key, entry]) => [key, entry.value]); },
+    importEntries(values) {
+      if (!Array.isArray(values) || values.length > 10000) throw new Error("Invalid cache handoff");
+      const seen = new Set();let size = 0;
+      for (const pair of values) {
+        if (!Array.isArray(pair) || pair.length !== 2 || pair.some(value => typeof value !== "string") || seen.has(pair[0])) throw new Error("Invalid cache handoff");
+        seen.add(pair[0]);size += byteLength(pair[0]) + byteLength(pair[1]);
+        if (size > limit) throw new Error("Cache handoff exceeds this version's limit");
+      }
+      entries.clear();bytes = 0;
+      for (const [key, value] of values) { const size = byteLength(key) + byteLength(value);entries.set(key, { value, bytes: size });bytes += size; }
+    },
     stats() {
       return {
         entries: entries.size,

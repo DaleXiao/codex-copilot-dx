@@ -57,6 +57,7 @@ export function createApiCatalogRefresh({ config, source, track, revision, commi
     return flight.promise;
   }
   return {
+    busy: () => pending.size > 0,
     refresh, cancel, invalidate,
     refreshAll(ids) {
       if (closed) return Promise.resolve();

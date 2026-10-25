@@ -12,6 +12,7 @@ import { createRequestId, runWithRequestContext, currentRequestContext } from ".
 import { requestApplication } from "./request-application.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { status } from "./status.mjs";
+import { exportResponseHistory, importResponseHistory } from "./response-history.mjs";
 import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
 import { ADAPTER_HEALTH_PATH, ADAPTER_PREDICTION_FIX_PATH } from "./running-adapter.mjs";
 import { createManagementHandler, isManagementRoute } from "./management-routes.mjs";
@@ -264,6 +265,9 @@ export function createAdapterHandler(options = {}) {
     return providerHandlers.get(provider);
   }
   const dispatch = async (req, res, pathname) => {
+    if (options.isDraining?.() && ![ADAPTER_STATUS_PATH, ADAPTER_HEALTH_PATH].includes(pathname)) {
+      res.setHeader("Retry-After", "1");sendJsonError(res, httpError("CCDX is switching versions; retry shortly", 503));return;
+    }
     if (pathname.startsWith("/anthropic/")) {
       if (!isLoopbackAddress(req.socket?.remoteAddress) || !req.headers?.host || !isLoopbackHostHeader(req.headers.host)
         || Object.hasOwn(req.headers, "origin")) { sendJsonError(res, httpError("Claude requires native local clients", 403));return; }
@@ -482,13 +486,20 @@ export function createAdapterHandler(options = {}) {
     }
   };
   handler.snapshot = statusSnapshot;
+  handler.busy = () => optionalRoutes.busy() || options.providerRuntime?.busy?.() === true;
+  handler.exportState = () => ({ version: 1, history: exportResponseHistory(), optional: optionalRoutes.exportState() });
+  handler.importState = async state => {
+    if (state?.version !== 1) throw new Error("Unsupported service-state version");
+    importResponseHistory(state.history);await optionalRoutes.importState(state.optional);
+  };
   handler.cleanup = () => optionalRoutes.dispose();
   return handler;
 }
 
 // Public server entry point.
 
-export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
+export async function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
+  const handoffState = options.handoffState;options = { ...options };delete options.handoffState;
   const ownsTerminalActivity = !Object.hasOwn(options, "terminalActivity");
   const terminalActivity = ownsTerminalActivity
     ? createTerminalActivityIndicator({ theme: options.terminalAnimationTheme })
@@ -496,11 +507,15 @@ export function startAdapter(port = 2026, host = "127.0.0.1", options = {}) {
   const handler = createAdapterHandler({ ...options, terminalActivity, imageMcpHostname: host });
   const server = http.createServer(handler);
   server.ccdxSnapshot = handler.snapshot;
+  server.ccdxBusy = handler.busy;
+  server.ccdxExportState = handler.exportState;
+  server.ccdxImportState = handler.importState;
+  if (handoffState) await handler.importState(handoffState);
   const cleanupTerminalActivity = () => {
     if (ownsTerminalActivity) terminalActivity?.cleanup?.();
     handler.cleanup?.();
   };
-  server.once("close", cleanupTerminalActivity);
+  server.on("close", cleanupTerminalActivity);
 
   server.on("upgrade", (req, socket) => {
     // The responses_websockets upgrade expects a server-push protocol that this

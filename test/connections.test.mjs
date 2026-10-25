@@ -463,3 +463,20 @@ test("legacy single-source Codex review choices use refreshed capability evidenc
   assert.equal(s.runtime.providerPreference(id).auto_review_effort, "high");
   assert.deepEqual(s.runtime.dashboardCatalog({ provider: id }).models.find(m => m.id === "custom/response").auto_review_efforts, ["low", "high"]);
 });
+
+test('maintenance startup cannot call client writers or publish background API discovery', async t => {
+ let preserving=false,writes=0;
+ const s=runtime(t,{preserveClientConfiguration:()=>preserving,configureCodex:()=>{writes++;return {state:'configured'};}});
+ await save(s.runtime);const before=writes;preserving=true;
+ await s.runtime.syncClients();await s.runtime.start();await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(writes,before);assert.equal(s.calls.length,0);
+ preserving=false;await s.runtime.syncClients(['codex']);assert.ok(writes>before);
+});
+test('private cached keys hand off only to their unchanged allowed reference set', async () => {
+ const ref='e'.repeat(32),other='d'.repeat(32),key='synthetic-private-key';
+ const store=createApiSecretStore({platform:'darwin',env:{},run:async()=>key});await store.get(ref);await store.get(other);
+ const state=store.exportState([ref]);assert.deepEqual(state,[[ref,key]]);
+ const restored=createApiSecretStore({platform:'darwin',env:{},run:async()=>{throw Error('vault should not be read');}});
+ restored.importState(state,[ref]);assert.equal(await restored.get(ref),key);
+ assert.throws(()=>restored.importState([[other,key]],[ref]));assert.equal(await restored.get(ref),key);store.close();restored.close();
+});

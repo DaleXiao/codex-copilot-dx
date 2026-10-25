@@ -132,6 +132,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
   return {
     get enabled() { return supported() && fits && !verbose; },
     start() { if (running) return;running = true;tick(); },
+    pause() { running = false;if (timer) timers.clearTimeout(timer);timer = null;if (lines) output.write("\n");lines = 0;previous = [];dirty = true; },
     beginRequest() { active++;dirty = true;let done = false;return () => { if (!done) { done = true;active = Math.max(0, active - 1);dirty = true; } }; },
     log(method, args) {
       const message = redactDiagnosticText(format(...args));

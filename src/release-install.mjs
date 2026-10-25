@@ -47,8 +47,8 @@ export function createNpmReleaseFetch(npmCli, { env = process.env, exec = execFi
   }
 }
 
-export async function releaseBytes(url, { fetchImpl = fetch, maxBytes, timeoutMs = 60000 } = {}) {
-  const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs), headers: { "User-Agent": "codex-copilot-dx", Accept: "application/octet-stream" } });
+export async function releaseBytes(url, { fetchImpl = fetch, maxBytes, timeoutMs = 60000, signal } = {}) {
+  const response = await fetchImpl(url, { redirect: "follow", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs), headers: { "User-Agent": "codex-copilot-dx", Accept: "application/octet-stream" } });
   const final = response.url && new URL(response.url);
   if (!response.ok || final && (final.protocol !== "https:" || !["github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"].includes(final.hostname))) {
     await response.body?.cancel();throw new Error(`Release download refused (HTTP ${response.status}). Check company proxy, certificates and approved download access. No fallback was attempted.`);
@@ -85,12 +85,12 @@ export function packageMetadata(bytes) {
   if (metadata?.name !== "codex-copilot-dx" || !stableVersion(metadata.version)) throw new Error("Release package identity is invalid");
   return metadata;
 }
-export async function downloadRelease(tag, { fetchImpl = fetch, directory } = {}) {
+export async function downloadRelease(tag, { fetchImpl = fetch, directory, signal } = {}) {
   const version = stableVersion(tag);if (!version) throw new Error("A valid stable GitHub release tag is required");
   const name = `codex-copilot-dx-${version}.tgz`, base = `${RELEASE_BASE}/v${version}`;
-  const manifest = await releaseBytes(`${base}/SHA256SUMS`, { fetchImpl, maxBytes: 65536 });
+  const manifest = await releaseBytes(`${base}/SHA256SUMS`, { fetchImpl, maxBytes: 65536, signal });
   const expected = releaseChecksum(manifest, name);
-  const bytes = await releaseBytes(`${base}/${name}`, { fetchImpl, maxBytes: 16 * 1024 * 1024 });
+  const bytes = await releaseBytes(`${base}/${name}`, { fetchImpl, maxBytes: 16 * 1024 * 1024, signal });
   if (createHash("sha256").update(bytes).digest("hex") !== expected) throw new Error("Release checksum mismatch; no installation was started");
   if (packageMetadata(bytes).version !== version) throw new Error("Release package version does not match its tag");
   const file = path.join(directory, name);fs.writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });return { file, name, version };
@@ -109,19 +109,25 @@ export function protectInstallation({ target, prefix, platform = process.platfor
   const entries = [target, ...["ccdx", "codex-copilot-dx"].flatMap(name => platform === "win32"
     ? [name, `${name}.cmd`, `${name}.ps1`].map(file => path.join(prefix, file)) : [path.join(prefix, "bin", name)])];
   const saved = [];
-  const clean = () => { fs.rmSync(backup, { recursive: true, force: true });fs.closeSync(fd);fs.unlinkSync(lock); };
+  const closeLock = () => { if (fd !== undefined) { const handle = fd;fd = undefined;fs.closeSync(handle); } };
+  const copyEntry = (from, to) => {
+    if (fs.lstatSync(from).isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(from), to);
+    else fs.cpSync(from, to, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
+  };
+  const clean = () => { fs.rmSync(backup, { recursive: true, force: true });closeLock();fs.unlinkSync(lock); };
   try {
     entries.forEach((file, index) => {
       let stat;try { stat = fs.lstatSync(file); } catch (error) { if (error.code !== "ENOENT") throw error; }
       if (file === target && stat && (!stat.isDirectory() || stat.isSymbolicLink())) throw new Error("The npm target is linked or not a regular installation; use its owning installer");
       const copy = path.join(backup, String(index));
-      if (stat) fs.cpSync(file, copy, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
+      if (stat) copyEntry(file, copy);
       saved.push({ file, copy, existed: Boolean(stat) });
     });
   } catch (error) { clean();throw error; }
   let finalized = false;
   return {
     commit() {
+      if (finalized) return;
       finalized = true;
       try { clean(); }
       catch { console.error(`CCDX was installed, but backup cleanup needs attention: ${backup}; check ${lock} before retrying.`); }
@@ -131,13 +137,15 @@ export function protectInstallation({ target, prefix, platform = process.platfor
       try {
         for (const { file, copy, existed } of saved) {
           fs.rmSync(file, { recursive: true, force: true });
-          if (existed) fs.cpSync(copy, file, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
+          if (existed) copyEntry(copy, file);
         }
-        clean();
       } catch (error) {
-        fs.closeSync(fd);
+        closeLock();
         throw new Error(`Restore could not finish. Previous package and commands remain at ${backup}; do not delete the install lock until restored.`, { cause: error });
       }
+      finalized = true;
+      try { clean(); }
+      catch { console.error(`Previous CCDX was restored, but backup cleanup needs attention: ${backup}; check ${lock} before retrying.`); }
     },
   };
 }
@@ -149,8 +157,12 @@ export function verifyPackageRuntime(target, version, { brokerRequired = false }
   if (!output.includes(`ccdx v${version} `)) throw new Error("Installed command version could not be verified");
 }
 
-export async function writePrivateLaunchers({ prefix, target }) {
+export function privateUnixLauncher({ prefix, target, name, node = process.execPath }) {
   const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+  const cli = path.join(target, "bin", name === "ccdx" ? "cli.mjs" : "codex-copilot-dx.mjs");
+  return `#!/bin/sh\nPATH=${quote(path.dirname(node))}:"$PATH"\nexport PATH\nCCDX_PRIVATE_INSTALL_PREFIX=${quote(prefix)}\nexport CCDX_PRIVATE_INSTALL_PREFIX\nif [ -z "\${npm_config_prefix:-}\${NPM_CONFIG_PREFIX:-}" ]; then npm_config_prefix=${quote(prefix)}; export npm_config_prefix; fi\nexec ${quote(node)} ${quote(cli)} "$@"\n`;
+}
+export async function writePrivateLaunchers({ prefix, target }) {
   const windows = process.platform === "win32"
     ? await import(pathToFileURL(path.join(target, "src", "windows-command.mjs")).href) : null;
   for (const name of ["ccdx", "codex-copilot-dx"]) {
@@ -159,7 +171,7 @@ export async function writePrivateLaunchers({ prefix, target }) {
       fs.writeFileSync(path.join(prefix, `${name}.cmd`), windows.privateWindowsCommand({ node: process.execPath, cli, prefix }));
     } else {
       const file = path.join(prefix, "bin", name);fs.rmSync(file, { force: true });
-      fs.writeFileSync(file, `#!/bin/sh\nPATH=${quote(path.dirname(process.execPath))}:"$PATH"\nexport PATH\nCCDX_PRIVATE_INSTALL_PREFIX=${quote(prefix)}\nexport CCDX_PRIVATE_INSTALL_PREFIX\nif [ -z "\${npm_config_prefix:-}\${NPM_CONFIG_PREFIX:-}" ]; then npm_config_prefix=${quote(prefix)}; export npm_config_prefix; fi\nexec ${quote(process.execPath)} ${quote(cli)} "$@"\n`, { mode: 0o755 });
+      fs.writeFileSync(file, privateUnixLauncher({ prefix, target, name }), { mode: 0o755 });
     }
   }
   if (windows && windows.inspectWindowsCommand({ packageRoot: target, repair: true }).status !== "ready") throw new Error("Private Windows commands could not be verified");

@@ -321,5 +321,8 @@ export function createImageMcpHandler({
   };
   // Status never reads credentials, loads image guidance, or probes a provider.
   handler.stats = () => ({ ...metrics, active, max_concurrent: maxConcurrent });
+  handler.exportState = () => { if (active) throw new Error("Image requests are active");return imageReferences.exportState(); };
+  handler.importState = state => imageReferences.importState(state);
+  handler.referenceBytes = () => imageReferences.stats().bytes;
   return handler;
 }

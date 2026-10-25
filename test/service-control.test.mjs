@@ -88,3 +88,11 @@ test("queued UI changes preserve concurrent CLI preferences and recover after a 
   assert.equal(saved.terminal_color_theme, "pink");assert.equal(saved.open_webui, false);assert.equal(saved.image_enabled, false);
   assert.equal(applied[0].color_theme, "pink");
 });
+
+test('nightly updates default off, require a boolean and do not enable other service features', async t => {
+ const f=fixture(t);assert.equal(f.control.snapshot().nightly_update.enabled,false);
+ await f.control.action({action:'preference',key:'image_enabled',value:false});
+ const enabled=await f.control.action({action:'nightly_update',enabled:true});assert.equal(enabled.nightly_update.enabled,true);assert.equal(enabled.nightly_update.effect,'next_start');
+ assert.equal(enabled.saved.image_enabled,false);await assert.rejects(f.control.action({action:'nightly_update',enabled:'true'}));
+ await f.control.action({action:'nightly_update',enabled:false});assert.equal(f.control.snapshot().nightly_update.enabled,false);
+});

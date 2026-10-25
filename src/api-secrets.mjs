@@ -25,7 +25,8 @@ export function checkedApiKey(key) {
   if (typeof key !== "string" || !/^[\x21-\x7e]{8,4096}$/.test(key)) throw accessError("ccdx_api_key_invalid");return key;
 }
 export function createApiSecretStore({ platform = process.platform, env = process.env, run = secretProcess, ...options } = {}) {
-  const cache = new Map(), folder = path.join(path.dirname(accessSettingsPath({ ...options, env })), "api-secrets");
+  const cache = new Map(), reads = new Map(), folder = path.join(path.dirname(accessSettingsPath({ ...options, env })), "api-secrets");
+  const forget = id => { cache.delete(id);reads.delete(id); };
   const ref = id => { if (!/^[a-f0-9]{32}$/.test(id)) throw accessError("ccdx_api_key_invalid");return id; };
   const powershell = path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const ps = async (script, input) => run(powershell, ["-NoProfile", "-NonInteractive", "-Command",
@@ -33,6 +34,9 @@ export function createApiSecretStore({ platform = process.platform, env = proces
   return {
     async get(id) {
       ref(id);if (cache.has(id)) return cache.get(id);
+      if (reads.has(id)) return reads.get(id).promise;
+      const flight = {};
+      flight.promise = Promise.resolve().then(async () => {
       let key;
       if (platform === "darwin") key = await run("/usr/bin/security", ["find-generic-password", "-s", SERVICE, "-a", id, "-w"], "", env);
       else if (platform === "win32") {
@@ -40,10 +44,13 @@ export function createApiSecretStore({ platform = process.platform, env = proces
         if (!/^[A-Za-z0-9+/]{64,65536}={0,2}$/.test(encrypted) || encrypted.length % 4) throw accessError("ccdx_api_secret_unavailable", 503);
         key = await ps("$null=[Reflection.Assembly]::LoadWithPartialName('System.Security');$b=[Convert]::FromBase64String([Console]::In.ReadLine());$p=[Security.Cryptography.ProtectedData]::Unprotect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);[Console]::Write([Text.Encoding]::UTF8.GetString($p))", encrypted);
       } else key = await run("/usr/bin/secret-tool", ["lookup", "service", SERVICE, "reference", id], "", env);
-      checkedApiKey(key);cache.set(id, key);return key;
+      checkedApiKey(key);if (reads.get(id) === flight) cache.set(id, key);return key;
+      }).finally(() => { if (reads.get(id) === flight) reads.delete(id); });
+      reads.set(id, flight);return flight.promise;
     },
     async set(id, key) {
-      ref(id);checkedApiKey(key);
+      ref(id);checkedApiKey(key);forget(id);
+      try {
       if (platform === "darwin") {
         const quote = value => '"' + value.replace(/[\\"]/g, "\\$&") + '"';
         await run("/usr/bin/security", ["-i"], `add-generic-password -a ${quote(id)} -s ${quote(SERVICE)} -w ${quote(key)}\n`, env);
@@ -56,14 +63,26 @@ export function createApiSecretStore({ platform = process.platform, env = proces
         if (!/^[A-Za-z0-9+/]{64,65536}={0,2}$/.test(encrypted) || encrypted.length % 4) throw accessError("ccdx_api_secret_unavailable", 503);
         fs.mkdirSync(folder, { recursive: true, mode: 0o700 });atomicWriteFileSync(path.join(folder, id), encrypted, { mode: 0o600 });
       } else await run("/usr/bin/secret-tool", ["store", "--label=CCDX API", "service", SERVICE, "reference", id], key, env);
-      cache.set(id, key);
+      } catch (error) { forget(id);throw error; }
+      forget(id);cache.set(id, key);
     },
     async remove(id) {
-      ref(id);cache.delete(id);
-      if (platform === "darwin") await run("/usr/bin/security", ["delete-generic-password", "-s", SERVICE, "-a", id], "", env);
-      else if (platform === "win32") fs.rmSync(path.join(folder, id), { force: true });
-      else await run("/usr/bin/secret-tool", ["clear", "service", SERVICE, "reference", id], "", env);
+      ref(id);forget(id);
+      try {
+        if (platform === "darwin") await run("/usr/bin/security", ["delete-generic-password", "-s", SERVICE, "-a", id], "", env);
+        else if (platform === "win32") fs.rmSync(path.join(folder, id), { force: true });
+        else await run("/usr/bin/secret-tool", ["clear", "service", SERVICE, "reference", id], "", env);
+      } finally { forget(id); }
     },
-    close() { cache.clear(); },
+    close() { cache.clear();reads.clear(); },
+    exportState(allowed) { return [...cache].filter(([id]) => allowed.includes(id)); },
+    importState(values, allowed) {
+      if (!Array.isArray(values) || values.length > 16 || new Set(values.map(pair => pair?.[0])).size !== values.length) throw accessError("ccdx_api_secret_unavailable", 503);
+      for (const pair of values) {
+        if (!Array.isArray(pair) || pair.length !== 2 || !allowed.includes(pair[0])) throw accessError("ccdx_api_secret_unavailable", 503);
+        ref(pair[0]);checkedApiKey(pair[1]);
+      }
+      for (const [id, key] of values) { forget(id);cache.set(id, key); }
+    },
   };
 }

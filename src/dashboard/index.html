@@ -11,6 +11,7 @@
     <script src="/refresh.js" defer></script>
     <script src="/icons.js" defer></script>
     <script src="/time.js" defer></script>
+    <script src="/view-boundary.js" defer></script>
     <script src="/status.js" defer></script>
     <script src="/activity.js" defer></script>
     <script src="/flow.js" defer></script>
@@ -391,6 +392,11 @@
         <section class="panel dashboard-section" id="version-updates" aria-labelledby="version-updates-title">
           <div class="version-heading"><h2 id="version-updates-title" data-i18n="version_updates">VERSION &amp; UPDATES</h2><button id="check-updates" type="button" data-i18n="check_updates">Check for updates</button></div>
           <dl class="version-list"><div><dt data-i18n="current_version">Current version</dt><dd id="update-current-version">—</dd><dd id="update-current-date" class="hint">—</dd></div><div id="update-latest-row" hidden><dt data-i18n="available_update">Update available</dt><dd id="update-latest-version">—</dd><dd id="update-latest-date" class="hint">—</dd></div></dl>
+          <div class="nightly-update">
+            <div class="setting-row"><label for="nightly-update" data-i18n="nightly_update">Update overnight</label><input id="nightly-update" type="checkbox" role="switch" aria-describedby="nightly-risk" disabled><span id="nightly-state" class="hint" role="status"></span></div>
+            <p id="nightly-risk" class="hint" data-i18n="nightly_risk">Updates install a new version and restart CCDX. Continuing a conversation may be affected.</p>
+            <div id="nightly-rules" hidden><dl class="nightly-rules"><div><dt data-i18n="nightly_window">Update window</dt><dd data-i18n="nightly_window_value">00:00–04:00 · Local time</dd></div><div><dt data-i18n="nightly_when">When to update</dt><dd data-i18n="nightly_when_value">Idle for 10 minutes, after checks pass</dd></div><div><dt data-i18n="nightly_versions">Versions</dt><dd data-i18n="nightly_versions_value">Stable patches released at least 24 hours ago</dd></div><div><dt data-i18n="nightly_failure">If an update fails</dt><dd data-i18n="nightly_failure_value">Try restoring the previous version and pause this update</dd></div></dl></div>
+          </div>
           <p id="update-state" class="hint" role="status" data-i18n="reading">READING</p>
           <div id="update-command-row" class="update-command"><code id="update-command">ccdx update github</code><button type="button" id="copy-update" data-i18n="copy_command">Copy command</button></div>
           <p class="hint" data-i18n="update_restart">Run in your terminal, then restart CCDX.</p>

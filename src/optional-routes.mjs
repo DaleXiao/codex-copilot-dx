@@ -1,4 +1,4 @@
-export const DASHBOARD_PATHS = new Set(["/", "/ui.css", "/theme.js", "/language.js", "/refresh.js", "/time.js", "/animation.js", "/status.js", "/activity.js", "/flow.js", "/usage.js", "/ui.js", "/console.js", "/updates.js", "/icons.js", "/tools.js", "/connections.js"]);
+export const DASHBOARD_PATHS = new Set(["/", "/ui.css", "/theme.js", "/language.js", "/refresh.js", "/time.js", "/animation.js", "/status.js", "/view-boundary.js", "/activity.js", "/flow.js", "/usage.js", "/ui.js", "/console.js", "/updates.js", "/icons.js", "/tools.js", "/connections.js"]);
 export const DASHBOARD_API_PATHS = new Set(["/_ccdx/ui/animation", "/_ccdx/ui/models/live", "/_ccdx/ui/usage", "/_ccdx/ui/auth", "/_ccdx/ui/providers", "/_ccdx/ui/settings", "/_ccdx/ui/m365/accounts", "/_ccdx/ui/updates", "/_ccdx/ui/account", "/_ccdx/ui/checks", "/_ccdx/ui/connections"]);
 
 export function isOptionalRoute(method, pathname) {
@@ -11,29 +11,43 @@ export function isOptionalRoute(method, pathname) {
 export function createOptionalRoutes(options = {}) {
   let imageMcpHandler = options.imageMcpHandler || null;
   let tools = null;
+  let pending = 0;
   return {
     dispose() { tools?.dispose(); },
+    busy: () => pending > 0 || tools?.busy?.() === true,
+    exportState() { const images = imageMcpHandler?.exportState?.() || [];return { images, bytes: (imageMcpHandler?.referenceBytes?.() || 0) + images.length * 64 }; },
+    async importState(state) {
+      if (!state || !Array.isArray(state.images)) throw new Error("Invalid optional-service handoff");
+      if (state.images.length) {
+        const { createImageMcpHandler } = await import("./image-mcp.mjs");
+        imageMcpHandler ||= createImageMcpHandler({ localHostname: options.imageMcpHostname });
+        imageMcpHandler.importState(state.images);
+      }
+    },
     imageStats() { return imageMcpHandler?.stats?.(); },
     async handle(req, res, pathname) {
+      pending++;
+      try {
       if (DASHBOARD_API_PATHS.has(pathname)) {
         const { handleDashboardApi } = await import("./dashboard-api.mjs");
         if (["/_ccdx/ui/account", "/_ccdx/ui/checks"].includes(pathname)) {
           const { createDashboardTools } = await import("./dashboard-tools.mjs");
           tools ||= createDashboardTools(options.dashboardOptions);
         }
-        return handleDashboardApi(req, res, pathname, { ...options.dashboardOptions, tools });
+        return await handleDashboardApi(req, res, pathname, { ...options.dashboardOptions, tools });
       }
       if ((req.method === "GET" || req.method === "HEAD") && DASHBOARD_PATHS.has(pathname)) {
         const { serveDashboard } = await import("./dashboard.mjs");
-        return serveDashboard(req, res, pathname);
+        return await serveDashboard(req, res, pathname);
       }
       if (pathname === "/mcp/image") {
-        if (imageMcpHandler) return imageMcpHandler(req, res);
-        return import("./image-mcp.mjs").then(({ createImageMcpHandler }) => {
+        if (imageMcpHandler) return await imageMcpHandler(req, res);
+        return await import("./image-mcp.mjs").then(({ createImageMcpHandler }) => {
           imageMcpHandler ||= createImageMcpHandler({ localHostname: options.imageMcpHostname });
           return imageMcpHandler(req, res);
         });
       }
+      } finally { pending--; }
     },
   };
 }

@@ -339,6 +339,7 @@ export async function ensureAuth({
   githubIdentityTimeoutMs = DEFAULT_GITHUB_IDENTITY_TIMEOUT_MS,
   sleepImpl = sleep,
   now = Date.now,
+  interactive = true,
 } = {}) {
   const GITHUB_TOKEN_PATH = githubTokenPath(home);
   if (fs.existsSync(GITHUB_TOKEN_PATH)) {
@@ -350,6 +351,7 @@ export async function ensureAuth({
     log(status("warn", "GitHub token file is empty"));
   }
 
+  if (!interactive) throw new Error("Saved GitHub sign-in is unavailable; unattended login was skipped");
   await withFileLock(githubTokenLockPath(home), async () => {
     const savedToken = readSavedGithubToken(home);
     if (savedToken) {

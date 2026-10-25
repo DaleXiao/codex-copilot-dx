@@ -36,6 +36,15 @@ export function createImageReferenceStore({ maxBytes = 64 * 1024 * 1024 } = {}) 
       return JSON.parse(value);
     },
     clear() { cache.clear(); },
+    exportState() { return cache.exportEntries(); },
+    importState(values) {
+      if (!Array.isArray(values) || values.some(pair => !Array.isArray(pair) || !/^[a-f0-9]{64}:ccdx_img_[0-9a-f-]{36}$/.test(pair[0]) || typeof pair[1] !== "string")) throw new Error("Invalid image-reference handoff");
+      for (const [, value] of values) {
+        const item = JSON.parse(value);
+        if (typeof item.image !== "string" || !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(item.image)) throw new Error("Invalid image-reference handoff");
+      }
+      cache.importEntries(values);
+    },
     stats() { return cache.stats(); },
   };
 }

@@ -17,3 +17,15 @@ test("a live child process does not retain the closed service listener", { timeo
   await new Promise((resolve, reject) => { replacement.once("error", reject);replacement.listen(port, "127.0.0.1", resolve); });
   assert.equal(child.exitCode, null);assert.equal(replacement.address().port, port);
 });
+
+test('a handed-back listener disposes optional tools on every close', async () => {
+ const {startAdapter}=await import('../src/adapter.mjs');const {closeHttpServer}=await import('../src/shutdown.mjs');let disposed=0;
+ const server=await startAdapter(0,'127.0.0.1',{log:()=>{},dashboardOptions:{accountTools:{snapshot:()=>({source:'account_tools'}),dispose(){disposed++;}}}});
+ try{
+  for(let i=0;i<2;i++){
+   if(i)await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+   const result=await fetch(`http://127.0.0.1:${server.address().port}/_ccdx/ui/account`,{headers:{'x-ccdx-dashboard':'1'}});assert.equal(result.status,200);await result.text();
+   await closeHttpServer(server);assert.equal(disposed,i+1);
+  }
+ }finally{await closeHttpServer(server);}
+});

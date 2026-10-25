@@ -6,6 +6,7 @@
   const label = (node, key, values = {}) => globalThis.ccdxLanguage.set(node, key, values);
   const format = (key, values = {}) => globalThis.ccdxLanguage.format(key, values);
   const nodes = { apps: new Map(), models: new Map() };
+  const detailRows = new Map();
   let rows = [], total = null, omitted = 0, fresh = false, deadline = 0, expiry = null;
   let selected = null, expanded = false, lastSignature = "", geometry = "", known = false;
   let lastApps = [], lastModels = [];
@@ -27,6 +28,11 @@
   function svg(tag, values) { const node = document.createElementNS(ns, tag);for (const [key, value] of Object.entries(values)) node.setAttribute(key, value);return node; }
   const logo = el("status-icon")?.cloneNode(true);
   if (logo) { logo.removeAttribute("id");logo.setAttribute("class", "flow-logo");el("flow-hub").prepend(logo); }
+  const halo = svg("svg", { class: "flow-halo", viewBox: "0 0 60 60", "aria-hidden": "true" });
+  halo.append(svg("circle", { class: "flow-halo-track", cx: 30, cy: 30, r: 28 }));
+  const orbit = svg("svg", { class: "flow-halo flow-halo-turn", viewBox: "0 0 60 60", "aria-hidden": "true" });
+  orbit.append(svg("circle", { cx: 30, cy: 30, r: 28 }));
+  el("flow-hub").append(halo, orbit);
 
   function group(type) {
     const map = new Map();
@@ -76,14 +82,18 @@
   function details() {
     label(el("flow-active-title"), fresh ? "flow_active_count" : "flow_last_count", { count: rows.filter(related).length });
     if (!el("flow-active").open) return;
-    const body = el("flow-active-body"), records = rows.filter(related);body.replaceChildren();
-    for (const row of records) {
-      const tr = entry("tr");
-      for (const value of [appName(row.application), sourceName(row.provider), modelName(row.model), format(fresh ? status(row) : "flow_last_observed"), `${(row.elapsed_ms / 1000).toFixed(1)} s`, row.upstream_attempts.toLocaleString()]) {
-        const td = entry("td");td.textContent = value;tr.append(td);
-      }
-      body.append(tr);
+    const body = el("flow-active-body"), records = rows.filter(related), wanted = new Set();
+    for (const [index, row] of records.entries()) {
+      const id = row.request_id || JSON.stringify([row.application, row.provider, row.model, index]);wanted.add(id);
+      let tr = detailRows.get(id);
+      if (!tr) { tr = entry("tr");for (let i = 0; i < 6; i++) tr.append(entry("td"));detailRows.set(id, tr); }
+      const values = [appName(row.application), sourceName(row.provider), modelName(row.model), format(fresh ? status(row) : "flow_last_observed"), `${(row.elapsed_ms / 1000).toFixed(1)} s`, row.upstream_attempts.toLocaleString()];
+      values.forEach((value, i) => { if (tr.children[i].textContent !== value) tr.children[i].textContent = value; });
+      if (body.children[index] !== tr) body.insertBefore(tr, body.children[index] || null);
     }
+    for (const [id, tr] of detailRows) if (!wanted.has(id)) { tr.remove();detailRows.delete(id); }
+    const kept = new Set(detailRows.values());
+    for (const tr of [...body.children]) if (!kept.has(tr)) tr.remove();
     if (!records.length) { const tr = entry("tr"), td = entry("td");td.colSpan = 6;label(td, known ? "flow_no_active" : "flow_status_unknown");tr.append(td);body.append(tr); }
   }
   function render() {

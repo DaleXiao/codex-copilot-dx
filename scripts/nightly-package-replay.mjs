@@ -1,0 +1,45 @@
+// Real npm and native dependencies in an owned prefix; synthetic Release bytes.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
+import assert from 'node:assert/strict';
+import { prepareNightlyRelease, verifyNightlyRuntime } from '../src/nightly-update.mjs';
+import { writePrivateLaunchers } from '../src/release-install.mjs';
+import { inspectWindowsCommand } from '../src/windows-command.mjs';
+const npm=process.env.npm_execpath;if(!npm)throw Error('Run through npm run test:nightly-package');
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'ccdx-nightly-package-')),repo=fileURLToPath(new URL('../',import.meta.url));
+const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),180000);timer.unref();
+const execute=promisify(execFile),env={...process.env},signal=controller.signal;
+const run=(args,cwd=repo)=>execute(process.execPath,[npm,...args],{cwd,env,signal,timeout:120000,maxBuffer:2*1024*1024,windowsHide:true});
+const prefix=path.join(root,'global prefix'),target=path.join(prefix,...(process.platform==='win32'?[]:['lib']),'node_modules/codex-copilot-dx');let candidate,transaction;
+try{
+ const values=JSON.parse((await run(['pack','--ignore-scripts','--json','--pack-destination',root])).stdout),packed=(Array.isArray(values)?values:Object.values(values))[0];
+ const version=JSON.parse(fs.readFileSync(path.join(repo,'package.json'))).version;
+ await run(['install','--global','--prefix',prefix,'--ignore-scripts','--no-audit','--no-fund',path.join(root,packed.filename)]);
+ if(process.platform==='win32')assert.equal(inspectWindowsCommand({packageRoot:target,repair:true}).status,'ready');
+ const future=path.join(root,'future');fs.mkdirSync(future);for(const folder of ['src','bin'])fs.cpSync(path.join(repo,folder),path.join(future,folder),{recursive:true});
+ const pkg=JSON.parse(fs.readFileSync(path.join(repo,'package.json')));pkg.version='1.2.999';pkg.files=['src/','bin/'];fs.writeFileSync(path.join(future,'package.json'),JSON.stringify(pkg));
+ const result=JSON.parse((await run(['pack','--ignore-scripts','--json','--pack-destination',root],future)).stdout),item=(Array.isArray(result)?result:Object.values(result))[0];
+ const bytes=fs.readFileSync(path.join(root,item.filename)),sha=createHash('sha256').update(bytes).digest('hex');let corrupt=false;
+ const fetchImpl=async url=>{assert.match(String(url),/^https:\/\/github\.com\/DaleXiao\/codex-copilot-dx\/releases\/download\/v1\.2\.999\//);return String(url).endsWith('SHA256SUMS')?new Response(`${corrupt?'0'.repeat(64):sha}  codex-copilot-dx-1.2.999.tgz\n`):new Response(bytes);};
+ const environment={target,prefix,package_root:target,npmCli:npm};
+ candidate=await prepareNightlyRelease({version:'1.2.999'},{environment,root:path.join(root,'runtime'),env,signal,fetchImpl});
+ await verifyNightlyRuntime(candidate.target,'1.2.999',{signal,brokerRequired:['darwin','win32'].includes(process.platform)});
+ transaction=await candidate.install();assert.equal(JSON.parse(fs.readFileSync(path.join(target,'package.json'))).version,'1.2.999');
+ const installedTransaction=transaction;transaction=null;installedTransaction.rollback();
+ await verifyNightlyRuntime(target,version,{signal,brokerRequired:['darwin','win32'].includes(process.platform)});
+ env.CCDX_PRIVATE_INSTALL_PREFIX=prefix;
+ await writePrivateLaunchers(environment);
+ const privateCommand=path.join(prefix,process.platform==='win32'?'ccdx.cmd':'bin/ccdx'),privateBefore=fs.readFileSync(privateCommand);
+ const privateTransaction=await candidate.install();
+ assert.match(fs.readFileSync(privateCommand,'utf8'),/CCDX_PRIVATE_INSTALL_PREFIX/);
+ privateTransaction.rollback();assert.ok(fs.readFileSync(privateCommand).equals(privateBefore));
+ candidate.cleanup();candidate=null;corrupt=true;
+ await assert.rejects(prepareNightlyRelease({version:'1.2.999'},{environment,root:path.join(root,'runtime'),env,signal,fetchImpl}),/checksum/);
+ assert.equal(JSON.parse(fs.readFileSync(path.join(target,'package.json'))).version,version);
+ console.log(JSON.stringify({platform:process.platform,baseline:version,synthetic_candidate:'1.2.999',real_npm_staging:true,real_global_prefix_install:true,private_launcher_preserved:true,native_modules_verified:true,rollback:true,corrupt_download_preserves_install:true,registry_policy_unchanged:true}));
+}finally{clearTimeout(timer);transaction?.rollback();candidate?.cleanup();fs.rmSync(root,{recursive:true,force:true});}

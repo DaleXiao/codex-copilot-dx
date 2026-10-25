@@ -116,6 +116,6 @@ export function createAccountTools({ home = os.homedir(), env = process.env, fet
     online = null;checkedAt = null;checkedFingerprint = "";operation = null;await onChanged();
     return snapshot();
   }
-  return { snapshot, check, start, cancel, logout, wait: async () => { await operation?.task;return snapshot(); },
+  return { snapshot, check, start, cancel, logout, busy: () => Boolean(checkFlight || operation && ["starting", "authorizing", "verifying"].includes(operation.state)), wait: async () => { await operation?.task;return snapshot(); },
     async reload() { await onChanged();return snapshot(); }, dispose() { operation?.controller.abort(); } };
 }

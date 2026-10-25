@@ -7,7 +7,7 @@ import { dashboardLanguage } from "../test-support/dashboard-language.mjs";
 
 const html = readFileSync(new URL("../src/dashboard/index.html", import.meta.url), "utf8");
 const script = readFileSync(new URL("../src/dashboard/ui.js", import.meta.url), "utf8");
-const viewScripts = ["status", "usage"].map(name => readFileSync(new URL(`../src/dashboard/${name}.js`, import.meta.url), "utf8")).join("\n");
+const viewScripts = ["view-boundary", "status", "usage"].map(name => readFileSync(new URL(`../src/dashboard/${name}.js`, import.meta.url), "utf8")).join("\n");
 const renderScript = viewScripts + "\n" + script.split('\nelement("refresh").addEventListener(')[0]
   + script.slice(script.indexOf("function emptyTable("), script.indexOf("async function loadModels("));
 

@@ -18,8 +18,8 @@ const mib = (value) => finite(value) ? `${(Number(value) / 1048576).toFixed(1)} 
 const time = (value, options) => globalThis.ccdxTime?.format(value, options) ?? (value ? new Date(value).toLocaleTimeString() : "—");
 const viewHelpers = { time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator: globalThis.navigator,
   motionAllowed: () => !reducedMotion.matches && document.visibilityState === "visible" && element("usage-analytics").open && !element("usage-analytics").closest("[hidden]") };
-const { render, renderProviders, renderFailures, renderContext } = globalThis.ccdxDashboardStatus.create(viewHelpers);
-const usageView = globalThis.ccdxDashboardUsage.create(viewHelpers);
+const { render, renderProviders, renderFailures, renderContext } = globalThis.ccdxViewBoundary.create("client-features", () => globalThis.ccdxDashboardStatus.create(viewHelpers), ["render", "renderProviders", "renderFailures", "renderContext"]);
+const usageView = globalThis.ccdxViewBoundary.create("usage-analytics", () => globalThis.ccdxDashboardUsage.create(viewHelpers), ["applyUsage", "renderUsageState", "renderAnalytics", "renderUsageTable", "selectUsageDay", "usageValues", "setChartVisible", "revealChart", "stopMotion"]);
 const { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay } = usageView;
 const loadAuth = () => dashboardRefresh.refresh("auth", { force: true });
 
@@ -38,8 +38,8 @@ element("refresh").addEventListener("click", () => {
 });
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-const animationView = globalThis.ccdxDashboardAnimation.create({ element, phrase, localize, text, reducedMotion,
-  getRefresh: () => dashboardRefresh, document });
+const animationView = globalThis.ccdxViewBoundary.create("animation-settings", () => globalThis.ccdxDashboardAnimation.create({ element, phrase, localize, text, reducedMotion,
+  getRefresh: () => dashboardRefresh, document }), ["apply", "load", "save", "sync", "stop"]);
 const { apply: applyAnimation, load: loadAnimation, save: saveAnimation, sync: syncAnimationPreview, stop: stopAnimationPreview } = animationView;
 reducedMotion.addEventListener("change", () => { if (reducedMotion.matches) usageView.stopMotion(); });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "visible") usageView.stopMotion(); });

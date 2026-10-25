@@ -6,8 +6,13 @@ import { readBoundedFileSync } from "./bounded-file.mjs";
 import { withFileLockSync } from "./lock.mjs";
 import { atomicWriteFileSync } from "./atomic-file.mjs";
 
-export function readClientGatewayKeys(options = {}) {
+export function readClientGatewayKeys({ create = true, ...options } = {}) {
   const file = path.join(path.dirname(accessSettingsPath(options)), "client-gateway-keys.json");
+  const checked = value => {
+    if (!value || Object.keys(value).length !== CLIENT_IDS.length || CLIENT_IDS.some(id => !/^[a-f0-9]{64}$/.test(value[id]))) throw accessError("ccdx_client_keys_invalid", 409);
+    return value;
+  };
+  if (!create) return checked(JSON.parse(readBoundedFileSync(file, { encoding: "utf8", maxBytes: 2048 })));
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   return withFileLockSync(`${file}.lock`, () => {
     let value;
@@ -17,8 +22,7 @@ export function readClientGatewayKeys(options = {}) {
       value = Object.fromEntries(CLIENT_IDS.map(id => [id, randomBytes(32).toString("hex")]));
       atomicWriteFileSync(file, JSON.stringify(value) + "\n", { mode: 0o600 });
     }
-    if (!value || Object.keys(value).length !== CLIENT_IDS.length || CLIENT_IDS.some(id => !/^[a-f0-9]{64}$/.test(value[id]))) throw accessError("ccdx_client_keys_invalid", 409);
-    return value;
+    return checked(value);
   });
 }
 export function gatewayClient(headers, keys) {

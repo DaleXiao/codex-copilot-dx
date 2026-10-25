@@ -20,8 +20,8 @@ import { deploymentModelId, resolveModelCapabilities, deploymentRevision } from 
 const validObject = (value, keys) => value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).every(key => keys.includes(key));
 export function createConnectionRuntime({ legacy, home, env = process.env, platform = process.platform, corePort = 2026,
   secretStore, createApi = createApiProvider, configureClaude = configureClaudeClients, restoreClaude = restoreClaudeClients,
-  configureCodex = configureCodexApi, inspectDesktop = inspectClaudeDesktopPolicy, clientAccessChanged, now = Date.now, log = () => {} } = {}) {
-  const options = { home, env, platform }, secrets = secretStore || createApiSecretStore(options);
+  configureCodex = configureCodexApi, inspectDesktop = inspectClaudeDesktopPolicy, clientAccessChanged, preserveClientConfiguration, now = Date.now, log = () => {} } = {}) {
+  const options = { home, env, platform, preserveClientConfiguration }, secrets = secretStore || createApiSecretStore(options);
   const guardConversation = createConversationSourceGuard(options), acquireClaudeRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 });
   let settings = readAccessSettings(options), managed = fs.existsSync(accessSettingsPath(options)), serial = Promise.resolve(), keys, closed = false;
   const instances = new Map(), active = new Map(), retired = new Set(), handlers = new Map(), summaries = new WeakMap(), sourceSecrets = new WeakMap(), setup = {}, lastClients = {};
@@ -31,7 +31,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     commit: (...args) => enqueue(() => applyCatalog(...args)),
     onState: (id, state) => state ? discoveries.set(id, state) : discoveries.delete(id) });
   const capabilitySupport = inspectClaudeCapabilitySupport(options);
-  let sharedSync = null, syncFlight = null, syncAgain = false;const syncTargets = new Set();
+  let sharedSync = null, syncFlight = null, syncAgain = false, operations = 0;const syncTargets = new Set();
   function cleanSecrets(id) {
     const refs = retiredSecrets.get(id);if (!refs) return;
     for (const ref of refs) {
@@ -131,6 +131,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
   }
   async function performClientSync(targets) {
     if (!managed || closed) return;
+    if (options.preserveClientConfiguration?.()) { for (const id of targets) setup[id] = "preserved";return; }
     const codex = binding("codex"), compiledCodex = plan("codex");
     const explicit = Array.isArray(codex.deployments), native = explicit ? codex.deployments.length > 0 && codex.deployments.every(item => item.source === "github") : codex.source === "github";
     if (targets.has("codex")) try {
@@ -191,8 +192,8 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
       save(next);await syncClients(CLIENT_IDS.filter(client => binding(client).source === id || binding(client).deployments?.some(model => model.source === id)));
     }
   }
-  function enqueue(work) { const job = serial.then(work);serial = job.catch(() => {});return job; }
-  const refreshApis = () => !closed && managed ? catalogRefresh.refreshAll(settings.apis.filter(api => api.enabled).map(api => api.id)) : Promise.resolve();
+  function enqueue(work) { operations++;const job = serial.then(work).finally(() => { operations--; });serial = job.catch(() => {});return job; }
+  const refreshApis = () => !closed && managed && !preserveClientConfiguration?.() ? catalogRefresh.refreshAll(settings.apis.filter(api => api.enabled).map(api => api.id)) : Promise.resolve();
   async function change(input) {
     if (closed) throw accessError("ccdx_connections_closed", 503);
     if (!validObject(input, ["operation", "id", "config", "key", "allowed", "source", "enabled", "replacements", "model", "auto_review_model", "auto_review_effort", "deployments", "default_model", "auto_sync"])) throw accessError("ccdx_connections_action_invalid");
@@ -315,6 +316,16 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     ...legacy,
     source: getSource,
     connections: snapshot,
+    privateScopes: id => [...new Set(plan(id).models.map(model => model.source_id))].sort().map(source => [source, getSource(source).profileId(id === "codex" ? "responses" : "messages")]),
+    validateLocalKeys() {
+      if (managed && CLIENT_IDS.some(id => binding(id).enabled && plan(id).models.some(model => model.source_id.startsWith("api_") || id !== "codex" && settings.claude_private_keys))) keys = readClientGatewayKeys({ ...options, create: false });
+    },
+    exportPrivateState: () => {
+      const credentials = secrets.exportState?.(settings.apis.filter(api => api.enabled && api.secret_ref).map(api => api.secret_ref)) || [];
+      return { credentials, bytes: credentials.reduce((sum, [ref, key]) => sum + 2 * Buffer.byteLength(ref + key) + 64, 0) };
+    },
+    importPrivateState: state => secrets.importState?.(state?.credentials || [], settings.apis.filter(api => api.enabled && api.secret_ref).map(api => api.secret_ref)),
+    busy: () => operations > 0 || active.size > 0 || Boolean(syncFlight) || catalogRefresh.busy() || legacy.snapshot().m365.account_change_in_flight === true || legacy.snapshot().m365.state === "checking",
     syncClients,
     async manageConnections(input) {
       if (!input) return snapshot();

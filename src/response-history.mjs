@@ -455,3 +455,53 @@ export function rememberResponseHistoryNode({
   touchTree(rootId);
   return true;
 }
+
+// Private process handoff only: no HTTP route or plaintext persistence.
+export function exportResponseHistory() {
+  if (pinnedTrees.size) throw new Error('Response history is busy');
+  let bytes = totalBytes;
+  for (const [id, entry] of histories) {
+    bytes += Buffer.byteLength(id) + Buffer.byteLength(entry.parentId || '') + Buffer.byteLength(entry.rootId) + 512;
+    if (bytes > 64 * 1024 * 1024) throw new Error('state_too_large');
+  }
+  return { version: 1, bytes, entries: [...histories], roots: [...treeLru.keys()], evicted: [...evictedIds],
+    counters: { evictedEntriesTotal, lookupMisses, evictedLookupMisses } };
+}
+export function importResponseHistory(state) {
+  if (histories.size || pinnedTrees.size || state?.version !== 1 || !Array.isArray(state.entries) || state.entries.length > maxEntries
+    || !Array.isArray(state.roots) || !Array.isArray(state.evicted) || state.evicted.length > 256) throw new Error('Invalid response-history handoff');
+  const restored = new Map();let bytes = 0;
+  const idOK = id => typeof id === 'string' && id.length > 0 && id.length <= 2048;
+  for (const pair of state.entries) {
+    if (!Array.isArray(pair) || pair.length !== 2 || !idOK(pair[0]) || restored.has(pair[0])) throw new Error('Invalid response-history handoff');
+    const [id, entry] = pair;
+    if (!entry || !Array.isArray(entry.inputItems) || !(entry.outputItems === undefined || Array.isArray(entry.outputItems))
+      || !(entry.parentId === null || idOK(entry.parentId)) || !idOK(entry.rootId) || typeof entry.hasOpaque !== 'boolean'
+      || !(entry.routeAffinity === null || typeof entry.routeAffinity === 'object')) throw new Error('Invalid response-history handoff');
+    const owned = structuredClone(entry);
+    owned.bytes = jsonByteLength(owned.routeAffinity ? [owned.inputItems, owned.outputItems, { routeAffinity: owned.routeAffinity, hasOpaque: owned.hasOpaque }] : [owned.inputItems, owned.outputItems]);
+    bytes += owned.bytes;if (bytes > maxBytes) throw new Error('Response-history handoff exceeds this version\'s limit');
+    restored.set(id, owned);
+  }
+  const roots = new Map();
+  for (const [id, entry] of restored) {
+    let at = id;const seen = new Set(), chain = [];
+    while (!roots.has(at)) {
+      if (seen.has(at)) throw new Error('Cyclic response-history handoff');
+      seen.add(at);chain.push(at);const current = restored.get(at);
+      if (!current) throw new Error('Incomplete response-history handoff');
+      if (!current.parentId) { roots.set(at, at);break; }at = current.parentId;
+    }
+    for (const item of chain) roots.set(item, roots.get(at));
+    if (entry.rootId !== roots.get(id)) throw new Error('Invalid response-history root');
+  }
+  if (state.roots.some(id => !idOK(id) || roots.get(id) !== id) || new Set(state.roots).size !== state.roots.length
+    || state.evicted.some(id => !idOK(id) || restored.has(id))) throw new Error('Invalid response-history handoff');
+  for (const [id, entry] of restored) { histories.set(id, entry);linkChild(entry.parentId, id); }
+  for (const id of state.roots) touchTree(id);
+  for (const [id, root] of roots) if (id === root && !treeLru.has(id)) touchTree(id);
+  for (const id of state.evicted) evictedIds.add(id);
+  totalBytes = bytes;
+  const count = name => Number.isSafeInteger(state.counters?.[name]) && state.counters[name] >= 0 ? state.counters[name] : 0;
+  evictedEntriesTotal = count('evictedEntriesTotal');lookupMisses = count('lookupMisses');evictedLookupMisses = count('evictedLookupMisses');
+}

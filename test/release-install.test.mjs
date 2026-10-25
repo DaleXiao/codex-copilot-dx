@@ -66,3 +66,15 @@ test("private POSIX commands preserve uppercase prefix and quote shell paths", {
   const result = JSON.parse(execFileSync(path.join(prefix, "bin", "ccdx"), [], { env, encoding: "utf8" }));
   assert.equal(result.upper, "/chosen-prefix");assert.equal(result.prefix, undefined);assert.equal(result.private, prefix);
 });
+
+test('installation rollback restores a relative launcher without following its dangling backup link', async t => {
+ if(process.platform==='win32')return t.skip('POSIX npm launcher layout');
+ const fs=await import('node:fs'),os=await import('node:os'),path=await import('node:path');
+ const {protectInstallation}=await import('../src/release-install.mjs');
+ const prefix=fs.mkdtempSync(path.join(os.tmpdir(),'ccdx-relative-launcher-'));t.after(()=>fs.rmSync(prefix,{recursive:true,force:true}));
+ const target=path.join(prefix,'lib/node_modules/codex-copilot-dx');fs.mkdirSync(path.join(target,'bin'),{recursive:true});fs.mkdirSync(path.join(prefix,'bin'));
+ fs.writeFileSync(path.join(target,'bin/cli.mjs'),'original');fs.symlinkSync('../lib/node_modules/codex-copilot-dx/bin/cli.mjs',path.join(prefix,'bin/ccdx'));
+ const transaction=protectInstallation({target,prefix});fs.writeFileSync(path.join(target,'bin/cli.mjs'),'replacement');
+ transaction.rollback();transaction.rollback();
+ assert.equal(fs.readFileSync(path.join(prefix,'bin/ccdx'),'utf8'),'original');assert.equal(fs.readlinkSync(path.join(prefix,'bin/ccdx')),'../lib/node_modules/codex-copilot-dx/bin/cli.mjs');
+});

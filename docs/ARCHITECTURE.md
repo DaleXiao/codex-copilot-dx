@@ -695,3 +695,9 @@ remain distinct, with suffixes only where needed. Native replay covers a legacy
 session, first model/list after cold/warm/old-cache starts, authMethod, effective
 provider, model visibility and synthetic inference. Real App UI acceptance remains
 separate from this RPC evidence.
+
+A complete recognized qualified-ID model cache can be retired to a single private
+backup during native reconciliation, before the config transaction commits.
+Unknown/partial caches are not claimed. On config commit failure, the old cache
+is restored only if the client has not created a new cache. This is a bounded
+schema migration, not a periodic cache purge or a credential/session reset.

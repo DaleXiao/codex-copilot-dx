@@ -47,9 +47,29 @@ function replaceRoot(content, key, text) {
   return item ? content.slice(0, item.start) + (text || "") + (text && !text.endsWith("\n") && item.end < content.length ? "\n" : "") + content.slice(item.end) : (text || "") + content;
 }
 
+// Retire only the complete, recognized qualified-ID cache from the old native
+// route. Its bytes remain available for rollback; unknown caches are untouched.
+function retireQualifiedCache(models, options) {
+  if (!Array.isArray(models) || !models.length) return () => {};
+  const aliases = new Set(models.filter(model => model.public_id !== model.route_id && /^ccdx\/model-\d+$/.test(model.route_id)).map(model => model.route_id));
+  if (aliases.size !== models.length) return () => {};
+  const file = path.join(codexPaths(options).directory, "models_cache.json"), backup = file + ".ccdx-qualified.bak";
+  let bytes, cache;
+  try { bytes = readBoundedFileSync(file, { maxBytes: 8 * 1024 * 1024 });cache = JSON.parse(bytes.toString("utf8")); }
+  catch (error) { if (error.code === "ENOENT" || error instanceof SyntaxError) return () => {};throw accessError("ccdx_codex_catalog_cache_unavailable", 409); }
+  if (!Array.isArray(cache.models) || cache.models.length !== aliases.size || !cache.models.every(model => typeof model?.slug === "string" && aliases.has(model.slug))
+    || new Set(cache.models.map(model => model.slug)).size !== aliases.size) return () => {};
+  try {
+    if (fs.existsSync(backup) && !readBoundedFileSync(backup, { maxBytes: 8 * 1024 * 1024 }).equals(bytes)) throw Error("cache_backup_conflict");
+    if (!readBoundedFileSync(file, { maxBytes: 8 * 1024 * 1024 }).equals(bytes)) throw Error("cache_changed");
+    fs.renameSync(file, backup);fs.chmodSync(backup, 0o600);
+  } catch { throw accessError("ccdx_codex_catalog_cache_unavailable", 409); }
+  return () => { if (!fs.existsSync(file)) fs.renameSync(backup, file); };
+}
+
 // GitHub-only traffic retains the built-in OpenAI provider. Private API traffic
 // keeps its own provider and local key. Both routes share one ownership journal.
-export function configureCodexApi({ baseUrl, apiKey, model, native = false, restore = false, ...options } = {}) {
+export function configureCodexApi({ baseUrl, apiKey, model, native = false, nativeModels, restore = false, ...options } = {}) {
   if (!restore) {
     let url;try { url = new URL(baseUrl); } catch { throw accessError("ccdx_codex_config_invalid"); }
     if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.pathname !== "/v1" || url.username || url.password || url.search || url.hash
@@ -107,7 +127,9 @@ export function configureCodexApi({ baseUrl, apiKey, model, native = false, rest
     }
     try { validateManagedConfigEdit(config, next, [["model"], ["model_provider"], ["model_providers", ID], ["openai_base_url"]]); }
     catch { throw accessError("ccdx_codex_config_invalid", 409); }
-    if (next !== content || JSON.stringify(nextOwner) !== JSON.stringify(owner)) atomicWriteFilePairSync(file, next, journal, nextOwner ? JSON.stringify(nextOwner) + "\n" : null, { mode: 0o600 });
+    const undoCache = native && !restore ? retireQualifiedCache(nativeModels, options) : () => {};
+    try { if (next !== content || JSON.stringify(nextOwner) !== JSON.stringify(owner)) atomicWriteFilePairSync(file, next, journal, nextOwner ? JSON.stringify(nextOwner) + "\n" : null, { mode: 0o600 }); }
+    catch (error) { undoCache();throw error; }
     return { state: modelEdited ? "preserved" : "configured", changed: next !== content };
   }));
 }

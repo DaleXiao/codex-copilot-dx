@@ -12,6 +12,7 @@ export const CLIENT_IDS = Object.freeze(["codex", "claude_app", "claude_code"]);
 export const CLIENT_NAMES = Object.freeze({ codex: "Codex App", claude_app: "Claude App", claude_code: "Claude Code" });
 const APIS = ["messages", "responses", "chat"];
 const messages = {
+  ccdx_codex_catalog_cache_unavailable: "Codex model cache could not be refreshed safely. Close Codex App and try again; existing files were kept.",
   ccdx_client_source_disabled: "This client's CCDX access or selected source is disabled. Review Settings.",
   ccdx_client_credential_required: "The client's local CCDX credential is missing or outdated. Reopen the client after setup.",
   ccdx_conversation_source_changed: "This conversation was observed on another source or key. Start a new conversation.",

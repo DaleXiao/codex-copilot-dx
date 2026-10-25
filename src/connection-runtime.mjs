@@ -138,7 +138,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
       else if (codex.enabled && compiledCodex.defaultUnavailable && !native) setup.codex = "default_unavailable";
       else {
         setup.codex = configureCodex({ ...options, ...(codex.enabled && (native || explicit && codex.deployments.length || codex.source?.startsWith("api_"))
-          ? { baseUrl: `http://127.0.0.1:${corePort}/v1`, native, ...(!native ? { apiKey: identities().codex } : {}),
+          ? { baseUrl: `http://127.0.0.1:${corePort}/v1`, native, ...(native ? { nativeModels: compiledCodex.models } : {}), ...(!native ? { apiKey: identities().codex } : {}),
             ...(explicit || !native ? { model: compiledCodex.defaultModel || (!compiledCodex.defaultUnavailable ? codex.model : undefined) } : {}) } : { restore: true }) }).state;
         if (codex.enabled && compiledCodex.defaultUnavailable && setup.codex === "configured") setup.codex = "default_unavailable";
       }

@@ -192,7 +192,11 @@ Codex catalogs and its `model` setting use an unambiguous upstream ID. Source
 suffixes appear only for same-named authorized deployments; friendly upstream
 names/descriptions are retained. Internal defaults and route aliases remain
 source-qualified, so adding another same-named source cannot move an existing
-default. Existing qualified IDs continue to resolve to their original source.
+default. Existing qualified IDs continue to resolve to their original source. During the
+one-time native ID migration, a complete cache containing exactly the recognized
+old selected route IDs is moved to `models_cache.json.ccdx-qualified.bak` with
+private permissions. The client then reads the current directory; unknown or
+partial caches and native authentication/session data are preserved.
 
 A deployment is identified by source plus actual model ID. Its stable public route
 is independent of catalog order and key rotation; its private history/evidence

@@ -481,7 +481,14 @@ try {
 
   // Refresh the VS Code version in the background; fallback is non-blocking.
   void refreshVSCodeVersion();
-  if (providerRuntime.selection().codex === "github") await profileModels.initialize();
+  if (providerRuntime.selection().codex === "github") {
+    await profileModels.initialize();
+    // Provider setup can run before GitHub's directory exists. Reconcile again
+    // before opening the App, then join any existing stale-cache refresh.
+    const refreshing = profileModels.codexRegistry.refreshInFlight ? profileModels.refreshAll() : null;
+    await providerRuntime.syncClients(["codex"]);
+    void refreshing?.then(() => providerRuntime.selection().codex === "github" && providerRuntime.syncClients(["codex"])).catch(() => {});
+  }
   if (profileModels.codexRegistry.source !== "live") {
     console.log(startupCheck("info", "Models", `${profileModels.codexRegistry.source} list loaded${profileModels.codexRegistry.refreshInFlight ? "; refreshing" : ""}`));
   }
@@ -539,7 +546,7 @@ try {
   const refreshIntervalMs = RUNTIME.modelRefreshIntervalMs;
   if (Number.isFinite(refreshIntervalMs) && refreshIntervalMs > 0) {
     modelRefreshTimer = setInterval(() => {
-      if (providerRuntime.selection().codex === "github") profileModels.refreshAll().catch(() => {});
+      if (providerRuntime.selection().codex === "github") profileModels.refreshAll().then(() => providerRuntime.selection().codex === "github" && providerRuntime.syncClients(["codex"])).catch(() => {});
       providerRuntime.refresh().catch(() => {});
     }, refreshIntervalMs);
     modelRefreshTimer.unref?.();

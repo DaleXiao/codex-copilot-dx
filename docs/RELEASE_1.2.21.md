@@ -19,9 +19,15 @@ native authentication and model/list probes succeeded.
 - Use readable unambiguous Codex model IDs and friendly upstream names/metadata.
   Same-named authorized deployments remain qualified and show a source suffix.
   Internal defaults retain source identity; old qualified routes remain valid.
+- Preserve a complete recognized qualified-ID catalog cache as a private backup
+  so the first App read after this ID migration obtains the fresh native catalog.
+  Unknown, partial or unrelated caches remain untouched.
 - On macOS, read bundled CLI metadata and optional cache versions in doctor.
   A cache mismatch is a hint to fully reopen the updated App, not proof of a
   failed catalog. HTTP `models` and RPC `model/list.data` are separate schemas.
+- Reconcile GitHub bindings after startup directory initialization and after
+  existing background refreshes. No extra directory request or refresh timer is
+  added; the full CLI startup replay checks the final native default.
 - Add a native replay with model/list as the first RPC, concurrent config/auth,
   a legacy-session resume, cold/warm/old-cache starts and synthetic inference.
   It asserts OpenAI identity for new sessions, ChatGPT auth, seven visible models,
@@ -34,12 +40,12 @@ The installed App is 26.1021.31345 with bundled Codex CLI
 of CLI authentication. Official configuration guidance supports `openai_base_url`
 for a proxy on the built-in provider.
 
-The native synthetic replay passed for all four cases, including a legacy session
+The native synthetic replay passed for all cases, including the temporary repair's fresh qualified-ID cache, including a legacy session
 that would fail to resume if its provider table were deleted. Responses WebSocket
 attempts still fall back to HTTP/SSE. This patch does not translate SSE into a
 new WebSocket protocol.
 
-Local `npm run verify` passed 1,543 tests: 1,533 passed, ten optional/platform
+Local `npm run verify` passed 1,545 tests: 1,535 passed, ten optional/platform
 skips, zero failures, plus HTTP/SSE smoke, performance budgets and pack checks.
 Twelve Chromium/WebKit connection cases passed across three palettes and
 light/dark modes, including default selection, source changes and private APIs.

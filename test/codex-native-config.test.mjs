@@ -72,3 +72,14 @@ test('normal startup defers an owned base URL to reconciliation and preserves us
   ensureCodexConfig(2026, { ...f.options, log() {} });assert.equal(f.read().openai_base_url, 'https://user-edited.test/v1');
   assert.equal(configureCodexApi(f.options).state, 'preserved');
 });
+
+
+test('native ID migration backs up only a complete recognized qualified model cache', t => {
+  const f = fixture(t), cache = path.join(path.dirname(f.file), 'models_cache.json');
+  const models = [{ route_id: 'ccdx/model-123', public_id: 'gpt-replay' }];
+  const bytes = JSON.stringify({ client_version: '0.164.0', models: [{ slug: models[0].route_id }] });fs.writeFileSync(cache, bytes);
+  configureCodexApi({ ...f.options, nativeModels: models });assert.equal(fs.existsSync(cache), false);assert.equal(fs.readFileSync(cache + '.ccdx-qualified.bak', 'utf8'), bytes);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(cache + '.ccdx-qualified.bak').mode & 0o777, 0o600);
+  fs.writeFileSync(cache, JSON.stringify({ models: [{ slug: 'unrelated' }] }));const unrelated = fs.readFileSync(cache);
+  configureCodexApi({ ...f.options, nativeModels: models });assert.ok(fs.readFileSync(cache).equals(unrelated));
+});

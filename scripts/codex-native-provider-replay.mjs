@@ -44,13 +44,26 @@ async function stopChild() {
 }
 let port = 0, legacyThread;
 try {
-  for (const state of ["legacy", "cold", "warm", "old-cache"]) {
+  for (const state of ["legacy", "temporary-repair", "cold", "warm", "old-cache"]) {
     if (state === "old-cache") { const file = path.join(profile, "models_cache.json");if (fs.existsSync(file)) { const cache = JSON.parse(fs.readFileSync(file));cache.client_version = "0.0.0";fs.writeFileSync(file, JSON.stringify(cache)); } }
     await new Promise(resolve => server.listen(port, "127.0.0.1", resolve));port = server.address().port;
     runtime = createProviderRuntime({ home: root, env, platform: process.platform, corePort: port, githubClient: client, githubRegistry: registry, secretStore: { close() {} } });
     if (state === "legacy") await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github", "m365"], deployments: ids.map(model => ({ source: "github", model })) });
     await runtime.start();
     if (state === "legacy") configureCodexApi({ home: root, env, baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: "c".repeat(64), model: deploymentModelId("github", ids[0]) });
+    if (state === "temporary-repair") {
+      // The user's temporary repair already used OpenAI mode but cached v1.2.20
+      // qualified IDs. Preserve that fresh cache to test real catalog migration.
+      configureCodexApi({ home: root, env, native: true, baseUrl: `http://127.0.0.1:${port}/v1`, model: deploymentModelId("github", ids[0]) });
+      const current = runtime.current.bind(runtime);
+      runtime.current = req => {
+        const selected = current(req);if (!selected?.codexCatalog) return selected;
+        const project = selected.codexCatalog;
+        return { ...selected, codexCatalog: Object.assign((value, catalog) => {
+          const result = project(value, catalog);return { ...result, models: result.models.map(model => ({ ...model, slug: deploymentModelId("github", model.slug), display_name: model.display_name + " · GitHub Copilot" })) };
+        }, { needsNativeCatalog: project.needsNativeCatalog }) };
+      };
+    }
     handler = createAdapterHandler({ providerRuntime: runtime, codexClient: client, modelRegistry: registry, codexModelCatalog: { load: async () => {
       catalogReads++;await new Promise(resolve => setTimeout(resolve, 80));return { models: ids.map(id => codexModelEntry({ id })) };
     } } });
@@ -81,16 +94,16 @@ try {
       call("config/read", { includeLayers: false }), call("getAuthStatus", { includeToken: false, refreshToken: false }),
     ]);
     assert.equal(configuration.config.model_provider ?? "openai", expectedProvider, "The App must stay outside its custom-provider branch after migration");
-    assert.equal(configuration.config.model, state === "legacy" ? deploymentModelId("github", ids[0]) : ids[0]);
+    assert.equal(configuration.config.model, ["legacy", "temporary-repair"].includes(state) ? deploymentModelId("github", ids[0]) : ids[0]);
     assert.equal(authStatus.authMethod, "chatgpt");
-    assert.deepEqual(catalog.data.map(model => model.id), ids, "The first model/list must contain every selected model");
-    for (const model of catalog.data) { assert.equal(model.hidden, false);assert.equal(model.availableAccessPrograms, null);assert.doesNotMatch(model.displayName, /·|GitHub/); }
+    assert.deepEqual(catalog.data.map(model => model.id), state === "temporary-repair" ? ids.map(id => deploymentModelId("github", id)) : ids, "The first model/list must contain every selected model");
+    for (const model of catalog.data) { assert.equal(model.hidden, false);assert.equal(model.availableAccessPrograms, null);if (state !== "temporary-repair") assert.doesNotMatch(model.displayName, /·|GitHub/); }
     if (state === "cold") {
       const resumed = await call("thread/resume", { threadId: legacyThread, cwd: root, approvalPolicy: "never", sandbox: "read-only" });
       assert.equal(resumed.modelProvider, "ccdx_gateway");
       assert.match(JSON.stringify(await call("thread/read", { threadId: legacyThread, includeTurns: true })), /NATIVE_PROVIDER_OK/);
     }
-    const thread = await call("thread/start", { cwd: root, model: state === "legacy" ? deploymentModelId("github", ids[0]) : ids[0], approvalPolicy: "never", sandbox: "read-only" });
+    const thread = await call("thread/start", { cwd: root, model: ["legacy", "temporary-repair"].includes(state) ? deploymentModelId("github", ids[0]) : ids[0], approvalPolicy: "never", sandbox: "read-only" });
     if (state === "legacy") legacyThread = thread.thread.id;
     assert.equal(thread.modelProvider, expectedProvider);
     await call("turn/start", { threadId: thread.thread.id, input: [{ type: "text", text: "Reply with NATIVE_PROVIDER_OK.", text_elements: [] }] });

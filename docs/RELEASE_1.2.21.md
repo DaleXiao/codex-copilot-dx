@@ -1,4 +1,4 @@
-# CCDX 1.2.21 candidate
+# CCDX 1.2.21
 
 GitHub-only Codex selections now retain the built-in OpenAI provider. This fixes
 the configuration path that put the App into its custom-provider UI even though
@@ -33,15 +33,16 @@ native authentication and model/list probes succeeded.
   It asserts OpenAI identity for new sessions, ChatGPT auth, seven visible models,
   no source suffixes and no sign-in errors. No model/list retry masks an empty list.
 
-## Evidence and remaining acceptance
+## Verification
 
 The installed App is 26.1021.31345 with bundled Codex CLI
 0.164.0-alpha.11.1. Static renderer branches check provider identity independently
 of CLI authentication. Official configuration guidance supports `openai_base_url`
 for a proxy on the built-in provider.
 
-The native synthetic replay passed for all cases, including the temporary repair's fresh qualified-ID cache, including a legacy session
-that would fail to resume if its provider table were deleted. Responses WebSocket
+The native synthetic replay passed five cases, including the temporary repair's
+fresh qualified-ID cache and a legacy session that would fail to resume if its
+provider table were deleted. Responses WebSocket
 attempts still fall back to HTTP/SSE. This patch does not translate SSE into a
 new WebSocket protocol.
 
@@ -50,7 +51,10 @@ skips, zero failures, plus HTTP/SSE smoke, performance budgets and pack checks.
 Twelve Chromium/WebKit connection cases passed across three palettes and
 light/dark modes, including default selection, source changes and private APIs.
 
-Actual App model-picker acceptance is pending. The computer-use tool disallows
-operating the Codex App, so native RPC/static evidence is not presented as an
-observed post-upgrade UI pass. The user's current working configuration and service
-remain untouched while this candidate is reviewed.
+Cross-platform CI passed all 17 jobs on the verified code commit, including the
+official Codex 0.164.0 client replay. After the approved local upgrade, the user
+confirmed that the actual App lists models normally. The native authentication
+file remained unchanged during that upgrade. Actual old-session UI acceptance
+was not separately reported; legacy-session resume passed the synthetic replay.
+GitHub assets and public npm bytes are checked after publication. The configured
+company registry and proxy policy remain unchanged.

@@ -19,6 +19,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
     for (const palette of (options.get("--palettes") || "green,klein,pink").split(",")) for (const mode of (options.get("--modes") || "light,dark").split(",")) {
       const width = mode === "light" ? 360 : 1280, language = palette === "klein" ? "en" : "zh";
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-connections-browser-")), env = { CCDX_M365: "0" }, values = new Map();
+      fs.mkdirSync(path.join(root, ".codex"));fs.writeFileSync(path.join(root, ".codex/config.toml"), '[features]\nmemories=true\n[memories]\nextract_model="response-replay"\n');
       let runtime, handler;const githubRegistry = { models: { data: [] } };
       const server = http.createServer((req, res) => handler(req, res));
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -35,7 +36,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           secretStore: { get: async id => values.get(id), set: async (id, key) => { values.set(id, key); }, remove: async id => { values.delete(id); }, close() {} },
           inspectDesktop: async () => false, configureClaude: input => ({ [input.client === "claude_app" ? "app" : "code"]: "configured" }), restoreClaude: () => ({ preserved: 0 }),
           createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, fetch: async (_url, init) => {
-            assert.equal(init.method, "GET");discoveries++;return Response.json({ data: ["claude-replay", "response-replay", ...Array.from({ length: 6 }, (_, i) => "unselected-" + i)].map(id => ({ id, ...(id === "claude-replay" ? { type: "model", max_input_tokens: 128000, max_tokens: 16000, capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true } } } } : {}) })) });
+            assert.equal(init.method, "GET");discoveries++;return Response.json({ data: ["claude-replay", "response-replay", ...Array.from({ length: 6 }, (_, i) => "unselected-" + i)].map(id => ({ id, publisher: "Example Maker", vendor: "example", owned_by: "gateway", ...(id === "claude-replay" ? { type: "model", max_input_tokens: 128000, max_tokens: 16000, capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true } } } } : {}) })) });
           } }) }) });
         const serviceControl = createServiceControl({ home: root, env, providerRuntime: runtime });
         handler = createAdapterHandler({ providerRuntime: runtime, dashboardOptions: { home: root, env, serviceControl,
@@ -71,6 +72,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         const modelRow = page.locator("#connection-models tr").filter({ hasText: "claude-replay" });
         await modelRow.locator("button").first().click();
         assert.match(await page.locator('#connection-model-detail > table').innerText(), /128K/);
+        assert.match(await page.locator('#connection-model-detail .model-identity').innerText(), /Example Maker/);
         await page.locator('#connection-model-detail > select').selectOption("responses");
         assert.doesNotMatch(await page.locator('#connection-model-detail > table').innerText(), /128K|low \/ medium/);
         await page.locator('#connection-model-detail > select').selectOption("messages");
@@ -100,6 +102,19 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           assert.equal(fs.readFileSync(accessSettingsPath({ home: root, env }), "utf8"), beforePreview, "Sync preview never writes configuration");
           if (options.get("--output")) await page.screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}-${route}-bindings.png`), fullPage: true });
         }
+        await page.locator('[data-route="codex"]').click();
+        await page.waitForFunction(() => document.getElementById("connection-memory-name").textContent === "response-replay");
+        const memoryBox = page.locator('#connection-bindings tr').filter({ hasText: "response-replay" }).locator('input[name="binding-model"]');
+        await memoryBox.click();await page.locator('#connection-memory-confirm').waitFor({ state: "visible" });
+        assert.match(await page.locator('#connection-memory-confirm').innerText(), language === "zh" ? /可能无法生成新记忆/ : /may prevent new memory/);
+        await page.locator('#connection-memory-keep').click();assert.equal(await memoryBox.isChecked(), true);
+        await memoryBox.click();await page.locator('#connection-memory-close').click();assert.equal(await memoryBox.isChecked(), false);
+        assert.match(await page.locator('#connection-memory-state').innerText(), language === "zh" ? /待保存/ : /after saving/);
+        await page.locator('#connection-client-form button[type="submit"]').click();
+        await page.waitForFunction(() => document.getElementById("connection-memory-state").textContent.includes(document.documentElement.lang.startsWith("zh") ? "未选入" : "Not selected"));
+        assert.equal(await page.locator('#connection-memory-warning').isVisible(), true);
+        await memoryBox.check();await page.locator('#connection-client-form button[type="submit"]').click();
+        await page.waitForFunction(() => document.getElementById("connection-memory-warning").hidden);
         await page.locator('[data-route="claude"]').click();
         await page.locator("#claude-model-management #connection-bindings tr").filter({ hasText: "claude-replay" }).locator('input[name="binding-model"]').uncheck();
         await page.locator('[data-claude-client="claude_code"]').click();
@@ -130,6 +145,9 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         githubRegistry.models = { data: [] };
         await page.waitForLoadState("networkidle");await page.goto(base + "/?binding-replay=restored#models");await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).waitFor();
         await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).locator('input[role="switch"]').click();
+        await page.locator("#connection-memory-confirm").waitFor({ state: "visible" });
+        assert.equal(runtime.connections().providers.find(p => p.id === id).enabled, true, "Source stays on before confirmation");
+        await page.locator("#connection-memory-close").click();
         await page.locator("#connection-disable-editor").waitFor({ state: "visible" });await fits();
         await page.locator('#connection-disable-form button[type="submit"]').click();await page.locator("#connection-disable-editor").waitFor({ state: "hidden" });
         assert.equal(runtime.selection().codex, null);assert.equal(runtime.dashboardProviders().some(p => p.id === id), false);

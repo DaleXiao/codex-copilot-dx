@@ -186,12 +186,14 @@ function applyModels(data, { changed }) {
     for (const model of data.models) {
       const clients = (model.clients || []).map(id => ({ codex: "Codex App", claude_app: "Claude App", claude_code: "Claude Code" })[id] || id).join(" / ") || "—";
       const row = tableRow([model.id, clients, ""]);row.children[0].className = "model-name";
+      if (model.vendor && model.vendor !== "Unknown") { const maker = document.createElement("span");maker.className = "model-maker";maker.textContent = model.vendor;row.children[0].append(maker); }
       const details = document.createElement("details"), summary = document.createElement("summary"), fields = document.createElement("dl");
       details.dataset.model = model.id;details.open = expanded.has(model.id);fields.className = "failure-detail";
       localize(summary, "model_details");details.append(summary, fields);
-      for (const [key, value, translated] of [["vendor", model.vendor || "—"], ["api", model.endpoints.join(" / ") || "—"],
+      for (const [key, value, translated] of [["vendor", model.vendor && model.vendor !== "Unknown" ? model.vendor : phrase("cap_unknown")], ["model_owner", model.owned_by], ["api", model.endpoints.join(" / ") || "—"],
         ["reasoning", model.reasoning_efforts?.join(" / ") || "—"], ["state", model.preview ? "preview" : model.state || "listed", true],
         ["model_window", number(model.context_window)]]) {
+        if (value === undefined) continue;
         const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);
         if (translated) localize(detail, value);else detail.textContent = value;
         fields.append(term, detail);
@@ -315,7 +317,8 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
             ["network_failure_stage", network ? phrase(`network_stage_${network.stage}`) : null],
             ["network_cause_code", network?.cause_code], ["http_status", catalog?.http_status || diagnostic.http_status], ["last_success", catalog?.last_success_at], ["upstream_request_id", catalog?.request_id]]) {
             if (value === null || value === undefined || value === "") continue;
-            const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);
+            if (value === undefined) continue;
+        const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);
             if (value?.key) localize(detail, value.key, value.values);else detail.textContent = String(value).slice(0, 300);
             fields.append(term, detail);
           }

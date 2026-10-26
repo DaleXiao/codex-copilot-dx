@@ -792,3 +792,35 @@ foreground freshness and the existing CSS motion remain unchanged. Catalog
 failure backoff is source-revision scoped and never holds the configuration
 transaction during network work. Existing body serialization ownership is
 retained: the ordinary manual Responses path serializes its final body once.
+
+
+## Display evidence and native memory dependency
+
+Manual upstream identity declarations live in `api-model-display` cache owned
+by the connection runtime, separate from strict connection v2 configuration and
+capability values. `apiCatalog` no longer stamps Unknown as a maker. Public API
+catalog projection decorates display data; native model IDs, auth, source/key
+identity and capability constraints are unchanged. Catalog publication guards
+also guard display evidence; failures cannot introduce an empty successful
+catalog or extra upstream permissions.
+
+The token counter separates unknown capability coordination from identical
+result sharing. The first real admitted count owns the capability operation.
+Different inputs may consume a 404 observation, but never another input's
+successful count. Waiter cancellation is independent. Known support restores
+normal parallel counts; state is bounded and source/configuration owned.
+
+`codex-memory-model` owns optional extraction-role evidence. It reads explicit
+native config and uses a separate bounded read-only SQLite helper only when
+needed. It reports configuration, observation or uncertainty; it never selects
+a model for Codex. WebUI owns the dependency notice/confirmation. The runtime
+continues to reject requests outside selected deployments, including native
+background jobs. Optional evidence is excluded from service handoff business
+contracts and never modifies the client files.
+
+Request observations retain scalar output budgets, usage and fixed stop/network
+fields across protocol adapters. Generation, explicit access restrictions,
+capability absence and protocol discovery remain distinct. Dashed flow motion
+uses CSS stroke offset on retained paths; model nodes share the same left edge.
+Geometry and SVG identity reuse from 1.2.23 remain in place, with hidden/stale/
+reduced-motion behavior and summary tables preserved.

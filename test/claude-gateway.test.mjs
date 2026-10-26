@@ -246,3 +246,10 @@ test("Claude timeout and count_tokens preserve status facts; cancellation is an 
   const recent = cancelled.server.snapshot().performance.recent_requests.at(-1);
   assert.equal(recent.http_status, 499);assert.equal(recent.origin, "client_disconnect");
 });
+
+test('capability waiting does not restart a count caller\'s upstream timeout budget',async t=>{
+ const {setTimeout:wait}=await import('node:timers/promises');let continued=false;
+ const g=await gateway(t,async(_body,options)=>{await wait(60,null,{signal:options.signal});continued=true;options.onUpstreamStart?.();await wait(60,null,{signal:options.signal});return Response.json({input_tokens:1});},{env:{CCDX_UPSTREAM_TIMEOUT_MS:'100'}});
+ const r=await fetch(`http://127.0.0.1:${g.server.port}/v1/messages/count_tokens`,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key},body:JSON.stringify({model:'claude-opus-5.5',messages:[]}),signal:AbortSignal.timeout(3000)});
+ assert.equal(r.status,504);await r.text();assert.equal(continued,true);assert.equal(g.server.snapshot().failed,0,'A count timeout is not a generation failure');
+});

@@ -8,9 +8,9 @@ export function modelReasoningEfforts(model) {
   return Array.isArray(values) ? [...new Set(values.filter(value => typeof value === "string" && /^[a-z][a-z0-9_-]{0,15}$/.test(value)))].slice(0, 16) : null;
 }
 
-export function publicModelCatalog(models, { clients = () => [], selectable = () => false } = {}) {
+export function publicModelCatalog(models, { clients = () => [], selectable = () => false, maker = model => model.publisher || model.vendor || model.owned_by || "Unknown" } = {}) {
   return models.slice(0, 1000).filter(model => typeof model?.id === "string").map(model => ({
-    id: model.id, vendor: model.publisher || model.vendor || model.owned_by || "Unknown",
+    id: model.id, vendor: maker(model), ...(model.owned_by ? { owned_by: model.owned_by } : {}),
     endpoints: [["responses", ["/responses", "/v1/responses"]], ["chat", ["/chat/completions", "/v1/chat/completions"]],
       ["messages", ["/v1/messages"]]].filter(([, paths]) => paths.some(path => model.supported_endpoints?.includes(path))).map(([label]) => label),
     preview: model.preview === true, selectable: selectable(model), clients: clients(model),

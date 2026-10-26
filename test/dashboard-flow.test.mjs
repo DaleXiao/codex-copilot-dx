@@ -96,9 +96,9 @@ test("stale, malformed and hidden flow never invent idle or replay work", () => 
 test("flow phase changes preserve wire nodes; hidden pages do not redraw", () => {
   const f = fixture(), active = row("codex_app", "gpt-test");
   f.api.update(snapshot([active]));
-  const wire = f.el("flow-wires").children[0], dot = f.el("flow-wires").children[1];
-  assert.ok(wire);assert.equal(dot.attributes.class, "flow-wait");
+  const wire = f.el("flow-wires").children[0];
+  assert.ok(wire);assert.match(wire.attributes.class, /flow-waiting/);
   f.api.update(snapshot([{ ...active, first_output_ms: 2 }]));
-  assert.equal(f.el("flow-wires").children[0], wire);assert.equal(f.el("flow-wires").children[1], dot);assert.equal(dot.attributes.class, "flow-packet");
+  assert.equal(f.el("flow-wires").children[0], wire);assert.match(wire.attributes.class, /flow-streaming/);assert.equal(f.el("flow-wires").children.filter(x => x.tag === "circle").length, 0);
   f.document.visibilityState = "hidden";f.api.update(snapshot([]));assert.equal(f.el("flow-wires").children[0], wire);
 });

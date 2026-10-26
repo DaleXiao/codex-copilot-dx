@@ -3,6 +3,7 @@
   const words = (node, key, args) => globalThis.ccdxLanguage.set(node, key, args), format = key => globalThis.ccdxLanguage.format(key);
   let data = null, editing = null, editingClient = null, disabling = null, models = [], selectedModels = new Set(), busy = false, generation = 0;
   let claudeClient = "claude_app", bindingSelection = new Set(), bindingDefault = null, bindingDirty = false;
+  let memoryAction = null, memoryOrigin = null;
   const drafts = new Map();let editorOrigin = null, discovery = null, desiredSource = null;
   const apiForm = el("connection-api-form"), clientForm = el("connection-client-form");
   const node = (tag, text, className) => { const item = document.createElement(tag);if (text !== undefined) item.textContent = text;if (className) item.className = className;return item; };
@@ -112,6 +113,12 @@
     const protocol = choice(model.protocols.map(id => ({ id, name: id === "messages" ? "Messages" : id === "responses" ? "Responses" : "Chat" })), model.protocols.includes("messages") ? "messages" : model.protocols[0], false);
     protocol.setAttribute("aria-label", format("cap_api"));detail.append(protocol);
     const status = node("p", undefined, "hint"), table = node("table"), body = node("tbody");table.append(body);detail.append(status, table);
+    const maker = model.display || source(editing)?.model_display?.[model.id] || {};
+    const identity = node("dl", undefined, "model-identity");
+    for (const [label, value] of [["vendor", maker.publisher || maker.vendor || format("cap_unknown")], ["model_owner", maker.owned_by]]) {
+      if (!value) continue;const term = node("dt");words(term, label);identity.append(term, node("dd", value));
+    }
+    detail.insertBefore(identity, protocol);
     const advanced = node("details"), summary = node("summary");words(summary, "cap_manual");advanced.append(summary);detail.append(advanced);
     const note = node("p", undefined, "hint");words(note, "cap_metadata_scope");advanced.append(note);
     const fields = node("div", undefined, "connection-fields");
@@ -177,6 +184,8 @@
       tr.dataset.model = model.id;
       const selection = check("selected-model", model.id, selectedModels.has(model.id), model.id);
       selection.firstChild.addEventListener("change", e => { if (e.target.checked) selectedModels.add(model.id);else selectedModels.delete(model.id); });name.append(selection);
+      const maker = model.display || source(editing)?.model_display?.[model.id];
+      if (maker?.publisher || maker?.vendor) name.append(node("span", maker.publisher || maker.vendor, "model-maker"));
       for (const protocol of ["messages", "responses", "chat"]) {
         const label = check("model-api", protocol, model.protocols.includes(protocol), protocol === "chat" ? "Chat" : protocol === "messages" ? "Messages" : "Responses");
         label.firstChild.disabled = !apiForm.querySelector(`[name="protocol"][value="${protocol}"]`).checked;
@@ -212,7 +221,7 @@
   apiForm.elements.key_env.addEventListener("input", keyMode);
   apiForm.addEventListener("submit", e => {
     e.preventDefault();if (busy || !apiForm.reportValidity()) return;
-    const chosenModels = models.filter(model => selectedModels.has(model.id));
+    const chosenModels = models.filter(model => selectedModels.has(model.id)).map(({ display, ...model }) => model);
     const invalid = chosenModels.find(model => !model.protocols.length);
     if (invalid) {
       message("api_model_protocol_required", { model: invalid.id });
@@ -242,11 +251,43 @@
     try {
       const result = await api({ operation: "discover", id: read.id }, read.controller.signal);if (discovery !== read || editing !== read.id) return;
       data = result;
-      const known = new Map(models.map(model => [model.id, model]));for (const model of result.discovered || []) { const previous = known.get(model.id);known.set(model.id, previous ? { ...previous, ...(model.metadata ? { metadata: model.metadata } : {}) } : model); }
+      const known = new Map(models.map(model => [model.id, model]));for (const model of result.discovered || []) { const previous = known.get(model.id);known.set(model.id, previous ? { ...previous, ...(model.display ? { display: model.display } : {}), ...(model.metadata ? { metadata: model.metadata } : {}) } : model); }
       models = [...known.values()].slice(0, 500);modelRows();message("api_models_read");
     } catch (error) { if (discovery === read) message(error.message); }
     finally { if (discovery === read) { discovery = null;trigger.disabled = false;trigger.removeAttribute("aria-busy");words(trigger, "api_read_models");el("connection-discover-cancel").hidden = true; } }
   });
+  function memoryMatches(item) {
+    const model = client("codex")?.memory_model?.model;
+    return Boolean(model && [item.id, item.model, item.route_id, item.public_id].includes(model));
+  }
+  function memoryRender() {
+    const area = el("connection-memory-model");if (!area || !data) return;
+    area.hidden = editingClient !== "codex";if (area.hidden) return;
+    const c = client("codex"), dep = c.memory_model || {};
+    el("connection-memory-name").textContent = dep.model || format("memory_not_detected");
+    words(el("connection-memory-basis"), dep.model ? `memory_basis_${dep.basis}` : "");
+    const selected = (c.deployments || c.model_plan?.models || []).some(memoryMatches);
+    const draft = dep.model && [...bindingSelection].some(key => {
+      const [source, id] = key.split("\0");return memoryMatches({ id, route_id: c.model_plan?.available?.find(x => x.source === source && x.id === id)?.route_id });
+    });
+    const pending = bindingDirty && Boolean(draft) !== selected;
+    const label = !dep.model ? "memory_not_detected" : dep.enabled === false ? "memory_generation_off" : pending ? draft ? "memory_pending_on" : "memory_pending_off" : selected ? "memory_model_on" : "memory_model_off";
+    const state = el("connection-memory-state");state.hidden = !dep.model;
+    if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(state, label, dep.enabled === false ? "unavailable" : !selected || pending && !draft ? "warning" : "ok");else words(state, label);
+    const warning = el("connection-memory-warning");warning.hidden = !dep.model || dep.enabled === false || selected && !pending;
+    words(warning, selected && pending && !draft ? "memory_pending_warning" : "memory_off_warning");
+  }
+  function confirmMemory(action) {
+    memoryAction = action;memoryOrigin = document.activeElement;
+    el("connection-memory-confirm").showModal();el("connection-memory-keep").focus();
+  }
+  function closeMemory(confirm) {
+    const action = memoryAction;memoryAction = null;el("connection-memory-confirm").close();
+    if (confirm) action?.();else if (memoryOrigin?.isConnected) memoryOrigin.focus();
+  }
+  el("connection-memory-keep").addEventListener("click", () => closeMemory(false));
+  el("connection-memory-close").addEventListener("click", () => closeMemory(true));
+  el("connection-memory-confirm").addEventListener("cancel", () => { memoryAction = null; });
   const bindingKey = (source, model) => source + "\0" + model;
   const routeId = item => item.route_id || item.public_id;
   function rememberDraft() {
@@ -271,6 +312,7 @@
     bindingRows(document.activeElement?.name === "binding-model" ? { kind: "selection", key: document.activeElement.value } : document.activeElement?.dataset.binding ? { kind: "default", key: document.activeElement.dataset.binding } : null);words(el("connection-client-title"), "cap_visible_model");list();
   }
   function bindingRows(focus) {
+    memoryRender();
     el("connection-client-cancel").disabled = !bindingDirty;
     const body = el("connection-bindings"), c = client(editingClient);body.replaceChildren();
     const available = c.model_plan?.available || [], availableKeys = new Set(available.map(item => bindingKey(item.source, item.id)));
@@ -279,10 +321,16 @@
       const key = bindingKey(item.source, item.id), row = node("tr"), name = node("td"), capability = item.capability?.values || {};
       const selection = check("binding-model", key, bindingSelection.has(key), item.id);
       selection.firstChild.addEventListener("change", event => {
-        bindingDirty = true;if (event.target.checked) { bindingSelection.add(key);bindingDefault ||= routeId(item); }
-        else { bindingSelection.delete(key);if (bindingDefault === routeId(item) || !bindingSelection.size) bindingDefault = null; }
-        rememberDraft();bindingRows({ kind: "selection", key });
+        const checked = event.target.checked;
+        const apply = () => {
+          bindingDirty = true;if (checked) { bindingSelection.add(key);bindingDefault ||= routeId(item); }
+          else { bindingSelection.delete(key);if (bindingDefault === routeId(item) || !bindingSelection.size) bindingDefault = null; }
+          rememberDraft();bindingRows({ kind: "selection", key });
+        };
+        if (!checked && editingClient === "codex" && client("codex").memory_model?.enabled !== false && memoryMatches(item)) { event.target.checked = true;confirmMemory(apply); }
+        else apply();
       });name.append(selection);
+      if (editingClient === "codex" && memoryMatches(item)) { const badge = node("span", undefined, "memory-model-badge");words(badge, "memory_extract_role");name.append(badge); }
       const action = button(bindingDefault === routeId(item) && bindingSelection.has(key) ? "cap_default" : "cap_set_default", () => { bindingDirty = true;bindingSelection.add(key);bindingDefault = routeId(item);rememberDraft();bindingRows({ kind: "default", key }); });
       action.setAttribute("aria-pressed", String(bindingDefault === routeId(item) && bindingSelection.has(key)));
       action.dataset.binding = key;action.disabled = Boolean(item.unavailable);action.setAttribute("aria-label", item.id + " · " + format(bindingDefault === routeId(item) ? "cap_default" : "cap_set_default"));
@@ -313,7 +361,11 @@
   }
   clientForm.addEventListener("submit", event => { event.preventDefault();void change(bindingInput("client")); });
   el("connection-sync-preview").addEventListener("click", () => void change(bindingInput("preview_client"), result => syncPreview(result.preview)));
-  function disableSource(provider) {
+  function disableSource(provider, confirmed = false) {
+    const c = client("codex");
+    if (!confirmed && c?.enabled && c.memory_model?.enabled !== false && c.model_plan?.models.some(item => item.source === provider.id && memoryMatches(item))) {
+      confirmMemory(() => disableSource(provider, true));return;
+    }
     const affected = data.clients.filter(c => c.enabled && c.source === provider.id);
     if (!affected.length) { void change({ operation: "provider", id: provider.id, enabled: false });return; }
     disabling = provider.id;panels("disable");const area = el("connection-replacements");area.replaceChildren();
@@ -323,12 +375,14 @@
     replacements: Object.fromEntries([...el("connection-replacements").querySelectorAll("select")].map(select => [select.name, select.value || null])) }); });
   el("connection-add").addEventListener("click", () => { if (data) editApi(); });
   for (const id of ["connection-cancel", "connection-disable-cancel"]) el(id).addEventListener("click", () => { panels();(editorOrigin?.isConnected ? editorOrigin : el("connection-source-list").querySelector("button") || el("connection-add")).focus(); });
+  el("refresh").addEventListener("click", () => { if (["#models", "#codex", "#claude"].includes(location.hash)) void load(); });
   window.addEventListener("hashchange", () => { apiForm.elements.key.value = "";mountClient();if (["#models", "#claude", "#codex"].includes(location.hash)) void load(); });
   window.addEventListener("ccdx:choose-source", event => { if (typeof event.detail?.id === "string" && providerEntries.some(p => p.id === event.detail.id)) chooseProvider(event.detail.id); });
   window.addEventListener("ccdx:source-view", () => { if (data) list(); });
   window.addEventListener("ccdx:providers", () => { if (desiredSource && providerEntries.some(p => p.id === desiredSource)) { const id = desiredSource;desiredSource = null;chooseProvider(id); }if (data) list(); });
   new MutationObserver(() => { if (data) list(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
-  globalThis.ccdxConnections = { load, editClient: id => { if (data && client(id)) { editClient(client(id)); } } };
+  globalThis.ccdxConnections = { load,
+    updateMemory(snapshot) { const c = snapshot?.clients?.find(c => c.id === "codex");if (data && c?.memory_model) { client("codex").memory_model = c.memory_model;memoryRender(); } }, editClient: id => { if (data && client(id)) { editClient(client(id)); } } };
   for (const button of document.querySelectorAll("[data-client-access]")) button.addEventListener("click", () => globalThis.ccdxConnections.editClient(button.dataset.clientAccess));
   void load();
 })();

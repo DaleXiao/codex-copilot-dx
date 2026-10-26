@@ -430,7 +430,8 @@ export function createAdapterHandler(options = {}) {
         })); } catch {}
       }
       try { complete({ statusCode, aborted }); } catch {}
-      try { streamPerformance?.finish({ failed: aborted || statusCode >= 400, aborted, statusCode }); } catch {}
+      try { streamPerformance?.finish({ failed: aborted || statusCode >= 400, aborted, statusCode,
+        rejectionReason: httpEvidence.reason || (httpEvidence.code === "ccdx_client_source_disabled" ? httpEvidence.code : undefined) }); } catch {}
       try { finishTerminalActivity(); } catch {}
       try { context?.finishProvider?.(); } catch {}
     };

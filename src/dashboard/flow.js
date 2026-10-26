@@ -154,17 +154,12 @@
     if (next === geometry && state === wireState) return;
     if (next !== geometry) {
       geometry = next;wires.setAttribute("viewBox", `0 0 ${width} ${height}`);wires.replaceChildren();
-      for (const edge of edges) wires.append(svg("path", { d: edge.d }), svg("circle", { r: 2.4 }));
+      for (const edge of edges) wires.append(svg("path", { d: edge.d }));
     }
     wireState = state;
     edges.forEach((edge, index) => {
-      const value = states[index], path = wires.children[index * 2], dot = wires.children[index * 2 + 1];
-      path.setAttribute("class", `flow-wire${value.dim ? " flow-dim" : value.active ? " flow-live" : ""}`);
-      dot.setAttribute("class", value.moving ? "flow-packet" : "flow-wait");
-      dot.style.display = value.active ? "" : "none";
-      dot.style.offsetPath = value.moving ? `path('${edge.d}')` : "none";
-      dot.style.animationDelay = edge.left ? "-.9s" : "0s";
-      dot.setAttribute("cx", value.moving ? 0 : edge.x);dot.setAttribute("cy", value.moving ? 0 : edge.y);
+      const value = states[index], path = wires.children[index];
+      path.setAttribute("class", `flow-wire${value.dim ? " flow-dim" : value.active ? " flow-live" : ""}${value.moving ? " flow-streaming" : value.active ? " flow-waiting" : ""}`);
     });
   }
   function unavailable() { clearTimeout(expiry);expiry = null;fresh = false;deadline = 0;render(); }

@@ -8,8 +8,8 @@ import { loadRuntimeConfig } from "./runtime-config.mjs";
 import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { runWithRequestContext, currentRequestContext, observeRequestedModel } from "./request-context.mjs";
-import { upstreamErrorEvidence } from "./response-failures.mjs";
-import { createStreamPerformanceMetrics, isMessagesOutputDelta } from "./stream-performance.mjs";
+import { upstreamErrorEvidence, requestOptionsEvidence } from "./response-failures.mjs";
+import { createStreamPerformanceMetrics, isMessagesOutputDelta, markRequestObservation } from "./stream-performance.mjs";
 import { buildMessagesUsageRecord, recordUsage } from "./usage-store.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { decodedBodyLimitPreference } from "./user-settings.mjs";
@@ -120,7 +120,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     if (!resolveRequest) tracker?.setProvider(provider.id);
     const abort = createRequestAbort(req, res);
     let release = () => {}, outcome = "failed", model = null, configuredModel = null, clientModel = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
-    let terminalOrigin = "client_validation", failureStatus = null;
+    let terminalOrigin = "client_validation", failureStatus = null, countDeadline = null, rejectionReason;
     if (!countTokens) { stats.total++;stats.active++;stats.last_request_at = new Date().toISOString(); }
     const context = parent || { requestId };
     context.provider = selectedProvider.id;context.application = requestApplication(req.headers, "claude");
@@ -131,6 +131,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         abort.setTimeout(config.requestBodyTimeoutMs, "request_body_timeout");
         let body = await readJsonBody(req, { admission: release, signal: abort.signal, maxBodyBytes: config.maxBodyBytes, maxDecodedBodyBytes: decodedLimit });
         observeRequestedModel(body);
+        context.requestOptions = requestOptionsEvidence(body);
         if (!body || typeof body.model !== "string" || !Array.isArray(body.messages)) {
           send(res, 400, apiError("ccdx_messages_invalid", "Expected a model and messages array"));return;
         }
@@ -148,6 +149,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (desktopAliases && configuredModel !== model) { clientModel = model;model = configuredModel;body = { ...body, model }; }
         stats.last_model = model;
         context.model = configuredModel || model;
+        if (!countTokens) markRequestObservation({ max_output_tokens_requested: body.max_tokens });
         tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });
         validateConversation?.(body, req.headers, selectedProvider);
         terminalOrigin = "transport";
@@ -156,7 +158,11 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
             context.countObservation = { ...context.countObservation, ...value };
             if (value.upstream) { context.upstreamAttempts = (context.upstreamAttempts || 0) + 1;tracker?.upstreamStarted(false); }
           },
-          onUpstreamStart() { abort.setTimeout(streamed ? config.streamHandshakeTimeoutMs : config.upstreamTimeoutMs, "upstream_timeout"); } });
+          onUpstreamStart() {
+            const timeout = streamed ? config.streamHandshakeTimeoutMs : config.upstreamTimeoutMs;
+            if (countTokens) countDeadline ??= Date.now() + timeout;
+            abort.setTimeout(countTokens ? Math.max(1, countDeadline - Date.now()) : timeout, "upstream_timeout");
+          } });
         body = null;
         terminalOrigin = upstream.ok ? "upstream_response" : "upstream_http";
         tracker?.upstreamHeaders(upstream.status);
@@ -205,6 +211,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           } finally { await reader.cancel().catch(() => {});reader.releaseLock(); }
         }
       } catch (error) {
+        rejectionReason = error.jsonBody?.error?.reason || (error.code === "ccdx_client_source_disabled" ? error.code : undefined);
         const detail = operationErrorDetails(error, { reason: abort.reason });
         outcome = detail.source === "cancelled" ? "cancelled" : "failed";
         const statusCode = detail.status || (abort.reason ? abortErrorStatusCode(abort.reason) : 502);
@@ -214,7 +221,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         const diagnostic = error.code === "ccdx_api_network_unavailable" ? transportErrorDetails(error) : null;
         log(outcome === "cancelled" ? "info" : "warn", `Claude request ${requestId}: ${detail.code}${diagnostic ? ` (${diagnostic.code}, ${diagnostic.phase})` : ""}`);
         tracker?.setErrorOrigin(terminalOrigin);
-        context.onHttpError?.({ code: detail.code, origin: terminalOrigin });
+        context.onHttpError?.({ code: detail.code, origin: terminalOrigin, ...(diagnostic ? { transport: diagnostic } : {}) });
         if (outcome === "cancelled") return;
         if (!res.headersSent) {
           const value = apiError(error.code || abort.reason || "ccdx_gateway_error", message);
@@ -226,11 +233,13 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         release();abort.cleanup();finishProvider();
         if (!countTokens) {
           stats.active--;stats[outcome]++;
+          const usageRecord = buildMessagesUsageRecord({ model: configuredModel || model, responseId, usage, mode: streamed ? "stream" : "json",
+            client: req.headers["x-ccdx-client"] === "claude-app" ? "claude_app" : req.headers["x-ccdx-client"] === "claude-code" ? "claude_code" : "claude", provider: selectedProvider.id });
+          markRequestObservation({ input_tokens: usageRecord?.usage?.input_tokens, output_tokens: usageRecord?.usage?.output_tokens });
           tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });tracker?.setOutputTokens(usage?.output_tokens);
-          tracker?.terminal(outcome, { origin: failedEvent ? "upstream_event" : terminalOrigin, reason: stopReason === "max_tokens" ? "max_output_tokens" : undefined });
-          tracker?.finish({ failed: outcome === "failed" || outcome === "cancelled", aborted: outcome === "cancelled", statusCode: failureStatus || res.statusCode });
-          const client = req.headers["x-ccdx-client"] === "claude-app" ? "claude_app" : req.headers["x-ccdx-client"] === "claude-code" ? "claude_code" : "claude";
-          try { void Promise.resolve(record(buildMessagesUsageRecord({ model: configuredModel || model, responseId, usage, mode: streamed ? "stream" : "json", client, provider: selectedProvider.id }))).catch(() => {}); } catch {}
+          tracker?.terminal(outcome, { origin: failedEvent ? "upstream_event" : terminalOrigin, stopReason, reason: stopReason === "max_tokens" ? "max_output_tokens" : undefined });
+          tracker?.finish({ failed: outcome === "failed" || outcome === "cancelled", aborted: outcome === "cancelled", statusCode: failureStatus || res.statusCode, rejectionReason });
+          try { void Promise.resolve(record(usageRecord)).catch(() => {}); } catch {}
         }
       }
     });

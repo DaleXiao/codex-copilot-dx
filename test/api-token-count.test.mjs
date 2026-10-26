@@ -69,3 +69,33 @@ test('an immediate new count after all cancellations never inherits an abandoned
  assert.equal((await fresh).status,200);assert.equal(starts,1);assert.equal(calls,2);
  assert.equal((await counter.count(body)).status,200);assert.equal(calls,3);
 });
+
+test('a cold unsupported model joins distinct count inputs before the first 404', async () => {
+ let calls=0,release;const wait=new Promise(r=>{release=r;});
+ const counter=createApiTokenCounter({request:async(_body,options)=>{calls++;options.onUpstreamStart();await wait;return new Response(null,{status:404});}});
+ const inputs=Array.from({length:16},(_,i)=>counter.count({...body,messages:[{role:'user',content:'synthetic-'+i}]}));
+ await turn();assert.equal(calls,1);release();
+ for(const reply of await Promise.all(inputs))assert.equal(reply.status,404);
+ assert.equal(calls,1);
+});
+
+test('successful capability discovery never reuses counts across different bodies',async()=>{
+ let calls=0;
+ const counter=createApiTokenCounter({request:async(value,options)=>{calls++;options.onUpstreamStart();return Response.json({input_tokens:value.messages[0].content.length});}});
+ const results=await Promise.all([1,3,8,15].map(n=>counter.count({...body,messages:[{role:'user',content:'x'.repeat(n)}]})));
+ assert.deepEqual(await Promise.all(results.map(async x=>(await x.json()).input_tokens)),[1,3,8,15]);assert.equal(calls,4);
+});
+
+test('a cancelled first capability caller leaves a different waiting input alive',async()=>{
+ let release,calls=0,sharedSignal;
+ const counter=createApiTokenCounter({request:async(value,options)=>{calls++;options.onUpstreamStart();if(calls===1){sharedSignal=options.signal;await new Promise(r=>{release=r;});}return Response.json({input_tokens:value.messages.length});}});
+ const a=new AbortController(),one=counter.count(body,{signal:a.signal}),two=counter.count({...body,messages:[]});await turn();
+ const cancelled=assert.rejects(one,{name:'AbortError'});a.abort();await cancelled;assert.equal(sharedSignal.aborted,false);release();
+ assert.equal((await(await two).json()).input_tokens,0);assert.equal(calls,2);
+});
+
+test('large admitted counts also wait for a cold capability without sharing unrelated successful counts',async()=>{
+ let calls=0;const counter=createApiTokenCounter({request:async()=>{calls++;await turn();return new Response(null,{status:404});}});
+ const inputs=[1,2,3].map(i=>counter.count({...body,messages:[{role:'user',content:'x'.repeat(2*1024*1024)+i}]}));
+ assert.ok((await Promise.all(inputs)).every(x=>x.status===404));assert.equal(calls,1);
+});

@@ -19,7 +19,7 @@ test("status distinguishes image outcomes from input optimization and reports lo
   assert.match(output, /Image generation: 1 active, 4 succeeded, 2 failed \(1 busy\), 3 cancelled, 1 delivery failures/);
   assert.match(output, /\[WARN\]\s+Usage logging: 2 pending.*3 dropped, 1 write failures/);
   assert.doesNotMatch(output, /Debug logging/);
-  assert.match(output, /1 generation, 2 token counts/);
+  assert.match(output, /1 generation, 2 capability\/access/);
   assert.match(output, /reason=ccdx_model_not_selected/);
 });
 

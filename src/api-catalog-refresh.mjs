@@ -2,7 +2,7 @@ import { accessError } from "./access-settings.mjs";
 
 // Network work never holds the configuration transaction. Only publication
 // enters the caller's short, version-checked commit boundary.
-export function createApiCatalogRefresh({ config, source, track, revision, commit, onState, now = Date.now }) {
+export function createApiCatalogRefresh({ config, source, track, revision, commit, onState, complete = () => true, now = Date.now }) {
   const reads = new Map(), flights = new Map(), pending = new Set();let closed = false, batch;
   const current = (id, version) => !closed && config(id)?.enabled && revision(config(id)) === version;
   function cancel(id) {
@@ -28,7 +28,7 @@ export function createApiCatalogRefresh({ config, source, track, revision, commi
       onState(id, { state: "ready", checked_at: new Date(cached.at).toISOString() });return cached.models;
     }
     const savedAge = now() - Date.parse(selected.checked_at);
-    if (!force && !cached && savedAge >= 0 && savedAge < 30 * 60000 && selected.models.every(model => model.metadata?.state && model.metadata.deployment === version)) return selected.models;
+    if (!force && !cached && savedAge >= 0 && savedAge < 30 * 60000 && complete(selected) && selected.models.every(model => model.metadata?.state && model.metadata.deployment === version)) return selected.models;
     const flight = { revision: version, controller: new AbortController() };
     flights.set(id, flight);
     const active = () => current(id, version) && flights.get(id) === flight && !flight.controller.signal.aborted;

@@ -118,7 +118,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     const serialized = body ? options.bodyText ?? JSON.stringify(body) : undefined;
     if (serialized !== undefined) requestHeaders["Content-Length"] = String(Buffer.byteLength(serialized));
     options.onUpstreamStart?.();
-    if (body) markUpstreamStarted(body.stream === true);
+    if (body) { markUpstreamStarted(body.stream === true);if (!options.countTokens) markRequestObservation({ max_output_tokens_sent: endpoint.includes("messages") ? body.max_tokens : body.max_output_tokens }); }
     try {
       const send = fetchImpl || await transport(options.signal);
       const response = await send(`${M365_API_BASE}${endpoint}`, { method: body ? "POST" : "GET", headers: requestHeaders,

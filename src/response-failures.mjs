@@ -2,6 +2,7 @@ import { terminalCell } from "./terminal-text.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { currentRequestContext } from "./request-context.mjs";
 import { isProviderId } from "./provider-metadata.mjs";
+import { transportErrorDetails } from "./operation-error.mjs";
 
 const DEFAULT_RECENT_FAILURES = 10;
 
@@ -129,6 +130,7 @@ export function requestOptionsEvidence(body) {
   if (["auto", "default", "flex", "priority", "scale"].includes(body.service_tier)) result.service_tier = body.service_tier;
   if (["text", "json_object", "json_schema"].includes(body.text?.format?.type)) result.output_format = body.text.format.type;
   if (Number.isSafeInteger(body.max_output_tokens) && body.max_output_tokens >= 0) result.max_output_tokens = body.max_output_tokens;
+  if (Number.isSafeInteger(body.max_tokens) && body.max_tokens >= 0) result.max_tokens = body.max_tokens;
   if (Array.isArray(body.tools)) result.tools = body.tools.length;
   if (Array.isArray(body.input)) result.input_items = body.input.length;
   return result;
@@ -144,15 +146,16 @@ export function createHttpFailureDiagnostics({ maxEntries = 20, now } = {}) {
   return {
     record(details) {
       all.record(details);
-      const category = details.route === "messages_count_tokens" ? "capability"
+      const accessNotice = details.reason === "ccdx_model_not_selected" || details.reason === "ccdx_client_source_disabled";
+      const category = accessNotice || details.route === "messages_count_tokens" ? "capability"
         : ["responses", "responses_compact", "messages"].includes(details.route) ? "inference"
         : details.route === "image_mcp" && details.http_status === 405 ? "protocol"
           : details.route === "not_found" ? "route" : "other";
       counts[category]++;
-      if (category === "inference" || category === "other") actionable.record(details);
+      if ((category === "inference" || category === "other") && !accessNotice) actionable.record(details);
       if (category === "capability") {
         capability.record(details);
-        if (![404, 405, 501].includes(details.http_status)) actionable.record(details);
+        if (!accessNotice && ![404, 405, 501].includes(details.http_status)) actionable.record(details);
       }
       if (category === "protocol") protocol.record(details);
       if (category === "route") routes.record(details);
@@ -165,13 +168,17 @@ export function createHttpFailureDiagnostics({ maxEntries = 20, now } = {}) {
 
 export function buildHttpFailureDetails({ statusCode, route, requestId, model, code, origin, headers,
   error_body, error_type, parameter, diagnostic_message, method, target, request_options, upstream_attempts, attempt_timings, requested_model, provider,
-  application, reason, capability_cached, shared_upstream }) {
+  application, reason, capability_cached, shared_upstream, transport }) {
+  if (!reason && code === "ccdx_client_source_disabled" && upstream_attempts === 0 && origin !== "upstream_http") {
+    reason = code;origin = "client_validation";
+  }
   const reasons = { ccdx_model_not_selected: "This model is not selected for this app.",
     ccdx_model_ambiguous: "This model name matches multiple sources. Select its source-specific entry.",
     ccdx_model_catalog_unavailable: "The selected model is not currently available in its source catalog.",
     ccdx_client_source_disabled: "This app or its model source is turned off." };
   const message = (Object.hasOwn(reasons, reason) ? reasons[reason] : null) || (route === "messages_count_tokens" && statusCode === 404 ? "The source's token-count endpoint returned HTTP 404. Message generation is separate."
-    : origin === "client_validation" ? "The request was rejected locally before an upstream call."
+    : code === "ccdx_api_network_unavailable" ? "Connection to the model source failed."
+      : origin === "client_validation" ? "The request was rejected locally before an upstream call."
       : error_body === "empty" ? "Upstream returned no error details." : "HTTP request failed; original response was preserved.");
   const details = responseFailureDetails({ model, error: { code: typeof code === "string" && /^[a-z\d_.:-]{1,80}$/i.test(code) ? code : `http_${statusCode}`,
     message } }, "http.error", { headers, provider });
@@ -186,5 +193,6 @@ export function buildHttpFailureDetails({ statusCode, route, requestId, model, c
     ...(["codex_app", "codex_cli", "codex", "claude_app", "claude_code", "claude", "api"].includes(application) ? { application } : {}),
     ...(Object.hasOwn(reasons, reason) ? { reason } : {}),
     ...(capability_cached === true ? { capability_cached: true } : {}), ...(shared_upstream === true ? { shared_upstream: true } : {}),
+    ...(transport ? { transport: transportErrorDetails({ transport }) } : {}),
     ...(Number.isSafeInteger(upstream_attempts) ? { upstream_attempts } : {}) };
 }

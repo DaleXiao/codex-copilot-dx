@@ -106,10 +106,10 @@
       const failures = [...grouped.values()].slice(-10);
       const recorded = new Set(failures.map((failure) => failure.request_id).filter(Boolean));
       for (const request of requests) {
-        if (!request.failed || recorded.has(request.request_id)) continue;
+        if (!request.failed || request.outcome === "cancelled" || request.rejection_reason || recorded.has(request.request_id)) continue;
         failures.push({ at: request.at, model: request.model, request_id: request.request_id,
           event_type: `request.${request.outcome}`, code: request.origin, timeline: request,
-          message: "Request ended without successful completion.", local_message: true, retried: request.upstream_attempts > 1 });
+          message: request.stop_reason === "max_tokens" ? "Output limit reached." : "Request ended without successful completion.", local_message: true, retried: request.upstream_attempts > 1 });
       }
       failures.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
       failures.splice(0, Math.max(0, failures.length - 10));
@@ -123,6 +123,7 @@
         return;
       }
       for (const failure of failures) {
+        const notModelRequest = ["not_found", "image_mcp", "models", "claude_models"].includes(failure.route);
         const item = document.createElement("li");
         const details = document.createElement("details");
         details.dataset.key = `${failure.at}/${failure.request_id || failure.response_id}/${failure.code}`;
@@ -131,7 +132,7 @@
         const summary = {
           detail: phrase("time_model_code", {
             time: failure.at ? time(failure.at, { date: true }) : phrase("unknown_time"),
-            model: failure.model ? String(failure.model).slice(0, 80) : phrase("unknown_model"),
+            model: notModelRequest ? phrase("not_applicable") : failure.model ? String(failure.model).slice(0, 80) : phrase("unknown_model"),
             code: failure.code ? String(failure.code).slice(0, 80) : phrase("unknown_error"),
           }),
           retry: phrase(failure.upstream_attempts === 0 ? "no_upstream_call" : failure.retried ? "retry_attempted" : "no_retry"),
@@ -151,7 +152,7 @@
         const timings = timeline?.timings_ms || {};
         const timingText = ["admission", "body", "history", "images", "serialization", "upstream_start", "upstream_headers", "first_output", "last_activity", "terminal", "finished"]
           .filter((key) => finite(timings[key])).map((key) => `${key}=${Number(timings[key]).toFixed(1)}`).join(" / ");
-        const fields = { time: failure.at, model: failure.model, event: failure.event_type, code: failure.code, reason: failure.reason, application: failure.application, occurrences: failure.occurrences > 1 ? failure.occurrences : undefined, capability_cached: failure.capability_cached, shared_upstream: failure.shared_upstream,
+        const fields = { time: failure.at, model: notModelRequest ? phrase("not_applicable") : failure.model, event: failure.event_type, code: failure.code, reason: failure.reason, application: failure.application, occurrences: failure.occurrences > 1 ? failure.occurrences : undefined, capability_cached: failure.capability_cached, shared_upstream: failure.shared_upstream,
           message: failure.message, response_id: failure.response_id, upstream_request_id: failure.upstream_request_id,
           retry: failure.retried ? (timeline ? "attempted" : "attempted (outcome not recorded here)") : "not attempted",
           retry_policy: failure.retry_policy, retry_skipped: failure.retry_skipped,
@@ -162,7 +163,9 @@
           error_type: failure.error_type, parameter: failure.parameter, error_body: failure.error_body,
           diagnostic_message: failure.diagnostic_message, method: failure.method, target: failure.target,
           request_options: failure.request_options ? JSON.stringify(failure.request_options) : undefined,
-          requested_model: failure.requested_model, request_kind: failure.request_kind, provider: failure.provider || timeline?.provider,
+          transport: failure.transport ? JSON.stringify(failure.transport) : undefined,
+          output_requested: timeline?.context?.max_output_tokens_requested, output_sent: timeline?.context?.max_output_tokens_sent,
+          output_used: timeline?.context?.output_tokens, stop_reason: timeline?.stop_reason, requested_model: failure.requested_model, request_kind: failure.request_kind, provider: failure.provider || timeline?.provider,
           attempt_timings: failure.attempt_timings || timeline?.attempts ? JSON.stringify(failure.attempt_timings || timeline.attempts) : undefined,
           timings_ms: timingText };
         const diagnostic = document.createElement("dl");
@@ -198,6 +201,7 @@
     
     function render(data) {
       for (const source of data.providers?.connections?.providers || []) sourceNames.set(source.id, source.name);
+      globalThis.ccdxConnections?.updateMemory?.(data.providers?.connections);
       globalThis.ccdxDashboardActivity?.update(data.model_activity);
       globalThis.ccdxDashboardFlow?.update(data);
       text("version", `v${data.version || "?"}`);
@@ -326,7 +330,9 @@
           String(sourceLabel(request.provider) || "—").slice(0, 80),
           String(request.model || "unknown").slice(0, 80), outcome, number(context.input_tokens), ""], { labels: [3] });
         const wireFailure = Number.isInteger(request.http_status) && request.http_status >= 400;
-        if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[3], wireFailure ? "request_http_failure" : outcome.toLowerCase(),
+        if (request.rejection_reason) {
+          if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[3], "request_access_blocked", "unavailable");else localize(row.children[3], "request_access_blocked");
+        } else if (globalThis.ccdxIcons) globalThis.ccdxIcons.set(row.children[3], wireFailure ? "request_http_failure" : outcome.toLowerCase(),
           wireFailure ? "warning" : globalThis.ccdxIcons.kind(outcome.toLowerCase()), wireFailure ? { status: request.http_status } : {});
         else if (wireFailure) localize(row.children[3], "request_http_failure", { status: request.http_status });
         const details = document.createElement("details"), summary = document.createElement("summary"), fields = document.createElement("dl");
@@ -337,7 +343,8 @@
         for (const [key, value] of [["request_id", request.request_id || "—"], ["http_status", number(request.http_status)], ["attempts", number(request.upstream_attempts)], ["model_outcome", globalThis.ccdxLanguage?.format(outcome.toLowerCase()) || outcome],
           ["time", Number.isFinite(at) ? time(at, { date: true }) : "—"],
           ["wire_mib", finite(context.payload_bytes) ? `${(Number(context.payload_bytes) / 1048576).toFixed(2)} MiB` : "—"],
-          ["images", number(context.images)], ["model_window", number(context.context_window_tokens)], ["input_window", ratio]]) {
+          ["images", number(context.images)], ["model_window", number(context.context_window_tokens)], ["input_window", ratio],
+          ["output_requested", number(context.max_output_tokens_requested)], ["output_sent", number(context.max_output_tokens_sent)], ["output_used", number(context.output_tokens)], ["stop_reason", request.stop_reason || "—"]]) {
           const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);detail.textContent = value;fields.append(term, detail);
         }
         row.children[5].append(details);body.append(row);

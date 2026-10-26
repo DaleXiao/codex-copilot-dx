@@ -19,8 +19,12 @@ test('model resolution failures retain their requested model and app without any
  t.after(async()=>{handler.dispose?.();server.closeAllConnections();await new Promise(r=>server.close(r));await runtime.close();fs.rmSync(home,{recursive:true,force:true});});
  const response=await fetch(`http://127.0.0.1:${server.address().port}/v1/responses`,{method:'POST',headers:{'Content-Type':'application/json',originator:'codex_app'},body:JSON.stringify({model:'gpt-unselected',input:'private synthetic prompt'})});
  assert.equal(response.status,400);assert.equal((await response.json()).error.reason,'ccdx_model_not_selected');assert.equal(calls,0);
- const issue=handler.snapshot().http_errors.actionable_recent.at(-1);
- assert.equal(issue.model,'gpt-unselected');assert.equal(issue.requested_model,'gpt-unselected');assert.equal(issue.application,'codex_app');assert.equal(issue.reason,'ccdx_model_not_selected');assert.equal(issue.upstream_attempts,0);assert.doesNotMatch(JSON.stringify(issue),/private synthetic/);
+ const issue=handler.snapshot().http_errors.capability_recent.at(-1);
+ assert.equal(issue.model,'gpt-unselected');assert.equal(issue.requested_model,'gpt-unselected');assert.equal(issue.application,'codex_app');assert.equal(issue.reason,'ccdx_model_not_selected');assert.equal(issue.upstream_attempts,0);assert.equal(handler.snapshot().stream_performance.recent_requests.at(-1).rejection_reason,'ccdx_model_not_selected');assert.doesNotMatch(JSON.stringify(issue),/private synthetic/);
+ await runtime.manageConnections({operation:'client',id:'codex',enabled:false,allowed:['github']});
+ const off=await fetch(`http://127.0.0.1:${server.address().port}/v1/responses`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'gpt-visible',input:'synthetic'})});
+ assert.equal(off.status,503);await off.text();
+ const notice=handler.snapshot().http_errors.capability_recent.at(-1);assert.equal(notice.reason,'ccdx_client_source_disabled');assert.equal(handler.snapshot().http_errors.actionable_recent.length,0);
 });
 
 test('Claude API counts retain source, model, HTTP origin and real or cached call counts',async t=>{
@@ -56,4 +60,26 @@ test('a Claude child keeps a separate source guard while the parent and each chi
  guard('claude_code','source-a',body,headers,salt);
  assert.throws(()=>guard('claude_code','source-c',body,{...headers,'x-claude-code-agent-id':'child-one'},salt),{code:'ccdx_conversation_source_changed'});
  assert.throws(()=>guard('claude_code','source-b',body,headers,salt),{code:'ccdx_conversation_source_changed'});
+});
+
+test('manual Messages preserve declared budget adjustments, stop reason and safe transport causes',async t=>{
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'ccdx-message-budget-')),env={CCDX_M365:'0'};let fail=false,sent;
+ const {createApiProvider}=await import('../src/providers/api.mjs');
+ const runtime=createProviderRuntime({home,env,githubClient:{},githubRegistry:{models:{data:[]}},secretStore:{set:async()=>{},get:async()=> 'synthetic-key',close(){}},configureClaude:()=>({app:'configured',code:'configured'}),inspectDesktop:async()=>false,
+  createApi:options=>createApiProvider({...options,networkFactory:async()=>({close(){},fetch:async(url,options)=>{
+   if(url.endsWith('/models'))return Response.json({data:[{id:'budget-model',supported_endpoints:['/v1/messages']}]});
+   if(fail)throw Object.assign(Error('input=private-content'),{transport:{code:'ECONNRESET',phase:'tls',reused_socket:true}});
+   sent=JSON.parse(options.body);return Response.json({id:'msg_budget',type:'message',model:'budget-model',content:[],stop_reason:'max_tokens',usage:{input_tokens:3,output_tokens:10}});
+  }})})});
+ t.after(async()=>{await runtime.close();fs.rmSync(home,{recursive:true,force:true});});
+ const saved=await runtime.manageConnections({operation:'save_api',config:{name:'Example',base_url:'https://example.test/v1',endpoints:{messages:'https://example.test/v1/messages'},auth_header:'bearer',models:[{id:'budget-model',protocols:['messages'],capabilities:{context_window:128000,max_output_tokens:10}}]},key:'synthetic-key',allowed:['claude_app']});
+ const id=saved.providers.find(x=>!x.builtin).id;await runtime.manageConnections({operation:'client',id:'claude_app',enabled:true,allowed:[id],deployments:[{source:id,model:'budget-model'}]});
+ const handler=createAdapterHandler({providerRuntime:runtime}),server=http.createServer(handler);await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ t.after(async()=>{handler.dispose?.();server.closeAllConnections();await new Promise(r=>server.close(r));});
+ const key=readClientGatewayKeys({home,env}).claude_app;
+ const send=()=>fetch(`http://127.0.0.1:${server.address().port}/anthropic/v1/messages`,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key},body:JSON.stringify({model:'budget-model',messages:[],max_tokens:50})});
+ const reply=await send();assert.equal(reply.status,200);await reply.text();assert.equal(sent.max_tokens,10);
+ const row=runtime.snapshot().claude.requests.performance.recent_requests.at(-1);assert.equal(row.stop_reason,'max_tokens');assert.equal(row.context.max_output_tokens_requested,50);assert.equal(row.context.max_output_tokens_sent,10);assert.equal(row.context.output_tokens,10);assert.equal(row.context.context_window_tokens,128000);assert.equal(row.outcome,'incomplete');
+ fail=true;const failed=await send();assert.equal(failed.status,502);const error=await failed.json();assert.equal(error.error.diagnostic.code,'ECONNRESET');
+ const issue=handler.snapshot().http_errors.actionable_recent.at(-1);assert.deepEqual(issue.transport,{code:'ECONNRESET',phase:'tls',reused_socket:true});assert.doesNotMatch(JSON.stringify(issue),/private-content/);
 });

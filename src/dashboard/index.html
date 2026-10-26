@@ -72,6 +72,10 @@
   <section class="panel dashboard-section" id="connection-client-editor" hidden aria-labelledby="connection-client-title">
     <div class="panel-heading"><h2 id="connection-client-title"></h2><span id="connection-draft-state" class="hint"></span></div>
     <form id="connection-client-form">
+      <div id="connection-memory-model" hidden>
+        <div class="memory-model-row"><span data-i18n="memory_extract_model">Memory extraction model</span><div class="memory-model-value"><strong id="connection-memory-name">—</strong><span id="connection-memory-basis" class="hint"></span><span id="connection-memory-state"></span></div></div>
+        <p id="connection-memory-warning" class="memory-model-notice" role="status" hidden></p>
+      </div>
       <p id="connection-default-note" class="hint" role="status" hidden></p>
       <div class="table-wrap"><table class="binding-table"><thead><tr><th data-i18n="model">Model</th><th data-i18n="source">Source</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th><th data-i18n="cap_default">Default</th></tr></thead><tbody id="connection-bindings"></tbody></table></div>
       <div class="setting-row"><label for="connection-auto-sync" data-i18n="cap_auto_sync">Sync model settings</label><input id="connection-auto-sync" type="checkbox" role="switch" checked><span class="hint" data-i18n="cap_sync_scope">Preserves your manual settings.</span></div>
@@ -414,5 +418,6 @@
       </main>
       <footer data-i18n="local_only_visible_page_updates">THIS COMPUTER ONLY / UPDATES WHILE VISIBLE</footer>
     </div>
+    <dialog id="connection-memory-confirm" class="memory-confirm" aria-labelledby="connection-memory-confirm-title"><h2 id="connection-memory-confirm-title" data-i18n="memory_close_title">Turn off the memory extraction model?</h2><p data-i18n="memory_close_body">Codex uses this model to extract new memories. Turning it off may prevent new memory generation.</p><p class="hint" data-i18n="memory_existing_kept">Existing memories will not be deleted.</p><div class="section-actions"><button type="button" id="connection-memory-keep" data-i18n="memory_keep_enabled">Keep enabled</button><button type="button" id="connection-memory-close" data-i18n="memory_close_anyway">Turn off anyway</button></div></dialog>
   </body>
 </html>

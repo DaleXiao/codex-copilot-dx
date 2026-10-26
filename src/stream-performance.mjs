@@ -249,7 +249,8 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       let headersAt = null;
       let lastActivityAt = null;
       let terminalAt = null;
-      const context = { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: null };
+      const context = { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: null, output_tokens: null, max_output_tokens_requested: null, max_output_tokens_sent: null };
+      let stopReason = null;
       const elapsed = (time) => time === null ? null : Number(Math.max(0, time - requestStartedAt).toFixed(1));
       if (activeRequests.size < MAX_ACTIVE_REQUESTS) activeRequests.set(activeId, () => ({
         request_id: safeRequestId, application: client, route: routeName, provider, model, phase,
@@ -337,19 +338,20 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         setErrorOrigin(value) {
           if (TERMINAL_ORIGINS.has(value)) errorOrigin = value;
         },
-        terminal(outcome, { model: terminalModel, origin, reason } = {}) {
+        terminal(outcome, { model: terminalModel, origin, reason, stopReason: stopped } = {}) {
           if (finished || terminalOutcome || !TERMINAL_OUTCOMES.includes(outcome)) return;
           terminalOutcome = outcome;
           terminalAt = now();
           if (terminalModel !== undefined) model = modelLabel(terminalModel);
           if (TERMINAL_ORIGINS.has(origin)) terminalOrigin = origin;
           if (outcome === "incomplete") incompleteReason = INCOMPLETE_REASONS.has(reason) ? reason : "other";
+          if (["end_turn", "max_tokens", "tool_use", "stop_sequence", "pause_turn", "refusal", "model_context_window_exceeded"].includes(stopped)) stopReason = stopped;
           if (outcome !== "completed") failed = true;
         },
         fail() {
           failed = true;
         },
-        finish({ failed: finishFailed = false, aborted = false, statusCode = 0 } = {}) {
+        finish({ failed: finishFailed = false, aborted = false, statusCode = 0, rejectionReason } = {}) {
           if (finished) return;
           if (!sourceStats) assignProvider("unknown");
           finished = true;
@@ -381,6 +383,8 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           recentRequests.push({
             request_id: safeRequestId, application: client,
             at, route: routeName, model, outcome, origin, phase,
+            ...(["ccdx_model_not_selected", "ccdx_client_source_disabled"].includes(rejectionReason) ? { rejection_reason: rejectionReason } : {}),
+            ...(stopReason ? { stop_reason: stopReason } : {}),
             ...(provider ? { provider } : {}),
             empty_stream_completion: emptyStreamCompletion,
             failed: failed || aborted || (terminalOutcome !== null && terminalOutcome !== "completed"),

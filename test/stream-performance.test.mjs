@@ -343,7 +343,7 @@ test("request timeline records stages, retry attempts and activity without chang
     http_status: 200, upstream_attempts: 2, first_output_source: "delta", timings_ms: { admission: 5, body: 0, history: 0,
       images: 0, serialization: 0, upstream_start: 10, upstream_headers: 45, first_output: 50,
       last_activity: 80, terminal: 90, finished: 95 },
-    context: { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: null },
+    context: { payload_bytes: null, images: null, input_tokens: null, context_window_tokens: null, output_tokens: null, max_output_tokens_requested: null, max_output_tokens_sent: null },
     attempts: [{ attempt: 1, started_ms: 10, headers_ms: 20, http_status: null },
       { attempt: 2, started_ms: 40, headers_ms: 45, http_status: null }],
   });
@@ -360,7 +360,7 @@ test("request context retains only bounded numeric observations and isolated sna
   tracker.observeContext({ payload_bytes: NaN, images: -1, input_tokens: null, context_window_tokens: 0 });
   tracker.finish({ statusCode: 200 });
   const first = metrics.snapshot();
-  assert.deepEqual(first.recent_requests[0].context, { payload_bytes: 2048, images: 2, input_tokens: 100, context_window_tokens: 1000 });
+  assert.deepEqual(first.recent_requests[0].context, { payload_bytes: 2048, images: 2, input_tokens: 100, context_window_tokens: 1000, output_tokens: null, max_output_tokens_requested: null, max_output_tokens_sent: null });
   first.recent_requests[0].context.input_tokens = 999;
   assert.equal(metrics.snapshot().recent_requests[0].context.input_tokens, 100);
   assert.doesNotMatch(JSON.stringify(metrics.snapshot()), /private-prompt|private-image|secret/);

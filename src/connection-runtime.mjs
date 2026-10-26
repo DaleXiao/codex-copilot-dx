@@ -4,6 +4,8 @@ import { accessSettingsPath, readAccessSettings, updateAccessSettings, checkedAp
 import { createApiSecretStore, checkedApiKey } from "./api-secrets.mjs";
 import { createApiCatalogRefresh } from "./api-catalog-refresh.mjs";
 import { createApiProvider } from "./providers/api.mjs";
+import { createApiModelDisplayStore } from "./api-model-display.mjs";
+import { createCodexMemoryModel } from "./codex-memory-model.mjs";
 import { readClientGatewayKeys, gatewayClient } from "./client-gateway-keys.mjs";
 import { createClaudeGatewayHandler } from "./claude-gateway.mjs";
 import { configureClaudeClients, restoreClaudeClients, inspectClaudeDesktopPolicy } from "./claude-client-config.mjs";
@@ -21,12 +23,14 @@ const validObject = (value, keys) => value && typeof value === "object" && !Arra
 export function createConnectionRuntime({ legacy, home, env = process.env, platform = process.platform, corePort = 2026,
   secretStore, createApi = createApiProvider, configureClaude = configureClaudeClients, restoreClaude = restoreClaudeClients,
   configureCodex = configureCodexApi, inspectDesktop = inspectClaudeDesktopPolicy, clientAccessChanged, preserveClientConfiguration, now = Date.now, log = () => {} } = {}) {
-  const options = { home, env, platform, preserveClientConfiguration }, secrets = secretStore || createApiSecretStore(options);
+  const options = { home, env, platform, preserveClientConfiguration }, secrets = secretStore || createApiSecretStore(options), modelDisplay = createApiModelDisplayStore(options);
   const guardConversation = createConversationSourceGuard(options), acquireClaudeRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 });
+  const memoryModel = createCodexMemoryModel({ ...options, corePort });
   let settings = readAccessSettings(options), managed = fs.existsSync(accessSettingsPath(options)), serial = Promise.resolve(), keys, closed = false;
   const instances = new Map(), active = new Map(), retired = new Set(), handlers = new Map(), summaries = new WeakMap(), sourceSecrets = new WeakMap(), setup = {}, lastClients = {};
   const retiredSecrets = new Map(), cleanups = new Set(), plans = new Map(), discoveries = new Map();
   const catalogRefresh = createApiCatalogRefresh({ config: id => settings.apis.find(api => api.id === id), source: getSource, track,
+    complete: api => modelDisplay.has(api.id, deploymentRevision(api, env)),
     revision: api => deploymentRevision(api, env), now,
     commit: (...args) => enqueue(() => applyCatalog(...args)),
     onState: (id, state) => state ? discoveries.set(id, state) : discoveries.delete(id) });
@@ -61,7 +65,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     const previous = instances.get(id), revision = deploymentRevision(config, env);if (previous?.config === config && previous.revision === revision) return previous.source;
     const signature = JSON.stringify(config) + revision;
     if (previous?.signature === signature) return previous.source;
-    const source = createApi({ config, secrets, env: { ...env }, platform });instances.set(id, { signature, source, config, revision });sourceSecrets.set(source, config.secret_ref);
+    const source = createApi({ config, secrets, env: { ...env }, platform, modelDisplay: model => modelDisplay.get(id, revision, model) });instances.set(id, { signature, source, config, revision });sourceSecrets.set(source, config.secret_ref);
     if (previous) retire(previous.source);return source;
   }
   function plan(id) {
@@ -121,9 +125,11 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     return structuredClone({ source: "connections", providers: [
       { id: "github", name: "GitHub Copilot", enabled: config.providers.github, builtin: true, protocols: ["responses"] },
       { id: "m365", name: "Microsoft 365", enabled: config.providers.m365, builtin: true, protocols: ["messages", "responses"] },
-      ...config.apis.map(api => { const { secret_ref, ...publicApi } = api;return { ...(compact ? { id: api.id, name: api.name, enabled: api.enabled } : publicApi),
-        ...summary(api), ...(compact ? {} : { deployment_revision: deploymentRevision(api, env) }), discovery: discoveries.get(api.id) || null, builtin: false, key_saved: api.key_env ? Boolean(env[api.key_env]) : Boolean(secret_ref) }; }),
+      ...config.apis.map(api => { const { secret_ref, ...publicApi } = api, revision = compact ? null : deploymentRevision(api, env);return { ...(compact ? { id: api.id, name: api.name, enabled: api.enabled } : publicApi),
+        ...summary(api), ...(compact ? {} : { deployment_revision: revision,
+          model_display: Object.fromEntries(api.models.map(model => [model.id, modelDisplay.get(api.id, revision, model.id)])) }), discovery: discoveries.get(api.id) || null, builtin: false, key_saved: api.key_env ? Boolean(env[api.key_env]) : Boolean(secret_ref) }; }),
     ], clients: CLIENT_IDS.map(id => ({ id, name: CLIENT_NAMES[id], ...config.clients[id], setup: setup[id] || null,
+      ...(id === "codex" ? { memory_model: memoryModel.snapshot() } : {}),
       observed_at: lastClients[id] || null, ...(compact ? {} : { model_plan: { default_model: plan(id).defaultModel, default_unavailable: plan(id).defaultUnavailable,
         models: plan(id).models.map(model => ({ source: model.source_id, id: model.id, public_id: model.public_id, route_id: model.route_id, capability: model.capability })),
         unavailable: (config.clients[id].deployments || []).filter(item => !plan(id).models.some(model => model.source_id === item.source && model.id === item.model))
@@ -194,6 +200,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     const next = editable(), current = next.apis.find(api => api.id === id);
     if (!current?.enabled || deploymentRevision(current, env) !== revision) throw accessError("ccdx_connections_conflict", 409);
     const byId = new Map(models.map(model => [model.id, model]));
+    try { modelDisplay.set(id, revision, models); } catch { log("warn", "Model maker metadata could not be saved; routing is unchanged"); }
     for (const model of current.models) if (byId.get(model.id)?.metadata) model.metadata = byId.get(model.id).metadata;
     current.checked_at = checkedAt;
     if (JSON.stringify(current) !== JSON.stringify(settings.apis.find(api => api.id === id))) {
@@ -336,7 +343,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     busy: () => operations > 0 || active.size > 0 || Boolean(syncFlight) || catalogRefresh.busy() || legacy.snapshot().m365.account_change_in_flight === true || legacy.snapshot().m365.state === "checking",
     syncClients,
     async manageConnections(input) {
-      if (!input) return snapshot();
+      if (!input) { if (binding("codex").enabled) void memoryModel.refresh();return snapshot(); }
       if (validObject(input, ["operation", "id"]) && input.operation === "discover") {
         const models = await catalogRefresh.refresh(input.id, true);return { ...snapshot(), discovered: models };
       }
@@ -348,7 +355,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
       } else if (input.operation === "provider" && input.enabled && input.id?.startsWith("api_")) void catalogRefresh.refresh(input.id).catch(() => {});
       return input.operation === "save_api" ? snapshot() : result;
     },
-    async start() { const old = legacy.start();if (managed) await syncClients();const result = await old;if (managed) await syncClients();void refreshApis();return result; },
+    async start() { if (binding("codex").enabled) void memoryModel.refresh();const old = legacy.start();if (managed) await syncClients();const result = await old;if (managed) await syncClients();void refreshApis();return result; },
     async refresh() { const result = await Promise.allSettled([!managed || settings.providers.m365 ? legacy.refresh() : Promise.resolve(), refreshApis()]);if (result[0].status === "rejected") throw result[0].reason; },
     selection() { return { ...legacy.selection(), codex: binding("codex").enabled ? binding("codex").source : null }; },
     providerPreference(id) {
@@ -492,6 +499,6 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
       if (managed && input.action === "switch") { const next = editable();if (next.clients.codex.source !== input.provider) next.clients.codex.history_isolation = true;next.clients.codex.source = input.provider;next.clients.codex.deployments = null;next.clients.codex.default_model = null;for (const key of ["model", "auto_review_model", "auto_review_effort"]) delete next.clients.codex[key];if (input.provider === "m365") Object.assign(next.clients.codex, legacy.selection().m365);save(next);await syncClients(); }
       return result;
     },
-    async close() { closed = true;await catalogRefresh.close();await serial;await syncFlight;for (const { source } of instances.values()) source.close();for (const source of retired) source.close();active.clear();for (const id of retiredSecrets.keys()) cleanSecrets(id);await Promise.allSettled([...cleanups]);secrets.close();await legacy.close(); },
+    async close() { closed = true;await memoryModel.close();await catalogRefresh.close();await serial;await syncFlight;for (const { source } of instances.values()) source.close();for (const source of retired) source.close();active.clear();for (const id of retiredSecrets.keys()) cleanSecrets(id);await Promise.allSettled([...cleanups]);secrets.close();await legacy.close(); },
   };
 }

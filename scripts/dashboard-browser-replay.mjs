@@ -443,8 +443,11 @@ try {
         assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "active");
         assert.equal(await page.locator("#flow-apps .flow-node").count(), 3);
         assert.equal(await page.locator("#flow-models .flow-node").count(), 3);
-        assert.equal(await page.locator("#flow-wires .flow-packet").count(), 4);
-        assert.equal(await page.locator("#flow-wires .flow-wait").count(), 2);
+        const starts = await page.locator("#flow-models .flow-choice").evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().left));
+        assert.ok(Math.max(...starts) - Math.min(...starts) < 1, "Every model uses the same left edge");
+        assert.equal(await page.locator("#flow-wires circle").count(), 0, "Flow uses dashed paths instead of moving dots");
+        assert.equal(await page.locator("#flow-wires .flow-streaming").count(), 4);
+        assert.equal(await page.locator("#flow-wires .flow-waiting").count(), 2);
         assert.ok((await page.locator("#flow-wires path").evaluateAll(nodes => nodes.map(node => node.getAttribute("d")))).some(d => d.includes("Q")), "Connections have rounded turns");
         await page.locator("#flow-apps .flow-choice").first().click();
         assert.equal(await page.locator("#flow-active-body tr").count(), 1);
@@ -466,7 +469,7 @@ try {
         await page.locator("#auto-refresh").click();
         await page.clock.fastForward(6001);
         assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "unknown");
-        assert.equal(await page.locator(".flow-packet").count(), 0, "Stale snapshots stop activity");
+        assert.equal(await page.locator(".flow-streaming").count(), 0, "Stale snapshots stop activity");
         await page.locator("#auto-refresh").click();
         flowRequests = [];await refreshStatus();
         assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "idle");

@@ -15,16 +15,17 @@ import { apiModelMetadata } from "./api-model-metadata.mjs";
 import { markRequestObservation, markUpstreamStarted } from "../stream-performance.mjs";
 import { createAbortAwareSingleflight } from "../bounded-result-cache.mjs";
 import { createApiTokenCounter } from "./api-token-count.mjs";
+import { apiModelDisplay } from "../api-model-display.mjs";
 
 const paths = { messages: "/v1/messages", responses: "/v1/responses", chat: "/v1/chat/completions" };
 export function apiCatalog(config, env = process.env) {
   const revision = deploymentRevision(config, env);
   return config.models.map(model => { const protocol_capabilities = Object.fromEntries(model.protocols.map(protocol => [protocol, resolveModelCapabilities(model, { revision, protocol })]));
-    const capability = protocol_capabilities[model.protocols.includes("messages") ? "messages" : model.protocols[0]];return ({ id: model.id, name: model.id, publisher: "Unknown",
+    const capability = protocol_capabilities[model.protocols.includes("messages") ? "messages" : model.protocols[0]];return ({ id: model.id, name: model.id,
     supported_endpoints: model.protocols.map(api => paths[api]), model_picker_enabled: true, policy: { state: "enabled" },
     capability, protocol_capabilities }); });
 }
-export function createApiProvider({ config, secrets, env = process.env, platform = process.platform, networkFactory = createApiNetwork } = {}) {
+export function createApiProvider({ config, secrets, env = process.env, platform = process.platform, networkFactory = createApiNetwork, modelDisplay = () => ({}) } = {}) {
   const catalog = apiCatalog(config, env);
   const fingerprint = config.key_env ? createHash("sha256").update(env[config.key_env] || "").digest("hex") : "";
   const generation = parseInt(createHash("sha256").update(JSON.stringify(config) + fingerprint).digest("hex").slice(0, 8), 16);
@@ -68,11 +69,15 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       const constrained = constrainModelRequest(body, capability, api);
       if (constrained.body !== body) { body = constrained.body;options = { ...options, bodyText: undefined }; }
       markRequestObservation({ capability_revision: capability?.revision, capability_constraints: constrained.applied.join(",") || "none" });
+      markRequestObservation({ context_window_tokens: capability?.values.context_window });
     }
     const serialized = body ? options.bodyText ?? JSON.stringify(body) : undefined;
     if (serialized !== undefined) headers["Content-Length"] = String(Buffer.byteLength(serialized));
     options.onUpstreamStart?.();
-    if (body && options.observeUpstream !== false) markUpstreamStarted(body.stream === true);
+    if (body && options.observeUpstream !== false) {
+      markUpstreamStarted(body.stream === true);
+      if (!options.countTokens) markRequestObservation({ max_output_tokens_sent: api === "messages" ? body.max_tokens : api === "chat" ? body.max_completion_tokens : body.max_output_tokens });
+    }
     try {
       const result = await transport.fetch(url, { method: body ? "POST" : "GET", headers, body: serialized, signal: options.signal });
       if (result.status >= 300 && result.status < 400) { await result.body?.cancel();throw accessError("ccdx_api_redirect_refused", 502); }
@@ -119,7 +124,8 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       .map(model => ({ ...model, capability: model.protocol_capabilities[family === "claude" ? "messages" : "responses"] })),
     catalog: () => catalog,
     publicCatalog(allowed = []) { return { source: "configured", checkedAt: config.checked_at || null, upstreamHost: new URL(config.base_url).hostname,
-      advertised: catalog.length, models: publicModelCatalog(catalog, { selectable: model => allowed.some(id => model.supported_endpoints.includes(id === "codex" ? paths.responses : paths.messages)),
+      advertised: catalog.length, models: publicModelCatalog(catalog.map(model => ({ ...model, ...modelDisplay(model.id) })), { maker: model => model.publisher || model.vendor || null,
+        selectable: model => allowed.some(id => model.supported_endpoints.includes(id === "codex" ? paths.responses : paths.messages)),
         clients: model => allowed.filter(id => model.supported_endpoints.includes(id === "codex" ? paths.responses : paths.messages)) }).map(model => ({ ...model,
           capability: catalog.find(entry => entry.id === model.id)?.capability, auto_review_efforts: [...(catalog.find(entry => entry.id === model.id)?.protocol_capabilities.responses?.values.reasoning_efforts || [])] })) }; },
     async discover({ signal } = {}) {
@@ -136,7 +142,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       if (!Array.isArray(value.data) || models.length + value.data.length > 500) throw accessError("ccdx_api_catalog_invalid", 502);
       for (const model of value.data) { if (!model || typeof model.id !== "string" || !/^[\w][\w./:@+-]{0,159}$/.test(model.id) || model.id.includes("..") || model.id.includes("//") || ids.has(model.id)) throw accessError("ccdx_api_catalog_invalid", 502);ids.add(model.id); }
       // A catalog listing is not evidence that every model supports every API.
-      models.push(...value.data.map(model => ({ id: model.id, metadata: apiModelMetadata(model, { checked_at, deployment: deploymentRevision(config, env) }), protocols: Array.isArray(model.supported_endpoints)
+      models.push(...value.data.map(model => ({ id: model.id, display: apiModelDisplay(model), metadata: apiModelMetadata(model, { checked_at, deployment: deploymentRevision(config, env) }), protocols: Array.isArray(model.supported_endpoints)
         ? Object.entries(paths).filter(([, endpoint]) => model.supported_endpoints.includes(endpoint) || model.supported_endpoints.includes(endpoint.slice(3))).map(([api]) => api).filter(api => config.endpoints[api]) : [] })));
       if (value.has_more !== true) return models;
       // Follow only the native cursor on the configured origin, never an

@@ -208,6 +208,7 @@ export function createResponsesHandler(options) {
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
       observeRequestedModel(parsed);
+      markRequestObservation({ max_output_tokens_requested: parsed?.max_output_tokens });
       const selectedProvider = options.resolveProvider?.(parsed, req);
       if (selectedProvider) {
         provider = selectedProvider;modelRegistry = provider.registry;
@@ -492,6 +493,7 @@ export function createResponsesCompactHandler(options) {
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       const parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
       observeRequestedModel(parsed);
+      markRequestObservation({ max_output_tokens_requested: parsed?.max_output_tokens });
       const selectedProvider = options.resolveProvider?.(parsed, req);
       if (selectedProvider) {
         provider = selectedProvider;modelRegistry = provider.registry;

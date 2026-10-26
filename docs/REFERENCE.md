@@ -1302,7 +1302,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.23/codex-copilot-dx-1.2.23.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.24/codex-copilot-dx-1.2.24.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1694,11 +1694,11 @@ The protected `/_ccdx/ui/account` and `/_ccdx/ui/checks` APIs require loopback, 
 
 `http_errors.recent` keeps its 20-record rolling view. Independent
 `actionable_recent` (20 generation/other failures and actionable count errors),
-`capability_recent` (20 token-count errors), `route_recent` (eight path errors)
+`capability_recent` (20 count/explicit-access notices), `route_recent` (eight path errors)
 and `protocol_recent` (eight image-MCP HTTP 405 records) prevent route/method noise from erasing inference
 evidence. `by_category` counts inference, capability, protocol, route and other HTTP failures;
 classification does not discard errors, grant access or retry requests.
-The WebUI defaults to reply issues and provides separate capability and connection/path views. Repeated capability/path notices are grouped within the bounded retained records, with their occurrence count and latest request details; raw HTTP counters remain visible. A count-endpoint 404 is not a failed generation. Count authentication, rate-limit and server failures remain actionable.
+The WebUI defaults to reply issues and provides separate capability/access and connection/path views. Explicitly unselected models and turned-off access remain refused with their original HTTP status, but are notices rather than model-generation failures. Client disconnects remain in recent requests rather than being promoted to the issue list. Known non-model HTTP paths show Not applicable in the UI; unknown paths are retained, not assumed harmless. Repeated capability/path notices are grouped within the bounded retained records, with their occurrence count and latest request details; raw HTTP counters remain visible. A count-endpoint 404 is not a failed generation. Count authentication, rate-limit and server failures remain actionable.
 
 Before model resolution, safe requested model IDs and the client hint are retained even for local rejection. Known binding failures include a specific reason: model not selected, ambiguous name, unavailable catalog entry or disabled access. These diagnostics never authorize a model or replace it with a default. Claude records propagate the actual model/source and distinguish a cached capability result from an upstream HTTP failure. Upstream attempts count logical calls; shared counts are marked `shared_upstream`, and cached 404s report zero calls. No prompt or key is retained.
 
@@ -2065,10 +2065,16 @@ this compatibility mechanism; status and safe Retry-After metadata survive.
 
 Identical concurrent count requests share one bounded upstream operation.
 Each caller cancels independently; the last cancelled waiter aborts shared
-work. Joining is limited to bodies up to 1 MiB, 16 shared operations and 4 MiB
-of shared request text. Larger/overflow requests use their normal admitted
-path. Count responses are capped at 64 KiB. At most 128 recent unavailable
-scopes are retained. Successful results and request bodies are not retained
+work. Before a model/header scope has a capability observation, distinct inputs
+wait for its first real admitted count request. An observed 404 is reused by
+those waiters; success is reused only for identical inputs. Distinct inputs
+then run their own counts. Capability waiting has at most 16 in-flight scopes
+and remains under normal gateway body/queue admission. Capability waiting and
+the caller's own count share its existing upstream timeout budget. Identical-result sharing
+is limited to bodies up to 1 MiB, 16 operations and 4 MiB of shared request text.
+Larger supported inputs and overflow use their normal admitted path. Count responses are capped at 64 KiB. At most 128 capability observations are retained. A 404 expires after one
+minute; a positive observation permits normal concurrency and a later 404 can
+replace it. Successful results and request bodies are not retained
 after the operation. Counts neither invoke generation nor fail over to another
 source. This does not supply a missing tokenizer or guarantee every Claude App
 context-management feature on a third-party model.
@@ -2084,3 +2090,62 @@ Claude Code's validated `x-claude-code-agent-id` separates a child task's local
 source guard from its parent's guard when a session is identified. Parent keys
 without that header remain unchanged. This header is correlation only: model
 access and the company's account/history checks remain authoritative.
+
+
+### Upstream maker metadata
+
+Manual API discovery accepts bounded text from publisher, vendor and owned_by.
+The model maker shown in lists/details prefers publisher, then vendor; owned_by
+is shown separately as ownership and is not treated as the maker. Absent maker
+information is Not provided; no name-based inference is performed. These are
+upstream declarations, not proof of backend identity.
+
+Rebuildable per-source files under `api-model-display/` beside settings are
+scoped by source ID and deployment revision. They preserve at most 500 models,
+512 KiB per file and 16 in-memory sources. They contain only model IDs and
+identity declarations, no key or response body. Old versions ignore them;
+connection v2 metadata remains readable during rollback. Missing display
+evidence triggers the existing normal catalog read rather than requiring key
+entry or model reselection. Failed discovery retains valid prior evidence for
+the same revision; invalid optional display cache does not block inference.
+
+### Memory-extraction dependency notices
+
+The Codex model editor reads [`memories.extract_model`](https://learn.chatgpt.com/docs/customization/memories#configure-local-memories) when explicitly configured
+in the native Codex config. Otherwise, it may show a recently observed extraction
+model from a bounded read-only correlation of native Phase 1 task failures and
+one unambiguous local HTTP 400 model. No prompt, memory text or model-name
+heuristic is used. Explicit configuration is labelled Configured in Codex;
+observations are Recently observed. The current client does not expose its
+compiled default in the queried interface, so CCDX does not label a guessed
+model as Codex default. Without evidence it shows Not detected.
+
+The optional native log helper runs only on startup/connection-view reads (including an explicit WebUI refresh),
+coalesced and at least one minute apart, with a 2.5-second limit. It reads up to
+eight task records and sixteen candidate HTTP records each, clipped to 8 KiB,
+from the prior 24 hours. It uses the bundled Node SQLite API in a separate
+read-only process; missing/locked/unsupported stores remain optional. Only a
+model ID and observation time can enter `codex-memory-observed.json`, scoped by
+the Codex profile, with a 24-hour freshness bound. No periodic log scanner,
+account lookup, native Codex process or inference is started by this helper.
+
+Closing a known extraction model or its source in WebUI prompts about new-memory
+generation and preserves your explicit decision. The draft is separate from the
+saved selection. Existing memories are not deleted. Native memory generation
+settings, model aliases, defaults, authentication and authorization are not
+changed to satisfy a dependency. Confirmations are WebUI guidance, not a new
+requirement on existing CLI/API operations. A notice does not identify every
+background task or prove that memory generation succeeded.
+
+### Messages stop and network evidence
+
+Recent Messages records retain declared context size, requested and forwarded
+output budgets, normalized returned input/output usage, and an allowlisted stop
+reason when supplied. Missing values remain unknown. `max_tokens` is shown as
+output-limit termination; CCDX does not raise an undeclared GLM output limit or
+use context length as an output ceiling. HTTP success and complete generation
+remain distinct.
+
+API transport errors retain fixed safe code, DNS/connect/TLS/request/response
+phase and reused-socket state in HTTP diagnostics. They do not retain raw
+exceptions or URLs, and do not trigger automatic POST or cross-source retries.

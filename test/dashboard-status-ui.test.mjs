@@ -189,3 +189,11 @@ test("native prediction dashboard distinguishes bridge readiness from candidate 
   assert.equal(nodes.get("prediction-note").textContent, prediction.reason);
   render({});assert.equal(nodes.get("prediction-preference").textContent, "Unknown");
 });
+
+test('known access refusals remain notices even when their separate notice entry has been evicted',()=>{
+ const nodes=new Map(),createNode=()=>({textContent:'',children:[],querySelectorAll(){return[];},setAttribute(){},replaceChildren(...items){this.children=items;},append(...items){this.children.push(...items);}});
+ const document={getElementById(id){if(!nodes.has(id))nodes.set(id,createNode());return nodes.get(id);},createElement:createNode};
+ const render=runInNewContext(`${renderScript}\nrender;`,{document,ccdxLanguage:dashboardLanguage});
+ render({stream_performance:{recent_requests:[{request_id:'blocked',at:'2026-10-26T01:00:00Z',model:'configured-but-disabled',failed:true,outcome:'unknown',origin:'client_validation',http_status:400,rejection_reason:'ccdx_model_not_selected'}]},http_errors:{actionable_recent:[],capability_recent:[]}});
+ assert.match(nodes.get('failures').children[0].textContent,/No recent issues recorded/);
+});

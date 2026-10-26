@@ -56,8 +56,11 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     if (!model?.supported_endpoints.includes(paths[api])) throw accessError("ccdx_api_model_unavailable");return model;
   };
   async function request(url, body, options = {}, api = "responses") {
+    if (closed) throw accessError("ccdx_api_closed", 503);
     if (config.key_env && !env[config.key_env]) throw accessError("ccdx_api_environment_key_missing", 503);
-    const key = config.key_env ? checkedApiKey(env[config.key_env]) : await secrets.get(config.secret_ref), transport = await getNetwork(options.signal);
+    const key = config.key_env ? checkedApiKey(env[config.key_env]) : await initialization.run("credential", () => secrets.get(config.secret_ref),
+      { signal: options.signal ? AbortSignal.any([options.signal, lifetime.signal]) : lifetime.signal });
+    const transport = await getNetwork(options.signal);
     const headers = { "Content-Type": "application/json", Accept: body?.stream ? "text/event-stream" : "application/json" };
     headers[api === "messages" && config.auth_header === "x-api-key" ? "x-api-key" : "Authorization"] = api === "messages" && config.auth_header === "x-api-key" ? key : `Bearer ${key}`;
     if (api === "messages") {

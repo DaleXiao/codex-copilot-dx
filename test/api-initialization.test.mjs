@@ -26,8 +26,8 @@ test('credential read failures are shared but never cached', async () => {
   assert.equal(calls, 1);await assert.rejects(store.get(ref));assert.equal(calls, 2);store.close();
 });
 
-function provider(factory) {
- return createApiProvider({ config: { id: 'api_probe', name: 'Probe', enabled: true, base_url: 'https://example.test/v1', endpoints: { messages: 'https://example.test/v1/messages' }, secret_ref: ref, auth_header: 'bearer', models: [{ id: 'claude-probe', protocols: ['messages'] }] }, env: {}, platform: 'linux', secrets: { get: async () => 'synthetic-key' }, networkFactory: factory });
+function provider(factory, secrets = { get: async () => 'synthetic-key' }) {
+ return createApiProvider({ config: { id: 'api_probe', name: 'Probe', enabled: true, base_url: 'https://example.test/v1', endpoints: { messages: 'https://example.test/v1/messages' }, secret_ref: ref, auth_header: 'bearer', models: [{ id: 'claude-probe', protocols: ['messages'] }] }, env: {}, platform: 'linux', secrets, networkFactory: factory });
 }
 const body = { model: 'claude-probe', max_tokens: 1, messages: [{ role: 'user', content: 'synthetic' }] };
 test('cancelling one network-setup waiter leaves another caller and its transport alive', async () => {
@@ -48,4 +48,17 @@ test('all setup waiters cancelling aborts their shared operation; a later caller
  });
  const a = new AbortController(), call = p.client.messages(body, { signal: a.signal });await turn();const cancelled = assert.rejects(call, { name: 'AbortError' });a.abort();await cancelled;
  assert.equal(signals[0].aborted, true);assert.equal((await p.client.messages(body)).status, 200);assert.equal(builds, 2);p.close();
+});
+
+test('a cancelled credential waiter finishes promptly without cancelling another caller or forwarding late', async t => {
+ let release, reads = 0, sends = 0, builds = 0;
+ const credential = new Promise(resolve => { release = resolve; });
+ const p = provider(async () => { builds++;return { close() {}, fetch: async () => { sends++;return Response.json({ ok: true }); } }; },
+  { get: () => { reads++;return credential; } });
+ t.after(() => { release('synthetic-key');p.close(); });
+ const controller = new AbortController();let error;
+ const first = p.client.messages(body, { signal: controller.signal }).catch(value => { error = value; });
+ const second = p.client.messages(body);await turn();controller.abort();await turn();
+ assert.equal(error?.name, 'AbortError');assert.equal(builds, 0);assert.equal(sends, 0);
+ release('synthetic-key');await first;assert.equal((await second).status, 200);assert.equal(sends, 1);assert.equal(reads, 1);
 });

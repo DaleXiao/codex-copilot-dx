@@ -7,6 +7,7 @@
   const format = (key, values = {}) => globalThis.ccdxLanguage.format(key, values);
   const nodes = { apps: new Map(), models: new Map() };
   const detailRows = new Map();
+  const movingWires = new Map();
   let rows = [], total = null, omitted = 0, fresh = false, deadline = 0, expiry = null;
   let selected = null, expanded = false, lastSignature = "", geometry = "", wireState = "", positions = null, known = false;
   let lastApps = [], lastModels = [];
@@ -150,17 +151,25 @@
       const matches = rows.filter(row => (edge.left ? row.application : modelKey(row)) === edge.id && related(row));
       return { active: fresh && matches.length > 0, moving: fresh && matches.some(responding), dim: edge.node.dataset.related === "false" };
     });
-    const state = JSON.stringify(states), wires = el("flow-wires");
+    const state = JSON.stringify(states), wires = el("flow-wires"), activity = el("flow-active-wires");
     if (next === geometry && state === wireState) return;
     if (next !== geometry) {
       geometry = next;wires.setAttribute("viewBox", `0 0 ${width} ${height}`);wires.replaceChildren();
+      activity.setAttribute("viewBox", `0 0 ${width} ${height}`);activity.replaceChildren();movingWires.clear();
       for (const edge of edges) wires.append(svg("path", { d: edge.d }));
     }
     wireState = state;
     edges.forEach((edge, index) => {
       const value = states[index], path = wires.children[index];
-      path.setAttribute("class", `flow-wire${value.dim ? " flow-dim" : value.active ? " flow-live" : ""}${value.moving ? " flow-streaming" : value.active ? " flow-waiting" : ""}`);
+      const classes = `flow-wire${value.dim ? " flow-dim" : value.active ? " flow-live" : ""}${value.moving ? " flow-streaming" : value.active ? " flow-waiting" : ""}`;
+      path.setAttribute("class", classes + (value.moving ? " flow-split" : ""));
+      let copy = movingWires.get(path);
+      if (value.moving) {
+        if (!copy) { copy = svg("path", { d: edge.d });activity.append(copy);movingWires.set(path, copy); }
+        copy.setAttribute("class", classes);
+      } else if (copy) { copy.remove();movingWires.delete(path); }
     });
+    if (movingWires.size) activity.removeAttribute("hidden");else activity.setAttribute("hidden", "");
   }
   function unavailable() { clearTimeout(expiry);expiry = null;fresh = false;deadline = 0;render(); }
   function visibilityChanged() { if (deadline && Date.now() >= deadline) { unavailable();return; }render();draw(); }

@@ -1316,7 +1316,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.24/codex-copilot-dx-1.2.24.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.25/codex-copilot-dx-1.2.25.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1763,7 +1763,7 @@ unset the variable after the investigation. Records disappear on service exit.
 | `CCDX_REQUEST_BODY_TIMEOUT_MS` | `120000` | Maximum time to receive and decode a request body before returning `408` |
 | `CCDX_MAX_UPSTREAM_BODY_BYTES` | `31457280` | Strict maximum forwarded Responses body size; larger payloads are adapted locally or rejected with `413` |
 | `CCDX_MAX_SSE_BUFFER_BYTES` | `8388608` | Maximum buffered bytes for one unterminated upstream SSE line or event |
-| `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Per-phase timeout for Responses preparation and non-streaming upstream requests |
+| `CCDX_UPSTREAM_TIMEOUT_MS` | `120000` | Per-phase timeout for Responses/Messages preparation and non-streaming upstream requests |
 | `CCDX_STREAM_HANDSHAKE_TIMEOUT_MS` | `120000` | Timeout while waiting for upstream streaming response headers |
 | `CCDX_STREAM_IDLE_TIMEOUT_MS` | `120000` | Maximum idle time between upstream streaming body chunks |
 | `CCDX_UPSTREAM_RETRIES` | `2` | Retries for safe requests and clearly pre-connect POST failures; capped at `5` |
@@ -1842,6 +1842,16 @@ Changing the model or transport of a continuation can require removing incompati
 Native Responses forwards Codex `agent_message` items unchanged. When a model requires Chat Completions, CCDX frames them as messages from another agent, not human input or approval, retaining author/recipient, typed text/refusal/reasoning and representable image/screenshot content. Content unsupported by Chat, including file, audio or opaque encrypted parts, receives an explicit compatibility error instead of being serialized into ordinary text. This projection does not introduce another model request or change native Responses, Fast, Auto-review or compaction routing.
 
 After the stream handshake succeeds, stream liveness uses the idle timeout rather than the expired handshake deadline. Eligible HTTP-200 failure recovery acquires a bounded preparation budget and history admission before rebuilding its payload, then releases those reservations when the retry opens upstream or fails. Normal streams still release preparation admission after their response headers arrive.
+
+Messages and token counting stop the body-upload timer after JSON is read, then
+use `CCDX_UPSTREAM_TIMEOUT_MS` for preparation. A preparation timeout returns
+`504 messages_prepare_timeout`; a slow body upload remains governed by its own
+body timeout. Upstream dispatch starts the existing handshake/non-streaming
+budget, and counting keeps its shared dispatch deadline across capability waits.
+Cancelling a manual API credential waiter returns promptly without cancelling
+other callers or forwarding after a late credential result. The shared OS secret
+read may finish under its existing ten-second bound. No new timeout setting or
+inference retry is added.
 
 Downstream backpressure waits also observe cancellation and the stream deadline. A client that stops reading cannot retain the pending stream indefinitely after timeout; CCDX closes that connection without retrying its request. Final error-frame delivery has a separate one-second maximum drain wait.
 

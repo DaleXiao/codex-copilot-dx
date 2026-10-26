@@ -16,6 +16,7 @@ function fixture() {
   class Node {
     constructor(tag = "div") { this.tag = tag;this.children = [];this.dataset = {};this.style = {};this.attributes = {};this.events = {};this.textContent = ""; }
     setAttribute(key, value) { this.attributes[key] = String(value); }
+    removeAttribute(key) { delete this.attributes[key]; }
     addEventListener(key, value) { this.events[key] = value; }
     append(...children) { for (const child of children) { child.remove();child.parent = this;this.children.push(child); } }
     replaceChildren(...children) { for (const child of [...this.children]) child.remove();this.append(...children); }
@@ -100,5 +101,8 @@ test("flow phase changes preserve wire nodes; hidden pages do not redraw", () =>
   assert.ok(wire);assert.match(wire.attributes.class, /flow-waiting/);
   f.api.update(snapshot([{ ...active, first_output_ms: 2 }]));
   assert.equal(f.el("flow-wires").children[0], wire);assert.match(wire.attributes.class, /flow-streaming/);assert.equal(f.el("flow-wires").children.filter(x => x.tag === "circle").length, 0);
+  const copy = f.el("flow-active-wires").children[0];assert.ok(copy);assert.equal(copy.attributes.d, wire.attributes.d);assert.match(wire.attributes.class, /flow-split/);
+  f.api.update(snapshot([{ ...active, first_output_ms: 3 }]));assert.equal(f.el("flow-active-wires").children[0], copy);
   f.document.visibilityState = "hidden";f.api.update(snapshot([]));assert.equal(f.el("flow-wires").children[0], wire);
+  f.document.visibilityState = "visible";f.api.visibilityChanged();assert.equal(f.el("flow-active-wires").children.length, 0);assert.equal(f.el("flow-active-wires").attributes.hidden, "");
 });

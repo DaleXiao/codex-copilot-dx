@@ -29,6 +29,11 @@ native GitHub and gateway bindings. Sync and request authorization share that
 calculation; paused access is rejected before credential checks without expanding
 model visibility or changing sign-in.
 
+Manual API setup uses abort-aware shared waits for credentials and transport.
+A cancelled caller releases its wait independently; a late shared result cannot
+resume its request. Messages keeps body upload, preparation and upstream budgets
+separate using the existing request-abort boundary.
+
 `model-capabilities.mjs` owns neutral limits, reasoning/tool/input/search fields,
 strict manual values, per-field evidence and deployment revisions. It reads no
 credentials or client files. Explicit manual values override the current API's

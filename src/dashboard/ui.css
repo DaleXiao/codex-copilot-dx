@@ -433,6 +433,8 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 
 .flow-network { position:relative;display:grid;grid-template-columns:minmax(130px,1fr) 70px minmax(170px,1fr);column-gap:clamp(36px,6vw,92px);align-items:stretch;min-height:236px;margin:26px 0 18px; }
 .flow-wires { position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible; }
+.flow-activity { will-change:transform; }
+.flow-wires .flow-split { visibility:hidden;animation:none; }
 .flow-column,.flow-hub-column { position:relative;min-width:0; }
 .flow-column { display:flex;flex-direction:column; }
 .flow-column-title { height:18px;line-height:18px;margin:0 0 18px;color:var(--muted);font-size:11px;text-align:center; }

@@ -68,17 +68,20 @@ test("device login cancellation, parallel requests and cooldown are bounded", as
 });
 
 test("connection checks distinguish GitHub rejection from Copilot denial and never start Device Flow", async t => {
-  for (const [reason, status, stage] of [["identity", 401, "identity"], ["access", 403, "access"], ["catalog", 503, "models"]]) await t.test(reason, async t => {
-    const { tools, calls } = fixture(t, { fetchImpl: async url => {
+  for (const [reason, status, stage] of [["identity", 401, "identity"], ["identity", 403, "identity"], ["identity", 429, "identity"],
+    ["access", 401, "access"], ["access", 403, "access"], ["catalog", 401, "models"], ["catalog", 403, "models"], ["catalog", 503, "models"]]) await t.test(`${reason}/${status}`, async t => {
+    const { tools, home, calls } = fixture(t, { fetchImpl: async url => {
       calls.push(url);
       if (url.endsWith("/user")) return Response.json({ login: "work_user", id: 7 }, { status: reason === "identity" ? status : 200 });
       if (url.endsWith("/v2/token")) return Response.json({ token: "private", endpoints: { api: "https://api.githubcopilot.com" } }, { status: reason === "access" ? status : 200 });
       return Response.json({ data: [] }, { status });
     } });
+    const file = githubTokenPath(home), before = fs.readFileSync(file, "utf8");
     const [first, second] = await Promise.all([tools.check(), tools.check()]);
     assert.equal(first.online.ok, false);assert.deepEqual(first, second);
-    assert.equal(first.online.stages[stage], reason === "identity" ? "invalid" : "unavailable");
-    assert.equal(first.online.reason === "github_token_invalid", reason === "identity");
+    assert.equal(first.online.stages[stage], reason === "identity" && status === 401 ? "invalid" : "unavailable");
+    assert.equal(first.online.reason === "github_token_invalid", reason === "identity" && status === 401);
+    assert.equal(fs.readFileSync(file, "utf8"), before);assert.equal(fs.existsSync(managedGithubTokenPath(home)), false);
     assert.ok(calls.length <= 3);assert.ok(calls.every(url => !url.includes("login/")));
     await tools.check();assert.ok(calls.length <= 3, "manual repeated checks reuse a 10-second result");
   });

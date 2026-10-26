@@ -130,6 +130,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         release = await acquireRequest(req, { signal: abort.signal });
         abort.setTimeout(config.requestBodyTimeoutMs, "request_body_timeout");
         let body = await readJsonBody(req, { admission: release, signal: abort.signal, maxBodyBytes: config.maxBodyBytes, maxDecodedBodyBytes: decodedLimit });
+        abort.setTimeout(config.upstreamTimeoutMs, "messages_prepare_timeout");
         observeRequestedModel(body);
         context.requestOptions = requestOptionsEvidence(body);
         if (!body || typeof body.model !== "string" || !Array.isArray(body.messages)) {
@@ -159,6 +160,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
             if (value.upstream) { context.upstreamAttempts = (context.upstreamAttempts || 0) + 1;tracker?.upstreamStarted(false); }
           },
           onUpstreamStart() {
+            if (abort.signal.aborted) throw abort.signal.reason;
             const timeout = streamed ? config.streamHandshakeTimeoutMs : config.upstreamTimeoutMs;
             if (countTokens) countDeadline ??= Date.now() + timeout;
             abort.setTimeout(countTokens ? Math.max(1, countDeadline - Date.now()) : timeout, "upstream_timeout");
@@ -224,7 +226,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         context.onHttpError?.({ code: detail.code, origin: terminalOrigin, ...(diagnostic ? { transport: diagnostic } : {}) });
         if (outcome === "cancelled") return;
         if (!res.headersSent) {
-          const value = apiError(error.code || abort.reason || "ccdx_gateway_error", message);
+          const value = apiError(abort.reason || error.code || "ccdx_gateway_error", message);
           if (diagnostic) value.error.diagnostic = diagnostic;
           send(res, statusCode, value);
         }

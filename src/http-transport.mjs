@@ -322,7 +322,7 @@ export function isAbortLikeError(err) {
 
 export function abortErrorStatusCode(reason) {
   if (reason === "request_body_timeout") return 408;
-  if (["responses_prepare_timeout", "upstream_timeout", "stream_handshake_timeout", "stream_idle_timeout"].includes(reason)) return 504;
+  if (["responses_prepare_timeout", "messages_prepare_timeout", "upstream_timeout", "stream_handshake_timeout", "stream_idle_timeout"].includes(reason)) return 504;
   if (reason === "client_aborted" || reason === "client_closed") return 499;
   return 502;
 }

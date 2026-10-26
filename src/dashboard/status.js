@@ -3,6 +3,8 @@
     let contextRequests = [];
     let contextCompactions = {};
     let failureSignature;
+    let issueGroups = { issues: [], capability: [], connection: [] }, issueRequests = [];
+    element("failure-kind")?.addEventListener?.("change", () => renderFailures(issueGroups[element("failure-kind").value] || [], element("failure-kind").value === "issues" ? issueRequests : []));
     let contextSignature;
     const sourceNames = new Map([["github", "GitHub Copilot"], ["m365", "Microsoft 365"]]);
     
@@ -85,7 +87,7 @@
     }
     
     function renderFailures(recent, recentRequests = []) {
-      const signature = JSON.stringify([recent, recentRequests]);
+      const signature = JSON.stringify([element("failure-kind")?.value, recent, recentRequests]);
       if (signature === failureSignature) return;
       failureSignature = signature;
       const list = element("failures");
@@ -93,7 +95,15 @@
       list.replaceChildren();
       const requests = Array.isArray(recentRequests) ? recentRequests.slice(-20) : [];
       const byRequest = new Map(requests.filter((request) => request.request_id).map((request) => [request.request_id, request]));
-      const failures = Array.isArray(recent) ? recent.slice(-10).map((failure) => ({ ...failure, timeline: byRequest.get(failure.request_id) })) : [];
+      const kind = element("failure-kind")?.value || "issues", grouped = new Map();
+      const entries = Array.isArray(recent) ? recent : [];
+      for (const failure of entries) {
+        const key = kind === "issues" ? failure.request_id || `${failure.at}/${failure.code}`
+          : JSON.stringify([failure.provider, failure.model, failure.route, failure.code, kind === "capability" ? null : failure.origin, failure.reason]);
+        const old = grouped.get(key);
+        grouped.set(key, { ...failure, occurrences: (old?.occurrences || 0) + 1, timeline: byRequest.get(failure.request_id) });
+      }
+      const failures = [...grouped.values()].slice(-10);
       const recorded = new Set(failures.map((failure) => failure.request_id).filter(Boolean));
       for (const request of requests) {
         if (!request.failed || recorded.has(request.request_id)) continue;
@@ -124,9 +134,13 @@
             model: failure.model ? String(failure.model).slice(0, 80) : phrase("unknown_model"),
             code: failure.code ? String(failure.code).slice(0, 80) : phrase("unknown_error"),
           }),
-          retry: phrase(failure.retried ? "retry_attempted" : "no_retry"),
+          retry: phrase(failure.upstream_attempts === 0 ? "no_upstream_call" : failure.retried ? "retry_attempted" : "no_retry"),
         };
         localize(title, "detail_retry", summary);
+        if (failure.occurrences > 1) {
+          summary.detail = phrase("repeated_issue", { detail: summary.detail, count: failure.occurrences });
+          localize(title, "detail_retry", summary);
+        }
         const timeline = failure.timeline;
         const provider = failure.provider || timeline?.provider;
         if (provider) {
@@ -137,7 +151,7 @@
         const timings = timeline?.timings_ms || {};
         const timingText = ["admission", "body", "history", "images", "serialization", "upstream_start", "upstream_headers", "first_output", "last_activity", "terminal", "finished"]
           .filter((key) => finite(timings[key])).map((key) => `${key}=${Number(timings[key]).toFixed(1)}`).join(" / ");
-        const fields = { time: failure.at, model: failure.model, event: failure.event_type, code: failure.code,
+        const fields = { time: failure.at, model: failure.model, event: failure.event_type, code: failure.code, reason: failure.reason, application: failure.application, occurrences: failure.occurrences > 1 ? failure.occurrences : undefined, capability_cached: failure.capability_cached, shared_upstream: failure.shared_upstream,
           message: failure.message, response_id: failure.response_id, upstream_request_id: failure.upstream_request_id,
           retry: failure.retried ? (timeline ? "attempted" : "attempted (outcome not recorded here)") : "not attempted",
           retry_policy: failure.retry_policy, retry_skipped: failure.retry_skipped,
@@ -197,8 +211,8 @@
       text("requests", number(requests.total));
       text("request-errors", "4xx_client_5xx_server_active_active", { client: number(requests.status_4xx), server: number(requests.status_5xx), active: number(requests.active) });
       const categories = data.http_errors?.by_category;
-      text("http-error-breakdown", categories ? "inference_inference_method_protocol_route_route_other_other" : "—",
-        categories ? Object.fromEntries(Object.entries(categories).map(([key, value]) => [key, number(value)])) : {});
+      text("http-error-breakdown", categories ? "http_categories" : "—",
+        categories ? Object.fromEntries(["inference", "capability", "protocol", "route", "other"].map(key => [key, number(categories[key] || 0)])) : {});
       text("body-limits", "raw_raw_decoded_decoded", { raw: mib(data.limits?.max_body_bytes), decoded: mib(data.limits?.max_decoded_body_bytes) });
     
       const outcomes = data.stream_performance?.by_route?.responses?.terminal_outcomes?.totals || {};
@@ -241,8 +255,15 @@
       }
       const recentRequests = [...(data.stream_performance?.recent_requests || []), ...(claudeMetrics?.recent_requests || [])]
         .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
-      renderFailures([...(data.response_failures?.recent || []), ...(data.http_errors?.actionable_recent || data.http_errors?.recent || [])]
-        .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0)), recentRequests);
+      issueGroups = {
+        issues: [...(data.response_failures?.recent || []), ...(data.http_errors?.actionable_recent || data.http_errors?.recent || [])],
+        capability: data.http_errors?.capability_recent || [],
+        connection: [...(data.http_errors?.protocol_recent || []), ...(data.http_errors?.route_recent || [])],
+      };
+      for (const rows of Object.values(issueGroups)) rows.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+      issueRequests = recentRequests;
+      const kind = element("failure-kind")?.value || "issues";
+      renderFailures(issueGroups[kind] || [], kind === "issues" ? recentRequests : []);
       renderContext({ ...data.stream_performance, recent_requests: recentRequests });
       if (element("claude-route")) {
         element("claude-route").textContent = claude?.base_url || "—";

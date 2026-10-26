@@ -1302,7 +1302,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.22/codex-copilot-dx-1.2.22.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.23/codex-copilot-dx-1.2.23.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1693,11 +1693,14 @@ The protected `/_ccdx/ui/account` and `/_ccdx/ui/checks` APIs require loopback, 
 ## HTTP error diagnostics
 
 `http_errors.recent` keeps its 20-record rolling view. Independent
-`actionable_recent` (20 inference/other failures) and `protocol_recent` (eight
-image-MCP HTTP 405 records) prevent route/method noise from erasing inference
-evidence. `by_category` counts inference, protocol, route and other HTTP failures;
+`actionable_recent` (20 generation/other failures and actionable count errors),
+`capability_recent` (20 token-count errors), `route_recent` (eight path errors)
+and `protocol_recent` (eight image-MCP HTTP 405 records) prevent route/method noise from erasing inference
+evidence. `by_category` counts inference, capability, protocol, route and other HTTP failures;
 classification does not discard errors, grant access or retry requests.
-The WebUI prioritizes actionable records; raw HTTP counters remain visible.
+The WebUI defaults to reply issues and provides separate capability and connection/path views. Repeated capability/path notices are grouped within the bounded retained records, with their occurrence count and latest request details; raw HTTP counters remain visible. A count-endpoint 404 is not a failed generation. Count authentication, rate-limit and server failures remain actionable.
+
+Before model resolution, safe requested model IDs and the client hint are retained even for local rejection. Known binding failures include a specific reason: model not selected, ambiguous name, unavailable catalog entry or disabled access. These diagnostics never authorize a model or replace it with a default. Claude records propagate the actual model/source and distinguish a cached capability result from an upstream HTTP failure. Upstream attempts count logical calls; shared counts are marked `shared_upstream`, and cached 404s report zero calls. No prompt or key is retained.
 
 New records retain safe error code/type/parameter paths, method, an allowlisted
 endpoint without a query, and upstream attempt count. Requested/served model
@@ -2046,3 +2049,38 @@ inference remains separate. Protected JSON/account/settings routes stay
 `CCDX_SUPERVISED_SERVICE` is an internal inherited worker marker. It is used only
 with a private parent IPC channel; do not set it as a user preference. It grants
 no network action and is not a replacement for the saved nightly-update opt-in.
+
+
+### Manual API token counting
+
+Messages support does not establish support for `POST /v1/messages/count_tokens`.
+CCDX forwards the configured Messages endpoint plus `/count_tokens`. A manual
+API's observed HTTP 404 is remembered in memory for 60 seconds, separately for
+each model and Anthropic version/beta-header scope. This is an observed endpoint
+failure, not a declaration that the model source is down. Cached and initial
+results return HTTP 404 with `ccdx_api_count_tokens_unavailable`; no estimated
+or synthetic count is returned. Changing the source configuration/key creates
+a new scope. Other statuses, including 401/403/405/429/5xx, are not cached by
+this compatibility mechanism; status and safe Retry-After metadata survive.
+
+Identical concurrent count requests share one bounded upstream operation.
+Each caller cancels independently; the last cancelled waiter aborts shared
+work. Joining is limited to bodies up to 1 MiB, 16 shared operations and 4 MiB
+of shared request text. Larger/overflow requests use their normal admitted
+path. Count responses are capped at 64 KiB. At most 128 recent unavailable
+scopes are retained. Successful results and request bodies are not retained
+after the operation. Counts neither invoke generation nor fail over to another
+source. This does not supply a missing tokenizer or guarantee every Claude App
+context-management feature on a third-party model.
+
+Background manual-API catalog failures back off for 1, 5, 30 and then 120
+minutes; successful publication resets the sequence. Explicit refresh retains
+the existing one-minute minimum interval rather than the longer background
+backoff. A valid upstream Retry-After also applies, bounded to 24 hours. These
+are read eligibility gates, not added background retry timers. Revision changes
+invalidate prior eligibility and obsolete results never publish.
+
+Claude Code's validated `x-claude-code-agent-id` separates a child task's local
+source guard from its parent's guard when a session is identified. Parent keys
+without that header remain unchanged. This header is correlation only: model
+access and the company's account/history checks remain authoritative.

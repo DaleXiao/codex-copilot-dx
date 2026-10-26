@@ -22,7 +22,9 @@ export function createConversationSourceGuard(options = {}) {
     const identified = typeof session === "string" && session.length > 0 && session.length <= 512 && !/[\u0000-\u001f\u007f]/.test(session);
     const first = items.find(item => item?.role === "user"), input = identified ? `session\0${session}` : first ? `first\0${JSON.stringify(first)}` : typeof body.input === "string" ? `first\0${body.input}` : null;
     if (!input) return;
-    const key = hash(client + "\0" + input), owner = hash(profile);
+    const agent = headers["x-claude-code-agent-id"];
+    const child = identified && ["claude_app", "claude_code"].includes(client) && typeof agent === "string" && /^[\w-]{1,128}$/.test(agent) ? `\0agent\0${agent}` : "";
+    const key = hash(client + "\0" + input + child), owner = hash(profile);
     if (cache?.[key] === owner) return;
     if (cache?.[key] && (identified || hasHistory)) throw accessError("ccdx_conversation_source_changed", 409);
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });

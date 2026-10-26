@@ -120,7 +120,9 @@ const server = http.createServer((req, res) => {
         ttft_ms: { avg: 1250, samples: 3, p50: 1400, p95: 2000, percentiles_estimated: true }, output_tokens_per_second: { avg: 123.4, samples: 2, unit: "token/s" },
       } } },
       response_failures: { recent:[{provider:"m365",code:"synthetic_error",model:"gpt-test",retried:false}] },
-      http_errors: { by_category: { inference: 1, protocol: 2, route: 3, other: 0 } },
+      http_errors: { by_category: { inference: 1, capability: 2, protocol: 2, route: 3, other: 0 },
+        capability_recent: ["upstream_http", "capability_cache"].map((origin, i) => ({ at: `2026-10-26T01:29:0${i}Z`, request_id: `count-${i}`, route: "messages_count_tokens", provider: "github", model: "count-replay", code: "ccdx_api_count_tokens_unavailable", http_status: 404, origin, upstream_attempts: i ? 0 : 1 })),
+        route_recent: [{ at: "2026-10-26T01:29:00Z", request_id: "path-replay", route: "not_found", code: "http_404", http_status: 404, target: "/.well-known/oauth-authorization-server" }] },
       providers: { codex_provider: "github", m365: { state: "ready", account: { login: "synthetic@example.test" }, models: { claude: 10, gpt: 5 },
         claude: { base_url: `http://127.0.0.1:${server.address().port}/anthropic`, gateway: "running", requests: { completed: 3, incomplete: 1, failed: 2 }, clients: { code: "configured", app: "configured" } } } },
       runtime_usage: { records: 4, input_tokens: 100, cached_input_tokens: 20, output_tokens: 10, cache_hit_rate: 0.2, cache_hit_rate_partial: false },
@@ -421,6 +423,14 @@ try {
         await page.locator("#flow-active-body tr").first().waitFor({ state: "visible" });
         await page.evaluate(() => { window.keptFlowRow = document.querySelector("#flow-active-body tr"); });
         flowRequests[0].elapsed_ms += 1000;await refreshStatus();
+        if (width === 1280) {
+          await page.waitForTimeout(60);
+          await page.evaluate(() => { window.keptFlowPaths = [...document.querySelectorAll("#flow-wires path")]; });
+          const savedOutput = flowRequests[0].first_output_ms;
+          flowRequests[0].first_output_ms = savedOutput === null ? 2 : null;await refreshStatus();
+          assert.equal(await page.evaluate(() => keptFlowPaths.every((node, i) => node === document.querySelectorAll("#flow-wires path")[i])), true, "Phase-only changes keep SVG paths");
+          flowRequests[0].first_output_ms = savedOutput;await refreshStatus();
+        }
         assert.equal(await page.evaluate(() => keptFlowRow === document.querySelector("#flow-active-body tr")), true, "Elapsed time updates keep the original row");
 
         flowRequests.push({ ...flowRequests[0], request_id: "shared-second", first_output_ms: null });
@@ -478,6 +488,14 @@ try {
         assert.equal(await metadata.getAttribute("open"), "", "A new request keeps retained request details open");
         assert.equal(await page.locator("#recent-failures").isVisible(), true);
         assert.match(await page.locator("#recent-failures li summary").innerText(), /Microsoft 365/);
+        await page.locator("#failure-kind").selectOption("capability");
+        assert.equal(await page.locator("#failures > li").count(), 1);
+        assert.match(await page.locator("#failures").innerText(), language === "zh" ? /出现 2 次/ : /2 occurrences/);
+        await page.locator("#failure-kind").selectOption("connection");
+        assert.equal(await page.locator("#failures > li").count(), 1);
+        await page.locator("#failures details > summary").click();
+        assert.match(await page.locator("#failures").innerText(), /oauth-authorization-server/);
+        await page.locator("#failure-kind").selectOption("issues");
         await page.locator("#language-toggle").click();
         assert.match(await page.locator("#recent-failures li summary").innerText(), language === "zh" ? /not retried/ : /未重试/);
         await page.locator("#language-toggle").click();

@@ -526,3 +526,5 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 
 .nightly-update { margin:26px 0; }.nightly-rules { display:grid;grid-template-columns:1fr 1fr;gap:20px 30px;margin:22px 0; }.nightly-rules dt { color:var(--muted);font-size:11px;margin-bottom:8px; }.nightly-rules dd { margin:0;font-size:12px;line-height:1.7; }
 @media(max-width:640px) { .nightly-rules { grid-template-columns:1fr; } }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

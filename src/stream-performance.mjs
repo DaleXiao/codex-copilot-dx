@@ -458,6 +458,8 @@ export async function measureRequestStageAsync(stage, operation) {
 }
 
 export function markUpstreamStarted(streaming = true) {
+  const context = currentRequestContext();
+  if (context) context.upstreamAttempts = (context.upstreamAttempts || 0) + 1;
   tracker()?.upstreamStarted(streaming);
 }
 
@@ -489,7 +491,7 @@ export function markResponseModel(model, { requestedModel, configuredModel = fal
   const context = currentRequestContext();
   if (context) {
     context.model = model;
-    if (requestedModel !== undefined) context.requestedModel = modelLabel(requestedModel);
+    if (requestedModel !== undefined && context.requestedModel === undefined) context.requestedModel = modelLabel(requestedModel);
   }
   tracker()?.setModel?.(model, { configured: configuredModel });
 }

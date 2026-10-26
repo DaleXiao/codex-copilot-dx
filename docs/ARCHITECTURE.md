@@ -768,3 +768,27 @@ existing cancellation-aware single-flight for transport initialization: one
 waiter cannot abort another, while the last cancellation or provider closure
 stops the shared setup. Existing native stream validation, byte admission,
 connection reuse, bounded metrics/logging and pinned source semantics remain.
+
+
+## Request evidence and optional counting
+
+The existing AsyncLocalStorage request context owns safe requested model and
+client evidence before model resolution. Claude keeps the outer HTTP context,
+while its generation metrics stay separate from count operations. Selected
+source/model, logical upstream calls and fixed resolution reasons reach HTTP
+diagnostics; no alternate route is chosen to improve a diagnostic result.
+
+`providers/api-token-count.mjs` is owned by one immutable manual-API
+configuration. It joins bounded identical count operations with independent
+waiter cancellation and keeps only bounded, short-lived 404 observations.
+It does not implement a general circuit breaker, protocol translation,
+inference fallback or tokenizer. Counts have their own diagnostics category;
+generation failure totals do not include this auxiliary capability.
+
+Flow rendering caches geometry until observed element size, topology, model
+labels or language change. Phase-only updates retain SVG path/circle nodes.
+Hidden pages stop the two-second status timer and refresh on visibility return;
+foreground freshness and the existing CSS motion remain unchanged. Catalog
+failure backoff is source-revision scoped and never holds the configuration
+transaction during network work. Existing body serialization ownership is
+retained: the ordinary manual Responses path serializes its final body once.

@@ -23,7 +23,12 @@ function fixture() {
     remove() { if (this.parent) this.parent.children.splice(this.parent.children.indexOf(this), 1);this.parent = null; }
     closest() { return hidden ? {} : null; }
     get isConnected() { return Boolean(this.parent); }
-    getBoundingClientRect() { return { width: 800, height: 300, top: 0, left: 0, right: 100 }; }
+    getBoundingClientRect() {
+      if (this === nodes.get("flow-network")) return { width: 800, height: 300, top: 0, left: 0, right: 800 };
+      if (this === nodes.get("flow-hub")) return { width: 60, height: 60, top: 120, left: 370, right: 430 };
+      const right = this.parent === nodes.get("flow-models") || this.parent?.parent === nodes.get("flow-models");
+      return { width: 200, height: 40, top: 0, left: right ? 600 : 0, right: right ? 800 : 200 };
+    }
   }
   const el = id => { if (!nodes.has(id)) nodes.set(id, new Node());return nodes.get(id); };
   const document = { visibilityState: "visible", documentElement: {}, getElementById: id => id === "status-icon" ? null : el(id), createElement: tag => new Node(tag), createElementNS: (_, tag) => new Node(tag), addEventListener: (key, fn) => listeners.set(key, fn) };
@@ -85,4 +90,15 @@ test("stale, malformed and hidden flow never invent idle or replay work", () => 
   f.api.update(snapshot([]));assert.equal(f.el("request-flow").dataset.state, "idle");
   f.hide(true);f.api.visibilityChanged();assert.equal(f.el("request-flow").dataset.paused, "true");
   f.api.unavailable();assert.equal(f.timers.size, 0);
+});
+
+
+test("flow phase changes preserve wire nodes; hidden pages do not redraw", () => {
+  const f = fixture(), active = row("codex_app", "gpt-test");
+  f.api.update(snapshot([active]));
+  const wire = f.el("flow-wires").children[0], dot = f.el("flow-wires").children[1];
+  assert.ok(wire);assert.equal(dot.attributes.class, "flow-wait");
+  f.api.update(snapshot([{ ...active, first_output_ms: 2 }]));
+  assert.equal(f.el("flow-wires").children[0], wire);assert.equal(f.el("flow-wires").children[1], dot);assert.equal(dot.attributes.class, "flow-packet");
+  f.document.visibilityState = "hidden";f.api.update(snapshot([]));assert.equal(f.el("flow-wires").children[0], wire);
 });

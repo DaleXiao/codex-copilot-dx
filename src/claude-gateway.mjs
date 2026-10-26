@@ -7,7 +7,8 @@ import { createRequestAdmission } from "./request-admission.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
 import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
-import { runWithRequestContext, currentRequestContext } from "./request-context.mjs";
+import { runWithRequestContext, currentRequestContext, observeRequestedModel } from "./request-context.mjs";
+import { upstreamErrorEvidence } from "./response-failures.mjs";
 import { createStreamPerformanceMetrics, isMessagesOutputDelta } from "./stream-performance.mjs";
 import { buildMessagesUsageRecord, recordUsage } from "./usage-store.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
@@ -17,6 +18,8 @@ import { requestApplication } from "./request-application.mjs";
 
 function send(res, code, value) {
   if (res.destroyed || res.writableEnded) return;
+  const context = currentRequestContext();
+  if (code >= 400) context?.onHttpError?.({ code: value?.error?.code, origin: context.errorOrigin || "client_validation" });
   res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });res.end(JSON.stringify(value));
 }
 const apiError = (code, message) => ({ type: "error", error: { type: "api_error", code, message } });
@@ -113,17 +116,21 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     const parent = currentRequestContext();
     if (parent) parent.provider = provider.id;
     const countTokens = pathname.endsWith("/count_tokens"), requestId = parent?.requestId || randomUUID();
-    const tracker = countTokens ? null : performance.begin("messages", { requestId, application: requestApplication(req.headers, "claude") });
+    const tracker = countTokens ? parent?.streamPerformance : performance.begin("messages", { requestId, application: requestApplication(req.headers, "claude") });
     if (!resolveRequest) tracker?.setProvider(provider.id);
     const abort = createRequestAbort(req, res);
     let release = () => {}, outcome = "failed", model = null, configuredModel = null, clientModel = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
     let terminalOrigin = "client_validation", failureStatus = null;
     if (!countTokens) { stats.total++;stats.active++;stats.last_request_at = new Date().toISOString(); }
-    await runWithRequestContext({ requestId, provider: selectedProvider.id, route: "messages", streamPerformance: tracker }, async () => {
+    const context = parent || { requestId };
+    context.provider = selectedProvider.id;context.application = requestApplication(req.headers, "claude");
+    context.streamPerformance = tracker;context.route = countTokens ? "messages_count_tokens" : "messages";
+    await runWithRequestContext(context, async () => {
       try {
         release = await acquireRequest(req, { signal: abort.signal });
         abort.setTimeout(config.requestBodyTimeoutMs, "request_body_timeout");
         let body = await readJsonBody(req, { admission: release, signal: abort.signal, maxBodyBytes: config.maxBodyBytes, maxDecodedBodyBytes: decodedLimit });
+        observeRequestedModel(body);
         if (!body || typeof body.model !== "string" || !Array.isArray(body.messages)) {
           send(res, 400, apiError("ccdx_messages_invalid", "Expected a model and messages array"));return;
         }
@@ -140,10 +147,15 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (desktopAliases && !configuredModel) throw Object.assign(new Error("The selected model is unavailable"), { code: "ccdx_api_model_unavailable", statusCode: 400 });
         if (desktopAliases && configuredModel !== model) { clientModel = model;model = configuredModel;body = { ...body, model }; }
         stats.last_model = model;
+        context.model = configuredModel || model;
         tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });
         validateConversation?.(body, req.headers, selectedProvider);
         terminalOrigin = "transport";
         const upstream = await selectedProvider.client.messages(body, { headers: req.headers, countTokens, signal: abort.signal,
+          onCountObservation(value) {
+            context.countObservation = { ...context.countObservation, ...value };
+            if (value.upstream) { context.upstreamAttempts = (context.upstreamAttempts || 0) + 1;tracker?.upstreamStarted(false); }
+          },
           onUpstreamStart() { abort.setTimeout(streamed ? config.streamHandshakeTimeoutMs : config.upstreamTimeoutMs, "upstream_timeout"); } });
         body = null;
         terminalOrigin = upstream.ok ? "upstream_response" : "upstream_http";
@@ -156,6 +168,8 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           const raw = await readBoundedResponseText(upstream, { maxBytes: upstream.ok ? config.maxUpstreamResponsesResponseBytes : MAX_UPSTREAM_ERROR_BODY_BYTES,
             label: "Claude gateway response", signal: abort.signal });
           let value;try { value = JSON.parse(raw); } catch {}
+          if (!upstream.ok) context.onHttpError?.({ ...upstreamErrorEvidence(raw),
+            origin: context.countObservation?.cached ? "capability_cache" : "upstream_http", headers: upstream.headers });
           if (!countTokens && upstream.ok && value?.type === "message" && Array.isArray(value.content)) {
             model = value.model || model;responseId = value.id;usage = value.usage;stopReason = value.stop_reason;
             sawStop = typeof stopReason === "string";outcome = stopReason === "max_tokens" ? "incomplete" : sawStop ? "completed" : "failed";
@@ -195,10 +209,12 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         outcome = detail.source === "cancelled" ? "cancelled" : "failed";
         const statusCode = detail.status || (abort.reason ? abortErrorStatusCode(abort.reason) : 502);
         failureStatus = statusCode;terminalOrigin = outcome === "cancelled" ? "client_disconnect" : statusCode < 500 && statusCode !== 429 ? "client_validation" : "transport";
+        context.errorOrigin = terminalOrigin;
         const message = redactDiagnosticText(error.message).split(apiKey).join("[redacted]").slice(0, 240);
         const diagnostic = error.code === "ccdx_api_network_unavailable" ? transportErrorDetails(error) : null;
         log(outcome === "cancelled" ? "info" : "warn", `Claude request ${requestId}: ${detail.code}${diagnostic ? ` (${diagnostic.code}, ${diagnostic.phase})` : ""}`);
         tracker?.setErrorOrigin(terminalOrigin);
+        context.onHttpError?.({ code: detail.code, origin: terminalOrigin });
         if (outcome === "cancelled") return;
         if (!res.headersSent) {
           const value = apiError(error.code || abort.reason || "ccdx_gateway_error", message);

@@ -8,8 +8,9 @@
   const nodes = { apps: new Map(), models: new Map() };
   const detailRows = new Map();
   let rows = [], total = null, omitted = 0, fresh = false, deadline = 0, expiry = null;
-  let selected = null, expanded = false, lastSignature = "", geometry = "", known = false;
+  let selected = null, expanded = false, lastSignature = "", geometry = "", wireState = "", positions = null, known = false;
   let lastApps = [], lastModels = [];
+  const resize = new ResizeObserver(() => { positions = null;draw(); });
   const visible = () => document.visibilityState === "visible" && !root.closest("[hidden]");
   const integer = value => Number.isSafeInteger(value) && value >= 0;
   const appName = id => format(`flow_app_${id}`);
@@ -47,7 +48,7 @@
   function project(type, groups) {
     const target = el(type === "apps" ? "flow-apps" : "flow-models"), cache = nodes[type], fragments = [];
     const ids = new Set(groups.map(group => group.id));
-    for (const [id, node] of cache) if (!ids.has(id)) { node.remove();cache.delete(id); }
+    for (const [id, node] of cache) if (!ids.has(id)) { resize.unobserve?.(node);node.remove();cache.delete(id);positions = null; }
     for (const group of groups) {
       let node = cache.get(group.id);
       if (!node) {
@@ -59,15 +60,16 @@
         });
         node.append(button, count, note);
         if (type === "models") node.append(entry("span", "flow-source"));
-        cache.set(group.id, node);
+        cache.set(group.id, node);resize.observe(node);positions = null;
       }
       const [button, count, note] = node.children;
-      button.textContent = type === "apps" ? appName(group.id) : modelName(group.model);
+      const title = type === "apps" ? appName(group.id) : modelName(group.model);
+      if (button.textContent !== title) { button.textContent = title;positions = null; }
       button.setAttribute("aria-pressed", String(selected?.type === type && selected.id === group.id));
       count.hidden = fresh && omitted === 0 && group.rows.length < 2;
       if (fresh && (group.rows.length || total === 0)) label(count, omitted ? "flow_count_lower" : "flow_count", { count: group.rows.length.toLocaleString() });
       else count.textContent = "—";
-      if (type === "models") node.children[3].textContent = sourceName(group.provider);
+      if (type === "models" && node.children[3].textContent !== sourceName(group.provider)) { node.children[3].textContent = sourceName(group.provider);positions = null; }
       const output = group.rows.filter(responding).length;
       const phase = group.rows.every(row => row.terminal_outcome) ? "flow_finishing"
         : group.rows.every(row => row.upstream_attempts > 1) ? "flow_retrying" : "flow_waiting";
@@ -77,7 +79,7 @@
     // Keep existing buttons and their focus when counts or phases change.
     const wanted = new Set(fragments);
     for (const node of [...target.children]) if (!wanted.has(node)) node.remove();
-    fragments.forEach((node, index) => { if (target.children[index] !== node) target.insertBefore(node, target.children[index] || null); });
+    fragments.forEach((node, index) => { if (target.children[index] !== node) { target.insertBefore(node, target.children[index] || null);positions = null; } });
   }
   function details() {
     label(el("flow-active-title"), fresh ? "flow_active_count" : "flow_last_count", { count: rows.filter(related).length });
@@ -119,7 +121,7 @@
     label(el("flow-more"), expanded ? "flow_fewer_models" : "flow_more_models", { count: Math.max(0, models.length - 12) });
     project("apps", shownApps);
     project("models", expanded ? models : models.slice(0, 12));
-    geometry = "";draw();
+    draw();
   }
   function rounded(x0, y0, x1, y1) {
     if (Math.abs(y1 - y0) < 2) return `M${x0} ${y0}H${x1}`;
@@ -128,25 +130,42 @@
   }
   function draw() {
     if (!visible()) return;
-    const network = el("flow-network"), rect = network.getBoundingClientRect(), hub = el("flow-hub").getBoundingClientRect(), edges = [];
-    const inset = rect.width < 500 ? 2 : 6;
-    if (!rect.width) return;
-    for (const type of ["apps", "models"]) for (const [id, node] of nodes[type]) {
-      if (!node.isConnected) continue;
-      const box = node.getBoundingClientRect(), button = node.children[0].getBoundingClientRect(), left = type === "apps";
-      const x0 = (left ? box.right : hub.right) - rect.left + inset, y0 = (left ? button.top + button.height / 2 : hub.top + hub.height / 2) - rect.top;
-      const x1 = (left ? hub.left : box.left) - rect.left - inset, y1 = (left ? hub.top + hub.height / 2 : button.top + button.height / 2) - rect.top;
-      if (x1 <= x0) continue;
-      const matches = rows.filter(row => (left ? row.application : modelKey(row)) === id && related(row));
-      edges.push({ d: rounded(x0, y0, x1, y1), active: fresh && matches.length > 0, moving: fresh && matches.some(responding), dim: node.dataset.related === "false", x: left ? x0 : x1, y: left ? y0 : y1, left });
+    if (!positions) {
+      const network = el("flow-network"), rect = network.getBoundingClientRect(), hub = el("flow-hub").getBoundingClientRect(), edges = [];
+      const inset = rect.width < 500 ? 2 : 6;
+      if (!rect.width) return;
+      for (const type of ["apps", "models"]) for (const [id, node] of nodes[type]) {
+        if (!node.isConnected) continue;
+        const box = node.getBoundingClientRect(), button = node.children[0].getBoundingClientRect(), left = type === "apps";
+        const x0 = (left ? box.right : hub.right) - rect.left + inset, y0 = (left ? button.top + button.height / 2 : hub.top + hub.height / 2) - rect.top;
+        const x1 = (left ? hub.left : box.left) - rect.left - inset, y1 = (left ? hub.top + hub.height / 2 : button.top + button.height / 2) - rect.top;
+        if (x1 <= x0) continue;
+        edges.push({ id, type, node, d: rounded(x0, y0, x1, y1), x: left ? x0 : x1, y: left ? y0 : y1, left });
+      }
+      positions = { width: rect.width, height: rect.height, edges };
     }
-    const next = JSON.stringify([rect.width, rect.height, edges]);if (next === geometry) return;geometry = next;
-    const wires = el("flow-wires");wires.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);wires.replaceChildren();
-    for (const edge of edges) {
-      wires.append(svg("path", { d: edge.d, class: `flow-wire${edge.dim ? " flow-dim" : edge.active ? " flow-live" : ""}` }));
-      if (edge.moving) { const dot = svg("circle", { r: 2.4, class: "flow-packet" });dot.style.offsetPath = `path('${edge.d}')`;dot.style.animationDelay = edge.left ? "-.9s" : "0s";wires.append(dot); }
-      else if (edge.active) wires.append(svg("circle", { cx: edge.x, cy: edge.y, r: 2.4, class: "flow-wait" }));
+    const { width, height, edges } = positions;
+    const next = JSON.stringify([width, height, edges.map(edge => [edge.type, edge.id, edge.d])]);
+    const states = edges.map(edge => {
+      const matches = rows.filter(row => (edge.left ? row.application : modelKey(row)) === edge.id && related(row));
+      return { active: fresh && matches.length > 0, moving: fresh && matches.some(responding), dim: edge.node.dataset.related === "false" };
+    });
+    const state = JSON.stringify(states), wires = el("flow-wires");
+    if (next === geometry && state === wireState) return;
+    if (next !== geometry) {
+      geometry = next;wires.setAttribute("viewBox", `0 0 ${width} ${height}`);wires.replaceChildren();
+      for (const edge of edges) wires.append(svg("path", { d: edge.d }), svg("circle", { r: 2.4 }));
     }
+    wireState = state;
+    edges.forEach((edge, index) => {
+      const value = states[index], path = wires.children[index * 2], dot = wires.children[index * 2 + 1];
+      path.setAttribute("class", `flow-wire${value.dim ? " flow-dim" : value.active ? " flow-live" : ""}`);
+      dot.setAttribute("class", value.moving ? "flow-packet" : "flow-wait");
+      dot.style.display = value.active ? "" : "none";
+      dot.style.offsetPath = value.moving ? `path('${edge.d}')` : "none";
+      dot.style.animationDelay = edge.left ? "-.9s" : "0s";
+      dot.setAttribute("cx", value.moving ? 0 : edge.x);dot.setAttribute("cy", value.moving ? 0 : edge.y);
+    });
   }
   function unavailable() { clearTimeout(expiry);expiry = null;fresh = false;deadline = 0;render(); }
   function visibilityChanged() { if (deadline && Date.now() >= deadline) { unavailable();return; }render();draw(); }
@@ -157,8 +176,8 @@
   document.addEventListener("visibilitychange", visibilityChanged);
   globalThis.addEventListener("pagehide", () => { root.dataset.paused = "true"; });
   globalThis.addEventListener("pageshow", visibilityChanged);
-  new ResizeObserver(draw).observe(el("flow-network"));
-  new MutationObserver(() => { lastSignature = "";render(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
+  resize.observe(el("flow-network"));
+  new MutationObserver(() => { lastSignature = "";positions = null;render(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
   globalThis.ccdxDashboardFlow = {
     update(data) {
       const parts = [data?.stream_performance, (data?.providers?.claude || data?.providers?.m365?.claude)?.requests?.performance].filter(Boolean);

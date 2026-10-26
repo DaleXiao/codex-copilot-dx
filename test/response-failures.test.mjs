@@ -36,7 +36,7 @@ test("inference errors survive route and MCP method noise without unbounded rete
   assert.equal(result.total, 61); assert.equal(result.recent.length, 2);
   assert.equal(result.actionable_recent[0].code, "invalid_parameter");
   assert.equal(result.protocol_recent.length, 8);
-  assert.deepEqual(result.by_category, { inference: 1, protocol: 30, route: 30, other: 0 });
+  assert.deepEqual(result.by_category, { inference: 1, capability: 0, protocol: 30, route: 30, other: 0 });
   result.actionable_recent[0].code = "changed";
   assert.equal(diagnostics.snapshot().actionable_recent[0].code, "invalid_parameter");
 });
@@ -96,4 +96,11 @@ test("failure diagnostics redact short credential forms and labelled upstream in
     assert.equal(details.code, "invalid_request");
     assert.equal(details.response_id, "resp_fixture");
   }
+});
+
+test('count endpoint absence is a separate capability notice while access and server failures stay actionable',()=>{
+ const d=createHttpFailureDiagnostics();
+ for(const status of [404,405,401,403,429,503])d.record(buildHttpFailureDetails({statusCode:status,route:'messages_count_tokens',model:'example-model',origin:'upstream_http'}));
+ const s=d.snapshot();assert.equal(s.by_category.inference,0);assert.equal(s.by_category.capability,6);assert.equal(s.capability_recent.length,6);
+ assert.deepEqual(s.actionable_recent.map(x=>x.http_status),[401,403,429,503]);
 });

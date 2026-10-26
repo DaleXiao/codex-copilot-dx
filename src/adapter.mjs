@@ -420,12 +420,13 @@ export function createAdapterHandler(options = {}) {
       if (requestFinished) return;
       requestFinished = true;
       if (trackRequest && statusCode >= 400) {
-        try { httpErrors.record(buildHttpFailureDetails({ ...httpEvidence, statusCode, route: routeName, requestId, model: context?.model,
+        try { httpErrors.record(buildHttpFailureDetails({ ...httpEvidence, statusCode, route: routeName, requestId, model: context?.model || context?.requestedModel,
           method: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"].includes(req.method) ? req.method : "OTHER",
           target: ["/v1/responses", "/v1/responses/compact", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens", "/anthropic/v1/models", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",
-          request_options: context?.requestOptions, upstream_attempts: streamPerformance?.attemptCount?.(),
+          request_options: context?.requestOptions, upstream_attempts: streamPerformance?.attemptCount?.() ?? context?.upstreamAttempts,
           attempt_timings: streamPerformance?.attemptTimings?.(),
-          requested_model: context?.requestedModel, provider: context?.provider,
+          requested_model: context?.requestedModel, provider: context?.provider, application: context?.application || requestApplication(req.headers),
+          capability_cached: context?.countObservation?.cached, shared_upstream: context?.countObservation?.shared,
         })); } catch {}
       }
       try { complete({ statusCode, aborted }); } catch {}
@@ -466,13 +467,14 @@ export function createAdapterHandler(options = {}) {
         showRequestId: options.showRequestId === true,
         includeHttpErrorDetails: options.includeHttpErrorDetails === true || process.env.CCDX_HTTP_ERROR_DETAILS === "1",
         streamPerformance,
+        upstreamAttempts: 0,
         provider: undefined,
         finishProvider: undefined,
         historyNamespace: undefined,
         historyTransferNamespace: undefined,
         onHistoryStored: undefined,
         clientHeaders: undefined,
-        onHttpError: evidence => { httpEvidence = evidence; },
+        onHttpError: evidence => { httpEvidence = { ...httpEvidence, ...evidence }; },
       };
       const result = runWithRequestContext(context, () => dispatchRequest(req, res, pathname));
       if (result && typeof result.then === "function") {

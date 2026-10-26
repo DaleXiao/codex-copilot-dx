@@ -26,3 +26,23 @@ test("explicit cancellation preserves last-good results and does not record a fa
   const job = refresh.refresh("api");refresh.cancel("api");const settled = assert.rejects(job, { code: "ccdx_connections_conflict" });
   read.resolve([{ id: "cancelled" }]);await settled;assert.equal(commits, 0);assert.equal(release, 1);assert.equal(states.at(-1).state, "cancelled");await refresh.close();
 });
+
+test('background catalog failures back off without blocking explicit recovery or publishing empty models', async () => {
+ let now=1000, calls=0, published=0, fail=true;
+ const refresh=createApiCatalogRefresh({now:()=>now,config:()=>({enabled:true,models:[]}),revision:()=> 'one',
+  source:()=>({discover:async()=>{calls++;if(fail)throw Object.assign(Error('synthetic'),{code:'ccdx_api_catalog_http_503',statusCode:503});return [{id:'recovered'}];}}),
+  track:()=>()=>{},commit:async()=>{published++;},onState:()=>{}});
+ await assert.rejects(refresh.refresh('api'));now+=60001;
+ await assert.rejects(refresh.refresh('api'));assert.equal(calls,2);now+=60001;
+ await assert.rejects(refresh.refresh('api'));assert.equal(calls,2,'background retry waits five minutes after its second failure');
+ fail=false;await refresh.refresh('api',true);assert.equal(calls,3);assert.equal(published,1);
+ await refresh.close();
+});
+
+test('catalog Retry-After is honored even on explicit refresh; source revisions invalidate it',async()=>{
+ let now=1,calls=0,version='one';
+ const refresh=createApiCatalogRefresh({now:()=>now,config:()=>({enabled:true,models:[]}),revision:()=>version,
+  source:()=>({discover:async()=>{calls++;throw Object.assign(Error('limited'),{code:'ccdx_api_catalog_http_429',retryAfterMs:300000});}}),track:()=>()=>{},commit:async()=>{},onState:()=>{}});
+ await assert.rejects(refresh.refresh('api'));now+=60001;await assert.rejects(refresh.refresh('api',true));assert.equal(calls,1);
+ version='two';refresh.invalidate();await assert.rejects(refresh.refresh('api',true));assert.equal(calls,2);await refresh.close();
+});

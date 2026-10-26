@@ -289,7 +289,7 @@
   // Only the small in-memory status snapshot is read at this cadence. Catalogs
   // and retained usage keep their existing on-demand, bounded refresh policy.
   function schedule() {
-    clearTimeout(timer);if (stopped) return;
+    clearTimeout(timer);if (stopped || document.visibilityState !== "visible" || !dashboardRefresh.automatic) return;
     timer = setTimeout(async () => {
       if (document.visibilityState === "visible" && dashboardRefresh.automatic) {
         await dashboardRefresh.refresh("status", { force: true });
@@ -302,6 +302,11 @@
     }, 2000);
   }
   window.addEventListener("hashchange", navigate);
+  document.addEventListener("visibilitychange", () => {
+    if (!stopped && document.visibilityState === "visible" && dashboardRefresh.automatic) void dashboardRefresh.refresh("status", { force: true });
+    schedule();
+  });
+  el("auto-refresh").addEventListener("click", schedule);
   el("refresh").addEventListener("click", () => { if (settingsViews.includes(current)) void loadSettings(); });
   window.addEventListener("pagehide", () => { stopped = true;clearTimeout(timer); });
   window.addEventListener("pageshow", () => { stopped = false;schedule(); });

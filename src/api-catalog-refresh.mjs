@@ -21,7 +21,8 @@ export function createApiCatalogRefresh({ config, source, track, revision, commi
     if (old?.revision === version && !old.controller.signal.aborted) return old.promise;
     if (old) cancel(id);
     const cached = reads.get(id), age = cached ? now() - cached.at : Infinity;
-    if (cached?.revision === version && age >= 0 && age < (force || cached.error ? 60000 : 30 * 60000)) {
+    const retryDelay = cached?.error ? [60000, 5 * 60000, 30 * 60000, 2 * 60 * 60000][Math.min((cached.failures || 1) - 1, 3)] : 0;
+    if (cached?.revision === version && age >= 0 && age < Math.max(cached.retryAfterMs || 0, force ? 60000 : cached.error ? retryDelay : 30 * 60000)) {
       if (cached.error) throw cached.error;
       await commit(id, cached.models, version, new Date(cached.at).toISOString(), () => current(id, version));
       onState(id, { state: "ready", checked_at: new Date(cached.at).toISOString() });return cached.models;
@@ -48,7 +49,9 @@ export function createApiCatalogRefresh({ config, source, track, revision, commi
         const code = /^ccdx_[a-z0-9_]+$/.test(error.code || "") ? error.code : "ccdx_api_catalog_unavailable";
         const failure = accessError(code, [401, 403, 409].includes(error.statusCode) ? error.statusCode : 502);
         if (active()) {
-          reads.set(id, { revision: version, at: now(), error: failure });
+          reads.set(id, { revision: version, at: now(), error: failure,
+            retryAfterMs: Number.isFinite(error.retryAfterMs) ? Math.max(0, Math.min(error.retryAfterMs, 86400000)) : 0,
+            failures: cached?.revision === version ? Math.min((cached.failures || 0) + 1, 4) : 1 });
           onState(id, { state: "stale", code, checked_at: new Date(now()).toISOString() });
         }
         throw failure;

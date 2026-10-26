@@ -75,7 +75,15 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
   }
   function resolveDeployment(id, model) {
     const value = plan(id), record = value.routes.get(model);
-    if (!record) throw accessError("ccdx_api_model_unavailable");
+    if (!record) {
+      const selected = binding(id), configured = selected.deployments || [{ source: selected.source, model: selected.model }];
+      const matches = configured.filter(item => item.model === model || deploymentModelId(item.source, item.model) === model);
+      const reason = !selected.enabled ? "ccdx_client_source_disabled" : matches.length > 1 ? "ccdx_model_ambiguous"
+        : matches.length && !permitted(id, matches[0].source) ? "ccdx_client_source_disabled"
+          : matches.length ? "ccdx_model_catalog_unavailable" : "ccdx_model_not_selected";
+      const error = accessError("ccdx_api_model_unavailable");error.jsonBody.error.reason = reason;
+      currentRequestContext()?.onHttpError?.({ code: error.code, origin: "client_validation", reason });throw error;
+    }
     const provider = requireSource(id, record.source);
     if (provider !== record.provider) { plans.delete(id);return resolveDeployment(id, model); }
     return record;

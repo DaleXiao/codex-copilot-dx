@@ -30,6 +30,7 @@ import {
   responseHistoryPressureRootId,
 } from "./responses-request.mjs";
 import { status } from "./status.mjs";
+import { observeRequestedModel } from "./request-context.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
 import { createSseKeepalive } from "./sse-keepalive.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
@@ -206,6 +207,7 @@ export function createResponsesHandler(options) {
       releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal }));
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
+      observeRequestedModel(parsed);
       const selectedProvider = options.resolveProvider?.(parsed, req);
       if (selectedProvider) {
         provider = selectedProvider;modelRegistry = provider.registry;
@@ -489,6 +491,7 @@ export function createResponsesCompactHandler(options) {
       releaseRequest = await measureRequestStageAsync("admission", () => acquireRequest(req, { signal: abort.signal }));
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       const parsed = await measureRequestStageAsync("body", () => readJsonBody(req, { admission: releaseRequest, signal: abort.signal }));
+      observeRequestedModel(parsed);
       const selectedProvider = options.resolveProvider?.(parsed, req);
       if (selectedProvider) {
         provider = selectedProvider;modelRegistry = provider.registry;

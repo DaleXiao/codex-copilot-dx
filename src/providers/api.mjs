@@ -12,8 +12,9 @@ import { checkedApiKey } from "../api-secrets.mjs";
 import { transportErrorDetails } from "../operation-error.mjs";
 import { resolveModelCapabilities, deploymentRevision, constrainModelRequest } from "../model-capabilities.mjs";
 import { apiModelMetadata } from "./api-model-metadata.mjs";
-import { markRequestObservation } from "../stream-performance.mjs";
+import { markRequestObservation, markUpstreamStarted } from "../stream-performance.mjs";
 import { createAbortAwareSingleflight } from "../bounded-result-cache.mjs";
+import { createApiTokenCounter } from "./api-token-count.mjs";
 
 const paths = { messages: "/v1/messages", responses: "/v1/responses", chat: "/v1/chat/completions" };
 export function apiCatalog(config, env = process.env) {
@@ -71,6 +72,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     const serialized = body ? options.bodyText ?? JSON.stringify(body) : undefined;
     if (serialized !== undefined) headers["Content-Length"] = String(Buffer.byteLength(serialized));
     options.onUpstreamStart?.();
+    if (body && options.observeUpstream !== false) markUpstreamStarted(body.stream === true);
     try {
       const result = await transport.fetch(url, { method: body ? "POST" : "GET", headers, body: serialized, signal: options.signal });
       if (result.status >= 300 && result.status < 400) { await result.body?.cancel();throw accessError("ccdx_api_redirect_refused", 502); }
@@ -91,6 +93,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       throw failure;
     }
   }
+  const counter = createApiTokenCounter({ request: (body, options) => request(config.endpoints.messages.replace(/\/+$/, "") + "/count_tokens", body, options, "messages") });
   const client = {
     listModels: async () => ({ status: 200, body: JSON.stringify(registry.models) }),
     getCachedModelEndpoints: id => catalog.find(model => model.id === id)?.supported_endpoints || null,
@@ -106,7 +109,8 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     chatCompletions(body, options = {}) { selected(body.model, "chat");return request(config.endpoints.chat, body, options, "chat"); },
     messages(body, options = {}) {
       const model = selected(body.model, "messages");
-      return request(options.countTokens ? config.endpoints.messages.replace(/\/+$/, "") + "/count_tokens" : config.endpoints.messages, model.id === body.model ? body : { ...body, model: model.id }, options, "messages");
+      const outgoing = model.id === body.model ? body : { ...body, model: model.id };
+      return options.countTokens ? counter.count(outgoing, options) : request(config.endpoints.messages, outgoing, options, "messages");
     },
   };
   return {
@@ -122,7 +126,11 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       const models = [], ids = new Set(), checked_at = new Date().toISOString();let url = modelsUrl, bytes = 0;
       for (let page = 0; page < 25; page++) {
       const response = await request(url, undefined, { signal }, config.endpoints.responses ? "responses" : "messages");
-      if (!response.ok) { await response.body?.cancel();throw accessError(`ccdx_api_catalog_http_${response.status}`, response.status === 401 || response.status === 403 ? response.status : 502); }
+      if (!response.ok) {
+        await response.body?.cancel();const error = accessError(`ccdx_api_catalog_http_${response.status}`, response.status === 401 || response.status === 403 ? response.status : 502);
+        const retry = response.headers.get("retry-after"), delay = /^\d{1,8}$/.test(retry || "") ? Number(retry) * 1000 : Date.parse(retry) - Date.now();
+        if (Number.isFinite(delay) && delay > 0) error.retryAfterMs = Math.min(delay, 86400000);throw error;
+      }
       const text = await readBoundedResponseText(response, { maxBytes: MAX_UPSTREAM_MODEL_CATALOG_BYTES - bytes, label: "API model catalog", signal });bytes += Buffer.byteLength(text);
       let value;try { value = JSON.parse(text); } catch { throw accessError("ccdx_api_catalog_invalid", 502); }
       if (!Array.isArray(value.data) || models.length + value.data.length > 500) throw accessError("ccdx_api_catalog_invalid", 502);

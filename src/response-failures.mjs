@@ -138,26 +138,43 @@ export function createHttpFailureDiagnostics({ maxEntries = 20, now } = {}) {
   const all = createResponseFailureDiagnostics({ maxEntries, now });
   const actionable = createResponseFailureDiagnostics({ maxEntries, now });
   const protocol = createResponseFailureDiagnostics({ maxEntries: 8, now });
-  const counts = { inference: 0, protocol: 0, route: 0, other: 0 };
+  const capability = createResponseFailureDiagnostics({ maxEntries: 20, now });
+  const routes = createResponseFailureDiagnostics({ maxEntries: 8, now });
+  const counts = { inference: 0, capability: 0, protocol: 0, route: 0, other: 0 };
   return {
     record(details) {
       all.record(details);
-      const category = ["responses", "responses_compact", "messages", "messages_count_tokens"].includes(details.route) ? "inference"
+      const category = details.route === "messages_count_tokens" ? "capability"
+        : ["responses", "responses_compact", "messages"].includes(details.route) ? "inference"
         : details.route === "image_mcp" && details.http_status === 405 ? "protocol"
           : details.route === "not_found" ? "route" : "other";
       counts[category]++;
       if (category === "inference" || category === "other") actionable.record(details);
+      if (category === "capability") {
+        capability.record(details);
+        if (![404, 405, 501].includes(details.http_status)) actionable.record(details);
+      }
       if (category === "protocol") protocol.record(details);
+      if (category === "route") routes.record(details);
     },
     snapshot() { return { ...all.snapshot(), by_category: { ...counts },
-      actionable_recent: actionable.snapshot().recent, protocol_recent: protocol.snapshot().recent }; },
+      actionable_recent: actionable.snapshot().recent, capability_recent: capability.snapshot().recent,
+      protocol_recent: protocol.snapshot().recent, route_recent: routes.snapshot().recent }; },
   };
 }
 
 export function buildHttpFailureDetails({ statusCode, route, requestId, model, code, origin, headers,
-  error_body, error_type, parameter, diagnostic_message, method, target, request_options, upstream_attempts, attempt_timings, requested_model, provider }) {
+  error_body, error_type, parameter, diagnostic_message, method, target, request_options, upstream_attempts, attempt_timings, requested_model, provider,
+  application, reason, capability_cached, shared_upstream }) {
+  const reasons = { ccdx_model_not_selected: "This model is not selected for this app.",
+    ccdx_model_ambiguous: "This model name matches multiple sources. Select its source-specific entry.",
+    ccdx_model_catalog_unavailable: "The selected model is not currently available in its source catalog.",
+    ccdx_client_source_disabled: "This app or its model source is turned off." };
+  const message = (Object.hasOwn(reasons, reason) ? reasons[reason] : null) || (route === "messages_count_tokens" && statusCode === 404 ? "The source's token-count endpoint returned HTTP 404. Message generation is separate."
+    : origin === "client_validation" ? "The request was rejected locally before an upstream call."
+      : error_body === "empty" ? "Upstream returned no error details." : "HTTP request failed; original response was preserved.");
   const details = responseFailureDetails({ model, error: { code: typeof code === "string" && /^[a-z\d_.:-]{1,80}$/i.test(code) ? code : `http_${statusCode}`,
-    message: error_body === "empty" ? "Upstream returned no error details." : "HTTP request failed; original response was preserved." } }, "http.error", { headers, provider });
+    message } }, "http.error", { headers, provider });
   return { ...details, request_id: requestId, http_status: statusCode, route,
     origin: origin || (route === "not_found" ? "route" : "unclassified"), local_message: true,
     ...(error_body ? { error_body } : {}), ...(error_type ? { error_type } : {}), ...(parameter ? { parameter } : {}),
@@ -166,5 +183,8 @@ export function buildHttpFailureDetails({ statusCode, route, requestId, model, c
     ...(request_options ? { request_options } : {}),
     ...(attempt_timings ? { attempt_timings } : {}),
     ...(requested_model ? { requested_model, request_kind: requested_model === "codex-auto-review" ? "auto_review" : "unknown" } : {}),
+    ...(["codex_app", "codex_cli", "codex", "claude_app", "claude_code", "claude", "api"].includes(application) ? { application } : {}),
+    ...(Object.hasOwn(reasons, reason) ? { reason } : {}),
+    ...(capability_cached === true ? { capability_cached: true } : {}), ...(shared_upstream === true ? { shared_upstream: true } : {}),
     ...(Number.isSafeInteger(upstream_attempts) ? { upstream_attempts } : {}) };
 }

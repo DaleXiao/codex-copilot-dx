@@ -38,7 +38,7 @@ test("HTTP diagnostics distinguish upstream refusal and local validation without
   assert.equal(status.http_errors.recent[0].http_status, 404);
   assert.equal(status.http_errors.actionable_recent.length, 2);
   assert.equal(status.http_errors.actionable_recent[0].code, "quota_exceeded");
-  assert.deepEqual(status.http_errors.by_category, { inference: 2, protocol: 0, route: 23, other: 0 });
+  assert.deepEqual(status.http_errors.by_category, { inference: 2, capability: 0, protocol: 0, route: 23, other: 0 });
 });
 
 function jsonRequest(body, contentEncoding, headers = {}) {

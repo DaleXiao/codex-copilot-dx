@@ -27,5 +27,14 @@ test('normal discovery publishes maker evidence without changing the legacy conn
  const id=saved.providers.find(x=>!x.builtin).id;await runtime.manageConnections({operation:'discover',id});
  const model=runtime.dashboardCatalog({provider:id}).models[0];assert.equal(model.vendor,'Example AI');assert.equal(model.owned_by,'gateway');
  assert.doesNotMatch(fs.readFileSync(accessSettingsPath({home,env}),'utf8'),/publisher|Example AI|model_display/);assert.equal(readAccessSettings({home,env}).version,2);
+ const publicApi=runtime.connections().providers.find(x=>x.id===id);
+ const {id:ignored,enabled,builtin,key_saved,protocols,model_count,codex_model_count,deployment_revision,discovery,checked_at,...roundtrip}=publicApi;
+ const found=await runtime.manageConnections({operation:'discover',id});roundtrip.models=structuredClone(found.discovered);
+ roundtrip.model_display={'model-one':{publisher:'Not an upstream declaration'}};roundtrip.models[0].display={publisher:'Not an upstream declaration'};
+ const profile=runtime.source(id).profileId('messages');
+ await runtime.manageConnections({operation:'save_api',id,config:roundtrip,allowed:['claude_app']});
+ assert.equal(runtime.source(id).profileId('messages'),profile);assert.equal(runtime.dashboardCatalog({provider:id}).models[0].vendor,'Example AI');
+ assert.doesNotMatch(fs.readFileSync(accessSettingsPath({home,env}),'utf8'),/publisher|model_display|Not an upstream declaration/);
+ await assert.rejects(runtime.manageConnections({operation:'save_api',id,config:{...roundtrip,unexpected:true},allowed:['claude_app']}),{code:'ccdx_api_config_invalid'});
  const again=make();try{assert.equal(again.dashboardCatalog({provider:id}).models[0].vendor,'Example AI');}finally{await again.close();}
 });

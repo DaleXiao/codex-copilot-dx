@@ -9,6 +9,8 @@ explains native memory-model dependencies and improves request-flow activity.
   revision-scoped display cache. Show the maker in model lists/details; missing
   declarations remain Not provided. Existing connection v2 schema and native
   model names, routes, credentials and history identities remain unchanged.
+  Legacy Save API round-trips ignore the new read-only display fields while
+  unknown editable fields still fail strict validation.
 - Coordinate the first real count for an unknown model/header scope. Distinct
   waiting inputs reuse a 404 observation, never another input's successful count.
   Known-supported counts keep normal concurrency, bounded sharing and independent

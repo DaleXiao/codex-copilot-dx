@@ -177,7 +177,7 @@ test("one client selects same-named models from two APIs on the shared port with
   // Editing capability metadata after Codex stores a qualified review route
   // must not mistake that route for an absent upstream model ID.
   const api = runtime.connections().providers.find(p => p.id === ids[0]);
-  const { id: ignored, enabled: ignoredEnabled, builtin, key_saved, model_count, codex_model_count, protocols, deployment_revision, model_display, discovery, ...config } = api;
+  const { id: ignored, enabled: ignoredEnabled, builtin, key_saved, model_count, codex_model_count, protocols, deployment_revision, discovery, ...config } = api;
   await runtime.manageConnections({ operation: "save_api", id: ids[0], config, allowed: ["claude_app", "codex"] });
   const beforePreview = JSON.stringify(runtime.connections());
   const client = runtime.connections().clients.find(c => c.id === "claude_app");

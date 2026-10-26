@@ -2104,7 +2104,9 @@ Rebuildable per-source files under `api-model-display/` beside settings are
 scoped by source ID and deployment revision. They preserve at most 500 models,
 512 KiB per file and 16 in-memory sources. They contain only model IDs and
 identity declarations, no key or response body. Old versions ignore them;
-connection v2 metadata remains readable during rollback. Missing display
+connection v2 metadata remains readable during rollback. The new read-only
+`model_display` source field and per-discovery `display` field are ignored if
+round-tripped into Save API; unknown configuration fields still fail validation. Missing display
 evidence triggers the existing normal catalog read rather than requiring key
 entry or model reselection. Failed discovery retains valid prior evidence for
 the same revision; invalid optional display cache does not block inference.

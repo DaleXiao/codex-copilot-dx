@@ -216,7 +216,14 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     if (input.operation === "save_api") {
       const existing = next.apis.find(api => api.id === input.id);
       if (!existing && next.apis.length >= 16) throw accessError("ccdx_api_limit");
-      if (!validObject(input.config, ["name", "base_url", "endpoints", "auth_header", "models", "key_env"])) throw accessError("ccdx_api_config_invalid");
+      if (!validObject(input.config, ["name", "base_url", "endpoints", "auth_header", "models", "key_env", "model_display"])) throw accessError("ccdx_api_config_invalid");
+      // Existing clients round-trip catalog data. New display-only fields must
+      // remain readable without becoming editable connection configuration.
+      const { model_display, ...editableConfig } = input.config;
+      input = { ...input, config: { ...editableConfig, models: Array.isArray(editableConfig.models) ? editableConfig.models.map(model => {
+        if (!model || typeof model !== "object" || Array.isArray(model)) return model;
+        const { display, ...editable } = model;return editable;
+      }) : editableConfig.models } };
       const id = existing?.id || "api_" + randomBytes(8).toString("hex");
       if (input.key !== undefined && input.key !== "") { checkedApiKey(input.key);freshRef = randomBytes(16).toString("hex"); }
       if (input.config.key_env && freshRef || !input.config.key_env && !freshRef && !existing?.secret_ref) throw accessError("ccdx_api_key_invalid");

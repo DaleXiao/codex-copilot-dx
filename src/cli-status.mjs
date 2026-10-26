@@ -200,9 +200,9 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
   if (data.http_errors) {
     lines.push(status("info", `HTTP failures: ${count(data.http_errors.total)} observed (separate from model terminal events)`));
     const categories = data.http_errors.by_category;
-    if (categories) lines.push(status("info", `HTTP categories: ${count(categories.inference)} inference, ${count(categories.protocol)} unsupported MCP methods, ${count(categories.route)} unmatched routes, ${count(categories.other)} other`));
+    if (categories) lines.push(status("info", `HTTP categories: ${count(categories.inference)} generation, ${count(categories.capability)} token counts, ${count(categories.protocol)} unsupported MCP methods, ${count(categories.route)} unmatched routes, ${count(categories.other)} other`));
     for (const failure of (data.http_errors.actionable_recent || []).slice(-3).reverse()) {
-      lines.push(status("warn", `HTTP ${count(failure.http_status)} ${terminalCell(failure.model)} ${terminalCell(failure.code)}${failure.parameter ? ` param=${terminalCell(failure.parameter)}` : ""}; ${terminalCell(failure.origin)}; ${count(failure.upstream_attempts)} attempts`));
+      lines.push(status("warn", `HTTP ${count(failure.http_status)} ${terminalCell(failure.model)} ${terminalCell(failure.code)}${failure.reason ? ` reason=${terminalCell(failure.reason)}` : ""}${failure.parameter ? ` param=${terminalCell(failure.parameter)}` : ""}; ${terminalCell(failure.origin)}; ${count(failure.upstream_attempts)} attempts`));
     }
   }
   lines.push(status("info", `Models: ${count(models.models)} total; Copilot token ${copilot.token_cached ? `cached (${duration(copilot.token_expires_in_ms)} remaining)` : "not cached"}`));

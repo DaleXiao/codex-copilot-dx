@@ -7,6 +7,8 @@
     "memory_extract_model": ["Memory extraction model", "记忆提取模型"],
     "memory_extract_role": ["Memory extraction", "记忆提取"],
     "memory_not_detected": ["Not detected", "未检测到"],
+    "memory_codex_default": ["Chosen by Codex", "由 Codex 选择"],
+    "memory_default_unknown": ["Default model ID not available.", "尚未取得默认型号。"],
     "memory_basis_configured": ["Configured in Codex", "Codex 已配置"],
     "memory_basis_observed": ["Recently observed", "最近检测到"],
     "memory_model_on": ["Enabled", "已启用"],

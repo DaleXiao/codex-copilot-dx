@@ -104,6 +104,15 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         }
         await page.locator('[data-route="codex"]').click();
         await page.waitForFunction(() => document.getElementById("connection-memory-name").textContent === "response-replay");
+        for (const [enabled, expected] of [[true, language === "zh" ? "由 Codex 选择" : "Chosen by Codex"],
+          [false, language === "zh" ? "记忆生成已关闭" : "Memory generation is off"], [null, language === "zh" ? "未检测到" : "Not detected"]]) {
+          await page.evaluate(enabled => globalThis.ccdxConnections.updateMemory({ clients: [{ id: "codex", memory_model: { model: null, basis: "unknown", enabled } }] }), enabled);
+          assert.equal(await page.locator("#connection-memory-name").innerText(), expected);
+          assert.equal(await page.locator("#connection-memory-state").isVisible(), false, "An unknown model must not claim a selected-model state");
+          assert.equal(await page.locator("#connection-memory-warning").isVisible(), false, "Model closure is not inferred without model evidence");
+          assert.equal((await page.locator("#connection-memory-basis").innerText()).length > 0, enabled === true);
+        }
+        await page.evaluate(() => globalThis.ccdxConnections.updateMemory({ clients: [{ id: "codex", memory_model: { model: "response-replay", basis: "configured", enabled: true } }] }));
         const memoryBox = page.locator('#connection-bindings tr').filter({ hasText: "response-replay" }).locator('input[name="binding-model"]');
         await memoryBox.click();await page.locator('#connection-memory-confirm').waitFor({ state: "visible" });
         assert.match(await page.locator('#connection-memory-confirm').innerText(), language === "zh" ? /可能无法生成新记忆/ : /may prevent new memory/);

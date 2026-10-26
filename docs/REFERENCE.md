@@ -2134,7 +2134,11 @@ one unambiguous local HTTP 400 model. No prompt, memory text or model-name
 heuristic is used. Explicit configuration is labelled Configured in Codex;
 observations are Recently observed. The current client does not expose its
 compiled default in the queried interface, so CCDX does not label a guessed
-model as Codex default. Without evidence it shows Not detected.
+model as Codex default. With memory generation explicitly enabled but no model
+evidence, the editor shows Chosen by Codex and Default model ID not available;
+this does not infer a model from the checked model list or claim a successful
+memory write. With generation explicitly disabled it shows Memory generation is
+off. Unknown generation state and no model evidence remain Not detected.
 
 The optional native log helper runs only on startup/connection-view reads (including an explicit WebUI refresh),
 coalesced and at least one minute apart, with a 2.5-second limit. It reads up to

@@ -264,8 +264,8 @@
     const area = el("connection-memory-model");if (!area || !data) return;
     area.hidden = editingClient !== "codex";if (area.hidden) return;
     const c = client("codex"), dep = c.memory_model || {};
-    el("connection-memory-name").textContent = dep.model || format("memory_not_detected");
-    words(el("connection-memory-basis"), dep.model ? `memory_basis_${dep.basis}` : "");
+    el("connection-memory-name").textContent = dep.model || format(dep.enabled === true ? "memory_codex_default" : dep.enabled === false ? "memory_generation_off" : "memory_not_detected");
+    words(el("connection-memory-basis"), dep.model ? `memory_basis_${dep.basis}` : dep.enabled === true ? "memory_default_unknown" : "");
     const selected = (c.deployments || c.model_plan?.models || []).some(memoryMatches);
     const draft = dep.model && [...bindingSelection].some(key => {
       const [source, id] = key.split("\0");return memoryMatches({ id, route_id: c.model_plan?.available?.find(x => x.source === source && x.id === id)?.route_id });

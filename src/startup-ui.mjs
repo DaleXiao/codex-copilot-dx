@@ -63,7 +63,7 @@ export function providerStartupSummary(data = {}) {
   const connections = data.providers.connections;
   if (connections?.managed) {
     const enabled = connections.providers.filter(provider => provider.enabled);
-    const states = { configured: "configured", not_configured: "not configured", not_installed: "not installed", preserved: "custom settings kept", configuration_unavailable: "config unavailable", partially_preserved: "partly configured", unavailable: "source unavailable" };
+    const states = { configured: "configured", paused: "paused", disabled: "off", not_configured: "not configured", not_installed: "not installed", preserved: "custom settings kept", configuration_unavailable: "config unavailable", partially_preserved: "partly configured", unavailable: "source unavailable" };
     const sourceLines = enabled.map(provider => `${terminalCell(provider.name)} / ${provider.builtin ? provider.id === "m365" ? terminalCell(connections.m365_state) : "sign-in checked separately" : `${provider.model_count} configured models`}`);
     const claudeLines = connections.clients.filter(client => client.id !== "codex").map(client => `${client.name}: ${!client.enabled ? "off" : client.source ? states[client.setup] || "not checked" : "paused"}`);
     return { catalogs: `${enabled.length} enabled source${enabled.length === 1 ? "" : "s"}`, claude: claudeLines.join(" / "), sourceLines, claudeLines,

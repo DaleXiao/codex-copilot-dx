@@ -102,10 +102,16 @@ export function protectInstallation({ target, prefix, platform = process.platfor
   if (!target || !prefix) return { commit() {}, rollback() {} };
   const parent = path.dirname(target);fs.mkdirSync(parent, { recursive: true });
   const lock = path.join(parent, ".ccdx-install.lock");let fd;
-  try { fd = fs.openSync(lock, "wx", 0o600); } catch { throw new Error("Another install may be running. Check the CCDX install lock before retrying."); }
+  try { fd = fs.openSync(lock, "wx", 0o600); }
+  catch (error) {
+    if (error.code === "EEXIST") throw new Error(`Another install may be running. CCDX install lock: ${lock}. Inspect its owner and .ccdx-backup-* in ${parent} before recovery; do not remove an active install lock.`, { cause: error });
+    throw new Error(`Cannot create the CCDX install lock at ${lock} (${error.code || "I/O error"}). Check directory permissions and free space; no installation was started.`, { cause: error });
+  }
   let backup;
-  try { backup = fs.mkdtempSync(path.join(parent, ".ccdx-backup-")); }
-  catch (error) { fs.closeSync(fd);fs.unlinkSync(lock);throw error; }
+  try {
+    backup = fs.mkdtempSync(path.join(parent, ".ccdx-backup-"));
+    fs.writeFileSync(fd, JSON.stringify({ version: 1, pid: process.pid, created_at: new Date().toISOString(), backup }) + "\n");
+  } catch (error) { if (backup) fs.rmSync(backup, { recursive: true, force: true });fs.closeSync(fd);fs.unlinkSync(lock);throw error; }
   const entries = [target, ...["ccdx", "codex-copilot-dx"].flatMap(name => platform === "win32"
     ? [name, `${name}.cmd`, `${name}.ps1`].map(file => path.join(prefix, file)) : [path.join(prefix, "bin", name)])];
   const saved = [];

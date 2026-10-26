@@ -92,6 +92,15 @@ starts. Its value is never returned by management or copied into client config.
 Private helpers omit unrelated credentials and Node hooks. API error bodies are
 replaced with stable codes; valid Retry-After metadata is retained.
 
+An explicit empty Codex deployment array pauses CCDX access, including after a
+restart or disabling the last selected source. Models, Responses and compact
+requests return `503 ccdx_client_source_disabled` before checking a client key;
+no upstream call, automatic model selection or login repair is attempted. Enable
+the app/source and select at least one model to resume. GitHub-only selections
+retain native OpenAI mode; nonempty mixed/API deployments retain private-key
+authentication. With automatic sync enabled, pausing restores only owned Codex
+configuration; manual sync leaves native files unchanged. Neither changes login.
+
 `client-gateway-keys.json` holds local credentials separately. Disabled sources leave normal source lists. **Model sources** owns **Disabled sources**; application access cards own **Disabled clients**. App navigation remains available while access is closed, so its restoration control stays reachable. Each
 collapsed list appears only when it has entries and provides **Enable again**.
 Closing a client stops CCDX access, not the app. Disabling an in-use source
@@ -1264,8 +1273,13 @@ Before npm changes a discovered global target, CCDX backs up only its package
 and two command entries and acquires an exclusive install lock. A linked target
 is preserved and refused. Installer or runtime-verification failure restores the
 old package/commands; successful installation removes the backup. A failed restore
-reports the retained backup and lock for manual recovery. A lock left by a killed
-installer requires checking that no installation is running before removing it.
+reports the retained backup and lock for manual recovery. New lock records include
+the installer PID, creation time and backup directory. Existing-lock errors name
+the exact file; other lock-creation failures retain their actual I/O error rather
+than claiming another install. Old empty locks remain owner-unknown. A lock left
+by a killed installer requires checking that no installation is running and
+inspecting its retained backup before recovery. Locks are not removed merely
+because they are old; an incomplete restore must be completed first.
 There is no promise of crash/power-loss atomicity. Other apps, credentials,
 settings, caches and the running service are not replaced. Readonly/busy Windows
 files can prevent installation; finish use of that installation and retry.

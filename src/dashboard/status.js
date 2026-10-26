@@ -12,7 +12,7 @@
     function renderProviders(data) {
       const providers = data.providers || [];
       const states = { saved: "saved_locally", authorized: "authorized", disabled: "disabled", unavailable: "unavailable_ca184",
-        unknown: "unknown", unconfigured: "not_configured", ready: "ready", checking: "checking", unsupported: "unsupported",
+        unknown: "unknown", paused: "access_paused", unconfigured: "not_configured", ready: "ready", checking: "checking", unsupported: "unsupported",
         configured: "configured", default_unavailable: "cap_default_unavailable", preserved: "existing_settings_kept", partially_preserved: "existing_settings_kept",
         restored: "settings_restored", not_installed: "not_installed", configuration_unavailable: "setup_unavailable", not_configured: "unknown", standby: "standby" };
       const auth = element("provider-auth"), clients = element("provider-clients"), requests = element("provider-requests"), claudeClients = element("claude-clients");
@@ -51,7 +51,7 @@
       }
       for (const entries of applications.values()) {
         const selected = entries.find(entry => entry.client.selected === true) || (entries.length === 1 ? entries[0] : null);
-        const client = selected?.client || { name: entries[0].client.name, state: "unknown" };
+        const client = selected?.client || { name: entries[0].client.name, state: entries.every(entry => entry.client.state === "paused") ? "paused" : "unknown" };
         const row = tableRow([client.name, selected?.provider.name || "—", states[client.state] || "unknown",
           client.gateway || "—", time(client.last_request_at)], { labels: [2, 3] });
         if (client.reason) localize(row.children[2], "state_reason", { state: phrase(states[client.state] || "unknown"), reason: client.reason });

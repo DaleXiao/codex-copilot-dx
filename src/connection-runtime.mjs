@@ -50,8 +50,16 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
   const binding = id => managed ? settings.clients[id] : { ...settings.clients[id], source: id === "codex" ? legacy.selection().codex : legacy.snapshot().m365.enabled ? "m365" : null };
   // GitHub-only selections retain the existing native loopback access contract.
   // Any other deployment still requires the private per-client credential.
-  const codexRequiresKey = () => !Array.isArray(binding("codex").deployments)
-    || !binding("codex").deployments.length || binding("codex").deployments.some(item => item.source !== "github");
+  function codexAccessMode() {
+    const client = binding("codex");
+    if (!client.enabled) return "disabled";
+    if (Array.isArray(client.deployments)) {
+      if (!client.deployments.length) return "paused";
+      return client.deployments.every(item => item.source === "github") ? "native" : "gateway";
+    }
+    return !client.source ? "paused" : client.source === "github" ? "native" : "gateway";
+  }
+  const codexRequiresKey = () => codexAccessMode() === "gateway";
   function requireCodexKey(req) {
     if (gatewayClient(req.headers, identities()) === "codex") return;
     // An old native process may still send its ChatGPT bearer. A local access
@@ -147,9 +155,12 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     if (!managed || closed) return;
     if (options.preserveClientConfiguration?.()) { for (const id of targets) setup[id] = "preserved";return; }
     const codex = binding("codex"), compiledCodex = plan("codex");
-    const explicit = Array.isArray(codex.deployments), native = explicit ? codex.deployments.length > 0 && codex.deployments.every(item => item.source === "github") : codex.source === "github";
+    const explicit = Array.isArray(codex.deployments), mode = codexAccessMode(), native = mode === "native";
     if (targets.has("codex")) try {
-      if (codex.enabled && codex.auto_sync === false) setup.codex = "manual_sync";
+      if (mode === "paused" || mode === "disabled") {
+        if (mode === "disabled" || codex.auto_sync !== false) configureCodex({ ...options, restore: true });
+        setup.codex = mode;
+      } else if (codex.auto_sync === false) setup.codex = "manual_sync";
       else if (codex.enabled && compiledCodex.defaultUnavailable && !native) setup.codex = "default_unavailable";
       else {
         setup.codex = configureCodex({ ...options, ...(codex.enabled && (native || explicit && codex.deployments.length || codex.source?.startsWith("api_"))
@@ -387,9 +398,10 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     },
     current(req) {
       if (!managed) return legacy.current();
+      const mode = codexAccessMode();
+      if (mode === "paused" || mode === "disabled") throw accessError("ccdx_client_source_disabled", 503);
       const c = binding("codex"), compiled = plan("codex");
       if (Array.isArray(c.deployments) && req?.method === "GET") {
-        if (!c.enabled) throw accessError("ccdx_client_source_disabled", 503);
         if (codexRequiresKey()) requireCodexKey(req);
         return { id: "connections", registry: { models: { data: compiled.models.map(model => ({ ...model, id: model.public_id })) } },
           client: { listModels: async () => ({ status: 200, body: JSON.stringify({ data: compiled.models.map(model => ({ ...model, id: model.public_id })) }) }) },
@@ -407,7 +419,10 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     },
     hasModelBindings(client = "codex") { return managed && Array.isArray(binding(client).deployments); },
     resolveCodex(body, req) {
-      if (!managed || !Array.isArray(binding("codex").deployments)) return null;
+      if (!managed) return null;
+      const mode = codexAccessMode();
+      if (mode === "paused" || mode === "disabled") throw accessError("ccdx_client_source_disabled", 503);
+      if (!Array.isArray(binding("codex").deployments)) return null;
       if (codexRequiresKey()) requireCodexKey(req);
       const requested = body.model === "codex-auto-review" ? binding("codex").auto_review_model || plan("codex").defaultModel : body.model;
       if (body.model === "codex-auto-review") {

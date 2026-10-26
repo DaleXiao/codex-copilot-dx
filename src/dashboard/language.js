@@ -1,6 +1,7 @@
 (() => {
   const translations = {
     "request_access_blocked": ["Access blocked", "请求已拦截"],
+    "access_paused": ["Access paused", "接入已暂停"],
     "not_applicable": ["Not applicable", "不适用"],
     "model_owner": ["Model owner", "模型归属"],
     "memory_extract_model": ["Memory extraction model", "记忆提取模型"],
@@ -41,7 +42,7 @@
     "model_not_selected_message": ["This model is not selected for this app.", "此应用尚未选入该模型。"],
     "model_ambiguous_message": ["This model name matches multiple sources. Select its source-specific entry.", "模型同名，请选择明确来源。"],
     "model_catalog_unavailable_message": ["The selected model is not currently available in its source catalog.", "来源目录中暂时没有该模型。"],
-    "client_source_disabled_message": ["This app or its model source is turned off.", "应用或模型来源已关闭。"],
+    "client_source_disabled_message": ["Access is paused. Enable the app and source, then select a model.", "接入已暂停。请启用应用和来源，并选择模型。"],
     "local_validation_message": ["The request was rejected locally before an upstream call.", "本机校验未通过，未调用上游。"],
     "count_endpoint_missing_message": ["The source's token-count endpoint returned HTTP 404. Message generation is separate.", "上游计数接口返回 404，回复另行处理。"],
     "nightly_update": ["Update overnight", "夜间自动更新"],
@@ -213,7 +214,7 @@
     "ccdx_source_in_use": ["Change the current source or pause its clients first.", "请先更换来源，或暂停相关客户端。"],
     "ccdx_source_busy": ["A previous M365 request is still running. Let it finish before disabling.", "旧的 M365 请求仍在运行，请结束后关闭。"],
     "ccdx_provider_environment_disabled": ["Microsoft 365 is disabled by CCDX_M365=0.", "Microsoft 365 已被环境设置关闭。"],
-    "ccdx_client_source_disabled": ["The client or source is disabled. Review Settings.", "客户端或来源已关闭，请查看设置。"],
+    "ccdx_client_source_disabled": ["Access is paused. Enable the app and source, then select a model.", "接入已暂停。请启用应用和来源，并选择模型。"],
     "ccdx_client_source_mismatch": ["Save the selected source before changing its review model.", "请先保存来源，再修改审查模型。"],
     "ccdx_conversation_source_changed": ["This history belongs to another source or key. Start a new conversation.", "此历史属于其他来源或 Key，请新建对话。"],
     "ccdx_conversation_state_invalid": ["Conversation source records are unreadable. The existing file was kept.", "会话来源记录无法读取，原文件已保留。"],

@@ -98,6 +98,10 @@ test("Overview groups apps by their selected source without hiding sources or gu
   providers[1].clients[0].selected = false;
   renderProviders({ providers });
   assert.equal(nodes.get("provider-clients").children[0].children[1].textContent, "—", "No source is invented when none is selected");
+  for (const provider of providers) for (const client of provider.clients) if (client.id === "codex") client.state = "paused";
+  renderProviders({ providers });
+  assert.equal(nodes.get("provider-clients").children[0].children[1].textContent, "—");
+  assert.equal(nodes.get("provider-clients").children[0].children[2].textContent, "Access paused");
 });
 
 test("dashboard usage renders percentages, zero hits and unknown rates in the seventh column", () => {

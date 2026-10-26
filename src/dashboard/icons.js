@@ -18,7 +18,7 @@
   }
   const kind = value => ["running", "active"].includes(value) ? "running"
     : ["ready", "authorized", "configured", "saved", "passed", "ok", "completed"].includes(value) ? "ok"
-      : ["unavailable", "disabled", "unsupported", "not_installed", "unconfigured"].includes(value) ? "unavailable"
+      : ["unavailable", "disabled", "paused", "unsupported", "not_installed", "unconfigured"].includes(value) ? "unavailable"
         : ["warn", "err", "invalid", "failed", "configuration_unavailable"].includes(value) ? "warning" : "unknown";
   globalThis.ccdxIcons = { icon, set, kind };
 })();

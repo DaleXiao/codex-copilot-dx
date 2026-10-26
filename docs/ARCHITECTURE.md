@@ -24,6 +24,10 @@ which owns grants, switches, versioned model-deployment bindings and lifecycle. 
 validates strict versioned metadata and locked atomic writes; stale cross-process
 saves are rejected. Accepted inputs and public snapshots do not share mutable
 objects with the live graph. The built-in registry does not load external code.
+One Codex access-mode calculation distinguishes disabled, paused (no selections),
+native GitHub and gateway bindings. Sync and request authorization share that
+calculation; paused access is rejected before credential checks without expanding
+model visibility or changing sign-in.
 
 `model-capabilities.mjs` owns neutral limits, reasoning/tool/input/search fields,
 strict manual values, per-field evidence and deployment revisions. It reads no
@@ -533,6 +537,8 @@ Byte-weighted request admission is not a simultaneous-stream limit. The 1.2.0 lo
 and no-Node bootstraps. It bounds downloads/decompression, verifies the exact
 release package and checksum, backs up only this package/commands under an
 exclusive lock, restores on failure and validates the version/sharp/broker.
+The lock records its PID, timestamp and backup path; existing/legacy locks remain
+explicit recovery barriers, while unrelated I/O failures keep their own cause.
 It reuses the selected npm's bundled downloader with named proxy/CA/TLS/offline settings and no retries; no new download dependency is added. No network installation runs on ordinary startup or inference paths. Opted-in supervisor startup copies/verifies its current immutable runtime; its separate night scheduler is described below. `package-update.mjs` keeps
 source choice, named npm-policy probes and fixed platform launch arguments;
 verified filenames enter cmd.exe, while paths enter cwd. Private-runtime commands

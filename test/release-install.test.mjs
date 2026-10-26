@@ -56,6 +56,40 @@ test("a linked npm target is preserved before starting an install", t => {
   assert.throws(() => protectInstallation({ target, prefix: root }), /linked/);assert.equal(fs.realpathSync(target), fs.realpathSync(actual));
 });
 
+test("install locks identify their owner and backup, and keep legacy empty locks intact", t => {
+  const root = directory(t), target = path.join(root, "node_modules", "codex-copilot-dx"), lock = path.join(path.dirname(target), ".ccdx-install.lock");
+  const transaction = protectInstallation({ target, prefix: root });
+  const record = JSON.parse(fs.readFileSync(lock, "utf8"));
+  assert.equal(record.version, 1);assert.equal(record.pid, process.pid);assert.ok(Number.isFinite(Date.parse(record.created_at)));
+  assert.equal(path.dirname(record.backup), path.dirname(target));assert.equal(fs.statSync(record.backup).isDirectory(), true);
+  assert.throws(() => protectInstallation({ target, prefix: root }), error => error.cause?.code === "EEXIST" && error.message.includes(lock));
+  transaction.commit();fs.writeFileSync(lock, "");
+  const old = new Date(Date.now() - 5 * 86400000);fs.utimesSync(lock, old, old);
+  const modified = fs.statSync(lock).mtimeMs;
+  assert.throws(() => protectInstallation({ target, prefix: root }), error => error.cause?.code === "EEXIST" && error.message.includes(lock));
+  assert.equal(fs.readFileSync(lock, "utf8"), "");assert.equal(fs.statSync(lock).mtimeMs, modified);
+});
+
+test("install-lock I/O failures are not reported as another running installation", t => {
+  const root = directory(t), target = path.join(root, "node_modules", "codex-copilot-dx"), lock = path.join(path.dirname(target), ".ccdx-install.lock");
+  fs.mkdirSync(path.dirname(target));
+  const original = fs.openSync;
+  t.mock.method(fs, "openSync", function (file, ...args) {
+    if (file === lock) throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+    return original.call(this, file, ...args);
+  });
+  assert.throws(() => protectInstallation({ target, prefix: root }), error => error.cause?.code === "EACCES" && /permissions/i.test(error.message) && error.message.includes(lock) && !/Another install/.test(error.message));
+  assert.deepEqual(fs.readdirSync(path.dirname(target)), []);
+  t.mock.restoreAll();
+  const write = fs.writeFileSync;
+  t.mock.method(fs, "writeFileSync", function (file, ...args) {
+    if (typeof file === "number") throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+    return write.call(this, file, ...args);
+  });
+  assert.throws(() => protectInstallation({ target, prefix: root }), { code: "ENOSPC" });
+  assert.deepEqual(fs.readdirSync(path.dirname(target)), []);
+});
+
 test("private POSIX commands preserve uppercase prefix and quote shell paths", { skip: process.platform === "win32" }, async t => {
   const { writePrivateLaunchers } = await import("../src/release-install.mjs"), { execFileSync } = await import("node:child_process");
   const root = directory(t), prefix = path.join(root, "prefix ' \" $() ` !"), target = path.join(prefix, "lib", "node_modules", "codex-copilot-dx");

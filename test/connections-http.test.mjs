@@ -11,10 +11,13 @@ import { readClientGatewayKeys } from "../src/client-gateway-keys.mjs";
 import { createApiNetwork } from "../src/providers/api-network.mjs";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { parse } from "smol-toml";
 
 process.env.CCDX_DISABLE_USAGE = "1";
 test("GitHub-only bindings retain an open native client's auth and expose only selected models", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-github-bindings-")), env = { CCDX_M365: "0" };
+  const authFile = path.join(home, ".codex", "auth.json"), authBytes = JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "synthetic-only" } });
+  fs.mkdirSync(path.dirname(authFile));fs.writeFileSync(authFile, authBytes);
   const registry = { models: { data: ["gpt-5.5", "gpt-5.4"].map(id => ({ id, supported_endpoints: ["/responses"] })) } };
   let handler, catalogs = 0, responses = 0, expectedModel = "gpt-5.5";
   const server = http.createServer((req, res) => handler(req, res));await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -29,10 +32,41 @@ test("GitHub-only bindings retain an open native client's auth and expose only s
   await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github", "m365"], deployments: [{ source: "github", model: "gpt-5.5" }] });
   const selectedModel = runtime.connections().clients.find(c => c.id === "codex").model_plan.models[0], model = selectedModel.public_id, route = selectedModel.route_id;
   const headers = { Authorization: "Bearer synthetic-existing-chatgpt-token" };
+  const paused = async (state = "paused") => {
+    const before = responses;
+    for (const authorization of [undefined, headers.Authorization, `Bearer ${readClientGatewayKeys({ home, env }).codex}`]) {
+      for (const route of ["/v1/models", "/v1/responses", "/v1/responses/compact"]) {
+        const response = await fetch(base + route, { method: route.endsWith("models") ? "GET" : "POST",
+          headers: { "Content-Type": "application/json", ...(authorization ? { Authorization: authorization } : {}) },
+          ...(route.endsWith("models") ? {} : { body: JSON.stringify({ model: "gpt-5.5", input: "synthetic" }) }) });
+        const body = await response.json();assert.equal(response.status, 503, JSON.stringify(body));
+        assert.equal(body.error.code, "ccdx_client_source_disabled");assert.equal(response.headers.get("www-authenticate"), null);
+      }
+    }
+    assert.equal(responses, before);assert.equal(catalogs, 0);
+    assert.equal(runtime.connections().clients.find(c => c.id === "codex").setup, state);
+    assert.equal(fs.readFileSync(authFile, "utf8"), authBytes);
+  };
+  await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github", "m365"], deployments: [] });
+  await paused();
+  const restarted = createProviderRuntime({ home, env, corePort: server.address().port, githubClient: client, githubRegistry: registry, secretStore: { close() {} }, inspectDesktop: async () => false });
+  try {
+    await restarted.syncClients();
+    assert.throws(() => restarted.current({ method: "GET", headers }), { code: "ccdx_client_source_disabled", statusCode: 503 });
+    assert.throws(() => restarted.resolveCodex({ model: "gpt-5.5" }, { headers }), { code: "ccdx_client_source_disabled", statusCode: 503 });
+    assert.equal(restarted.connections().clients.find(c => c.id === "codex").setup, "paused");
+  } finally { await restarted.close(); }
+  await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github", "m365"], deployments: [{ source: "github", model: "gpt-5.5" }] });
+  assert.equal(parse(fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8")).model_provider, undefined);
   const raw = await fetch(base + "/v1/models", { headers });assert.equal(raw.status, 200);assert.deepEqual((await raw.json()).data.map(m => m.id), [model]);
   const native = await fetch(base + "/v1/models?client_version=0.163.0", { headers });assert.equal(native.status, 200);assert.deepEqual((await native.json()).models.map(m => m.slug), [model]);
   const reply = await fetch(base + "/v1/responses", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.5", input: "synthetic", stream: false }) });
   assert.equal(reply.status, 200, await reply.text());assert.equal(responses, 1);assert.equal(catalogs, 0);
+  await runtime.manageConnections({ operation: "provider", id: "github", enabled: false, replacements: { codex: null } });
+  await paused();
+  await runtime.manageConnections({ operation: "provider", id: "github", enabled: true });
+  await paused();
+  await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github", "m365"], deployments: [{ source: "github", model: "gpt-5.5" }] });
   const denied = await fetch(base + "/v1/responses", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.4", input: "synthetic", stream: false }) });
   assert.equal(denied.status, 400);assert.equal(responses, 1, "The transition never reopens an unselected model");
   await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github", "m365"],
@@ -57,8 +91,16 @@ test("GitHub-only bindings retain an open native client's auth and expose only s
   assert.equal((await fetch(base + "/v1/models", { headers })).status, 403, "An old ChatGPT bearer is refused without an authentication-refresh challenge");
   assert.equal((await fetch(base + "/v1/responses", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.5", input: "synthetic" }) })).status, 403);
   const credential = readClientGatewayKeys({ home, env }).codex;
+  const config = parse(fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8"));
+  assert.equal(config.model_provider, "ccdx_gateway");assert.equal(config.model_providers.ccdx_gateway.experimental_bearer_token, credential);
+  assert.equal(config.model_providers.ccdx_gateway.requires_openai_auth, true);
   const mixed = await fetch(base + "/v1/models", { headers: { Authorization: `Bearer ${credential}` } });assert.equal(mixed.status, 200);assert.equal((await mixed.json()).data.length, 2);
-  assert.equal(responses, 2);assert.equal(catalogs, 0);
+  expectedModel = "gpt-5.5";
+  const mixedReply = await fetch(base + "/v1/responses", { method: "POST", headers: { ...headers, Authorization: `Bearer ${credential}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.5", input: "synthetic" }) });
+  assert.equal(mixedReply.status, 200, await mixedReply.text());assert.equal(responses, 3);assert.equal(catalogs, 0);
+  await runtime.manageConnections({ operation: "client", id: "codex", enabled: false, allowed: ["github", "m365", api],
+    deployments: [{ source: "github", model: "gpt-5.5" }, { source: api, model: "api-model" }] });
+  await paused("disabled");
 });
 
 test("same-port HTTP enforces management origin, native client keys and configured model scopes", async t => {

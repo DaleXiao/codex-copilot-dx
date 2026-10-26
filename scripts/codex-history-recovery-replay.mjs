@@ -115,7 +115,9 @@ try {
   const completed = await until(value => value.method === "turn/completed" && value.params.turn.id === turn.turn.id, "first turn");
   assert.equal(completed.params.turn.status, "completed", JSON.stringify(completed.params.turn.error));
   await call("thread/compact/start", { threadId });
-  await until(value => value.method === "item/completed" && value.params.item?.type === "contextCompaction", "native compaction");
+  const compacted = await until(value => value.method === "item/completed" && value.params.item?.type === "contextCompaction", "native compaction");
+  const compactTurn = await until(value => value.method === "turn/completed" && value.params.turn.id === compacted.params.turnId, "compaction turn completion");
+  assert.equal(compactTurn.params.turn.status, "completed", JSON.stringify(compactTurn.params.turn.error));
   const continued = await call("turn/start", { threadId, input: [{ type: "text", text: "Continue from the earlier decision.", text_elements: [] }] });
   const resumed = await until(value => value.method === "turn/completed" && value.params.turn.id === continued.turn.id, "recovered turn");
   assert.equal(resumed.params.turn.status, "completed", JSON.stringify(resumed.params.turn.error) + stderr);

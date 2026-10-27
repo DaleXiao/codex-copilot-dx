@@ -1336,7 +1336,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.27/codex-copilot-dx-1.2.27.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.28/codex-copilot-dx-1.2.28.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -2183,6 +2183,37 @@ source guard from its parent's guard when a session is identified. Parent keys
 without that header remain unchanged. This header is correlation only: model
 access and the company's account/history checks remain authoritative.
 
+
+### Claude App cross-source continuation
+
+In Claude App, choose another model that you have selected and authorized for
+that app. CCDX can continue the same conversation across Messages sources using
+the complete history supplied by the client. This is explicit model selection,
+not automatic failover. Codex and Claude Code retain their existing source rules.
+
+CCDX preserves the original client conversation. In the forwarded request it
+keeps visible messages, available image/document content, and completed native
+tool calls/results; it removes incompatible old-source thinking and records a
+hashed history checkpoint. Subsequent thinking from the new source is retained.
+A changed/compacted client prefix is rebuilt only between completed tool turns.
+No automatic summary, tool execution, history truncation or hidden inference is
+added. Target capabilities and input/output limits still apply; unsupported
+upstream behavior is reported without retrying another source.
+
+Finish a running response/tool operation before changing sources. Incomplete
+tool pairs, source-owned file/container handles and unrecoverable encrypted
+history require completing the operation or restoring the original content.
+Known history belonging to a different company account remains blocked. Model
+validation and token counting do not move a conversation's source. A failed
+request before usable output leaves its prior checkpoint; partial output keeps
+the actual new-source checkpoint and is never automatically replayed.
+
+`conversation-transfers.json`, beside `connections.json`, stores at most 1024
+HMAC-keyed entries with source/prefix hashes and message counts, within a 512 KiB
+read limit. It stores no prompts, files, raw session IDs or credentials. Records
+survive ordinary service restart; corrupt records are preserved and reported,
+not replaced with empty defaults. This does not persist Responses history or
+change Codex login/provider/model-list configuration.
 
 ### Upstream maker metadata
 

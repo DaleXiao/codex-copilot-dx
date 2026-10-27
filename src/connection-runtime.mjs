@@ -13,6 +13,7 @@ import { configureCodexApi } from "./codex-api-config.mjs";
 import { autoReviewReasoningEfforts } from "./models.mjs";
 import { createRequestAdmission } from "./request-admission.mjs";
 import { createConversationSourceGuard } from "./conversation-source-guard.mjs";
+import { createMessagesHistoryTransfer } from "./messages-history-transfer.mjs";
 import { compileClientModels, sourceModels } from "./client-model-plan.mjs";
 import { codexClientCatalog, codexSourceCatalog } from "./clients/codex-models.mjs";
 import { currentRequestContext } from "./request-context.mjs";
@@ -25,6 +26,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
   configureCodex = configureCodexApi, inspectDesktop = inspectClaudeDesktopPolicy, clientAccessChanged, preserveClientConfiguration, now = Date.now, log = () => {} } = {}) {
   const options = { home, env, platform, preserveClientConfiguration }, secrets = secretStore || createApiSecretStore(options), modelDisplay = createApiModelDisplayStore(options);
   const guardConversation = createConversationSourceGuard(options), acquireClaudeRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 });
+  const messagesTransfer = createMessagesHistoryTransfer({ ...options, onTransfer: () => log("info", "Conversation continued on the selected source; original history kept") });
   const memoryModel = createCodexMemoryModel({ ...options, corePort });
   let settings = readAccessSettings(options), managed = fs.existsSync(accessSettingsPath(options)), serial = Promise.resolve(), keys, closed = false;
   const instances = new Map(), active = new Map(), retired = new Set(), handlers = new Map(), summaries = new WeakMap(), sourceSecrets = new WeakMap(), setup = {}, lastClients = {};
@@ -204,7 +206,13 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
   }
   function validateConversation(body, headers, source, client = "codex") {
     if (!body || typeof body !== "object" || Array.isArray(body)) return;
-    if (managed && (binding(client).history_isolation || source?.id.startsWith("api_"))) guardConversation(client, source.profileId(client === "codex" ? "responses" : "messages"), body, headers, identities()[client]);
+    if (managed && (binding(client).history_isolation || source?.id.startsWith("api_") || client === "claude_app")) {
+      const transfer = client === "claude_app" ? {
+        profiles: [...new Set(plan(client).models.map(model => model.source_id))].map(id => getSource(id).profileId("messages")),
+        prepare: input => messagesTransfer.prepare({ ...input, countTokens: currentRequestContext()?.route === "messages_count_tokens" }),
+      } : undefined;
+      return guardConversation(client, source.profileId(client === "codex" ? "responses" : "messages"), body, headers, identities()[client], transfer);
+    }
   }
   async function applyCatalog(id, models, revision, checkedAt, active) {
     if (!active()) throw accessError("ccdx_connections_conflict", 409);

@@ -23,6 +23,8 @@ function send(res, code, value) {
   res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });res.end(JSON.stringify(value));
 }
 const apiError = (code, message) => ({ type: "error", error: { type: "api_error", code, message } });
+const hasMessageState = block => Boolean(block && (block.id || block.signature || block.data
+  || typeof block.text === "string" && block.text.length || typeof block.thinking === "string" && block.thinking.length));
 function desktopMessages(body) {
   const messages = [], instructions = [];
   const blocks = content => {
@@ -119,7 +121,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     const tracker = countTokens ? parent?.streamPerformance : performance.begin("messages", { requestId, application: requestApplication(req.headers, "claude") });
     if (!resolveRequest) tracker?.setProvider(provider.id);
     const abort = createRequestAbort(req, res);
-    let release = () => {}, outcome = "failed", model = null, configuredModel = null, clientModel = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
+    let release = () => {}, conversation, outcome = "failed", model = null, configuredModel = null, clientModel = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
     let terminalOrigin = "client_validation", failureStatus = null, countDeadline = null, rejectionReason;
     if (!countTokens) { stats.total++;stats.active++;stats.last_request_at = new Date().toISOString(); }
     const context = parent || { requestId };
@@ -152,7 +154,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         context.model = configuredModel || model;
         if (!countTokens) markRequestObservation({ max_output_tokens_requested: body.max_tokens });
         tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });
-        validateConversation?.(body, req.headers, selectedProvider);
+        conversation = validateConversation?.(body, req.headers, selectedProvider);
         terminalOrigin = "transport";
         const upstream = await selectedProvider.client.messages(body, { headers: req.headers, countTokens, signal: abort.signal,
           onCountObservation(value) {
@@ -179,6 +181,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           if (!upstream.ok) context.onHttpError?.({ ...upstreamErrorEvidence(raw),
             origin: context.countObservation?.cached ? "capability_cache" : "upstream_http", headers: upstream.headers });
           if (!countTokens && upstream.ok && value?.type === "message" && Array.isArray(value.content)) {
+            if (value.content.some(hasMessageState)) conversation?.commit?.({ tool: value.content.some(block => block?.type === "tool_use") });
             model = value.model || model;responseId = value.id;usage = value.usage;stopReason = value.stop_reason;
             sawStop = typeof stopReason === "string";outcome = stopReason === "max_tokens" ? "incomplete" : sawStop ? "completed" : "failed";
           } else if (countTokens && upstream.ok) outcome = "completed";
@@ -191,6 +194,8 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           const observer = createMessagesObserver(event => {
             if (event.type === "error") { failedEvent = true;outcome = "failed";return; }
             if (sawStop || failedEvent) return;
+            if (event.type === "content_block_start" && hasMessageState(event.content_block)
+              || event.type === "content_block_delta" && (isMessagesOutputDelta(event.delta) || event.delta?.type === "signature_delta" && event.delta.signature)) conversation?.commit?.({ tool: event.content_block?.type === "tool_use" });
             if (event.type === "message_start") { responseId = event.message?.id;model = event.message?.model || model;usage = event.message?.usage || {}; }
             if (event.type === "content_block_delta" && isMessagesOutputDelta(event.delta)) tracker?.firstOutput();
             if (event.type === "message_delta") { usage = { ...usage, ...event.usage };stopReason = event.delta?.stop_reason || stopReason; }
@@ -232,7 +237,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         }
         else if (!res.destroyed && !res.writableEnded) res.end(`event: error\ndata: ${JSON.stringify(apiError("ccdx_gateway_error", message))}\n\n`);
       } finally {
-        release();abort.cleanup();finishProvider();
+        conversation?.release?.();release();abort.cleanup();finishProvider();
         if (!countTokens) {
           stats.active--;stats[outcome]++;
           const usageRecord = buildMessagesUsageRecord({ model: configuredModel || model, responseId, usage, mode: streamed ? "stream" : "json",

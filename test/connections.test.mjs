@@ -320,7 +320,7 @@ test("Windows CurrentUser credential protection round-trips without storing the 
   const file = path.join(path.dirname(accessSettingsPath({ home, env })), "api-secrets", ref);assert.equal(fs.readFileSync(file, "utf8").includes(key), false);await store.remove(ref);assert.equal(fs.existsSync(file), false);store.close();
 });
 
-test("known Messages histories cannot cross an API key rotation and only hashes are retained", async t => {
+test("Claude App can rebuild a selected source after key rotation and retains only hashes", async t => {
   const s = runtime(t), id = await save(s.runtime), c = s.runtime.connections().clients.find(c => c.id === "claude_app");
   await s.runtime.manageConnections({ operation: "client", id: c.id, enabled: true, allowed: c.allowed, source: id });
   const key = readClientGatewayKeys({ home: s.home, env: s.env }).claude_app, headers = { Authorization: `Bearer ${key}`, "x-conversation-id": "synthetic-session-only" };
@@ -330,10 +330,21 @@ test("known Messages histories cannot cross an API key rotation and only hashes 
   const { id: omitted, enabled, secret_ref, ...config } = structuredClone(apiConfig);
   await s.runtime.manageConnections({ operation: "save_api", id, config, key: "rotated-synthetic-key", allowed: ["codex", "claude_app", "claude_code"] });
   const old = await invoke(s.runtime.handleClaude, { headers, body: { model: "any-message-model", messages: [{ role: "user", content: "synthetic" }, { role: "assistant", content: "old" }, { role: "user", content: "next" }], max_tokens: 4 } });
-  assert.equal(old.status, 409);assert.equal(s.calls.length, 1);
+  assert.equal(old.status, 200);assert.equal(s.calls.length, 2);
   assert.equal((await invoke(s.runtime.handleClaude, { headers: { ...headers, "x-conversation-id": "fresh-session-only" } })).status, 200);
   const owners = fs.readFileSync(path.join(path.dirname(accessSettingsPath({ home: s.home, env: s.env })), "conversation-sources.json"), "utf8");
   for (const secret of ["synthetic-session-only", "fresh-session-only", "synthetic-key-only", "rotated-synthetic-key", "any-message-model"]) assert.equal(owners.includes(secret), false);
+});
+
+test("Claude Code retains its source guard across API key rotation", async t => {
+  const s = runtime(t), id = await save(s.runtime), client = s.runtime.connections().clients.find(c => c.id === "claude_code");
+  await s.runtime.manageConnections({ operation: "client", id: client.id, enabled: true, allowed: client.allowed, source: id });
+  const headers = { authorization: `Bearer ${readClientGatewayKeys({ home: s.home, env: s.env }).claude_code}`, "x-conversation-id": "code-session" };
+  assert.equal((await invoke(s.runtime.handleClaude, { headers })).status, 200);
+  const { id: omitted, enabled, secret_ref, ...config } = structuredClone(apiConfig);
+  await s.runtime.manageConnections({ operation: "save_api", id, config, key: "rotated-synthetic-key", allowed: ["codex", "claude_app", "claude_code"] });
+  assert.equal((await invoke(s.runtime.handleClaude, { headers, body: { model: "any-message-model", messages: [{ role: "user", content: "synthetic" }, { role: "assistant", content: "old" }, { role: "user", content: "next" }], max_tokens: 4 } })).status, 409);
+  assert.equal(s.calls.length, 1);
 });
 
 test("API worker recovery is deferred to a later request and never replays a failed call", async () => {

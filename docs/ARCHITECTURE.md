@@ -135,9 +135,25 @@ For this same manual App boundary, system-role text is collected into the native
 top-level system field in order; conversation blocks and their order are retained.
 
 `conversation-source-guard.mjs` retains bounded HMAC correlations for observed
-managed histories. Known source/key conflicts fail before forwarding. It does
-not establish provenance for an unseen history or implement dynamic affinity.
-The existing Responses route-plan boundary continues to own opaque-state checks.
+managed histories. Codex and Claude Code retain their existing conflict checks.
+Claude App explicitly supplies the protocol-level `messages-history-transfer.mjs`
+policy after resolving an authorized model/source. The policy has no application,
+provider or model-name rules. It rebuilds only the forwarded Messages prefix,
+removes source-private thinking from that prefix, preserves native completed tool
+pairs and available media, and rejects unfinished tools or unrecoverable source
+handles. New-source thinking after the checkpoint stays unchanged. Changed
+prefixes can be rebuilt only at a completed tool boundary. It adds no automatic
+retry, summary inference, routing fallback or conversation database.
+
+Transfer records are bounded to 1024 hashed keys in a 512 KiB versioned file;
+they contain owner hashes, prefix hashes and message counts, not transcripts.
+Count/model-validation requests do not rebind. A per-conversation request lease
+pins active source work; the gateway commits a checkpoint immediately before
+delivering usable output/tool/private state and releases every lease on failure
+or completion. Pre-output errors preserve the earlier checkpoint, while partial
+output keeps the actual source's provenance. A matching private request grant
+allows first association with the selected M365 account; known foreign account
+owners are still refused. Native Responses recovery/configuration is unchanged.
 
 `dashboard/connections.js` owns settings forms; application source/review and
 account/catalog views keep their existing scopes and use the same backend graph.

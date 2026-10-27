@@ -211,7 +211,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     async messages(body, options = {}) {
       if (catalog && now() - catalogAt >= SOFT_TTL_MS && !flight) void refresh().catch(() => {});
       const model = selectedModel(body.model, "claude");
-      if (account) guardConversation(account, body, options.headers);
+      if (account) guardConversation(account, body, options.headers, { profile: profile(), countTokens: options.countTokens === true });
       const efforts = modelReasoningEfforts(model);
       if (body.output_config?.effort !== undefined && efforts && !efforts.includes(body.output_config.effort)) {
         throw protocolError("m365_effort_unavailable", "The selected effort is not advertised by this model. Refresh its model list and select an available effort.");

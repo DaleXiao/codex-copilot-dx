@@ -1,0 +1,77 @@
+name: Complete platform packages
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact source ref to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, target: darwin-arm64 }
+          - { os: macos-15-intel, target: darwin-x64 }
+          - { os: windows-latest, target: win32-x64 }
+          - { os: windows-11-arm, target: win32-arm64 }
+          - { os: ubuntu-latest, target: linux-x64-glibc }
+          - { os: ubuntu-24.04-arm, target: linux-arm64-glibc }
+          - { os: ubuntu-latest, target: linux-x64-musl, musl: true }
+          - { os: ubuntu-24.04-arm, target: linux-arm64-musl, musl: true }
+    steps:
+      - name: Keep source bytes consistent across native builders
+        shell: bash
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        if: ${{ !matrix.musl }}
+        with:
+          node-version: 24.x
+          architecture: ${{ contains(matrix.target, 'arm64') && 'arm64' || 'x64' }}
+          cache: npm
+      - name: Build and verify with exact strict npm 12
+        if: ${{ !matrix.musl }}
+        shell: bash
+        run: |
+          npm ci --ignore-scripts
+          npm run release:pack -- "$RUNNER_TEMP/complete-release"
+          npm run release:runtime -- "$RUNNER_TEMP/complete-release"
+          npm install --prefix "$RUNNER_TEMP/strict-npm" --ignore-scripts --no-audit --no-fund npm@12.0.1
+          node scripts/runtime-package-replay.mjs "$RUNNER_TEMP/complete-release" "$RUNNER_TEMP/strict-npm/node_modules/npm/bin/npm-cli.js"
+      - name: Build and verify native musl package
+        if: ${{ matrix.musl }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/complete-release"
+          docker run --rm -v "$PWD:/work" -v "$RUNNER_TEMP/complete-release:/out" -w /work node:24-alpine sh -eu -c '
+            npm ci --ignore-scripts
+            npm run release:pack -- /out
+            npm run release:runtime -- /out
+            npm install --prefix /tmp/strict-npm --ignore-scripts --no-audit --no-fund npm@12.0.1
+            node scripts/runtime-package-replay.mjs /out /tmp/strict-npm/node_modules/npm/bin/npm-cli.js
+          '
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: complete-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/complete-release/*-${{ matrix.target }}.tgz
+            ${{ runner.temp }}/complete-release/*-${{ matrix.target }}.tgz.manifest.json
+            ${{ runner.temp }}/complete-release/*-${{ matrix.target }}.tgz.sha256
+          if-no-files-found: error
+          retention-days: 7

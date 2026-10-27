@@ -565,3 +565,12 @@ CLI 仍保持英文；原始错误码保留在诊断中。新增账号命令与 
 | 无新增中文 CLI 文案 | CLI 继续英文 |
 
 百分比使用原始聚合值，与 Overview 同口径；不完整缓存证据加 `~`，未知或无效显示 `—`。淡粉主题保留全部既有状态标签和布局。
+# 1.2.30 update-path additions
+
+These rows supersede older update-help wording in the historical comparison.
+
+| Previous copy | Current copy |
+|---|---|
+| Failed installations are not retried automatically. | GitHub updates retry once offline with a verified same-version platform package only after EALLOWREMOTE; other errors are not retried. |
+| npm error code EALLOWREMOTE | npm refused a remote dependency. Previous installation restored; checking the same version's complete platform package. |
+| Dependencies use the configured npm registry. | Complete platform package verified; installing offline with the saved npm policy. |

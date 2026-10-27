@@ -4,7 +4,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { inspectPackageUpdateEnvironment } from './package-update.mjs';
-import { downloadRelease, createNpmReleaseFetch, protectInstallation, stableVersion, writePrivateLaunchers, privateUnixLauncher } from './release-install.mjs';
+import { downloadRelease, createNpmReleaseFetch, protectInstallation, stableVersion, writePrivateLaunchers, privateUnixLauncher, remoteDownloadDenied } from './release-install.mjs';
 import { inspectWindowsCommand } from './windows-command.mjs';
 import { isVersionGreater } from './version.mjs';
 import { readBoundedResponseText } from './upstream-body.mjs';
@@ -64,15 +64,22 @@ export async function prepareNightlyRelease(release, { environment, root=nightly
   const target=path.join(directory,...(process.platform==='win32'?[]:['lib']),'node_modules/codex-copilot-dx');
   const brokerRequired=fs.existsSync(path.join(environment.target,'node_modules/@azure/msal-node-runtime'));
   try {
-    const artifact=await downloadRelease(version,{directory,fetchImpl,signal});
+    let artifact=await downloadRelease(version,{directory,fetchImpl,signal});
     const args=['install','--global','--ignore-scripts','--no-audit','--no-fund'];
-    await execute(process.execPath,[environment.npmCli,...args,'--prefix',directory,artifact.file],{env,signal,timeout:300000,maxBuffer:128*1024,windowsHide:true});
+    const installArgs=()=>[...args,...(artifact.complete?['--offline']:[])];
+    try { await execute(process.execPath,[environment.npmCli,...installArgs(),'--prefix',directory,artifact.file],{env,signal,timeout:300000,maxBuffer:128*1024,windowsHide:true}); }
+    catch(error) {
+      if(!remoteDownloadDenied(error)||signal?.aborted)throw error;
+      artifact=await downloadRelease(version,{directory,fetchImpl,signal,complete:true});
+      fs.rmSync(target,{recursive:true,force:true});
+      await execute(process.execPath,[environment.npmCli,...installArgs(),'--prefix',directory,artifact.file],{env,signal,timeout:300000,maxBuffer:128*1024,windowsHide:true});
+    }
     await verify(target,version,{signal,brokerRequired});
     return { version, target, directory,
       async install() {
         signal?.throwIfAborted();const transaction=protectInstallation(environment);
         try {
-          await execute(process.execPath,[environment.npmCli,...args,'--prefix',environment.prefix,artifact.file],{env,signal,timeout:300000,maxBuffer:128*1024,windowsHide:true});
+          await execute(process.execPath,[environment.npmCli,...installArgs(),'--prefix',environment.prefix,artifact.file],{env,signal,timeout:300000,maxBuffer:128*1024,windowsHide:true});
           await verify(environment.target,version,{signal,brokerRequired});
           const normalize=value=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value);
           if(env.CCDX_PRIVATE_INSTALL_PREFIX&&normalize(env.CCDX_PRIVATE_INSTALL_PREFIX)===normalize(environment.prefix))await writePrivateLaunchers(environment);

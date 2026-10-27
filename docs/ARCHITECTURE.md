@@ -278,11 +278,26 @@ the installer, not an unrelated working project's `.npmrc`. It queries version,
 Default installer argv preserves the saved download policy. The boolean
 `--allow-remote` opt-in adds one fixed permission argument only when supported;
 it applies to that installation's entire dependency tree, not selected hosts.
-Unknown support fails before an explicitly requested override. Installation
-streams remain inherited; conditional failure guidance is not an assertion that
-every nonzero exit is a policy error. There is no automatic retry or policy write.
+Unknown support fails before an explicitly requested override. npm stderr is
+forwarded unchanged while a bounded scanner recognizes only EALLOWREMOTE.
+A confirmed GitHub dependency-policy refusal rolls back the first installation,
+then permits one same-version complete platform package attempt offline. Other
+failures do not trigger a retry. There is no npm policy write or public-registry
+fallback. Explicit npm-source updates retain their original source.
 The source lock retains exact versions/integrities without binding smol-toml to a
 developer's corporate feed; omitted registry resolution is delegated to npm.
+
+`release-install.mjs` owns complete-asset names, platform selection and bounded
+SHA-256/version/target/bundled-root validation. Manual GitHub updates and nightly
+candidate preparation reuse this contract. Complete installs disable network
+dependency resolution and scripts; existing installation protection and native
+runtime verification remain required. Bootstrap prefers a manifest-listed complete
+asset and retains the old path for source-only releases. `runtime-package.mjs`
+builds each complete package from the exact standard source tarball plus its
+locked runtime dependencies, pruning only unrelated Broker OS/architecture files.
+The npm artifact remains unchanged in form. Native target CI installs complete
+packages using empty caches and strict npm12 offline policy. No runtime component
+cache, new loader, inference route or background process is introduced.
 Readonly update preflight reports Node/npm, the running package and npm's selected
 global target. A different target warns, but never changes PATH or prefix. Its
 bounded npm probe is limited to explicit update/full doctor commands and opted-in supervisor startup, never inference.
@@ -730,6 +745,8 @@ existing GitHub shortcut; wording describes navigation rather than a silent chec
 No new polling, framework, runtime dependency, setting or endpoint is introduced.
 
 ## Catalog transactions and default identity (1.2.20)
+
+GitHub dashboard catalog reads use the existing `profile-model-runtime.mjs` single-flight through an injected refresh callback, rather than a second independent directory request. Successful publication updates the shared provider registry/endpoint cache, and the dashboard rereads connection candidates while preserving drafts. Explicit reads report refresh failures instead of presenting the last-good fallback as fresh success. Credential changes during a read reject publication; catalog browsing never synchronizes client files or changes selected deployments, defaults, grants or native authentication.
 
 `api-catalog-refresh.mjs` owns bounded catalog I/O, same-source single-flight,
 existing success/failure cooldowns, cancellation and deployment-version checks.

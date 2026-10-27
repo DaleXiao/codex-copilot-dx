@@ -148,9 +148,11 @@ export function createProfileModelRuntime({
   }
 
   async function performRefresh(generation) {
+    const fingerprint = credentialFingerprint();
     try {
       const models = await requestCatalog();
       if (refreshGeneration !== generation) return codexRegistry.models;
+      if (fingerprint !== credentialFingerprint()) throw new Error("GitHub account changed during model refresh; the previous catalog was preserved");
       checkCatalog(models);
       applyCatalog(models, "live");
       persist(models, generation);
@@ -173,8 +175,12 @@ export function createProfileModelRuntime({
     }
   }
 
-  function refreshCodex() {
-    if (refreshFlight) return refreshFlight;
+  function refreshCodex({ strict = false } = {}) {
+    const result = flight => strict ? flight.then(models => {
+      if (codexRegistry.lastError || !isValidModelList(models)) throw new Error(codexRegistry.lastError || "GitHub model catalog is unavailable");
+      return models;
+    }) : flight;
+    if (refreshFlight) return result(refreshFlight);
     const generation = refreshGeneration + 1;
     refreshGeneration = generation;
     codexRegistry.generation = generation;
@@ -184,7 +190,7 @@ export function createProfileModelRuntime({
       if (refreshGeneration === generation) codexRegistry.refreshInFlight = false;
     });
     refreshFlight = flight;
-    return flight;
+    return result(flight);
   }
 
   async function initialize() {

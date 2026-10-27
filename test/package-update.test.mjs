@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import {
   globalUpdateCommand,
   normalizeUpdateSource,
@@ -70,7 +71,7 @@ test("package update: POSIX direct source works without a terminal and never use
   assert.deepEqual(calls[0], {
     command: "npm",
     args: ["install", "--global", "codex-copilot-dx@latest"],
-    options: { env, shell: false, stdio: "inherit" },
+    options: { env, shell: false, stdio: ["inherit", "inherit", "pipe"] },
   });
   assert.match(output.text(), /Restart the running adapter/);
 });
@@ -165,7 +166,7 @@ test("Windows npm update preserves environment and uses only a fixed command thr
     spawnImpl: successfulSpawn(calls), fetchImpl() { assert.fail("npm source does not look up a release"); } });
   assert.deepEqual(calls[0], { command: "C:\\Windows\\System32\\cmd.exe",
     args: ["/d", "/s", "/v:off", "/c", '"npm.cmd install --global codex-copilot-dx@latest"'],
-    options: { env, shell: false, stdio: "inherit", windowsVerbatimArguments: true, windowsHide: true } });
+    options: { env, shell: false, stdio: ["inherit", "inherit", "pipe"], windowsVerbatimArguments: true, windowsHide: true } });
   assert.equal(calls[0].options.env, env);
   assert.match(output.text(), /Updated codex-copilot-dx/);
 });
@@ -177,7 +178,7 @@ test("POSIX sources retain exact argv and no Windows launcher flags", async () =
       spawnImpl: successfulSpawn(calls), fetchImpl: fetchRelease });
     assert.equal(calls[0].command, "npm");
     assert.deepEqual(calls[0].args, globalUpdateCommand(source, { platform, releaseTag: "v0.9.19", ...(source === "github" ? { releaseFile: "./codex-copilot-dx-0.9.19.tgz" } : {}) }).args);
-    assert.deepEqual({ ...calls[0].options, cwd: undefined }, { env, shell: false, stdio: "inherit", cwd: undefined });
+    assert.deepEqual({ ...calls[0].options, cwd: undefined }, { env, shell: false, stdio: ["inherit", "inherit", "pipe"], cwd: undefined });
   }
 });
 
@@ -280,6 +281,35 @@ test("strict policy is preserved by default, with no retry or success on failure
     spawnImpl(command, args, opts) { installs++;assert.ok(!args.some(value => value.includes("--allow-remote")));const child = new EventEmitter();queueMicrotask(() => child.emit("exit", 1));return child; },
   }), error => error.npmExitCode === 1 && /If npm reported EALLOWREMOTE/.test(error.message) && /update github --allow-remote/.test(error.message));
   assert.equal(installs, 1);assert.doesNotMatch(output.text(), /Updated codex/);
+});
+
+test("only a confirmed npm remote-policy refusal retries the pinned GitHub version with an offline complete package", async () => {
+  for (const platform of ["darwin", "win32", "linux"]) for (const code of ["EALLOWREMOTE", "EINTEGRITY", "E403"]) {
+    const calls = [], events = [], output = outputBuffer(false), downloads = [];
+    const target = `${platform}-${process.arch}${platform === "linux" ? process.report.getReport().header.glibcVersionRuntime ? "-glibc" : "-musl" : ""}`;
+    const task = runPackageUpdateCommand({ source: "github", platform, output: output.stream, fetchImpl: fetchRelease,
+      downloadReleaseFn: async (tag, options) => {
+        downloads.push({ tag, complete: options.complete === true });
+        if (options.complete) assert.deepEqual(events, ["rollback"]);
+        return { name: `codex-copilot-dx-0.9.19${options.complete ? "-" + target : ""}.tgz`, complete: options.complete === true };
+      },
+      protectInstallationFn: () => ({ rollback: () => events.push("rollback"), commit: () => events.push("commit") }),
+      spawnImpl(command, args) {
+        calls.push(args);const child = new EventEmitter();child.stderr = new PassThrough();
+        queueMicrotask(() => {
+          if (calls.length === 1) child.stderr.end(`npm error code ${code}\n` + "bounded synthetic output\n".repeat(30));
+          else child.stderr.end();
+          child.emit("exit", calls.length === 1 ? 1 : 0);
+        });return child;
+      },
+    });
+    if (code === "EALLOWREMOTE") {
+      await task;assert.equal(calls.length, 2);assert.match(calls[1].join(" "), /(?:^|\s)--offline(?:\s|$)/);
+      assert.match(calls[1].join(" "), /(?:^|\s)--ignore-scripts(?:\s|$)/);assert.deepEqual(events, ["rollback", "commit"]);
+      assert.deepEqual(downloads, [{ tag: "v0.9.19", complete: false }, { tag: "v0.9.19", complete: true }]);
+    } else { await assert.rejects(task, /status 1/);assert.equal(calls.length, 1);assert.equal(downloads.length, 1); }
+    assert.ok(calls.every(args => !args.some(arg => arg.includes("--allow-remote"))));
+  }
 });
 
 test("only explicit per-update consent adds the fixed remote flag on all platforms", async () => {

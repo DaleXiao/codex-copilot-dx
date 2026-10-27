@@ -150,6 +150,32 @@ test("Codex model runtime coalesces concurrent refreshes", async () => {
   assert.equal(runtime.codexRegistry.refreshInFlight, false);
 });
 
+test("an explicit directory refresh reports failure while keeping the last-good runtime catalog", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-runtime-strict-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  let failed = false;
+  const runtime = createProfileModelRuntime({ home, log() {}, codexClient: clientWithList(async () => {
+    if (failed) throw new Error("HTTP 503 unavailable");return modelResult(catalog("gpt-existing"));
+  }) });
+  await runtime.initialize();const previous = runtime.codexRegistry.models;failed = true;
+  await assert.rejects(runtime.refreshCodex({ strict: true }), /HTTP 503/);
+  assert.equal(runtime.codexRegistry.models, previous);
+  assert.equal(await runtime.refreshCodex(), previous);
+});
+
+test("a catalog acquired while the GitHub identity changes never overwrites the saved account catalog", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-runtime-identity-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  let fingerprint = "first", pending = null;
+  const runtime = createProfileModelRuntime({ home, log() {}, codexCredentialFingerprint: () => fingerprint,
+    codexClient: clientWithList(async () => pending ? pending.promise : modelResult(catalog("gpt-existing"))) });
+  await runtime.initialize();const previous = runtime.codexRegistry.models;
+  pending = deferred();const refresh = runtime.refreshCodex({ strict: true });fingerprint = "second";
+  pending.resolve(modelResult(catalog("gpt-other-account")));
+  await assert.rejects(refresh, /account changed/);
+  assert.equal(runtime.codexRegistry.models, previous);
+  assert.equal(loadModelCache({ home, credentialFingerprint: "second" }), null);
+  assert.deepEqual(loadModelCache({ home, credentialFingerprint: "first" }), previous);
+});
+
 test("Codex model runtime ignores another credential's cache and redacts refresh failures", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-runtime-credential-"));
   saveModelCache(catalog("gpt-old"), {

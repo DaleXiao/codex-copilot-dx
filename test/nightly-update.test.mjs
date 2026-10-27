@@ -1,8 +1,44 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { eligiblePatch, nightlyWindow, NIGHTLY_IDLE_MS } from '../src/nightly-update.mjs';
+import { prepareNightlyRelease } from '../src/nightly-update.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
+import { runtimeReleaseTarget } from '../src/release-install.mjs';
+import { privateWindowsCommand, inspectWindowsCommand } from '../src/windows-command.mjs';
 import { createNightlyScheduler, switchServiceVersion } from '../src/service-supervisor.mjs';
 const localDate=()=>new Date(2026,9,25,0,10);
+
+test('nightly preparation recovers an npm policy refusal offline before touching the installed service', async t => {
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'ccdx-nightly-fallback-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const prefix=path.join(root,'global'),target=path.join(prefix,...(process.platform==='win32'?[]:['lib']),'node_modules/codex-copilot-dx');
+ fs.mkdirSync(target,{recursive:true});fs.writeFileSync(path.join(target,'old.txt'),'old runtime');
+ const make=extra=>{const b=Buffer.from(JSON.stringify({name:'codex-copilot-dx',version:'1.2.999',...extra})),h=Buffer.alloc(512);h.write('package/package.json');h.write(b.length.toString(8).padStart(11,'0'),124);h[156]=48;return gzipSync(Buffer.concat([h,b,Buffer.alloc((512-b.length%512)%512),Buffer.alloc(1024)]));};
+ const normal=make({}),complete=make({ccdx_runtime:{schema:1,target:runtimeReleaseTarget()},bundleDependencies:['sharp','smol-toml','@azure/msal-node-runtime']});
+ const name='codex-copilot-dx-1.2.999',manifest=`${createHash('sha256').update(normal).digest('hex')}  ${name}.tgz\n${createHash('sha256').update(complete).digest('hex')}  ${name}-${runtimeReleaseTarget()}.tgz\n`;
+ const calls=[],candidate=await prepareNightlyRelease({version:'1.2.999'},{environment:{prefix,target,npmCli:process.execPath},root:path.join(root,'candidate'),env:{},
+  fetchImpl:async url=>new Response(url.endsWith('SHA256SUMS')?manifest:url.endsWith(`${name}.tgz`)?normal:complete),verify:async()=>{},
+  execute:async(_command,args)=>{
+   calls.push(args);if(calls.length===1)throw Object.assign(Error('npm failed'),{stderr:'npm error code EALLOWREMOTE\n'});
+   const destination=path.join(args[args.indexOf('--prefix')+1],...(process.platform==='win32'?[]:['lib']),'node_modules/codex-copilot-dx');
+   fs.mkdirSync(path.join(destination,'bin'),{recursive:true});
+   fs.writeFileSync(path.join(destination,'package.json'),JSON.stringify({name:'codex-copilot-dx',version:'1.2.999',bin:{ccdx:'bin/cli.mjs','codex-copilot-dx':'bin/codex-copilot-dx.mjs'}}));
+   const commands=path.dirname(path.dirname(destination));
+   for(const [name,script] of [['ccdx','cli.mjs'],['codex-copilot-dx','codex-copilot-dx.mjs']]){
+    const cli=path.join(destination,'bin',script);fs.writeFileSync(cli,'// synthetic installer fixture\n');
+    fs.writeFileSync(path.join(commands,name+'.cmd'),privateWindowsCommand({node:process.execPath,cli,prefix:commands}));
+   }
+   return {stdout:''};}});
+ t.after(()=>candidate.cleanup());assert.equal(calls.length,2);assert.equal(calls[1].includes('--offline'),true);
+ assert.equal(inspectWindowsCommand({platform:'win32',packageRoot:candidate.target}).status,'ready');
+ assert.equal(fs.readFileSync(path.join(target,'old.txt'),'utf8'),'old runtime');
+ const transaction=await candidate.install();assert.equal(calls[2].includes('--offline'),true);transaction.rollback();
+ assert.equal(fs.readFileSync(path.join(target,'old.txt'),'utf8'),'old runtime');
+ assert.ok(calls.every(args=>!args.some(arg=>arg.includes('--allow-remote'))));
+});
 
 test('nightly updates select only stable, aged patch versions in the local window',()=>{
  const now=localDate().getTime(),release={version:'1.2.23',published_at:new Date(now-86400001).toISOString()};

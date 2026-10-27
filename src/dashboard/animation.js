@@ -91,6 +91,7 @@
           element("save-animation").disabled = selectedAnimation === savedAnimation;
           updateAnimationState();
           syncAnimationPreview();
+          globalThis.ccdxSettingsPreferences?.selectAnimation(theme.id);
         });
         const name = document.createElement("span");
         name.className = "theme-name";
@@ -145,6 +146,7 @@
       }
       updateAnimationState();
       text("animation-note", animationNote(data));
+      globalThis.ccdxSettingsPreferences?.render();
     }
 
     function updateAnimationState() {
@@ -180,6 +182,12 @@
     }
 
     return { apply: applyAnimation, load: loadAnimation, save: saveAnimation, sync: syncAnimationPreview, stop: stopAnimationPreview,
+      select(theme) {
+        if (!animationRows.has(theme) || selectedAnimation === theme) return;
+        selectedAnimation = theme;
+        for (const [id, row] of animationRows) row.setAttribute("aria-pressed", String(id === theme));
+        updateAnimationState();syncAnimationPreview();
+      },
       get saving() { return animationSaving; }, get framesLoaded() { return animationFramesLoaded; } };
   }
   globalThis.ccdxDashboardAnimation = { create };

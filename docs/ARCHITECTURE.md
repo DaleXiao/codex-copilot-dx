@@ -184,6 +184,8 @@ absence and policy refusal do not disable GitHub.
 
 `network-route.mjs` canonicalizes abbreviated IPv4 CIDRs only while adapting system `ExceptionsList` input, before merging it with the unchanged strict `NO_PROXY` input. `network-bypass.mjs` remains the shared strict Node/PAC matcher; it performs no DNS lookup. This fixes no-proxy and static-proxy macOS configurations without dropping exception rules or weakening unsupported dynamic-PAC protection.
 
+`providers/m365-endpoint.mjs` declares the fixed production origin and path shared by Node transport and the Windows parent whitelist. A regression checks the C# worker’s matching fixed-host policy. Catalog publication and history namespaces include the service origin and company account; legacy/different-origin caches stay on disk but do not publish as the new catalog. No cross-environment retry or implicit source switch is introduced.
+
 `providers/m365-network-diagnostic.mjs` is a small pure projection of fixed proxy failure codes, source and stage, shared by transport, provider state, protected dashboard routes and CLI. Raw error chains/settings never cross that boundary. M365 retains existing outer error categories; the source runtime forwards the bounded diagnostic, and existing bilingual renderers expose a readable explanation with technical details. Startup uses the same fixed English explanation. Refresh failures retain last-good catalogs and never change the selected provider; successful transport creation clears the setup diagnostic. No new service, storage, dependency, route fallback or provider retry is introduced.
 
 `claude-client-lifecycle.mjs` owns configuration reconciliation and restore state, independently from source auth/catalog code. It checks lifecycle/profile validity after asynchronous policy inspection and preserves the existing field-ownership writer.
@@ -417,10 +419,27 @@ prevents stale apply across tabs. `status.js` renders source-neutral authorizati
 and client evidence; `usage.js` renders usage and date selection. View state remains
 page-local; only existing preferences and the viewed model Provider are saved in
 the browser. Expanded sections read on demand. The directory and Codex selectors share the same catalog resource, freshness and single-flight read. Changing sources cancels an obsolete waiter; generation checks reject late results. Account changes clear old-source drafts and snapshots; ordinary refreshes retain pending choices. There is no Node data watcher.
-The sidebar controller reads small process-local status snapshots every two seconds
+The sidebar controller reads view-scoped process-local status snapshots every two seconds
 while visible/automatic, and source/settings evidence every eight status ticks.
 Catalog and retained-log reads retain their slower, view-scoped policy. Animation
 frames still load once per page when opened.
+
+`settings-preferences.mjs` owns the explicit settings-page allowlist, normalized
+defaults, revision checks and the single private pre-reset snapshot. Reset uses the
+existing file-pair transaction with the backup written first; unrelated config
+keys stay in the original file and never enter the backup. `service-control.mjs`
+keeps its existing serialized action boundary and applies terminal/update effects
+after the saved preferences commit. It never routes this operation through client
+setup, account recovery or connection migration.
+
+`dashboard/preferences.js` owns page-local drafts, coalesced writes, manual saving,
+revision conflicts and browser-local appearance backup. The existing theme and
+animation views expose small explicit preview/selection hooks. Settings writes
+invalidate only animation/settings evidence, without model or account refresh.
+Summary and complete status have separate refresh resources. `status-summary.mjs`
+projects the optional lightweight response; full status stays the default public
+contract. Hidden status regions defer DOM updates, and summary rendering never
+replaces the full request/history cache.
 
 `dashboard/usage.js` owns bar/curve geometry and viewport-gated, one-shot Web Animations. The two views share retained analytics and accessible day buttons; their paths never connect unavailable history or overshoot adjacent values. View-only changes leave the calendar nodes intact. The UI lifecycle cancels motion on hidden/suspended views and reduced-motion changes; no animation timer or chart dependency is added. `usage-store.mjs` shares cache-evidence validation between retained summaries and process-local totals; runtime snapshots expose the weighted cache ratio plus a partial-evidence flag, without new persistence or log scans. The Overview renderer formats that snapshot and preserves unknown/invalid values.
 

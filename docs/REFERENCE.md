@@ -333,10 +333,10 @@ restore existing client settings; use `m365 off` for that explicit operation.
 Entra tokens are retained in memory until renewal/close, never saved in a CCDX
 credential file. Renewal is silent and single-flight, with a 28-second helper
 deadline and one-minute failure backoff. The provider uses only
-`https://df.loki.delve.office.com/api/v1/llmapi`; discovery uses `/models` and
+`https://loki.delve.office.com/api/v1/llmapi`; discovery uses `/models` and
 inference uses its advertised native Responses or Messages endpoints. This is a
-dogfood service, not a promised public SLA. No request is redirected to another
-origin. Explicit proxy/trust settings are preserved. Windows delegates system
+private service, not a promised public SLA. Its fixed origin is shared by the Node and Windows target policies; authentication resources and company network policy are unchanged. No request is redirected to another
+origin. Model caches and replay namespaces are bound to this service origin and account. A legacy cache with no origin, or one from the prior dogfood origin, is preserved on disk but is not published as this environment’s catalog; a successful discovery replaces it. Disabled sources and saved client/model selections are not automatically changed. Explicit proxy/trust settings are preserved. Windows delegates system
 PAC/WPAD and integrated authentication to its own isolated WinHTTP worker;
 unsupported macOS dynamic PAC is reported rather than bypassed.
 
@@ -1316,7 +1316,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.25/codex-copilot-dx-1.2.25.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.26/codex-copilot-dx-1.2.26.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1505,6 +1505,54 @@ existing 30-minute cadence and short freshness gate. Hidden pages stop scheduled
 reads. Catalog requests are deduplicated, stale tab reads are cancelled and late
 results rejected. Failed reads preserve last-good data and label it as stale.
 Service-setting errors are visible on the current page and can be retried manually.
+
+### Settings saving and restore
+
+Settings → **Save & restore**, after Version & updates, controls only this page’s
+preferences. **Save changes automatically** defaults on. Terminal palette,
+animation, animation enablement, opening the webpage at startup and overnight-update
+preferences save after a short coalescing delay. Webpage appearance stays in the
+current browser. Turning automatic saving off reveals Save changes and Discard
+changes; enabling it with a draft asks before saving that draft. Invalid or failed
+saves keep the draft. Polls do not overwrite drafts, old responses do not replace
+newer edits, and a conflicting settings revision requires reviewing the current
+settings. Ordinary appearance saves do not enumerate accounts, authenticate or
+refresh provider catalogs. Overnight updates remain off by default and enabling
+them confirms the existing restart risk; saving the preference never installs an update.
+
+Restore defaults confirms the scope, backs up the saved preferences first, then
+writes the settings-page fields in one locked atomic transaction. Defaults are:
+green webpage and terminal palettes, dark webpage appearance, Comet animation,
+terminal animation on, open webpage on startup, overnight updates off and automatic
+saving on. Language, model/source selections, API keys, native sign-in and client
+configuration, review/memory choices, image/prediction access, history, usage and
+network/environment policy are preserved. Environment-controlled effective values
+remain controlled. Pending drafts are explicitly discarded only after confirmation.
+
+The private `settings-preferences-backup.json` beside the settings file contains
+only the six allowlisted service preferences, version, ID and creation time; it
+contains no credentials or provider settings. Restore backup uses the latest
+pre-reset snapshot. Backup failure aborts reset; a failed settings write restores
+the prior settings and prior backup. A repeated reset with its same operation ID
+cannot overwrite the original snapshot after a lost response. Unreadable settings
+or backups are preserved and reported.
+
+Browser appearance has its own origin-local backup linked to the operation ID.
+At most two entries are held while a reset result is uncertain, reducing to the
+matching latest backup after a confirmed settings read. Service and browser storage
+are not one atomic transaction: a browser-storage failure after the service save is
+reported as partial completion and can be retried. Another browser without the
+matching appearance backup reports that limitation rather than claiming a complete
+restore. No periodic backup service, credential export or full configuration reset
+is added.
+
+The full `/_ccdx/status` response remains the default CLI/diagnostic contract.
+Overview and Settings use an explicit `?scope=summary` projection containing service
+identity, uptime, model activity and current-run usage. The browser keeps summary
+and full reads in separate resource entries; summary data cannot replace request
+history or turn missing full fields into zero values. Other pages request full
+status when opened. Hidden data regions skip DOM work, retaining their last data
+until a visible full read; native inference and the selected model are unaffected.
 
 The usage selector retains current and historical sources. Combined model rows
 and daily analytics preserve source identity; old records without a client label

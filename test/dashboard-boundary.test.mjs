@@ -30,4 +30,8 @@ test('dashboard resource validators distinguish HTML, content changes and mismat
  const changed=await invokeAdapter({}, {method:'GET',url:'/flow.js',headers:{...headers,'if-none-match':'"other"'}});assert.equal(changed.status,200);
  const wrong=await invokeAdapter({}, {method:'GET',url:'/flow.js?v=0.0.0',headers});assert.equal(wrong.status,409);assert.equal(wrong.headers['Cache-Control'],'no-store');
  const html=await invokeAdapter({}, {method:'GET',url:'/',headers});assert.equal(html.headers['Cache-Control'],'no-store');assert.match(html.text,/flow\.js\?v=\d+\.\d+\.\d+/);
+ for(const match of html.text.matchAll(/src="(\/[a-z-]+\.js(?:\?[^\"]*)?)"/g)){
+  const asset=await invokeAdapter({}, {method:'GET',url:match[1],headers});assert.equal(asset.status,200,match[1]);
+  assert.match(asset.headers['Content-Type'],/javascript/);
+ }
 });

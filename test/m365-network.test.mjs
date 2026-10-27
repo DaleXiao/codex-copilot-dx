@@ -5,7 +5,7 @@ import { PassThrough } from "node:stream";
 import { createM365Network, requestFetch } from "../src/providers/m365-network.mjs";
 import { m365NetworkDiagnostic, m365NetworkMessage, m365ProxyFailure } from "../src/providers/m365-network-diagnostic.mjs";
 
-const target = "https://df.loki.delve.office.com/api/v1/llmapi/models";
+const target = "https://loki.delve.office.com/api/v1/llmapi/models";
 test("reported macOS exceptions work without any proxy-enable flags or a real HTTP request", async () => {
   const stdout = "<dictionary> {\n  ExceptionsList : <array> {\n    0 : *.local\n    1 : 169.254/16\n  }\n  FTPPassive : 1\n}\n";
   for (const proxy of ["", "HTTPSEnable : 1\nHTTPSProxy : proxy.example.test\nHTTPSPort : 8080\n"]) {
@@ -50,7 +50,7 @@ test("M365 uses the Windows system worker only when explicit environment routing
   };
   const system = await createM365Network({ platform: "win32", env: { GITHUB_TOKEN: "never-forward", NODE_OPTIONS: "never-run" }, startWindowsNetwork });
   assert.equal(system.snapshot().type, "winhttp");system.close();assert.equal(closes, 1);
-  for (const env of [{ HTTPS_PROXY: "http://proxy.example.test:8080" }, { NO_PROXY: "df.loki.delve.office.com" }]) {
+  for (const env of [{ HTTPS_PROXY: "http://proxy.example.test:8080" }, { NO_PROXY: "loki.delve.office.com" }]) {
     const explicit = await createM365Network({ platform: "win32", env, startWindowsNetwork });explicit.close();
   }
   assert.equal(starts, 1);
@@ -72,9 +72,9 @@ test("M365 preserves macOS proxies and fails closed for unsupported PAC without 
 
 test("M365 transport rejects other targets before forwarding a credential", async () => {
   const send = requestFetch(() => assert.fail("No request should be opened"));
-  for (const value of ["http://df.loki.delve.office.com/api/v1/llmapi/models", "https://example.test/api/v1/llmapi/models",
-    "https://user:pass@df.loki.delve.office.com/api/v1/llmapi/models", "https://df.loki.delve.office.com/private",
-    target + "#fragment", "https://df.loki.delve.office.com:444/api/v1/llmapi/models"]) {
+  for (const value of ["http://loki.delve.office.com/api/v1/llmapi/models", "https://example.test/api/v1/llmapi/models",
+    "https://user:pass@loki.delve.office.com/api/v1/llmapi/models", "https://loki.delve.office.com/private",
+    target + "#fragment", "https://loki.delve.office.com:444/api/v1/llmapi/models"]) {
     await assert.rejects(send(value, { headers: { Authorization: "Bearer secret" } }), { code: "m365_target_invalid" });
   }
   await assert.rejects(send(target, { method: "DELETE" }), { code: "m365_target_invalid" });
@@ -105,4 +105,14 @@ test("M365 cancellation closes an in-flight connection and an already-aborted ca
   const pending = send(target, { signal: controller.signal });controller.abort();
   await assert.rejects(pending, { name: "AbortError" });assert.equal(destroyed, 1);
   await assert.rejects(send(target, { signal: controller.signal }), { name: "AbortError" });assert.equal(destroyed, 1);
+});
+
+test('Node and native Windows M365 target policy name the same fixed production host', async () => {
+  const { M365_API_HOST, M365_API_BASE } = await import('../src/providers/m365-endpoint.mjs');
+  const fs = await import('node:fs');
+  const native = fs.readFileSync(new URL('../src/windows-prediction-network.cs', import.meta.url), 'utf8');
+  assert.equal(M365_API_BASE, `https://${M365_API_HOST}/api/v1/llmapi`);
+  assert.ok(native.includes(`uri.Host!="${M365_API_HOST}"`));assert.ok(!native.includes('df.loki.delve.office.com'));
+  const fetch = requestFetch(() => assert.fail('No request to the old environment'));
+  await assert.rejects(fetch('https://df.loki.delve.office.com/api/v1/llmapi/models'));
 });

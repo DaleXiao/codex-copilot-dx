@@ -99,7 +99,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
     fetch: async (url, options) => {
       requests.push(url);
       if (fetchFn) { const response = await fetchFn(url, options); if (response) return response; }
-      const data = url === "/_ccdx/status" ? { ok: true, name: "codex-copilot-dx" }
+      const data = url.startsWith("/_ccdx/status") ? { ok: true, name: "codex-copilot-dx" }
         : url === "/_ccdx/ui/providers" ? { source: "provider_status", providers: [{ id: "github", name: "GitHub Copilot", enabled: true, state: "unknown", auth: { state: "saved", account: "octocat" }, clients: [{ id: "codex", name: "Codex App", selected: true, state: "configured" }] }] }
         : url.includes("/models/") ? { source: "live", models: [] }
         : url.includes("/usage") ? { ...usage, ...(url.includes("analytics=1") ? { analytics: collector.snapshot() } : {}) }

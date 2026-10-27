@@ -3,6 +3,7 @@ import { ADAPTER_CACHE_PATH, cacheRuntimeSnapshot, cleanRuntimeCaches, setHistor
 import { createRequestAbort, readJsonBody, sendJsonError } from "./http-transport.mjs";
 import { httpError } from "./http-errors.mjs";
 import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
+import { statusSummary } from "./status-summary.mjs";
 
 export function isManagementRoute(method, pathname) {
   return (method === "GET" && [ADAPTER_STATUS_PATH, ADAPTER_HEALTH_PATH].includes(pathname))
@@ -21,7 +22,8 @@ export function createManagementHandler({ statusSnapshot, nativePredictionPac, f
         return;
       }
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      res.end(JSON.stringify(statusSnapshot()));
+      const snapshot = statusSnapshot();
+      res.end(JSON.stringify(new URL(req.url, "http://localhost").searchParams.get("scope") === "summary" ? statusSummary(snapshot) : snapshot));
       return;
     }
 

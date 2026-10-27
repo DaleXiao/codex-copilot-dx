@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { PassThrough, Writable } from "node:stream";
 import { windowsPowerShellEnvironment } from "./windows-process.mjs";
+import { M365_API_HOST } from "./providers/m365-endpoint.mjs";
 
 function failure(code) {
   return Object.assign(new Error(`Windows network failed (${code}); existing company routes were preserved`), { code });
@@ -16,7 +17,7 @@ export async function startWindowsHttpNetwork({ settings = {}, target = "predict
   if (target === "api" && (!Array.isArray(apiTargets) || !apiTargets.length || apiTargets.length > 8 || apiTargets.some(raw => {
     try { const url = new URL(raw);return url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.href !== raw; } catch { return true; }
   }))) throw failure("proxy_target_invalid");
-  const allowedHosts = target === "api" ? apiTargets.map(raw => new URL(raw).hostname) : target === "m365" ? ["df.loki.delve.office.com"] : ["chatgpt.com", "ab.chatgpt.com"];
+  const allowedHosts = target === "api" ? apiTargets.map(raw => new URL(raw).hostname) : target === "m365" ? [M365_API_HOST] : ["chatgpt.com", "ab.chatgpt.com"];
   const command = path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const source = fileURLToPath(new URL("./windows-prediction-network.cs", import.meta.url));
   const child = spawnImpl(command, ["-NoProfile", "-NonInteractive", "-Command",

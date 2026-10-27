@@ -19,6 +19,7 @@
     <script src="/updates.js" defer></script>
     <script src="/animation.js" defer></script>
     <script src="/ui.js" defer></script>
+    <script src="/preferences.js" defer></script>
     <script src="/console.js" defer></script>
     <script src="/tools.js" defer></script>
     <script src="/connections.js" defer></script>
@@ -50,6 +51,7 @@
         <section class="intro">
           <h1><span id="page-title" data-i18n="overview">Overview</span></h1>
           <p id="page-settings-note" class="hint" role="status"></p>
+          <div id="preferences-status" class="preferences-status" role="status" aria-live="polite" hidden></div>
         </section>
 
 
@@ -415,6 +417,19 @@
             <p id="install-windows-policy" class="hint" hidden data-i18n="update_windows_policy">If scripts are blocked, use your company’s approved installation method.</p>
           </details><p id="update-copy-note" class="hint" role="status"></p>
         </section>
+        <section class="panel dashboard-section" id="settings-preferences" aria-labelledby="preferences-heading">
+          <h2 id="preferences-heading" data-i18n="preferences_heading">SAVE &amp; RESTORE</h2>
+          <div class="preferences-row"><div><label for="preferences-auto" data-i18n="preferences_auto">Save changes automatically</label><p class="hint" data-i18n="preferences_auto_hint">Valid changes on this page save automatically.</p></div><input id="preferences-auto" type="checkbox" role="switch" disabled checked></div>
+          <div class="preferences-row preferences-separator"><div><span data-i18n="preferences_reset_title">Restore default settings</span><p class="hint" data-i18n="preferences_reset_hint">Back up saved settings before restoring.</p></div><button id="preferences-reset" type="button" disabled data-i18n="preferences_reset">Restore defaults</button></div>
+          <div id="preferences-backup" class="preferences-row preferences-separator" hidden><div><span data-i18n="preferences_backup">Settings before restore</span><p id="preferences-backup-time" class="hint"></p></div><button id="preferences-restore" type="button" data-i18n="preferences_restore">Restore backup</button></div>
+          <div id="preferences-manual" class="preferences-row preferences-separator" hidden><span id="preferences-manual-note" class="hint"></span><div class="connection-actions"><button id="preferences-discard" type="button" data-i18n="preferences_discard">Discard changes</button><button id="preferences-save" type="button" data-i18n="preferences_save">Save changes</button></div></div>
+          <div class="section-actions"><button id="preferences-retry" type="button" hidden data-i18n="view_retry">Retry</button><p id="preferences-error" class="hint" role="alert"></p></div>
+        </section>
+        <dialog id="preferences-dialog" class="preferences-dialog" aria-labelledby="preferences-dialog-title">
+          <h2 id="preferences-dialog-title"></h2><p id="preferences-dialog-intro"></p>
+          <dl id="preferences-dialog-scope"><div><dt data-i18n="preferences_scope">Restore</dt><dd data-i18n="preferences_scope_value">Web and terminal appearance, animation, startup and update preferences.</dd></div><div><dt data-i18n="preferences_keep">Keep</dt><dd data-i18n="preferences_keep_value">Accounts and keys, models and sources, app connections, chats, usage, image and prediction access.</dd></div></dl>
+          <p id="preferences-dialog-note" class="hint"></p><div class="section-actions"><button id="preferences-dialog-cancel" type="button" data-i18n="cancel">Cancel</button><button id="preferences-dialog-confirm" type="button"></button></div>
+        </dialog>
         </div>
       </main>
       <footer data-i18n="local_only_visible_page_updates">THIS COMPUTER ONLY / UPDATES WHILE VISIBLE</footer>

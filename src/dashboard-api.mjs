@@ -221,7 +221,7 @@ export async function handleDashboardApi(req, res, pathname, {
       if (!res.destroyed && !res.writableEnded) sendJson(res, 200, data);
     } catch (error) {
       sendJson(res, error.statusCode || (error.code?.startsWith("ccdx_cache_") ? 409 : 400), { error: safeText(error.message, 300),
-        ...(/^m365_[a-z_]+$/.test(error.code || "") ? { code: error.code } : {}) });
+        ...(/^(?:m365_[a-z_]+|ccdx_settings_[a-z_]+)$/.test(error.code || "") ? { code: error.code } : {}) });
     } finally { abort.cleanup(); }
     return;
   }

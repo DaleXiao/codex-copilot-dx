@@ -12,6 +12,7 @@ const ASSETS = new Map([
   ["/ui.js", ["./dashboard/ui.js", "text/javascript; charset=utf-8"]],
   ["/console.js", ["./dashboard/console.js", "text/javascript; charset=utf-8"]],
   ["/updates.js", ["./dashboard/updates.js", "text/javascript; charset=utf-8"]],
+  ["/preferences.js", ["./dashboard/preferences.js", "text/javascript; charset=utf-8"]],
   ["/time.js", ["./dashboard/time.js", "text/javascript; charset=utf-8"]],
   ["/view-boundary.js", ["./dashboard/view-boundary.js", "text/javascript; charset=utf-8"]],
   ["/status.js", ["./dashboard/status.js", "text/javascript; charset=utf-8"]],

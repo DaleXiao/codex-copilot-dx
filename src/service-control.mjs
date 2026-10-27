@@ -5,6 +5,7 @@ import { readImageProviderConfig } from "./image-provider-config.mjs";
 import { readPredictionSettings } from "./native-prediction-profile.mjs";
 import { cacheRuntimeSnapshot, cleanRuntimeCaches, setHistoryCacheLimit } from "./cache-control.mjs";
 import { isTerminalAnimationTheme } from "./terminal-animation.mjs";
+import { settingsPreferencesSnapshot, writeSettingsPreferences } from "./settings-preferences.mjs";
 
 export function createServiceControl({ env = process.env, home, providerRuntime, clientIntegration, terminal,
   nightlyStatus = () => null, nightlyChanged = () => {},
@@ -17,7 +18,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     try { imageConfigured = Boolean(readImages()); } catch {}
     try { predictionConfigured = readPrediction().enabled === true; } catch {}
     const enabled = nightlyUpdatePreference(options), nightly = nightlyStatus();
-    return { source: "service_settings", saved, theme, color_theme,
+    return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options),
       nightly_update: { enabled, ...nightly, effect: enabled && !nightly ? "next_start" : "immediate" },
       effective: {
         terminal_animation_enabled: { value: terminal?.enabled === true && saved.terminal_animation_enabled && !/^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || ""),
@@ -33,9 +34,16 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid setting action");
     const allowed = { preference: ["action", "key", "value"], nightly_update: ["action", "enabled"], animation: ["action", "theme"], color_theme: ["action", "theme"],
       history_limit: ["action", "mib"], history_clean: ["action"], prediction_fix: ["action"],
+      preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id"], restore_preferences: ["action", "revision", "backup_id"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
     if (!allowed || Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unknown setting action or field");
-    if (input.action === "nightly_update") {
+    if (["preferences", "reset_preferences", "restore_preferences"].includes(input.action)) {
+      const before = nightlyUpdatePreference(options);
+      writeSettingsPreferences(input, options);
+      const current = settingsPreferencesSnapshot(options).values;
+      terminal?.apply?.({ ...servicePreferences(options), theme: current.terminal_animation, color_theme: current.terminal_color_theme });
+      if (before !== current.nightly_updates) nightlyChanged(current.nightly_updates);
+    } else if (input.action === "nightly_update") {
       writeNightlyUpdatePreference(input.enabled, options);nightlyChanged(input.enabled);
     } else if (input.action === "preference") {
       writeServicePreference(input.key, input.value, options);

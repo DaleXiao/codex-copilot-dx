@@ -72,13 +72,13 @@ test("M365 WinHTTP worker accepts only its inference origin and cannot send cred
   const f = fixture(t, { ready: null });
   const network = await startWindowsHttpNetwork({ target: "m365", settings: {}, spawnImpl: f.spawnImpl, timeoutMs: 120000 });
   t.after(() => network.close());assert.equal(f.received[0].target, "m365");assert.equal(f.received[0].timeoutMs, 120000);
-  for (const [hostname, pathname] of [["chatgpt.com", "/backend-api/test"], ["df.loki.delve.office.com", "/other"]]) {
+  for (const [hostname, pathname] of [["chatgpt.com", "/backend-api/test"], ["loki.delve.office.com", "/other"]]) {
     const req = network.requestImpl({ hostname, path: pathname, headers: { authorization: "synthetic_secret" } }, () => assert.fail());
     const rejected = once(req, "error");req.end();assert.match((await rejected)[0].message, /proxy_target_invalid/);
   }
   assert.equal(f.received.some(event => event.op === "request"), false);
   const result = new Promise((resolve, reject) => {
-    const req = network.requestImpl({ hostname: "df.loki.delve.office.com", path: "/api/v1/llmapi/models", headers: {} }, res => {
+    const req = network.requestImpl({ hostname: "loki.delve.office.com", path: "/api/v1/llmapi/models", headers: {} }, res => {
       const chunks = [];res.on("data", chunk => chunks.push(chunk));res.on("end", () => resolve(Buffer.concat(chunks).toString()));res.on("error", reject);
     });req.on("error", reject);req.end();
   });assert.equal(await result, "fixture reply");

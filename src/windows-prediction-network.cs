@@ -84,7 +84,7 @@ public static class CCDXPredictionNetwork {
     IntPtr connection=IntPtr.Zero;
     try {
       var uri=new Uri((string)data["url"]);
-      if(uri.Scheme!="https" || uri.UserInfo.Length!=0 || uri.Fragment.Length!=0 || (target=="api" ? !ApiTargetAllowed(uri,(string)data["method"]) : (uri.Port!=443 || (target=="m365" ? (uri.Host!="df.loki.delve.office.com" || !uri.AbsolutePath.StartsWith("/api/v1/llmapi/",StringComparison.Ordinal)) : (uri.Host!="chatgpt.com"&&uri.Host!="ab.chatgpt.com"))))) throw new IOException("winhttp_target_invalid");
+      if(uri.Scheme!="https" || uri.UserInfo.Length!=0 || uri.Fragment.Length!=0 || (target=="api" ? !ApiTargetAllowed(uri,(string)data["method"]) : (uri.Port!=443 || (target=="m365" ? (uri.Host!="loki.delve.office.com" || !uri.AbsolutePath.StartsWith("/api/v1/llmapi/",StringComparison.Ordinal)) : (uri.Host!="chatgpt.com"&&uri.Host!="ab.chatgpt.com"))))) throw new IOException("winhttp_target_invalid");
       var method=(string)data["method"];
       if(method!="GET"&&method!="POST"&&method!="HEAD"&&method!="PUT"&&method!="DELETE"&&method!="OPTIONS"&&method!="PATCH")throw new IOException("winhttp_method_invalid");
       var headers=(string)data["headers"];

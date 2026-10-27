@@ -70,3 +70,10 @@ test("company account selection uses the listed opaque ID and reports its scope 
     control: async ({ action }) => { actions.push(action);return action.action === "accounts" ? { accounts: [{ id, login: "b@example.test", tenant: "company" }] } : { m365: { state: "ready" } }; } });
   assert.deepEqual(actions.at(-1), { action: "account", account_id: id });assert.match(lines.join(""), /Codex and Claude/);
 });
+
+test('M365 CLI reports the running service origin without assuming an upgraded CLI changed an old process', async t => {
+ const options=fixture(t);writeProviderSettings('m365',preference,options);
+ const current=await fetchActiveProviderModels({...options,control:async()=>({...available,state:{m365:{service_origin:'https://loki.delve.office.com'}}})});
+ assert.equal(current.upstreamHost,'loki.delve.office.com');
+ const old=await fetchActiveProviderModels({...options,control:async()=>available});assert.equal(old.upstreamHost,'Microsoft 365');
+});

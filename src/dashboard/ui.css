@@ -553,3 +553,22 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 .memory-model-value .hint { margin:0; }
 .memory-model-value { min-width:0;max-width:100%; }
 .memory-model-value strong { min-width:0;overflow-wrap:anywhere; }
+
+/* Settings-page preferences keep their own draft, save and recovery controls. */
+.preferences-status { color:var(--muted); font-size:11px; }
+.preferences-row { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:20px 0; font-size:13px; }
+.preferences-row:last-of-type { padding-bottom:0; }
+.preferences-row .hint { margin-top:5px; }
+.preferences-row input[role="switch"] { flex:none; }
+.preferences-separator { border-top:1px solid var(--border); margin-top:14px; }
+#preferences-backup-time { margin-bottom:0; }
+#preferences-error { margin:0; color:var(--failed); }
+#preferences-save, #preferences-dialog-confirm { background:var(--accent); color:var(--page); border-color:var(--accent); }
+.preferences-dialog { width:480px; max-width:calc(100% - 32px); padding:25px; border:1px solid var(--border); border-radius:2px; background:var(--surface); color:var(--text); font:inherit; }
+.preferences-dialog::backdrop { background:#0007; }
+.preferences-dialog h2 { font-size:19px; margin:0 0 18px; color:var(--strong); }
+.preferences-dialog p, .preferences-dialog dl { font-size:12px; line-height:1.8; }
+.preferences-dialog dl > div { display:grid; grid-template-columns:80px minmax(0,1fr); gap:12px; margin-top:12px; }
+.preferences-dialog dt { color:var(--muted); }.preferences-dialog dd { margin:0; }
+.preferences-dialog .section-actions { justify-content:flex-end; margin-top:24px; }
+@media(max-width:640px) { .preferences-row { gap:14px; flex-wrap:wrap; }.preferences-row > div:first-child { flex:1; min-width:150px; }.preferences-dialog { padding:20px; }.preferences-dialog dl > div { grid-template-columns:1fr; gap:3px; } }

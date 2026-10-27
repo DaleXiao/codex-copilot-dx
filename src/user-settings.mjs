@@ -51,9 +51,9 @@ export function readUserSettings({ env = process.env, home = os.homedir(), stric
         delete parsed[key];
       }
     }
-    if (Object.hasOwn(parsed, "nightly_updates") && typeof parsed.nightly_updates !== "boolean") {
-      if (strict) throw invalidSettings(filePath, "nightly_updates must be a boolean");
-      delete parsed.nightly_updates;
+    for (const key of ["nightly_updates", "auto_save_settings"]) if (Object.hasOwn(parsed, key) && typeof parsed[key] !== "boolean") {
+      if (strict) throw invalidSettings(filePath, `${key} must be a boolean`);
+      delete parsed[key];
     }
     if (Object.hasOwn(parsed, "terminal_color_theme") && !isColorTheme(parsed.terminal_color_theme)) {
       if (strict) throw invalidSettings(filePath, "terminal_color_theme must be green, klein or pink");

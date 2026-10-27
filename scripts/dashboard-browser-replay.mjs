@@ -8,6 +8,7 @@ import os from "node:os";
 import { createServiceControl } from "../src/service-control.mjs";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { summarizeUsage } from "../src/usage-store.mjs";
+import { statusSummary } from "../src/status-summary.mjs";
 import { requestApplication } from "../src/request-application.mjs";
 
 const args = process.argv.slice(2);
@@ -105,14 +106,14 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith("/_ccdx/ui/animation")) {
     res.writeHead(200, { "content-type": "application/json" });
     const frames = !req.url.includes("frames=0");
-    res.end(JSON.stringify({ theme: "comet", source: "default", disabled_by_environment: false,
+    res.end(JSON.stringify({ theme: serviceControl.snapshot().theme, source: "settings", disabled_by_environment: false,
       themes: ["comet", "twin"].map(id => ({ id, label: id === "comet" ? "Comet" : "Twin", default: id === "comet",
         ...(frames ? { frames: [{ ansi: "[●··]", delay_ms: 100 }], loop_pause_ms: 100 } : {}) })) }));
     return;
   }
-  if (req.url === "/_ccdx/status") {
+  if (req.url.split("?")[0] === "/_ccdx/status") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, name: "codex-copilot-dx", version: "synthetic", pid: 1, uptime_ms: 1000,
+    const snapshot = { ok: true, name: "codex-copilot-dx", version: "synthetic", pid: 1, uptime_ms: 1000,
       requests: { total: 1, active: 0 }, model_activity: { active: modelActivity }, models: { models: 1, source: "synthetic" },
       stream_performance: { active_requests: flowRequests, active_total: flowRequests.length, recent_requests: [...extraRequests, { at: "2026-10-21T05:51:08Z", request_id: "synthetic-recent", provider: "github", model: "gpt-test", outcome: "completed",
         context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000 } },
@@ -127,7 +128,8 @@ const server = http.createServer((req, res) => {
         claude: { base_url: `http://127.0.0.1:${server.address().port}/anthropic`, gateway: "running", requests: { completed: 3, incomplete: 1, failed: 2 }, clients: { code: "configured", app: "configured" } } } },
       runtime_usage: { records: 4, input_tokens: 100, cached_input_tokens: 20, output_tokens: 10, cache_hit_rate: 0.2, cache_hit_rate_partial: false },
       process: { rss_bytes: 123456, heap_used_bytes: 34567 },
-      response_history: { bytes: 0, maxBytes: 67108864 }, client_integrations: { prediction: { configured: false, bridge: "stopped" } } }));
+      response_history: { bytes: 0, maxBytes: 67108864 }, client_integrations: { prediction: { configured: false, bridge: "stopped" } } };
+    res.end(JSON.stringify(req.url.includes("scope=summary") ? statusSummary(snapshot) : snapshot));
     return;
   }
   handler(req, res);
@@ -153,7 +155,7 @@ try {
         watchdog.unref();
         page.setDefaultTimeout(15000);
         const errors = [];
-        page.on("pageerror", error => errors.push(error.message));
+        page.on("pageerror", error => { errors.push(error.message);console.error("Page error:", error.message); });
         signin = { source: "account_tools", configured: true, saved: true, login: "synthetic_user", store: "legacy", online: null, checked_at: null, operation: null };
         await page.addInitScript(({ language, theme, palette }) => { localStorage.setItem("ccdx.dashboard.palette", palette); localStorage.setItem("ccdx.dashboard.language", language); localStorage.setItem("ccdx.dashboard.theme", theme); }, { language, theme, palette });
         await page.addInitScript(() => {
@@ -173,6 +175,7 @@ try {
         flowRequests = [];
         updateReads = 0;updateState = "checked";latestVersion = "1.2.4";
         m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
+        await serviceControl.action({ action: "preferences", revision: serviceControl.snapshot().preferences.revision, values: { terminal_animation: "comet", terminal_color_theme: "green", open_webui: true, nightly_updates: false, auto_save_settings: true } });
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
         await page.waitForFunction(() => !document.getElementById("refresh-models").disabled && !document.getElementById("refresh-usage").disabled);
         assert.equal(await page.evaluate(() => atomMotions.length), 1);
@@ -198,8 +201,8 @@ try {
         // A force refresh intentionally joins an in-flight poll. Drain its previous
         // fixture response before requesting the newly installed synthetic state.
         const refreshStatus = () => page.evaluate(async () => {
-          await dashboardRefresh.state("status").pending;
-          return dashboardRefresh.refresh("status", { force: true });
+          const key = statusResourceKey();await dashboardRefresh.state(key).pending;
+          return dashboardRefresh.refresh(key, { force: true });
         });
         // Long/short modules, status labels and scrolling must not resize the shared shell.
         const layout = await page.locator(".topbar").boundingBox();
@@ -239,11 +242,11 @@ try {
         await page.waitForFunction(() => document.getElementById("model-activity").dataset.state === "idle");
         assert.equal((await page.locator('[data-view="overview"] .overview').boundingBox()).y, overviewTop);
         assert.equal(await page.locator(".activity-lamp").evaluate(node => getComputedStyle(node, "::before").animationName), "activity-breathe");
-        await page.route("**/_ccdx/status", route => route.fulfill({ status: 503, contentType: "application/json", body: '{}' }));
+        await page.route("**/_ccdx/status*", route => route.fulfill({ status: 503, contentType: "application/json", body: '{}' }));
         await page.locator("#refresh").click();
         await page.waitForFunction(() => document.getElementById("model-activity").dataset.state === "unknown");
         assert.equal(await page.locator(".activity-lamp").evaluate(node => getComputedStyle(node, "::before").content), "none");
-        await page.unroute("**/_ccdx/status");await page.locator("#refresh").click();
+        await page.unroute("**/_ccdx/status*");await page.locator("#refresh").click();
         await page.waitForFunction(() => document.getElementById("model-activity").dataset.state === "idle");
         assert.match(await page.locator("#runtime-usage").innerText(), /100/);
         assert.equal(await page.locator("#runtime-cache-hit").innerText(), "20.0%");
@@ -558,11 +561,13 @@ try {
         await page.waitForFunction(() => !document.getElementById("nightly-update").disabled);
         assert.equal(await page.locator("#nightly-update").isChecked(), false);
         assert.match(await page.locator("#nightly-risk").innerText(), language === "zh" ? /重启.*会话/ : /restart.*conversation/);
-        await page.locator("#nightly-update").check();
+        const settlePreferences = async () => { await page.clock.runFor(400);await page.waitForFunction(() => !ccdxSettingsPreferences.busy); };
+        await page.locator("#nightly-update").click();
+        await page.locator("#preferences-dialog-confirm").click();await settlePreferences();
         await page.waitForFunction(() => !document.getElementById("nightly-update").disabled);
         assert.equal(await page.locator("#nightly-rules").isVisible(), true);
         assert.match(await page.locator("#nightly-state").innerText(), language === "zh" ? /下次启动/ : /next time/);
-        await page.locator("#nightly-update").uncheck();
+        await page.locator("#nightly-update").uncheck();await settlePreferences();
         await page.waitForFunction(() => !document.getElementById("nightly-update").disabled);
         assert.equal(await page.locator("#nightly-rules").isVisible(), false);
         await page.locator("#web-color-theme").focus();
@@ -584,21 +589,24 @@ try {
         await page.waitForFunction(() => !document.getElementById("terminal-color-theme").disabled);
         assert.equal(await page.locator("#web-color-theme").inputValue(), palette);
         const terminalPalette = palette === "pink" ? "pink" : "klein";
-        await page.locator("#terminal-color-theme").selectOption(terminalPalette);
+        await page.locator("#terminal-color-theme").selectOption(terminalPalette);await settlePreferences();
         await page.waitForFunction(() => !document.getElementById("terminal-color-theme").disabled);
         assert.equal(await page.locator("html").getAttribute("data-palette"), palette);
         assert.equal(await page.locator("#terminal-color-sample").getAttribute("data-terminal-palette"), terminalPalette);
-        await page.locator("#web-color-theme").selectOption(palette === "green" ? "klein" : "green");
+        await page.locator("#web-color-theme").selectOption(palette === "green" ? "klein" : "green");await settlePreferences();
         assert.equal(await page.locator("#terminal-color-theme").inputValue(), terminalPalette);
-        await page.locator("#web-color-theme").selectOption(palette);
+        await page.locator("#web-color-theme").selectOption(palette);await settlePreferences();
         await page.route("**/_ccdx/ui/settings", async route => {
           if (route.request().method() === "POST") return route.fulfill({status:409,contentType:"application/json",body:JSON.stringify({error:"synthetic save refused"})});
           return route.continue();
         });
-        await page.locator("#terminal-color-theme").selectOption("green");
-        await page.waitForFunction(() => document.getElementById("terminal-color-note").textContent.includes("synthetic save refused"));
-        assert.equal(await page.locator("#terminal-color-theme").inputValue(), terminalPalette);
+        await page.locator("#terminal-color-theme").selectOption("green");await settlePreferences();
+        assert.equal(await page.locator("#preferences-retry").isVisible(), true);
+        assert.equal(await page.locator("#terminal-color-theme").inputValue(), "green", "Failed preferences retain the draft");
+        assert.equal(serviceControl.snapshot().color_theme, terminalPalette);
         await page.unroute("**/_ccdx/ui/settings");
+        await page.locator("#preferences-retry").click();await settlePreferences();
+        assert.equal(serviceControl.snapshot().color_theme, "green");
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         await page.locator("#animation-settings > summary").click();
         await page.waitForFunction(() => document.querySelectorAll(".theme-option").length === 2);
@@ -606,14 +614,70 @@ try {
         await page.locator("#refresh").click();
         await page.waitForFunction(() => !document.getElementById("refresh").disabled);
         assert.equal(await page.locator(".theme-option").nth(1).getAttribute("aria-pressed"), "true");
-        assert.equal(await page.locator("#save-animation").isEnabled(), true);
+        assert.equal(await page.locator("#save-animation").isHidden(), true);
+        await settlePreferences();assert.equal(serviceControl.snapshot().theme, "twin");
         await page.waitForFunction(() => !document.getElementById("setting-open_webui").disabled);
         const openBefore = await page.locator("#setting-open_webui").isChecked();
-        await page.locator("#setting-open_webui").setChecked(!openBefore);
+        await page.locator("#setting-open_webui").setChecked(!openBefore);await settlePreferences();
         await page.waitForFunction(() => !document.getElementById("setting-open_webui").disabled);
         assert.match(await page.locator("#effect-open_webui").innerText(), language === "zh" ? /重启 CCDX 后生效/ : /Next CCDX start/);
-        await page.locator("#setting-open_webui").setChecked(openBefore);
+        await page.locator("#setting-open_webui").setChecked(openBefore);await settlePreferences();
         await page.waitForFunction(() => !document.getElementById("setting-open_webui").disabled);
+        const previousPreferences = serviceControl.snapshot().preferences.values;
+        const protectedSettings = { image: serviceControl.snapshot().saved.image_enabled, prediction: serviceControl.snapshot().saved.prediction_enabled, source: codexSource };
+        assert.equal(await page.locator("#preferences-auto").isChecked(), true);
+        assert.equal(await page.locator("#settings-preferences").evaluate(node => node.previousElementSibling.id), "version-updates");
+        await page.locator("#preferences-auto").uncheck();await settlePreferences();
+        assert.equal(serviceControl.snapshot().preferences.values.auto_save_settings, false);
+        await page.locator("#terminal-color-theme").selectOption("pink");
+        await page.locator("#setting-open_webui").setChecked(!previousPreferences.open_webui);
+        await page.locator("#refresh").click();await page.waitForFunction(() => !document.getElementById("refresh").disabled);
+        assert.equal(await page.locator("#terminal-color-theme").inputValue(), "pink", "Polling retains manual drafts");
+        assert.equal(serviceControl.snapshot().color_theme, previousPreferences.terminal_color_theme, "Manual changes are not persisted early");
+        await page.locator("#preferences-save").click();await settlePreferences();
+        assert.equal(serviceControl.snapshot().color_theme, "pink");
+        const savedBeforeReset = serviceControl.snapshot().preferences.values;
+        await page.locator("#preferences-reset").click();await page.locator("#preferences-dialog").waitFor({state:"visible"});
+        assert.match(await page.locator("#preferences-dialog-scope").innerText(), language === "zh" ? /账号与密钥/ : /Accounts and keys/);
+        await page.locator("#preferences-dialog-confirm").click();await settlePreferences();
+        assert.equal(serviceControl.snapshot().preferences.values.terminal_color_theme, "green");
+        assert.equal(serviceControl.snapshot().preferences.values.terminal_animation, "comet");
+        assert.equal(await page.locator("html").getAttribute("data-palette"), "green");
+        assert.equal(await page.locator("#preferences-backup").isVisible(), true);
+        assert.deepEqual({image:serviceControl.snapshot().saved.image_enabled,prediction:serviceControl.snapshot().saved.prediction_enabled,source:codexSource}, protectedSettings);
+        await page.locator("#preferences-restore").click();await page.locator("#preferences-dialog-confirm").click();await settlePreferences();
+        assert.deepEqual(serviceControl.snapshot().preferences.values, savedBeforeReset);
+        assert.equal(await page.locator("html").getAttribute("data-palette"), palette);
+        await page.locator("#terminal-color-theme").selectOption(previousPreferences.terminal_color_theme);
+        await page.locator("#setting-open_webui").setChecked(previousPreferences.open_webui);
+        await page.locator("#preferences-auto").click();
+        await page.locator("#preferences-dialog").waitFor({state:"visible"});
+        await page.locator("#preferences-dialog-confirm").click();await settlePreferences();
+        assert.equal(serviceControl.snapshot().preferences.values.auto_save_settings, true);
+        if (language === "en" && theme === "light" && width === 1280 && palette === "green") {
+          const beforeBlockedBackup = serviceControl.snapshot().preferences.values;
+          await page.evaluate(() => { window.realPreferenceStorage = Storage.prototype.setItem;Storage.prototype.setItem = function(key, value) { if (key === "ccdx.dashboard.preferences-backup") throw Error("storage fixture denied");return window.realPreferenceStorage.call(this, key, value); }; });
+          await page.locator("#preferences-reset").click();await page.locator("#preferences-dialog-confirm").click();
+          await page.waitForFunction(() => document.getElementById("preferences-error").textContent.includes("backup"));
+          assert.deepEqual(serviceControl.snapshot().preferences.values, beforeBlockedBackup, "A browser backup failure makes no server reset");
+          await page.evaluate(() => { Storage.prototype.setItem = window.realPreferenceStorage; });
+          await page.locator("#terminal-color-theme").selectOption("pink");await settlePreferences();
+          await page.locator("#terminal-color-theme").selectOption(previousPreferences.terminal_color_theme);await settlePreferences();
+          let releaseRead, readStarted, intercepted = false;
+          const staleGate = new Promise(resolve => { releaseRead = resolve; }), staleStarted = new Promise(resolve => { readStarted = resolve; });
+          await page.route("**/_ccdx/ui/settings", async route => {
+            if (route.request().method() === "GET" && !intercepted) {
+              intercepted = true;const stale = serviceControl.snapshot();stale.terminal = { ...stale.terminal, last_notice: "stale-read-applied" };readStarted();await staleGate;return route.fulfill({json:stale});
+            }
+            return route.continue();
+          });
+          await page.locator("#refresh").click();await staleStarted;
+          await page.locator("#setting-open_webui").setChecked(!previousPreferences.open_webui);await settlePreferences();
+          releaseRead();await page.waitForFunction(() => document.getElementById("process-notice").textContent === "stale-read-applied");
+          assert.equal(await page.locator("#setting-open_webui").isChecked(), !previousPreferences.open_webui, "A late read cannot undo a saved preference");
+          await page.unroute("**/_ccdx/ui/settings");
+          await page.locator("#setting-open_webui").setChecked(previousPreferences.open_webui);await settlePreferences();
+        }
         assert.equal(await page.evaluate(() => window.savedCalendar === document.querySelector(".calendar-day") && window.savedModelRow === document.querySelector("#live-models-body tr")), true);
         assert.equal(await page.locator("#analytics-range").inputValue(), "90");
         if (output && language === "zh") { await page.evaluate(() => window.scrollTo(0, 0));await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-settings.png`), fullPage: true }); }

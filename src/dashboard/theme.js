@@ -24,10 +24,11 @@
     document.getElementById("favicon").href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
   };
   applyTheme();
-  function persist() {
-    try { localStorage.setItem(key, theme);localStorage.setItem(paletteKey, palette);saved = true; }
+  function persist(values = { theme, palette }) {
+    try { localStorage.setItem(key, values.theme);localStorage.setItem(paletteKey, values.palette);saved = true; }
     catch { saved = false; }
     sync();
+    return saved;
   }
   document.addEventListener("DOMContentLoaded", () => {
     const button = document.getElementById("theme-toggle");
@@ -47,10 +48,16 @@
     document.getElementById("web-color-theme")?.addEventListener("change", event => {
       if (!valid(event.target.value)) return;
       palette = event.target.value;applyTheme();
-      persist();
+      if (!globalThis.ccdxSettingsPreferences?.appearanceChanged()) persist();
     });
+    globalThis.ccdxDashboardTheme = {
+      snapshot: () => ({ theme, palette }), persist, sync,
+      read: () => ({ theme: localStorage.getItem(key) === "light" ? "light" : "dark", palette: valid(localStorage.getItem(paletteKey)) ? localStorage.getItem(paletteKey) : "green" }),
+      preview(values) { if (["light", "dark"].includes(values.theme)) theme = values.theme;if (valid(values.palette)) palette = values.palette;applyTheme();updateLabel();sync(); },
+    };
     globalThis.addEventListener?.("storage", event => {
       if (event.key !== paletteKey && event.key !== key) return;
+      if (globalThis.ccdxSettingsPreferences?.externalAppearance()) return;
       if (event.key === paletteKey) palette = valid(event.newValue) ? event.newValue : "green";
       else theme = event.newValue === "light" ? "light" : "dark";
       applyTheme();updateLabel();sync();

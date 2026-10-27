@@ -219,3 +219,17 @@ test("GitHub review settings share CLI effort filtering and preserve environment
   await assert.rejects(runtime.action({ action: "auto-review", provider: "github", model: "gpt-6.1-sol", effort: "low" }), /controlled by CCDX/);
   assert.equal(runtime.snapshot().github.preference.reasoningEffort, "high");await runtime.close();
 });
+
+test('a memory request keeps its explicit model and new source while an old turn is still in flight', async t => {
+ let release, entered;
+ const started=new Promise(resolve=>{entered=resolve;});
+ const memory={id:'gpt-5.6-luna',publisher:'OpenAI',supported_endpoints:['/responses']};
+ const s=setup(t,{modelCatalog:{data:[...catalog.data,memory]},githubRequest:async body=>{entered();await new Promise(resolve=>{release=resolve;});return completed(body.model,'old-turn');}});
+ await s.runtime.start();
+ const old=invokeAdapter(s.options,{body:{model:'gpt-6.1-sol',input:'old'},headers:{session_id:'old-thread'}});await started;
+ await choose(s.runtime);
+ const result=await invokeAdapter(s.options,{body:{model:memory.id,input:'memory work'},headers:{session_id:'memory-thread','x-openai-request-kind':'memory_consolidation'}});
+ assert.equal(result.status,200);assert.equal(s.calls.at(-1).provider,'m365');assert.equal(s.calls.at(-1).body.model,memory.id);
+ assert.equal(s.runtime.selection().m365.model,'gpt-6-sol');
+ release();assert.equal((await old).status,200);assert.equal(s.calls[0].provider,'github');
+});

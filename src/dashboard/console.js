@@ -44,6 +44,9 @@
     if (next !== "codex") sourceGeneration++;
     if (!["codex", "models"].includes(next) && dashboardRefresh.state("models").pending) dashboardRefresh.invalidate("models");
     for (const view of document.querySelectorAll("[data-view]")) view.hidden = view.dataset.view !== next;
+    const snapshot = dashboardRefresh.state(statusResourceKey()).value;
+    if (snapshot) render(snapshot);
+    void refreshStatus();
     globalThis.ccdxDashboardActivity?.visibilityChanged();
     globalThis.ccdxDashboardFlow?.visibilityChanged();
     for (const item of document.querySelectorAll("[data-route]")) {
@@ -58,6 +61,7 @@
     if (next === "usage") { void dashboardRefresh.refresh("usage");usageView.revealChart(); } else usageView.stopMotion();
     if (next === "requests") renderContext();
     if (next === "system") { void dashboardRefresh.refresh("animation");void dashboardRefresh.refresh("updates"); }
+    preferences?.render();
     syncAnimationPreview();
   }
   async function api(body) {
@@ -66,6 +70,10 @@
       ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(body?.operation === "account" ? 65000 : 15000) });
     const data = await response.json();if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`), { code: data.code });return data;
   }
+  const preferences = globalThis.ccdxDashboardPreferences?.create({ element: el, api, applied: applySettings, time,
+    selectAnimation: theme => animationView.select(theme),
+    refreshAnimation() { dashboardRefresh.invalidate("animation");if (current === "system") void dashboardRefresh.refresh("animation", { force: true }); } });
+  globalThis.ccdxSettingsPreferences = preferences;
   const states = { immediate: "effective_now", terminal_unavailable: "terminal_animation_unavailable_in_this_output_mode", next_start: "next_ccdx_start", next_call: "applies_to_new_calls", needs_setup: "setup_required",
     next_config_request: "next_configuration_request_cached_suggestions_may_remain", needs_app_relaunch: "reopen_the_client_to_finish", needs_service_restart: "restart_ccdx_to_finish" };
   const selectedSource = () => providerEntries.find(source => source.id === el("source-provider").value);
@@ -103,7 +111,7 @@
     syncReviewButton();
   }
   window.addEventListener("ccdx:providers", () => { syncSources();if (current === "codex") void loadSourceModels(); });
-  function applySettings(data) {
+  function applySettings(data, meta) {
     settings = data;
     const nightly = data.nightly_update;
     el("nightly-update").checked = nightly?.enabled === true;el("nightly-update").disabled = false;
@@ -164,13 +172,15 @@
       }
     }
     el("process-notice").textContent = data.terminal?.last_notice || "";
+    preferences?.sync(data, meta);
   }
   async function loadSettings() {
     if (settingsPending) return;
     settingsPending = true;
     el("terminal-color-theme").disabled = true;
     syncAccountControls();
-    try { applySettings(await api());settingsReadAt = time(Date.now());void globalThis.ccdxConnections?.load(); }
+    const readVersion = preferences?.version;
+    try { applySettings(await api(), { readVersion });settingsReadAt = time(Date.now());void globalThis.ccdxConnections?.load(); }
     catch (error) {
       for (const id of ["settings-note", ...(settingsViews.includes(current) ? ["page-settings-note"] : [])]) {
         label(el(id), settingsReadAt ? "showing_previous_data_updated_time" : "could_not_read_settings", { time: settingsReadAt });
@@ -206,7 +216,7 @@
         dashboardRefresh.invalidate("models", { clear: true });
         label(el("m365-account-note"), "company_account_checked");
       }
-      if (body.action !== "color_theme") { await dashboardRefresh.refresh("status", { force: true });await dashboardRefresh.refresh("auth", { force: true }); }
+      if (body.action !== "color_theme") { await refreshStatus();await dashboardRefresh.refresh("auth", { force: true }); }
     }
     catch (error) {
       if (settings) applySettings(settings);
@@ -223,9 +233,10 @@
     }
   }
   for (const input of document.querySelectorAll('[role=switch][id^="setting-"]')) input.addEventListener("change", () => {
+    if (preferences && input.closest('[data-view="system"]')) return;
     void change({ action: "preference", key: input.id.slice("setting-".length), value: input.checked }, input);
   });
-  el("terminal-color-theme").addEventListener("change", () => void change({ action: "color_theme", theme: el("terminal-color-theme").value }, el("terminal-color-theme")));
+  if (!preferences) el("terminal-color-theme").addEventListener("change", () => void change({ action: "color_theme", theme: el("terminal-color-theme").value }, el("terminal-color-theme")));
   el("save-history").addEventListener("click", () => void change({ action: "history_limit", mib: Number(el("history-limit").value) }, el("save-history")));
   el("clean-history").addEventListener("click", () => {
     if (window.confirm(globalThis.ccdxLanguage.format("clear_inactive_codex_conversation_data_older_continuation_ids_ma"))) void change({ action: "history_clean" }, el("clean-history"));
@@ -283,7 +294,7 @@
       model: el("source-model").value, ...(settings?.providers?.codex_provider === provider ? {} : {
         auto_review_model: el("source-review").value, auto_review_effort: el("source-review-effort").value || null }) } : {}) }, el("apply-source"));
   });
-  el("nightly-update").addEventListener("change", () => void change({ action: "nightly_update", enabled: el("nightly-update").checked }, el("nightly-update")));
+  if (!preferences) el("nightly-update").addEventListener("change", () => void change({ action: "nightly_update", enabled: el("nightly-update").checked }, el("nightly-update")));
   el("save-review").addEventListener("click", () => void change({ action: "provider", operation: "auto-review", provider: el("source-provider").value,
     model: el("source-review").value, auto_review_effort: el("source-review-effort").value || null }, el("save-review")));
   // Only the small in-memory status snapshot is read at this cadence. Catalogs
@@ -292,7 +303,7 @@
     clearTimeout(timer);if (stopped || document.visibilityState !== "visible" || !dashboardRefresh.automatic) return;
     timer = setTimeout(async () => {
       if (document.visibilityState === "visible" && dashboardRefresh.automatic) {
-        await dashboardRefresh.refresh("status", { force: true });
+        await refreshStatus();
         if (++ticks % 8 === 0) {
           await dashboardRefresh.refresh("auth", { force: true });
           if (settingsViews.includes(current)) await loadSettings();
@@ -303,7 +314,7 @@
   }
   window.addEventListener("hashchange", navigate);
   document.addEventListener("visibilitychange", () => {
-    if (!stopped && document.visibilityState === "visible" && dashboardRefresh.automatic) void dashboardRefresh.refresh("status", { force: true });
+    if (!stopped && document.visibilityState === "visible" && dashboardRefresh.automatic) void refreshStatus();
     schedule();
   });
   el("auto-refresh").addEventListener("click", schedule);

@@ -85,7 +85,7 @@ test("M365 never reuses another account's model cache or opaque replay identity"
   const p = createM365Provider({ home, auth: auth(), fetchImpl: async () => Response.json(catalog) });
   assert.equal(p.models("gpt").length, 0);await p.refresh();
   const plan = p.route({}, { upstreamModel: "gpt-6-sol", surface: "responses" });
-  assert.equal(plan.origin, "m365");assert.equal(plan.profile, `m365:${m365AccountKey(account)}`);
+  assert.equal(plan.origin, "m365");assert.equal(plan.profile, `m365:https://loki.delve.office.com:${m365AccountKey(account)}`);
   p.close();
 });
 
@@ -154,4 +154,17 @@ test("Claude aliases preserve effort and signed blocks; unsupported advertised e
   for (const body of sent) { assert.equal(body.model, entry.id);assert.deepEqual(body.messages[0].content, content); }
   await assert.rejects(p.client.messages({ model: "claude-opus-5-5", messages: [], output_config: { effort: "medium" } }), { code: "m365_effort_unavailable" });
   assert.equal(sent.length, 3);
+});
+
+test('M365 cache publication is account-and-origin bound; old environment files are preserved until success', async t => {
+  const home = fixture(t), paths = m365Paths({ home });writeM365Json(paths.account, account);
+  for (const service_origin of [undefined, 'https://df.loki.delve.office.com']) {
+    writeM365Json(paths.catalog, { account_key: m365AccountKey(account), service_origin, models: catalog, saved_at: Date.now() });
+    const before = fs.readFileSync(paths.catalog, 'utf8');
+    const p = createM365Provider({ home, auth: auth(), fetchImpl: async () => Response.json({}, { status: 403 }) });
+    assert.equal(p.catalog().length, 0);await assert.rejects(p.refresh());assert.equal(fs.readFileSync(paths.catalog, 'utf8'), before);p.close();
+  }
+  const p = createM365Provider({ home, auth: auth(), fetchImpl: async () => Response.json(catalog) });await p.refresh();p.close();
+  assert.equal(JSON.parse(fs.readFileSync(paths.catalog)).service_origin, 'https://loki.delve.office.com');
+  const cached = createM365Provider({ home, auth: auth() });assert.equal(cached.catalog().length, catalog.data.length);cached.close();
 });

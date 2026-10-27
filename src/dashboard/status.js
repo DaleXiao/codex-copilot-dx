@@ -1,5 +1,8 @@
 (() => {
   function create({ time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator }) {
+    const visible = node => !node?.closest?.('[data-view]')?.hidden;
+    const writeText = text;
+    text = (id, ...args) => { if (visible(element(id))) writeText(id, ...args); };
     let contextRequests = [];
     let contextCompactions = {};
     let failureSignature;
@@ -87,6 +90,7 @@
     }
     
     function renderFailures(recent, recentRequests = []) {
+      if (!visible(element("failures"))) return;
       const signature = JSON.stringify([element("failure-kind")?.value, recent, recentRequests]);
       if (signature === failureSignature) return;
       failureSignature = signature;
@@ -200,6 +204,14 @@
     }
     
     function render(data) {
+      if (data.scope === "summary") {
+        globalThis.ccdxDashboardActivity?.update(data.model_activity);
+        text("version", `v${data.version || "?"}`);
+        text("uptime", "pid_pid_uptime_duration", { pid: number(data.pid), duration: duration(data.uptime_ms) });
+        renderRuntimeUsage(data);
+        text("updated", "snapshot_time", { time: time(Date.now()) });
+        return;
+      }
       for (const source of data.providers?.connections?.providers || []) sourceNames.set(source.id, source.name);
       globalThis.ccdxConnections?.updateMemory?.(data.providers?.connections);
       globalThis.ccdxDashboardActivity?.update(data.model_activity);
@@ -237,7 +249,7 @@
       const used = Number(history.bytes || 0);
       text("history", `${mib(used)} / ${mib(limit)}`);
       text("history-detail", "entries_entries_trees_trees_misses_misses_evicted_evicted", { entries: number(history.entries), trees: number(history.tree_count), misses: number(history.lookup_misses), evicted: number(history.evicted_lookup_misses) });
-      element("history-meter").value = limit > 0 ? Math.min(100, Math.max(0, used / limit * 100)) : 0;
+      if (visible(element("history-meter"))) element("history-meter").value = limit > 0 ? Math.min(100, Math.max(0, used / limit * 100)) : 0;
     
       const image = data.image_generation;
       text("image", image ? "count_succeeded" : "not_initialized", { count: number(image?.succeeded) });
@@ -248,7 +260,7 @@
       const claude = data.providers?.claude || data.providers?.m365?.claude, claudeMetrics = claude?.requests?.performance;
       percentiles("claude-ttft-percentiles", claudeMetrics?.by_route?.messages?.ttft_ms);
       const sourceBody = element("source-requests-body");
-      if (sourceBody) {
+      if (sourceBody && visible(sourceBody)) {
         sourceBody.replaceChildren();
         const routes = { ...data.stream_performance?.by_route, ...claudeMetrics?.by_route };
         for (const [protocol, route] of Object.entries(routes)) for (const [source, stats] of Object.entries(route.by_provider || {})) {
@@ -269,7 +281,7 @@
       const kind = element("failure-kind")?.value || "issues";
       renderFailures(issueGroups[kind] || [], kind === "issues" ? recentRequests : []);
       renderContext({ ...data.stream_performance, recent_requests: recentRequests });
-      if (element("claude-route")) {
+      if (element("claude-route") && visible(element("claude-route"))) {
         element("claude-route").textContent = claude?.base_url || "—";
         const clientState = value => ({ configured: "configured", restored: "settings_restored", preserved: "existing_settings_kept", partially_preserved: "existing_settings_kept",
           not_installed: "not_installed", configuration_unavailable: "setup_unavailable" })[value] || "unknown";
@@ -280,18 +292,8 @@
           text(id, metric?.samples > 0 ? `${Number(metric.avg).toFixed(1)} ${unit} / ${metric.samples}` : "—");
         }
       }
-      if (element("runtime-usage")) {
-        const usage = data.runtime_usage;
-        text("runtime-usage", usage ? "records_usage_records_input_input_cache_read_cached_output_outpu" : "—",
-          usage ? { records: number(usage.records), input: number(usage.input_tokens), cached: number(usage.cached_input_tokens), output: number(usage.output_tokens), partial: usage.partial_records ? " ~" : "" } : {});
-        const rate = usage?.cache_hit_rate;
-        text("runtime-cache-hit", Number.isFinite(rate) && rate >= 0 && rate <= 1 ? `${usage.cache_hit_rate_partial ? "~" : ""}${(rate * 100).toFixed(1)}%` : "—");
-        element("process-state").textContent = `PID ${data.pid || "—"} / ${globalThis.location?.origin || ""}`;
-        text("process-memory", "rss_rss_heap_heap", { rss: mib(data.process?.rss_bytes), heap: mib(data.process?.heap_used_bytes) });
-        text("process-queues", "codex_body_admission_active_active_queued_queued_queue_limit_lim", {
-          active: number(data.admission?.activeRequests), queued: number(data.admission?.queued), limit: number(data.admission?.maxQueued) });
-      }
-      if (element("prediction-preference")) {
+      renderRuntimeUsage(data);
+      if (element("prediction-preference") && visible(element("prediction-preference"))) {
         const prediction = data.client_integrations?.prediction;
         text("prediction-preference", prediction ? prediction.configured ? "configured" : "not_configured" : "unknown");
         text("prediction-bridge", ({ running: "running_f4cca", recovering: "recovering", stopped: "stopped", unavailable: "unavailable_ca184" })[prediction?.bridge] || "unknown");
@@ -302,6 +304,21 @@
       }
       text("updated", "snapshot_time", { time: time(Date.now()) });
     }
+    function renderRuntimeUsage(data) {
+      if (element("runtime-usage") && visible(element("runtime-usage"))) {
+        const usage = data.runtime_usage;
+        text("runtime-usage", usage ? "records_usage_records_input_input_cache_read_cached_output_outpu" : "—",
+          usage ? { records: number(usage.records), input: number(usage.input_tokens), cached: number(usage.cached_input_tokens), output: number(usage.output_tokens), partial: usage.partial_records ? " ~" : "" } : {});
+        const rate = usage?.cache_hit_rate;
+        text("runtime-cache-hit", Number.isFinite(rate) && rate >= 0 && rate <= 1 ? `${usage.cache_hit_rate_partial ? "~" : ""}${(rate * 100).toFixed(1)}%` : "—");
+      }
+      if (element("process-state") && visible(element("process-state"))) {
+        element("process-state").textContent = `PID ${data.pid || "—"} / ${globalThis.location?.origin || ""}`;
+        text("process-memory", "rss_rss_heap_heap", { rss: mib(data.process?.rss_bytes), heap: mib(data.process?.heap_used_bytes) });
+        text("process-queues", "codex_body_admission_active_active_queued_queued_queue_limit_lim", {
+          active: number(data.admission?.activeRequests), queued: number(data.admission?.queued), limit: number(data.admission?.maxQueued) });
+      }
+    }
     
     function renderContext(performance) {
       if (performance !== undefined) {
@@ -309,7 +326,7 @@
         contextCompactions = performance?.by_route?.responses_compact?.terminal_outcomes?.totals || {};
       }
       const body = element("context-body");
-      if (!body) return;
+      if (!body || !visible(body)) return;
       text("context-note", "20_latest_finished_requests_compactions_completed_completed_inco", {
         completed: number(contextCompactions.completed), incomplete: number(contextCompactions.incomplete), failed: number(contextCompactions.failed),
       });

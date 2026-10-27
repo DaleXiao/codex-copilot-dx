@@ -7,16 +7,16 @@ import { createProxyAgent } from "../proxy-tunnel.mjs";
 import { loadRuntimeConfig } from "../runtime-config.mjs";
 import { m365HelperEnvironment } from "./m365-auth.mjs";
 import { m365ProxyFailure } from "./m365-network-diagnostic.mjs";
+import { M365_API_HOST as HOST, M365_API_BASE, M365_API_PATH } from "./m365-endpoint.mjs";
 
-const HOST = "df.loki.delve.office.com";
-const targetUrl = new URL(`https://${HOST}/api/v1/llmapi/models`);
+const targetUrl = new URL(`${M365_API_BASE}/models`);
 const fail = code => Object.assign(new Error(`Microsoft 365 network is unavailable (${code})`), { code: `m365_${code}`, statusCode: 503 });
 
 export function requestFetch(requestImpl, agent) {
   return (raw, init = {}) => new Promise((resolve, reject) => {
     let url;try { url = new URL(raw); } catch { reject(fail("target_invalid"));return; }
     if (url.protocol !== "https:" || url.hostname !== HOST || url.port || url.username || url.password || url.hash
-      || !url.pathname.startsWith("/api/v1/llmapi/") || !["GET", "POST", "HEAD"].includes(init.method || "GET")) { reject(fail("target_invalid"));return; }
+      || !url.pathname.startsWith(`${M365_API_PATH}/`) || !["GET", "POST", "HEAD"].includes(init.method || "GET")) { reject(fail("target_invalid"));return; }
     if (init.signal?.aborted) { reject(init.signal.reason);return; }
     const headers = Object.fromEntries(new Headers(init.headers));
     headers["accept-encoding"] = "identity";

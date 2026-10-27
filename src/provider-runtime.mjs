@@ -14,6 +14,7 @@ import { m365NetworkMessage } from "./providers/m365-network-diagnostic.mjs";
 import { createConnectionRuntime } from "./connection-runtime.mjs";
 import { accessSettingsPath, readAccessSettings } from "./access-settings.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
+import { M365_API_HOST } from "./providers/m365-endpoint.mjs";
 
 const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavailable (${reason}); GitHub routing was not substituted`),
   { code: reason, statusCode: 503 });
@@ -250,7 +251,7 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, githubCred
       if (closed || !enabled || source !== m365 || changingAccount) throw unavailable("m365_refresh_cancelled");
       reason = null;
       const eligible = new Set([...source.models("gpt"), ...source.models("claude")]);
-      return { source: "catalog", checkedAt: m365.snapshot().models.refreshed_at, upstreamHost: "Microsoft 365",
+      return { source: "catalog", checkedAt: m365.snapshot().models.refreshed_at, upstreamHost: M365_API_HOST,
         advertised: m365.catalog().length, models: publicModelCatalog(m365.catalog(), {
           selectable: model => eligible.has(model),
           clients: model => !eligible.has(model) ? [] : model.publisher?.toLowerCase() === "anthropic" ? ["claude_code", "claude_app"] : ["codex"],

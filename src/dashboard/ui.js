@@ -23,7 +23,9 @@ const usageView = globalThis.ccdxViewBoundary.create("usage-analytics", () => gl
 const { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay } = usageView;
 const loadAuth = () => dashboardRefresh.refresh("auth", { force: true });
 
-const refresh = () => dashboardRefresh.refresh("status", { force: true });
+const statusResourceKey = () => ["codex", "claude", "models", "usage", "requests", "checks"].includes((globalThis.location?.hash || "").slice(1)) ? "status" : "status-summary";
+const refreshStatus = () => dashboardRefresh.refresh(statusResourceKey(), { force: true });
+const refresh = refreshStatus;
 
 function animateRefresh() {
   const icon = element("status-icon");
@@ -39,7 +41,7 @@ element("refresh").addEventListener("click", () => {
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const animationView = globalThis.ccdxViewBoundary.create("animation-settings", () => globalThis.ccdxDashboardAnimation.create({ element, phrase, localize, text, reducedMotion,
-  getRefresh: () => dashboardRefresh, document }), ["apply", "load", "save", "sync", "stop"]);
+  getRefresh: () => dashboardRefresh, document }), ["apply", "load", "save", "sync", "stop", "select"]);
 const { apply: applyAnimation, load: loadAnimation, save: saveAnimation, sync: syncAnimationPreview, stop: stopAnimationPreview } = animationView;
 reducedMotion.addEventListener("change", () => { if (reducedMotion.matches) usageView.stopMotion(); });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "visible") usageView.stopMotion(); });
@@ -234,6 +236,16 @@ for (const [key, ids] of [["auth", ["account-authorization", "client-features", 
 }
 
 const updateView = globalThis.ccdxDashboardUpdates.create(viewHelpers);
+function statusState(state) {
+  if (state.error || !state.value) globalThis.ccdxDashboardActivity?.unavailable();
+  if ((state.error || !state.value) && statusResourceKey() === "status") globalThis.ccdxDashboardFlow?.unavailable();
+  text("connection", state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable");
+  element("connection").className = `badge ${state.pending ? "neutral" : state.error ? "bad" : "good"}`;
+  globalThis.ccdxIcons?.set(element("connection"), state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable",
+    state.pending && !state.value ? "unknown" : state.error ? "unavailable" : "running");
+  if (state.error) refreshTime(element("updated"), state);
+  for (const node of timestamps.get("status")) refreshTime(node, state);
+}
 const dashboardRefresh = globalThis.ccdxRefresh.createController({
   visible: () => document.visibilityState === "visible",
   onState: ({ pendingKeys }) => {
@@ -250,23 +262,24 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       state: updateView.state,
     },
     status: {
-      visible: () => true,
+      visible: () => statusResourceKey() === "status",
       load: async ({ signal }) => {
         const data = await readDashboard("/_ccdx/status", { signal, timeout: 5000 });
         if (data.ok !== true || data.name !== "codex-copilot-dx") throw new Error("Unexpected status response");
         return data;
       },
-      apply: render,
-      state: state => {
-        if (state.error || !state.value) globalThis.ccdxDashboardActivity?.unavailable();
-        if (state.error || !state.value) globalThis.ccdxDashboardFlow?.unavailable();
-        text("connection", state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable");
-        element("connection").className = `badge ${state.pending ? "neutral" : state.error ? "bad" : "good"}`;
-        globalThis.ccdxIcons?.set(element("connection"), state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable",
-          state.pending && !state.value ? "unknown" : state.error ? "unavailable" : "running");
-        if (state.error) refreshTime(element("updated"), state);
-        for (const node of timestamps.get("status")) refreshTime(node, state);
+      apply: data => { if (statusResourceKey() === "status") render(data); },
+      state: state => { if (statusResourceKey() === "status") statusState(state); },
+    },
+    "status-summary": {
+      visible: () => statusResourceKey() === "status-summary",
+      load: async ({ signal }) => {
+        const data = await readDashboard("/_ccdx/status?scope=summary", { signal, timeout: 5000 });
+        if (data.ok !== true || data.name !== "codex-copilot-dx") throw new Error("Unexpected status response");
+        return data;
       },
+      apply: data => { if (statusResourceKey() === "status-summary") render(data); },
+      state: state => { if (statusResourceKey() === "status-summary") statusState(state); },
     },
     auth: {
       visible: () => true,

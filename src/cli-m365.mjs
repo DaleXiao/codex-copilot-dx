@@ -40,7 +40,9 @@ export async function fetchActiveProviderModels({ control = providerControl, ...
   }
   const address = parseAdapterAddressOptions(options.env || process.env);
   const result = await control({ host: address.adapterHost, port: address.adapterPort, ...options, action: { action: "models", family: "gpt" } });
-  return { source: "catalog", upstreamHost: "Microsoft 365", advertised: result.models.length,
+  let upstreamHost = "Microsoft 365";
+  try { const origin = new URL(result.state?.m365?.service_origin);if (origin.protocol === "https:") upstreamHost = origin.hostname; } catch {}
+  return { source: "catalog", upstreamHost, advertised: result.models.length,
     models: result.models.map(model => ({ id: model.id, vendor: model.publisher, endpoints: ["responses"], preview: false })) };
 }
 

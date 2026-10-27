@@ -19,7 +19,8 @@ import { createM365ConversationGuard } from "./m365-conversation-accounts.mjs";
 import { catalogFailure, m365CatalogDiagnostic } from "./m365-catalog-diagnostic.mjs";
 import { m365NetworkDiagnostic } from "./m365-network-diagnostic.mjs";
 
-export const M365_API_BASE = "https://df.loki.delve.office.com/api/v1/llmapi";
+import { M365_API_BASE, M365_API_ORIGIN } from "./m365-endpoint.mjs";
+export { M365_API_BASE } from "./m365-endpoint.mjs";
 const SOFT_TTL_MS = 2 * 60 * 60 * 1000;
 const HARD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const protocolError = (code, message, statusCode = 400) => Object.assign(new Error(message), {
@@ -79,7 +80,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
   let networkDiagnostic = null, catalogDiagnostic = null;
   const registry = { models: null, source: "unavailable", cacheState: "none", cacheSavedAtMs: null,
     refreshInFlight: false, generation: 0, lastError: null, lastErrorAtMs: null };
-  const profile = () => account ? `m365:${m365AccountKey(account)}` : "m365:unavailable";
+  const profile = () => account ? `m365:${M365_API_ORIGIN}:${m365AccountKey(account)}` : "m365:unavailable";
   async function transport(signal) {
     if (network?.healthy()) return network.fetch;
     if (!networkFlight) {
@@ -103,7 +104,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
   try {
     account = accountOverride || readM365Account({ home });
     const saved = readM365Json(paths.catalog);
-    if (account && saved?.account_key === m365AccountKey(account) && Number.isFinite(saved.saved_at)
+    if (account && saved?.service_origin === M365_API_ORIGIN && saved.account_key === m365AccountKey(account) && Number.isFinite(saved.saved_at)
       && now() - saved.saved_at < HARD_TTL_MS) applyCatalog(saved.models, "cache", saved.saved_at);
   } catch { reason = "m365_cache_unavailable"; }
 
@@ -154,7 +155,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
       if (current !== generation || signal.aborted) throw m365Error("m365_refresh_cancelled");
       const savedAt = now();
       const nextAccount = { ...credential.account, ...(account?.history_isolation ? { history_isolation: true } : {}) };
-      if (persist) writeM365Binding(nextAccount, { account_key: m365AccountKey(nextAccount), saved_at: savedAt, models: value }, { home, expectedAccount: account });
+      if (persist) writeM365Binding(nextAccount, { account_key: m365AccountKey(nextAccount), service_origin: M365_API_ORIGIN, saved_at: savedAt, models: value }, { home, expectedAccount: account });
       account = nextAccount;
       applyCatalog(value, "live", savedAt);catalogDiagnostic = null;state = "ready";reason = null;registry.lastError = null;registry.lastErrorAtMs = null;
       try { await onCatalog(value); } catch { log("warn", "M365 models are ready; optional client configuration could not be updated"); }
@@ -252,10 +253,11 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     },
     commitSelection(expectedAccount) {
       if (!catalog || state !== "ready" || !account) throw m365Error("m365_not_ready");
-      writeM365Binding(account, { account_key: m365AccountKey(account), saved_at: catalogAt, models: catalog }, { home, expectedAccount });
+      writeM365Binding(account, { account_key: m365AccountKey(account), service_origin: M365_API_ORIGIN, saved_at: catalogAt, models: catalog }, { home, expectedAccount });
       persist = true;
     },
     snapshot: () => ({ ...auth.snapshot(), state, reason: reason || auth.snapshot().reason, account: account ? { login: account.login, tenant: account.tenant, selection_source: account.selection_source || "legacy" } : null,
+      service_origin: M365_API_ORIGIN,
       network: network?.snapshot() || null,
       network_diagnostic: networkDiagnostic ? { ...networkDiagnostic } : null,
       catalog_diagnostic: m365CatalogDiagnostic(catalogDiagnostic),

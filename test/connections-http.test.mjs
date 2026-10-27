@@ -14,6 +14,21 @@ import { PassThrough } from "node:stream";
 import { parse } from "smol-toml";
 
 process.env.CCDX_DISABLE_USAGE = "1";
+test("an ungranted Claude route returns exactly one error response and keeps the listener healthy", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-ungranted-http-")), writes = [];let handler;
+  const runtime = createProviderRuntime({ home, env: { CCDX_M365: "0" }, githubClient: {}, githubRegistry: { models: { data: [] } }, secretStore: { close() {} } });
+  const server = http.createServer((req, res) => {
+    let count = 0;const write = res.writeHead;res.writeHead = function(...args) { count++;return write.apply(this, args); };
+    res.once("finish", () => writes.push(count));handler(req, res);
+  });await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  handler = createAdapterHandler({ providerRuntime: runtime, dashboardOptions: { home, env: { CCDX_M365: "0" } } });
+  t.after(async () => { handler.cleanup?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${server.address().port}`, refused = await fetch(base + "/anthropic/v1/models");
+  assert.equal(refused.status, 503);assert.equal((await refused.json()).error.code, "ccdx_client_source_disabled");
+  const status = await fetch(base + "/_ccdx/status");assert.equal(status.status, 200);await status.text();
+  assert.deepEqual(writes, [1, 1]);
+});
+
 test("GitHub-only bindings retain an open native client's auth and expose only selected models", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-github-bindings-")), env = { CCDX_M365: "0" };
   const authFile = path.join(home, ".codex", "auth.json"), authBytes = JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "synthetic-only" } });

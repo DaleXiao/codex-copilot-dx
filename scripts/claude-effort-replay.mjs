@@ -17,15 +17,21 @@ async function startSharedGateway(provider) {
   await new Promise((resolve, reject) => { server.once("error", reject);server.listen(0, "127.0.0.1", resolve); });
   const port = server.address().port;
   const runtime = createProviderRuntime({ corePort: port, home, env: {}, platform: "darwin", githubClient: {},
-    createM365: () => provider, configureClients: () => ({ code: "configured", app: "configured" }) });
+    createM365: () => provider, configureClients: () => ({ code: "configured", app: "configured" }), configureClaude: () => ({ code: "configured", app: "configured" }) });
   handler = createAdapterHandler({ providerRuntime: runtime, codexClient: {} });
   try { await runtime.start(); }
   catch (error) { await runtime.close();server.closeAllConnections();await new Promise(resolve => server.close(resolve));throw error; }
   const state = runtime.snapshot();
   assert.equal(state.m365.claude.port, port);assert.equal(state.m365.claude.base_url, `http://127.0.0.1:${port}/anthropic`);
-  // Use the real generated local key, kept entirely inside this isolated home.
-  const { ensureM365GatewayKey } = await import("../src/m365-settings.mjs");
-  const localKey = ensureM365GatewayKey({ home, env: {} });
+  const ungranted = await fetch(`${state.m365.claude.base_url}/v1/models`);assert.equal(ungranted.status, 503);
+  assert.equal((await ungranted.json()).error.code, "ccdx_client_source_disabled");
+  // Match a user's explicit grant and model selection; discovery alone grants
+  // no client. Keep the generated per-client key inside this isolated home.
+  await runtime.manageConnections({ operation: "source_access", id: "m365", allowed: ["claude_code"] });
+  const c = runtime.connections().clients.find(client => client.id === "claude_code");
+  await runtime.manageConnections({ operation: "client", id: c.id, enabled: true, source: "m365", allowed: c.allowed });
+  const { readClientGatewayKeys } = await import("../src/client-gateway-keys.mjs");
+  const localKey = readClientGatewayKeys({ home, env: {} }).claude_code;
   const models = await fetch(`${state.m365.claude.base_url}/v1/models?limit=1000`, { headers: { "x-api-key": localKey } });
   assert.equal(models.status, 200);assert.equal((await models.json()).data[0].id, "claude-opus-5-5");
   return { port, key: localKey, close: async () => { await runtime.close();server.closeAllConnections();await new Promise(resolve => server.close(resolve)); } };

@@ -30,7 +30,8 @@ changed by ordinary app grants.
   atomic commits and stale-proof rejection protect rollback. Legacy proofs
   upgrade only after verification. Real pending/unmatched tool work, unknown
   source-owned state and foreign-account history retain their protections.
-  Rejections expose fixed, non-content source/prefix/tool reasons.
+  Rejections expose fixed, non-content source/prefix/tool reasons. Early Claude
+  denials terminate dispatch after their single response, preserving the listener.
 - Explicit M365 directory reads request network/HTTP revalidation even with a
   valid local model cache. The existing refresh cadence is unchanged. The source
   page summarizes online/cache origin, model totals, GPT/Claude counts and data
@@ -61,7 +62,7 @@ inference refusal without replay, and the directory-403 gateway error shape.
 
 ## Verification
 
-Local verification passed 1,656 tests: 1,646 passed, ten platform/optional skips
+Local verification passed 1,657 tests: 1,647 passed, ten platform/optional skips
 and zero failures, followed by HTTP/SSE smoke, performance budgets and pack checks.
 The 48 Chromium/WebKit bilingual/theme/narrow dashboard combinations and twelve
 application-connection combinations passed. Release receipts also record focused

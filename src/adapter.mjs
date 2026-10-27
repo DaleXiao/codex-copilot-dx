@@ -276,7 +276,7 @@ export function createAdapterHandler(options = {}) {
       const query = new URL(req.url, "http://localhost").search;
       req.url = pathname.slice("/anthropic".length) + query;
       try { return await options.providerRuntime.handleClaude(req, res); }
-      catch (error) { sendJsonError(res, error, error.statusCode || 502); }
+      catch (error) { return sendJsonError(res, error, error.statusCode || 502); }
       finally { req.url = original; }
     }
     if (req.method === "POST" && ["/v1/responses", "/v1/responses/compact"].includes(pathname)

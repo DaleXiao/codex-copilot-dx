@@ -150,3 +150,75 @@ test("prefix migration preserves user-edited routes and rejects arbitrary base p
   assert.deepEqual(read(paths.code), code);assert.deepEqual(read(paths.profile), profile);
   assert.throws(() => configureClaudeClients({ ...options, baseUrl: "http://127.0.0.1:2026/arbitrary" }), /gateway must use/);
 });
+
+function contextModel(id, window = 1000000) {
+  return { id, capability: { values: { context_window: window, reasoning_efforts: ["low", "high", "max"] } } };
+}
+
+test("App-owned 1M choices and JSON formatting do not block adding managed models on any platform", t => {
+  for (const platform of ["darwin", "win32", "linux"]) {
+    const { options } = fixture(t), input = { ...options, platform, client: "claude_app", models: [contextModel("claude-sonnet-5.5"), contextModel("claude-opus-5.5")] }, paths = claudeClientPaths(input);
+    configureClaudeClients(input);
+    const profile = read(paths.profile), original = JSON.parse(profile.inferenceModels);
+    assert.ok(original.every(model => model.prefer1m === true));
+    original[0].prefer1m = false;
+    profile.inferenceModels = JSON.stringify(original, null, 2);write(paths.profile, profile);
+    const result = configureClaudeClients({ ...input, models: [...input.models, contextModel("claude-haiku-5.5")] });
+    assert.equal(result.app, "configured");assert.equal(result.changed, true);
+    const after = JSON.parse(read(paths.profile).inferenceModels);
+    assert.deepEqual(after.slice(0, original.length), original);
+    assert.equal(after.at(-1).name, "claude-haiku-5-5");assert.equal(after.at(-1).prefer1m, true);
+    assert.equal(read(paths.profile).inferenceGatewayApiKey, input.apiKey);
+    assert.equal(configureClaudeClients({ ...input, models: [...input.models, contextModel("claude-haiku-5.5")] }).changed, false);
+  }
+});
+
+test("an already-correct manual model recovery updates prior ownership without rewriting the App file", t => {
+  const { options, paths } = fixture(t), input = { ...options, client: "claude_app", models: [contextModel("claude-opus-5.5")] };
+  configureClaudeClients(input);
+  const journalPath = m365Paths(input).ownership, oldJournal = read(journalPath), record = oldJournal.operations.find(op => op.file === paths.profile && op.keys.join(".") === "inferenceModels");
+  const originalBefore = structuredClone(record.before);
+  record.after = JSON.stringify(JSON.parse(record.after).map(({ prefer1m, ...model }) => model));write(journalPath, oldJournal);
+  const added = { name: "claude-sonnet-5-5", supports1m: true, maxEffort: "max", prefer1m: true };
+  const profile = read(paths.profile);profile.inferenceModels = JSON.stringify([...JSON.parse(profile.inferenceModels), added], null, 2);write(paths.profile, profile);
+  const bytes = fs.readFileSync(paths.profile);
+  const wanted = { ...input, models: [...input.models, contextModel("claude-sonnet-5.5")] };
+  assert.equal(configureClaudeClients(wanted).app, "configured");assert.deepEqual(fs.readFileSync(paths.profile), bytes);
+  const adopted = read(journalPath).operations.find(op => op.file === paths.profile && op.keys.join(".") === "inferenceModels");
+  assert.deepEqual(adopted.before, originalBefore);assert.equal(adopted.after, profile.inferenceModels);
+  assert.equal(configureClaudeClients({ ...wanted, models: [...wanted.models, contextModel("claude-haiku-5.5")] }).app, "configured");
+  assert.equal(JSON.parse(read(paths.profile).inferenceModels).length, 3);
+});
+
+test("real App model edits, invalid preferences and malformed model lists retain strict protection", t => {
+  for (const edit of [
+    entries => { entries[0].labelOverride = "My name";return entries; },
+    entries => { entries[0].maxEffort = "low";return entries; },
+    entries => { entries[0].prefer1m = "true";return entries; },
+    entries => [...entries, entries[0]],
+  ]) {
+    const { options, paths } = fixture(t), input = { ...options, client: "claude_app", models: [contextModel("claude-opus-5.5")] };
+    configureClaudeClients(input);
+    const profile = read(paths.profile);profile.inferenceModels = JSON.stringify(edit(JSON.parse(profile.inferenceModels)));write(paths.profile, profile);
+    const bytes = fs.readFileSync(paths.profile);
+    assert.equal(configureClaudeClients({ ...input, models: [...input.models, contextModel("claude-sonnet-5.5")] }).app, "partially_preserved");
+    assert.deepEqual(fs.readFileSync(paths.profile), bytes);
+  }
+  const { options, paths } = fixture(t);configureClaudeClients(options);
+  const profile = read(paths.profile);profile.inferenceModels = "broken JSON";write(paths.profile, profile);
+  assert.equal(configureClaudeClients({ ...options, models: [...options.models, contextModel("claude-sonnet-5.5")] }).app, "partially_preserved");
+  assert.equal(read(paths.profile).inferenceModels, "broken JSON");
+});
+
+test("new 1M-only choices require declared support; model order and non-model ownership do not become permissive", t => {
+  const { options, paths } = fixture(t), input = { ...options, client: "claude_app", models: [contextModel("claude-opus-5.5", 200000), { id: "claude-sonnet-5.5" }] };
+  configureClaudeClients(input);
+  assert.ok(JSON.parse(read(paths.profile).inferenceModels).every(model => !Object.hasOwn(model, "prefer1m")));
+  const journalPath = m365Paths(input).ownership, before = read(journalPath).operations.find(op => op.file === paths.profile && op.keys.join(".") === "inferenceModels").after;
+  const profile = read(paths.profile);profile.inferenceModels = JSON.stringify(JSON.parse(profile.inferenceModels).toReversed());write(paths.profile, profile);
+  configureClaudeClients(input);
+  assert.equal(read(journalPath).operations.find(op => op.file === paths.profile && op.keys.join(".") === "inferenceModels").after, before, "A real user reorder must not be adopted as managed");
+  assert.equal(configureClaudeClients({ ...input, models: [...input.models, contextModel("claude-haiku-5.5")] }).app, "partially_preserved");
+  profile.inferenceGatewayApiKey = "user-key";write(paths.profile, profile);
+  assert.equal(configureClaudeClients(input).app, "preserved");assert.equal(read(paths.profile).inferenceGatewayApiKey, "user-key");
+});

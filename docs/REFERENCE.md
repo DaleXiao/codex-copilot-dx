@@ -373,6 +373,26 @@ optional image MCP/skill/API remains separately configured and off by default.
 
 ### Claude gateway and client ownership
 
+Claude App ordinary model synchronization compares the model-list JSON by its
+structure. The App-owned boolean `prefer1m` may change without blocking managed
+model additions or removals; its explicit true/false value is preserved by exact
+model identity while 1M support remains declared. New entries with declared 1M
+support default to `prefer1m: true`, so the App shows one 1M option rather than
+separate standard/1M rows. Unknown or smaller windows are not promoted to 1M.
+Names, display overrides, effort caps, unknown fields and meaningful model order
+changes retain strict ownership protection. Invalid JSON, duplicate identities or
+invalid preference types are preserved rather than rewritten.
+
+When a prior manual recovery already exactly matches the generated selected list,
+a previous ownership record may be refreshed without rewriting the App profile.
+Surviving old entries must retain their non-preference fields and relative order;
+the original restoration value is kept. An unowned model list is not claimed just
+because it happens to match. Non-model fields and restoration keep their existing
+strict ownership checks. Restart the App normally if its loaded model menu is
+older than the saved profile. Source/key changes in an existing conversation still
+require a new conversation; this patch does not relax that isolation.
+
+
 Company-account history is isolated. `conversations.json` stores at most 1024 hashes of conversation identifiers (or the first user item when no native identifier exists) and their account fingerprints; no messages, raw session IDs or tokens are stored there. Each new conversation writes its ownership once; known conversations use memory. After changing accounts, known foreign conversations are refused before forwarding. Unknown requests containing old history are also refused, including after restart; use a new conversation. Clients without stable conversation IDs can collide when their first user item is identical, so supply a unique native session ID. Evicted/unrecognized history fails closed after a switch. The history-isolation marker is saved with the binding and survives token renewal. Removing the M365 profile clears this ownership file, but never removes system sign-in or usage history.
 
 Account selection stages the new authorization/catalog before replacing the old provider. Catalog and binding writes use the existing locked atomic writer with restoration on failure; this is not a crash/power-loss transaction. Client configuration remains a separate readiness state: its failure does not claim that account authorization failed or overwrite custom/managed fields. Previously saved model preferences are not substituted when the new account lacks those models.
@@ -1316,7 +1336,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.26/codex-copilot-dx-1.2.26.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.27/codex-copilot-dx-1.2.27.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 

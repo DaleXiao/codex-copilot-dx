@@ -87,6 +87,33 @@ function setOperation(snapshot, operation, value) {
   setAt(snapshot, operation.keys, { exists: true, value: next });
 }
 
+function parsedAppModels(value) {
+  try {
+    if (typeof value !== "string") return null;
+    const models = JSON.parse(value), names = new Set();
+    if (!Array.isArray(models)) return null;
+    for (const model of models) {
+      if (!model || typeof model !== "object" || Array.isArray(model) || typeof model.name !== "string" || !model.name || names.has(model.name)
+        || Object.hasOwn(model, "prefer1m") && typeof model.prefer1m !== "boolean") return null;
+      names.add(model.name);
+    }
+    return models;
+  } catch { return null; }
+}
+const withoutAppPreference = models => models.map(({ prefer1m, ...model }) => model);
+function appModelsOwned(current, previous, desired, alreadyDesired) {
+  const actual = parsedAppModels(current), recorded = parsedAppModels(previous);
+  if (!actual || !recorded) return false;
+  if (isDeepStrictEqual(withoutAppPreference(actual), withoutAppPreference(recorded))) return true;
+  // A prior manual recovery may already equal the selected generated list.
+  // Adopt only if surviving old entries retain their fields and relative order.
+  const selected = alreadyDesired && parsedAppModels(desired);
+  if (!selected) return false;
+  const oldNames = new Set(recorded.map(model => model.name)), wanted = new Set(selected.map(model => model.name));
+  return isDeepStrictEqual(withoutAppPreference(actual.filter(model => oldNames.has(model.name))),
+    withoutAppPreference(recorded.filter(model => wanted.has(model.name))));
+}
+
 export function reconcileClaudeConfiguration(operations, { restore = false, ...options } = {}) {
   const paths = claudeClientPaths(options), allowed = new Set(Object.values(paths)), journalPath = m365Paths(options).ownership;
   fs.mkdirSync(path.dirname(journalPath), { recursive: true, mode: 0o700 });
@@ -122,10 +149,22 @@ export function reconcileClaudeConfiguration(operations, { restore = false, ...o
         setOperation(state.next, operation, desired);
         nextJournal.operations = nextJournal.operations.filter(op => !(op.file === operation.file && isDeepStrictEqual(op.keys, operation.keys) && op.itemId === operation.itemId));
       } else {
-        if (isDeepStrictEqual(current, desired)) continue;
+        const modelField = operation.file === paths.profile && operation.keys.join(".") === "inferenceModels";
+        const currentModels = modelField && parsedAppModels(current.value), desiredModels = modelField && parsedAppModels(desired.value);
+        const alreadyDesired = isDeepStrictEqual(current, desired)
+          || Boolean(currentModels && desiredModels && isDeepStrictEqual(currentModels, desiredModels));
+        const owned = previous && (isDeepStrictEqual(current, { exists: true, value: previous.after })
+          || modelField && current.exists && appModelsOwned(current.value, previous.after, desired.value, alreadyDesired));
+        if (alreadyDesired) {
+          if (modelField && owned && previous.after !== current.value) {
+            nextJournal.operations = nextJournal.operations.map(op => op.file === operation.file
+              && isDeepStrictEqual(op.keys, operation.keys) && op.itemId === operation.itemId ? { ...op, after: current.value } : op);
+          }
+          continue;
+        }
         const replaceMode = operation.keys.join(".") === "deploymentMode" && [paths.normal, paths.threep].includes(operation.file)
           && current.value === "1p";
-        if (current.exists && !replaceMode && (!previous || !isDeepStrictEqual(current, { exists: true, value: previous.after }))) { skipped.push(operation.file);continue; }
+        if (current.exists && !replaceMode && !owned) { skipped.push(operation.file);continue; }
         const entry = { file: operation.file, keys: operation.keys, ...(operation.itemId ? { itemId: operation.itemId } : {}),
           before: previous?.before || current, after: operation.value };
         setOperation(state.next, operation, desired);
@@ -220,7 +259,11 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
         const name = typeof entry === "string" ? entry : entry?.name;
         return [typeof name === "string" ? claudeClientModelId(name) : "", index];
       }));
-      const desktopEntries = desktopAliases ? claudeModelEntries(models, { desktopAliases }) : entries;
+      const previousByName = new Map((Array.isArray(previousModels) ? previousModels : []).filter(model => model && typeof model === "object").map(model => [model.name, model]));
+      const desktopEntries = (desktopAliases ? claudeModelEntries(models, { desktopAliases }) : entries).map(entry => {
+        const previous = previousByName.get(entry.name);
+        return entry.supports1m ? { ...entry, prefer1m: typeof previous?.prefer1m === "boolean" ? previous.prefer1m : true } : entry;
+      });
       for (let index = 0; index < models.length; index++) {
         const old = order.get(claudeClientModelId(models[index].id));
         if (old !== undefined && !order.has(desktopEntries[index].name)) order.set(desktopEntries[index].name, old);

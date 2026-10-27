@@ -188,6 +188,15 @@ absence and policy refusal do not disable GitHub.
 
 `providers/m365-network-diagnostic.mjs` is a small pure projection of fixed proxy failure codes, source and stage, shared by transport, provider state, protected dashboard routes and CLI. Raw error chains/settings never cross that boundary. M365 retains existing outer error categories; the source runtime forwards the bounded diagnostic, and existing bilingual renderers expose a readable explanation with technical details. Startup uses the same fixed English explanation. Refresh failures retain last-good catalogs and never change the selected provider; successful transport creation clears the setup diagnostic. No new service, storage, dependency, route fallback or provider retry is introduced.
 
+`claude-client-config.mjs` treats only the typed App-owned `prefer1m` flag as a
+mutable preference during ordinary model-list synchronization. The generated list
+keeps that flag per exact model name and defaults declared 1M entries to one 1M
+choice. Structural comparison tolerates JSON formatting, but not changed managed
+fields or model ordering. Already-desired manual recovery can refresh an existing
+ownership record only when surviving recorded entries remain unchanged apart from
+that preference. Its original `before` value stays intact; it does not claim an
+unowned field or broaden restoration, route, key or organization-policy authority.
+
 `claude-client-lifecycle.mjs` owns configuration reconciliation and restore state, independently from source auth/catalog code. It checks lifecycle/profile validity after asynchronous policy inspection and preserves the existing field-ownership writer.
 Claude handler/configuration readiness is also separate from M365 provider
 readiness. A Claude setup failure or a GPT-only catalog cannot block the explicitly

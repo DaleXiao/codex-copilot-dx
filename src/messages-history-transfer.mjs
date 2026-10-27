@@ -16,7 +16,9 @@ const fail = (code, message) => { throw Object.assign(new Error(message), { code
 const invalidState = () => fail("ccdx_history_transfer_state_invalid", "History transfer records could not be read. Existing records and conversation were kept.");
 
 // Only a locally prepared request can carry this grant; HTTP fields cannot set it.
-export const messagesHistoryTransferGrant = body => grants.get(body);
+export const messagesHistoryTransferGrant = body => {
+  const grant = grants.get(body);return grant?.active ? grant : undefined;
+};
 export function messagesTransferPath(options = {}) {
   return path.join(path.dirname(accessSettingsPath(options)), "conversation-transfers.json");
 }
@@ -115,7 +117,8 @@ export function createMessagesHistoryTransfer(options = {}) {
           ? entry.count : body.messages.length;
         project(body, count);
       }
-      grants.set(body, { profile, noncommitting: true, initial });
+      const grant = { profile, noncommitting: true, initial, active: true };grants.set(body, grant);
+      const checkpoint = countTokens ? null : { owner, count: body.messages.length, prefix: digest(body.messages) };
       let toolLease, committed = false;
       return { handled: true, commit(state) {
         // A no-history model probe must not pin the conversation. An actual
@@ -123,22 +126,22 @@ export function createMessagesHistoryTransfer(options = {}) {
         if (countTokens || !state?.tool || committed) return;
         const lease = active.get(key);
         if (lease && lease.owner !== owner) fail("ccdx_history_transfer_busy", "Wait for the current response to finish before switching sources.");
-        save(key, { owner, count: body.messages.length, prefix: digest(body.messages) });committed = true;
+        save(key, checkpoint);committed = true;
         toolLease = lease || { owner, count: 0 };toolLease.count++;active.set(key, toolLease);
       }, release() {
-        grants.delete(body);if (toolLease && --toolLease.count === 0) active.delete(key);toolLease = null;
+        grant.active = false;if (toolLease && --toolLease.count === 0) active.delete(key);toolLease = null;
       } };
     }
     const lease = active.get(key);
     if (lease && lease.owner !== owner) fail("ccdx_history_transfer_busy", "Wait for the current response to finish before switching sources.");
-    let candidate = null, removed = 0;
+    let candidate = null, removed = 0, grant;
     if (changed || entry) {
       let count;
       if (!changed && body.messages.length >= entry.count && digest(body.messages.slice(0, entry.count)) === entry.prefix) count = entry.count;
       else {
         checkHistory(body, false);count = body.messages.length;candidate = { owner, count, prefix: digest(body.messages) };
       }
-      removed = project(body, count);grants.set(body, { profile, noncommitting: false, initial });
+      removed = project(body, count);grant = { profile, noncommitting: false, initial, active: true };grants.set(body, grant);
     }
     const current = lease || { owner, count: 0 };current.count++;active.set(key, current);
     let released = false, committed = false;
@@ -148,7 +151,7 @@ export function createMessagesHistoryTransfer(options = {}) {
       committed = true;
       if (candidate && changed) options.onTransfer?.({ removed_thinking: removed });
     }, release() {
-      if (released) return;released = true;grants.delete(body);
+      if (released) return;released = true;if (grant) grant.active = false;
       if (--current.count === 0) active.delete(key);
     } };
   } };

@@ -51,9 +51,9 @@ The user accepted an isolated runtime prototype in a real old Claude App
 conversation: DeepSeek API to M365 Claude and back both succeeded. That result
 establishes this specific conversation/path, not every model or capability.
 The formal implementation adds persistent checkpoints, output-time commit and
-leases. Local verification passed 1,643 tests: 1,633 passed, ten platform/optional
+leases. Local verification passed 1,644 tests: 1,634 passed, ten platform/optional
 skips, zero failures, followed by HTTP/SSE smoke, performance budgets and pack
-checks. Seventy-five focused checks passed with one platform skip. A real Codex
+checks. Seventy-six focused checks completed: 75 passed and one platform skip. A real Codex
 runtime passed five isolated startup/cache states, ChatGPT auth, complete first
 model lists and old-session resume against synthetic providers. Service handoff,
 catalog-outage retention and rollback preserved config/auth and old response IDs.

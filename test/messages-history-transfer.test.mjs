@@ -7,6 +7,7 @@ import { createConversationSourceGuard } from "../src/conversation-source-guard.
 import { createMessagesHistoryTransfer, messagesTransferPath } from "../src/messages-history-transfer.mjs";
 import { createM365ConversationGuard } from "../src/providers/m365-conversation-accounts.mjs";
 import { startClaudeGateway } from "../src/claude-gateway.mjs";
+import { execFileSync } from "node:child_process";
 
 const user = content => ({ role: "user", content });
 const body = () => ({ model: "model-two", max_tokens: 32, messages: [user("Remember PRIVATE-ALPHA"),
@@ -82,6 +83,23 @@ test("clients without the transfer policy retain their original source guard", t
   f.prepare("codex-one", value, { client: "codex", strict: true });
   assert.throws(() => f.prepare("codex-two", value, { client: "codex", strict: true }), { code: "ccdx_conversation_source_changed" });
   assert.equal(fs.existsSync(f.file), false);
+});
+
+test("an active transfer plan does not retain the admitted request body", t => {
+  const f = fixture(t), moduleUrl = new URL("../src/messages-history-transfer.mjs", import.meta.url).href;
+  execFileSync(process.execPath, ["--expose-gc", "--input-type=module", "-e", `
+    import { createMessagesHistoryTransfer } from ${JSON.stringify(moduleUrl)};
+    const policy = createMessagesHistoryTransfer({ home: ${JSON.stringify(f.options.home)}, env: {} });
+    let reference;
+    (() => {
+      const body = { messages: [{ role: 'user', content: 'A'.repeat(5 * 1024 * 1024) }, { role: 'assistant', content: 'B' }, { role: 'user', content: 'C' }] };
+      reference = new WeakRef(body);
+      globalThis.heldPlan = policy.prepare({ key: 'a'.repeat(64), owner: 'b'.repeat(64), previousOwner: 'c'.repeat(64), profile: 'target', body });
+    })();
+    for (let i = 0; i < 30; i++) { await new Promise(setImmediate);global.gc(); }
+    if (reference.deref()) throw Error('A streaming plan retained its full request body');
+    globalThis.heldPlan.release();
+  `], { timeout: 10000, stdio: "pipe" });
 });
 
 test("switching before a first prompt cannot strand the new model's first tool turn", t => {

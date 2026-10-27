@@ -284,10 +284,10 @@ test("strict policy is preserved by default, with no retry or success on failure
 });
 
 test("only a confirmed npm remote-policy refusal retries the pinned GitHub version with an offline complete package", async () => {
-  for (const code of ["EALLOWREMOTE", "EINTEGRITY", "E403"]) {
+  for (const platform of ["darwin", "win32", "linux"]) for (const code of ["EALLOWREMOTE", "EINTEGRITY", "E403"]) {
     const calls = [], events = [], output = outputBuffer(false), downloads = [];
-    const target = `${process.platform}-${process.arch}${process.platform === "linux" ? process.report.getReport().header.glibcVersionRuntime ? "-glibc" : "-musl" : ""}`;
-    const task = runPackageUpdateCommand({ source: "github", output: output.stream, fetchImpl: fetchRelease,
+    const target = `${platform}-${process.arch}${platform === "linux" ? process.report.getReport().header.glibcVersionRuntime ? "-glibc" : "-musl" : ""}`;
+    const task = runPackageUpdateCommand({ source: "github", platform, output: output.stream, fetchImpl: fetchRelease,
       downloadReleaseFn: async (tag, options) => {
         downloads.push({ tag, complete: options.complete === true });
         if (options.complete) assert.deepEqual(events, ["rollback"]);
@@ -304,8 +304,8 @@ test("only a confirmed npm remote-policy refusal retries the pinned GitHub versi
       },
     });
     if (code === "EALLOWREMOTE") {
-      await task;assert.equal(calls.length, 2);assert.equal(calls[1].includes("--offline"), true);
-      assert.equal(calls[1].includes("--ignore-scripts"), true);assert.deepEqual(events, ["rollback", "commit"]);
+      await task;assert.equal(calls.length, 2);assert.match(calls[1].join(" "), /(?:^|\s)--offline(?:\s|$)/);
+      assert.match(calls[1].join(" "), /(?:^|\s)--ignore-scripts(?:\s|$)/);assert.deepEqual(events, ["rollback", "commit"]);
       assert.deepEqual(downloads, [{ tag: "v0.9.19", complete: false }, { tag: "v0.9.19", complete: true }]);
     } else { await assert.rejects(task, /status 1/);assert.equal(calls.length, 1);assert.equal(downloads.length, 1); }
     assert.ok(calls.every(args => !args.some(arg => arg.includes("--allow-remote"))));

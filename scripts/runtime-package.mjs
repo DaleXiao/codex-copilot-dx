@@ -38,7 +38,13 @@ try {
   // The official Broker ships several OS/architecture binaries in one package.
   const native = path.join(stage, "node_modules/@azure/msal-node-runtime/dist"), keep = { darwin: "macos", win32: "windows", linux: "linux" }[process.platform];
   for (const system of ["macos", "windows", "linux"]) if (system !== keep) fs.rmSync(path.join(native, system), { recursive: true, force: true });
-  if (process.platform !== "linux") for (const arch of ["x64", "arm64", "x86"]) if (arch !== process.arch) fs.rmSync(path.join(native, keep, arch), { recursive: true, force: true });
+  if (process.platform !== "linux") {
+    for (const arch of ["x64", "arm64", "x86"]) if (arch !== process.arch) fs.rmSync(path.join(native, keep, arch), { recursive: true, force: true });
+  } else {
+    for (const distribution of fs.readdirSync(path.join(native, "linux"), { withFileTypes: true }).filter(entry => entry.isDirectory())) {
+      for (const arch of ["x64", "arm64", "x86"]) if (arch !== process.arch) fs.rmSync(path.join(native, "linux", distribution.name, arch), { recursive: true, force: true });
+    }
+  }
   const metadata = { ...pkg, bundleDependencies: required, os: [process.platform], cpu: [process.arch],
     ccdx_runtime: { schema: 1, target, lock_sha256: createHash("sha256").update(fs.readFileSync(path.join(root, "package-lock.json"))).digest("hex") } };
   fs.writeFileSync(path.join(stage, "package.json"), JSON.stringify(metadata, null, 2) + "\n");

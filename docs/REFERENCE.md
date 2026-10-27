@@ -149,6 +149,8 @@ Temporarily unavailable selected models remain visible in the application editor
 Saving them fails without changing prior settings; refresh the catalog or explicitly
 clear the affected selection. A missing directory entry never means deselection.
 
+GitHub catalog reads in Model sources share the running model registry and endpoint cache with Codex. A successful read updates available candidates without selecting new models, changing defaults or rewriting client files. Concurrent reads join one refresh. An explicit failed refresh remains an error while the prior catalog is retained; an account change during the read prevents publication under the new identity.
+
 A manual Codex provider includes an authenticated `model_catalog_url` on the same
 listener. Native app-server catalogs list configured names; the App may still use
 its custom-provider UI for non-GitHub selections. Unknown names
@@ -1183,7 +1185,7 @@ Opening Settings reads `GET /_ccdx/ui/updates`, protected by the existing loopba
 
 Failed/rate-limited checks never claim that the installed version is latest. Last-known release details remain labeled as such, separate from the latest check attempt. A failed current-tag date lookup does not hide an otherwise verified available update. The startup web-redirect check remains unchanged and independent of this REST check. If npm/network settings cannot be read or company policy blocks GitHub, the version card reports the check as unavailable.
 
-Expand the recovery instructions to choose macOS Terminal or Windows PowerShell. Commands download the version-pinned Release installer into a unique temporary directory and remove that directory afterward. They use the newer of the running version and last-known stable release, falling back to the running version if no release is known; stale metadata cannot select a downgrade. Installers retain the documented no-Git, minimum-runtime, rollback and configured-registry behavior. Windows instructions keep the current execution policy; if company policy blocks scripts, use its approved installation method. Dependencies still require the configured npm registry.
+Expand the recovery instructions to choose macOS Terminal or Windows PowerShell. Commands download the version-pinned Release installer into a unique temporary directory and remove that directory afterward. They use the newer of the running version and last-known stable release, falling back to the running version if no release is known; stale metadata cannot select a downgrade. Installers retain the documented no-Git, minimum-runtime, rollback and configured-registry behavior. Windows instructions keep the current execution policy; if company policy blocks scripts, use its approved installation method. The current installer prefers a complete platform package and installs it offline; source-only old releases require the configured registry.
 
 Model-list failures name the selected source, retain its last successful list when available, and distinguish that list's timestamp from the failed check. Expand Check details for the bounded public reason, source, available HTTP status and check time. A retry time is shown only when the source supplies an actual retry delay; no new retry or automatic provider failover is added. Existing diagnostic redaction and size limits remain.
 
@@ -1279,7 +1281,7 @@ channel or automatically grants remote-download permission. Each asset has a
 60-second download deadline and bounded size (64 KiB manifest, 16 MiB package,
 64 MiB decompressed metadata scan). The checksum comes from the same HTTPS
 release; it detects corrupt/mismatched files and is not a separate signature.
-Dependencies still use npm's configured registry, including a company mirror.
+Source packages use npm's configured registry, including a company mirror. A confirmed EALLOWREMOTE in a GitHub update permits one verified complete-package attempt offline, without changing that registry or policy.
 This is not a fully offline or registry-free distribution.
 
 Windows runs `npm.cmd` through system `cmd.exe` with AutoRun and delayed expansion
@@ -1320,8 +1322,17 @@ installs `codex-copilot-dx@latest`; it never silently switches to GitHub.
 npm policy is read using bounded named global fields, without printing credentials.
 An unrelated project's `.npmrc` cannot grant permission. npm 12's
 `allow-remote=none` can reject a mirror's cross-origin dependency URL with
-`EALLOWREMOTE`. Only if company policy permits and you trust this entire package
-tree, use the explicit one-install exception:
+`EALLOWREMOTE`. GitHub updates restore the previous package, then try one
+same-version complete platform package from the official Release. Its SHA-256,
+version, platform marker and bundled dependency declaration must validate before
+an offline installation. Missing/corrupt complete assets stop the fallback;
+authentication, integrity and other npm errors do not trigger it. Nightly updates
+perform this fallback in their candidate directory before any service handoff.
+No registry, proxy, CA, download permission or saved client selection is changed.
+Explicit npm-source updates keep their selected source and do not silently use GitHub.
+
+If the complete package is unavailable, only if company policy permits and you
+trust this entire package tree, use the explicit one-install exception:
 
 ```sh
 ccdx update github --allow-remote
@@ -1329,14 +1340,14 @@ ccdx update npm --allow-remote
 ```
 
 This grants URL downloads throughout that installation's dependency tree, not a
-hostname allowlist. It does not change `.npmrc`, add a retry, allow every script
+hostname allowlist. It does not change `.npmrc`, add further retries, allow every script
 or override other administrator policy. Older npm receives no unsupported flag.
 Unknown support prevents an explicitly requested exception from starting.
 
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.29/codex-copilot-dx-1.2.29.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.30/codex-copilot-dx-1.2.30.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1396,6 +1407,16 @@ choose a writable prefix without `%` using `npm_config_prefix`. Unicode, spaces,
 `&` and `!` are covered, including a legacy console code page. This avoids shipping
 an additional native executable just to bypass the shell's path parsing.
 No install hook is added to the npm package.
+
+The current verified bootstrap chooses a complete platform package when the
+Release manifest contains one, then installs it offline with scripts disabled.
+Source-only old releases retain the previous registry-based path. Complete packs
+are separate from the lightweight npm artifact and contain the locked runtime
+dependency closure, including the applicable sharp/libvips and Broker files.
+Supported complete targets are macOS/Windows x64 and ARM64, and Linux x64/ARM64
+with glibc or musl. Selection follows the running Node architecture. An old
+1.2.29 updater does not learn this fallback until updated; use the current verified
+bootstrap once when the old path cannot install under its saved npm policy.
 
 The scripts accept only `sh install.sh [--allow-remote]` or
 `./install.ps1 [-AllowRemote]`; the permission is explicit and applies to that

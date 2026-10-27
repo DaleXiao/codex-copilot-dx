@@ -1,7 +1,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
-import { downloadRelease, protectInstallation, verifyPackageRuntime, writePrivateLaunchers, createNpmReleaseFetch } from "./release-install.mjs";
+import { downloadRelease, protectInstallation, verifyPackageRuntime, writePrivateLaunchers, createNpmReleaseFetch, remoteDownloadDenied } from "./release-install.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
@@ -77,16 +77,20 @@ export function inspectNpmDownloadPolicy({ env = process.env, platform = process
   return result;
 }
 
-export function globalUpdateCommand(source, { platform = process.platform, releaseTag, releaseFile, allowRemote = false } = {}) {
+export function globalUpdateCommand(source, { platform = process.platform, releaseTag, releaseFile, allowRemote = false, complete = false } = {}) {
   if (typeof allowRemote !== "boolean") throw new Error("Remote download permission must be a boolean");
+  if (typeof complete !== "boolean") throw new Error("Complete-package selection must be a boolean");
   const normalized = normalizeUpdateSource(source);
   if (!normalized) throw new Error(`Choose npm or github. Received: ${source}`);
   const args = ["install", "--global"];
   if (allowRemote) args.push("--allow-remote=all");
+  if (complete) args.push("--offline", "--ignore-scripts", "--no-audit", "--no-fund");
   if (normalized === "github") {
     if (!githubReleaseVersion(releaseTag)) throw new Error("A valid stable GitHub release tag is required");
     const version = githubReleaseVersion(releaseTag), name = `codex-copilot-dx-${version}.tgz`;
-    if (releaseFile !== undefined && releaseFile !== `./${name}`) throw new Error("Invalid verified release filename");
+    const runtimeNames = ["darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64", "linux-x64-glibc", "linux-arm64-glibc", "linux-x64-musl", "linux-arm64-musl"]
+      .map(target => `./codex-copilot-dx-${version}-${target}.tgz`);
+    if (releaseFile !== undefined && releaseFile !== `./${name}` && !(complete && runtimeNames.includes(releaseFile))) throw new Error("Invalid verified release filename");
     args.push(releaseFile || `${UPDATE_SPECS.github}/v${version}/${name}`);
   } else {
     args.push(UPDATE_SPECS[normalized]);
@@ -100,17 +104,29 @@ export function globalUpdateCommand(source, { platform = process.platform, relea
 
 function waitForExit(child) {
   return new Promise((resolve, reject) => {
-    let settled = false;
+    let settled = false, exited = false, ended = !child.stderr, failure, tail = "", denied = false;
     const finish = (handler, value) => {
       if (settled) return;
       settled = true;
       handler(value);
     };
+    const complete = () => { if (exited && ended) {
+      if (failure) { if (denied) failure.npmCode = "EALLOWREMOTE";finish(reject, failure); }
+      else finish(resolve);
+    } };
+    child.stderr?.on("data", bytes => {
+      process.stderr.write(bytes);const text = tail + bytes.toString();
+      if (/npm (?:error|ERR!) code EALLOWREMOTE\b/.test(text)) denied = true;
+      tail = text.slice(-64);
+    });
+    const end = () => { ended = true;complete(); };
+    child.stderr?.once("end", end);child.stderr?.once("close", end);child.stderr?.once("error", end);
     child.once("error", (error) => finish(reject, error));
     child.once("exit", (code, signal) => {
-      if (signal) finish(reject, new Error(`npm update was interrupted by ${signal}`));
-      else if (code !== 0) finish(reject, Object.assign(new Error(`npm update exited with status ${code}`), { npmExitCode: code }));
-      else finish(resolve);
+      exited = true;
+      if (signal) failure = new Error(`npm update was interrupted by ${signal}`);
+      else if (code !== 0) failure = Object.assign(new Error(`npm update exited with status ${code}`), { npmExitCode: code });
+      complete();
     });
   });
 }
@@ -203,7 +219,6 @@ export async function runPackageUpdateCommand({
     output.write("Release package verified; Git is not required. Dependencies use the configured npm registry.\n");
   }
   try {
-  const update = globalUpdateCommand(selectedSource, { platform, releaseTag: release?.tagName, releaseFile: artifact ? `./${artifact.name}` : undefined, allowRemote: permitRemote });
   const sourceLabel = selectedSource === "npm" ? "npm registry" : `GitHub release ${release.tagName}`;
   output.write(`Updating ${PACKAGE_NAME} from ${sourceLabel}...\n`);
   if (policy.allowRemote) output.write(`npm ${terminalCell(policy.version)}: saved allow-remote=${policy.allowRemote}${policy.registryOrigin ? `; registry ${terminalCell(policy.registryOrigin)}` : ""}.\n`);
@@ -214,30 +229,46 @@ export async function runPackageUpdateCommand({
   }
   // The verified tarball basename is fixed and safe for cmd.exe. Its directory
   // is passed as cwd, never interpolated into the Windows command string.
-  const launch = npmLaunch(update.args, { platform, env });
   const brokerRequired = Boolean(environment?.target && fs.existsSync(path.join(environment.target, "node_modules", "@azure", "msal-node-runtime")));
+  const install = async item => {
+  const update = globalUpdateCommand(selectedSource, { platform, releaseTag: release?.tagName,
+    releaseFile: item ? `./${item.name}` : undefined, allowRemote: permitRemote && !item?.complete, complete: item?.complete === true });
+  const launch = npmLaunch(update.args, { platform, env });
   const transaction = protectInstallationFn({ ...environment, platform });
-  let installedVersion;
+  let version;
   try {
   const child = spawnImpl(launch.command, launch.args, {
     env,
     ...(directory ? { cwd: directory } : {}),
     shell: false,
-    stdio: "inherit",
+    stdio: ["inherit", "inherit", "pipe"],
     ...launch.options,
   });
   try { await waitForExit(child); }
   catch (error) {
     if (Number.isInteger(error.npmExitCode) && !allowRemote && ["none", "root"].includes(policy.allowRemote)) {
-      error.message += `. npm allow-remote=${policy.allowRemote} was preserved. If npm reported EALLOWREMOTE, its registry/mirror tarball URL was refused; only if you trust this update and policy permits it, retry explicitly with ${terminalCell(commandName)} update ${selectedSource} --allow-remote. This grants URL downloads to this installation's dependency tree, not just one hostname. No automatic retry or config change was made.`;
+      error.message += `. npm allow-remote=${policy.allowRemote} was preserved. If npm reported EALLOWREMOTE, its registry/mirror tarball URL was refused; only if you trust this update and policy permits it, retry explicitly with ${terminalCell(commandName)} update ${selectedSource} --allow-remote. This grants URL downloads to this installation's dependency tree, not just one hostname. No permission or config change was made.`;
     }
     throw error;
   }
-  installedVersion = verifyInstalledFn(environment?.target, { expectedVersion: release?.version });
-  if (environment?.target && installedVersion) verifyRuntimeFn(environment.target, installedVersion, { brokerRequired });
+  version = verifyInstalledFn(environment?.target, { expectedVersion: release?.version });
+  if (environment?.target && version) verifyRuntimeFn(environment.target, version, { brokerRequired });
   if (env.CCDX_PRIVATE_INSTALL_PREFIX && environment?.prefix && (platform === "win32" ? path.win32.resolve(env.CCDX_PRIVATE_INSTALL_PREFIX).toLowerCase() === path.win32.resolve(environment.prefix).toLowerCase() : path.resolve(env.CCDX_PRIVATE_INSTALL_PREFIX) === path.resolve(environment.prefix))) await writePrivateLaunchers(environment);
   transaction.commit();
+  return version;
   } catch (error) { transaction.rollback();throw error; }
+  };
+  let installedVersion;
+  try { installedVersion = await install(artifact); }
+  catch (error) {
+    if (selectedSource !== "github" || allowRemote || !remoteDownloadDenied(error)) throw error;
+    output.write("npm refused a remote dependency. Previous installation restored; checking the same version's complete platform package.\n");
+    try { artifact = await downloadReleaseFn(release.tagName, { fetchImpl, directory, complete: true, platform }); }
+    catch (fallbackError) { error.message += ` Complete platform package unavailable: ${fallbackError.message}`;throw error; }
+    if (!artifact.complete) throw new Error("The fallback is not a verified complete platform package; no second installation was started");
+    output.write("Complete platform package verified; installing offline with the saved npm policy.\n");
+    installedVersion = await install(artifact);
+  }
   if (installedVersion) {
     output.write(`Updated ${PACKAGE_NAME}: installed v${terminalCell(installedVersion)} at ${terminalCell(environment.target)}.\n`);
     if (platform === "win32") {

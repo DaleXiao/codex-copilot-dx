@@ -66,8 +66,8 @@ export function releaseChecksum(manifest, name) {
   if (lines.length !== 1 || !/^[a-f0-9]{64}  [\w.-]+$/.test(lines[0])) throw new Error("Release checksum is missing or invalid");
   return lines[0].slice(0, 64);
 }
-export function packageMetadata(bytes) {
-  const tar = gunzipSync(bytes, { maxOutputLength: 64 * 1024 * 1024 });
+export function packageMetadata(bytes, { complete = false } = {}) {
+  const tar = gunzipSync(bytes, { maxOutputLength: (complete ? 256 : 64) * 1024 * 1024 });
   let metadata;
   for (let offset = 0; offset + 512 <= tar.length;) {
     const header = tar.subarray(offset, offset + 512), name = header.subarray(0, 100).toString().replace(/\0.*$/s, "");
@@ -85,15 +85,36 @@ export function packageMetadata(bytes) {
   if (metadata?.name !== "codex-copilot-dx" || !stableVersion(metadata.version)) throw new Error("Release package identity is invalid");
   return metadata;
 }
-export async function downloadRelease(tag, { fetchImpl = fetch, directory, signal } = {}) {
+export function runtimeReleaseTarget({ platform = process.platform, arch = process.arch, libc } = {}) {
+  if (!["darwin", "win32", "linux"].includes(platform) || !["x64", "arm64"].includes(arch)) throw new Error("No complete Release package is available for this platform");
+  if (platform !== "linux") return `${platform}-${arch}`;
+  libc ||= process.report?.getReport().header.glibcVersionRuntime ? "glibc" : "musl";
+  if (!["glibc", "musl"].includes(libc)) throw new Error("Unsupported Linux runtime");
+  return `${platform}-${arch}-${libc}`;
+}
+export function remoteDownloadDenied(error) {
+  return error?.npmCode === "EALLOWREMOTE" || /(?:^|\n)npm (?:error|ERR!) code EALLOWREMOTE(?:\r?\n|$)/.test(String(error?.stderr || ""));
+}
+export async function downloadRelease(tag, { fetchImpl = fetch, directory, signal, complete = false, preferComplete = false, platform, arch, libc } = {}) {
   const version = stableVersion(tag);if (!version) throw new Error("A valid stable GitHub release tag is required");
-  const name = `codex-copilot-dx-${version}.tgz`, base = `${RELEASE_BASE}/v${version}`;
+  const base = `${RELEASE_BASE}/v${version}`;
   const manifest = await releaseBytes(`${base}/SHA256SUMS`, { fetchImpl, maxBytes: 65536, signal });
+  let name = `codex-copilot-dx-${version}.tgz`, target;
+  if (complete || preferComplete) {
+    target = runtimeReleaseTarget({ platform, arch, libc });
+    const runtimeName = `codex-copilot-dx-${version}-${target}.tgz`;
+    if (complete || manifest.toString("utf8").split(/\r?\n/).some(line => line.endsWith(`  ${runtimeName}`))) { name = runtimeName;complete = true; }
+  }
   const expected = releaseChecksum(manifest, name);
-  const bytes = await releaseBytes(`${base}/${name}`, { fetchImpl, maxBytes: 16 * 1024 * 1024, signal });
+  const bytes = await releaseBytes(`${base}/${name}`, { fetchImpl, maxBytes: (complete ? 64 : 16) * 1024 * 1024, signal });
   if (createHash("sha256").update(bytes).digest("hex") !== expected) throw new Error("Release checksum mismatch; no installation was started");
-  if (packageMetadata(bytes).version !== version) throw new Error("Release package version does not match its tag");
-  const file = path.join(directory, name);fs.writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });return { file, name, version };
+  const metadata = packageMetadata(bytes, { complete });
+  if (metadata.version !== version) throw new Error("Release package version does not match its tag");
+  if (complete && (metadata.ccdx_runtime?.schema !== 1 || metadata.ccdx_runtime.target !== target
+    || !Array.isArray(metadata.bundleDependencies) || !["sharp", "smol-toml", "@azure/msal-node-runtime"].every(name => metadata.bundleDependencies.includes(name)))) {
+    throw new Error("Complete Release package does not match this runtime or lacks bundled dependencies");
+  }
+  const file = path.join(directory, name);fs.writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });return { file, name, version, complete };
 }
 
 // Preserve only this package and its command entries. Never snapshot credentials
@@ -190,11 +211,12 @@ async function bootstrap() {
   const target = path.join(prefix, ...(process.platform === "win32" ? [] : ["lib"]), "node_modules", "codex-copilot-dx");
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-install-"));let transaction;
   try {
-    const release = await downloadRelease(tag, { directory, fetchImpl: createNpmReleaseFetch(npmCli) });
+    const release = await downloadRelease(tag, { directory, fetchImpl: createNpmReleaseFetch(npmCli), preferComplete: true });
     transaction = protectInstallation({ target, prefix });
     const npmVersion = execFileSync(process.execPath, [npmCli, "--version"], { encoding: "utf8", timeout: 10000 }).trim();
     const args = [npmCli, "install", "--global", "--prefix", prefix, "--ignore-scripts", "--no-audit", "--no-fund"];
-    if (permission && Number(npmVersion.split(".")[0]) >= 12) args.push("--allow-remote=all");
+    if (release.complete) args.push("--offline");
+    else if (permission && Number(npmVersion.split(".")[0]) >= 12) args.push("--allow-remote=all");
     args.push(release.file);
     execFileSync(process.execPath, args, { stdio: "inherit", timeout: 300000 });
     verifyPackageRuntime(target, release.version, { brokerRequired: ["darwin", "win32"].includes(process.platform) });
@@ -202,7 +224,7 @@ async function bootstrap() {
     transaction.commit();transaction = null;
     console.log(`Installed CCDX ${release.version}. Existing services keep running until restarted.`);
   } catch (error) {
-    transaction?.rollback();throw new Error("Installation failed. Previous CCDX package and commands were restored. Check approved registry, proxy, certificates and npm policy; dependencies still need registry access.", { cause: error });
+    transaction?.rollback();throw new Error("Installation failed. Previous CCDX package and commands were restored. Check the Release package, platform, proxy, certificates and npm policy. Older source-only releases still need registry access.", { cause: error });
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 }
 if (process.argv[1] && path.basename(process.argv[1]) === "ccdx-install.mjs" && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {

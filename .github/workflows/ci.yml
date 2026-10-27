@@ -13,6 +13,10 @@ env:
   CCDX_M365: "0"
 
 jobs:
+  runtime-packages:
+    uses: ./.github/workflows/runtime-packages.yml
+    with:
+      ref: ${{ github.sha }}
   npm12-install:
     runs-on: ${{ matrix.os }}
     strategy:

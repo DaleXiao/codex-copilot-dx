@@ -12,8 +12,42 @@ import { createApiNetwork } from "../src/providers/api-network.mjs";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { parse } from "smol-toml";
+import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
 
 process.env.CCDX_DISABLE_USAGE = "1";
+test("reading the GitHub directory publishes new Codex candidates without changing selected models or sign-in", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-shared-catalog-")), env = { CCDX_M365: "0" };
+  let incoming = ["gpt-existing"], reads = 0, fail = false, handler;
+  const client = { cacheModelEndpoints() {}, listModels: async () => {
+    reads++;if (fail) throw new Error("HTTP 503 unavailable");
+    return { status: 200, body: JSON.stringify({ data: incoming.map(id => ({ id, vendor: "OpenAI", model_picker_enabled: true, supported_endpoints: ["/responses"] })) }) };
+  } };
+  const models = createProfileModelRuntime({ home, codexClient: client, log() {} });await models.initialize();
+  const server = http.createServer((req, res) => handler(req, res));await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const runtime = createProviderRuntime({ home, env, corePort: server.address().port, githubClient: client, githubRegistry: models.codexRegistry,
+    refreshGithubCatalog: () => models.refreshCodex({ strict: true }), secretStore: { close() {} }, inspectDesktop: async () => false });
+  handler = createAdapterHandler({ providerRuntime: runtime, modelRegistry: models.codexRegistry, dashboardOptions: { home, env } });
+  t.after(async () => { handler.cleanup?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const saved = await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: ["github"], deployments: [{ source: "github", model: "gpt-existing" }], default_model: "gpt-existing" });
+  const previousDefault = saved.clients.find(client => client.id === "codex").default_model;
+  const auth = path.join(home, ".codex/auth.json"), config = path.join(home, ".codex/config.toml");
+  fs.writeFileSync(auth, '{"auth_mode":"chatgpt","tokens":{"access_token":"synthetic-only"}}');
+  const before = [auth, config].map(file => fs.readFileSync(file, "utf8"));incoming = ["gpt-existing", "gpt-next"];
+  const base = `http://127.0.0.1:${server.address().port}`, headers = { "X-CCDX-Dashboard": "1" };
+  const response = await fetch(base + "/_ccdx/ui/models/live?provider=github", { headers });
+  assert.equal(response.status, 200);assert.deepEqual((await response.json()).models.map(model => model.id), incoming);
+  const connections = await (await fetch(base + "/_ccdx/ui/connections", { headers })).json();
+  const codex = connections.clients.find(client => client.id === "codex");
+  assert.deepEqual(codex.model_plan.available.map(model => model.id), incoming);
+  assert.deepEqual(codex.model_plan.models.map(model => model.id), ["gpt-existing"]);
+  assert.equal(codex.default_model, previousDefault);assert.equal(reads, 2);
+  assert.deepEqual([auth, config].map(file => fs.readFileSync(file, "utf8")), before);
+  fail = true;
+  assert.equal((await fetch(base + "/_ccdx/ui/models/live?provider=github", { headers })).status, 502);
+  assert.deepEqual(models.codexRegistry.models.data.map(model => model.id), incoming);
+  assert.deepEqual([auth, config].map(file => fs.readFileSync(file, "utf8")), before);
+});
+
 test("an ungranted Claude route returns exactly one error response and keeps the listener healthy", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-ungranted-http-")), writes = [];let handler;
   const runtime = createProviderRuntime({ home, env: { CCDX_M365: "0" }, githubClient: {}, githubRegistry: { models: { data: [] } }, secretStore: { close() {} } });

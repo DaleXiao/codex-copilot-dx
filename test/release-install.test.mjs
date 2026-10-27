@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { downloadRelease, packageMetadata, protectInstallation, releaseBytes, releaseChecksum } from "../src/release-install.mjs";
-function artifact(version = "1.2.1", name = "codex-copilot-dx") {
-  const bytes = Buffer.from(JSON.stringify({ name, version })), header = Buffer.alloc(512);
+import { downloadRelease, packageMetadata, protectInstallation, releaseBytes, releaseChecksum, runtimeReleaseTarget, remoteDownloadDenied } from "../src/release-install.mjs";
+function artifact(version = "1.2.1", name = "codex-copilot-dx", extra = {}) {
+  const bytes = Buffer.from(JSON.stringify({ name, version, ...extra })), header = Buffer.alloc(512);
   header.write("package/package.json");header.write(bytes.length.toString(8).padStart(11, "0"), 124);header[156] = 48;
   return gzipSync(Buffer.concat([header, bytes, Buffer.alloc(512 - bytes.length), Buffer.alloc(1024)]));
 }
@@ -19,6 +19,23 @@ test("release download verifies SHA256, package identity and tag before writing"
   } });
   assert.equal(calls.length, 2);assert.ok(calls.every(url => url.startsWith("https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.1/")));
   assert.equal(result.version, "1.2.1");assert.deepEqual(fs.readFileSync(result.file), bytes);
+});
+test("complete releases require the selected platform and bundled runtime dependencies", async t => {
+  const target = "win32-arm64", name = `codex-copilot-dx-1.2.1-${target}.tgz`, root = directory(t);
+  const extra = { ccdx_runtime: { schema: 1, target }, bundleDependencies: ["sharp", "smol-toml", "@azure/msal-node-runtime"] };
+  const fetchPackage = bytes => async url => new Response(url.endsWith("SHA256SUMS") ? `${createHash("sha256").update(bytes).digest("hex")}  ${name}\n` : bytes);
+  const bytes = artifact("1.2.1", "codex-copilot-dx", extra);
+  const packed = await downloadRelease("v1.2.1", { directory: root, platform: "win32", arch: "arm64", complete: true, fetchImpl: fetchPackage(bytes) });
+  assert.equal(packed.complete, true);assert.equal(packed.name, name);
+  fs.unlinkSync(packed.file);
+  for (const metadata of [{}, { ...extra, ccdx_runtime: { schema: 1, target: "darwin-arm64" } }, { ...extra, bundleDependencies: ["sharp"] }]) {
+    await assert.rejects(downloadRelease("v1.2.1", { directory: root, platform: "win32", arch: "arm64", complete: true, fetchImpl: fetchPackage(artifact("1.2.1", "codex-copilot-dx", metadata)) }), /does not match/);
+    assert.deepEqual(fs.readdirSync(root), []);
+  }
+  assert.equal(runtimeReleaseTarget({ platform: "linux", arch: "x64", libc: "musl" }), "linux-x64-musl");
+  assert.throws(() => runtimeReleaseTarget({ platform: "darwin", arch: "ia32" }), /No complete/);
+  assert.equal(remoteDownloadDenied({ stderr: "npm error code EALLOWREMOTE\n" }), true);
+  for (const stderr of ["npm error code EINTEGRITY\n", "npm error code E403\n", "npm error code ENOTFOUND\n"]) assert.equal(remoteDownloadDenied({ stderr }), false);
 });
 test("corrupt, wrong-version and wrong-package release artifacts never reach installation", async t => {
   const root = directory(t), name = "codex-copilot-dx-1.2.1.tgz";

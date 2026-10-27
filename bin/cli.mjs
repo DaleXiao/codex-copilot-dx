@@ -485,6 +485,7 @@ try {
     log: (kind, message) => console.log(startupComplete ? status(kind, message) : startupCheck(kind, "Models", message)),
   });
   providerRuntime = createProviderRuntime({ githubClient: profileRuntime.codexClient, githubRegistry: profileModels.codexRegistry,
+    refreshGithubCatalog: () => profileModels.refreshCodex({ strict: true }),
     corePort: ADAPTER_PORT, preserveClientConfiguration: () => serviceWorker?.preserving === true || serviceWorker?.draining === true,
     clientAccessChanged: async enabled => { earlyIntegration.setPredictionActive(enabled && servicePreferences().prediction_enabled);if (enabled) await earlyIntegration.configure(); },
     githubCredentialFingerprint: () => profileRuntime.codexCredentialFingerprint,

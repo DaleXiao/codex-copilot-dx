@@ -19,6 +19,7 @@ export async function runWebCommand({ host = "127.0.0.1", port = 2026, env = pro
   let profile = createProfileRuntime({ home, codexClient: defaultCopilotClient });
   const models = createProfileModelRuntime({ home, env, codexClient: defaultCopilotClient, codexCredentialFingerprint: () => profile.codexCredentialFingerprint });
   const providers = createProviderRuntime({ home, env, corePort: port, githubClient: defaultCopilotClient,
+    refreshGithubCatalog: () => models.refreshCodex({ strict: true }),
     githubRegistry: models.codexRegistry, githubClientConfigured: false, githubCredentialFingerprint: () => profile.codexCredentialFingerprint });
   const serviceControl = createServiceControl({ home, env, providerRuntime: providers });
   const server = await startAdapter(port, host, { providerRuntime: providers, codexModelRegistry: models.codexRegistry,

@@ -193,6 +193,7 @@ function catalogReadDetails(data) {
 }
 function applyModels(data, { changed }) {
   modelSnapshots.set(data.provider || selectedProvider, data);
+  if (changed) void globalThis.ccdxConnections?.load?.();
   if (data.provider && data.provider !== selectedProvider) return;
   if (changed) {
     const body = element("live-models-body");

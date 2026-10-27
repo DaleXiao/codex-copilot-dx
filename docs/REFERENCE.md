@@ -1414,8 +1414,9 @@ Source-only old releases retain the previous registry-based path. Complete packs
 are separate from the lightweight npm artifact and contain the locked runtime
 dependency closure, including the applicable sharp/libvips and Broker files.
 Supported complete targets are macOS/Windows x64 and ARM64, and Linux x64/ARM64
-with glibc or musl. Selection follows the running Node architecture. An old
-1.2.29 updater does not learn this fallback until updated; use the current verified
+with glibc or musl. Selection follows the running Node architecture. Other Node
+platforms retain the source installation path without claiming a complete package.
+An old 1.2.29 updater does not learn this fallback until updated; use the current verified
 bootstrap once when the old path cannot install under its saved npm policy.
 
 The scripts accept only `sh install.sh [--allow-remote]` or

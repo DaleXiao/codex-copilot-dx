@@ -572,5 +572,5 @@ These rows supersede older update-help wording in the historical comparison.
 | Previous copy | Current copy |
 |---|---|
 | Failed installations are not retried automatically. | GitHub updates retry once offline with a verified same-version platform package only after EALLOWREMOTE; other errors are not retried. |
-| npm update exited with status 1 | npm refused a remote dependency. Previous installation restored; checking the same version's complete platform package. |
+| npm error code EALLOWREMOTE | npm refused a remote dependency. Previous installation restored; checking the same version's complete platform package. |
 | Dependencies use the configured npm registry. | Complete platform package verified; installing offline with the saved npm policy. |

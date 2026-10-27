@@ -101,9 +101,14 @@ export async function downloadRelease(tag, { fetchImpl = fetch, directory, signa
   const manifest = await releaseBytes(`${base}/SHA256SUMS`, { fetchImpl, maxBytes: 65536, signal });
   let name = `codex-copilot-dx-${version}.tgz`, target;
   if (complete || preferComplete) {
-    target = runtimeReleaseTarget({ platform, arch, libc });
-    const runtimeName = `codex-copilot-dx-${version}-${target}.tgz`;
-    if (complete || manifest.toString("utf8").split(/\r?\n/).some(line => line.endsWith(`  ${runtimeName}`))) { name = runtimeName;complete = true; }
+    if (complete) target = runtimeReleaseTarget({ platform, arch, libc });
+    else {
+      try { target = runtimeReleaseTarget({ platform, arch, libc }); } catch { /* Other platforms retain the source-only bootstrap path. */ }
+    }
+    if (target) {
+      const runtimeName = `codex-copilot-dx-${version}-${target}.tgz`;
+      if (complete || manifest.toString("utf8").split(/\r?\n/).some(line => line.endsWith(`  ${runtimeName}`))) { name = runtimeName;complete = true; }
+    }
   }
   const expected = releaseChecksum(manifest, name);
   const bytes = await releaseBytes(`${base}/${name}`, { fetchImpl, maxBytes: (complete ? 64 : 16) * 1024 * 1024, signal });

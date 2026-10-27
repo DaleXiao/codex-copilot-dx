@@ -37,6 +37,13 @@ test("complete releases require the selected platform and bundled runtime depend
   assert.equal(remoteDownloadDenied({ stderr: "npm error code EALLOWREMOTE\n" }), true);
   for (const stderr of ["npm error code EINTEGRITY\n", "npm error code E403\n", "npm error code ENOTFOUND\n"]) assert.equal(remoteDownloadDenied({ stderr }), false);
 });
+test("bootstrap keeps the existing source installation path on platforms without a complete package", async t => {
+  const root = directory(t), bytes = artifact(), name = "codex-copilot-dx-1.2.1.tgz", calls = [];
+  const packed = await downloadRelease("v1.2.1", { directory: root, platform: "freebsd", arch: "x64", preferComplete: true, fetchImpl: async url => {
+    calls.push(url);return new Response(url.endsWith("SHA256SUMS") ? `${createHash("sha256").update(bytes).digest("hex")}  ${name}\n` : bytes);
+  } });
+  assert.equal(packed.name, name);assert.equal(packed.complete, false);assert.equal(calls.length, 2);
+});
 test("corrupt, wrong-version and wrong-package release artifacts never reach installation", async t => {
   const root = directory(t), name = "codex-copilot-dx-1.2.1.tgz";
   for (const [bytes, checksum] of [[artifact(), "0".repeat(64)], [artifact("1.2.0"), null], [artifact("1.2.1", "other"), null]]) {

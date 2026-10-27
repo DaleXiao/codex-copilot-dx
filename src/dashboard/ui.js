@@ -178,6 +178,19 @@ async function readModelCatalog(provider) {
 }
 async function loadModels() { return refreshCatalog({ force: true }); }
 
+function catalogReadDetails(data) {
+  const read = data?.catalog_read;if (!read) return;
+  text("models-note", "catalog_read_summary", { origin: phrase(read.source === "network" ? "catalog_read_network" : "catalog_read_cache"),
+    total: number(read.total), claude: number(read.claude), gpt: number(read.gpt), time: time(read.checked_at) });
+  const fields = element("model-check-fields");fields.replaceChildren();element("model-check-details").hidden = false;
+  for (const [key, value] of [["source", data.upstream_host], ["source_check_time", time(read.checked_at)], ["http_status", read.http_status],
+    ["catalog_local_cache", phrase(read.local_cache_used ? "catalog_cache_used" : "catalog_cache_unused")],
+    ["catalog_http_cache", read.http_revalidation_requested ? phrase("catalog_revalidation_requested") : null], ["catalog_filtered", read.filtered],
+    ["catalog_response_age", read.response_age_seconds], ["upstream_request_id", read.request_id], ["catalog_correlation", read.client_correlation_id]]) {
+    if (value === null || value === undefined || value === "") continue;
+    const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);detail.textContent = String(value);fields.append(term, detail);
+  }
+}
 function applyModels(data, { changed }) {
   modelSnapshots.set(data.provider || selectedProvider, data);
   if (data.provider && data.provider !== selectedProvider) return;
@@ -307,8 +320,10 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       state: state => {
         if (state.attemptVariant !== selectedProvider) return;
         element("refresh-models").disabled = Boolean(state.pending);
-        text("models-state", state.pending ? "checking_live" : state.error ? "live_lookup_failed" : state.value?.source === "configured" ? "api_configured_models" : state.value?.source === "catalog" ? "catalog_snapshot" : "live_snapshot");
-        element("model-check-details").hidden = !state.error;
+        text("models-state", state.pending ? "checking_live" : state.error ? "live_lookup_failed" : state.value?.catalog_read ? state.value.catalog_read.source === "network" ? "catalog_read_network" : "catalog_read_cache" : state.value?.source === "configured" ? "api_configured_models" : state.value?.source === "catalog" ? "catalog_snapshot" : "live_snapshot");
+        const evidence = state.value?.provider === selectedProvider ? state.value : modelSnapshots.get(selectedProvider);
+        element("model-check-details").hidden = !state.error && !evidence?.catalog_read;
+        if (!state.error) catalogReadDetails(evidence);
         if (state.error) {
           const message = String(state.error.message || state.error).slice(0, 240);
           const httpError = /^Live model lookup failed \(HTTP (\d{3})\)\. Run ccdx models for details\.$/.exec(message);

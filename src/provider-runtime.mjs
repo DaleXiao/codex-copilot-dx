@@ -15,6 +15,7 @@ import { createConnectionRuntime } from "./connection-runtime.mjs";
 import { accessSettingsPath, readAccessSettings } from "./access-settings.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { M365_API_HOST } from "./providers/m365-endpoint.mjs";
+import { m365CatalogDiagnostic, m365CatalogMessage } from "./providers/m365-catalog-diagnostic.mjs";
 
 const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavailable (${reason}); GitHub routing was not substituted`),
   { code: reason, statusCode: 503 });
@@ -24,12 +25,8 @@ const unavailable = reason => Object.assign(new Error(`Microsoft 365 is unavaila
 export function createProviderRuntime(options = {}) {
   options = { ...options, corePort: options.corePort ?? Number((options.env || process.env).ADAPTER_PORT || 2026) };
   let connections;
-  const legacy = createBuiltinProviderRuntime({ ...options, managedClaude: () => {
-    if (!fs.existsSync(accessSettingsPath(options))) return false;
-    const graph = readAccessSettings(options);
-    return graph.claude_private_keys || !["claude_app", "claude_code"].every(id => graph.clients[id].enabled && graph.clients[id].source === "m365" && graph.clients[id].allowed.includes("m365"));
-  },
-    onClaudeReady: () => connections?.syncClients() });
+  const legacy = createBuiltinProviderRuntime({ ...options, managedClaude: () => connections?.managesClaude() !== false,
+    onClaudeReady: () => connections?.syncSourceClients("m365") });
   connections = createConnectionRuntime({ ...options, legacy });return connections;
 }
 
@@ -230,7 +227,11 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, githubCred
       if (changingAccount) { res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });res.end(JSON.stringify({ error: { code: "m365_account_busy", message: m365AccountMessage("m365_account_busy") } }));return; }
       if (!enabled || !gateway?.handle) {
         res.writeHead(503, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-        res.end(JSON.stringify({ type: "error", error: { type: "api_error", code: claudeReason || reason || "m365_claude_unavailable", message: "Claude is unavailable; check the model service settings." } }));return;
+        const diagnostic = enabled ? m365CatalogDiagnostic(m365?.snapshot().catalog_diagnostic) : null;
+        const code = claudeReason || reason || "m365_claude_unavailable";
+        res.end(JSON.stringify({ type: "error", error: { type: "api_error", code,
+          message: m365CatalogMessage(diagnostic) || (code === "m365_no_claude_models" ? "The model directory did not include Claude models. Check the directory read details."
+            : "Claude is unavailable; check the model service settings."), ...(diagnostic ? { diagnostic } : {}) } }));return;
       }
       return gateway.handle(req, res);
     },
@@ -251,7 +252,7 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, githubCred
       if (closed || !enabled || source !== m365 || changingAccount) throw unavailable("m365_refresh_cancelled");
       reason = null;
       const eligible = new Set([...source.models("gpt"), ...source.models("claude")]);
-      return { source: "catalog", checkedAt: m365.snapshot().models.refreshed_at, upstreamHost: M365_API_HOST,
+      return { source: "catalog", checkedAt: m365.snapshot().models.refreshed_at, upstreamHost: M365_API_HOST, catalogRead: source.snapshot().catalog_read,
         advertised: m365.catalog().length, models: publicModelCatalog(m365.catalog(), {
           selectable: model => eligible.has(model),
           clients: model => !eligible.has(model) ? [] : model.publisher?.toLowerCase() === "anthropic" ? ["claude_code", "claude_app"] : ["codex"],

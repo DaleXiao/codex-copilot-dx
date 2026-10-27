@@ -19,6 +19,7 @@ import { codexClientCatalog, codexSourceCatalog } from "./clients/codex-models.m
 import { currentRequestContext } from "./request-context.mjs";
 import { claudeSharedCapabilityPlan, syncClaudeCapabilities, inspectClaudeCapabilitySupport, inspectClaudeCapabilityConfiguration } from "./claude-capability-config.mjs";
 import { deploymentModelId, resolveModelCapabilities, deploymentRevision } from "./model-capabilities.mjs";
+import { m365Paths } from "./m365-settings.mjs";
 
 const validObject = (value, keys) => value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).every(key => keys.includes(key));
 export function createConnectionRuntime({ legacy, home, env = process.env, platform = process.platform, corePort = 2026,
@@ -29,6 +30,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
   const messagesTransfer = createMessagesHistoryTransfer({ ...options, onTransfer: () => log("info", "Conversation continued on the selected source; original history kept") });
   const memoryModel = createCodexMemoryModel({ ...options, corePort });
   let settings = readAccessSettings(options), managed = fs.existsSync(accessSettingsPath(options)), serial = Promise.resolve(), keys, closed = false;
+  const legacyClaudeAccess = fs.existsSync(m365Paths(options).ownership);
   const instances = new Map(), active = new Map(), retired = new Set(), handlers = new Map(), summaries = new WeakMap(), sourceSecrets = new WeakMap(), setup = {}, lastClients = {};
   const retiredSecrets = new Map(), cleanups = new Set(), plans = new Map(), discoveries = new Map();
   const catalogRefresh = createApiCatalogRefresh({ config: id => settings.apis.find(api => api.id === id), source: getSource, track,
@@ -49,7 +51,9 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
   }
   const identities = () => keys ||= readClientGatewayKeys(options);
   const enabled = id => id?.startsWith("api_") ? settings.apis.find(api => api.id === id)?.enabled === true : settings.providers[id] === true;
-  const binding = id => managed ? settings.clients[id] : { ...settings.clients[id], source: id === "codex" ? legacy.selection().codex : legacy.snapshot().m365.enabled ? "m365" : null };
+  const binding = id => managed ? settings.clients[id] : { ...settings.clients[id],
+    allowed: settings.clients[id].allowed.filter(source => source !== "m365" || legacyClaudeAccess || id === "codex" && legacy.selection().codex === "m365"),
+    source: id === "codex" ? legacy.selection().codex : legacyClaudeAccess && legacy.snapshot().m365.enabled ? "m365" : null };
   // GitHub-only selections retain the existing native loopback access contract.
   // Any other deployment still requires the private per-client credential.
   function codexAccessMode() {
@@ -113,7 +117,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
   function editable() {
     if (managed) return structuredClone(settings);
     const next = structuredClone(settings);next.providers.m365 = legacy.snapshot().m365.enabled === true;
-    for (const id of CLIENT_IDS) next.clients[id].source = binding(id).source;
+    for (const id of CLIENT_IDS) next.clients[id] = { ...binding(id) };
     return next;
   }
   function save(next) {
@@ -148,6 +152,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
           route_id: deploymentModelId(source, model.id), capability: model.capability || resolveModelCapabilities(model, { builtin: true }) }))), sync: sharedSync, support: capabilitySupport } }) })), managed, m365_state: state.m365.state });
   }
   async function syncClients(ids = CLIENT_IDS) {
+    if (!ids.length) return;
     for (const id of ids) syncTargets.add(id);
     syncAgain = true;if (syncFlight) return syncFlight;
     syncFlight = (async () => { do { syncAgain = false;const targets = new Set(syncTargets);syncTargets.clear();await performClientSync(targets); } while (syncAgain && !closed); })();
@@ -191,6 +196,10 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     if (["claude_app", "claude_code"].some(id => setup[id] === "default_unavailable")) {
       sharedSync = { ...sharedSync, state: "partially_preserved", limitations: [{ code: "default_model_unavailable" }] };return;
     }
+    if (!["claude_app", "claude_code"].some(id => targets.has(id))) return;
+    if (["claude_app", "claude_code"].some(id => !targets.has(id) && !setup[id] && binding(id).enabled && plan(id).models.length)) {
+      sharedSync = { state: "partially_preserved", limitations: [{ code: "other_client_not_checked" }] };return;
+    }
     const shared = claudeSharedCapabilityPlan({ app: setup.claude_app === "configured" ? plan("claude_app").models : [],
       code: setup.claude_code === "configured" ? plan("claude_code").models : [], support: capabilitySupport });
     if (["claude_app", "claude_code"].some(id => setup[id] === "manual_sync")) {
@@ -232,7 +241,29 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     if (closed) throw accessError("ccdx_connections_closed", 503);
     if (!validObject(input, ["operation", "id", "config", "key", "allowed", "source", "enabled", "replacements", "model", "auto_review_model", "auto_review_effort", "deployments", "default_model", "auto_sync"])) throw accessError("ccdx_connections_action_invalid");
     const next = editable();let freshRef, previousRef;
-    if (input.operation === "save_api") {
+    if (input.operation === "source_access") {
+      if (input.id !== "m365" || !Array.isArray(input.allowed) || new Set(input.allowed).size !== input.allowed.length || input.allowed.some(id => !CLIENT_IDS.includes(id))) throw accessError("ccdx_connections_action_invalid");
+      const affected = CLIENT_IDS.filter(id => next.clients[id].allowed.includes(input.id) !== input.allowed.includes(id));
+      const sharedClaude = ["claude_app", "claude_code"].filter(id => next.clients[id].enabled && next.clients[id].source === "m365");
+      const migrateClaude = !next.claude_private_keys && sharedClaude.length > 0 && affected.some(id => id !== "codex");
+      const targets = new Set();
+      for (const id of affected) {
+        const c = next.clients[id];
+        c.allowed = [...c.allowed.filter(source => source !== input.id), ...(input.allowed.includes(id) ? [input.id] : [])];
+        if (!input.allowed.includes(id)) {
+          if (c.source === input.id || c.deployments?.some(item => item.source === input.id)) targets.add(id);
+          if (c.source === input.id) c.source = null;
+          if (Array.isArray(c.deployments)) c.deployments = c.deployments.filter(item => item.source !== input.id);
+          c.history_isolation = true;
+        }
+      }
+      if (migrateClaude) next.claude_private_keys = true;
+      if (migrateClaude) for (const id of ["claude_app", "claude_code"]) if (next.clients[id].source === "m365") targets.add(id);
+      save(next);await syncClients([...targets]);
+      const retained = migrateClaude ? [...targets].filter(id => id !== "codex" && next.clients[id].enabled && next.clients[id].source === "m365") : [];
+      return { ...snapshot(), client_refresh: retained.filter(id => setup[id] === "configured"),
+        client_review: retained.filter(id => ["preserved", "partially_preserved", "manual_sync", "configuration_unavailable"].includes(setup[id])) };
+    } else if (input.operation === "save_api") {
       const existing = next.apis.find(api => api.id === input.id);
       if (!existing && next.apis.length >= 16) throw accessError("ccdx_api_limit");
       if (!validObject(input.config, ["name", "base_url", "endpoints", "auth_header", "models", "key_env", "model_display"])) throw accessError("ccdx_api_config_invalid");
@@ -355,6 +386,9 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
   }
   return {
     ...legacy,
+    managesClaude() { return !managed ? !legacyClaudeAccess : settings.claude_private_keys
+      || !["claude_app", "claude_code"].every(id => binding(id).enabled && binding(id).source === "m365" && binding(id).allowed.includes("m365")); },
+    syncSourceClients(source) { return syncClients(CLIENT_IDS.filter(id => binding(id).source === source || binding(id).deployments?.some(item => item.source === source))); },
     source: getSource,
     connections: snapshot,
     privateScopes: id => [...new Set(plan(id).models.map(model => model.source_id))].sort().map(source => [source, getSource(source).profileId(id === "codex" ? "responses" : "messages")]),
@@ -454,7 +488,7 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
       return { historyNamespace: target.profileId() };
     },
     async handleClaude(req, res) {
-      if (!managed) return legacy.handleClaude(req, res);
+      if (!managed) { if (!legacyClaudeAccess) throw accessError("ccdx_client_source_disabled", 503);return legacy.handleClaude(req, res); }
       if (!settings.claude_private_keys) {
         if (["claude_app", "claude_code"].every(id => permitted(id, "m365") && binding(id).source === "m365")) return legacy.handleClaude(req, res);
         throw accessError("ccdx_client_source_disabled", 503);
@@ -524,9 +558,9 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
         model: input.model, auto_review_model: input.auto_review_model, auto_review_effort: input.auto_review_effort });return this.snapshot(); }
       if (input.action === "auto-review" && managed && binding("codex").source !== "github") { await this.manageConnections({ operation: "client", id: "codex", ...clientInput, auto_review_model: input.model, auto_review_effort: input.effort });return this.snapshot(); }
       if (input.action === "auto-review" && managed && legacy.selection().codex !== "github") await legacy.action({ action: "switch", provider: "github" });
-      if (managed && input.action === "switch" && !permitted("codex", input.provider)) throw accessError("ccdx_client_source_disabled", 503);
+      if (managed && input.action === "switch" && !enabled(input.provider)) throw accessError("ccdx_client_source_disabled", 503);
       const result = await legacy.action(input);
-      if (managed && input.action === "switch") { const next = editable();if (next.clients.codex.source !== input.provider) next.clients.codex.history_isolation = true;next.clients.codex.source = input.provider;next.clients.codex.deployments = null;next.clients.codex.default_model = null;for (const key of ["model", "auto_review_model", "auto_review_effort"]) delete next.clients.codex[key];if (input.provider === "m365") Object.assign(next.clients.codex, legacy.selection().m365);save(next);await syncClients(); }
+      if (managed && input.action === "switch") { const next = editable();if (next.clients.codex.source !== input.provider) next.clients.codex.history_isolation = true;next.clients.codex.allowed = [...new Set([...next.clients.codex.allowed, input.provider])];next.clients.codex.source = input.provider;next.clients.codex.deployments = null;next.clients.codex.default_model = null;for (const key of ["model", "auto_review_model", "auto_review_effort"]) delete next.clients.codex[key];if (input.provider === "m365") Object.assign(next.clients.codex, legacy.selection().m365);save(next);await syncClients(["codex"]); }
       return result;
     },
     async close() { closed = true;await memoryModel.close();await catalogRefresh.close();await serial;await syncFlight;for (const { source } of instances.values()) source.close();for (const source of retired) source.close();active.clear();for (const id of retiredSecrets.keys()) cleanSecrets(id);await Promise.allSettled([...cleanups]);secrets.close();await legacy.close(); },

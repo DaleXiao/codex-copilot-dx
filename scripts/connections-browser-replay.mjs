@@ -14,11 +14,11 @@ const module = await import(options.get("--playwright")), { chromium, webkit } =
 process.env.CCDX_DISABLE_USAGE = "1";globalThis.fetch = async () => { throw new Error("Live provider calls are forbidden"); };
 const report = [];let discoveries = 0;
 for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter(([name]) => !options.get("--engines") || options.get("--engines").split(",").includes(name))) {
-  const browser = await type.launch({ headless: true });
+  const browser = await type.launch({ headless: true, ...(options.get("--executable") ? { executablePath: options.get("--executable") } : {}) });
   try {
     for (const palette of (options.get("--palettes") || "green,klein,pink").split(",")) for (const mode of (options.get("--modes") || "light,dark").split(",")) {
       const width = mode === "light" ? 360 : 1280, language = palette === "klein" ? "en" : "zh";
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-connections-browser-")), env = { CCDX_M365: "0" }, values = new Map();
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-connections-browser-")), env = {}, values = new Map();
       fs.mkdirSync(path.join(root, ".codex"));fs.writeFileSync(path.join(root, ".codex/config.toml"), '[features]\nmemories=true\n[memories]\nextract_model="response-replay"\n');
       let runtime, handler;const githubRegistry = { models: { data: [] } };
       const server = http.createServer((req, res) => handler(req, res));
@@ -51,6 +51,26 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         const fits = async () => assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "No horizontal page overflow");
         await fits();await page.locator('#connection-api-form button[type="submit"]').click();await page.locator("#connection-editor").waitFor({ state: "hidden" });
         const id = runtime.connections().providers.find(p => !p.builtin).id;
+        const codexBeforeGrant = fs.readFileSync(path.join(root, ".codex/config.toml"), "utf8");
+        await page.locator("#model-provider-m365").click();await page.locator("#m365-app-access").waitFor({ state: "visible" });
+        assert.equal(await page.locator("#m365-allowed-apps input:checked").count(), 0);
+        await page.locator('#m365-allowed-apps input[value="claude_app"]').check();
+        await page.locator('#m365-allowed-apps input[value="claude_code"]').check();
+        await page.route("**/_ccdx/ui/connections", async route => {
+          if (route.request().method() === "POST" && JSON.parse(route.request().postData()).operation === "source_access") return route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "ccdx_connections_conflict" }) });
+          return route.continue();
+        });
+        await page.locator("#m365-access-save").click();await page.waitForFunction(() => !document.getElementById("m365-access-save").disabled);
+        assert.equal(await page.locator("#m365-allowed-apps input:checked").count(), 2, "Failed saves keep the app choices");
+        await page.unroute("**/_ccdx/ui/connections");await page.locator("#m365-access-save").click();
+        await page.waitForFunction(() => document.getElementById("m365-access-save").disabled && !document.getElementById("m365-access-save").hasAttribute("aria-busy"));
+        assert.deepEqual(runtime.connections().clients.filter(c => c.allowed.includes("m365")).map(c => c.id).sort(), ["claude_app", "claude_code"]);
+        if (options.get("--output")) { fs.mkdirSync(options.get("--output"), { recursive: true });await page.locator("#m365-source-access").screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}-source-access.png`) }); }
+        for (const app of ["claude_app", "claude_code"]) await page.locator(`#m365-allowed-apps input[value="${app}"]`).uncheck();
+        await page.locator("#m365-access-save").click();await page.waitForFunction(() => document.getElementById("m365-access-save").disabled && !document.getElementById("m365-access-save").hasAttribute("aria-busy"));
+        assert(runtime.connections().clients.every(c => !c.allowed.includes("m365")));
+        assert.equal(fs.readFileSync(path.join(root, ".codex/config.toml"), "utf8"), codexBeforeGrant);
+        await page.locator(`#model-provider-${id}`).click();
         assert.equal(runtime.connections().providers.find(p => p.id === id).models.length, 0);
         await page.locator('[data-route="claude"]').click();await page.locator("#connection-bindings").waitFor();
         assert.match(await page.locator("#connection-bindings").innerText(), /暂无|No models/);

@@ -6,13 +6,14 @@ import path from "node:path";
 import { createProviderRuntime } from "../src/provider-runtime.mjs";
 import { createM365Provider } from "../src/providers/m365.mjs";
 import { accountChoiceId } from "../src/providers/m365-accounts.mjs";
-import { readM365Account, readM365Json, m365Paths, writeM365Binding, m365AccountKey } from "../src/m365-settings.mjs";
+import { readM365Account, readM365Json, m365Paths, writeM365Binding, m365AccountKey, writeM365Json } from "../src/m365-settings.mjs";
 
 const a = { id: "account-a", tenant: "company-a", login: "a@example.test", selection_source: "single" };
 const b = { id: "account-b", tenant: "company-b", login: "b@example.test" };
 const catalog = { data: [{ id: "gpt-test", publisher: "OpenAI", supported_endpoints: ["/responses"] }, { id: "claude-test", publisher: "Anthropic", supported_endpoints: ["/v1/messages"] }] };
-function fixture(t) {
+function fixture(t, legacyClaude = false) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-account-selection-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  if (legacyClaude) writeM365Json(m365Paths({ home }).ownership, {});
   const providers = [];let fetches = 0, discoveries = 0, refuse = false, hold;
   const runtime = createProviderRuntime({ home, env: {}, platform: "win32", githubClient: {}, githubRegistry: { models: { data: [] } }, log() {},
     discoverM365: async () => { discoveries++;return { accounts: [a, b], windowsLogin: null }; },
@@ -48,7 +49,7 @@ test("permission refusal and stale selection preserve the prior account and mode
 });
 
 test("active M365 work prevents selection before discovery; validation blocks new M365 work and leaves GitHub available", async t => {
-  const f = fixture(t);await f.runtime.start();const finish = f.runtime.track({ id: "m365" });
+  const f = fixture(t, true);await f.runtime.start();const finish = f.runtime.track({ id: "m365" });
   await assert.rejects(f.runtime.action({ action: "account", account_id: accountChoiceId(b) }), { code: "m365_account_busy" });
   assert.equal(f.discoveries(), 0);finish();
   let release;f.hold(new Promise(resolve => { release = resolve; }));

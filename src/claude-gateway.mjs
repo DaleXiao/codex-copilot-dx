@@ -228,10 +228,11 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         const diagnostic = error.code === "ccdx_api_network_unavailable" ? transportErrorDetails(error) : null;
         log(outcome === "cancelled" ? "info" : "warn", `Claude request ${requestId}: ${detail.code}${diagnostic ? ` (${diagnostic.code}, ${diagnostic.phase})` : ""}`);
         tracker?.setErrorOrigin(terminalOrigin);
-        context.onHttpError?.({ code: detail.code, origin: terminalOrigin, ...(diagnostic ? { transport: diagnostic } : {}) });
+        context.onHttpError?.({ code: detail.code, origin: terminalOrigin, ...(rejectionReason ? { reason: rejectionReason } : {}), ...(diagnostic ? { transport: diagnostic } : {}) });
         if (outcome === "cancelled") return;
         if (!res.headersSent) {
           const value = apiError(abort.reason || error.code || "ccdx_gateway_error", message);
+          if (rejectionReason) value.error.reason = rejectionReason;
           if (diagnostic) value.error.diagnostic = diagnostic;
           send(res, statusCode, value);
         }

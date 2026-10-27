@@ -91,7 +91,9 @@ const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, servic
     if (provider === "github") return null;
     if (provider === "third") throw Object.assign(Error("Unavailable"), { code: "m365_disabled", statusCode: 503 });
     if (proxyFailure) throw Object.assign(Error("Bearer NEVER_EXPOSE"), { code: "m365_proxy_settings_unsupported", statusCode: 502, network_diagnostic: { ...networkDiagnostic, raw: "NEVER_EXPOSE" } });
-    return { source: "catalog", checkedAt: new Date().toISOString(), advertised: 1, upstreamHost: "Microsoft 365", models: [
+    return { source: "catalog", checkedAt: new Date().toISOString(), advertised: 3, upstreamHost: "Microsoft 365",
+      catalogRead: { source: "network", checked_at: new Date().toISOString(), total: 3, claude: 1, gpt: 2, filtered: 0, http_status: 200,
+        http_revalidation_requested: true, request_id: "synthetic-catalog-request" }, models: [
       { id: "claude-opus-5.5", vendor: "Anthropic", endpoints: ["messages"], clients: ["claude_app", "claude_code"], reasoning_efforts: ["low", "high"], selectable: true },
           { id: "gpt-source", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], reasoning_efforts: ["low"], auto_review_efforts: ["low"], selectable: true },
       { id: "gpt-second", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], reasoning_efforts: ["low"], auto_review_efforts: ["low"], selectable: true },
@@ -159,6 +161,14 @@ try {
         signin = { source: "account_tools", configured: true, saved: true, login: "synthetic_user", store: "legacy", online: null, checked_at: null, operation: null };
         await page.addInitScript(({ language, theme, palette }) => { localStorage.setItem("ccdx.dashboard.palette", palette); localStorage.setItem("ccdx.dashboard.language", language); localStorage.setItem("ccdx.dashboard.theme", theme); }, { language, theme, palette });
         await page.addInitScript(() => {
+          window.clipboardWrites = [];window.clipboardBlocked = false;window.clipboardStartedCode = null;
+          window.ClipboardItem = class { constructor(data) { this.data = data; } };
+          Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+            async write(items) { window.clipboardStartedCode = document.getElementById("github-user-code")?.textContent;
+              if (window.clipboardBlocked) throw Error("Synthetic clipboard denial");
+              window.clipboardWrites.push(await (await items[0].data["text/plain"]).text()); },
+            async writeText(text) { if (window.clipboardBlocked) throw Error("Synthetic clipboard denial");window.clipboardWrites.push(text); },
+          } });
           window.atomMotions = [];window.chartMotions = [];
           const animate = Element.prototype.animate;
           Element.prototype.animate = function(frames, options) {
@@ -308,6 +318,19 @@ try {
         await page.locator("#github-signin").click();
         await page.waitForFunction(() => !document.getElementById("github-login-flow").hidden);
         assert.equal(await page.locator("#github-user-code").innerText(), "ABCD-EFGH");
+        await page.waitForFunction(() => window.clipboardWrites.length === 1);
+        assert.deepEqual(await page.evaluate(() => window.clipboardWrites), ["ABCD-EFGH"]);
+        assert.equal(await page.evaluate(() => window.clipboardStartedCode), "—", "Clipboard preparation starts in the login click before the code arrives");
+        assert.equal(await page.locator("#github-copy-code svg").count(), 1);
+        await page.locator("#refresh").click();await page.waitForFunction(() => !document.getElementById("refresh").disabled);
+        assert.equal(await page.evaluate(() => window.clipboardWrites.length), 1, "Polling or rendering does not overwrite the clipboard repeatedly");
+        await page.evaluate(() => { window.clipboardBlocked = true; });await page.locator("#github-copy-code").click();
+        await page.waitForFunction(() => document.getElementById("github-copy-state").textContent.includes(document.documentElement.lang === "zh-CN" ? "手动" : "manually"));
+        await page.evaluate(() => { window.clipboardBlocked = false; });await page.locator("#github-copy-code").click();
+        await page.waitForFunction(() => window.clipboardWrites.length === 2);
+        await page.locator("#github-authorize").evaluate(node => node.addEventListener("click", event => event.preventDefault()));
+        await page.locator("#github-authorize").click();await page.waitForFunction(() => window.clipboardWrites.length === 3);
+        if (output && language === "zh" && width === 1280) await page.locator("#github-account").screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-device-code.png`) });
         await page.locator("#github-cancel").click();
         await page.waitForFunction(() => document.getElementById("github-login-flow").hidden);
         assert.match(await page.locator("#github-account-note").innerText(), language === "zh" ? /取消.*保留/ : /cancelled.*kept/);
@@ -320,6 +343,12 @@ try {
         assert.equal(accountChecks, 0, "Opening the page never enumerates accounts or acquires tokens");
         await page.locator("#model-provider-m365").click();
         await page.waitForFunction(() => !document.getElementById("m365-source-access").hidden);
+        await page.waitForFunction(() => document.getElementById("models-note").textContent.includes("GPT 2"));
+        assert.match(await page.locator("#models-note").innerText(), /Claude 1/);
+        assert.equal(await page.locator("#model-check-details").isVisible(), true);
+        await page.locator("#model-check-details > summary").click();assert.match(await page.locator("#model-check-fields").innerText(), /synthetic-catalog-request/);
+        assert.doesNotMatch(await page.locator("#model-check-fields").innerText(), /NEVER_EXPOSE/);
+        await page.locator("#model-check-details > summary").click();
         assert.equal(await page.locator("#github-account").isVisible(), false);
         assert.equal(await page.locator("#provider-auth tr:visible").count(), 1);
         assert.match(await page.locator("#provider-auth").innerText(), /synthetic@example.test/);
@@ -380,7 +409,11 @@ try {
         await page.locator("#language-toggle").click();
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-network-diagnostic.png`), fullPage: true });
         proxyFailure = false;await page.locator("#refresh").click();
-        await page.waitForFunction(() => document.getElementById("model-check-details").hidden && !document.getElementById("refresh").disabled);
+        // A force read joins existing work. Drain any old synthetic refusal
+        // before requiring a new receipt from the changed fixture.
+        await page.evaluate(async () => { await Promise.all(["models", "auth"].map(async key => { await dashboardRefresh.state(key).pending;await dashboardRefresh.refresh(key, { force: true }); })); });
+        await page.waitForFunction(() => document.getElementById("model-check-fields").textContent.includes("synthetic-catalog-request") && !document.getElementById("refresh").disabled);
+        await page.waitForFunction(() => !/代理例外规则无效|Invalid proxy exception rule/.test(document.getElementById("provider-auth").textContent));
         assert.doesNotMatch(await page.locator("#provider-auth").innerText(), /代理例外规则无效|Invalid proxy exception rule/);
         await page.locator("#model-provider-third").click();
         await page.waitForFunction(() => document.getElementById("model-check-fields").textContent.includes("m365_disabled"));

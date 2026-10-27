@@ -68,6 +68,40 @@ test("connections fail closed on corrupt files and validate origin, model APIs a
   assert.throws(() => updateAccessSettings(() => defaultAccessSettings(), options), { code: "ccdx_connections_invalid" });assert.equal(fs.readFileSync(file, "utf8"), "{broken");
 });
 
+test("M365 grants support zero, one and several apps without changing the Codex source or configuration", async t => {
+  let codexWrites = 0;const s = runtime(t, { configureCodex: () => { codexWrites++;return {}; } });
+  assert(s.runtime.connections().clients.every(c => !c.allowed.includes("m365")));
+  const before = s.runtime.connections().clients.find(c => c.id === "codex");
+  for (const allowed of [["claude_app"], ["claude_app", "claude_code", "codex"], []]) {
+    await s.runtime.manageConnections({ operation: "source_access", id: "m365", allowed });
+    const state = s.runtime.connections();assert.deepEqual(state.clients.filter(c => c.allowed.includes("m365")).map(c => c.id).sort(), [...allowed].sort());
+    assert.equal(state.clients.find(c => c.id === "codex").source, before.source);assert.equal(codexWrites, 0);
+  }
+  const saved = fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env }), "utf8");
+  await assert.rejects(s.runtime.manageConnections({ operation: "source_access", id: "m365", allowed: ["unknown"] }), { code: "ccdx_connections_action_invalid" });
+  assert.equal(fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env }), "utf8"), saved);
+});
+
+test("revoking M365 removes its selected routes but preserves another API and rejects old M365 aliases", async t => {
+  let m365Calls = 0;
+  const s = runtime(t, { env: {}, platform: "darwin", createM365: () => ({ id: "m365", refresh: async () => {}, close() {}, profileId: () => "m365:synthetic-account",
+    registry: { models: { data: [] } }, models: family => family === "claude" ? [{ id: "ms-message", supported_endpoints: ["/v1/messages"] }] : [], catalog: () => [],
+    snapshot: () => ({ state: "ready", models: { total: 1, claude: 1, gpt: 0, source: "cache" } }),
+    client: { messages: async body => { m365Calls++;return Response.json({ type: "message", model: body.model, content: [{ type: "text", text: "synthetic" }], stop_reason: "end_turn" }); } },
+  }) });
+  const api = await save(s.runtime);await s.runtime.start();await s.runtime.manageConnections({ operation: "source_access", id: "m365", allowed: ["claude_app"] });
+  const c = s.runtime.connections().clients.find(c => c.id === "claude_app"), ms = c.model_plan.available.find(model => model.source === "m365");
+  await s.runtime.manageConnections({ operation: "client", id: c.id, enabled: true, allowed: c.allowed, deployments: [{ source: "m365", model: "ms-message" }, { source: api, model: "any-message-model" }], default_model: ms.route_id });
+  const selected = s.runtime.connections().clients.find(c => c.id === "claude_app"), alias = selected.model_plan.models.find(model => model.source === "m365").public_id;
+  const headers = { authorization: `Bearer ${readClientGatewayKeys({ home: s.home, env: s.env }).claude_app}` };
+  const body = { model: alias, messages: [{ role: "user", content: "synthetic" }], max_tokens: 4 };
+  assert.equal((await invoke(s.runtime.handleClaude, { headers, body })).status, 200);
+  await s.runtime.manageConnections({ operation: "source_access", id: "m365", allowed: [] });
+  const after = s.runtime.connections().clients.find(c => c.id === "claude_app");assert.deepEqual(after.deployments.map(model => model.source), [api]);
+  assert.equal((await invoke(s.runtime.handleClaude, { headers, body })).status, 400);assert.equal(m365Calls, 1);
+  assert.equal((await invoke(s.runtime.handleClaude, { headers })).status, 200);
+});
+
 test("restoring M365 never selects paused legacy Claude clients and M365 counts stay source-scoped", async t => {
   let legacyConfigured = 0;
   const gpt = id => ({ id, supported_endpoints: ["/responses"], capabilities: { supports: { reasoning_effort: ["low", "high"] } } });
@@ -82,6 +116,7 @@ test("restoring M365 never selects paused legacy Claude clients and M365 counts 
   const id = await save(s.runtime);await s.runtime.manageConnections({ operation: "provider", id: "m365", enabled: true });
   assert.equal(legacyConfigured, 0);assert.equal(s.runtime.connections().clients.find(c => c.id === "claude_app").source, null);
   await assert.rejects(invoke(s.runtime.handleClaude), { code: "ccdx_client_source_disabled" });
+  await s.runtime.manageConnections({ operation: "source_access", id: "m365", allowed: ["codex", "claude_app"] });
   for (const [name, source] of [["claude_app", "m365"], ["claude_code", id], ["codex", "m365"]]) {
     const c = s.runtime.connections().clients.find(c => c.id === name);await s.runtime.manageConnections({ operation: "client", id: name, source, enabled: true, allowed: c.allowed });
   }
@@ -121,7 +156,7 @@ test("manual API save reads only the catalog and does not activate a client", as
   assert.equal(s.calls.length, 0);assert.equal(s.runtime.selection().codex, "github");
   const publicData = JSON.stringify(s.runtime.connections());assert.equal(publicData.includes("synthetic-key-only"), false);assert.equal(publicData.includes("secret_ref"), false);
   assert.equal(fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env }), "utf8").includes("synthetic-key-only"), false);
-  assert.deepEqual(s.runtime.connections().clients.find(c => c.id === "claude_app").allowed, ["m365", id]);
+  assert.deepEqual(s.runtime.connections().clients.find(c => c.id === "claude_app").allowed, [id]);
 });
 
 test("a slow catalog cannot block unrelated configuration and disabling aborts its publication", async t => {

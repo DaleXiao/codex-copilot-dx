@@ -1336,7 +1336,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.28/codex-copilot-dx-1.2.28.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.29/codex-copilot-dx-1.2.29.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -1760,7 +1760,7 @@ unchanged.
 
 New explicit-tool sign-ins use `~/.local/share/ccdx/github_token` and fingerprint-bound `.account.json` metadata, with private permissions and the existing atomic paired writer. When present, this owned store takes precedence over `~/.local/share/copilot-api/github_token`; existing startup/discovery compatibility remains supported. `auth logout` requires interactive confirmation or `--yes`, writes an empty owned credential, and does not delete or revoke other apps' legacy credentials. This intentionally blocks inference's legacy fallback. New login or normal startup can perform the existing explicit discovery/sign-in process again. CLI changes notify a compatible running local service; if notification is unavailable, the CLI asks for a service restart. In-flight model requests are not replayed or forcibly stopped. A token cache invalidation preserves its running account binding, so switching accounts still requires a restart.
 
-Model sources uses one source selector for the selected source controls, account and catalog. Disabled sources remain under its collapsed list; there is no second list of enabled source cards. Selecting a tab is browsing only. GitHub offers sign-in, independent connection checks and cancellation; sign-out is under More actions. The browser opens only the fixed GitHub device authorization URL after the user chooses Open GitHub. No token or password entry field is added. Microsoft 365 retains local account discovery/selection and source controls; its corporate SSO is not replaced with a GitHub-style login. Raw codes remain under details and last-good model lists retain their previous timestamp after failures.
+Model sources uses one source selector for the selected source controls, account and catalog. Disabled sources remain under its collapsed list; there is no second list of enabled source cards. Selecting a tab is browsing only. GitHub offers sign-in, independent connection checks and cancellation; sign-out is under More actions. The browser opens only the fixed GitHub device authorization URL after the user chooses Copy & open GitHub. Its copy icon writes only the displayed short user code. The originating sign-in click prepares one asynchronous clipboard write; browsers that reject it retain an explicit copy action and selectable text. Re-rendering/polling does not repeatedly overwrite the clipboard. Clipboard reads are never requested, failed writes never show Copied, and cancelled/obsolete flow completions cannot update the new flow. Opening the link retries the copy in the click without delaying the native link activation. No token or password entry field is added. Microsoft 365 retains local account discovery/selection and source controls; its corporate SSO is not replaced with a GitHub-style login. Raw codes remain under details and last-good model lists retain their previous timestamp after failures.
 
 `ccdx web` opens an existing compatible dashboard or starts a management-only local listener without sign-in, app configuration, app launch, prediction setup or automatic M365 startup. It does not claim normal startup integrations are active. Stop that management listener with Ctrl+C before running normal `ccdx` for application routing and optional integrations. Opening the dashboard does not initiate a GitHub Device Flow or model inference.
 
@@ -2214,6 +2214,46 @@ read limit. It stores no prompts, files, raw session IDs or credentials. Records
 survive ordinary service restart; corrupt records are preserved and reported,
 not replaced with empty defaults. This does not persist Responses history or
 change Codex login/provider/model-list configuration.
+
+`conversation-prefixes.json` adds a second bounded receipt with protocol-equivalent
+block fingerprints. A string and its single text block compare equally, and
+combining adjacent same-role messages preserves the proved block prefix. This
+changes only comparison, not the client's messages. Text/code whitespace and
+tool argument values remain significant. Each semantic receipt is tied to the
+legacy owner/count/hash; an older writer makes stale semantic proof ineligible.
+The pair commits atomically. Legacy receipts upgrade only when their prefix is
+proved, and the original legacy file remains readable by older versions. Each
+file is limited to 1024 keys and a 512 KiB read. No tool or private state is
+replayed to work around an unknown prefix or account mismatch. Rejections report
+whether the source changed or the prefix changed, and whether a tool result is
+missing/unmatched or a tool turn is active.
+
+### Explicit M365 app access and directory read receipts
+
+Model sources → Microsoft 365 → Allowed apps grants the current source to one,
+several or no enabled apps. Granting access does not choose models or change the
+current source. Removing access removes only that source's selected routes,
+preserving other source selections and an unavailable default until explicitly
+replaced. The runtime enforces revoked access even if a client retains its old
+model menu. Shared legacy Claude-key migration reports which retained consumers
+need reopening. Existing saved grants/owned legacy setups are retained; first-time
+discovery/sign-in alone does not connect all apps. An explicit CLI M365 source
+choice authorizes Codex only. Ordinary grants do not synchronize unrelated Codex
+configuration, authentication or catalogs.
+
+M365's explicit directory refresh always requests the network, even when a
+usable local model cache exists. `Cache-Control: no-cache` and `Pragma: no-cache`
+request HTTP revalidation through the existing transport. They do not bypass
+enterprise proxies, certificates, account policies or change token refresh.
+The read summary distinguishes network from CCDX cache, records the data time,
+raw total, compatible GPT/Claude counts and locally excluded count. Collapsed
+details include sanitized upstream/client correlation IDs, HTTP status and a
+bounded upstream Age value when returned. A network response containing five
+models replaces an older fifteen-model cache; a failed check preserves and
+labels prior data. Directory access is not inference authorization. There is no
+automatic empty-directory substitution, fabricated Claude entry, extra polling
+loop or inference probe. Correlation IDs are receipts, not proof that every
+intermediate proxy honored revalidation.
 
 ### Upstream maker metadata
 

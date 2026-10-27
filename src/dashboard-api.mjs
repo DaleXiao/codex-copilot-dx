@@ -1,6 +1,6 @@
 import os from "node:os";
 import { isProviderId } from "./provider-metadata.mjs";
-import { m365CatalogDiagnostic } from "./providers/m365-catalog-diagnostic.mjs";
+import { m365CatalogDiagnostic, m365CatalogRead } from "./providers/m365-catalog-diagnostic.mjs";
 import { m365NetworkDiagnostic } from "./providers/m365-network-diagnostic.mjs";
 import { fetchLiveCopilotModels } from "./live-models.mjs";
 import { authStatus } from "./auth-status.mjs";
@@ -309,6 +309,7 @@ export async function handleDashboardApi(req, res, pathname, {
         checked_at: ["catalog", "configured"].includes(catalog.source) ? catalog.checkedAt : new Date().toISOString(),
         upstream_host: safeText(catalog?.upstreamHost || "GitHub Copilot", 120),
         advertised: finite(catalog?.advertised),
+        ...(m365CatalogRead(catalog?.catalogRead) ? { catalog_read: m365CatalogRead(catalog.catalogRead) } : {}),
         selectable: models.filter(model => model.selectable !== false).length,
         models: models.slice(0, 500).map((model) => ({
           id: safeText(model.id, 160),

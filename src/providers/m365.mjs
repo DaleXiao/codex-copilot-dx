@@ -16,7 +16,7 @@ import { resolveClaudeModel } from "../claude-models.mjs";
 import { modelReasoningEfforts } from "../provider-metadata.mjs";
 import { limitM365CacheTtl } from "./m365-messages-policy.mjs";
 import { createM365ConversationGuard } from "./m365-conversation-accounts.mjs";
-import { catalogFailure, m365CatalogDiagnostic } from "./m365-catalog-diagnostic.mjs";
+import { catalogFailure, m365CatalogDiagnostic, m365CatalogRead } from "./m365-catalog-diagnostic.mjs";
 import { m365NetworkDiagnostic } from "./m365-network-diagnostic.mjs";
 
 import { M365_API_BASE, M365_API_ORIGIN } from "./m365-endpoint.mjs";
@@ -77,7 +77,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
   const guardConversation = createM365ConversationGuard({ home });
   let catalog = null, account = null, catalogAt = 0, state = "idle", reason = null, flight = null, controller = null, generation = 0;
   let network = null, networkFlight = null, cacheTtlAdjustments = 0;
-  let networkDiagnostic = null, catalogDiagnostic = null;
+  let networkDiagnostic = null, catalogDiagnostic = null, catalogRead = null, lastCatalogResponse = null;
   const registry = { models: null, source: "unavailable", cacheState: "none", cacheSavedAtMs: null,
     refreshInFlight: false, generation: 0, lastError: null, lastErrorAtMs: null };
   const profile = () => account ? `m365:${M365_API_ORIGIN}:${m365AccountKey(account)}` : "m365:unavailable";
@@ -95,17 +95,23 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     }
     return networkFlight;
   }
-  function applyCatalog(value, source, savedAt) {
+  function readObservation(value, source, savedAt, evidence = {}) {
+    const claude = m365Models(value, "claude").length, gpt = m365Models(value, "gpt").length;
+    return m365CatalogRead({ ...evidence, source: source === "live" ? "network" : "cache", checked_at: new Date(savedAt).toISOString(),
+      total: value.data.length, claude, gpt, filtered: value.data.length - claude - gpt });
+  }
+  function applyCatalog(value, source, savedAt, evidence) {
     catalog = m365Catalog(value);catalogAt = savedAt;
     registry.models = { data: m365Models(catalog, "gpt").map(model => ({ ...model,
       vendor: "OpenAI", model_picker_enabled: true, policy: { state: "enabled" } })) };
     registry.source = source;registry.cacheSavedAtMs = savedAt;registry.cacheState = now() - savedAt < SOFT_TTL_MS ? "fresh" : "stale";
+    catalogRead = readObservation(catalog, source, savedAt, source === "live" ? lastCatalogResponse : evidence);
   }
   try {
     account = accountOverride || readM365Account({ home });
     const saved = readM365Json(paths.catalog);
     if (account && saved?.service_origin === M365_API_ORIGIN && saved.account_key === m365AccountKey(account) && Number.isFinite(saved.saved_at)
-      && now() - saved.saved_at < HARD_TTL_MS) applyCatalog(saved.models, "cache", saved.saved_at);
+      && now() - saved.saved_at < HARD_TTL_MS) applyCatalog(saved.models, "cache", saved.saved_at, m365CatalogRead(saved.catalog_read));
   } catch { reason = "m365_cache_unavailable"; }
 
   async function request(endpoint, body, options = {}) {
@@ -116,6 +122,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     const requestHeaders = m365Headers(credential.token, { ...options,
       conversationId: body ? m365ConversationId(body, options.headers, m365AccountKey(credential.account)) : undefined,
       stream: body?.stream === true });
+    if (endpoint === "/models") { requestHeaders["Cache-Control"] = "no-cache";requestHeaders.Pragma = "no-cache"; }
     const serialized = body ? options.bodyText ?? JSON.stringify(body) : undefined;
     if (serialized !== undefined) requestHeaders["Content-Length"] = String(Buffer.byteLength(serialized));
     options.onUpstreamStart?.();
@@ -124,6 +131,12 @@ export function createM365Provider({ home, env = process.env, account: accountOv
       const send = fetchImpl || await transport(options.signal);
       const response = await send(`${M365_API_BASE}${endpoint}`, { method: body ? "POST" : "GET", headers: requestHeaders,
         ...(serialized !== undefined ? { body: serialized } : {}), signal: options.signal, redirect: "manual" });
+      if (endpoint === "/models") {
+        const age = response.headers.get("age");
+        lastCatalogResponse = { http_status: response.status, request_id: response.headers.get("request-id") || response.headers.get("x-ms-request-id") || response.headers.get("x-request-id"),
+          client_correlation_id: requestHeaders["X-ClientCorrelationId"], http_revalidation_requested: true,
+          response_age_seconds: age !== null && /^\d+$/.test(age) ? Number(age) : null };
+      }
       if (response.ok) return response;
       const raw = await readBoundedResponseText(response, { maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES, label: "M365 error", signal: options.signal });
       const safe = raw.split(credential.token).join("[redacted]");
@@ -155,7 +168,8 @@ export function createM365Provider({ home, env = process.env, account: accountOv
       if (current !== generation || signal.aborted) throw m365Error("m365_refresh_cancelled");
       const savedAt = now();
       const nextAccount = { ...credential.account, ...(account?.history_isolation ? { history_isolation: true } : {}) };
-      if (persist) writeM365Binding(nextAccount, { account_key: m365AccountKey(nextAccount), service_origin: M365_API_ORIGIN, saved_at: savedAt, models: value }, { home, expectedAccount: account });
+      if (persist) writeM365Binding(nextAccount, { account_key: m365AccountKey(nextAccount), service_origin: M365_API_ORIGIN, saved_at: savedAt, models: value,
+        catalog_read: readObservation(value, "live", savedAt, lastCatalogResponse) }, { home, expectedAccount: account });
       account = nextAccount;
       applyCatalog(value, "live", savedAt);catalogDiagnostic = null;state = "ready";reason = null;registry.lastError = null;registry.lastErrorAtMs = null;
       try { await onCatalog(value); } catch { log("warn", "M365 models are ready; optional client configuration could not be updated"); }
@@ -253,7 +267,8 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     },
     commitSelection(expectedAccount) {
       if (!catalog || state !== "ready" || !account) throw m365Error("m365_not_ready");
-      writeM365Binding(account, { account_key: m365AccountKey(account), service_origin: M365_API_ORIGIN, saved_at: catalogAt, models: catalog }, { home, expectedAccount });
+      writeM365Binding(account, { account_key: m365AccountKey(account), service_origin: M365_API_ORIGIN, saved_at: catalogAt, models: catalog,
+        catalog_read: m365CatalogRead(catalogRead) }, { home, expectedAccount });
       persist = true;
     },
     snapshot: () => ({ ...auth.snapshot(), state, reason: reason || auth.snapshot().reason, account: account ? { login: account.login, tenant: account.tenant, selection_source: account.selection_source || "legacy" } : null,
@@ -261,6 +276,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
       network: network?.snapshot() || null,
       network_diagnostic: networkDiagnostic ? { ...networkDiagnostic } : null,
       catalog_diagnostic: m365CatalogDiagnostic(catalogDiagnostic),
+      catalog_read: m365CatalogRead(catalogRead),
       cache_ttl_adjustments: cacheTtlAdjustments,
       models: { total: catalog?.data.length || 0, claude: m365Models(catalog, "claude").length, gpt: m365Models(catalog, "gpt").length,
         source: registry.source, refreshed_at: catalogAt ? new Date(catalogAt).toISOString() : null }, refresh_in_flight: Boolean(flight) }),

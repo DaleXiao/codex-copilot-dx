@@ -3,6 +3,42 @@
   const label = (node, key, values) => language.set(node, key, values);
   const text = (id, key, values) => label(el(id), key, values);
   let account = null, pending = false, pollTimer = null, stopped = false, repairPreview = null;
+  let codeCopy = null, copyGeneration = 0, accountGeneration = 0, copyState = "tools_code_copy_needed";
+  const userCode = () => account?.operation?.state === "authorizing" && /^[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(account.operation.user_code || "") ? account.operation.user_code : null;
+  function showCopyState() {
+    el("github-copy-code").disabled = pending || !userCode();
+    const node = el("github-copy-state");
+    if (userCode()) { if (node.dataset.i18n !== copyState || node.textContent !== language.format(copyState)) text("github-copy-state", copyState); }
+    else { node.removeAttribute("data-i18n");node.textContent = ""; }
+  }
+  function finishCodeCopy() { copyGeneration++;codeCopy?.reject(Error("Sign-in ended"));codeCopy = null;copyState = "tools_code_copy_needed"; }
+  function copied(promise, generation, code, automatic = false) {
+    return Promise.resolve(promise).then(() => {
+      if (generation === copyGeneration && code === userCode()) { copyState = "tools_code_copied";showCopyState(); }return true;
+    }, () => {
+      if (generation === copyGeneration) { copyState = automatic ? "tools_code_copy_needed" : "tools_code_copy_failed";showCopyState(); }return false;
+    });
+  }
+  function copyCode(automatic = false) {
+    const code = userCode(), generation = copyGeneration;if (!code) return Promise.resolve(false);
+    try { return copied(navigator.clipboard.writeText(code), generation, code, automatic); }
+    catch { copyState = automatic ? "tools_code_copy_needed" : "tools_code_copy_failed";showCopyState();return Promise.resolve(false); }
+  }
+  function prepareCodeCopy() {
+    finishCodeCopy();const generation = copyGeneration;
+    let resolve, reject;const value = new Promise((yes, no) => { resolve = yes;reject = no; });value.catch(() => {});
+    codeCopy = { resolve, reject, prepared: false, code: null };
+    // Start the clipboard operation inside the original click. The code can
+    // arrive later through polling without losing Safari's user activation.
+    if (navigator.clipboard?.write && typeof ClipboardItem === "function") try {
+      const payload = value.then(code => new Blob([code], { type: "text/plain" }));payload.catch(() => {});
+      const item = new ClipboardItem({ "text/plain": payload });
+      const write = navigator.clipboard.write([item]);codeCopy.prepared = true;
+      void Promise.resolve(write).then(() => { if (generation === copyGeneration && codeCopy?.code && codeCopy.code === userCode()) { copyState = "tools_code_copied";showCopyState(); } }, () => {
+        if (generation === copyGeneration) { copyState = "tools_code_copy_needed";showCopyState(); }
+      });
+    } catch { /* The explicit copy button remains available. */ }
+  }
   const activeFlow = () => ["starting", "authorizing", "verifying"].includes(account?.operation?.state);
   async function api(path, body) {
     const response = await fetch(`/_ccdx/ui/${path}`, { method: body ? "POST" : "GET", cache: "no-store",
@@ -54,6 +90,8 @@
     el("github-user-code").textContent = op?.user_code || "—";
     el("github-authorize").hidden = op?.state !== "authorizing";
     el("github-authorize").href = op?.verification_uri === "https://github.com/login/device" ? op.verification_uri : "https://github.com/login/device";
+    if (userCode() && codeCopy && !codeCopy.code) { codeCopy.code = userCode();codeCopy.resolve(codeCopy.code);if (!codeCopy.prepared) void copyCode(true); }
+    if (!activeFlow() && codeCopy) finishCodeCopy();showCopyState();
     el("github-cancel").disabled = pending;
     el("github-check-code").textContent = online?.reason || "—";
     el("github-check-http").textContent = online?.http_status || "—";
@@ -67,10 +105,10 @@
   }
   function schedulePoll() {
     clearTimeout(pollTimer);pollTimer = null;
-    if (stopped || !activeFlow() || document.visibilityState !== "visible") return;
+    if (stopped || pending || !activeFlow() || document.visibilityState !== "visible") return;
     pollTimer = setTimeout(async () => {
       try {
-        const before = account.operation.state, data = await api("account");renderAccount(data);
+        const generation = accountGeneration, before = account.operation.state, data = await api("account");if (generation !== accountGeneration || pending) return;renderAccount(data);
         if (before !== data.operation?.state && data.operation?.state === "complete") {
           dashboardRefresh.invalidate("auth");dashboardRefresh.invalidate("models", { clear: true });
           void dashboardRefresh.refreshVisible({ force: true });
@@ -80,18 +118,24 @@
   }
   async function accountAction(action) {
     if (pending) return;
+    accountGeneration++;clearTimeout(pollTimer);
     pending = true;if (account) renderAccount(account);text("github-account-note", "checking");
+    if (action.action === "start") prepareCodeCopy();
+    else if (action.action === "cancel" || action.action === "logout") finishCodeCopy();
     let failureCode = null;
     try { renderAccount(await api("account", action)); }
-    catch (error) { failureCode = error.code; }
+    catch (error) { failureCode = error.code;if (action.action === "start") finishCodeCopy(); }
     finally { pending = false;if (account) renderAccount(account);if (failureCode) text("github-account-note", failureCode); }
   }
   el("github-signin").addEventListener("click", () => void accountAction({ action: "start", reauth: account?.saved === true }));
   el("github-force-reauth").addEventListener("click", () => void accountAction({ action: "start", reauth: true }));
   el("github-check").addEventListener("click", () => void accountAction({ action: "check" }));
   el("github-cancel").addEventListener("click", () => { if (account?.operation) void accountAction({ action: "cancel", id: account.operation.id }); });
+  el("github-copy-code").addEventListener("click", () => void copyCode());
+  el("github-authorize").addEventListener("click", event => { if (pending || !userCode()) { event.preventDefault();return; }void copyCode(); });
+  window.addEventListener("pagehide", finishCodeCopy);
   el("github-logout").addEventListener("click", () => { if (window.confirm(language.format("tools_logout_confirm"))) void accountAction({ action: "logout", confirmed: true }); });
-  async function loadAccount() { try { renderAccount(await api("account")); } catch { text("github-account-note", "tools_read_failed"); } }
+  async function loadAccount() { const generation = accountGeneration;try { const data = await api("account");if (generation === accountGeneration && !pending) renderAccount(data); } catch { if (generation === accountGeneration) text("github-account-note", "tools_read_failed"); } }
   function renderChecks(data) {
     const body = el("checks-body");body.replaceChildren();
     const groups = new Map();

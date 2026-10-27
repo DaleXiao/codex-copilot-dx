@@ -176,6 +176,13 @@ export function buildHttpFailureDetails({ statusCode, route, requestId, model, c
     ccdx_model_ambiguous: "This model name matches multiple sources. Select its source-specific entry.",
     ccdx_model_catalog_unavailable: "The selected model is not currently available in its source catalog.",
     ccdx_client_source_disabled: "This app or its model source is turned off." };
+  for (const prefix of ["source_changed", "prefix_changed"]) {
+    reasons[`${prefix}_tool_call_pending`] = "A tool call is still waiting for its result. Finish the current turn before switching.";
+    reasons[`${prefix}_tool_result_unmatched`] = "A tool result has no matching call. Restore complete history before switching.";
+    reasons[`${prefix}_tool_history_invalid`] = "The tool history is incomplete. Restore complete history before switching.";
+    reasons[`${prefix}_active_tool_turn`] = prefix === "prefix_changed" ? "History changed during a tool turn. Finish the current turn before switching."
+      : "A tool turn is still active on the previous source. Finish it before switching.";
+  }
   const message = (Object.hasOwn(reasons, reason) ? reasons[reason] : null) || (route === "messages_count_tokens" && statusCode === 404 ? "The source's token-count endpoint returned HTTP 404. Message generation is separate."
     : code === "ccdx_api_network_unavailable" ? "Connection to the model source failed."
       : origin === "client_validation" ? "The request was rejected locally before an upstream call."

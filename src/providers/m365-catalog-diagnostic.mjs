@@ -36,3 +36,15 @@ export function catalogFailure(response, body, { checkedAt, lastSuccessAt } = {}
   return m365CatalogDiagnostic({ stage: "catalog", cause_code, http_status: code, checked_at: checkedAt,
     last_success_at: lastSuccessAt, request_id: response.headers.get("request-id") || response.headers.get("x-ms-request-id") });
 }
+
+export function m365CatalogRead(value) {
+  if (!value || !["network", "cache"].includes(value.source) || !date(value.checked_at)
+    || !["total", "claude", "gpt", "filtered"].every(key => Number.isInteger(value[key]) && value[key] >= 0 && value[key] <= 1000)
+    || value.claude + value.gpt + value.filtered !== value.total) return null;
+  const identifier = id => typeof id === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(id) && !/^(?:github_pat_|gh[pousr]_|sk-|eyJ)/.test(id) ? id : null;
+  return { source: value.source, checked_at: value.checked_at, total: value.total, claude: value.claude, gpt: value.gpt, filtered: value.filtered,
+    request_id: identifier(value.request_id), client_correlation_id: identifier(value.client_correlation_id),
+    http_status: value.source === "network" && value.http_status === 200 ? 200 : null,
+    local_cache_used: value.source === "cache", http_revalidation_requested: value.source === "network" && value.http_revalidation_requested === true,
+    response_age_seconds: Number.isSafeInteger(value.response_age_seconds) && value.response_age_seconds >= 0 && value.response_age_seconds <= 604800 ? value.response_age_seconds : null };
+}

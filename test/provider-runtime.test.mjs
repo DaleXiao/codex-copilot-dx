@@ -11,14 +11,16 @@ import { rememberResponseHistoryNode, materializeResponseHistory, clearResponseH
 import { invokeAdapter } from "../test-support/adapter.mjs";
 import { applyResponseHistoryRoutePlan } from "../src/responses-request.mjs";
 import { createM365Network } from "../src/providers/m365-network.mjs";
+import { m365Paths, writeM365Json } from "../src/m365-settings.mjs";
 
 const catalog = { data: [
   { id: "claude-opus-5.5", publisher: "Anthropic", supported_endpoints: ["/v1/messages"] },
   { id: "gpt-6-sol", publisher: "OpenAI", supported_endpoints: ["/responses"], capabilities: { supports: { reasoning_effort: ["low", "medium"] } } },
 ] };
 function completed(model, id) { return Response.json({ id, model, status: "completed", output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }); }
-function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, corePort, modelCatalog = catalog, onConfigure = () => {}, m365Network } = {}) {
+function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, corePort, modelCatalog = catalog, onConfigure = () => {}, m365Network, legacyClaude = false } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-providers-")), calls = [], lifecycle = [];
+  if (legacyClaude) writeM365Json(m365Paths({ home }).ownership, {});
   const githubClient = { getCachedModelEndpoints: () => ["/responses"], listModels: async () => ({ status: 200, body: JSON.stringify({ data: [] }) }),
     responses: async body => { calls.push({ provider: "github", body: structuredClone(body) });return githubRequest ? githubRequest(body) : completed(body.model, "resp_github"); },
     responsesCompact: async body => completed(body.model, "resp_compact"), runtimeStatus: () => ({}), chatCompletions: () => assert.fail("Unexpected Chat fallback") };
@@ -39,6 +41,15 @@ function setup(t, { failM365 = false, githubRequest, acquireM365, gatewayError, 
 }
 const choose = runtime => runtime.action({ action: "switch", provider: "m365", model: "gpt-6-sol", auto_review_model: "gpt-6-sol" });
 
+test("an explicit CLI source choice grants only Codex and preserves discovery-only defaults", async t => {
+  let configured = 0;const s = setup(t, { onConfigure: () => { configured++; } });await s.runtime.start();
+  assert.equal(configured, 0);assert(s.runtime.connections().clients.every(c => !c.allowed.includes("m365")));
+  await s.runtime.manageConnections({ operation: "source_access", id: "m365", allowed: [] });
+  await choose(s.runtime);
+  assert.deepEqual(s.runtime.connections().clients.filter(c => c.allowed.includes("m365")).map(c => c.id), ["codex"]);
+  assert.equal(configured, 0);
+});
+
 test("an explicit recovered catalog clears the composition's old refusal without switching sources", async t => {
   let refused = true;
   const s = setup(t, { m365Network: async () => ({ healthy: () => true, close() {}, snapshot: () => ({ source: "direct", healthy: true }),
@@ -48,6 +59,16 @@ test("an explicit recovered catalog clears the composition's old refusal without
   refused = false;await s.runtime.dashboardCatalog({ provider: "m365" });
   assert.equal(s.runtime.snapshot().m365.reason, null);assert.equal(s.runtime.snapshot().m365.state, "ready");
   assert.equal(s.runtime.snapshot().codex_provider, "github");
+});
+
+test("a legacy gateway reports its directory refusal with bounded cause and correlation evidence", async t => {
+  const s = setup(t, { legacyClaude: true, m365Network: async () => ({ healthy: () => true, close() {}, snapshot: () => ({ source: "direct", healthy: true }),
+    fetch: async () => Response.json({ error: { message: "Copilot CLI Entra access is not enabled for this user." } }, { status: 403, headers: { "request-id": "catalog-denial-1" } }) }) });
+  await s.runtime.start();let status, body;
+  await s.runtime.handleClaude({}, { writeHead(code) { status = code; }, end(value) { body = JSON.parse(value); } });
+  assert.equal(status, 503);assert.equal(body.error.code, "m365_catalog_http_403");assert.equal(body.error.diagnostic.http_status, 403);
+  assert.equal(body.error.diagnostic.cause_code, "entra_access_disabled");assert.equal(body.error.diagnostic.request_id, "catalog-denial-1");
+  assert.match(body.error.message, /Entra access/);assert.doesNotMatch(JSON.stringify(body), /test_entra/);
 });
 
 test("system proxy parse failures stay local to M365, retain the cause, and recover without replacing GitHub", async t => {
@@ -195,7 +216,7 @@ test("provider model browsing is independent of Codex selection and includes ine
 
 test("successful background catalogs synchronize Claude configuration and stopping prevents later writes", async t => {
   const data = structuredClone(catalog), configured = [];
-  const s = setup(t, { modelCatalog: data, onConfigure: input => configured.push(structuredClone(input.models)) });
+  const s = setup(t, { legacyClaude: true, modelCatalog: data, onConfigure: input => configured.push(structuredClone(input.models)) });
   await s.runtime.start();await choose(s.runtime);
   const provider = s.runtime.current();
   data.data[0].capabilities = { supports: { reasoning_effort: ["low", "high"] } };

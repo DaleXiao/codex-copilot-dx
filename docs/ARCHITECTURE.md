@@ -145,8 +145,17 @@ handles. New-source thinking after the checkpoint stays unchanged. Changed
 prefixes can be rebuilt only at a completed tool boundary. It adds no automatic
 retry, summary inference, routing fallback or conversation database.
 
-Transfer records are bounded to 1024 hashed keys in a 512 KiB versioned file;
-they contain owner hashes, prefix hashes and message counts, not transcripts.
+Transfer records are bounded to 1024 hashed keys per 512 KiB versioned file;
+they contain owner hashes, prefix hashes and counts, not transcripts.
+`conversation-prefixes.json` adds protocol-equivalent block fingerprints beside
+the unchanged legacy `conversation-transfers.json` shape. Strings and single
+text blocks compare equally; adjacent same-role messages can be combined without
+changing the proved block prefix. Text/code whitespace, arrays and tool argument
+values remain significant. Only protocol cache hints are excluded. The semantic
+receipt is anchored to its legacy owner/count/hash so an older writer invalidates
+stale proof. Both files commit under the existing lock and atomic file-pair
+rollback. Legacy receipts upgrade only after their prefix is proved; unmatched
+old history is never guessed. Old versions can still read the legacy receipt.
 Count/model-validation requests do not rebind. A per-conversation request lease
 pins active source work; the gateway commits a checkpoint immediately before
 delivering usable output/tool/private state and releases every lease on failure
@@ -157,6 +166,15 @@ owners are still refused. Native Responses recovery/configuration is unchanged.
 
 `dashboard/connections.js` owns settings forms; application source/review and
 account/catalog views keep their existing scopes and use the same backend graph.
+M365's `source_access` action changes client grants without choosing a source or
+model. Only revoked active routes and necessary shared-key migrations synchronize
+client configuration; unrelated clients and empty sync targets are untouched.
+Unchecked routes are removed from runtime authorization while other deployments
+remain selected. Fresh discovery without owned legacy configuration grants no
+automatic M365 consumers; existing graph/legacy ownership is retained. Explicit
+CLI source selection remains an intentional grant for Codex only. Shared native
+Claude capability settings are preserved when an unaffected consumer is not yet
+checked, until normal reconciliation can verify both consumers.
 Its binding draft retains selected identities independently from current catalog
 availability. Missing selections stay visible and cannot be silently dropped on save.
 Full configuration is on-demand; ordinary status uses compact cached summaries.
@@ -423,6 +441,13 @@ settlement for two seconds; no successful plaintext cache or transcript index ex
 ## Dashboard reads
 
 `account-tools.mjs` is the shared explicit GitHub sign-in/check/sign-out boundary for CLI and WebUI. It reuses bounded device polling and `auth-status.mjs` access checks, isolates candidate credentials until verification, compares the original credential under the existing cross-process auth lock, and atomically commits to the CCDX-owned store. It does not own Microsoft SSO. Public snapshots project fixed stages/codes and omit token material. A cancelled or failed candidate is never persisted; the service keeps one sign-in controller and one connection-check flight, with bounded lifetimes/cooldowns. Explicit cache invalidation aborts a pending token refresh while preserving the runtime's account binding. The CLI notifies a compatible local service after changes; account changes require a restart.
+The verification view starts one deferred ClipboardItem write in the explicit
+sign-in gesture, resolves it only to the short public user code and retains an
+explicit writeText/selectable-text fallback. Fixed-URL native link activation
+retries copying without awaiting a popup-blocking task. Flow/account generations
+ignore cancelled or obsolete completion; unchanged polls do not rewrite or
+reannounce the clipboard feedback. No clipboard read or token projection is added.
+
 
 `local-tools.mjs` reuses doctor and the existing config writer. It projects redacted local checks and a revision-bound config preview rather than wrapping arbitrary shell commands. The config writer validates the revision again inside its own lock, then preserves unmanaged settings and backs up changed originals. `dashboard-tools.mjs` owns the small strict action schema and bounded request-body transport; `optional-routes.mjs` creates these tools lazily per handler and disposes sign-in work when the listener closes. `dashboard/tools.js` owns the source-specific account view, user-triggered checks/preview and local progress polling; source selection does not change routing. `dashboard/icons.js` supplies fixed local circle SVGs and separate localized text nodes, preserving language changes without replacing the icons. No runtime dependency or per-stream instrumentation is added.
 

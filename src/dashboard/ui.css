@@ -19,6 +19,14 @@ button:hover, .button-link:hover { background: var(--button-hover); }
 button:focus-visible, .button-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .button-link { display:inline-flex;align-items:center;justify-content:center;text-decoration:none; }
 .account-entry { text-transform:none; }
+.device-code-row { display:flex;align-items:center;gap:10px; }
+.device-code-row .device-code { margin:10px 0; }
+#github-copy-state:empty { display:none; }
+#m365-app-access { margin-top:22px; }
+#m365-app-access fieldset { border:0;padding:0;margin:0; }
+#m365-app-access legend { margin-bottom:10px;padding:0; }
+#m365-access-warning { color:var(--incomplete); }
+#m365-access-state { margin:0; }
 button:disabled { opacity: .55; cursor: default; }
 button[aria-busy="true"] { cursor: progress; }
 .icon-button { display: inline-flex; flex:none; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 6px; border: 0; background: transparent; }

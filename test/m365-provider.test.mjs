@@ -17,6 +17,42 @@ function fixture(t) { const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-m
 function auth(identity = account) { return { getToken: async () => ({ token: "synthetic_entra_secret", account: identity, expiresAt: Date.now() + 3600000 }),
   snapshot: () => ({ token_cached: true, reason: null }), reset() {} }; }
 
+test("explicit directory refresh replaces an old five-model cache with the actual network list", async t => {
+  const home = fixture(t), paths = m365Paths({ home }), { M365_API_ORIGIN } = await import("../src/providers/m365-endpoint.mjs");
+  const gpt = Array.from({ length: 5 }, (_, i) => ({ id: `gpt-example-${i}`, publisher: "OpenAI", supported_endpoints: ["/responses"] }));
+  const all = [...gpt, ...Array.from({ length: 10 }, (_, i) => ({ id: `claude-example-${i}`, publisher: "Anthropic", supported_endpoints: ["/v1/messages"] }))];
+  writeM365Json(paths.account, account);writeM365Json(paths.catalog, { service_origin: M365_API_ORIGIN, account_key: m365AccountKey(account), saved_at: Date.now() - 60000, models: { data: gpt } });
+  let calls = 0;
+  const p = createM365Provider({ home, auth: auth(), fetchImpl: async (_url, init) => {
+    calls++;assert.equal(init.method, "GET");assert.equal(init.headers["Cache-Control"], "no-cache");assert.equal(init.headers.Pragma, "no-cache");
+    return Response.json({ data: all }, { headers: { "request-id": "catalog-network-1", age: "42" } });
+  } });t.after(() => p.close());
+  assert.equal(p.catalog().length, 5);assert.equal(p.snapshot().catalog_read.source, "cache");assert.equal(calls, 0);
+  await p.refresh();assert.equal(calls, 1);assert.equal(p.catalog().length, 15);
+  assert.deepEqual([p.snapshot().catalog_read.total, p.snapshot().catalog_read.claude, p.snapshot().catalog_read.gpt], [15, 10, 5]);
+  assert.equal(p.snapshot().catalog_read.local_cache_used, false);assert.equal(p.snapshot().catalog_read.request_id, "catalog-network-1");
+  assert.equal(p.snapshot().catalog_read.response_age_seconds, 42);assert.equal(JSON.stringify(JSON.parse(fs.readFileSync(paths.catalog))).includes("synthetic_entra_secret"), false);
+});
+
+test("an online five-model result is not expanded from a fifteen-model cache", async t => {
+  const home = fixture(t), paths = m365Paths({ home }), { M365_API_ORIGIN } = await import("../src/providers/m365-endpoint.mjs");
+  writeM365Json(paths.account, account);writeM365Json(paths.catalog, { service_origin: M365_API_ORIGIN, account_key: m365AccountKey(account), saved_at: Date.now(), models: catalog });
+  const one = catalog.data.filter(model => model.publisher === "OpenAI");
+  const p = createM365Provider({ home, auth: auth(), fetchImpl: async () => Response.json({ data: one }) });t.after(() => p.close());
+  await p.refresh();assert.equal(p.catalog().length, 1);assert.equal(p.snapshot().catalog_read.source, "network");assert.equal(p.snapshot().catalog_read.claude, 0);
+});
+
+test("a readable catalog never hides an inference refusal or retries another model", async t => {
+  let posts = 0;
+  const p = createM365Provider({ home: fixture(t), auth: auth(), persist: false, fetchImpl: async (_url, init) => {
+    if (init.method === "GET") return Response.json(catalog);
+    posts++;return Response.json({ error: { code: "model_access_denied", message: "synthetic refusal" } }, { status: 403, headers: { "request-id": "inference-request-1" } });
+  } });t.after(() => p.close());await p.refresh();
+  const result = await p.client.messages({ model: "claude-opus-5.5", max_tokens: 1, messages: [{ role: "user", content: "synthetic" }] });
+  assert.equal(result.status, 403);assert.equal(result.headers.get("request-id"), "inference-request-1");assert.equal((await result.json()).error.code, "model_access_denied");
+  assert.equal(posts, 1);assert.equal(p.snapshot().catalog_read.http_status, 200);
+});
+
 test("a catalog refusal retains the last-good list, exposes its reason, and clears on recovery", async t => {
   let refused = false, clock = Date.parse("2026-10-22T07:00:00Z");
   const p = createM365Provider({ home: fixture(t), auth: auth(), now: () => clock,

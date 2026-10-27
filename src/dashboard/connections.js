@@ -8,6 +8,28 @@
   const apiForm = el("connection-api-form"), clientForm = el("connection-client-form");
   const node = (tag, text, className) => { const item = document.createElement(tag);if (text !== undefined) item.textContent = text;if (className) item.className = className;return item; };
   const source = id => data.providers.find(item => item.id === id), client = id => data.clients.find(item => item.id === id);
+  let accessDraft = null, accessError = null, accessRefresh = [], accessReview = [];
+  const accessForm = el("m365-app-access");
+  function renderAccess() {
+    if (!accessForm) return;accessForm.hidden = selectedProvider !== "m365";
+    const saved = data.clients.filter(c => c.allowed.includes("m365")).map(c => c.id), selected = accessDraft || saved;
+    const area = el("m365-allowed-apps"), focus = area.contains(document.activeElement) ? document.activeElement.value : null;
+    area.replaceChildren(...data.clients.filter(c => c.enabled).map(c => {
+      const item = check("m365-app", c.id, selected.includes(c.id), c.name);
+      item.firstChild.disabled = busy;item.firstChild.addEventListener("change", () => {
+        accessDraft = [...selected.filter(id => !data.clients.find(c => c.id === id)?.enabled), ...[...area.querySelectorAll("input:checked")].map(input => input.value)];
+        accessError = null;
+        renderAccess();[...area.querySelectorAll("input")].find(input => input.value === c.id)?.focus();
+      });return item;
+    }));
+    const dirty = JSON.stringify([...saved].sort()) !== JSON.stringify([...selected].sort());el("m365-access-save").disabled = busy || !dirty;
+    words(el("m365-access-state"), accessError || (dirty ? "cap_unsaved" : accessReview.length ? "source_apps_review" : accessRefresh.length ? "source_apps_reopen" : saved.length ? "cap_saved" : "source_apps_none"),
+      { apps: (accessReview.length ? [...new Set([...accessReview, ...accessRefresh])] : accessRefresh).map(id => data.clients.find(c => c.id === id)?.name || id).join(" / ") });
+    const affected = data.clients.filter(c => !selected.includes(c.id) && (c.source === "m365" || c.deployments?.some(item => item.source === "m365")));
+    el("m365-access-warning").hidden = !affected.length;words(el("m365-access-warning"), "source_apps_pause", { apps: affected.map(c => c.name).join(" / ") });
+    if (focus) [...area.querySelectorAll("input")].find(input => input.value === focus)?.focus();
+  }
+  accessForm?.addEventListener("submit", event => { event.preventDefault();accessError = null;void change({ operation: "source_access", id: "m365", allowed: accessDraft || [] }, result => { accessDraft = null;accessRefresh = result.client_refresh || [];accessReview = result.client_review || [];renderAccess(); }); });
   const compatible = (provider, id) => provider.protocols.includes(id === "codex" ? "responses" : "messages");
   const selectableSource = (provider, id) => compatible(provider, id)
     && (provider.builtin || provider.models?.some(model => model.protocols.includes(id === "codex" ? "responses" : "messages")));
@@ -66,6 +88,7 @@
     const m365Toggle = el("m365-enabled")?.closest(".setting-row");if (m365Toggle) m365Toggle.hidden = true;
     for (const link of document.querySelectorAll("[data-source-link]")) { const id = link.dataset.sourceLink;if (["m365", "github"].includes(id)) link.hidden = !source(id)?.enabled; }
     globalThis.ccdxConnectionNames = Object.fromEntries(data.providers.map(p => [p.id, p.name]));
+    renderAccess();
   }
   async function load() {
     if (busy) return;const current = ++generation;
@@ -91,9 +114,10 @@
       if (input.operation === "client" && input.source && setup === "not_installed") key = "api_client_not_installed";
       if (input.operation === "client") words(el("connection-client-note"), key);else message(key);
     }window.dispatchEvent(new CustomEvent("ccdx:connections"));void dashboardRefresh.refresh("auth", { force: true });void dashboardRefresh.refresh("status", { force: true }); }
-    catch (error) { if (input.operation === "client") words(el("connection-client-note"), error.message);else message(error.message); }
+    catch (error) { if (input.operation === "source_access") accessError = error.message;else if (input.operation === "client") words(el("connection-client-note"), error.message);else message(error.message); }
     finally { busy = false;if (trigger?.tagName === "BUTTON") { trigger.removeAttribute("aria-busy");trigger.disabled = false;if (oldKey) words(trigger, oldKey);else trigger.textContent = oldText; }
       if (["client", "preview_client"].includes(input.operation)) bindingRows();
+      if (input.operation === "source_access") renderAccess();
     }
   }
   const resolved = (model, protocol = model.protocols.includes("messages") ? "messages" : model.protocols[0]) => {

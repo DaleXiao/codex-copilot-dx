@@ -85,6 +85,45 @@ test("clients without the transfer policy retain their original source guard", t
   assert.equal(fs.existsSync(f.file), false);
 });
 
+test("protocol-equivalent history forms preserve an ongoing tool turn without a source change", t => {
+  const f = fixture(t), original = body(), first = f.prepare("source-two", structuredClone(original));first.commit();first.release();f.restart();
+  const next = structuredClone(original);next.messages[0].content = [{ text: next.messages[0].content, type: "text" }];
+  next.messages.push({ role: "assistant", content: [{ type: "thinking", thinking: "keep", signature: "own" }, { type: "tool_use", id: "current", name: "read", input: {} }] },
+    user([{ type: "tool_result", tool_use_id: "current", content: "done" }]));
+  const plan = f.prepare("source-two", next);assert.equal(next.messages.at(-2).content[0].signature, "own");plan.commit();plan.release();
+});
+
+test("adjacent Messages turns may be combined without losing the migrated prefix boundary", t => {
+  const f = fixture(t), original = { model: "two", messages: [user("alpha"), user("beta")] };
+  const first = f.prepare("source-two", original);first.commit();first.release();f.restart();
+  const combined = { model: "two", messages: [user([{ type: "text", text: "alpha" }, { type: "text", text: "beta" }]),
+    { role: "assistant", content: [{ type: "thinking", thinking: "keep", signature: "own" }, { type: "tool_use", id: "current", name: "read", input: {} }] },
+    user([{ type: "tool_result", tool_use_id: "current", content: "done" }])] };
+  const plan = f.prepare("source-two", combined);assert.equal(combined.messages[1].content[0].signature, "own");plan.release();
+});
+
+test("legacy checkpoints upgrade at a proved prefix and remain readable after rollback", t => {
+  const f = fixture(t), original = body(), first = f.prepare("source-two", structuredClone(original));first.commit();first.release();
+  const canonicalFile = path.join(path.dirname(f.file), "conversation-prefixes.json");fs.unlinkSync(canonicalFile);f.restart();
+  const next = structuredClone(original);next.messages[0].content = [{ type: "text", text: next.messages[0].content }];
+  next.messages.push({ role: "assistant", content: [{ type: "thinking", signature: "own", thinking: "keep" }, { type: "tool_use", id: "current", name: "read", input: {} }] }, user([{ type: "tool_result", tool_use_id: "current", content: "done" }]));
+  const plan = f.prepare("source-two", next);assert.equal(next.messages.at(-2).content[0].signature, "own");plan.commit();plan.release();assert(fs.existsSync(canonicalFile));
+  for (const record of Object.values(JSON.parse(fs.readFileSync(f.file)).records)) assert.deepEqual(Object.keys(record).sort(), ["count", "owner", "prefix"]);
+  const raw = JSON.parse(fs.readFileSync(f.file));Object.values(raw.records)[0].prefix = "f".repeat(64);fs.writeFileSync(f.file, JSON.stringify(raw));f.restart();
+  assert.throws(() => f.prepare("source-two", next), error => error.jsonBody?.error?.reason === "prefix_changed_active_tool_turn");
+});
+
+test("protocol normalization never ignores tool argument changes or user text whitespace", t => {
+  const f = fixture(t), original = body();original.messages.splice(2, 0,
+    { role: "assistant", content: [{ type: "tool_use", id: "old", name: "read", input: { cache_control: "user-data" } }] },
+    user([{ type: "tool_result", tool_use_id: "old", content: "old" }]), { role: "assistant", content: "Done" });
+  const first = f.prepare("source-two", structuredClone(original));first.commit();first.release();
+  for (const edit of [value => { value.messages[2].content[0].input.cache_control = "changed"; }, value => { value.messages[0].content += " "; }]) {
+    const changed = structuredClone(original);edit(changed);changed.messages.push({ role: "assistant", content: [{ type: "tool_use", id: "current", name: "read", input: {} }] }, user([{ type: "tool_result", tool_use_id: "current", content: "done" }]));
+    assert.throws(() => f.prepare("source-two", changed), error => error.jsonBody?.error?.reason === "prefix_changed_active_tool_turn");
+  }
+});
+
 test("an active transfer plan does not retain the admitted request body", t => {
   const f = fixture(t), moduleUrl = new URL("../src/messages-history-transfer.mjs", import.meta.url).href;
   execFileSync(process.execPath, ["--expose-gc", "--input-type=module", "-e", `

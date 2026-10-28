@@ -21,7 +21,7 @@ export function startupBanner({ commandName = "ccdx", version, stream = process.
   const title = `${terminalCell(commandName)} v${terminalCell(version)} by Dale Xiao`;
   const color = stream.isTTY === true && !Object.hasOwn(env, "NO_COLOR") && env.TERM !== "dumb";
   if (!color || Number(stream.columns || 80) < 72) return `${title}\nLocal model services for Codex and Claude`;
-  const labels = new Map([[1, `${terminalCell(commandName).toUpperCase()} v${terminalCell(version)}`], [2, "by Dale Xiao"], [4, "Codex + Claude / local services"]]);
+  const labels = new Map([[1, `${terminalCell(commandName).toUpperCase()} v${terminalCell(version)}`], [2, "by Dale Xiao"], [4, "Local model gateway"]]);
   const theme = colorTheme || terminalColorPreference({ env, home });
   return ATOM.map((line, i) => `${colorTerminalText(line, theme, { output: stream, env })}${labels.has(i) ? `  ${labels.get(i)}` : ""}`).join("\n");
 }

@@ -51,6 +51,13 @@ test("canonical routes and deep help share a valid grammar; old switching and au
   assert.match(cliHelp("ccdx", "app codex prediction"), /setup|repair/);
   assert.doesNotMatch(cliHelp("ccdx", "source github"), /github (?:edit|remove)/);
 });
+test("canonical feature help retains the existing integration safety and data-loss boundaries", () => {
+  assert.match(cliHelp("ccdx", "app codex prediction setup"), /decrypted locally/);
+  assert.match(cliHelp("ccdx", "app codex prediction setup"), /Quit Codex/);
+  assert.match(cliHelp("ccdx", "app codex image remove"), /stored API credential/);
+  assert.match(cliHelp("ccdx", "doctor cache"), /next continuation fail/);
+  assert.match(cliHelp("ccdx", "update"), /entire dependency tree/);
+});
 test("unknown actions, malformed client IDs, duplicate flags and nonnumeric bounds fail before IO", () => {
   for (const args of [["app", "wrong", "status"], ["source", "github", "unknown"], ["requests", "--limit", "101"], ["requests", "--active", "--failed"],
     ["status", "--format", "xml"], ["app", "codex", "models", "--file", "x"], ["source", "m365", "access", "--apps", "codex"], ["source", "github", "status", "--format", "json", "--format", "json"]]) assert.throws(() => parseCliArgs(args), undefined, args.join(" "));

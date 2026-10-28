@@ -438,6 +438,15 @@ function topicHelp(name, topic) {
 
 export function cliHelp(commandName = "ccdx", topic = "") {
   if (!topic) return rootCommandHelp();
-  const canonical = managedCommandHelp(topic.split(" "));if (canonical !== null) return canonical;
+  const parts = topic.split(" "), canonical = managedCommandHelp(parts);
+  if (canonical !== null) {
+    const feature = parts[0] === "app" && parts[1] === "codex" ? parts[2] : null;
+    const integration = feature === "prediction" ? "prediction" : feature === "image" ? parts[3] === "remove" ? "disable-image" : "enable-image" : feature === "review" ? "auto-review-model"
+      : parts[0] === "source" && parts[1] === "github" && ["login", "reauth", "logout"].includes(parts[2]) ? "auth"
+        : parts[0] === "source" && parts[1] === "m365" && parts[2] === "account" ? "m365"
+          : parts[0] === "doctor" && parts[1] === "cache" ? "cache" : parts[0] === "config" && ["limits", "animation"].includes(parts[1]) ? parts[1] : parts[0] === "update" ? "update" : null;
+    const notes = integration ? topicHelp("ccdx", integration).split("\n\n").slice(1).join("\n\n") : "";
+    return canonical + (notes ? "\n\nIntegration details:\n" + notes : "");
+  }
   return topicHelp("ccdx", checkedHelpTopic(topic.split(" ")));
 }

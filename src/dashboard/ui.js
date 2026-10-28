@@ -201,12 +201,12 @@ function applyModels(data, { changed }) {
     body.replaceChildren();
     for (const model of data.models) {
       const clients = (model.clients || []).map(id => ({ codex: "Codex App", claude_app: "Claude App", claude_code: "Claude Code" })[id] || id).join(" / ") || "—";
-      const row = tableRow([model.id, clients, ""]);row.children[0].className = "model-name";
+      const row = tableRow([model.display_name || model.id, clients, ""]);row.children[0].className = "model-name";
       if (model.vendor && model.vendor !== "Unknown") { const maker = document.createElement("span");maker.className = "model-maker";maker.textContent = model.vendor;row.children[0].append(maker); }
       const details = document.createElement("details"), summary = document.createElement("summary"), fields = document.createElement("dl");
       details.dataset.model = model.id;details.open = expanded.has(model.id);fields.className = "failure-detail";
       localize(summary, "model_details");details.append(summary, fields);
-      for (const [key, value, translated] of [["vendor", model.vendor && model.vendor !== "Unknown" ? model.vendor : phrase("cap_unknown")], ["model_owner", model.owned_by], ["api", model.endpoints.join(" / ") || "—"],
+      for (const [key, value, translated] of [["model_id", model.id], ["vendor", model.vendor && model.vendor !== "Unknown" ? model.vendor : phrase("cap_unknown")], ["model_owner", model.owned_by], ["api", model.endpoints.join(" / ") || "—"],
         ["reasoning", model.reasoning_efforts?.join(" / ") || "—"], ["state", model.preview ? "preview" : model.state || "listed", true],
         ["model_window", number(model.context_window)]]) {
         if (value === undefined) continue;

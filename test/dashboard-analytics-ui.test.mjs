@@ -244,9 +244,10 @@ test("English copy and Chinese failures keep raw values, missing states and diag
   const rows = h.nodes.get("failures").children;
   assert.ok(rows.some((row) => /模型未知/.test(row.children[0].children[0].textContent)));
   const literal = rows.find((row) => /Comet/.test(row.children[0].children[0].textContent)).children[0];
-  assert.match(literal.children[0].textContent, /Comet \/ response.failed/);
+  assert.match(literal.children[0].textContent, /请求未完成.*Comet/);
   await literal.children.at(-1).listeners.click();
   assert.match(copied, /model: Comet/);
+  assert.match(copied, /code: response.failed/);
   assert.match(copied, /message: DEFAULT \{input\}/);
   assert.match(copied, /retry: not attempted/);
   assert.equal(literal.children.at(-1).textContent, "已复制");

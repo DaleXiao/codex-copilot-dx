@@ -574,3 +574,8 @@ These rows supersede older update-help wording in the historical comparison.
 | Failed installations are not retried automatically. | GitHub updates retry once offline with a verified same-version platform package only after EALLOWREMOTE; other errors are not retried. |
 | npm error code EALLOWREMOTE | npm refused a remote dependency. Previous installation restored; checking the same version's complete platform package. |
 | Dependencies use the configured npm registry. | Complete platform package verified; installing offline with the saved npm policy. |
+
+
+# 1.2.31 presentation boundary
+
+CLI commands and normal terminal output are unchanged. Display names do not change model IDs accepted by CLI tools. The new model.error diagnostic event preserves HTTP status and structured upstream error identifiers; it does not add scrolling request logs or automatic inference retries.

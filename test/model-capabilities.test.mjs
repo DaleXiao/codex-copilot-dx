@@ -12,6 +12,13 @@ import { defaultAccessSettings, accessSettingsPath, readAccessSettings, updateAc
 const temporary = t => { const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-capabilities-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));return { home, env: {}, platform: "linux" }; };
 const model = (id, window, output = 16000) => ({ id, public_id: id, client_id: id, capability: { values: { ...(window ? { context_window: window } : {}), max_output_tokens: output, reasoning_efforts: ["low", "medium", "high"] } } });
 
+test("an unverified client version preserves the existing capability configuration", t => {
+  const options = temporary(t), file = claudeClientPaths(options).code;
+  fs.mkdirSync(path.dirname(file), { recursive: true });const before = '{"env":{"CLAUDE_CODE_MAX_CONTEXT_TOKENS":"128000"},"modelSettings":{"custom":{"autoCompactWindow":120000}}}';fs.writeFileSync(file, before);
+  const result = syncClaudeCapabilities({ limitations: [{ code: "client_version_unknown" }] }, options);
+  assert.equal(result.state, "partially_preserved");assert.equal(result.changed, false);assert.equal(fs.readFileSync(file, "utf8"), before);
+});
+
 test("capabilities preserve explicit false, field evidence, unknowns and credential generations", () => {
   const config = { base_url: "https://example.test/v1", endpoints: { messages: "https://example.test/v1/messages" }, auth_header: "bearer", secret_ref: "a".repeat(32) };
   const revision = deploymentRevision(config), metadata = { deployment: revision, checked_at: "2026-10-24T00:00:00.000Z", values: { context_window: 256000, reasoning: true, reasoning_efforts: ["low", "high"], tools: true } };
@@ -99,7 +106,7 @@ test("Codex exposes unambiguous names while keeping qualified routes and source-
   const providers = Object.fromEntries(["github", "api_two"].map(id => [id, { id, models: () => [{ id: "same", name: "Friendly model", supported_endpoints: ["/responses"] }] }]));
   const binding = { enabled: true, allowed: Object.keys(providers), deployments: [{ source: "github", model: "same" }], default_model: deploymentModelId("github", "same") };
   const compile = () => compileClientModels({ client: "codex", binding, source: id => providers[id], enabled: () => true, names: { github: "GitHub Copilot", api_two: "Work API" } });
-  const single = compile();assert.equal(single.defaultModel, "same");assert.equal(single.models[0].display_name, undefined);assert.equal(single.models[0].name, "Friendly model");
+  const single = compile();assert.equal(single.defaultModel, "same");assert.equal(single.models[0].display_name, "Friendly model");assert.equal(single.models[0].name, "Friendly model");
   assert.equal(single.routes.get(binding.default_model), single.routes.get("same"));
   binding.deployments.push({ source: "api_two", model: "same" });const mixed = compile();assert.equal(mixed.routes.has("same"), false);
   assert.equal(mixed.routes.get(mixed.defaultModel).source, "github");assert.equal(mixed.defaultModel, binding.default_model);

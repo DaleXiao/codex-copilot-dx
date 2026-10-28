@@ -102,3 +102,21 @@ after compatible models are saved. Manual ID entry remains optional.
 Unknown capabilities still differ from explicit unsupported values and an
 unrecognized upstream format. No wording claims that a catalog proves inference
 entitlement or native client support.
+
+
+## 1.2.31 scoped changes
+
+| Previous | English | 中文 |
+| --- | --- | --- |
+| First API Save | Save & read models | 保存并读取模型 |
+| Draft Saved (unchanged meaning) | Saved | 已保存 |
+| Implicit sync result | Configuration written · reopen the app to load changes | 配置已写入 · 重开应用查看变更 |
+| Sync model settings | Sync app configuration after saving | 保存后同步到本机应用 |
+| Client Save with sync on | Save & sync | 保存并同步 |
+| Repeated Model sources panel | Accounts & APIs | 账号与 API |
+| Repeated Terminal animation disclosure | Animation style | 动效样式 |
+| Catalog Details | Catalog scope | 目录说明 |
+| Machine error code as issue lead | Request did not complete | 请求未完成 |
+| Missing nondefault-source warning | Selected models: before → after · removes count | 已选模型：变更前 → 变更后 · 移除数量 |
+
+Raw model names/IDs are retained rather than translated. Codes, request IDs and diagnostics remain in details and clipboard exports. CLI stays English. Existing settings/usage scope is unchanged.

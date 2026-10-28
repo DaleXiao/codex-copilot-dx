@@ -12,7 +12,7 @@ test("flow assets use the same loopback-only management boundary", async () => {
 });
 
 function fixture() {
-  const nodes = new Map(), timers = new Map(), listeners = new Map();let now = 0, hidden = false;
+  const nodes = new Map(), timers = new Map(), listeners = new Map();let now = 0, hidden = false, measurements = 0;
   class Node {
     constructor(tag = "div") { this.tag = tag;this.children = [];this.dataset = {};this.style = {};this.attributes = {};this.events = {};this.textContent = ""; }
     setAttribute(key, value) { this.attributes[key] = String(value); }
@@ -25,6 +25,7 @@ function fixture() {
     closest() { return hidden ? {} : null; }
     get isConnected() { return Boolean(this.parent); }
     getBoundingClientRect() {
+      measurements++;
       if (this === nodes.get("flow-network")) return { width: 800, height: 300, top: 0, left: 0, right: 800 };
       if (this === nodes.get("flow-hub")) return { width: 60, height: 60, top: 120, left: 370, right: 430 };
       const right = this.parent === nodes.get("flow-models") || this.parent?.parent === nodes.get("flow-models");
@@ -38,10 +39,17 @@ function fixture() {
     ccdxLanguage: language, ccdxIcons: { set: (node, key, kind, values) => language.set(node, key, values) },
     addEventListener: (key, fn) => listeners.set(key, fn), ResizeObserver: class { observe() {} }, MutationObserver: class { observe() {} } };
   runInNewContext(script, context);
-  return { api: context.ccdxDashboardFlow, el, document, timers, listeners, hide: value => { hidden = value; }, advance: ms => { now += ms; } };
+  return { api: context.ccdxDashboardFlow, el, document, timers, listeners, measurements: () => measurements, hide: value => { hidden = value; }, advance: ms => { now += ms; } };
 }
 const row = (application, model, extra = {}) => ({ request_id: `${application}-${model}`, application, model, provider: "m365", upstream_attempts: 1, elapsed_ms: 1000, first_output_ms: null, ...extra });
 const snapshot = rows => ({ stream_performance: { active_requests: rows, active_total: rows.length } });
+
+test("elapsed updates reuse flow geometry and nodes without repeated layout reads", () => {
+  const f = fixture(), records = [row("claude_app", "external-model", { first_output_ms: 10 })];
+  f.api.update(snapshot(records));const measured = f.measurements(), node = f.el("flow-models").children[0];assert(measured > 0);
+  for (let i = 0; i < 20; i++) f.api.update(snapshot(records.map(record => ({ ...record, elapsed_ms: 2000 + i }))));
+  assert.equal(f.measurements(), measured);assert.equal(f.el("flow-models").children[0], node);
+});
 
 test("flow groups concurrent work, selects only names and keeps the exact total outside filters", () => {
   const f = fixture(), records = [row("codex_app", "gpt-test", { first_output_ms: 2 }), row("claude_code", "claude-test", { upstream_attempts: 2 }), row("claude_app", "claude-other")];

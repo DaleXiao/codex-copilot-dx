@@ -8,14 +8,16 @@ const rev='a'.repeat(32);
 test('maker declarations are bounded text, separate from ownership and capabilities',()=>{
  assert.deepEqual(apiModelDisplay({publisher:' Example AI ',vendor:'example',owned_by:'gateway',id:'ignored'}),{publisher:'Example AI',vendor:'example',owned_by:'gateway'});
  assert.deepEqual(apiModelDisplay({publisher:'sk-private',vendor:'bad\nvalue',owned_by:'x'.repeat(161)}),{});
+ assert.deepEqual(apiModelDisplay({display_name:' 上游名称 ',name:'Model name'}),{display_name:'上游名称',name:'Model name'});
 });
 
 test('display cache survives reload, rejects stale revisions and fails independently of connections',t=>{
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'ccdx-display-'));t.after(()=>fs.rmSync(home,{recursive:true,force:true}));
  const store=createApiModelDisplayStore({home,env:{}});assert.equal(store.has('api_test',rev),false);
- store.set('api_test',rev,[{id:'same-model',display:{publisher:'Example AI'}}]);
+ store.set('api_test',rev,[{id:'same-model',display:{publisher:'Example AI',display_name:'Readable name'}}]);
  const next=createApiModelDisplayStore({home,env:{}});assert.equal(next.get('api_test',rev,'same-model').publisher,'Example AI');assert.equal(next.has('api_test','b'.repeat(32)),false);
  assert.equal(fs.existsSync(accessSettingsPath({home,env:{}})),false);
+ assert.equal(next.get('api_test',rev,'same-model').display_name,'Readable name');
 });
 
 test('normal discovery publishes maker evidence without changing the legacy connection schema',async t=>{

@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import { accessSettingsPath, readAccessSettings, updateAccessSettings, checkedApi, checkedAccessSettings, accessError, CLIENT_IDS, CLIENT_NAMES } from "./access-settings.mjs";
 import { createApiSecretStore, checkedApiKey } from "./api-secrets.mjs";
 import { createApiCatalogRefresh } from "./api-catalog-refresh.mjs";
@@ -145,11 +145,25 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     ], clients: CLIENT_IDS.map(id => ({ id, name: CLIENT_NAMES[id], ...config.clients[id], setup: setup[id] || null,
       ...(id === "codex" ? { memory_model: memoryModel.snapshot() } : {}),
       observed_at: lastClients[id] || null, ...(compact ? {} : { model_plan: { default_model: plan(id).defaultModel, default_unavailable: plan(id).defaultUnavailable,
-        models: plan(id).models.map(model => ({ source: model.source_id, id: model.id, public_id: model.public_id, route_id: model.route_id, capability: model.capability })),
+        models: plan(id).models.map(model => ({ source: model.source_id, id: model.id, display_name: model.display_name, public_id: model.public_id, route_id: model.route_id, capability: model.capability })),
         unavailable: (config.clients[id].deployments || []).filter(item => !plan(id).models.some(model => model.source_id === item.source && model.id === item.model))
           .map(item => ({ source: item.source, id: item.model, route_id: deploymentModelId(item.source, item.model) })),
         available: config.clients[id].allowed.filter(enabled).flatMap(source => sourceModels(getSource(source), id).map(model => ({ source, id: model.id,
-          route_id: deploymentModelId(source, model.id), capability: model.capability || resolveModelCapabilities(model, { builtin: true }) }))), sync: sharedSync, support: capabilitySupport } }) })), managed, m365_state: state.m365.state });
+          display_name: model.display_name || model.name || model.id, route_id: deploymentModelId(source, model.id), capability: model.capability || resolveModelCapabilities(model, { builtin: true }) }))), sync: sharedSync, support: capabilitySupport } }) })),
+      ...(!compact ? { source_impacts: Object.fromEntries(["github", "m365", ...config.apis.map(api => api.id)].map(id => [id, sourceImpact(id)])) } : {}), managed, m365_state: state.m365.state });
+  }
+  function sourceImpact(source) {
+    const clients = CLIENT_IDS.flatMap(id => {
+      const c = binding(id);if (!c.enabled) return [];
+      const explicit = Array.isArray(c.deployments), removed = explicit ? c.deployments.filter(item => item.source === source) : [];
+      if (explicit ? !removed.length : c.source !== source) return [];
+      const remaining = explicit ? c.deployments.length - removed.length : 0;
+      const defaultSource = plan(id).routes.get(c.default_model)?.source || removed.find(item => deploymentModelId(source, item.model) === c.default_model)?.source || c.source;
+      const default_affected = defaultSource === source;
+      return [{ id, removed: explicit ? removed.length : sourceModels(getSource(source), id).length, remaining, default_affected, needs_replacement: default_affected || remaining === 0 }];
+    });
+    const api = settings.apis.find(item => item.id === source), profile = api ? deploymentRevision(api, env) : getSource(source)?.profileId();
+    return { clients, revision: createHash("sha256").update(JSON.stringify([source, enabled(source), profile, CLIENT_IDS.map(id => binding(id))])).digest("hex") };
   }
   async function syncClients(ids = CLIENT_IDS) {
     if (!ids.length) return;
@@ -228,18 +242,21 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
     const next = editable(), current = next.apis.find(api => api.id === id);
     if (!current?.enabled || deploymentRevision(current, env) !== revision) throw accessError("ccdx_connections_conflict", 409);
     const byId = new Map(models.map(model => [model.id, model]));
-    try { modelDisplay.set(id, revision, models); } catch { log("warn", "Model maker metadata could not be saved; routing is unchanged"); }
+    let displayChanged = false;
+    try { displayChanged = modelDisplay.set(id, revision, models); } catch { log("warn", "Model display metadata could not be saved; routing is unchanged"); }
     for (const model of current.models) if (byId.get(model.id)?.metadata) model.metadata = byId.get(model.id).metadata;
     current.checked_at = checkedAt;
-    if (JSON.stringify(current) !== JSON.stringify(settings.apis.find(api => api.id === id))) {
-      save(next);await syncClients(CLIENT_IDS.filter(client => binding(client).source === id || binding(client).deployments?.some(model => model.source === id)));
+    const changed = JSON.stringify(current) !== JSON.stringify(settings.apis.find(api => api.id === id));
+    if (changed) save(next);
+    if (changed || displayChanged) {
+      plans.clear();await syncClients(CLIENT_IDS.filter(client => binding(client).source === id || binding(client).deployments?.some(model => model.source === id)));
     }
   }
   function enqueue(work) { operations++;const job = serial.then(work).finally(() => { operations--; });serial = job.catch(() => {});return job; }
   const refreshApis = () => !closed && managed && !preserveClientConfiguration?.() ? catalogRefresh.refreshAll(settings.apis.filter(api => api.enabled).map(api => api.id)) : Promise.resolve();
   async function change(input) {
     if (closed) throw accessError("ccdx_connections_closed", 503);
-    if (!validObject(input, ["operation", "id", "config", "key", "allowed", "source", "enabled", "replacements", "model", "auto_review_model", "auto_review_effort", "deployments", "default_model", "auto_sync"])) throw accessError("ccdx_connections_action_invalid");
+    if (!validObject(input, ["operation", "id", "config", "key", "allowed", "source", "enabled", "replacements", "impact_revision", "model", "auto_review_model", "auto_review_effort", "deployments", "default_model", "auto_sync"])) throw accessError("ccdx_connections_action_invalid");
     const next = editable();let freshRef, previousRef;
     if (input.operation === "source_access") {
       if (input.id !== "m365" || !Array.isArray(input.allowed) || new Set(input.allowed).size !== input.allowed.length || input.allowed.some(id => !CLIENT_IDS.includes(id))) throw accessError("ccdx_connections_action_invalid");
@@ -347,7 +364,9 @@ export function createConnectionRuntime({ legacy, home, env = process.env, platf
       if (input.id === "m365" && input.enabled && env.CCDX_M365 === "0") throw accessError("ccdx_provider_environment_disabled", 409);
       if (input.id === "m365" && !input.enabled && legacy.snapshot().m365.claude.requests?.active > 0) throw accessError("ccdx_source_busy", 409);
       if (!input.enabled) {
-        const affected = CLIENT_IDS.filter(id => next.clients[id].source === input.id && next.clients[id].enabled);
+        const impact = sourceImpact(input.id);
+        if (input.impact_revision !== undefined && input.impact_revision !== impact.revision) throw accessError("ccdx_connections_conflict", 409);
+        const affected = impact.clients.filter(client => client.needs_replacement).map(client => client.id);
         if (affected.some(id => id !== "codex")) next.claude_private_keys = true;
         if (affected.length && !validObject(input.replacements, affected)) throw accessError("ccdx_source_in_use", 409);
         for (const id of affected) {

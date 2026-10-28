@@ -20,23 +20,23 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
       const width = mode === "light" ? 360 : 1280, language = palette === "klein" ? "en" : "zh";
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-connections-browser-")), env = {}, values = new Map();
       fs.mkdirSync(path.join(root, ".codex"));fs.writeFileSync(path.join(root, ".codex/config.toml"), '[features]\nmemories=true\n[memories]\nextract_model="response-replay"\n');
-      let runtime, handler;const githubRegistry = { models: { data: [] } };
+      let runtime, handler, timeOffset = 0, failDiscovery = palette === "pink" && mode === "light";const githubRegistry = { models: { data: [] } };
       const server = http.createServer((req, res) => handler(req, res));
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
       const base = `http://127.0.0.1:${server.address().port}`;
       const context = await browser.newContext({ viewport: { width, height: 1000 } });
       // Binding edits are explicit; periodic refresh behavior has its own replay.
       await context.addInitScript(({ palette, mode, language }) => { localStorage.setItem("ccdx.dashboard.palette", palette);localStorage.setItem("ccdx.dashboard.theme", mode);localStorage.setItem("ccdx.dashboard.language", language);localStorage.setItem("ccdx.dashboard.autoRefresh", "off"); }, { palette, mode, language });
-      const page = await context.newPage(), errors = [];page.on("pageerror", error => errors.push(error.message));page.setDefaultTimeout(10000);
+      const page = await context.newPage(), errors = [];page.on("pageerror", error => errors.push(error.message));page.on("response", response => { if (/\.(?:js|css)$/.test(new URL(response.url()).pathname) && response.status() >= 400) errors.push(`Asset ${response.status()}: ${response.url()}`); });page.setDefaultTimeout(10000);
       const sampleName = 'API <img src=x onerror="alert(1)">';
       console.log("Connections case:", JSON.stringify({ engine, palette, mode, language, width }));
       const watchdog = setTimeout(() => { console.error("Connection browser case exceeded 120 seconds");process.exit(124); }, 120000);watchdog.unref();
       try {
-        runtime = createProviderRuntime({ home: root, env, corePort: server.address().port, githubClient: { runtimeStatus: () => ({ token_cached: false }) }, githubRegistry,
+        runtime = createProviderRuntime({ home: root, env, now: () => Date.now() + timeOffset, corePort: server.address().port, githubClient: { runtimeStatus: () => ({ token_cached: false }) }, githubRegistry,
           secretStore: { get: async id => values.get(id), set: async (id, key) => { values.set(id, key); }, remove: async id => { values.delete(id); }, close() {} },
           inspectDesktop: async () => false, configureClaude: input => ({ [input.client === "claude_app" ? "app" : "code"]: "configured" }), restoreClaude: () => ({ preserved: 0 }),
           createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, fetch: async (_url, init) => {
-            assert.equal(init.method, "GET");discoveries++;return Response.json({ data: ["claude-replay", "response-replay", ...Array.from({ length: 6 }, (_, i) => "unselected-" + i)].map(id => ({ id, publisher: "Example Maker", vendor: "example", owned_by: "gateway", ...(id === "claude-replay" ? { type: "model", max_input_tokens: 128000, max_tokens: 16000, capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true } } } } : {}) })) });
+            assert.equal(init.method, "GET");discoveries++;if (failDiscovery) return Response.json({ error: "synthetic unavailable" }, { status: 503 });return Response.json({ data: ["claude-replay", "response-replay", ...Array.from({ length: 6 }, (_, i) => "unselected-" + i)].map(id => ({ id, publisher: "Example Maker", vendor: "example", owned_by: "gateway", ...(id === "claude-replay" ? { type: "model", max_input_tokens: 128000, max_tokens: 16000, capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true } } } } : {}) })) });
           } }) }) });
         const serviceControl = createServiceControl({ home: root, env, providerRuntime: runtime });
         handler = createAdapterHandler({ providerRuntime: runtime, dashboardOptions: { home: root, env, serviceControl,
@@ -49,7 +49,18 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         await page.locator("#connection-key").fill("synthetic-key-no-network");
         for (const id of ["codex", "claude_app", "claude_code"]) await page.locator(`#connection-allowed-clients input[value="${id}"]`).check();
         const fits = async () => assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "No horizontal page overflow");
-        await fits();await page.locator('#connection-api-form button[type="submit"]').click();await page.locator("#connection-editor").waitFor({ state: "hidden" });
+        await fits();await page.locator('#connection-api-form button[type="submit"]').click();
+        await page.waitForFunction(() => !document.getElementById("connection-discover").disabled && !document.getElementById("connection-discover").hasAttribute("aria-busy"));
+        assert.equal(await page.locator("#connection-editor").isVisible(), true, "First save stays in model setup");
+        assert.equal(await page.locator("#connection-name").inputValue(), sampleName);
+        assert.equal(await page.locator("#connection-key").inputValue(), "");
+        if (failDiscovery) {
+          assert.match(await page.locator("#connection-note").innerText(), /503/);
+          failDiscovery = false;timeOffset = 61000;await page.locator("#connection-discover").click();
+        }
+        await page.waitForFunction(() => document.getElementById("connection-models").children.length === 8 && !document.getElementById("connection-discover").hasAttribute("aria-busy"));
+        assert.equal(await page.locator('#connection-api-form input[name="protocol"]:checked').count(), 2);
+        await page.locator("#connection-cancel").click();await page.locator("#connection-editor").waitFor({ state: "hidden" });
         const id = runtime.connections().providers.find(p => !p.builtin).id;
         const codexBeforeGrant = fs.readFileSync(path.join(root, ".codex/config.toml"), "utf8");
         await page.locator("#model-provider-m365").click();await page.locator("#m365-app-access").waitFor({ state: "visible" });
@@ -204,5 +215,6 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
     }
   } finally { await browser.close(); }
 }
-assert.equal(discoveries, report.length, "One automatic catalog read per case; explicit reads and model saves reuse its cache");
-console.log(JSON.stringify({ cases: report.length, results: report, live_provider_calls: 0, automatic_catalog_requests: discoveries, inference_requests: 0 }));
+assert.equal(discoveries, report.length + report.filter(row => row.palette === "pink" && row.mode === "light").length,
+  "Successful setup reuses one catalog read; failed setup adds one explicit retry after cooldown");
+console.log(JSON.stringify({ cases: report.length, results: report, live_provider_calls: 0, catalog_requests: discoveries, automatic_catalog_requests: report.length, explicit_retry_requests: report.filter(row => row.palette === "pink" && row.mode === "light").length, inference_requests: 0 }));

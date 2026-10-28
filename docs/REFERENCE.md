@@ -7,8 +7,11 @@ Claude gateway and an explicitly selected Codex backup.
 ## Manual APIs and client access
 
 `ccdx web` starts management without GitHub sign-in or automatic App launch.
-Use **Model sources → Add API**, save the HTTPS API base address/key
-(including a required prefix such as `/v1`), then reopen **Manage → Read models**.
+Use **Model sources → Add API**, enter the HTTPS API base address/key
+(including a required prefix such as `/v1`), then choose **Save & read models**.
+The saved source remains available and the editor stays open for model selection.
+A failed directory read keeps the source and draft; retry with **Read models**
+under the existing request-coalescing and cooldown policy.
 Select the models to use and their supported interfaces, save, then choose each
 client's visible models and default on **Codex** or **Claude**. Unselected catalog entries
 are not saved. A selected model needs at least one interface; choosing an
@@ -1347,7 +1350,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.30/codex-copilot-dx-1.2.30.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.31/codex-copilot-dx-1.2.31.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -2279,7 +2282,7 @@ intermediate proxy honored revalidation.
 
 ### Upstream maker metadata
 
-Manual API discovery accepts bounded text from publisher, vendor and owned_by.
+Manual API discovery accepts bounded text from publisher, vendor, owned_by, display_name and name.
 The model maker shown in lists/details prefers publisher, then vendor; owned_by
 is shown separately as ownership and is not treated as the maker. Absent maker
 information is Not provided; no name-based inference is performed. These are
@@ -2340,3 +2343,22 @@ remain distinct.
 API transport errors retain fixed safe code, DNS/connect/TLS/request/response
 phase and reused-socket state in HTTP diagnostics. They do not retain raw
 exceptions or URLs, and do not trigger automatic POST or cross-source retries.
+
+
+### Model presentation and source impact (1.2.31)
+
+Model upstream IDs, source-qualified routes and client aliases retain their existing identities. Presentation follows a valid upstream display_name, then name, then the upstream ID. The shared client plan adds a source suffix only for ambiguous display labels; same-source display collisions include the upstream ID. No capability or backend identity is inferred from a name. The display cache stays separate from connection v2 and is bound to the source deployment revision. Display-only changes invalidate the client plan and reconcile selected consumers without changing their grants or defaults. Claude configuration uses labelOverride even when a mixed binding's default source is not an API. Existing client list order, user context preferences and configuration ownership are retained. The gateway directory and written configuration share display labels; user-preserved ordering is not replaced with a vendor-family ranking.
+
+Application pages distinguish saved selections from configuration-write results. A written configuration is not evidence that an already running App adopted it. Reopen the client to load changes. Manual-sync settings, preserved fields, missing defaults and failed writes retain separate statuses. When client capability controls are unverified, existing shared capability settings are kept; this does not assert support for those controls in the new version.
+
+Closing a source reviews selected deployments for every enabled app, including nondefault and temporarily unavailable selections. The preview reports selected-model counts and whether the default needs replacement. A still-valid default stays unchanged. Losing the default or the last selection requires an explicit replacement or pause through the existing access semantics. The WebUI submits an impact revision; changes to bindings or source identity invalidate that confirmation. Mere authorization without selected models is not counted as model consumption.
+
+### Disclosure motion and scoped interface changes (1.2.31)
+
+Native details/summary controls use one theme-colored SVG chevron: down while closed, up while open. Rotation takes 160 ms; visible content uses a 160 ms opening and 110 ms closing opacity/translation transition, without height animation. Keyboard activation, cancellation by rapid toggling, translated summaries and dynamically inserted disclosures remain supported. Reduced-motion mode uses native immediate toggles, and backgrounding finishes pending transitions. The animation script is a versioned same-origin dashboard asset.
+
+The existing palettes, sidebar, atom, solid selected controls and usage views remain. All retained usage totals, source/model filters, 7/30/90-day trends, bar/line views and 365-day activity are retained. Checks hide the empty results header until results exist. Animation style has one specific disclosure title; saved/effective differences are expressed on one line. Coarse-pointer switch labels and toolbar icon targets expand without enlarging the drawn switches.
+
+### Successful HTTP transport carrying model errors (1.2.31)
+
+A native Messages JSON error envelope under HTTP 200, or an SSE error event under a successful HTTP status, is recorded as model.error with the original HTTP status and a bounded structured error code/type. Existing failed-model accounting remains. The original response bytes/status are preserved; no automatic retry or replay is added. Normal output carrying incidental error-like fields is not reclassified. Token-count errors remain in their separate capability category. Request issue summaries lead with known plain-language causes, while technical codes, IDs, original diagnostic fields and clipboard export remain available in details.

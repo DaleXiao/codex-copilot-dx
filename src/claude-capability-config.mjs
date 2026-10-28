@@ -53,6 +53,7 @@ export function claudeSharedCapabilityPlan({ app = [], code = [], support = {} }
 }
 
 export function syncClaudeCapabilities(plan, options = {}) {
+  if (plan.limitations?.some(item => item.code === "client_version_unknown")) return { state: "partially_preserved", changed: false, preserved: 0, restart_required: false };
   const paths = claudeClientPaths(options), env = options.env || process.env;
   let current = {};try { current = JSON.parse(readBoundedFileSync(paths.code, { maxBytes: 1024 * 1024, encoding: "utf8" })); }
   catch (error) { if (error.code !== "ENOENT") throw error; }

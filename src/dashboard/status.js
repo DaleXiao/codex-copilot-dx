@@ -133,11 +133,16 @@
         details.dataset.key = `${failure.at}/${failure.request_id || failure.response_id}/${failure.code}`;
         details.open = expanded.has(details.dataset.key);
         const title = document.createElement("summary");
+        const cause = failure.route === "messages_count_tokens" && [404, 405, 501].includes(failure.http_status) ? "issue_count_unavailable"
+          : ["rate_limit_error", "rate_limit_exceeded", "insufficient_quota", "http_429"].includes(failure.code) ? "issue_source_limit"
+            : /^m365_catalog_http_/.test(failure.code || "") ? "issue_catalog_unavailable"
+              : failure.reason === "ccdx_model_not_selected" ? "issue_model_not_selected"
+                : failure.http_status === 401 || failure.http_status === 403 ? "issue_access_denied" : "issue_request_failed";
         const summary = {
-          detail: phrase("time_model_code", {
+          detail: phrase("issue_brief", {
             time: failure.at ? time(failure.at, { date: true }) : phrase("unknown_time"),
             model: notModelRequest ? phrase("not_applicable") : failure.model ? String(failure.model).slice(0, 80) : phrase("unknown_model"),
-            code: failure.code ? String(failure.code).slice(0, 80) : phrase("unknown_error"),
+            cause: phrase(cause),
           }),
           retry: phrase(failure.upstream_attempts === 0 ? "no_upstream_call" : failure.retried ? "retry_attempted" : "no_retry"),
         };

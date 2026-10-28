@@ -6,7 +6,7 @@ import { atomicWriteFileSync } from "./atomic-file.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 
 export function apiModelDisplay(model) {
-  return Object.fromEntries(["publisher", "vendor", "owned_by"].flatMap(key => {
+  return Object.fromEntries(["publisher", "vendor", "owned_by", "display_name", "name"].flatMap(key => {
     const value = model?.[key];
     return typeof value === "string" && value.trim() && value.length <= 160
       && !/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(value) && redactDiagnosticText(value) === value ? [[key, value.trim()]] : [];
@@ -41,7 +41,9 @@ export function createApiModelDisplayStore(options = {}) {
       const value = { version: 1, revision, models: models.map(model => ({ id: model.id, ...apiModelDisplay(model.display) })) };
       const checked = validate(value, revision), text = JSON.stringify(value) + "\n";
       if (!checked || Buffer.byteLength(text) > 512 * 1024) throw Error("Invalid model display cache");
+      const changed = JSON.stringify([...(read(id, revision) || [])]) !== JSON.stringify([...checked]);
       fs.mkdirSync(directory, { recursive: true, mode: 0o700 });atomicWriteFileSync(file(id), text, { mode: 0o600 });cache.set(id, { revision, models: checked });while (cache.size > 16) cache.delete(cache.keys().next().value);
+      return changed;
     },
   };
 }

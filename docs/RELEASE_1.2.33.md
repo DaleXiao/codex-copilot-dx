@@ -24,6 +24,18 @@
 
 ## Verification
 
-Candidate verification and public publication receipts are completed before
-release promotion. Native Codex auth/catalog/old-session and Claude protocol gates
-remain required; isolated synthetic checks do not claim real account/App adoption.
+- Final runtime candidate: `8b5e4f4bcf12b23f79956d6d0755789458d7befc`.
+- [CI 40678226236](https://github.com/DaleXiao/codex-copilot-dx/actions/runs/40678226236): **25/25 effective jobs passed**. Windows no-Node bootstrap passed on its unchanged failed-job rerun; the first attempt timed out after the download message. An earlier candidate's Windows PAC fixture fetch also failed once; the original PAC checks passed on the final candidate. The exact initial causes are not proven; no speculative proxy/installer change or weaker assertion was introduced.
+- Local `npm run verify`: 1,695 tests, 1,685 passed, 10 skipped, no failures; streaming smoke, performance/resource budgets and package-content checks passed.
+- Real CLI subprocesses exercised source/client/settings actions through the protected loopback API, private key input, stale/old-service rejection, paused empty selection and restoration, native model naming and byte-preserved Codex auth. Interactive foreground startup checks Codex configuration evidence without creating a binding file. Memory-dependency and canonical-help safety omissions were reproduced before correction.
+- Actual xterm replay passed 72 size/color combinations, 200 frames per combination, including 16-row, plain/NO_COLOR, resize and cursor/scroll behavior. Structured cancellation/incomplete outcomes stay distinct from failures; MCP discovery does not drive model activity.
+- CI retains official native Codex ChatGPT sign-in, complete first model catalogs and old-session continuation, Claude protocol/capability replay, strict npm 12, proxy/private-CA behavior, browser regression and eight native package install/rollback gates. These are isolated synthetic-provider checks, not a claim that every real account or visible desktop App was exercised.
+- Isolated verified 1.2.32 -> 1.2.33 installation and native sharp/broker loading passed. All eight complete packages matched the final standard package's 235 source files byte-for-byte before upload.
+- Standard archive: 706,645 bytes; SHA256 `d0a1e3d613b72281bf85213dd894c4f0516ff0e7d0b81eb09bfae89b01824aa8`.
+
+Publication and independent public npm/asset receipts are linked from the
+[GitHub Release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.2.33).
+The release tag updates only this receipt relative to the green runtime tree.
+Release work leaves the existing global service untouched. Finish active tasks
+before installing/restarting normally; no source/model configuration needs to be
+saved again just to adopt the terminal and command layout.

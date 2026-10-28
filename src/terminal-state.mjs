@@ -17,7 +17,6 @@ export function clientSetup(client = {}) {
 }
 export function projectTerminalState(data = {}) {
   const routes = data.requests?.by_route, names = ["responses", "responses_compact", "messages"];
-  const known = routes && names.every(name => integer(routes[name]?.active) && integer(routes[name]?.total));
   const partialRoutes = routes && names.some(name => routes[name]);
   const active = partialRoutes ? names.reduce((sum, name) => sum + (routes[name]?.active || 0), 0) : null;
   const requests = partialRoutes ? names.reduce((sum, name) => sum + (routes[name]?.total || 0), 0) : null;
@@ -28,10 +27,8 @@ export function projectTerminalState(data = {}) {
       .reduce((sum, row) => sum + (integer(row[key]) ? row[key] : 0), 0)]));
   const activity = Object.hasOwn(data.model_activity || {}, "active") ? integer(data.model_activity.active) ? data.model_activity.active : null : active;
   const running = [...new Map(performance.flatMap(part => (part.active_requests || []).filter(row => part === claude ? !row.route || row.route === "messages" : !row.route || ["responses", "responses_compact"].includes(row.route))).map((row, i) => [row.request_id || `unknown-${i}`, row])).values()];
-  const byApp = new Map(), requestIds = new Set();let unidentified = 0;
+  const byApp = new Map();let unidentified = 0;
   for (const row of running) {
-    if (row.request_id && requestIds.has(row.request_id)) continue;
-    if (row.request_id) requestIds.add(row.request_id);
     const app = appIds[row.application];if (app) byApp.set(app, (byApp.get(app) || 0) + 1);else unidentified++;
   }
   const connection = data.providers?.connections, clientRows = connection?.clients;
@@ -53,7 +50,7 @@ export function projectTerminalState(data = {}) {
     const message = causes[lastFailure.code] || (lastFailure.route === "messages_count_tokens" ? "Token-count check failed" : lastFailure.http_status === 401 ? "Sign-in was rejected" : lastFailure.http_status === 403 ? "Access was denied" : lastFailure.http_status === 429 ? "Request limit reached" : "Request failed");
     issue = { label: `${terminalCell(app)} / ${terminalCell(source)}: ${message}`, request_id: lastFailure.request_id, application: lastFailure.application };
   }
-  return { sources, clients, requests, active, activity, outcomes, issue, complete_activity: Boolean(known) };
+  return { sources, clients, requests, active, activity, outcomes, issue };
 }
 
 export function retainedRequests(data = {}) {

@@ -437,58 +437,7 @@ function topicHelp(name, topic) {
 }
 
 export function cliHelp(commandName = "ccdx", topic = "") {
-  const name = "ccdx";
   if (!topic) return rootCommandHelp();
   const canonical = managedCommandHelp(topic.split(" "));if (canonical !== null) return canonical;
-  const normalizedTopic = checkedHelpTopic(topic ? topic.split(" ") : []);
-  if (normalizedTopic) return topicHelp(name, normalizedTopic);
-  return `Usage:
-  ${name} [start] [--show-request-id] [--no-browser] [--verbose]
-  ${name} auth status [--online] [--format table|plain]
-  ${name} doctor [--online] [--compat] [--fix] [--json]
-  ${name} doctor config
-  ${name} doctor network
-  ${name} doctor report
-  ${name} auth [login|reauth|check|logout]
-  ${name} web
-  ${name} source [github|m365]
-  ${name} image [status|pause|resume]
-  ${name} status
-  ${name} models [--format table|plain]
-  ${name} usage [--format table|plain] [--provider ID]
-  ${name} cache [--limit <MiB|default> | --clean [--history] [--yes]]
-  ${name} limits [--decoded <MiB|default>]
-  ${name} animation
-  ${name} enable-image
-  ${name} disable-image
-  ${name} image-status
-  ${name} auto-review-model
-  ${name} prediction [status|on|off|fix|pause|resume]
-  ${name} m365 [status|models|accounts|account|switch|on|off|remove]
-  ${name} update [npm|github] [--allow-remote]
-  ${name} --version
-  ${name} --help
-
-Commands:
-  start              Start or reuse the adapter and configure Codex
-  auth               Manage GitHub sign-in and check access
-  web                Open local account and repair tools
-  source             Choose a Codex model source
-  image              Inspect, pause or resume image requests
-  doctor             Diagnose local config; optional live and inference checks
-  status             Show runtime routing, performance, queue, and cache health
-  models             Show the selected Codex provider's GPT model catalog
-  usage              Summarize locally recorded token usage
-  cache              Inspect, size, or clear bounded runtime caches
-  limits             Inspect or configure the decoded request-body limit
-  animation          Select the terminal activity animation
-  enable-image       Configure and enable the optional image provider
-  disable-image      Disable the image provider and remove its credential
-  image-status       Show the optional image provider status
-  auto-review-model  Select the Codex Auto-review model and reasoning effort
-  prediction         Toggle optional native next-message predictions
-  m365               Manage M365 Claude access and the optional Codex backup
-  update             Update the global package from npm or GitHub
-
-Run ${name} <command> --help for command details.`;
+  return topicHelp("ccdx", checkedHelpTopic(topic.split(" ")));
 }

@@ -95,7 +95,7 @@
       if (signature === failureSignature) return;
       failureSignature = signature;
       const list = element("failures");
-      const expanded = new Set([...list.querySelectorAll("details[open]")].map((item) => item.dataset.key));
+      const expanded = new Set([...list.querySelectorAll("details[open]")].filter(item => item.dataset.disclosureClosing !== "true").map(item => item.dataset.key));
       list.replaceChildren();
       const requests = Array.isArray(recentRequests) ? recentRequests.slice(-20) : [];
       const byRequest = new Map(requests.filter((request) => request.request_id).map((request) => [request.request_id, request]));
@@ -339,7 +339,7 @@
       const signature = JSON.stringify(contextRequests);
       if (signature === contextSignature) return;
       contextSignature = signature;
-      const expanded = new Set([...(body.querySelectorAll?.("details[open]") || [])].map(details => details.getAttribute("data-request-key")));
+      const expanded = new Set([...(body.querySelectorAll?.("details[open]") || [])].filter(details => details.dataset.disclosureClosing !== "true").map(details => details.getAttribute("data-request-key")));
       body.replaceChildren();
       for (const request of contextRequests) {
         const context = request.context || {};

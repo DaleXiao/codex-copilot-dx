@@ -197,7 +197,7 @@ function applyModels(data, { changed }) {
   if (data.provider && data.provider !== selectedProvider) return;
   if (changed) {
     const body = element("live-models-body");
-    const expanded = new Set([...body.querySelectorAll("details[open]")].map(node => node.dataset.model));
+    const expanded = new Set([...body.querySelectorAll("details[open]")].filter(node => node.dataset.disclosureClosing !== "true").map(node => node.dataset.model));
     body.replaceChildren();
     for (const model of data.models) {
       const clients = (model.clients || []).map(id => ({ codex: "Codex App", claude_app: "Claude App", claude_code: "Claude Code" })[id] || id).join(" / ") || "—";

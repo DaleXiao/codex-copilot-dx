@@ -494,6 +494,9 @@ test("failure details are text-only, preserve expansion and copy only existing d
   assert.doesNotMatch(copied, /excluded/);
   h.api.renderFailures(failures);
   assert.equal(list.children[0].children[0].open, true);
+  details.dataset.disclosureClosing = "true";
+  h.api.renderFailures(failures.map(failure => ({ ...failure, message: "Updated while closing" })));
+  assert.equal(list.children[0].children[0].open, false, "A background refresh preserves the closing intent");
 });
 
 test("background, auto-off and collapsed groups do not poll; a visible stale page catches up once", async () => {

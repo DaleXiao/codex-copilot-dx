@@ -2453,7 +2453,8 @@ source-impact revision and replacement/pause review; scripts must give explicit
 Client models describe the saved selected plan, not the upstream directory.
 Unavailable selections remain explicit and are not silently dropped; a changed
 plan containing unavailable selections is refused until the catalog returns or
-the user explicitly removes them. New access toggles retain legacy source/model
+the user explicitly removes them. Removing an observed Codex memory dependency
+shows its existing warning before confirmation; no model name is guessed. New access toggles retain legacy source/model
 bindings and do not materialize deployments. `sync --preview` reports the model
 and managed-configuration plan, not a byte-level file diff. Explicit sync can write
 once while `auto_sync` is false; the preference stays false. Writers retain current
@@ -2469,7 +2470,8 @@ For scripts, API files contain only `config` and `allowed` (backend client IDs).
 Configuration includes name/base_url/endpoints/auth_header/models and optionally
 key_env. A key uses a bounded private stdin stream with `--key-stdin` or an existing
 environment reference; it is not a command argument or echoed in output. App model
-files allow deployments/default_model/auto_sync only. Both forms use the same
+files require an explicit deployments array (empty pauses access) and allow
+default_model/auto_sync. Both forms use the same
 backend validation and authorization as WebUI. Interactive creation retains a saved
 source after discovery failure, reports partial failure, and allows explicit retry;
 model interfaces missing upstream must be chosen explicitly.

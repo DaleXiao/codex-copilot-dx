@@ -207,7 +207,8 @@ export async function runManagementCommand(command, options = {}) {
     if (action === "models") {
       if (flags.file) {
         const file = readFile();if (Object.keys(file).some(key => !["deployments", "default_model", "auto_sync"].includes(key))) throw new Error("Model files allow deployments, default_model and auto_sync only.");
-        Object.assign(body, file);
+        if (!Array.isArray(file.deployments)) throw new Error("Model files require an explicit deployments array; use [] to pause access.");
+        Object.assign(body, file);if (!body.deployments.length) body.default_model = null;
       } else {
         const available = [...(modelPlan?.available || [])], selected = Array.isArray(client.deployments) ? client.deployments : modelPlan?.models.map(model => ({ source: model.source, model: model.id })) || [];
         for (const old of selected) if (!available.some(row => row.source === old.source && row.id === old.model)) available.push({ source: old.source, id: old.model, unavailable: true });
@@ -224,6 +225,13 @@ export async function runManagementCommand(command, options = {}) {
       }
       if (body.deployments?.some(item => modelPlan?.unavailable.some(row => row.source === item.source && row.id === item.model))) throw new Error("Unavailable selections were kept. Wait for the catalog or explicitly deselect them before saving a changed plan.");
     } else throw new Error("Unsupported client action.");
+    const memory = id === "codex" ? client.memory_model?.model : null;
+    const memoryModels = [...(modelPlan?.models || []), ...(modelPlan?.available || []), ...(modelPlan?.unavailable || [])].filter(row => [row.id, row.route_id, row.public_id].includes(memory));
+    const memoryPairs = new Set(memoryModels.map(row => row.source + "\0" + row.id));
+    const memoryMatch = row => memoryPairs.size ? memoryPairs.has(row.source + "\0" + (row.model || row.id)) : [row.model, row.id, row.route_id, row.public_id].includes(memory);
+    if (memory && (client.deployments || modelPlan?.models || []).some(memoryMatch) && Array.isArray(body.deployments) && !body.deployments.some(memoryMatch)) {
+      output.write(`Warning: ${terminalCell(memory)} is an observed memory dependency; memory writing may fail if it is unselected.\n`);
+    }
     const checked = await save({ ...body, operation: "preview_client" });
     output.write(print({ client: ids.app, planned_models: checked.preview?.models.map(model => ({ source: model.source, id: model.id })), change: action, enabled: body.enabled, deployments: body.deployments, default_model: body.default_model }) + "\n");
     if (flags.preview) return "Preview only; no settings changed.";

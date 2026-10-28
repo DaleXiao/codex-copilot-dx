@@ -133,6 +133,24 @@ test("request diagnostics retain cancellation and incomplete outcomes when HTTP 
     http_errors: { recent: [{ request_id: "cancelled", code: "client_aborted" }, { request_id: "partial", http_status: 502 }] } };
   const rows = retainedRequests(data);assert.equal(rows.find(row => row.request_id === "cancelled").state, "cancelled");assert.equal(rows.find(row => row.request_id === "partial").state, "incomplete");
 });
+test("new client model editing warns before removing an observed memory dependency without guessing its name", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-memory-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const file = path.join(home, "models.json");fs.writeFileSync(file, JSON.stringify({ deployments: [{ source: "github", model: "other" }], default_model: "other" }));
+  for (const observed of ["observed-memory-id", "qualified-memory-route"]) {
+    const f = fixture();Object.assign(f.state.clients[0], { memory_model: { model: observed }, deployments: [{ source: "github", model: "observed-memory-id" }] });
+    f.state.clients[0].model_plan.models = [{ source: "github", id: "observed-memory-id", route_id: "qualified-memory-route" }];
+    await f.run(["app", "codex", "models", "--edit", "--file", file, "--yes"]);
+    assert.match(f.output.join(""), /memory writing may fail/);
+  }
+});
+test("an explicit empty model file clears the old default and keeps pause separate from credentials", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-empty-models-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const file = path.join(home, "models.json");fs.writeFileSync(file, JSON.stringify({ deployments: [] }));
+  const f = fixture();Object.assign(f.state.clients[0], { deployments: [{ source: "github", model: "previous" }], default_model: "old-route" });
+  await f.run(["app", "codex", "models", "--edit", "--file", file, "--yes"]);
+  assert.equal(f.calls.find(call => call.body?.operation === "client").body.default_model, null);
+  fs.writeFileSync(file, JSON.stringify({ auto_sync: false }));await assert.rejects(f.run(["app", "codex", "models", "--edit", "--file", file, "--yes"]), /explicit deployments/);
+});
 test("noninteractive same-origin API metadata edits keep the saved key without requesting secret input", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-api-edit-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const file = path.join(home, "api.json");fs.writeFileSync(file, JSON.stringify({ config: { name: "Work API", base_url: "https://example.test/v1", endpoints: { responses: "https://example.test/v1/responses", messages: "https://example.test/v1/messages" }, auth_header: "bearer", models: [] }, allowed: [] }));

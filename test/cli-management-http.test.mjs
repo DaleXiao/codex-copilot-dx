@@ -62,6 +62,11 @@ test("actual CLI processes use the protected loopback API without starting apps 
   const disabled = await run(["app", "codex", "disable", "--yes"]);assert.equal(disabled.code, 0, disabled.stderr);
   const paused = await fetch(`http://127.0.0.1:${port}/v1/models`);assert.equal(paused.status, 503);assert.match(await paused.text(), /ccdx_client_source_disabled/);
   const enabled = await run(["app", "codex", "enable", "--yes"]);assert.equal(enabled.code, 0, enabled.stderr);
+  const emptyFile = path.join(home, "empty-models.json");fs.writeFileSync(emptyFile, JSON.stringify({ deployments: [] }));
+  const empty = await run(["app", "codex", "models", "--edit", "--file", emptyFile, "--yes"]);assert.equal(empty.code, 0, empty.stderr);
+  const emptyResponse = await fetch(`http://127.0.0.1:${port}/v1/models`);assert.equal(emptyResponse.status, 503);assert.match(await emptyResponse.text(), /ccdx_client_source_disabled/);
+  const resume = await run(["app", "codex", "models", "--edit", "--file", modelFile, "--yes"]);assert.equal(resume.code, 0, resume.stderr);
+  assert.deepEqual(fs.readFileSync(auth), authBytes);assert.doesNotMatch(fs.readFileSync(config, "utf8"), /^model_provider\s*=/m);
   const failure = await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: "POST", headers: { "content-type": "application/json", originator: "Codex Desktop" }, body: JSON.stringify({ model: "not-selected", input: "synthetic", stream: false }) });
   assert.equal(failure.status, 400);
   const requests = await run(["requests", "--failed", "--format", "json"]);assert.equal(requests.code, 0, requests.stderr);assert.ok(JSON.parse(requests.stdout).length > 0);

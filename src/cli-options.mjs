@@ -1,3 +1,4 @@
+import { parseManagedCommand, managedCommandHelp, rootCommandHelp } from "./cli-command-spec.mjs";
 import { isProviderId } from "./provider-metadata.mjs";
 import { MAX_TIMER_DELAY_MS } from "./runtime-config.mjs";
 
@@ -130,6 +131,12 @@ function parseStartOptions(args) {
 export function parseCliArgs(args = []) {
   const [command, ...rest] = args;
   if (!command) return baseCommand("start");
+  const helpParts = HELP_COMMANDS.has(command) ? rest : HELP_COMMANDS.has(args.at(-1)) ? args.slice(0, -1) : null;
+  if (helpParts && managedCommandHelp(helpParts) !== null) return baseCommand("help", { helpTopic: helpParts.join(" ") });
+  if (["app", "config"].includes(command) && !rest.length) return baseCommand("help", { helpTopic: command });
+  const managed = parseManagedCommand(args);
+  if (managed) return managed.legacy ? parseCliArgs(managed.legacy) : baseCommand("manage", managed);
+
   if (command === "reauth") return parseCliArgs(["auth", "reauth", ...rest]);
   if (command === "source") { if (rest.length === 1 && HELP_COMMANDS.has(rest[0])) return helpCommand(["source"]);return parseCliArgs(["m365", "switch", ...rest]); }
   if (command === "web") { if (rest.length === 1 && HELP_COMMANDS.has(rest[0])) return helpCommand(["web"]);if (rest.length) unexpectedArgs(rest);return baseCommand("web"); }
@@ -430,56 +437,16 @@ function topicHelp(name, topic) {
 }
 
 export function cliHelp(commandName = "ccdx", topic = "") {
-  const name = "ccdx";
-  const normalizedTopic = checkedHelpTopic(topic ? topic.split(" ") : []);
-  if (normalizedTopic) return topicHelp(name, normalizedTopic);
-  return `Usage:
-  ${name} [start] [--show-request-id] [--no-browser] [--verbose]
-  ${name} auth status [--online] [--format table|plain]
-  ${name} doctor [--online] [--compat] [--fix] [--json]
-  ${name} doctor config
-  ${name} doctor network
-  ${name} doctor report
-  ${name} auth [login|reauth|check|logout]
-  ${name} web
-  ${name} source [github|m365]
-  ${name} image [status|pause|resume]
-  ${name} status
-  ${name} models [--format table|plain]
-  ${name} usage [--format table|plain] [--provider ID]
-  ${name} cache [--limit <MiB|default> | --clean [--history] [--yes]]
-  ${name} limits [--decoded <MiB|default>]
-  ${name} animation
-  ${name} enable-image
-  ${name} disable-image
-  ${name} image-status
-  ${name} auto-review-model
-  ${name} prediction [status|on|off|fix|pause|resume]
-  ${name} m365 [status|models|accounts|account|switch|on|off|remove]
-  ${name} update [npm|github] [--allow-remote]
-  ${name} --version
-  ${name} --help
-
-Commands:
-  start              Start or reuse the adapter and configure Codex
-  auth               Manage GitHub sign-in and check access
-  web                Open local account and repair tools
-  source             Choose a Codex model source
-  image              Inspect, pause or resume image requests
-  doctor             Diagnose local config; optional live and inference checks
-  status             Show runtime routing, performance, queue, and cache health
-  models             Show the selected Codex provider's GPT model catalog
-  usage              Summarize locally recorded token usage
-  cache              Inspect, size, or clear bounded runtime caches
-  limits             Inspect or configure the decoded request-body limit
-  animation          Select the terminal activity animation
-  enable-image       Configure and enable the optional image provider
-  disable-image      Disable the image provider and remove its credential
-  image-status       Show the optional image provider status
-  auto-review-model  Select the Codex Auto-review model and reasoning effort
-  prediction         Toggle optional native next-message predictions
-  m365               Manage M365 Claude access and the optional Codex backup
-  update             Update the global package from npm or GitHub
-
-Run ${name} <command> --help for command details.`;
+  if (!topic) return rootCommandHelp();
+  const parts = topic.split(" "), canonical = managedCommandHelp(parts);
+  if (canonical !== null) {
+    const feature = parts[0] === "app" && parts[1] === "codex" ? parts[2] : null;
+    const integration = feature === "prediction" ? "prediction" : feature === "image" ? parts[3] === "remove" ? "disable-image" : "enable-image" : feature === "review" ? "auto-review-model"
+      : parts[0] === "source" && parts[1] === "github" && ["login", "reauth", "logout"].includes(parts[2]) ? "auth"
+        : parts[0] === "source" && parts[1] === "m365" && parts[2] === "account" ? "m365"
+          : parts[0] === "doctor" && parts[1] === "cache" ? "cache" : parts[0] === "config" && ["limits", "animation"].includes(parts[1]) ? parts[1] : parts[0] === "update" ? "update" : null;
+    const notes = integration ? topicHelp("ccdx", integration).split("\n\n").slice(1).join("\n\n") : "";
+    return canonical + (notes ? "\n\nIntegration details:\n" + notes : "");
+  }
+  return topicHelp("ccdx", checkedHelpTopic(topic.split(" ")));
 }

@@ -13,7 +13,7 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
   const prediction = createPredictionState();
   let native = null;
   let operation = null, operationName = null, closed = false;
-  let pendingRoutePid = null;
+  let pendingRoutePid = null, codexSetup = null;
   async function startPredictionBridge(expectedPort, environment) {
     const started = await startPrediction({ state: prediction, warning: info,
       ...(environment ? { environment } : {}), ...(expectedPort ? { expectedPort } : {}) });
@@ -52,7 +52,11 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
         retirePredictionIntegration();
       } catch { /* Legacy cleanup is optional; never interrupt or clutter core startup. */ }
       const enabled = Boolean(readImageProviderConfig());
-      const { imageMcpSkipped } = ensureCodexConfig(port, { host, imageProviderEnabled: enabled, ...(configLog ? { log: configLog } : {}) });
+      let imageMcpSkipped;
+      try {
+        const result = ensureCodexConfig(port, { host, imageProviderEnabled: enabled, ...(configLog ? { log: configLog } : {}) });
+        imageMcpSkipped = result.imageMcpSkipped;codexSetup = { setup: result.coreSetup, checked_at: new Date().toISOString() };
+      } catch (error) { codexSetup = { setup: "configuration_unavailable", checked_at: new Date().toISOString() };throw error; }
       if (enabled && !imageMcpSkipped) {
         try {
           const { syncEnabledImageSkill } = await import("./cli-image.mjs");
@@ -120,7 +124,7 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
       const active = native?.setActive?.(value) ?? false;
       return { active, state: active ? "active" : native ? "paused" : "needs_setup" };
     },
-    snapshot() { return { prediction: { ...prediction.snapshot(), active: native?.enabled?.() === true } }; },
+    snapshot() { return { codex: codexSetup ? { ...codexSetup } : null, prediction: { ...prediction.snapshot(), active: native?.enabled?.() === true } }; },
     busy: () => Boolean(operation),
     bridgeHealthy: () => native?.healthy?.() === true,
     pauseForUpdate() { return serialize("pause", async () => { await native?.close();native = null; }); },

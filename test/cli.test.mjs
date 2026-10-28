@@ -134,14 +134,14 @@ test("cli --help exits without validating runtime configuration", async () => {
   });
 
   assert.match(stdout, /Usage:/);
-  assert.match(stdout, /ccdx doctor/);
+  assert.match(stdout, /doctor\s+Check local setup/);
   assert.doesNotMatch(stdout, /Equivalent command/);
-  assert.match(stdout, /ccdx status/);
-  assert.match(stdout, /ccdx models/);
-  assert.match(stdout, /ccdx auth status/);
-  assert.match(stdout, /ccdx animation/);
-  assert.match(stdout, /doctor \[--online\] \[--compat\]/);
-  assert.match(stdout, /ccdx m365/);
+  assert.match(stdout, /status\s+Show service state/);
+  assert.match(stdout, /Compatibility:[\s\S]*models/);
+  assert.match(stdout, /Compatibility:[\s\S]*auth/);
+  assert.match(stdout, /Compatibility:[\s\S]*animation/);
+  assert.match(stdout, /deeper checks are explicit/);
+  assert.match(stdout, /Compatibility:[\s\S]*m365/);
   assert.doesNotMatch(stdout, /pms|pm-studio/i);
   assert.equal(stderr, "");
 });
@@ -163,13 +163,13 @@ test("deprecated cli help and argument errors use the canonical command name wit
     timeout: 2000,
     env: { ...process.env, ADAPTER_PORT: "invalid" },
   });
-  assert.match(stdout, /ccdx doctor/);
-  assert.match(stdout, /ccdx status/);
-  assert.match(stdout, /ccdx models/);
-  assert.match(stdout, /ccdx auto-review-model/);
-  assert.match(stdout, /ccdx animation/);
-  assert.match(stdout, /ccdx update \[npm\|github\]/);
-  assert.match(stdout, /ccdx m365/);
+  assert.match(stdout, /doctor\s+Check local setup/);
+  assert.match(stdout, /status\s+Show service state/);
+  assert.match(stdout, /Compatibility:[\s\S]*models/);
+  assert.match(stdout, /Compatibility:[\s\S]*auto-review-model/);
+  assert.match(stdout, /Compatibility:[\s\S]*animation/);
+  assert.match(stdout, /update github\|npm/);
+  assert.match(stdout, /Compatibility:[\s\S]*m365/);
   assert.doesNotMatch(stdout, /pms|pm-studio/i);
   assertNoCompatibilityWarning(stderr);
 
@@ -193,9 +193,9 @@ test("both CLI entrypoints expose the same complete subcommand help", async () =
   assert.equal(legacy.stdout, primary.stdout);
   assertNoCompatibilityWarning(legacy.stderr);
   for (const command of ["auth", "doctor", "status", "models", "usage", "animation", "enable-image", "disable-image", "image-status", "auto-review-model", "update"]) {
-    assert.match(primary.stdout, new RegExp(`ccdx ${command}`));
+    assert.match(primary.stdout, new RegExp(command));
   }
-  assert.match(primary.stdout, /ccdx m365/);
+  assert.match(primary.stdout, /Compatibility:[\s\S]*m365/);
   assert.doesNotMatch(primary.stdout, /pms|pm-studio/i);
 });
 

@@ -57,14 +57,14 @@ test("status table fits supported widths, separates notices and motion, and redr
     const borders = screen.filter(line => /^[┌├└│]/.test(line));
     assert.equal(borders.length, 10);assert.ok(borders.every(line => displayWidth(line.trim()) === columns - 1));
     assert.match(screen.join("\n"), /Input\s+1\.7M/);assert.match(screen.join("\n"), /Reused(?: input)?\s+1\.1M/);
-    assert.match(screen.join("\n"), /Requests\s+7/);assert.match(screen.join("\n"), /Completed\s+5/);assert.match(screen.join("\n"), /Failed\s+1/);
+    assert.match(screen.join("\n"), /Total\s+7/);assert.match(screen.join("\n"), /Completed\s+5/);assert.match(screen.join("\n"), /Failed\s+1/);
     assert.match(screen.join("\n"), /Active\s+2/);
-    assert.match(screen.at(-2), /^\r?1 notices/);assert.match(screen.at(-1), /^\r?\[.*\] Working/);
+    assert.match(screen.at(-2), /^\r?1 notice/);assert.match(screen.at(-1), /^\r?\[.*\] Active/);
     assert.doesNotMatch(writes[0], /\x1b\[(?:97|38;5;)/);
     const [tick, ms] = [...scheduled][0];scheduled.delete(tick);time += ms;tick();
     assert.doesNotMatch(writes.at(-1), /Usage|│|notices|\n/);
-    finish();output.columns = 60;output.emit("resize");
-    const [next, delay] = [...scheduled][0];scheduled.delete(next);time += delay;next();
+    finish();data.requests.by_route.responses.active = 0;output.columns = 60;output.emit("resize");
+    const [next, delay] = [...scheduled][0];scheduled.delete(next);time += Math.max(delay, 1000);next();
     assert.match(stripVTControlCharacters(writes.at(-1)), /○ Idle/);assert.doesNotMatch(writes.at(-1), /\x1b\[\d+A/);
     output.rows = 10;output.emit("resize");assert.equal(terminal.enabled, false);terminal.cleanup();
   }
@@ -87,7 +87,7 @@ test("very narrow TTY uses plain mode, while supported themes retain their color
   const tiny = createTerminalConsole({ env: {}, output: { isTTY: true, columns: 10, write: value => writes.push(value) }, errorOutput: { isTTY: true, write() {} },
     timers: { setTimeout() { return 1; }, clearTimeout() {} } });
   tiny.start();assert.equal(tiny.enabled, false);assert.equal(tiny.snapshot().mode, "plain");assert.equal(writes.length, 0);tiny.cleanup();
-  const colored = createTerminalConsole({ env: {}, output: { isTTY: true, columns: 80, write: value => writes.push(value) }, errorOutput: { isTTY: true, write() {} },
+  const colored = createTerminalConsole({ snapshot: () => ({ model_activity: { active: 1 } }), env: {}, output: { isTTY: true, columns: 80, write: value => writes.push(value) }, errorOutput: { isTTY: true, write() {} },
     timers: { setTimeout(fn, ms) { timers.push(ms);return 1; }, clearTimeout() {} } });
   colored.beginRequest();colored.start();assert.match(writes.join(""), /\x1b\[(?:97|38;5;)/);
   assert.ok(timers[0] > 0);colored.cleanup();
@@ -114,7 +114,7 @@ test("40 and 80 column terminals retain live usage at the supported 16-row heigh
       now: () => time, snapshot: () => data, timers: { setTimeout(fn, ms) { scheduled.set(fn, ms);return fn; }, clearTimeout(fn) { scheduled.delete(fn); } } });
     terminal.start();const screen = stripVTControlCharacters(writes[0]).replace(/\r/g, "").split("\n");
     assert.ok(screen.length < 16);assert.ok(screen.every(line => displayWidth(line) < columns));
-    assert.match(screen.join("\n"), /Input\s+500/);assert.match(screen.join("\n"), /Code: (?:unchecked|not checked) \/ App: (?:unchecked|not checked)/);
+    assert.match(screen.join("\n"), /Input\s+500/);assert.match(screen.join("\n"), /Apps: .*not checked/);
     data.runtime_usage.input_tokens = 600;data.providers.m365.claude.clients = { code: "preserved", app: "configuration_unavailable" };
     const [tick] = [...scheduled][0];time += 1000;tick();assert.match(stripVTControlCharacters(writes.at(-1)), /Input\s+600/);
     assert.equal(terminal.snapshot().mode, "status");terminal.cleanup();

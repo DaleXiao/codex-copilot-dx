@@ -59,19 +59,12 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.equal(parseCliArgs(["update", "npm"]).allowRemote, false);
   assert.throws(() => parseCliArgs(["update", "--allow-remote", "--allow-remote"]), /only once/);
   assert.throws(() => parseCliArgs(["update", "npm", "--allow-remote=all"]));
-  assert.match(cliHelp(), /ccdx status/);
-  assert.match(cliHelp(), /ccdx models/);
-  assert.match(cliHelp(), /ccdx auth status \[--online\]/);
-  assert.match(cliHelp(), /models \[--format table\|plain\]/);
-  assert.match(cliHelp(), /doctor \[--online\] \[--compat\]/);
+  assert.match(cliHelp(), /status\s+Show service state/);
+  assert.match(cliHelp(), /source\s+Accounts, APIs/);
+  assert.match(cliHelp(), /app\s+Client model plans/);
+  assert.match(cliHelp(), /config\s+Service and terminal/);
   assert.match(cliHelp(), /--show-request-id/);
-  assert.match(cliHelp(), /ccdx auto-review-model/);
-  assert.match(cliHelp(), /ccdx animation/);
-  assert.match(cliHelp(), /ccdx cache/);
-  assert.match(cliHelp(), /ccdx limits/);
-  assert.match(cliHelp(), /ccdx enable-image/);
-  assert.match(cliHelp(), /ccdx update \[npm\|github\]/);
-  assert.match(cliHelp("codex-copilot-dx"), /ccdx status/);
+  assert.match(cliHelp("ccdx", "legacy"), /models|auth|animation|cache|limits/);
   assert.doesNotMatch(cliHelp("codex-copilot-dx"), /Equivalent command/);
   assert.equal(parseCliArgs(["doctor", "--help"]).helpTopic, "doctor");
   assert.equal(parseCliArgs(["animation", "--help"]).helpTopic, "animation");
@@ -81,7 +74,7 @@ test("parseCliArgs: accepts supported commands and options", () => {
   assert.match(cliHelp("ccdx", "animation"), /applies it live/);
   assert.match(cliHelp("ccdx", "enable-image"), /HTTPS image API endpoint/);
   assert.match(cliHelp("ccdx", "doctor"), /consumes a small amount of Copilot usage/);
-  assert.match(cliHelp(), /m365\s+Manage M365 Claude access/);
+  assert.match(cliHelp(), /m365/);
   assert.doesNotMatch(cliHelp(), /pms|pm-studio/i);
   assert.equal(cliHelp("ccdx"), cliHelp("codex-copilot-dx"));
 });
@@ -101,7 +94,7 @@ test("doctor config has a dedicated read-only grammar and help topic", () => {
   for (const profile of ["codex", "claude", "all"]) {
     assert.throws(() => parseCliArgs(["doctor", "config", "--profile", profile]), /Unexpected argument/);
   }
-  assert.match(cliHelp(), /ccdx doctor config/);
+  assert.match(cliHelp("ccdx", "doctor"), /ccdx doctor config/);
   assert.match(cliHelp("ccdx", "doctor config"), /No authentication, network requests, file writes/);
 });
 
@@ -132,7 +125,7 @@ test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
   assert.throws(() => parseCliArgs(["serve"]), /Unknown command or option: serve/);
   assert.throws(() => parseCliArgs(["usage", "extra"]), /Unexpected argument: extra/);
   assert.throws(() => parseCliArgs(["usage", "--format"]), /Enter a value for --format/);
-  assert.throws(() => parseCliArgs(["usage", "--format", "json"]), /Format must be table or plain: json/);
+  assert.equal(parseCliArgs(["usage", "--format", "json"]).flags.format, "json");
   assert.throws(() => parseCliArgs(["cache", "--limit", "128", "--clean"]), /Use either --limit or --clean/);
   assert.throws(() => parseCliArgs(["cache", "--history"]), /require --clean/);
   assert.throws(() => parseCliArgs(["cache", "--limit", "large"]), /integer MiB value or default/);

@@ -3,11 +3,24 @@ import assert from "node:assert/strict";
 import { stripVTControlCharacters } from "node:util";
 import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck, providerStartupChecks, providerStartupSummary } from "../src/startup-ui.mjs";
 import { status } from "../src/status.mjs";
+import { createStartupPresentation } from "../src/startup-ui.mjs";
+
+test("interactive startup replaces ordinary checks while retaining device codes and scoped warnings", () => {
+  const writes = [], errors = [], presentation = createStartupPresentation({ output: { isTTY: true, columns: 80, rows: 24, write: text => writes.push(text) },
+    errorOutput: { isTTY: true, write: text => errors.push(text) }, env: {} });
+  presentation.log("log", [startupCheck("ok", "Config", "Codex local configuration checked")]);
+  assert.match(writes.at(-1), /Starting · Codex/);assert.doesNotMatch(writes.join(""), /Ready|Images|Suggestions/);
+  presentation.log("log", [startupCheck("info", "Sign-in", "Enter code: ABCD-EFGH")]);
+  assert.match(writes.at(-1), /ABCD-EFGH/);
+  presentation.log("warn", [startupCheck("warn", "App", "Codex requires a normal relaunch")]);
+  assert.match(errors.join(""), /normal relaunch/);assert.equal(presentation.warnings.length, 1);
+  presentation.finish();
+});
 
 test("A atom banner is static, bounded and enabled only on a wide colored terminal", () => {
   const args = { version: "0.0.0", env: {}, colorTheme: "green", stream: { isTTY: true, columns: 80 } };
   const colored = startupBanner(args);
-  assert.match(colored, /\x1b\[38;2;166;245;168m/);assert.match(colored, /[▀▄█]/);
+  assert.match(colored, /\x1b\[38;2;166;245;168m/);assert.match(colored, /[▀▄█]/);assert.match(colored, /Local model gateway/);
   assert.equal(colored.split("\n").length, 6);
   for (const line of colored.split("\n")) assert.ok(stripVTControlCharacters(line).length < 72);
   assert.doesNotMatch(colored, /\x1b\[(?:\d*[ABCDEFGHJK]|\?25)/);

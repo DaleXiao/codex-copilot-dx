@@ -29,7 +29,7 @@ for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const col
   const lines = () => {
     const buffer = screen.buffer.active, end = buffer.baseY + buffer.cursorY;
     let start = end;
-    while (start > Math.max(0, end - 23) && !/^CCDX /.test(buffer.getLine(start)?.translateToString(true) || "")) start--;
+    while (start > Math.max(0, end - 23) && !/^(?:Listening|Previous data|Status unavailable)/.test(buffer.getLine(start)?.translateToString(true) || "")) start--;
     return Array.from({ length: end - start + 1 }, (_, index) => buffer.getLine(start + index)?.translateToString(true) || "");
   };
   const step = async () => {
@@ -45,11 +45,13 @@ for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const col
   const tableStart = visible.findIndex(line => line.startsWith("┌"));
   const offset = visible[tableStart + 1].includes("Usage / this run") ? 3 : 1;
   assert.ok(tableStart > 0);assert.match(visible[tableStart + offset + 6], /^└.*┴.*┘$/);
-  for (const detail of offset === 1 ? ["Code: set / App: set", "Claude service: running"] : ["Claude Code: configured", "Claude App: configured", "local service running"]) assert.ok(visible.join("\n").includes(detail) || (detail.startsWith("Claude") && visible.join("\n").includes("Claude / Code: configured / App: configured")), `${columns}: ${visible.join("\n")}`);
+  if (offset === 1) assert.match(visible.join("\n"), /Apps:.*configured/);
+  else { assert.match(visible.join("\n"), /Claude App\s+Configured/);assert.match(visible.join("\n"), /Claude Code\s+Configured/); }
+  assert.match(visible.join("\n"), /Enabled sources: 2/);
   assert.match(visible[tableStart + offset + 1], /Input\s+1\.7M.*Active\s+2/);
   assert.match(visible[tableStart + offset + 2], /Reused(?: input)?\s+1\.1M.*Completed\s+5/);
   assert.match(visible[tableStart + offset + 5], /Cache hit\s+64\.7%.*Cancelled\s+0/);
-  assert.match(visible.at(-2), /^11 notices/);assert.match(visible.at(-1), /^\[.*\] Working$/);
+  assert.match(visible.at(-2), /^11 notices/);assert.match(visible.at(-1), /^\[.*\] Active$/);
   if (columns === 80 && rows === 24 && !color && options.get("--output")) await fs.writeFile(options.get("--output"), visible.join("\n") + "\n");
   finish();finishSecond();data.runtime_usage.output_tokens = 6000;
   data.requests.by_route.responses.active = 0;

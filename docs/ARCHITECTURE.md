@@ -940,3 +940,35 @@ service settings. Chinese font fallback is shared through the page's font-stack
 CSS variable, without remote font I/O. Flow layout aligns application node right
 edges and model node left edges; existing ResizeObserver/geometry caching and
 visibility-gated dash animation retain their ownership.
+
+
+### CLI state and management (1.2.33)
+
+`terminal-state.mjs` projects existing request/source/client evidence for the live
+terminal and canonical CLI views. It does not own model selection, credentials,
+provider health, files or requests. TUI snapshots stay on the one-second cadence;
+animation updates only its final row. `model_activity` provides actual inference
+and generation activity; tool discovery is not work. The core Codex startup writer
+returns observed configured/preserved metadata, which the integration snapshot
+exposes only as last-checked setup evidence. Managed binding setup keeps priority.
+
+`cli-command-spec.mjs` defines canonical paths, validated options, nearby/deep help
+and explicit legacy translations. `cli-management.mjs` formats bounded public
+snapshots and orchestrates existing loopback actions with normal prompt/private-key
+input. The CLI entry exits before service startup for these commands. Existing
+legacy parsing/handlers retain their effects and non-TTY/machine paths.
+
+The full connection snapshot exposes a management capability and per-client
+binding revision. CLI connection mutations require this capability; older running
+services are not silently upgraded or mutated. Source authorization uses the same
+source-impact revision as closing previews. A client access-only action retains
+legacy source and deployment representation; it does not migrate a GitHub-only
+binding or change Codex auth mode. Explicit one-shot client sync reuses serialized,
+targeted ownership writers while retaining `auto_sync=false`. Shared Claude settings
+retain existing peer/manual-support protections. Disabled, unbound APIs can be
+removed; in-flight credential retirement uses the existing secret lifecycle.
+
+CLI service-preference backups use the existing bounded validator, file lock and
+atomic backup/config pair with a separate backup filename. WebUI's appearance-paired
+backup and version-one format are unchanged. No new history store, daemon, client
+restart controller, transport policy or production dependency is introduced.

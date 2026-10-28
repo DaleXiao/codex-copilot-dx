@@ -4,7 +4,7 @@ import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { DEFAULT_TERMINAL_ANIMATION_THEME, TERMINAL_ANIMATION_THEMES, isTerminalAnimationTheme, renderTerminalAnimationFrame,
   getTerminalAnimationCycleLength, getTerminalAnimationFrameDelay } from "./terminal-animation.mjs";
 import { displayWidth } from "./cli-table.mjs";
-import { providerStartupSummary } from "./startup-ui.mjs";
+import { projectTerminalState, terminalUptime } from "./terminal-state.mjs";
 import { colorTerminalText, colorTerminalMotion } from "./terminal-colors.mjs";
 
 const clear = "\r\x1b[2K";
@@ -14,7 +14,7 @@ const flagOff = value => /^(0|false|no|off)$/i.test(String(value || ""));
 export function createTerminalConsole({ output = process.stdout, errorOutput = process.stderr, env = process.env,
   snapshot = () => ({}), preferences = () => ({}), baseUrl = "", verbose = false,
   timers = { setTimeout, clearTimeout }, now = Date.now } = {}) {
-  let running = false, timer = null, lines = 0, active = 0, frame = 0, lastRead = 0, data = {};
+  let running = false, timer = null, lines = 0, frame = 0, lastRead = 0, data = {}, projection = projectTerminalState();
   let notices = 0, lastNotice = "", lastPrintedNotice = "", previous = [];
   let content = [], dirty = true, readFailed = false, updatedAt = null, fits = true;
   let current = { theme: DEFAULT_TERMINAL_ANIMATION_THEME, color_theme: "green", terminal_animation_enabled: true };
@@ -44,7 +44,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
   function table(width, usage, requests, inferenceActive, sum, compactTitle = false) {
     const left = Math.floor((width - 3) / 2), right = width - 3 - left;
     const cell = (label, value, size) => {
-      const number = value === undefined ? "" : updatedAt === null && readFailed ? "—" : typeof value === "string" ? value : compact(value), inner = size - 2;
+      const number = value === undefined ? "" : updatedAt === null && readFailed ? "—" : value === null ? "—" : typeof value === "string" ? value : compact(value), inner = size - 2;
       const text = clip(label, Math.max(0, inner - displayWidth(number) - (number ? 1 : 0)));
       return ` ${text}${" ".repeat(Math.max(0, inner - displayWidth(text) - displayWidth(number)))}${number} `;
     };
@@ -52,18 +52,20 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
     const rule = (a, b, c) => `${a}${"─".repeat(left)}${b}${"─".repeat(right)}${c}`;
     const rate = usage.cache_hit_rate;
     const cacheHit = Number.isFinite(rate) && rate >= 0 && rate <= 1 ? `${usage.cache_hit_rate_partial ? "~" : ""}${(rate * 100).toFixed(1)}%` : "—";
-    const usageRows = [[left < 23 ? "Records" : "Usage records", usage.records || 0], ["Input", usage.input_tokens], [left < 23 ? "Reused" : "Reused input", usage.cached_input_tokens],
-      ["Output", usage.output_tokens], ["Partial usage", usage.partial_records || 0], ["Cache hit", cacheHit]];
-    const requestRows = [["Requests", requests], ["Active", inferenceActive], ["Completed", sum("completed")], ["Incomplete", sum("incomplete")], ["Failed", sum("failed")], ["Cancelled", sum("cancelled")]];
-    const title = compactTitle ? [`┌─ Usage ${"─".repeat(left - 8)}┬─ Inference ${"─".repeat(right - 12)}┐`]
-      : [rule("┌", "┬", "┐"), row(cell("Usage / this run", undefined, left), cell("Inference", undefined, right)), rule("├", "┼", "┤")];
+    const usageRows = [[left < 23 ? "Records" : "Usage records", usage.records ?? null], ["Input", usage.input_tokens ?? null], [left < 23 ? "Reused" : "Reused input", usage.cached_input_tokens ?? null],
+      ["Output", usage.output_tokens ?? null], [left < 23 ? "Partial" : "Partial records", usage.partial_records ?? null], ["Cache hit", cacheHit]];
+    const requestRows = [["Total", requests], ["Active", inferenceActive], ["Completed", sum("completed")], ["Incomplete", sum("incomplete")], ["Failed", sum("failed")], ["Cancelled", sum("cancelled")]];
+    if (sum("unknown")) { usageRows.push(["", ""]);requestRows.push(["Unknown", sum("unknown")]); }
+    const title = compactTitle ? [`┌─ Usage ${"─".repeat(left - 8)}┬─ Requests ${"─".repeat(right - 11)}┐`]
+      : [rule("┌", "┬", "┐"), row(cell("Usage / this run", undefined, left), cell(right < 23 ? "Requests" : "Model requests", undefined, right)), rule("├", "┼", "┤")];
     return [...title,
-      ...usageRows.map(([label, value], index) => row(cell(label, value ?? (label ? 0 : undefined), left), cell(...requestRows[index], right))), rule("└", "┴", "┘")];
+      ...usageRows.map(([label, value], index) => row(cell(label, value === undefined ? (label ? null : undefined) : value, left), cell(...requestRows[index], right))), rule("└", "┴", "┘")];
   }
   function render() {
     if (!running || !supported() || verbose) { frameDelay = 1000;return; }
     const width = Math.max(1, Math.min(160, Number(output.columns) || 80) - 1);
-    let motion = active ? "●" : "○";
+    const active = readFailed ? null : projection.activity;
+    let motion = active === null ? "?" : active ? "●" : "○";
     frameDelay = 1000;
     if (active && current.terminal_animation_enabled && !flagOff(env.CCDX_TERMINAL_ANIMATION) && width >= 24) {
       frame %= getTerminalAnimationCycleLength(current.theme);
@@ -75,30 +77,29 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
       frameDelay = getTerminalAnimationFrameDelay(current.theme, index) + (frame === 0 ? metadata.loopPauseMs : 0);
     }
     if (dirty) {
-      const usage = data.runtime_usage || {}, routes = data.requests?.by_route || {};
-      const outcomes = [data.stream_performance?.by_route?.responses, data.stream_performance?.by_route?.responses_compact, (data.providers?.claude || data.providers?.m365?.claude)?.requests?.performance?.by_route?.messages]
-        .map(route => route?.terminal_outcomes?.totals || {});
-      const sum = key => outcomes.reduce((total, item) => total + (Number(item[key]) || 0), 0);
-      const requests = ["responses", "responses_compact", "messages"].reduce((total, key) => total + (routes[key]?.total || 0), 0);
-      const inferenceActive = ["responses", "responses_compact", "messages"].reduce((total, key) => total + (routes[key]?.active || 0), 0);
-      const providers = providerStartupSummary(data);
-      const heading = readFailed ? updatedAt === null ? "CCDX / No data received" : `CCDX / ${width < 80 ? "Previous data" : "Showing previous data / updated"} / ${new Date(updatedAt).toLocaleTimeString("en-GB")}`
-        : `CCDX RUNNING / uptime ${Math.floor((data.uptime_ms || 0) / 60000)}m / ${baseUrl}`;
-      content = [clip(heading, width)];
-      for (const group of [[`Sources / ${providers.catalogs}`, providers.sourceLines], [`Claude / ${providers.claude}`, providers.claudeLines]]) {
-        content.push(...(displayWidth(group[0]) <= width ? [group[0]] : (group[1] || [group[0]]).flatMap(line => wrap(line, width))));
-      }
-      content.push(...table(width, usage, requests, inferenceActive, sum));
-      content.push(clip(`${notices} notices${lastNotice ? ` · latest: ${lastNotice}` : " / details in WebUI"}`, width));
+      const usage = data.runtime_usage || {}, view = projection;
+      const heading = readFailed ? updatedAt === null ? "Status unavailable" : `Previous data / ${new Date(updatedAt).toLocaleTimeString("en-GB")}`
+        : `${baseUrl ? `Listening · ${baseUrl}` : "Listening"} · up ${terminalUptime(data.uptime_ms)}`;
+      const sourceHeader = view.sources ? `Enabled sources: ${view.sources.length}` : "Enabled sources: unknown";
+      const appSize = width < 64 ? 13 : 15, setupSize = Math.max(10, Math.min(20, width - appSize - 7));
+      const appRows = view.clients.map(client => `${clip(client.name, appSize - 1).padEnd(appSize)}${clip(client.setup, setupSize - 1).padEnd(setupSize)}${String(readFailed || client.active === null ? "—" : client.active).padStart(6)}`);
+      const issue = view.issue?.label;
+      const notice = notices ? `${notices} ${notices === 1 ? "notice" : "notices"}${issue ? ` · last model issue: ${issue}` : " · ccdx status --details"}` : issue ? `Last model issue: ${issue}` : "No notices";
+      content = [clip(heading, width), sourceHeader,
+        ...(view.sources ? wrap(view.sources.map(source => source.name).join(" · "), width) : []),
+        `${"App".padEnd(appSize)}${"Setup".padEnd(setupSize)}${"Active".padStart(6)}`, ...appRows,
+        ...table(width, usage, view.requests, readFailed ? null : view.active, key => view.outcomes[key]),
+        clip("Web: ccdx web · Help: ccdx help · Ctrl+C: stop", width), clip(notice, width)];
       if (content.length + 1 >= (Number(output.rows) || 24)) {
-        const summaries = [...(providers.compactSources || ["Sources: not checked"]), ...(providers.compactClaude || ["Claude: not checked"])];
-        content = [clip(heading, width), ...summaries.flatMap(line => wrap(line, width)), ...table(width, usage, requests, inferenceActive, sum, true), content.at(-1)];
+        const grouped = Object.entries(view.clients.reduce((counts, client) => ({ ...counts, [client.setup]: (counts[client.setup] || 0) + 1 }), {})).map(([state, count]) => `${count} ${state.toLowerCase()}`).join(" · ");
+        content = [clip(heading, width), sourceHeader, clip(`Apps: ${grouped}`, width),
+          ...table(width, usage, view.requests, readFailed ? null : view.active, key => view.outcomes[key], true), clip(notice, width)];
       }
       dirty = false;
     }
     // Apply color after clipping/layout so escape sequences never consume columns.
     const body = [...content.map(line => ["klein", "pink"].includes(current.color_theme) && /^[┌│├└]/.test(line)
-      ? colorTerminalText(line, current.color_theme, { output, env }) : line), `${motion} ${active ? "Working" : "Idle"}`];
+      ? colorTerminalText(line, current.color_theme, { output, env }) : line), `${motion} ${active === null ? "Status unknown" : active ? "Active" : "Idle"}`];
     fits = body.length < (Number(output.rows) || 24);
     if (!fits) { frameDelay = 1000;return; }
     // Animation ticks update only the final line; data stays on its 1s cadence.
@@ -120,7 +121,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
     if (now() - lastRead >= 1000 || !lastRead) {
       try {
         const next = snapshot(), nextPreferences = preferences();
-        data = next;current = { ...current, ...nextPreferences };readFailed = false;updatedAt = now();
+        data = next;projection = projectTerminalState(data);current = { ...current, ...nextPreferences };readFailed = false;updatedAt = now();
         if (!isTerminalAnimationTheme(current.theme)) current.theme = DEFAULT_TERMINAL_ANIMATION_THEME;
       } catch { readFailed = true; }
       lastRead = now();
@@ -133,7 +134,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
     get enabled() { return supported() && fits && !verbose; },
     start() { if (running) return;running = true;tick(); },
     pause() { running = false;if (timer) timers.clearTimeout(timer);timer = null;if (lines) output.write("\n");lines = 0;previous = [];dirty = true; },
-    beginRequest() { active++;dirty = true;let done = false;return () => { if (!done) { done = true;active = Math.max(0, active - 1);dirty = true; } }; },
+    beginRequest() { dirty = true;return () => { dirty = true; }; },
     log(method, args) {
       const message = redactDiagnosticText(format(...args));
       if (verbose) { (method === "error" || method === "warn" ? errorOutput : output).write(`${message}\n`);return; }

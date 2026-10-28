@@ -34,7 +34,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid setting action");
     const allowed = { preference: ["action", "key", "value"], nightly_update: ["action", "enabled"], animation: ["action", "theme"], color_theme: ["action", "theme"],
       history_limit: ["action", "mib"], history_clean: ["action"], prediction_fix: ["action"],
-      preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id"], restore_preferences: ["action", "revision", "backup_id"],
+      preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id", "scope"], restore_preferences: ["action", "revision", "backup_id", "scope"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
     if (!allowed || Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unknown setting action or field");
     if (["preferences", "reset_preferences", "restore_preferences"].includes(input.action)) {

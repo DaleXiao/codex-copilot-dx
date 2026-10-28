@@ -134,7 +134,7 @@ export async function readAdapterStatus({
   }
 }
 
-export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", cliVersion = data.version } = {}) {
+export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", cliVersion = data.version, scoped = false } = {}) {
   const requests = data.requests || {};
   const performance = data.stream_performance?.by_route?.responses || {};
   const terminalOutcomes = performance.terminal_outcomes?.totals;
@@ -154,7 +154,7 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
   const lines = [
     `${commandName} status`,
     adapterLine,
-    status("info", `Requests: ${count(requests.completed)}/${count(requests.total)} completed, ${count(requests.active)} active, ${count(requests.status_4xx)} 4xx, ${count(requests.status_5xx)} 5xx, ${count(requests.aborted)} aborted`),
+    status("info", `${scoped ? "HTTP requests" : "Requests"}: ${count(requests.completed)}/${count(requests.total)} completed, ${count(requests.active)} active, ${count(requests.status_4xx)} 4xx, ${count(requests.status_5xx)} 5xx, ${count(requests.aborted)} aborted`),
     status("info", `Responses stream: TTFT avg ${firstOutputLatency(performance.ttft_ms)} (${count(performance.ttft_ms?.samples)} samples), output avg ${outputRate(performance.output_tokens_per_second)} (${count(performance.output_tokens_per_second?.samples)} samples; gateway estimate)`),
     ...(terminalOutcomes ? [status("info", `Model outcomes: ${count(terminalOutcomes.completed)} completed, ${count(terminalOutcomes.incomplete)} incomplete, ${count(terminalOutcomes.failed)} failed, ${count(terminalOutcomes.cancelled)} cancelled, ${count(terminalOutcomes.unknown)} without terminal`)] : []),
     status("info", `Admission: ${count(admission.activeRequests)} active, ${count(admission.queued)} queued, ${count(admission.rejected)} rejected, ${count(admission.timedOut)} timed out, wait avg ${latency(admission.waitMsAvg)}`),
@@ -205,19 +205,19 @@ export function formatAdapterStatus({ baseUrl, data }, { commandName = "ccdx", c
       lines.push(status("warn", `HTTP ${count(failure.http_status)} ${terminalCell(failure.model)} ${terminalCell(failure.code)}${failure.reason ? ` reason=${terminalCell(failure.reason)}` : ""}${failure.parameter ? ` param=${terminalCell(failure.parameter)}` : ""}; ${terminalCell(failure.origin)}; ${count(failure.upstream_attempts)} attempts`));
     }
   }
-  lines.push(status("info", `Models: ${count(models.models)} total; Copilot token ${copilot.token_cached ? `cached (${duration(copilot.token_expires_in_ms)} remaining)` : "not cached"}`));
+  lines.push(status("info", `${scoped ? "Codex models" : "Models"}: ${count(models.models)} total; Copilot token ${copilot.token_cached ? `cached (${duration(copilot.token_expires_in_ms)} remaining)` : "not cached"}`));
   const prediction = data.client_integrations?.prediction;
   if (prediction) {
-    lines.push(status("info", `Native predictions: ${prediction.configured ? "on" : "off"}; bridge ${prediction.bridge}; client route ${prediction.client_route}; visible candidate unknown`));
-    if (prediction.launch_route) lines.push(status("info", `Prediction self-check: App route ${prediction.launch_route}; persistent route ${prediction.persistence || "unknown"}; ${count(prediction.recovery?.recovered)} bridge recoveries, ${count(prediction.recovery?.attempts)}/3 attempts used`));
+    lines.push(status("info", `${scoped ? "Codex predictions" : "Native predictions"}: ${prediction.configured ? "on" : "off"}; bridge ${prediction.bridge}; client route ${prediction.client_route}; visible candidate unknown`));
+    if (prediction.launch_route) lines.push(status("info", `${scoped ? "Codex prediction route" : "Prediction self-check"}: App route ${prediction.launch_route}; persistent route ${prediction.persistence || "unknown"}; ${count(prediction.recovery?.recovered)} bridge recoveries, ${count(prediction.recovery?.attempts)}/3 attempts used`));
     if (prediction.reason) lines.push(status("warn", terminalCell(prediction.reason).slice(0, 400)));
     if (prediction.environment) lines.push(status("info", formatPredictionEnvironment(prediction.environment)));
   }
   if (data.profiles?.codex) {
-    lines.push(status("info", `Profile: ${profileSummary("Codex", data.profiles.codex)}`));
+    lines.push(status("info", `${scoped ? "GitHub profile for Codex" : "Profile"}: ${profileSummary("Codex", data.profiles.codex)}`));
   }
   if (data.routing?.responses) {
-    lines.push(status("info", `Routing: /v1/responses -> ${routingTarget(data.routing.responses)}`));
+    lines.push(status("info", `${scoped ? "Codex routing" : "Routing"}: /v1/responses -> ${routingTarget(data.routing.responses)}`));
   }
   if (data.providers?.m365) {
     const m365 = data.providers.m365;

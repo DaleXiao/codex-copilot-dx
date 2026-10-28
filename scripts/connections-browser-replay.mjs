@@ -16,7 +16,7 @@ const report = [];let discoveries = 0;
 for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter(([name]) => !options.get("--engines") || options.get("--engines").split(",").includes(name))) {
   const browser = await type.launch({ headless: true, ...(options.get("--executable") ? { executablePath: options.get("--executable") } : {}) });
   try {
-    for (const palette of (options.get("--palettes") || "green,klein,pink").split(",")) for (const mode of (options.get("--modes") || "light,dark").split(",")) {
+    for (const palette of (options.get("--palettes") || "green,klein,pink,mono").split(",")) for (const mode of (options.get("--modes") || "light,dark").split(",")) {
       const width = mode === "light" ? 360 : 1280, language = palette === "klein" ? "en" : "zh";
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-connections-browser-")), env = {}, values = new Map();
       fs.mkdirSync(path.join(root, ".codex"));fs.writeFileSync(path.join(root, ".codex/config.toml"), '[features]\nmemories=true\n[memories]\nextract_model="response-replay"\n');

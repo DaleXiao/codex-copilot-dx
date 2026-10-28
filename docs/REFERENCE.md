@@ -1172,13 +1172,13 @@ Overview reserves a fixed-height row below its status summary. Six 4px theme-col
 
 ### Color themes
 
-Settings separates Web appearance and Terminal appearance. Each offers Classic green (default), Klein blue and Soft pink. Green preserves the previous palette and terminal table's original text colors. Blue and pink color the terminal logo, full table and activity animation without changing glyphs, timing or metric definitions. Webpage color is independent of terminal color, and of the page header's dark/light switch.
+Settings separates Web appearance and Terminal appearance. Both offer Classic green (default), Klein blue and Soft pink. Web appearance also offers Pure white: white page/surfaces with black text and icons in light mode, inverted in dark mode. All WebUI palette tokens, including alerts and charts, are grayscale; status icons and words retain their meaning. Terminal previews continue to reflect the independently selected terminal palette. Green preserves the previous palette and terminal table's original text colors. Blue and pink color the terminal logo, full table and activity animation without changing glyphs, timing or metric definitions. Webpage color is independent of terminal color, and of the page header's dark/light switch.
 
-Web choices use `ccdx.dashboard.palette` (`green` / `klein` / `pink`) and the existing `ccdx.dashboard.theme` (`dark` / `light`) in browser local storage. They are applied before the stylesheet, including the atom favicon. Same-origin tabs receive storage updates; other browsers retain their own choices. If storage is blocked, the current tab still changes and explicitly reports that the choice was not saved. No service request is needed to change webpage colors.
+Web choices use `ccdx.dashboard.palette` (`green` / `klein` / `pink` / `mono`) and the existing `ccdx.dashboard.theme` (`dark` / `light`) in browser local storage. They are applied before the stylesheet, including the atom favicon. Same-origin tabs receive storage updates; other browsers retain their own choices. If storage is blocked, the current tab still changes and explicitly reports that the choice was not saved. No service request is needed to change webpage colors.
 
 Terminal color uses `terminal_color_theme: "klein"` or `"pink"` in the normal CCDX user config. An absent value means `green`; choosing green removes the override. It does not change `terminal_animation` or any capability flag. The same bounded, strict settings read, file lock and atomic writer are reused. Invalid/unreadable existing config is not overwritten with defaults. A successful save applies to the supported live status table; the startup logo uses the saved choice next time. Previously printed terminal lines are not rewritten. Color codes are added after width calculation and clipping. Truecolor, 256-color and ordinary ANSI fallbacks are supported; `NO_COLOR`, dumb terminals and redirected output preserve plain output. A terminal's own palette and background affect the displayed color. Pink uses a darker tone when COLORFGBG explicitly identifies a light background (7 or 15); otherwise its default tone is pale pink. CCDX does not query or change the terminal background.
 
-The terminal sample in Settings is labeled Preview and uses sample numbers, not current usage. Existing nine animation previews and their save operation remain available beneath the color choice. Red errors and amber warnings keep their meaning across webpage themes.
+The terminal sample in Settings is labeled Preview and uses sample numbers, not current usage. Existing nine animation previews and their save operation remain available beneath the color choice. Errors and warnings retain their text and status icons in every webpage theme; the three colored palettes also retain red/amber cues.
 
 ### Version and update information
 
@@ -1350,7 +1350,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.31/codex-copilot-dx-1.2.31.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.32/codex-copilot-dx-1.2.32.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -2362,3 +2362,25 @@ The existing palettes, sidebar, atom, solid selected controls and usage views re
 ### Successful HTTP transport carrying model errors (1.2.31)
 
 A native Messages JSON error envelope under HTTP 200, or an SSE error event under a successful HTTP status, is recorded as model.error with the original HTTP status and a bounded structured error code/type. Existing failed-model accounting remains. The original response bytes/status are preserved; no automatic retry or replay is added. Normal output carrying incidental error-like fields is not reclassified. Token-count errors remain in their separate capability category. Request issue summaries lead with known plain-language causes, while technical codes, IDs, original diagnostic fields and clipboard export remain available in details.
+
+
+### Flow alignment and system fonts (1.2.32)
+
+Applications, request counts and their status lines share a right-aligned edge;
+source/model nodes retain their shared left edge. Application wire anchors no
+longer move with label width or mixed singleton/group counts. The existing
+rounded turns, dashed activity, selection and reduced-motion behavior remain.
+Narrow layouts keep counts below the application name and aligned to the same
+text edge.
+
+The WebUI retains its Latin monospace stack and explicitly names Chinese
+sans-serif system fallbacks before generic monospace: Microsoft YaHei UI/YaHei,
+PingFang SC, Noto Sans CJK SC/Noto Sans SC and WenQuanYi Micro Hei. Form controls
+inherit the page family; code and terminal samples reuse the same stack. No font
+is downloaded or installed. Available system fonts determine the exact glyphs;
+unsupported scripts still use browser fallback.
+
+Pure white uses the existing independent light/dark toggle, browser persistence,
+cross-tab updates, automatic/manual saving, and pre-reset backup/restore. It does
+not change the default green palette or the terminal palette and does not change
+Codex/Claude routing, credentials or model selections.

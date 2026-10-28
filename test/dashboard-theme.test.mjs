@@ -115,3 +115,18 @@ test("pink restores before paint, changes mode independently and persists withou
   f.select.value = "green";f.select.change({ target: f.select });
   assert.equal(saved.get("ccdx.dashboard.palette"), "green");assert.equal(f.root.dataset.theme, "dark");
 });
+
+
+test("pure white survives reload and mode changes without changing terminal selection", () => {
+  const saved = new Map([["ccdx.dashboard.palette", "mono"], ["ccdx.dashboard.theme", "light"]]);
+  const storage = { getItem: key => saved.get(key), setItem: (key, value) => saved.set(key, value) };
+  const f = loadTheme(storage);
+  assert.equal(f.root.dataset.palette, "mono");assert.equal(f.select.value, "mono");
+  assert.match(decodeURIComponent(f.favicon.href), /stroke="#000000"/);
+  f.button.click();assert.equal(f.root.dataset.theme, "dark");
+  assert.equal(saved.get("ccdx.dashboard.palette"), "mono");
+  assert.match(decodeURIComponent(f.favicon.href), /stroke="#ffffff"/);
+  const restored = loadTheme(storage);
+  assert.equal(restored.root.dataset.palette, "mono");assert.equal(restored.root.dataset.theme, "dark");
+  assert.equal(saved.has("terminal_color_theme"), false);
+});

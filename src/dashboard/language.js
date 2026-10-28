@@ -545,6 +545,7 @@
     "appearance_classic_green": ["Classic green (default)", "经典绿（默认）"],
     "appearance_klein_blue": ["Klein blue", "克莱因蓝"],
     "appearance_soft_pink": ["Soft pink", "淡粉色"],
+    "appearance_pure_white": ["Pure white", "纯白"],
     "model_activity_active": ["Processing {count} requests", "正在处理 {count} 个请求"],
     "model_activity_idle": ["No model requests", "暂无模型请求"],
     "model_activity_unknown": ["Activity unknown", "活动状态未知"],

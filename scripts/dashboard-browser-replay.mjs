@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import os from "node:os";
+import { pathToFileURL } from "node:url";
 import { createServiceControl } from "../src/service-control.mjs";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { summarizeUsage } from "../src/usage-store.mjs";
@@ -15,7 +16,7 @@ const args = process.argv.slice(2);
 const options = new Map();
 for (let index = 0; index < args.length; index += 2) options.set(args[index], args[index + 1]);
 assert.ok(path.isAbsolute(options.get("--playwright") || ""), "Supply --playwright /absolute/path/to/playwright/index.js");
-const module = await import(options.get("--playwright"));
+const module = await import(pathToFileURL(options.get("--playwright")).href);
 const playwright = module.default || module;
 const output = options.get("--output");
 if (output) await fs.mkdir(output, { recursive: true });
@@ -140,12 +141,12 @@ await new Promise((resolve, reject) => { server.once("error", reject); server.li
 const results = [];
 try {
   for (const engine of (options.get("--engines") || "chromium,webkit").split(",")) {
-    const browser = await playwright[engine].launch({ headless: true, ...(options.get("--executable") ? { executablePath: options.get("--executable") } : {}) });
+    const browser = await playwright[engine].launch({ headless: true, ...(options.get("--channel") ? { channel: options.get("--channel") } : {}), ...(options.get("--executable") ? { executablePath: options.get("--executable") } : {}) });
     try {
       for (const language of (options.get("--languages") || "en,zh").split(","))
         for (const theme of (options.get("--themes") || "dark,light").split(","))
           for (const width of (options.get("--widths") || "420,1280").split(",").map(Number))
-            for (const palette of (options.get("--palettes") || "green,klein,pink").split(",")) {
+            for (const palette of (options.get("--palettes") || "green,klein,pink,mono").split(",")) {
         const caseName = JSON.stringify({ engine, language, theme, palette, width });
         console.log(`Browser case: ${caseName}`);
         const page = await browser.newPage({ viewport: { width, height: 900 }, reducedMotion: "no-preference" });
@@ -188,6 +189,25 @@ try {
         m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
         await serviceControl.action({ action: "preferences", revision: serviceControl.snapshot().preferences.revision, values: { terminal_animation: "comet", terminal_color_theme: "green", open_webui: true, nightly_updates: false, auto_save_settings: true } });
         await page.goto(`http://127.0.0.1:${server.address().port}/`);
+        await page.locator("#page-title").waitFor();
+        const fonts = await page.locator("#page-title").evaluate(node => getComputedStyle(node).fontFamily);
+        assert.match(fonts, /Microsoft YaHei UI/);assert.match(fonts, /PingFang SC/);
+        if (engine === "chromium" && process.platform === "win32" && language === "zh") {
+          const cdp = await page.context().newCDPSession(page);
+          await cdp.send("DOM.enable");await cdp.send("CSS.enable");
+          const { root } = await cdp.send("DOM.getDocument");
+          const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector: "#page-title" });
+          const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
+          assert.ok(fonts.some(font => /Microsoft YaHei/i.test(font.familyName) && font.glyphCount > 0), `Chinese uses a Windows sans-serif face: ${JSON.stringify(fonts)}`);
+          await cdp.detach();
+        }
+        if (palette === "mono") {
+          const colors = await page.locator("body").evaluate(node => {
+            const css = getComputedStyle(node);return { page: css.backgroundColor, text: css.color, accent: css.getPropertyValue("--accent").trim() };
+          });
+          assert.equal(colors.page, theme === "light" ? "rgb(255, 255, 255)" : "rgb(0, 0, 0)");
+          assert.equal(colors.text, theme === "light" ? "rgb(0, 0, 0)" : "rgb(255, 255, 255)");
+        }
         await page.waitForFunction(() => !document.getElementById("refresh-models").disabled && !document.getElementById("refresh-usage").disabled);
         assert.equal(await page.evaluate(() => atomMotions.length), 1);
         assert.equal(await page.evaluate(() => atomMotions[0].options.duration), 450);
@@ -423,7 +443,7 @@ try {
         await page.waitForFunction(() => document.getElementById("live-models-body").textContent.includes("gpt-6.1-sol"));
         const icon = decodeURIComponent(await page.locator("#favicon").getAttribute("href"));
         assert.equal((icon.match(/<ellipse /g) || []).length, 3);
-        const iconColors = { green: ["#a6f5a8", "#176b3a"], klein: ["#789aff", "#002fa7"], pink: ["#f3a8c8", "#a83e68"] };
+        const iconColors = { green: ["#a6f5a8", "#176b3a"], klein: ["#789aff", "#002fa7"], pink: ["#f3a8c8", "#a83e68"], mono: ["#ffffff", "#000000"] };
         assert.ok(icon.includes(iconColors[palette][theme === "dark" ? 0 : 1]));
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "No whole-page horizontal overflow");
         await nav("checks");
@@ -480,6 +500,11 @@ try {
         assert.equal(await page.locator("#request-flow").getAttribute("data-state"), "active");
         assert.equal(await page.locator("#flow-apps .flow-node").count(), 3);
         assert.equal(await page.locator("#flow-models .flow-node").count(), 3);
+        // A shared right edge keeps application paths and their bends aligned.
+        const appEdges = await page.locator("#flow-apps .flow-node").evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().right));
+        assert.ok(Math.max(...appEdges) - Math.min(...appEdges) < 1, "Every app uses the same right edge");
+        const notes = await page.locator("#flow-apps .flow-note").evaluateAll(nodes => nodes.map(node => ({ right: node.getBoundingClientRect().right, align: getComputedStyle(node).textAlign })));
+        assert.ok(notes.every(node => node.align === "right") && Math.max(...notes.map(node => node.right)) - Math.min(...notes.map(node => node.right)) < 1, "Application statuses share a right-aligned edge");
         const starts = await page.locator("#flow-models .flow-choice").evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().left));
         assert.ok(Math.max(...starts) - Math.min(...starts) < 1, "Every model uses the same left edge");
         assert.equal(await page.locator("#flow-wires circle").count(), 0, "Flow uses dashed paths instead of moving dots");
@@ -493,6 +518,10 @@ try {
         assert.equal(await page.locator("#flow-wires .flow-split").evaluateAll(nodes => nodes.every(node => getComputedStyle(node).animationName === "none" && getComputedStyle(node).visibility === "hidden")), true);
         assert.equal(await page.locator("#flow-wires .flow-waiting").count(), 2);
         assert.ok((await page.locator("#flow-wires path").evaluateAll(nodes => nodes.map(node => node.getAttribute("d")))).some(d => d.includes("Q")), "Connections have rounded turns");
+        flowRequests.push({ ...flowRequests[0], request_id: "multi-app-count" });await refreshStatus();
+        const countedEdges = await page.locator("#flow-apps .flow-node").evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().right));
+        assert.ok(Math.max(...countedEdges) - Math.min(...countedEdges) < 1, "Mixed singleton and counted apps retain fixed anchors");
+        flowRequests = concurrentFlow();await refreshStatus();
         await page.locator("#flow-apps .flow-choice").first().click();
         assert.equal(await page.locator("#flow-active-body tr").count(), 1);
         const selectedName = page.locator('.flow-choice[aria-pressed="true"]');

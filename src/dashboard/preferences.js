@@ -13,7 +13,7 @@
       const raw = localStorage.getItem(backupKey);if (raw === null) return { version: 1, entries: [] };
       const value = JSON.parse(raw);
       if (value?.version !== 1 || !Array.isArray(value.entries) || value.entries.length > 2 || value.entries.some(entry => typeof entry.id !== "string"
-        || !["dark", "light"].includes(entry.values?.theme) || !["green", "klein", "pink"].includes(entry.values?.palette))) throw Error("preferences_browser_backup_invalid");
+        || !["dark", "light"].includes(entry.values?.theme) || !["green", "klein", "pink", "mono"].includes(entry.values?.palette))) throw Error("preferences_browser_backup_invalid");
       return value;
     }
     function render() {

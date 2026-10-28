@@ -932,3 +932,11 @@ The connection snapshot's read-only source_impacts reports actual selected consu
 Unknown client capability adapters preserve existing shared settings and report their limitation. The presentation schema and protocol capability evidence do not share an enable gate. HTTP-200 error envelopes and native SSE errors feed the existing bounded diagnostics as model.error; transport bytes and retry policies remain unchanged.
 
 `dashboard/disclosure.js` is optional progressive enhancement of native details/summary. It uses cancellable opacity/transform animations, CSS chevrons independent of translated DOM text, and no polling/height animation. Reduced motion and hidden documents finish immediately. A resource integration test covers every script/style referenced by the shell. Flow regression measures layout reads and DOM identity under elapsed-only updates; existing geometry caches, list limits and visibility gates remain the performance mechanism.
+
+
+WebUI-only appearance remains browser-owned. The `mono` palette reuses existing
+semantic CSS tokens and the light/dark toggle; it does not extend terminal or
+service settings. Chinese font fallback is shared through the page's font-stack
+CSS variable, without remote font I/O. Flow layout aligns application node right
+edges and model node left edges; existing ResizeObserver/geometry caching and
+visibility-gated dash animation retain their ownership.

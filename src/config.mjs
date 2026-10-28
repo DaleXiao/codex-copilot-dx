@@ -315,7 +315,8 @@ function ensureCodexConfigUnlocked(adapterPort = 2026, {
   }
   // Disabled means no image maintenance, including no implicit removal of old
   // or user-owned entries. Explicit disable-image owns the cleanup operation.
-  if (!imageProviderEnabled) return { imageMcpSkipped: false };
+  const coreSetup = parseCodexToml(core.content).openai_base_url === baseUrl ? "configured" : "preserved";
+  if (!imageProviderEnabled) return { coreSetup, imageMcpSkipped: false };
   try {
     const previousBaseUrl = content === undefined ? undefined : parseCodexToml(content).openai_base_url;
     const image = computeImageConfig(core.content, { enabled: true, adapterPort, adapterHost: host }, previousBaseUrl);
@@ -325,9 +326,9 @@ function ensureCodexConfigUnlocked(adapterPort = 2026, {
       }
       atomicWriteFileIfChangedSync(filePath, image.content);
     }
-    return { imageMcpSkipped: false };
+    return { coreSetup, imageMcpSkipped: false };
   } catch (error) {
     console.warn(status("warn", `Image MCP setup was skipped: ${error.message}. Core proxy startup will continue.`));
-    return { imageMcpSkipped: true };
+    return { coreSetup, imageMcpSkipped: true };
   }
 }

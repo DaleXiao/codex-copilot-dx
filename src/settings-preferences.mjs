@@ -16,9 +16,9 @@ const idValid = value => typeof value === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{
 const valuesFor = settings => Object.fromEntries(keys.map(key => [key, key === "terminal_animation" && !isTerminalAnimationTheme(settings[key])
   ? SETTINGS_DEFAULTS[key] : settings[key] ?? SETTINGS_DEFAULTS[key]]));
 const revisionFor = values => createHash("sha256").update(JSON.stringify(keys.map(key => values[key]))).digest("hex");
-export const settingsBackupPath = options => path.join(path.dirname(userSettingsPath(options)), "settings-preferences-backup.json");
+export const settingsBackupPath = options => path.join(path.dirname(userSettingsPath(options)), options?.backupScope === "service" ? "service-settings-preferences-backup.json" : "settings-preferences-backup.json");
 
-function checkedValues(values) {
+export function checkedPreferenceValues(values) {
   if (!values || typeof values !== "object" || Array.isArray(values) || Object.keys(values).some(key => !keys.includes(key)
     || (key === "terminal_color_theme" ? !isColorTheme(values[key]) : key === "terminal_animation" ? !isTerminalAnimationTheme(values[key]) : typeof values[key] !== "boolean"))) {
     throw fail("ccdx_settings_values_invalid", "Choose valid settings on this page", 400);
@@ -31,7 +31,7 @@ function readBackup(options) {
     if (value?.version !== 1 || !idValid(value.id) || typeof value.created_at !== "string" || !Number.isFinite(Date.parse(value.created_at))
       || Object.keys(value).some(key => !["version", "id", "created_at", "values"].includes(key))
       || keys.some(key => !Object.hasOwn(value.values || {}, key))) throw Error();
-    checkedValues(value.values);return value;
+    checkedPreferenceValues(value.values);return value;
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw fail("ccdx_settings_backup_invalid", "The settings backup could not be read; existing files were preserved");
@@ -48,6 +48,8 @@ export function settingsPreferencesSnapshot(options = {}) {
 // Only this page's preferences enter its backup. Routing, auth, business flags
 // and unknown settings are retained in the current file, never copied here.
 export function writeSettingsPreferences(input, options = {}) {
+  if (input.scope !== undefined && (!["reset_preferences", "restore_preferences"].includes(input.action) || input.scope !== "service")) throw fail("ccdx_settings_action_invalid", "Unknown backup scope", 400);
+  if (input.scope === "service") options = { ...options, backupScope: "service" };
   const file = userSettingsPath(options);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   return withFileLockSync(`${file}.lock`, () => {
@@ -58,7 +60,7 @@ export function writeSettingsPreferences(input, options = {}) {
       throw fail("ccdx_settings_changed", "Settings changed elsewhere. Review the current settings before saving again");
     }
     let values;
-    if (input.action === "preferences") values = checkedValues(input.values);
+    if (input.action === "preferences") values = checkedPreferenceValues(input.values);
     else {
       if (!idValid(input.backup_id)) throw fail("ccdx_settings_backup_invalid", "Choose the current settings backup", 400);
       if (input.action === "restore_preferences") {

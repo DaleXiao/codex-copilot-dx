@@ -2,6 +2,9 @@ import { status } from "./status.mjs";
 import { terminalCell } from "./terminal-text.mjs";
 import { colorTerminalText } from "./terminal-colors.mjs";
 import { terminalColorPreference } from "./user-settings.mjs";
+import { format } from "node:util";
+import { displayWidth } from "./cli-table.mjs";
+import { redactDiagnosticText } from "./diagnostic-text.mjs";
 
 // The favicon's three ellipses, rasterized as terminal half-blocks. No runtime
 // graphics library or terminal cursor control is needed.
@@ -39,6 +42,31 @@ export function startupLogger(name, output = console.log) {
       const match = /^\[(OK|INFO|WARN|ERR|WAIT|DEBUG)\]\s+(.*)$/.exec(line);
       output(match ? startupCheck(match[1].toLowerCase(), name, match[2]) : line);
     }
+  };
+}
+
+// One transient startup row. Authorization instructions and warnings remain
+// visible; only ordinary structured checks are replaced by the live region.
+export function createStartupPresentation({ output = process.stdout, errorOutput = process.stderr, env = process.env, verbose = false } = {}) {
+  const enabled = !verbose && output.isTTY === true && errorOutput.isTTY === true && env.TERM !== "dumb"
+    && (!env.CI || /^(0|false|no|off)$/i.test(env.CI)) && (output.columns || 80) >= 40 && (output.rows || 24) >= 16;
+  let visible = false;const warnings = [];
+  function clear() { if (visible) output.write("\r\x1b[2K");visible = false; }
+  return { enabled, warnings, finish: clear,
+    log(method, args) {
+      const message = redactDiagnosticText(format(...args));
+      const warning = method === "error" || method === "warn" || /^\s*\[(?:WARN|ERR)\]/.test(message);
+      const check = /^\[(?:OK|INFO|WAIT)\]\s+([A-Za-z-]+)\s+(.*)$/.exec(message);
+      if (!enabled || warning || !check || ["Sign-in", "GitHub"].includes(check[1]) && !/GitHub token found|saved sign-in/i.test(check[2])) {
+        clear();(warning ? errorOutput : output).write(message + "\n");
+        if (warning && warnings.length < 100) warnings.push([method, args]);return;
+      }
+      const scope = ["App", "Config", "Suggestions", "Images"].includes(check[1]) ? "Codex" : check[1] === "Claude" ? "Apps" : check[1];
+      let text = `Starting · ${scope}`;
+      if (["Service", "Models", "Sources", "M365"].includes(scope)) text += ` · ${check[2]}`;
+      while (displayWidth(text) >= (output.columns || 80)) text = [...text].slice(0, -1).join("");
+      clear();output.write(`\r\x1b[2K${text}`);visible = true;
+    },
   };
 }
 

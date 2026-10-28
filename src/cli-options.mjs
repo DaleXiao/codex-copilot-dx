@@ -1,3 +1,4 @@
+import { parseManagedCommand, managedCommandHelp, rootCommandHelp } from "./cli-command-spec.mjs";
 import { isProviderId } from "./provider-metadata.mjs";
 import { MAX_TIMER_DELAY_MS } from "./runtime-config.mjs";
 
@@ -130,6 +131,12 @@ function parseStartOptions(args) {
 export function parseCliArgs(args = []) {
   const [command, ...rest] = args;
   if (!command) return baseCommand("start");
+  const helpParts = HELP_COMMANDS.has(command) ? rest : HELP_COMMANDS.has(args.at(-1)) ? args.slice(0, -1) : null;
+  if (helpParts && managedCommandHelp(helpParts) !== null) return baseCommand("help", { helpTopic: helpParts.join(" ") });
+  if (["app", "config"].includes(command) && !rest.length) return baseCommand("help", { helpTopic: command });
+  const managed = parseManagedCommand(args);
+  if (managed) return managed.legacy ? parseCliArgs(managed.legacy) : baseCommand("manage", managed);
+
   if (command === "reauth") return parseCliArgs(["auth", "reauth", ...rest]);
   if (command === "source") { if (rest.length === 1 && HELP_COMMANDS.has(rest[0])) return helpCommand(["source"]);return parseCliArgs(["m365", "switch", ...rest]); }
   if (command === "web") { if (rest.length === 1 && HELP_COMMANDS.has(rest[0])) return helpCommand(["web"]);if (rest.length) unexpectedArgs(rest);return baseCommand("web"); }
@@ -431,6 +438,8 @@ function topicHelp(name, topic) {
 
 export function cliHelp(commandName = "ccdx", topic = "") {
   const name = "ccdx";
+  if (!topic) return rootCommandHelp();
+  const canonical = managedCommandHelp(topic.split(" "));if (canonical !== null) return canonical;
   const normalizedTopic = checkedHelpTopic(topic ? topic.split(" ") : []);
   if (normalizedTopic) return topicHelp(name, normalizedTopic);
   return `Usage:

@@ -23,7 +23,7 @@ async function visibleQuestion(input, output, question) {
   finally { prompt.close(); }
 }
 
-export function hiddenQuestion(input, output, question) {
+export function hiddenQuestion(input, output, question, { cancelMessage = "Image provider setup cancelled" } = {}) {
   if (!input?.isTTY || !output?.isTTY || typeof input.setRawMode !== "function") {
     return Promise.reject(new Error("Hidden API key input requires an interactive terminal"));
   }
@@ -43,7 +43,7 @@ export function hiddenQuestion(input, output, question) {
     const onKeypress = (text, key = {}) => {
       if (key.ctrl && key.name === "c") {
         cleanup();
-        reject(new Error("Image provider setup cancelled"));
+        reject(new Error(cancelMessage));
         return;
       }
       if (key.name === "return" || key.name === "enter") {

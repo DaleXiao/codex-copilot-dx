@@ -22,7 +22,7 @@ import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
 import { createCodexModelCatalog } from "../src/codex-model-catalog.mjs";
 import { createProviderRuntime } from "../src/provider-runtime.mjs";
 import { setResponseHistoryMaxBytes } from "../src/response-history.mjs";
-import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck, providerStartupChecks } from "../src/startup-ui.mjs";
+import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck, providerStartupChecks, createStartupPresentation } from "../src/startup-ui.mjs";
 import { createTerminalConsole } from "../src/terminal-console.mjs";
 import { createServiceControl } from "../src/service-control.mjs";
 import { openDashboard } from "../src/browser-launch.mjs";
@@ -47,6 +47,19 @@ if (CLI.command === "help") {
 if (CLI.command === "version") {
   console.log(CLI_BANNER);
   process.exit(0);
+}
+if (CLI.command === "manage") {
+  try {
+    const { runManagementCommand } = await import("../src/cli-management.mjs");
+    const address = parseAdapterAddressOptions(process.env);
+    const result = await runManagementCommand(CLI, { host: address.adapterHost, port: address.adapterPort, version: LOCAL_VERSION });
+    if (result) console.log(result);
+    process.exit(0);
+  } catch (error) {
+    if (CLI.flags?.format === "json") console.log(JSON.stringify({ error: { code: error.code || "ccdx_command_failed", message: error.message } }));
+    else console.error(status("err", `${error.code ? `${error.code}: ` : ""}${error.message}`));
+    process.exit(1);
+  }
 }
 if (CLI.command === "web") {
   try {
@@ -235,7 +248,10 @@ if (CLI.command === "status") {
       port: probe.adapterPort,
       timeoutMs: probe.existingAdapterTimeoutMs,
     });
-    console.log(formatAdapterStatus(snapshot, { commandName: CLI_NAME, cliVersion: LOCAL_VERSION }));
+    if (process.stdout.isTTY) {
+      const { runManagementCommand } = await import("../src/cli-management.mjs");
+      console.log(await runManagementCommand({ group: "status", path: ["status"], flags: {} }, { version: LOCAL_VERSION, readStatus: async () => snapshot }));
+    } else console.log(formatAdapterStatus(snapshot, { commandName: CLI_NAME, cliVersion: LOCAL_VERSION }));
     process.exit(0);
   } catch (e) {
     console.error(status("err", e.message));
@@ -440,6 +456,8 @@ if (CLI.command === "doctor") {
 }
 
 console.log(`\n${startupBanner({ commandName: CLI_NAME, version: LOCAL_VERSION })}\n`);
+const startupPresentation = createStartupPresentation({ verbose: CLI.verbose === true || CLI.showRequestId === true || LOGGING.level === "debug" || serviceWorker?.warming });
+if (startupPresentation.enabled) LOGGING.setTerminalSink((method, args) => startupPresentation.log(method, args));
 
 async function printUpdateNotice() {
   try {
@@ -466,7 +484,7 @@ try {
     // Ready is already displayed; finish the bounded check before this short-lived CLI exits.
     await updateNotice;
     serviceWorker?.reused();
-    await LOGGING.cleanup();
+    startupPresentation.finish();await LOGGING.cleanup();
     process.exit(0);
   }
 
@@ -579,9 +597,13 @@ try {
   }
 
   startupComplete = true;
-  console.log(startupReady({ baseUrl: adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT), commandName: CLI_NAME }));
+  if (!startupPresentation.enabled) console.log(startupReady({ baseUrl: adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT), commandName: CLI_NAME }));
   await launchDashboard();
-  if (!serviceWorker?.warming) { terminalConsole.start();LOGGING.setTerminalSink((method, args) => terminalConsole.log(method, args)); }
+  if (!serviceWorker?.warming) {
+    startupPresentation.finish();for (const [method, args] of startupPresentation.warnings) terminalConsole.log(method, args);
+    terminalConsole.start();if (!terminalConsole.enabled && startupPresentation.enabled) process.stdout.write(startupReady({ baseUrl: adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT), commandName: CLI_NAME }));
+    LOGGING.setTerminalSink((method, args) => terminalConsole.log(method, args));
+  }
 
   const shutdown = async (signal) => {
     if (shuttingDown) return;
@@ -646,7 +668,7 @@ try {
     });
   }
 } catch (e) {
-  LOGGING.setTerminalSink(null);terminalConsole?.cleanup();
+  startupPresentation.finish();LOGGING.setTerminalSink(null);terminalConsole?.cleanup();
   console.error(status("err", e.message));
   await clientIntegration?.close().catch(() => {});
   await providerRuntime?.close().catch(() => {});

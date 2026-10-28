@@ -579,3 +579,28 @@ These rows supersede older update-help wording in the historical comparison.
 # 1.2.31 presentation boundary
 
 CLI commands and normal terminal output are unchanged. Display names do not change model IDs accepted by CLI tools. The new model.error diagnostic event preserves HTTP status and structured upstream error identifiers; it does not add scrolling request logs or automatic inference retries.
+
+
+## Canonical CLI and TUI (1.2.33)
+
+The new command hierarchy is defined by `src/cli-command-spec.mjs`; live and CLI
+state labels use `src/terminal-state.mjs`. Service state, source credentials/catalogs,
+client configuration/adoption and observed model activity are distinct evidence.
+The normal interactive startup row is transient. Authorization instructions and
+warnings remain visible. Legacy plain/verbose startup and non-TTY status contracts
+remain; legacy rows above are not assertions of online source authorization.
+
+| Before | Canonical/current display |
+| --- | --- |
+| Ready + Web UI + CCDX RUNNING repeat the listener | One Listening/address/uptime line in the live region |
+| Sources / N enabled sources | Enabled sources: N; source names on the next line, left aligned |
+| Claude-only summary | Peer client Setup and Active rows; Codex includes App/CLI observations |
+| Suggestions / Images at service level | Codex-only app detail/feature commands |
+| Working driven by transport callbacks | Active driven by observed inference/actual generation; unknown stays unknown |
+| Inference / Requests | Model requests / Total; HTTP diagnostics remain separate |
+| Partial usage | Partial records (Partial in narrow tables) |
+| 1 notices | 1 notice; other counts use notices |
+| Latest raw warning/UUID dominates one row | Scoped last model issue when structured evidence exists; raw details retained |
+| App configured implies App is open | Configuration evidence and observed request adoption are separate |
+
+CLI remains English. Browser layout, translations and theme controls are unchanged.

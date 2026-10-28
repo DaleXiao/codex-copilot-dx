@@ -1010,22 +1010,29 @@ The upgrade intentionally does not delete or rewrite retired Claude or PM Studio
 
 ## Commands
 
-Run `ccdx <command> --help` for command-specific behavior and side-effect details.
-Startup uses aligned status/project/result columns and a left-aligned Ready footer
-with the Web UI URL and `ccdx help`. Ctrl+C is shown only for the foreground-owned
-service, never a short-lived command reusing another service. A static, favicon-style
-atom uses the saved terminal color (green by default) and half-block characters only on interactive color terminals
-at least 72 columns wide; narrow terminals, `NO_COLOR`, `TERM=dumb` and redirected
-output keep a plain title. No new graphics/font/runtime dependency is installed.
-Credentials found are not labeled online-authorized, cached model lists are not
-labeled fresh upstream data, and image configuration is not a provider test.
-Ready reports core readiness independently of optional prediction/image warnings.
-Model refresh logs show counts; `ccdx models` retains the complete live list.
-After Ready, the default foreground display becomes a fixed status region;
-request and background-refresh detail is available with `--verbose` or explicit file logging. Status messages remove terminal controls and collapse newlines;
-the static banner and multiline interactive prompts retain their own presentation.
-VS Code compatibility-version details remain available in debug logging. Startup
-does not wait for optional update/compression work or add online doctor/model probes.
+Run `ccdx <command> --help` or `ccdx help <path>` for command behavior and
+side effects. On supported interactive terminals ordinary startup checks use one
+transient row. Device authorization instructions and warnings remain visible.
+The foreground live region then owns one listener/uptime line, enabled sources,
+peer client setup/activity, returned usage, notices and a separate animation line.
+Source names start in column one immediately below `Enabled sources: N`.
+Small terminals compact summaries without changing metric meaning. The atom,
+colors, plain/NO_COLOR/dumb output and verbose paths remain.
+
+Enabled sources are not inferred online-authorized. Configured client settings
+are not App process liveness or proof that all visible models were adopted.
+Codex legacy startup writes expose only their observed configured/preserved state;
+managed model-plan state keeps priority. No new App probe is started by rendering.
+The live region uses existing model activity, including actual image generation,
+not image MCP tool-listing traffic. The model-request table retains its three
+text-inference routes; HTTP/capability counters stay in detailed diagnostics.
+Unknown outcomes appear when nonzero. Failed reads keep timestamped prior usage
+and mark current activity unknown rather than clearing counters or showing Idle.
+
+Supported TTY output replaces redundant Ready/Web/Claude summaries. Non-TTY,
+verbose and short-lived existing-service paths retain their compatible startup
+output. `Ctrl+C` stops only the foreground-owned service. Logs remain available
+through explicit file logging or verbose mode, without growing the live region.
 
 ### Live models
 
@@ -1350,7 +1357,7 @@ Unknown support prevents an explicitly requested exception from starting.
 For an older updater that still requires Git, install the Release tarball directly:
 
 ```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.32/codex-copilot-dx-1.2.32.tgz
+npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.33/codex-copilot-dx-1.2.33.tgz
 # Windows PowerShell: use npm.cmd instead of npm.
 ```
 
@@ -2384,3 +2391,103 @@ Pure white uses the existing independent light/dark toggle, browser persistence,
 cross-tab updates, automatic/manual saving, and pre-reset backup/restore. It does
 not change the default green palette or the terminal palette and does not change
 Codex/Claude routing, credentials or model selections.
+
+
+### Command groups (1.2.33)
+
+Canonical groups separate source identity/catalogs, client model plans and service
+preferences. The compact route definition drives parsing, nearby/deep help and
+explicit legacy mappings. Existing legacy handlers continue to own their original
+arguments, output and effects. New CLI handlers use the loopback management API;
+read-only commands do not start a service or launch an App.
+
+```text
+  ccdx source list
+  ccdx source add [--file FILE] [--key-stdin] [--preview] [--yes]
+  ccdx source ID status [--format table|plain|json]
+  ccdx source ID models [--refresh] [--format table|plain|json]
+  ccdx source ID check [--format table|plain|json]
+  ccdx source ID edit [--file FILE] [--key-stdin] [--preview] [--yes]
+  ccdx source ID access [--edit] [--apps codex,claude-app,claude-code|none]
+  ccdx source ID enable|disable|remove [--preview] [--yes]
+  ccdx source github login|reauth [--login ACCOUNT]
+  ccdx source github logout [--yes]
+  ccdx source m365 accounts
+  ccdx source m365 account [--id ID]
+
+  ccdx app list
+  ccdx app ID status [--details] [--format table|plain|json]
+  ccdx app ID models [--edit] [--file FILE] [--preview] [--yes]
+  ccdx app ID sync [--preview] [--yes]
+  ccdx app ID enable|disable [--preview] [--yes]
+  ccdx app codex prediction status|setup|remove|pause|resume|repair
+  ccdx app codex image status|setup|remove|pause|resume
+  ccdx app codex review status|select
+
+  ccdx requests [--active|--failed] [--app ID] [--source ID] [--limit 1..100]
+  ccdx requests show REQUEST_ID
+  ccdx status [--details] [--format table|plain|json]
+  ccdx usage --scope run|all [--provider ID] [--format table|plain|json]
+  ccdx config show [--effective] [--format table|plain|json]
+  ccdx config set KEY VALUE [--preview] [--yes]
+  ccdx config terminal
+  ccdx config animation
+  ccdx config limits [--decoded MiB|default]
+  ccdx config reset|restore [--preview] [--yes]
+  ccdx doctor cache [existing cache options]
+  ccdx update check [--format table|plain|json]
+```
+
+Client IDs are `codex`, `claude-app`, `claude-code`; backend binding IDs are unchanged.
+Only APIs support generic edit/remove. Removal requires a disabled source with no
+retained client binding, including disabled clients. Built-in M365 profile cleanup
+remains the explicit legacy `m365 remove`, with its existing effects. Source
+`check`/model `--refresh` contact a source only when requested and never send inference.
+Cached built-in catalogs are read directly from the source, without filtering
+through client selection. API default catalogs describe saved model configuration;
+explicit refresh returns discovery results. Neither proves inference access.
+Source grants do not choose visible client models. Disable uses the existing
+source-impact revision and replacement/pause review; scripts must give explicit
+`--replacements` JSON for affected clients. It never silently chooses another source.
+
+Client models describe the saved selected plan, not the upstream directory.
+Unavailable selections remain explicit and are not silently dropped; a changed
+plan containing unavailable selections is refused until the catalog returns or
+the user explicitly removes them. New access toggles retain legacy source/model
+bindings and do not materialize deployments. `sync --preview` reports the model
+and managed-configuration plan, not a byte-level file diff. Explicit sync can write
+once while `auto_sync` is false; the preference stays false. Writers retain current
+ownership checks and do not restart client programs or imply App adoption.
+
+Source and client writes carry the current revision. Old running services without
+the new management capability are refused before new connection mutations. This
+is not an automatic restart or a package/process hot handoff. New JSON output
+contains no ANSI or startup chatter; failures exit nonzero. Existing 0/1/2 exit
+conventions and legacy non-TTY/machine paths remain.
+
+For scripts, API files contain only `config` and `allowed` (backend client IDs).
+Configuration includes name/base_url/endpoints/auth_header/models and optionally
+key_env. A key uses a bounded private stdin stream with `--key-stdin` or an existing
+environment reference; it is not a command argument or echoed in output. App model
+files allow deployments/default_model/auto_sync only. Both forms use the same
+backend validation and authorization as WebUI. Interactive creation retains a saved
+source after discovery failure, reports partial failure, and allows explicit retry;
+model interfaces missing upstream must be chosen explicitly.
+
+`config` only manages the settings-preference allowlist. It does not reset browser
+local storage, accounts, API credentials, model plans, chats or image/prediction
+access. CLI reset/restore reuse the existing atomic backup writer with a separate
+`service-settings-preferences-backup.json` in the same CCDX config directory.
+The original WebUI backup file and version-one format are retained. The CLI uses
+`config restore`; WebUI keeps its own appearance-paired backup. Invalid or stale
+files are not overwritten. Overnight-update risk needs explicit confirmation;
+`--yes` is an explicit script choice. Saved/effective state and normal restart
+requirements remain distinct. No new background service, stop or restart command
+is introduced.
+
+Requests use existing bounded active/recent performance and structured error
+snapshots. They retain original request IDs, source, route, codes and attempts;
+missing records return Not retained. Notices are not treated as failed request
+counts, and no new transcript/history database is added. Only observed application
+identity is used. Codex App/CLI observations share the Codex binding; unidentified
+clients stay separate.

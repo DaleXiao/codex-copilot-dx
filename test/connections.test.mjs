@@ -62,6 +62,54 @@ async function save(r, options = {}) {
   const state = await r.manageConnections({ operation: "save_api", config, allowed: ["codex", "claude_app", "claude_code"], key: "synthetic-key-only", ...options });
   const savedId = state.providers.find(p => !p.builtin).id;await r.manageConnections({ operation: "discover", id: savedId });return savedId;
 }
+test("cached source catalogs and client inspection never create a gateway binding or rewrite Codex sign-in", async t => {
+  const native = [{ id: "native-one", supported_endpoints: ["/responses"] }, { id: "native-other", supported_endpoints: ["/v1/messages"] }];
+  const s = runtime(t, { githubRegistry: { models: { data: native } }, prepareHome(home) {
+    fs.mkdirSync(path.join(home, ".codex"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".codex/config.toml"), 'model = "native-one"\n');
+    fs.writeFileSync(path.join(home, ".codex/auth.json"), '{"auth_mode":"chatgpt","tokens":{"access_token":"synthetic-only"}}');
+  } });
+  const config = fs.readFileSync(path.join(s.home, ".codex/config.toml")), auth = fs.readFileSync(path.join(s.home, ".codex/auth.json"));
+  const before = fs.existsSync(accessSettingsPath({ home: s.home, env: s.env }));
+  const state = s.runtime.connections();assert.equal(state.management_version, 1);assert.ok(state.clients.every(client => /^[a-f0-9]{64}$/.test(client.revision)));
+  const catalog = await s.runtime.manageConnections({ operation: "source_catalog", id: "github" });
+  assert.deepEqual(catalog.models.map(model => model.id), ["native-one", "native-other"]);assert.equal(catalog.access_checked, false);
+  assert.equal(fs.existsSync(accessSettingsPath({ home: s.home, env: s.env })), before);
+  assert.deepEqual(fs.readFileSync(path.join(s.home, ".codex/config.toml")), config);assert.deepEqual(fs.readFileSync(path.join(s.home, ".codex/auth.json")), auth);
+  assert.equal(s.calls.length, 0);assert.equal(s.catalogCalls.length, 0);
+});
+test("explicit manual sync writes only the target, retains auto_sync false and refuses stale client drafts", async t => {
+  const writes = [], s = runtime(t, { configureCodex: input => { writes.push(input);return { state: "configured" }; } });
+  const api = await save(s.runtime), client = s.runtime.connections().clients.find(client => client.id === "codex"), model = client.model_plan.available.find(model => model.source === api && model.id === "custom/response");
+  await s.runtime.manageConnections({ operation: "client", id: "codex", enabled: true, source: client.source, allowed: client.allowed,
+    deployments: [{ source: api, model: "custom/response" }], default_model: model.route_id, auto_sync: false, client_revision: client.revision });
+  const current = s.runtime.connections().clients.find(client => client.id === "codex"), before = writes.length, claude = s.configured.length;
+  assert.equal(current.setup, "manual_sync");
+  const result = await s.runtime.manageConnections({ operation: "sync_client", id: "codex", client_revision: current.revision });
+  assert.equal(writes.length, before + 1);assert.equal(s.configured.length, claude);
+  assert.equal(result.clients.find(client => client.id === "codex").auto_sync, false);
+  assert.equal(result.clients.find(client => client.id === "codex").setup, "configured");
+  await assert.rejects(s.runtime.manageConnections({ operation: "sync_client", id: "codex", client_revision: client.revision }), { code: "ccdx_connections_conflict" });
+  assert.equal(writes.length, before + 1);
+});
+test("source authorization is source-scoped, revision-checked and cannot grant incompatible GitHub access", async t => {
+  const s = runtime(t), api = await save(s.runtime), before = s.runtime.connections();
+  await s.runtime.manageConnections({ operation: "source_access", id: api, allowed: ["claude_app"], impact_revision: before.source_impacts[api].revision });
+  const after = s.runtime.connections();assert.equal(after.clients.find(client => client.id === "codex").allowed.includes(api), false);
+  assert.equal(after.clients.find(client => client.id === "claude_app").allowed.includes(api), true);
+  assert.equal(after.clients.find(client => client.id === "claude_app").source, null);
+  await assert.rejects(s.runtime.manageConnections({ operation: "source_access", id: api, allowed: [], impact_revision: before.source_impacts[api].revision }), { code: "ccdx_connections_conflict" });
+  await assert.rejects(s.runtime.manageConnections({ operation: "source_access", id: "github", allowed: ["claude_app"] }), { code: "ccdx_api_protocol_required" });
+});
+test("removing an API requires disabled unbound state, removes its grants and cleans only its credential", async t => {
+  const s = runtime(t), api = await save(s.runtime);
+  await assert.rejects(s.runtime.manageConnections({ operation: "remove_api", id: api }), { code: "ccdx_source_in_use" });
+  await s.runtime.manageConnections({ operation: "provider", id: api, enabled: false });
+  const before = s.runtime.connections(), result = await s.runtime.manageConnections({ operation: "remove_api", id: api, impact_revision: before.source_impacts[api].revision });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(result.providers.some(source => source.id === api), false);assert.ok(result.clients.every(client => !client.allowed.includes(api)));
+  assert.equal(s.stored.values.size, 0);assert.equal(result.providers.find(source => source.id === "github").enabled, true);
+});
 function invoke(handler, { url = "/v1/messages", headers = {}, body = { model: "any-message-model", messages: [{ role: "user", content: "synthetic" }], max_tokens: 4 } } = {}) {
   return new Promise((resolve, reject) => {
     const req = Readable.from([Buffer.from(JSON.stringify(body))]);Object.assign(req, { url, method: "POST", headers: { host: "127.0.0.1:2026", "content-type": "application/json", ...headers }, socket: { remoteAddress: "127.0.0.1" } });

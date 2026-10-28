@@ -59,7 +59,7 @@ test("CRLF configuration and marker-like strings are not normalized on equivalen
   const before = `${TOP}notes = '''\n${START}\n${END}\n'''\n${START}\n${BLOCK}${END}\n${FEATURES}`.replaceAll("\n", "\r\n");
   const filePath = configFile(t, before);
   const stat = fs.statSync(filePath);
-  assert.deepEqual(ensureCodexConfig(2026, { filePath, imageProviderEnabled: true }), { imageMcpSkipped: false });
+  assert.deepEqual(ensureCodexConfig(2026, { filePath, imageProviderEnabled: true }), { coreSetup: "configured", imageMcpSkipped: false });
   assert.equal(fs.readFileSync(filePath, "utf8"), before);
   assert.equal(fs.statSync(filePath).mtimeMs, stat.mtimeMs);
   const disabled = computeImageMcpCodexConfig(before, { enabled: false });
@@ -119,7 +119,7 @@ test("true image conflicts warn once while core setup succeeds, preserving image
     const before = `${image}${FEATURES}`;
     const filePath = configFile(t, before);
     const result = ensureCodexConfig(2026, { filePath, imageProviderEnabled: true });
-    assert.deepEqual(result, { imageMcpSkipped: true });
+    assert.deepEqual(result, { coreSetup: "configured", imageMcpSkipped: true });
     const after = fs.readFileSync(filePath, "utf8");
     for (const line of image.trimEnd().split("\n")) assert.ok(after.includes(line));
     assert.equal(parse(after).openai_base_url, "http://127.0.0.1:2026/v1");
@@ -182,7 +182,7 @@ test("disabled startup never edits image entries, even damaged or previously man
     const filePath = configFile(t, before);
     const stat = fs.statSync(filePath);
     const warn = t.mock.method(console, "warn", () => { throw new Error("Disabled images must not warn"); });
-    assert.deepEqual(ensureCodexConfig(2026, { filePath, imageProviderEnabled: false }), { imageMcpSkipped: false });
+    assert.deepEqual(ensureCodexConfig(2026, { filePath, imageProviderEnabled: false }), { coreSetup: "configured", imageMcpSkipped: false });
     assert.equal(fs.readFileSync(filePath, "utf8"), before);
     assert.equal(fs.statSync(filePath).mtimeMs, stat.mtimeMs);
     warn.mock.restore();
@@ -205,7 +205,7 @@ test("image-only write failure does not undo or fail essential core setup", (t) 
       }
       return rename(from, to);
     });
-    assert.deepEqual(ensureCodexConfig(port, { filePath, imageProviderEnabled: true }), { imageMcpSkipped: true });
+    assert.deepEqual(ensureCodexConfig(port, { filePath, imageProviderEnabled: true }), { coreSetup: "configured", imageMcpSkipped: true });
     stub.mock.restore();
     const after = parse(fs.readFileSync(filePath, "utf8"));
     assert.equal(after.openai_base_url, `http://127.0.0.1:${port}/v1`);
@@ -224,7 +224,7 @@ test("image maintenance preserves a config changed by another writer after core 
     rename(from, to);
     if (to === filePath && ++writes === 1) fs.appendFileSync(filePath, "\n# external config edit\n");
   });
-  assert.deepEqual(ensureCodexConfig(2026, { filePath, imageProviderEnabled: true }), { imageMcpSkipped: true });
+  assert.deepEqual(ensureCodexConfig(2026, { filePath, imageProviderEnabled: true }), { coreSetup: "configured", imageMcpSkipped: true });
   assert.equal(writes, 1);
   const after = fs.readFileSync(filePath, "utf8");
   assert.ok(after.endsWith("# external config edit\n"));

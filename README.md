@@ -11,44 +11,42 @@ npm install -g codex-copilot-dx@latest
 ccdx
 ```
 
-No Node or Git? Download [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.32/install.sh) (macOS/Linux) or [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.32/install.ps1) (Windows), then run `sh install.sh` or `./install.ps1` under your current shell policy. The bootstrap reuses compatible Node/npm or installs verified official Node 24.22.0 privately for CCDX. It adds no Git, compiler or system package manager. It keeps registry/proxy/certificate policy, verifies the Release package and installed runtime, and restores the prior CCDX package if installation fails. Manifest-listed complete packages install their bundled dependencies offline; older source-only releases need the configured registry. See [installation limits and private command paths](docs/REFERENCE.md#install-without-node-or-git).
+No Node or Git? Download [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.33/install.sh) (macOS/Linux) or [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.33/install.ps1) (Windows), then run `sh install.sh` or `./install.ps1` under your current shell policy. The bootstrap reuses compatible Node/npm or installs verified official Node 24.22.0 privately for CCDX. It adds no Git, compiler or system package manager. It keeps registry/proxy/certificate policy, verifies the Release package and installed runtime, and restores the prior CCDX package if installation fails. Manifest-listed complete packages install their bundled dependencies offline; older source-only releases need the configured registry. See [installation limits and private command paths](docs/REFERENCE.md#install-without-node-or-git).
 
 CCDX reuses a compatible local credential or starts GitHub Device Flow, listens on `127.0.0.1:2026`, configures Codex, and opens the App. Interactive desktop starts also open the local WebUI once; use `ccdx --no-browser` or disable this in WebUI settings. No client binary patch is needed. On Windows, open the App manually unless native prediction setup is enabled. In restricted Windows PowerShell, use `npm.cmd` to install and `ccdx.cmd` for the first launch, or run `ccdx.cmd doctor --fix`. Startup, updates and explicit repair remove only CCDX's exact npm-generated `.ps1` launchers so later calls can use `ccdx`. The npm package adds no install hook or policy change; custom launchers are preserved. npm's own script is untouched. The configured `dummy` API key is a placeholder, not a credential.
 
-The [local control console](http://127.0.0.1:2026/) separates Overview, Codex/Claude, Model sources, Usage, Requests, Checks & repairs and Settings, with a stable sticky header. Model sources owns API accounts, keys and model capabilities; application pages own visible models and defaults. Settings owns independent web/terminal colors (classic green, Klein blue or Soft pink), plus a WebUI-only Pure white palette with an inverted black night mode, startup and updates. Accounts and model catalogs stay with Model sources; client-specific tools stay with their application. CLI remains English; WebUI supports English/Chinese. Codex shows evidenced memory-model dependencies and warns before closing them; native memory settings remain yours. An interactive terminal shows bounded startup checks, source/client state, a usage table with approximate cache hit rate, notices and animation. Plain/NO_COLOR/narrow output remains supported; `--verbose` retains request detail.
+The [local control console](http://127.0.0.1:2026/) separates Overview, Codex/Claude, Model sources, Usage, Requests, Checks & repairs and Settings, with a stable sticky header. Model sources owns API accounts, keys and model capabilities; application pages own visible models and defaults. Settings owns independent web/terminal colors (classic green, Klein blue or Soft pink), plus a WebUI-only Pure white palette with an inverted black night mode, startup and updates. Accounts and model catalogs stay with Model sources; client-specific tools stay with their application. CLI remains English; WebUI supports English/Chinese. Codex shows evidenced memory-model dependencies and warns before closing them; native memory settings remain yours. An interactive terminal replaces ordinary startup checks with one live view: the listener, enabled sources, client setup/activity, usage and scoped notices. Source names start left-aligned below `Enabled sources: N`. Saved credentials do not imply access; configured clients do not imply running Apps. Motion uses observed inference and actual image generation, not MCP discovery traffic. Plain/NO_COLOR/narrow output remains supported; `--verbose` retains request detail.
 
 The WebUI keeps English monospace text with explicit Chinese sans-serif system-font fallbacks, including Microsoft YaHei on Windows. Requests aligns applications to a shared right edge and models to a shared left edge. It shows live app/source/model flow above existing summaries and finished records; a thin theme-colored ring rotates around its atom while requests are active. Usage offers animated bars or curves; reduced motion stays static. Hidden pages stop scheduled reads; status refreshes about every two seconds and source/settings evidence about every 16 seconds. Catalogs and retained usage load on demand or every 30 minutes while open. Disclosures use down/up chevrons with brief rotation and content transitions; reduced-motion mode remains immediate. Saved model selection and configuration-write results are shown separately; writing does not prove that the App has loaded the change. The UI does not add inference calls. Ready means local service availability, not verified model access. First output uses ms, speed token/s, and partial/unknown usage remains explicit. Images/predictions stay opt-in; their first setup uses CLI. 1.2.18 preserves Codex sign-in and unavailable model selections after saving bindings. See the [control reference](docs/REFERENCE.md#control-console-and-online-settings), [1.2.18 fixes and verification](https://github.com/DaleXiao/codex-copilot-dx/blob/main/docs/RELEASE_1.2.18.md) and [copy inventory](https://github.com/DaleXiao/codex-copilot-dx/blob/main/docs/UX_COPY.md).
 
 ## Commands
+
 | Command | Purpose |
 | --- | --- |
-| `ccdx help` | Command help; use `ccdx help <command>` for details |
-| `ccdx start` | Start/reuse the adapter, open Codex when enabled, and open WebUI on interactive desktop starts |
-| `ccdx --no-browser` / `ccdx --verbose` | Skip WebUI opening once / retain detailed terminal logs |
-| `ccdx status` | Runtime, limits and bounded request diagnostics |
-| `ccdx doctor` | Configuration, adapter and read-only App/catalog diagnostics |
-| `ccdx doctor --fix` | Repair owned launchers/config, recover existing auth and enabled prediction routing once |
-| `ccdx doctor --json` | Redacted structured diagnostics; combines with `--fix` |
-| `ccdx doctor config` | Read-only configuration check |
-| `ccdx doctor --compat` | Online inference/continuation compatibility probes |
-| `ccdx auth status` / `login` / `reauth` / `check` / `logout` | Inspect, verify or safely replace CCDX sign-in; other apps stay signed in |
-| `ccdx models` | Current source models; manual APIs show configured models without an online probe |
-| `ccdx usage` | Recorded tokens and upstream prompt-cache hit rate |
-| `ccdx usage --provider ID` | Filter current or historical source-specific usage |
-| `ccdx m365 status` / `models` | M365 authorization, Claude gateway and Claude models |
-| `ccdx m365 accounts` / `account` | List local company accounts or select one; `account --id ID` supports scripts |
-| `ccdx m365 switch` | Choose the Codex source; default remains GitHub |
-| `ccdx m365 on` / `off` / `remove` | Enable discovery, restore owned client settings, or remove owned M365 state |
-| `ccdx auto-review-model` | Select model, then reasoning effort; `0` follows client |
-| `ccdx animation` | Preview and select terminal animation |
-| `ccdx prediction fix` | Recheck system routing and repair enabled predictions; report required restarts |
-| `ccdx cache --limit 128` | Set the history-cache budget in MiB |
-| `ccdx cache --clean` | Clear the rebuildable image-transform cache |
-| `ccdx limits --decoded 256` | Set the decoded request-body budget; restart to apply |
-| `ccdx enable-image` | Opt in to image generation/editing with your own API |
-| `ccdx image-status` / `ccdx disable-image` | Check or disable optional images |
-| `ccdx prediction on` / `off` / `status` | Opt in to native predictions (macOS and Windows) |
-| `ccdx update` | Update the global package |
+| `ccdx` / `ccdx start` | Start/reuse the foreground gateway; keep existing client setup/launch behavior |
+| `ccdx status` / `status --details` | Brief interactive state / complete diagnostic view |
+| `ccdx web` | Open local management tools |
+| `ccdx source list` | List registered sources |
+| `ccdx source github status` / `check` / `reauth` | Saved GitHub evidence / online access check / safe sign-in replacement |
+| `ccdx source m365 models --refresh` | Explicitly read the online company catalog; no inference |
+| `ccdx source add` | Save an API, read models and choose their declared interfaces |
+| `ccdx app list` | List client configuration and observed request activity |
+| `ccdx app claude-app models --edit` | Choose client models separately from source authorization |
+| `ccdx app claude-app sync --preview` | Review the model/configuration plan without writing |
+| `ccdx app codex prediction status` | Inspect the optional Codex-only prediction integration |
+| `ccdx app codex image setup` | Configure optional Codex images with a private key prompt |
+| `ccdx requests --failed --app claude-app` | Inspect retained failures; no full-history promise |
+| `ccdx usage` / `usage --scope run` | Legacy all-recorded usage / current service run |
+| `ccdx config show --effective` | Separate saved service preferences from effective state |
+| `ccdx config reset --preview` | Review default service/terminal preferences; browser appearance stays separate |
+| `ccdx doctor` / `doctor --fix` | Local checks / existing bounded owned repairs |
+| `ccdx update check` / `update github` | Check without installation / install a verified GitHub release |
+
+Use `ccdx help app codex prediction` or nearby `--help` for complete options.
+New read-only commands support `--format table|plain|json`. New connection writes require the compatible updated service and use the protected loopback API. Finish active work before restarting an older service. `--verbose` and `--show-request-id` keep detailed startup/request output.
+
+Existing `ccdx auth`, `ccdx reauth`, `ccdx models`, `ccdx source github|m365`, `ccdx m365 switch`, `ccdx prediction`, `ccdx image`, `ccdx enable-image`, `ccdx disable-image`, `ccdx image-status`, `ccdx auto-review-model`, `ccdx animation`, `ccdx cache`, `ccdx limits` and flag aliases remain supported. Legacy `source` switching stays Codex-only; legacy `models` stays a catalog. Non-TTY legacy status output is retained.
+See [command groups and compatibility](docs/REFERENCE.md#command-groups-1233).
 
 ## Add your own API
 

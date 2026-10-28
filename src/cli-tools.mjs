@@ -1,9 +1,10 @@
 import { adapterBaseUrl, checkRunningAdapter } from "./running-adapter.mjs";
 import { isLoopbackHost } from "./security.mjs";
 import { readBoundedResponseText } from "./upstream-body.mjs";
+import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { writeServicePreference } from "./user-settings.mjs";
 
-export async function dashboardToolRequest({ host = "127.0.0.1", port = 2026, path = "account", body, fetchImpl = fetch, timeoutMs = 5000 } = {}) {
+export async function dashboardToolRequest({ host = "127.0.0.1", port = 2026, path = "account", body, fetchImpl = fetch, timeoutMs = 5000, detailedErrors = false } = {}) {
   const baseUrl = adapterBaseUrl(isLoopbackHost(host) ? host : "127.0.0.1", port);
   const running = await checkRunningAdapter({ host, port, fetchImpl, timeoutMs });
   if (!running.ok) throw new Error("Start or restart CCDX to use this tool.");
@@ -11,7 +12,7 @@ export async function dashboardToolRequest({ host = "127.0.0.1", port = 2026, pa
     headers: { "X-CCDX-Dashboard": "1", Origin: baseUrl, ...(body ? { "Content-Type": "application/json" } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(timeoutMs) });
   const data = JSON.parse(await readBoundedResponseText(response, { maxBytes: 1024 * 1024, label: "Local tool response" }));
-  if (!response.ok) throw new Error("Local tool is unavailable. Restart the updated CCDX service.");
+  if (!response.ok) throw Object.assign(new Error(detailedErrors && typeof data.error === "string" ? redactDiagnosticText(data.error.slice(0, 300)) : "Local tool is unavailable. Restart the updated CCDX service."), { statusCode: response.status, code: /^(?:ccdx|m365|auth)_[a-z0-9_]+$/.test(data.code || data.error || "") ? data.code || data.error : "ccdx_tool_unavailable" });
   return data;
 }
 

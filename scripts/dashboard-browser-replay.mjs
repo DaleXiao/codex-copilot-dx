@@ -158,6 +158,7 @@ try {
         page.setDefaultTimeout(15000);
         const errors = [];
         page.on("pageerror", error => { errors.push(error.message);console.error("Page error:", error.message); });
+        page.on("response", response => { if (/\.(?:js|css)$/.test(new URL(response.url()).pathname) && response.status() >= 400) errors.push(`Asset ${response.status()}: ${response.url()}`); });
         signin = { source: "account_tools", configured: true, saved: true, login: "synthetic_user", store: "legacy", online: null, checked_at: null, operation: null };
         await page.addInitScript(({ language, theme, palette }) => { localStorage.setItem("ccdx.dashboard.palette", palette); localStorage.setItem("ccdx.dashboard.language", language); localStorage.setItem("ccdx.dashboard.theme", theme); }, { language, theme, palette });
         await page.addInitScript(() => {

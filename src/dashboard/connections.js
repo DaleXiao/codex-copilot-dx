@@ -4,6 +4,7 @@
   let data = null, editing = null, editingClient = null, disabling = null, models = [], selectedModels = new Set(), busy = false, generation = 0;
   let claudeClient = "claude_app", bindingSelection = new Set(), bindingDefault = null, bindingDirty = false;
   let memoryAction = null, memoryOrigin = null;
+  let disableRevision = null;
   const drafts = new Map();let editorOrigin = null, discovery = null, desiredSource = null;
   const apiForm = el("connection-api-form"), clientForm = el("connection-client-form");
   const node = (tag, text, className) => { const item = document.createElement(tag);if (text !== undefined) item.textContent = text;if (className) item.className = className;return item; };
@@ -66,17 +67,17 @@
         if (provider.discovery?.state === "stale") { const warning = node("p", undefined, "hint");words(warning, "cap_catalog_stale");warning.append(" ", provider.discovery.code);info.append(warning); }
         if (!provider.builtin) actions.append(button("api_manage", () => editApi(provider)));
         const toggle = node("input");toggle.type = "checkbox";toggle.checked = true;toggle.setAttribute("role", "switch");toggle.setAttribute("aria-label", format("api_disable_source") + " " + provider.name);
-        toggle.addEventListener("change", () => { toggle.checked = true;disableSource(provider); });actions.append(toggle);
+        toggle.addEventListener("change", () => { toggle.checked = true;disableSource(provider); });const hit = node("label", undefined, "switch-hit");hit.append(toggle);actions.append(hit);
       } else actions.append(button("api_restore", () => void change({ operation: "provider", id: provider.id, enabled: true })));
       row.append(info, actions);if (!provider.enabled) disabledSources.append(row);else if (provider.id === selectedProvider) providerList.append(row);
     }
     const current = editingClient && client(editingClient);
     if (current) {
-      const row = node("div", undefined, "connection-row"), title = node("h3", current.name), toggle = node("input");
+      const row = node("div", undefined, "connection-row"), title = node("strong", current.name), toggle = node("input");
       toggle.type = "checkbox";toggle.checked = current.enabled;toggle.setAttribute("role", "switch");toggle.setAttribute("aria-label", current.name);
       toggle.addEventListener("change", () => void change({ operation: "client", id: current.id, enabled: toggle.checked,
         source: toggle.checked ? current.source : null, allowed: current.allowed, ...(Array.isArray(current.deployments) ? { deployments: current.deployments, default_model: current.default_model, auto_sync: current.auto_sync } : {}) }));
-      row.append(title, toggle);clientList.append(row);
+      const hit = node("label", undefined, "switch-hit");hit.append(toggle);row.append(title, hit);clientList.append(row);
     }
     for (const c of data.clients.filter(c => !c.enabled)) {
       const row = node("div", undefined, "connection-row");row.append(node("span", c.name), button("api_restore", () => void change({ operation: "client", id: c.id, enabled: true, source: null, allowed: c.allowed })));disabledClients.append(row);
@@ -109,16 +110,28 @@
       panels();let key = input.operation === "save_api" ? "api_config_saved" : input.operation === "provider" ? input.enabled ? "api_provider_enabled" : "api_provider_disabled"
         : !input.enabled ? "api_client_disabled" : !input.source ? "api_client_enabled" : "api_saved";
       const setup = data.clients.find(c => c.id === input.id)?.setup;
-      if (input.operation === "client" && input.source && ["preserved", "partially_preserved"].includes(setup)) key = "api_client_preserved";
-      if (input.operation === "client" && input.source && setup === "configuration_unavailable") key = "api_client_config_failed";
-      if (input.operation === "client" && input.source && setup === "not_installed") key = "api_client_not_installed";
+      if (input.operation === "client" && ["preserved", "partially_preserved"].includes(setup)) key = "api_client_preserved";
+      if (input.operation === "client" && setup === "configuration_unavailable") key = "api_client_config_failed";
+      if (input.operation === "client" && setup === "not_installed") key = "api_client_not_installed";
+      if (input.operation === "client" && setup === "configured") key = "sync_config_written";
+      if (input.operation === "client" && setup === "manual_sync") key = "sync_manual";
       if (input.operation === "client") words(el("connection-client-note"), key);else message(key);
+      if (input.operation === "save_api" && input.config.models.length) for (const c of data.clients.filter(c => c.enabled && input.allowed.includes(c.id))) {
+        const link = node("a", c.name, "section-link");link.href = c.id === "codex" ? "#codex" : "#claude";link.addEventListener("click", event => { event.preventDefault();editClient(c); });el("connection-note").append(" ", link);
+      }
     }window.dispatchEvent(new CustomEvent("ccdx:connections"));void dashboardRefresh.refresh("auth", { force: true });void dashboardRefresh.refresh("status", { force: true }); }
-    catch (error) { if (input.operation === "source_access") accessError = error.message;else if (input.operation === "client") words(el("connection-client-note"), error.message);else message(error.message); }
+    catch (error) {
+      if (input.operation === "provider" && !input.enabled && error.message === "ccdx_connections_conflict") {
+        try { data = await api();list();disableSource(source(input.id));message("api_impact_changed"); } catch { message(error.message); }return;
+      }
+      if (input.operation === "source_access") accessError = error.message;else if (input.operation === "client") words(el("connection-client-note"), error.message);else message(error.message);return;
+    }
     finally { busy = false;if (trigger?.tagName === "BUTTON") { trigger.removeAttribute("aria-busy");trigger.disabled = false;if (oldKey) words(trigger, oldKey);else trigger.textContent = oldText; }
       if (["client", "preview_client"].includes(input.operation)) bindingRows();
       if (input.operation === "source_access") renderAccess();
+      if (input.operation === "save_api") words(apiForm.querySelector('button[type="submit"]'), editing ? "api_save" : "api_save_read");
     }
+    return true;
   }
   const resolved = (model, protocol = model.protocols.includes("messages") ? "messages" : model.protocols[0]) => {
     const metadata = model.metadata?.deployment === source(editing)?.deployment_revision ? model.metadata : null;
@@ -230,11 +243,12 @@
     apiForm.elements.key.required = !provider;globalThis.ccdxLanguage.set(apiForm.elements.key, provider ? "api_key_keep" : "api_key_enter", {}, "placeholder");
     apiForm.elements.auth_header.value = provider?.auth_header || "x-api-key";
     apiForm.elements.key_env.value = provider?.key_env || "";keyMode();
-    for (const input of apiForm.querySelectorAll('[name="protocol"]')) input.checked = provider ? provider.protocols.includes(input.value) : input.value !== "chat";
+    for (const input of apiForm.querySelectorAll('[name="protocol"]')) input.checked = provider ? Boolean(provider.endpoints?.[input.value]) : input.value !== "chat";
     setEndpoints(provider?.base_url || "", provider?.endpoints);
     const allowed = el("connection-allowed-clients");allowed.replaceChildren(...data.clients.filter(c => c.enabled).map(c => check("allowed", c.id, c.allowed.includes(editing), c.name)));
     el("connection-model-detail").hidden = true;
     models = structuredClone(provider?.models || []);selectedModels = new Set(models.map(model => model.id));modelRows();el("connection-manual-model").open = false;el("connection-discover").disabled = !editing;el("connection-model-id").value = "";apiForm.elements.name.focus();
+    words(apiForm.querySelector('button[type="submit"]'), provider ? "api_save" : "api_save_read");
   }
   apiForm.elements.base.addEventListener("change", () => setEndpoints(apiForm.elements.base.value));
   for (const input of apiForm.querySelectorAll('[name="protocol"]')) input.addEventListener("change", () => {
@@ -253,10 +267,15 @@
     }
     const endpoints = Object.fromEntries([...apiForm.querySelectorAll('[name="protocol"]:checked')].map(input => [input.value, apiForm.elements[input.value + "_url"].value.trim()]));
     const key = apiForm.elements.key.value;apiForm.elements.key.value = "";
-    void change({ operation: "save_api", ...(editing ? { id: editing } : {}), key,
+    const first = !editing;
+    const input = { operation: "save_api", ...(editing ? { id: editing } : {}), key,
       config: { name: apiForm.elements.name.value.trim(), base_url: apiForm.elements.base.value.trim().replace(/\/+$/, ""), endpoints, auth_header: apiForm.elements.auth_header.value, models: chosenModels,
         ...(apiForm.elements.key_env.value.trim() ? { key_env: apiForm.elements.key_env.value.trim() } : {}) },
-      allowed: [...apiForm.querySelectorAll('[name="allowed"]:checked')].map(input => input.value).concat(data.clients.filter(c => !c.enabled && c.allowed.includes(editing)).map(c => c.id)) });
+      allowed: [...apiForm.querySelectorAll('[name="allowed"]:checked')].map(input => input.value).concat(data.clients.filter(c => !c.enabled && c.allowed.includes(editing)).map(c => c.id)) };
+    void (async () => {
+      const saved = await change(input, first ? result => { const provider = result.providers.find(p => !p.builtin && p.name === input.config.name);if (provider) editApi(provider); } : undefined);
+      if (saved && first && editing) await discoverModels();
+    })();
   });
   el("connection-model-add").addEventListener("click", () => {
     const id = el("connection-model-id").value.trim();if (!id || models.some(model => model.id === id) || models.length >= 500) return;
@@ -268,7 +287,7 @@
     el("connection-discover").disabled = !editing;el("connection-discover").removeAttribute("aria-busy");words(el("connection-discover"), "api_read_models");el("connection-discover-cancel").hidden = true;return cancelled;
   }
   el("connection-discover-cancel").addEventListener("click", () => { stopDiscovery();message("api_read_cancelled");el("connection-discover").focus(); });
-  el("connection-discover").addEventListener("click", async () => {
+  async function discoverModels() {
     if (discovery || !editing) return;
     const read = { id: editing, controller: new AbortController() };discovery = read;
     const trigger = el("connection-discover");trigger.disabled = true;trigger.setAttribute("aria-busy", "true");words(trigger, "api_reading");el("connection-discover-cancel").hidden = false;
@@ -277,9 +296,10 @@
       data = result;
       const known = new Map(models.map(model => [model.id, model]));for (const model of result.discovered || []) { const previous = known.get(model.id);known.set(model.id, previous ? { ...previous, ...(model.display ? { display: model.display } : {}), ...(model.metadata ? { metadata: model.metadata } : {}) } : model); }
       models = [...known.values()].slice(0, 500);modelRows();message("api_models_read");
-    } catch (error) { if (discovery === read) message(error.message); }
+    } catch (error) { if (discovery === read) message("api_read_failed", { code: error.message }); }
     finally { if (discovery === read) { discovery = null;trigger.disabled = false;trigger.removeAttribute("aria-busy");words(trigger, "api_read_models");el("connection-discover-cancel").hidden = true; } }
-  });
+  }
+  el("connection-discover").addEventListener("click", () => void discoverModels());
   function memoryMatches(item) {
     const model = client("codex")?.memory_model?.model;
     return Boolean(model && [item.id, item.model, item.route_id, item.public_id].includes(model));
@@ -343,7 +363,7 @@
     const missing = [...bindingSelection].filter(key => !availableKeys.has(key)).map(key => { const [source, id] = key.split("\0");return { source, id, route_id: c.model_plan?.unavailable?.find(item => item.source === source && item.id === id)?.route_id, unavailable: true }; });
     for (const item of [...available, ...missing]) {
       const key = bindingKey(item.source, item.id), row = node("tr"), name = node("td"), capability = item.capability?.values || {};
-      const selection = check("binding-model", key, bindingSelection.has(key), item.id);
+      const selection = check("binding-model", key, bindingSelection.has(key), item.display_name || item.id);
       selection.firstChild.addEventListener("change", event => {
         const checked = event.target.checked;
         const apply = () => {
@@ -368,6 +388,13 @@
     const warning = el("connection-default-note");warning.hidden = !unavailableDefault;words(warning, "cap_default_unavailable");
     clientForm.querySelector('button[type="submit"]').disabled = unavailableDefault || busy;
     words(el("connection-draft-state"), bindingDirty ? "cap_unsaved" : "cap_saved");
+    const setup = c.setup || "not_configured", syncKey = setup === "configured" ? "sync_config_written" : setup === "manual_sync" ? "sync_manual"
+      : ["preserved", "partially_preserved"].includes(setup) ? "sync_preserved" : setup === "configuration_unavailable" ? "sync_failed"
+        : setup === "default_unavailable" ? "cap_default_unavailable" : "sync_not_configured";
+    globalThis.ccdxIcons.set(el("connection-setup-state"), syncKey, setup === "configured" ? "ok" : ["configuration_unavailable", "default_unavailable"].includes(setup) ? "warning" : "unavailable");
+    const capabilityNote = el("connection-capability-state");capabilityNote.hidden = !c.model_plan?.sync?.limitations?.some(item => item.code === "client_version_unknown");
+    if (!capabilityNote.hidden) words(capabilityNote, "sync_capability_unverified");
+    words(clientForm.querySelector('button[type="submit"]'), el("connection-auto-sync").checked ? "cap_save_sync" : "api_save");
     if (focus) { const selector = focus.kind === "selection" ? 'input[name="binding-model"]' : 'button[data-binding]';[...body.querySelectorAll(selector)].find(input => (input.value || input.dataset.binding) === focus.key)?.focus(); }
     if (!body.children.length) { const row = node("tr"), cell = node("td");cell.colSpan = 5;words(cell, "cap_no_models");const link = node("a");link.href = "#models";words(link, "model_services");cell.append(" ", link);row.append(cell);body.append(row); }
   }
@@ -376,7 +403,7 @@
     rememberDraft();claudeClient = segment.dataset.claudeClient;
     for (const button of document.querySelectorAll("[data-claude-client]")) button.setAttribute("aria-pressed", String(button === segment));mountClient(true);
   });
-  el("connection-auto-sync").addEventListener("change", () => { bindingDirty = true;rememberDraft();el("connection-client-cancel").disabled = false;words(el("connection-draft-state"), "cap_unsaved"); });
+  el("connection-auto-sync").addEventListener("change", () => { bindingDirty = true;rememberDraft();el("connection-client-cancel").disabled = false;words(el("connection-draft-state"), "cap_unsaved");words(clientForm.querySelector('button[type="submit"]'), el("connection-auto-sync").checked ? "cap_save_sync" : "api_save"); });
   el("connection-client-cancel").addEventListener("click", () => { drafts.delete(editingClient);bindingDirty = false;mountClient(true); });
   function bindingInput(operation) {
     const c = client(editingClient);return { operation, id: c.id, enabled: true, allowed: c.allowed,
@@ -390,12 +417,21 @@
     if (!confirmed && c?.enabled && c.memory_model?.enabled !== false && c.model_plan?.models.some(item => item.source === provider.id && memoryMatches(item))) {
       confirmMemory(() => disableSource(provider, true));return;
     }
-    const affected = data.clients.filter(c => c.enabled && c.source === provider.id);
-    if (!affected.length) { void change({ operation: "provider", id: provider.id, enabled: false });return; }
+    const impact = data.source_impacts?.[provider.id];
+    if (!impact) { message("api_impact_unavailable");void load();return; }
+    const affected = impact.clients;disableRevision = impact.revision;
+    if (!affected.length) { void change({ operation: "provider", id: provider.id, enabled: false, impact_revision: disableRevision });return; }
     disabling = provider.id;panels("disable");const area = el("connection-replacements");area.replaceChildren();
-    for (const c of affected) { const label = node("label", c.name), select = choice(data.providers.filter(p => p.id !== provider.id && p.enabled && c.allowed.includes(p.id) && selectableSource(p, c.id)));select.name = c.id;label.append(select);area.append(label); }
+    for (const item of affected) {
+      const c = client(item.id), section = node("div", undefined, "source-impact");section.append(node("strong", c.name));
+      const count = node("p");words(count, "api_impact_models", { before: item.removed + item.remaining, after: item.remaining, removed: item.removed });section.append(count);
+      const note = node("p", undefined, "hint");words(note, item.needs_replacement ? "api_choose_replacements" : "api_impact_default_kept");section.append(note);
+      if (item.needs_replacement) { const label = node("label"), select = choice(data.providers.filter(p => p.id !== provider.id && p.enabled && c.allowed.includes(p.id) && selectableSource(p, c.id)));select.name = c.id;select.setAttribute("aria-label", c.name);label.append(select);section.append(label); }
+      area.append(section);
+    }
   }
   el("connection-disable-form").addEventListener("submit", e => { e.preventDefault();void change({ operation: "provider", id: disabling, enabled: false,
+    impact_revision: disableRevision,
     replacements: Object.fromEntries([...el("connection-replacements").querySelectorAll("select")].map(select => [select.name, select.value || null])) }); });
   el("connection-add").addEventListener("click", () => { if (data) editApi(); });
   for (const id of ["connection-cancel", "connection-disable-cancel"]) el(id).addEventListener("click", () => { panels();(editorOrigin?.isConnected ? editorOrigin : el("connection-source-list").querySelector("button") || el("connection-add")).focus(); });

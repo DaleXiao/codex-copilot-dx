@@ -140,6 +140,7 @@
     const body = el("checks-body");body.replaceChildren();
     const groups = new Map();
     for (const check of data.checks || []) { if (!groups.has(check.id)) groups.set(check.id, []);groups.get(check.id).push(check); }
+    el("checks-results").hidden = !groups.size;
     for (const [id, checks] of groups) {
       const row = document.createElement("tr"), name = document.createElement("td"), result = document.createElement("td"), details = document.createElement("td");
       const kind = checks.some(check => check.kind === "err" || check.kind === "warn") ? "warning" : checks.some(check => check.kind === "ok") ? "ok" : "unknown";

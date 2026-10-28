@@ -419,7 +419,7 @@ export function createAdapterHandler(options = {}) {
     const finishRequest = ({ statusCode = 0, aborted = false } = {}) => {
       if (requestFinished) return;
       requestFinished = true;
-      if (trackRequest && statusCode >= 400) {
+      if (trackRequest && (statusCode >= 400 || httpEvidence.model_error === true)) {
         try { httpErrors.record(buildHttpFailureDetails({ ...httpEvidence, statusCode, route: routeName, requestId, model: context?.model || context?.requestedModel,
           method: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"].includes(req.method) ? req.method : "OTHER",
           target: ["/v1/responses", "/v1/responses/compact", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens", "/anthropic/v1/models", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",

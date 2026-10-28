@@ -921,3 +921,14 @@ capability absence and protocol discovery remain distinct. Dashed flow motion
 uses CSS stroke offset on retained paths; model nodes share the same left edge.
 Geometry and SVG identity reuse from 1.2.23 remain in place, with hidden/stale/
 reduced-motion behavior and summary tables preserved.
+
+
+## Model presentation and shared source impact (1.2.31)
+
+`model-display.mjs` is a pure presentation fallback. `api-model-display.mjs` retains bounded upstream names beside maker declarations in the existing revision-bound, rebuildable cache. `providers/api.mjs` exposes that evidence to `client-model-plan.mjs`, which disambiguates presentation independently of route identity. Claude uses labelOverride for client aliases regardless of the default source. No connection-schema or routing-ID migration is introduced. Existing client-file ordering and manual ownership remain authoritative.
+
+The connection snapshot's read-only source_impacts reports actual selected consumers, removed/remaining selection counts, and default-replacement needs. Both source-close validation and the WebUI use that result; the default source alone never represents every selected deployment. An optional impact_revision protects new WebUI confirmations while preserving existing programmatic command compatibility. Settings writes remain serialized and revision checked. Source identity changes also invalidate confirmation.
+
+Unknown client capability adapters preserve existing shared settings and report their limitation. The presentation schema and protocol capability evidence do not share an enable gate. HTTP-200 error envelopes and native SSE errors feed the existing bounded diagnostics as model.error; transport bytes and retry policies remain unchanged.
+
+`dashboard/disclosure.js` is optional progressive enhancement of native details/summary. It uses cancellable opacity/transform animations, CSS chevrons independent of translated DOM text, and no polling/height animation. Reduced motion and hidden documents finish immediately. A resource integration test covers every script/style referenced by the shell. Flow regression measures layout reads and DOM identity under elapsed-only updates; existing geometry caches, list limits and visibility gates remain the performance mechanism.

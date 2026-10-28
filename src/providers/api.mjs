@@ -124,7 +124,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
   return {
     id: config.id, name: config.name, client, registry, configuredModels: true, defaultReviewEffort: null, profileId: (protocol = "responses") => profiles[protocol] || profile,
     models: family => catalog.filter(model => model.supported_endpoints.includes(family === "claude" ? paths.messages : paths.responses))
-      .map(model => ({ ...model, capability: model.protocol_capabilities[family === "claude" ? "messages" : "responses"] })),
+      .map(model => ({ ...model, ...modelDisplay(model.id), capability: model.protocol_capabilities[family === "claude" ? "messages" : "responses"] })),
     catalog: () => catalog,
     publicCatalog(allowed = []) { return { source: "configured", checkedAt: config.checked_at || null, upstreamHost: new URL(config.base_url).hostname,
       advertised: catalog.length, models: publicModelCatalog(catalog.map(model => ({ ...model, ...modelDisplay(model.id) })), { maker: model => model.publisher || model.vendor || null,

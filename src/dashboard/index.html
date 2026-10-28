@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/ui.css">
     <script src="/refresh.js" defer></script>
     <script src="/icons.js" defer></script>
+    <script src="/disclosure.js" defer></script>
     <script src="/time.js" defer></script>
     <script src="/view-boundary.js" defer></script>
     <script src="/status.js" defer></script>
@@ -79,6 +80,8 @@
         <p id="connection-memory-warning" class="memory-model-notice" role="status" hidden></p>
       </div>
       <p id="connection-default-note" class="hint" role="status" hidden></p>
+      <p id="connection-setup-state" class="client-sync-state" role="status" aria-live="polite"></p>
+      <p id="connection-capability-state" class="hint" hidden></p>
       <div class="table-wrap"><table class="binding-table"><thead><tr><th data-i18n="model">Model</th><th data-i18n="source">Source</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th><th data-i18n="cap_default">Default</th></tr></thead><tbody id="connection-bindings"></tbody></table></div>
       <div class="setting-row"><label for="connection-auto-sync" data-i18n="cap_auto_sync">Sync model settings</label><input id="connection-auto-sync" type="checkbox" role="switch" checked><span class="hint" data-i18n="cap_sync_scope">Preserves your manual settings.</span></div>
       <div class="section-actions"><button type="submit" data-i18n="api_save">Save</button><button type="button" id="connection-client-cancel" data-i18n="cap_discard_changes">Discard changes</button><button type="button" id="connection-sync-preview" data-i18n="cap_sync_preview">Review sync</button></div>
@@ -170,7 +173,7 @@
         </div>
         <div data-view="models" hidden>
   <section class="panel dashboard-section" id="connection-sources">
-    <div class="panel-heading"><h2 data-i18n="model_services">Model sources</h2><button id="connection-add" type="button" data-i18n="api_add">Add API</button></div>
+    <div class="panel-heading"><h2 data-i18n="source_accounts">Accounts &amp; APIs</h2><button id="connection-add" type="button" data-i18n="api_add">Add API</button></div>
     <div id="model-providers" class="provider-tabs" role="tablist" aria-label="Model providers" data-i18n-label="model_providers"></div>
     <div id="connection-source-list"></div>
     <details id="connection-disabled-sources" class="connection-disabled" hidden><summary data-i18n="api_disabled_sources">Disabled sources</summary><div id="connection-disabled-source-list"></div></details>
@@ -246,7 +249,7 @@
           <p id="models-note" class="table-note" data-i18n="reading_provider_catalog">Loading model list…</p>
           <details id="model-check-details" class="model-check-details" hidden><summary data-i18n="source_check_details">Check details</summary><dl id="model-check-fields" class="failure-detail"></dl></details>
           <div class="table-wrap"><table><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="client">APP</th><th scope="col" data-i18n="tools_details">Details</th></tr></thead><tbody id="live-models-body" role="tabpanel"><tr><td colspan="3" data-i18n="loading">Loading…</td></tr></tbody></table></div>
-          <details class="tool-details"><summary data-i18n="tools_details">Details</summary><p class="hint" data-i18n="catalog_listing_does_not_guarantee_inference_access">Models listed; inference access not verified.</p></details>
+          <details class="tool-details"><summary data-i18n="catalog_scope">Catalog scope</summary><p class="hint" data-i18n="catalog_listing_does_not_guarantee_inference_access">Models listed; inference access not verified.</p></details>
         </details>
         <details class="panel dashboard-section" id="account-authorization">
           <summary data-i18n="source_access_details">SOURCE ACCESS DETAILS</summary>
@@ -261,7 +264,7 @@
             <p class="hint" data-i18n="tools_local_scope">Local checks do not contact external services.</p>
             <div class="section-actions"><button id="check-local" type="button" data-i18n="tools_check_local">Check this computer</button></div>
             <p id="checks-note" class="table-note" role="status" aria-live="polite" data-i18n="tools_checks_empty">Run a check to see the results.</p>
-            <div class="table-wrap"><table class="checks-table"><thead><tr><th data-i18n="tools_check_item">Check</th><th data-i18n="state">State</th><th data-i18n="tools_details">Details</th></tr></thead><tbody id="checks-body"></tbody></table></div>
+            <div class="table-wrap" id="checks-results" hidden><table class="checks-table"><thead><tr><th data-i18n="tools_check_item">Check</th><th data-i18n="state">State</th><th data-i18n="tools_details">Details</th></tr></thead><tbody id="checks-body"></tbody></table></div>
           </section>
           <section class="panel dashboard-section">
             <h2 data-i18n="account_access">ACCOUNT AND ACCESS</h2>

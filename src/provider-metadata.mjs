@@ -1,4 +1,5 @@
 import { autoReviewReasoningEfforts } from "./models.mjs";
+import { modelDisplayName } from "./model-display.mjs";
 // Public metadata only. Credentials and provider transport never enter this layer.
 export const isProviderId = value => typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(value)
   && !["constructor", "prototype"].includes(value);
@@ -10,7 +11,7 @@ export function modelReasoningEfforts(model) {
 
 export function publicModelCatalog(models, { clients = () => [], selectable = () => false, maker = model => model.publisher || model.vendor || model.owned_by || "Unknown" } = {}) {
   return models.slice(0, 1000).filter(model => typeof model?.id === "string").map(model => ({
-    id: model.id, vendor: maker(model), ...(model.owned_by ? { owned_by: model.owned_by } : {}),
+    id: model.id, display_name: modelDisplayName(model), vendor: maker(model), ...(model.owned_by ? { owned_by: model.owned_by } : {}),
     endpoints: [["responses", ["/responses", "/v1/responses"]], ["chat", ["/chat/completions", "/v1/chat/completions"]],
       ["messages", ["/v1/messages"]]].filter(([, paths]) => paths.some(path => model.supported_endpoints?.includes(path))).map(([label]) => label),
     preview: model.preview === true, selectable: selectable(model), clients: clients(model),

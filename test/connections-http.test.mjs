@@ -15,6 +15,31 @@ import { parse } from "smol-toml";
 import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
 
 process.env.CCDX_DISABLE_USAGE = "1";
+test("HTTP 200 model errors remain byte-preserved and become actionable diagnostics without retry", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-model-errors-")), env = { CCDX_M365: "0" };let handler, calls = 0;
+  const payload = { type: "error", error: { type: "rate_limit_error", message: "Synthetic refusal" } }, raw = JSON.stringify(payload);
+  const runtime = createProviderRuntime({ home, env, githubClient: {}, githubRegistry: { models: { data: [] } },
+    secretStore: { set: async () => {}, get: async () => "synthetic-key", close() {} }, inspectDesktop: async () => false,
+    configureClaude: () => ({ app: "configured" }), restoreClaude: () => ({ preserved: 0 }),
+    createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, fetch: async (_url, init) => {
+      if (init.method === "GET") return Response.json({ data: [{ id: "demo" }] });
+      calls++;const stream = JSON.parse(init.body).stream;
+      return new Response(stream ? `event: error\ndata: ${raw}\n\n` : raw, { status: 200, headers: { "content-type": stream ? "text/event-stream" : "application/json" } });
+    } }) }) });
+  const server = http.createServer((req, res) => handler(req, res));await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  handler = createAdapterHandler({ providerRuntime: runtime, dashboardOptions: { home, env } });
+  t.after(async () => { handler.cleanup?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const saved = await runtime.manageConnections({ operation: "save_api", config: { name: "API", base_url: "https://example.test/v1", endpoints: { messages: "https://example.test/v1/messages" }, auth_header: "bearer", models: [{ id: "demo", protocols: ["messages"] }] }, key: "synthetic-key", allowed: ["claude_app"] });
+  const source = saved.providers.find(p => !p.builtin).id;await runtime.manageConnections({ operation: "client", id: "claude_app", enabled: true, source, allowed: [source] });
+  const base = `http://127.0.0.1:${server.address().port}`, key = readClientGatewayKeys({ home, env }).claude_app;
+  for (const stream of [false, true]) {
+    const response = await fetch(base + "/anthropic/v1/messages", { method: "POST", headers: { "content-type": "application/json", "x-api-key": key }, body: JSON.stringify({ model: "demo", messages: [], max_tokens: 1, stream }) });
+    assert.equal(response.status, 200);assert.equal(await response.text(), stream ? `event: error\ndata: ${raw}\n\n` : raw);
+  }
+  const status = await (await fetch(base + "/_ccdx/status")).json();
+  assert.equal(calls, 2);const issues = status.http_errors.recent.filter(row => row.code === "rate_limit_error");
+  assert.equal(issues.length, 2);assert(issues.every(row => row.event_type === "model.error" && row.http_status === 200 && row.retried === false));
+});
 test("reading the GitHub directory publishes new Codex candidates without changing selected models or sign-in", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-shared-catalog-")), env = { CCDX_M365: "0" };
   let incoming = ["gpt-existing"], reads = 0, fail = false, handler;

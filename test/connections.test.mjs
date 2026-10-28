@@ -16,8 +16,26 @@ import { runWithRequestContext } from "../src/request-context.mjs";
 import { updateM365Settings } from "../src/m365-settings.mjs";
 import { transportErrorDetails } from "../src/operation-error.mjs";
 import { claudeModelEntries } from "../src/claude-models.mjs";
+import { deploymentModelId } from "../src/model-capabilities.mjs";
 
 process.env.CCDX_DISABLE_USAGE = "1";
+
+test("source impact includes nondefault deployments and rejects an outdated confirmation", async t => {
+  const s = runtime(t), one = await save(s.runtime), { id, enabled, secret_ref, ...config } = structuredClone(apiConfig);
+  const state = await s.runtime.manageConnections({ operation: "save_api", config: { ...config, name: "Second API" }, key: "synthetic-key", allowed: ["claude_app"] });
+  const two = state.providers.find(provider => provider.name === "Second API").id;await s.runtime.manageConnections({ operation: "discover", id: two });
+  const select = source => s.runtime.manageConnections({ operation: "client", id: "claude_app", enabled: true, allowed: [one, two],
+    deployments: [one, two].map(source => ({ source, model: "any-message-model" })), default_model: deploymentModelId(source, "any-message-model") });
+  await select(one);const before = s.runtime.connections().source_impacts[two];
+  assert.deepEqual(before.clients, [{ id: "claude_app", removed: 1, remaining: 1, default_affected: false, needs_replacement: false }]);
+  await select(two);
+  await assert.rejects(s.runtime.manageConnections({ operation: "provider", id: two, enabled: false, impact_revision: before.revision }), { code: "ccdx_connections_conflict" });
+  assert.equal(s.runtime.connections().providers.find(provider => provider.id === two).enabled, true);
+  await select(one);const impact = s.runtime.connections().source_impacts[two];
+  const closed = await s.runtime.manageConnections({ operation: "provider", id: two, enabled: false, impact_revision: impact.revision });
+  const app = closed.clients.find(c => c.id === "claude_app");assert.equal(app.default_model, deploymentModelId(one, "any-message-model"));
+  assert.deepEqual(app.deployments, [{ source: one, model: "any-message-model" }]);assert.equal(s.calls.length, 0);
+});
 
 const apiConfig = { id: "api_example", name: "Example", enabled: true, base_url: "https://api.example.test/v1", endpoints: {
   messages: "https://api.example.test/v1/messages", responses: "https://api.example.test/v1/responses", chat: "https://api.example.test/v1/chat/completions" },

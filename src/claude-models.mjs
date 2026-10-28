@@ -1,5 +1,6 @@
 import { modelReasoningEfforts } from "./provider-metadata.mjs";
 import { createHash } from "node:crypto";
+import { modelDisplayName } from "./model-display.mjs";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
@@ -25,7 +26,7 @@ export function claudeModelEntries(models, { desktopAliases = false } = {}) {
     ids.add(name);
     const advertised = model.capability?.values.reasoning === false ? [] : model.capability?.values.reasoning_efforts || modelReasoningEfforts(model);
     const maxEffort = EFFORTS.filter(value => advertised?.includes(value)).at(-1);
-    return { name, ...(model.display_name || desktopAliases && name !== claudeClientModelId(model.id) ? { labelOverride: model.display_name || model.id } : {}),
+    return { name, ...(model.display_name || name !== claudeClientModelId(model.id) ? { labelOverride: modelDisplayName(model) } : {}),
       ...(model.capability?.values.context_window >= 1000000 ? { supports1m: true } : {}), ...(maxEffort ? { maxEffort } : {}) };
   });
 }

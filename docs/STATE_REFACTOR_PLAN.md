@@ -1,29 +1,30 @@
-# State-code review and proposed work
+# State orchestration in 1.3.0
 
-Status: proposal for discussion. The 1.3 candidate changes presentation and command entrypoints; it does not replace these state machines.
+The approved local refactor is implemented. Storage schemas, account bindings, client authentication modes and the data-plane protocols are unchanged.
 
-| Area | Current risk | Smallest useful change | Acceptance check |
-| --- | --- | --- | --- |
-| `connection-runtime.mjs`: `change` | Validation, graph mutation, key retirement and synchronization share a large dispatcher | Extract one mutation at a time into a named local function. Keep the existing queue, revision checks and atomic writer | Same before/after graph, conflict result and secret cleanup; no extra synchronization |
-| `connection-runtime.mjs`: `performClientSync` | Nested client conditions make preservation and paused states hard to review | Separate the Codex and Claude branches into local functions. Keep the shared Claude capability plan and synchronization queue | Native login/config bytes stay intact; paused/disabled/manual/unavailable remain distinct; one client cannot restore another's fields |
-| `connection-runtime.mjs`: `snapshot` | Repeated plan lookups and nested projections obscure data ownership | Read each cached plan once per client and name its public projections. Profile snapshot cost before adding another cache | Equivalent redacted snapshots; no key exposure, selection changes or extra catalog reads |
-| Client access state | Authorization, configuration and presentation can drift if they rederive the same conditions | Retain `codexAccessMode` as the existing access authority. Audit consumers and remove duplicated access decisions only where found | Empty selections return paused 503 before credential checks; GitHub-only and mixed-source authentication remain separate |
-| `bin/cli.mjs` | Many static imports make unrelated commands load startup components | Measure cold help/version/status first. Move only proven unnecessary command imports behind their dispatch branch | Same command output and exit codes; read-only commands never start services, apps or sign-in |
-| TUI / Web UI projection | Setup, process activity and model availability are different facts | Reuse existing projections and name each fact consistently. Keep unknown states explicit; do not infer app identity from protocol | One source summary, one app setup view, actual request activity; no false ready/running claim |
+| Area | Included change | Protected behavior |
+| --- | --- | --- |
+| Connection operations | Named preparation/selection handlers inside the existing runtime | Same serial queue, revision validation, secret commit/cleanup points and synchronization order |
+| Client synchronization | Separate Codex writing, Claude preparation/writing and shared capability reconciliation | Same await point for desktop inspection; App/Code shared fields are still coordinated together |
+| Full snapshots | Obtain each client's cached plan once within that snapshot and reuse it for source impacts | Same public values and property order, isolated public objects, no credential/transport initialization |
+| Access state | Keep `codexAccessMode` as the existing authority | Disabled/paused/native/gateway distinctions and paused-before-credentials rejection remain |
+| Graph persistence | Use the existing compare-before-atomic-write helper under the existing lock | v1 backup keeps original bytes; identical serialized content keeps mtime/mode; explicit sync actions still execute |
+| CLI loading | Load startup composition after help/version/management/local tools exit | Same command grammar, exit codes, stdout/JSON and offline image/prediction status |
 
-## Protected boundaries
+## Evidence and boundaries
 
-- Keep native account stores and user/managed configuration untouched.
-- Keep all current image and prediction behavior, certificates, routes and setup/removal ownership.
-- Keep request admission, stream cancellation/backpressure, conversation ownership and capability snapshots in the data path.
-- Keep old saved configuration readable. Removing old CLI syntax does not authorize resetting profiles, selections or keys.
-- Do not add a plugin framework, generic workflow engine or new cache without a measured need.
+A paired synthetic snapshot comparison returned identical public data before/after. With three clients selecting 800 models, 20 reads reduced plan lookups from 48,660 to 60. The local median changed from about 23.2ms to 10.0ms; this is a control-plane benchmark, not an inference-latency claim. Small legacy snapshots also retained their data and avoided repeated plan compilation. No global cache was added.
 
-## Sequence and stop condition
+Five fresh CLI processes per command, with the local filesystem warm, measured median `version` at about 65.7ms before / 32.0ms after, and `help` at 62.0ms / 29.5ms. These are local observations, not cross-platform timing guarantees.
 
-1. Capture the affected state transitions and their current outputs.
-2. Refactor one area, without a format-only repository rewrite.
-3. Run its meaningful transition tests and the existing native client regression gates.
-4. Stop when behavior matches and the responsibility is easier to review. Further extraction requires a new concrete problem.
+Meaningful regression cases cover original-byte v1 backup, unchanged graph timestamps/mode, native auth bytes, stable local gateway keys/source identity, retained selections/manual sync, and an actual synthetic request consuming the retained key, reasoning effort and output limit. The current native client, protocol, platform, streaming and install gates remain required.
 
-Each future change should report its own scope and evidence. This document does not claim that these proposals are implemented or that a performance gain has been measured.
+## Upstream references
+
+- [Magpie account-local preservation](https://github.com/yetone/magpie/commit/5ed6669cec2a377e385d7047dc6cdc8ff23c6ef4) and kept-connection behavior informed the preservation boundaries. No account/quota-driven takeover or automatic fallback was imported.
+- [cc-switch plan/ownership separation](https://github.com/farion1231/cc-switch/blob/cd9c721086fbee36a1d9b1d986a8f3e14ac69147/src-tauri/src/services/provider/codex_editor.rs) informed local preparation versus effect boundaries. CCDX retains its existing ownership journals and writers.
+- Versioned-result reuse and deterministic timestamp boundaries informed the benchmark/fixture design. CCDX's existing usage cache and stream deadlines were not replaced.
+
+## Deferred work
+
+Further cache/index layers, selective invalidation beyond the existing targeted-sync policy, new routing behavior and DNS-level self-forwarding detection remain outside this release. Images, prediction, account/tenant isolation, request admission, stream cancellation/backpressure and conversation ownership keep their current implementations.

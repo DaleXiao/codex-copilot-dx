@@ -1,37 +1,51 @@
-# CCDX 1.3.0 candidate
+# CCDX 1.3.0
 
-Date: 2026-10-29. Base: 1.2.33 (`175e0b7`). This is a candidate report, not a publication receipt.
+Date: 2026-10-29. Baseline: 1.2.33 (`175e0b7`).
 
-## Changes
+## Resulting behavior
 
-- Classify each startup line independently. Ordinary source/client checks remain transient; warnings and device-code instructions remain visible.
-- Show a clear Web UI address and one source/app summary. Display preserved configuration as `Unchanged`, without changing the stored state.
-- Keep source-catalog columns stable when Model details opens. Place API-editor capability details beneath the selected model row.
-- Keep the existing recorded-usage table/cache-hit display; label usage rows as Records and sanitize diagnostic labels.
-- Keep local image and prediction status available offline through the canonical paths; underlying feature handlers are reused.
-- Use one public command grammar and the single `ccdx` executable. Remove old command roots/aliases; retain existing account, model, history and configuration formats.
-- Support macOS and Windows only, x64/ARM64. Build four native packages and remove Linux jobs/positive platform cases and duplicate macOS verification jobs.
-- Shorten README and reference material; update current command examples. Remove the unused old model-table formatter and obsolete command-shim tests.
-- List further state work in `STATE_REFACTOR_PLAN.md`. No connection-state rewrite, image behavior change or prediction behavior change is included.
+The terminal keeps one live source/app summary, labels the Web UI address directly and displays retained client settings as `Unchanged`. Ordinary startup checks are transient; warnings and device-code instructions remain visible. Model details expand without shifting catalog columns, and API-editor capabilities open below their selected row. Existing themes and motion remain.
 
-The minor version was explicitly selected by the maintainer. Removing command entrypoints and platform support is an intentional compatibility change. Existing scripts must use the current command tree.
+One command grammar and the single `ccdx` executable replace old roots/aliases. Image and native prediction handlers, including offline status, keep their existing setup, trust, routing and generation behavior. Recorded usage keeps its table/cache-hit display, labels rows as Records and escapes terminal-controlled fields.
 
-## Local verification
+Only macOS and Windows x64/ARM64 are shipped. This platform/command change is intentional and the 1.3.0 version was explicitly selected by the maintainer. Saved account, model, history and configuration formats are retained.
 
-- Full `npm run verify`: 1,667 tests, 1,657 passed, 10 skipped, no failures; streaming smoke, performance/resource budgets and package checks passed.
-- Chromium source catalog: eight combinations of language, light/dark and narrow/desktop widths, including unchanged disclosure x coordinate and horizontal scroll position.
-- API editor: Chromium and WebKit, narrow and desktop; inline details, capability save, source grants and recovery passed with synthetic data.
-- xterm: 36 combinations, 200 frames per combination; cursor/resize, color/plain output and bounded live region passed.
-- Isolated package upgrade from verified 1.2.33: installed CLI, sharp and supported native broker loaded. Mac ARM64 complete package passed empty-cache offline installation.
+## State and configuration protection
 
-Native CI and final candidate artifacts are recorded separately after completion. No live model inference or current-client restart was used for these tests. The observed local service remained 1.2.33; the candidate was not installed globally.
+- Connection operations have named local preparation/selection handlers while retaining the serial queue, revision checks, secret commit/retirement points and client synchronization order.
+- Codex, Claude preparation/writing and shared App/Code capability reconciliation have separate local responsibilities. Desktop inspection remains at its existing await point; clients are not synchronized in parallel.
+- Full snapshots reuse a client plan within that snapshot, including source-impact projection. Public objects remain isolated, with the same fields, revisions, route IDs and access interpretation. No global cache was added.
+- Graph persistence skips identical serialized writes under the existing lock. Original-byte v1 backup and first-write migration remain; reads do not migrate files. Explicit synchronization/credential actions are not skipped.
+- Native login files/stores, key references, source identity, model selections/defaults, manual capabilities and manual-sync choices retain their existing owners and behavior. Missing catalogs do not delete selections or re-enable hidden models.
+- Startup composition loads after help/version/management/local-tool commands exit. Public syntax, exit codes and local diagnostics remain.
 
-## GitHub Release cleanup
+## Verification
 
-Deleted exactly 24 Release records and their assets: the 22 existing releases below 1.2.0, plus 1.2.17 and 1.2.20. A fresh API listing matched the planned IDs, with no unexpected deletion. All other 1.2 releases, including 1.2.33, remained. Git tags, commits and npm versions were not deleted.
+The complete local verification reported **1,669 tests: 1,659 passed, 10 skipped, no failures**, including streaming smoke and existing performance/resource budgets. Targeted transition/configuration tests additionally cover:
 
-## Remaining boundaries
+- native auth bytes and timestamps retained through an isolated runtime reload;
+- stable local gateway keys, source identity, model choices and manual-sync preferences;
+- a real synthetic request using the retained credential, reasoning effort and output-token limit;
+- original CRLF v1 bytes retained in backup and unchanged v2 file bytes/mtime/mode;
+- unchanged public snapshots against the prior candidate in both legacy and managed configurations.
 
-- Windows native behavior requires the Windows CI jobs; local macOS checks are not a substitute.
-- Further state refactoring is a proposal and needs its own behavior-preservation checks.
-- No version tag, npm publication, production merge or local service switch is part of candidate preparation.
+The native CI gate covers Windows/macOS, strict npm 12, complete package installation, native client protocols/sign-in/model catalogs and the unchanged browser UI. Final CI and publication receipts are linked in the GitHub Release. Synthetic protocol checks do not claim a live account or GUI adoption test.
+
+Existing interface verification includes Chromium/WebKit source/catalog and editor checks, plus 36 xterm configurations with 200 frames each. Isolated 1.2.33 upgrade and empty-cache complete-package native loading remain release gates. Public npm bytes and a fresh installed runtime are independently verified after publication, against the source pack uploaded by the publish job.
+
+## Local performance observations
+
+With three clients selecting 800 models from eight synthetic APIs, 20 full snapshots reduced plan lookups from 48,660 to 60. Paired public snapshots were equal. The local median changed from about 23.2ms to 10.0ms; this is control-plane work, not an inference-latency claim.
+
+Five fresh CLI processes per command, with the local filesystem warm, measured median `version` at about 65.7ms before / 32.0ms after, and `help` at 62.0ms / 29.5ms. These are local observations, not cross-platform timing guarantees.
+
+## Scope and distribution
+
+README and the current reference are shorter and use the current command paths. Obsolete command-shim/model-formatter tests, unsupported-platform positive cases and redundant CI work were removed; relevant native login, model, history, image and prediction protection remains.
+
+The earlier authorized cleanup removed 24 GitHub Release records/assets: all existing releases below 1.2.0 plus 1.2.17 and 1.2.20. Tags, commits and npm versions were retained.
+
+No new plugin framework, storage schema, production dependency, source failover, background model probe, DNS self-forwarding module or content-masking feature was added. See the repository's `STATE_REFACTOR_PLAN.md` for implemented boundaries and deferred work.
+
+- [GitHub Release](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.3.0)
+- [npm package](https://www.npmjs.com/package/codex-copilot-dx/v/1.3.0)

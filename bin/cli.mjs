@@ -1,30 +1,8 @@
 #!/usr/bin/env node
 
-import { ensureAuth, openCodex } from "../src/launcher.mjs";
-import { startAdapter } from "../src/adapter.mjs";
-import { defaultCopilotClient, refreshVSCodeVersion } from "../src/copilot.mjs";
 import { status } from "../src/status.mjs";
-import { configureLogging } from "../src/log.mjs";
-import { flushUsageWrites } from "../src/usage.mjs";
 import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
-import { runDoctor } from "../src/doctor.mjs";
-import { adapterBaseUrl, checkRunningAdapter } from "../src/running-adapter.mjs";
-import { assertSafeAdapterHost, isLoopbackHost } from "../src/security.mjs";
-import { runInBackground } from "../src/startup.mjs";
 import { cliCommandName, cliHelp, parseAdapterAddressOptions, parseAdapterProbeOptions, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
-import { readAdapterStatus } from "../src/cli-status.mjs";
-import { closeHttpServer } from "../src/shutdown.mjs";
-import { autoReviewModelPreference, autoReviewPreference, responseHistoryLimitPreference, terminalAnimationPreference, servicePreferences, serviceSettingsSnapshot, nightlyUpdatePreference } from "../src/user-settings.mjs";
-import { runAuthCommand } from "../src/cli-auth.mjs";
-import { createProfileRuntime } from "../src/profile-runtime.mjs";
-import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
-import { createCodexModelCatalog } from "../src/codex-model-catalog.mjs";
-import { createProviderRuntime } from "../src/provider-runtime.mjs";
-import { setResponseHistoryMaxBytes } from "../src/response-history.mjs";
-import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck, providerStartupChecks, createStartupPresentation } from "../src/startup-ui.mjs";
-import { createTerminalConsole } from "../src/terminal-console.mjs";
-import { createServiceControl } from "../src/service-control.mjs";
-import { openDashboard } from "../src/browser-launch.mjs";
 
 const LOCAL_VERSION = localPackageVersion();
 const CLI_NAME = cliCommandName();
@@ -123,6 +101,7 @@ if (CLI.command === "prediction") {
       console.log(await pauseServiceFeature({ feature: "prediction", action: CLI.action, host: address.adapterHost, port: address.adapterPort }));
       process.exit(0);
     }
+    const { readAdapterStatus } = await import("../src/cli-status.mjs");
     const { runPredictionCommand } = await import("../src/native-prediction.mjs");
     const lines = [], structured = CLI.outputFormat === "json";
     const result = await runPredictionCommand({ action: CLI.action, ...(structured ? { output: text => lines.push(String(text)) } : {}), repairRuntime: async () => {
@@ -181,6 +160,7 @@ if (CLI.command === "limits") {
 }
 if (CLI.command === "auth") {
   try {
+    const { runAuthCommand } = await import("../src/cli-auth.mjs");
     const result = await runAuthCommand({
       action: CLI.action,
       profile: CLI.profile,
@@ -237,6 +217,7 @@ if (CLI.command === "doctor" && CLI.tool) {
   } catch (error) { console.error(status("err", error.message));process.exit(1); }
 }
 if (CLI.command === "doctor" && CLI.configOnly) {
+  const { runDoctor } = await import("../src/doctor.mjs");
   let probe;
   try {
     probe = parseAdapterAddressOptions(process.env);
@@ -252,6 +233,29 @@ if (CLI.command === "doctor" && CLI.configOnly) {
   });
   process.exit(checks.some((check) => check.kind === "err") ? 1 : 0);
 }
+
+// Startup components are loaded only after read-only and local tool commands exit.
+const { ensureAuth, openCodex } = await import("../src/launcher.mjs");
+const { startAdapter } = await import("../src/adapter.mjs");
+const { defaultCopilotClient, refreshVSCodeVersion } = await import("../src/copilot.mjs");
+const { configureLogging } = await import("../src/log.mjs");
+const { flushUsageWrites } = await import("../src/usage.mjs");
+const { runDoctor } = await import("../src/doctor.mjs");
+const { adapterBaseUrl, checkRunningAdapter } = await import("../src/running-adapter.mjs");
+const { assertSafeAdapterHost, isLoopbackHost } = await import("../src/security.mjs");
+const { runInBackground } = await import("../src/startup.mjs");
+const { readAdapterStatus } = await import("../src/cli-status.mjs");
+const { closeHttpServer } = await import("../src/shutdown.mjs");
+const { autoReviewModelPreference, autoReviewPreference, responseHistoryLimitPreference, terminalAnimationPreference, servicePreferences, serviceSettingsSnapshot, nightlyUpdatePreference } = await import("../src/user-settings.mjs");
+const { createProfileRuntime } = await import("../src/profile-runtime.mjs");
+const { createProfileModelRuntime } = await import("../src/profile-model-runtime.mjs");
+const { createCodexModelCatalog } = await import("../src/codex-model-catalog.mjs");
+const { createProviderRuntime } = await import("../src/provider-runtime.mjs");
+const { setResponseHistoryMaxBytes } = await import("../src/response-history.mjs");
+const { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck, providerStartupChecks, createStartupPresentation } = await import("../src/startup-ui.mjs");
+const { createTerminalConsole } = await import("../src/terminal-console.mjs");
+const { createServiceControl } = await import("../src/service-control.mjs");
+const { openDashboard } = await import("../src/browser-launch.mjs");
 
 let serviceWorker = null;
 if (CLI.command === "start") {

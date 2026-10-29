@@ -43,7 +43,7 @@ const apiConfig = { id: "api_example", name: "Example", enabled: true, base_url:
 const localHome = t => { const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-connections-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));return home; };
 const secrets = () => { const values = new Map();return { values, get: async id => values.get(id) || "synthetic-key-only", set: async (id, key) => { values.set(id, key); }, remove: async id => { values.delete(id); }, close() {} }; };
 function runtime(t, overrides = {}) {
-  const home = localHome(t), calls = [], catalogCalls = [], stored = secrets(), configured = [];
+  const home = overrides.home || localHome(t), calls = [], catalogCalls = [], stored = secrets(), configured = [];
   overrides.prepareHome?.(home);
   const result = createProviderRuntime({ home, env: { CCDX_M365: "0" }, platform: "linux", secretStore: stored,
     githubClient: {}, githubRegistry: { models: { data: [] } }, inspectDesktop: async () => false,
@@ -591,4 +591,60 @@ test('private cached keys hand off only to their unchanged allowed reference set
  const restored=createApiSecretStore({platform:'darwin',env:{},run:async()=>{throw Error('vault should not be read');}});
  restored.importState(state,[ref]);assert.equal(await restored.get(ref),key);
  assert.throws(()=>restored.importState([[other,key]],[ref]));assert.equal(await restored.get(ref),key);store.close();restored.close();
+});
+
+test("unchanged graph saves preserve timestamps and v1 migration keeps the original bytes", t => {
+  const home = localHome(t), options = { home, env: {} }, file = accessSettingsPath(options);
+  const original = defaultAccessSettings();original.version = 1;
+  original.clients.codex.source = "github";original.clients.codex.model = "kept-model";
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const bytes = JSON.stringify(original, null, 2).replaceAll("\n", "\r\n") + "\r\n";
+  fs.writeFileSync(file, bytes);const stamp = new Date("2020-01-02T03:04:05Z");fs.utimesSync(file, stamp, stamp);
+  assert.equal(readAccessSettings(options).version, 2);
+  assert.equal(fs.readFileSync(file, "utf8"), bytes);assert.equal(fs.statSync(file).mtimeMs, stamp.getTime());
+  updateAccessSettings(value => value, options);
+  assert.equal(fs.readFileSync(file + ".v1-backup", "utf8"), bytes);
+  assert.equal(readAccessSettings(options).clients.codex.model, "kept-model");
+  const saved = fs.readFileSync(file);fs.utimesSync(file, stamp, stamp);const mode = fs.statSync(file).mode;
+  updateAccessSettings(value => value, options);
+  assert.deepEqual(fs.readFileSync(file), saved);assert.equal(fs.statSync(file).mtimeMs, stamp.getTime());assert.equal(fs.statSync(file).mode, mode);
+});
+
+test("restart inherits account material, gateway keys, model choices and uses saved capabilities", async t => {
+  const values = new Map(), store = { get: async ref => { assert.ok(values.has(ref));return values.get(ref); }, set: async (ref, key) => { values.set(ref, key); }, remove: async ref => values.delete(ref), close() {} };
+  const s = runtime(t, { secretStore: store, githubRegistry: { models: { data: [{ id: "native-one", supported_endpoints: ["/responses"] }] } }, prepareHome(home) {
+    fs.mkdirSync(path.join(home, ".codex"));
+    fs.writeFileSync(path.join(home, ".codex/auth.json"), '{"auth_mode":"chatgpt","tokens":{"access_token":"synthetic-only","refresh_token":"synthetic-refresh"}}');
+    fs.writeFileSync(path.join(home, ".codex/config.toml"), 'model = "native-one"\ncustom_user_option = "keep-me"\n');
+  } });
+  const auth = path.join(s.home, ".codex/auth.json"), authBytes = fs.readFileSync(auth), authTime = fs.statSync(auth).mtimeMs;
+  const config = structuredClone(apiConfig);config.models[1].capabilities = { context_window: 65536, max_output_tokens: 512, reasoning_efforts: ["low", "high"], reasoning_format: "responses" };
+  delete config.id;delete config.enabled;delete config.secret_ref;
+  const created = await s.runtime.manageConnections({ operation: "save_api", config, key: "synthetic-persisted-key", allowed: ["codex", "claude_app"] });
+  const id = created.providers.find(p => !p.builtin).id;await s.runtime.manageConnections({ operation: "discover", id });
+  const choose = (clientId, model) => s.runtime.manageConnections({ operation: "client", id: clientId, enabled: true, allowed: [id], source: id, deployments: [{ source: id, model }], default_model: deploymentModelId(id, model), auto_sync: false });
+  await choose("codex", "custom/response");await choose("claude_app", "any-message-model");
+  const before = readAccessSettings({ home: s.home, env: s.env });
+  const keys = readClientGatewayKeys({ home: s.home, env: s.env });const profile = s.runtime.source(id).profileId("responses");
+  const configBytes = fs.readFileSync(path.join(s.home, ".codex/config.toml"));
+  const file = accessSettingsPath({ home: s.home, env: s.env }), stamp = new Date("2020-01-02T03:04:05Z");fs.utimesSync(file, stamp, stamp);
+  const binding = s.runtime.connections().clients.find(c => c.id === "codex");
+  await s.runtime.manageConnections({ operation: "client_state", id: "codex", enabled: true, client_revision: binding.revision });
+  assert.equal(fs.statSync(file).mtimeMs, stamp.getTime(), "An unchanged access save must not rewrite the graph");
+  await s.runtime.close();
+  const reload = runtime(t, { home: s.home, env: s.env, secretStore: store, githubRegistry: { models: { data: [{ id: "native-one", supported_endpoints: ["/responses"] }] } } });
+  const state = reload.runtime.connections();
+  assert.deepEqual(readAccessSettings({ home: s.home, env: s.env }), before);
+  assert.deepEqual(readClientGatewayKeys({ home: s.home, env: s.env }), keys);
+  assert.equal(reload.runtime.source(id).profileId("responses"), profile);
+  assert.deepEqual(fs.readFileSync(auth), authBytes);assert.equal(fs.statSync(auth).mtimeMs, authTime);
+  assert.deepEqual(fs.readFileSync(path.join(s.home, ".codex/config.toml")), configBytes);
+  const selected = state.clients.find(c => c.id === "codex");assert.equal(selected.auto_sync, false);
+  assert.deepEqual(selected.deployments, before.clients.codex.deployments);assert.equal(selected.default_model, before.clients.codex.default_model);
+  const target = reload.runtime.current({ headers: { authorization: `Bearer ${keys.codex}` } });
+  await target.client.responses({ model: "custom/response", input: "synthetic inheritance check", reasoning: { effort: "high" }, max_output_tokens: 4096 });
+  const sent = JSON.parse(reload.calls[0].init.body);
+  assert.equal(sent.model, "custom/response");assert.equal(sent.reasoning.effort, "high");assert.equal(sent.max_output_tokens, 512);
+  assert.equal(new Headers(reload.calls[0].init.headers).get("authorization"), "Bearer synthetic-persisted-key");
+  assert.deepEqual(fs.readFileSync(auth), authBytes);assert.equal(values.size, 1);
 });

@@ -32,7 +32,7 @@ The Web UI opens at [http://127.0.0.1:2026](http://127.0.0.1:2026/). Run `ccdx w
 
 For a custom API, enter its HTTPS address and key, then choose **Save & read models**. Select the models and interfaces it provides. Codex uses Responses; Claude uses Messages. Both share port 2026.
 
-Model availability depends on your account and service. Microsoft 365 also requires a supported company environment. Existing account and model settings are retained during upgrades.
+Model availability depends on your account and service. Microsoft 365 also requires a supported company environment. Existing account, model and client settings are retained during upgrades. No repeat setup or model selection is needed for an unchanged working configuration.
 
 ## Commands
 

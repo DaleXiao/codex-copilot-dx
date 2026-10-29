@@ -975,7 +975,7 @@ backup and version-one format are unchanged. No new history store, daemon, clien
 restart controller, transport policy or production dependency is introduced.
 
 
-### 1.3 scope and proposed state work
+### 1.3 scope and state orchestration
 
 CCDX ships only for macOS and Windows (x64/ARM64). CI and complete-package builders use those four targets. The macOS bootstrap rejects unsupported systems before downloads. `ccdx` is the only package command; old CLI roots and aliases are removed without resetting accounts, keys, selected models or client-owned files.
 
@@ -983,4 +983,8 @@ Startup presentation classifies each formatted line independently. Normal checks
 
 Source-catalog tables keep fixed column geometry while native disclosures expand, preventing metadata width from moving the disclosure control. The API editor places its capability panel below the selected model row. Neither path adds network reads or inference.
 
-The repository-only proposal in `docs/STATE_REFACTOR_PLAN.md` lists further work separately. Connection, configuration-ownership, image and prediction state machines have not been replaced by that proposal.
+`connection-runtime.mjs` retains one serial mutation queue and its existing synchronization coalescer. Named preparation/selection handlers separate branch-specific validation/mutation from the shared credential-write, client-sync and retirement sequence. Codex sync, Claude preparation/writing and shared App/Code capability reconciliation have local boundaries. Desktop inspection remains at the existing await point; clients are not synchronized in parallel.
+
+A full snapshot keeps a local map of compiled client plans, including reuse during source-impact projection. Public data remains cloned and contains the same revisions/route identifiers. No persistent or global cache is added. `updateAccessSettings` retains strict validation, the lock and original-byte v1 backup, then skips an atomic rewrite only when serialized bytes already match. Skipping a file write does not skip an explicit control action or client sync.
+
+The CLI keeps only command/version/status fundamentals before its early command dispatch. Existing tool implementations are imported in their branches; startup composition loads afterward in its previous dependency order. Native account stores, source/key identity, model projections and image/prediction behavior are unchanged. The repository-only `docs/STATE_REFACTOR_PLAN.md` records included boundaries, local measurements and deferred work.

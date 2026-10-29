@@ -99,15 +99,19 @@ if (CLI.command === "image") {
       ? parseAdapterAddressOptions(process.env)
       : { adapterPort: 2026, adapterHost: "127.0.0.1" };
     const { runImageCommand } = await import("../src/cli-image.mjs");
-    await runImageCommand({
+    const lines = [], structured = CLI.outputFormat === "json";
+    const result = await runImageCommand({
       action: CLI.action,
       commandName: CLI_NAME,
       adapterPort: address.adapterPort,
       adapterHost: address.adapterHost,
+      ...(structured ? { output: { write: text => lines.push(String(text)) } } : {}),
     });
+    if (structured) console.log(JSON.stringify({ client: "codex", feature: "image", configured: result.enabled === true, details: lines.join("").trim() }));
     process.exit(0);
   } catch (e) {
-    console.error(status("err", e.message));
+    if (CLI.outputFormat === "json") console.log(JSON.stringify({ error: { code: e.code || "ccdx_image_status_failed", message: e.message } }));
+    else console.error(status("err", e.message));
     process.exit(1);
   }
 }
@@ -120,7 +124,8 @@ if (CLI.command === "prediction") {
       process.exit(0);
     }
     const { runPredictionCommand } = await import("../src/native-prediction.mjs");
-    const result = await runPredictionCommand({ action: CLI.action, repairRuntime: async () => {
+    const lines = [], structured = CLI.outputFormat === "json";
+    const result = await runPredictionCommand({ action: CLI.action, ...(structured ? { output: text => lines.push(String(text)) } : {}), repairRuntime: async () => {
       const { requestPredictionFix } = await import("../src/native-prediction-fix.mjs");
       const probe = parseAdapterProbeOptions(process.env);
       return requestPredictionFix({ host: probe.adapterHost, port: probe.adapterPort });
@@ -128,9 +133,11 @@ if (CLI.command === "prediction") {
       const probe = parseAdapterProbeOptions(process.env);
       return readAdapterStatus({ host: probe.adapterHost, port: probe.adapterPort, timeoutMs: probe.existingAdapterTimeoutMs }).then(({ data }) => data);
     } });
+    if (structured) console.log(JSON.stringify({ client: "codex", feature: "prediction", configured: result.enabled === true, details: lines.join("\n") }));
     process.exit(CLI.action === "fix" ? result.exitCode : 0);
   } catch (error) {
-    console.error(status("err", error.message));
+    if (CLI.outputFormat === "json") console.log(JSON.stringify({ error: { code: error.code || "ccdx_prediction_status_failed", message: error.message } }));
+    else console.error(status("err", error.message));
     process.exit(1);
   }
 }

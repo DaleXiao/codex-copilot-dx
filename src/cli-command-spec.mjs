@@ -116,14 +116,27 @@ export const MANAGED_COMMANDS = [
   command("app <app> sync", "Preview or write CCDX-owned client configuration", confirm),
   command("app <app> enable", "Enable client access with its saved selection", confirm),
   command("app <app> disable", "Disable access without quitting the app", confirm),
-  command("app codex prediction status", "Show Codex prediction setup and observation", read),
+  command(
+    "app codex prediction status",
+    "Show local Codex prediction setup and observation",
+    read,
+    flags => ({
+      command: "prediction",
+      action: "status",
+      outputFormat: flags.format,
+    })
+  ),
   ...["setup", "remove", "pause", "resume", "repair"].map(action =>
     command(`app codex prediction ${action}`, "Manage the optional Codex prediction integration", {}, () => ({
       command: "prediction",
       action: { setup: "on", remove: "off", repair: "fix" }[action] || action,
     }))
   ),
-  command("app codex image status", "Show Codex image setup; do not generate", read),
+  command("app codex image status", "Show local Codex image setup; do not generate", read, flags => ({
+    command: "image",
+    action: "status",
+    outputFormat: flags.format,
+  })),
   ...["setup", "remove", "pause", "resume"].map(action =>
     command(`app codex image ${action}`, "Manage the Codex image integration", {}, () => ({
       command: "image",

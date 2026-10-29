@@ -274,3 +274,18 @@ test("recorded usage stays readable offline and malformed records do not leak in
   const malformed = await run(file);assert.equal(JSON.parse(malformed.stdout).requests, 0);assert.match(malformed.stderr, /invalid record/);assert.doesNotMatch(malformed.stdout + malformed.stderr, /PRIVATE-MALFORMED/);
   await assert.rejects(run(home), error => error.code === 1 && typeof JSON.parse(error.stdout).error.code === "string" && !/triggerUncaughtException/.test(error.stderr));
 });
+
+test("canonical native feature status stays available offline without enabling either feature", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-feature-status-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const env = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: home, USERPROFILE: home, CODEX_HOME: path.join(home, "codex"), XDG_CONFIG_HOME: path.join(home, "config"), ADAPTER_HOST: "127.0.0.1", ADAPTER_PORT: "9", CCDX_AUTO_LAUNCH: "1", CCDX_UPSTREAM_TIMEOUT_MS: "invalid" };
+  for (const feature of ["image", "prediction"]) {
+    const args = [cliPath, "app", "codex", feature, "status"];
+    const plain = await execFileAsync(process.execPath, args, { env, timeout: 5000 });
+    assert.match(plain.stdout, feature === "image" ? /Image generation: disabled/ : /Native prediction preference: off/);
+    assert.doesNotMatch(plain.stdout, /Ready|Starting|GitHub token/);
+    const json = await execFileAsync(process.execPath, [...args, "--format", "json"], { env, timeout: 5000 });
+    const state = JSON.parse(json.stdout);assert.equal(state.configured, false);assert.equal(state.feature, feature);assert.ok(state.details);
+    assert.deepEqual(fs.readdirSync(home), []);
+  }
+});

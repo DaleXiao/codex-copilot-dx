@@ -44,7 +44,7 @@ For installation and first use, start with the [README](../README.md). This refe
 | `ccdx update check` / `update github` / `update npm` | Check or install an update |
 | `ccdx version` | Show the installed package version |
 
-Client IDs are `codex`, `claude-app` and `claude-code`. Source IDs are listed by `source list`. Read-only management commands support `--format table|plain|json`. They do not start an app or a gateway. Management operations need the running service; use `ccdx web` to start it without launching a client.
+Client IDs are `codex`, `claude-app` and `claude-code`. Source IDs are listed by `source list`. Read-only management commands support `--format table|plain|json`. They do not start an app or a gateway. Native image/suggestion status also reads local setup when the gateway is stopped; JSON includes the saved configuration flag and the same public details. Management operations need the running service; use `ccdx web` to start it without launching a client.
 
 `start` supports `--no-browser`, `--verbose` and `--show-request-id`. The normal TUI has one source summary and one app table. It labels the Web UI address directly. `Unchanged` means existing client settings were kept; `Configured` means the configuration write/check succeeded. Neither is proof that a client process has loaded that configuration. Warnings and sign-in instructions remain visible during startup. The final activity row reflects observed model work. Ctrl+C stops the foreground service.
 

@@ -8,6 +8,7 @@ Date: 2026-10-29. Base: 1.2.33 (`175e0b7`). This is a candidate report, not a pu
 - Show a clear Web UI address and one source/app summary. Display preserved configuration as `Unchanged`, without changing the stored state.
 - Keep source-catalog columns stable when Model details opens. Place API-editor capability details beneath the selected model row.
 - Keep the existing recorded-usage table/cache-hit display; label usage rows as Records and sanitize diagnostic labels.
+- Keep local image and prediction status available offline through the canonical paths; underlying feature handlers are reused.
 - Use one public command grammar and the single `ccdx` executable. Remove old command roots/aliases; retain existing account, model, history and configuration formats.
 - Support macOS and Windows only, x64/ARM64. Build four native packages and remove Linux jobs/positive platform cases and duplicate macOS verification jobs.
 - Shorten README and reference material; update current command examples. Remove the unused old model-table formatter and obsolete command-shim tests.
@@ -17,7 +18,7 @@ The minor version was explicitly selected by the maintainer. Removing command en
 
 ## Local verification
 
-- Full `npm run verify`: 1,666 tests, 1,656 passed, 10 skipped, no failures; streaming smoke, performance/resource budgets and package checks passed.
+- Full `npm run verify`: 1,667 tests, 1,657 passed, 10 skipped, no failures; streaming smoke, performance/resource budgets and package checks passed.
 - Chromium source catalog: eight combinations of language, light/dark and narrow/desktop widths, including unchanged disclosure x coordinate and horizontal scroll position.
 - API editor: Chromium and WebKit, narrow and desktop; inline details, capability save, source grants and recovery passed with synthetic data.
 - xterm: 36 combinations, 200 frames per combination; cursor/resize, color/plain output and bounded live region passed.

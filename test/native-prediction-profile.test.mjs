@@ -26,7 +26,7 @@ const app = { app: "/Applications/ChatGPT.app", archive: "/not-an-installed-fixt
 
 test("canonical prediction commands keep setup/removal semantics and safety notes", () => {
   for (const [action, internal] of [["setup", "on"], ["remove", "off"], ["repair", "fix"]]) assert.equal(parseCliArgs(["app", "codex", "prediction", action]).action, internal);
-  assert.equal(parseCliArgs(["app", "codex", "prediction", "status"]).command, "manage");
+  assert.equal(parseCliArgs(["app", "codex", "prediction", "status"]).command, "prediction");
   assert.throws(() => parseCliArgs(["app", "codex", "prediction", "model"]));
   const help = cliHelp("ccdx", "app codex prediction");
   for (const text of [/off by default/, /decrypted locally/, /Git\/OpenSSL is not required/, /port persists across restarts\/updates/]) assert.match(help, text);

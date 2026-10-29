@@ -102,12 +102,14 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         assert.equal(await page.locator("#connection-model-id").inputValue(), "", "Catalog selection does not require typing an ID");
         const modelRow = page.locator("#connection-models > tr:not(.connection-detail-row)").filter({ hasText: "claude-replay" });
         await modelRow.locator("button").first().scrollIntoViewIfNeeded();
+        const modelColumnsBefore = await modelRow.locator("td").evaluateAll(cells => cells.map(cell => ({ x: cell.getBoundingClientRect().x, width: cell.getBoundingClientRect().width })));
         const beforeDetails = await page.evaluate(() => ({ x: scrollX, table: document.getElementById("connection-models").closest(".table-wrap").scrollLeft }));
         await modelRow.locator("button").first().click();
         assert.equal(await modelRow.locator("xpath=following-sibling::tr[1]").getAttribute("class"), "connection-detail-row");
         assert.equal(await page.locator("#connection-model-detail").evaluate(el => el.closest("td").colSpan), 6);
         assert.deepEqual(await page.evaluate(() => ({ x: scrollX, table: document.getElementById("connection-models").closest(".table-wrap").scrollLeft })), beforeDetails, "Opening details must not move either horizontal scroll position");
         assert.equal(await modelRow.locator("button").first().getAttribute("aria-expanded"), "true");
+        assert.deepEqual(await modelRow.locator("td").evaluateAll(cells => cells.map(cell => ({ x: cell.getBoundingClientRect().x, width: cell.getBoundingClientRect().width }))), modelColumnsBefore, "Capability expansion must not redistribute model columns");
         assert.match(await page.locator('#connection-model-detail > table').innerText(), /128K/);
         assert.match(await page.locator('#connection-model-detail .model-identity').innerText(), /Example Maker/);
         await page.locator('#connection-model-detail > select').selectOption("responses");

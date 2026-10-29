@@ -931,6 +931,8 @@ The connection snapshot's read-only source_impacts reports actual selected consu
 
 Unknown client capability adapters preserve existing shared settings and report their limitation. The presentation schema and protocol capability evidence do not share an enable gate. HTTP-200 error envelopes and native SSE errors feed the existing bounded diagnostics as model.error; transport bytes and retry policies remain unchanged.
 
+Table disclosure metadata blocks use inline-size containment: their natural height remains, while long IDs, timestamps and diagnostics do not change the table columns' intrinsic widths. Rows with details stay top-aligned so their time/source/model text remains at its original vertical position. This shared rule covers request metadata, checks and nested capability details without adding fixed empty column space. The API capability row uses the same containment boundary. Global browser replay checks each disclosure's trigger/text x coordinate, peer-row text y position, column widths and horizontal scroll at opening, mid-animation, open and closed states.
+
 `dashboard/disclosure.js` is optional progressive enhancement of native details/summary. It uses cancellable opacity/transform animations, CSS chevrons independent of translated DOM text, and no polling/height animation. Reduced motion and hidden documents finish immediately. A resource integration test covers every script/style referenced by the shell. Flow regression measures layout reads and DOM identity under elapsed-only updates; existing geometry caches, list limits and visibility gates remain the performance mechanism.
 
 

@@ -563,7 +563,14 @@ try {
         assert.equal(await page.locator("#context-body script").count(), 0);
         assert.match(await page.locator("#context-body").innerText(), /<script>not-html<\/script>/);
         const metadata = page.locator('#context-body .request-details[data-request-key="synthetic-recent"]');
+        await metadata.locator("summary").scrollIntoViewIfNeeded();
+        const metadataBefore = await metadata.locator("summary").boundingBox();
+        const requestColumnsBefore = await page.locator("#context-body").evaluate(body => [...body.closest("table").tHead.rows[0].cells].map(cell => ({ x: cell.getBoundingClientRect().x, width: cell.getBoundingClientRect().width })));
         await metadata.locator("summary").click();
+        await page.clock.fastForward(250);
+        const metadataAfter = await metadata.locator("summary").boundingBox();
+        assert(Math.abs(metadataBefore.x - metadataAfter.x) <= 1, "Request metadata expands without moving the trigger horizontally");
+        assert.deepEqual(await page.locator("#context-body").evaluate(body => [...body.closest("table").tHead.rows[0].cells].map(cell => ({ x: cell.getBoundingClientRect().x, width: cell.getBoundingClientRect().width }))), requestColumnsBefore, "Opening request metadata must not redistribute table columns");
         assert.match(await metadata.innerText(), /1\.00 MiB.*0.*1,000.*15\.0%/s);
         await refreshStatus();
         assert.equal(await metadata.getAttribute("open"), "", "Unchanged reads keep request details open");

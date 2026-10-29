@@ -59,6 +59,7 @@
     if (settingsViews.includes(next)) void loadSettings();
     if (next === "models") { void refreshCatalog();void dashboardRefresh.refresh("auth"); }
     if (next === "usage") { void dashboardRefresh.refresh("usage");usageView.revealChart(); } else usageView.stopMotion();
+    globalThis.ccdxContextView?.routeChanged();
     if (next === "requests") renderContext();
     if (next === "system") { void dashboardRefresh.refresh("animation");void dashboardRefresh.refresh("updates"); }
     preferences?.render();

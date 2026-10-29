@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 import { currentRequestContext } from "./request-context.mjs";
 import { isProviderId } from "./provider-metadata.mjs";
 import { applicationLabel } from "./request-application.mjs";
+import { createContextMetrics } from "./context-metrics.mjs";
 
 const PERFORMANCE_ROUTES = Object.freeze(["responses", "responses_compact"]);
 const PREPARATION_STAGES = Object.freeze(["admission", "body", "history", "images", "serialization"]);
@@ -215,6 +216,7 @@ function routeSnapshot(route) {
 export function createStreamPerformanceMetrics({ now = () => performance.now(), wallNow = () => new Date().toISOString(), routeNames = PERFORMANCE_ROUTES } = {}) {
   const routes = Object.fromEntries(routeNames.map((name) => [name, createRoutePerformance()]));
   const recentRequests = [];
+  const contexts = createContextMetrics();
   const activeRequests = new Map();
   let activeTotal = 0, activeSequence = 0;
 
@@ -234,6 +236,8 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       let failed = false;
       let finished = false;
       let model = "other";
+      let session = null;
+      let cachedInput = null;
       let provider = null;
       let sourceStats = null;
       let terminalOutcome = null;
@@ -323,10 +327,12 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           model = modelLabel(value, configured);
         },
         setProvider: assignProvider,
+        observeSession(key) { if (!finished && typeof key === "string" && /^[a-f0-9]{64}$/.test(key)) session = key; },
         attemptCount() { return attempts; },
         attemptTimings() { return attemptTimings.map(attempt => ({ ...attempt })); },
         observeContext(values) {
           if (finished || !values || typeof values !== "object") return;
+          if (Number.isSafeInteger(values.cached_input_tokens) && values.cached_input_tokens >= 0) cachedInput = values.cached_input_tokens;
           for (const key of [...Object.keys(context), "capability_revision", "capability_constraints"]) {
             const value = values[key];
             if (["capability_revision", "capability_constraints"].includes(key)) {
@@ -379,6 +385,8 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
             for (const stage of PREPARATION_STAGES) observe(sourceStats.preparation[stage], preparationMs[stage]);
           }
           const finishedAt = now();
+          contexts.record({ session, application: client, provider, model, route: routeName, at, started: requestStartedAt,
+            finished: finishedAt, request_id: safeRequestId, outcome, context, cached_input_tokens: cachedInput });
           // Only scalar, allowlisted metadata survives the request; never retain payloads.
           recentRequests.push({
             request_id: safeRequestId, application: client,
@@ -427,6 +435,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         },
       };
     },
+    contextSnapshot: () => contexts.snapshot(),
     snapshot() {
       return {
         by_route: Object.fromEntries(routeNames.map((name) => [name, routeSnapshot(routes[name])])),

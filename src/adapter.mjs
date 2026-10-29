@@ -175,6 +175,11 @@ export function createAdapterHandler(options = {}) {
   const responseFailures = options.responseFailures || createResponseFailureDiagnostics();
   const httpErrors = createHttpFailureDiagnostics();
   const optionalRoutes = createOptionalRoutes({ ...options, dashboardOptions: { ...options.dashboardOptions,
+    contextSnapshotFn: () => {
+      const snapshots = [streamPerformanceMetrics.contextSnapshot?.(), options.providerRuntime?.claudePerformance?.contextSnapshot?.()];
+      const combine = name => snapshots.flatMap((data, index) => (data?.[name] || []).map(entry => ({ ...entry, id: `${index}-${entry.id}` })));
+      return { source: "run_context", sessions: combine("sessions"), unassigned: combine("unassigned") };
+    },
     credentialsChanged: options.dashboardOptions?.credentialsChanged || (() => codexClient.invalidateCredentials?.()),
     ...(options.providerRuntime ? { providerCatalogFn: input => options.providerRuntime.dashboardCatalog(input),
       providerStateFn: () => options.providerRuntime.dashboardProviders(),

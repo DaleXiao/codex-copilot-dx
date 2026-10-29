@@ -15,6 +15,7 @@ import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { decodedBodyLimitPreference } from "./user-settings.mjs";
 import { operationErrorDetails, transportErrorDetails } from "./operation-error.mjs";
 import { requestApplication } from "./request-application.mjs";
+import { observeContextSession } from "./context-metrics.mjs";
 
 function send(res, code, value) {
   if (res.destroyed || res.writableEnded) return;
@@ -155,6 +156,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (!countTokens) markRequestObservation({ max_output_tokens_requested: body.max_tokens });
         tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });
         conversation = validateConversation?.(body, req.headers, selectedProvider);
+        if (!countTokens) observeContextSession(body, req.headers, selectedProvider, "messages");
         terminalOrigin = "transport";
         const upstream = await selectedProvider.client.messages(body, { headers: req.headers, countTokens, signal: abort.signal,
           onCountObservation(value) {
@@ -254,7 +256,8 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           stats.active--;stats[outcome]++;
           const usageRecord = buildMessagesUsageRecord({ model: configuredModel || model, responseId, usage, mode: streamed ? "stream" : "json",
             client: req.headers["x-ccdx-client"] === "claude-app" ? "claude_app" : req.headers["x-ccdx-client"] === "claude-code" ? "claude_code" : "claude", provider: selectedProvider.id });
-          markRequestObservation({ input_tokens: usageRecord?.usage?.input_tokens, output_tokens: usageRecord?.usage?.output_tokens });
+          markRequestObservation({ input_tokens: usageRecord?.usage?.input_tokens, output_tokens: usageRecord?.usage?.output_tokens,
+            cached_input_tokens: usageRecord?.usage?.cached_input_tokens });
           tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });tracker?.setOutputTokens(usage?.output_tokens);
           tracker?.terminal(outcome, { origin: failedEvent ? "upstream_event" : terminalOrigin, stopReason, reason: stopReason === "max_tokens" ? "max_output_tokens" : undefined });
           tracker?.finish({ failed: outcome === "failed" || outcome === "cancelled", aborted: outcome === "cancelled", statusCode: failureStatus || res.statusCode, rejectionReason });

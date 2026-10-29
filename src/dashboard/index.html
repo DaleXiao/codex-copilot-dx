@@ -17,6 +17,7 @@
     <script src="/activity.js" defer></script>
     <script src="/flow.js" defer></script>
     <script src="/usage.js" defer></script>
+    <script src="/context.js" defer></script>
     <script src="/updates.js" defer></script>
     <script src="/animation.js" defer></script>
     <script src="/ui.js" defer></script>
@@ -286,6 +287,8 @@
           </details>
         </div>
         <div data-view="usage" hidden>
+        <div class="context-tabs" role="tablist" aria-label="Usage view" data-i18n-label="context_tabs"><button type="button" id="usage-tokens-tab" role="tab" aria-selected="true" aria-controls="usage-tokens-pane" data-i18n="context_tokens">Tokens</button><button type="button" id="usage-context-tab" role="tab" aria-selected="false" aria-controls="usage-context-pane" data-i18n="context_title">Context</button></div>
+        <div id="usage-tokens-pane" role="tabpanel" aria-labelledby="usage-tokens-tab">
         <div class="section-actions usage-source-controls"><label><span data-i18n="source_entire_page">Source / entire page</span><select id="usage-provider"><option value="" data-i18n="all_providers">All providers</option></select></label><button id="refresh-usage" type="button" data-i18n="refresh_usage">Refresh usage</button></div>
 
           <details id="usage-analytics" class="panel dashboard-section analytics-section">
@@ -313,6 +316,15 @@
 ~ Partial records. — Unknown or invalid.</p>
 
         </details>
+        </div>
+        <div id="usage-context-pane" role="tabpanel" aria-labelledby="usage-context-tab" hidden>
+          <section class="panel dashboard-section"><h2 data-i18n="context_activity">Conversations &amp; requests</h2><p id="context-view-state" class="table-note" role="status"></p><div class="table-wrap"><table class="context-sessions"><thead><tr><th data-i18n="context_item">Conversation / request</th><th data-i18n="client">App</th><th data-i18n="model">Model</th><th data-i18n="context_share">Input share</th></tr></thead><tbody id="context-sessions"></tbody></table></div></section>
+          <section id="context-selection" class="panel dashboard-section" aria-labelledby="context-selection-title" hidden><div class="panel-heading"><h2 id="context-selection-title"></h2><span id="context-selection-source"></span></div>
+            <dl class="context-metrics"><div><dt data-i18n="context_latest_input">Latest input</dt><dd id="context-latest-input">—</dd></div><div><dt data-i18n="model_window">Model window</dt><dd id="context-window">—</dd></div><div><dt data-i18n="context_share">Input share</dt><dd id="context-share">—</dd></div><div><dt data-i18n="context_reuse">Cache reuse</dt><dd id="context-reuse">—</dd></div></dl>
+            <div class="panel-heading"><h3 data-i18n="context_history">Input history</h3><span id="context-history-note"></span></div><div id="context-history-chart" class="context-history-chart"></div>
+            <details class="tool-details" open><summary data-i18n="context_compactions">Compactions</summary><div class="table-wrap"><table><thead><tr><th data-i18n="time">Time</th><th data-i18n="outcome">Result</th><th data-i18n="context_elapsed">Elapsed</th></tr></thead><tbody id="context-compactions"></tbody></table></div></details>
+          </section>
+        </div>
         </div>
         <div data-view="requests" hidden>
         <section class="panel dashboard-section" id="request-flow" data-state="unknown">

@@ -1,11 +1,15 @@
 (() => {
   const shapes = { ok: ["path", { d: "m8 12 2.5 2.5L16 9" }], running: ["path", { d: "m10 8 6 4-6 4Z" }],
+    connected: ["path", { d: "M9 17H7a5 5 0 0 1 0-10h2m6 0h2a5 5 0 0 1 0 10h-2M8 12h8" }],
+    progress: ["path", { d: "M8 12h.01M12 12h.01M16 12h.01" }],
     warning: ["path", { d: "M12 7.5v5m0 3.5h.01" }], unavailable: ["path", { d: "M8 12h8" }] };
   function icon(kind = "unknown") {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     for (const [key, value] of Object.entries({ viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false", class: "state-icon" })) svg.setAttribute(key, value);
-    const circle = document.createElementNS(svg.namespaceURI, "circle");
-    circle.setAttribute("cx", "12");circle.setAttribute("cy", "12");circle.setAttribute("r", "9");svg.append(circle);
+    if (kind !== "connected") {
+      const circle = document.createElementNS(svg.namespaceURI, "circle");
+      circle.setAttribute("cx", "12");circle.setAttribute("cy", "12");circle.setAttribute("r", "9");svg.append(circle);
+    }
     if (shapes[kind]) { const [tag, attributes] = shapes[kind], shape = document.createElementNS(svg.namespaceURI, tag);
       for (const [key, value] of Object.entries(attributes)) shape.setAttribute(key, value);svg.append(shape); }
     return svg;

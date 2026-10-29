@@ -52,13 +52,23 @@ For scripts, source access accepts `--apps codex,claude-app` with `--edit`; edit
 
 An app model file contains `deployments: [{"source":"github","model":"<model-id>"}]`, with optional `default_model` and `auto_sync`. An explicit empty array clears the default and pauses access. A file without `deployments` is rejected. Unavailable saved selections remain visible until the user changes them.
 
+## Context observations
+
+**Usage → Context** shows reported input, declared model windows, cache reuse and observed gateway compactions from this process. It leaves missing values unknown. Input share is reported input divided by the declared window; it is not a measurement of every item currently held by the client. Reused input still occupies context.
+
+Only explicit, bounded session IDs can link requests. Local display identifiers replace native IDs and titles; account/profile, app, source, model and declared subagent identities remain separate. Unidentified requests appear individually. Concurrent observations are points rather than a connected conversation curve. Compaction records cover observed Responses compact calls, not every client-side summary, and their elapsed time includes the whole gateway request. No before/after size is invented from summary output tokens.
+
+Each protocol observer retains at most 64 series of 64 request points and 16 compaction records, plus 20 unidentified requests. These numeric observations are memory-only and reset on restart. The page reads them on demand through the existing dashboard refresh controller; ordinary status payloads do not include them. There is no prompt storage, text tokenization, transcript scan, extra provider request, content breakdown or compression control.
+
 ## Sources and client access
+
+Clicking the Web UI logo plays one brief rotation and keeps its Overview navigation. System reduced-motion preferences disable this effect. The header uses a link icon for the local connection; the request-flow total uses a circled ellipsis for active requests.
 
 Upgrades retain saved account bindings, source IDs, key references, model choices/defaults and capability overrides. Native account stores keep their existing owner; bookkeeping does not request another login. Unchanged client settings need no repeat save or synchronization. Explicit user changes and ordinary credential renewal keep their current behavior.
 
 Sources own accounts, API addresses, keys and model capabilities. Apps own visible models and defaults. Allowing an app to use a source does not select all its models. Selecting no models pauses that app. Settings owns service preferences and appearance, not model routing. An unchanged graph save keeps the file bytes and modification time; explicit sync, refresh and credential actions still run. Existing v1 configuration is backed up byte-for-byte before its first v2 write; reads do not migrate files.
 
-In the Web UI, **Model sources → Add API** saves the source and immediately reads its catalog. A failed read keeps the saved source and editor. Select supported models and their declared interfaces before assigning them to apps. Catalog details expand without shifting columns. API-editor capability details open below their model row; manual overrides are separate from reported metadata.
+In the Web UI, **Model sources → Add API** saves the source and immediately reads its catalog. A failed read keeps the saved source and editor. Select supported models and their declared interfaces before assigning them to apps. Table details expand downward without shifting their controls or redistributing columns, including request metadata and check results. API-editor capability details open below their model row; manual overrides are separate from reported metadata.
 
 Manual APIs require HTTPS. Codex requires Responses; Claude requires Messages. CCDX does not invent an interface, token-count result, reasoning level or web-search capability absent from the source declaration. Returned maker/name metadata is displayed separately from the source name. Model IDs are not used to guess a maker.
 

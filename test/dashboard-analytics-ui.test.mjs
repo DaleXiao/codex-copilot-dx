@@ -66,6 +66,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
     return node;
   };
   const document = { documentElement: { dataset: {} }, visibilityState: "visible", getElementById(id) { if (!nodes.has(id)) nodes.set(id, new Node()); return nodes.get(id); }, createElement: createNode, createElementNS: (namespace, tag) => createNode(tag), createDocumentFragment: () => new Node(), addEventListener(event, fn) { if (event === "DOMContentLoaded") ready.push(fn); else on(event, fn); },
+    querySelector(selector) { return selector === ".sidebar-brand" ? this.getElementById("sidebar-brand") : null; },
     querySelectorAll(selector) {
       if (selector === "[data-source-link]") return [];
       const found = new Set();
@@ -126,7 +127,7 @@ function harness({ fetchFn, clipboard = async () => {}, reduced = false, languag
     reduceMotion(value) { media.matches = value;mediaListeners.forEach(fn => fn()); } };
 }
 
-test("atom rotates once on load/manual refresh, not background refresh; reduced motion stays still", async () => {
+test("atom rotates on load, manual refresh and logo clicks, not background refresh; reduced motion stays still", async () => {
   const h = harness();await flush();
   assert.equal(h.motions.length, 1);assert.equal(h.motions[0].options.duration, 450);
   assert.equal(h.motions[0].frames.at(-1).transform, "rotate(360deg)");
@@ -134,7 +135,12 @@ test("atom rotates once on load/manual refresh, not background refresh; reduced 
   assert.equal(h.motions.length, 1);
   h.nodes.get("refresh").listeners.click();await flush();
   assert.equal(h.motions.length, 2);assert.equal(h.motions[0].cancelled, true);
+  const reads = h.requests.length;
+  h.nodes.get("sidebar-brand").listeners.click();
+  assert.equal(h.motions.length, 3);assert.equal(h.motions[1].cancelled, true);
+  assert.equal(h.requests.length, reads, "Logo feedback does not request another refresh");
   const reduced = harness({ reduced: true });await flush();
+  reduced.nodes.get("sidebar-brand").listeners.click();
   reduced.nodes.get("refresh").listeners.click();await flush();
   assert.equal(reduced.motions.length, 0);
 });

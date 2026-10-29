@@ -223,7 +223,8 @@ export function recordUsage(record) {
 
 export function recordResponsesUsage(args) {
   const response = args.response || args.event?.response || args.event;
-  markRequestObservation({ input_tokens: response?.usage?.input_tokens });
+  markRequestObservation({ input_tokens: response?.usage?.input_tokens,
+    cached_input_tokens: response?.usage?.input_tokens_details?.cached_tokens ?? response?.usage?.cached_input_tokens });
   return recordUsage(buildResponsesUsageRecord(args));
 }
 

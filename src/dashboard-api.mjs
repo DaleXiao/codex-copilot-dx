@@ -148,6 +148,7 @@ export async function handleDashboardApi(req, res, pathname, {
   providerStateFn,
   providerAccountsFn,
   connectionsFn,
+  contextSnapshotFn,
   updateStatusFn,
   serviceControl,
   applyAnimation,
@@ -164,6 +165,11 @@ export async function handleDashboardApi(req, res, pathname, {
     return;
   }
 
+  if (pathname === "/_ccdx/ui/context") {
+    if (req.method !== "GET") { sendJson(res, 405, { error: "Use GET" });return; }
+    if (req.headers.origin && !sameOrigin(req)) { sendJson(res, 403, { error: "Context requires the same-origin dashboard" });return; }
+    sendJson(res, 200, contextSnapshotFn?.() || { source: "run_context", sessions: [], unassigned: [] });return;
+  }
   if (["/_ccdx/ui/account", "/_ccdx/ui/checks"].includes(pathname)) {
     return tools.handle(req, res, pathname, sendJson, sameOrigin);
   }

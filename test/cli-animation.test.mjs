@@ -184,7 +184,7 @@ test("animation selector: preview failure does not hide or undo a saved choice",
 test("animation selector: rejects non-interactive use without an injected prompt", async () => {
   await assert.rejects(
     runAnimationCommand({ input: { isTTY: false }, output: { isTTY: false } }),
-    /ccdx animation requires an interactive terminal/,
+    /ccdx config animation requires an interactive terminal/,
   );
 });
 

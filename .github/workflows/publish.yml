@@ -18,7 +18,7 @@ jobs:
       ref: v${{ inputs.version }}
   publish:
     needs: runtime-packages
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -35,6 +35,35 @@ jobs:
       - run: npm ci
       - run: npm run verify
       - run: npm run release:pack -- "$RUNNER_TEMP/ccdx-release"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-source-${{ inputs.version }}
+          path: ${{ runner.temp }}/ccdx-release/
+          if-no-files-found: error
+          retention-days: 7
       - run: npm publish "$RUNNER_TEMP/ccdx-release/codex-copilot-dx-${{ inputs.version }}.tgz" --tag latest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  verify-public:
+    needs: publish
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: v${{ inputs.version }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org/
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-source-${{ inputs.version }}
+          path: ${{ runner.temp }}/ccdx-public-source
+      - run: node scripts/verify-public-package.mjs "$RUNNER_TEMP/ccdx-public-source"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-npm-${{ inputs.version }}
+          path: ${{ runner.temp }}/ccdx-public-source/public-npm-receipt.json
+          if-no-files-found: error
+          retention-days: 7

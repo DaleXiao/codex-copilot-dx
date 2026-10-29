@@ -24,16 +24,12 @@ function noRunningApp(command, args, opts) {
 }
 const app = { app: "/Applications/ChatGPT.app", archive: "/not-an-installed-fixture", size: 1, mtimeMs: 1 };
 
-test("prediction CLI has explicit on/off/status, off by default, without model rewriting", () => {
-  for (const action of ["on", "off", "status", "fix"]) assert.equal(parseCliArgs(["prediction", action]).action, action);
-  assert.equal(parseCliArgs(["prediction"]).action, "status");
-  assert.throws(() => parseCliArgs(["prediction", "model"]));
-  assert.throws(() => parseCliArgs(["prediction", "on", "extra"]));
-  assert.match(cliHelp("ccdx", "prediction"), /off by default/);
-  assert.match(cliHelp("ccdx", "prediction"), /decrypted locally/);
-  assert.match(cliHelp("ccdx", "prediction"), /Git\/OpenSSL is not required/);
-  assert.match(cliHelp("ccdx", "prediction"), /port persists across restarts\/updates/);
-  assert.doesNotMatch(cliHelp("ccdx", "prediction"), /Windows \(candidate\)|real composer verification is pending/);
+test("canonical prediction commands keep setup/removal semantics and safety notes", () => {
+  for (const [action, internal] of [["setup", "on"], ["remove", "off"], ["repair", "fix"]]) assert.equal(parseCliArgs(["app", "codex", "prediction", action]).action, internal);
+  assert.equal(parseCliArgs(["app", "codex", "prediction", "status"]).command, "prediction");
+  assert.throws(() => parseCliArgs(["app", "codex", "prediction", "model"]));
+  const help = cliHelp("ccdx", "app codex prediction");
+  for (const text of [/off by default/, /decrypted locally/, /Git\/OpenSSL is not required/, /port persists across restarts\/updates/]) assert.match(help, text);
 });
 
 test("default and status do not create files, probe an App, or start a bridge", async (t) => {

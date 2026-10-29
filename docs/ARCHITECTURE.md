@@ -269,7 +269,7 @@ before body admission, credential use or provider dispatch; native LAN opt-in is
 Manual package installation is an explicit management operation in `package-update.mjs`,
 not part of inference or optional client integration. Windows uses the system
 command interpreter only for the fixed `npm.cmd` installer command; stable-tag
-validation remains upstream of launch. macOS/Linux use direct npm argv. There
+validation remains upstream of launch. macOS uses direct npm argv. There
 is no generic shell runner or package-manager framework, and npm's configured
 registry/proxy environment remains owned by the user.
 Readonly npm policy discovery is update-only and uses the same global context as
@@ -605,8 +605,8 @@ and cancellation propagation for both native Responses and Chat translation.
 Empty-stream diagnostics are additive scalar metadata, not a new retry policy.
 Release reports describe a specific environment, not an SLA or a guarantee of
 compatibility with every future client or corporate network policy.
-CI runs Node 22.15 and 24 on Linux, Windows and macOS. The owned temporary-prefix
-package smoke installs its 0.9.41 baseline (or an explicit local artifact), upgrades to the packed candidate and exercises
+CI runs Node 22.15 and 24 on Windows and macOS. The owned temporary-prefix
+package smoke installs its 1.2.33 baseline (or an explicit local artifact), upgrades to the packed candidate and exercises
 installed sharp without provider calls. It does not claim a live Codex UI test
 or the GitHub updater's network installation; the Windows command chain has a
 separate actual-process fixture. Direct runtime dependencies are exact versions;
@@ -942,7 +942,7 @@ edges and model node left edges; existing ResizeObserver/geometry caching and
 visibility-gated dash animation retain their ownership.
 
 
-### CLI state and management (1.2.33)
+### CLI state and management
 
 `terminal-state.mjs` projects existing request/source/client evidence for the live
 terminal and canonical CLI views. It does not own model selection, credentials,
@@ -953,10 +953,11 @@ returns observed configured/preserved metadata, which the integration snapshot
 exposes only as last-checked setup evidence. Managed binding setup keeps priority.
 
 `cli-command-spec.mjs` defines canonical paths, validated options, nearby/deep help
-and explicit legacy translations. `cli-management.mjs` formats bounded public
+and handler dispatch. `cli-management.mjs` formats bounded public
 snapshots and orchestrates existing loopback actions with normal prompt/private-key
-input. The CLI entry exits before service startup for these commands. Existing
-legacy parsing/handlers retain their effects and non-TTY/machine paths.
+input. The CLI entry exits before service startup for these commands. The single
+public grammar rejects removed command roots before startup. Shared feature
+handlers keep their existing behavior. Saved configuration remains readable.
 
 The full connection snapshot exposes a management capability and per-client
 binding revision. CLI connection mutations require this capability; older running
@@ -972,3 +973,18 @@ CLI service-preference backups use the existing bounded validator, file lock and
 atomic backup/config pair with a separate backup filename. WebUI's appearance-paired
 backup and version-one format are unchanged. No new history store, daemon, client
 restart controller, transport policy or production dependency is introduced.
+
+
+### 1.3 scope and state orchestration
+
+CCDX ships only for macOS and Windows (x64/ARM64). CI and complete-package builders use those four targets. The macOS bootstrap rejects unsupported systems before downloads. `ccdx` is the only package command; old CLI roots and aliases are removed without resetting accounts, keys, selected models or client-owned files.
+
+Startup presentation classifies each formatted line independently. Normal checks are transient; mixed-message warnings and sign-in instructions remain visible. The live region labels the Web UI address and renders enabled sources once. `preserved` remains an internal configuration result and is displayed as `Unchanged`.
+
+Source-catalog tables keep fixed column geometry while native disclosures expand, preventing metadata width from moving the disclosure control. The API editor places its capability panel below the selected model row. Neither path adds network reads or inference.
+
+`connection-runtime.mjs` retains one serial mutation queue and its existing synchronization coalescer. Named preparation/selection handlers separate branch-specific validation/mutation from the shared credential-write, client-sync and retirement sequence. Codex sync, Claude preparation/writing and shared App/Code capability reconciliation have local boundaries. Desktop inspection remains at the existing await point; clients are not synchronized in parallel.
+
+A full snapshot keeps a local map of compiled client plans, including reuse during source-impact projection. Public data remains cloned and contains the same revisions/route identifiers. No persistent or global cache is added. `updateAccessSettings` retains strict validation, the lock and original-byte v1 backup, then skips an atomic rewrite only when serialized bytes already match. Skipping a file write does not skip an explicit control action or client sync.
+
+The CLI keeps only command/version/status fundamentals before its early command dispatch. Existing tool implementations are imported in their branches; startup composition loads afterward in its previous dependency order. Native account stores, source/key identity, model projections and image/prediction behavior are unchanged. The repository-only `docs/STATE_REFACTOR_PLAN.md` records included boundaries, local measurements and deferred work.

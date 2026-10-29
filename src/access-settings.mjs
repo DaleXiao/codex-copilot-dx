@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { userSettingsPath } from "./user-settings.mjs";
 import { readBoundedFileSync } from "./bounded-file.mjs";
-import { atomicWriteFileSync } from "./atomic-file.mjs";
+import { atomicWriteFileSync, atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { withFileLockSync } from "./lock.mjs";
 import { isProviderId } from "./provider-metadata.mjs";
 import { CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
@@ -114,6 +114,6 @@ export function updateAccessSettings(change, options = {}) {
       const original = readBoundedFileSync(file, { maxBytes: 8 * 1024 * 1024, encoding: "utf8" });
       if (JSON.parse(original).version === 1 && !fs.existsSync(`${file}.v1-backup`)) atomicWriteFileSync(`${file}.v1-backup`, original, { mode: 0o600 });
     } catch (error) { if (error.code !== "ENOENT") throw error; }
-    atomicWriteFileSync(file, text, { mode: 0o600 });return next;
+    atomicWriteFileIfChangedSync(file, text, { mode: 0o600 });return next;
   });
 }

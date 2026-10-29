@@ -56,13 +56,13 @@ export function inspectWindowsCommand({ platform = process.platform,
   try {
     const pkg = JSON.parse(readBoundedFileSync(path.join(root, "package.json"), { encoding: "utf8", maxBytes: 64 * 1024 }));
     if (pkg.name !== "codex-copilot-dx" || pkg.bin?.ccdx !== "bin/cli.mjs"
-      || pkg.bin?.["codex-copilot-dx"] !== "bin/codex-copilot-dx.mjs") throw new Error();
+     ) throw new Error();
   } catch { return { status: "preserved", changed: false }; }
   if (repair && !locked) return withFileLockSync(path.join(root, ".ccdx-command.lock"),
     () => inspectWindowsCommand({ platform, packageRoot, repair, locked: true }), { timeoutMs: 1000 });
   const prefix = path.dirname(path.dirname(root));
   const results = [];
-  for (const [name, script] of [["ccdx", "cli.mjs"], ["codex-copilot-dx", "codex-copilot-dx.mjs"]]) {
+  for (const [name, script] of [["ccdx", "cli.mjs"]]) {
     const ps1 = path.join(prefix, `${name}.ps1`), cmd = path.join(prefix, `${name}.cmd`);
     const target = `node_modules/codex-copilot-dx/bin/${script}`;
     try {

@@ -71,7 +71,7 @@ test("interpretPoll: empty access_token is not done", () => {
 test("githubReauthMessage: recommends reauth without deleting saved credentials", () => {
   const message = githubReauthMessage("Saved token is invalid.", "/tmp/ccdx-home");
   assert.match(message, /Saved token is invalid\./);
-  assert.match(message, /ccdx auth reauth/);
+  assert.match(message, /ccdx source github reauth/);
   assert.doesNotMatch(message, /rm |Delete/);
   assert.match(message, /ccdx/);
 });

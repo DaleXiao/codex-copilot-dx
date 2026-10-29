@@ -25,9 +25,9 @@ test('nightly preparation recovers an npm policy refusal offline before touching
    calls.push(args);if(calls.length===1)throw Object.assign(Error('npm failed'),{stderr:'npm error code EALLOWREMOTE\n'});
    const destination=path.join(args[args.indexOf('--prefix')+1],...(process.platform==='win32'?[]:['lib']),'node_modules/codex-copilot-dx');
    fs.mkdirSync(path.join(destination,'bin'),{recursive:true});
-   fs.writeFileSync(path.join(destination,'package.json'),JSON.stringify({name:'codex-copilot-dx',version:'1.2.999',bin:{ccdx:'bin/cli.mjs','codex-copilot-dx':'bin/codex-copilot-dx.mjs'}}));
+   fs.writeFileSync(path.join(destination,'package.json'),JSON.stringify({name:'codex-copilot-dx',version:'1.2.999',bin:{ccdx:'bin/cli.mjs'}}));
    const commands=path.dirname(path.dirname(destination));
-   for(const [name,script] of [['ccdx','cli.mjs'],['codex-copilot-dx','codex-copilot-dx.mjs']]){
+   for(const [name,script] of [['ccdx','cli.mjs']]){
     const cli=path.join(destination,'bin',script);fs.writeFileSync(cli,'// synthetic installer fixture\n');
     fs.writeFileSync(path.join(commands,name+'.cmd'),privateWindowsCommand({node:process.execPath,cli,prefix:commands}));
    }

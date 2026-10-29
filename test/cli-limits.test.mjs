@@ -99,11 +99,11 @@ test("limits binary saves, reports, and resets a limit without starting the adap
   };
   delete env.CCDX_MAX_DECODED_BODY_BYTES;
   const cliPath = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
-  const run = (...args) => spawnSync(process.execPath, [cliPath, "limits", ...args], {
+  const run = (...args) => spawnSync(process.execPath, [cliPath, "config", "limits", ...args], {
     env, encoding: "utf8", timeout: 10000,
   });
   try {
-    const set = run("-256");
+    const set = run("--decoded", "256");
     assert.equal(set.status, 0, set.stderr);
     assert.match(set.stdout, /Configured decoded request body: 256 MiB \(settings\)/);
     assert.match(set.stdout, /restart ccdx/);

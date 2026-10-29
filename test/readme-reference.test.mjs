@@ -10,20 +10,13 @@ test("quick-start command table and full reference retain active CLI and safety 
   assert.ok(pkg.files.includes("docs/REFERENCE.md"), "preserve the complete offline reference in npm");
   assert.ok(pkg.files.includes("docs/ARCHITECTURE.md"), "ship the linked architecture reference");
   assert.ok(fs.existsSync(new URL("../docs/ARCHITECTURE.md", import.meta.url)));
-  assert.match(reference, /Startup, image setup, config doctor, compression and legacy prediction cleanup share this path/);
-  assert.doesNotMatch(reference, /does not redirect it through `CODEX_HOME`/);
-  assert.ok(readme.trimEnd().split("\n").length <= 130, "keep the expanded two-provider quick start concise");
-  assert.match(readme, /ccdx m365 switch/);
-  assert.match(reference, /## Microsoft 365 provider/);
-  for (const command of ["start", "status", "doctor", "models", "usage", "auto-review-model", "animation", "cache", "limits", "enable-image", "image-status", "disable-image", "update"]) {
-    assert.ok(readme.includes(`ccdx ${command}`), command);
-    assert.ok(cliHelp().includes(command), command);
-  }
-  for (const text of ["## Security", "## Configuration", "## Authentication", "## Debug logging"]) {
-    if (text === "## Authentication") assert.match(reference, /### Authentication recovery/);
-    else assert.ok(reference.includes(text), text);
-  }
-  assert.match(readme, /Image generation is \*\*off by default\*\*/);
-  assert.match(readme, /can\n  break continuations/);
-  assert.match(reference, /not an exact live/);
+  assert.ok(readme.trimEnd().split("\n").length <= 100, "Keep the quick start concise");
+  for (const command of ["ccdx source list", "ccdx source github reauth", "ccdx app codex models --edit", "ccdx config show --effective", "ccdx requests --failed"]) assert.ok(readme.includes(command), command);
+  for (const group of ["source", "app", "config", "requests", "doctor", "update"]) assert.ok(cliHelp().includes(group), group);
+  assert.doesNotMatch(cliHelp(), /Compatibility|help legacy/);
+  for (const text of ["## Security", "## Configuration", "## Checks and troubleshooting", "## Debug logging", "## Optional native predictions", "## Optional image generation"]) assert.ok(reference.includes(text), text);
+  assert.match(readme, /off by default/);
+  assert.match(reference, /can break the next continuation/);
+  assert.match(reference, /HTTPS[\s\S]{0,160}decrypted[\s\S]{0,40}locally/);
+  assert.match(reference, /recorded usage|recorded token/);
 });

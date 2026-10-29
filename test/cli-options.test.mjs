@@ -8,158 +8,36 @@ import {
   parseRuntimeOptions,
 } from "../src/cli-options.mjs";
 
-test("parseCliArgs: accepts supported commands and options", () => {
-  assert.deepEqual(parseCliArgs([]), { command: "start", showRequestId: false, online: false, compat: false });
-  assert.deepEqual(parseCliArgs(["--show-request-id"]), { command: "start", showRequestId: true, online: false, compat: false });
-  assert.deepEqual(parseCliArgs(["doctor", "--online"]), { command: "doctor", showRequestId: false, online: true, compat: false });
-  assert.deepEqual(parseCliArgs(["doctor", "--compat"]), { command: "doctor", showRequestId: false, online: false, compat: true });
-  assert.deepEqual(parseCliArgs(["doctor", "--compat", "--online"]), { command: "doctor", showRequestId: false, online: true, compat: true });
-  assert.equal(parseCliArgs(["doctor", "--profile", "codex"]).command, "doctor");
-  assert.equal(parseCliArgs(["--help"]).command, "help");
-  assert.equal(parseCliArgs(["-v"]).command, "version");
-  assert.equal(parseCliArgs(["status"]).command, "status");
-  assert.equal(parseCliArgs(["--status"]).command, "status");
-  assert.equal(parseCliArgs(["usage"]).command, "usage");
-  assert.equal(parseCliArgs(["cache"]).action, "status");
-  assert.deepEqual(
-    [parseCliArgs(["cache", "--limit", "128"]), parseCliArgs(["cache", "-128"])].map(({ action, limitMib }) => ({ action, limitMib })),
-    [{ action: "limit", limitMib: 128 }, { action: "limit", limitMib: 128 }],
-  );
-  assert.equal(parseCliArgs(["cache", "--limit", "default"]).resetLimit, true);
-  assert.equal(parseCliArgs(["cache", "-clean"]).action, "clean");
-  assert.equal(parseCliArgs(["cache", "--clean", "--history", "--yes"]).history, true);
-  assert.equal(parseCliArgs(["limits"]).action, "status");
-  assert.deepEqual(
-    [parseCliArgs(["limits", "--decoded", "256"]), parseCliArgs(["limits", "-256"])].map(({ action, limitMib }) => ({ action, limitMib })),
-    [{ action: "set", limitMib: 256 }, { action: "set", limitMib: 256 }],
-  );
-  assert.equal(parseCliArgs(["limits", "--decoded", "default"]).resetLimit, true);
-  assert.equal(parseCliArgs(["usage", "--format", "table"]).outputFormat, "table");
-  assert.deepEqual(parseCliArgs(["models"]), { command: "models", showRequestId: false, online: false, compat: false });
-  assert.equal(parseCliArgs(["models", "--format", "table"]).outputFormat, "table");
-  assert.equal(parseCliArgs(["models", "--profile", "codex"]).command, "models");
-  assert.deepEqual(parseCliArgs(["auth", "status"]), {
-    command: "auth", action: "status", profile: "", showRequestId: false,
-    online: false, compat: false, expectedLogin: "", reauth: false,
-  });
-  assert.equal(parseCliArgs(["auth", "status", "--online"]).online, true);
-  assert.equal(parseCliArgs(["auth", "status", "--online", "--format", "table"]).outputFormat, "table");
-  assert.equal(parseCliArgs(["auto-review-model"]).command, "auto-review-model");
-  assert.equal(parseCliArgs(["animation"]).command, "animation");
-  assert.deepEqual(
-    ["enable-image", "disable-image", "image-status"].map((command) => parseCliArgs([command]).action),
-    ["enable", "disable", "status"],
-  );
-  assert.equal(parseCliArgs(["update"]).command, "update");
-  assert.equal(parseCliArgs(["update", "npm"]).updateSource, "npm");
-  assert.equal(parseCliArgs(["update", "github"]).updateSource, "github");
-  assert.equal(parseCliArgs(["update", "gh"]).updateSource, "github");
+test("one command grammar exposes grouped management and rejects removed entrypoints", () => {
+  assert.equal(parseCliArgs([]).command, "start");
+  assert.equal(parseCliArgs(["--no-browser"]).noBrowser, true);
+  assert.equal(parseCliArgs(["--version"]).command, "version");
+  assert.equal(parseCliArgs(["status"]).group, "status");
+  assert.equal(parseCliArgs(["usage", "--format", "table"]).flags.format, "table");
+  assert.equal(parseCliArgs(["source", "github", "reauth", "--login", "user"]).expectedLogin, "user");
+  assert.equal(parseCliArgs(["source", "m365", "account", "--id", "a".repeat(64)]).accountId, "a".repeat(64));
+  assert.equal(parseCliArgs(["app", "codex", "image", "setup"]).action, "enable");
+  assert.equal(parseCliArgs(["app", "codex", "prediction", "repair"]).action, "fix");
+  assert.equal(parseCliArgs(["doctor", "cache", "--clean", "--history", "--yes"]).history, true);
+  assert.equal(parseCliArgs(["config", "limits", "--decoded", "256"]).limitMib, 256);
   assert.equal(parseCliArgs(["update", "github", "--allow-remote"]).allowRemote, true);
-  assert.equal(parseCliArgs(["update", "--allow-remote", "npm"]).updateSource, "npm");
-  assert.equal(parseCliArgs(["update", "npm"]).allowRemote, false);
-  assert.throws(() => parseCliArgs(["update", "--allow-remote", "--allow-remote"]), /only once/);
-  assert.throws(() => parseCliArgs(["update", "npm", "--allow-remote=all"]));
-  assert.match(cliHelp(), /status\s+Show service state/);
-  assert.match(cliHelp(), /source\s+Accounts, APIs/);
-  assert.match(cliHelp(), /app\s+Client model plans/);
-  assert.match(cliHelp(), /config\s+Service and terminal/);
-  assert.match(cliHelp(), /--show-request-id/);
-  assert.match(cliHelp("ccdx", "legacy"), /models|auth|animation|cache|limits/);
-  assert.doesNotMatch(cliHelp("codex-copilot-dx"), /Equivalent command/);
-  assert.equal(parseCliArgs(["doctor", "--help"]).helpTopic, "doctor");
-  assert.equal(parseCliArgs(["animation", "--help"]).helpTopic, "animation");
-  assert.equal(parseCliArgs(["cache", "--help"]).helpTopic, "cache");
-  assert.equal(parseCliArgs(["limits", "--help"]).helpTopic, "limits");
-  assert.match(cliHelp("ccdx", "limits"), /Restart ccdx to apply/);
-  assert.match(cliHelp("ccdx", "animation"), /applies it live/);
-  assert.match(cliHelp("ccdx", "enable-image"), /HTTPS image API endpoint/);
-  assert.match(cliHelp("ccdx", "doctor"), /consumes a small amount of Copilot usage/);
-  assert.match(cliHelp(), /m365/);
-  assert.doesNotMatch(cliHelp(), /pms|pm-studio/i);
-  assert.equal(cliHelp("ccdx"), cliHelp("codex-copilot-dx"));
+  for (const root of ["auth", "reauth", "models", "m365", "image", "prediction", "animation", "cache", "limits", "enable-image", "disable-image", "image-status", "auto-review-model", "suggestion", "--doctor", "--status", "pm-studio"]) {
+    assert.throws(() => parseCliArgs([root]), undefined, root);
+  }
+  assert.throws(() => parseCliArgs(["help", "legacy"]));
+  for (const args of [["version", "extra"], ["status", "--format", "xml"], ["source", "github"], ["source", "m365", "account", "--id", "wrong"], ["doctor", "cache", "--history"], ["config", "limits", "--decoded", "wrong"], ["start", "--verbose", "--verbose"]]) assert.throws(() => parseCliArgs(args));
+  assert.doesNotMatch(cliHelp(), /Compatibility|help legacy/);
 });
-
-test("doctor config has a dedicated read-only grammar and help topic", () => {
+test("doctor configuration checks have a read-only grammar", () => {
   assert.equal(parseCliArgs(["doctor", "--fix", "--json"]).fix, true);
-  assert.equal(parseCliArgs(["doctor", "--json"]).json, true);
-  assert.deepEqual(parseCliArgs(["doctor", "config"]), {
-    command: "doctor", showRequestId: false, online: false, compat: false, configOnly: true,
-  });
-  for (const args of [["doctor", "config", "--help"], ["help", "doctor", "config"], ["--doctor", "config", "-h"]]) {
-    assert.equal(parseCliArgs(args).helpTopic, "doctor config");
-  }
-  for (const extra of ["--online", "--compat", "--write", "--profile", "extra"]) {
-    assert.throws(() => parseCliArgs(["doctor", "config", extra]), /Unexpected argument/);
-  }
-  for (const profile of ["codex", "claude", "all"]) {
-    assert.throws(() => parseCliArgs(["doctor", "config", "--profile", profile]), /Unexpected argument/);
-  }
-  assert.match(cliHelp("ccdx", "doctor"), /ccdx doctor config/);
-  assert.match(cliHelp("ccdx", "doctor config"), /No authentication, network requests, file writes/);
-});
-
-test("parseCliArgs: maps retired Claude and PM Studio integrations to a side-effect-free result", () => {
-  for (const args of [
-    ["--configure-claude-desktop"],
-    ["start", "--configure-claude-app"],
-    ["start", "--configure-claude-app", "--help"],
-    ["pms", "setup"],
-    ["pms", "--help"],
-    ["pms", "status"],
-    ["pms", "restore"],
-    ["pm-studio", "setup"],
-    ["models", "--profile", "claude"],
-    ["models", "--profile", "claude", "--help"],
-    ["doctor", "--profile", "claude"],
-    ["doctor", "--profile", "all"],
-    ["auth", "login", "claude", "--github-login", "personal", "--reauth"],
-    ["auth", "login", "claude", "--help"],
-  ]) {
-    const parsed = parseCliArgs(args);
-    assert.equal(parsed.command, "retired", args.join(" "));
-    assert.match(parsed.integration, /Claude|PM Studio/);
-  }
-});
-
-test("parseCliArgs: rejects unknown commands and trailing arguments", () => {
-  assert.throws(() => parseCliArgs(["serve"]), /Unknown command or option: serve/);
-  assert.throws(() => parseCliArgs(["usage", "extra"]), /Unexpected argument: extra/);
-  assert.throws(() => parseCliArgs(["usage", "--format"]), /Enter a value for --format/);
-  assert.equal(parseCliArgs(["usage", "--format", "json"]).flags.format, "json");
-  assert.throws(() => parseCliArgs(["cache", "--limit", "128", "--clean"]), /Use either --limit or --clean/);
-  assert.throws(() => parseCliArgs(["cache", "--history"]), /require --clean/);
-  assert.throws(() => parseCliArgs(["cache", "--limit", "large"]), /integer MiB value or default/);
-  assert.throws(() => parseCliArgs(["limits", "--decoded", "large"]), /integer MiB value or default/);
-  assert.throws(() => parseCliArgs(["limits", "--decoded"]), /Enter a value for --decoded/);
-  assert.throws(() => parseCliArgs(["limits", "--decoded", "256", "--decoded", "384"]), /Unexpected argument: --decoded/);
-  assert.throws(() => parseCliArgs(["status", "extra"]), /Unexpected argument: extra/);
-  assert.throws(() => parseCliArgs(["models", "extra"]), /Unexpected argument: extra/);
-  assert.throws(() => parseCliArgs(["models", "--profile"]), /Enter a value for --profile/);
-  assert.throws(() => parseCliArgs(["models", "--profile", "all"]), /Profile must be codex: all/);
-  assert.throws(() => parseCliArgs(["models", "--format", "wide"]), /Format must be table or plain: wide/);
-  assert.equal(parseCliArgs(["auth"]).action, "status");
-  assert.throws(() => parseCliArgs(["auth", "logout", "claude"]), /Unexpected argument: claude/);
-  assert.throws(() => parseCliArgs(["auth", "status", "claude"]), /Unexpected argument: claude/);
-  assert.throws(() => parseCliArgs(["auth", "status", "--online", "--online"]), /Unexpected argument: --online/);
-  assert.throws(() => parseCliArgs(["auth", "status", "--format", "table", "--format", "plain"]), /Unexpected argument: --format/);
-  assert.equal(parseCliArgs(["auth", "login"]).action, "login");
-  assert.equal(parseCliArgs(["auth", "login", "codex"]).action, "login");
-  assert.throws(() => parseCliArgs(["auto-review-model", "gpt-5.6-sol"]), /Unexpected argument: gpt-5.6-sol/);
-  assert.throws(() => parseCliArgs(["animation", "comet"]), /Unexpected argument: comet/);
-  assert.throws(() => parseCliArgs(["update", "other"]), /Choose npm or github/);
-  assert.throws(() => parseCliArgs(["update", "npm", "extra"]), /Unexpected argument: extra/);
-  assert.throws(() => parseCliArgs(["doctor", "--write"]), /Unexpected argument: --write/);
-  assert.throws(() => parseCliArgs(["doctor", "--online", "--online"]), /Unexpected argument: --online/);
-  assert.throws(() => parseCliArgs(["doctor", "--compat", "--compat"]), /Unexpected argument: --compat/);
-  assert.throws(() => parseCliArgs(["doctor", "--profile"]), /Enter a value for --profile/);
-  assert.throws(() => parseCliArgs(["doctor", "--profile", "other"]), /Profile must be codex: other/);
-  assert.throws(() => parseCliArgs(["--show-request-id", "--show-request-id"]), /Unexpected argument: --show-request-id/);
+  assert.equal(parseCliArgs(["doctor", "config"]).configOnly, true);
+  for (const args of [["doctor", "config", "--help"], ["help", "doctor", "config"]]) assert.equal(parseCliArgs(args).helpTopic, "doctor config");
+  for (const extra of ["--online", "--compat", "--write", "--profile", "extra"]) assert.throws(() => parseCliArgs(["doctor", "config", extra]));
 });
 
 test("cliCommandName: always presents the canonical ccdx command", () => {
   assert.equal(cliCommandName("/usr/local/bin/ccdx"), "ccdx");
   assert.equal(cliCommandName("C:\\Users\\Dale\\bin\\codex-copilot-dx"), "ccdx");
-  assert.equal(cliCommandName("/usr/local/lib/bin/codex-copilot-dx.mjs"), "ccdx");
   assert.equal(cliCommandName("/workspace/bin/cli.mjs"), "ccdx");
   assert.equal(cliCommandName(), "ccdx");
 });

@@ -35,7 +35,7 @@ export function githubTokenMetadataPath(home = os.homedir()) {
 
 export function githubReauthMessage(reason, home = os.homedir()) {
   return `${reason}
-Run ccdx auth reauth to sign in again.
+Run ccdx source github reauth to sign in again.
 The saved sign-in is kept until verification succeeds.`;
 }
 

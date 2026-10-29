@@ -12,43 +12,14 @@ import packageJson from "../package.json" with { type: "json" };
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
-const legacyCliPath = fileURLToPath(new URL("../bin/codex-copilot-dx.mjs", import.meta.url));
 const nonDarwinPlatformPreload = fileURLToPath(new URL("./fixtures/non-darwin-platform.cjs", import.meta.url));
-const legacyWarning = /codex-copilot-dx is deprecated; use ccdx instead/;
 
-function assertNoCompatibilityWarning(stderr) {
-  assert.equal(stderr, "");
-}
-
-test("usage CLI wraps real read errors but keeps missing and malformed logs nonfatal", async (t) => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-usage-cli-"));
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  const missing = path.join(directory, "absent", "usage.jsonl");
-  const options = (file) => ({ timeout: 5000, env: { ...process.env, CCDX_USAGE_PATH: file } });
-  const empty = await execFileAsync(process.execPath, [cliPath, "usage"], options(missing));
-  assert.match(empty.stdout, /No usage records yet\./);
-  assert.equal(empty.stderr, "");
-  assert.equal(fs.existsSync(path.dirname(missing)), false);
-  await assert.rejects(execFileAsync(process.execPath, [cliPath, "usage"], options(directory)), (error) => {
-    assert.equal(error.code, 1);
-    assert.match(error.stderr, /\[ERR\]/);
-    assert.doesNotMatch(error.stderr, /triggerUncaughtException|node:internal|\n\s+at /);
-    return true;
-  });
-  const malformed = path.join(directory, "usage.jsonl");
-  fs.writeFileSync(malformed, "private-invalid-record\n");
-  const ignored = await execFileAsync(process.execPath, [cliPath, "usage"], options(malformed));
-  assert.match(ignored.stdout, /No usage records yet\./);
-  assert.match(ignored.stderr, /ignored 1 invalid record/);
-  assert.doesNotMatch(ignored.stderr, /private-invalid-record/);
-});
-
-test("package exposes ccdx and keeps the deprecated command as a compatibility shim", () => {
+test("package exposes only the ccdx command", () => {
   assert.deepEqual(packageJson.bin, {
     ccdx: "bin/cli.mjs",
-    "codex-copilot-dx": "bin/codex-copilot-dx.mjs",
   });
 });
+
 
 test("cli --version exits without starting the adapter", async () => {
   const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, "--version"], {
@@ -59,6 +30,7 @@ test("cli --version exits without starting the adapter", async () => {
   assert.equal(stdout.trim(), `ccdx v${localPackageVersion()} by Dale Xiao`);
   assert.equal(stderr, "");
 });
+
 
 test("doctor config CLI stays offline and read-only even with startup and logging settings", async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-doctor-config-cli-"));
@@ -91,7 +63,7 @@ context_management = false
     CCDX_LOG_PATH: path.join(home, "logs", "must-not-exist.log"),
     XDG_CACHE_HOME: path.join(home, "cache"),
   };
-  for (const executable of [cliPath, legacyCliPath]) {
+  for (const executable of [cliPath]) {
     const { stdout, stderr } = await execFileAsync(process.execPath, ["--require", guard, executable, "doctor", "config"], { env, timeout: 5000 });
     assert.match(stdout, /^ccdx doctor config/m);
     assert.match(stdout, /explicitly disabled; retained/);
@@ -117,15 +89,6 @@ context_management = false
   assert.equal(fs.existsSync(configPath), false);
 });
 
-test("deprecated cli --version stays silent outside an interactive terminal", async () => {
-  const { stdout, stderr } = await execFileAsync(process.execPath, [legacyCliPath, "--version"], {
-    timeout: 2000,
-    env: { ...process.env, ADAPTER_PORT: "0" },
-  });
-
-  assert.equal(stdout.trim(), `ccdx v${localPackageVersion()} by Dale Xiao`);
-  assertNoCompatibilityWarning(stderr);
-});
 
 test("cli --help exits without validating runtime configuration", async () => {
   const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, "--help"], {
@@ -137,261 +100,27 @@ test("cli --help exits without validating runtime configuration", async () => {
   assert.match(stdout, /doctor\s+Check local setup/);
   assert.doesNotMatch(stdout, /Equivalent command/);
   assert.match(stdout, /status\s+Show service state/);
-  assert.match(stdout, /Compatibility:[\s\S]*models/);
-  assert.match(stdout, /Compatibility:[\s\S]*auth/);
-  assert.match(stdout, /Compatibility:[\s\S]*animation/);
   assert.match(stdout, /deeper checks are explicit/);
-  assert.match(stdout, /Compatibility:[\s\S]*m365/);
   assert.doesNotMatch(stdout, /pms|pm-studio/i);
   assert.equal(stderr, "");
 });
+
 
 test("cli rejects unknown commands without starting the adapter", async () => {
   await assert.rejects(
     execFileAsync(process.execPath, [cliPath, "serve"], { timeout: 2000, env: { ...process.env } }),
     (error) => {
       assert.equal(error.code, 2);
-      assert.match(error.stderr, /Unknown command or option: serve/);
+      assert.match(error.stderr, /Unknown command path: serve/);
       assert.match(error.stderr, /Help: ccdx --help/);
       return true;
     },
   );
 });
 
-test("deprecated cli help and argument errors use the canonical command name without warning scripts", async () => {
-  const { stdout, stderr } = await execFileAsync(process.execPath, [legacyCliPath, "--help"], {
-    timeout: 2000,
-    env: { ...process.env, ADAPTER_PORT: "invalid" },
-  });
-  assert.match(stdout, /doctor\s+Check local setup/);
-  assert.match(stdout, /status\s+Show service state/);
-  assert.match(stdout, /Compatibility:[\s\S]*models/);
-  assert.match(stdout, /Compatibility:[\s\S]*auto-review-model/);
-  assert.match(stdout, /Compatibility:[\s\S]*animation/);
-  assert.match(stdout, /update github\|npm/);
-  assert.match(stdout, /Compatibility:[\s\S]*m365/);
-  assert.doesNotMatch(stdout, /pms|pm-studio/i);
-  assertNoCompatibilityWarning(stderr);
 
-  await assert.rejects(
-    execFileAsync(process.execPath, [legacyCliPath, "serve"], { timeout: 2000, env: { ...process.env } }),
-    (error) => {
-      assert.equal(error.code, 2);
-      assert.doesNotMatch(error.stderr, legacyWarning);
-      assert.match(error.stderr, /Help: ccdx --help/);
-      return true;
-    },
-  );
-});
-
-test("both CLI entrypoints expose the same complete subcommand help", async () => {
-  const [primary, legacy] = await Promise.all([
-    execFileAsync(process.execPath, [cliPath, "--help"], { timeout: 2000 }),
-    execFileAsync(process.execPath, [legacyCliPath, "--help"], { timeout: 2000 }),
-  ]);
-
-  assert.equal(legacy.stdout, primary.stdout);
-  assertNoCompatibilityWarning(legacy.stderr);
-  for (const command of ["auth", "doctor", "status", "models", "usage", "animation", "enable-image", "disable-image", "image-status", "auto-review-model", "update"]) {
-    assert.match(primary.stdout, new RegExp(command));
-  }
-  assert.match(primary.stdout, /Compatibility:[\s\S]*m365/);
-  assert.doesNotMatch(primary.stdout, /pms|pm-studio/i);
-});
-
-test("both CLI entrypoints keep nested help and argument errors byte-for-byte equivalent", async () => {
-  const [primaryHelp, legacyHelp] = await Promise.all([
-    execFileAsync(process.execPath, [cliPath, "auth", "status", "--help"], { timeout: 2000 }),
-    execFileAsync(process.execPath, [legacyCliPath, "auth", "status", "--help"], { timeout: 2000 }),
-  ]);
-  assert.equal(legacyHelp.stdout, primaryHelp.stdout);
-  assert.match(primaryHelp.stdout, /Shows the saved GitHub Copilot account/);
-  assertNoCompatibilityWarning(legacyHelp.stderr);
-
-  const [primaryAnimationHelp, legacyAnimationHelp] = await Promise.all([
-    execFileAsync(process.execPath, [cliPath, "animation", "--help"], {
-      timeout: 2000,
-      env: { ...process.env, ADAPTER_PORT: "invalid" },
-    }),
-    execFileAsync(process.execPath, [legacyCliPath, "animation", "--help"], {
-      timeout: 2000,
-      env: { ...process.env, ADAPTER_PORT: "invalid" },
-    }),
-  ]);
-  assert.equal(legacyAnimationHelp.stdout, primaryAnimationHelp.stdout);
-  assert.match(primaryAnimationHelp.stdout, /applies it live/);
-  assert.equal(primaryAnimationHelp.stderr, "");
-  assertNoCompatibilityWarning(legacyAnimationHelp.stderr);
-
-  const [primaryImageHelp, legacyImageHelp] = await Promise.all([
-    execFileAsync(process.execPath, [cliPath, "enable-image", "--help"], {
-      timeout: 2000,
-      env: { ...process.env, ADAPTER_PORT: "invalid" },
-    }),
-    execFileAsync(process.execPath, [legacyCliPath, "enable-image", "--help"], {
-      timeout: 2000,
-      env: { ...process.env, ADAPTER_PORT: "invalid" },
-    }),
-  ]);
-  assert.equal(legacyImageHelp.stdout, primaryImageHelp.stdout);
-  assert.match(primaryImageHelp.stdout, /HTTPS image API endpoint/);
-  assert.equal(primaryImageHelp.stderr, "");
-  assertNoCompatibilityWarning(legacyImageHelp.stderr);
-
-  const [primaryError, legacyError] = await Promise.allSettled([
-    execFileAsync(process.execPath, [cliPath, "models", "--profile", "all"], { timeout: 2000 }),
-    execFileAsync(process.execPath, [legacyCliPath, "models", "--profile", "all"], { timeout: 2000 }),
-  ]);
-  assert.equal(primaryError.status, "rejected");
-  assert.equal(legacyError.status, "rejected");
-  assert.equal(legacyError.reason.code, primaryError.reason.code);
-  assert.equal(legacyError.reason.stderr, primaryError.reason.stderr);
-});
-
-test("both CLI entrypoints retire legacy integrations before runtime, auth, logging, or GUI startup", async () => {
-  for (const [executable, args, integration] of [
-    [cliPath, ["pms", "setup"], "PM Studio"],
-    [legacyCliPath, ["pm-studio", "restore"], "PM Studio"],
-    [cliPath, ["--configure-claude-desktop"], "Claude App and Claude Code"],
-    [legacyCliPath, ["auth", "login", "claude", "--reauth"], "Claude App and Claude Code"],
-    [cliPath, ["models", "--profile", "claude"], "Claude App and Claude Code"],
-    [legacyCliPath, ["doctor", "--profile", "all"], "Claude App and Claude Code"],
-  ]) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-retired-"));
-    const logPath = path.join(home, "debug.log");
-    try {
-      await assert.rejects(
-        execFileAsync(process.execPath, [executable, ...args], {
-          timeout: 30000,
-          env: {
-            ...process.env,
-            HOME: home,
-            ADAPTER_PORT: "invalid",
-            CCDX_LOG_PATH: logPath,
-            CCDX_CONFIGURE_CLAUDE_DESKTOP: "1",
-            CCDX_AUTO_LAUNCH: "1",
-          },
-        }),
-        (error) => {
-          assert.equal(error.code, 1);
-          assert.match(error.stderr, new RegExp(`${integration} integration was retired in ccdx 0\\.7\\.0`));
-          assert.doesNotMatch(error.stderr, /ADAPTER_PORT/);
-          return true;
-        },
-      );
-      assert.equal(fs.existsSync(logPath), false);
-      assert.equal(fs.existsSync(path.join(home, ".local")), false);
-      assert.equal(fs.existsSync(path.join(home, ".codex")), false);
-      assert.equal(fs.existsSync(path.join(home, ".claude")), false);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  }
-});
-
-test("both CLI entrypoints report auth status through the canonical command", async () => {
-  for (const executable of [cliPath, legacyCliPath]) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-status-"));
-    const logPath = path.join(home, "debug.log");
-    const { stdout, stderr } = await execFileAsync(process.execPath, [executable, "auth", "status"], {
-      timeout: 2000,
-      env: {
-        ...process.env,
-        HOME: home,
-        ADAPTER_PORT: "invalid",
-        CCDX_LOG_PATH: logPath,
-      },
-    });
-
-    assert.match(stdout, /^ccdx auth status/m);
-    assert.match(stdout, /Codex: not configured/);
-    assert.match(stdout, /Routing: responses -> codex/);
-    assert.doesNotMatch(stdout, /Claude|Anthropic|messages ->/i);
-    assertNoCompatibilityWarning(stderr);
-    assert.equal(fs.existsSync(logPath), false);
-    assert.equal(fs.existsSync(path.join(home, ".local")), false);
-    assert.equal(fs.existsSync(path.join(home, ".codex")), false);
-    assert.equal(fs.existsSync(path.join(home, ".claude")), false);
-  }
-});
-
-test("both CLI entrypoints render the same explicit auth status table", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-auth-table-"));
-  try {
-    const [primary, legacy] = await Promise.all([
-      execFileAsync(process.execPath, [cliPath, "auth", "status", "--format", "table"], {
-        timeout: 2000,
-        env: { ...process.env, HOME: home, ADAPTER_PORT: "invalid" },
-      }),
-      execFileAsync(process.execPath, [legacyCliPath, "auth", "status", "--format", "table"], {
-        timeout: 2000,
-        env: { ...process.env, HOME: home, ADAPTER_PORT: "invalid" },
-      }),
-    ]);
-    assert.equal(legacy.stdout, primary.stdout);
-    assert.match(primary.stdout, /^APP\s+ACCOUNT\s+SAVED SIGN-IN\s+ACCESS CHECK\s+MODELS$/m);
-    assert.match(primary.stdout, /Routing: responses -> codex/);
-    assert.doesNotMatch(primary.stdout, /Claude|Anthropic|messages ->/i);
-    assert.equal(primary.stderr, "");
-    assertNoCompatibilityWarning(legacy.stderr);
-    assert.equal(fs.existsSync(path.join(home, ".local")), false);
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test("usage table is explicit while non-interactive default output stays compatible", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-usage-table-"));
-  const usagePath = path.join(home, "usage.jsonl");
-  fs.writeFileSync(usagePath, [
-    JSON.stringify({ model: "gpt-test", usage: { input_tokens: 10, cached_input_tokens: 4, output_tokens: 2, total_tokens: 12 } }),
-    JSON.stringify({ model: "gpt-fast-test", usage: { cache_read_input_tokens: 5, output_tokens: 3, total_tokens: 8 } }),
-    "",
-  ].join("\n"));
-  const env = { ...process.env, HOME: home, CCDX_USAGE_PATH: usagePath, ADAPTER_PORT: "invalid" };
-  try {
-    const [primary, legacy, plain] = await Promise.all([
-      execFileAsync(process.execPath, [cliPath, "usage", "--format", "table"], { timeout: 2000, env }),
-      execFileAsync(process.execPath, [legacyCliPath, "usage", "--format", "table"], { timeout: 2000, env }),
-      execFileAsync(process.execPath, [cliPath, "usage"], { timeout: 2000, env }),
-    ]);
-    assert.equal(legacy.stdout, primary.stdout);
-    assert.match(primary.stdout, /^MODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+OUTPUT\s+TOTAL\s+HIT %$/m);
-    assert.match(primary.stdout, /TOTAL\s+2\s+10\s+9\s+5\s+20\s+~90\.0%/);
-    assert.match(primary.stdout, /gpt-test\s+1\s+10\s+4\s+2\s+12\s+40\.0%/);
-    assert.match(plain.stdout, /^Usage log: .*\nRequests: 2\nTokens:/);
-    assert.doesNotMatch(plain.stdout, /^MODEL\s+RECORDS/m);
-    assert.match(plain.stdout, /Cache hit: ~90\.0% \(cached\/input tokens\)/);
-    assert.equal(primary.stderr, "");
-    assertNoCompatibilityWarning(legacy.stderr);
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test("both CLI entrypoints fail models cleanly without a saved token or startup side effects", async () => {
-  for (const executable of [cliPath, legacyCliPath]) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-models-"));
-    const logPath = path.join(home, "debug.log");
-    await assert.rejects(
-      execFileAsync(process.execPath, [executable, "models"], {
-        timeout: 2000,
-        env: { ...process.env, HOME: home, ADAPTER_PORT: "invalid", CCDX_LOG_PATH: logPath },
-      }),
-      (error) => {
-        assert.equal(error.code, 1);
-        assert.match(error.stderr, /GitHub token not found/);
-        return true;
-      },
-    );
-    assert.equal(fs.existsSync(logPath), false, executable);
-    assert.equal(fs.existsSync(path.join(home, ".codex")), false, executable);
-    assert.equal(fs.existsSync(path.join(home, ".claude")), false, executable);
-  }
-});
-
-test("both CLI entrypoints require a source for non-interactive updates", async () => {
-  for (const executable of [cliPath, legacyCliPath]) {
+test("CLI require a source for non-interactive updates", async () => {
+  for (const executable of [cliPath]) {
     await assert.rejects(
       execFileAsync(process.execPath, [executable, "update"], { timeout: 2000 }),
       (error) => {
@@ -403,26 +132,14 @@ test("both CLI entrypoints require a source for non-interactive updates", async 
   }
 });
 
-test("both CLI entrypoints reject non-interactive model selection consistently", async () => {
-  for (const executable of [cliPath, legacyCliPath]) {
-    await assert.rejects(
-      execFileAsync(process.execPath, [executable, "auto-review-model"], { timeout: 2000 }),
-      (error) => {
-        assert.equal(error.code, 1);
-        assert.match(error.stderr, /ccdx auto-review-model requires an interactive terminal/);
-        return true;
-      },
-    );
-  }
-});
 
-test("both CLI entrypoints reject non-interactive animation selection before startup side effects", async () => {
-  for (const executable of [cliPath, legacyCliPath]) {
+test("CLI reject non-interactive animation selection before startup side effects", async () => {
+  for (const executable of [cliPath]) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-animation-"));
     const logPath = path.join(home, "debug.log");
     try {
       await assert.rejects(
-        execFileAsync(process.execPath, [executable, "animation"], {
+        execFileAsync(process.execPath, [executable, "config", "animation"], {
           timeout: 2000,
           env: {
             ...process.env,
@@ -435,7 +152,7 @@ test("both CLI entrypoints reject non-interactive animation selection before sta
         }),
         (error) => {
           assert.equal(error.code, 1);
-          assert.match(error.stderr, /ccdx animation requires an interactive terminal/);
+          assert.match(error.stderr, /requires an interactive terminal/);
           assert.doesNotMatch(error.stderr, /ADAPTER_PORT/);
           return true;
         },
@@ -450,6 +167,7 @@ test("both CLI entrypoints reject non-interactive animation selection before sta
   }
 });
 
+
 test("cli doctor exits without starting the adapter", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-doctor-"));
   const { stdout, stderr } = await execFileAsync(process.execPath, ["--require", nonDarwinPlatformPreload, cliPath, "doctor"], {
@@ -461,6 +179,7 @@ test("cli doctor exits without starting the adapter", async () => {
   assert.match(stdout, /\[WARN\]\s+Adapter is not listening on http:\/\/127\.0\.0\.1:9/);
   assert.equal(stderr, "");
 });
+
 
 test("cli doctor ignores retired Claude settings and remains Codex-only", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-doctor-retired-"));
@@ -477,16 +196,6 @@ test("cli doctor ignores retired Claude settings and remains Codex-only", async 
   assert.equal(stderr, "");
 });
 
-test("deprecated cli doctor heading uses the canonical command name without warning scripts", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-legacy-doctor-"));
-  const { stdout, stderr } = await execFileAsync(process.execPath, ["--require", nonDarwinPlatformPreload, legacyCliPath, "doctor"], {
-    timeout: 2000,
-    env: { ...process.env, HOME: home, ADAPTER_PORT: "9" },
-  });
-
-  assert.match(stdout, /^ccdx doctor/m);
-  assertNoCompatibilityWarning(stderr);
-});
 
 test("cli status fails read-only before unrelated runtime validation or initialization", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-status-"));
@@ -514,6 +223,7 @@ test("cli status fails read-only before unrelated runtime validation or initiali
   assert.equal(fs.existsSync(path.join(home, ".claude")), false);
 });
 
+
 test("isLanAllowed: requires an explicit opt-in", () => {
   assert.equal(isLanAllowed({}), false);
   assert.equal(isLanAllowed({ CCDX_ALLOW_LAN: "1" }), true);
@@ -521,12 +231,14 @@ test("isLanAllowed: requires an explicit opt-in", () => {
   assert.equal(isLanAllowed({ CCDX_ALLOW_LAN: "yes" }), true);
 });
 
+
 test("assertSafeAdapterHost: allows loopback hosts", () => {
   assert.doesNotThrow(() => assertSafeAdapterHost("127.0.0.1", {}));
   assert.doesNotThrow(() => assertSafeAdapterHost("localhost", {}));
   assert.doesNotThrow(() => assertSafeAdapterHost("::1", {}));
   assert.doesNotThrow(() => assertSafeAdapterHost("[::1]", {}));
 });
+
 
 test("assertSafeAdapterHost: blocks non-loopback hosts unless LAN is explicitly allowed", () => {
   assert.throws(
@@ -538,4 +250,27 @@ test("assertSafeAdapterHost: blocks non-loopback hosts unless LAN is explicitly 
     /CCDX_ALLOW_LAN=1/,
   );
   assert.doesNotThrow(() => assertSafeAdapterHost("0.0.0.0", { CCDX_ALLOW_LAN: "1" }));
+});
+test("removed command roots fail before authentication, file writes or service startup", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-removed-cli-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  for (const root of ["auth", "models", "m365", "prediction", "image-status", "suggestion", "animation"]) {
+    await assert.rejects(execFileAsync(process.execPath, [cliPath, root], {
+      timeout: 5000, env: { ...process.env, HOME: home, ADAPTER_PORT: "invalid", CCDX_AUTO_LAUNCH: "1", CCDX_LOG_PATH: path.join(home, "must-not-exist.log") },
+    }), error => error.code === 2 && /Unknown command/.test(error.stderr) && !/ADAPTER_PORT|Ready|Starting/.test(error.stdout));
+  }
+  assert.deepEqual(fs.readdirSync(home), []);
+});
+
+test("recorded usage stays readable offline and malformed records do not leak into output", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-usage-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const file = path.join(home, "usage.jsonl");
+  const run = target => execFileAsync(process.execPath, [cliPath, "usage", "--format", "json"], { timeout: 5000, env: { ...process.env, HOME: home, CCDX_USAGE_PATH: target } });
+  const plain = await execFileAsync(process.execPath, [cliPath, "usage"], { timeout: 5000, env: { ...process.env, HOME: home, CCDX_USAGE_PATH: file } });
+  assert.match(plain.stdout, /No usage records yet/);
+  const missing = await run(file);assert.equal(JSON.parse(missing.stdout).requests, 0);assert.equal(fs.existsSync(file), false);
+  fs.writeFileSync(file, "PRIVATE-MALFORMED-RECORD\n");
+  const malformed = await run(file);assert.equal(JSON.parse(malformed.stdout).requests, 0);assert.match(malformed.stderr, /invalid record/);assert.doesNotMatch(malformed.stdout + malformed.stderr, /PRIVATE-MALFORMED/);
+  await assert.rejects(run(home), error => error.code === 1 && typeof JSON.parse(error.stdout).error.code === "string" && !/triggerUncaughtException/.test(error.stderr));
 });

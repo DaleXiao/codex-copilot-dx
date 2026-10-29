@@ -43,11 +43,11 @@ test("network diagnostics do not execute macOS discovery on Linux", () => {
 });
 
 test("new command tools accept only explicit supported actions and expose help", () => {
-  for (const args of [["web"], ["source", "github"], ["image", "pause"], ["prediction", "resume"], ["auth", "reauth"], ["reauth"], ["auth", "check"], ["auth", "logout", "--yes"], ["doctor", "network"], ["doctor", "report"]]) assert.ok(parseCliArgs(args).command);
-  for (const args of [["web", "--help"], ["source", "--help"], ["image", "--help"], ["auth", "login", "--help"], ["doctor", "network", "--help"]]) {
+  for (const args of [["web"], ["source", "github", "status"], ["app", "codex", "image", "pause"], ["app", "codex", "prediction", "resume"], ["source", "github", "reauth"], ["source", "github", "check"], ["source", "github", "logout", "--yes"], ["doctor", "network"], ["doctor", "report"]]) assert.ok(parseCliArgs(args).command);
+  for (const args of [["web", "--help"], ["source", "--help"], ["app", "codex", "image", "--help"], ["source", "github", "login", "--help"], ["doctor", "network", "--help"]]) {
     const parsed = parseCliArgs(args);assert.equal(parsed.command, "help");assert.match(cliHelp("ccdx", parsed.helpTopic), /Usage:/);
   }
-  for (const args of [["web", "--yes"], ["auth", "login", "--login", "not/account"], ["auth", "logout", "--force"], ["image", "destroy"], ["doctor", "report", "--online"]]) assert.throws(() => parseCliArgs(args));
+  for (const args of [["web", "--yes"], ["source", "github", "login", "--login", "not/account"], ["source", "github", "logout", "--force"], ["app", "codex", "image", "destroy"], ["doctor", "report", "--online"]]) assert.throws(() => parseCliArgs(args));
 });
 
 test("pause and resume retain setup, and offline operation explicitly requires startup", async t => {

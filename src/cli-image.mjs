@@ -211,13 +211,13 @@ export async function runImageCommand({
   }
   if (action !== "enable") throw new Error(`Unknown image command action: ${action}`);
   if (!prompt && (!input.isTTY || !output.isTTY)) {
-    throw new Error(`${commandName} enable-image requires an interactive terminal`);
+    throw new Error(`${commandName} app codex image setup requires an interactive terminal`);
   }
 
   const current = readImageProviderConfig({ env, home });
   const ask = prompt || ((question) => visibleQuestion(input, output, question));
   const askSecret = promptSecret || ((question) => hiddenQuestion(input, output, question));
-  output.write(`${commandName} enable-image\n`);
+  output.write(`${commandName} app codex image setup\n`);
   output.write("Enter an HTTPS base URL (for example, https://api.example/v1) or a full /images/generations endpoint.\n");
   const endpointAnswer = String(await ask(`Image service URL${current ? ` [${current.endpoint}]` : ""}: `) || "").trim();
   if (!endpointAnswer && !current?.endpoint) throw new Error("Image API base URL or endpoint is required");

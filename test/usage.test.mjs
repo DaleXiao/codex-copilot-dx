@@ -417,13 +417,13 @@ test("formatUsageSummary: plain layout remains compatible and combines cache fie
     output: { isTTY: true, columns: 120 },
   }), [
     "Usage log: /tmp/usage.jsonl",
-    "Requests: 2",
+    "Records: 2",
     "Tokens: input=12 cache_read=5 output=3 total=15",
     "Cache hit: 41.7% (cached/input tokens)",
     "",
     "By model:",
-    "  b: requests=1 input=4 cache_read=2 output=1 total=5 cache_hit=50.0%",
-    "  a: requests=1 input=8 cache_read=3 output=2 total=10 cache_hit=37.5%",
+    "  b: records=1 input=4 cache_read=2 output=1 total=5 cache_hit=50.0%",
+    "  a: records=1 input=8 cache_read=3 output=2 total=10 cache_hit=37.5%",
   ].join("\n"));
 });
 
@@ -492,7 +492,7 @@ test("formatUsageSummary: auto keeps plain output when stdout is not a TTY", () 
     format: "auto",
     output: { isTTY: false, columns: 120 },
   });
-  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\nRequests: 1\nTokens:/);
+  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\nRecords: 1\nTokens:/);
   assert.doesNotMatch(output, /MODEL\s+RECORDS/);
 });
 
@@ -520,7 +520,7 @@ test("formatUsageSummary: auto falls back to plain when even the compact table c
     format: "auto",
     output: { isTTY: true, columns: 8 },
   });
-  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\nRequests: 1\nTokens:/);
+  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\nRecords: 1\nTokens:/);
   assert.doesNotMatch(output, /MODEL\s+RECORDS/);
   assert.doesNotMatch(output, /\u001b/);
   assert.doesNotMatch(output, /\n\[OK\] injected/);
@@ -600,4 +600,12 @@ test("current-run cache rate is token-weighted and separates zero, missing, part
   assert.equal(providers.cache_partial.cache_hit_rate, 0.25);assert.equal(providers.cache_partial.cache_hit_rate_partial, true);
   assert.equal(providers.cache_bad.cache_hit_rate, null);
   assert.equal(providers.cache_no_output.cache_hit_rate, 0.5);assert.equal(providers.cache_no_output.cache_hit_rate_partial, false);
+});
+
+test("explicit plain usage preserves record meaning without terminal injection", () => {
+  const summary = summarizeUsage([{ model: "model\x1b[2J\nFORGED", usage: { input_tokens: 10, output_tokens: 1, total_tokens: 11 } }]);
+  const output = formatUsageSummary(summary, { format: "plain", filePath: "/tmp/usage.jsonl" });
+  assert.match(output, /Records: 1/);
+  assert.match(output, /Cache hit:/);
+  assert.doesNotMatch(output, /\x1b|^FORGED/m);
 });

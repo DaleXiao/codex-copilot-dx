@@ -114,7 +114,7 @@ export function readPredictionCertificate(directory, { allowExpired = false, pla
   if (!x509.publicKey.export({ type: "spki", format: "der" }).equals(publicKey)
     || (!allowExpired && Date.parse(x509.validTo) <= Date.now()) || !x509.checkHost("chatgpt.com") || !x509.checkHost("ab.chatgpt.com")
     || !x509.verify(ca.publicKey) || !ca.ca || x509.ca) {
-    throw new Error("Prediction certificate needs renewal; quit Codex and run ccdx prediction on");
+    throw new Error("Prediction certificate needs renewal; quit Codex and run ccdx app codex prediction setup");
   }
   return { cert, key, ca: ca.toString(), hash: createHash("sha256").update(ca.raw).digest("hex").toUpperCase(), der: ca.raw };
 }

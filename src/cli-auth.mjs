@@ -31,7 +31,7 @@ function onlineStatusLine(profile) {
 
 function authStatusPlainLines(snapshot, { commandName }) {
   return [
-    `${commandName} auth status`,
+    `${commandName} source github status`,
     status(snapshot.profiles.codex.valid ? "ok" : "warn", `Codex: ${accountLabel(snapshot.profiles.codex)} [${snapshot.profiles.codex.source === "ccdx" ? "CCDX store" : "legacy path"}]`),
     onlineStatusLine(snapshot.profiles.codex),
     status("info", `Routing: responses -> ${snapshot.routing.responses}`),
@@ -90,7 +90,7 @@ export function formatAuthStatus(snapshot = authStatus(), {
   if (format === "auto" && table.overflow) {
     return plainLines.map((line) => terminalCell(line, { fallback: "" })).join("\n");
   }
-  const lines = [`${commandName} auth status`, "", table.output];
+  const lines = [`${commandName} source github status`, "", table.output];
   if (table.compact) {
     lines.push("", "Details:", ...plainLines.slice(1, -1).map((line) => terminalCell(line, { fallback: "" })));
   }
@@ -137,7 +137,7 @@ export async function runAuthCommand({
       if (result.operation?.state === "failed") throw new Error(`Sign-in failed: ${safeCell(result.operation.reason)}. Saved sign-in kept.`);
       return { action, output: result.operation?.state === "cancelled" ? "Sign-in cancelled. Saved sign-in kept."
         : result.operation?.state === "complete" ? "Signed in and verified. Use a new conversation; restart CCDX to change accounts."
-          : "A sign-in is saved. Run ccdx auth check to verify it, or ccdx auth reauth to replace it." };
+          : "A sign-in is saved. Run ccdx source github check to verify it, or ccdx source github reauth to replace it." };
     } finally { process.removeListener("SIGINT", cancel);tools.dispose(); }
   }
   if (action !== "status") throw new Error(`Unsupported auth action: ${action}`);

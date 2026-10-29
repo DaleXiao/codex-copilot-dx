@@ -144,9 +144,23 @@
   const count = value => !value ? format("cap_unknown") : value >= 1000000 ? `${Number((value / 1000000).toFixed(2))}M` : value >= 1000 ? `${Number((value / 1000).toFixed(1))}K` : String(value);
   const reasoningText = values => values.reasoning === false ? format("cap_unsupported") : values.reasoning_efforts?.length ? values.reasoning_efforts.join(" / ") : values.reasoning === true ? format("cap_supported") : format("cap_unknown");
   const searchText = values => values.web_search === undefined ? format("cap_unknown") : values.web_search.length ? values.web_search.map(protocol => protocol === "messages" ? "Messages" : protocol === "responses" ? "Responses" : "Chat").join(" / ") : format("cap_unsupported");
-  function modelDetail(model) {
+  function closeModelDetail() {
+    const detail = el("connection-model-detail");
+    const row = detail.closest(".connection-detail-row");
+    detail.hidden = true;
+    el("connection-models").closest("fieldset").append(detail);
+    row?.remove();
+    for (const button of el("connection-models").querySelectorAll("[data-model-details]")) button.setAttribute("aria-expanded", "false");
+  }
+  function modelDetail(model, modelRow, trigger) {
+    if (trigger.getAttribute("aria-expanded") === "true") { closeModelDetail();return; }
+    closeModelDetail();
     const detail = el("connection-model-detail");detail.hidden = false;detail.replaceChildren();
-    const heading = node("div", undefined, "panel-heading");heading.append(node("h3", model.id), button("close", () => { detail.hidden = true; }));detail.append(heading);
+    const row = node("tr", undefined, "connection-detail-row"), cell = node("td");
+    cell.colSpan = modelRow.children.length;
+    cell.append(detail);row.append(cell);modelRow.after(row);
+    trigger.setAttribute("aria-expanded", "true");
+    const heading = node("div", undefined, "panel-heading");heading.append(node("h3", model.id), button("close", () => { closeModelDetail();trigger.focus(); }));detail.append(heading);
     const protocol = choice(model.protocols.map(id => ({ id, name: id === "messages" ? "Messages" : id === "responses" ? "Responses" : "Chat" })), model.protocols.includes("messages") ? "messages" : model.protocols[0], false);
     protocol.setAttribute("aria-label", format("cap_api"));detail.append(protocol);
     const status = node("p", undefined, "hint"), table = node("table"), body = node("tbody");table.append(body);detail.append(status, table);
@@ -196,7 +210,7 @@
         override[key] = numeric.includes(key) ? Number(text) : flags.includes(key) ? text === "true" : arrays.includes(key) ? text === "[]" ? [] : text.split(/[,，]\s*/).filter(Boolean) : text;
       }
       model.capabilities = override;delete model.context_window;delete model.reasoning_efforts;modelRows();detail.hidden = true;message("cap_details_draft");
-    });advanced.append(save);detail.scrollIntoView({ block: "nearest", behavior: "auto" });
+    });advanced.append(save);
   }
   function syncPreview(preview) {
     const c = client(editingClient), result = el("connection-sync-result");result.hidden = false;result.replaceChildren();
@@ -215,6 +229,7 @@
     }
   }
   function modelRows() {
+    closeModelDetail();
     const body = el("connection-models");body.replaceChildren();
     for (const model of models) {
       const tr = node("tr"), name = node("td"), apis = node("td"), actions = node("td"), group = node("div", undefined, "connection-checks");
@@ -233,7 +248,11 @@
       }
       const capability = resolved(model);
       const context = node("td", count(capability.context_window)), reasoning = node("td", reasoningText(capability)), search = node("td", searchText(capability));
-      apis.append(group);actions.append(button("cap_details", () => modelDetail(model)), button("api_remove_model", () => { models = models.filter(item => item !== model);selectedModels.delete(model.id);modelRows(); }));tr.append(name, apis, context, reasoning, search, actions);body.append(tr);
+      const details = button("cap_details", () => modelDetail(model, tr, details));
+      details.dataset.modelDetails = "";
+      details.setAttribute("aria-expanded", "false");
+      details.setAttribute("aria-controls", "connection-model-detail");
+      apis.append(group);actions.append(details, button("api_remove_model", () => { models = models.filter(item => item !== model);selectedModels.delete(model.id);modelRows(); }));tr.append(name, apis, context, reasoning, search, actions);body.append(tr);
     }
   }
   function setEndpoints(base, endpoints) { for (const [api, path] of [["messages", "messages"], ["responses", "responses"], ["chat", "chat/completions"]]) apiForm.elements[api + "_url"].value = endpoints?.[api] || base.replace(/\/+$/, "") + "/" + path; }

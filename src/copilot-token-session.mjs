@@ -128,7 +128,7 @@ export function createCopilotTokenSession({
       });
     }
     if (usesDefaultTokenStore) return githubReauthMessage(reason, resolveHome(home));
-    return `${reason}\nRun \`ccdx auth login ${profile} --reauth\`, then restart ccdx.`;
+    return `${reason}\nReconnect the affected account in its application; other saved accounts were kept.`;
   };
 
   async function loadCredentials(home) {

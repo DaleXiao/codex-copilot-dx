@@ -35,7 +35,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
   const settings = readPredictionSettings(opts);
   if (action === "fix") {
     if (!settings.enabled) {
-      output("Input suggestions are off. Nothing changed.\nTo enable: ccdx prediction on");
+      output("Input suggestions are off. Nothing changed.\nTo enable: ccdx app codex prediction setup");
       return { status: "disabled", exitCode: 0 };
     }
     if (!repairRuntime) throw new Error("Start a CCDX version that supports suggestion repair.");
@@ -45,12 +45,12 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
     if (prediction.environment) output(formatPredictionEnvironment(prediction.environment));
     if (result.status === "disabled") output("The running adapter has predictions off; no feature was enabled.");
     else if (result.status === "needs_service_restart") output("Node trust settings changed. Restart the CCDX service to apply them; no certificate or App was changed.");
-    else if (result.status === "environment_preserved") output(`Network recheck failed; the existing bridge and routes were preserved. ${result.environment_error?.message || "Check ccdx prediction status."}`);
+    else if (result.status === "environment_preserved") output(`Network recheck failed; the existing bridge and routes were preserved. ${result.environment_error?.message || "Check ccdx app codex prediction status."}`);
     else if (prediction.bridge !== "running") output(prediction.reason || "Prediction bridge is unavailable; core service was not changed.");
     else if (prediction.environment?.status === "needs_app_relaunch") output("Network settings changed. The bridge uses the new snapshot, but the App may cache its earlier PAC. Fully quit Codex, then run ccdx; no App was restarted.");
     else if (result.app_route === "verified") output("App launch route verified. A visible suggestion still needs an App-side check.");
     else if (result.app_route === "closed") output("Bridge is ready. Run ccdx to open Codex with its prediction route.");
-    else if (result.status === "route_unverified") output("Bridge is ready, but App route inspection was unavailable or ambiguous. Check ccdx prediction status; no App was restarted.");
+    else if (result.status === "route_unverified") output("Bridge is ready, but App route inspection was unavailable or ambiguous. Check ccdx app codex prediction status; no App was restarted.");
     else output("Bridge is ready, but the running App route is not verified. No App was restarted. Fully quit Codex, then run ccdx to attach the route.");
     return { ...result, exitCode: ["ready", "disabled"].includes(result.status) ? 0 : 1 };
   }
@@ -88,7 +88,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
         if (certificate.hash !== settings.certificateHash) throw new Error("Prediction certificate changed; trust cleanup was skipped");
         await updatePredictionTrust(settings.store, certificate, { remove: true });
       } catch (error) {
-        output(`Predictions disabled. ${error.message}. Quit Codex and run ccdx prediction off again to finish cleanup.`);
+        output(`Predictions disabled. ${error.message}. Quit Codex and run ccdx app codex prediction remove again to finish cleanup.`);
         return { ...settings, enabled: false, cleanupPending: true };
       }
     }
@@ -171,7 +171,7 @@ export async function startNativePrediction({ env = process.env, platform = proc
     const current = (options.resolveApp || installedPredictionApp)({ ...opts,
       ...(platform === "win32" && settings.app?.profile ? { preferredProfile: settings.app.profile } : {}) });
     if (current.app !== settings.app?.app || (platform === "win32" && current.profile !== settings.app?.profile)) {
-      throw new Error("Codex App identity/profile changed; run ccdx prediction on after quitting it to recheck compatibility");
+      throw new Error("Codex App identity/profile changed; run ccdx app codex prediction setup after quitting it to recheck compatibility");
     }
     const settingsFile = predictionPaths(opts).settings;
     await withFileLock(`${settingsFile}.lock`, () => {
@@ -183,7 +183,7 @@ export async function startNativePrediction({ env = process.env, platform = proc
     warning("Codex App compatibility rechecked; prediction port and trust were preserved");
   }
   const paths = predictionPaths({ ...opts, app: settings.app });
-  if (settings.store !== paths.store || !fs.existsSync(paths.store)) throw new Error("Prediction profile trust is unavailable; run ccdx prediction on after quitting Codex");
+  if (settings.store !== paths.store || !fs.existsSync(paths.store)) throw new Error("Prediction profile trust is unavailable; run ccdx app codex prediction setup after quitting Codex");
   const certificate = readPredictionCertificate(certificateDirectory(settings, paths), opts);
   if (certificate.hash !== settings.certificateHash) throw new Error("Prediction certificate changed; setup must be checked again");
   const [{ startPredictionTransport }, { applyNativePredictionOverlay, normalizeStatsigRequest }, { createProxyAgent }] = await Promise.all([

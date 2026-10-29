@@ -85,26 +85,22 @@ export function packageMetadata(bytes, { complete = false } = {}) {
   if (metadata?.name !== "codex-copilot-dx" || !stableVersion(metadata.version)) throw new Error("Release package identity is invalid");
   return metadata;
 }
-export function runtimeReleaseTarget({ platform = process.platform, arch = process.arch, libc } = {}) {
-  if (!["darwin", "win32", "linux"].includes(platform) || !["x64", "arm64"].includes(arch)) throw new Error("No complete Release package is available for this platform");
-  if (platform !== "linux") return `${platform}-${arch}`;
-  libc ||= process.report?.getReport().header.glibcVersionRuntime ? "glibc" : "musl";
-  if (!["glibc", "musl"].includes(libc)) throw new Error("Unsupported Linux runtime");
-  return `${platform}-${arch}-${libc}`;
+export function runtimeReleaseTarget({ platform = process.platform, arch = process.arch } = {}) {
+  if (!["darwin", "win32"].includes(platform) || !["x64", "arm64"].includes(arch)) {
+    throw new Error("CCDX supports macOS and Windows on x64 or arm64");
+  }
+  return `${platform}-${arch}`;
 }
 export function remoteDownloadDenied(error) {
   return error?.npmCode === "EALLOWREMOTE" || /(?:^|\n)npm (?:error|ERR!) code EALLOWREMOTE(?:\r?\n|$)/.test(String(error?.stderr || ""));
 }
-export async function downloadRelease(tag, { fetchImpl = fetch, directory, signal, complete = false, preferComplete = false, platform, arch, libc } = {}) {
+export async function downloadRelease(tag, { fetchImpl = fetch, directory, signal, complete = false, preferComplete = false, platform, arch } = {}) {
+  const target = runtimeReleaseTarget({ platform, arch });
   const version = stableVersion(tag);if (!version) throw new Error("A valid stable GitHub release tag is required");
   const base = `${RELEASE_BASE}/v${version}`;
   const manifest = await releaseBytes(`${base}/SHA256SUMS`, { fetchImpl, maxBytes: 65536, signal });
-  let name = `codex-copilot-dx-${version}.tgz`, target;
+  let name = `codex-copilot-dx-${version}.tgz`;
   if (complete || preferComplete) {
-    if (complete) target = runtimeReleaseTarget({ platform, arch, libc });
-    else {
-      try { target = runtimeReleaseTarget({ platform, arch, libc }); } catch { /* Other platforms retain the source-only bootstrap path. */ }
-    }
     if (target) {
       const runtimeName = `codex-copilot-dx-${version}-${target}.tgz`;
       if (complete || manifest.toString("utf8").split(/\r?\n/).some(line => line.endsWith(`  ${runtimeName}`))) { name = runtimeName;complete = true; }
@@ -191,14 +187,14 @@ export function verifyPackageRuntime(target, version, { brokerRequired = false }
 
 export function privateUnixLauncher({ prefix, target, name, node = process.execPath }) {
   const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
-  const cli = path.join(target, "bin", name === "ccdx" ? "cli.mjs" : "codex-copilot-dx.mjs");
+  const cli = path.join(target, "bin", "cli.mjs");
   return `#!/bin/sh\nPATH=${quote(path.dirname(node))}:"$PATH"\nexport PATH\nCCDX_PRIVATE_INSTALL_PREFIX=${quote(prefix)}\nexport CCDX_PRIVATE_INSTALL_PREFIX\nif [ -z "\${npm_config_prefix:-}\${NPM_CONFIG_PREFIX:-}" ]; then npm_config_prefix=${quote(prefix)}; export npm_config_prefix; fi\nexec ${quote(node)} ${quote(cli)} "$@"\n`;
 }
 export async function writePrivateLaunchers({ prefix, target }) {
   const windows = process.platform === "win32"
     ? await import(pathToFileURL(path.join(target, "src", "windows-command.mjs")).href) : null;
-  for (const name of ["ccdx", "codex-copilot-dx"]) {
-    const cli = path.join(target, "bin", name === "ccdx" ? "cli.mjs" : "codex-copilot-dx.mjs");
+  for (const name of ["ccdx"]) {
+    const cli = path.join(target, "bin", "cli.mjs");
     if (windows) {
       fs.writeFileSync(path.join(prefix, `${name}.cmd`), windows.privateWindowsCommand({ node: process.execPath, cli, prefix }));
     } else {

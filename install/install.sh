@@ -1,7 +1,8 @@
 #!/bin/sh
 # CCDX release bootstrap. No administrator privileges or system package manager.
 set -eu
-version=1.2.33
+[ "$(uname -s)" = Darwin ] || { echo "CCDX supports macOS and Windows. Use install.ps1 on Windows." >&2; exit 1; }
+version=1.3.0
 base="https://github.com/DaleXiao/codex-copilot-dx/releases/download/v$version"
 permission=
 case "${1-}" in '' ) ;; --allow-remote) permission=--allow-remote ;; *) echo 'Use: sh install.sh [--allow-remote]' >&2; exit 2 ;; esac
@@ -23,14 +24,8 @@ else
   case "$(uname -s)/$(uname -m)" in
     Darwin/arm64) platform=darwin-arm64; hash=6a9724d9b50a5f22b4816cded441b5a8d9ddae546191a5e5b7efa5a5e2ee26d5 ;;
     Darwin/x86_64) platform=darwin-x64; hash=495e3f273c645f3c4677d438304cdfc701729ea5dec5728f5c8e76a2dece4b91 ;;
-    Linux/aarch64|Linux/arm64) platform=linux-arm64; hash=b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d ;;
-    Linux/x86_64) platform=linux-x64; hash=28ea0a438de9a13bd7891fd758eee6c7819ee8af5442dfd8d45bd65e56d4228c ;;
     *) echo 'No tested private Node build for this platform. Keep your existing installation; use an approved Node 22.15+ distribution.' >&2; exit 1 ;;
   esac
-  # Linux musl users may reuse an existing compatible Node; never install glibc.
-  if [ "$(uname -s)" = Linux ] && ldd --version 2>&1 | head -1 | grep -qi musl; then
-    echo 'Install an approved musl-compatible Node 22.15+ first; no system libraries were changed.' >&2; exit 1
-  fi
   runtime="$prefix/runtime/node-v24.22.0-$platform"
   if [ ! -x "$runtime/bin/node" ]; then
     echo 'Downloading official Node 24.22.0 for CCDX only…'

@@ -22,9 +22,9 @@ const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== "--baseline" || !path.isAbsolute(args[1]) || !fs.statSync(args[1]).isFile())) throw new Error("Use --baseline /absolute/path/to/package.tgz for a local baseline artifact");
 try {
   const install = spec => runNpm(["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", spec]);
-  install(args[1] || "codex-copilot-dx@0.9.41");
+  install(args[1] || "codex-copilot-dx@1.2.33");
   const baselineVersion = version();
-  assert.match(baselineVersion, args[1] ? /ccdx v\d+\.\d+\.\d+ / : /ccdx v0\.9\.41 /);
+  assert.match(baselineVersion, args[1] ? /ccdx v\d+\.\d+\.\d+ / : /ccdx v1\.2\.33 /);
   const expected = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")).version;
   const result = JSON.parse(runNpm(["pack", "--json", "--ignore-scripts", "--pack-destination", root]));
   // npm 10/11 return an array; npm 12 keys pack results by package name.

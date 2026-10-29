@@ -61,7 +61,7 @@ async function confirmHistoryCleanup({ input, output, prompt, yes }) {
 }
 
 function formatStatus(preference, runtime) {
-  const lines = ["ccdx cache", `Saved buffer limit: ${mib(preference.bytes)} (${preference.source})`];
+  const lines = ["ccdx doctor cache", `Saved buffer limit: ${mib(preference.bytes)} (${preference.source})`];
   if (!runtime?.supported) {
     lines.push(runtime?.offline
       ? "Runtime cache: adapter is not running"
@@ -104,7 +104,7 @@ export async function runCacheCommand({
   }
   if (action === "limit") {
     if (String(env.CCDX_RESPONSE_HISTORY_MAX_BYTES || "").trim()) {
-      throw new Error("CCDX_RESPONSE_HISTORY_MAX_BYTES overrides saved cache settings; unset it before using ccdx cache --limit");
+      throw new Error("CCDX_RESPONSE_HISTORY_MAX_BYTES overrides saved cache settings; unset it before using ccdx doctor cache --limit");
     }
     const targetMib = resetLimit ? RESPONSE_HISTORY_DEFAULT_MIB : Number(limitMib);
     const targetBytes = targetMib * MIB;

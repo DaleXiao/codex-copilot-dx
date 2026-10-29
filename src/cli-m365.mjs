@@ -122,7 +122,7 @@ export async function runM365Command({ action = "status", provider, model, autoR
         return result;
       }
       if (!accountId) {
-        if (!prompt && (!input.isTTY || !output.isTTY)) throw new Error("Use ccdx m365 account --id ID from ccdx m365 accounts.");
+        if (!prompt && (!input.isTTY || !output.isTTY)) throw new Error("Use ccdx source m365 account --id ID from ccdx source m365 accounts.");
         output.write(accounts.map((value, index) => `  ${index + 1}. ${terminalCell(value.login)} / ${terminalCell(value.tenant)}${value.selected ? " [selected]" : value.current_windows ? " [Windows sign-in]" : ""}`).join("\n") + "\n");
         const answer = String(await ask("Choose an account, or q to cancel: ")).trim();
         if (answer === "q") return { cancelled: true };

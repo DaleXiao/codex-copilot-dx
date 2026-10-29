@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -42,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -73,7 +73,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Verify Windows updater process, certificates, worker, profile, ACL, launch and recovery
-        run: node --test --test-concurrency=2 test/package-update.test.mjs test/package-update-windows.test.mjs test/release-install.test.mjs test/bounded-file.test.mjs test/auth.test.mjs test/auth-profile.test.mjs test/doctor.test.mjs test/adapter.test.mjs test/response-failures.test.mjs test/native-prediction-windows.test.mjs test/launcher.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs test/dashboard-refresh.test.mjs test/dashboard-updates.test.mjs test/dashboard-analytics-ui.test.mjs test/dashboard-language.test.mjs test/dashboard-time.test.mjs test/dashboard-theme.test.mjs test/dashboard-status-ui.test.mjs test/upstream-headers.test.mjs test/cli-models.test.mjs test/module-boundaries.test.mjs test/http-transport.test.mjs
+        run: node --test --test-concurrency=2 test/package-update.test.mjs test/package-update-windows.test.mjs test/release-install.test.mjs test/bounded-file.test.mjs test/auth.test.mjs test/auth-profile.test.mjs test/doctor.test.mjs test/adapter.test.mjs test/response-failures.test.mjs test/native-prediction-windows.test.mjs test/launcher.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs test/dashboard-refresh.test.mjs test/dashboard-updates.test.mjs test/dashboard-analytics-ui.test.mjs test/dashboard-language.test.mjs test/dashboard-time.test.mjs test/dashboard-theme.test.mjs test/dashboard-status-ui.test.mjs test/upstream-headers.test.mjs test/module-boundaries.test.mjs test/http-transport.test.mjs
       - name: Verify startup presentation and bounded prediction recovery on Windows
         run: node --test test/startup-ui.test.mjs test/quiet-startup.test.mjs test/terminal-startup.test.mjs test/native-prediction-route.test.mjs test/native-prediction-recovery.test.mjs test/native-prediction-protocol.test.mjs test/prediction-fix.test.mjs test/network-route.test.mjs test/network-environment.test.mjs
       - name: Verify command ownership, credential discovery and bounded doctor repairs
@@ -91,28 +91,12 @@ jobs:
         if: matrix.node == '24.x'
         run: node scripts/dashboard-browser-replay.mjs --playwright "${{ runner.temp }}/ccdx-browser/node_modules/playwright/index.js" --engines chromium --channel msedge --palettes green,mono
       - run: npm run test:package
-  macos:
-    runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ["22.15.0", "24.x"]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: ${{ matrix.node }}
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run test:smoke
-      - run: npm run test:package
   prediction-browsers:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -123,15 +107,15 @@ jobs:
       - name: Provision test-only Chromium
         run: |
           npm install --prefix "${{ runner.temp }}/ccdx-browser" playwright@1.62.1 @xterm/headless@6.0.0
-          node "${{ runner.temp }}/ccdx-browser/node_modules/playwright/cli.js" install --with-deps chromium
+          node "${{ runner.temp }}/ccdx-browser/node_modules/playwright/cli.js" install chromium
       - name: Verify repeated recovery in the same browser process and preserve company fallback
         run: node scripts/prediction-browser-replay.mjs --playwright "${{ runner.temp }}/ccdx-browser/node_modules/playwright/index.js"
       - name: Verify terminal table, animation, cursor updates and resize in xterm
         run: node scripts/terminal-console-replay.mjs --xterm "${{ runner.temp }}/ccdx-browser/node_modules/@xterm/headless/lib-headless/xterm-headless.js"
       - name: Verify revised PAC and default credential denial handling
         run: node --test test/prediction-pac.test.mjs test/copilot-auth-recovery.test.mjs
-  test:
-    runs-on: ubuntu-latest
+  macos:
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
@@ -149,7 +133,7 @@ jobs:
       - run: npm run test:package
       - run: node scripts/config-startup-replay.mjs
   codex-client:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -182,12 +166,12 @@ jobs:
       - name: Verify native OpenAI mode and complete first catalog across cold and warm starts
         run: node scripts/codex-native-provider-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
   dashboard-browsers:
-    # Preinstalled browser dependencies avoid slow Azure Ubuntu archive downloads.
-    runs-on: ubuntu-24.04
-    container:
-      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
-      options: --ipc=host
+    runs-on: macos-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, webkit]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -197,9 +181,10 @@ jobs:
       - run: npm ci
       - name: Provision matching test-only Playwright package
         run: npm install --prefix "$RUNNER_TEMP/ccdx-browser" playwright@1.62.1
+      - run: node "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/cli.js" install ${{ matrix.engine }}
       - name: Verify bilingual themes, small screens, timer and user-state preservation
-        run: node scripts/dashboard-browser-replay.mjs --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js" --output "$RUNNER_TEMP/ccdx-dashboard-screenshots"
+        run: node scripts/dashboard-browser-replay.mjs --engines ${{ matrix.engine }} --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js" --output "$RUNNER_TEMP/ccdx-dashboard-screenshots"
       - name: Verify API creation, many-to-many access, disabling and recovery
-        run: node scripts/connections-browser-replay.mjs --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js" --output "$RUNNER_TEMP/ccdx-connection-screenshots"
+        run: node scripts/connections-browser-replay.mjs --engines ${{ matrix.engine }} --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js" --output "$RUNNER_TEMP/ccdx-connection-screenshots"
       - name: Verify disclosure motion, keyboard operation and reduced motion
-        run: node scripts/disclosure-browser-replay.mjs --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js"
+        run: node scripts/disclosure-browser-replay.mjs --engines ${{ matrix.engine }} --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js"

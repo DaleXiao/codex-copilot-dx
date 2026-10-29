@@ -29,7 +29,7 @@ for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const col
   const lines = () => {
     const buffer = screen.buffer.active, end = buffer.baseY + buffer.cursorY;
     let start = end;
-    while (start > Math.max(0, end - 23) && !/^(?:Listening|Previous data|Status unavailable)/.test(buffer.getLine(start)?.translateToString(true) || "")) start--;
+    while (start > Math.max(0, end - 23) && !/^(?:Running|Web UI:|Previous data|Status unavailable)/.test(buffer.getLine(start)?.translateToString(true) || "")) start--;
     return Array.from({ length: end - start + 1 }, (_, index) => buffer.getLine(start + index)?.translateToString(true) || "");
   };
   const step = async () => {

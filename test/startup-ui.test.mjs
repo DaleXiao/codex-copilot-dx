@@ -17,6 +17,28 @@ test("interactive startup replaces ordinary checks while retaining device codes 
   presentation.finish();
 });
 
+test("multiline startup summaries stay transient and retain each warning", () => {
+  const writes = [], errors = [];
+  const presentation = createStartupPresentation({
+    output: { isTTY: true, columns: 80, rows: 24, write: text => writes.push(text) },
+    errorOutput: { isTTY: true, write: text => errors.push(text) }, env: {},
+  });
+  presentation.log("log", [providerStartupChecks({ providers: { connections: {
+    managed: true, providers: [{ id: "github", name: "GitHub Copilot", builtin: true, enabled: true }],
+    clients: [{ id: "claude_app", name: "Claude App", enabled: true, source: "github", setup: "configured" }],
+  } } })]);
+  presentation.finish();
+  assert.equal(writes.filter(text => text.endsWith("\n")).length, 0);
+  assert.match(writes.join(""), /Starting · Sources/);
+  assert.match(writes.join(""), /Starting · Apps/);
+  assert.doesNotMatch(writes.join(""), /\[INFO\]|Claude App: configured/);
+  presentation.log("log", [startupCheck("info", "Sources", "Loaded") + "\n" + startupCheck("warn", "Claude", "Configuration unreadable")]);
+  assert.match(errors.join(""), /Configuration unreadable/);
+  assert.equal(presentation.warnings.length, 1);
+  presentation.log("log", ["Open the sign-in page\nEnter code: ABCD-EFGH"]);
+  assert.match(writes.join(""), /Open the sign-in page\nEnter code: ABCD-EFGH\n/);
+});
+
 test("A atom banner is static, bounded and enabled only on a wide colored terminal", () => {
   const args = { version: "0.0.0", env: {}, colorTheme: "green", stream: { isTTY: true, columns: 80 } };
   const colored = startupBanner(args);
@@ -55,8 +77,8 @@ test("self-check does not confuse disabled, unavailable, saved-route, launch and
     assert.match(line, /suggestion display not verified/);assert.doesNotMatch(line, /\[OK\]/);
   }
   assert.match(predictionStartupCheck({ configured: true, bridge: "running", active: false }), /Paused; trust and route retained/);
-  assert.match(predictionStartupCheck({ configured: true, bridge: "running", environment: { status: "needs_service_restart" } }), /\[WARN\].*restart CCDX[\s\S]*ccdx prediction status/);
-  assert.match(predictionStartupCheck({ configured: true, bridge: "unavailable", reason: "synthetic certificate error" }), /synthetic certificate error[\s\S]*ccdx prediction status/);
+  assert.match(predictionStartupCheck({ configured: true, bridge: "running", environment: { status: "needs_service_restart" } }), /\[WARN\].*restart CCDX[\s\S]*ccdx app codex prediction status/);
+  assert.match(predictionStartupCheck({ configured: true, bridge: "unavailable", reason: "synthetic certificate error" }), /synthetic certificate error[\s\S]*ccdx app codex prediction status/);
 });
 
 test("startup counts discovered catalogs without claiming inference access or uninspected client configuration", () => {

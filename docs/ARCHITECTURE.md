@@ -316,6 +316,12 @@ Copilot OAuth and noninteractive GitHub CLI token retrieval. Provider-specific
 readers do not validate or write credentials. The auth facade enforces bounded
 GitHub/Copilot validation, account matching and ambiguity handling. Saved-token
 startup does not scan sources or make new validation calls.
+An optional `ensureAuth` import callback hands verified discovery results to the
+startup client's `reuseVerifiedAuth`. The session rechecks the saved credential
+and identity, expiry and existing cache/flight/account binding before using the
+existing cache writer. Rejected handoffs leave normal refresh behavior intact.
+No service-token file, shared global handoff cache, new endpoint or configuration
+field is introduced; the auth facade still imports no runtime/client module.
 
 `windows-command.mjs` owns exact npm-generated CCDX PowerShell launcher cleanup.
 Best-effort Windows startup, the verified updater target and explicit doctor

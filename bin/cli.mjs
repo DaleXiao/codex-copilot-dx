@@ -448,7 +448,8 @@ try {
   const predictionSetup = codexEnabled && !serviceWorker?.warming ? runInBackground(() => earlyIntegration.start()) : Promise.resolve(null);
   const m365Setup = runInBackground(() => providerRuntime.start());
   if (providerRuntime.selection().codex === "github") {
-    try { await ensureAuth({ log: startupLogger("Sign-in"), interactive: serviceWorker?.preserving !== true }); }
+    try { await ensureAuth({ log: startupLogger("Sign-in"), interactive: serviceWorker?.preserving !== true,
+      onImportedAuth: imported => profileRuntime.codexClient.reuseVerifiedAuth(imported) }); }
     catch (error) { if (serviceWorker?.preserving) throw error;console.warn(startupCheck("warn", "Sign-in", "Sign-in unavailable. Use the dashboard or ccdx source github login; saved credentials kept.")); }
   } else {
     if (providerRuntime.selection().codex === "m365") await m365Setup;

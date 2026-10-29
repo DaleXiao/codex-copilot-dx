@@ -36,14 +36,14 @@ function cacheHitPercent(usage) {
 }
 
 function providerSummaryLines(summary) {
-  if (summary.provider_filter) return [`Provider: ${summary.provider_filter}`];
+  if (summary.provider_filter) return [`Provider: ${terminalCell(summary.provider_filter)}`];
   const sources = Object.entries(summary.providers || {}).filter(([, count]) => count > 0);
   return sources.some(([id]) => id !== "github")
-    ? [`Providers: ${sources.map(([id, count]) => `${id} ${fmt(count)}`).join(" / ")} (combined totals; use --provider to separate)`] : [];
+    ? [`Providers: ${sources.map(([id, count]) => `${terminalCell(id)} ${fmt(count)}`).join(" / ")} (combined totals; use --provider to separate)`] : [];
 }
 
-function formatPlainUsageSummary(summary, filePath, { sanitize = true } = {}) {
-  const lines = [`Usage log: ${filePath}`];
+function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {
+  const lines = [`Usage log: ${terminalCell(filePath)}`];
   lines.push(...providerSummaryLines(summary));
   if (summary.requests === 0) {
     lines.push("No usage records yet.");
@@ -57,7 +57,7 @@ function formatPlainUsageSummary(summary, filePath, { sanitize = true } = {}) {
     "By model:",
   );
   for (const [model, row] of Object.entries(usageModelGroups(summary))) {
-    lines.push(`  ${model}: records=${fmt(row.requests)} input=${fmt(row.input_tokens)} cache_read=${fmt(cacheReadTokens(row))} output=${fmt(row.output_tokens)} total=${fmt(row.total_tokens)} cache_hit=${cacheHitPercent(row)}`);
+    lines.push(`  ${terminalCell(model)}: records=${fmt(row.requests)} input=${fmt(row.input_tokens)} cache_read=${fmt(cacheReadTokens(row))} output=${fmt(row.output_tokens)} total=${fmt(row.total_tokens)} cache_hit=${cacheHitPercent(row)}`);
   }
   return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
 }

@@ -32,6 +32,12 @@ let proxyFailure = false;
 let modelActivity = 2;
 let extraRequests = [];
 let flowRequests = [];
+let contextReads = 0;
+const contextFixture = () => ({ source: "run_context", sessions: [{ id: "0-session-1", application: "codex_app", provider: "github", model: "gpt-test", concurrent: false,
+  points: [100, 200, 120].map((input, index) => ({ at: `2026-10-29T11:00:0${index}Z`, order: index * 10, finished: index * 10 + 1,
+    input_tokens: input, context_window_tokens: 1000, cached_input_tokens: 60, request_id: `context-${index}`, outcome: "completed" })),
+  compactions: [{ at: "2026-10-29T11:00:02Z", order: 20, elapsed_ms: 2400, outcome: "completed" }] }],
+  unassigned: [{ id: "0-request-2", application: "claude_app", provider: "m365", model: "external-test", input_tokens: 50, context_window_tokens: null, cached_input_tokens: null, at: "2026-10-29T10:00:00Z" }] });
 const concurrentFlow = () => [
   { request_id: "flow-codex", application: requestApplication({ originator: "Codex Desktop" }), provider: "github", model: "gpt-test", first_output_ms: 100, upstream_attempts: 1, elapsed_ms: 1200 },
   { request_id: "flow-code", application: "claude_code", provider: "m365", model: "claude-test", first_output_ms: 200, upstream_attempts: 1, elapsed_ms: 1000 },
@@ -106,6 +112,7 @@ const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, servic
     for (const record of selected) options?.onRecord?.(record, summarizeUsage([record])); return summarizeUsage(selected, { provider: options?.provider }); },
 } });
 const server = http.createServer((req, res) => {
+  if (req.url === "/_ccdx/ui/context") { contextReads++;res.writeHead(200, { "content-type": "application/json" });res.end(JSON.stringify(contextFixture()));return; }
   if (req.url.startsWith("/_ccdx/ui/animation")) {
     res.writeHead(200, { "content-type": "application/json" });
     const frames = !req.url.includes("frames=0");
@@ -226,6 +233,14 @@ try {
         await page.locator("#refresh").click();
         await page.waitForFunction(() => !document.getElementById("refresh").disabled);
         assert.equal(await page.evaluate(() => atomMotions.length), 2);
+        await page.locator(".sidebar-brand #status-icon").click();
+        assert.equal(await page.evaluate(() => atomMotions.length), 3, "Clicking the logo plays one rotation");
+        assert.equal(await page.evaluate(() => location.hash), "#overview", "Logo navigation stays intact");
+        await page.locator(".sidebar-brand").focus();
+        await page.keyboard.press("Enter");
+        assert.equal(await page.evaluate(() => atomMotions.length), 4, "Keyboard activation also plays the logo motion");
+        await page.evaluate(() => { for (let index = 0; index < 10; index++) document.querySelector(".sidebar-brand").click(); });
+        assert.equal(await page.locator("#status-icon").evaluate(node => node.getAnimations().length), 1, "Rapid clicks replace the current rotation");
         assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
         assert.equal(await page.locator("html").getAttribute("lang"), language === "zh" ? "zh-CN" : "en");
         const nav = async route => { await page.locator(`[data-route="${route}"]`).click();await page.locator(`[data-view="${route}"]`).waitFor({ state: "visible" }); };
@@ -335,7 +350,8 @@ try {
         await page.locator("#github-check").click();
         await page.waitForFunction(() => document.getElementById("github-check-code").textContent === "github_token_invalid");
         assert.equal(await page.locator("#github-account-state .state-warning .state-icon").count(), 1);
-        assert.equal(await page.locator("#connection .state-running .state-icon").count(), 1);
+        assert.equal(await page.locator("#connection .state-connected .state-icon").count(), 1);
+        assert.equal(await page.locator("#connection .state-icon circle").count(), 0, "Connection uses a link without an outer circle");
         await page.locator("#github-signin").click();
         await page.waitForFunction(() => !document.getElementById("github-login-flow").hidden);
         assert.equal(await page.locator("#github-user-code").innerText(), "ABCD-EFGH");
@@ -477,6 +493,7 @@ try {
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Checks stay within the viewport");
         await nav("requests");
         flowRequests = concurrentFlow().slice(0, 1);await refreshStatus();
+        assert.equal(await page.locator("#flow-state .state-progress .state-icon circle").count(), 1, "Active requests use circled ellipsis");
         const singlePaths = await page.locator("#flow-wires path").evaluateAll(nodes => nodes.map(node => node.getAttribute("d")));
         assert.equal(singlePaths.length, 2);assert.ok(singlePaths.every(d => !/[QV]/.test(d)), "A single route is straight");
         assert.equal(await page.locator("#flow-network .flow-count:visible").count(), 0);
@@ -592,6 +609,28 @@ try {
         await page.locator("#language-toggle").click();
         assert.equal(await page.locator("#model-usage").isVisible(), false);
         await nav("usage");
+        const beforeContext = contextReads;
+        assert.equal(await page.locator("#usage-tokens-pane").isVisible(), true);
+        await page.locator("#usage-context-tab").click();
+        await page.waitForFunction(() => document.getElementById("context-latest-input").textContent === "120");
+        assert.equal(contextReads, beforeContext + 1);
+        assert.equal(await page.locator("#context-sessions tr").count(), 2);
+        assert.equal(await page.locator("#context-history-chart svg").count(), 1);
+        assert.equal(await page.locator("#context-share").textContent(), "12.0%");
+        assert.equal(await page.locator("#context-reuse").textContent(), "50.0%");
+        assert.match(await page.locator("#context-compactions").textContent(), /2.4 s/);
+        if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-context.png`), fullPage: true });
+        await page.locator("#context-sessions button").last().click();
+        assert.equal(await page.locator("#context-share").textContent(), "—");
+        assert.equal(await page.locator("#context-reuse").textContent(), "—");
+        assert.equal(await page.locator("#context-history-chart svg").count(), 0, "Unidentified requests do not create conversation curves");
+        await page.route("**/_ccdx/ui/context", route => route.fulfill({ status: 503, body: '{}' }));
+        await page.locator("#refresh").click();
+        await page.waitForFunction(() => !document.getElementById("refresh").disabled);
+        assert.equal(await page.locator("#context-sessions tr").count(), 2, "Failed reads retain observed metadata");
+        await page.unroute("**/_ccdx/ui/context");
+        await page.locator("#usage-tokens-tab").click();
+        assert.equal(await page.locator("#usage-tokens-pane").isVisible(), true);
         await page.locator("#usage-analytics > summary").click();
         await page.waitForFunction(() => document.querySelectorAll(".calendar-day").length === 365);
         await page.waitForFunction(() => !document.getElementById("refresh-usage").disabled);
@@ -769,6 +808,8 @@ try {
         assert.equal(await page.evaluate(() => atomMotions.length), motionCount);
         await page.emulateMedia({ reducedMotion: "reduce" });
         const chartMotionCount = await page.evaluate(() => chartMotions.length);
+        await page.locator(".sidebar-brand #status-icon").click();
+        assert.equal(await page.evaluate(() => atomMotions.length), motionCount, "Reduced motion also suppresses logo click rotations");
         await nav("usage");
         await page.locator("#analytics-view").selectOption("bars");
         await page.locator("#analytics-view").selectOption("line");

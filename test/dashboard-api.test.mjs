@@ -13,6 +13,21 @@ import { authStatus } from "../src/cli-auth.mjs";
 import { githubTokenPath, githubTokenMetadataPath } from "../src/auth.mjs";
 import { githubTokenFingerprint } from "../src/github-identity.mjs";
 import { createRequestMetrics } from "../src/observability.mjs";
+import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
+
+test("context metadata is on-demand, read-only and uses the dashboard access boundary", async () => {
+  const metrics = createStreamPerformanceMetrics();
+  const trace = metrics.begin("responses", { requestId: "context-test", application: "codex_app" });
+  trace.setProvider("github");trace.setModel("test", { configured: true });trace.observeSession("a".repeat(64));
+  trace.observeContext({ input_tokens: 100, cached_input_tokens: 50, context_window_tokens: 1000 });trace.finish();
+  const handler = createAdapterHandler({ streamPerformanceMetrics: metrics });
+  const valid = await invoke(handler, { url: "/_ccdx/ui/context" });
+  assert.equal(valid.status, 200);const data = valid.body;
+  assert.equal(data.sessions[0].points[0].input_tokens, 100);
+  for (const [options, expected] of [[{ dashboardHeader: "" }, 403], [{ origin: "https://example.test" }, 403], [{ method: "POST" }, 405], [{ remoteAddress: "192.0.2.1" }, 403]]) {
+    assert.equal((await invoke(handler, { url: "/_ccdx/ui/context", ...options })).status, expected);
+  }
+});
 
 async function invoke(handler, {
   method = "GET",

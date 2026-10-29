@@ -27,7 +27,7 @@ const statusResourceKey = () => ["codex", "claude", "models", "usage", "requests
 const refreshStatus = () => dashboardRefresh.refresh(statusResourceKey(), { force: true });
 const refresh = refreshStatus;
 
-function animateRefresh() {
+function animateLogo() {
   const icon = element("status-icon");
   if (!icon || reducedMotion.matches || !icon.animate) return;
   for (const animation of icon.getAnimations?.() || []) animation.cancel();
@@ -35,9 +35,10 @@ function animateRefresh() {
     { duration: 450, easing: "cubic-bezier(0.25, 1, 0.5, 1)" });
 }
 element("refresh").addEventListener("click", () => {
-  animateRefresh();
+  animateLogo();
   dashboardRefresh.refreshVisible({ force: true });
 });
+document.querySelector(".sidebar-brand").addEventListener("click", animateLogo);
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const animationView = globalThis.ccdxViewBoundary.create("animation-settings", () => globalThis.ccdxDashboardAnimation.create({ element, phrase, localize, text, reducedMotion,
@@ -256,7 +257,7 @@ function statusState(state) {
   text("connection", state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable");
   element("connection").className = `badge ${state.pending ? "neutral" : state.error ? "bad" : "good"}`;
   globalThis.ccdxIcons?.set(element("connection"), state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable",
-    state.pending && !state.value ? "unknown" : state.error ? "unavailable" : "running");
+    state.pending && !state.value ? "unknown" : state.error ? "unavailable" : "connected");
   if (state.error) refreshTime(element("updated"), state);
   for (const node of timestamps.get("status")) refreshTime(node, state);
 }
@@ -269,6 +270,12 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
     element("refresh").setAttribute("aria-busy", String(busy));
   },
   resources: {
+    context: {
+      visible: () => globalThis.ccdxContextView?.visible() === true,
+      load: ({ signal }) => readDashboard("/_ccdx/ui/context", { signal, timeout: 5000, source: "run_context" }),
+      apply: data => globalThis.ccdxContextView?.apply(data),
+      state: state => globalThis.ccdxContextView?.state(state),
+    },
     updates: {
       visible: () => !element("version-updates").closest("[hidden]"),
       load: ({ signal }) => readDashboard("/_ccdx/ui/updates", { signal, timeout: 20000, source: "release_status" }),
@@ -458,7 +465,8 @@ for (const link of document.querySelectorAll("[data-source-link]")) link.addEven
   const id = link.dataset.sourceLink === "codex" ? providerEntries.find(provider => provider.clients?.some(client => client.id === "codex" && client.selected))?.id : link.dataset.sourceLink;
   if (providerEntries.some(provider => provider.id === id)) chooseProvider(id);
 });
+window.addEventListener("ccdx:context-view", () => { if (globalThis.ccdxContextView?.visible()) void dashboardRefresh.refresh("context"); });
 loadAnimation();
 refresh();
 loadAuth();
-animateRefresh();
+animateLogo();

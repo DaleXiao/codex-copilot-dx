@@ -114,7 +114,7 @@
     root.dataset.state = !fresh ? "unknown" : total ? "active" : "idle";
     const state = el("flow-state");
     if (fresh && total === 0) label(state, "flow_idle");
-    else globalThis.ccdxIcons?.set(state, !fresh ? "flow_status_unknown" : "flow_total", !fresh ? "unavailable" : "running", { count: total });
+    else globalThis.ccdxIcons?.set(state, !fresh ? "flow_status_unknown" : "flow_total", !fresh ? "unavailable" : "progress", { count: total });
     label(el("flow-caption"), !fresh ? "flow_status_unknown" : omitted ? "flow_omitted" : selected ? "flow_related_count" : total ? "flow_group_scope" : "flow_no_active",
       { count: rows.filter(related).length, omitted, apps: apps.length, models: allModels.length });
     el("flow-clear").hidden = !selected;

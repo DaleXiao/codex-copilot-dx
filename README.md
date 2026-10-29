@@ -15,8 +15,8 @@ ccdx
 
 Without Node.js, download and run the installer for your system:
 
-- macOS: [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.0/install.sh), then `sh install.sh`.
-- Windows: [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.0/install.ps1), then `./install.ps1` under your current shell policy.
+- macOS: [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.1/install.sh), then `sh install.sh`.
+- Windows: [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.1/install.ps1), then `./install.ps1` under your current shell policy.
 
 The installer reuses a compatible Node.js or installs a private, verified copy. Git and a compiler are not required. Complete platform packages include their dependencies. Company registry, proxy, certificate and shell policies are kept.
 
@@ -29,6 +29,7 @@ The Web UI opens at [http://127.0.0.1:2026](http://127.0.0.1:2026/). Run `ccdx w
 1. **Model sources:** connect an account or API, read its models and choose allowed apps.
 2. **Codex / Claude:** choose visible models, set a default and save. Preview and synchronize client settings when needed.
 3. **Overview / Requests:** check configuration, activity and errors.
+4. **Usage → Context:** inspect reported input, model windows and observed compactions from this run.
 
 For a custom API, enter its HTTPS address and key, then choose **Save & read models**. Select the models and interfaces it provides. Codex uses Responses; Claude uses Messages. Both share port 2026.
 

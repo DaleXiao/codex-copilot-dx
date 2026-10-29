@@ -1,4 +1,5 @@
 import { defaultGithubProvider } from "./providers/github.mjs";
+import { observeContextSession } from "./context-metrics.mjs";
 import {
   createRequestAbort,
   logRequestFailure,
@@ -218,6 +219,7 @@ export function createResponsesHandler(options) {
         if (provider.id !== "github") openAIModelEnv = { ...openAIModelEnv, CCDX_AUTO_REVIEW_MODEL: "" };
       }
       options.validateConversation?.(parsed, req.headers, provider);
+      observeContextSession(parsed, req.headers, provider);
       activeDeadline = now() + upstreamTimeoutMs;
       activeTimeoutReason = "responses_prepare_timeout";
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");
@@ -503,6 +505,7 @@ export function createResponsesCompactHandler(options) {
         if (provider.id !== "github") openAIModelEnv = { ...openAIModelEnv, CCDX_AUTO_REVIEW_MODEL: "" };
       }
       options.validateConversation?.(parsed, req.headers, provider);
+      observeContextSession(parsed, req.headers, provider);
       activeDeadline = now() + upstreamTimeoutMs;
       activeTimeoutReason = "responses_prepare_timeout";
       abort.setTimeout(upstreamTimeoutMs, "responses_prepare_timeout");

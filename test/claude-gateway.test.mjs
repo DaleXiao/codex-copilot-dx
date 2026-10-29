@@ -5,6 +5,7 @@ import { startClaudeGateway, createMessagesObserver } from "../src/claude-gatewa
 import { buildMessagesUsageRecord, usageCacheHitRate } from "../src/usage-store.mjs";
 import { currentRequestContext } from "../src/request-context.mjs";
 import { claudeModelEntries } from "../src/claude-models.mjs";
+import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
 
 const key = "ccdx_m365_" + "a".repeat(64);
 const message = { id: "msg_synthetic", type: "message", role: "assistant", model: "claude-opus-5.5",
@@ -13,7 +14,7 @@ const message = { id: "msg_synthetic", type: "message", role: "assistant", model
 async function gateway(t, messages, extra = {}) {
   const records = [], calls = [];
   const server = await startClaudeGateway({ port: 0, apiKey: key, provider: {
-    id: "m365", models: () => [{ id: "claude-opus-5.5", name: "Opus 5.5" }], client: { messages: async (body, options) => {
+    id: "m365", profileId: () => "test-profile", models: () => [{ id: "claude-opus-5.5", name: "Opus 5.5" }], client: { messages: async (body, options) => {
       calls.push(body);currentRequestContext()?.streamPerformance?.upstreamStarted();options.onUpstreamStart?.();return messages(body, options);
     } },
   }, record: value => records.push(value), ...extra });
@@ -27,13 +28,17 @@ async function gateway(t, messages, extra = {}) {
 }
 
 test("Claude gateway delivers Messages JSON and normalizes cache accounting once", async t => {
-  const g = await gateway(t, async () => Response.json(message));
-  const response = await g.request();assert.equal(response.status, 200);assert.deepEqual(await response.json(), message);
+  const performance = createStreamPerformanceMetrics({ routeNames: ["messages"] });
+  const g = await gateway(t, async () => Response.json(message), { performance });
+  const response = await g.request(undefined, { headers: { session_id: "test-session" } });assert.equal(response.status, 200);assert.deepEqual(await response.json(), message);
   assert.equal(g.calls.length, 1);assert.equal(g.records.length, 1);
   assert.equal(g.records[0].usage.input_tokens, 15);assert.equal(g.records[0].usage.total_tokens, 18);
   assert.equal(usageCacheHitRate(g.records[0].usage), 8 / 15);
   assert.equal(g.records[0].anthropic_usage.input_tokens, 2);
   assert.equal(g.server.snapshot().completed, 1);assert.equal(g.server.snapshot().active, 0);
+  const observed = performance.contextSnapshot().sessions[0].points[0];
+  assert.equal(observed.input_tokens, 15);assert.equal(observed.cached_input_tokens, 8);
+  assert.equal(observed.context_window_tokens, null);
 });
 
 test("Claude API failures expose safe transport facts without raw causes or extra diagnostic fields", async t => {

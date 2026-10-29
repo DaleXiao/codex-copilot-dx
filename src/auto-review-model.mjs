@@ -93,7 +93,7 @@ export async function runAutoReviewModelCommand({
   followClientLabel = "follow client (low when omitted)",
 } = {}) {
   if (!prompt && (!input.isTTY || !output.isTTY)) {
-    throw new Error(`${commandName} auto-review-model requires an interactive terminal`);
+    throw new Error(`${commandName} app codex review select requires an interactive terminal`);
   }
 
   readUserSettings({ env, home, strict: true });
@@ -102,7 +102,7 @@ export async function runAutoReviewModelCommand({
   const modelIds = sortedModelIds(catalog.modelIds, current.model);
   if (!modelIds.length) throw new Error("No selectable Responses models are available");
 
-  output.write(`${commandName} auto-review-model\n`);
+  output.write(`${commandName} app codex review select\n`);
   output.write(`Current: ${current.model} (${current.source})\n`);
   output.write(`Reasoning: ${current.reasoningEffort || followClientLabel}\n`);
   output.write(`Responses models from ${catalog.source}:\n`);

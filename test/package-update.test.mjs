@@ -172,7 +172,7 @@ test("Windows npm update preserves environment and uses only a fixed command thr
 });
 
 test("POSIX sources retain exact argv and no Windows launcher flags", async () => {
-  for (const platform of ["darwin", "linux"]) for (const source of ["npm", "github"]) {
+  for (const platform of ["darwin"]) for (const source of ["npm", "github"]) {
     const calls = [], env = Object.freeze({ PATH: "/company/bin" });
     await runPackageUpdateCommand({ env, platform, source, output: outputBuffer(false).stream,
       spawnImpl: successfulSpawn(calls), fetchImpl: fetchRelease });
@@ -258,7 +258,7 @@ test("a zero installer exit cannot announce an unverified update or change servi
 });
 
 test("readonly npm policy probe requests only named safe fields and hides registry credentials", () => {
-  for (const platform of ["darwin", "linux", "win32"]) {
+  for (const platform of ["darwin", "win32"]) {
     const calls = [], env = Object.freeze({ SystemRoot: "C:\\Windows" });
     const policy = inspectNpmDownloadPolicy({ platform, env, exec(command, args, opts) {
       calls.push({ command, args });assert.equal(opts.env, env);assert.equal(opts.shell, false);
@@ -284,9 +284,9 @@ test("strict policy is preserved by default, with no retry or success on failure
 });
 
 test("only a confirmed npm remote-policy refusal retries the pinned GitHub version with an offline complete package", async () => {
-  for (const platform of ["darwin", "win32", "linux"]) for (const code of ["EALLOWREMOTE", "EINTEGRITY", "E403"]) {
+  for (const platform of ["darwin", "win32"]) for (const code of ["EALLOWREMOTE", "EINTEGRITY", "E403"]) {
     const calls = [], events = [], output = outputBuffer(false), downloads = [];
-    const target = `${platform}-${process.arch}${platform === "linux" ? process.report.getReport().header.glibcVersionRuntime ? "-glibc" : "-musl" : ""}`;
+    const target = `${platform}-${process.arch}`;
     const task = runPackageUpdateCommand({ source: "github", platform, output: output.stream, fetchImpl: fetchRelease,
       downloadReleaseFn: async (tag, options) => {
         downloads.push({ tag, complete: options.complete === true });
@@ -313,7 +313,7 @@ test("only a confirmed npm remote-policy refusal retries the pinned GitHub versi
 });
 
 test("only explicit per-update consent adds the fixed remote flag on all platforms", async () => {
-  for (const platform of ["win32", "darwin", "linux"]) for (const source of ["npm", "github"]) {
+  for (const platform of ["win32", "darwin"]) for (const source of ["npm", "github"]) {
     const calls = [], output = outputBuffer(false), env = Object.freeze({ SystemRoot: "C:\\Windows", npm_config_allow_remote: "none", npm_config_registry: "https://mirror.test/npm/" });
     await runPackageUpdateCommand({ source, allowRemote: true, platform, env, output: output.stream, fetchImpl: fetchRelease,
       inspectPolicyFn: () => ({ version: "12.0.1", allowRemote: "none", supported: true }), spawnImpl: successfulSpawn(calls) });

@@ -5,17 +5,16 @@ import { startAdapter } from "../src/adapter.mjs";
 import { defaultCopilotClient, refreshVSCodeVersion } from "../src/copilot.mjs";
 import { status } from "../src/status.mjs";
 import { configureLogging } from "../src/log.mjs";
-import { flushUsageWrites, printUsageSummary } from "../src/usage.mjs";
+import { flushUsageWrites } from "../src/usage.mjs";
 import { checkForUpdate, localPackageVersion } from "../src/version.mjs";
 import { runDoctor } from "../src/doctor.mjs";
 import { adapterBaseUrl, checkRunningAdapter } from "../src/running-adapter.mjs";
 import { assertSafeAdapterHost, isLoopbackHost } from "../src/security.mjs";
 import { runInBackground } from "../src/startup.mjs";
 import { cliCommandName, cliHelp, parseAdapterAddressOptions, parseAdapterProbeOptions, parseCliArgs, parseRuntimeOptions } from "../src/cli-options.mjs";
-import { formatAdapterStatus, readAdapterStatus } from "../src/cli-status.mjs";
+import { readAdapterStatus } from "../src/cli-status.mjs";
 import { closeHttpServer } from "../src/shutdown.mjs";
 import { autoReviewModelPreference, autoReviewPreference, responseHistoryLimitPreference, terminalAnimationPreference, servicePreferences, serviceSettingsSnapshot, nightlyUpdatePreference } from "../src/user-settings.mjs";
-import { formatLiveCopilotModels } from "../src/cli-models.mjs";
 import { runAuthCommand } from "../src/cli-auth.mjs";
 import { createProfileRuntime } from "../src/profile-runtime.mjs";
 import { createProfileModelRuntime } from "../src/profile-model-runtime.mjs";
@@ -112,19 +111,6 @@ if (CLI.command === "image") {
     process.exit(1);
   }
 }
-if (CLI.command === "suggestion") {
-  try {
-    const { retirePredictionIntegration } = await import("../src/prediction-retirement.mjs");
-    const result = retirePredictionIntegration({ dryRun: CLI.action === "status" });
-    console.log("The old suggestion panel is no longer supported.");
-    if (CLI.action === "status" && result.changed) console.log(`Legacy settings remain; run ${CLI_NAME} suggestion off to clean them up.`);
-    if (result.preserved) console.warn("Your edited suggestion settings were kept.");
-    process.exit(0);
-  } catch (error) {
-    console.error(status("err", error.message));
-    process.exit(1);
-  }
-}
 if (CLI.command === "prediction") {
   try {
     if (["pause", "resume"].includes(CLI.action)) {
@@ -145,19 +131,6 @@ if (CLI.command === "prediction") {
     process.exit(CLI.action === "fix" ? result.exitCode : 0);
   } catch (error) {
     console.error(status("err", error.message));
-    process.exit(1);
-  }
-}
-if (CLI.command === "usage") {
-  try {
-    await printUsageSummary({
-      format: CLI.outputFormat || "auto",
-      provider: CLI.provider || "",
-      output: process.stdout,
-    });
-    process.exit(0);
-  } catch (e) {
-    console.error(status("err", e.message));
     process.exit(1);
   }
 }
@@ -199,15 +172,6 @@ if (CLI.command === "limits") {
     process.exit(1);
   }
 }
-if (CLI.command === "retired") {
-  console.error(status("err", `${CLI.integration} integration was retired in ccdx 0.7.0.`));
-  if (CLI.integration === "PM Studio") {
-    console.error(status("info", "Update or reinstall PM Studio to remove an older CCDX app patch."));
-  } else {
-    console.error(status("info", "Remove any old CCDX endpoint from the client before using a different provider."));
-  }
-  process.exit(1);
-}
 if (CLI.command === "auth") {
   try {
     const result = await runAuthCommand({
@@ -228,45 +192,6 @@ if (CLI.command === "auth") {
       output: process.stdout,
     });
     if (result.output) console.log(result.output);
-    process.exit(0);
-  } catch (e) {
-    console.error(status("err", e.message));
-    process.exit(1);
-  }
-}
-if (CLI.command === "status") {
-  let probe;
-  try {
-    probe = parseAdapterProbeOptions(process.env);
-  } catch (e) {
-    console.error(e.message);
-    process.exit(2);
-  }
-  try {
-    const snapshot = await readAdapterStatus({
-      host: probe.adapterHost,
-      port: probe.adapterPort,
-      timeoutMs: probe.existingAdapterTimeoutMs,
-    });
-    if (process.stdout.isTTY) {
-      const { runManagementCommand } = await import("../src/cli-management.mjs");
-      console.log(await runManagementCommand({ group: "status", path: ["status"], flags: {} }, { version: LOCAL_VERSION, readStatus: async () => snapshot }));
-    } else console.log(formatAdapterStatus(snapshot, { commandName: CLI_NAME, cliVersion: LOCAL_VERSION }));
-    process.exit(0);
-  } catch (e) {
-    console.error(status("err", e.message));
-    process.exit(1);
-  }
-}
-if (CLI.command === "models") {
-  try {
-    const { fetchActiveProviderModels } = await import("../src/cli-m365.mjs");
-    const catalog = await fetchActiveProviderModels();
-    console.log(formatLiveCopilotModels(catalog, {
-      commandName: CLI_NAME,
-      format: CLI.outputFormat || "auto",
-      output: process.stdout,
-    }));
     process.exit(0);
   } catch (e) {
     console.error(status("err", e.message));
@@ -513,7 +438,7 @@ try {
   const m365Setup = runInBackground(() => providerRuntime.start());
   if (providerRuntime.selection().codex === "github") {
     try { await ensureAuth({ log: startupLogger("Sign-in"), interactive: serviceWorker?.preserving !== true }); }
-    catch (error) { if (serviceWorker?.preserving) throw error;console.warn(startupCheck("warn", "Sign-in", "Sign-in unavailable. Use the dashboard or ccdx auth login; saved credentials kept.")); }
+    catch (error) { if (serviceWorker?.preserving) throw error;console.warn(startupCheck("warn", "Sign-in", "Sign-in unavailable. Use the dashboard or ccdx source github login; saved credentials kept.")); }
   } else {
     if (providerRuntime.selection().codex === "m365") await m365Setup;
     const source = providerRuntime.connections().providers.find(source => source.id === providerRuntime.selection().codex);

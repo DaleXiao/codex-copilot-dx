@@ -404,7 +404,15 @@ try {
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-accounts.png`), fullPage: true });
         await page.locator("#model-provider-m365").click();
         await page.waitForFunction(() => document.getElementById("live-models-body").textContent.includes("claude-opus-5.5"));
-        await page.locator("#live-models-body tr").first().locator("summary").click();
+        const modelSummary = page.locator("#live-models-body tr").first().locator("summary");
+        await modelSummary.scrollIntoViewIfNeeded();
+        const modelSummaryBefore = await modelSummary.boundingBox();
+        const catalogScrollBefore = await modelSummary.evaluate(el => ({ page: scrollX, table: el.closest(".table-wrap").scrollLeft }));
+        await modelSummary.click();
+        await page.clock.fastForward(250);
+        const modelSummaryAfter = await modelSummary.boundingBox();
+        assert(Math.abs(modelSummaryBefore.x - modelSummaryAfter.x) <= 1, "Model details expand without moving the summary horizontally");
+        assert.deepEqual(await modelSummary.evaluate(el => ({ page: scrollX, table: el.closest(".table-wrap").scrollLeft })), catalogScrollBefore);
         assert.match(await page.locator("#live-models-body").innerText(), /low.*high/);
         const contrast = await page.locator("#live-models-body td").first().evaluate(node => {
           const luminance = color => { const rgb = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => { value /= 255;return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4; });return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722; };

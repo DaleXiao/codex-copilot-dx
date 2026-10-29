@@ -221,7 +221,7 @@ export function createImageMcpHandler({
         instructions: config && isEnabled()
           ? `CCDX handles the configured image API and credentials; no Python or SDK setup. Embed returned image Markdown in the final reply. Redisplay reuses it without tool calls. Keep each image_id with its own image. Do not automatically retry failed/timed-out requests or switch providers.${supportsImageEditing(config) ? " Use generate_image for new images; edit_image requires the exact retained source ID." : " Use generate_image for new images. Editing is unsupported; do not substitute generation."}`
           : config ? "Image calls are paused. Resume them in the CCDX WebUI; the provider and retained edit handles are preserved."
-            : "Image generation is disabled. Enable it with ccdx enable-image before requesting images.",
+            : "Image generation is disabled. Enable it with ccdx app codex image setup before requesting images.",
       });
       return;
     }
@@ -248,7 +248,7 @@ export function createImageMcpHandler({
     if (!config || !isEnabled()) {
       metrics.failed += 1;
       if (!config) imageReferences.clear();
-      reply({ content: [{ type: "text", text: config ? "Image calls are paused. Resume them in the CCDX WebUI." : "Image generation is disabled. Run ccdx enable-image first." }], isError: true });
+      reply({ content: [{ type: "text", text: config ? "Image calls are paused. Resume them in the CCDX WebUI." : "Image generation is disabled. Run ccdx app codex image setup first." }], isError: true });
       return;
     }
     const editing = request.params.name === EDIT_TOOL_NAME;

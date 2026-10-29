@@ -224,11 +224,11 @@ export async function collectDoctorChecks({
       const environment = inspectPredictionEnvironmentFn({ env, platform });
       checks.push({ kind: environment.summary.tls.extra_ca === "unreadable_or_invalid" ? "warn" : "info", message: formatPredictionEnvironment(environment.summary) });
     } else checks.push({ kind: "warn", message: "Native predictions require macOS or Windows; existing settings preserved" });
-  } catch { checks.push({ kind: "warn", message: "Prediction environment could not be verified; existing routing and trust settings preserved", fix: "ccdx prediction status" }); }
+  } catch { checks.push({ kind: "warn", message: "Prediction environment could not be verified; existing routing and trust settings preserved", fix: "ccdx app codex prediction status" }); }
   try {
     const image = readImageProviderConfigFn({ home, env, strict: true });
     checks.push({ kind: "info", message: image ? "Image generation configured; no provider request was made" : "Image generation is off; optional checks skipped" });
-  } catch { checks.push({ kind: "warn", message: "Image provider configuration is invalid; core service is unaffected", fix: "ccdx image-status" }); }
+  } catch { checks.push({ kind: "warn", message: "Image provider configuration is invalid; core service is unaffected", fix: "ccdx app codex image status" }); }
   const updateEnvironment = inspectUpdateEnvironmentFn();
   const updateMessage = updateEnvironment.state === "different" ? "npm update target differs from this CCDX installation; review PATH/prefix before updating"
       : updateEnvironment.state === "unavailable" ? "npm update environment could not be verified; installer settings were not changed"
@@ -252,8 +252,8 @@ export async function collectDoctorChecks({
         const ready = result.state?.m365?.state === "ready" && result.models?.length > 0;
         checks.push({ kind: ready ? "ok" : "warn", id: "provider", message: ready
           ? `Microsoft 365 is ready; ${result.models.length} GPT models available`
-          : "Microsoft 365 is not ready; inspect ccdx m365 status. No GitHub fallback was selected" });
-      } catch { checks.push({ kind: "warn", id: "provider", message: "Microsoft 365 could not be checked through the running adapter; start ccdx and inspect ccdx m365 status" }); }
+          : "Microsoft 365 is not ready; inspect ccdx source m365 status. No GitHub fallback was selected" });
+      } catch { checks.push({ kind: "warn", id: "provider", message: "Microsoft 365 could not be checked through the running adapter; start ccdx and inspect ccdx source m365 status" }); }
     } else if (!sourceError) checks.push(...await inspectAuthProfilesOnline({
       home,
       profile,

@@ -33,6 +33,8 @@ test("interactive CLI startup retains auth instructions and replaces duplicate c
   const text = stripVTControlCharacters(output).replaceAll("\r", "");
   assert.match(output, /\x1b\[2KStarting/);assert.match(text, /Enabled sources: 1\nGitHub Copilot/);
   assert.match(text, /Codex\s+Configured/);assert.doesNotMatch(text, /Ready\s+Local service ready|\[OK\]\s+Sign-in\s+GitHub token found/);
+  assert.doesNotMatch(text, /\[INFO\]\s+(?:Sources|Claude)\s/);
+  assert.match(text, new RegExp(`Web UI: http://127\\.0\\.0\\.1:${port}`));
   const snapshot = await fetch(`http://127.0.0.1:${port}/_ccdx/status`).then(response => response.json());
   assert.equal(snapshot.client_integrations.codex.setup, "configured");assert.equal(snapshot.model_activity.active, 0);
   assert.equal(snapshot.providers.connections, undefined, "Rendering keeps the legacy runtime snapshot contract");

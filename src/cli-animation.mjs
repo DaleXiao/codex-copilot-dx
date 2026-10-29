@@ -38,14 +38,14 @@ export async function runAnimationCommand({
   gallery = startTerminalAnimationGallery,
 } = {}) {
   if (!prompt && (!input.isTTY || !output.isTTY)) {
-    throw new Error(`${commandName} animation requires an interactive terminal`);
+    throw new Error(`${commandName} config animation requires an interactive terminal`);
   }
 
   readUserSettings({ env, home, strict: true });
   const current = terminalAnimationPreference({ env, home });
   const currentIndex = TERMINAL_ANIMATION_THEMES.findIndex(({ id }) => id === current.theme);
 
-  output.write(`${commandName} animation\n`);
+  output.write(`${commandName} config animation\n`);
   output.write(`Current: ${TERMINAL_ANIMATION_THEMES[currentIndex].label} (${current.source})\n\n`);
   const labels = TERMINAL_ANIMATION_THEMES.map((theme, index) => `  ${index + 1}. ${theme.label}${markers(theme, current.theme)}`);
   const prefixWidth = Math.max(...labels.map((label) => label.length)) + 2;

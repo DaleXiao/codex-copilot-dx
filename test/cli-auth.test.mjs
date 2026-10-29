@@ -156,8 +156,8 @@ test("formatAuthStatus renders single-profile plain and responsive table output"
     routing: { responses: "codex" },
   };
 
-  const plain = formatAuthStatus(snapshot, { commandName: "codex-copilot-dx" });
-  assert.match(plain, /^codex-copilot-dx auth status/m);
+  const plain = formatAuthStatus(snapshot, { commandName: "ccdx" });
+  assert.match(plain, /^ccdx source github status/m);
   assert.match(plain, /Codex online: octocat; 4 models/);
   assert.match(plain, /Routing: responses -> codex/);
   assert.doesNotMatch(plain, /Claude/);

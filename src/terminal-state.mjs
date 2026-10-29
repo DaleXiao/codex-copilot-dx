@@ -4,7 +4,7 @@ const integer = value => Number.isSafeInteger(value) && value >= 0;
 const appIds = { codex_app: "codex", codex_cli: "codex", codex: "codex", claude_app: "claude_app", claude_code: "claude_code" };
 export const TERMINAL_CLIENT_NAMES = Object.freeze({ codex: "Codex", claude_app: "Claude App", claude_code: "Claude Code" });
 const labels = { configured: "Configured", paused: "Paused", disabled: "Disabled", not_configured: "Not configured", not_installed: "Not installed",
-  preserved: "Preserved", partially_preserved: "Partly preserved", manual_sync: "Manual sync", default_unavailable: "Default unavailable", configuration_unavailable: "Unreadable", unavailable: "Unavailable" };
+  preserved: "Unchanged", partially_preserved: "Partly unchanged", manual_sync: "Manual sync", default_unavailable: "Default unavailable", configuration_unavailable: "Unreadable", unavailable: "Unavailable" };
 export function terminalUptime(milliseconds) {
   if (!Number.isFinite(milliseconds) || milliseconds < 0) return "unknown";
   const minutes = Math.floor(milliseconds / 60000), hours = Math.floor(minutes / 60), days = Math.floor(hours / 24);

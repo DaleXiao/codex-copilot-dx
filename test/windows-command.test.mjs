@@ -20,8 +20,8 @@ function fixture(t) {
   t.after(() => fs.rmSync(prefix, { recursive: true, force: true }));
   const root = path.join(prefix, "node_modules", "codex-copilot-dx");
   fs.mkdirSync(root, { recursive: true });
-  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "codex-copilot-dx", bin: { ccdx: "bin/cli.mjs", "codex-copilot-dx": "bin/codex-copilot-dx.mjs" } }));
-  for (const [name, script] of [["ccdx", "cli.mjs"], ["codex-copilot-dx", "codex-copilot-dx.mjs"]]) {
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "codex-copilot-dx", bin: { ccdx: "bin/cli.mjs" } }));
+  for (const [name, script] of [["ccdx", "cli.mjs"]]) {
     fs.writeFileSync(path.join(prefix, `${name}.ps1`), template.replaceAll("/cli.mjs", `/${script}`).replaceAll("\n", "\r\n"));
     fs.writeFileSync(path.join(prefix, `${name}.cmd`), `@ECHO off\r\n"%_prog%"  "%dp0%\\node_modules\\codex-copilot-dx\\bin\\${script}" %*\r\n`);
   }

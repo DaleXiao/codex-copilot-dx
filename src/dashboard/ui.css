@@ -207,12 +207,17 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; color: 
 .provider-tabs button, .install-platforms button { text-align: center; }
 .provider-tabs [aria-selected="true"], .provider-tabs [aria-selected="true"]:hover, .install-platforms [aria-pressed="true"], .install-platforms [aria-pressed="true"]:hover { color: var(--page); border-color: var(--accent); background: var(--accent); }
 .model-catalog table, .model-catalog td { color: var(--text); font-size: 13px; background: var(--surface); }
+.model-catalog table { table-layout: fixed; }
+.model-catalog th:first-child { width: 40%; }
+.model-catalog th:nth-child(2) { width: 25%; }
+.model-catalog th:last-child { width: 35%; }
+.model-catalog td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
 .model-catalog th { color: var(--text); font-size: 12px; }
 .model-catalog > summary h2 { color: var(--strong); }
 .model-catalog .model-name { color: var(--strong); font-weight: 600; }
 .model-catalog td:last-child { white-space: normal; }
 .model-catalog td details { margin: 0; }
-.model-catalog .failure-detail { min-width: 200px; }
+.model-catalog .failure-detail { min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 3px; }
 #provider-auth td, #provider-clients td { overflow-wrap: anywhere; }
 .details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 700px) { .details { grid-template-columns: 1fr; } }
@@ -540,7 +545,8 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 /* Model capability and application binding controls share the existing palette. */
 .client-segments { margin-bottom: 18px; }
 .client-segments button[aria-pressed="true"], .binding-table button[aria-pressed="true"] { color: var(--page); background: var(--accent); border-color: var(--accent); }
-#connection-model-detail { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+#connection-model-detail { margin: 0; padding: 18px 0; }
+.connection-detail-row > td { white-space: normal; }
 #connection-model-detail h3 { overflow-wrap: anywhere; }
 #connection-model-detail .connection-fields { margin-bottom: 18px; }
 #connection-models td:last-child { min-width: 130px; }

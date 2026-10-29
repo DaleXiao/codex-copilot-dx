@@ -30,11 +30,11 @@ export function installedUpdateEnvironment(options = {}) {
     if (inspectWindowsCommand({ packageRoot: environment.target }).status !== 'ready') throw new Error('command_not_owned');
   } else {
     const privateInstall = options.env?.CCDX_PRIVATE_INSTALL_PREFIX || process.env.CCDX_PRIVATE_INSTALL_PREFIX;
-    for (const name of ['ccdx','codex-copilot-dx']) {
+    for (const name of ['ccdx']) {
       const file = path.join(environment.prefix,'bin',name);
       if (privateInstall && path.resolve(privateInstall) === path.resolve(environment.prefix)) {
         if (readBoundedFileSync(file,{encoding:'utf8',maxBytes:16384}) !== privateUnixLauncher({...environment,name})) throw new Error('command_not_owned');
-      } else if (fs.realpathSync(file) !== fs.realpathSync(path.join(environment.target,'bin',name === 'ccdx' ? 'cli.mjs' : 'codex-copilot-dx.mjs'))) throw new Error('command_not_owned');
+      } else if (fs.realpathSync(file) !== fs.realpathSync(path.join(environment.target,'bin','cli.mjs'))) throw new Error('command_not_owned');
     }
   }
   return { ...environment, npmCli: cli };

@@ -1,183 +1,111 @@
-# CCDX command, configuration and compatibility reference
+# CCDX reference
 
-Use Codex App with GPT models available to your **GitHub Copilot** account by default.
-The optional [Microsoft 365 provider](#microsoft-365-provider) supplies a protocol-isolated
-Claude gateway and an explicitly selected Codex backup.
+For installation and first use, start with the [README](../README.md). This reference covers operations and the limits that affect them. Supported systems are macOS and Windows, x64 and ARM64.
 
-## Manual APIs and client access
+## Commands
 
-`ccdx web` starts management without GitHub sign-in or automatic App launch.
-Use **Model sources → Add API**, enter the HTTPS API base address/key
-(including a required prefix such as `/v1`), then choose **Save & read models**.
-The saved source remains available and the editor stays open for model selection.
-A failed directory read keeps the source and draft; retry with **Read models**
-under the existing request-coalescing and cooldown policy.
-Select the models to use and their supported interfaces, save, then choose each
-client's visible models and default on **Codex** or **Claude**. Unselected catalog entries
-are not saved. A selected model needs at least one interface; choosing an
-interface also selects its model. Manual ID entry is an optional collapsed path
-for models absent from the catalog. Only Codex on GitHub needs the default
-GitHub sign-in path. To use Claude alone, disable Codex access. Stop the
-management-only process before normal `ccdx` startup for the live terminal.
+`ccdx` is the only executable. Commands and help use one grammar. Use `ccdx help <path>` or append `--help`; old roots and flag aliases are not accepted. Existing saved settings remain readable.
 
-| Client | Local base path | Required upstream API |
-| --- | --- | --- |
-| Codex App / CLI | `/v1` | Responses |
-| Claude App / Claude Code | `/anthropic` | Messages |
+| Group | Operations |
+| --- | --- |
+| `ccdx` / `ccdx start` | Start or reuse the foreground gateway |
+| `ccdx web` | Open the Web UI, or start management without signing in |
+| `ccdx status` | Show runtime and app configuration; `--details` expands diagnostics |
+| `ccdx source list` / `source add` | List sources or add an API |
+| `ccdx source <id> status` | Read saved account and catalog evidence |
+| `ccdx source <id> models [--refresh]` | Read cached models, or explicitly refresh the source |
+| `ccdx source <id> check` | Check source access without inference |
+| `ccdx source <id> access --edit` | Choose allowed apps |
+| `ccdx source <id> enable` / `disable` | Change source access; disabling reviews affected apps |
+| `ccdx source <id> edit` / `remove` | Edit an API, or remove a disabled, unbound API |
+| `ccdx source github login` / `reauth` / `logout` | Manage the saved GitHub account |
+| `ccdx source m365 accounts` / `account` | List local company accounts or select one |
+| `ccdx app list` | Show client setup and observed activity |
+| `ccdx app <id> status [--details]` | Read client configuration and scoped features |
+| `ccdx app <id> models --edit` | Choose visible models and a default |
+| `ccdx app <id> sync --preview` | Preview the model/configuration plan |
+| `ccdx app <id> sync` | Write client settings owned by CCDX |
+| `ccdx app <id> enable` / `disable` | Change access without quitting the app |
+| `ccdx app codex prediction …` | Native suggestion setup and diagnostics |
+| `ccdx app codex image …` | Image setup and diagnostics |
+| `ccdx app codex review status` / `select` | Read or choose the review model |
+| `ccdx config show [--effective]` | Read saved preferences and effective state |
+| `ccdx config set <key> <value>` | Save a validated preference |
+| `ccdx config terminal` / `animation` | Choose terminal appearance |
+| `ccdx config limits [--decoded MiB]` | Read or change the decoded request limit |
+| `ccdx config reset --preview` / `restore` | Preview defaults or restore the pre-reset backup |
+| `ccdx requests [--failed] [--active]` | Inspect retained requests |
+| `ccdx requests show <request_id>` | Read one retained request |
+| `ccdx usage [--scope all\|run] [--provider ID]` | Read recorded usage or current-run usage |
+| `ccdx doctor [--online] [--compat] [--fix] [--json]` | Check local setup; optional access checks and repairs |
+| `ccdx doctor config` / `network` / `report` | Read configuration, routing or a redacted local report |
+| `ccdx doctor cache [--limit MiB\|default]` | Inspect runtime buffers or change their limit |
+| `ccdx doctor cache --clean [--history] [--yes]` | Clear rebuildable data; history cleanup requires confirmation |
+| `ccdx update check` / `update github` / `update npm` | Check or install an update |
+| `ccdx version` | Show the installed package version |
 
-All paths share the main port, normally 2026. Manual Codex and explicitly managed
-Claude clients receive distinct private local credentials; never the upstream
-key. Display hints do not authorize requests. API addresses require HTTPS, no
-userinfo/query/fragment, and endpoint overrides on the base address's origin.
-Redirects are refused. Existing proxy/bypass/private-CA rules remain; unsupported
-dynamic macOS routing fails without a direct fallback. Windows delegates system
-routing to a target-pinned WinHTTP worker. Failed calls are not replayed. A
-transport failure before response headers marks that transport unhealthy; a
-later request creates a new transport and rereads the existing routing policy.
-Other responses already using the old transport finish before it is released.
-HTTP denials and deliberate cancellation do not trigger this recovery.
-Network failures retain `ccdx_api_network_unavailable` and include a bounded
-`error.diagnostic`: a recognized local error `code`, observed `phase`, and
-`reused_socket` (boolean or unknown). Unknown codes/phases remain `unknown`.
-Diagnostics omit raw error text, endpoints, headers, keys and request content.
+Client IDs are `codex`, `claude-app` and `claude-code`. Source IDs are listed by `source list`. Read-only management commands support `--format table|plain|json`. They do not start an app or a gateway. Management operations need the running service; use `ccdx web` to start it without launching a client.
 
-Up to 16 uniquely named manual APIs and 500 unique models per API are supported. Model IDs are limited to 160 characters; `codex-auto-review` remains an internal alias. Custom model
-IDs are not filtered by a GPT/Claude prefix. Each model declares Messages,
-Responses and/or Chat Completions; optional stored `context_window` and
-`reasoning_efforts` metadata remain explicit. Chat-only records are catalog
-information, not converted into another client protocol. Saving automatically
-reads the catalog; failure does not undo saved configuration. Startup and the
-existing periodic model-refresh cycle refresh enabled APIs serially, using a
-30-minute success cache and a one-minute failure cooldown. **Read models** can
-refresh sooner, but shares a one-minute cache with recent reads. Directory GETs
-use a 20-second total deadline, 8 MiB total body bound, 500 models and at most 25
-pages. Native `has_more`/`last_id` pagination uses only a validated `after_id`
-cursor on the configured catalog URL; arbitrary next URLs are never followed.
-An ID-only result has unknown protocol support until reviewed. Ordinary page
-reads use saved data; no discovery sends inference. `ccdx models` labels manual
-models as configured, not live. New catalog entries are candidates, never
-automatically granted to a client. An absent entry does not delete a saved model.
+`start` supports `--no-browser`, `--verbose` and `--show-request-id`. The normal TUI has one source summary and one app table. It labels the Web UI address directly. `Unchanged` means existing client settings were kept; `Configured` means the configuration write/check succeeded. Neither is proof that a client process has loaded that configuration. Warnings and sign-in instructions remain visible during startup. The final activity row reflects observed model work. Ctrl+C stops the foreground service.
 
-For manual Messages APIs, CCDX writes Claude App's model configuration
-automatically. Standard Claude IDs keep their existing identity; other IDs use
-a stable `ccdx/claude-compatible-<digits>` route with `labelOverride` set to the
-real model ID. Reordering or adding models does not renumber existing routes.
-The App's model catalog advertises the same routes and real display names.
-Users do not need to add aliases manually. Owned configuration migrates through
-the existing field journal; custom or managed settings remain protected.
+For scripts, source access accepts `--apps codex,claude-app` with `--edit`; edits use confirmation or `--yes`. API/model edits accept `--file`. An API key uses the private prompt, `--key-stdin`, or an environment reference, never a command argument or metadata file. Source removal requires a disabled API with no client binding. Disabling an in-use source requires explicit replacement choices in scripts; `--yes` alone does not choose them.
 
-Only the authenticated Claude App binding enables this translation. The gateway
-resolves routes against that source's allowed Messages models, sends real IDs
-upstream for Messages and token counting, and returns the requested route in
-JSON messages or SSE `message_start.message.model`. Other SSE frames, tool data
-and signatures are retained. Alias SSE framing is bounded by the existing event
-limit and follows client backpressure. Usage and request diagnostics keep real
-model IDs. Explicit multi-source bindings use source-qualified routes for Codex and both Claude clients. Unqualified legacy IDs resolve only when exactly one authorized deployment matches. Source/key history boundaries and native protocol semantics remain enforced.
+An app model file contains `deployments: [{"source":"github","model":"<model-id>"}]`, with optional `default_model` and `auto_sync`. An explicit empty array clears the default and pauses access. A file without `deployments` is rejected. Unavailable saved selections remain visible until the user changes them.
 
-Some App requests include `system` messages as well as a top-level `system`
-field, including system notes after user content. For manual App connections,
-CCDX appends their text blocks to the top-level field in system-message order,
-retaining system priority, block metadata and the order/content of conversation
-messages. Non-text system content fails locally. Other clients and providers
-keep their existing payload paths.
+## Sources and client access
 
-Compatibility routes address Claude App's model-name filter. A saved connection,
-successful model-list read or connection check does not prove complete App
-conversation, tool or thinking support for every upstream model.
+Sources own accounts, API addresses, keys and model capabilities. Apps own visible models and defaults. Allowing an app to use a source does not select all its models. Selecting no models pauses that app. Settings owns service preferences and appearance, not model routing.
 
-`connections.json` beside user settings (respecting `XDG_CONFIG_HOME`) stores a
-strict version-two graph of provider switches, API metadata, source grants and per-client model deployments/defaults. Version one is read with its original single-source visibility; the first write preserves original bytes in `connections.json.v1-backup`. A null deployment list retains the legacy source catalog; an explicit array exposes only its selected deployments. Migration never expands an old `allowed` grant into model visibility. It stores only credential references or an environment
-variable name. Keys use macOS Keychain service `codex-copilot-dx.manual-api`,
-Windows CurrentUser DPAPI-protected bytes, or Linux Secret Service (`secret-tool`).
-Unavailable protection fails without plaintext fallback. Headless installations
-may use `key_env` under Addresses & authentication; set the variable before CCDX
-starts. Its value is never returned by management or copied into client config.
-Private helpers omit unrelated credentials and Node hooks. API error bodies are
-replaced with stable codes; valid Retry-After metadata is retained.
+In the Web UI, **Model sources → Add API** saves the source and immediately reads its catalog. A failed read keeps the saved source and editor. Select supported models and their declared interfaces before assigning them to apps. Catalog details expand without shifting columns. API-editor capability details open below their model row; manual overrides are separate from reported metadata.
 
-An explicit empty Codex deployment array pauses CCDX access, including after a
-restart or disabling the last selected source. Models, Responses and compact
-requests return `503 ccdx_client_source_disabled` before checking a client key;
-no upstream call, automatic model selection or login repair is attempted. Enable
-the app/source and select at least one model to resume. GitHub-only selections
-retain native OpenAI mode; nonempty mixed/API deployments retain private-key
-authentication. With automatic sync enabled, pausing restores only owned Codex
-configuration; manual sync leaves native files unchanged. Neither changes login.
+Manual APIs require HTTPS. Codex requires Responses; Claude requires Messages. CCDX does not invent an interface, token-count result, reasoning level or web-search capability absent from the source declaration. Returned maker/name metadata is displayed separately from the source name. Model IDs are not used to guess a maker.
 
-`client-gateway-keys.json` holds local credentials separately. Disabled sources leave normal source lists. **Model sources** owns **Disabled sources**; application access cards own **Disabled clients**. App navigation remains available while access is closed, so its restoration control stays reachable. Each
-collapsed list appears only when it has entries and provides **Enable again**.
-Closing a client stops CCDX access, not the app. Disabling an in-use source
-requires explicit replacements or pauses. Pinned API streams finish on their
-original provider; retired transports/keys are released afterwards. Legacy M365
-work is guarded before its old gateway is removed. Recovery preserves grants,
-configuration and historical usage without choosing a current source. With a
-managed graph, `m365 off` pauses affected bindings; `m365 remove` preserves shared
-Claude ownership records still needed by APIs.
+A running request stays with its original source, credential revision and capabilities. Refreshing a catalog does not select models or change defaults. Failed reads keep last-good data with failure evidence; they do not trigger inference, re-login or source switching. Normal API refresh uses a 30-minute cache and a one-minute minimum interval after explicit reads or failures.
 
-Claude's existing field-owned journal protects custom/managed edits. Manual
-clients use the existing profile with generic name CCDX; M365's beta restriction
-is not imposed on APIs. Only an unchanged owned restriction is restored. Adding
-an API alone does not migrate existing M365 client credentials. First explicit
-Claude connection management installs private client keys; reopen affected apps.
-Codex reconciliation owns provider selection, the selected model, the private
-provider table and, in native mode, `openai_base_url`. GitHub-only selections use
-this base URL with the built-in `openai` provider; fresh native setups create no
-custom provider table. The App therefore keeps its native provider branch.
-An unchanged old `ccdx_gateway` table is retained inactive during migration so
-existing sessions can still resume their recorded provider. New sessions use
-`openai`; existing session files are never rewritten to disguise their provider.
+Codex selections containing only GitHub models keep native OpenAI mode and readable names. Other selections use the client's private local gateway credential. Paused access is rejected before credential validation. CCDX does not write or clear native ChatGPT sign-in data. When models are missing after a client update, check the selected models and run `ccdx doctor`; fully quit and reopen the app before changing credentials.
 
-The versioned ownership journal records exact prior/owned declarations and
-supports native/private switching and restoration. Startup defers an owned base
-URL to this reconciliation instead of overwriting preserved user edits. Identical
-setup does not rewrite the file. A missing default keeps its identity and does
-not prevent a safe native route repair. User model/base edits remain protected.
-Reconciliation never writes `auth.json` or replaces native credentials.
+Claude App and Claude Code use separate keys on `http://127.0.0.1:2026/anthropic`. Compatibility aliases are internal; visible model names follow source metadata. Client synchronization respects manual/managed fields and records ownership for restoration. Already-running clients may need a normal restart.
 
-Non-GitHub deployments retain the private provider/local-key route. Existing
-native sign-in or credential-store policy keeps `requires_openai_auth = true`;
-a fresh API-only profile remains usable without ChatGPT login. Native account
-operations retain their own authentication. App custom-provider controls can
-differ from native OpenAI controls; CLI catalogs do not prove App UI parity.
-Reopen Codex after an owned provider/authentication configuration change.
+Claude App can continue an existing conversation on another selected, authorized source when complete Messages history is available. Unfinished tool turns, unavailable attachments and company-account isolation are checked before transfer. Opaque signed or compacted history is not transferable between services. Codex and Claude Code keep their existing continuation rules. A 409 is a history/isolation conflict; it does not by itself mean the selected model is unavailable.
 
-GitHub-only explicit bindings preserve the legacy native loopback access contract,
-including requests from a process that has not yet reloaded its configuration.
-Their catalog comes from the selected deployments, not a second live Copilot read.
-Adding any non-GitHub deployment requires the private Codex key for the entire
-catalog and all bound inference requests. Unselected models remain refused.
-A supplied non-Codex bearer receives a local 403, not a ChatGPT 401 refresh
-challenge. Missing credentials still receive 401; neither denial reaches upstream.
-Temporarily unavailable selected models remain visible in the application editor.
-Saving them fails without changing prior settings; refresh the catalog or explicitly
-clear the affected selection. A missing directory entry never means deselection.
+## Microsoft 365
 
-GitHub catalog reads in Model sources share the running model registry and endpoint cache with Codex. A successful read updates available candidates without selecting new models, changing defaults or rewriting client files. Concurrent reads join one refresh. An explicit failed refresh remains an error while the prior catalog is retained; an account change during the read prevents publication under the new identity.
+Supported company environments discover local accounts at startup. Access depends on the account, tenant, device policy and service entitlement. Optional failure does not block another source.
 
-A manual Codex provider includes an authenticated `model_catalog_url` on the same
-listener. Native app-server catalogs list configured names; the App may still use
-its custom-provider UI for non-GitHub selections. Unknown names
-use conservative metadata without borrowed model instructions, invented context,
-vision, web search or Fast claims. API-specific Auto Review uses its configured
-model and advertised efforts; following the client does not synthesize low.
-See the official [provider configuration](https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers)
-and [gateway catalog requirements](https://learn.chatgpt.com/docs/enterprise/roll-out-a-gateway#use-a-model-catalog-for-custom-names).
+Choose consuming apps under **Model sources → Microsoft 365 → Allowed apps**. Read the company catalog with `ccdx source m365 models --refresh`; this sends no inference. Use `source m365 accounts` to list accounts or `source m365 account` to choose one. Existing explicit account selection takes priority, followed by an exact Windows work-account match or the single available company account. Account changes require a new conversation.
 
-Responses namespaces include API configuration/key identity. Managed native
-histories retain at most 1,024 HMAC-only correlation/owner pairs in
-`conversation-sources.json`. No prompt, raw session ID or key is stored. A known
-session or first-message correlation that changes source/key returns 409 before
-forwarding history. This is bounded observation, not proof of the provenance of
-unseen external history. Start a new conversation after source/key changes; do
-not transfer opaque reasoning, compaction or signed history between services.
-There is no automatic load balancing, fallback or cross-source history replay.
+Catalog diagnostics distinguish local cached data from an online response and expose check time, service origin, HTTP status, last success and service request ID when available. Model counts can differ across environments. A 403 alone does not prove a stale cache, an expired account or a changed endpoint. Do not repeatedly sign in or probe inference to diagnose catalog failures.
 
-`/_ccdx/ui/connections` requires loopback, the dashboard header, same-origin JSON
-POSTs and a 256 KiB body bound. It returns redacted configuration and explicit
-action results. Invalid/conflicting files are retained. The ordinary two-second
-status returns compact source/client summaries, not all model records. Metrics
-allow the two built-ins plus 16 APIs (18 labels plus bounded `other`). Aggregate
-Claude observation covers all Messages sources; M365 counts keep their own scope.
+## Checks and troubleshooting
+
+- **Saved account, access denied:** use source status/check to distinguish the saved credential from current access. `source github reauth` replaces sign-in only after a successful new login. Other apps' credentials are read-only.
+- **No client models:** inspect allowed sources, selected models and unavailable selections. An empty selection means paused access, not missing credentials.
+- **Configuration unchanged:** CCDX kept existing settings. Preview the intended plan before syncing; do not overwrite managed settings to force success.
+- **Request failure:** use Requests or `ccdx requests --failed`. HTTP failures and model completion outcomes are separate. A successful HTTP transport can still carry a model error.
+- **Token counting unavailable:** an observed API count-endpoint 404 is cached briefly per model/header scope. Inference and token counting are separate capabilities; no synthetic count is returned.
+- **Local checks:** `doctor` is read-only by default. `--online` checks access; `--compat` sends minimal inference and consumes usage. `--fix` backs up owned configuration and performs bounded repairs. It does not enable optional features, change company policy or force-restart apps. Partial repairs exit 1.
+- **Cache cleanup:** adding `--history` can break the next continuation. It does not delete client transcripts or generated images.
+
+Request inspection covers bounded retained records, not a full conversation archive. Unidentified clients stay unidentified. Routine diagnostics omit secrets, prompts and error bodies. Explicit error excerpts use bounded, redacted collection. Usage is returned token metadata; cache hit is reused input divided by input, with unknown/partial data indicated. It is not a request-based cache rate or a billing receipt.
+
+## Settings and appearance
+
+Settings separates saved preferences from effective state. Auto-save applies changes by default; required restarts remain explicit. Restore-defaults creates a backup first and keeps accounts, keys, model plans and chats. CLI preference reset/restore uses its own service-only backup; it does not change browser appearance or replace the Web UI's backup.
+
+Web and terminal colors are independent. Web appearance is browser-local. The terminal keeps its selected color and animation; NO_COLOR, dumb/non-TTY and narrow output remain supported. Reduced motion disables decorative movement. Closed tabs and hidden views stop scheduled work. Model/usage data loads on demand; the Web UI adds no inference calls.
+
+## Installation and updates
+
+Use the installers linked in the [README](../README.md) when Node.js is unavailable. They support macOS and Windows on x64/ARM64, reuse a compatible Node.js, or install verified Node 24.22.0 privately. They do not install Git, compilers or system package managers, or change company registry/proxy/certificate/shell policy.
+
+Complete Release packages include locked runtime dependencies. The updater verifies package identity, version and digests before installation, backs up the discovered package and launchers, and restores them on installation/runtime-check failure. A busy installation fails in place. Lock errors include the lock path; do not delete a lock held by another install.
+
+`ccdx update github` uses the latest stable Release. Normal source-package installation uses the configured registry. After npm EALLOWREMOTE, the updater can use a verified same-version complete platform package without relaxing npm policy. Other failures are not retried across arbitrary sources. Explicit `--allow-remote` grants URL downloads to that installation's whole dependency tree, not one hostname; use it only if policy permits. No persistent npm setting changes.
+
+Finish active work before updating the active installation, then restart CCDX normally. The installed package version can differ from the running process. No interruption-free upgrade is promised for an ordinary foreground service.
+
+Overnight updates are opt-in. The supervised service checks within its local midnight window, stages only eligible patches in the same minor version, and waits for idle work before handoff. Candidates must be published for at least 24 hours. Failed preparation/handoff retains or restores the previous service. Enabling this feature requires its documented normal restart; it does not attach a supervisor to an existing ordinary process. Minor upgrades such as 1.2 → 1.3 remain manual.
+
 
 ## Model capabilities and Claude synchronization
 
@@ -283,256 +211,8 @@ sync shows declared capabilities, supported budgets and limitations. Reopen the
 client after its owned configuration changes. All tests using sample capabilities
 are isolated; they do not assign sample limits to a user's real models.
 
-## Microsoft 365 provider
 
-Starting with 0.10.0, CCDX can discover authorized M365 models independently of
-Copilot CLI. This is not restoration of the retired personal-GitHub Claude profile
-or PM Studio patch. The core Codex provider remains GitHub until explicitly changed.
-
-```bash
-ccdx m365 status
-ccdx m365 models
-ccdx m365 accounts
-ccdx m365 account
-ccdx m365 account --id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-ccdx m365 switch
-ccdx m365 switch m365 --model gpt-6-sol --auto-review-model gpt-6-sol
-ccdx m365 switch github
-ccdx m365 off
-ccdx m365 on
-ccdx m365 remove
-ccdx usage --provider m365
-ccdx usage --provider github
-```
-
-The model IDs above are examples, not guaranteed entitlement. `switch` checks the
-current M365 catalog before committing. Interactive mode asks for the provider,
-Codex GPT model and Auto-review model; scripts must supply available IDs (or reuse
-previously saved valid choices). Switching requires the running updated adapter.
-It affects subsequent requests, not in-flight streams. Existing Codex threads keep
-their selected model: choose an available M365 model in the App. Unavailable
-models return a clear error instead of being aliased. There is no automatic
-cross-provider failover, quota borrowing or organization/account substitution.
-
-Startup uses the official optional `@azure/msal-node-runtime` 0.20.6 package in a
-short-lived Node helper. It discovers OS broker accounts and calls silent token
-acquisition only. It neither launches a login UI nor reads Copilot CLI tokens.
-macOS requires MDM enrollment and a working Microsoft Enterprise SSO broker;
-Windows uses its Microsoft account broker. Tenant policy, device compliance,
-account authorization and Loki entitlement still decide access. Saved bindings remain selected, including bindings created before account selection was added. Without a binding, Windows runs its system `whoami.exe /upn` once when multiple candidates exist (2.5-second limit) and accepts only a unique exact case-insensitive match with a discovered company account. It does not use the device enrollment identity, environment username, email suffix or list order. Local sign-ins, unsupported UPN lookup and shared UPNs fall back to a single company account or explicit selection. The Node broker has no explicit current-OS-account flag; a UPN match is not a SID/object-ID or device-compliance check. Entra/hybrid enterprise environments still need their own validation.
-
-Duplicate stable account/tenant records are merged only when their identity metadata agrees. Conflicts and multiple remaining accounts require user action. Personal Microsoft consumer-tenant accounts are excluded. Windows local sign-in with an Office company account works only when the broker can discover that account; Office's sign-in UI does not prove broker visibility or model entitlement.
-
-Use **Model sources → Microsoft 365 → Company account** or `ccdx m365 account` to choose. `ccdx m365 accounts` performs local discovery only; its opaque IDs can be passed as `ccdx m365 account --id ID`. These commands require the updated running service. Selection rediscovers accounts, rejects stale IDs, authorizes only the selected account and fetches its catalog once before committing. Failure retains the previous binding/catalog. Active M365 requests or startup work prevent selection; new M365 requests are refused during validation, while GitHub remains independent. Account changes apply to both M365 GPT and Claude; the selected Codex provider and saved model choices are not silently changed. Models missing from the new catalog require an explicit model choice. No interactive Microsoft sign-in UI is opened automatically. Interaction requirements, policy refusal or a missing native package leave M365 unavailable. None of these invalidate GitHub credentials.
-The GitHub-selected Codex path retains its existing first-run GitHub login flow.
-
-The optional package download is approximately 14.6 MB, contains prebuilt binaries
-and has no install script or runtime dependencies. It is not bundled Copilot CLI.
-If this optional broker alone is unavailable, core GitHub/prediction/image behavior
-remains available with the existing dependencies installed. Do not use a blanket
-`--omit=optional` workaround: sharp still needs its platform-specific optional binaries.
-M365 is enabled automatically only on macOS/Windows; Linux reports it
-unsupported. The `CCDX_M365` environment control accepts `0` to suppress M365 startup for that process. It does not
-restore existing client settings; use `m365 off` for that explicit operation.
-
-Entra tokens are retained in memory until renewal/close, never saved in a CCDX
-credential file. Renewal is silent and single-flight, with a 28-second helper
-deadline and one-minute failure backoff. The provider uses only
-`https://loki.delve.office.com/api/v1/llmapi`; discovery uses `/models` and
-inference uses its advertised native Responses or Messages endpoints. This is a
-private service, not a promised public SLA. Its fixed origin is shared by the Node and Windows target policies; authentication resources and company network policy are unchanged. No request is redirected to another
-origin. Model caches and replay namespaces are bound to this service origin and account. A legacy cache with no origin, or one from the prior dogfood origin, is preserved on disk but is not published as this environment’s catalog; a successful discovery replaces it. Disabled sources and saved client/model selections are not automatically changed. Explicit proxy/trust settings are preserved. Windows delegates system
-PAC/WPAD and integrated authentication to its own isolated WinHTTP worker;
-unsupported macOS dynamic PAC is reported rather than bypassed.
-
-System `ExceptionsList` entries such as `169.254/16`, `10/8`, `172.16/12` and `192.168.1/24` are normalized to full four-octet IPv4 CIDRs before the existing shared Node/PAC matcher. Missing octets become zero only when the supplied octets cover the prefix; invalid octets, ambiguous leading zeros, out-of-range or underspecified prefixes remain errors. User-supplied `NO_PROXY` retains its existing strict syntax. No system setting, proxy bypass policy, DNS lookup or network probe is added. The shared system-input correction also applies to prediction environment parsing.
-
-M365 proxy-setup failures retain their existing outer category (`m365_proxy_settings_unsupported`, `m365_proxy_discovery_failed`, or the existing environment-failure category `m365_network_error`) and add an optional `network_diagnostic`: fixed `source` (`system`/`environment`), `stage` (`proxy_discovery`/`proxy_config`) and `cause_code`. Causes distinguish discovery, dynamic PAC/WPAD, invalid bypass rules, invalid static settings and invalid/unsupported proxy addresses; unknown causes stay generic. CLI/startup explain the specific cause without suggesting a new sign-in for a known network setup failure. WebUI shows the bilingual reason in source status (codes in its tooltip) and the existing model-check details, with source/stage/cause fields. Proxy URLs, credentials, raw settings and raw nested errors are never projected. These local setup failures happen before the model HTTP request; a local 502/503 does not establish a model-service denial. Successful transport setup or a later unrelated refresh failure clears the previous setup diagnostic. Failed catalog reads still remain failures and preserve last-good data; they are not successful empty catalogs. No automatic route substitution or extra polling is added.
-
-The M365 profile under `~/.local/share/codex-copilot-dx/profiles/m365/` contains
-`settings.json`, nonsecret `account.json`, account-bound `models.json`, a private
-local `gateway.json` key, and `client-config.json` field ownership. JSON reads are
-bounded at 4 MiB and regular files only; new owned files use private permissions.
-Codex source and M365 review choices live separately in
-`~/.config/codex-copilot-dx/providers.json` (or under `XDG_CONFIG_HOME`). Existing
-GitHub auth/cache/preferences, Codex auth, prediction trust and image keys are not
-copied into the M365 profile. The system's Microsoft SSO account is never deleted.
-
-M365 catalogs refresh at startup and on explicit lookups. Existing model-list
-reads and Claude Messages traffic start a background refresh after two hours;
-disk caches older than seven days are rejected. `ccdx models` and Auto-review's
-selector follow the selected Codex source. Dashboard tabs query a registered
-Provider independently of that selection; M365 uses a fresh provider catalog
-lookup and labels the returned catalog timestamp. Its disabled/hidden or
-ineligible models remain visible as directory metadata, with no eligible client.
-Client discovery and request validation still exclude wrong publishers/protocols
-and disabled/hidden models. A listing does not prove inference access or quota.
-M365 Fast is unverified and `priority` requests fail explicitly; choose Standard.
-GitHub Fast behavior is unchanged.
-
-M365 Auto-review has its own required model choice and defaults to low reasoning.
-`ccdx auto-review-model` changes that provider's model/effort without touching the
-GitHub preference or falling back to its cached catalog. Native prediction still
-uses the conversation's selected model through the normal Codex endpoint. The
-optional image MCP/skill/API remains separately configured and off by default.
-
-### Claude gateway and client ownership
-
-Claude App ordinary model synchronization compares the model-list JSON by its
-structure. The App-owned boolean `prefer1m` may change without blocking managed
-model additions or removals; its explicit true/false value is preserved by exact
-model identity while 1M support remains declared. New entries with declared 1M
-support default to `prefer1m: true`, so the App shows one 1M option rather than
-separate standard/1M rows. Unknown or smaller windows are not promoted to 1M.
-Names, display overrides, effort caps, unknown fields and meaningful model order
-changes retain strict ownership protection. Invalid JSON, duplicate identities or
-invalid preference types are preserved rather than rewritten.
-
-When a prior manual recovery already exactly matches the generated selected list,
-a previous ownership record may be refreshed without rewriting the App profile.
-Surviving old entries must retain their non-preference fields and relative order;
-the original restoration value is kept. An unowned model list is not claimed just
-because it happens to match. Non-model fields and restoration keep their existing
-strict ownership checks. Restart the App normally if its loaded model menu is
-older than the saved profile. Source/key changes in an existing conversation still
-require a new conversation; this patch does not relax that isolation.
-
-
-Company-account history is isolated. `conversations.json` stores at most 1024 hashes of conversation identifiers (or the first user item when no native identifier exists) and their account fingerprints; no messages, raw session IDs or tokens are stored there. Each new conversation writes its ownership once; known conversations use memory. After changing accounts, known foreign conversations are refused before forwarding. Unknown requests containing old history are also refused, including after restart; use a new conversation. Clients without stable conversation IDs can collide when their first user item is identical, so supply a unique native session ID. Evicted/unrecognized history fails closed after a switch. The history-isolation marker is saved with the binding and survives token renewal. Removing the M365 profile clears this ownership file, but never removes system sign-in or usage history.
-
-Account selection stages the new authorization/catalog before replacing the old provider. Catalog and binding writes use the existing locked atomic writer with restoration on failure; this is not a crash/power-loss transaction. Client configuration remains a separate readiness state: its failure does not claim that account authorization failed or overwrite custom/managed fields. Previously saved model preferences are not substituted when the new account lacks those models.
-
-Since 1.1.0, Claude mounts under the main HTTP listener at
-`http://127.0.0.1:<ADAPTER_PORT>/anthropic` (default main port 2026).
-It exposes `GET /anthropic/v1/models`, `POST /anthropic/v1/messages` and
-`POST /anthropic/v1/messages/count_tokens`. The Claude Base URL excludes the final `/v1`.
-The local socket, loopback Host, native-client Origin rejection and private Bearer
-or `x-api-key` checks remain independent of any main-listener LAN opt-in.
-Messages tools, thinking, signatures, image blocks, beta headers and SSE retain
-their native protocol and backpressure/cancellation handling. Provider-specific
-cache policy is described below; the local gateway key is never forwarded upstream.
-
-The protocol handler owns only its responses, never the shared server. Codex,
-WebUI and Claude share the main port; native prediction keeps its CONNECT/PAC
-transport and saved port. Root `/v1/messages` remains retired, including on a
-custom main port. Claude requests never reach GitHub. M365 GPT-only catalogs do
-not configure Claude. Optional Claude setup failure leaves the Codex backup independent.
-
-Unchanged CCDX-owned Code/App addresses migrate from 2027 to the shared prefix,
-with the original restoration values preserved. User-edited fields, managed
-settings and explicit environment routes remain preserved. CCDX does not keep
-a permanent 2027 compatibility listener; migrate hand-written old URLs explicitly.
-Already-running clients may need a normal restart to reload their base URL.
-Disabling/removing M365 is rejected while its Codex or Claude inference is active,
-so an accepted disable does not cut off those requests.
-
-Loki explicitly rejects one-hour prompt-cache retention. M365's request policy
-caps standard `cache_control: {type: "ephemeral", ttl: "1h"}` fields to `5m`,
-logs that limitation once and counts adjustments in its status. Prompt bytes,
-breakpoint positions, tool input, thinking and approval settings do not change.
-This is a retention/cost limitation of the new M365 path, not an equivalent
-one-hour cache guarantee. GitHub caching is unchanged.
-
-The gateway publishes canonical Claude version IDs such as `claude-opus-5-5`,
-while M365 receives its exact `claude-opus-5.5` ID. Existing raw IDs are still
-accepted. Only exact supported family/version spellings are normalized; alias
-collisions fail explicitly. Bodies, thinking signatures and native response bytes
-remain intact apart from the existing cache-TTL policy and the upstream model ID.
-
-`capabilities.supports.reasoning_effort` supplies deployment-specific effort
-metadata. App `inferenceModels` entries receive the highest recognized advertised
-`maxEffort`; Code discovery receives canonical IDs. A successful catalog refresh
-reconciles unchanged owned fields outside inference serialization. An owned legacy
-Code default can migrate to its matching canonical ID; valid user model/effort
-preferences are preserved. Reads after a profile change invalidate page catalogs.
-Unknown metadata stays unknown. Unknown effort names remain visible as upstream
-metadata and are not invented as App caps. When an explicit effort list exists,
-requests for absent efforts fail before inference, without dropping the field or
-substituting a lower level. Missing metadata leaves the upstream authoritative.
-
-App effort controls also depend on its model knowledge. Supported versions can
-read Anthropic's signed catalog under the App's existing network and management
-policy; CCDX neither replaces that signed document nor changes its URL/policy.
-`maxEffort` is a ceiling, not an arbitrary discrete allowlist: client-visible
-options may differ from an upstream's sparse list, while exact request validation
-remains authoritative. Unknown model identities or new protocol semantics can
-still need a client or CCDX update. A displayed control alone is not an inference
-verification. See [Claude model configuration](https://claude.com/docs/third-party/claude-desktop/configuration)
-and [gateway behavior](https://code.claude.com/docs/en/llm-gateway-protocol).
-
-For Claude Code, CCDX owns only its gateway environment fields in
-`CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`. For Claude App it
-uses the installed client's third-party config library, with one named
-`CCDX Microsoft 365` profile and the normal third-party deployment setting.
-macOS stores the owned App configuration below `~/Library/Application Support/Claude-3p`;
-Windows uses `%LOCALAPPDATA%/Claude-3p`. First-party Claude configuration is not modified.
-See the [official desktop configuration contract](https://claude.com/docs/third-party/claude-desktop/configuration).
-Existing foreign gateways,
-cloud-provider choices, other selected App profiles and detected managed desktop
-policies are preserved. No binary patch, system certificate, execution-policy
-change or forced App restart is performed. An already-running client can require
-its normal restart to read the saved settings; “configured” is not proof of a
-visible chat or successful reply.
-
-Claude Code 2.1.295 emits experimental fields that this Loki API rejects with
-`invalid_body`. Owned gateway setup therefore supplies the documented
-`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` compatibility option when no explicit
-environment override exists. Existing user values are preserved. This leaves
-standard tools, thinking and prompt-cache fields available; first-party-only beta
-features are not promised. CCDX does not silently delete conversation content,
-disable approval checks, or retry inference with reduced semantics. See the
-[official variable reference](https://code.claude.com/docs/en/env-vars).
-For Codex, both verified providers reject native image-generation declarations;
-their explicit request policy retains CCDX image function/MCP tools instead.
-
-`off` selects GitHub, stops M365 and restores only unchanged owned Claude fields.
-`remove` additionally removes CCDX's account/catalog/gateway/ownership files,
-while retaining the disabled preference and historical usage. Active M365 requests
-block removal; user-modified fields block full cleanup and are reported, not
-deleted. Neither operation clears Codex transcripts or shared image output.
-
-### Isolation and measurements
-
-Each request is pinned to its provider. Response IDs/history are namespaced by
-provider and account inside the existing shared history-byte limit; this is not a
-second unbounded history cache. Explicit switching can replay complete visible
-history. Foreign encrypted reasoning is not forwarded; opaque tool/compaction
-state requires verified local plaintext recovery, otherwise the request fails
-without discarding earlier context. No automatic cross-source retry is performed.
-
-CLI usage and WebUI include source filtering; historical records without a source
-are treated as GitHub. Claude's cache-read/cache-write input is included in its
-normalized total input, with raw reported usage retained. Missing counts remain
-unknown. Combined totals are labeled; identical model names across providers can
-be separated with the filter. The M365 status card separates auth/catalog state,
-gateway availability, client configuration and selected Codex source. Observed
-client requests are not claimed to prove the App's UI state. `doctor --online`
-checks the selected provider; `doctor --fix` does not reimport inactive GitHub auth.
-Claude gateway outcomes are displayed separately; core HTTP totals retain their
-existing main-listener meaning rather than mixing in another protocol's counts.
-
-CCDX is a local compatibility adapter for Codex App. It configures Codex to use an OpenAI Responses API on loopback while GitHub authentication, model discovery, and inference stay backed by GitHub Copilot.
-
-## How it works
-
-### Retired prediction integration
-
-The manual prediction MCP, automatic Stop hook and dashboard panel are removed.
-CCDX does not install a prediction skill or replacement predictor. Startup disables
-the old `suggestion.json` preference and removes only unchanged CCDX declarations
-from the active `CODEX_HOME/config.toml` (or `~/.codex/config.toml`).
-`CCDX_SUGGESTION_CONFIG` still identifies the legacy settings path for cleanup.
-For an immediate cleanup without starting the adapter, run `ccdx suggestion off`.
-The old `suggestion on` and `suggestion model` commands cannot re-enable it.
-
-Modified, inline and profile-specific declarations are preserved. Cleanup failures
-do not block the core adapter. Saved model preferences and old candidate files are
-not deleted; they are inactive. Native Codex preference settings, hook trust records,
-other hooks and the optional image MCP are untouched. Two inert compatibility
-entrypoints prevent user-modified registrations from invoking a removed module:
-the old Hook exits with an empty result, and the old MCP exposes no tools or panel.
-
-### Optional native predictions
+## Optional native predictions
 
 Native next-message predictions are **off by default** and use no MCP, Hook, skill,
 panel, renderer injection, or client-program modification. This compatibility
@@ -638,15 +318,15 @@ have the separate restart/setup requirements described below.
 
 ```bash
 # Fully quit Codex App first.
-ccdx prediction on
+ccdx app codex prediction setup
 # Restart the running CCDX process, then launch Codex through ccdx.
 ccdx
-ccdx prediction status
+ccdx app codex prediction status
 # Repair only an already-enabled bridge in a compatible running CCDX service:
-ccdx prediction fix
+ccdx app codex prediction repair
 
 # To remove the optional setup, fully quit Codex first:
-ccdx prediction off
+ccdx app codex prediction remove
 ```
 
 Enabling explicitly adds a private certificate trust record to the selected App
@@ -746,7 +426,7 @@ requests can fail during an outage and are never replayed by this supervisor.
 Disabled prediction startup creates no recovery timer. The existing in-memory
 overlay switch still observes explicit on/off changes independently.
 
-`ccdx prediction fix` asks the running adapter for one explicit repair, without
+`ccdx app codex prediction repair` asks the running adapter for one explicit repair, without
 starting another core service or forcibly restarting Codex. Disabled predictions
 remain off. Healthy/current bridges with unchanged environments are kept; a failed bridge or changed App identity
 reuses the saved port, certificate and verified profile. Compatibility, certificate,
@@ -820,417 +500,13 @@ route state, recovery attempts and recoveries. These are independent of the
 unknown candidate-visibility value. A successful recovery only means the bridge
 was recreated on the original address, not that gray text appeared.
 
-### Configuration ownership
 
-Core setup, image setup/guidance, config doctor, optional history compression and
-legacy prediction cleanup resolve the same `CODEX_HOME/config.toml`; absent
-`CODEX_HOME`, they use `~/.codex/config.toml`. An explicit function-level file path
-still takes precedence for embedders. App-profile trust is a separate location
-selected by `CODEX_ELECTRON_USER_DATA_PATH`, not by `CODEX_HOME`.
-
-CCDX-owned config mutations share an owner-recorded cross-process lock, reread
-under the lock, and retain existing atomic replacement/rollback checks. User
-settings updates use a separate lock for their shared JSON file; prediction
-on/off uses its own settings lock. Readers take no lock and write no lock file.
-Contention fails with a retry message instead of stealing a live lock. Other
-applications do not participate in these locks, so snapshot conflict checks still
-apply; the locks do not claim a global filesystem transaction.
-
-Since `0.9.33`, local settings/auth metadata reads are capped at 1 MiB, token
-files at 64 KiB, and saved model catalog files at 9 MiB including metadata.
-Oversized files remain untouched. Existing strict readers reject them; optional
-cache readers treat them as unusable. Conversation files, HTTP request limits
-and runtime history/cache limits are unchanged.
-Full `ccdx doctor` reports npm's global installation target and readonly credential
-permission evidence. Windows checks existing NTFS allow entries for other
-identities, without changing ACLs. This is not a full effective-access audit;
-unavailable checks warn. `doctor config` performs neither npm nor ACL probes.
-
-### Core adapter
-
-One in-process adapter listens on `127.0.0.1:2026` by default and exposes:
-
-- `POST /v1/responses`
-- `POST /v1/responses/compact`
-- `GET /v1/models`
-
-Responses-only models and compaction use Copilot's Responses transport directly. For requests routed through Chat Completions, CCDX converts the supported text, image, and function-tool subset and rejects incompatible message content rather than turning it into JSON text. Chat `length` and `content_filter` finish reasons become incomplete Responses in both streaming and non-streaming modes. Both streaming SSE and non-streaming responses are supported.
-
-Chat conversion maps an explicitly supplied `reasoning.effort` to `reasoning_effort`.
-Known effort values are checked against the existing model catalog when it advertises
-an effort array; without that metadata, upstream validation remains authoritative.
-No extra model lookup is made. Malformed function tools, forced undeclared functions,
-unsupported tool-choice strings and unknown text formats receive a local compatibility
-error instead of being dropped. Native Responses request fields are not changed by this check.
-
-The adapter handles response history, encrypted reasoning state, function/custom tools, images, compaction, cancellation, retries, and usage metadata within the compatibility boundaries below. Routing prefers endpoint metadata from Copilot's live or cached catalog; when metadata is unavailable, a small built-in set identifies known Responses-only GPT models.
-
-### Local compaction recovery
-
-`0.9.28` adds bounded local recovery; the affected user's real chat still needs
-verification. After the exact decoded HTTP 400 `input item does not belong
-to this connection` rejection, or its HTTP-200/pre-output Responses failure
-equivalent, a request containing encrypted compaction can attempt one verified
-plaintext rebuild. Healthy encrypted histories remain unchanged.
-
-The reader is loaded only after this failure. It requires a loopback peer and
-Host, no browser Origin, and LAN mode disabled. It binds a UUID from native
-`thread-id` / `client_metadata.thread_id`, or an exact UUID session/cache key
-when primary metadata is absent. Conflicting primary IDs are rejected. It reads
-only UUID-matching rollout filenames under the service's configured
-`CODEX_HOME/sessions` and `archived_sessions`; it does not search by conversation
-title, similarity, arbitrary request paths or another machine's filesystem.
-
-Supported source files are complete JSONL logs and their `.jsonl.zst` variants,
-decoded with Node's built-in Zstandard support. Header identity, the exact
-compaction ciphertext, retained message order and function/custom-tool pairs
-must match. A history-base reference, fork reference, rollback/reset marker,
-missing plaintext tool content, malformed data or multiple matching sources
-stops recovery. Referenced/split histories are not assembled by this recovery;
-the caller must have a complete standalone source prefix.
-
-The request replaces the rejected compaction with recorded plaintext before it,
-retains current instructions and post-compaction input, and removes unavailable
-reasoning. It does not decrypt or claim to reproduce hidden encrypted reasoning.
-Normal preparation, image limits and upstream model/context limits still apply.
-The reader has a five-second deadline, a 4,096-entry directory lookup bound and
-a 16-candidate bound. Decoded reads and the rebuilt body are bounded by the
-running adapter's decoded-body limit; history admission reservations cover
-recovery preparation. Requests cannot retry after visible output has begun.
-
-Overlapping equivalent recovery readers share in-flight source discovery/decoding,
-with independent cancellation and independent restored requests. Every caller retains
-its admission reservation; exclusive admission can serialize reads instead of sharing.
-Successful plaintext is not retained after the flight settles. Up to 32 failure-code
-records last two seconds, keyed by the exact source file identity/size/timestamps,
-thread, compaction digest and byte limit. Directory discovery still runs; missing
-sources, cancellation, deadlines and unstable snapshots are not cached. Source changes
-invalidate reuse. No transcript index, watcher or healthy-request scan is added.
-
-Neither the original rollout nor client configuration is rewritten. Recovery
-diagnostics contain type/count/status metadata, not transcript text, ciphertext
-or file paths. If verification fails, `ccdx_history_rebuild_required` includes
-`recovery.local_status`; "not modified" does not imply CCDX has backed up complete
-plaintext. Cross-machine/LAN recovery is intentionally unavailable. A full
-plaintext replay can still exceed the upstream context window; this recovery
-does not silently truncate it or add chunked re-compaction.
-
-### Reasoning usage declaration
-
-Native Responses success replies preserve `X-Reasoning-Included: true` only
-when the upstream explicitly returns a case-insensitive literal `true`.
-Missing, false or other values are not forwarded: current Codex treats header
-presence as a declaration that historical reasoning is already counted.
-CCDX does not infer that declaration from `output_tokens_details`, invent it,
-add it to Chat-converted replies or HTTP/JSON failures, or change token totals.
-Streaming headers describe the upstream declaration, not a guarantee that the
-stream will later complete. This is compatibility metadata, not proof of lower
-context use, faster inference or fewer compactions on every client.
-
-### Fast and Standard modes
-
-Codex can select Standard or Fast without changing CCDX configuration. When the client requests a model with `service_tier: "priority"`, CCDX uses its exact `-fast` model only when the live Copilot catalog advertises that variant as enabled, selectable, OpenAI-owned, and Responses-only. Standard mode continues to use the base model; CCDX does not invent Fast availability when the upstream catalog does not provide it. This retains the established `gpt-5.6-sol` / `gpt-5.6-sol-fast` mapping and applies the same exact-match rule to future models.
-
-Codex Auto-review uses the hidden `codex-auto-review` model ID. CCDX maps it to Copilot's `gpt-6.1-sol` Responses model by default, independently of the interactive Fast/Standard selection, and logs both model IDs when the mapping is used. Without a saved reasoning override, an omitted Auto-review effort defaults to `low`; explicit client efforts are preserved. A saved override changes only review effort, preserving other reasoning fields. The review target and effort can be changed interactively without reinstalling or restarting a current CCDX adapter.
-
-### GPT-6 model catalog
-
-Codex App requests a versioned, capability-rich model catalog that is different from Copilot's raw model list. CCDX reads the complete catalog bundled with the installed Codex App and preserves every other model entry and capability. It exposes each managed GPT-6 entry only when Copilot advertises that exact model as enabled, selectable, OpenAI-owned, and Responses-capable.
-
-When an installed 0.155.x catalog does not yet contain `gpt-6-sol` or `gpt-6-luna`, CCDX derives their client-compatible entries from that catalog's GPT-6 Astra schema and the published OpenAI Codex model definitions at commit `0a2eb4696c26ac33204bcd255721ab30220a4774`. When an installed 0.158+ catalog contains `gpt-6-sol` but not `gpt-6.1-sol`, CCDX derives only the missing 6.1 entry from that client's Sol schema and OpenAI Codex model identity/defaults at commit `ab84d71f5767e4a565ce81c2c426287cb48c7918`. Fallback reasoning controls are intersected with Copilot's advertised efforts; every other bundled entry retains its established behavior. A newer client-provided entry supplies its schema and future fields while CCDX still gates its visibility, speed tiers, and 6.1 Sol reasoning controls against Copilot.
-
-CCDX exposes GPT-6 Standard paths and removes unverified speed-tier metadata. Existing GPT-6 bundled reasoning-effort options remain unchanged; 6.1 Sol is limited to efforts advertised by Copilot. Fast follows the exact upstream-variant rule above. Versioned model discovery matches the bundled catalog to the client's `client_version`, including the nested Codex CLI binary in current macOS App bundles, caches it by application binary identity, and reloads it after an App update. If a matching usable catalog cannot be loaded, the versioned models request returns `503`; an unversioned request returns the Copilot-style list.
-
-`/v1/models` still attempts live discovery first. With a usable in-process catalog, it limits that upstream wait to 1.5 seconds (or a shorter configured upstream timeout) before falling back to last-known-good data. Without a catalog it retains the regular upstream timeout. Received HTTP `401`/`403` responses remain errors, not cached successes; fallback does not grant inference access. This does not change the explicitly live `ccdx models` command.
-
-## Prerequisites
-
-- A GitHub account with Copilot access to the desired models
-- Node.js 22.15 or newer, for built-in Zstandard request decompression
-- Codex App on macOS
-
-## Install and start
-
-```bash
-npm install -g codex-copilot-dx@latest
-ccdx
-```
-
-`ccdx` is the primary launcher. The old `codex-copilot-dx` executable remains temporarily as a compatibility shim: it prints a deprecation warning at most once every seven days in interactive terminals, runs `ccdx`, and remains silent in scripts. The warning timestamp is stored under `XDG_CACHE_HOME` or `~/.cache`; `doctor config` bypasses that warning cache to remain read-only. The alias will be removed in a future breaking release.
-
-For a one-off run without a global install:
-
-```bash
-npm exec --yes --package=codex-copilot-dx@latest -- ccdx
-```
-
-On a normal launch, CCDX:
-
-1. Prints the installed package version and checks GitHub's latest stable release in the background (not npm).
-2. Reuses a compatible running adapter when available; otherwise it reuses a compatible local Copilot credential or starts GitHub Device Flow when authentication is required.
-3. Loads a usable model cache or attempts a live refresh, then starts listening. A cache older than two hours refreshes in the background; a fresh cache can be used immediately. A failed refresh retains the last-known-good list when one is available.
-4. Checks the startup-managed settings in `CODEX_HOME/config.toml` (default `~/.codex/config.toml`), including the local `/v1` endpoint.
-5. Attempts to open Codex App on macOS unless `CCDX_AUTO_LAUNCH` disables it.
-
-The `OPENAI_API_KEY=dummy` value used in the Codex shell environment is only a client-side placeholder. It is not a GitHub credential. CCDX exchanges the saved GitHub OAuth credential for short-lived Copilot service tokens internally.
-
-On startup, CCDX also adds `context_management = true` under `[features]` when the key is missing, creating the section if needed. Existing values, including `false`, are preserved. Existing inline or dotted `features` declarations and nested context-management settings are left intact to avoid conflicting TOML definitions. This opts unconfigured users into Codex context management; support and behavior depend on the installed Codex version. A configuration that already matches is not rewritten.
-
-Startup and adapter reuse also attempt an optional `local_thread_store_compression = true` default under `[features]`. CCDX probes installed macOS App runtimes with `features list`, using an empty temporary Codex directory, no inherited credentials/provider overrides, a 1.5-second timeout per runtime and a 128 KiB output limit. All discovered App readers must advertise a supported, disabled feature; missing/removed/unknown/default-on features or failed probes skip setup. Existing user settings (including `false`, inline/dotted forms and legacy profile overrides) are preserved without probing. Alternative feature-table declarations that cannot be safely extended are left intact. The shared config is reread after probing, and only this key can change. Temporary probe directories are removed; no user transcript is read or compressed by CCDX itself, and no upstream or npm lookup is added. Ready and core requests do not wait for this optional task; its failures never abort the main service. On a first launch, the App may read the config before this background task finishes; the setting is available on its next config load/restart.
-
-This remains an experimental Codex storage feature. Current Codex compresses cold local transcript files, including shared histories, with Zstandard; every external reader of that Codex directory must also support the format. It does not reduce model context, request-body limits or CCDX's in-memory history cache, and CCDX does not promise faster inference. Existing third-party transcript readers are not detected. `ccdx doctor config` remains a config-only preview of essential startup settings; it does not spawn runtimes or predict this optional compatibility-gated default.
-
-If a compatible adapter is already running, a later launch reuses it and checks the local Codex configuration. Reuse requires the same package version, protocol version, and required capabilities. After updating the package, stop the old adapter before starting the new version. Installing or updating the package alone does not restart the adapter or update Codex configuration.
-
-### Codex configuration writes
-
-Normal startup and reuse of an existing adapter check `CODEX_HOME/config.toml` (default `~/.codex/config.toml`) once, after startup prerequisites succeed. There is no file watcher or periodic configuration rewrite. Startup, image setup, config doctor, compression and legacy prediction cleanup share this path. CCDX does not edit project-level Codex files.
-
-| Setting | Existing file | New file |
-| --- | --- | --- |
-| Top-level `openai_base_url` | Add or update to the adapter's `/v1` address | Set to the adapter address |
-| `model_context_window` | Add `1000000` only when missing | `1000000` |
-| `model_auto_compact_token_limit` | Add `900000` only when missing | `900000` |
-| `[shell_environment_policy.set]` OpenAI URL/key | Update `OPENAI_BASE_URL` and set `OPENAI_API_KEY="dummy"` when this section is recognized; leave an absent section absent | Create the section and set both keys; set `shell_environment_policy.inherit="core"` |
-| `[features]` `context_management` | Add `true` when missing; preserve explicit values and alternative declarations as described above | `true` |
-| `[features]` `local_thread_store_compression` | Optional compatibility-gated default; preserve existing values, skip already-on/unsupported/unavailable runtimes | `true` only after a successful probe |
-| `[mcp_servers.ccdx_image]` | Added in a marked CCDX-owned block only after `ccdx enable-image`; removed by `ccdx disable-image` | Absent by default |
-
-The two token limits are fixed defaults, not detected model capabilities. Existing custom values are retained. Writes target the listed keys with format-preserving edits and atomic replacement; this is not a general TOML formatter. Quoted keys, quoted table headers, and explicit dotted shell-environment declarations are recognized; inline shell-environment tables are left intact. Startup and image configuration commands validate UTF-8/TOML and verify that unrelated settings retain their values before writing. An unsafe edit leaves the original file unchanged. Use `ccdx doctor config` to inspect parsed values and preview what this writer would do with the current file. No actual change means no file rewrite.
-
-Interactive image setup rereads the shared config after prompts and network validation, so unrelated changes made during setup are preserved. It checks the snapshot again before committing and rejects conflicting image declarations. Identical configuration bytes are not replaced; private file permissions may still be corrected. These checks reduce lost-update risks but are not a filesystem-wide transaction with other applications that do not share a lock.
-
-## Version 0.7.0 migration
-
-CCDX 0.7.0 retired the former personal-GitHub Claude App, Claude Code, Anthropic Messages API, isolated Claude account, and PM Studio patch integrations. Their old setup, status, restore, profile, and routing commands remain unsupported. Version 0.10.0 adds a separate M365-only Claude gateway; it does not reactivate these old routes or PM Studio support.
-
-If PM Studio is still patched by an older CCDX release, update or reinstall PM Studio to restore its official application bundle. CCDX 0.7.0 does not patch PM Studio and does not provide a restore workflow.
-
-The upgrade intentionally does not delete or rewrite retired Claude or PM Studio configuration, historical patch backups, or isolated credentials created by older versions. Normal Codex configuration updates continue as documented above. Review and remove obsolete retired-integration state yourself only if you no longer need it.
-
-## Commands
-
-Run `ccdx <command> --help` or `ccdx help <path>` for command behavior and
-side effects. On supported interactive terminals ordinary startup checks use one
-transient row. Device authorization instructions and warnings remain visible.
-The foreground live region then owns one listener/uptime line, enabled sources,
-peer client setup/activity, returned usage, notices and a separate animation line.
-Source names start in column one immediately below `Enabled sources: N`.
-Small terminals compact summaries without changing metric meaning. The atom,
-colors, plain/NO_COLOR/dumb output and verbose paths remain.
-
-Enabled sources are not inferred online-authorized. Configured client settings
-are not App process liveness or proof that all visible models were adopted.
-Codex legacy startup writes expose only their observed configured/preserved state;
-managed model-plan state keeps priority. No new App probe is started by rendering.
-The live region uses existing model activity, including actual image generation,
-not image MCP tool-listing traffic. The model-request table retains its three
-text-inference routes; HTTP/capability counters stay in detailed diagnostics.
-Unknown outcomes appear when nonzero. Failed reads keep timestamped prior usage
-and mark current activity unknown rather than clearing counters or showing Idle.
-
-Supported TTY output replaces redundant Ready/Web/Claude summaries. Non-TTY,
-verbose and short-lived existing-service paths retain their compatible startup
-output. `Ctrl+C` stops only the foreground-owned service. Logs remain available
-through explicit file logging or verbose mode, without growing the live region.
-
-### Live models
-
-```bash
-ccdx models
-```
-
-With GitHub selected, this performs a fresh, read-only GitHub Copilot model-directory lookup without starting the adapter, opening Device Flow, reading the local model cache, or consuming an inference request. It lists selectable GPT model IDs, providers, advertised APIs, and preview status. With M365 selected it reads the running provider's isolated GPT catalog. Catalog availability does not guarantee that a later inference request will avoid quota, rate-limit, or policy enforcement.
-
-Concurrent identical live lookups share only the active request. Caller
-cancellation is independent; results are not retained as a fresh catalog after
-completion. The dashboard cancels its waiter when the read is abandoned.
-
-Interactive terminals use aligned tables for `models`, `auth status`, and `usage`. Redirected or piped output retains the plain-text layout for scripts; use `--format table` or `--format plain` when a command offers an explicit format override.
-
-`ccdx usage` and the dashboard Model Usage table show token cache hit rate for each model and the aggregate: recorded cached input tokens divided by recorded input tokens, weighted by token count rather than averaging request percentages. This describes the upstream prompt cache; the local history and image-transform caches are separate. Incomplete historical records do not hide a computable ratio: `~` marks a rate derived from incomplete counts. A rate is `—` when input tokens are zero, usable totals are missing, or token counts are invalid. Older logs may omit explicit zero cache counts; new Responses usage records retain reported zeros. CLI tables keep existing token columns on narrow terminals and show rates below the table when the extra column does not fit.
-
-### Auto-review model
-
-```bash
-ccdx auto-review-model
-```
-
-With GitHub selected, the selector first queries the running adapter, including its last-known-good model list when live refresh is unavailable, then falls back to a local model cache no older than seven days. It offers model IDs that advertise a Responses endpoint and are not explicitly hidden from the model picker. M365 selection uses only that running provider's catalog and separate saved preference, with no GitHub cache fallback. This selection does not itself verify policy or inference access.
-
-Enter a model number, then a reasoning-effort number. The second menu reuses the same model-directory lookup and lists only advertised efforts. GPT-6.1 Sol excludes `none` and `minimal`, even if upstream metadata incorrectly lists them. Enter keeps the current valid effort or selects `low` for a new selection when advertised; `0` follows the client (or `low` if the request omits effort). If effort metadata is absent, only `0` is offered. Enter `q` at either step to cancel without saving either choice.
-
-Both choices are saved together in `~/.config/codex-copilot-dx/config.json`, or under `XDG_CONFIG_HOME` when set. Choosing `gpt-6.1-sol` clears the model override and restores the package default. A selected effort is saved as `auto_review_reasoning: { "model": "gpt-6.1-sol", "effort": "medium" }` and applies only when its model matches the effective review target. Existing saved models, including `gpt-5.5`, and environment model overrides retain their precedence; changing the model via an environment variable does not transfer another model's effort. Choose `0` to clear the effort override; its `null` marker remembers client-following so Enter preserves that choice next time. Users who do not configure effort retain their existing behavior. Adapters running 0.9.13 or newer read both settings on the next Auto-review request; older adapters must first be upgraded and restarted. No client patch, foreground-model change, Fast mapping, permission or approval-policy change is involved.
-
-### Runtime caches
-
-```bash
-ccdx cache
-ccdx cache --limit 128
-ccdx cache --limit default
-ccdx cache --clean
-ccdx cache --clean --history
-```
-
-`ccdx cache` separates the shared in-memory Responses history from the rebuildable input-image transform cache. The history limit accepts 16–1024 MiB, is saved in the normal CCDX settings file, and applies immediately to a compatible running adapter. `CCDX_RESPONSE_HISTORY_MAX_BYTES` remains the higher-precedence environment override. Lowering the limit below current usage is rejected rather than evicting tasks silently. `ccdx cache -128` is a short alias for `--limit 128`; `-clean` aliases `--clean`.
-
-Plain `--clean` clears only completed image transforms; the next matching request may recompute them. Adding `--history` also invalidates all process-local `previous_response_id` chains and can make a task's next continuation fail, so it requires interactive confirmation or `--yes`. Cleanup refuses active cache users; retry after current requests finish. It never deletes Codex transcripts, generated image files, provider credentials, image edit handles, model catalogs, or usage/debug logs. A stopped or older adapter must be restarted before runtime cleanup; a saved limit applies on the next start.
-
-### Request-body limits
-
-```bash
-ccdx limits
-ccdx limits --decoded 256
-ccdx limits -256
-ccdx limits --decoded default
-```
-
-`ccdx limits` distinguishes the saved decoded request-body limit from the running adapter's active limit. The default is 128 MiB; the opt-in saved limit accepts 128–512 MiB. Changes take effect only after restarting the adapter, never restart it automatically, and do not clear conversations or caches. `CCDX_MAX_DECODED_BODY_BYTES` overrides the saved setting; unset it before changing the saved limit. The separate 64 MiB raw/compressed-body limit is not changed. Larger decoded requests can use substantially more process memory during JSON parsing and image preparation; raising this limit may enable a large thread to compact, but does not guarantee successful inference or compaction. Return to `default` after temporary use.
-
-### Control console and online settings
-
-The sidebar separates Overview, indented Codex/Claude Apps, Model sources, Usage, Requests, and Settings. Codex owns optional image generation, native
-prediction adaptation and the temporary Responses conversation buffer. That
-buffer supports continuation; it is not a chat archive. Shared HTTP traffic and
-per-protocol model outcomes are distinct. Claude Messages metrics are not labeled
-as all Microsoft 365 traffic. Saved credentials, authorization, catalog discovery,
-client configuration and successful requests are separate evidence.
-
-Interactive desktop starts open the default browser once after core readiness.
-`--no-browser` skips this for one invocation; `open_webui:false` in
-`~/.config/codex-copilot-dx/config.json` disables subsequent automatic opening.
-Query commands do not open it. Headless/CI/SSH or noninteractive starts skip it;
-a browser-launch failure does not stop the service. This is an opening attempt,
-not a guarantee that every browser will reuse an existing tab.
-
-The default TTY display uses wrapping source/Claude summaries, a line-framed usage/inference table, and separate notice/activity rows, without an alternate screen or raw keyboard input. It shows usage returned since this process began; pending
-usage is excluded, missing usage stays partial, and this is not an invoice.
-Business requests drive terminal activity; status/catalog polling does not. The live table fills its existing last usage row with Cache hit, using the same process-local cache_hit_rate and partial marker as Overview. Unknown/invalid rates display —; a known zero displays 0.0%. Existing nine
-animation styles retain their timing and cycle pauses; the default green retains its original palette. `--verbose`,
-`--show-request-id` or `CCDX_LOG_LEVEL=debug` restore detailed terminal output.
-Failed reads show previous-data status and the last successful update time, or that no data has been received. Narrow summaries wrap rather than hiding Claude App/Code state. Non-TTY/CI/dumb/too-small terminals use plain output; repeated identical notices
-are coalesced. File logging retains its existing explicit opt-in and redaction.
-In-memory usage still updates when `CCDX_DISABLE_USAGE=1` disables persistence. `runtime_usage.by_provider` separates returned process-local usage by source. The Requests view contains live Request flow, Requests by source, recent failures and request context; `ccdx status` also lists source/protocol outcomes. Unknown outcomes and partial usage remain distinct. CLI remains English; WebUI keeps English/Chinese.
-
-The Clear conversation buffer action clears all process-local conversation continuation data. If image optimization or conversation history is active, cleanup is refused; retry after current requests finish. Old chats may fail to continue; saved Codex transcripts remain. It invokes the existing image-transform/history cleanup operation, rather than an inactive-only selector.
-
-The source page groups account/access checks and the model list under the selected
-source. Selecting a source tab only browses it; application routing is changed from
-the application page. Model names remain in the main table; maker, protocol,
-reasoning levels, listing state and context limit are in each model's details.
-The Codex choices and source table share one catalog read with freshness,
-cancellation and account-generation checks. Explicit Refresh still checks again.
-
-Selection uses a solid theme fill with centered text, without a preceding check.
-Model-list text uses the normal text color. Selects have square borders and a
-visible keyboard focus indicator. Settings groups webpage appearance, independent
-terminal color/animation, startup and updates. The terminal preview is expandable;
-choosing an animation previews it, while Save applies it to the running terminal.
-Usage trends are separate from the model summary and remain on demand. Request
-rows show an observed HTTP failure separately from the model's terminal result;
-request IDs and attempt counts are available in the same bounded details. List
-timestamps use local 24-hour time in both UI languages.
-
-M365 catalog refusals expose a fixed reason, HTTP status, check/last-success time
-and service request ID when available. `entra_access_disabled` means the server
-reported that Copilot CLI Entra access is not enabled for that account; a generic
-403 does not establish why access changed. Sign-in, discovery and successful
-inference remain separate evidence. Failed discovery keeps the account-bound
-last-good list. A successful refresh clears old failure evidence. No automatic
-relogin, model call, source switch or policy exception is added.
-
-The settings API is local, requires the dashboard header, bounded JSON and
-same-origin POST. It invokes the same Provider, cache and integration operations;
-it does not spawn a CLI or generic shell command. Settings reads do not reveal
-upstream keys. Each operation reads back saved and effective state. Corrupt saved
-service preferences fail closed for optional calls rather than reopening them.
-
-| Control | Effective scope |
-| --- | --- |
-| Webpage color | Current browser, immediately; independent of the existing dark/light choice |
-| Terminal color | Live supported status table and animation; startup logo on the next launch |
-| Terminal animation | Live supported status terminal; plain/verbose/environment-disabled modes are reported separately |
-| Open WebUI | Next interactive desktop start |
-| Image calls | New local MCP calls; keeps provider credentials and allows an already-started call to finish |
-| Prediction adaptation | Subsequent configuration traffic on an already-provisioned bridge; keeps trust/route, and App caches can remain |
-| Model source | Explicit validated selection for subsequent Codex requests; existing requests retain their binding |
-| Conversation buffer | Live validated limit; cleanup refuses pinned/active data, then clears all buffered continuation IDs |
-
-Boolean allow preferences `terminal_animation_enabled`, `image_enabled` and
-`prediction_enabled` default to true, preserving already configured features;
-they do not provision or enable the default-off image/prediction integrations.
-The existing explicit CLI enable commands resume the corresponding paused gate.
-`disable-image` and `prediction off` retain their documented full cleanup
-semantics, distinct from a WebUI pause. First-time setup and client trust/routing
-changes still use existing compatibility checks and may require a normal App
-relaunch. Environment-controlled limits cannot be overridden through the page.
-
-Visible auto-refresh reads the in-memory status approximately every two seconds,
-and Provider/settings evidence approximately every 16 seconds. Hidden pages stop
-scheduled reads. Catalogs and retained usage are fetched only for their open view
-or an explicit lookup; their normal refresh interval remains 30 minutes. Paused
-auto-refresh still permits manual refresh/settings retry. No history-log scan is
-performed at the status cadence. The atom moves on load/manual refresh only and
-respects reduced motion. Client attribution absent from older records stays unknown.
-
-### Overview activity
-
-Overview reserves a fixed-height row below its status summary. Six 4px theme-colored dots appear and retract in order while the status snapshot reports active Responses, compaction, Claude Messages or actual image generation. Catalog reads, token counting, image MCP discovery and management calls are excluded; retries do not add another logical request. Active dots have no halo. Idle shows one small dot with a breathing halo. Invalid/missing status or a read older than six seconds shows Activity unknown, without a halo. This reuses the existing two-second status polling; short requests between snapshots may not be shown. No model probing, stream connection or extra polling is added. Hidden pages/views pause motion; reduced motion shows static corresponding states.
-
-### Color themes
-
-Settings separates Web appearance and Terminal appearance. Both offer Classic green (default), Klein blue and Soft pink. Web appearance also offers Pure white: white page/surfaces with black text and icons in light mode, inverted in dark mode. All WebUI palette tokens, including alerts and charts, are grayscale; status icons and words retain their meaning. Terminal previews continue to reflect the independently selected terminal palette. Green preserves the previous palette and terminal table's original text colors. Blue and pink color the terminal logo, full table and activity animation without changing glyphs, timing or metric definitions. Webpage color is independent of terminal color, and of the page header's dark/light switch.
-
-Web choices use `ccdx.dashboard.palette` (`green` / `klein` / `pink` / `mono`) and the existing `ccdx.dashboard.theme` (`dark` / `light`) in browser local storage. They are applied before the stylesheet, including the atom favicon. Same-origin tabs receive storage updates; other browsers retain their own choices. If storage is blocked, the current tab still changes and explicitly reports that the choice was not saved. No service request is needed to change webpage colors.
-
-Terminal color uses `terminal_color_theme: "klein"` or `"pink"` in the normal CCDX user config. An absent value means `green`; choosing green removes the override. It does not change `terminal_animation` or any capability flag. The same bounded, strict settings read, file lock and atomic writer are reused. Invalid/unreadable existing config is not overwritten with defaults. A successful save applies to the supported live status table; the startup logo uses the saved choice next time. Previously printed terminal lines are not rewritten. Color codes are added after width calculation and clipping. Truecolor, 256-color and ordinary ANSI fallbacks are supported; `NO_COLOR`, dumb terminals and redirected output preserve plain output. A terminal's own palette and background affect the displayed color. Pink uses a darker tone when COLORFGBG explicitly identifies a light background (7 or 15); otherwise its default tone is pale pink. CCDX does not query or change the terminal background.
-
-The terminal sample in Settings is labeled Preview and uses sample numbers, not current usage. Existing nine animation previews and their save operation remain available beneath the color choice. Errors and warnings retain their text and status icons in every webpage theme; the three colored palettes also retain red/amber cues.
-
-### Version and update information
-
-Settings ends with Version & updates. The current version belongs to the running service, which can differ from a newly installed package until CCDX restarts. Dates are GitHub Release publication dates, not local installation dates; an unavailable date is explicitly unknown. A verified newer stable release shows its version/date and `ccdx update github`. Copying a command never executes it. No background installation or service restart is added.
-
-Opening Settings reads `GET /_ccdx/ui/updates`, protected by the existing loopback/Host/dashboard-header checks. It reads public GitHub REST release metadata without credentials, accepting stable, non-draft releases only. The first successful check needs at most two serial metadata requests: latest, and the exact current tag when different. The current publication date is retained in memory. Concurrent reads share one lookup; successful results are cached for five minutes and failures for one minute. The page reuses the visible-view 30-minute refresh controller, so the two-second status timer never polls GitHub. Manual checks also respect the service cache. Network configuration discovery is asynchronous and reads only npm's named proxy/CA/TLS/offline settings; no registry or policy is rewritten. Each metadata request has a four-second deadline and a 128 KiB decoded-body limit, with no automatic retry.
-
-Failed/rate-limited checks never claim that the installed version is latest. Last-known release details remain labeled as such, separate from the latest check attempt. A failed current-tag date lookup does not hide an otherwise verified available update. The startup web-redirect check remains unchanged and independent of this REST check. If npm/network settings cannot be read or company policy blocks GitHub, the version card reports the check as unavailable.
-
-Expand the recovery instructions to choose macOS Terminal or Windows PowerShell. Commands download the version-pinned Release installer into a unique temporary directory and remove that directory afterward. They use the newer of the running version and last-known stable release, falling back to the running version if no release is known; stale metadata cannot select a downgrade. Installers retain the documented no-Git, minimum-runtime, rollback and configured-registry behavior. Windows instructions keep the current execution policy; if company policy blocks scripts, use its approved installation method. The current installer prefers a complete platform package and installs it offline; source-only old releases require the configured registry.
-
-Model-list failures name the selected source, retain its last successful list when available, and distinguish that list's timestamp from the failed check. Expand Check details for the bounded public reason, source, available HTTP status and check time. A retry time is shown only when the source supplies an actual retry delay; no new retry or automatic provider failover is added. Existing diagnostic redaction and size limits remain.
-
-### Terminal animation
-
-Choose the terminal activity animation interactively:
-
-```bash
-ccdx animation
-```
-
-The selector is ordered numerically:
-
-1. Comet (default)
-2. Twin
-3. Shuttle
-4. Chase
-5. Mirror
-6. Pulse
-7. Stack — short light trails arrive, accumulate, then leave as one bundle
-8. Relay — fixed nodes receive and pass a short light trail
-9. Split — one incoming light trail divides into two outgoing trails
-
-All nine rows preview their animations together while you enter a number to select one. The live previews keep each theme's original timing and leave the input cursor in place; selection ends them immediately. Small terminals, disabled animation, CI and dumb terminals retain static previews. Resizing or clearing the terminal pauses the live gallery so input stays usable. When the gallery cannot run, CCDX retains the selected animation's one-cycle confirmation when supported. The setting is saved in `~/.config/codex-copilot-dx/config.json`, or under `XDG_CONFIG_HOME` when set.
-
-All nine animations use the same 20-column colon track and cyan/blue palette. They indicate activity, not completion percentage. Braille was removed in 0.7.7. A saved `terminal_animation: "braille"` falls back to Comet without rewriting the settings file; choosing another animation replaces it, and explicitly choosing Comet clears it. Other settings remain intact.
-
-Running 1.1.0+ services pick up a changed saved theme without restarting. The WebUI applies it directly; the CLI gallery save is picked up by the status renderer within about one second. Older services still need a restart after upgrade. `CCDX_TERMINAL_ANIMATION=0` (also `false`, `no`, or `off`) remains the boolean gate that disables terminal animation regardless of the selected theme.
-
-### Optional image generation
+## Optional image generation
 
 Image generation is disabled by default. Configure it interactively only when you want Codex App to receive the local CCDX image tool:
 
 ```bash
-ccdx enable-image
+ccdx app codex image setup
 ```
 
 The command accepts an HTTPS base URL or a full `/images/generations` endpoint, then asks for an API key without echoing the key. A bare origin such as `https://api.example` expands to `/v1/images/generations`; `https://api.example/v1` expands to the same endpoint. Custom base paths are retained, and existing full endpoints remain unchanged. CCDX uses GET for the corresponding `/models` catalog and POST for image requests; there is no endpoint-search or automatic fallback. It asks for a numeric model selection only when multiple image models are available, then detects either the standard OpenAI Images request format or the supported `input.messages` format for the selected model only. Its single validation request omits the prompt and does not generate an image.
@@ -1250,8 +526,8 @@ Direct MCP generations and edits retain their original inline image content and 
 Inspect or disable the optional provider with:
 
 ```bash
-ccdx image-status
-ccdx disable-image
+ccdx app codex image status
+ccdx app codex image remove
 ```
 
 `image-status` never prints the API key and performs only a local, non-generating tool-readiness check. It lists generation and editing separately based on the local tools/list response; a configured model name alone does not prove editing is available. Disabling removes the stored provider credential, the CCDX-owned MCP block, and unmodified skill, reference, and helper files; user-modified files are preserved. Cached tool calls then fail closed. The Node helper creates a new file under the task's `output/imagegen` directory by default and reports its absolute path; it never overwrites an existing file or automatically repeats a failed generation. The image endpoint is contacted only by `enable-image` validation and by explicit `generate_image` or `edit_image` tool calls. Ordinary Responses, models, authentication, Fast, Auto-review, compaction, and image-input paths remain on their existing routes.
@@ -1268,573 +544,6 @@ With `qwen-image-3.0-pro` or `qwen-image-3.0` using either supported protocol, C
 
 Editing references are opaque IDs bound to the provider configuration, not paths or URLs. Source images up to 10 MiB are kept in a 64 MiB byte-bounded in-memory LRU. IDs expire on eviction, provider/credential changes, or adapter restart; restarting Codex App alone does not clear them. A missing or expired ID fails before upstream dispatch. This feature does not import arbitrary local images or provide masks, transparent output, or an `/images/edits` endpoint. Other providers retain their existing generation behavior. The helper accepts `--image-id` for the same edit operation; its stdout remains the saved absolute file path and stderr reports the new ID. Normal host approvals still apply, and failed edits are never replaced with an automatic new generation.
 
-### Update
-
-Choose a source interactively:
-
-```bash
-ccdx update
-```
-
-Or choose directly:
-
-```bash
-ccdx update npm
-ccdx update github
-```
-
-Since 1.2.1, the GitHub channel resolves the latest stable Release, downloads
-`codex-copilot-dx-VERSION.tgz` and `SHA256SUMS` from that exact release, checks
-SHA-256 and the packed package name/version, and gives the verified local file
-to npm. **Git is not required.** It never installs `main`, falls back to another
-channel or automatically grants remote-download permission. Each asset has a
-60-second download deadline and bounded size (64 KiB manifest, 16 MiB package,
-64 MiB decompressed metadata scan). The checksum comes from the same HTTPS
-release; it detects corrupt/mismatched files and is not a separate signature.
-Source packages use npm's configured registry, including a company mirror. A confirmed EALLOWREMOTE in a GitHub update permits one verified complete-package attempt offline, without changing that registry or policy.
-This is not a fully offline or registry-free distribution.
-
-Windows runs `npm.cmd` through system `cmd.exe` with AutoRun and delayed expansion
-disabled. Its fixed tarball basename is passed separately from the temporary
-working directory, including when that path has spaces or shell metacharacters.
-Use `ccdx.cmd` if PowerShell blocks npm's `.ps1` entry. No PowerShell policy,
-registry, proxy, certificate setting or persistent npm permission is changed.
-macOS/Linux keep direct npm execution with separate argument arrays.
-
-Before npm changes a discovered global target, CCDX backs up only its package
-and two command entries and acquires an exclusive install lock. A linked target
-is preserved and refused. Installer or runtime-verification failure restores the
-old package/commands; successful installation removes the backup. A failed restore
-reports the retained backup and lock for manual recovery. New lock records include
-the installer PID, creation time and backup directory. Existing-lock errors name
-the exact file; other lock-creation failures retain their actual I/O error rather
-than claiming another install. Old empty locks remain owner-unknown. A lock left
-by a killed installer requires checking that no installation is running and
-inspecting its retained backup before recovery. Locks are not removed merely
-because they are old; an incomplete restore must be completed first.
-There is no promise of crash/power-loss atomicity. Other apps, credentials,
-settings, caches and the running service are not replaced. Readonly/busy Windows
-files can prevent installation; finish use of that installation and retry.
-
-The selected target must have the correct name/stable version (exact version for
-GitHub), a working version command and working sharp. A previously installed
-native M365 broker must remain loadable. A mismatched npm prefix warns and retains
-the caller's choice; if the target cannot be discovered, verification/rollback
-cannot be guaranteed and the command explicitly says so. Restart CCDX separately.
-
-Normal startup still checks GitHub's `releases/latest` web redirect once in the
-background, with a two-second deadline and no npm/REST/PAT access. It validates
-only the redirect header, cancels the body and silently skips errors; it never
-installs, polls or retries. Explicit GitHub updates use a ten-second lookup.
-`ccdx update gh` is shorthand. `ccdx update npm` keeps the configured registry and
-installs `codex-copilot-dx@latest`; it never silently switches to GitHub.
-
-npm policy is read using bounded named global fields, without printing credentials.
-An unrelated project's `.npmrc` cannot grant permission. npm 12's
-`allow-remote=none` can reject a mirror's cross-origin dependency URL with
-`EALLOWREMOTE`. GitHub updates restore the previous package, then try one
-same-version complete platform package from the official Release. Its SHA-256,
-version, platform marker and bundled dependency declaration must validate before
-an offline installation. Missing/corrupt complete assets stop the fallback;
-authentication, integrity and other npm errors do not trigger it. Nightly updates
-perform this fallback in their candidate directory before any service handoff.
-No registry, proxy, CA, download permission or saved client selection is changed.
-Explicit npm-source updates keep their selected source and do not silently use GitHub.
-
-If the complete package is unavailable, only if company policy permits and you
-trust this entire package tree, use the explicit one-install exception:
-
-```sh
-ccdx update github --allow-remote
-ccdx update npm --allow-remote
-```
-
-This grants URL downloads throughout that installation's dependency tree, not a
-hostname allowlist. It does not change `.npmrc`, add further retries, allow every script
-or override other administrator policy. Older npm receives no unsupported flag.
-Unknown support prevents an explicitly requested exception from starting.
-
-For an older updater that still requires Git, install the Release tarball directly:
-
-```sh
-npm install -g https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.2.33/codex-copilot-dx-1.2.33.tgz
-# Windows PowerShell: use npm.cmd instead of npm.
-```
-
-This manual npm URL command relies on npm/HTTPS and does not perform CCDX's
-separate SHA-256 check. Under strict remote policy, use the verified bootstrap or
-an administrator-approved local package/cache; do not automatically broaden policy.
-A failed old `github:owner/repo#tag` install with `spawn git ENOENT` means npm
-could not launch Git, often because Git was absent from the terminal's PATH.
-It is unrelated to Wave styling; unknown-option warnings are separate.
-
-### Install without Node or Git
-
-The Release also contains `install.sh`, `install.ps1`, `ccdx-install.mjs` and
-`SHA256SUMS`. Download the platform script from the intended release and run it
-with the current shell policy. The scripts reuse compatible Node/npm and the
-configured global prefix. If unavailable, they download **only official Node
-24.22.0 LTS** for the current platform, verify the pinned official SHA-256,
-and keep it inside CCDX's private directory. macOS arm64/x64, Windows arm64/x64
-and glibc Linux arm64/x64 archives are selected explicitly. Linux musl users can
-reuse an existing approved compatible Node; this bootstrap does not add libc.
-Unsupported platforms fail before installing a system runtime.
-
-Default private prefixes are `${XDG_DATA_HOME:-~/.local/share}/ccdx` and
-`%LOCALAPPDATA%\CCDX`; an explicit `npm_config_prefix` takes precedence. No global
-Node, Git, Python, compiler, Build Tools or package manager is installed. Native
-packages use prebuilt dependencies with install scripts disabled. The bootstrap
-verifies sharp and the native broker on macOS/Windows; a missing required prebuilt
-component fails and restores the old CCDX package. The private Node remains
-available for a retry if a later package download is blocked.
-
-The helper and package are verified against the release checksum list. The
-bootstrap script itself is initially trusted through the selected HTTPS release;
-review it or compare its checksum through an independent trusted copy if needed.
-The helper reuses the selected npm's bundled `make-fetch-happen` downloader and
-bounded named proxy/no-proxy/CA/TLS/offline settings, with no automatic retries.
-It adds no downloader dependency, forwards no registry credentials and refuses
-network downloads in npm offline mode. A nonstandard npm missing that component
-fails with local-package guidance. Outer platform-script downloads use curl or
-Windows' download tool under their existing network/certificate policy; managed
-PAC-only/offline environments may require administrator-provided Release files.
-The bootstrap keeps user/global npm configuration, proxy and certificate choices.
-Unavailable downloads or restrictive policy stop with no channel fallback.
-It still needs approved access to GitHub Release assets, Node downloads when
-needed, and the configured registry for dependencies. For offline/managed devices,
-ask the administrator to pre-stage these exact files and dependency cache or use
-an approved existing Node/npm distribution; CCDX does not bypass network policy.
-
-Private launchers bind the chosen Node and set `CCDX_PRIVATE_INSTALL_PREFIX` for
-future updates. Windows bootstrap uses these validated commands even with an
-existing Node, so spaces and shell metacharacters in the prefix do not break npm's generated batch commands. Exact npm-owned PowerShell launchers are removed; custom scripts and script policy stay unchanged. They supply a private `npm_config_prefix` only when the caller has
-not set one. Updates preserve those launchers. PATH and shell profiles are not
-rewritten: the installer prints the full command path and the directory to add
-for `ccdx` shorthand. Compatible POSIX installations keep npm's normal commands. Windows PowerShell
-expands percent signs in batch command filenames, before CCDX can run. The
-Windows bootstrap refuses an install prefix containing `%` before modifying it;
-choose a writable prefix without `%` using `npm_config_prefix`. Unicode, spaces,
-`&` and `!` are covered, including a legacy console code page. This avoids shipping
-an additional native executable just to bypass the shell's path parsing.
-No install hook is added to the npm package.
-
-The current verified bootstrap chooses a complete platform package when the
-Release manifest contains one, then installs it offline with scripts disabled.
-Source-only old releases retain the previous registry-based path. Complete packs
-are separate from the lightweight npm artifact and contain the locked runtime
-dependency closure, including the applicable sharp/libvips and Broker files.
-Supported complete targets are macOS/Windows x64 and ARM64, and Linux x64/ARM64
-with glibc or musl. Selection follows the running Node architecture. Other Node
-platforms retain the source installation path without claiming a complete package.
-An old 1.2.29 updater does not learn this fallback until updated; use the current verified
-bootstrap once when the old path cannot install under its saved npm policy.
-
-The scripts accept only `sh install.sh [--allow-remote]` or
-`./install.ps1 [-AllowRemote]`; the permission is explicit and applies to that
-one installation, with the same whole-tree meaning described above. Do not use
-it when company policy forbids it. Interrupted runtime downloads stay in a cleaned
-temporary directory; installed private runtime cleanup is a separate user choice.
-
-## Diagnostics
-
-`ccdx doctor` is read-only by default and makes no inference request. It checks
-local credentials/configuration, Node/platform, installation target, Windows
-command launchers, enabled optional feature settings and the running adapter.
-Disabled image/prediction features do not trigger provider or routing setup.
-`--online` checks GitHub/Copilot access and a nonempty model directory; `--compat`
-explicitly consumes model usage and requires completed Responses/SSE, not just
-HTTP 200. Probe bodies are bounded to 4 MiB.
-
-`ccdx doctor --fix` makes one repair attempt per supported area and verifies its
-result: exact owned Windows command shims, startup-managed Codex settings, a
-verified existing GitHub credential when none is saved, and the already-enabled
-prediction bridge through its existing management API. Credential recovery can
-contact GitHub without `--online`, but never starts Device Flow. Existing tokens,
-user-modified/invalid configuration, unrelated MCPs/hooks and company routing or
-security policy are not replaced. Existing changed config is transactionally
-backed up to `config.toml.ccdx-doctor.bak` (the latest repair backup only). Repairs
-do not install optional image tools, enable prediction, renew certificates or
-force-restart Apps. A required normal App/service restart remains an explicit
-partial result. Partial repairs exit 1; no automatic retry loop is added.
-
-`ccdx doctor --json` emits one redacted JSON report; combine with `--fix` to
-include `before_checks` and final per-operation repair results. Inspect these
-results rather than equating a configured bridge with a visible gray suggestion.
-
-Windows adds no install-time lifecycle script, so npm 12's script-approval policy
-is not expanded. In restricted PowerShell, install with `npm.cmd`, then first run
-`ccdx.cmd` or `ccdx.cmd doctor --fix`. Startup recognizes only the exact npm
-PowerShell shims for the two CCDX commands, checks their matching `.cmd` targets
-and package identity, then removes those `.ps1` shims. Subsequent calls can use
-bare `ccdx` without changing policy or profiles. The updater applies the same
-check only after verifying its installed target/version. Customized, symlinked,
-unexpected or unreadable shims are preserved; optional setup failures do not
-block core startup or turn a verified update into failure. Direct npm reinstalls
-can recreate the shims; a first `.cmd` invocation repairs them again. Read-only
-commands such as version/help/status do not repair them. Aliases/functions and
-another installation earlier in PATH can still override resolution. npm's own
-`.ps1` shim is untouched, so `npm.cmd` may still be needed. macOS/Linux and source
-checkouts are no-ops.
-
-`ccdx status` and the dashboard show the sample count beside each timing. First
-output is observed at the gateway from generated deltas, hidden-reasoning/tool
-announcements or content snapshots; a runtime-only result is marked separately.
-Empty message/envelope frames, client tool results and compaction are excluded.
-`first_output_sources` and each recent request's `first_output_source` describe
-that evidence, not internal model decode or prefill timing. First output is
-displayed in ms, and output speed in token/s. The additive
-`output_tokens_per_second` metric divides the sum of reported output-token
-intervals (`output_tokens - 1`) by their summed first-output-to-finish durations.
-It is a time-weighted per-request estimate, not the inverse of average TPOT, an
-unweighted average of request speeds, or concurrent system throughput. At least
-two integral output tokens and a positive duration are required; missing usage
-is unknown, not zero speed. The existing TPOT histogram remains unchanged for
-API consumers, including its partial-failure samples. Both estimates can
-include hosted-tool and downstream delays. The new
-timing classifier does not change stream forwarding or the existing output
-commitment that gates compatibility retries.
-
-The adapted Codex model catalog preserves valid multi-agent reasoning mappings.
-Only a mapping no longer supported by the final advertised effort options is
-repaired to the last available non-Ultra effort; no model switch or forced
-highest-effort policy is introduced. Client-provided defaults, option order,
-instructions and multi-agent version stay intact.
-
-CI additionally provisions the latest official Codex on its runner and uses an
-isolated app-server to verify configuration, its model list and synthetic direct
-and proxied Responses message delivery. It logs the tested runtime version,
-does not skip installed-version mismatches and does not install clients on user
-machines or use live credentials/models.
-
-`ccdx doctor` also inspects installed macOS App version metadata and running
-Codex/ChatGPT App executable identities, without reading command arguments,
-changing client files or killing processes. It shows the running adapter version,
-upstream model-directory source, and the last client-version/bundled-directory
-match observed by that adapter. These are observations, not proof of the App's
-internal model cache. Fully quit the named App with Command-Q before reopening;
-closing its window alone may leave its App server running. `doctor config` stays
-configuration-only, with no process inspection or adapter request.
-
-The default streaming path sends small downstream SSE comments after 15 seconds
-of silence only once valid stream headers have been sent. Comments do not count
-as model output/TTFT, extend upstream/idle deadlines, start another upstream call,
-or release a held compatibility-retry prelude. They stop on completion, failure
-or cancellation and are skipped while the downstream is backpressured. A valid
-JSON reply to a streaming request is still not silently converted to SSE.
-
-### Local dashboard
-
-Interactive desktop starts open [http://127.0.0.1:2026/](http://127.0.0.1:2026/)
-once by default, using the configured main port when customized. See
-[control console and online settings](#control-console-and-online-settings) for
-startup preferences, output modes and effective-state rules. Assets require both
-a loopback connection and loopback Host, including when the main listener uses LAN mode.
-
-The sidebar separates Overview, indented Codex/Claude Apps, Model sources, Usage, Requests, Checks & repairs, and Settings. Desktop header rows have explicit heights, the header sticks when it reaches the viewport top, and stable scrollbar space prevents horizontal movement between long and short pages. Narrow screens keep compact navigation and a two-row toolbar. Page switches reset scroll and move keyboard focus to the main content; background/manual data refreshes preserve scroll. Each page has its own purpose description, and data groups carry their own update times rather than a shared page-wide freshness claim. Codex-specific images, prediction integration
-and conversation buffering stay under Codex. Buffer controls and request performance have separate groups. HTTP traffic counts include model
-catalogs and route errors; model outcomes and timing are named by protocol.
-Microsoft 365's Claude Messages summary is not a Provider-wide request total.
-
-The source access table uses bounded local credential metadata and Provider snapshots, showing only the selected source. Switching source tabs also changes the account controls and catalog, never application routing. Overview groups client rows by app and uses an explicitly selected source; it does not substitute a configured but unselected source when the selected source is unavailable. The source card still lists every registered source. Claude App and Claude Code have separate setup/local-service rows, while Messages performance stays combined and is labeled accordingly. A running local service does not prove the app is open.
-A locally saved GitHub credential is not online entitlement. Account names with
-underscores retain their exact display value; identity, keys and environment
-values are not inferred from model names. Client configuration, gateway state,
-recent requests and actual inference are separate observations. The top summary
-describes source/application status without mapping arrows. The source card counts and lists every discovered registered source, including disabled sources; availability and account evidence remain in the detailed tables. Each sidebar tab has a decorative inline SVG icon, with application entries indented. Terminal appearance has one Settings entry, and the animation selector has one separating rule. Settings contains webpage/terminal appearance, startup preferences and version updates. Local memory, queues, notices, raw HTTP traffic and request-size caps live under Checks & repairs → Runtime details. Account-check links identify the source and lead to its existing account tools. Save failures appear beside the affected controls; configuration repair previews and destructive-action confirmations remain in place.
-
-Catalog tabs browse registered Provider directories without changing routing.
-Rows retain protocol, eligible clients, reasoning metadata and directory state.
-Unknown metadata stays unknown; listings are not verified inference access.
-The source form lives under Codex and explicitly applies subsequent routing. GitHub conversation models are selected in Codex, so its conversation-model field is hidden rather than empty. Auto Review has its own model/effort form under Codex, for either source; choices use the same advertised-effort policy and preference storage as the CLI. First source setup initializes the review choices atomically; later conversation-model saves preserve the saved review choice, and review changes use their own Save button. The GitHub model environment override is shown and locked. Microsoft 365 enable/disable stays under Model sources; disabling confirms that Claude local access stops, unchanged CCDX-owned settings are restored and Codex returns to GitHub. Active requests still block disabling.
-Existing active streams keep their Provider binding. User/organization client
-configuration is not overwritten by browsing or by a pause operation.
-
-Top Refresh updates local evidence and open data groups, plus current-page settings.
-Auto-refresh defaults on and is browser-local. Small status snapshots update about
-every two seconds; source/settings evidence updates every eight status ticks.
-Catalogs and retained usage load only on demand or in their open view, with the
-existing 30-minute cadence and short freshness gate. Hidden pages stop scheduled
-reads. Catalog requests are deduplicated, stale tab reads are cancelled and late
-results rejected. Failed reads preserve last-good data and label it as stale.
-Service-setting errors are visible on the current page and can be retried manually.
-
-### Settings saving and restore
-
-Settings → **Save & restore**, after Version & updates, controls only this page’s
-preferences. **Save changes automatically** defaults on. Terminal palette,
-animation, animation enablement, opening the webpage at startup and overnight-update
-preferences save after a short coalescing delay. Webpage appearance stays in the
-current browser. Turning automatic saving off reveals Save changes and Discard
-changes; enabling it with a draft asks before saving that draft. Invalid or failed
-saves keep the draft. Polls do not overwrite drafts, old responses do not replace
-newer edits, and a conflicting settings revision requires reviewing the current
-settings. Ordinary appearance saves do not enumerate accounts, authenticate or
-refresh provider catalogs. Overnight updates remain off by default and enabling
-them confirms the existing restart risk; saving the preference never installs an update.
-
-Restore defaults confirms the scope, backs up the saved preferences first, then
-writes the settings-page fields in one locked atomic transaction. Defaults are:
-green webpage and terminal palettes, dark webpage appearance, Comet animation,
-terminal animation on, open webpage on startup, overnight updates off and automatic
-saving on. Language, model/source selections, API keys, native sign-in and client
-configuration, review/memory choices, image/prediction access, history, usage and
-network/environment policy are preserved. Environment-controlled effective values
-remain controlled. Pending drafts are explicitly discarded only after confirmation.
-
-The private `settings-preferences-backup.json` beside the settings file contains
-only the six allowlisted service preferences, version, ID and creation time; it
-contains no credentials or provider settings. Restore backup uses the latest
-pre-reset snapshot. Backup failure aborts reset; a failed settings write restores
-the prior settings and prior backup. A repeated reset with its same operation ID
-cannot overwrite the original snapshot after a lost response. Unreadable settings
-or backups are preserved and reported.
-
-Browser appearance has its own origin-local backup linked to the operation ID.
-At most two entries are held while a reset result is uncertain, reducing to the
-matching latest backup after a confirmed settings read. Service and browser storage
-are not one atomic transaction: a browser-storage failure after the service save is
-reported as partial completion and can be retried. Another browser without the
-matching appearance backup reports that limitation rather than claiming a complete
-restore. No periodic backup service, credential export or full configuration reset
-is added.
-
-The full `/_ccdx/status` response remains the default CLI/diagnostic contract.
-Overview and Settings use an explicit `?scope=summary` projection containing service
-identity, uptime, model activity and current-run usage. The browser keeps summary
-and full reads in separate resource entries; summary data cannot replace request
-history or turn missing full fields into zero values. Other pages request full
-status when opened. Hidden data regions skip DOM work, retaining their last data
-until a visible full read; native inference and the selected model are unaffected.
-
-The usage selector retains current and historical sources. Combined model rows
-and daily analytics preserve source identity; old records without a client label
-are not guessed into one. Legacy untagged Provider records retain their historical
-GitHub attribution. Cache-read tokens are included in input, not added twice.
-The separate current-run summary updates from returned usage in memory, without
-rescanning retained logs at the status cadence.
-Overview adds an approximate token cache hit rate: returned reused input tokens divided by returned input tokens, weighted by tokens rather than request percentages. Missing evidence is distinct from an explicit zero; all-unknown cache evidence, zero input and invalid counts display `—`. Mixed complete/incomplete cache evidence displays `~` before the recorded aggregate ratio. This describes recorded input reuse, not a request success ratio, invoice or whole-account cache statistic. Missing output alone does not invalidate usable input/cache evidence.
-
-The usage source selector applies to the whole page. Model selection controls both daily trends and the calendar; 7/30/90-day range and bar/line view belong to daily trends, and request/Token measure belongs to the fixed annual calendar. These controls do not redefine the all-history model table; selecting a known day narrows the table and Show all restores retained-history totals.
-
-Usage analytics remains collapsed until opened: 7/30/90-day charts and a bounded
-365-day calendar in the browser time zone. Model/range/day selection reuses its
-snapshot. Days outside retained history are distinct from zero recorded activity.
-Filters, chart nodes and unsaved animation selection survive unrelated refreshes.
-Dark/light, English/Chinese and reduced motion remain supported. Language changes
-translate page labels in place without fetching models or rebuilding charts;
-commands, identifiers and upstream error text retain their original values.
-Chart view defaults to Bar chart on each page load; its dropdown switches to Line chart without another request or log scan. Both views retain the same input/output values, scale, model/source/range filters and date selection. Lines show separate input/output series, pass through each known day's value, stay between neighboring values and break across unavailable history; a lone known day is a point. The calendar is unchanged by view switching.
-
-Visible bar stacks rise from the baseline once over 450 ms; curves draw left to right over 600 ms (a lone point fades in over 200 ms). Opening/revealing a chart and changing its data, filters or view can replay the entrance. Selecting a day, changing calendar measure and unchanged background refreshes do not replay it. Hidden/collapsed views, page suspension and reduced-motion preferences cancel active chart motion; reduced-motion or unsupported animation APIs retain the complete static chart. Chart motion adds no polling loop, chart library or runtime dependency.
-
-The atom logo stays in the sidebar brand (compact top navigation on narrow screens).
-It rotates once on load and manual Refresh, never on scheduled reads, and respects
-reduced motion. Terminal animation settings are independent of the WebUI logo.
-
-Startup lists the number of discovered cached/live Provider catalogs, their model
-counts and source, and separate Claude Code/App configuration states. Checking,
-unavailable, preserved custom settings and uninspected configurations remain
-distinct. Background discovery does not delay core readiness; its latest state
-appears in the running terminal region. These observations do not prove inference
-access. Normal prediction startup uses one line; exceptions retain reasons and
-required restart guidance. `ccdx prediction status` retains environment/recovery
-details, including routing, CA and TLS verification state.
-
-After Ready, a supported TTY has a bounded region: uptime, source/Claude state,
-a line-framed usage/inference table, one notice row and one activity row below it.
-Input includes reused input; partial usage counts returned records with missing fields.
-Inference HTTP calls exclude catalog/count-tokens requests; model outcomes are
-separate protocol observations, not an HTTP-success total. Activity motion includes
-image MCP traffic; inference counters exclude it. Usage is process-local returned
-data, not a bill or pending estimate. Counts/tokens use compact display.
-Data refreshes about once a second; animation ticks reuse the table and redraw only
-changed rows. Historical notices do not turn a running service into a health verdict.
-Client cancellations remain in verbose/file diagnostics as informational records;
-timeouts and actual failures remain notices. Non-TTY, CI, dumb and terminals under
-40 columns or 16 rows retain plain output. At 40×16 the compact table keeps all metrics and short source/Code/App states. Larger terminals wrap full state descriptions. No runtime terminal dependency is added.
-
-Terminal appearance lives only in Settings. Preview frames load on opening; closing, hiding the view/page or reduced
-motion stops preview timers. Saving changes the running supported status terminal.
-
-The recent-failure view merges bounded Responses events, main-listener HTTP
-failures and recent Responses/compact/Messages request timelines, with at most ten
-visible entries. Request IDs correlate final outcomes; a retry alone is not proof
-of recovery. It is diagnostic metadata, not a session archive. Original error
-responses remain unchanged. Review upstream diagnostic prose before sharing.
-
-Inspect only the local Codex configuration:
-
-```bash
-ccdx doctor config
-```
-
-This command reads `~/.codex/config.toml` and checks UTF-8/TOML syntax, correctly scoped CCDX-managed URL/environment settings, positive integer context limits, their relative ordering, and `features.context_management`. Explicit `false` is valid. A missing optional shell environment section is valid for an existing file. Structured context-management settings are retained and reported as unverified for the installed Codex version.
-
-It also runs the existing startup writer in memory and lists the managed keys that would change. A missing file produces a creation preview. A preview that yields invalid TOML or changes unowned settings is reported as an error rather than applied. No files are written, including debug logs; it does not read credentials, contact the adapter or upstream, start Device Flow, or open Codex App. It uses `ADAPTER_HOST` and `ADAPTER_PORT` for the expected URL. Unrelated startup/probe timeout settings do not affect this config-only command.
-
-The syntax check uses a TOML 1.1 parser and validates only the listed managed fields, not the full installed Codex schema. It does not merge project files, profiles, environment overrides, or command-line overrides into an effective Codex configuration. Syntax errors report line/column without source snippets; configured URL and key values are not printed. The command accepts no `--online`, `--compat`, or write/fix options.
-
-For the broader credential/configuration/adapter diagnostic:
-
-```bash
-ccdx doctor
-```
-
-The ordinary doctor reuses the same configuration checks, inspects the saved GitHub credential, and probes the local adapter. It does not start the adapter or modify credentials or Codex configuration; when `CCDX_LOG_PATH` is set, this broader command can write its diagnostics to that log. Both doctor modes exit `1` when any check is an error, and `0` for OK/warning-only results, including missing configuration or an explicit feature opt-out. Unsupported arguments or invalid relevant CLI options exit `2`.
-
-To verify the saved GitHub token, Copilot entitlement, and live models endpoint without starting Device Flow or changing the credential:
-
-```bash
-ccdx doctor --online
-```
-
-To exercise the protocol through an already-running adapter:
-
-```bash
-ccdx doctor --compat
-```
-
-The compatibility doctor sends a few minimal Copilot requests covering Auto-review, native Responses, streaming history, and compaction. It consumes a small amount of Copilot usage, never starts the adapter or Device Flow, and does not change client configuration. Combine it with `--online` when both checks are needed.
-
-For a concise summary of the running adapter:
-
-```bash
-ccdx status
-```
-
-For the complete machine-readable status payload:
-
-```bash
-curl -s http://127.0.0.1:2026/_ccdx/status | jq
-```
-
-The status endpoint is restricted to the socket's real loopback address even when LAN binding is explicitly enabled. It reports fixed-size HTTP request counters separately from bounded `completed` / `incomplete` / `failed` / `cancelled` response outcomes by model and origin, plus bounded incomplete-reason counts, TTFT/TPOT histograms, admission pressure, memory use, response-history size/tree concentration/lookup misses, image queue/cache and adaptive-history state, model-cache counts, token expiry state, and the ten most recent upstream `response.failed` diagnostics retained by the running process. HTTP errors without a model terminal remain "without terminal" and retain their known origin; they are not counted as model failures. History eviction markers are not failed-request counts; `ccdx status` warns near the cache limit without deleting or compressing history. Failure diagnostics include the event type, model, error code/message, response/request IDs when supplied upstream, and retry outcome. Common credential forms, long opaque encrypted values, and explicitly labelled input/prompt/tool-content echoes are redacted. They are cleared when the adapter restarts. Whole request/response bodies, credential fields, and account profiles are not archived in status. Explicit HTTP diagnostic mode can retain a bounded error excerpt; see HTTP error diagnostics below. Arbitrary upstream prose cannot be guaranteed free of sensitive content; review diagnostics before sharing them.
-
-`stream_performance.by_route.*.empty_stream_completions` counts completed streams
-with no observed output and an explicit zero output-token count. The recent request's
-`empty_stream_completion` flag records the same condition. Missing usage is not zero;
-non-streaming replies and observed tool/refusal output are excluded. This diagnostic
-does not change completion status, trigger a retry or reject legitimate empty replies.
-
-`image_mcp` has its own HTTP route counter. After the image handler has been used, `image_generation` separately reports active, succeeded, failed, busy, cancelled, and chat-file delivery-failure counts, including tool errors returned with HTTP 200. A delivery failure can accompany a successful generation; it never causes another generation. Before handler initialization this field is `null`, meaning not observed, not necessarily disabled. Status never initializes that handler, reads its provider credential, installs guidance, or probes the provider. Input-image optimization metrics remain separate. `logging` reports pending records/bytes, queue caps, overflow drops, and write failures for usage and enabled debug-file logging.
-
-`stream_performance.by_route` also reports `request_ttft_ms`, measured from adapter entry to the first observed output delta, including local preparation. The existing `ttft_ms` continues to start at upstream dispatch. Neither timestamp means the client has drained or displayed the output. `preparation_ms` contains bounded histograms for admission (including history reservations), body reading/decompression/JSON parsing, history materialization/compact preparation, image optimization, and request serialization. Each sample measures one operation, including failed operations; retries can add samples. These are diagnostic intervals rather than a complete breakdown of request time: body reading includes internal decoded-body admission waits; authentication, routing, and other preparation are not individually timed. Non-streaming requests contribute preparation samples without inventing a first-token measurement.
-
-`stream_performance.recent_requests` retains at most 20 finished Responses/compact requests. Each entry contains a CCDX-owned request ID, start timestamp, bounded model/route labels, HTTP status, final model outcome, known error origin, last observed phase and provider-call count. `timings_ms` includes cumulative preparation durations and offsets from adapter entry for the first upstream dispatch, latest upstream headers, first output, latest observed upstream activity, terminal and finish. Null means not observed, not zero. Stage durations can overlap and should not be added into a total. Provider-call counts include compatibility attempts but exclude OAuth exchanges and low-level connection retries. Streams update a single activity timestamp per read; no content, headers, opaque state or unbounded event list is retained. Entries are process-local and reset on restart; normal status refresh reads them without new upstream calls or background polling.
-
-`http_errors` separately counts HTTP failures on tracked API routes and retains
-the latest 20. Entries contain HTTP status, technical code when safe, observed
-model, route/source and request IDs; the message is a fixed local explanation.
-They never retain the original body, prompt, URL query or headers. Original
-errors are still returned unchanged. Management/dashboard reads are excluded.
-The recent-error panel merges these entries with model failures and request
-timelines, retaining at most ten visible items. HTTP counts do not change model
-terminal counts; unknown sources/models remain unknown.
-
-Every API response includes a safe `X-Request-Id` for correlation. To include the same ID in related terminal and file log lines, start with:
-
-```bash
-ccdx --show-request-id
-```
-
-### Authentication recovery
-
-The dashboard's **RECENT REQUESTS** section opens by default and reuses the same
-status snapshot. It shows at most 20 finished request observations: time, source, model, outcome and returned input tokens, with serialized
-upstream payload bytes, image count, reported input tokens, the advertised model
-window and terminal outcome, plus process-local compaction outcome counts. Missing
-fields are unknown, not zero; input/window is a reference ratio, not an exact live
-session measurement. No prompts, image bytes, files, tool results or extra session
-scan are retained. Technical fields are folded into each row. Expanded fields survive unchanged reads and retained matching request observations; closed/hidden request groups defer row rebuilding without another API call.
-
-When the saved token is missing, `ccdx` looks for compatible local Copilot GitHub tokens, validates them with GitHub and Copilot, and imports a valid one before starting Device Flow. It checks explicit token sources (`CCDX_GITHUB_TOKEN`, `CCDX_GITHUB_TOKEN_PATH`, and `CCDX_GITHUB_TOKEN_PATHS`) plus common local `auth.json` layouts. Generic discovery refuses to choose silently when valid credentials for multiple GitHub accounts are found.
-
-Discovery also reads legacy OpenCode's `$XDG_DATA_HOME/opencode/auth.json`
-(otherwise `~/.local/share/opencode/auth.json`), specifically `github-copilot`
-OAuth `refresh`, and an installed GitHub CLI's noninteractive
-`gh auth token --hostname github.com`. It does not import unrelated API keys,
-enterprise-host OAuth, browser cookies, subscription credentials or a newer
-OpenCode database format. `APPDATA` and `LOCALAPPDATA` auth.json roots are included
-where present. GitHub CLI is optional, not a runtime dependency; its output/time
-are bounded and no login prompt is started. Other apps' files remain read-only.
-Source reads are bounded, discovery validates at most 24 distinct tokens within
-a 12-second overall validation budget, and each candidate has a 4-second budget.
-Directory/profile scans have explicit caps; hitting a cap or a network failure
-reports incomplete discovery rather than silently selecting an account or
-starting another login. Set an explicit source/account to resolve ambiguity.
-An existing saved-token startup path performs no extra discovery/network calls.
-Package reinstallation does not clear that user-owned credential. Copilot's short-lived
-access token is obtained again when needed; it is not the saved GitHub credential.
-For the default credential store, Copilot HTTP 403 preserves the credential and
-reports access/network policy rather than recommending deletion. Copilot HTTP 401
-performs a bounded GitHub identity check only if compatible local recovery did not
-succeed. Only an identity HTTP 401 permits reauthorization guidance; an unavailable
-check does not establish expiry. Neither case automatically deletes the credential
-or starts Device Flow. Denials are not hidden by a cached Copilot token. A discovery
-HTTP 403 also stops before Device Flow, preserving external sources and account
-selection. Isolated/custom credential clients retain their own recovery contract.
-
-After an account is selected, automatic `401`/`403` recovery and in-process token rotation accept only that same GitHub account. Concurrent callers share token refresh work without sharing cancellation, and a still-valid Copilot token may be used briefly after a transient refresh failure. Explicit token variables remain the intentional way to select another account.
-
-If refresh still fails with Copilot `401` or `403`, preserve the saved credential.
-Run `ccdx auth status --online` only when you explicitly want an online diagnosis;
-check account entitlement and company routing policy separately. Reauthorization
-is appropriate only after independent GitHub identity rejection or an explicit
-account-change decision, not merely a Copilot denial, package update, or failed
-network probe. Existing same-account recovery and explicit source selection are
-unchanged.
-
-## Account and repair tools
-
-`ccdx auth` defaults to local status. `auth check` is the explicit online alias: it checks GitHub identity, Copilot authorization and a bounded model directory without inference. `auth status --online` remains available. A saved file is not proof of online access. Copilot denial and network failures do not recommend reauthentication merely because access failed.
-
-`ccdx auth login` starts GitHub device authorization when no sign-in is saved. `ccdx auth reauth` / `ccdx reauth` explicitly replaces an existing sign-in. `auth login --reauth` is also accepted. The existing account binding is required by default; `--login ACCOUNT` explicitly requests a different account, which needs a service restart before it can become the running inference account. The device request has a 30-second deadline, GitHub's interval/slow-down responses govern polling, and the device lifetime is limited to 15 minutes. Candidate identity, entitlement and directory validation has a 15-second deadline. No candidate is saved before all checks pass. A final cross-process lock and comparison prevent overwriting a concurrently changed credential. Cancellation, denial, mismatch, expiration or validation failure preserves the prior sign-in. One WebUI flow runs per service, with a 30-second minimum between starts; connection checks coalesce and retain a same-credential result for 10 seconds.
-
-New explicit-tool sign-ins use `~/.local/share/ccdx/github_token` and fingerprint-bound `.account.json` metadata, with private permissions and the existing atomic paired writer. When present, this owned store takes precedence over `~/.local/share/copilot-api/github_token`; existing startup/discovery compatibility remains supported. `auth logout` requires interactive confirmation or `--yes`, writes an empty owned credential, and does not delete or revoke other apps' legacy credentials. This intentionally blocks inference's legacy fallback. New login or normal startup can perform the existing explicit discovery/sign-in process again. CLI changes notify a compatible running local service; if notification is unavailable, the CLI asks for a service restart. In-flight model requests are not replayed or forcibly stopped. A token cache invalidation preserves its running account binding, so switching accounts still requires a restart.
-
-Model sources uses one source selector for the selected source controls, account and catalog. Disabled sources remain under its collapsed list; there is no second list of enabled source cards. Selecting a tab is browsing only. GitHub offers sign-in, independent connection checks and cancellation; sign-out is under More actions. The browser opens only the fixed GitHub device authorization URL after the user chooses Copy & open GitHub. Its copy icon writes only the displayed short user code. The originating sign-in click prepares one asynchronous clipboard write; browsers that reject it retain an explicit copy action and selectable text. Re-rendering/polling does not repeatedly overwrite the clipboard. Clipboard reads are never requested, failed writes never show Copied, and cancelled/obsolete flow completions cannot update the new flow. Opening the link retries the copy in the click without delaying the native link activation. No token or password entry field is added. Microsoft 365 retains local account discovery/selection and source controls; its corporate SSO is not replaced with a GitHub-style login. Raw codes remain under details and last-good model lists retain their previous timestamp after failures.
-
-`ccdx web` opens an existing compatible dashboard or starts a management-only local listener without sign-in, app configuration, app launch, prediction setup or automatic M365 startup. It does not claim normal startup integrations are active. Stop that management listener with Ctrl+C before running normal `ccdx` for application routing and optional integrations. Opening the dashboard does not initiate a GitHub Device Flow or model inference.
-
-Checks & repairs performs the existing local doctor checks without adapter/client online checks. Configuration repair uses the existing owned-key writer: the preview lists scope and backup filename, a revision check rejects changes since preview, and the writer rechecks that revision under its existing config lock. It preserves unowned TOML and refuses invalid/unsafe configurations. A changed existing file is backed up as `config.toml.ccdx-doctor.bak`; an unchanged file or a missing original has no previous file to back up. The page does not expose arbitrary commands, forced restarts, certificate setup or an automatic repair loop. Compatibility probes remain the explicitly displayed `ccdx doctor --compat` command and consume usage.
-
-`ccdx doctor network` and the page's Network settings read proxy/trust summaries without external HTTP requests or policy edits. Linux reports environment routing; Windows/macOS also inspect their supported system settings. `ccdx doctor report` prints the local report as JSON; Export report downloads the same bounded redacted projection. Home paths and account email addresses are replaced, and credentials, arbitrary check fields, chats and request bodies are omitted. Reports include only local checks, not a full network trace or proof of provider entitlement.
-
-`ccdx image pause|resume` and `ccdx prediction pause|resume` use the existing service preference gates. They keep credentials, trust and routes and cannot provision a feature that has not been configured. Running image requests may finish. Offline changes apply on service startup; online prediction adaptation uses the running service's settings action. The existing full `disable-image` / `prediction off` cleanup semantics are unchanged. `ccdx source` is an alias for `ccdx m365 switch`, with the same model validation and explicit selection rules.
-
-The protected `/_ccdx/ui/account` and `/_ccdx/ui/checks` APIs require loopback, a local Host and `X-CCDX-Dashboard: 1`. POST actions additionally require the matching Origin and JSON content type; bodies are capped at 4 KiB with a five-second body deadline, and unknown actions/fields are rejected. GET reads only local/process state. Sign-in polling GETs read in-memory operation state and do not trigger extra GitHub polling. Device-flow controllers are cancelled when the owning listener closes. SVG state icons are shipped locally and load no external icon library; an empty circle means unknown/not checked, a circle-minus means unavailable, and running uses circle-play rather than the success check.
-
-## HTTP error diagnostics
-
-`http_errors.recent` keeps its 20-record rolling view. Independent
-`actionable_recent` (20 generation/other failures and actionable count errors),
-`capability_recent` (20 count/explicit-access notices), `route_recent` (eight path errors)
-and `protocol_recent` (eight image-MCP HTTP 405 records) prevent route/method noise from erasing inference
-evidence. `by_category` counts inference, capability, protocol, route and other HTTP failures;
-classification does not discard errors, grant access or retry requests.
-The WebUI defaults to reply issues and provides separate capability/access and connection/path views. Explicitly unselected models and turned-off access remain refused with their original HTTP status, but are notices rather than model-generation failures. Client disconnects remain in recent requests rather than being promoted to the issue list. Known non-model HTTP paths show Not applicable in the UI; unknown paths are retained, not assumed harmless. Repeated capability/path notices are grouped within the bounded retained records, with their occurrence count and latest request details; raw HTTP counters remain visible. A count-endpoint 404 is not a failed generation. Count authentication, rate-limit and server failures remain actionable.
-
-Before model resolution, safe requested model IDs and the client hint are retained even for local rejection. Known binding failures include a specific reason: model not selected, ambiguous name, unavailable catalog entry or disabled access. These diagnostics never authorize a model or replace it with a default. Claude records propagate the actual model/source and distinguish a cached capability result from an upstream HTTP failure. Upstream attempts count logical calls; shared counts are marked `shared_upstream`, and cached 404s report zero calls. No prompt or key is retained.
-
-New records retain safe error code/type/parameter paths, method, an allowlisted
-endpoint without a query, and upstream attempt count. Requested/served model
-IDs are distinct; only the explicit Auto-review alias identifies that request
-purpose. Other purposes remain unknown, not guessed from a model name.
-Known enum/numeric options
-include reasoning effort, service tier, output format, max output tokens and
-input/tool counts; no prompt, schema or tool values are kept. `error_body` says
-whether the upstream provided empty, structured or unstructured error details.
-Recent request `attempts` and HTTP `attempt_timings` retain the first and last two
-provider dispatch/header offsets and statuses; these are not TCP-retry counts.
-
-By default arbitrary upstream error prose is not copied into HTTP diagnostics.
-For a specific investigation, start a **new** service with
-`CCDX_HTTP_ERROR_DETAILS=1` to retain a redacted error-message excerpt, capped at
-500 characters, in those bounded in-memory records. In Windows PowerShell set
-`$env:CCDX_HTTP_ERROR_DETAILS='1'` before `ccdx.cmd`. This does not reconfigure an
-already-running service, enable file logging, retain whole requests, or guarantee
-that arbitrary upstream prose contains no private context. Review before sharing;
-unset the variable after the investigation. Records disappear on service exit.
 
 ## Security
 
@@ -1842,7 +551,7 @@ unset the variable after the investigation. Records disappear on service exit.
 - Enabling LAN binding exposes a Copilot-backed API to other reachable machines. Provide your own host firewall and network isolation; do not expose the listener to an untrusted network.
 - Inference POSTs reject any browser `Origin` header before reading the body or contacting upstream, including simple `text/plain` requests. Native Codex/Node requests without Origin and deliberately enabled native LAN clients keep their existing access. This is not authentication or protection against untrusted local native programs.
 - Explicit auth tools store GitHub OAuth credentials at `~/.local/share/ccdx/github_token`, with precedence over the compatible legacy `~/.local/share/copilot-api/github_token` store. Short-lived Copilot service tokens remain in process memory and are refreshed as needed. See Account and repair tools for safe replacement/sign-out behavior.
-- The optional image API credential is stored separately with mode `0600` only after `ccdx enable-image`; it is never placed in Codex configuration or diagnostic output.
+- The optional image API credential is stored separately with mode `0600` only after `ccdx app codex image setup`; it is never placed in Codex configuration or diagnostic output.
 - Runtime status and usage records retain metadata by default; explicitly enabled HTTP error excerpts can contain private context. Diagnostic logging records status and error messages; it is not a general redaction layer for arbitrary error text. See Debug logging before sharing logs.
 - Request/response bodies, request-admission queues, retained history, image work, SSE buffers, log queues, retries, and shutdown have explicit limits. These component limits are not a single process-wide memory ceiling; completed image files are persistent user artifacts, not an automatically evicted cache.
 
@@ -1884,7 +593,7 @@ unset the variable after the investigation. Records disappear on service exit.
 | `CCDX_AUTO_LAUNCH` | enabled | Set to `0`, `false`, `no`, or `off` to start without opening Codex App |
 | `CCDX_GITHUB_TOKEN` | unset | Explicit GitHub Copilot OAuth token to validate and import before Device Flow |
 | `CCDX_GITHUB_TOKEN_PATH` | unset | Explicit file containing a GitHub Copilot OAuth token |
-| `CCDX_GITHUB_TOKEN_PATHS` | unset | Multiple token files separated by the platform path delimiter (`:` on macOS/Linux, `;` on Windows) |
+| `CCDX_GITHUB_TOKEN_PATHS` | unset | Multiple token files separated by the platform path delimiter (`:` on macOS, `;` on Windows) |
 | `CCDX_GITHUB_LOGIN` | saved account | Require automatic discovery and recovery to use this GitHub login |
 | `CCDX_DISABLE_TOKEN_DISCOVERY` | unset | Set to `1` to skip local token discovery and use the saved token or Device Flow |
 | `CCDX_TOKEN_LOCK_TIMEOUT_MS` | `600000` | Maximum time to wait for another process to finish GitHub token login or import |
@@ -1892,7 +601,7 @@ unset the variable after the investigation. Records disappear on service exit.
 | `CCDX_EXISTING_ADAPTER_TIMEOUT_MS` | `500` | Timeout for detecting an already-running local adapter during startup |
 | `CCDX_MODEL_REFRESH_TIMEOUT_MS` | `5000` | Timeout for Copilot model refresh or live Auto-review model lookup |
 | `CCDX_MODEL_REFRESH_INTERVAL_MS` | `7200000` | Periodic model refresh interval; `0` disables periodic refresh, while startup cache/refresh behavior still applies |
-| `CCDX_RESPONSE_HISTORY_MAX_BYTES` | `67108864` | Higher-precedence total in-memory byte budget for locally expanded Responses history; `ccdx cache --limit` provides a persistent 16–1024 MiB setting when this is unset |
+| `CCDX_RESPONSE_HISTORY_MAX_BYTES` | `67108864` | Higher-precedence total in-memory byte budget for locally expanded Responses history; `ccdx doctor cache --limit` provides a persistent 16–1024 MiB setting when this is unset |
 | `CCDX_RESPONSE_HISTORY_MAX_ENTRIES` | `4096` | Maximum stored incremental Responses history nodes |
 | `CCDX_USAGE_PATH` | `~/.local/share/codex-copilot-dx/usage.jsonl` | Local JSONL token-usage log |
 | `CCDX_USAGE_MAX_BYTES` | `33554432` | Rotate the usage log at this size and retain one `.1` backup; set to `0` to disable rotation |
@@ -1918,6 +627,7 @@ Diagnostic redaction removes Basic authorization payloads and URL userinfo, and 
 ## Debug logging
 
 Set `CCDX_LOG_PATH=1` to record diagnostic logs independently of quiet terminal presentation to `~/.local/share/codex-copilot-dx/debug.log`, or provide a custom path. Add `CCDX_LOG_LEVEL=debug` for upstream attempts, retry causes, status codes, and timings. The adapter does not deliberately dump request/response bodies or authorization headers. File diagnostics redact common credential forms and labelled content echoes, but this cannot identify every secret in arbitrary external prose; review logs before sharing them. File writes are asynchronous and batched with a 4096-record / 2 MiB pending-and-in-flight ceiling. Overflow drops excess file records with one warning and a status counter; terminal output continues. CLI exit paths flush for at most 1.5 seconds. `ccdx doctor config` bypasses file logging entirely.
+
 
 ## Large histories and images
 
@@ -1963,533 +673,22 @@ Newer Codex App builds can advertise an `image_gen` namespace that already exist
 
 ## Development
 
-```bash
-npm ci
-npm run verify
-npm run bench:payload
-```
-
-`bench:check` covers both SSE parsers, including native Responses identity rewriting, 1/4/8 MiB fragmented events, write batching, and slow-client backpressure. It also repeats four concurrent image preparations across six rounds using a desktop-sized synthetic screenshot and a public-domain photograph. Checks enforce content preservation, single-pass JSON parsing, bounded copying, cache reuse, settled work, and bounded retained heap/ArrayBuffers after warm-up and GC. Sampled RSS and absolute timings remain report-only because allocators, runtimes, and machines differ; the fixtures do not establish production latency or visual model accuracy.
-
-`npm test` runs unit, handler, CLI, and documentation-contract tests. `npm run test:smoke` starts a real local adapter with fully injected offline upstreams. `npm run bench:check` enforces linear SSE scanning, image/tool processing, and request-admission resource limits. `npm run pack:check` verifies npm tarball contents without publishing. `npm run bench:payload` is a report-only isolated-process benchmark for 5–60 MiB synthetic padded-image payloads and does not contact Copilot. CI runs the complete `verify` gate on Node 22.15.0 and 24.x.
-
-The [documentation index](https://github.com/DaleXiao/codex-copilot-dx/blob/main/docs/README.md) distinguishes current guidance from historical release evidence. Release reports retain the measurements and limits of their specific versions; they do not establish current live-provider compatibility.
-
-From a source checkout, `node scripts/codex-message-id-replay.mjs --codex /absolute/path/to/codex` checks message identity against an installed Codex runtime using only synthetic SSE, a local mock server, and automatically cleaned temporary Codex directories. It does not use the real client configuration or call Copilot.
+Run `npm run verify` for unit tests, streaming smoke, resource budgets and package checks. Native Windows and macOS CI verifies installers, credential/configuration ownership, client protocols and the browser UI. Keep inference tests synthetic unless an online probe is explicitly requested. Release evidence stays in dated release notes; architecture proposals are separate from implemented guarantees.
 
 ## License
 
 MIT
 
-
-### Live request flow and timing estimates
-
-Request flow is a read-only view of active Responses, Responses compaction and
-Claude Messages requests observed by CCDX; it excludes image-MCP, token counting,
-catalog and management calls. It groups
-apps and source/model pairs; a model used through two sources stays separate.
-`X-CCDX-Client` recognizes `codex-app`, `codex-cli`, `claude-app`, `claude-code`;
-known Codex `originator` values also provide labels, including the actual
-`Codex Desktop` spelling. Explicit client hints take precedence, followed by known
-originators, then known versioned Codex User-Agent prefixes. A generic `codex`
-prefix identifies only the Codex family, not App versus CLI. Unknown clients are
-shown as Unidentified app (the existing `api` metadata ID is retained); unmarked
-Messages requests remain Claude (app unspecified). These are client-reported
-presentation hints, never verified identities, authorization or routing inputs.
-Only bounded scalar strings are inspected; no User-Agent/header text is retained.
-An unrelated agent containing the word Codex does not match.
-
-Only observed first output starts moving dots. A started attempt without output
-is waiting, a subsequent attempt is retrying, and terminal evidence awaiting
-connection completion is finishing. No fresh status for six seconds means unknown,
-not idle or successful. Auto refresh off therefore expires the view. Hidden pages
-pause animation; reduced-motion uses static dots. Idle retains bounded last-known
-nodes with zero counts; unknown retained counts are dashes. Initially up to 12
-model groups are visible, with an explicit show-more control. Snapshots retain up
-to 64 details per metrics instance; exact active totals may be higher and omitted
-details are reported. With omitted details, observed group counts use ≥; retained
-nodes with no current detail use dashes, even while the exact total is active. Short requests between two status reads can appear only in
-the finished table; the diagram does not fabricate or replay them.
-
-A single app/source-model route has aligned name/hub anchors and straight paths,
-even when multiple requests share that route. Branches alone use rounded curves.
-Known singleton and idle-zero node counts are hidden. Concurrent counts read
-“2 requests” beside the name and outside its selected area; lower bounds retain ≥
-and missing/stale counts remain dashes. The exact active total appears once in
-the flow header, not again below the logo.
-
-Clicking an app or model name filters only active details. Counts, source totals,
-all five terminal outcomes (including unknown), last 20 finished requests and
-issues remain available. No prompt/image/credential is added to active telemetry.
-The existing local-dashboard host/origin protections apply to the new flow asset.
-
-Codex and Claude request-performance panels show approximate first-output P50/P95
-in milliseconds with sample counts. Values come from existing histogram buckets,
-not raw samples; the highest bucket uses the observed maximum. These are the
-upstream first-output observations already used for the mean, include failures
-after partial output, and do not measure user-perceived completion or promise a
-routing improvement. No samples displays a dash.
-
-
-### Account shortcuts and compact toolbar (1.2.12)
-
-Checks & repairs offers equal-height GitHub account / M365 account shortcuts.
-Both open the corresponding model-source page; neither starts a connection check,
-account enumeration, login or model call. Actual checks stay on that source page.
-The M365 shortcut retains link semantics and the shared button appearance.
-
-Auto refresh has content-based width, sized for the longer localized on/off label
-so toggling it does not shift nearby controls. The language control has a 40px
-minimum width, cannot flex-shrink and keeps 中文 / EN on one line. Compact toolbars
-wrap when required rather than compressing text; header position remains stable
-between modules in the same language and viewport.
-
-### Application editing and keyboard behavior (1.2.20)
-
-Codex, Claude App and Claude Code keep separate page-local model/default/sync
-drafts. Switching clients, navigating within the dashboard or reading current
-settings preserves unsaved drafts. Save and Discard changes affect that client
-only; reloading the browser discards page-local drafts. Model selection restores
-focus to the corresponding checkbox/default button. Add API focuses its first
-field; Cancel restores the entry control. Narrow layouts stack source, context
-and reasoning below each model while retaining the same table semantics.
-
-Reading a catalog marks only its Read models button busy and offers Cancel.
-Cancelling leaves the editor and its draft intact. No inference is sent. Source
-saves report persistence separately from subsequent metadata refresh. Background
-read failures retain existing messages; key read/save states use polite live
-announcements. Account labels and values stay paired, and request summaries use
-configured source names. Technical IDs remain available in request details.
-
-### Codex App updates and model selection
-
-After an App update, completely quit and reopen the App once if the model list is
-empty, then inspect `ccdx doctor`. On macOS, doctor reads bundled CLI package
-metadata and the optional model-cache version without executing a binary or
-altering the cache. A version mismatch is a diagnostic hint; it does not prove
-that the cache caused a failed catalog. HTTP catalog `models` and app-server RPC
-`model/list.data` are different layers, not evidence by themselves of a format
-regression between client versions.
-
-The Responses WebSocket protocol is not implemented by CCDX. Upgrade requests
-are refused promptly so supported native clients can fall back to HTTP/SSE.
-This is tested separately from model-directory and provider-identity behavior;
-SSE events are not relabeled as a WebSocket protocol.
-
-
-### Nightly updates (opt-in)
-
-Available from 1.2.22 after one manual upgrade. Settings → Version & updates →
-Update overnight writes the boolean `nightly_updates`, false when absent. Enabling
-it requires a normal CCDX restart; disabling it cancels pending automatic work in
-a supervised service. Management-only `ccdx web` never installs updates. The risk
-text explains that automatic installation/restart can affect conversation
-continuation. The feature does not promise zero downtime or infallible rollback.
-
-Only an owned, writable npm installation with recognized command launchers can
-use the supervisor. Standard execution stays unchanged when disabled. When enabled,
-a foreground parent runs the gateway from an immutable private package tree;
-Ctrl+C stops both, and no launchd/systemd/Windows service or boot task is installed.
-Stopping CCDX, sleeping or powering off does not start a separate updater. After
-a long observation gap, a new ten-minute idle interval is required.
-
-The parent observes bounded local state once a minute. A release check occurs at
-most once per local calendar day, within 00:00–04:00, after ten observed idle
-minutes. The new version must be a stable patch in the same major/minor series
-and have been published at least 24 hours earlier. No prerelease or automatic
-minor/major migration is accepted. Active inference, image work, configuration
-operations, discovery or sign-in defer the update. New work during preparation
-also defers it. Checks do not invoke models.
-
-Preparation uses the official pinned GitHub Release tarball and checksum, an
-independent npm prefix, the configured registry/proxy/CA/TLS/offline policy and
-ignored lifecycle scripts. Existing private-runtime launchers are regenerated;
-custom launchers are not silently claimed. No Git, new Node installation,
-permission override, certificate change or public-registry fallback is added.
-A policy refusal, unavailable dependency or runtime check failure leaves the
-current service running. The supported native broker is checked when already
-present in the original installation.
-
-Before switching, the parent compares client/configuration fingerprints and
-authorized model/default selections, backs up the global package and commands,
-and validates the candidate on an internal loopback-only ephemeral listener while
-the current instance continues serving. Previously healthy selected sources must remain healthy, every previously
-published model must remain available, and defaults/credential scopes must match.
-Additional upstream models are allowed. API discovery publication and client
-writers are paused during this warmup. Only then is the old gateway quiesced.
-A bounded private IPC message transfers Responses
-history, source-scoped parent links/opaque items, image-edit references and
-already-cached API keys limited to unchanged configured references.
-Conversation payloads, image references and cached keys are never written to a
-handoff file or diagnostics. Ordinary process-local counters begin a new run;
-retained usage files remain available.
-The combined serialized state is limited to 64 MiB; oversized/busy state defers
-the update without eviction. New requests during the brief switching interval
-can receive a temporary failure with `Retry-After: 1`.
-
-The warmed replacement imports state before taking over the same main port. Its
-maintenance startup preserves client configuration, skips interactive GitHub
-login, and opens neither browser nor client. Model/default selections and
-configuration fingerprints must match before it accepts normal traffic. Failed
-startup, discovery or a mismatched candidate leaves the original instance
-alive. A failed port/prediction handover attempts package rollback and resumes
-that same instance with its original caches. Cleanup of a retired runtime is
-best-effort; pending cleanup suspends further automatic transitions. The old
-process is retired only
-after the replacement has acknowledged acceptance. A deliberate Ctrl+C
-never starts another worker. Unexpected later worker exits are reported once;
-this is not a general crash-respawn mechanism.
-
-The private `nightly-update-state.json` beside settings stores only the attempted
-local day and paused version. Installed candidates that fail verification are
-not repeatedly attempted; a newer version or explicit manual update is needed.
-Unreadable records pause automatic updates without stopping the gateway. A
-failed package rollback or failed restoration can require manual recovery;
-Settings retains the full platform installation commands.
-
-### Web resilience and resource versions
-
-Optional status/usage/animation views contain local initialization/render errors,
-retain the surrounding shell and expose a local retry. Retry replays only the
-latest bounded call state per view method. Network errors retain their existing
-last-successful snapshots and explicit unknown/error status. Request-flow detail
-rows are keyed and updated in place, retaining selection and DOM identity.
-
-The flow atom's thin ring is static while idle and rotates once per five seconds
-while fresh active requests are observed, including waits/retries. The atom itself
-does not rotate; counts do not accelerate the ring. Hidden/stale views stop it,
-and reduced motion disables rotation. Existing curves, tables, palettes,
-client identification and authorization remain unchanged.
-
-Static dashboard bytes are snapshotted together on first use and reused by the
-process. HTML remains `no-store` and stamps script/style URLs with the service
-version. Other assets use content-derived ETags and `no-cache` revalidation;
-matching validators return 304. A mismatched version query returns 409 rather
-than mixing resources, requiring a page reload. If the installed package changed
-before a coherent bundle could be loaded, the optional page fails explicitly;
-inference remains separate. Protected JSON/account/settings routes stay
-`no-store`. No API-body caching, compression worker or new dependency is added.
-
-`CCDX_SUPERVISED_SERVICE` is an internal inherited worker marker. It is used only
-with a private parent IPC channel; do not set it as a user preference. It grants
-no network action and is not a replacement for the saved nightly-update opt-in.
-
-
-### Manual API token counting
-
-Messages support does not establish support for `POST /v1/messages/count_tokens`.
-CCDX forwards the configured Messages endpoint plus `/count_tokens`. A manual
-API's observed HTTP 404 is remembered in memory for 60 seconds, separately for
-each model and Anthropic version/beta-header scope. This is an observed endpoint
-failure, not a declaration that the model source is down. Cached and initial
-results return HTTP 404 with `ccdx_api_count_tokens_unavailable`; no estimated
-or synthetic count is returned. Changing the source configuration/key creates
-a new scope. Other statuses, including 401/403/405/429/5xx, are not cached by
-this compatibility mechanism; status and safe Retry-After metadata survive.
-
-Identical concurrent count requests share one bounded upstream operation.
-Each caller cancels independently; the last cancelled waiter aborts shared
-work. Before a model/header scope has a capability observation, distinct inputs
-wait for its first real admitted count request. An observed 404 is reused by
-those waiters; success is reused only for identical inputs. Distinct inputs
-then run their own counts. Capability waiting has at most 16 in-flight scopes
-and remains under normal gateway body/queue admission. Capability waiting and
-the caller's own count share its existing upstream timeout budget. Identical-result sharing
-is limited to bodies up to 1 MiB, 16 operations and 4 MiB of shared request text.
-Larger supported inputs and overflow use their normal admitted path. Count responses are capped at 64 KiB. At most 128 capability observations are retained. A 404 expires after one
-minute; a positive observation permits normal concurrency and a later 404 can
-replace it. Successful results and request bodies are not retained
-after the operation. Counts neither invoke generation nor fail over to another
-source. This does not supply a missing tokenizer or guarantee every Claude App
-context-management feature on a third-party model.
-
-Background manual-API catalog failures back off for 1, 5, 30 and then 120
-minutes; successful publication resets the sequence. Explicit refresh retains
-the existing one-minute minimum interval rather than the longer background
-backoff. A valid upstream Retry-After also applies, bounded to 24 hours. These
-are read eligibility gates, not added background retry timers. Revision changes
-invalidate prior eligibility and obsolete results never publish.
-
-Claude Code's validated `x-claude-code-agent-id` separates a child task's local
-source guard from its parent's guard when a session is identified. Parent keys
-without that header remain unchanged. This header is correlation only: model
-access and the company's account/history checks remain authoritative.
-
-
-### Claude App cross-source continuation
-
-In Claude App, choose another model that you have selected and authorized for
-that app. CCDX can continue the same conversation across Messages sources using
-the complete history supplied by the client. This is explicit model selection,
-not automatic failover. Codex and Claude Code retain their existing source rules.
-
-CCDX preserves the original client conversation. In the forwarded request it
-keeps visible messages, available image/document content, and completed native
-tool calls/results; it removes incompatible old-source thinking and records a
-hashed history checkpoint. Subsequent thinking from the new source is retained.
-A changed/compacted client prefix is rebuilt only between completed tool turns.
-No automatic summary, tool execution, history truncation or hidden inference is
-added. Target capabilities and input/output limits still apply; unsupported
-upstream behavior is reported without retrying another source.
-
-Finish a running response/tool operation before changing sources. Incomplete
-tool pairs, source-owned file/container handles and unrecoverable encrypted
-history require completing the operation or restoring the original content.
-Known history belonging to a different company account remains blocked. Model
-validation and token counting do not move a conversation's source. A failed
-request before usable output leaves its prior checkpoint; partial output keeps
-the actual new-source checkpoint and is never automatically replayed.
-
-`conversation-transfers.json`, beside `connections.json`, stores at most 1024
-HMAC-keyed entries with source/prefix hashes and message counts, within a 512 KiB
-read limit. It stores no prompts, files, raw session IDs or credentials. Records
-survive ordinary service restart; corrupt records are preserved and reported,
-not replaced with empty defaults. This does not persist Responses history or
-change Codex login/provider/model-list configuration.
-
-`conversation-prefixes.json` adds a second bounded receipt with protocol-equivalent
-block fingerprints. A string and its single text block compare equally, and
-combining adjacent same-role messages preserves the proved block prefix. This
-changes only comparison, not the client's messages. Text/code whitespace and
-tool argument values remain significant. Each semantic receipt is tied to the
-legacy owner/count/hash; an older writer makes stale semantic proof ineligible.
-The pair commits atomically. Legacy receipts upgrade only when their prefix is
-proved, and the original legacy file remains readable by older versions. Each
-file is limited to 1024 keys and a 512 KiB read. No tool or private state is
-replayed to work around an unknown prefix or account mismatch. Rejections report
-whether the source changed or the prefix changed, and whether a tool result is
-missing/unmatched or a tool turn is active.
-
-### Explicit M365 app access and directory read receipts
-
-Model sources → Microsoft 365 → Allowed apps grants the current source to one,
-several or no enabled apps. Granting access does not choose models or change the
-current source. Removing access removes only that source's selected routes,
-preserving other source selections and an unavailable default until explicitly
-replaced. The runtime enforces revoked access even if a client retains its old
-model menu. Shared legacy Claude-key migration reports which retained consumers
-need reopening. Existing saved grants/owned legacy setups are retained; first-time
-discovery/sign-in alone does not connect all apps. An explicit CLI M365 source
-choice authorizes Codex only. Ordinary grants do not synchronize unrelated Codex
-configuration, authentication or catalogs.
-
-M365's explicit directory refresh always requests the network, even when a
-usable local model cache exists. `Cache-Control: no-cache` and `Pragma: no-cache`
-request HTTP revalidation through the existing transport. They do not bypass
-enterprise proxies, certificates, account policies or change token refresh.
-The read summary distinguishes network from CCDX cache, records the data time,
-raw total, compatible GPT/Claude counts and locally excluded count. Collapsed
-details include sanitized upstream/client correlation IDs, HTTP status and a
-bounded upstream Age value when returned. A network response containing five
-models replaces an older fifteen-model cache; a failed check preserves and
-labels prior data. Directory access is not inference authorization. There is no
-automatic empty-directory substitution, fabricated Claude entry, extra polling
-loop or inference probe. Correlation IDs are receipts, not proof that every
-intermediate proxy honored revalidation.
-
-### Upstream maker metadata
-
-Manual API discovery accepts bounded text from publisher, vendor, owned_by, display_name and name.
-The model maker shown in lists/details prefers publisher, then vendor; owned_by
-is shown separately as ownership and is not treated as the maker. Absent maker
-information is Not provided; no name-based inference is performed. These are
-upstream declarations, not proof of backend identity.
-
-Rebuildable per-source files under `api-model-display/` beside settings are
-scoped by source ID and deployment revision. They preserve at most 500 models,
-512 KiB per file and 16 in-memory sources. They contain only model IDs and
-identity declarations, no key or response body. Old versions ignore them;
-connection v2 metadata remains readable during rollback. The new read-only
-`model_display` source field and per-discovery `display` field are ignored if
-round-tripped into Save API; unknown configuration fields still fail validation. Missing display
-evidence triggers the existing normal catalog read rather than requiring key
-entry or model reselection. Failed discovery retains valid prior evidence for
-the same revision; invalid optional display cache does not block inference.
-
-### Memory-extraction dependency notices
-
-The Codex model editor reads [`memories.extract_model`](https://learn.chatgpt.com/docs/customization/memories#configure-local-memories) when explicitly configured
-in the native Codex config. Otherwise, it may show a recently observed extraction
-model from a bounded read-only correlation of native Phase 1 task failures and
-one unambiguous local HTTP 400 model. No prompt, memory text or model-name
-heuristic is used. Explicit configuration is labelled Configured in Codex;
-observations are Recently observed. The current client does not expose its
-compiled default in the queried interface, so CCDX does not label a guessed
-model as Codex default. With memory generation explicitly enabled but no model
-evidence, the editor shows Chosen by Codex and Default model ID not available;
-this does not infer a model from the checked model list or claim a successful
-memory write. With generation explicitly disabled it shows Memory generation is
-off. Unknown generation state and no model evidence remain Not detected.
-
-The optional native log helper runs only on startup/connection-view reads (including an explicit WebUI refresh),
-coalesced and at least one minute apart, with a 2.5-second limit. It reads up to
-eight task records and sixteen candidate HTTP records each, clipped to 8 KiB,
-from the prior 24 hours. It uses the bundled Node SQLite API in a separate
-read-only process; missing/locked/unsupported stores remain optional. Only a
-model ID and observation time can enter `codex-memory-observed.json`, scoped by
-the Codex profile, with a 24-hour freshness bound. No periodic log scanner,
-account lookup, native Codex process or inference is started by this helper.
-
-Closing a known extraction model or its source in WebUI prompts about new-memory
-generation and preserves your explicit decision. The draft is separate from the
-saved selection. Existing memories are not deleted. Native memory generation
-settings, model aliases, defaults, authentication and authorization are not
-changed to satisfy a dependency. Confirmations are WebUI guidance, not a new
-requirement on existing CLI/API operations. A notice does not identify every
-background task or prove that memory generation succeeded.
-
-### Messages stop and network evidence
-
-Recent Messages records retain declared context size, requested and forwarded
-output budgets, normalized returned input/output usage, and an allowlisted stop
-reason when supplied. Missing values remain unknown. `max_tokens` is shown as
-output-limit termination; CCDX does not raise an undeclared GLM output limit or
-use context length as an output ceiling. HTTP success and complete generation
-remain distinct.
-
-API transport errors retain fixed safe code, DNS/connect/TLS/request/response
-phase and reused-socket state in HTTP diagnostics. They do not retain raw
-exceptions or URLs, and do not trigger automatic POST or cross-source retries.
-
-
-### Model presentation and source impact (1.2.31)
-
-Model upstream IDs, source-qualified routes and client aliases retain their existing identities. Presentation follows a valid upstream display_name, then name, then the upstream ID. The shared client plan adds a source suffix only for ambiguous display labels; same-source display collisions include the upstream ID. No capability or backend identity is inferred from a name. The display cache stays separate from connection v2 and is bound to the source deployment revision. Display-only changes invalidate the client plan and reconcile selected consumers without changing their grants or defaults. Claude configuration uses labelOverride even when a mixed binding's default source is not an API. Existing client list order, user context preferences and configuration ownership are retained. The gateway directory and written configuration share display labels; user-preserved ordering is not replaced with a vendor-family ranking.
-
-Application pages distinguish saved selections from configuration-write results. A written configuration is not evidence that an already running App adopted it. Reopen the client to load changes. Manual-sync settings, preserved fields, missing defaults and failed writes retain separate statuses. When client capability controls are unverified, existing shared capability settings are kept; this does not assert support for those controls in the new version.
-
-Closing a source reviews selected deployments for every enabled app, including nondefault and temporarily unavailable selections. The preview reports selected-model counts and whether the default needs replacement. A still-valid default stays unchanged. Losing the default or the last selection requires an explicit replacement or pause through the existing access semantics. The WebUI submits an impact revision; changes to bindings or source identity invalidate that confirmation. Mere authorization without selected models is not counted as model consumption.
-
-### Disclosure motion and scoped interface changes (1.2.31)
-
-Native details/summary controls use one theme-colored SVG chevron: down while closed, up while open. Rotation takes 160 ms; visible content uses a 160 ms opening and 110 ms closing opacity/translation transition, without height animation. Keyboard activation, cancellation by rapid toggling, translated summaries and dynamically inserted disclosures remain supported. Reduced-motion mode uses native immediate toggles, and backgrounding finishes pending transitions. The animation script is a versioned same-origin dashboard asset.
-
-The existing palettes, sidebar, atom, solid selected controls and usage views remain. All retained usage totals, source/model filters, 7/30/90-day trends, bar/line views and 365-day activity are retained. Checks hide the empty results header until results exist. Animation style has one specific disclosure title; saved/effective differences are expressed on one line. Coarse-pointer switch labels and toolbar icon targets expand without enlarging the drawn switches.
-
-### Successful HTTP transport carrying model errors (1.2.31)
-
-A native Messages JSON error envelope under HTTP 200, or an SSE error event under a successful HTTP status, is recorded as model.error with the original HTTP status and a bounded structured error code/type. Existing failed-model accounting remains. The original response bytes/status are preserved; no automatic retry or replay is added. Normal output carrying incidental error-like fields is not reclassified. Token-count errors remain in their separate capability category. Request issue summaries lead with known plain-language causes, while technical codes, IDs, original diagnostic fields and clipboard export remain available in details.
-
-
-### Flow alignment and system fonts (1.2.32)
-
-Applications, request counts and their status lines share a right-aligned edge;
-source/model nodes retain their shared left edge. Application wire anchors no
-longer move with label width or mixed singleton/group counts. The existing
-rounded turns, dashed activity, selection and reduced-motion behavior remain.
-Narrow layouts keep counts below the application name and aligned to the same
-text edge.
-
-The WebUI retains its Latin monospace stack and explicitly names Chinese
-sans-serif system fallbacks before generic monospace: Microsoft YaHei UI/YaHei,
-PingFang SC, Noto Sans CJK SC/Noto Sans SC and WenQuanYi Micro Hei. Form controls
-inherit the page family; code and terminal samples reuse the same stack. No font
-is downloaded or installed. Available system fonts determine the exact glyphs;
-unsupported scripts still use browser fallback.
-
-Pure white uses the existing independent light/dark toggle, browser persistence,
-cross-tab updates, automatic/manual saving, and pre-reset backup/restore. It does
-not change the default green palette or the terminal palette and does not change
-Codex/Claude routing, credentials or model selections.
-
-
-### Command groups (1.2.33)
-
-Canonical groups separate source identity/catalogs, client model plans and service
-preferences. The compact route definition drives parsing, nearby/deep help and
-explicit legacy mappings. Existing legacy handlers continue to own their original
-arguments, output and effects. New CLI handlers use the loopback management API;
-read-only commands do not start a service or launch an App.
-
-```text
-  ccdx source list
-  ccdx source add [--file FILE] [--key-stdin] [--preview] [--yes]
-  ccdx source ID status [--format table|plain|json]
-  ccdx source ID models [--refresh] [--format table|plain|json]
-  ccdx source ID check [--format table|plain|json]
-  ccdx source ID edit [--file FILE] [--key-stdin] [--preview] [--yes]
-  ccdx source ID access [--edit] [--apps codex,claude-app,claude-code|none]
-  ccdx source ID enable|disable|remove [--preview] [--yes]
-  ccdx source github login|reauth [--login ACCOUNT]
-  ccdx source github logout [--yes]
-  ccdx source m365 accounts
-  ccdx source m365 account [--id ID]
-
-  ccdx app list
-  ccdx app ID status [--details] [--format table|plain|json]
-  ccdx app ID models [--edit] [--file FILE] [--preview] [--yes]
-  ccdx app ID sync [--preview] [--yes]
-  ccdx app ID enable|disable [--preview] [--yes]
-  ccdx app codex prediction status|setup|remove|pause|resume|repair
-  ccdx app codex image status|setup|remove|pause|resume
-  ccdx app codex review status|select
-
-  ccdx requests [--active|--failed] [--app ID] [--source ID] [--limit 1..100]
-  ccdx requests show REQUEST_ID
-  ccdx status [--details] [--format table|plain|json]
-  ccdx usage --scope run|all [--provider ID] [--format table|plain|json]
-  ccdx config show [--effective] [--format table|plain|json]
-  ccdx config set KEY VALUE [--preview] [--yes]
-  ccdx config terminal
-  ccdx config animation
-  ccdx config limits [--decoded MiB|default]
-  ccdx config reset|restore [--preview] [--yes]
-  ccdx doctor cache [existing cache options]
-  ccdx update check [--format table|plain|json]
-```
-
-Client IDs are `codex`, `claude-app`, `claude-code`; backend binding IDs are unchanged.
-Only APIs support generic edit/remove. Removal requires a disabled source with no
-retained client binding, including disabled clients. Built-in M365 profile cleanup
-remains the explicit legacy `m365 remove`, with its existing effects. Source
-`check`/model `--refresh` contact a source only when requested and never send inference.
-Cached built-in catalogs are read directly from the source, without filtering
-through client selection. API default catalogs describe saved model configuration;
-explicit refresh returns discovery results. Neither proves inference access.
-Source grants do not choose visible client models. Disable uses the existing
-source-impact revision and replacement/pause review; scripts must give explicit
-`--replacements` JSON for affected clients. It never silently chooses another source.
-
-Client models describe the saved selected plan, not the upstream directory.
-Unavailable selections remain explicit and are not silently dropped; a changed
-plan containing unavailable selections is refused until the catalog returns or
-the user explicitly removes them. Removing an observed Codex memory dependency
-shows its existing warning before confirmation; no model name is guessed. New access toggles retain legacy source/model
-bindings and do not materialize deployments. `sync --preview` reports the model
-and managed-configuration plan, not a byte-level file diff. Explicit sync can write
-once while `auto_sync` is false; the preference stays false. Writers retain current
-ownership checks and do not restart client programs or imply App adoption.
-
-Source and client writes carry the current revision. Old running services without
-the new management capability are refused before new connection mutations. This
-is not an automatic restart or a package/process hot handoff. New JSON output
-contains no ANSI or startup chatter; failures exit nonzero. Existing 0/1/2 exit
-conventions and legacy non-TTY/machine paths remain.
-
-For scripts, API files contain only `config` and `allowed` (backend client IDs).
-Configuration includes name/base_url/endpoints/auth_header/models and optionally
-key_env. A key uses a bounded private stdin stream with `--key-stdin` or an existing
-environment reference; it is not a command argument or echoed in output. App model
-files require an explicit deployments array (empty pauses access) and allow
-default_model/auto_sync. Both forms use the same
-backend validation and authorization as WebUI. Interactive creation retains a saved
-source after discovery failure, reports partial failure, and allows explicit retry;
-model interfaces missing upstream must be chosen explicitly.
-
-`config` only manages the settings-preference allowlist. It does not reset browser
-local storage, accounts, API credentials, model plans, chats or image/prediction
-access. CLI reset/restore reuse the existing atomic backup writer with a separate
-`service-settings-preferences-backup.json` in the same CCDX config directory.
-The original WebUI backup file and version-one format are retained. The CLI uses
-`config restore`; WebUI keeps its own appearance-paired backup. Invalid or stale
-files are not overwritten. Overnight-update risk needs explicit confirmation;
-`--yes` is an explicit script choice. Saved/effective state and normal restart
-requirements remain distinct. No new background service, stop or restart command
-is introduced.
-
-Requests use existing bounded active/recent performance and structured error
-snapshots. They retain original request IDs, source, route, codes and attempts;
-missing records return Not retained. Notices are not treated as failed request
-counts, and no new transcript/history database is added. Only observed application
-identity is used. Codex App/CLI observations share the Codex binding; unidentified
-clients stay separate.
+## Common environment controls
+
+| Variable | Use |
+| --- | --- |
+| `ADAPTER_HOST` | Listener host; default loopback |
+| `ADAPTER_PORT` | Main listener port; default 2026 |
+| `CCDX_AUTO_LAUNCH` | Set to 0 to skip opening Codex |
+| `CCDX_M365` | Set to 0 to disable the company source for this run |
+| `CCDX_USAGE_PATH` | Recorded usage file path |
+| `CCDX_LOG_LEVEL` | Optional diagnostic logging level |
+| `CCDX_LOG_PATH` | Optional diagnostic log path |
+
+Internal supervisor and installer environment fields are not user settings.

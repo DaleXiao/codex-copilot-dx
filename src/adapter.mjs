@@ -77,7 +77,7 @@ function sendRetiredClaudeSurface(res) {
     error: {
       type: "not_found_error",
       code: "ccdx_claude_retired",
-      message: "The GitHub Claude endpoint was retired in ccdx 0.7.0. Microsoft 365 Claude uses the separate gateway; run ccdx m365 status.",
+      message: "The GitHub Claude endpoint was retired in ccdx 0.7.0. Microsoft 365 Claude uses the separate gateway; run ccdx source m365 status.",
     },
   }));
 }

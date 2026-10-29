@@ -136,7 +136,7 @@ test("actual prediction fix CLI uses only the local management route and reports
   server.listen(0, "127.0.0.1");await once(server, "listening");env.ADAPTER_PORT = String(server.address().port);
   const cli = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
   const preload = fileURLToPath(new URL("../scripts/replay-fixtures/config-startup-preload.cjs", import.meta.url));
-  const run = () => promisify(execFile)(process.execPath, ["--require", preload, cli, "prediction", "fix"], { env, timeout: 5000 });
+  const run = () => promisify(execFile)(process.execPath, ["--require", preload, cli, "app", "codex", "prediction", "repair"], { env, timeout: 5000 });
   const first = await run();assert.match(first.stdout, /App launch route verified/);assert.equal(calls, 1);
   status = "needs_app_relaunch";
   await assert.rejects(run(), error => error.code === 1 && /No App was restarted/.test(error.stdout));assert.equal(calls, 2);

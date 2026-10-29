@@ -88,20 +88,26 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         await page.locator('[data-route="models"]').click();
         await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).locator("button").click();
         await page.locator("#connection-discover").click();
-        await page.waitForFunction(() => document.querySelectorAll("#connection-models tr").length === 8);
+        await page.waitForFunction(() => document.querySelectorAll("#connection-models > tr:not(.connection-detail-row)").length === 8);
         assert.equal(await page.locator("#connection-manual-model").getAttribute("open"), null, "Manual IDs remain an optional collapsed entry");
-        const unconfigured = page.locator("#connection-models tr").filter({ hasText: "unselected-0" });
+        const unconfigured = page.locator("#connection-models > tr:not(.connection-detail-row)").filter({ hasText: "unselected-0" });
         await unconfigured.locator('input[name="selected-model"]').check();await page.locator('#connection-api-form button[type="submit"]').click();
         assert.equal(runtime.connections().providers.find(p => p.id === id).models.length, 0, "A selected model without APIs cannot overwrite saved data");
         assert.match(await page.locator("#connection-note").innerText(), /unselected-0/);await unconfigured.locator('input[name="selected-model"]').uncheck();
-        await page.locator("#connection-models tr").filter({ hasText: "claude-replay" }).locator('input[name="selected-model"]').check();
+        await page.locator("#connection-models > tr:not(.connection-detail-row)").filter({ hasText: "claude-replay" }).locator('input[name="selected-model"]').check();
         for (const [model, protocol] of [["claude-replay", "messages"], ["claude-replay", "responses"], ["response-replay", "responses"]]) {
-          await page.locator("#connection-models tr").filter({ hasText: model }).locator(`input[value="${protocol}"]`).check();
+          await page.locator("#connection-models > tr:not(.connection-detail-row)").filter({ hasText: model }).locator(`input[value="${protocol}"]`).check();
         }
         assert.equal(await page.locator('#connection-models input[name="selected-model"]:checked').count(), 2, "Checking an API selects its model");
         assert.equal(await page.locator("#connection-model-id").inputValue(), "", "Catalog selection does not require typing an ID");
-        const modelRow = page.locator("#connection-models tr").filter({ hasText: "claude-replay" });
+        const modelRow = page.locator("#connection-models > tr:not(.connection-detail-row)").filter({ hasText: "claude-replay" });
+        await modelRow.locator("button").first().scrollIntoViewIfNeeded();
+        const beforeDetails = await page.evaluate(() => ({ x: scrollX, table: document.getElementById("connection-models").closest(".table-wrap").scrollLeft }));
         await modelRow.locator("button").first().click();
+        assert.equal(await modelRow.locator("xpath=following-sibling::tr[1]").getAttribute("class"), "connection-detail-row");
+        assert.equal(await page.locator("#connection-model-detail").evaluate(el => el.closest("td").colSpan), 6);
+        assert.deepEqual(await page.evaluate(() => ({ x: scrollX, table: document.getElementById("connection-models").closest(".table-wrap").scrollLeft })), beforeDetails, "Opening details must not move either horizontal scroll position");
+        assert.equal(await modelRow.locator("button").first().getAttribute("aria-expanded"), "true");
         assert.match(await page.locator('#connection-model-detail > table').innerText(), /128K/);
         assert.match(await page.locator('#connection-model-detail .model-identity').innerText(), /Example Maker/);
         await page.locator('#connection-model-detail > select').selectOption("responses");

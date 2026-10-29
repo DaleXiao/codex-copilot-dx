@@ -10,8 +10,6 @@ import * as security from "../src/security.mjs";
 import * as observability from "../src/observability.mjs";
 import * as authCli from "../src/cli-auth.mjs";
 import * as authData from "../src/auth-status.mjs";
-import * as modelCli from "../src/cli-models.mjs";
-import * as modelData from "../src/live-models.mjs";
 import * as usageCli from "../src/usage.mjs";
 import * as usageData from "../src/usage-store.mjs";
 import { terminalCell as cliCell } from "../src/cli-table.mjs";
@@ -20,7 +18,7 @@ import * as auth from "../src/auth.mjs";
 import * as credentials from "../src/auth-credentials.mjs";
 import * as device from "../src/auth-device-flow.mjs";
 
-test("legacy exports share the exact extracted functions and usage state", () => {
+test("shared modules retain transport, authentication and usage boundaries", () => {
   assert.equal(transport.httpError, errors.httpError);
   assert.equal(transport.createRequestAdmission, admission.createRequestAdmission);
   for (const [name, value] of Object.entries(upstreamBody)) assert.equal(transport[name], value, name);
@@ -28,7 +26,6 @@ test("legacy exports share the exact extracted functions and usage state", () =>
   assert.equal(observability.isLoopbackHostHeader, security.isLoopbackHostHeader);
   assert.equal(cliCell, terminalCell);
   for (const name of ["authStatus", "authStatusOnline"]) assert.equal(authCli[name], authData[name], name);
-  for (const name of ["fetchLiveCopilotModels", "selectableCopilotModels"]) assert.equal(modelCli[name], modelData[name], name);
   for (const [name, value] of Object.entries(usageData)) assert.equal(usageCli[name], value, name);
   for (const [name, value] of Object.entries(credentials)) {
     if (name !== "readSavedGithubToken") assert.equal(auth[name], value, name);

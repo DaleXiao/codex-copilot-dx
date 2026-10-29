@@ -104,7 +104,7 @@ export async function runManagementCommand(command, options = {}) {
     if (flags.format === "json") return print(result);
     const sourceNames = view.sources?.map(source => source.name).join(" · ");
     return [`CCDX ${data.version}${options.version && options.version !== data.version ? ` · installed CLI ${options.version}` : ""}`,
-      `Listening · ${baseUrl} · up ${terminalUptime(data.uptime_ms)}`, `Enabled sources: ${view.sources?.length ?? "unknown"}`,
+      `Running · up ${terminalUptime(data.uptime_ms)}`, `Web UI: ${baseUrl}`, `Enabled sources: ${view.sources?.length ?? "unknown"}`,
       ...(sourceNames ? [sourceNames] : []), "", print(view.clients, [["name", "Client"], ["setup", "Setup"], ["active", "Active"]]), "",
       `Model requests: ${view.requests ?? "unknown"} total · ${view.active ?? "unknown"} active · ${view.outcomes.failed} failed`].join("\n");
   }

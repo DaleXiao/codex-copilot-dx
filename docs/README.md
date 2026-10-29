@@ -1,80 +1,13 @@
-# Documentation index
+# Documentation
 
-- [1.1.1: Clear startup checks and framed terminal status](RELEASE_1.1.1.md)
-- [1.1.0: Shared entry, control console and quiet terminal](RELEASE_1.1.0.md)
-- [1.0.0: Provider dashboard and Claude effort adaptation](RELEASE_1.0.0.md)
+- [Quick start](../README.md): install, connect sources and choose app models.
+- [Reference](REFERENCE.md): commands, settings, diagnostics, images and native suggestions.
+- [Architecture](ARCHITECTURE.md): module ownership and runtime boundaries.
+- [State-code proposal](STATE_REFACTOR_PLAN.md): proposed follow-up work; not an implemented refactor.
+- [1.3.0 candidate](RELEASE_1.3.0.md): scope, compatibility changes and verification status.
 
-The [root README](../README.md) is the quick start; the [command/configuration
-reference](REFERENCE.md) preserves complete current behavior and limits. `ccdx --help` and
-`ccdx <command> --help` describe the installed package's CLI. Code and tests
-resolve any discrepancy; CLI version and running-adapter version can differ.
-The [architecture boundaries](ARCHITECTURE.md) explain module ownership,
-optional integration lifecycle and configuration safety.
+CLI help describes the installed package. The running service can be an older version until its next normal restart.
 
-`ccdx doctor config` performs local, read-only configuration diagnostics and
-previews the current startup writer. It does not claim to resolve the complete
-effective Codex configuration or validate every field against the installed app.
+Historical `RELEASE_*.md` files record their own source revision and test environment. They remain engineering evidence, not current installation instructions. GitHub Release cleanup does not remove Git history or npm versions.
 
-## Historical release evidence
-
-- [1.2.8: Soft pink, accurate activity and terminal cache reuse](RELEASE_1.2.8.md)
-- [1.2.7: Account tools, checks and repairs, consistent status icons](RELEASE_1.2.7.md)
-- [1.2.6: Abbreviated proxy networks and preserved diagnostics](RELEASE_1.2.6.md)
-- [1.2.5: Animated usage views and approximate cache hit rate](RELEASE_1.2.5.md)
-
-- [1.2.4: Navigation clarity and bounded version discovery](RELEASE_1.2.4.md)
-
-These reports record a specific release and test environment. Their version,
-test counts, timings, live-provider observations, and limitations remain
-historical facts rather than current guarantees.
-
-- [0.9.31: verified Windows package-update process launch](RELEASE_0.9.31.md)
-- [0.9.30: persistent prediction routes and verified macOS launch](RELEASE_0.9.30.md)
-- [0.9.29: visible-page refresh, atom favicon and safe reasoning declarations](RELEASE_0.9.29.md)
-- [0.9.28: verified local plaintext recovery and validation boundaries](RELEASE_0.9.28.md)
-- [0.9.27: Windows certificate setup without Git/OpenSSL](RELEASE_0.9.27.md)
-- [0.9.26: Windows native predictions, safe ownership recovery and dashboard disclosures](RELEASE_0.9.26.md)
-- [Windows prediction validation history](WINDOWS_PREDICTION_PREVIEW.md)
-- [0.9.25: static proxy compatibility, integration boundaries and release diagnostics](RELEASE_0.9.25.md)
-
-- [0.9.19: GitHub startup checks and stable-release updates](RELEASE_0.9.19.md)
-- [0.9.21: compatibility-gated local history compression](RELEASE_0.9.21.md)
-- [0.9.20: timing evidence, real-client checks and bounded analytics reuse](RELEASE_0.9.20.md)
-- [0.9.13: model-bound Auto-review reasoning selection](RELEASE_0.9.13.md)
-- [0.9.12: GPT-6.1 Sol / low Auto-review default](RELEASE_0.9.12.md)
-- [0.9.11: bounded usage-summary cache and diagnostic redaction](RELEASE_0.9.11.md)
-- [0.9.10: agent messages, opaque-state tests and bounded request timelines](RELEASE_0.9.10.md)
-
-- [0.9.9: English and Simplified Chinese dashboard](RELEASE_0.9.9.md)
-- [0.9.8: underscore account names in the dashboard](RELEASE_0.9.8.md)
-- [0.9.7: saved GitHub account in the dashboard header](RELEASE_0.9.7.md)
-- [0.9.6: lazy dashboard controls and daily usage analytics](RELEASE_0.9.6.md)
-- [0.9.5: cache hit rates with incomplete history](RELEASE_0.9.5.md)
-- [0.9.4: token cache hit rate in usage and dashboard](RELEASE_0.9.4.md)
-- [0.9.3: GPT-6.1 Sol Codex catalog compatibility](RELEASE_0.9.3.md)
-- [0.9.2: read-only runtime limits in the dashboard](RELEASE_0.9.2.md)
-- [0.9.1: safe Qwen data-URI image delivery](RELEASE_0.9.1.md)
-- [0.9.0: opt-in decoded request-body limit CLI](RELEASE_0.9.0.md)
-- [0.8.11: theme-aware double-peak SVG favicon](RELEASE_0.8.11.md)
-- [0.8.10: borderless theme toggle and fuller moon icon](RELEASE_0.8.10.md)
-- [0.8.9: local dashboard light and dark themes](RELEASE_0.8.9.md)
-- [0.8.8: local dashboard with animation, live models, and usage](RELEASE_0.8.8.md)
-- [0.8.7: faithful Chat fallback and response-outcome diagnostics](RELEASE_0.8.7.md)
-- [0.8.6: bounded large-body memory and history accounting improvements](RELEASE_0.8.6.md)
-- [0.8.5: GPT-6 Sol/Luna compatibility and runtime cache control](RELEASE_0.8.5.md)
-- [0.8.4: bounded audit fixes and safety verification](RELEASE_0.8.4.md)
-- [0.8.3: image configuration recovery and core-service isolation](RELEASE_0.8.3.md)
-- [0.8.2: progressive image guidance and opt-in lifecycle](RELEASE_0.8.2.md)
-- [0.8.1: chat image delivery and image-provider base URLs](RELEASE_0.8.1.md)
-- [0.8.0: configuration safety, bounded failure recovery, and image integration hardening](RELEASE_0.8.0.md)
-- [0.7.10: generated-image editing and simultaneous animation previews](RELEASE_0.7.10.md)
-- [0.7.9: image tool discovery and invocation](RELEASE_0.7.9.md)
-- [0.7.8: streamed failure recovery and optional image generation](RELEASE_0.7.8.md)
-- [0.7.7: terminal animation additions and Braille retirement](RELEASE_0.7.7.md)
-- [0.7.6: configuration doctor and documentation audit](RELEASE_0.7.6.md)
-- [0.7.5: context-management default](RELEASE_0.7.5.md)
-- [0.7.4: preparation timing and performance checks](RELEASE_0.7.4.md)
-- [0.7.3: native Responses message identity](RELEASE_0.7.3.md)
-
-The [benchmark-fixture provenance](../scripts/fixtures/README.md) documents the
-photo source and distinguishes it from the generated screenshot fixture.
+[Benchmark fixtures](../scripts/fixtures/README.md) document test-image provenance.

@@ -55,17 +55,21 @@ export function createStartupPresentation({ output = process.stdout, errorOutput
   return { enabled, warnings, finish: clear,
     log(method, args) {
       const message = redactDiagnosticText(format(...args));
-      const warning = method === "error" || method === "warn" || /^\s*\[(?:WARN|ERR)\]/.test(message);
-      const check = /^\[(?:OK|INFO|WAIT)\]\s+([A-Za-z-]+)\s+(.*)$/.exec(message);
-      if (!enabled || warning || !check || ["Sign-in", "GitHub"].includes(check[1]) && !/GitHub token found|saved sign-in/i.test(check[2])) {
-        clear();(warning ? errorOutput : output).write(message + "\n");
-        if (warning && warnings.length < 100) warnings.push([method, args]);return;
+      for (const line of message.split("\n")) {
+        const warning = method === "error" || method === "warn" || /^\s*\[(?:WARN|ERR)\]/.test(line);
+        const check = /^\[(?:OK|INFO|WAIT)\]\s+([A-Za-z-]+)\s+(.*)$/.exec(line);
+        if (!enabled || warning || !check || ["Sign-in", "GitHub"].includes(check[1]) && !/GitHub token found|saved sign-in/i.test(check[2])) {
+          clear();
+          (warning ? errorOutput : output).write(line + "\n");
+          if (warning && warnings.length < 100) warnings.push([method, [line]]);
+          continue;
+        }
+        const scope = ["App", "Config", "Suggestions", "Images"].includes(check[1]) ? "Codex" : check[1] === "Claude" ? "Apps" : check[1];
+        let text = `Starting · ${scope}`;
+        if (["Service", "Models", "Sources", "M365"].includes(scope)) text += ` · ${check[2]}`;
+        while (displayWidth(text) >= (output.columns || 80)) text = [...text].slice(0, -1).join("");
+        clear();output.write(`\r\x1b[2K${text}`);visible = true;
       }
-      const scope = ["App", "Config", "Suggestions", "Images"].includes(check[1]) ? "Codex" : check[1] === "Claude" ? "Apps" : check[1];
-      let text = `Starting · ${scope}`;
-      if (["Service", "Models", "Sources", "M365"].includes(scope)) text += ` · ${check[2]}`;
-      while (displayWidth(text) >= (output.columns || 80)) text = [...text].slice(0, -1).join("");
-      clear();output.write(`\r\x1b[2K${text}`);visible = true;
     },
   };
 }
@@ -81,7 +85,7 @@ export function predictionStartupCheck(prediction) {
   const warning = prediction.bridge !== "running" || problem || prediction.launch_route === "unverified";
   const lines = [startupCheck(warning ? "warn" : "info", "Suggestions", detail)];
   if (prediction.bridge !== "running" && prediction.reason) lines.push(startupCheck("warn", "Reason", prediction.reason));
-  if (warning) lines.push(startupCheck("info", "Details", "ccdx prediction status"));
+  if (warning) lines.push(startupCheck("info", "Details", "ccdx app codex prediction status"));
   return lines.join("\n");
 }
 

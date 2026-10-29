@@ -42,10 +42,10 @@ function safeText(value, length = 160) {
 function liveModelError(error) {
   const message = String(error?.message || error || "");
   const status = /\bHTTP (\d{3})\b/.exec(message)?.[1];
-  if (status) return `Live model lookup failed (HTTP ${status}). Run ccdx models for details.`;
-  if (/timed out/i.test(message)) return "Live model lookup timed out. Retry or run ccdx models.";
+  if (status) return `Live model lookup failed (HTTP ${status}). Run ccdx app codex models for details.`;
+  if (/timed out/i.test(message)) return "Live model lookup timed out. Retry or run ccdx app codex models.";
   if (/GitHub token not found/i.test(message)) return "GitHub token not found. Start ccdx to sign in.";
-  return "Live model lookup failed. Run ccdx models for details.";
+  return "Live model lookup failed. Run ccdx app codex models for details.";
 }
 
 function animationState(env, home, { includeFrames = false } = {}) {
@@ -252,7 +252,7 @@ export async function handleDashboardApi(req, res, pathname, {
       const query = new URL(req.url, "http://localhost").searchParams;
       sendJson(res, 200, animationState(env, home, { includeFrames: query.get("frames") !== "0" }));
     } catch {
-      sendJson(res, 409, { error: "Animation settings are invalid; inspect them with ccdx animation" });
+      sendJson(res, 409, { error: "Animation settings are invalid; inspect them with ccdx config animation" });
     }
     return;
   }
@@ -286,7 +286,7 @@ export async function handleDashboardApi(req, res, pathname, {
       applyAnimation?.(body.theme);
       sendJson(res, 200, { changed: result.changed, ...animationState(env, home) });
     } catch {
-      sendJson(res, 409, { error: "Animation setting was not saved; check ccdx animation" });
+      sendJson(res, 409, { error: "Animation setting was not saved; check ccdx config animation" });
     }
     return;
   }

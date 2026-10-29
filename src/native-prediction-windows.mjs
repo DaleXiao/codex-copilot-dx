@@ -88,7 +88,7 @@ export function windowsPredictionProfile({ app, env = process.env, preferredProf
   const profiles = [...new Set(candidates)].filter(candidate => fs.existsSync(path.win32.join(candidate, "Local State")));
   if (profiles.length !== 1) throw new Error(profiles.length
     ? "Multiple Codex App profiles found; set CODEX_ELECTRON_USER_DATA_PATH to the active profile"
-    : "Open Codex App once, fully quit it, then run ccdx prediction on; its Windows profile was not found");
+    : "Open Codex App once, fully quit it, then run ccdx app codex prediction setup; its Windows profile was not found");
   return profiles[0];
 }
 

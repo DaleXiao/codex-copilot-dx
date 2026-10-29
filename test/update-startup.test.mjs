@@ -11,7 +11,6 @@ import { localPackageVersion } from "../src/version.mjs";
 
 const preload = fileURLToPath(new URL("../scripts/replay-fixtures/config-startup-preload.cjs", import.meta.url));
 const cli = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
-const legacy = fileURLToPath(new URL("../bin/codex-copilot-dx.mjs", import.meta.url));
 
 async function bounded(promise) {
   let timer;
@@ -44,7 +43,7 @@ async function marker(run, text) {
   })());
 }
 
-for (const [mode, executable] of [["new", cli], ["new", legacy], ["current", cli], ["offline", cli], ["malformed", cli], ["timeout", cli]]) {
+for (const [mode, executable] of [["new", cli], ["current", cli], ["offline", cli], ["malformed", cli], ["timeout", cli]]) {
   test(`startup update check: ${mode} / ${path.basename(executable)} remains optional on cold start and reuse`, async (t) => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-update-startup-"));
     const runs = [];

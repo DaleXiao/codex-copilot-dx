@@ -22,11 +22,9 @@ function setup(t) {
   return { home, settings, env, codex: path.join(home, "config.toml") };
 }
 
-test("retired prediction cannot enable or choose models; cleanup aliases remain", () => {
-  for (const args of [["suggestion", "on"], ["suggestion", "model"], ["suggestion", "model", "gpt-6-luna"]]) assert.throws(() => parseCliArgs(args), /retired/);
-  for (const action of ["off", "status"]) assert.equal(parseCliArgs(["suggestion", action]).command, "suggestion");
+test("removed suggestion commands fail without reviving the retired integration", () => {
+  for (const args of [["suggestion", "on"], ["suggestion", "model"], ["suggestion", "off"], ["suggestion", "status"]]) assert.throws(() => parseCliArgs(args), /Unknown command/);
   assert.doesNotMatch(cliHelp(), /suggestion on/);
-  assert.match(cliHelp("ccdx", "suggestion"), /retired/);
 });
 
 test("cleanup preserves image MCP, native settings, user hooks and trust records", t => {

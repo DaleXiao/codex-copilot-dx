@@ -292,7 +292,7 @@ test("createCopilotClient: rejects an inactive isolated credential snapshot befo
     secondary.getCopilotToken({ fetchImpl: async () => { fetchCalls += 1; } }),
     (error) => error.statusCode === 401
       && /token_metadata_mismatch/.test(error.message)
-      && /ccdx auth login secondary --reauth/.test(error.message),
+      && /Reconnect the affected account/.test(error.message),
   );
   assert.equal(fetchCalls, 0);
 });

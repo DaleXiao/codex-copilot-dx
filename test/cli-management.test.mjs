@@ -36,15 +36,14 @@ function fixture() {
   const run = args => runManagementCommand(parseCliArgs(args), options);
   return { state, data, calls, output, options, run };
 }
-test("canonical routes and deep help share a valid grammar; old switching and auth paths retain their parser", () => {
+test("canonical routes and deep help share one public grammar", () => {
   for (const spec of MANAGED_COMMANDS) {
     const args = spec.path.map(token => ({ "<source>": "api_work", "<app>": "codex", "<request>": "request-1", "<key>": "open_webui", "<value>": "false" }[token] || token));
     assert.ok(parseCliArgs(args).command, args.join(" "));
     assert.match(cliHelp("ccdx", args.slice(0, -1).join(" ") || args[0]), /Usage|Compatibility|Usage:/);
   }
-  assert.equal(parseCliArgs(["source", "github"]).command, "m365");
-  assert.equal(parseCliArgs(["source", "github"]).action, "switch");
-  assert.equal(parseCliArgs(["models"]).command, "models");
+  assert.throws(() => parseCliArgs(["source", "github"]));
+  assert.throws(() => parseCliArgs(["models"]));
   assert.equal(parseCliArgs(["source", "github", "reauth", "--login", "user"]).expectedLogin, "user");
   assert.equal(parseCliArgs(["app", "codex", "prediction", "setup"]).action, "on");
   assert.equal(parseCliArgs(["config", "limits", "--decoded", "256"]).limitMib, 256);
@@ -53,9 +52,9 @@ test("canonical routes and deep help share a valid grammar; old switching and au
 });
 test("canonical feature help retains the existing integration safety and data-loss boundaries", () => {
   assert.match(cliHelp("ccdx", "app codex prediction setup"), /decrypted locally/);
-  assert.match(cliHelp("ccdx", "app codex prediction setup"), /Quit Codex/);
-  assert.match(cliHelp("ccdx", "app codex image remove"), /stored API credential/);
-  assert.match(cliHelp("ccdx", "doctor cache"), /next continuation fail/);
+  assert.match(cliHelp("ccdx", "app codex prediction setup"), /Codex to be closed/);
+  assert.match(cliHelp("ccdx", "app codex image remove"), /stored image credential/);
+  assert.match(cliHelp("ccdx", "doctor cache"), /break chat continuation/);
   assert.match(cliHelp("ccdx", "update"), /entire dependency tree/);
 });
 test("unknown actions, malformed client IDs, duplicate flags and nonnumeric bounds fail before IO", () => {

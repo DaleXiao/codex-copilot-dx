@@ -132,7 +132,7 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGit
     return { ...result, binding: readM365Account(options) };
   }
   async function selectAccount(id) {
-    if (typeof id !== "string" || !/^[a-f0-9]{64}$/.test(id)) throw Object.assign(new Error("Use an account ID from ccdx m365 accounts"), { statusCode: 400 });
+    if (typeof id !== "string" || !/^[a-f0-9]{64}$/.test(id)) throw Object.assign(new Error("Use an account ID from ccdx source m365 accounts"), { statusCode: 400 });
     if (!enabled) throw unavailable("m365_disabled");
     if (activeM365Requests > 0 || gateway?.snapshot?.().active > 0 || pending) {
       throw Object.assign(new Error(m365AccountMessage("m365_account_busy")), { code: "m365_account_busy", statusCode: 409 });

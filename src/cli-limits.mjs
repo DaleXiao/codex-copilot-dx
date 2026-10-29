@@ -23,7 +23,7 @@ export async function runLimitsCommand({
 } = {}) {
   if (action === "set") {
     if (String(env.CCDX_MAX_DECODED_BODY_BYTES || "").trim()) {
-      throw new Error("CCDX_MAX_DECODED_BODY_BYTES overrides saved limits; unset it before using ccdx limits --decoded");
+      throw new Error("CCDX_MAX_DECODED_BODY_BYTES overrides saved limits; unset it before using ccdx config limits --decoded");
     }
     writeDecodedBodyLimitMib(resetLimit ? null : limitMib, { env, home });
   } else if (action !== "status") {
@@ -40,7 +40,7 @@ export async function runLimitsCommand({
   const activeDecoded = Number(runtime?.data?.limits?.max_decoded_body_bytes);
   const activeRaw = Number(runtime?.data?.limits?.max_body_bytes);
   const lines = [
-    "ccdx limits",
+    "ccdx config limits",
     `Configured decoded request body: ${mib(preference.bytes)} (${preference.source})`,
     runtime && Number.isFinite(activeDecoded) && activeDecoded > 0
       ? `Running decoded request body: ${mib(activeDecoded)}`

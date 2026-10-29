@@ -9,7 +9,7 @@ export async function requestPredictionFix({ host = "127.0.0.1", port = 2026, fe
     requiredCapabilities: [PREDICTION_FIX_CAPABILITY] });
   if (!probe.ok) throw new Error(probe.incompatible
     ? "The running adapter lacks compatible prediction repair. Upgrade and restart the CCDX service once; the App was not restarted."
-    : "Could not reach a running CCDX adapter. Start ccdx, then retry ccdx prediction fix.");
+    : "Could not reach a running CCDX adapter. Start ccdx, then retry ccdx app codex prediction repair.");
   const signal = AbortSignal.timeout(timeoutMs);
   const response = await fetchImpl(probe.baseUrl + ADAPTER_PREDICTION_FIX_PATH, {
     method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },

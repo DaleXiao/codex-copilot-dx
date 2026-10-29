@@ -54,7 +54,7 @@ export function publicM365Accounts(accounts, { binding, windowsLogin } = {}) {
 }
 
 export function m365AccountMessage(code) {
-  return ({ m365_account_ambiguous: "Choose a company account in Model sources or run ccdx m365 account.",
+  return ({ m365_account_ambiguous: "Choose a company account in Model sources or run ccdx source m365 account.",
     m365_account_unavailable: "Company account unavailable. Connect it in Windows or macOS, then check again.",
     m365_account_conflict: "Account records conflict. Check your company sign-in, then check again.",
     m365_interaction_required: "Complete your company sign-in, then check again.",

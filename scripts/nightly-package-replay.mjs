@@ -19,17 +19,18 @@ const prefix=path.join(root,'global prefix'),target=path.join(prefix,...(process
 try{
  const values=JSON.parse((await run(['pack','--ignore-scripts','--json','--pack-destination',root])).stdout),packed=(Array.isArray(values)?values:Object.values(values))[0];
  const version=JSON.parse(fs.readFileSync(path.join(repo,'package.json'))).version;
+ const candidateVersion=version.replace(/\d+$/,patch=>String(Number(patch)+1));
  await run(['install','--global','--prefix',prefix,'--ignore-scripts','--no-audit','--no-fund',path.join(root,packed.filename)]);
  if(process.platform==='win32')assert.equal(inspectWindowsCommand({packageRoot:target,repair:true}).status,'ready');
  const future=path.join(root,'future');fs.mkdirSync(future);for(const folder of ['src','bin'])fs.cpSync(path.join(repo,folder),path.join(future,folder),{recursive:true});
- const pkg=JSON.parse(fs.readFileSync(path.join(repo,'package.json')));pkg.version='1.3.999';pkg.files=['src/','bin/'];fs.writeFileSync(path.join(future,'package.json'),JSON.stringify(pkg));
+ const pkg=JSON.parse(fs.readFileSync(path.join(repo,'package.json')));pkg.version=candidateVersion;pkg.files=['src/','bin/'];fs.writeFileSync(path.join(future,'package.json'),JSON.stringify(pkg));
  const result=JSON.parse((await run(['pack','--ignore-scripts','--json','--pack-destination',root],future)).stdout),item=(Array.isArray(result)?result:Object.values(result))[0];
  const bytes=fs.readFileSync(path.join(root,item.filename)),sha=createHash('sha256').update(bytes).digest('hex');let corrupt=false;
- const fetchImpl=async url=>{assert.match(String(url),/^https:\/\/github\.com\/DaleXiao\/codex-copilot-dx\/releases\/download\/v1\.2\.999\//);return String(url).endsWith('SHA256SUMS')?new Response(`${corrupt?'0'.repeat(64):sha}  codex-copilot-dx-1.3.999.tgz\n`):new Response(bytes);};
+ const fetchImpl=async url=>{assert.ok(String(url).startsWith(`https://github.com/DaleXiao/codex-copilot-dx/releases/download/v${candidateVersion}/`));return String(url).endsWith('SHA256SUMS')?new Response(`${corrupt?'0'.repeat(64):sha}  codex-copilot-dx-${candidateVersion}.tgz\n`):new Response(bytes);};
  const environment={target,prefix,package_root:target,npmCli:npm};
- candidate=await prepareNightlyRelease({version:'1.3.999'},{environment,root:path.join(root,'runtime'),env,signal,fetchImpl});
- await verifyNightlyRuntime(candidate.target,'1.3.999',{signal,brokerRequired:['darwin','win32'].includes(process.platform)});
- transaction=await candidate.install();assert.equal(JSON.parse(fs.readFileSync(path.join(target,'package.json'))).version,'1.3.999');
+ candidate=await prepareNightlyRelease({version:candidateVersion},{environment,root:path.join(root,'runtime'),env,signal,fetchImpl});
+ await verifyNightlyRuntime(candidate.target,candidateVersion,{signal,brokerRequired:['darwin','win32'].includes(process.platform)});
+ transaction=await candidate.install();assert.equal(JSON.parse(fs.readFileSync(path.join(target,'package.json'))).version,candidateVersion);
  const installedTransaction=transaction;transaction=null;installedTransaction.rollback();
  await verifyNightlyRuntime(target,version,{signal,brokerRequired:['darwin','win32'].includes(process.platform)});
  env.CCDX_PRIVATE_INSTALL_PREFIX=prefix;
@@ -39,7 +40,7 @@ try{
  assert.match(fs.readFileSync(privateCommand,'utf8'),/CCDX_PRIVATE_INSTALL_PREFIX/);
  privateTransaction.rollback();assert.ok(fs.readFileSync(privateCommand).equals(privateBefore));
  candidate.cleanup();candidate=null;corrupt=true;
- await assert.rejects(prepareNightlyRelease({version:'1.3.999'},{environment,root:path.join(root,'runtime'),env,signal,fetchImpl}),/checksum/);
+ await assert.rejects(prepareNightlyRelease({version:candidateVersion},{environment,root:path.join(root,'runtime'),env,signal,fetchImpl}),/checksum/);
  assert.equal(JSON.parse(fs.readFileSync(path.join(target,'package.json'))).version,version);
- console.log(JSON.stringify({platform:process.platform,baseline:version,synthetic_candidate:'1.3.999',real_npm_staging:true,real_global_prefix_install:true,private_launcher_preserved:true,native_modules_verified:true,rollback:true,corrupt_download_preserves_install:true,registry_policy_unchanged:true}));
+ console.log(JSON.stringify({platform:process.platform,baseline:version,synthetic_candidate:candidateVersion,real_npm_staging:true,real_global_prefix_install:true,private_launcher_preserved:true,native_modules_verified:true,rollback:true,corrupt_download_preserves_install:true,registry_policy_unchanged:true}));
 }finally{clearTimeout(timer);transaction?.rollback();candidate?.cleanup();fs.rmSync(root,{recursive:true,force:true});}

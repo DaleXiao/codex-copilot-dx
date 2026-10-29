@@ -64,7 +64,7 @@ for (const scenario of [
       assert.equal(received.body.includes("response.completed"), false);
       assert.equal(cancelled, true);
     } else {
-      assert.equal(received.error, null);
+      assert.equal(received.error, null, JSON.stringify({ scenario: scenario.name, received_bytes: Buffer.byteLength(received.body), keepalives: received.body.split(": ccdx keepalive").length - 1, error: received.error }));
       assert.match(received.body, /: ccdx keepalive/);
       assert.match(received.body, /response.completed/);
       const route = metrics.snapshot().by_route.responses;

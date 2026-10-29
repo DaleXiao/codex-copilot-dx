@@ -352,5 +352,5 @@ try {
   console.log(JSON.stringify({ version, direct, proxy }, null, 2));
   console.log("PASS: installed Codex exposes drift directly and preserves commentary/final identity through CCDX.");
 } finally {
-  await fs.rm(root, { recursive: true, force: true });
+  await fs.rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 }

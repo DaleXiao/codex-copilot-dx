@@ -4,7 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { createProviderRuntime } from "../src/provider-runtime.mjs";
 import { createAdapterHandler } from "../src/adapter.mjs";
@@ -82,4 +83,21 @@ test("actual CLI processes use the protected loopback API without starting apps 
   const removed = await run(["source", api, "remove", "--yes"]);assert.equal(removed.code, 0, removed.stderr);
   assert.equal(runtime.connections().providers.some(source => source.id === api), false);assert.equal(credentials.size, 0);assert.deepEqual(fs.readFileSync(auth), authBytes);
   assert.ok(upstream.every(call => call.method === "GET"));
+});
+
+const execFileAsync = promisify(execFile);
+const localCli = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
+test("canonical native feature status stays available offline without enabling either feature", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-feature-status-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const env = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: home, USERPROFILE: home, CODEX_HOME: path.join(home, "codex"), XDG_CONFIG_HOME: path.join(home, "config"), ADAPTER_HOST: "127.0.0.1", ADAPTER_PORT: "9", CCDX_AUTO_LAUNCH: "1", CCDX_UPSTREAM_TIMEOUT_MS: "invalid" };
+  for (const feature of ["image", "prediction"]) {
+    const args = [localCli, "app", "codex", feature, "status"];
+    const plain = await execFileAsync(process.execPath, args, { env, timeout: 5000 });
+    assert.match(plain.stdout, feature === "image" ? /Image generation: disabled/ : /Native prediction preference: off/);
+    assert.doesNotMatch(plain.stdout, /Ready|Starting|GitHub token/);
+    const json = await execFileAsync(process.execPath, [...args, "--format", "json"], { env, timeout: 5000 });
+    const state = JSON.parse(json.stdout);assert.equal(state.configured, false);assert.equal(state.feature, feature);assert.ok(state.details);
+    assert.deepEqual(fs.readdirSync(home), []);
+  }
 });

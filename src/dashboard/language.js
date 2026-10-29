@@ -1,5 +1,8 @@
 (() => {
   const translations = {
+    "context_tabs": ["Usage view", "统计视图"],
+    "context_unknown_window": ["Unknown", "未知"],
+    "context_compact_event": ["Compaction", "压缩"],
     "context_tokens": ["Tokens", "用量"],
     "context_title": ["Context", "上下文"],
     "context_activity": ["Conversations & requests", "会话与请求"],

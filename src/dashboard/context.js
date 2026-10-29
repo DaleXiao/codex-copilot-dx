@@ -53,6 +53,7 @@
       const index = points.findIndex(point => point.order >= compact.order);
       if (index < 0 || compact.outcome !== "completed") continue;
       const px = x(index);shape("line", { x1: px, x2: px, y1: top, y2: height - bottom, class: "context-compact" });
+      shape("text", { x: Math.min(width - right - 35, Math.max(left + 35, px)), y: top - 8, "text-anchor": "middle" }, language.format("context_compact_event"));
     }
   }
   function render() {
@@ -76,7 +77,7 @@
     el("context-selection-source").textContent = entry.provider === "github" ? "GitHub Copilot" : entry.provider === "m365" ? "Microsoft 365" : globalThis.ccdxConnectionNames?.[entry.provider] || language.format("flow_source_unknown");
     const point = latest(entry);
     el("context-latest-input").textContent = number(point.input_tokens);
-    el("context-window").textContent = valid(point.context_window_tokens) && point.context_window_tokens > 0 ? number(point.context_window_tokens) : language.format("unknown");
+    el("context-window").textContent = valid(point.context_window_tokens) && point.context_window_tokens > 0 ? number(point.context_window_tokens) : language.format("context_unknown_window");
     el("context-share").textContent = ratio(point.input_tokens, point.context_window_tokens);
     el("context-reuse").textContent = ratio(point.cached_input_tokens, point.input_tokens);
     label(el("context-history-note"), entry.concurrent ? "context_concurrent" : "context_request_order");chart(entry);

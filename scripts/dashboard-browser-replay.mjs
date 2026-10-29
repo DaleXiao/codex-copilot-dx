@@ -236,8 +236,10 @@ try {
         await page.locator(".sidebar-brand #status-icon").click();
         assert.equal(await page.evaluate(() => atomMotions.length), 3, "Clicking the logo plays one rotation");
         assert.equal(await page.evaluate(() => location.hash), "#overview", "Logo navigation stays intact");
+        await page.waitForFunction(() => document.activeElement?.id === "main-content");
         await page.locator(".sidebar-brand").focus();
         await page.keyboard.press("Enter");
+        await page.waitForFunction(() => atomMotions.length === 4);
         assert.equal(await page.evaluate(() => atomMotions.length), 4, "Keyboard activation also plays the logo motion");
         await page.evaluate(() => { for (let index = 0; index < 10; index++) document.querySelector(".sidebar-brand").click(); });
         assert.equal(await page.locator("#status-icon").evaluate(node => node.getAnimations().length), 1, "Rapid clicks replace the current rotation");

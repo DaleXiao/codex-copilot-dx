@@ -217,7 +217,8 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; color: 
 .model-catalog .model-name { color: var(--strong); font-weight: 600; }
 .model-catalog td:last-child { white-space: normal; }
 .model-catalog td details { margin: 0; }
-.model-catalog .failure-detail { min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 3px; }
+.model-catalog .failure-detail { min-width: 0; }
+@media (max-width: 700px) { .model-catalog .failure-detail { grid-template-columns: minmax(0, 1fr); gap: 3px; } }
 #provider-auth td, #provider-clients td { overflow-wrap: anywhere; }
 .details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 700px) { .details { grid-template-columns: 1fr; } }

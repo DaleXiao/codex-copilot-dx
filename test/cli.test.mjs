@@ -267,6 +267,8 @@ test("recorded usage stays readable offline and malformed records do not leak in
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const file = path.join(home, "usage.jsonl");
   const run = target => execFileAsync(process.execPath, [cliPath, "usage", "--format", "json"], { timeout: 5000, env: { ...process.env, HOME: home, CCDX_USAGE_PATH: target } });
+  const plain = await execFileAsync(process.execPath, [cliPath, "usage"], { timeout: 5000, env: { ...process.env, HOME: home, CCDX_USAGE_PATH: file } });
+  assert.match(plain.stdout, /No usage records yet/);
   const missing = await run(file);assert.equal(JSON.parse(missing.stdout).requests, 0);assert.equal(fs.existsSync(file), false);
   fs.writeFileSync(file, "PRIVATE-MALFORMED-RECORD\n");
   const malformed = await run(file);assert.equal(JSON.parse(malformed.stdout).requests, 0);assert.match(malformed.stderr, /invalid record/);assert.doesNotMatch(malformed.stdout + malformed.stderr, /PRIVATE-MALFORMED/);

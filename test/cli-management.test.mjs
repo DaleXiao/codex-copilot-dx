@@ -6,7 +6,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { parseCliArgs, cliHelp } from "../src/cli-options.mjs";
 import { MANAGED_COMMANDS } from "../src/cli-command-spec.mjs";
-import { runManagementCommand } from "../src/cli-management.mjs";
+import { runManagementCommand, formatManagement } from "../src/cli-management.mjs";
 import { projectTerminalState, retainedRequests } from "../src/terminal-state.mjs";
 import { userSettingsPath, readUserSettings } from "../src/user-settings.mjs";
 import { settingsPreferencesSnapshot, settingsBackupPath } from "../src/settings-preferences.mjs";
@@ -164,4 +164,15 @@ test("model activity excludes transport-only MCP work, keeps unknown clients and
   const view = projectTerminalState(f.data);assert.equal(view.clients.find(row => row.id === "codex").active, 1);assert.equal(view.clients.find(row => row.id === "other").active, 1);
   assert.equal(retainedRequests(f.data).find(row => row.request_id === "one").active, true);
   f.data.model_activity.active = null;assert.equal(projectTerminalState(f.data).activity, null);
+});
+
+test("plain diagnostic keys cannot inject terminal controls or forged lines", () => {
+  const key = "model\x1b[2J\nFORGED";
+  const value = { models: { [key]: { records: 1 } } };
+  const plain = formatManagement(value, { format: "plain" });
+  assert.doesNotMatch(plain, /\x1b|^FORGED/m);
+  assert.match(plain, /Records: 1/);
+  const json = formatManagement(value, { format: "json" });
+  assert.doesNotMatch(json, /\x1b/);
+  assert.deepEqual(Object.keys(JSON.parse(json).models), [key]);
 });

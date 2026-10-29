@@ -86,7 +86,7 @@ Catalog diagnostics distinguish local cached data from an online response and ex
 - **Local checks:** `doctor` is read-only by default. `--online` checks access; `--compat` sends minimal inference and consumes usage. `--fix` backs up owned configuration and performs bounded repairs. It does not enable optional features, change company policy or force-restart apps. Partial repairs exit 1.
 - **Cache cleanup:** adding `--history` can break the next continuation. It does not delete client transcripts or generated images.
 
-Request inspection covers bounded retained records, not a full conversation archive. Unidentified clients stay unidentified. Routine diagnostics omit secrets, prompts and error bodies. Explicit error excerpts use bounded, redacted collection. Usage is returned token metadata; cache hit is reused input divided by input, with unknown/partial data indicated. It is not a request-based cache rate or a billing receipt.
+Request inspection covers bounded retained records, not a full conversation archive. Unidentified clients stay unidentified. Routine diagnostics omit secrets, prompts and error bodies. Explicit error excerpts use bounded, redacted collection. The usage JSON `requests` field counts recorded usage rows, not HTTP calls. Usage is returned token metadata; cache hit is reused input divided by input, with unknown/partial data indicated. It is not a request-based cache rate or a billing receipt.
 
 ## Settings and appearance
 

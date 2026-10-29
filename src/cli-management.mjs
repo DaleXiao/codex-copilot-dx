@@ -33,7 +33,7 @@ export function formatManagement(value, { format, output = process.stdout, colum
   }
   const scalar = value => value === null || value === undefined ? "Not observed" : value === true ? "Yes" : value === false ? "No" : terminalCell(String(value));
   const lines = (item, indent = "") => Object.entries(item).flatMap(([key, value]) => {
-    const label = key.replaceAll("_", " ").replace(/^./, char => char.toUpperCase());
+    const label = terminalCell(key.replaceAll("_", " ").replace(/^./, char => char.toUpperCase()));
     if (Array.isArray(value)) {
       if (!value.length) return [`${indent}${label}: None`];
       if (value.every(row => row === null || typeof row !== "object")) return [`${indent}${label}: ${value.map(scalar).join(", ")}`];
@@ -123,7 +123,11 @@ export async function runManagementCommand(command, options = {}) {
       if (!usage) throw new Error("Current-run usage is unavailable.");
       return print(flags.provider ? usage.by_provider?.[flags.provider] || { records: 0 } : usage);
     }
-    const { summarizeUsageLogs } = await import("./usage-store.mjs");return print(await summarizeUsageLogs(undefined, { ...(flags.provider ? { provider: flags.provider } : {}) }));
+    const { summarizeUsageLogs } = await import("./usage-store.mjs");
+    const summary = await summarizeUsageLogs(undefined, { ...(flags.provider ? { provider: flags.provider } : {}) });
+    if (flags.format === "json") return print(summary);
+    const { formatUsageSummary } = await import("./usage.mjs");
+    return formatUsageSummary(summary, { format: flags.format || "auto", output });
   }
   if (group === "update") {
     const { dashboardUpdateStatus } = await import("./dashboard-updates.mjs");return print(await dashboardUpdateStatus());

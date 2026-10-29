@@ -42,7 +42,7 @@ function providerSummaryLines(summary) {
     ? [`Providers: ${sources.map(([id, count]) => `${id} ${fmt(count)}`).join(" / ")} (combined totals; use --provider to separate)`] : [];
 }
 
-function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {
+function formatPlainUsageSummary(summary, filePath, { sanitize = true } = {}) {
   const lines = [`Usage log: ${filePath}`];
   lines.push(...providerSummaryLines(summary));
   if (summary.requests === 0) {
@@ -50,14 +50,14 @@ function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {
     return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
   }
   lines.push(
-    `Requests: ${fmt(summary.requests)}`,
+    `Records: ${fmt(summary.requests)}`,
     `Tokens: input=${fmt(summary.totals.input_tokens)} cache_read=${fmt(cacheReadTokens(summary.totals))} output=${fmt(summary.totals.output_tokens)} total=${fmt(summary.totals.total_tokens)}`,
     `Cache hit: ${cacheHitPercent(summary.totals)} (cached/input tokens)`,
     "",
     "By model:",
   );
   for (const [model, row] of Object.entries(usageModelGroups(summary))) {
-    lines.push(`  ${model}: requests=${fmt(row.requests)} input=${fmt(row.input_tokens)} cache_read=${fmt(cacheReadTokens(row))} output=${fmt(row.output_tokens)} total=${fmt(row.total_tokens)} cache_hit=${cacheHitPercent(row)}`);
+    lines.push(`  ${model}: records=${fmt(row.requests)} input=${fmt(row.input_tokens)} cache_read=${fmt(cacheReadTokens(row))} output=${fmt(row.output_tokens)} total=${fmt(row.total_tokens)} cache_hit=${cacheHitPercent(row)}`);
   }
   return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
 }

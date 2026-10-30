@@ -72,6 +72,8 @@ ccdx update github
 ccdx version
 ```
 
+Web UI activity updates through server push; the terminal uses the same in-process activity feed. Reconnecting restores current state and bounded recent records.
+
 The foreground terminal stops with **Ctrl+C**. Client configuration marked **Unchanged** means CCDX kept the existing settings. Configuration and successful model access are separate checks.
 
 If models are missing, check the selected source and app models first. After a client update or configuration change, fully quit and reopen that app. Use **Checks & repairs** or `ccdx doctor` for local diagnostics.

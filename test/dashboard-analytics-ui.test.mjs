@@ -6,7 +6,7 @@ import { createUsageAnalytics } from "../src/usage-analytics.mjs";
 import { summarizeUsage } from "../src/usage.mjs";
 
 const script = readFileSync(new URL("../src/dashboard/ui.js", import.meta.url), "utf8");
-const viewScripts = ["view-boundary", "status", "usage", "updates", "animation"].map(name => readFileSync(new URL(`../src/dashboard/${name}.js`, import.meta.url), "utf8")).join("\n");
+const viewScripts = ["view-boundary", "status", "usage", "updates", "animation", "live"].map(name => readFileSync(new URL(`../src/dashboard/${name}.js`, import.meta.url), "utf8")).join("\n");
 const refreshScript = readFileSync(new URL("../src/dashboard/refresh.js", import.meta.url), "utf8");
 const languageScript = readFileSync(new URL("../src/dashboard/language.js", import.meta.url), "utf8");
 const flush = () => new Promise((resolve) => setImmediate(resolve));

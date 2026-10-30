@@ -60,7 +60,7 @@ Messages observes the selected model's effective capability snapshot after alias
 
 Only explicit, bounded session IDs can link requests. Local display identifiers replace native IDs and titles; account/profile, app, source, model and declared subagent identities remain separate. Unidentified requests appear individually. Concurrent observations are points rather than a connected conversation curve. Compaction records cover observed Responses compact calls, not every client-side summary, and their elapsed time includes the whole gateway request. No before/after size is invented from summary output tokens.
 
-Each protocol observer retains at most 64 series of 64 request points and 16 compaction records, plus 20 unidentified requests. These numeric observations are memory-only and reset on restart. The page reads them on demand through the existing dashboard refresh controller; ordinary status payloads do not include them. There is no prompt storage, text tokenization, transcript scan, extra provider request, content breakdown or compression control.
+Each protocol observer retains at most 64 series of 64 request points and 16 compaction records, plus 20 unidentified requests. These numeric observations are memory-only and reset on restart. The page reads them on demand and after observed request completion through the existing dashboard refresh controller; ordinary status payloads do not include them. There is no prompt storage, text tokenization, transcript scan, extra provider request, content breakdown or compression control.
 
 ## Sources and client access
 
@@ -111,6 +111,12 @@ Request inspection covers bounded retained records, not a full conversation arch
 Settings separates saved preferences from effective state. Auto-save applies changes by default; required restarts remain explicit. Restore-defaults creates a backup first and keeps accounts, keys, model plans and chats. CLI preference reset/restore uses its own service-only backup; it does not change browser appearance or replace the Web UI's backup.
 
 Web and terminal colors are independent. Web appearance is browser-local. The terminal keeps its selected color and animation; NO_COLOR, dumb/non-TTY and narrow output remain supported. Reduced motion disables decorative movement. Closed tabs and hidden views stop scheduled work. Model/usage data loads on demand; the Web UI adds no inference calls.
+
+Activity, flow and current-run counters use one visible-page SSE connection at `/_ccdx/activity`. TUI activity subscribes to the same in-process notifications. Request starts, model/provider selection, first output, retries and completion coalesce within 50 ms; ordinary output chunks do not trigger pushes. A connection starts with current memory-only state, including the existing recent-request limits. Reconnection restores current state and totals; it does not replay animations or recover arbitrary old history. No replay buffer or durable event store is added.
+
+The stream sends a small heartbeat every 15 seconds; the browser replaces a silent connection after 45 seconds. Hidden/suspended pages and Auto refresh OFF close the stream; returning reconnects with a fresh snapshot. A lost connection means activity is unknown, not idle. The old six-second snapshot expiry applies only to manual HTTP snapshots, not healthy push state. Catalogs, accounts, retained usage and update checks keep their separate on-demand/low-frequency reads. Visible context series refresh after request completion through the existing bounded reader.
+
+Push reads do not invoke the complete diagnostic snapshot, read usage files, refresh credentials/catalogs or send inference. Up to eight native/same-origin loopback streams are accepted. Slow streams keep at most one newer snapshot and close if still blocked at the next heartbeat. Streams are excluded from request/work counts and closed before normal service shutdown. TUI static setup/preferences retain a ten-second local read; live activity does not wait for it. Animation frames and elapsed-time updates remain local. Existing reduced-motion and terminal output controls remain.
 
 ## Installation and updates
 

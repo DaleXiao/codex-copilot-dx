@@ -14,7 +14,9 @@ import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { status } from "./status.mjs";
 import { exportResponseHistory, importResponseHistory } from "./response-history.mjs";
 import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
-import { ADAPTER_HEALTH_PATH, ADAPTER_PREDICTION_FIX_PATH } from "./running-adapter.mjs";
+import { ADAPTER_HEALTH_PATH, ADAPTER_PREDICTION_FIX_PATH, adapterHealthPayload } from "./running-adapter.mjs";
+import { ACTIVITY_EVENTS_PATH, createActivityEvents } from "./activity-events.mjs";
+import { runtimeUsageSnapshot } from "./usage-store.mjs";
 import { createManagementHandler, isManagementRoute } from "./management-routes.mjs";
 import { createOptionalRoutes, isOptionalRoute, DASHBOARD_PATHS, DASHBOARD_API_PATHS } from "./optional-routes.mjs";
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
@@ -185,8 +187,22 @@ export function createAdapterHandler(options = {}) {
       providerStateFn: () => options.providerRuntime.dashboardProviders(),
       providerAccountsFn: () => options.providerRuntime.action({ action: "accounts" }),
       connectionsFn: input => options.providerRuntime.manageConnections(input) } : {}) } });
+  const activityEvents = createActivityEvents({
+    sources: [requestMetrics, streamPerformanceMetrics, options.providerRuntime?.claudePerformance],
+    snapshot: () => {
+      const requests = requestMetrics.snapshot(), image = optionalRoutes.imageStats();
+      const active = ["responses", "responses_compact", "messages"].reduce((sum, route) => sum + requests.by_route[route].active, image?.active || 0);
+      const claude = options.providerRuntime?.claudePerformance?.activitySnapshot?.();
+      return { ...adapterHealthPayload(), scope: "activity", uptime_ms: Math.round(process.uptime() * 1000),
+        model_activity: { active }, requests, runtime_usage: runtimeUsageSnapshot(),
+        stream_performance: streamPerformanceMetrics.activitySnapshot(),
+        ...(claude ? { providers: { claude: { requests: { performance: claude } } } } : {}),
+        http_errors: httpErrors.snapshot(), response_failures: responseFailures.snapshot() };
+    },
+  });
   let statusSnapshot;
   const managementHandler = createManagementHandler({
+    activityEvents,
     nativePredictionPac: options.nativePredictionPac, fixPrediction: options.fixPrediction, requestBodyTimeoutMs,
     statusSnapshot: statusSnapshot = () => {
       const snapshot = runtimeStatusPayload({ metrics: requestMetrics, streamPerformance: streamPerformanceMetrics, admission: acquireRequest,
@@ -403,6 +419,7 @@ export function createAdapterHandler(options = {}) {
     }
 
     const trackRequest = pathname !== ADAPTER_HEALTH_PATH
+      && pathname !== ACTIVITY_EVENTS_PATH
       && pathname !== ADAPTER_STATUS_PATH
       && pathname !== ADAPTER_CACHE_PATH
       && pathname !== ADAPTER_PREDICTION_FIX_PATH
@@ -494,13 +511,15 @@ export function createAdapterHandler(options = {}) {
     }
   };
   handler.snapshot = statusSnapshot;
+  handler.subscribeActivity = activityEvents.subscribe;
+  handler.closeActivity = activityEvents.close;
   handler.busy = () => optionalRoutes.busy() || options.providerRuntime?.busy?.() === true;
   handler.exportState = () => ({ version: 1, history: exportResponseHistory(), optional: optionalRoutes.exportState() });
   handler.importState = async state => {
     if (state?.version !== 1) throw new Error("Unsupported service-state version");
     importResponseHistory(state.history);await optionalRoutes.importState(state.optional);
   };
-  handler.cleanup = () => optionalRoutes.dispose();
+  handler.cleanup = () => { activityEvents.close();optionalRoutes.dispose(); };
   return handler;
 }
 
@@ -515,6 +534,8 @@ export async function startAdapter(port = 2026, host = "127.0.0.1", options = {}
   const handler = createAdapterHandler({ ...options, terminalActivity, imageMcpHostname: host });
   const server = http.createServer(handler);
   server.ccdxSnapshot = handler.snapshot;
+  server.ccdxSubscribeActivity = handler.subscribeActivity;
+  server.ccdxCloseActivity = handler.closeActivity;
   server.ccdxBusy = handler.busy;
   server.ccdxExportState = handler.exportState;
   server.ccdxImportState = handler.importState;

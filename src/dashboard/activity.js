@@ -20,7 +20,7 @@
   globalThis.addEventListener("pageshow", pause);
   function unavailable() { clearTimeout(expiry);expiry = null;deadline = 0;show(null); }
   globalThis.ccdxDashboardActivity = {
-    update(data) { clearTimeout(expiry);show(data?.active);deadline = Date.now() + 6000;expiry = setTimeout(unavailable, 6000); },
+    update(data, { live = false } = {}) { clearTimeout(expiry);show(data?.active);deadline = live ? 0 : Date.now() + 6000;expiry = live ? null : setTimeout(unavailable, 6000); },
     unavailable, visibilityChanged: pause,
   };
   pause();

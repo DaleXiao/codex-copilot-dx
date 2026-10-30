@@ -481,6 +481,7 @@ try {
   const terminalAnimationTheme = terminalAnimationPreference().theme;
   terminalConsole = createTerminalConsole({ baseUrl: webUiUrl, verbose: CLI.verbose === true || CLI.showRequestId === true || LOGGING.level === "debug",
     snapshot: () => activeServer?.ccdxSnapshot?.() || {},
+    subscribe: listener => activeServer?.ccdxSubscribeActivity?.(listener),
     preferences: () => { const { saved, theme, color_theme } = serviceSettingsSnapshot();return { ...saved, theme, color_theme }; } });
   const serviceControl = createServiceControl({ providerRuntime, clientIntegration: earlyIntegration, terminal: terminalConsole, nightlyStatus: () => serviceWorker?.status() || null, nightlyChanged: enabled => serviceWorker?.preferenceChanged(enabled) });
   const codexModelCatalog = createCodexModelCatalog();

@@ -11,6 +11,7 @@
   let rows = [], total = null, omitted = 0, fresh = false, deadline = 0, expiry = null;
   let selected = null, expanded = false, lastSignature = "", geometry = "", wireState = "", positions = null, known = false;
   let lastApps = [], lastModels = [];
+  let sampledAt = Date.now();
   const resize = new ResizeObserver(() => { positions = null;draw(); });
   const visible = () => document.visibilityState === "visible" && !root.closest("[hidden]");
   const integer = value => Number.isSafeInteger(value) && value >= 0;
@@ -90,7 +91,7 @@
       const id = row.request_id || JSON.stringify([row.application, row.provider, row.model, index]);wanted.add(id);
       let tr = detailRows.get(id);
       if (!tr) { tr = entry("tr");for (let i = 0; i < 6; i++) tr.append(entry("td"));detailRows.set(id, tr); }
-      const values = [appName(row.application), sourceName(row.provider), modelName(row.model), format(fresh ? status(row) : "flow_last_observed"), `${(row.elapsed_ms / 1000).toFixed(1)} s`, row.upstream_attempts.toLocaleString()];
+      const values = [appName(row.application), sourceName(row.provider), modelName(row.model), format(fresh ? status(row) : "flow_last_observed"), `${((row.elapsed_ms + Math.max(0, Date.now() - sampledAt)) / 1000).toFixed(1)} s`, row.upstream_attempts.toLocaleString()];
       values.forEach((value, i) => { if (tr.children[i].textContent !== value) tr.children[i].textContent = value; });
       if (body.children[index] !== tr) body.insertBefore(tr, body.children[index] || null);
     }
@@ -183,7 +184,7 @@
   resize.observe(el("flow-network"));
   new MutationObserver(() => { lastSignature = "";positions = null;render(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
   globalThis.ccdxDashboardFlow = {
-    update(data) {
+    update(data, { live = false } = {}) {
       const parts = [data?.stream_performance, (data?.providers?.claude || data?.providers?.m365?.claude)?.requests?.performance].filter(Boolean);
       if (!parts.length || parts.some(part => !integer(part.active_total) || !Array.isArray(part.active_requests))) { unavailable();return; }
       const values = parts.flatMap(part => part.active_requests).slice(0, 128);
@@ -196,8 +197,9 @@
       }));
       total = parts.reduce((sum, part) => sum + part.active_total, 0);
       if (!integer(total) || total < rows.length) { unavailable();return; }
-      omitted = total - rows.length;fresh = true;known = true;
-      clearTimeout(expiry);deadline = Date.now() + 6000;expiry = setTimeout(unavailable, 6000);render();
+      omitted = total - rows.length;fresh = true;known = true;sampledAt = Date.now();
+      clearTimeout(expiry);deadline = live ? 0 : Date.now() + 6000;expiry = live ? null : setTimeout(unavailable, 6000);render();
     }, unavailable, visibilityChanged,
+    tick() { if (fresh && total && visible()) details(); },
   };
 })();

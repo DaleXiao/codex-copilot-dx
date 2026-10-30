@@ -245,7 +245,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; color: 
 .brand { font-size: 12px; }
 .topbar-actions { gap: 12px; flex-wrap: nowrap; }
 .topbar-actions #connection { width: 154px; flex: none; }
-.topbar-actions #auto-refresh { display:inline-grid; flex:none; justify-self:start; white-space:nowrap; }
+.topbar-actions #auto-refresh { display:inline-grid; place-items:center; flex:none; justify-self:start; white-space:nowrap; }
 #auto-refresh span { grid-column:1; grid-row:1; }
 #auto-refresh .auto-refresh-measure { visibility:hidden; }
 .intro { display: block; padding: 20px 0 16px; min-height: 0; }

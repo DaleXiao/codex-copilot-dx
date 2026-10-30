@@ -235,8 +235,20 @@ try {
         assert.doesNotMatch(await page.locator("#source-detail").innerText(), /→|Codex|Claude/);
         assert.equal(await page.locator("#provider-clients tr").count(), 3, "Each app has one row rather than one per source");
         assert.match(await page.locator("#provider-clients tr").first().innerText(), /Codex App.*Microsoft 365/s);
+        const assertAutoRefreshCentered = async () => {
+          const geometry = await page.evaluate(() => {
+            const button = document.getElementById("auto-refresh").getBoundingClientRect();
+            const textRange = document.createRange();textRange.selectNodeContents(document.getElementById("auto-refresh-label"));
+            const text = textRange.getBoundingClientRect();
+            return { x: text.x + text.width / 2 - button.x - button.width / 2,
+              y: text.y + text.height / 2 - button.y - button.height / 2 };
+          });
+          assert.ok(Math.abs(geometry.x) <= 2 && Math.abs(geometry.y) <= 2,
+            `Auto refresh text must be centered, not just its span: ${JSON.stringify(geometry)}`);
+        };
         const brandIcon = await page.locator(".sidebar-brand #status-icon").boundingBox();
         for (const selector of ["#refresh", "#auto-refresh"]) assert.equal((await page.locator(selector).boundingBox()).height, 32, "Compact desktop controls retain their target height");
+        await assertAutoRefreshCentered();
         assert.ok(brandIcon && brandIcon.width >= 40 && brandIcon.height >= 40 && brandIcon.x >= 0 && brandIcon.x + brandIcon.width <= width);
         await page.locator("#refresh").click();
         await page.waitForFunction(() => !document.getElementById("refresh").disabled);
@@ -274,7 +286,8 @@ try {
         assert.ok(automaticWidth <= (language === "zh" ? 125 : 160), "Auto refresh uses localized content width");
         await page.locator("#auto-refresh").click();
         assert.equal((await page.locator("#auto-refresh").boundingBox()).width, automaticWidth, "On/off does not change button width");
-        await page.locator("#auto-refresh").click();
+        await assertAutoRefreshCentered();
+        await page.locator("#auto-refresh").click();await assertAutoRefreshCentered();
         for (const route of ["codex", "claude", "usage", "requests", "checks", "overview"]) {
           await nav(route);
           const header = await page.locator(".topbar").boundingBox();

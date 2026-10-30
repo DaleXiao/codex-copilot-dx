@@ -1028,3 +1028,5 @@ Messages window observation belongs to `claude-gateway.mjs`, independently of th
 ### Compact dashboard spacing
 
 `dashboard/ui.css` retains the existing color/type system and grid/navigation boundaries. Shared `--control-height` and `--inline-control-height` values align controls at 32/30 px, with 44 px coarse-pointer targets; multiline choice cards keep intrinsic height. Existing narrow-header rules still own reflow. Panel/header/table/form spacing is adjusted in its existing rules rather than adding a second layout mode. Request-flow geometry continues to measure actual anchors after resize and disclosure changes. Browser replays assert actual sizes and unchanged header anchors alongside bilingual themes, model details, drafts and reduced motion.
+
+The Auto refresh button overlays its visible and width-measuring labels in one centered grid cell. Browser acceptance measures the visible text range against the button on both axes, including ON/OFF in both languages; the outer control height alone is not alignment evidence.

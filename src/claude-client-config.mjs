@@ -242,16 +242,20 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
   else {
     let meta, profile;
     try { meta = read(paths.meta).value;profile = read(paths.profile).value; } catch { result.app = "configuration_unavailable"; }
+    const sealedOwnedKey = typeof profile?.inferenceGatewayApiKey === "string"
+      && profile.inferenceGatewayApiKey.trimStart().startsWith("__sealed__:v1:")
+      && owns(paths.profile, ["inferenceGatewayApiKey"], apiKey);
     if (!meta) { /* Code setup remains independent. */ }
     else if (meta.hybridPointer || meta.appliedId && meta.appliedId !== M365_CLAUDE_PROFILE_ID
       || profile.inferenceProvider && profile.inferenceProvider !== "gateway"
       || profile.inferenceGatewayBaseUrl && profile.inferenceGatewayBaseUrl !== baseUrl
         && !owns(paths.profile, ["inferenceGatewayBaseUrl"], profile.inferenceGatewayBaseUrl)
-      || profile.inferenceGatewayApiKey && profile.inferenceGatewayApiKey !== apiKey && !owns(paths.profile, ["inferenceGatewayApiKey"], profile.inferenceGatewayApiKey)) result.app = "preserved";
+      || profile.inferenceGatewayApiKey && profile.inferenceGatewayApiKey !== apiKey && !owns(paths.profile, ["inferenceGatewayApiKey"], profile.inferenceGatewayApiKey) && !sealedOwnedKey) result.app = "preserved";
     else {
       add(paths.profile, ["inferenceProvider"], "gateway");
       add(paths.profile, ["inferenceGatewayBaseUrl"], baseUrl);
-      add(paths.profile, ["inferenceGatewayApiKey"], apiKey);
+      if (sealedOwnedKey) result.app_credential = "encrypted_unverified";
+      else add(paths.profile, ["inferenceGatewayApiKey"], apiKey);
       add(paths.profile, ["inferenceGatewayAuthScheme"], "bearer");
       let previousModels = [];
       try { previousModels = JSON.parse(profile.inferenceModels || "[]"); } catch { /* Ownership reconciliation preserves a user-modified field. */ }

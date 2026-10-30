@@ -1,7 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { redactDiagnosticText } from "../src/diagnostic-text.mjs";
+import { redactDiagnosticText, boundedDiagnosticText } from "../src/diagnostic-text.mjs";
 import { responseFailureDetails, formatResponseFailureLog } from "../src/response-failures.mjs";
+import { operationErrorDetails } from "../src/operation-error.mjs";
+
+test("oversized diagnostic copies are omitted before scanning while original errors remain intact", () => {
+  const message = "synthetic private diagnostic ".repeat(50000), event = { error: { code: "fixture_error", message } };
+  const result = responseFailureDetails(event, "response.failed", { model: "fixture" });
+  assert.equal(result.message, "Diagnostic text omitted (too long)");
+  assert.equal(event.error.message, message);assert.equal(result.code, "fixture_error");
+  assert.equal(operationErrorDetails({ code: "ECONNRESET", message }).message, result.message);
+  assert.equal(responseFailureDetails({ error: { code: message, message: "short" } }).code, "unknown");
+});
+
+test("bounded diagnostic text keeps Unicode boundaries and normal credential cleanup", () => {
+  const text = "x ".repeat(249) + "😀 end";
+  const result = boundedDiagnosticText(text, { maxChars: 499 });
+  assert.equal(result.length, 498);assert.ok(!/[\uD800-\uDBFF]$/.test(result));
+  assert.equal(boundedDiagnosticText("汉".repeat(60), { maxChars: 50 }).length, 50);
+  const secret = "ghu_syntheticOnly";
+  const safe = boundedDiagnosticText(`HTTP 401 \u001b[31mBearer ${secret}\u001b[0m`);
+  assert.match(safe, /HTTP 401/);assert.ok(!safe.includes(secret));assert.ok(!safe.includes("\u001b"));
+});
 
 test("diagnostics redact Basic payloads and URL userinfo without hiding the target or error", () => {
   const payload = Buffer.from("synthetic-user:synthetic-password").toString("base64");

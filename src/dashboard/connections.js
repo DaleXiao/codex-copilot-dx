@@ -224,6 +224,7 @@
     const wrap = node("div", undefined, "table-wrap");wrap.append(table);result.append(wrap);
     const note = node("p", undefined, "hint");words(note, "cap_preview_scope");result.append(note);
     const sync = preview?.shared || c.model_plan?.sync;
+    if (c.credential_state === "encrypted_unverified") { const kept = node("p", undefined, "hint");words(kept, "client_key_encrypted_kept");result.append(kept); }
     if (sync) { const status = node("p", undefined, "hint");words(status, "cap_sync_" + sync.state);result.append(status);
       for (const limitation of sync.limitations || []) { const line = node("p", undefined, "hint");words(line, "cap_limit_" + limitation.code);if (limitation.model) line.prepend(limitation.model + ": ");result.append(line); }
     }

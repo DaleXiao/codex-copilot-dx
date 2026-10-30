@@ -1,23 +1,27 @@
 import { summarizeUsageLogs, usageLogPath, usageSummaryVersion } from "./usage-store.mjs";
 import { createUsageAnalytics } from "./usage-analytics.mjs";
+import { createAbortAwareSingleflight } from "./bounded-result-cache.mjs";
 
 const MAX_ENTRIES = 2;
 const MAX_BYTES = 2 * 1024 * 1024;
 const cache = new Map();
+const activeReads = createAbortAwareSingleflight();
 
 // Only bounded, settled-file aggregates survive. No record index or payload cache.
-export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "UTC", now = Date.now(), warn = console.error, provider = "" } = {}) {
+export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "UTC", now = Date.now(), warn = console.error, provider = "", signal } = {}) {
   const analytics = createUsageAnalytics({ timeZone, now, qualifyProviders: !provider });
   const zone = new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
   const version = warn === console.error ? await usageSummaryVersion(filePath) : null;
-  const key = version === null ? null : `${version}\0${provider}\0${zone.resolvedOptions().timeZone}\0${zone.format(new Date(now))}`;
+  const query = `${provider}\0${zone.resolvedOptions().timeZone}\0${zone.format(new Date(now))}`;
+  const key = version === null ? null : `${version}\0${query}`;
+  const activeVersion = version === null && warn === console.error ? await usageSummaryVersion(filePath, { settled: false }) : null;
   if (key && cache.has(key)) return structuredClone(await cache.get(key).promise);
   if (key) {
     for (const [old, entry] of cache) if (entry.version !== version) cache.delete(old);
     while (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value);
   } else cache.clear();
   const entry = { version, bytes: 0, promise: null };
-  entry.promise = (async () => {
+  const collect = async () => {
     let warned = false;
     const summary = await summarizeUsageLogs(filePath, {
       provider,
@@ -39,7 +43,8 @@ export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "
       }
     }
     return result;
-  })();
+  };
+  entry.promise = activeVersion ? activeReads.run(`${activeVersion}\0${query}`, collect, { signal }) : collect();
   if (key) cache.set(key, entry);
   try { return structuredClone(await entry.promise); }
   catch (error) { if (cache.get(key) === entry) cache.delete(key); throw error; }

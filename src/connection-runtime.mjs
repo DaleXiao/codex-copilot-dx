@@ -85,6 +85,7 @@ export function createConnectionRuntime({
     summaries = new WeakMap(),
     sourceSecrets = new WeakMap(),
     setup = {},
+    credentialStates = {},
     lastClients = {};
   const retiredSecrets = new Map(),
     cleanups = new Set(),
@@ -316,6 +317,7 @@ export function createConnectionRuntime({
       name: CLIENT_NAMES[id],
       ...config.clients[id],
       setup: setup[id] || null,
+      ...(credentialStates[id] ? { credential_state: credentialStates[id] } : {}),
       ...(id === "codex" ? { memory_model: memoryModel.snapshot() } : {}),
       observed_at: lastClients[id] || null,
     };
@@ -561,6 +563,7 @@ export function createConnectionRuntime({
       defaultModel: Array.isArray(selected.deployments) ? compiled.defaultModel : undefined,
     });
     setup[id] = result[id === "claude_app" ? "app" : "code"] || "not_configured";
+    if (id === "claude_app" && result.app_credential) credentialStates[id] = result.app_credential;
   }
   function syncSharedClaudeCapabilities(targets) {
     if (["claude_app", "claude_code"].some(id => setup[id] === "default_unavailable")) {
@@ -601,6 +604,7 @@ export function createConnectionRuntime({
   }
   async function performClientSync(targets, requested = new Set()) {
     if (!managed || closed) return;
+    for (const id of targets) delete credentialStates[id];
     if (options.preserveClientConfiguration?.()) {
       for (const id of targets) setup[id] = "preserved";
       return;

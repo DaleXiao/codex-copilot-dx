@@ -34,7 +34,8 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
       try {
         runtime = createProviderRuntime({ home: root, env, now: () => Date.now() + timeOffset, corePort: server.address().port, githubClient: { runtimeStatus: () => ({ token_cached: false }) }, githubRegistry,
           secretStore: { get: async id => values.get(id), set: async (id, key) => { values.set(id, key); }, remove: async id => { values.delete(id); }, close() {} },
-          inspectDesktop: async () => false, configureClaude: input => ({ [input.client === "claude_app" ? "app" : "code"]: "configured" }), restoreClaude: () => ({ preserved: 0 }),
+          inspectDesktop: async () => false, configureClaude: input => ({ [input.client === "claude_app" ? "app" : "code"]: "configured",
+            ...(input.client === "claude_app" ? { app_credential: "encrypted_unverified" } : {}) }), restoreClaude: () => ({ preserved: 0 }),
           createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, fetch: async (_url, init) => {
             assert.equal(init.method, "GET");discoveries++;if (failDiscovery) return Response.json({ error: "synthetic unavailable" }, { status: 503 });return Response.json({ data: ["claude-replay", "response-replay", ...Array.from({ length: 6 }, (_, i) => "unselected-" + i)].map(id => ({ id, publisher: "Example Maker", vendor: "example", owned_by: "gateway", ...(id === "claude-replay" ? { type: "model", max_input_tokens: 128000, max_tokens: 16000, capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true } } } } : {}) })) });
           } }) }) });
@@ -138,6 +139,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           assert.equal(runtime.connections().clients.find(c => c.id === idClient).deployments[0].model, model);
           const beforePreview = fs.readFileSync(accessSettingsPath({ home: root, env }), "utf8");
           await page.locator("#connection-sync-preview").click();await page.locator("#connection-sync-result").waitFor({ state: "visible" });assert.match(await page.locator("#connection-sync-result").innerText(), new RegExp(model));await page.locator('#connection-client-form button[type="submit"]:enabled').waitFor();await fits();
+          if (idClient === "claude_app") assert.match(await page.locator("#connection-sync-result").innerText(), language === "zh" ? /密钥保持加密/ : /Key kept encrypted/);
           assert.equal(fs.readFileSync(accessSettingsPath({ home: root, env }), "utf8"), beforePreview, "Sync preview never writes configuration");
           if (options.get("--output")) await page.screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}-${route}-bindings.png`), fullPage: true });
         }

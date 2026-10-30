@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { analyzeUsageLogs } from "../src/usage-analysis.mjs";
 import { summarizeUsageLogs } from "../src/usage-store.mjs";
 
@@ -46,6 +47,53 @@ test("usage analysis shares one settled scan and returns independent bounded agg
   results[0].summary.requests = -1;
   assert.equal((await analyzeUsageLogs(f.file, { now: f.now, timeZone: "Asia/Shanghai" })).analytics.days.at(-1).models[0].input_tokens, 100);
   assert.equal(f.reads(), 2);
+});
+
+test("active-log queries share only their in-flight scan and return isolated aggregates", async t => {
+  const f = fixture(t);f.realTime();fs.writeFileSync(f.file, f.row());const options = { now: f.now, timeZone: "UTC" };
+  const results = await Promise.all(Array.from({ length: 4 }, () => analyzeUsageLogs(f.file, options)));
+  assert.equal(f.reads(), 2);results[0].summary.requests = -1;assert.equal(results[1].summary.requests, 1);
+  await analyzeUsageLogs(f.file, options);assert.equal(f.reads(), 4, "Active results are not retained after settlement");
+  fs.appendFileSync(f.file, f.row("next"));
+  assert.equal((await analyzeUsageLogs(f.file, options)).summary.requests, 2);assert.equal(f.reads(), 6);
+});
+
+test("active summary reads coalesce and cancelled analytics do not poison another caller", async t => {
+  const f = fixture(t);f.realTime();fs.writeFileSync(f.file, f.row());
+  const values = await Promise.all(Array.from({ length: 4 }, () => summarizeUsageLogs(f.file)));
+  assert.equal(f.reads(), 2);values[0].totals.input_tokens = -1;assert.equal(values[1].totals.input_tokens, 100);
+  const controller = new AbortController(), reason = Error("fixture cancelled");controller.abort(reason);
+  const aborted = analyzeUsageLogs(f.file, { now: f.now, signal: controller.signal });
+  const good = analyzeUsageLogs(f.file, { now: f.now });
+  await assert.rejects(aborted, error => error === reason);assert.equal((await good).summary.requests, 1);
+});
+
+test("active reads keep source filters and file replacements separate", async t => {
+  const f = fixture(t);f.realTime();const github = JSON.parse(f.row()), m365 = { ...github, provider: "m365", model: "company", usage: { input_tokens: 20 } };
+  fs.writeFileSync(f.file, JSON.stringify(github) + "\n" + JSON.stringify(m365) + "\n");
+  const rows = await Promise.all(["github", "m365", "github", "m365"].map(provider => analyzeUsageLogs(f.file, { now: f.now, provider })));
+  assert.deepEqual(rows.map(row => row.summary.totals.input_tokens), [100, 20, 100, 20]);assert.equal(f.reads(), 4);
+  fs.writeFileSync(f.file + ".tmp", f.row("replacement"));fs.renameSync(f.file + ".tmp", f.file);
+  const replaced = await analyzeUsageLogs(f.file, { now: f.now });assert.ok(replaced.summary.byModel.replacement);assert.equal(replaced.summary.byModel.company, undefined);
+});
+
+test("an active query for a replacement file never joins an older in-flight scan", async t => {
+  const f = fixture(t);f.realTime();fs.writeFileSync(f.file, f.row("before"));
+  const original = fs.createReadStream, held = new PassThrough();let intercepted = false, began;
+  const started = new Promise(resolve => { began = resolve; });
+  fs.createReadStream = (...args) => {
+    if (args[0] !== f.file || intercepted) return original(...args);
+    intercepted = true;setImmediate(() => { held.emit("open");began(); });return held;
+  };
+  const first = analyzeUsageLogs(f.file, { now: f.now });let timer;
+  try {
+    await started;
+    fs.writeFileSync(f.file + ".tmp", f.row("after"));fs.renameSync(f.file + ".tmp", f.file);
+    const second = await Promise.race([analyzeUsageLogs(f.file, { now: f.now }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(Error("Replacement query joined a stale scan")), 3000); })]);
+    assert.ok(second.summary.byModel.after);assert.equal(second.summary.byModel.before, undefined);
+    held.end(f.row("before"));assert.ok((await first).summary.byModel.before);
+  } finally { clearTimeout(timer);held.end();await first.catch(() => {});fs.createReadStream = original; }
 });
 
 test("analysis invalidates append, rewrite, replacement, truncation, rotation and removal", async t => {

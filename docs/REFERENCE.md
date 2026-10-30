@@ -64,6 +64,8 @@ Each protocol observer retains at most 64 series of 64 request points and 16 com
 
 ## Sources and client access
 
+When Claude App encrypts a CCDX-owned gateway key, synchronization keeps the encrypted value and can still update owned model fields. The expected local key must match CCDX's ownership record; foreign profiles, addresses, rotated keys and user edits are not adopted. The sync result can report that the key was kept encrypted without claiming verified access. No system keystore decryption or extra permission is used.
+
 Clicking the Web UI logo plays one brief rotation and keeps its Overview navigation. System reduced-motion preferences disable this effect. The header uses a link icon for the local connection; the request-flow total uses a circled ellipsis for active requests.
 
 Upgrades retain saved account bindings, source IDs, key references, model choices/defaults and capability overrides. Native account stores keep their existing owner; bookkeeping does not request another login. Unchanged client settings need no repeat save or synchronization. Explicit user changes and ordinary credential renewal keep their current behavior.
@@ -706,3 +708,9 @@ MIT
 | `CCDX_LOG_PATH` | Optional diagnostic log path |
 
 Internal supervisor and installer environment fields are not user settings.
+
+## Diagnostic and usage read bounds
+
+Diagnostic presentation omits input longer than 16,384 UTF-16 code units before normalization or credential scanning. Ordinary identifiers/messages retain budgets of 200/500 UTF-16 code units (400 for operation details), clipped only at complete surrogate boundaries. Oversized diagnostics retain structured status, error and request identifiers; original HTTP/SSE payloads are not changed. The general-purpose credential recognizer keeps its original semantics.
+
+Usage queries for recently written logs may share an in-flight aggregate only when observed device/inode/size/mtime/ctime identities and query filters match. Those results are not kept after the scan. The existing two-second settled-file rule and bounded caches remain. Appends, rewrites, replacement, rotation, provider filters, time zone and calendar date retain independent identities. Custom warning callbacks bypass sharing. Cancelling one waiter does not stop other waiters; a bounded scan already started may complete without retaining its result.

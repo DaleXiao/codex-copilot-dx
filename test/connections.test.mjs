@@ -20,6 +20,19 @@ import { deploymentModelId } from "../src/model-capabilities.mjs";
 
 process.env.CCDX_DISABLE_USAGE = "1";
 
+test("encrypted credential observations stay with App sync and clear when no longer observed", async t => {
+  let sealed = true;
+  const s = runtime(t, { platform: "darwin", configureClaude: input => ({ [input.client === "claude_app" ? "app" : "code"]: "configured",
+    ...(input.client === "claude_app" && sealed ? { app_credential: "encrypted_unverified" } : {}) }) });
+  const id = await save(s.runtime);
+  await s.runtime.manageConnections({ operation: "client", id: "claude_app", enabled: true, allowed: [id], deployments: [{ source: id, model: "any-message-model" }] });
+  const find = id => s.runtime.connections().clients.find(client => client.id === id);
+  assert.equal(find("claude_app").credential_state, "encrypted_unverified");
+  assert.equal(find("claude_code").credential_state, undefined);
+  sealed = false;await s.runtime.syncClients(["claude_app"]);
+  assert.equal(find("claude_app").credential_state, undefined);
+});
+
 test("source impact includes nondefault deployments and rejects an outdated confirmation", async t => {
   const s = runtime(t), one = await save(s.runtime), { id, enabled, secret_ref, ...config } = structuredClone(apiConfig);
   const state = await s.runtime.manageConnections({ operation: "save_api", config: { ...config, name: "Second API" }, key: "synthetic-key", allowed: ["claude_app"] });

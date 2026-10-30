@@ -1,4 +1,4 @@
-import { redactDiagnosticText } from "./diagnostic-text.mjs";
+import { boundedDiagnosticText } from "./diagnostic-text.mjs";
 
 const TRANSPORT_CODES = new Set([
   "ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "EPIPE", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "EPERM", "EACCES",
@@ -37,7 +37,7 @@ export function operationErrorDetails(error, { reason } = {}) {
   else if (/ENOTFOUND|ECONN|EAI_/.test(code)) source = "network";
   else if (/HTTP|http/.test(code) || status >= 400) source = "upstream";
   return { code: /^[A-Za-z0-9_-]{1,80}$/.test(code) ? code : "unknown", source,
-    message: redactDiagnosticText(String(error?.message || "Operation failed")).slice(0, 400),
+    message: boundedDiagnosticText(error?.message || "Operation failed", { maxChars: 400 }),
     status };
 }
 

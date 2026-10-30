@@ -9,6 +9,7 @@ import { PREDICTION_PAC_PATH, predictionProxyExpression } from "./prediction-pac
 export const PREDICTION_HOSTS = Object.freeze(["chatgpt.com", "ab.chatgpt.com"]);
 const CONFIG_LIMIT = 16 * 1024 * 1024;
 const REQUEST_LIMIT = 512 * 1024;
+export const PREDICTION_HEADER_LIMIT = 64 * 1024;
 const decoders = { gzip: promisify(gunzip), deflate: promisify(inflate), br: promisify(brotliDecompress) };
 
 export function predictionRoute(host, pathname) {
@@ -67,7 +68,7 @@ export async function startPredictionTransport({
   const upstreams = new Set();
   let closing = false;
   let listenerError = false;
-  const gateway = https.createServer({ key, cert, minVersion: "TLSv1.2" }, (req, res) => {
+  const gateway = https.createServer({ key, cert, minVersion: "TLSv1.2", maxHeaderSize: PREDICTION_HEADER_LIMIT }, (req, res) => {
     let target;
     try {
       target = new URL(req.url, `https://${req.headers.host}`);
@@ -82,8 +83,9 @@ export async function startPredictionTransport({
     // No decoding/re-encoding on pass-through paths.
     if (route && enabled()) headers["accept-encoding"] = "identity";
     let upstream;
-    const fail = (error) => {
-      onEvent({ type: "upstream_error", error: operationErrorDetails(error) });
+    const fail = (error, phase = error?.code === "HPE_HEADER_OVERFLOW" ? "response_headers" : "upstream_request") => {
+      onEvent({ type: "upstream_error", error: operationErrorDetails(error), phase,
+        target: route || "passthrough", host: target.hostname, header_limit: PREDICTION_HEADER_LIMIT });
       if (!res.headersSent) { res.writeHead(502); res.end(); } else res.destroy();
     };
     const send = (body, streamRemainder = false) => {
@@ -93,13 +95,14 @@ export async function startPredictionTransport({
         servername: target.hostname, method: req.method,
         path: req.url, headers,
         rejectUnauthorized: true,
+        maxHeaderSize: PREDICTION_HEADER_LIMIT,
         ...(agent ? { agent } : {}),
       }, (reply) => {
         const pass = () => {
           res.writeHead(reply.statusCode, cleanHeaders(reply.headers));
           reply.pipe(res);
         };
-        reply.on("error", fail);
+        reply.on("error", error => fail(error, "response_body"));
         // Error and non-JSON responses are forwarded as received. The overlay
         // decides whether the narrowly allowed missing-config response applies.
         const mediaType = String(reply.headers["content-type"] || "").split(";", 1)[0].trim();
@@ -192,11 +195,17 @@ export async function startPredictionTransport({
     const upstream = requestImpl({
       protocol: "https:", hostname: host, port: 443, servername: host,
       method: req.method, path: req.url, rejectUnauthorized: true,
+      maxHeaderSize: PREDICTION_HEADER_LIMIT,
       ...(agent ? { agent } : {}),
       headers: { ...cleanHeaders(req.headers), connection: "Upgrade", upgrade: req.headers.upgrade },
     });
     upstreams.add(upstream);
-    upstream.on("error", () => socket.destroy());
+    upstream.on("error", error => {
+      onEvent({ type: "upstream_error", error: operationErrorDetails(error),
+        phase: error.code === "HPE_HEADER_OVERFLOW" ? "response_headers" : "upstream_request",
+        target: "upgrade", host, header_limit: PREDICTION_HEADER_LIMIT });
+      socket.destroy();
+    });
     upstream.on("response", (reply) => {
       const headers = Object.entries(cleanHeaders(reply.headers)).flatMap(([name, values]) =>
         (Array.isArray(values) ? values : [values]).map((value) => `${name}: ${value}`));
@@ -219,8 +228,13 @@ export async function startPredictionTransport({
     upstream.end();
   });
   gateway.on("tlsClientError", (error, socket) => { onEvent({ type: "tls_error", error: operationErrorDetails(error) }); socket.destroy(); });
-  gateway.on("clientError", (_error, socket) => socket.destroy());
-  const proxy = http.createServer((req, res) => {
+  gateway.on("clientError", (error, socket) => {
+    if (socket.destroyed || socket.writableEnded) return;
+    onEvent({ type: "client_error", error: operationErrorDetails(error), phase: "request_headers", header_limit: PREDICTION_HEADER_LIMIT });
+    if (error.code === "HPE_HEADER_OVERFLOW" && socket.writable) socket.end("HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+    else socket.destroy();
+  });
+  const proxy = http.createServer({ maxHeaderSize: PREDICTION_HEADER_LIMIT }, (req, res) => {
     if (req.method === "GET" && ["/proxy.pac", PREDICTION_PAC_PATH].includes(req.url) && !req.headers.origin
       && ["127.0.0.1", "localhost"].includes(String(req.headers.host || "").split(":")[0])) {
       res.writeHead(200, { "Content-Type": "application/x-ns-proxy-autoconfig", "Cache-Control": "no-store" });

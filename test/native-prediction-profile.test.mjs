@@ -289,7 +289,7 @@ test("App identity/profile changes and concurrent compatibility preferences do n
 
 test("a first-start preference conflict closes its uncommitted listener rather than persisting a stale route", { skip: process.platform === "win32" }, async t => {
   const opts = fixture(t), archive = path.join(opts.root, "app.asar");fs.writeFileSync(archive, "synthetic App identity");
-  const stat = fs.statSync(archive), verified = { ...app, archive, size: stat.size, mtimeMs: stat.mtimeMs };
+  const stat = fs.statSync(archive), verified = { ...app, identity_version: 2, executable: archive, size: stat.size, mtimeMs: stat.mtimeMs };
   const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => verified, output() {} };
   await runPredictionCommand({ ...run, action: "on" });
   const settings = predictionPaths(opts).settings;

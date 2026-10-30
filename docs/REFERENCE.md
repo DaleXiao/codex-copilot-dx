@@ -86,6 +86,8 @@ Claude App and Claude Code use separate keys on `http://127.0.0.1:2026/anthropic
 
 Claude App can continue an existing conversation on another selected, authorized source when complete Messages history is available. Unfinished tool turns, unavailable attachments and company-account isolation are checked before transfer. Opaque signed or compacted history is not transferable between services. Codex and Claude Code keep their existing continuation rules. A 409 is a history/isolation conflict; it does not by itself mean the selected model is unavailable.
 
+Model details show exclusion reasons only when applicable: app/source disabled, source access not granted, missing interface, source restriction, missing catalog entry or no selection. These are configuration/catalog facts, not an online capability test. Expected local GET/HEAD discovery replies are listed separately under Requests → Service probes. Raw HTTP counters remain unchanged; unknown paths, security denials and actual call failures remain inspectable.
+
 ## Microsoft 365
 
 Supported company environments discover local accounts at startup. Access depends on the account, tenant, device policy and service entitlement. Optional failure does not block another source.
@@ -245,6 +247,15 @@ panel, renderer injection, or client-program modification. This compatibility
 feature uses the App's existing composer UI and the conversation's
 selected model through CCDX. Suggestions are not sent automatically. Native
 eligibility rules still apply; availability is not promised for every thread type.
+
+App identity is verified through system installation metadata and platform trust,
+without scanning internal App archives. Checks are asynchronous and leave account,
+model and image settings alone. Existing prediction trust, profile and port are
+reused after an App update. Known live configuration schemas determine adaptation;
+unknown payloads keep their existing forwarding behavior. No configuration traffic
+means unverified availability, not a confirmed incompatibility. Visible suggestions
+still require an App-side check. The bridge accepts headers up to 64 KiB; larger
+headers fail with bounded stage diagnostics and are not retried.
 
 The `0.9.40` routing revision uses the stable local PAC URL
 `/proxy.pac?v=2`, independent of the package version. The primary proxy remains
@@ -646,7 +657,7 @@ The summary covers the current log and its single rotated backup, not an unbound
 
 Usage writes are asynchronous and batched under the existing cross-process rotation lock. Pending and in-flight records share a 4096-record / 4 MiB ceiling. If either ceiling is reached, new excess records are dropped with a warning and a status counter; inference does not wait or retry. Normal records and per-record rotation boundaries are unchanged. The bounded shutdown flush remains 1.5 seconds; disk failures and shutdown deadlines can prevent persistence, so usage is diagnostic rather than a billing ledger.
 
-Repeated plain usage summaries in the same process reuse one bounded cache entry when both retained log files are unchanged. File identity, size, modification/change timestamps and a two-second recent-write guard control reuse; concurrent settled-file queries share one scan. The serialized summary budget is 256 KiB and at most 128 model groups; larger results remain complete but uncached. Warnings, unstable reads, metadata errors and scans with changed files are not retained. Each caller receives an independent result. Analytics record callbacks and custom-warning reads keep the original streaming path. There is no persistent index, background polling, cross-process cache or change to usage writes; the first analytics read still scans the retained records. Dashboard analytics then reuses up to two settled aggregate snapshots within a combined 2 MiB serialized budget, keyed by file identity/version, time zone and local date. Concurrent identical reads share one scan; writes, rotation, truncation, replacement, warnings, future/undated records and oversized results prevent reuse. Returned data is cloned, and custom callbacks/warnings keep the uncached path.
+Repeated plain usage summaries reuse one bounded entry when retained files are unchanged, with the existing two-second recent-write guard and 256 KiB/128-group limit. Dashboard analytics keeps up to two independent aggregate checkpoints within 2 MiB. Its first read scans both retained logs. Later reads apply only append batches witnessed by this process under the existing write lock, with a 256 KiB pending-delta limit per checkpoint. Another process's writes, rotation, truncation, replacement, incomplete tails, warnings, future/undated records and oversized results fall back to a complete read. Queries remain scoped by source, time zone and local date; returned results are cloned and identical concurrent reads share work. The asynchronous writer supplies file-version evidence only while analytics checkpoints exist. There is no persistent index, background poll or added model request.
 
 Diagnostic redaction removes Basic authorization payloads and URL userinfo, and consumes escaped quotes inside sensitive JSON fields. Ordinary Basic-related prose, safe host/path information and error codes are retained. These protections apply to existing failure/status/debug diagnostics, not forwarded requests or upstream response bodies. They do not make arbitrary upstream prose guaranteed safe to share.
 

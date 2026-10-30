@@ -215,6 +215,11 @@ function applyModels(data, { changed }) {
         if (translated) localize(detail, value);else detail.textContent = value;
         fields.append(term, detail);
       }
+      for (const item of model.client_visibility || []) if (item.reason) {
+        const term = document.createElement("dt"), detail = document.createElement("dd");
+        term.textContent = ({ codex: "Codex App", claude_app: "Claude App", claude_code: "Claude Code" })[item.client] || item.client;
+        localize(detail, "visibility_" + item.reason);fields.append(term, detail);
+      }
       row.children[2].append(details);body.append(row);
     }
     if (!data.models.length) emptyTable("live-models-body", 3, "no_models_advertised");

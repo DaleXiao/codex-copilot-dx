@@ -21,7 +21,7 @@ import { createManagementHandler, isManagementRoute } from "./management-routes.
 import { createOptionalRoutes, isOptionalRoute, DASHBOARD_PATHS, DASHBOARD_API_PATHS } from "./optional-routes.mjs";
 import { createResponsesCompactHandler, createResponsesHandler } from "./responses-handler.mjs";
 import { createResponsesImagePressureController } from "./responses-image-pressure.mjs";
-import { createResponseFailureDiagnostics, createHttpFailureDiagnostics, buildHttpFailureDetails } from "./response-failures.mjs";
+import { createResponseFailureDiagnostics, createHttpFailureDiagnostics, buildHttpFailureDetails, isDiscoveryRequest } from "./response-failures.mjs";
 import { ADAPTER_CACHE_PATH } from "./cache-control.mjs";
 import { loadRuntimeConfig, parsePositiveInteger } from "./runtime-config.mjs";
 import {
@@ -428,9 +428,9 @@ export function createAdapterHandler(options = {}) {
       && !((req.method === "GET" || req.method === "HEAD") && DASHBOARD_PATHS.has(pathname));
     const routeName = classifyAdapterRoute(req.method, pathname);
     const complete = trackRequest ? requestMetrics.begin(routeName) : () => {};
-    const streamPerformance = trackRequest ? streamPerformanceMetrics.begin(routeName, { requestId, application: requestApplication(req.headers) }) : null;
+    const streamPerformance = trackRequest && !isDiscoveryRequest(req.method, pathname) ? streamPerformanceMetrics.begin(routeName, { requestId, application: requestApplication(req.headers) }) : null;
     let finishTerminalActivity = () => {};
-    if (trackRequest && ["responses", "responses_compact", "messages", "image_mcp"].includes(routeName)) {
+    if (trackRequest && !isDiscoveryRequest(req.method, pathname) && ["responses", "responses_compact", "messages", "image_mcp"].includes(routeName)) {
       try {
         const finish = options.terminalActivity?.beginRequest?.();
         if (typeof finish === "function") finishTerminalActivity = finish;
@@ -445,7 +445,7 @@ export function createAdapterHandler(options = {}) {
         try { httpErrors.record(buildHttpFailureDetails({ ...httpEvidence, statusCode, route: routeName, requestId, model: context?.model || context?.requestedModel,
           method: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"].includes(req.method) ? req.method : "OTHER",
           target: ["/v1/responses", "/v1/responses/compact", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens", "/anthropic/v1/models", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",
-          request_options: context?.requestOptions, upstream_attempts: streamPerformance?.attemptCount?.() ?? context?.upstreamAttempts,
+          request_options: context?.requestOptions, upstream_attempts: streamPerformance?.attemptCount?.() ?? context?.upstreamAttempts ?? 0,
           attempt_timings: streamPerformance?.attemptTimings?.(),
           requested_model: context?.requestedModel, provider: context?.provider, application: context?.application || requestApplication(req.headers),
           capability_cached: context?.countObservation?.cached, shared_upstream: context?.countObservation?.shared,

@@ -10,6 +10,22 @@ import {
   createHttpFailureDiagnostics,
 } from "../src/response-failures.mjs";
 
+test("only known local GET/HEAD discovery replies are separated from failures", () => {
+  const d = createHttpFailureDiagnostics();
+  for (const [method, target, statusCode] of [["GET", "/mcp/image", 405], ["HEAD", "/.well-known/oauth-protected-resource", 404]]) {
+    d.record(buildHttpFailureDetails({ method, target, statusCode, route: target === "/mcp/image" ? "image_mcp" : "not_found", upstream_attempts: 0 }));
+  }
+  let state = d.snapshot();assert.equal(state.discovery_total, 2);assert.equal(state.total, 2);
+  assert.equal(state.actionable_recent.length, 0);assert.equal(state.protocol_recent.length, 0);assert.equal(state.route_recent.length, 0);
+  for (const [method, target, statusCode, route] of [["POST", "/mcp/image", 405, "image_mcp"], ["GET", "/mcp/image", 403, "image_mcp"],
+    ["GET", "/unknown", 404, "not_found"], ["POST", "/v1/responses", 401, "responses"]]) {
+    d.record(buildHttpFailureDetails({ method, target, statusCode, route, upstream_attempts: 0 }));
+  }
+  state = d.snapshot();assert.equal(state.discovery_total, 2);assert.equal(state.total, 6);
+  assert.equal(state.protocol_recent.length, 1);assert.equal(state.route_recent.length, 1);
+  assert.ok(state.actionable_recent.some(row => row.http_status === 403));assert.ok(state.actionable_recent.some(row => row.http_status === 401));
+});
+
 test("HTTP evidence is bounded technical metadata; arbitrary prose requires explicit opt-in", () => {
   const body = JSON.stringify({ error: { code: "unsupported_value", type: "invalid_request_error", param: "reasoning.effort", message: 'Rejected. prompt="private prompt" Bearer secret-token' } });
   assert.deepEqual(upstreamErrorEvidence(body), { error_body: "structured", code: "unsupported_value", error_type: "invalid_request_error", parameter: "reasoning.effort" });

@@ -345,6 +345,9 @@ startup cleanup closes any optional listener that was already started.
 Only its two selected hosts use the App-specific route. Non-configuration requests
 on those hosts are forwarded unchanged. The bridge does not replace Copilot or
 image-provider networking, modify client program files, or install system trust.
+App identity checks use system metadata and asynchronous platform verification,
+without reading an App archive or renderer implementation. Only recognized live
+configuration responses receive the existing prediction overlay.
 Static upstream proxy routes and bypass rules are preserved. IPv4/IPv6 CIDRs
 match URL IP literals, without DNS. macOS dynamic PAC/WPAD remains unsupported
 and is reported rather than discarded.
@@ -390,10 +393,16 @@ only, preserves company/user routing, and never treats a saved preference as
 proof of a running route or visible candidate. App compatibility is rechecked only
 when its recorded identity changes, before existing trust/port checks are reused.
 
-`native-prediction-protocol.mjs` owns bounded archive recognition only, independent
-of certificates, networking and the CLI. It accepts multiple named hashed chunks
-without assuming the first general-settings chunk is the implementation. Signature
-and profile checks remain in the existing platform boundary.
+`native-prediction-app.mjs` owns asynchronous installation identity checks. macOS
+uses signed bundle metadata and executable stamps; Windows uses the official Store
+registration and executable stamp. Renderer files and archive layout are not
+compatibility gates. Concurrent checks share a bounded signature result cache.
+Legacy identity records are reverified on first use while keeping their certificate,
+port and profile. A Store update may change its install path only when the official
+package family and selected profile remain the same. Known configuration schemas
+remain the overlay boundary; unknown payloads retain the existing pass-through rules.
+The optional TLS transport has a 64 KiB header budget for requests, replies and
+upgrades, with bounded stage/target diagnostics rather than header contents.
 
 `prediction-pac.mjs` is the pure shared format boundary for direct, static and
 Windows company-PAC composition. Its stable revision URL makes a one-time old-PAC
@@ -1030,3 +1039,18 @@ Messages window observation belongs to `claude-gateway.mjs`, independently of th
 `dashboard/ui.css` retains the existing color/type system and grid/navigation boundaries. Shared `--control-height` and `--inline-control-height` values align controls at 32/30 px, with 44 px coarse-pointer targets; multiline choice cards keep intrinsic height. Existing narrow-header rules still own reflow. Panel/header/table/form spacing is adjusted in its existing rules rather than adding a second layout mode. Request-flow geometry continues to measure actual anchors after resize and disclosure changes. Browser replays assert actual sizes and unchanged header anchors alongside bilingual themes, model details, drafts and reduced motion.
 
 The Auto refresh button overlays its visible and width-measuring labels in one centered grid cell. Browser acceptance measures the visible text range against the button on both axes, including ON/OFF in both languages; the outer control height alone is not alignment evidence.
+
+In 1.3.5, expected local GET/HEAD MCP discovery replies retain their HTTP counts
+and a separate bounded probe history; they do not animate model activity. Unknown
+paths and security failures remain inspectable. Source catalog details explain
+client exclusions from current grants, interfaces, policy and selections. They
+perform no inference or automatic model selection. Removing an owned Claude
+source-only flag shares the existing configuration/journal rollback transaction.
+
+Dashboard usage analytics keeps two aggregate checkpoints within 2 MiB. A passive
+listener exists only while checkpoints are retained. The existing asynchronous
+writer reports before/after file versions inside its rotation lock; only witnessed
+non-rotating appends queue delta lines (at most 256 KiB per checkpoint). Queries
+apply those records without rescanning history. Other-process writes, unknown
+changes, rotation, incomplete tails, warnings and oversized results rebuild through
+the original full scan. No persistent index, polling or per-token work is added.

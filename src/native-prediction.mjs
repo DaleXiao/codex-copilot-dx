@@ -48,6 +48,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
     else if (result.status === "environment_preserved") output(`Network recheck failed; the existing bridge and routes were preserved. ${result.environment_error?.message || "Check ccdx app codex prediction status."}`);
     else if (prediction.bridge !== "running") output(prediction.reason || "Prediction bridge is unavailable; core service was not changed.");
     else if (prediction.environment?.status === "needs_app_relaunch") output("Network settings changed. The bridge uses the new snapshot, but the App may cache its earlier PAC. Fully quit Codex, then run ccdx; no App was restarted.");
+    else if (prediction.client_route === "observed") output("Prediction configuration traffic observed. Visible suggestions still need an App-side check.");
     else if (result.app_route === "verified") output("App launch route verified. A visible suggestion still needs an App-side check.");
     else if (result.app_route === "closed") output("Bridge is ready. Run ccdx to open Codex with its prediction route.");
     else if (result.status === "route_unverified") output("Bridge is ready, but App route inspection was unavailable or ambiguous. Check ccdx app codex prediction status; no App was restarted.");
@@ -105,7 +106,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
   }
   assertCodexClosed(opts);
   inspectPredictionEnvironment(opts);
-  const app = resolveApp({ ...opts, ...(platform === "win32" && settings.app?.profile ? { preferredProfile: settings.app.profile } : {}) });
+  const app = await resolveApp({ ...opts, ...(platform === "win32" && settings.app?.profile ? { preferredProfile: settings.app.profile } : {}) });
   paths = predictionPaths({ ...opts, app });
   if (settings.store && settings.store !== paths.store) throw new Error("Codex profile changed; disable the previous profile before enabling another");
   let certificate, previous, generated = false;
@@ -168,9 +169,10 @@ export async function startNativePrediction({ env = process.env, platform = proc
   }
   if (options.expectedPort !== undefined && settings.bridgePort !== options.expectedPort) throw new Error("Prediction route changed; automatic recovery was skipped");
   if (!predictionAppMatches(settings.app)) {
-    const current = (options.resolveApp || installedPredictionApp)({ ...opts,
+    const current = await (options.resolveApp || installedPredictionApp)({ ...opts,
       ...(platform === "win32" && settings.app?.profile ? { preferredProfile: settings.app.profile } : {}) });
-    if (current.app !== settings.app?.app || (platform === "win32" && current.profile !== settings.app?.profile)) {
+    const sameApp = current.app === settings.app?.app || platform === "win32" && current.family && current.family === settings.app?.family;
+    if (!sameApp || (platform === "win32" && current.profile !== settings.app?.profile)) {
       throw new Error("Codex App identity/profile changed; run ccdx app codex prediction setup after quitting it to recheck compatibility");
     }
     const settingsFile = predictionPaths(opts).settings;

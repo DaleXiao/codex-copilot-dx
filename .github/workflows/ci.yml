@@ -168,6 +168,10 @@ jobs:
         run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --bindings models --signed-in chatgpt
       - name: Verify native OpenAI mode and complete first catalog across cold and warm starts
         run: node scripts/codex-native-provider-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
+      - name: Provision verified Codex compatibility baseline
+        run: npm install --prefix "$RUNNER_TEMP/ccdx-codex-baseline" @openai/codex@0.164.0
+      - name: Verify baseline sign-in and first catalog across cold and warm starts
+        run: node scripts/codex-native-provider-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex-baseline/node_modules/.bin/codex"
   dashboard-browsers:
     runs-on: macos-latest
     timeout-minutes: 15

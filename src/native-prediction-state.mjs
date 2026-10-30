@@ -34,7 +34,10 @@ export function createPredictionState({ now = () => new Date().toISOString() } =
         state.configuration[event.route] = { status: event.status, modified: event.changed === true, official: event.official === true };
       } else if (event.type === "tls_error") state.counters.tls_errors++;
       else if (event.type === "upstream_error") state.counters.upstream_errors++;
-      if (event.error) state.last_error = { code: event.error.code, source: event.error.source, message: event.error.message, status: event.error.status };
+      if (event.error) state.last_error = { code: event.error.code, source: event.error.source, message: event.error.message, status: event.error.status,
+        ...(["request_headers", "response_headers", "response_body", "upstream_request"].includes(event.phase) ? { phase: event.phase } : {}),
+        ...(["bootstrap", "prediction", "refresh", "passthrough", "upgrade"].includes(event.target) ? { target: event.target } : {}),
+        ...(event.header_limit === 65536 ? { header_limit: event.header_limit } : {}) };
     },
     snapshot() { return structuredClone(state); },
   };

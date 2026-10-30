@@ -22,6 +22,6 @@ export async function requestPredictionFix({ host = "127.0.0.1", port = 2026, fe
     || !["running", "stopped", "unavailable", "recovering"].includes(value?.prediction?.bridge)
     || value.prediction.candidate !== "unknown"
     || (["ready", "needs_app_relaunch", "route_unverified"].includes(value.status) && value.prediction.bridge !== "running")
-    || (value.status === "ready" && !["verified", "closed"].includes(value.app_route))) throw new Error("Adapter returned an invalid prediction repair result");
+    || (value.status === "ready" && !["verified", "closed"].includes(value.app_route) && value.prediction.client_route !== "observed")) throw new Error("Adapter returned an invalid prediction repair result");
   return value;
 }

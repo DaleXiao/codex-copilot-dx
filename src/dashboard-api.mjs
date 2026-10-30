@@ -324,6 +324,10 @@ export async function handleDashboardApi(req, res, pathname, {
           preview: model.preview === true,
           selectable: model.selectable !== false,
           clients: Array.isArray(model.clients) ? model.clients.filter(value => typeof value === "string").slice(0, 8).map(value => safeText(value, 40)) : [],
+          client_visibility: Array.isArray(model.client_visibility) ? model.client_visibility.slice(0, 3)
+            .filter(value => ["codex", "claude_app", "claude_code"].includes(value?.client) && (value.reason === null
+              || ["app_disabled", "source_disabled", "source_not_allowed", "model_missing", "source_restricted", "protocol_unsupported", "model_not_selected"].includes(value.reason)))
+            .map(({ client, reason }) => ({ client, reason })) : [],
           auto_review_efforts: Array.isArray(model.auto_review_efforts) ? model.auto_review_efforts.slice(0, 16).map(value => safeText(value, 16)) : [],
           reasoning_efforts: Array.isArray(model.reasoning_efforts) ? model.reasoning_efforts.slice(0, 16).map(value => safeText(value, 16)) : null,
           state: ["listed", "restricted", "hidden"].includes(model.state) ? model.state : "listed",

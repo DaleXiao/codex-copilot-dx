@@ -8,10 +8,9 @@ import { atomicWriteFileSync } from "./atomic-file.mjs";
 import { userSettingsPath } from "./user-settings.mjs";
 import { resolveNetworkRoute } from "./network-route.mjs";
 import { codexPaths } from "./codex-paths.mjs";
-import { assertWindowsCodexClosed, installedWindowsPredictionApp, windowsPredictionProfile,
-  windowsPrivatePredictionPath } from "./native-prediction-windows.mjs";
+import { assertWindowsCodexClosed, windowsPrivatePredictionPath } from "./native-prediction-windows.mjs";
 import { windowsPredictionCertificate } from "./windows-prediction-certificate.mjs";
-import { inspectPredictionArchive } from "./native-prediction-protocol.mjs";
+export { installedPredictionApp, predictionAppMatches } from "./native-prediction-app.mjs";
 
 export function predictionPaths({ env = process.env, home = os.homedir(), platform = process.platform, app } = {}) {
   const directory = path.join(path.dirname(userSettingsPath({ env, home })), "native-prediction");
@@ -57,39 +56,6 @@ export function assertCodexClosed({ exec = execFileSync, platform = process.plat
     }
     throw new Error("Quit Codex App before changing native prediction setup; no running App will be stopped");
   }
-}
-
-export function installedPredictionApp({ exec = execFileSync, platform = process.platform, ...options } = {}) {
-  const candidates = platform === "win32" ? [installedWindowsPredictionApp({ ...options, exec })]
-    : ["/Applications/ChatGPT.app", "/Applications/Codex.app"].map(app => ({ app, archive: path.join(app, "Contents", "Resources", "app.asar") }));
-  for (const candidate of candidates) {
-    const { app, archive } = candidate;
-    if (!fs.existsSync(archive)) continue;
-    const inspected = inspectPredictionArchive(archive);
-    if (!inspected.compatible) continue;
-    if (platform !== "win32") exec("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], { stdio: "pipe", timeout: 15_000 });
-    const stat = fs.statSync(archive);
-    if (stat.size !== inspected.size || stat.mtimeMs !== inspected.mtimeMs) throw new Error("Codex App changed during compatibility verification");
-    if (platform === "win32") {
-      const executable = fs.statSync(app);
-      return { ...candidate, profile: windowsPredictionProfile({ app: candidate, env: options.env, preferredProfile: options.preferredProfile }),
-        size: stat.size, mtimeMs: stat.mtimeMs, executableSize: executable.size, executableMtimeMs: executable.mtimeMs };
-    }
-    return { app, archive, size: stat.size, mtimeMs: stat.mtimeMs };
-  }
-  throw new Error("This Codex App does not expose the verified native prediction protocol; setup was skipped");
-}
-
-export function predictionAppMatches(app) {
-  try {
-    const stat = fs.statSync(app.archive);
-    if (app.executableSize !== undefined) {
-      const executable = fs.statSync(app.app);
-      if (executable.size !== app.executableSize || executable.mtimeMs !== app.executableMtimeMs) return false;
-    }
-    return stat.size === app.size && stat.mtimeMs === app.mtimeMs;
-  }
-  catch { return false; }
 }
 
 function privateDirectory(directory, { platform = process.platform, ...options } = {}) {

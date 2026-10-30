@@ -52,7 +52,7 @@ test("shared data and foundation modules do not depend on presentation or compos
     "native-prediction-state.mjs": ["adapter.mjs", "dashboard-api.mjs", "cli-status.mjs"],
     "native-prediction-route.mjs": ["adapter.mjs", "dashboard-api.mjs", "copilot.mjs", "startup-ui.mjs"],
     "native-prediction-recovery.mjs": ["adapter.mjs", "dashboard-api.mjs", "copilot.mjs", "startup-ui.mjs"],
-    "native-prediction-protocol.mjs": ["adapter.mjs", "native-prediction.mjs", "native-prediction-profile.mjs", "dashboard-api.mjs"],
+    "native-prediction-app.mjs": ["adapter.mjs", "native-prediction.mjs", "native-prediction-profile.mjs", "dashboard-api.mjs"],
     "native-prediction-fix.mjs": ["adapter.mjs", "copilot.mjs", "native-prediction-profile.mjs", "native-prediction.mjs"],
     "prediction-pac.mjs": ["node:fs", "node:dns", "node:child_process", "native-prediction.mjs", "adapter.mjs", "network-route.mjs"],
     "startup-ui.mjs": ["adapter.mjs", "native-prediction.mjs", "copilot.mjs", "dashboard-api.mjs"],

@@ -4,6 +4,16 @@ import { claudeDeploymentId, claudeRouteAliases } from "./clients/claude-models.
 import { modelDisplayName } from "./model-display.mjs";
 
 const endpoints = { codex: ["/responses", "/v1/responses"], claude_app: ["/v1/messages"], claude_code: ["/v1/messages"] };
+export function clientModelExclusion({ client, binding, sourceId, sourceEnabled, model, selected }) {
+  if (!binding.enabled) return "app_disabled";
+  if (!sourceEnabled) return "source_disabled";
+  if (!binding.allowed.includes(sourceId)) return "source_not_allowed";
+  if (!model) return "model_missing";
+  if (["restricted", "hidden"].includes(model.state)) return "source_restricted";
+  const protocol = client === "codex" ? "responses" : "messages";
+  if (!model.endpoints.includes(protocol) && !(client === "codex" && sourceId === "github" && model.endpoints.includes("chat"))) return "protocol_unsupported";
+  return selected ? null : "model_not_selected";
+}
 export function sourceModels(source, client) {
   if (!source) return [];
   const models = source.models?.(client === "codex" ? "gpt" : "claude") || source.registry?.models?.data || [];

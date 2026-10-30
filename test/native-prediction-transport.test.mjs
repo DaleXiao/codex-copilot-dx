@@ -34,7 +34,7 @@ function deferred() {
 
 async function fixture(t, handler, options = {}) {
   const peers = new Set(), seen = [];
-  const upstream = http.createServer(handler);
+  const upstream = http.createServer({ maxHeaderSize: 128 * 1024 }, handler);
   upstream.on("connection", socket => {
     peers.add(socket);socket.once("close", () => peers.delete(socket));
   });
@@ -82,7 +82,7 @@ async function fixture(t, handler, options = {}) {
     t.after(() => agent.destroy());
     let req;
     const result = new Promise((resolve, reject) => {
-      req = https.request({ hostname: host, path: pathname, method, agent, headers: { ...headers, connection: "close" } }, res => {
+      req = https.request({ hostname: host, path: pathname, method, agent, maxHeaderSize: 128 * 1024, headers: { ...headers, connection: "close" } }, res => {
         const chunks = [];
         onResponse?.(res);
         res.on("data", chunk => { chunks.push(chunk);onData?.(chunk); });
@@ -120,6 +120,33 @@ test("prediction PAC routes only two HTTPS origins and falls back to direct", ()
     assert.equal(scope.FindProxyForURL(`https://${host}/`, host), "DIRECT");
   }
   for (const port of [0, -1, 65536, 1.5, "2026"]) assert.throws(() => predictionPac(port), /Invalid/);
+});
+
+test("large bounded headers pass through without changing cookies, status or body", async t => {
+  const value = "x".repeat(20 * 1024), events = [];
+  const f = await fixture(t, (req, res) => {
+    assert.equal(req.headers.cookie, value);
+    res.writeHead(201, { "set-cookie": value });res.end("unchanged");
+  }, { onEvent: e => events.push(e) });
+  const result = await f.send("chatgpt.com", "/backend-api/unrelated", { headers: { cookie: value } });
+  assert.equal(result.status, 201);assert.equal(result.body.toString(), "unchanged");assert.deepEqual(result.headers["set-cookie"], [value]);
+  assert.deepEqual(events, []);
+});
+
+test("oversized response headers fail with bounded stage evidence and no retry", async t => {
+  const events = [];let calls = 0;
+  const f = await fixture(t, (_req, res) => { calls++;res.writeHead(200, { "x-fixture": "x".repeat(96 * 1024) });res.end(); }, { onEvent: e => events.push(e) });
+  assert.equal((await f.send("chatgpt.com", "/backend-api/unrelated")).status, 502);
+  assert.equal(calls, 1);const error = events.find(e => e.error?.code === "HPE_HEADER_OVERFLOW");
+  assert.equal(error.phase, "response_headers");assert.equal(error.target, "passthrough");assert.equal(error.header_limit, 65536);
+  assert.ok(JSON.stringify(error).length < 600);
+});
+
+test("oversized client headers are rejected before reaching the upstream", async t => {
+  let calls = 0;
+  const f = await fixture(t, (_req, res) => { calls++;res.end(); });
+  assert.equal((await f.send("chatgpt.com", "/backend-api/unrelated", { headers: { cookie: "x".repeat(96 * 1024) } })).status, 431);
+  assert.equal(calls, 0);
 });
 
 test("an already-cached App route still handles trusted TLS configuration after bridge restart", { timeout: 10_000 }, async t => {
@@ -344,13 +371,13 @@ test("WebSocket upgrade preserves handshake headers and both directions of binar
   f.upstream.on("upgrade", (req, peer, head) => {
     assert.equal(req.headers.authorization, "Bearer synthetic-fixture-only");
     assert.equal(req.url, "/ws/%2f?keep=1");assert.equal(head.length, 0);
-    peer.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: fixture\r\n\r\n");
+    peer.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: fixture\r\nX-Fixture: " + "x".repeat(20 * 1024) + "\r\n\r\n");
     peer.once("data", data => { received.resolve(data);peer.write(serverFrame); });
   });
   const secure = await f.tunnel();
   const agent = new https.Agent({ keepAlive: false });agent.createConnection = () => secure;t.after(() => agent.destroy());
   const { socket, head } = await new Promise((resolve, reject) => {
-    const req = https.request({ hostname: "chatgpt.com", path: "/ws/%2f?keep=1", agent, headers: { connection: "Upgrade", upgrade: "websocket", authorization: "Bearer synthetic-fixture-only" } });
+    const req = https.request({ hostname: "chatgpt.com", path: "/ws/%2f?keep=1", agent, maxHeaderSize: 64 * 1024, headers: { connection: "Upgrade", upgrade: "websocket", authorization: "Bearer synthetic-fixture-only" } });
     req.once("upgrade", (res, socket, head) => {
       assert.equal(res.statusCode, 101);assert.equal(res.headers["sec-websocket-accept"], "fixture");resolve({ socket, head });
     });req.once("error", reject);req.end();

@@ -44,6 +44,17 @@ test("manual repair starts a previously unavailable bridge once and is idempoten
   await client.fix();assert.equal(counts.starts, 2);assert.equal(counts.closes, 0);
 });
 
+test("observed prediction traffic remains valid route evidence without a command-line PAC flag", async t => {
+  const client = createClientIntegration({ startPrediction: async ({ state }) => {
+    state.configure(true);state.running({ type: "direct" });
+    state.event({ type: "configuration", route: "prediction", status: 200, changed: true });
+    return { pacUrl: "http://127.0.0.1:23456/proxy.pac", healthy: () => true, enabled: () => true,
+      inspectRoute: async () => "missing", prepareRoute: async () => ({ status: "installed" }), close: async () => state.stopped() };
+  } });t.after(() => client.close());
+  await client.start();const result = await client.fix();
+  assert.equal(result.status, "ready");assert.equal(result.app_route, "missing");assert.equal(result.prediction.candidate, "unknown");
+});
+
 test("repair preserves the saved port, distinguishes missing App routes and never enables disabled prediction", async t => {
   const { client, counts } = integration(t, { route: "missing" });await client.start();
   counts.healthy = false;

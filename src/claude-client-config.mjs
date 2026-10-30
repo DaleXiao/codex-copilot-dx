@@ -114,7 +114,7 @@ function appModelsOwned(current, previous, desired, alreadyDesired) {
     withoutAppPreference(recorded.filter(model => wanted.has(model.name))));
 }
 
-export function reconcileClaudeConfiguration(operations, { restore = false, ...options } = {}) {
+export function reconcileClaudeConfiguration(operations, { restore = false, restoreFields = [], ...options } = {}) {
   const paths = claudeClientPaths(options), allowed = new Set(Object.values(paths)), journalPath = m365Paths(options).ownership;
   fs.mkdirSync(path.dirname(journalPath), { recursive: true, mode: 0o700 });
   return withFileLockSync(`${journalPath}.lock`, () => {
@@ -137,14 +137,16 @@ export function reconcileClaudeConfiguration(operations, { restore = false, ...o
     const sharedOperation = op => op.file === paths.code && (op.keys[0] === "modelSettings" || ["CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MODEL_CAPABILITIES"].includes(op.keys[1]));
     const forClient = op => (!options.selectOperation || options.selectOperation(op)) && (!options.client || (options.client === "claude_code" ? op.file === paths.code && !sharedOperation(op) : op.file !== paths.code))
       && (!options.fields || options.fields.includes(op.keys.join(".")));
-    const list = restore ? journal.operations.filter(forClient) : operations;
+    const list = restore ? journal.operations.filter(forClient) : [
+      ...journal.operations.filter(op => forClient(op) && restoreFields.includes(op.keys.join("."))).map(op => ({ ...op, restore: true })), ...operations];
     for (const operation of list) {
       if (!allowed.has(operation.file) || !safeKeys(operation)) throw new Error("Unexpected Claude configuration path");
       if (!states.has(operation.file)) states.set(operation.file, read(operation.file));
       const state = states.get(operation.file);state.next ||= structuredClone(state.value);
       const previous = journal.operations.find(op => op.file === operation.file && isDeepStrictEqual(op.keys, operation.keys) && op.itemId === operation.itemId);
-      const current = operationValue(state.next, operation), desired = restore ? operation.before : { exists: true, value: operation.value };
-      if (restore) {
+      const restoring = restore || operation.restore === true;
+      const current = operationValue(state.next, operation), desired = restoring ? operation.before : { exists: true, value: operation.value };
+      if (restoring) {
         if (!isDeepStrictEqual(current, { exists: true, value: operation.after })) { skipped.push(operation.file);continue; }
         setOperation(state.next, operation, desired);
         nextJournal.operations = nextJournal.operations.filter(op => !(op.file === operation.file && isDeepStrictEqual(op.keys, operation.keys) && op.itemId === operation.itemId));
@@ -282,7 +284,8 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
       result.app = "configured";
     }
   }
-  const applied = reconcileClaudeConfiguration(operations, options);
+  const applied = reconcileClaudeConfiguration(operations, { ...options,
+    ...(!disableExperimentalBetas && result.code === "configured" ? { restoreFields: ["env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] } : {}) });
   if (applied.preserved) {
     if (result.code === "configured") result.code = "partially_preserved";
     if (result.app === "configured") result.app = "partially_preserved";

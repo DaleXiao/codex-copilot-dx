@@ -14,6 +14,17 @@ function fixture(t) {
     baseUrl: "http://127.0.0.1:2027", apiKey: "ccdx_m365_" + "a".repeat(64), models: [{ id: "claude-opus-5.5" }] };
   return { options, paths: claudeClientPaths(options) };
 }
+
+test("removing an owned source-only flag and writing new Claude settings share one transaction", t => {
+  const { options, paths } = fixture(t), input = { ...options, client: "claude_code" };
+  configureClaudeClients(input);const old = fs.readFileSync(paths.code), journal = m365Paths(options).ownership, oldOwner = fs.readFileSync(journal);
+  const rename = fs.renameSync;
+  t.mock.method(fs, "renameSync", (from, to) => { if (to === paths.code) throw Error("fixture write failed");return rename(from, to); });
+  assert.throws(() => configureClaudeClients({ ...input, disableExperimentalBetas: false, models: [{ id: "another-model" }] }), /fixture write failed/);
+  assert.deepEqual(fs.readFileSync(paths.code), old);assert.deepEqual(fs.readFileSync(journal), oldOwner);
+  t.mock.restoreAll();configureClaudeClients({ ...input, disableExperimentalBetas: false });
+  assert.equal(JSON.parse(fs.readFileSync(paths.code)).env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, undefined);
+});
 function write(file, value) { fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, JSON.stringify(value)); }
 const read = file => JSON.parse(fs.readFileSync(file));
 

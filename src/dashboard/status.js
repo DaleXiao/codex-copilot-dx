@@ -306,6 +306,7 @@
         issues: [...(data.response_failures?.recent || []), ...(data.http_errors?.actionable_recent || data.http_errors?.recent || [])],
         capability: data.http_errors?.capability_recent || [],
         connection: [...(data.http_errors?.protocol_recent || []), ...(data.http_errors?.route_recent || [])],
+        discovery: data.http_errors?.discovery_recent || [],
       };
       for (const rows of Object.values(issueGroups)) rows.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
       issueRequests = recentRequests;

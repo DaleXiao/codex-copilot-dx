@@ -102,7 +102,8 @@ const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, servic
     return { source: "catalog", checkedAt: new Date().toISOString(), advertised: 3, upstreamHost: "Microsoft 365",
       catalogRead: { source: "network", checked_at: new Date().toISOString(), total: 3, claude: 1, gpt: 2, filtered: 0, http_status: 200,
         http_revalidation_requested: true, request_id: "synthetic-catalog-request" }, models: [
-      { id: "claude-opus-5.5", vendor: "Anthropic", endpoints: ["messages"], clients: ["claude_app", "claude_code"], reasoning_efforts: ["low", "high"], selectable: true },
+      { id: "claude-opus-5.5", vendor: "Anthropic", endpoints: ["messages"], clients: ["claude_app", "claude_code"], reasoning_efforts: ["low", "high"], selectable: true,
+        client_visibility: [{ client: "codex", reason: "protocol_unsupported" }] },
           { id: "gpt-source", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], reasoning_efforts: ["low"], auto_review_efforts: ["low"], selectable: true },
       { id: "gpt-second", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], reasoning_efforts: ["low"], auto_review_efforts: ["low"], selectable: true },
     ] };
@@ -457,6 +458,8 @@ try {
         assert(Math.abs(modelSummaryBefore.x - modelSummaryAfter.x) <= 1, "Model details expand without moving the summary horizontally");
         assert.deepEqual(await modelSummary.evaluate(el => ({ page: scrollX, table: el.closest(".table-wrap").scrollLeft })), catalogScrollBefore);
         assert.match(await page.locator("#live-models-body").innerText(), /low.*high/);
+        assert.equal(await page.locator('#live-models-body [data-i18n="visibility_protocol_unsupported"]').count(), 1);
+        assert.equal(await page.locator('#failure-kind option[value="discovery"]').count(), 1);
         const contrast = await page.locator("#live-models-body td").first().evaluate(node => {
           const luminance = color => { const rgb = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => { value /= 255;return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4; });return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722; };
           const text = luminance(getComputedStyle(node).color), surface = luminance(getComputedStyle(node.closest(".panel")).backgroundColor);

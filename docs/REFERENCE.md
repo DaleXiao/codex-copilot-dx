@@ -80,6 +80,8 @@ A running request stays with its original source, credential revision and capabi
 
 Codex selections containing only GitHub models keep native OpenAI mode and readable names. Other selections use the client's private local gateway credential. Paused access is rejected before credential validation. CCDX does not write or clear native ChatGPT sign-in data. When models are missing after a client update, check the selected models and run `ccdx doctor`; fully quit and reopen the app before changing credentials.
 
+Old conversations keep their recorded provider identity. Codex 0.166 requires the currently selected provider to match that identity; a per-resume override does not bypass this check. Continue a legacy custom-provider chat with its original provider selected. CCDX retains the inactive, unchanged legacy provider table and does not silently rewrite chat metadata or switch the global native default back to a custom provider.
+
 Claude App and Claude Code use separate keys on `http://127.0.0.1:2026/anthropic`. Compatibility aliases are internal; visible model names follow source metadata. Client synchronization respects manual/managed fields and records ownership for restoration. Already-running clients may need a normal restart.
 
 Claude App can continue an existing conversation on another selected, authorized source when complete Messages history is available. Unfinished tool turns, unavailable attachments and company-account isolation are checked before transfer. Opaque signed or compacted history is not transferable between services. Codex and Claude Code keep their existing continuation rules. A 409 is a history/isolation conflict; it does not by itself mean the selected model is unavailable.

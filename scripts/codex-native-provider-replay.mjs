@@ -24,8 +24,8 @@ const registry = { models: { data: ids.map((id, i) => ({ id, name: `Replay ${i +
   capabilities: { limits: { max_context_window_tokens: 128000 }, supports: { reasoning_effort: ["low", "high"], tool_calls: true } } })) } };
 const client = { getCachedModelEndpoints: () => ["/responses"], responses: async body => {
   assert.ok(ids.includes(body.model));calls.push(body.model);
-  const item = { type: "message", id: "msg_replay", role: "assistant", status: "completed", content: [{ type: "output_text", text: "NATIVE_PROVIDER_OK", annotations: [] }] };
-  const response = { id: "resp_replay", object: "response", model: body.model, output: [item], status: "completed", usage: { input_tokens: 10, output_tokens: 4, total_tokens: 14 } };
+  const item = { type: "message", id: `msg_replay_${calls.length}`, role: "assistant", status: "completed", content: [{ type: "output_text", text: "NATIVE_PROVIDER_OK", annotations: [] }] };
+  const response = { id: `resp_replay_${calls.length}`, object: "response", model: body.model, output: [item], status: "completed", usage: { input_tokens: 10, output_tokens: 4, total_tokens: 14 } };
   const events = [{ type: "response.created", response: { ...response, status: "in_progress", output: [] } }, { type: "response.output_item.added", output_index: 0, item: { ...item, status: "in_progress", content: [] } },
     { type: "response.content_part.added", output_index: 0, content_index: 0, item_id: item.id, part: { type: "output_text", text: "", annotations: [] } },
     { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: item.id, delta: "NATIVE_PROVIDER_OK" }, { type: "response.output_item.done", output_index: 0, item }, { type: "response.completed", response }];
@@ -42,9 +42,9 @@ async function stopChild() {
   if (!child || child.exitCode !== null) return;
   const stopped = new Promise(resolve => child.once("exit", resolve));child.kill();await bounded(stopped, "native process stop");child = null;
 }
-let port = 0, legacyThread;
+let port = 0, legacyThread, providerGuardObserved = false;
 try {
-  for (const state of ["legacy", "temporary-repair", "cold", "warm", "old-cache"]) {
+  for (const state of ["legacy", "temporary-repair", "cold", "legacy-resume", "warm", "old-cache"]) {
     if (state === "old-cache") { const file = path.join(profile, "models_cache.json");if (fs.existsSync(file)) { const cache = JSON.parse(fs.readFileSync(file));cache.client_version = "0.0.0";fs.writeFileSync(file, JSON.stringify(cache)); } }
     await new Promise(resolve => server.listen(port, "127.0.0.1", resolve));port = server.address().port;
     runtime = createProviderRuntime({ home: root, env, platform: process.platform, corePort: port, githubClient: client, githubRegistry: registry, secretStore: { close() {} } });
@@ -71,9 +71,11 @@ try {
     Object.assign(childEnv, { HOME: root, CODEX_HOME: profile, HTTP_PROXY: "http://127.0.0.1:1", HTTPS_PROXY: "http://127.0.0.1:1", NO_PROXY: "127.0.0.1,localhost" });
     const overrides = { chatgpt_base_url: `http://127.0.0.1:${port}`, "features.shell_snapshot": false, "features.plugins": false, "features.remote_plugin": false, "features.apps": false,
       "features.skill_search": false, "features.skill_mcp_dependency_install": false, "analytics.enabled": false, "feedback.enabled": false, check_for_update_on_startup: false };
+    if (state === "legacy-resume") overrides.model_provider = "ccdx_gateway";
+    const configBytes = fs.readFileSync(path.join(profile, "config.toml"));
     const pending = new Map();let next = 0, buffer = "", resolveTurn, authErrors = 0;
     const turn = new Promise(resolve => { resolveTurn = resolve; });
-    const call = (method, params) => bounded(new Promise((resolve, reject) => { const id = ++next;pending.set(id, { resolve, reject });child.stdin.write(JSON.stringify({ id, method, params }) + "\n"); }), method);
+    const call = (method, params) => bounded(new Promise((resolve, reject) => { const id = ++next;pending.set(id, { method, resolve, reject });child.stdin.write(JSON.stringify({ id, method, params }) + "\n"); }), method);
     child = spawn(binary, [...Object.entries(overrides).flatMap(([key, value]) => ["-c", `${key}=${JSON.stringify(value)}`]), "app-server", "--stdio"], { env: childEnv, cwd: root, stdio: ["pipe", "pipe", "pipe"] });
     child.stderr.on("data", chunk => { if (/Sign in to ChatGPT/.test(String(chunk))) authErrors++; });child.stdin.on("error", () => {});
     child.on("error", error => { for (const request of pending.values()) request.reject(error); });
@@ -81,12 +83,12 @@ try {
       buffer += chunk;let boundary;
       while ((boundary = buffer.indexOf("\n")) >= 0) { const line = buffer.slice(0, boundary);buffer = buffer.slice(boundary + 1);if (!line) continue;
         const value = JSON.parse(line), request = pending.get(value.id);
-        if (request) { pending.delete(value.id);value.error ? request.reject(Error(JSON.stringify(value.error))) : request.resolve(value.result); }
+        if (request) { pending.delete(value.id);value.error ? request.reject(Object.assign(Error(`${request.method}: ${JSON.stringify(value.error)}`), { rpc: value.error })) : request.resolve(value.result); }
         else if (value.method === "turn/completed") resolveTurn(value.params);
       }
     });
     await call("initialize", { clientInfo: { name: "Codex Desktop", version: "1.0" }, capabilities: { experimentalApi: true } });child.stdin.write('{"method":"initialized","params":{}}\n');
-    const expectedProvider = state === "legacy" ? "ccdx_gateway" : "openai";
+    const expectedProvider = ["legacy", "legacy-resume"].includes(state) ? "ccdx_gateway" : "openai";
     // Ask for models first and concurrently with config/auth, as the App can
     // during startup. No warm-up read or model/list retry may hide an empty list.
     const [catalog, configuration, authStatus] = await Promise.all([
@@ -99,18 +101,36 @@ try {
     assert.deepEqual(catalog.data.map(model => model.id), state === "temporary-repair" ? ids.map(id => deploymentModelId("github", id)) : ids, "The first model/list must contain every selected model");
     for (const model of catalog.data) { assert.equal(model.hidden, false);assert.equal(model.availableAccessPrograms, null);if (state !== "temporary-repair") assert.doesNotMatch(model.displayName, /·|GitHub/); }
     if (state === "cold") {
-      const resumed = await call("thread/resume", { threadId: legacyThread, cwd: root, approvalPolicy: "never", sandbox: "read-only" });
-      assert.equal(resumed.modelProvider, "ccdx_gateway");
+      try {
+        const resumed = await call("thread/resume", { threadId: legacyThread, cwd: root, approvalPolicy: "never", sandbox: "read-only" });
+        assert.equal(resumed.modelProvider, "ccdx_gateway");
+      } catch (error) {
+        // Codex 0.166 checks both the saved and current provider before overrides.
+        // Respect that boundary instead of rewriting metadata or the native default.
+        if (error.rpc?.data?.type !== "modelProviderMismatch") throw error;
+        const value = error.rpc;
+        assert.equal(value.data?.type, "modelProviderMismatch");
+        assert.equal(value.data.modelProvider, "ccdx_gateway");assert.equal(value.data.currentModelProvider, "openai");
+        providerGuardObserved = true;
+      }
+      assert.equal((await call("getAuthStatus", { includeToken: false, refreshToken: false })).authMethod, "chatgpt");
+      assert.deepEqual((await call("model/list", { includeHidden: true, cursor: null, limit: 100 })).data.map(model => model.id), ids);
+    }
+    const thread = state === "legacy-resume"
+      ? await call("thread/resume", { threadId: legacyThread, cwd: root, approvalPolicy: "never", sandbox: "read-only" })
+      : await call("thread/start", { cwd: root, model: ["legacy", "temporary-repair"].includes(state) ? deploymentModelId("github", ids[0]) : ids[0], approvalPolicy: "never", sandbox: "read-only" });
+    if (state === "legacy-resume") {
+      assert.equal(thread.thread.id, legacyThread);
       assert.match(JSON.stringify(await call("thread/read", { threadId: legacyThread, includeTurns: true })), /NATIVE_PROVIDER_OK/);
     }
-    const thread = await call("thread/start", { cwd: root, model: ["legacy", "temporary-repair"].includes(state) ? deploymentModelId("github", ids[0]) : ids[0], approvalPolicy: "never", sandbox: "read-only" });
     if (state === "legacy") legacyThread = thread.thread.id;
     assert.equal(thread.modelProvider, expectedProvider);
     await call("turn/start", { threadId: thread.thread.id, input: [{ type: "text", text: "Reply with NATIVE_PROVIDER_OK.", text_elements: [] }] });
     const completed = await bounded(turn, "native turn");assert.equal(completed.turn.status, "completed");
     const read = await call("thread/read", { threadId: thread.thread.id, includeTurns: true });assert.match(JSON.stringify(read), /NATIVE_PROVIDER_OK/);
     assert.equal(fs.readFileSync(path.join(profile, "auth.json"), "utf8"), auth);assert.equal(authErrors, 0);
-    results.push({ state, auth: "chatgpt", provider: expectedProvider, ...(state === "cold" ? { legacy_session_resumed: true } : {}), first_catalog_models: catalog.data.length, completed: true, auth_errors: authErrors });
+    assert.deepEqual(fs.readFileSync(path.join(profile, "config.toml")), configBytes, "Per-process provider selection must not change the global config");
+    results.push({ state, auth: "chatgpt", provider: expectedProvider, ...(state === "cold" ? { provider_guard_observed: providerGuardObserved } : {}), ...(state === "legacy-resume" ? { legacy_session_resumed: true, legacy_turn_completed: true, global_config_unchanged: true } : {}), first_catalog_models: catalog.data.length, completed: true, auth_errors: authErrors });
     await stopChild();handler.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime.close();runtime = null;
   }
   console.log(JSON.stringify({ results, synthetic_upstream_requests: calls.length, catalog_reads: catalogReads, websocket_fallbacks: upgrades, live_provider_calls: 0 }));

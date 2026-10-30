@@ -11,3 +11,5 @@ Baseline: 1.3.1. Existing accounts, model selections and client configuration ne
 Images, native input suggestions, client sign-in/configuration modes, source selection, streaming and supported Windows/macOS platforms retain their existing behavior. Responses WebSocket, content masking, automatic routing and extra cache/index systems are outside this patch.
 
 Release gates include focused ownership/concurrency/protocol cases, full verification, browser and native-client/platform CI, performance comparisons, isolated 1.3.1 upgrade, strict/offline platform installs, and independent public package/download integrity checks.
+
+The native client replay checks current Codex's provider-selection boundary and continues a legacy chat in a separate original-provider process, without changing global native configuration or auth bytes. Fresh native-mode catalogs and generation remain checked. This does not bypass provider isolation or migrate user chat metadata.

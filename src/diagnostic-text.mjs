@@ -1,3 +1,5 @@
+import { terminalCell } from "./terminal-text.mjs";
+
 // Diagnostics are not a copy of the upstream payload. Keep useful error text,
 // but remove common credential forms and explicitly labelled content echoes.
 export function redactDiagnosticText(value) {
@@ -15,4 +17,14 @@ export function redactDiagnosticText(value) {
     .replace(/((?:prompt|input|completion|tool_arguments|arguments|content)["']?\s*[:=]\s*)[^\n]+/gi, "$1[redacted]")
     .replace(/(encrypted(?: function output)? content\s+)[A-Za-z0-9+/_=-]{24,}/gi, "$1[redacted]")
     .replace(/\b[A-Za-z0-9+/_=-]{96,}\b/g, "[redacted]");
+}
+
+// Bound work before scanning a diagnostic copy. The raw protocol response is untouched.
+export function boundedDiagnosticText(value, { maxChars = 500, fallback = "Operation failed", overflow = "Diagnostic text omitted (too long)" } = {}) {
+  const raw = value === null || value === undefined ? fallback : String(value);
+  if (raw.length > 16 * 1024) return overflow;
+  const text = redactDiagnosticText(terminalCell(raw, { fallback }));
+  let end = Math.min(maxChars, text.length);
+  if (end > 0 && end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]) && /[\uDC00-\uDFFF]/.test(text[end])) end--;
+  return text.slice(0, end);
 }

@@ -359,6 +359,24 @@ export function createCopilotTokenSession({
     return waitForSingleflight(flight, options.signal);
   }
 
+  async function reuseVerifiedAuth(imported, { home } = {}) {
+    const validation = imported?.validation, data = validation?.copilotTokenData;
+    if (imported?.imported !== true || validation?.ok !== true || typeof data?.token !== "string" || !data.token.trim()
+      || typeof data.expires_at !== "number" || !Number.isFinite(data.expires_at * 1000)) return false;
+    try {
+      const credentials = await loadCredentials(home), identity = normalizeGithubIdentity(validation);
+      const savedIdentity = credentials.identity || (typeof readProfileGithubIdentity === "function"
+        ? await readProfileGithubIdentity(credentials.token, { profile, home: resolveHome(home), tokenPath: resolveTokenPath(home) })
+        : usesDefaultTokenStore ? readGithubTokenMetadata(resolveHome(home), credentials.token) : null);
+      if (copilotToken || refreshFlight || data.expires_at * 1000 <= Date.now() + 60000
+        || credentials.token !== imported.token || !identity || !savedIdentity
+        || !githubIdentitiesEqual(savedIdentity, identity)
+        || githubIdentity && !githubIdentitiesEqual(githubIdentity, identity)) return false;
+      cacheTokenData(data, { sourceKey: credentials.sourceKey, githubToken: credentials.token, identity });
+      return true;
+    } catch { return false; } // Normal refresh remains responsible for credential/transport errors.
+  }
+
   function runtimeStatus(now = Date.now()) {
     let upstreamHost = "unknown";
     try { upstreamHost = new URL(apiBase).hostname; } catch {}
@@ -394,6 +412,7 @@ export function createCopilotTokenSession({
 
   return Object.freeze({
     getToken,
+    reuseVerifiedAuth,
     getApiBase: () => apiBase,
     runtimeStatus,
     invalidateCredentials,

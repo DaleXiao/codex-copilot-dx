@@ -1,5 +1,6 @@
 import { isProviderId } from "./provider-metadata.mjs";
 import fs from "node:fs";
+import { createAbortAwareSingleflight } from "./bounded-result-cache.mjs";
 import { markRequestObservation } from "./stream-performance.mjs";
 import os from "node:os";
 import path from "node:path";
@@ -369,15 +370,16 @@ async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord
 const SUMMARY_CACHE_MAX_BYTES = 256 * 1024;
 const SUMMARY_CACHE_SETTLED_MS = 2000;
 let cachedSummary = null;
+const activeSummaries = createAbortAwareSingleflight();
 
-export async function usageSummaryVersion(filePath) {
+export async function usageSummaryVersion(filePath, { settled = true } = {}) {
   try {
     const files = await Promise.all([rotatedFilePath(filePath), filePath].map(async (file) => {
       try {
         const stat = await fs.promises.stat(file, { bigint: true });
         if (!stat.isFile()) return null;
         const recent = Math.max(Number(stat.mtimeMs), Number(stat.ctimeMs));
-        if (Date.now() - recent < SUMMARY_CACHE_SETTLED_MS) return null;
+        if (settled && Date.now() - recent < SUMMARY_CACHE_SETTLED_MS) return null;
         return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(":");
       } catch (error) {
         if (error?.code === "ENOENT") return "missing";
@@ -388,14 +390,17 @@ export async function usageSummaryVersion(filePath) {
   } catch { return null; } // Uncacheable metadata never replaces the normal read/error path.
 }
 
-export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord, provider = "" } = {}) {
+export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord, provider = "", signal } = {}) {
   if (provider && !isProviderId(provider)) throw new Error("Usage provider must be a valid provider ID");
   if (onRecord || warn !== console.error) return summarizeUsageLogFiles(filePath, { warn, onRecord, provider });
   const fileVersion = await usageSummaryVersion(filePath);
   const version = fileVersion === null ? null : `${fileVersion}\0${provider}`;
   if (version === null) {
     cachedSummary = null;
-    return summarizeUsageLogFiles(filePath, { warn, provider });
+    const activeVersion = await usageSummaryVersion(filePath, { settled: false });
+    if (!activeVersion) return summarizeUsageLogFiles(filePath, { warn, provider });
+    return structuredClone(await activeSummaries.run(`${activeVersion}\0${provider}`,
+      () => summarizeUsageLogFiles(filePath, { warn, provider }), { signal }));
   }
   if (cachedSummary?.version === version) return structuredClone(await cachedSummary.promise);
   const entry = { version, promise: null };

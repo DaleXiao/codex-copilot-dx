@@ -17,6 +17,39 @@ function fixture(t) {
 function write(file, value) { fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, JSON.stringify(value)); }
 const read = file => JSON.parse(fs.readFileSync(file));
 
+test("owned App models sync while the host's encrypted key remains opaque and unchanged", t => {
+  for (const platform of ["darwin", "win32"]) {
+    const { options } = fixture(t), input = { ...options, platform, client: "claude_app" }, paths = claudeClientPaths(input);
+    configureClaudeClients(input);
+    const profile = read(paths.profile), sealed = "  __sealed__:v1:c3ludGhldGljLW9ubHk=";
+    profile.inferenceGatewayApiKey = sealed;write(paths.profile, profile);
+    const models = [...input.models, { id: "claude-sonnet-5.5" }];
+    const result = configureClaudeClients({ ...input, models });
+    assert.equal(result.app, "configured");assert.equal(result.app_credential, "encrypted_unverified");
+    assert.equal(read(paths.profile).inferenceGatewayApiKey, sealed);
+    assert.equal(JSON.parse(read(paths.profile).inferenceModels).length, 2);
+    assert.equal(configureClaudeClients({ ...input, models }).changed, false);
+    assert.equal(fs.existsSync(paths.code), false);
+    const custom = read(paths.profile);custom.inferenceModels = JSON.stringify([{ name: "user-model", labelOverride: "User choice" }]);write(paths.profile, custom);
+    assert.equal(configureClaudeClients({ ...input, models }).app, "partially_preserved");
+    assert.equal(read(paths.profile).inferenceModels, custom.inferenceModels);
+    restoreClaudeClients(input);assert.equal(read(paths.profile).inferenceGatewayApiKey, sealed);
+  }
+});
+
+test("encrypted-key recognition never adopts another profile, endpoint or rotated local key", t => {
+  for (const change of ["endpoint", "profile", "key", "unowned"]) {
+    const { options, paths } = fixture(t), input = { ...options, client: "claude_app" };configureClaudeClients(input);
+    const profile = read(paths.profile);profile.inferenceGatewayApiKey = "__sealed__:v1:c3ludGhldGlj";
+    if (change === "endpoint") profile.inferenceGatewayBaseUrl = "http://127.0.0.1:2999";
+    if (change === "profile") { const meta = read(paths.meta);meta.appliedId = "other-profile";write(paths.meta, meta); }
+    if (change === "unowned") fs.unlinkSync(m365Paths(input).ownership);
+    write(paths.profile, profile);const before = fs.readFileSync(paths.profile);
+    const result = configureClaudeClients({ ...input, ...(change === "key" ? { apiKey: "replacement_" + "b".repeat(64) } : {}), models: [...input.models, { id: "claude-sonnet-5.5" }] });
+    assert.equal(result.app, "preserved");assert.deepEqual(fs.readFileSync(paths.profile), before);
+  }
+});
+
 test("compatibility aliases migrate owned App models on each platform without renaming Code models", t => {
   for (const platform of ["darwin", "win32", "linux"]) {
     const { options } = fixture(t), input = { ...options, platform, models: [{ id: "deepseek-v4.1-flash-1017" }, { id: "qwen3.8-max" }] }, paths = claudeClientPaths(input);

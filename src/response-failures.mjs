@@ -1,5 +1,4 @@
-import { terminalCell } from "./terminal-text.mjs";
-import { redactDiagnosticText } from "./diagnostic-text.mjs";
+import { boundedDiagnosticText, redactDiagnosticText } from "./diagnostic-text.mjs";
 import { currentRequestContext } from "./request-context.mjs";
 import { isProviderId } from "./provider-metadata.mjs";
 import { transportErrorDetails } from "./operation-error.mjs";
@@ -7,14 +6,11 @@ import { transportErrorDetails } from "./operation-error.mjs";
 const DEFAULT_RECENT_FAILURES = 10;
 
 function safeIdentifier(value, fallback = "unknown") {
-  const text = redactDiagnosticText(terminalCell(value, { fallback }));
-  return text.slice(0, 200);
+  return boundedDiagnosticText(value, { maxChars: 200, fallback, overflow: fallback });
 }
 
 function safeFailureMessage(value) {
-  let text = terminalCell(value, { fallback: "Response failed without an error message" });
-  text = redactDiagnosticText(text);
-  return text.slice(0, 500);
+  return boundedDiagnosticText(value, { fallback: "Response failed without an error message" });
 }
 
 function upstreamRequestId(headers) {

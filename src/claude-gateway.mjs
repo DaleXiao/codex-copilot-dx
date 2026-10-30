@@ -16,6 +16,19 @@ import { decodedBodyLimitPreference } from "./user-settings.mjs";
 import { operationErrorDetails, transportErrorDetails } from "./operation-error.mjs";
 import { requestApplication } from "./request-application.mjs";
 import { observeContextSession } from "./context-metrics.mjs";
+import { catalogCapabilities } from "./model-capabilities.mjs";
+
+function observeMessagesWindow(provider, model, capability, entry) {
+  try {
+    if (capability == null) {
+      entry ||= resolveClaudeModel(provider.models("claude"), model);
+      capability = entry?.protocol_capabilities?.messages ?? entry?.capability;
+    }
+    if (capability == null && !entry) return;
+    const values = capability == null ? catalogCapabilities(entry) : capability.values;
+    markRequestObservation({ context_window_tokens: values?.context_window });
+  } catch { /* Optional catalog metadata must not change inference availability. */ }
+}
 
 function send(res, code, value) {
   if (res.destroyed || res.writableEnded) return;
@@ -123,6 +136,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     if (!resolveRequest) tracker?.setProvider(provider.id);
     const abort = createRequestAbort(req, res);
     let release = () => {}, conversation, outcome = "failed", model = null, configuredModel = null, clientModel = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
+    let selectedModel, selectedCapability;
     let terminalOrigin = "client_validation", failureStatus = null, countDeadline = null, rejectionReason;
     if (!countTokens) { stats.total++;stats.active++;stats.last_request_at = new Date().toISOString(); }
     const context = parent || { requestId };
@@ -143,17 +157,24 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           const resolved = await resolveRequest(body, req);
           selectedProvider = resolved.provider;finishProvider = resolved.finish || finishProvider;
           configuredModel = resolved.model;clientModel = body.model === configuredModel ? null : body.model;
+          selectedCapability = resolved.capability;
           body = { ...body, model: configuredModel };tracker?.setProvider(selectedProvider.id);
           const context = currentRequestContext();if (context) context.provider = selectedProvider.id;
         }
         if (desktopAliases) body = desktopMessages(body);
         model = body.model;streamed = !countTokens && body.stream === true;
-        if (!resolveRequest) configuredModel = provider.configuredModels || desktopAliases ? resolveClaudeModel(provider.models("claude"), model, { desktopAliases })?.id : null;
+        if (!resolveRequest && (provider.configuredModels || desktopAliases)) {
+          selectedModel = resolveClaudeModel(provider.models("claude"), model, { desktopAliases });
+          configuredModel = selectedModel?.id;
+        }
         if (desktopAliases && !configuredModel) throw Object.assign(new Error("The selected model is unavailable"), { code: "ccdx_api_model_unavailable", statusCode: 400 });
         if (desktopAliases && configuredModel !== model) { clientModel = model;model = configuredModel;body = { ...body, model }; }
         stats.last_model = model;
         context.model = configuredModel || model;
-        if (!countTokens) markRequestObservation({ max_output_tokens_requested: body.max_tokens });
+        if (!countTokens) {
+          markRequestObservation({ max_output_tokens_requested: body.max_tokens });
+          observeMessagesWindow(selectedProvider, configuredModel || model, selectedCapability, selectedModel);
+        }
         tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });
         conversation = validateConversation?.(body, req.headers, selectedProvider);
         if (!countTokens) observeContextSession(body, req.headers, selectedProvider, "messages");

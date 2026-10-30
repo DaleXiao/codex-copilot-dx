@@ -56,11 +56,15 @@ An app model file contains `deployments: [{"source":"github","model":"<model-id>
 
 **Usage → Context** shows reported input, declared model windows, cache reuse and observed gateway compactions from this process. It leaves missing values unknown. Input share is reported input divided by the declared window; it is not a measurement of every item currently held by the client. Reused input still occupies context.
 
+Messages observes the selected model's effective capability snapshot after alias resolution. Legacy connections use cached catalog metadata when no snapshot is supplied. Missing or invalid windows remain unknown; no size is inferred from model names. Existing provider-applied capability observations keep their priority. This adds neither catalog refresh nor inference calls, and does not change request bodies, replies or token-count probes.
+
 Only explicit, bounded session IDs can link requests. Local display identifiers replace native IDs and titles; account/profile, app, source, model and declared subagent identities remain separate. Unidentified requests appear individually. Concurrent observations are points rather than a connected conversation curve. Compaction records cover observed Responses compact calls, not every client-side summary, and their elapsed time includes the whole gateway request. No before/after size is invented from summary output tokens.
 
 Each protocol observer retains at most 64 series of 64 request points and 16 compaction records, plus 20 unidentified requests. These numeric observations are memory-only and reset on restart. The page reads them on demand through the existing dashboard refresh controller; ordinary status payloads do not include them. There is no prompt storage, text tokenization, transcript scan, extra provider request, content breakdown or compression control.
 
 ## Sources and client access
+
+When Claude App encrypts a CCDX-owned gateway key, synchronization keeps the encrypted value and can still update owned model fields. The expected local key must match CCDX's ownership record; foreign profiles, addresses, rotated keys and user edits are not adopted. The sync result can report that the key was kept encrypted without claiming verified access. No system keystore decryption or extra permission is used.
 
 Clicking the Web UI logo plays one brief rotation and keeps its Overview navigation. System reduced-motion preferences disable this effect. The header uses a link icon for the local connection; the request-flow total uses a circled ellipsis for active requests.
 
@@ -75,6 +79,8 @@ Manual APIs require HTTPS. Codex requires Responses; Claude requires Messages. C
 A running request stays with its original source, credential revision and capabilities. Refreshing a catalog does not select models or change defaults. Failed reads keep last-good data with failure evidence; they do not trigger inference, re-login or source switching. Normal API refresh uses a 30-minute cache and a one-minute minimum interval after explicit reads or failures.
 
 Codex selections containing only GitHub models keep native OpenAI mode and readable names. Other selections use the client's private local gateway credential. Paused access is rejected before credential validation. CCDX does not write or clear native ChatGPT sign-in data. When models are missing after a client update, check the selected models and run `ccdx doctor`; fully quit and reopen the app before changing credentials.
+
+Old conversations keep their recorded provider identity. Codex 0.166 requires the currently selected provider to match that identity; a per-resume override does not bypass this check. Continue a legacy custom-provider chat with its original provider selected. CCDX retains the inactive, unchanged legacy provider table and does not silently rewrite chat metadata or switch the global native default back to a custom provider.
 
 Claude App and Claude Code use separate keys on `http://127.0.0.1:2026/anthropic`. Compatibility aliases are internal; visible model names follow source metadata. Client synchronization respects manual/managed fields and records ownership for restoration. Already-running clients may need a normal restart.
 
@@ -562,7 +568,7 @@ Editing references are opaque IDs bound to the provider configuration, not paths
 - CCDX binds to loopback by default. Non-loopback hosts are rejected unless `CCDX_ALLOW_LAN=1` is set explicitly.
 - Enabling LAN binding exposes a Copilot-backed API to other reachable machines. Provide your own host firewall and network isolation; do not expose the listener to an untrusted network.
 - Inference POSTs reject any browser `Origin` header before reading the body or contacting upstream, including simple `text/plain` requests. Native Codex/Node requests without Origin and deliberately enabled native LAN clients keep their existing access. This is not authentication or protection against untrusted local native programs.
-- Explicit auth tools store GitHub OAuth credentials at `~/.local/share/ccdx/github_token`, with precedence over the compatible legacy `~/.local/share/copilot-api/github_token` store. Short-lived Copilot service tokens remain in process memory and are refreshed as needed. See Account and repair tools for safe replacement/sign-out behavior.
+- Explicit auth tools store GitHub OAuth credentials at `~/.local/share/ccdx/github_token`, with precedence over the compatible legacy `~/.local/share/copilot-api/github_token` store. Short-lived Copilot service tokens remain in process memory and are refreshed as needed. First-time local discovery hands its verified service token to the startup client when the saved credential and account match and more than a minute of validity remains, avoiding a duplicate exchange. Existing cached tokens, refreshes in flight and account bindings are retained. See Account and repair tools for safe replacement/sign-out behavior.
 - The optional image API credential is stored separately with mode `0600` only after `ccdx app codex image setup`; it is never placed in Codex configuration or diagnostic output.
 - Runtime status and usage records retain metadata by default; explicitly enabled HTTP error excerpts can contain private context. Diagnostic logging records status and error messages; it is not a general redaction layer for arbitrary error text. See Debug logging before sharing logs.
 - Request/response bodies, request-admission queues, retained history, image work, SSE buffers, log queues, retries, and shutdown have explicit limits. These component limits are not a single process-wide memory ceiling; completed image files are persistent user artifacts, not an automatically evicted cache.
@@ -704,3 +710,9 @@ MIT
 | `CCDX_LOG_PATH` | Optional diagnostic log path |
 
 Internal supervisor and installer environment fields are not user settings.
+
+## Diagnostic and usage read bounds
+
+Diagnostic presentation omits input longer than 16,384 UTF-16 code units before normalization or credential scanning. Ordinary identifiers/messages retain budgets of 200/500 UTF-16 code units (400 for operation details), clipped only at complete surrogate boundaries. Oversized diagnostics retain structured status, error and request identifiers; original HTTP/SSE payloads are not changed. The general-purpose credential recognizer keeps its original semantics.
+
+Usage queries for recently written logs may share an in-flight aggregate only when observed device/inode/size/mtime/ctime identities and query filters match. Those results are not kept after the scan. The existing two-second settled-file rule and bounded caches remain. Appends, rewrites, replacement, rotation, provider filters, time zone and calendar date retain independent identities. Custom warning callbacks bypass sharing. Cancelling one waiter does not stop other waiters; a bounded scan already started may complete without retaining its result.

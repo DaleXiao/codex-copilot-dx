@@ -356,14 +356,15 @@ export async function handleDashboardApi(req, res, pathname, {
         return;
       }
     }
+    const abort = createRequestAbort(req, res);
     try {
       const analysis = analytics && !usageSummaryFn
-        ? await analyzeUsageLogs(undefined, { timeZone: query.get("time_zone") || "UTC", provider }) : null;
-      const summary = analysis?.summary || await (usageSummaryFn || (options => summarizeUsageLogs(undefined, options)))({ provider, ...(analytics ? { onRecord: analytics.record } : {}) });
-      sendJson(res, 200, { source: "local_usage_log", provider: provider || "all", providers: summary.providers, ...usageTable(summary), ...(analytics ? { analytics: analysis?.analytics || analytics.snapshot() } : {}) });
+        ? await analyzeUsageLogs(undefined, { timeZone: query.get("time_zone") || "UTC", provider, signal: abort.signal }) : null;
+      const summary = analysis?.summary || await (usageSummaryFn || (options => summarizeUsageLogs(undefined, { ...options, signal: abort.signal })))({ provider, ...(analytics ? { onRecord: analytics.record } : {}) });
+      if (!abort.signal.aborted) sendJson(res, 200, { source: "local_usage_log", provider: provider || "all", providers: summary.providers, ...usageTable(summary), ...(analytics ? { analytics: analysis?.analytics || analytics.snapshot() } : {}) });
     } catch {
-      sendJson(res, 500, { error: "Could not read local usage summary" });
-    }
+      if (!abort.signal.aborted) sendJson(res, 500, { error: "Could not read local usage summary" });
+    } finally { abort.cleanup(); }
     return;
   }
 

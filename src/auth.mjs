@@ -340,6 +340,7 @@ export async function ensureAuth({
   sleepImpl = sleep,
   now = Date.now,
   interactive = true,
+  onImportedAuth,
 } = {}) {
   const GITHUB_TOKEN_PATH = githubTokenPath(home);
   if (fs.existsSync(GITHUB_TOKEN_PATH)) {
@@ -360,7 +361,10 @@ export async function ensureAuth({
     }
 
     const imported = await importDiscoveredGithubToken({ home, env, fetchImpl, signal, log, lock: false });
-    if (imported) return;
+    if (imported) {
+      await onImportedAuth?.(imported);
+      return;
+    }
 
     log(status("wait", "No usable GitHub token found. Starting device login..."));
 

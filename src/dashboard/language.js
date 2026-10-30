@@ -1,5 +1,6 @@
 (() => {
   const translations = {
+    "client_key_encrypted_kept": ["Key kept encrypted; access not checked.", "密钥保持加密，访问未验证。"],
     "context_tabs": ["Usage view", "统计视图"],
     "context_unknown_window": ["Unknown", "未知"],
     "context_compact_event": ["Compaction", "压缩"],

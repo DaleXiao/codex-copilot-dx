@@ -231,6 +231,7 @@ export function createCopilotClientRuntime({
     getApiBase: tokenSession.getApiBase,
     runtimeStatus,
     getCopilotToken: tokenSession.getToken,
+    reuseVerifiedAuth: tokenSession.reuseVerifiedAuth,
     invalidateCredentials: tokenSession.invalidateCredentials,
     resetTokenForTests: tokenSession.resetForTests,
     chatCompletions,

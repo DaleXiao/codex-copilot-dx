@@ -2,6 +2,8 @@
 
 Baseline: 1.3.4. This patch reduces the impact of client packaging changes while retaining native sign-in, model selections, image setup and optional prediction settings.
 
+Terminal appearance adds Black & white and Orange in Settings and `ccdx config terminal`. Black & white follows the terminal's default foreground; Orange supports truecolor, 256-color and ordinary ANSI, with a darker shade for an explicitly reported light background. Layout is calculated before coloring, and plain output retains its existing behavior. Web and terminal palettes remain independent.
+
 Prediction startup verifies the installed application's system identity asynchronously. It no longer inspects `app.asar`, hashed chunks or renderer implementation strings. Existing identity records are reverified while retaining their certificate, port and profile. macOS retains platform signature checks; Windows retains the official Store registration and selected profile boundary. Live configuration requests remain the protocol boundary. Unrecognized payloads keep the existing forwarding behavior; no model request is added to test availability.
 
 The optional prediction transport uses a finite 64 KiB header budget on requests, replies and upgrades. Larger headers remain rejected. Errors expose bounded stages and target categories without cookies, authorization headers or bodies. Observed configuration traffic counts as route evidence even when a command-line PAC flag is absent; visible suggestions remain an independent client-side observation.

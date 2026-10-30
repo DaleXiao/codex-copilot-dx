@@ -144,6 +144,8 @@
     "issue_capabilities": ["Capabilities and access", "能力与访问"],
     "issue_connections": ["Connections and paths", "连接与路径"],
     "issue_discovery": ["Service probes", "连接探测"],
+    "appearance_black_white": ["Black & white", "黑白"],
+    "appearance_orange": ["Orange", "橙色"],
     "visibility_app_disabled": ["App access is off", "应用接入已关闭"],
     "visibility_source_disabled": ["Source is off", "模型来源已关闭"],
     "visibility_source_not_allowed": ["Source access not granted", "尚未授权此来源"],

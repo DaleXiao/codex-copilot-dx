@@ -33,3 +33,22 @@ test("pink covers terminal depths, explicit light backgrounds and plain output",
   assert.match(colorTerminalText("test", "pink", { output: { isTTY: true, getColorDepth: () => 24 }, env: { COLORFGBG: "0;15" } }), /168;62;104/);
   for (const options of [{ output: { isTTY: false }, env: {} }, { output: { isTTY: true }, env: { NO_COLOR: "" } }, { output: { isTTY: true }, env: { TERM: "dumb" } }]) assert.equal(colorTerminalText("test", "pink", options), "test");
 });
+
+test("black and white follows terminal foreground; orange adapts without changing table or motion width", () => {
+  const text = "│ Input 1.7M │", frame = "[\x1b[38;5;159m::\x1b[97m:\x1b[0m]";
+  for (const [depth, dark, light] of [[24, "38;2;255;154;61", "38;2;173;77;0"], [8, "38;5;208", "38;5;130"], [4, "93", "33"]]) {
+    for (const background of ["0", "15"]) {
+      const options = { output: { isTTY: true, getColorDepth: () => depth }, env: { COLORFGBG: "7;" + background } };
+      assert.ok(colorTerminalText(text, "mono", options).startsWith("\x1b[39m"));
+      assert.ok(colorTerminalText(text, "orange", options).startsWith(`\x1b[${background === "15" ? light : dark}m`));
+      for (const theme of ["mono", "orange"]) {
+        assert.equal(stripVTControlCharacters(colorTerminalText(text, theme, options)), text);
+        assert.equal(stripVTControlCharacters(colorTerminalMotion(frame, theme, options)), "[:::]");
+        assert.ok(startupBanner({ version: "test", colorTheme: theme, stream: { ...options.output, columns: 80 }, env: options.env }).includes(theme === "mono" ? "\x1b[39m" : "\x1b[" + (background === "15" ? light : dark) + "m"));
+      }
+    }
+  }
+  for (const theme of ["mono", "orange"]) for (const options of [{ output: { isTTY: false }, env: {} }, { output: { isTTY: true }, env: { NO_COLOR: "" } }, { output: { isTTY: true }, env: { TERM: "dumb" } }]) {
+    assert.equal(colorTerminalText(text, theme, options), text);
+  }
+});

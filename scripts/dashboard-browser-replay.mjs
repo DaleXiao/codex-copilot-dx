@@ -735,7 +735,7 @@ try {
         await page.locator(".update-install > summary").click();
         await page.waitForFunction(() => !document.getElementById("terminal-color-theme").disabled);
         assert.equal(await page.locator("#web-color-theme").inputValue(), palette);
-        const terminalPalette = palette === "pink" ? "pink" : "klein";
+        const terminalPalette = ({ green: "orange", mono: "mono", pink: "pink", klein: "klein" })[palette];
         await page.locator("#terminal-color-theme").selectOption(terminalPalette);await settlePreferences();
         await page.waitForFunction(() => !document.getElementById("terminal-color-theme").disabled);
         assert.equal(await page.locator("html").getAttribute("data-palette"), palette);

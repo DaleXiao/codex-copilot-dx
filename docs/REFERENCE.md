@@ -135,6 +135,8 @@ Finish active work before updating the active installation, then restart CCDX no
 Overnight updates are opt-in. The supervised service checks within its local midnight window, stages only eligible patches in the same minor version, and waits for idle work before handoff. Candidates must be published for at least 24 hours. Failed preparation/handoff retains or restores the previous service. Enabling this feature requires its documented normal restart; it does not attach a supervisor to an existing ordinary process. Minor upgrades such as 1.2 → 1.3 remain manual.
 
 
+Terminal palettes are green (default), Klein blue, soft pink, black & white (`mono`) and orange. Choose one in Settings → Terminal appearance or with `ccdx config terminal`. Black & white follows the terminal's default foreground without changing its background. Orange adapts to truecolor, 256-color and ANSI; an explicit light `COLORFGBG` uses a darker orange. Non-TTY, `NO_COLOR` and dumb-terminal output keep their plain behavior. Web color remains independent.
+
 ## Model capabilities and Claude synchronization
 
 An explicitly selected default keeps its identity when its catalog entry becomes

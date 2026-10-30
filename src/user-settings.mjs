@@ -56,7 +56,7 @@ export function readUserSettings({ env = process.env, home = os.homedir(), stric
       delete parsed[key];
     }
     if (Object.hasOwn(parsed, "terminal_color_theme") && !isColorTheme(parsed.terminal_color_theme)) {
-      if (strict) throw invalidSettings(filePath, "terminal_color_theme must be green, klein or pink");
+      if (strict) throw invalidSettings(filePath, "terminal_color_theme must be green, klein, pink, mono or orange");
       delete parsed.terminal_color_theme;
     }
     if (Object.hasOwn(parsed, AUTO_REVIEW_MODEL_KEY)) {
@@ -152,7 +152,7 @@ export function terminalColorPreference(options = {}) {
 }
 
 export function writeTerminalColorTheme(theme, options = {}) {
-  if (!isColorTheme(theme)) throw new Error("Choose green, klein or pink for the terminal color theme");
+  if (!isColorTheme(theme)) throw new Error("Choose green, klein, pink, mono or orange for the terminal color theme");
   return withFileLockSync(`${userSettingsPath(options)}.lock`, () => {
     const settings = readUserSettings({ ...options, strict: true });
     const next = { ...settings };

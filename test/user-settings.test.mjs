@@ -330,6 +330,10 @@ test("terminal color is independent, preserves other keys and refuses damaged se
   assert.equal(serviceSettingsSnapshot(options).theme, "twin");
   assert.equal(readUserSettings(options).image_enabled, false);
   assert.equal(readUserSettings(options).custom, "keep");
+  for (const theme of ["mono", "orange"]) {
+    writeTerminalColorTheme(theme, options);assert.equal(terminalColorPreference(options), theme);
+    assert.equal(serviceSettingsSnapshot(options).theme, "twin");assert.equal(readUserSettings(options).custom, "keep");
+  }
   assert.throws(() => writeTerminalColorTheme("unknown", options));
   writeTerminalColorTheme("green", options);
   assert.equal(terminalColorPreference(options), "green");

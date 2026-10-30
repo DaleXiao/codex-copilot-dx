@@ -25,6 +25,10 @@ let pendingRecords = 0;
 let pendingBytes = 0;
 let droppedRecords = 0;
 let writeFailures = 0;
+const appendObservers = new Set();
+export function subscribeUsageAppends(listener) {
+  appendObservers.add(listener);return () => appendObservers.delete(listener);
+}
 const runtimeUsage = { since: new Date().toISOString(), records: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, partial_records: 0 };
 const runtimeUsageByProvider = new Map();
 
@@ -155,7 +159,14 @@ async function writeUsageBatch(batch) {
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
   await withFileLock(`${path.resolve(filePath)}.lock`, async () => {
     batch.push(...takePendingWrites(filePath, maxBytes));
+    const before = appendObservers.size ? await usageSummaryVersion(filePath, { settled: false }) : null;
     await appendRotatingLines(filePath, batch.map(({ line }) => line), maxBytes);
+    if (before && appendObservers.size) {
+      const after = await usageSummaryVersion(filePath, { settled: false });
+      const change = { filePath: path.resolve(filePath), before, after,
+        lines: batch.map(entry => entry.line), bytes: batch.reduce((sum, entry) => sum + entry.bytes, 0) };
+      for (const listener of appendObservers) { try { listener(change); } catch { /* Analytics cannot fail a log write. */ } }
+    }
   }, {
     timeoutMs: USAGE_WRITE_LOCK_TIMEOUT_MS,
     staleMs: USAGE_WRITE_LOCK_STALE_MS,
@@ -351,20 +362,19 @@ async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord
       if (provider && provider !== usageProvider(record)) continue;
       const one = summarizeUsage([record]);
       onRecord?.(record, one);
-      summary.requests += one.requests;
-      addUsageTotals(summary.totals, one.totals);
-      addUsageTotals(summary.providers, one.providers);
-      for (const [model, values] of Object.entries(one.byModel)) {
-        if (!Object.hasOwn(summary.byModel, model)) Object.defineProperty(summary.byModel, model, { value: { requests: 0 }, enumerable: true, configurable: true, writable: true });
-        addUsageTotals(summary.byModel[model], values);
-      }
-      for (const [model, values] of Object.entries(one.bySourceModel)) {
-        if (!Object.hasOwn(summary.bySourceModel, model)) summary.bySourceModel[model] = {};
-        addUsageTotals(summary.bySourceModel[model], values);
-      }
+      mergeUsageSummary(summary, one);
     }
   }
   return summary;
+}
+
+export function mergeUsageSummary(summary, one) {
+  summary.requests += one.requests;
+  addUsageTotals(summary.totals, one.totals);addUsageTotals(summary.providers, one.providers);
+  for (const key of ["byModel", "bySourceModel"]) for (const [model, values] of Object.entries(one[key])) {
+    if (!Object.hasOwn(summary[key], model)) Object.defineProperty(summary[key], model, { value: {}, enumerable: true, configurable: true, writable: true });
+    addUsageTotals(summary[key][model], values);
+  }
 }
 
 const SUMMARY_CACHE_MAX_BYTES = 256 * 1024;

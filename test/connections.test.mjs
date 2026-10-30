@@ -105,6 +105,26 @@ test("explicit manual sync writes only the target, retains auto_sync false and r
   await assert.rejects(s.runtime.manageConnections({ operation: "sync_client", id: "codex", client_revision: client.revision }), { code: "ccdx_connections_conflict" });
   assert.equal(writes.length, before + 1);
 });
+
+test("a failed client write preserves the saved source and selected models with an explicit sync failure", async t => {
+  const s = runtime(t, { configureCodex() { throw Error("fixture write denied"); } });
+  const id = await save(s.runtime), client = s.runtime.connections().clients.find(c => c.id === "codex");
+  const result = await s.runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: client.allowed,
+    deployments: [{ source: id, model: "custom/response" }], client_revision: client.revision });
+  const saved = result.clients.find(c => c.id === "codex");
+  assert.equal(saved.setup, "configuration_unavailable");assert.equal(saved.deployments[0].model, "custom/response");
+  assert.ok(result.providers.some(p => p.id === id));assert.equal(s.calls.length, 0);
+});
+
+test("catalog visibility explains client selection and protocol exclusions without changing access", async t => {
+  const s = runtime(t), id = await save(s.runtime);
+  const graph = fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env }));
+  const catalog = await s.runtime.manageConnections({ operation: "source_catalog", id });
+  const messages = catalog.models.find(m => m.id === "any-message-model"), responses = catalog.models.find(m => m.id === "custom/response");
+  assert.equal(messages.client_visibility.find(c => c.client === "codex").reason, "protocol_unsupported");
+  assert.equal(responses.client_visibility.find(c => c.client === "codex").reason, "model_not_selected");
+  assert.deepEqual(fs.readFileSync(accessSettingsPath({ home: s.home, env: s.env })), graph);
+});
 test("source authorization is source-scoped, revision-checked and cannot grant incompatible GitHub access", async t => {
   const s = runtime(t), api = await save(s.runtime), before = s.runtime.connections();
   await s.runtime.manageConnections({ operation: "source_access", id: api, allowed: ["claude_app"], impact_revision: before.source_impacts[api].revision });

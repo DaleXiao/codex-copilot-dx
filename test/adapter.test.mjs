@@ -243,8 +243,11 @@ test("createAdapterHandler: tracks terminal activity for one business request li
   };
 
   createAdapterHandler({ terminalActivity, imageMcpHandler: (_req, response) => response.end() })(req, res);
-  assert.equal(started, 1);
-  assert.equal(finished, 1);
+  assert.equal(started, 0, "GET discovery must not animate model activity");
+  assert.equal(finished, 0);
+  req.method = "POST";
+  createAdapterHandler({ terminalActivity, imageMcpHandler: (_req, response) => response.end() })(req, res);
+  assert.equal(started, 1);assert.equal(finished, 1);
 });
 
 test("createAdapterHandler contains unexpected synchronous and asynchronous dispatch failures", async () => {

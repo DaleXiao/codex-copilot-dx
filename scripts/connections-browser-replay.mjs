@@ -187,7 +187,9 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         assert.equal(fs.readFileSync(accessSettingsPath({ home: root, env }), "utf8"), beforeMissing, "A missing catalog entry cannot silently remove a saved selection");
         assert.equal(runtime.connections().clients.find(c => c.id === "codex").deployments.length, 2);
         const missingRow = page.locator("#connection-bindings tr").filter({ hasText: "gpt-temporarily-missing" });
-        assert.match(await missingRow.innerText(), /Unavailable|暂不可用/);await missingRow.locator('input[name="binding-model"]').click();
+        assert.match(await missingRow.innerText(), language === "zh" ? /来源目录暂未提供/ : /Missing from source catalog/);
+        assert.equal(await missingRow.locator('[data-i18n="visibility_model_missing"]').count(), 1);
+        await missingRow.locator('input[name="binding-model"]').click();
         const correctedSave = page.waitForResponse(response => response.url().endsWith("/_ccdx/ui/connections") && response.request().method() === "POST");
         await page.locator('#connection-client-form button[type="submit"]').click();assert.equal((await correctedSave).status(), 200);
         assert.deepEqual(runtime.connections().clients.find(c => c.id === "codex").deployments, [{ source: "github", model: "gpt-retained" }]);

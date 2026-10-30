@@ -115,7 +115,7 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
       }
       const snapshot = prediction.snapshot();
       const status = !snapshot.configured && snapshot.bridge !== "unavailable" ? "disabled" : snapshot.bridge !== "running" ? "failed"
-        : pendingRoutePid !== null ? "needs_app_relaunch" : route === "verified" || route === "closed" ? "ready" : route === "missing" ? "needs_app_relaunch" : "route_unverified";
+        : pendingRoutePid !== null ? "needs_app_relaunch" : snapshot.client_route === "observed" || route === "verified" || route === "closed" ? "ready" : route === "missing" ? "needs_app_relaunch" : "route_unverified";
       return { status, bridge_restarted: restarted, app_route: route, ...(routeError ? { route_error: true } : {}), prediction: snapshot };
     }); },
     pacUrl() { return native?.pacUrl || null; },

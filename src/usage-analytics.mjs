@@ -40,6 +40,7 @@ export function createUsageAnalytics({ timeZone = "UTC", now = Date.now(), quali
   }
 
   return {
+    advanceTime(value) { now = value; },
     record(record, summary) {
       const timestamp = typeof record.ts === "string" ? Date.parse(record.ts) : NaN;
       if (!Number.isFinite(timestamp) || timestamp > now) { undated += 1; return; }

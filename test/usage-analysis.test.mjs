@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { analyzeUsageLogs } from "../src/usage-analysis.mjs";
-import { summarizeUsageLogs } from "../src/usage-store.mjs";
+import { summarizeUsageLogs, recordResponsesUsage, flushUsageWrites } from "../src/usage-store.mjs";
 
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-usage-analysis-"));
@@ -49,13 +49,13 @@ test("usage analysis shares one settled scan and returns independent bounded agg
   assert.equal(f.reads(), 2);
 });
 
-test("active-log queries share only their in-flight scan and return isolated aggregates", async t => {
+test("active-log queries reuse unchanged snapshots and rescan external appends", async t => {
   const f = fixture(t);f.realTime();fs.writeFileSync(f.file, f.row());const options = { now: f.now, timeZone: "UTC" };
   const results = await Promise.all(Array.from({ length: 4 }, () => analyzeUsageLogs(f.file, options)));
   assert.equal(f.reads(), 2);results[0].summary.requests = -1;assert.equal(results[1].summary.requests, 1);
-  await analyzeUsageLogs(f.file, options);assert.equal(f.reads(), 4, "Active results are not retained after settlement");
+  await analyzeUsageLogs(f.file, options);assert.equal(f.reads(), 2);
   fs.appendFileSync(f.file, f.row("next"));
-  assert.equal((await analyzeUsageLogs(f.file, options)).summary.requests, 2);assert.equal(f.reads(), 6);
+  assert.equal((await analyzeUsageLogs(f.file, options)).summary.requests, 2);assert.equal(f.reads(), 4);
 });
 
 test("active summary reads coalesce and cancelled analytics do not poison another caller", async t => {
@@ -129,7 +129,7 @@ test("analysis keys separate time zones, midnight and bounded recent choices", a
   await assert.rejects(analyzeUsageLogs(f.file, { timeZone: "invalid" }));
 });
 
-test("warnings, future records, oversized aggregates, fresh files and read errors remain uncached", async t => {
+test("warnings, future records, oversized aggregates and read errors remain uncached", async t => {
   const f = fixture(t); const options = { now: f.now };
   const oldError = console.error; let warnings = 0; console.error = () => { warnings++; };
   t.after(() => { console.error = oldError; });
@@ -143,8 +143,32 @@ test("warnings, future records, oversized aggregates, fresh files and read error
   await analyzeUsageLogs(f.file, options); assert.equal(f.reads(), largeReads + 2);
   fs.writeFileSync(f.file, f.row()); f.realTime();
   await analyzeUsageLogs(f.file, options); const freshReads = f.reads();
-  await analyzeUsageLogs(f.file, options); assert.equal(f.reads(), freshReads + 2);
+  await analyzeUsageLogs(f.file, options); assert.equal(f.reads(), freshReads);
   fs.rmSync(f.file); fs.mkdirSync(f.file); await assert.rejects(analyzeUsageLogs(f.file, options));
+});
+
+test("writer-witnessed appends update aggregates without rereading history and rotation invalidates them", async t => {
+  const f = fixture(t), oldPath = process.env.CCDX_USAGE_PATH, oldLimit = process.env.CCDX_USAGE_MAX_BYTES;
+  process.env.CCDX_USAGE_PATH = f.file;process.env.CCDX_USAGE_MAX_BYTES = "33554432";
+  t.after(() => { if (oldPath === undefined) delete process.env.CCDX_USAGE_PATH;else process.env.CCDX_USAGE_PATH = oldPath;
+    if (oldLimit === undefined) delete process.env.CCDX_USAGE_MAX_BYTES;else process.env.CCDX_USAGE_MAX_BYTES = oldLimit; });
+  fs.writeFileSync(f.file, f.row("before"));const options = { now: Date.now(), timeZone: "UTC" };
+  await analyzeUsageLogs(f.file, options);const reads = f.reads();
+  await recordResponsesUsage({ response: { id: "synthetic", model: "added", usage: { input_tokens: 10, output_tokens: 2, input_tokens_details: { cached_tokens: 4 } } } });
+  await flushUsageWrites();
+  const delta = await analyzeUsageLogs(f.file, { ...options, now: Date.now() });
+  assert.equal(f.reads(), reads, "a witnessed append must not rescan the log");assert.equal(delta.summary.requests, 2);
+  const full = await summarizeUsageLogs(f.file, { warn() {} });assert.deepEqual(delta.summary, full);
+  process.env.CCDX_USAGE_MAX_BYTES = "1";
+  await recordResponsesUsage({ response: { id: "synthetic-next", model: "rotated", usage: { input_tokens: 3, output_tokens: 1 } } });await flushUsageWrites();
+  const rotated = await analyzeUsageLogs(f.file, { ...options, now: Date.now() });
+  assert.ok(f.reads() > reads);assert.deepEqual(rotated.summary, await summarizeUsageLogs(f.file, { warn() {} }));
+});
+
+test("an unterminated valid tail cannot become an append cache checkpoint", async t => {
+  const f = fixture(t);fs.writeFileSync(f.file, f.row().trimEnd());
+  const options = { now: f.now };assert.equal((await analyzeUsageLogs(f.file, options)).summary.requests, 1);
+  const reads = f.reads();await analyzeUsageLogs(f.file, options);assert.equal(f.reads(), reads + 2);
 });
 
 test("custom warnings and changes during scans cannot retain a reusable clean snapshot", async t => {

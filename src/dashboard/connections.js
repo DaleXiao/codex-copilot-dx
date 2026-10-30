@@ -380,7 +380,7 @@
     el("connection-client-cancel").disabled = !bindingDirty;
     const body = el("connection-bindings"), c = client(editingClient);body.replaceChildren();
     const available = c.model_plan?.available || [], availableKeys = new Set(available.map(item => bindingKey(item.source, item.id)));
-    const missing = [...bindingSelection].filter(key => !availableKeys.has(key)).map(key => { const [source, id] = key.split("\0");return { source, id, route_id: c.model_plan?.unavailable?.find(item => item.source === source && item.id === id)?.route_id, unavailable: true }; });
+    const missing = [...bindingSelection].filter(key => !availableKeys.has(key)).map(key => { const [source, id] = key.split("\0"), saved = c.model_plan?.unavailable?.find(item => item.source === source && item.id === id);return { source, id, route_id: saved?.route_id, reason: saved?.reason, unavailable: true }; });
     for (const item of [...available, ...missing]) {
       const key = bindingKey(item.source, item.id), row = node("tr"), name = node("td"), capability = item.capability?.values || {};
       const selection = check("binding-model", key, bindingSelection.has(key), item.display_name || item.id);
@@ -398,7 +398,7 @@
       const action = button(bindingDefault === routeId(item) && bindingSelection.has(key) ? "cap_default" : "cap_set_default", () => { bindingDirty = true;bindingSelection.add(key);bindingDefault = routeId(item);rememberDraft();bindingRows({ kind: "default", key }); });
       action.setAttribute("aria-pressed", String(bindingDefault === routeId(item) && bindingSelection.has(key)));
       action.dataset.binding = key;action.disabled = Boolean(item.unavailable);action.setAttribute("aria-label", item.id + " · " + format(bindingDefault === routeId(item) ? "cap_default" : "cap_set_default"));
-      if (item.unavailable) { const warning = node("span", undefined, "hint binding-unavailable");words(warning, "cap_model_unavailable");name.append(warning); }
+      if (item.unavailable) { const warning = node("span", undefined, "hint binding-unavailable");words(warning, item.reason ? "visibility_" + item.reason : "cap_model_unavailable");name.append(warning); }
       const cell = node("td");cell.append(action);
       const details = [node("td", source(item.source)?.name || item.source), node("td", count(capability.context_window)), node("td", reasoningText(capability))];
       details.forEach((cell, i) => cell.dataset.label = format(["source", "cap_context", "cap_reasoning"][i]));

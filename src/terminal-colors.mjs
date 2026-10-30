@@ -1,12 +1,16 @@
-export const isColorTheme = value => value === "green" || value === "klein" || value === "pink";
+export const TERMINAL_COLOR_THEMES = Object.freeze(["green", "klein", "pink", "mono", "orange"]);
+export const isColorTheme = value => TERMINAL_COLOR_THEMES.includes(value);
 
 export function terminalColorCode(theme, { output = process.stdout, env = process.env } = {}) {
   if (output.isTTY !== true || Object.hasOwn(env, "NO_COLOR") || env.TERM === "dumb") return "";
-  // Preserve the original green exactly. Blue also supports ordinary ANSI terminals.
-  if (theme !== "klein" && theme !== "pink") return "\x1b[38;2;166;245;168m";
+  if (theme === "mono") return "\x1b[39m";
+  // Preserve the original green exactly. Other colors adapt to terminal depth.
+  if (theme !== "klein" && theme !== "pink" && theme !== "orange") return "\x1b[38;2;166;245;168m";
   const depth = output.getColorDepth?.(env) || (/truecolor|24bit/i.test(env.COLORTERM || "") ? 24 : 4);
+  const light = /^(7|15)$/.test(String(env.COLORFGBG || "").split(";").at(-1));
+  if (theme === "orange") return depth >= 24 ? light ? "\x1b[38;2;173;77;0m" : "\x1b[38;2;255;154;61m"
+    : depth >= 8 ? light ? "\x1b[38;5;130m" : "\x1b[38;5;208m" : light ? "\x1b[33m" : "\x1b[93m";
   if (theme === "pink") {
-    const light = /^(7|15)$/.test(String(env.COLORFGBG || "").split(";").at(-1));
     return depth >= 24 ? light ? "\x1b[38;2;168;62;104m" : "\x1b[38;2;243;168;200m"
       : depth >= 8 ? light ? "\x1b[38;5;132m" : "\x1b[38;5;218m" : "\x1b[95m";
   }
@@ -19,7 +23,7 @@ export function colorTerminalText(text, theme, options) {
 }
 
 export function colorTerminalMotion(frame, theme, options) {
-  if (theme !== "klein" && theme !== "pink") return frame;
+  if (!isColorTheme(theme) || theme === "green") return frame;
   const code = terminalColorCode(theme, options);
   return frame.replace(/\x1b\[(?:38;5;\d+|97)m/g, code);
 }

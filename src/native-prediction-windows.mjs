@@ -1,17 +1,23 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import { windowsPowerShellEnvironment } from "./windows-process.mjs";
 export { windowsPowerShellEnvironment } from "./windows-process.mjs";
 
 const WINDOWS_PUBLISHER = "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B";
 const WINDOWS_PACKAGE_FAMILY = "OpenAI.Codex_2p2nqsd0c76g0";
+const execFileAsync = promisify(execFile);
+
+function powershellCommand(script, env) {
+  return [path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop';[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);" + script]];
+}
 
 function powershell(script, { env = process.env, exec = execFileSync, ...options } = {}) {
-  const command = path.win32.join(env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const [command, args] = powershellCommand(script, env);
   try {
-    return exec(command, ["-NoProfile", "-NonInteractive", "-Command",
-      "$ErrorActionPreference='Stop';[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);" + script],
+    return exec(command, args,
     { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, env: windowsPowerShellEnvironment(env), windowsHide: true, ...options }).trim();
   } catch {
     throw new Error("Windows prediction check failed; verify PowerShell, App registration and current-user permissions");
@@ -44,13 +50,14 @@ export function windowsPredictionAppProcesses(app, { env = process.env, ...optio
   return rows;
 }
 
-export function installedWindowsPredictionApp(options = {}) {
-  const raw = powershell(`$p=@(Get-AppxPackage -Name OpenAI.Codex | Where-Object { [int]$_.Status -eq 0 -and [int]$_.SignatureKind -eq 3 -and $_.Publisher -eq '${WINDOWS_PUBLISHER}' -and $_.PackageFamilyName -eq '${WINDOWS_PACKAGE_FAMILY}' });
+const WINDOWS_APP_SCRIPT = `$p=@(Get-AppxPackage -Name OpenAI.Codex | Where-Object { [int]$_.Status -eq 0 -and [int]$_.SignatureKind -eq 3 -and $_.Publisher -eq '${WINDOWS_PUBLISHER}' -and $_.PackageFamilyName -eq '${WINDOWS_PACKAGE_FAMILY}' });
     if($p.Count -ne 1){throw 'A single official OpenAI.Codex MSIX registration is required'};
     $m=Get-AppxPackageManifest -Package ([string]$p[0].PackageFullName);
     $a=@($m.Package.Applications.Application | Where-Object { [System.IO.Path]::GetFileName($_.Executable) -in @('Codex.exe','ChatGPT.exe') });
     if($a.Count -ne 1){throw 'Unknown Windows App executable'};
-    @{root=$p[0].InstallLocation;executable=$a[0].Executable;family=$p[0].PackageFamilyName} | ConvertTo-Json -Compress`, options);
+    @{root=$p[0].InstallLocation;executable=$a[0].Executable;family=$p[0].PackageFamilyName} | ConvertTo-Json -Compress`;
+
+function registeredApp(raw) {
   let metadata;
   try { metadata = JSON.parse(raw); } catch { throw new Error("Could not read the registered Windows Codex App"); }
   const { root, executable, family } = metadata;
@@ -61,10 +68,20 @@ export function installedWindowsPredictionApp(options = {}) {
     throw new Error("Unknown Windows App registration; prediction setup was skipped");
   }
   const app = path.win32.join(root, executable);
-  const archives = [path.win32.join(path.win32.dirname(app), "resources", "app.asar"), path.win32.join(root, "resources", "app.asar")];
-  const archive = [...new Set(archives)].find(candidate => fs.existsSync(candidate));
-  if (!archive) throw new Error("The registered Windows App has no readable app archive");
-  return { app, archive, family };
+  return { app, family };
+}
+
+export function installedWindowsPredictionApp(options = {}) {
+  return registeredApp(powershell(WINDOWS_APP_SCRIPT, options));
+}
+
+export async function installedWindowsPredictionAppAsync({ env = process.env, exec = execFileAsync } = {}) {
+  const [command, args] = powershellCommand(WINDOWS_APP_SCRIPT, env);
+  let result;
+  try { result = await exec(command, args, { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024,
+    env: windowsPowerShellEnvironment(env), windowsHide: true }); }
+  catch { throw new Error("Windows prediction check failed; verify PowerShell, App registration and current-user permissions"); }
+  return registeredApp(String(result?.stdout ?? result).trim());
 }
 
 export function windowsPredictionProfile({ app, env = process.env, preferredProfile } = {}) {

@@ -82,7 +82,7 @@ export function predictionStartupCheck(prediction) {
     : prediction.active === false ? "Paused; trust and route retained"
     : "Running; suggestion display not verified";
   if (problem) detail += environment === "needs_service_restart" ? "; restart CCDX" : environment === "needs_app_relaunch" ? "; relaunch Codex" : "; environment unavailable";
-  const warning = prediction.bridge !== "running" || problem || prediction.launch_route === "unverified";
+  const warning = prediction.bridge !== "running" || problem || prediction.launch_route === "unverified" && prediction.client_route !== "observed";
   const lines = [startupCheck(warning ? "warn" : "info", "Suggestions", detail)];
   if (prediction.bridge !== "running" && prediction.reason) lines.push(startupCheck("warn", "Reason", prediction.reason));
   if (warning) lines.push(startupCheck("info", "Details", "ccdx app codex prediction status"));

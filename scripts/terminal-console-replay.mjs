@@ -5,6 +5,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { pathToFileURL } from "node:url";
 import { createTerminalConsole } from "../src/terminal-console.mjs";
+import { TERMINAL_COLOR_THEMES } from "../src/terminal-colors.mjs";
 
 const args = process.argv.slice(2), options = new Map();
 for (let index = 0; index < args.length; index += 2) options.set(args[index], args[index + 1]);
@@ -12,7 +13,7 @@ assert.ok(path.isAbsolute(options.get("--xterm") || ""), "Supply --xterm /absolu
 const imported = await import(pathToFileURL(options.get("--xterm")));
 const { Terminal } = imported.default || imported;
 const results = [];
-for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const color of [false, true]) for (const palette of ["green", "klein", "pink"]) {
+for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const color of [false, true]) for (const palette of TERMINAL_COLOR_THEMES) {
   const screen = new Terminal({ cols: columns, rows, allowProposedApi: true });
   const output = new EventEmitter(), pending = [], timers = new Map();let time = 1000, bytes = 0;
   Object.assign(output, { isTTY: true, columns, rows, write(value) { bytes += Buffer.byteLength(value);pending.push(value); } });

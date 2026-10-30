@@ -18,6 +18,8 @@ export {
   readUsageRecords,
   summarizeUsage,
   summarizeUsageLogs,
+  mergeUsageSummary,
+  subscribeUsageAppends,
   cacheReadTokens,
   usageCacheHitRate,
 } from "./usage-store.mjs";

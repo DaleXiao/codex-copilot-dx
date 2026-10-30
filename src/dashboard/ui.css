@@ -422,6 +422,13 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
  --bad:#000; --failed:#000; --incomplete:#000;
 }
 .terminal-sample[data-terminal-palette="pink"] { --sample-logo:#f3a8c8; --sample-table:#f3a8c8; --sample-motion:#f3a8c8; }
+.terminal-sample[data-terminal-palette="orange"] { --sample-logo:#ff9a3d; --sample-table:#ff9a3d; --sample-motion:#ff9a3d; }
+.terminal-sample[data-terminal-palette="mono"] { --sample-bg:#000; --sample-text:#fff; --sample-muted:#aaa; --sample-line:#777; --sample-logo:#fff; --sample-table:#fff; --sample-motion:#fff; }
+:root[data-theme="light"] .terminal-sample[data-terminal-palette="mono"] { --sample-bg:#fff; --sample-text:#000; --sample-muted:#555; --sample-logo:#000; --sample-table:#000; --sample-motion:#000; }
+:root:not([data-theme="light"]) #animation-settings[data-terminal-palette="orange"] { --ansi-white:#ff9a3d;--ansi-159:#ff9a3d;--ansi-123:#ff9a3d;--ansi-87:#ff9a3d;--ansi-51:#ff9a3d;--ansi-45:#ff9a3d;--ansi-39:#ff9a3d;--ansi-33:#ff9a3d; }
+:root[data-theme="light"] #animation-settings[data-terminal-palette="orange"] { --ansi-white:#ad4d00;--ansi-159:#ad4d00;--ansi-123:#ad4d00;--ansi-87:#ad4d00;--ansi-51:#ad4d00;--ansi-45:#ad4d00;--ansi-39:#ad4d00;--ansi-33:#ad4d00; }
+:root:not([data-theme="light"]) #animation-settings[data-terminal-palette="mono"] { --ansi-white:#fff;--ansi-159:#fff;--ansi-123:#fff;--ansi-87:#fff;--ansi-51:#fff;--ansi-45:#fff;--ansi-39:#fff;--ansi-33:#fff; }
+:root[data-theme="light"] #animation-settings[data-terminal-palette="mono"] { --ansi-white:#000;--ansi-159:#000;--ansi-123:#000;--ansi-87:#000;--ansi-51:#000;--ansi-45:#000;--ansi-39:#000;--ansi-33:#000; }
 :root:not([data-theme="light"]) #animation-settings[data-terminal-palette="pink"] { --ansi-white:#f3a8c8;--ansi-159:#f3a8c8;--ansi-123:#f3a8c8;--ansi-87:#f3a8c8;--ansi-51:#f3a8c8;--ansi-45:#f3a8c8;--ansi-39:#f3a8c8;--ansi-33:#f3a8c8; }
 :root[data-theme="light"] #animation-settings[data-terminal-palette="pink"] { --ansi-white:#a83e68;--ansi-159:#a83e68;--ansi-123:#a83e68;--ansi-87:#a83e68;--ansi-51:#a83e68;--ansi-45:#a83e68;--ansi-39:#a83e68;--ansi-33:#a83e68; }
 

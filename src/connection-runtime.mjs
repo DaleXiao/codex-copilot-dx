@@ -28,7 +28,7 @@ import { autoReviewReasoningEfforts } from "./models.mjs";
 import { createRequestAdmission } from "./request-admission.mjs";
 import { createConversationSourceGuard } from "./conversation-source-guard.mjs";
 import { createMessagesHistoryTransfer } from "./messages-history-transfer.mjs";
-import { compileClientModels, sourceModels } from "./client-model-plan.mjs";
+import { compileClientModels, sourceModels, clientModelExclusion } from "./client-model-plan.mjs";
 import { codexClientCatalog, codexSourceCatalog } from "./clients/codex-models.mjs";
 import { currentRequestContext } from "./request-context.mjs";
 import {
@@ -346,6 +346,7 @@ export function createConnectionRuntime({
             source: item.source,
             id: item.model,
             route_id: deploymentModelId(item.source, item.model),
+            reason: modelExclusion(id, item.source, item.model),
           })),
         available: config.clients[id].allowed
           .filter(enabled)
@@ -362,6 +363,20 @@ export function createConnectionRuntime({
         support: capabilitySupport,
       },
     };
+  }
+  function modelExclusion(id, sourceId, modelId, model, selected = false) {
+    if (!model) {
+      const source = getSource(sourceId), raw = source?.catalog?.() || source?.registry?.models?.data || [];
+      model = publicModelCatalog(raw.filter(value => value.id === modelId))[0];
+    }
+    return clientModelExclusion({ client: id, binding: binding(id), sourceId, sourceEnabled: enabled(sourceId), model, selected });
+  }
+  function catalogVisibility(catalog, sourceId) {
+    if (!catalog || !Array.isArray(catalog.models)) return catalog;
+    const selected = new Map(CLIENT_IDS.map(id => [id, new Set(plan(id).models.filter(model => model.source_id === sourceId).map(model => model.id))]));
+    return { ...catalog, models: catalog.models.map(model => ({ ...model,
+      client_visibility: CLIENT_IDS.map(id => ({ client: id,
+        reason: modelExclusion(id, sourceId, model.id, model, selected.get(id).has(model.id)) })) })) };
   }
   function snapshot(compact = false) {
     const state = legacy.snapshot(),
@@ -548,8 +563,6 @@ export function createConnectionRuntime({
   }
   function writeClaudeSync(id, { selected, compiled, source }, desktopManaged) {
     const m365Only = compiled.models.every(model => model.source_id === "m365");
-    if (id === "claude_code" && !m365Only)
-      restoreClaude({ ...options, client: id, fields: ["env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] });
     const result = configureClaude({
       ...options,
       client: id,
@@ -1238,13 +1251,13 @@ export function createConnectionRuntime({
           throw accessError("ccdx_connections_action_invalid");
         const source = getSource(input.id),
           raw = source?.catalog?.() || source?.registry?.models?.data;
-        return {
+        return catalogVisibility({
           source: input.id,
           loaded: Array.isArray(raw),
           evidence: input.id.startsWith("api_") ? "configured" : "cached",
           access_checked: false,
           models: publicModelCatalog(raw || []).map(({ selectable, clients, ...model }) => model),
-        };
+        }, input.id);
       }
       if (validObject(input, ["operation", "id"]) && input.operation === "discover") {
         const models = await catalogRefresh.refresh(input.id, true);
@@ -1539,11 +1552,14 @@ export function createConnectionRuntime({
         });
     },
     dashboardCatalog(input = {}) {
-      if (!input.provider?.startsWith("api_")) return legacy.dashboardCatalog(input);
+      if (!input.provider?.startsWith("api_")) {
+        const value = legacy.dashboardCatalog(input), source = input.provider || this.selection().codex;
+        return value?.then ? value.then(catalog => catalogVisibility(catalog, source)) : catalogVisibility(value, source);
+      }
       if (!enabled(input.provider)) throw accessError("ccdx_client_source_disabled", 503);
-      return getSource(input.provider).publicCatalog(
+      return catalogVisibility(getSource(input.provider).publicCatalog(
         CLIENT_IDS.filter(id => binding(id).enabled && binding(id).allowed.includes(input.provider))
-      );
+      ), input.provider);
     },
     async action(input) {
       if (managed && input.action === "auto-review" && Array.isArray(binding("codex").deployments)) {

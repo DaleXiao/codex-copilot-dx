@@ -15,7 +15,7 @@ import { windowsPredictionCertificate } from "../src/windows-prediction-certific
 import { resolveNetworkRoute, networkProxyFor } from "../src/network-route.mjs";
 import { openCodex } from "../src/launcher.mjs";
 import { runPredictionCommand, startNativePrediction } from "../src/native-prediction.mjs";
-import { predictionPaths, readPredictionSettings, writePredictionSettings, readPredictionCertificate, createPredictionCertificate, updatePredictionTrust } from "../src/native-prediction-profile.mjs";
+import { predictionPaths, readPredictionSettings, writePredictionSettings, readPredictionCertificate, createPredictionCertificate, updatePredictionTrust, installedPredictionApp } from "../src/native-prediction-profile.mjs";
 
 const registration = { root: "C:\\Program Files\\WindowsApps\\OpenAI.Codex_fixture", executable: "app/ChatGPT.exe", family: "OpenAI.Codex_2p2nqsd0c76g0" };
 const executable = path.win32.join(registration.root, registration.executable);
@@ -34,7 +34,7 @@ test("Windows discovery uses registered Store metadata, not guessed executables 
   const app = installedWindowsPredictionApp({ env: { SystemRoot: "C:\\Windows" }, exec(command, args, options) {
     call = { command, args, options };return JSON.stringify(registration);
   } });
-  assert.deepEqual(app, { app: executable, archive, family: registration.family });
+  assert.deepEqual(app, { app: executable, family: registration.family });
   assert.match(call.args.at(-1), /Get-AppxPackage -Name OpenAI.Codex/);
   assert.match(call.args.at(-1), /SignatureKind -eq 3/);
   assert.match(call.args.at(-1), /Publisher -eq 'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B'/);
@@ -45,6 +45,16 @@ test("Windows discovery uses registered Store metadata, not guessed executables 
     { root: "\\\\remote\\share" }, { family: "unrelated_package" }]) {
     assert.throws(() => installedWindowsPredictionApp({ exec: () => JSON.stringify({ ...registration, ...changed }) }), /Unknown Windows/);
   }
+});
+
+test("asynchronous Windows identity discovery requires no archive and preserves the selected profile", async t => {
+  const profile = "C:\\Users\\fixture\\AppData\\Roaming\\Codex";
+  t.mock.method(fs, "existsSync", file => file === path.win32.join(profile, "Local State"));
+  t.mock.method(fs, "statSync", file => { assert.equal(file, executable);return { isFile: () => true, size: 100, mtimeMs: 1 }; });
+  const app = await installedPredictionApp({ platform: "win32", preferredProfile: profile, exec: async (_command, args, options) => {
+    assert.match(args.at(-1), /SignatureKind -eq 3/);assert.equal(options.windowsHide, true);return { stdout: JSON.stringify(registration) };
+  } });
+  assert.equal(app.identity_version, 2);assert.equal(app.archive, undefined);assert.equal(app.profile, profile);
 });
 
 test("Windows process checks fail closed and never stop an App", () => {

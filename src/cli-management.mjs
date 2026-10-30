@@ -11,6 +11,7 @@ import { checkedApi } from "./access-settings.mjs";
 import { hiddenQuestion } from "./cli-image.mjs";
 import { readBoundedFileSync } from "./bounded-file.mjs";
 import { deploymentModelId } from "./model-capabilities.mjs";
+import { TERMINAL_COLOR_THEMES } from "./terminal-colors.mjs";
 
 async function readSecretInput(input) {
   const chunks = [];let bytes = 0;
@@ -146,8 +147,8 @@ export async function runManagementCommand(command, options = {}) {
       if (typeof local.defaults[ids.key] === "boolean") { if (!["true", "false"].includes(value)) throw new Error("Use true or false for this setting.");value = value === "true"; }
       values = { [ids.key]: value };
     } else if (action === "terminal") {
-      const themes = ["green", "klein", "pink"], pick = (await ask(`Terminal color [${local.values.terminal_color_theme}] (green/klein/pink): `)).trim() || local.values.terminal_color_theme;
-      if (!themes.includes(pick)) throw new Error("Choose green, klein or pink.");values = { terminal_color_theme: pick };
+      const themes = TERMINAL_COLOR_THEMES, pick = (await ask(`Terminal color [${local.values.terminal_color_theme}] (${themes.join("/")}): `)).trim() || local.values.terminal_color_theme;
+      if (!themes.includes(pick)) throw new Error("Choose " + themes.join(", ") + ".");values = { terminal_color_theme: pick };
     } else if (["reset", "restore"].includes(action)) {
       operation = action === "reset" ? "reset_preferences" : "restore_preferences";
       backup_id = action === "reset" ? randomUUID() : local.backup?.id;

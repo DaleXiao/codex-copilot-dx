@@ -138,9 +138,13 @@ export function createHttpFailureDiagnostics({ maxEntries = 20, now } = {}) {
   const protocol = createResponseFailureDiagnostics({ maxEntries: 8, now });
   const capability = createResponseFailureDiagnostics({ maxEntries: 20, now });
   const routes = createResponseFailureDiagnostics({ maxEntries: 8, now });
+  const discovery = createResponseFailureDiagnostics({ maxEntries: 8, now });
   const counts = { inference: 0, capability: 0, protocol: 0, route: 0, other: 0 };
   return {
     record(details) {
+      const probe = isDiscoveryRequest(details.method, details.target) && [404, 405].includes(details.http_status)
+        && details.upstream_attempts === 0;
+      if (probe) details = { ...details, request_kind: "discovery" };
       all.record(details);
       const accessNotice = details.reason === "ccdx_model_not_selected" || details.reason === "ccdx_client_source_disabled";
       const category = accessNotice || details.route === "messages_count_tokens" ? "capability"
@@ -148,6 +152,7 @@ export function createHttpFailureDiagnostics({ maxEntries = 20, now } = {}) {
         : details.route === "image_mcp" && details.http_status === 405 ? "protocol"
           : details.route === "not_found" ? "route" : "other";
       counts[category]++;
+      if (probe) { discovery.record(details);return; }
       if ((category === "inference" || category === "other") && !accessNotice) actionable.record(details);
       if (category === "capability") {
         capability.record(details);
@@ -158,8 +163,14 @@ export function createHttpFailureDiagnostics({ maxEntries = 20, now } = {}) {
     },
     snapshot() { return { ...all.snapshot(), by_category: { ...counts },
       actionable_recent: actionable.snapshot().recent, capability_recent: capability.snapshot().recent,
-      protocol_recent: protocol.snapshot().recent, route_recent: routes.snapshot().recent }; },
+      protocol_recent: protocol.snapshot().recent, route_recent: routes.snapshot().recent,
+      discovery_total: discovery.snapshot().total, discovery_recent: discovery.snapshot().recent }; },
   };
+}
+
+export function isDiscoveryRequest(method, pathname) {
+  return ["GET", "HEAD"].includes(method) && ["/mcp/image", "/.well-known/oauth-authorization-server",
+    "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname);
 }
 
 export function buildHttpFailureDetails({ statusCode, route, requestId, model, code, origin, headers, model_error,

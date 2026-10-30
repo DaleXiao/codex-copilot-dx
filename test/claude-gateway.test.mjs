@@ -41,6 +41,45 @@ test("Claude gateway delivers Messages JSON and normalizes cache accounting once
   assert.equal(observed.context_window_tokens, null);
 });
 
+test("Messages context observes declared, effective and pinned windows without another catalog read", async t => {
+  const raw = { capabilities: { limits: { max_context_window_tokens: 1234567 } } };
+  const cases = [
+    { name: "legacy declared metadata", metadata: raw, expected: 1234567 },
+    { name: "effective override", configured: true, metadata: { ...raw, capability: { values: { context_window: 345678 } } }, expected: 345678 },
+    { name: "Messages protocol", configured: true, metadata: { capability: { values: { context_window: 999999 } }, protocol_capabilities: { messages: { values: { context_window: 222222 } } } }, expected: 222222 },
+    { name: "pinned route capability", resolved: { values: { context_window: 555555 } }, expected: 555555 },
+    { name: "pinned unknown", resolved: { values: {} }, expected: null },
+    { name: "unknown effective override", metadata: { ...raw, capability: { values: {} } }, expected: null },
+    { name: "invalid declared value", metadata: { capabilities: { limits: { max_context_window_tokens: "1000000" } } }, expected: null },
+  ];
+  for (const item of cases) await t.test(item.name, async t => {
+    let reads = 0, calls = 0, finished = 0;
+    const source = { id: item.resolved ? "api_test" : "m365", configuredModels: item.configured,
+      models() { reads++;if (item.resolved) throw Error("Do not re-read a pinned capability");return [{ id: message.model, ...item.metadata }]; },
+      client: { messages: async body => { calls++;assert.equal(body.model, message.model);return Response.json(message); } } };
+    const g = await gateway(t, null, { provider: source, ...(item.resolved ? { resolveRequest: () => ({ provider: source, model: message.model,
+      capability: item.resolved, finish: () => { finished++; } }) } : {}) });
+    const response = await g.request();assert.equal(response.status, 200);assert.deepEqual(await response.json(), message);
+    const observed = g.server.snapshot().performance.recent_requests.at(-1);
+    assert.equal(observed.context.context_window_tokens, item.expected);
+    assert.equal(observed.context.input_tokens, 15);assert.equal(calls, 1);
+    assert.equal(reads, item.resolved ? 0 : 1);assert.equal(finished, item.resolved ? 1 : 0);
+    assert.equal(observed.provider, source.id);
+  });
+});
+
+test("unavailable observation metadata keeps Messages available and provider-applied windows retain priority", async t => {
+  for (const applied of [null, 765432]) await t.test(String(applied), async t => {
+    let calls = 0;
+    const source = { id: "api_test", models() { throw Error("Optional catalog unavailable"); }, client: {
+      messages: async () => { calls++;if (applied) currentRequestContext().streamPerformance.observeContext({ context_window_tokens: applied });return Response.json(message); },
+    } };
+    const g = await gateway(t, null, { provider: source, ...(applied ? { resolveRequest: () => ({ provider: source, model: message.model, capability: { values: { context_window: 987654 } } }) } : {}) });
+    const response = await g.request();assert.equal(response.status, 200);assert.deepEqual(await response.json(), message);
+    assert.equal(calls, 1);assert.equal(g.server.snapshot().performance.recent_requests.at(-1).context.context_window_tokens, applied);
+  });
+});
+
 test("Claude API failures expose safe transport facts without raw causes or extra diagnostic fields", async t => {
   const logs = [], error = Object.assign(new Error("ccdx_api_network_unavailable"), { code: "ccdx_api_network_unavailable", statusCode: 502,
     cause: new Error("synthetic-private-upstream-key"), transport: { code: "ECONNRESET", phase: "tls", reused_socket: true, key: "synthetic-private-upstream-key" } });
@@ -163,7 +202,7 @@ test("bounded Claude observation preserves UTF-8 and handles multiline events", 
 });
 
 test("App alias streaming changes only the model event across fragmented multiline SSE", async t => {
-  const actual = "deepseek-v4.1-flash-1017", models = [{ id: actual }], alias = claudeModelEntries(models, { desktopAliases: true })[0].name;
+  const actual = "deepseek-v4.1-flash-1017", models = [{ id: actual, capabilities: { limits: { max_context_window_tokens: 456789 } } }], alias = claudeModelEntries(models, { desktopAliases: true })[0].name;
   const first = { type: "message_start", message: { ...message, model: actual, content: [], vendor: { untouched: true } } };
   const tail = 'event: content_block_delta\r\ndata: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"测试 😀"}}\r\n\r\n'
     + 'event: content_block_delta\ndata: {"type":"content_block_delta","index":9,"delta":{"type":"signature_delta","signature":"opaque-signature"}}\n\n'
@@ -183,6 +222,7 @@ test("App alias streaming changes only the model event across fragmented multili
     const observed = [], observer = createMessagesObserver(event => observed.push(event));observer.write(Buffer.from(wire));observer.finish();
     assert.deepEqual(observed[0], { ...first, message: { ...first.message, model: alias } });
     assert.equal(calls[0].model, actual);assert.equal(g.records[0].model, actual);assert.equal(g.server.snapshot().last_model, actual);
+    assert.equal(g.server.snapshot().performance.recent_requests.at(-1).context.context_window_tokens, 456789);
     assert.equal(g.server.snapshot().completed, 1);
     const catalog = await fetch(`http://127.0.0.1:${g.server.port}/v1/models`, { headers: { "x-api-key": key } });
     assert.deepEqual((await catalog.json()).data, [{ id: alias, type: "model", display_name: actual }]);
@@ -190,7 +230,7 @@ test("App alias streaming changes only the model event across fragmented multili
 });
 
 test("App aliases cover JSON and count_tokens while bounded framing rejects oversized comments", async t => {
-  const actual = "qwen3.8-max", models = [{ id: actual }], alias = claudeModelEntries(models, { desktopAliases: true })[0].name, calls = [];
+  const actual = "qwen3.8-max", models = [{ id: actual, capability: { values: { context_window: 234567 } } }], alias = claudeModelEntries(models, { desktopAliases: true })[0].name, calls = [];
   const g = await gateway(t, null, { desktopAliases: true, provider: { id: "api_test", configuredModels: true, models: () => models, client: {
     messages: async (body, options) => { calls.push({ body, options });return Response.json(options.countTokens ? { input_tokens: 42 } : { ...message, model: actual }); },
   } } });
@@ -198,6 +238,8 @@ test("App aliases cover JSON and count_tokens while bounded framing rejects over
   const counts = await fetch(`http://127.0.0.1:${g.server.port}/v1/messages/count_tokens`, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key }, body: JSON.stringify({ model: alias, messages: [] }) });
   assert.deepEqual(await counts.json(), { input_tokens: 42 });assert.ok(calls.every(call => call.body.model === actual));assert.equal(calls[1].options.countTokens, true);
   assert.equal(g.records.length, 1);assert.equal(g.records[0].model, actual);
+  const recorded = g.server.snapshot().performance.recent_requests;
+  assert.equal(recorded.length, 1);assert.equal(recorded[0].context.context_window_tokens, 234567);
   const observer = createMessagesObserver(() => {}, 64, alias);
   assert.throws(() => { for (let i = 0; i < 8; i++) observer.write(Buffer.from(": comment\n")); }, /limit/);
 });

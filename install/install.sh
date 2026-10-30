@@ -2,7 +2,7 @@
 # CCDX release bootstrap. No administrator privileges or system package manager.
 set -eu
 [ "$(uname -s)" = Darwin ] || { echo "CCDX supports macOS and Windows. Use install.ps1 on Windows." >&2; exit 1; }
-version=1.3.2
+version=1.3.3
 base="https://github.com/DaleXiao/codex-copilot-dx/releases/download/v$version"
 permission=
 case "${1-}" in '' ) ;; --allow-remote) permission=--allow-remote ;; *) echo 'Use: sh install.sh [--allow-remote]' >&2; exit 2 ;; esac

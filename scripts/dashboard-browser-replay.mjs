@@ -10,6 +10,7 @@ import { createServiceControl } from "../src/service-control.mjs";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { summarizeUsage } from "../src/usage-store.mjs";
 import { statusSummary } from "../src/status-summary.mjs";
+import { createActivityEvents, createChangeSignal } from "../src/activity-events.mjs";
 import { requestApplication } from "../src/request-application.mjs";
 
 const args = process.argv.slice(2);
@@ -29,7 +30,7 @@ let predictionActive = true, codexSource = "github", m365Enabled = true;
 const accountChoices = ["a", "b"].map(letter => ({ id: letter.repeat(64), login: `${letter}@example.test`, tenant: `company-${letter}` }));
 let companyAccount = accountChoices[0], accountChecks = 0, accountChanges = 0, refuseAccountChange = false;
 let proxyFailure = false;
-let modelActivity = 2;
+let modelActivity = 2, fixtureRevision = 0;
 let extraRequests = [];
 let flowRequests = [];
 let contextReads = 0;
@@ -111,19 +112,8 @@ const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, servic
   usageSummaryFn: async options => { summaries++; const selected = records.filter(record => !options?.provider || record.provider === options.provider);
     for (const record of selected) options?.onRecord?.(record, summarizeUsage([record])); return summarizeUsage(selected, { provider: options?.provider }); },
 } });
-const server = http.createServer((req, res) => {
-  if (req.url === "/_ccdx/ui/context") { contextReads++;res.writeHead(200, { "content-type": "application/json" });res.end(JSON.stringify(contextFixture()));return; }
-  if (req.url.startsWith("/_ccdx/ui/animation")) {
-    res.writeHead(200, { "content-type": "application/json" });
-    const frames = !req.url.includes("frames=0");
-    res.end(JSON.stringify({ theme: serviceControl.snapshot().theme, source: "settings", disabled_by_environment: false,
-      themes: ["comet", "twin"].map(id => ({ id, label: id === "comet" ? "Comet" : "Twin", default: id === "comet",
-        ...(frames ? { frames: [{ ansi: "[●··]", delay_ms: 100 }], loop_pause_ms: 100 } : {}) })) }));
-    return;
-  }
-  if (req.url.split("?")[0] === "/_ccdx/status") {
-    res.writeHead(200, { "content-type": "application/json" });
-    const snapshot = { ok: true, name: "codex-copilot-dx", version: "synthetic", pid: 1, uptime_ms: 1000,
+function dashboardSnapshot() {
+  return { ok: true, name: "codex-copilot-dx", version: "synthetic", instance_id: "dashboard-replay", activity_revision: fixtureRevision, pid: 1, uptime_ms: 1000,
       requests: { total: 1, active: 0 }, model_activity: { active: modelActivity }, models: { models: 1, source: "synthetic" },
       stream_performance: { active_requests: flowRequests, active_total: flowRequests.length, recent_requests: [...extraRequests, { at: "2026-10-21T05:51:08Z", request_id: "synthetic-recent", provider: "github", model: "gpt-test", outcome: "completed",
         context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000 } },
@@ -139,7 +129,24 @@ const server = http.createServer((req, res) => {
       runtime_usage: { records: 4, input_tokens: 100, cached_input_tokens: 20, output_tokens: 10, cache_hit_rate: 0.2, cache_hit_rate_partial: false },
       process: { rss_bytes: 123456, heap_used_bytes: 34567 },
       response_history: { bytes: 0, maxBytes: 67108864 }, client_integrations: { prediction: { configured: false, bridge: "stopped" } } };
-    res.end(JSON.stringify(req.url.includes("scope=summary") ? statusSummary(snapshot) : snapshot));
+}
+const fixtureChanges = createChangeSignal();
+const fixtureEvents = createActivityEvents({ sources: [fixtureChanges], snapshot: () => ({ ...dashboardSnapshot(), scope: "activity" }) });
+const server = http.createServer((req, res) => {
+  if (req.url === "/_ccdx/activity") { fixtureEvents.serve(req, res);return; }
+  if (req.url === "/_ccdx/ui/context") { contextReads++;res.writeHead(200, { "content-type": "application/json" });res.end(JSON.stringify(contextFixture()));return; }
+  if (req.url.startsWith("/_ccdx/ui/animation")) {
+    res.writeHead(200, { "content-type": "application/json" });
+    const frames = !req.url.includes("frames=0");
+    res.end(JSON.stringify({ theme: serviceControl.snapshot().theme, source: "settings", disabled_by_environment: false,
+      themes: ["comet", "twin"].map(id => ({ id, label: id === "comet" ? "Comet" : "Twin", default: id === "comet",
+        ...(frames ? { frames: [{ ansi: "[●··]", delay_ms: 100 }], loop_pause_ms: 100 } : {}) })) }));
+    return;
+  }
+  if (req.url.split("?")[0] === "/_ccdx/status") {
+    res.writeHead(200, { "content-type": "application/json" });
+    fixtureRevision++;const snapshot = dashboardSnapshot();fixtureChanges.changed();
+    res.end(JSON.stringify(req.url.includes("scope=summary") ? { ...statusSummary(snapshot), activity_revision: snapshot.activity_revision } : snapshot));
     return;
   }
   handler(req, res);
@@ -229,6 +236,7 @@ try {
         assert.equal(await page.locator("#provider-clients tr").count(), 3, "Each app has one row rather than one per source");
         assert.match(await page.locator("#provider-clients tr").first().innerText(), /Codex App.*Microsoft 365/s);
         const brandIcon = await page.locator(".sidebar-brand #status-icon").boundingBox();
+        for (const selector of ["#refresh", "#auto-refresh"]) assert.equal((await page.locator(selector).boundingBox()).height, 32, "Compact desktop controls retain their target height");
         assert.ok(brandIcon && brandIcon.width >= 40 && brandIcon.height >= 40 && brandIcon.x >= 0 && brandIcon.x + brandIcon.width <= width);
         await page.locator("#refresh").click();
         await page.waitForFunction(() => !document.getElementById("refresh").disabled);
@@ -246,12 +254,16 @@ try {
         assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
         assert.equal(await page.locator("html").getAttribute("lang"), language === "zh" ? "zh-CN" : "en");
         const nav = async route => { await page.locator(`[data-route="${route}"]`).click();await page.locator(`[data-view="${route}"]`).waitFor({ state: "visible" }); };
-        // A force refresh intentionally joins an in-flight poll. Drain its previous
-        // fixture response before requesting the newly installed synthetic state.
-        const refreshStatus = () => page.evaluate(async () => {
-          const key = statusResourceKey();await dashboardRefresh.state(key).pending;
-          return dashboardRefresh.refresh(key, { force: true });
-        });
+        // HTTP diagnostics and SSE are independent. Wait for the actual synthetic
+        // activity revision instead of assuming an HTTP response delivered its push.
+        const refreshStatus = async () => {
+          const result = await page.evaluate(async () => {
+            const key = statusResourceKey();await dashboardRefresh.state(key).pending;
+            const data = await dashboardRefresh.refresh(key, { force: true });
+            return { revision: data.activity_revision, push: dashboardRefresh.automatic && document.visibilityState === "visible" };
+          });
+          if (result.push) await page.waitForFunction(revision => liveActivity.current?.activity_revision >= revision, result.revision);
+        };
         // Long/short modules, status labels and scrolling must not resize the shared shell.
         const layout = await page.locator(".topbar").boundingBox();
         const titleTop = (await page.locator(".intro").boundingBox()).y;
@@ -292,8 +304,8 @@ try {
         assert.equal(await page.locator(".activity-lamp").evaluate(node => getComputedStyle(node, "::before").animationName), "activity-breathe");
         await page.route("**/_ccdx/status*", route => route.fulfill({ status: 503, contentType: "application/json", body: '{}' }));
         await page.locator("#refresh").click();
-        await page.waitForFunction(() => document.getElementById("model-activity").dataset.state === "unknown");
-        assert.equal(await page.locator(".activity-lamp").evaluate(node => getComputedStyle(node, "::before").content), "none");
+        await page.waitForFunction(() => document.getElementById("connection").classList.contains("bad"));
+        assert.equal(await page.locator("#model-activity").getAttribute("data-state"), "idle", "A failed diagnostic read does not invalidate healthy SSE activity");
         await page.unroute("**/_ccdx/status*");await page.locator("#refresh").click();
         await page.waitForFunction(() => document.getElementById("model-activity").dataset.state === "idle");
         assert.match(await page.locator("#runtime-usage").innerText(), /100/);
@@ -322,7 +334,7 @@ try {
         await page.waitForFunction(() => document.getElementById("source-provider").value === "m365" && document.getElementById("source-model").value === "gpt-source");
         assert.equal(await page.locator("#source-review").inputValue(), "gpt-source");
         assert.equal(await page.locator("#legacy-source-controls").isHidden(), true, "Source selection moved to application model bindings");
-        for (const selector of ["#source-review", "#source-review-effort", "#save-review"]) assert.equal((await page.locator(selector).boundingBox()).height, 36);
+        for (const selector of ["#source-review", "#source-review-effort", "#save-review"]) assert.equal((await page.locator(selector).boundingBox()).height, 32);
         const childIndent = await page.locator('[data-route="codex"]').evaluate(node => parseFloat(getComputedStyle(node).paddingLeft));assert.ok(childIndent > 12);
         await page.locator("#source-review").selectOption("gpt-second");
         await page.evaluate(() => dashboardRefresh.refresh("auth", { force: true }));await page.locator("#refresh").click();
@@ -409,7 +421,7 @@ try {
         await page.waitForFunction(() => !document.getElementById("m365-account-form").hidden && !document.getElementById("m365-accounts-refresh").disabled);
         assert.equal(accountChecks, 1);assert.equal(accountChanges, 0);
         await page.locator("#m365-account-choice").selectOption(accountChoices[1].id);
-        for (const selector of ["#m365-account-choice", "#m365-account-apply"]) assert.equal((await page.locator(selector).boundingBox()).height, 36);
+        for (const selector of ["#m365-account-choice", "#m365-account-apply"]) assert.equal((await page.locator(selector).boundingBox()).height, 32);
         refuseAccountChange = true;page.once("dialog", dialog => dialog.accept());
         await page.locator("#m365-account-apply").click();
         await page.waitForFunction(() => !document.getElementById("m365-account-apply").disabled);
@@ -476,7 +488,7 @@ try {
         const entries = page.locator('[data-view="checks"] .account-entry');
         assert.equal(await entries.count(), 2);
         const entryBoxes = await entries.evaluateAll(nodes => nodes.map(node => { const rect = node.getBoundingClientRect();return { height: rect.height, y: rect.y, decoration: getComputedStyle(node).textDecorationLine }; }));
-        assert.equal(entryBoxes[0].height, 36);assert.equal(entryBoxes[1].height, 36);assert.equal(entryBoxes[0].y, entryBoxes[1].y);assert.equal(entryBoxes[1].decoration, "none");
+        assert.equal(entryBoxes[0].height, 32);assert.equal(entryBoxes[1].height, 32);assert.equal(entryBoxes[0].y, entryBoxes[1].y);assert.equal(entryBoxes[1].decoration, "none");
         await entries.nth(1).click();await page.waitForFunction(() => !document.getElementById("m365-source-access").hidden);
         assert.equal(accountChecks, 1, "Navigation does not silently enumerate accounts");
         await nav("checks");await page.locator("#check-account-link").click();await page.waitForFunction(() => !document.getElementById("github-account").hidden);
@@ -849,4 +861,4 @@ try {
     } finally { await browser.close(); }
   }
   console.log(JSON.stringify({ cases: results, model_lookups: models, usage_reads: summaries, real_provider_calls: 0 }));
-} finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve));await fs.rm(home, { recursive: true, force: true }); }
+} finally { fixtureEvents.close();handler.cleanup();server.closeAllConnections(); await new Promise(resolve => server.close(resolve));await fs.rm(home, { recursive: true, force: true }); }

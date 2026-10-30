@@ -320,6 +320,9 @@
       text("uptime", "pid_pid_uptime_duration", { pid: number(data.pid), duration: duration(data.uptime_ms) });
       text("requests", number(data.requests?.total));
       text("request-errors", "4xx_client_5xx_server_active_active", { client: number(data.requests?.status_4xx), server: number(data.requests?.status_5xx), active: number(data.requests?.active) });
+      const categories = data.http_errors?.by_category;
+      text("http-error-breakdown", categories ? "http_categories" : "—",
+        categories ? Object.fromEntries(["inference", "capability", "protocol", "route", "other"].map(key => [key, number(categories[key] || 0)])) : {});
       for (const key of ["completed", "incomplete", "failed", "cancelled"]) {
         text(key, number(data.stream_performance?.by_route?.responses?.terminal_outcomes?.totals[key]));
         text(`claude-${key}`, number(data.providers?.claude?.requests?.performance?.by_route?.messages?.terminal_outcomes?.totals[key]));

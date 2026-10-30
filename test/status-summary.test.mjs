@@ -17,7 +17,7 @@ test('default status keeps the full legacy contract while the opt-in projection 
  const complete=JSON.parse((await invokeAdapter(options,{method:'GET',url:'/_ccdx/status',headers})).text);
  const summary=JSON.parse((await invokeAdapter(options,{method:'GET',url:'/_ccdx/status?scope=summary',headers})).text);
  assert.ok(complete.stream_performance);assert.ok(complete.http_errors);assert.equal(complete.scope,undefined);
- assert.equal(summary.scope,'summary');assert.equal(summary.name,complete.name);assert.equal(summary.version,complete.version);
+ assert.equal(summary.scope,'summary');assert.equal(summary.instance_id,complete.instance_id);assert.equal(typeof summary.instance_id,'string');assert.equal(summary.name,complete.name);assert.equal(summary.version,complete.version);
  assert.equal(Object.hasOwn(summary,'http_errors'),false);assert.equal(Object.hasOwn(summary,'providers'),false);
  const refused=await invokeAdapter(options,{method:'GET',url:'/_ccdx/status?scope=summary',headers:{host:'evil.invalid'}});assert.equal(refused.status,403);
 });

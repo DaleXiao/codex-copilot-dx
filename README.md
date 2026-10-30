@@ -15,8 +15,8 @@ ccdx
 
 Without Node.js, download and run the installer for your system:
 
-- macOS: [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.2/install.sh), then `sh install.sh`.
-- Windows: [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.2/install.ps1), then `./install.ps1` under your current shell policy.
+- macOS: [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.3/install.sh), then `sh install.sh`.
+- Windows: [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.3/install.ps1), then `./install.ps1` under your current shell policy.
 
 The installer reuses a compatible Node.js or installs a private, verified copy. Git and a compiler are not required. Complete platform packages include their dependencies. Company registry, proxy, certificate and shell policies are kept.
 

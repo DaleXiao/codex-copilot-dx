@@ -25,14 +25,17 @@ function begin(application,model,route){const complete=metrics.begin(route),r=(r
 let browser;const receipts=[];
 try{
  for(const engine of (options.get('--engines')||'chromium').split(',')){
-  browser=await playwright[engine].launch({headless:true,...(options.get('--'+engine)?{executablePath:options.get('--'+engine)}:{})});
-  const context=await browser.newContext({viewport:{width:1280,height:1000}}),page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(String(e)));page.setDefaultTimeout(15000);
+  browser=await playwright[engine].launch({headless:true,...(options.get('--channel')?{channel:options.get('--channel')} : {}),...(options.get('--'+engine)?{executablePath:options.get('--'+engine)}:{})});
+  console.log(`Activity replay: ${engine}`);
+  const context=await browser.newContext({viewport:{width:1280,height:1000}}),page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(String(e)));page.setDefaultTimeout(15000);const watchdog=setTimeout(()=>{console.error(`Activity replay timed out: ${engine}`);process.exit(1)},120000);watchdog.unref();
   await page.goto(base+'/#requests');await page.waitForFunction(()=>document.querySelector('#request-flow').dataset.state==='idle',{timeout:10000});
   const finish=[begin('codex_app','gpt-one','responses'),begin('claude_app','claude-two','messages'),begin('claude_code','claude-three','messages')];
   await page.waitForFunction(()=>document.querySelector('#request-flow').dataset.state==='active'&&document.querySelector('#flow-models').children.length===3);
   assert.match(writes.at(-1),/Active/);if(options.get('--output'))await page.screenshot({path:options.get('--output'),fullPage:true});
-  await page.waitForTimeout(6500);assert.equal(await page.locator('#request-flow').getAttribute('data-state'),'active','no 6s expiry while SSE is healthy');
-  await context.setOffline(true);for(const end of finish)end();await page.waitForTimeout(150);
+  await page.locator('[data-route=overview]').click();await page.locator('#refresh').click();
+  await page.waitForTimeout(6500);assert.equal(await page.locator('#model-activity').getAttribute('data-state'),'active','manual summary refresh cannot reinstate the 6s expiry on healthy SSE');
+  await page.locator('[data-route=requests]').click();await page.waitForFunction(()=>document.querySelector('#request-flow').dataset.state==='active');
+  await context.setOffline(true);for(const res of responses)res.destroy();await page.waitForFunction(()=>document.querySelector('#model-activity').dataset.state==='unknown');for(const end of finish)end();await page.waitForTimeout(150);
   assert.match(writes.at(-1),/Idle/);
   await context.setOffline(false);for(const res of responses)res.end();
   await page.waitForFunction(()=>document.querySelector('#request-flow').dataset.state==='idle',{timeout:15000});
@@ -45,7 +48,7 @@ try{
   await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'))});
   await page.waitForFunction(()=>document.querySelector('#request-flow').dataset.state==='idle');assert.deepEqual(errors,[]);
   receipts.push({engine,concurrent_apps:3,concurrent_models:3,long_stream:true,reconnect:true,pause:true,hidden_page:true,page_errors:errors.length});
-  await context.close();await browser.close();browser=null;
+  await context.close();await browser.close();browser=null;clearTimeout(watchdog);
  }
  console.log(JSON.stringify(receipts));
 }finally{await browser?.close();terminal.cleanup();await closeHttpServer(server);handler.cleanup();await fs.rm(home,{recursive:true,force:true})}

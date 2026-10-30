@@ -118,6 +118,8 @@ The stream sends a small heartbeat every 15 seconds; the browser replaces a sile
 
 Push reads do not invoke the complete diagnostic snapshot, read usage files, refresh credentials/catalogs or send inference. Up to eight native/same-origin loopback streams are accepted. Slow streams keep at most one newer snapshot and close if still blocked at the next heartbeat. Streams are excluded from request/work counts and closed before normal service shutdown. TUI static setup/preferences retain a ten-second local read; live activity does not wait for it. Animation frames and elapsed-time updates remain local. Existing reduced-motion and terminal output controls remain.
 
+Desktop spacing keeps existing fonts, palettes, navigation and disclosure anchors. The header is 64 px at desktop widths; its existing narrow-screen layout stays responsive. Panels use 16 px padding and ordinary rows use 7 px vertical cell padding. Standard controls are 32 px high and inline source/model actions 30 px; coarse pointers retain 44 px controls. Multi-line animation choices retain their natural height. Compact padding does not change model lists, draft fields, settings behavior or focus outlines.
+
 ## Installation and updates
 
 Use the installers linked in the [README](../README.md) when Node.js is unavailable. They support macOS and Windows on x64/ARM64, reuse a compatible Node.js, or install verified Node 24.22.0 privately. They do not install Git, compilers or system package managers, or change company registry/proxy/certificate/shell policy.

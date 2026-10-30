@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Local gateway for Codex and Claude with Copilot, Microsoft 365 and custom APIs",
   "author": "Dale Xiao",
   "type": "module",

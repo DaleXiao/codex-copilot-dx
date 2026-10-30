@@ -7,6 +7,7 @@ import { decodedBodyLimitPreference } from "./user-settings.mjs";
 import { profileRouting } from "./profile-routing.mjs";
 import { usageLoggingStats, runtimeUsageSnapshot } from "./usage-store.mjs";
 import { debugLoggingStats } from "./log.mjs";
+import { createChangeSignal } from "./activity-events.mjs";
 
 export { ADAPTER_STATUS_PATH };
 export { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
@@ -58,6 +59,7 @@ function counterSnapshot(counter) {
 }
 
 export function createRequestMetrics({ now = Date.now } = {}) {
+  const changes = createChangeSignal();
   const total = emptyCounter();
   const routes = Object.fromEntries(ROUTE_NAMES.map((name) => [name, emptyCounter()]));
 
@@ -68,6 +70,7 @@ export function createRequestMetrics({ now = Date.now } = {}) {
     total.active += 1;
     route.total += 1;
     route.active += 1;
+    changes.changed();
     let completed = false;
 
     return ({ statusCode = 0, aborted = false } = {}) => {
@@ -84,11 +87,13 @@ export function createRequestMetrics({ now = Date.now } = {}) {
         const bucket = statusBucket(statusCode);
         if (bucket) counter[bucket] += 1;
       }
+      changes.changed();
     };
   };
 
   return {
     begin,
+    subscribe: changes.subscribe,
     snapshot() {
       return {
         ...counterSnapshot(total),

@@ -3,6 +3,7 @@ import { currentRequestContext } from "./request-context.mjs";
 import { isProviderId } from "./provider-metadata.mjs";
 import { applicationLabel } from "./request-application.mjs";
 import { createContextMetrics } from "./context-metrics.mjs";
+import { createChangeSignal } from "./activity-events.mjs";
 
 const PERFORMANCE_ROUTES = Object.freeze(["responses", "responses_compact"]);
 const PREPARATION_STAGES = Object.freeze(["admission", "body", "history", "images", "serialization"]);
@@ -214,6 +215,7 @@ function routeSnapshot(route) {
 }
 
 export function createStreamPerformanceMetrics({ now = () => performance.now(), wallNow = () => new Date().toISOString(), routeNames = PERFORMANCE_ROUTES } = {}) {
+  const changes = createChangeSignal();
   const routes = Object.fromEntries(routeNames.map((name) => [name, createRoutePerformance()]));
   const recentRequests = [];
   const contexts = createContextMetrics();
@@ -221,6 +223,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
   let activeTotal = 0, activeSequence = 0;
 
   return {
+    subscribe: changes.subscribe,
     begin(routeName, { requestId, application } = {}) {
       const route = routes[routeName];
       if (!route) return null;
@@ -262,6 +265,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         upstream_attempts: attempts, terminal_outcome: terminalOutcome,
         attempts: attemptTimings.map(attempt => ({ ...attempt })),
       }));
+      changes.changed();
       const assignProvider = value => {
         if (finished || sourceStats || !isProviderId(value)) return;
         provider = value;
@@ -269,6 +273,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         if (!route.providers.has(label)) route.providers.set(label, { requests: 0, active: 0, finished: 0, totals: emptyOutcomes(), models: new Map(),
           ttft: createHistogram(TTFT_EDGES_MS), preparation: Object.fromEntries(PREPARATION_STAGES.map(stage => [stage, createHistogram(PREPARATION_EDGES_MS)])) });
         sourceStats = route.providers.get(label);sourceStats.requests++;sourceStats.active++;
+        changes.changed();
       };
 
       return {
@@ -294,6 +299,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           attemptTimings.push({ attempt: attempts, started_ms: elapsed(time), headers_ms: null, http_status: null });
           firstAttemptAt ??= time;
           phase = "upstream_connection";
+          changes.changed();
           if (streaming && upstreamStartedAt === null) upstreamStartedAt = time;
         },
         upstreamHeaders(statusCode) {
@@ -301,6 +307,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           headersAt = now();
           lastActivityAt = headersAt;
           phase = "upstream_response";
+          changes.changed();
           const attempt = attemptTimings.at(-1);
           if (attempt) {
             attempt.headers_ms = elapsed(headersAt);
@@ -310,12 +317,13 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         upstreamActivity() {
           if (finished) return;
           lastActivityAt = now();
-          phase = "upstream_stream";
+          if (phase !== "upstream_stream") { phase = "upstream_stream";changes.changed(); }
         },
         firstOutput(source = "delta") {
           if (firstOutputAt === null) {
             firstOutputAt = now();
             firstOutputSource = Object.hasOwn(route.outputSources, source) ? source : "delta";
+            changes.changed();
           }
         },
         setOutputTokens(value) {
@@ -324,7 +332,8 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           if (Number.isFinite(tokens) && tokens >= 0) outputTokens = tokens;
         },
         setModel(value, { configured = false } = {}) {
-          model = modelLabel(value, configured);
+          const next = modelLabel(value, configured);
+          if (next !== model) { model = next;changes.changed(); }
         },
         setProvider: assignProvider,
         observeSession(key) { if (!finished && typeof key === "string" && /^[a-f0-9]{64}$/.test(key)) session = key; },
@@ -362,6 +371,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           if (!sourceStats) assignProvider("unknown");
           finished = true;
           activeTotal--;activeRequests.delete(activeId);
+          changes.changed();
           failed ||= finishFailed;
           const outcome = terminalOutcome || (aborted ? "cancelled" : "unknown");
           const emptyStreamCompletion = outcome === "completed" && upstreamStartedAt !== null
@@ -436,6 +446,19 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       };
     },
     contextSnapshot: () => contexts.snapshot(),
+    activitySnapshot() {
+      return {
+        by_route: Object.fromEntries(routeNames.map(name => [name, {
+          terminal_outcomes: { totals: { ...routes[name].terminalTotals } },
+          by_provider: Object.fromEntries([...routes[name].providers].map(([id, value]) => [id, {
+            active: value.active, terminal_outcomes: { totals: { ...value.totals } },
+          }])),
+        }])),
+        active_requests: [...activeRequests.values()].map(read => read()), active_total: activeTotal,
+        active_omitted: Math.max(0, activeTotal - activeRequests.size),
+        recent_requests: recentRequests.map(entry => ({ ...entry, context: { ...entry.context }, timings_ms: { ...entry.timings_ms } })),
+      };
+    },
     snapshot() {
       return {
         by_route: Object.fromEntries(routeNames.map((name) => [name, routeSnapshot(routes[name])])),

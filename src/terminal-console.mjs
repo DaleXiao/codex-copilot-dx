@@ -12,13 +12,15 @@ const flagOff = value => /^(0|false|no|off)$/i.test(String(value || ""));
 
 // A bounded status region, independent of file logging and inference delivery.
 export function createTerminalConsole({ output = process.stdout, errorOutput = process.stderr, env = process.env,
-  snapshot = () => ({}), preferences = () => ({}), baseUrl = "", verbose = false,
+  snapshot = () => ({}), subscribe, preferences = () => ({}), baseUrl = "", verbose = false,
   timers = { setTimeout, clearTimeout }, now = Date.now } = {}) {
   let running = false, timer = null, lines = 0, frame = 0, lastRead = 0, data = {}, projection = projectTerminalState();
   let notices = 0, lastNotice = "", lastPrintedNotice = "", previous = [];
   let content = [], dirty = true, readFailed = false, updatedAt = null, fits = true;
   let current = { theme: DEFAULT_TERMINAL_ANIMATION_THEME, color_theme: "green", terminal_animation_enabled: true };
   let frameDelay = 1000;
+  let unsubscribe = null, live = null;
+  const mergeActivity = value => live ? { ...value, ...live, providers: { ...value.providers, ...live.providers } } : value;
   const tty = output.isTTY === true && errorOutput.isTTY === true && (!env.CI || flagOff(env.CI)) && env.TERM !== "dumb";
   const supported = () => tty && (Number(output.columns) || 80) >= 40 && (Number(output.rows) || 24) >= 16;
   const resized = () => { if (lines) output.write("\n");lines = 0;previous = [];frame = 0;dirty = true; };
@@ -103,7 +105,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
       ? colorTerminalText(line, current.color_theme, { output, env }) : line), `${motion} ${active === null ? "Status unknown" : active ? "Active" : "Idle"}`];
     fits = body.length < (Number(output.rows) || 24);
     if (!fits) { frameDelay = 1000;return; }
-    // Animation ticks update only the final line; data stays on its 1s cadence.
+    // Animation ticks do not read status; activity notifications update state.
     let update = "";
     if (lines && lines !== body.length) {
       update = `${lines > 1 ? `\x1b[${lines - 1}A` : ""}\r\x1b[J`;lines = 0;previous = [];
@@ -119,10 +121,10 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
   }
   function tick() {
     if (!running) return;
-    if (now() - lastRead >= 1000 || !lastRead) {
+    if (now() - lastRead >= (subscribe ? 10000 : 1000) || !lastRead) {
       try {
         const next = snapshot(), nextPreferences = preferences();
-        data = next;projection = projectTerminalState(data);current = { ...current, ...nextPreferences };readFailed = false;updatedAt = now();
+        data = mergeActivity(next);projection = projectTerminalState(data);current = { ...current, ...nextPreferences };readFailed = false;updatedAt = now();
         if (!isTerminalAnimationTheme(current.theme)) current.theme = DEFAULT_TERMINAL_ANIMATION_THEME;
       } catch { readFailed = true; }
       lastRead = now();
@@ -133,8 +135,15 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
   }
   return {
     get enabled() { return supported() && fits && !verbose; },
-    start() { if (running) return;running = true;tick(); },
-    pause() { running = false;if (timer) timers.clearTimeout(timer);timer = null;if (lines) output.write("\n");lines = 0;previous = [];dirty = true; },
+    start() {
+      if (running) return;running = true;live = null;lastRead = 0;tick();
+      unsubscribe = subscribe?.(value => {
+        if (!running) return;
+        live = value;data = mergeActivity(data);projection = projectTerminalState(data);readFailed = false;updatedAt = now();dirty = true;
+        if (timer) timers.clearTimeout(timer);tick();
+      });
+    },
+    pause() { running = false;unsubscribe?.();unsubscribe = null;if (timer) timers.clearTimeout(timer);timer = null;if (lines) output.write("\n");lines = 0;previous = [];dirty = true; },
     beginRequest() { dirty = true;return () => { dirty = true; }; },
     log(method, args) {
       const message = redactDiagnosticText(format(...args));
@@ -146,6 +155,6 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
     snapshot() { return { notices, last_notice: lastNotice || null, mode: verbose ? "verbose" : supported() && fits ? "status" : "plain",
       data_state: readFailed ? updatedAt === null ? "unavailable" : "stale" : updatedAt === null ? "unknown" : "current", updated_at: updatedAt === null ? null : new Date(updatedAt).toISOString() }; },
     apply(value) { if (value.theme && value.theme !== current.theme) frame = 0;current = { ...current, ...value };lastRead = 0; },
-    cleanup() { running = false;if (timer) timers.clearTimeout(timer);timer = null;if (lines) output.write("\n");lines = 0;output.off?.("resize", resized); },
+    cleanup() { running = false;unsubscribe?.();unsubscribe = null;if (timer) timers.clearTimeout(timer);timer = null;if (lines) output.write("\n");lines = 0;output.off?.("resize", resized); },
   };
 }

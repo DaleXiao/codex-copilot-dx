@@ -18,7 +18,7 @@ const mib = (value) => finite(value) ? `${(Number(value) / 1048576).toFixed(1)} 
 const time = (value, options) => globalThis.ccdxTime?.format(value, options) ?? (value ? new Date(value).toLocaleTimeString() : "—");
 const viewHelpers = { time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator: globalThis.navigator,
   motionAllowed: () => !reducedMotion.matches && document.visibilityState === "visible" && element("usage-analytics").open && !element("usage-analytics").closest("[hidden]") };
-const { render, renderProviders, renderFailures, renderContext } = globalThis.ccdxViewBoundary.create("client-features", () => globalThis.ccdxDashboardStatus.create(viewHelpers), ["render", "renderProviders", "renderFailures", "renderContext"]);
+const { render, renderActivity, renderProviders, renderFailures, renderContext } = globalThis.ccdxViewBoundary.create("client-features", () => globalThis.ccdxDashboardStatus.create(viewHelpers), ["render", "renderActivity", "renderProviders", "renderFailures", "renderContext"]);
 const usageView = globalThis.ccdxViewBoundary.create("usage-analytics", () => globalThis.ccdxDashboardUsage.create(viewHelpers), ["applyUsage", "renderUsageState", "renderAnalytics", "renderUsageTable", "selectUsageDay", "usageValues", "setChartVisible", "revealChart", "stopMotion"]);
 const { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay } = usageView;
 const loadAuth = () => dashboardRefresh.refresh("auth", { force: true });
@@ -252,8 +252,8 @@ for (const [key, ids] of [["auth", ["account-authorization", "client-features", 
 
 const updateView = globalThis.ccdxDashboardUpdates.create(viewHelpers);
 function statusState(state) {
-  if (state.error || !state.value) globalThis.ccdxDashboardActivity?.unavailable();
-  if ((state.error || !state.value) && statusResourceKey() === "status") globalThis.ccdxDashboardFlow?.unavailable();
+  if (!liveActivity.current && (state.error || !state.value)) globalThis.ccdxDashboardActivity?.unavailable();
+  if (!liveActivity.current && (state.error || !state.value) && statusResourceKey() === "status") globalThis.ccdxDashboardFlow?.unavailable();
   text("connection", state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable");
   element("connection").className = `badge ${state.pending ? "neutral" : state.error ? "bad" : "good"}`;
   globalThis.ccdxIcons?.set(element("connection"), state.pending && !state.value ? "reading" : state.error ? "unavailable_eb0be" : "service_reachable",
@@ -289,7 +289,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
         if (data.ok !== true || data.name !== "codex-copilot-dx") throw new Error("Unexpected status response");
         return data;
       },
-      apply: data => { if (statusResourceKey() === "status") render(data); },
+      apply: data => { if (statusResourceKey() === "status") { render(data);restoreLive(data); } },
       state: state => { if (statusResourceKey() === "status") statusState(state); },
     },
     "status-summary": {
@@ -299,7 +299,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
         if (data.ok !== true || data.name !== "codex-copilot-dx") throw new Error("Unexpected status response");
         return data;
       },
-      apply: data => { if (statusResourceKey() === "status-summary") render(data); },
+      apply: data => { if (statusResourceKey() === "status-summary") { render(data);restoreLive(data); } },
       state: state => { if (statusResourceKey() === "status-summary") statusState(state); },
     },
     auth: {
@@ -417,22 +417,46 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
 });
 
 const autoRefreshKey = "ccdx.dashboard.autoRefresh";
+let liveCompleted = null;
+const liveActivity = globalThis.ccdxLive.create({
+  visible: () => document.visibilityState === "visible",
+  apply: data => {
+    renderActivity(data);
+    const completed = JSON.stringify([data.instance_id, data.requests?.completed]);
+    if (completed !== liveCompleted && globalThis.ccdxContextView?.visible()) void dashboardRefresh.refresh("context", { force: true });
+    liveCompleted = completed;
+  },
+  tick: () => globalThis.ccdxDashboardFlow?.tick(),
+  state: value => {
+    if (value === "live") {
+      element("connection").className = "badge good";
+      globalThis.ccdxIcons?.set(element("connection"), "service_reachable", "connected");
+    } else {
+      globalThis.ccdxDashboardActivity?.unavailable();globalThis.ccdxDashboardFlow?.unavailable();
+      if (value !== "paused") {
+        element("connection").className = "badge neutral";
+        globalThis.ccdxIcons?.set(element("connection"), "reading", "unknown");
+      }
+    }
+  },
+});
+function restoreLive(data) { if (liveActivity.current && liveActivity.current.instance_id === data.instance_id) renderActivity(liveActivity.current); }
 const updateAutoRefresh = () => {
   element("auto-refresh").setAttribute("aria-pressed", String(dashboardRefresh.automatic));
   text("auto-refresh-label", dashboardRefresh.automatic ? "auto_refresh_on" : "auto_refresh_off");
 };
 let automatic = true;
 try { automatic = localStorage.getItem(autoRefreshKey) !== "off"; } catch { /* Keep the default when browser storage is unavailable. */ }
-dashboardRefresh.setAutomatic(automatic);
+dashboardRefresh.setAutomatic(automatic);liveActivity.setAutomatic(automatic);
 updateAutoRefresh();
 element("auto-refresh").addEventListener("click", () => {
-  dashboardRefresh.setAutomatic(!dashboardRefresh.automatic);
+  dashboardRefresh.setAutomatic(!dashboardRefresh.automatic);liveActivity.setAutomatic(dashboardRefresh.automatic);
   updateAutoRefresh();
   try { localStorage.setItem(autoRefreshKey, dashboardRefresh.automatic ? "on" : "off"); } catch { /* Keep the current choice. */ }
 });
-document.addEventListener("visibilitychange", () => dashboardRefresh.visibilityChanged());
-window.addEventListener("pagehide", () => { dashboardRefresh.suspend(); stopAnimationPreview();usageView.stopMotion(); });
-window.addEventListener("pageshow", () => { dashboardRefresh.resume(); syncAnimationPreview(); });
+document.addEventListener("visibilitychange", () => { dashboardRefresh.visibilityChanged();liveActivity.sync(); });
+window.addEventListener("pagehide", () => { dashboardRefresh.suspend();liveActivity.suspend(); stopAnimationPreview();usageView.stopMotion(); });
+window.addEventListener("pageshow", () => { dashboardRefresh.resume();liveActivity.resume(); syncAnimationPreview(); });
 
 for (const [id, key] of [["account-authorization", "auth"], ["client-features", "status"], ["request-context", "status"], ["recent-failures", "status"], ["upstream-models", "models"], ["model-usage", "usage"]]) {
   element(id).addEventListener("toggle", () => {

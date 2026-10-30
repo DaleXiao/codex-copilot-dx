@@ -1,4 +1,5 @@
 export async function closeHttpServer(server, { timeoutMs = 5000 } = {}) {
+  server?.ccdxCloseActivity?.();
   if (!server?.listening) return { forced: false };
 
   return new Promise((resolve, reject) => {

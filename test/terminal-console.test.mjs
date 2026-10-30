@@ -120,3 +120,17 @@ test("40 and 80 column terminals retain live usage at the supported 16-row heigh
     assert.equal(terminal.snapshot().mode, "status");terminal.cleanup();
   }
 });
+
+test('activity notifications wake the TUI immediately, keep client metadata and unsubscribe on pause', () => {
+  const writes=[],timers=new Map();let listener,time=1000,reads=0,unsubscribed=0;
+  const terminal=createTerminalConsole({env:{},output:{isTTY:true,columns:100,rows:30,write:v=>writes.push(v)},errorOutput:{isTTY:true},now:()=>time,
+    snapshot:()=>{reads++;return {uptime_ms:1000,requests:{by_route:{responses:{active:0,total:0}}},providers:{connections:{providers:[{id:'github',name:'GitHub Copilot',enabled:true}],clients:[{id:'codex',enabled:true,source:'github',setup:'preserved'}]}}}},
+    subscribe:fn=>{listener=fn;return ()=>{unsubscribed++;listener=null}},timers:{setTimeout(fn,ms){timers.set(fn,ms);return fn},clearTimeout(fn){timers.delete(fn)}}});
+  terminal.start();assert.equal(reads,1);
+  listener({model_activity:{active:1},requests:{by_route:{responses:{active:1,total:1}}},stream_performance:{active_requests:[{request_id:'one',application:'codex_app'}]}});
+  assert.match(stripVTControlCharacters(writes.at(-1)),/Active/);assert.equal(reads,1);
+  listener({model_activity:{active:0},requests:{by_route:{responses:{active:0,total:1}}},stream_performance:{active_requests:[]}});
+  assert.match(stripVTControlCharacters(writes.at(-1)),/Idle/);assert.equal(reads,1);
+  time+=2000;const fn=[...timers.keys()][0];timers.delete(fn);fn();assert.equal(reads,1,'no full snapshot per animation or second');
+  terminal.pause();assert.equal(unsubscribed,1);assert.equal(timers.size,0);terminal.cleanup();
+});

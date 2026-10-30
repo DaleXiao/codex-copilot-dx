@@ -264,6 +264,32 @@
 
       const claude = data.providers?.claude || data.providers?.m365?.claude, claudeMetrics = claude?.requests?.performance;
       percentiles("claude-ttft-percentiles", claudeMetrics?.by_route?.messages?.ttft_ms);
+      renderRequestTables(data);
+      if (element("claude-route") && visible(element("claude-route"))) {
+        element("claude-route").textContent = claude?.base_url || "—";
+        const clientState = value => ({ configured: "configured", restored: "settings_restored", preserved: "existing_settings_kept", partially_preserved: "existing_settings_kept",
+          not_installed: "not_installed", configuration_unavailable: "setup_unavailable" })[value] || "unknown";
+        text("claude-client-state", "claude_code_code_claude_app_app", { code: phrase(clientState(claude?.clients?.code)), app: phrase(clientState(claude?.clients?.app)) });
+        const totals = claudeMetrics?.by_route?.messages?.terminal_outcomes?.totals || claude?.requests || {};
+        for (const key of ["completed", "incomplete", "failed", "cancelled"]) text(`claude-${key}`, totals[key] === undefined ? "—" : number(totals[key]));
+        for (const [id, metric, unit] of [["claude-ttft", claudeMetrics?.by_route?.messages?.ttft_ms, "ms"], ["claude-speed", claudeMetrics?.by_route?.messages?.output_tokens_per_second, "token/s"]]) {
+          text(id, metric?.samples > 0 ? `${Number(metric.avg).toFixed(1)} ${unit} / ${metric.samples}` : "—");
+        }
+      }
+      renderRuntimeUsage(data);
+      if (element("prediction-preference") && visible(element("prediction-preference"))) {
+        const prediction = data.client_integrations?.prediction;
+        text("prediction-preference", prediction ? prediction.configured ? "configured" : "not_configured" : "unknown");
+        text("prediction-bridge", ({ running: "running_f4cca", recovering: "recovering", stopped: "stopped", unavailable: "unavailable_ca184" })[prediction?.bridge] || "unknown");
+        text("prediction-route", prediction?.client_route === "observed" ? "observed" : "unknown");
+        text("prediction-candidate", "unknown");
+        const note = element("prediction-note");
+        if (note) note.textContent = prediction?.reason || "";
+      }
+      text("updated", "snapshot_time", { time: time(Date.now()) });
+    }
+    function renderRequestTables(data) {
+      const claudeMetrics = (data.providers?.claude || data.providers?.m365?.claude)?.requests?.performance;
       const sourceBody = element("source-requests-body");
       if (sourceBody && visible(sourceBody)) {
         sourceBody.replaceChildren();
@@ -286,27 +312,22 @@
       const kind = element("failure-kind")?.value || "issues";
       renderFailures(issueGroups[kind] || [], kind === "issues" ? recentRequests : []);
       renderContext({ ...data.stream_performance, recent_requests: recentRequests });
-      if (element("claude-route") && visible(element("claude-route"))) {
-        element("claude-route").textContent = claude?.base_url || "—";
-        const clientState = value => ({ configured: "configured", restored: "settings_restored", preserved: "existing_settings_kept", partially_preserved: "existing_settings_kept",
-          not_installed: "not_installed", configuration_unavailable: "setup_unavailable" })[value] || "unknown";
-        text("claude-client-state", "claude_code_code_claude_app_app", { code: phrase(clientState(claude?.clients?.code)), app: phrase(clientState(claude?.clients?.app)) });
-        const totals = claudeMetrics?.by_route?.messages?.terminal_outcomes?.totals || claude?.requests || {};
-        for (const key of ["completed", "incomplete", "failed", "cancelled"]) text(`claude-${key}`, totals[key] === undefined ? "—" : number(totals[key]));
-        for (const [id, metric, unit] of [["claude-ttft", claudeMetrics?.by_route?.messages?.ttft_ms, "ms"], ["claude-speed", claudeMetrics?.by_route?.messages?.output_tokens_per_second, "token/s"]]) {
-          text(id, metric?.samples > 0 ? `${Number(metric.avg).toFixed(1)} ${unit} / ${metric.samples}` : "—");
-        }
+    }
+    function renderActivity(data) {
+      globalThis.ccdxDashboardActivity?.update(data.model_activity, { live: true });
+      globalThis.ccdxDashboardFlow?.update(data, { live: true });
+      text("version", `v${data.version || "?"}`);
+      text("uptime", "pid_pid_uptime_duration", { pid: number(data.pid), duration: duration(data.uptime_ms) });
+      text("requests", number(data.requests?.total));
+      text("request-errors", "4xx_client_5xx_server_active_active", { client: number(data.requests?.status_4xx), server: number(data.requests?.status_5xx), active: number(data.requests?.active) });
+      const categories = data.http_errors?.by_category;
+      text("http-error-breakdown", categories ? "http_categories" : "—",
+        categories ? Object.fromEntries(["inference", "capability", "protocol", "route", "other"].map(key => [key, number(categories[key] || 0)])) : {});
+      for (const key of ["completed", "incomplete", "failed", "cancelled"]) {
+        text(key, number(data.stream_performance?.by_route?.responses?.terminal_outcomes?.totals[key]));
+        text(`claude-${key}`, number(data.providers?.claude?.requests?.performance?.by_route?.messages?.terminal_outcomes?.totals[key]));
       }
-      renderRuntimeUsage(data);
-      if (element("prediction-preference") && visible(element("prediction-preference"))) {
-        const prediction = data.client_integrations?.prediction;
-        text("prediction-preference", prediction ? prediction.configured ? "configured" : "not_configured" : "unknown");
-        text("prediction-bridge", ({ running: "running_f4cca", recovering: "recovering", stopped: "stopped", unavailable: "unavailable_ca184" })[prediction?.bridge] || "unknown");
-        text("prediction-route", prediction?.client_route === "observed" ? "observed" : "unknown");
-        text("prediction-candidate", "unknown");
-        const note = element("prediction-note");
-        if (note) note.textContent = prediction?.reason || "";
-      }
+      renderRuntimeUsage(data);renderRequestTables(data);
       text("updated", "snapshot_time", { time: time(Date.now()) });
     }
     function renderRuntimeUsage(data) {
@@ -373,7 +394,7 @@
       }
       if (!contextRequests.length) emptyTable("context-body", 6, "no_observed_request_metadata");
     }
-    return { render, renderProviders, renderFailures, renderContext };
+    return { render, renderActivity, renderProviders, renderFailures, renderContext };
   }
   globalThis.ccdxDashboardStatus = { create };
 })();

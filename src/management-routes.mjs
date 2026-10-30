@@ -4,17 +4,27 @@ import { createRequestAbort, readJsonBody, sendJsonError } from "./http-transpor
 import { httpError } from "./http-errors.mjs";
 import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 import { statusSummary } from "./status-summary.mjs";
+import { ACTIVITY_EVENTS_PATH } from "./activity-events.mjs";
 
 export function isManagementRoute(method, pathname) {
-  return (method === "GET" && [ADAPTER_STATUS_PATH, ADAPTER_HEALTH_PATH].includes(pathname))
+  return (method === "GET" && [ADAPTER_STATUS_PATH, ADAPTER_HEALTH_PATH, ACTIVITY_EVENTS_PATH].includes(pathname))
     || pathname === ADAPTER_PREDICTION_FIX_PATH || pathname === ADAPTER_CACHE_PATH;
 }
 
 // Management retains its own access checks; it receives snapshots and explicit
 // actions, never an inference client or a second integration lifecycle.
-export function createManagementHandler({ statusSnapshot, nativePredictionPac, fixPrediction, requestBodyTimeoutMs } = {}) {
+export function createManagementHandler({ statusSnapshot, activityEvents, nativePredictionPac, fixPrediction, requestBodyTimeoutMs } = {}) {
   const options = { nativePredictionPac, fixPrediction };
   return async (req, res, pathname) => {
+    if (req.method === "GET" && pathname === ACTIVITY_EVENTS_PATH) {
+      const origin = req.headers?.origin;
+      if (!isLoopbackAddress(req.socket?.remoteAddress) || !isLoopbackHostHeader(req.headers?.host)
+        || origin !== undefined && origin !== `http://${req.headers.host}`
+        || req.headers["sec-fetch-site"] === "cross-site") {
+        res.writeHead(403);res.end();return;
+      }
+      activityEvents.serve(req, res);return;
+    }
     if (req.method === "GET" && pathname === ADAPTER_STATUS_PATH) {
       if (!isLoopbackAddress(req.socket?.remoteAddress) || !isLoopbackHostHeader(req.headers?.host)) {
         res.writeHead(403, { "Content-Type": "application/json" });

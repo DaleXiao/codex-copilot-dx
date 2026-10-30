@@ -9,6 +9,7 @@
     <script src="/theme.js"></script>
     <link rel="stylesheet" href="/ui.css">
     <script src="/refresh.js" defer></script>
+    <script src="/live.js" defer></script>
     <script src="/icons.js" defer></script>
     <script src="/disclosure.js" defer></script>
     <script src="/time.js" defer></script>
@@ -46,7 +47,7 @@
 
       <header class="topbar">
         <div class="brand">CCDX <span class="brand-detail" data-i18n="local_status">/ DASHBOARD</span></div>
-        <div class="topbar-actions"><span id="connection" class="badge neutral" role="status" data-i18n="reading">READING</span><button id="theme-toggle" class="icon-button" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg><svg class="icon-moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 3A9 9 0 1 0 21 12 7 7 0 0 1 12 3Z"/></svg></button><button id="language-toggle" class="icon-button language-button" type="button" aria-label="Switch to Chinese" title="Switch to Chinese">中文</button><button id="auto-refresh" type="button" aria-pressed="true" data-i18n-title="visible_status_updates_every_2_seconds_catalogs_and_retained_usa" title="Visible status updates every 2 seconds. Catalogs and retained usage refresh on demand or every 30 minutes while open."><span class="auto-refresh-measure" aria-hidden="true" data-i18n="auto_refresh_off">Auto refresh · OFF</span><span id="auto-refresh-label" data-i18n="auto_refresh_on">Auto refresh · ON</span></button><button id="refresh" type="button" data-i18n="refresh">Refresh</button></div>
+        <div class="topbar-actions"><span id="connection" class="badge neutral" role="status" data-i18n="reading">READING</span><button id="theme-toggle" class="icon-button" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg><svg class="icon-moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 3A9 9 0 1 0 21 12 7 7 0 0 1 12 3Z"/></svg></button><button id="language-toggle" class="icon-button language-button" type="button" aria-label="Switch to Chinese" title="Switch to Chinese">中文</button><button id="auto-refresh" type="button" aria-pressed="true" data-i18n-title="activity_updates_live" title="Activity updates live. Catalogs and retained usage refresh on demand or every 30 minutes while open."><span class="auto-refresh-measure" aria-hidden="true" data-i18n="auto_refresh_off">Auto refresh · OFF</span><span id="auto-refresh-label" data-i18n="auto_refresh_on">Auto refresh · ON</span></button><button id="refresh" type="button" data-i18n="refresh">Refresh</button></div>
       </header>
 
       <main id="main-content" tabindex="-1">

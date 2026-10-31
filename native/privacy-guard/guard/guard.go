@@ -100,6 +100,10 @@ func Load(dir string) (*Model, error) {
 	}
 	m := &Model{tok: tok, net: nt}
 	m.ml, m.MLErr = openCoreML(dir, nt)
+	if m.ml != nil && m.ml.Device != "Neural Engine" && m.ml.Device != "GPU" {
+		// CPU-only CoreML uses expanded weights; the INT8 path is faster.
+		m.ml = nil
+	}
 	return m, nil
 }
 

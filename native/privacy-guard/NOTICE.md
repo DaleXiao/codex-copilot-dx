@@ -2,8 +2,9 @@
 
 The `guard` implementation is adapted from Magpie commit
 `64aaf421ac39fb2a2dab8c9df1f7729c8e39b4e8`, copyright 2026 yetone,
-under the MIT license in `LICENSE.magpie`. The only import-path change is
-the local CoreML package path. Magpie is not a runtime dependency.
+under the MIT license in `LICENSE.magpie`. Import paths use the local
+CoreML package. CPU-only CoreML falls back to the INT8 CPU implementation.
+Magpie is not a runtime dependency.
 
 The optional AstrLink Guard 0.1.3 model is published by QuantumNous under
 Apache-2.0. Model files are downloaded separately, at a fixed revision and

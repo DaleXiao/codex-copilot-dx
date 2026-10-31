@@ -114,7 +114,7 @@ function appModelsOwned(current, previous, desired, alreadyDesired) {
     withoutAppPreference(recorded.filter(model => wanted.has(model.name))));
 }
 
-export function reconcileClaudeConfiguration(operations, { restore = false, restoreFields = [], ...options } = {}) {
+export function reconcileClaudeConfiguration(operations, { restore = false, restoreFields = [], restoreSelect, ...options } = {}) {
   const paths = claudeClientPaths(options), allowed = new Set(Object.values(paths)), journalPath = m365Paths(options).ownership;
   fs.mkdirSync(path.dirname(journalPath), { recursive: true, mode: 0o700 });
   return withFileLockSync(`${journalPath}.lock`, () => {
@@ -138,7 +138,7 @@ export function reconcileClaudeConfiguration(operations, { restore = false, rest
     const forClient = op => (!options.selectOperation || options.selectOperation(op)) && (!options.client || (options.client === "claude_code" ? op.file === paths.code && !sharedOperation(op) : op.file !== paths.code))
       && (!options.fields || options.fields.includes(op.keys.join(".")));
     const list = restore ? journal.operations.filter(forClient) : [
-      ...journal.operations.filter(op => forClient(op) && restoreFields.includes(op.keys.join("."))).map(op => ({ ...op, restore: true })), ...operations];
+      ...journal.operations.filter(op => forClient(op) && (restoreFields.includes(op.keys.join(".")) || restoreSelect?.(op))).map(op => ({ ...op, restore: true })), ...operations];
     for (const operation of list) {
       if (!allowed.has(operation.file) || !safeKeys(operation)) throw new Error("Unexpected Claude configuration path");
       if (!states.has(operation.file)) states.set(operation.file, read(operation.file));

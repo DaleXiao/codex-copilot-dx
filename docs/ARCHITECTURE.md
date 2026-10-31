@@ -1054,3 +1054,16 @@ non-rotating appends queue delta lines (at most 256 KiB per checkpoint). Queries
 apply those records without rescanning history. Other-process writes, unknown
 changes, rotation, incomplete tails, warnings and oversized results rebuild through
 the original full scan. No persistent index, polling or per-token work is added.
+### Local masking boundary
+
+`local-privacy.mjs` owns explicit consent, per-request policy snapshots, a private placeholder seed and bounded shared detection metadata. It wraps provider calls after authorization/model resolution without changing the prepared request used by local history. Completed history records restore client-visible values while signed and encrypted state stays opaque. `privacy-transform.mjs` projects only supported text fields and restores complete reply events, including JSON-escaped tool arguments. It does not take ownership of credentials or select providers.
+
+`privacy-model.mjs` owns verified, optional downloads and a stdio-only child process. The npm dependency graph is unchanged. Model files are revision/SHA256 pinned; the executable is verified against the fixed component Release's checksum manifest. The downloader reuses the selected npm's network policy. Startup warms only already-downloaded, explicitly enabled protection; opening Settings never downloads a model.
+
+Disabled calls retain their original provider function and body. Enabled calls await a complete check. A frontend check deadline rejects without contacting the provider; shared native work is bounded and may populate the metadata cache for another waiter. Cancellation does not cancel another request's shared work. Native input, jobs, cache and reply buffers have finite budgets; no prompt or mapping database is introduced. The child inherits only required system environment fields, not API keys or sign-in tokens.
+
+The Magpie-derived Go tokenizer/INT8 classifier is built for four macOS/Windows targets, with native CI inference on each target. macOS can use CoreML and otherwise falls back to CPU; Windows uses CPU. The model remains a separate download. The fixed component version and protocol are independent of a client's model ID and of future CCDX code-only updates.
+
+Progress and readiness share the existing coalesced activity SSE. The settings controller only reads status while visible and uses a bounded-action fallback when event updates are absent. Main-page preference revisions are refreshed after masking choices change. Protected request details add replacement count and local-check duration; other request rows retain their current layout.
+
+Claude passthrough now holds incomplete SSE frames and validates complete data before forwarding. Malformed tails do not precede the terminal error; valid final JSON without a newline remains deliverable. Capability restoration and replacement writes use the existing ownership journal in one transaction, preserving both files and ownership on failure.

@@ -54,10 +54,10 @@
     }
     function sync(data, { readVersion } = {}) {
       if (!data.preferences) return;
-      terminalMode = data.terminal?.mode;
+      if (data.terminal) terminalMode = data.terminal.mode;
       if (readVersion !== undefined && readVersion !== version || pending) { render();return; }
       const next = data.preferences;
-      locks.terminal_animation_enabled = data.effective?.terminal_animation_enabled?.locked;
+      if (data.effective) locks.terminal_animation_enabled = data.effective.terminal_animation_enabled?.locked;
       if (base) for (const key of Object.keys(draft)) {
         if (next.values[key] === draft[key]) delete draft[key];
         else if (next.values[key] !== base.values[key]) { conflict = true;error = "preferences_changed"; }

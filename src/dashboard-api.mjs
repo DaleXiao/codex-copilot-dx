@@ -18,6 +18,7 @@ import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate, usageModelGroup
 import { createUsageAnalytics } from "./usage-analytics.mjs";
 import { analyzeUsageLogs } from "./usage-analysis.mjs";
 import { readUserSettings, terminalAnimationPreference, writeTerminalAnimationTheme } from "./user-settings.mjs";
+import { settingsPreferencesSnapshot } from "./settings-preferences.mjs";
 
 const ANIMATION_PATH = "/_ccdx/ui/animation";
 const MODELS_PATH = "/_ccdx/ui/models/live";
@@ -152,6 +153,7 @@ export async function handleDashboardApi(req, res, pathname, {
   updateStatusFn,
   serviceControl,
   applyAnimation,
+  privacy,
   tools,
 } = {}) {
   if (!isLoopbackAddress(req.socket?.remoteAddress)
@@ -165,6 +167,19 @@ export async function handleDashboardApi(req, res, pathname, {
     return;
   }
 
+  if (pathname === "/_ccdx/ui/privacy") {
+    if (!privacy) { sendJson(res, 503, { code: "ccdx_privacy_unavailable" });return; }
+    if (req.headers.origin && !sameOrigin(req)) { sendJson(res, 403, { code: "ccdx_privacy_origin_required" });return; }
+    if (req.method === "GET") { sendJson(res, 200, { ...privacy.snapshot(), preferences: settingsPreferencesSnapshot({ home, env }) });return; }
+    if (req.method !== "POST") { sendJson(res, 405, { error: "Use GET or POST" });return; }
+    if (!sameOrigin(req) || !/^application\/json(?:\s*;|$)/i.test(req.headers["content-type"] || "")) { sendJson(res, 403, { code: "ccdx_privacy_origin_required" });return; }
+    const abort = createRequestAbort(req, res);abort.setTimeout(5000, "request_body_timeout");
+    try {
+      const input = await readJsonBody(req, { maxBodyBytes: 16384, maxDecodedBodyBytes: 16384, signal: abort.signal });abort.clearTimeout();
+      sendJson(res, 200, { ...await privacy.action(input), preferences: settingsPreferencesSnapshot({ home, env }) });
+    } catch (error) { sendJson(res, error.statusCode || 503, { code: /^ccdx_privacy_[a-z_]+$/.test(error.code || "") ? error.code : "ccdx_privacy_unavailable" }); }
+    finally { abort.cleanup(); }return;
+  }
   if (pathname === "/_ccdx/ui/context") {
     if (req.method !== "GET") { sendJson(res, 405, { error: "Use GET" });return; }
     if (req.headers.origin && !sameOrigin(req)) { sendJson(res, 403, { error: "Context requires the same-origin dashboard" });return; }

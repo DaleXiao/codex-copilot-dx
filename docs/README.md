@@ -4,6 +4,7 @@
 - [Reference](REFERENCE.md): commands, settings, diagnostics, images and native suggestions.
 - [Architecture](ARCHITECTURE.md): module ownership and runtime boundaries.
 - [State orchestration](STATE_REFACTOR_PLAN.md): implemented boundaries, preservation checks and deferred work.
+- [1.3.6](RELEASE_1.3.6.md): optional local masking, complete stream frames and atomic capability updates.
 - [1.3.5](RELEASE_1.3.5.md): protocol-first App checks, bounded prediction transport and incremental usage analytics.
 - [1.3.4](RELEASE_1.3.4.md): centered Auto refresh labels at compact control heights.
 - [1.3.3](RELEASE_1.3.3.md): live activity updates and compact WebUI spacing.

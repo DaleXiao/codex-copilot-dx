@@ -8,6 +8,7 @@ import { compileClientModels, sourceModels } from "../src/client-model-plan.mjs"
 import { claudeSharedCapabilityPlan, syncClaudeCapabilities } from "../src/claude-capability-config.mjs";
 import { claudeClientPaths, restoreClaudeClients, configureClaudeClients } from "../src/claude-client-config.mjs";
 import { defaultAccessSettings, accessSettingsPath, readAccessSettings, updateAccessSettings } from "../src/access-settings.mjs";
+import { m365Paths } from "../src/m365-settings.mjs";
 
 const temporary = t => { const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-capabilities-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));return { home, env: {}, platform: "linux" }; };
 const model = (id, window, output = 16000) => ({ id, public_id: id, client_id: id, capability: { values: { ...(window ? { context_window: window } : {}), max_output_tokens: output, reasoning_efforts: ["low", "medium", "high"] } } });
@@ -64,6 +65,20 @@ test("shared Claude budgets handle mixed windows and preserve manual and unrelat
   const saved = JSON.parse(fs.readFileSync(file));assert.equal(saved.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "1000000");assert.equal(saved.modelSettings["ccdx/model-1"].autoCompactWindow, 110000);assert.equal(saved.modelSettings["ccdx/model-1"].effortLevel, "low");assert.deepEqual(saved.permissions, { allow: [] });
   restoreClaudeClients(options);const restored = JSON.parse(fs.readFileSync(file));assert.equal(restored.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined);assert.equal(restored.modelSettings["ccdx/model-1"].autoCompactWindow, 110000);
   for (const window of [64000, 2000000, null]) { const limited = claudeSharedCapabilityPlan({ app: [model("ccdx/model-1", window), model("ccdx/model-2", 256000)], support: { app: true } });assert.equal(limited.context_tokens, null);assert.deepEqual(limited.budgets, {}); }
+});
+
+test("removing old capability fields and writing replacement budgets roll back together", t => {
+  const options = temporary(t), file = claudeClientPaths(options).code;
+  const initial = claudeSharedCapabilityPlan({ app: [model("old-model", 128000)], support: { app: true } });
+  syncClaudeCapabilities(initial, options);
+  const before = fs.readFileSync(file), owner = m365Paths(options).ownership, journal = fs.readFileSync(owner), rename = fs.renameSync;
+  t.mock.method(fs, "renameSync", (from, to) => { if (to === file) throw Error("fixture write rejected");return rename(from, to); });
+  const replacement = claudeSharedCapabilityPlan({ app: [model("new-model", 256000)], support: { app: true } });
+  assert.throws(() => syncClaudeCapabilities(replacement, options), /fixture write rejected/);
+  assert.deepEqual(fs.readFileSync(file), before);assert.deepEqual(fs.readFileSync(owner), journal);
+  t.mock.restoreAll();syncClaudeCapabilities(replacement, options);
+  const current = JSON.parse(fs.readFileSync(file));assert.equal(current.modelSettings["old-model"]?.autoCompactWindow, undefined);
+  assert.equal(current.modelSettings["new-model"].autoCompactWindow, 256000);
 });
 
 test("output constraints are explicit, never discard history, and reject undeclared effort", () => {

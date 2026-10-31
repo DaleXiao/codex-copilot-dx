@@ -51,7 +51,7 @@ export function readUserSettings({ env = process.env, home = os.homedir(), stric
         delete parsed[key];
       }
     }
-    for (const key of ["nightly_updates", "auto_save_settings"]) if (Object.hasOwn(parsed, key) && typeof parsed[key] !== "boolean") {
+    for (const key of ["nightly_updates", "auto_save_settings", "privacy_enabled", "privacy_personal"]) if (Object.hasOwn(parsed, key) && typeof parsed[key] !== "boolean") {
       if (strict) throw invalidSettings(filePath, `${key} must be a boolean`);
       delete parsed[key];
     }

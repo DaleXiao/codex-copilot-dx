@@ -634,6 +634,10 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 #preferences-save, #preferences-dialog-confirm { background:var(--accent); color:var(--page); border-color:var(--accent); }
 .preferences-dialog { width:480px; max-width:calc(100% - 32px); padding:25px; border:1px solid var(--border); border-radius:2px; background:var(--surface); color:var(--text); font:inherit; }
 .preferences-dialog::backdrop { background:#0007; }
+.privacy-preview { margin-top:12px; }
+.privacy-preview label { display:block; margin:12px 0 6px; }
+.privacy-preview textarea { width:100%; box-sizing:border-box; resize:vertical; padding:8px; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:2px; font:inherit; }
+.privacy-preview pre { white-space:pre-wrap; overflow-wrap:anywhere; margin:12px 0 0; font-size:12px; }
 .preferences-dialog h2 { font-size:19px; margin:0 0 18px; color:var(--strong); }
 .preferences-dialog p, .preferences-dialog dl { font-size:12px; line-height:1.8; }
 .preferences-dialog dl > div { display:grid; grid-template-columns:80px minmax(0,1fr); gap:12px; margin-top:12px; }

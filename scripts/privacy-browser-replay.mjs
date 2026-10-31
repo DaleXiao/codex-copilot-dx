@@ -3,12 +3,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
+import { pathToFileURL } from "node:url";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { createLocalPrivacy } from "../src/local-privacy.mjs";
 import { createServiceControl } from "../src/service-control.mjs";
 
 const options = new Map();for (let i = 2; i < process.argv.length; i += 2) options.set(process.argv[i], process.argv[i + 1]);
-const { chromium, webkit } = await import(options.get("--playwright"));
+const module = await import(pathToFileURL(options.get("--playwright")).href), { chromium, webkit } = module.default || module;
 globalThis.fetch = async () => { throw Error("Live provider requests are forbidden"); };
 const report = [];
 for (const [name, engine] of [["chromium", chromium], ["webkit", webkit]].filter(([name]) => !options.get("--engines") || options.get("--engines").split(",").includes(name))) {

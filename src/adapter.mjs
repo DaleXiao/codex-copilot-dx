@@ -11,6 +11,7 @@ import {
 import { createRequestId, runWithRequestContext, currentRequestContext } from "./request-context.mjs";
 import { requestApplication } from "./request-application.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
+import { createLocalPrivacy } from "./local-privacy.mjs";
 import { status } from "./status.mjs";
 import { exportResponseHistory, importResponseHistory } from "./response-history.mjs";
 import { createTerminalActivityIndicator } from "./terminal-activity.mjs";
@@ -175,8 +176,10 @@ export function createAdapterHandler(options = {}) {
   const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics();
   const imagePressure = options.imagePressure || createResponsesImagePressureController();
   const responseFailures = options.responseFailures || createResponseFailureDiagnostics();
+  const privacy = options.privacy || options.providerRuntime?.privacy || createLocalPrivacy({ env: options.env, home: options.dashboardOptions?.home });
   const httpErrors = createHttpFailureDiagnostics();
   const optionalRoutes = createOptionalRoutes({ ...options, dashboardOptions: { ...options.dashboardOptions,
+    privacy,
     contextSnapshotFn: () => {
       const snapshots = [streamPerformanceMetrics.contextSnapshot?.(), options.providerRuntime?.claudePerformance?.contextSnapshot?.()];
       const combine = name => snapshots.flatMap((data, index) => (data?.[name] || []).map(entry => ({ ...entry, id: `${index}-${entry.id}` })));
@@ -188,12 +191,12 @@ export function createAdapterHandler(options = {}) {
       providerAccountsFn: () => options.providerRuntime.action({ action: "accounts" }),
       connectionsFn: input => options.providerRuntime.manageConnections(input) } : {}) } });
   const activityEvents = createActivityEvents({
-    sources: [requestMetrics, streamPerformanceMetrics, options.providerRuntime?.claudePerformance],
+    sources: [requestMetrics, streamPerformanceMetrics, options.providerRuntime?.claudePerformance, privacy],
     snapshot: () => {
       const requests = requestMetrics.snapshot(), image = optionalRoutes.imageStats();
       const active = ["responses", "responses_compact", "messages"].reduce((sum, route) => sum + requests.by_route[route].active, image?.active || 0);
       const claude = options.providerRuntime?.claudePerformance?.activitySnapshot?.();
-      return { ...adapterHealthPayload(), scope: "activity", uptime_ms: Math.round(process.uptime() * 1000),
+      return { ...adapterHealthPayload(), scope: "activity", uptime_ms: Math.round(process.uptime() * 1000), local_privacy: privacy.snapshot(),
         model_activity: { active }, requests, runtime_usage: runtimeUsageSnapshot(),
         stream_performance: streamPerformanceMetrics.activitySnapshot(),
         ...(claude ? { providers: { claude: { requests: { performance: claude } } } } : {}),
@@ -225,6 +228,7 @@ export function createAdapterHandler(options = {}) {
     },
   });
   const responsesHandler = createResponsesHandler({
+    privacy,
     validateConversation: (body, headers, source) => options.providerRuntime?.validateConversation?.(body, headers, source),
     resolveProvider: (body, req) => options.providerRuntime?.resolveCodex?.(body, req),
     providerPreference: id => options.providerRuntime?.providerPreference?.(id),
@@ -247,6 +251,7 @@ export function createAdapterHandler(options = {}) {
     upstreamTimeoutMs,
   });
   const responsesCompactHandler = createResponsesCompactHandler({
+    privacy,
     validateConversation: (body, headers, source) => options.providerRuntime?.validateConversation?.(body, headers, source),
     resolveProvider: (body, req) => options.providerRuntime?.resolveCodex?.(body, req),
     providerPreference: id => options.providerRuntime?.providerPreference?.(id),
@@ -268,7 +273,7 @@ export function createAdapterHandler(options = {}) {
   function handlersFor(provider) {
     if (!provider || provider.id === "github") return githubHandlers;
     if (!providerHandlers.has(provider)) {
-      const common = { provider, acquireRequest, imagePressure, keepaliveIntervalMs: options.keepaliveIntervalMs,
+      const common = { provider, privacy, acquireRequest, imagePressure, keepaliveIntervalMs: options.keepaliveIntervalMs,
         validateConversation: (body, headers, source) => options.providerRuntime?.validateConversation?.(body, headers, source),
     resolveProvider: (body, req) => options.providerRuntime?.resolveCodex?.(body, req),
     providerPreference: id => options.providerRuntime?.providerPreference?.(id),
@@ -519,7 +524,7 @@ export function createAdapterHandler(options = {}) {
     if (state?.version !== 1) throw new Error("Unsupported service-state version");
     importResponseHistory(state.history);await optionalRoutes.importState(state.optional);
   };
-  handler.cleanup = () => { activityEvents.close();optionalRoutes.dispose(); };
+  handler.cleanup = () => { activityEvents.close();optionalRoutes.dispose();if (!options.providerRuntime?.privacy) privacy.close(); };
   return handler;
 }
 

@@ -113,6 +113,7 @@
   }
   window.addEventListener("ccdx:providers", () => { syncSources();if (current === "codex") void loadSourceModels(); });
   function applySettings(data, meta) {
+    globalThis.ccdxPrivacy?.sync(data.local_privacy);
     settings = data;
     const nightly = data.nightly_update;
     el("nightly-update").checked = nightly?.enabled === true;el("nightly-update").disabled = false;
@@ -320,6 +321,7 @@
   });
   el("auto-refresh").addEventListener("click", schedule);
   el("refresh").addEventListener("click", () => { if (settingsViews.includes(current)) void loadSettings(); });
+  document.addEventListener("ccdx:privacy-preferences", event => { if (event.detail?.preferences) preferences?.sync(event.detail);else if (settingsViews.includes(current)) void loadSettings(); });
   window.addEventListener("pagehide", () => { stopped = true;clearTimeout(timer); });
   window.addEventListener("pageshow", () => { stopped = false;schedule(); });
   navigate();schedule();

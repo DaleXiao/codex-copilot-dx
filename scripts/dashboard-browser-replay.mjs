@@ -773,7 +773,8 @@ try {
         const previousPreferences = serviceControl.snapshot().preferences.values;
         const protectedSettings = { image: serviceControl.snapshot().saved.image_enabled, prediction: serviceControl.snapshot().saved.prediction_enabled, source: codexSource };
         assert.equal(await page.locator("#preferences-auto").isChecked(), true);
-        assert.equal(await page.locator("#settings-preferences").evaluate(node => node.previousElementSibling.id), "version-updates");
+        assert.equal(await page.locator("#privacy-settings").evaluate(node => node.previousElementSibling.id), "version-updates");
+        assert.equal(await page.locator("#settings-preferences").evaluate(node => node.previousElementSibling.id), "privacy-dialog");
         await page.locator("#preferences-auto").uncheck();await settlePreferences();
         assert.equal(serviceControl.snapshot().preferences.values.auto_save_settings, false);
         await page.locator("#terminal-color-theme").selectOption("pink");

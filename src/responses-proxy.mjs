@@ -316,7 +316,7 @@ function parseSuccessfulResponsesResult(text) {
 
 function storeCompletedResponse(reqContext, completed) {
   if (!completed) return;
-  rememberResponseHistory(reqContext, completed.response);
+  rememberResponseHistory(reqContext, reqContext.privacyRestore?.(completed.response) || completed.response);
   recordResponsesUsage({
     surface: reqContext.surface,
     mode: "stream",
@@ -571,7 +571,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
         compactionInputWithoutTrigger(reqContext.body.input),
         data,
       );
-      rememberResponseHistory(reqContext, response);
+      rememberResponseHistory(reqContext, reqContext.privacyRestore?.(response) || response);
       recordResponsesUsage({
         surface: reqContext.surface,
         mode: "json",
@@ -620,7 +620,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
           continue;
         }
       }
-      rememberResponseHistory(reqContext, response);
+      rememberResponseHistory(reqContext, reqContext.privacyRestore?.(response) || response);
       recordResponsesUsage({
         surface: reqContext.surface,
         mode: "json",

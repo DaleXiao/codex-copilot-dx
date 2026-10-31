@@ -27,6 +27,7 @@ for (const [source, destination] of [["src/release-install.mjs", "ccdx-install.m
 }
 const names = [name, "ccdx-install.mjs", "install.sh", "install.ps1"];
 for (const file of fs.readdirSync(output)) if (new RegExp(`^codex-copilot-dx-${version.replaceAll(".", "\\.")}-(?:darwin|win32|linux)-[a-z0-9-]+\\.tgz$`).test(file)) names.push(file);
+for (const file of fs.readdirSync(output)) if (/^ccdx-privacy-guard-1-(?:darwin|win32)-(?:arm64|x64)(?:\.exe)?$/.test(file)) names.push(file);
 fs.writeFileSync(path.join(output, "SHA256SUMS"), names.map(file => `${createHash("sha256").update(fs.readFileSync(path.join(output, file))).digest("hex")}  ${file}\n`).join(""));
 fs.writeFileSync(path.join(output, "package-manifest.json"), JSON.stringify(entries[0], null, 2) + "\n");
 console.log(`Release ${version}: ${entries[0].size} bytes, ${entries[0].files.length} package files; checksummed bootstrap helpers.`);

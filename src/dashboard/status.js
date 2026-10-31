@@ -383,7 +383,8 @@
         const key = String(request.request_id || `${request.at || ""}/${request.provider || ""}/${request.model || ""}`).slice(0, 256);
         details.setAttribute?.("data-request-key", key);details.open = expanded.has(key);
         details.className = "request-details";fields.className = "failure-detail";
-        localize(summary, "request_metadata");details.append(summary, fields);
+        if (Number.isSafeInteger(context.privacy_count)) globalThis.ccdxLanguage.set(summary, "privacy_result", { count: context.privacy_count, ms: context.privacy_ms || 0 });
+        else localize(summary, "request_metadata");details.append(summary, fields);
         for (const [key, value] of [["request_id", request.request_id || "—"], ["http_status", number(request.http_status)], ["attempts", number(request.upstream_attempts)], ["model_outcome", globalThis.ccdxLanguage?.format(outcome.toLowerCase()) || outcome],
           ["time", Number.isFinite(at) ? time(at, { date: true }) : "—"],
           ["wire_mib", finite(context.payload_bytes) ? `${(Number(context.payload_bytes) / 1048576).toFixed(2)} MiB` : "—"],

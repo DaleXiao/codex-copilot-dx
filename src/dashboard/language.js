@@ -1,5 +1,10 @@
 (() => {
   const translations = {
+    privacy_heading: ["ADVANCED", "高级"], privacy_enable: ["Local masking", "本地脱敏"], privacy_scope: ["Conversation and tool text. Images and predictions keep their current behavior.", "检查对话和工具文本。图片与预测保持原有行为。"], privacy_state_checking: ["On · checking locally", "已开启 · 本地检查中"],
+    privacy_personal: ["Include personal information", "同时保护个人信息"], privacy_personal_hint: ["Names and addresses may be mistaken for code.", "姓名和地址可能与代码混淆。"], privacy_try: ["Try locally", "本地试用"], privacy_sample: ["Sample text", "试用文本"], privacy_check: ["Check text", "检查文本"], privacy_remove: ["Delete model", "删除模型"],
+    privacy_download: ["Downloads about 39 MB plus the local component. Checks may add delay or mistake ordinary text.", "下载约 39 MB 模型及本地组件。检查可能增加等待或误识别。"], privacy_fail_closed: ["If a check cannot finish, the request is not sent.", "检查未完成时，请求不会发出。"], privacy_confirm: ["Download & enable", "下载并开启"],
+    privacy_state_off: ["Off", "已关闭"], privacy_state_downloading: ["Downloading · {percent}%", "下载中 · {percent}%"], privacy_state_loading: ["Loading locally", "本地加载中"], privacy_state_ready: ["On · keys and passwords", "已开启 · 密钥与密码"], privacy_state_error: ["Not ready", "尚未就绪"], privacy_state_installed: ["Downloaded · off", "已下载 · 已关闭"], privacy_result: ["{count} values masked · {ms} ms", "脱敏 {count} 项 · {ms} ms"],
+    privacy_error: ["Check could not finish. Nothing was sent; retry or review these settings.", "检查未完成，未发送请求。请重试或检查设置。"], privacy_download_error: ["Download failed. Check approved download access, proxy and certificates.", "下载失败。请检查下载权限、代理和证书。"], privacy_changed: ["Settings changed elsewhere. Reload this section before trying again.", "设置已在其他窗口修改。请刷新后重试。"], privacy_preview_error: ["Local check failed. No text was sent to a provider.", "本地检查失败。未向模型来源发送文本。"],
     "client_key_encrypted_kept": ["Key kept encrypted; access not checked.", "密钥保持加密，访问未验证。"],
     "context_tabs": ["Usage view", "统计视图"],
     "context_unknown_window": ["Unknown", "未知"],

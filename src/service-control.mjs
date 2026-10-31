@@ -18,7 +18,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     try { imageConfigured = Boolean(readImages()); } catch {}
     try { predictionConfigured = readPrediction().enabled === true; } catch {}
     const enabled = nightlyUpdatePreference(options), nightly = nightlyStatus();
-    return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options),
+    return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options), local_privacy: providerRuntime?.privacy?.snapshot(),
       nightly_update: { enabled, ...nightly, effect: enabled && !nightly ? "next_start" : "immediate" },
       effective: {
         terminal_animation_enabled: { value: terminal?.enabled === true && saved.terminal_animation_enabled && !/^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || ""),
@@ -40,6 +40,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (["preferences", "reset_preferences", "restore_preferences"].includes(input.action)) {
       const before = nightlyUpdatePreference(options);
       writeSettingsPreferences(input, options);
+      if (input.action !== "preferences" || Object.keys(input.values || {}).some(key => key.startsWith("privacy_"))) providerRuntime?.privacy?.settingsChanged();
       const current = settingsPreferencesSnapshot(options).values;
       terminal?.apply?.({ ...servicePreferences(options), theme: current.terminal_animation, color_theme: current.terminal_color_theme });
       if (before !== current.nightly_updates) nightlyChanged(current.nightly_updates);

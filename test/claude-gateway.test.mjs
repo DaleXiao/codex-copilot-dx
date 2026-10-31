@@ -8,6 +8,14 @@ import { claudeModelEntries } from "../src/claude-models.mjs";
 import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
 
 const key = "ccdx_m365_" + "a".repeat(64);
+test("unaliased stream framing never forwards a severed JSON fragment and keeps a complete final event", () => {
+  const observed = [], reader = createMessagesObserver(value => observed.push(value));
+  assert.equal(reader.write(Buffer.from('event: message_start\ndata: {"type":"message_start"}\n\ndata: {"type":"content_')).length, 1);
+  assert.throws(() => reader.finish(), /Invalid Claude stream event/);
+  const ended = createMessagesObserver(value => observed.push(value));
+  assert.equal(ended.write(Buffer.from('data: {"type":"message_stop"}')).length, 0);
+  const final = Buffer.concat(ended.finish()).toString();assert.match(final, /message_stop/);assert.match(final, /\n\n$/);
+});
 const message = { id: "msg_synthetic", type: "message", role: "assistant", model: "claude-opus-5.5",
   content: [{ type: "text", text: "Hello 测试 😀" }], stop_reason: "end_turn",
   usage: { input_tokens: 2, cache_read_input_tokens: 8, cache_creation_input_tokens: 5, output_tokens: 3 } };

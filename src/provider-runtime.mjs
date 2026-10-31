@@ -27,13 +27,14 @@ export function createProviderRuntime(options = {}) {
   options = { ...options, corePort: options.corePort ?? Number((options.env || process.env).ADAPTER_PORT || 2026) };
   let connections;
   const legacy = createBuiltinProviderRuntime({ ...options, managedClaude: () => connections?.managesClaude() !== false,
+    privacy: { wrap: (fn, context) => connections?.privacy.wrap(fn, context) || fn },
     onClaudeReady: () => connections?.syncSourceClients("m365") });
   connections = createConnectionRuntime({ ...options, legacy });return connections;
 }
 
 function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGithubCatalog, githubCredentialFingerprint = "", githubClientConfigured = true, home, env = process.env, platform = process.platform,
   corePort = Number(env.ADAPTER_PORT || 2026), log = () => {}, createM365, startGateway, configureClients, restoreClients,
-  discoverM365 = requestM365Accounts, managedClaude, onClaudeReady, preserveClientConfiguration } = {}) {
+  discoverM365 = requestM365Accounts, managedClaude, onClaudeReady, preserveClientConfiguration, privacy } = {}) {
   const options = { home, env, platform }, github = { ...createGithubProvider({ client: githubClient,
     profileId: () => { const value = typeof githubCredentialFingerprint === "function" ? githubCredentialFingerprint() : githubCredentialFingerprint;
       return value ? `codex:${value}` : "codex"; } }), registry: githubRegistry };
@@ -85,7 +86,7 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGit
         const apiKey = ensureM365GatewayKey({ ...options, create: !preserveClientConfiguration?.() });
         if (!gateway) {
           const start = startGateway || (await import("./claude-gateway.mjs")).createClaudeGateway;
-          const opened = await start({ provider: m365, apiKey, port: corePort, env, log, performance: claudePerformance,
+          const opened = await start({ privacy, provider: m365, apiKey, port: corePort, env, log, performance: claudePerformance,
             onRequest({ client }) { lastClients[client] = new Date().toISOString(); } });
           if (closed || !enabled) { await opened.close();return null; }
           gateway = opened;
@@ -152,7 +153,7 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGit
       if (closed) throw unavailable("m365_runtime_closed");
       if (candidate.models("claude").length) {
         const start = startGateway || (await import("./claude-gateway.mjs")).createClaudeGateway;
-          opened = await start({ provider: candidate, apiKey: ensureM365GatewayKey(options), port: corePort, env, log, performance: claudePerformance,
+          opened = await start({ privacy, provider: candidate, apiKey: ensureM365GatewayKey(options), port: corePort, env, log, performance: claudePerformance,
           onRequest({ client }) { lastClients[client] = new Date().toISOString(); } });
       }
       candidate.commitSelection(discovered.binding);

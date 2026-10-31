@@ -270,6 +270,11 @@ export function createResponsesHandler(options) {
       prepared = selected instanceof Promise ? await selected : selected;
       if (prepared.historyParentId === null) releaseHistorySnapshot();
       provider.applyRequestPolicies(prepared.body);
+      if (options.privacy) {
+        prepared.privacyRestore = value => options.privacy.restoreResponse(res, value);
+        responsesFn = options.privacy.wrap(responsesFn, { res, protocol: "responses", client: "codex" });
+        chatCompletionsFn = options.privacy.wrap(chatCompletionsFn, { res, protocol: "chat", client: "codex" });
+      }
       if (routePlan.protocol === "openai-responses") {
         const restorePlaintextHistory = async (context, { reserveHistory } = {}) => {
           assertPrepareActive();
@@ -322,7 +327,7 @@ export function createResponsesHandler(options) {
             const written = await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`, { signal: abort.signal });
             if (!written) return false;
             if (event === "response.completed" || event === "response.incomplete") {
-              if (event === "response.completed") rememberResponseHistory(prepared, data.response);
+              if (event === "response.completed") rememberResponseHistory(prepared, prepared.privacyRestore?.(data.response) || data.response);
               recordResponsesUsage({ surface: prepared.surface, mode: "stream", model, response: data.response, event: data });
             }
             return true;
@@ -385,7 +390,7 @@ export function createResponsesHandler(options) {
             markResponseTerminal(response.status, {
               model: response.model || model, origin: "chat_completion", reason: response.incomplete_details?.reason,
             });
-            rememberResponseHistory(prepared, response);
+            rememberResponseHistory(prepared, prepared.privacyRestore?.(response) || response);
             if (response.status === "completed") imagePressure?.markSuccess?.(responseHistoryPressureRootId(prepared));
             recordResponsesUsage({ surface: prepared.surface, mode: "json", model, response, event: response });
             res.writeHead(200, safeUpstreamResponseHeaders(upstream.headers, {
@@ -553,6 +558,10 @@ export function createResponsesCompactHandler(options) {
       prepared = selected instanceof Promise ? await selected : selected;
       releaseHistorySnapshot();
       provider.applyRequestPolicies(prepared.body);
+      if (options.privacy) {
+        prepared.privacyRestore = value => options.privacy.restoreResponse(res, value);
+        responsesCompactFn = options.privacy.wrap(responsesCompactFn, { res, protocol: "responses", client: "codex" });
+      }
       const result = await proxyCopilotResponses(prepared, req, res, responsesCompactFn, {
         compatibility: provider.compatibility,
         assertPrepareActive,

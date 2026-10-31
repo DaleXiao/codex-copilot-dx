@@ -426,6 +426,7 @@ let liveCompleted = null;
 const liveActivity = globalThis.ccdxLive.create({
   visible: () => document.visibilityState === "visible",
   apply: data => {
+    globalThis.ccdxPrivacy?.sync(data.local_privacy);
     renderActivity(data);
     const completed = JSON.stringify([data.instance_id, data.requests?.completed]);
     if (completed !== liveCompleted && globalThis.ccdxContextView?.visible()) void dashboardRefresh.refresh("context", { force: true });

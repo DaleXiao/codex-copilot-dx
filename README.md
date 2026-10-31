@@ -4,6 +4,8 @@ Use your model services in **Codex App, Claude App and Claude Code** through one
 
 Connect GitHub Copilot, Microsoft 365 or your own API. Choose which apps can use each source, then select their models. CCDX supports **macOS and Windows**, on Apple Silicon/ARM64 and x64.
 
+Optional local masking is off by default. Enable it in Settings → Advanced to download the model and component. Checks run locally and may add delay or mistake ordinary text; an unfinished check holds the request back. See [local masking](docs/REFERENCE.md#local-masking).
+
 ## Install and start
 
 With Node.js **22.15+** and npm:
@@ -15,8 +17,8 @@ ccdx
 
 Without Node.js, download and run the installer for your system:
 
-- macOS: [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.5/install.sh), then `sh install.sh`.
-- Windows: [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.5/install.ps1), then `./install.ps1` under your current shell policy.
+- macOS: [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.6/install.sh), then `sh install.sh`.
+- Windows: [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.6/install.ps1), then `./install.ps1` under your current shell policy.
 
 The installer reuses a compatible Node.js or installs a private, verified copy. Git and a compiler are not required. Complete platform packages include their dependencies. Company registry, proxy, certificate and shell policies are kept.
 

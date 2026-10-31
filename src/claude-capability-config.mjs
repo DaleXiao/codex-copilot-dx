@@ -72,12 +72,11 @@ export function syncClaudeCapabilities(plan, options = {}) {
     for (const [id, value] of Object.entries(plan.budgets)) add(["modelSettings", id, "autoCompactWindow"], value);
   }
   const active = new Set(operations.map(op => op.keys.join(".")));
-  const restored = reconcileClaudeConfiguration([], { ...options, restore: true,
-    selectOperation: op => op.file === paths.code && (ownedFields.includes(op.keys.join(".")) || op.keys[0] === "modelSettings" && op.keys[2] === "autoCompactWindow") && !active.has(op.keys.join(".")) });
-  const result = reconcileClaudeConfiguration(operations, options);
-  return { state: conflict || result.preserved || restored.preserved ? "partially_preserved" : operations.length ? "configured" : "limited",
-    changed: result.changed || restored.changed, preserved: result.preserved + restored.preserved,
-    restart_required: result.changed || restored.changed };
+  const result = reconcileClaudeConfiguration(operations, { ...options,
+    restoreSelect: op => op.file === paths.code && (ownedFields.includes(op.keys.join(".")) || op.keys[0] === "modelSettings" && op.keys[2] === "autoCompactWindow") && !active.has(op.keys.join(".")) });
+  return { state: conflict || result.preserved ? "partially_preserved" : operations.length ? "configured" : "limited",
+    changed: result.changed, preserved: result.preserved,
+    restart_required: result.changed };
 }
 
 export function inspectClaudeCapabilityConfiguration(models, options = {}) {

@@ -9,7 +9,7 @@ import { atomicWriteFileIfChangedSync, atomicWriteFilePairSync } from "./atomic-
 import { withFileLockSync } from "./lock.mjs";
 
 export const SETTINGS_DEFAULTS = Object.freeze({ terminal_color_theme: "green", terminal_animation: DEFAULT_TERMINAL_ANIMATION_THEME,
-  terminal_animation_enabled: true, open_webui: true, nightly_updates: false, auto_save_settings: true });
+  terminal_animation_enabled: true, open_webui: true, nightly_updates: false, auto_save_settings: true, privacy_enabled: false, privacy_personal: false });
 const keys = Object.keys(SETTINGS_DEFAULTS);
 const fail = (code, message, statusCode = 409) => Object.assign(new Error(message), { code, statusCode });
 const idValid = value => typeof value === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value);
@@ -30,7 +30,8 @@ function readBackup(options) {
     const value = JSON.parse(readBoundedFileSync(settingsBackupPath(options), { encoding: "utf8", maxBytes: 8192 }));
     if (value?.version !== 1 || !idValid(value.id) || typeof value.created_at !== "string" || !Number.isFinite(Date.parse(value.created_at))
       || Object.keys(value).some(key => !["version", "id", "created_at", "values"].includes(key))
-      || keys.some(key => !Object.hasOwn(value.values || {}, key))) throw Error();
+      || keys.filter(key => !key.startsWith("privacy_")).some(key => !Object.hasOwn(value.values || {}, key))) throw Error();
+    value.values = { privacy_enabled: false, privacy_personal: false, ...value.values };
     checkedPreferenceValues(value.values);return value;
   } catch (error) {
     if (error.code === "ENOENT") return null;

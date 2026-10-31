@@ -26,6 +26,7 @@
     <script src="/console.js" defer></script>
     <script src="/tools.js" defer></script>
     <script src="/connections.js" defer></script>
+    <script src="/privacy.js" defer></script>
     <title data-i18n="ccdx_local_dashboard">CCDX · Dashboard</title>
   </head>
   <body>
@@ -436,6 +437,18 @@
             <p id="install-windows-policy" class="hint" hidden data-i18n="update_windows_policy">If scripts are blocked, use your company’s approved installation method.</p>
           </details><p id="update-copy-note" class="hint" role="status"></p>
         </section>
+        <section class="panel dashboard-section" id="privacy-settings" aria-labelledby="privacy-heading">
+          <h2 id="privacy-heading" data-i18n="privacy_heading">ADVANCED</h2>
+          <div class="setting-row"><label for="privacy-enabled" data-i18n="privacy_enable">Local masking</label><input id="privacy-enabled" type="checkbox" role="switch" disabled><span id="privacy-status" class="hint" role="status" aria-live="polite"></span></div>
+          <p class="hint" data-i18n="privacy_scope">Conversation and tool text. Images and predictions keep their current behavior.</p>
+          <div id="privacy-options" hidden>
+            <div class="setting-row"><label for="privacy-personal" data-i18n="privacy_personal">Include personal information</label><input id="privacy-personal" type="checkbox" role="switch"><span id="privacy-device" class="hint"></span></div>
+            <p class="hint" data-i18n="privacy_personal_hint">Names and addresses may be mistaken for code.</p>
+            <details class="privacy-preview"><summary data-i18n="privacy_try">Try locally</summary><label for="privacy-text" data-i18n="privacy_sample">Sample text</label><textarea id="privacy-text" rows="3" maxlength="8192" spellcheck="false"></textarea><div class="section-actions"><button id="privacy-preview" type="button" data-i18n="privacy_check">Check text</button><span id="privacy-preview-count" class="hint" role="status"></span></div><pre id="privacy-result" hidden></pre></details>
+          </div>
+          <div class="section-actions"><button id="privacy-cancel" type="button" hidden data-i18n="cancel">Cancel</button><button id="privacy-retry" type="button" hidden data-i18n="view_retry">Retry</button><button id="privacy-remove" type="button" hidden data-i18n="privacy_remove">Delete model</button><p id="privacy-error" class="hint" role="alert"></p></div>
+        </section>
+        <dialog id="privacy-dialog" class="preferences-dialog" aria-labelledby="privacy-dialog-title"><h2 id="privacy-dialog-title" data-i18n="privacy_enable">Local masking</h2><p data-i18n="privacy_download">Downloads about 39 MB plus the local component. Checks may add delay or mistake ordinary text.</p><p data-i18n="privacy_fail_closed">If a check cannot finish, the request is not sent.</p><div class="section-actions"><button id="privacy-dialog-cancel" type="button" data-i18n="cancel">Cancel</button><button id="privacy-dialog-confirm" type="button" data-i18n="privacy_confirm">Download &amp; enable</button></div></dialog>
         <section class="panel dashboard-section" id="settings-preferences" aria-labelledby="preferences-heading">
           <h2 id="preferences-heading" data-i18n="preferences_heading">SAVE &amp; RESTORE</h2>
           <div class="preferences-row"><div><label for="preferences-auto" data-i18n="preferences_auto">Save changes automatically</label><p class="hint" data-i18n="preferences_auto_hint">Valid changes on this page save automatically.</p></div><input id="preferences-auto" type="checkbox" role="switch" disabled checked></div>

@@ -342,7 +342,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         observeContext(values) {
           if (finished || !values || typeof values !== "object") return;
           if (Number.isSafeInteger(values.cached_input_tokens) && values.cached_input_tokens >= 0) cachedInput = values.cached_input_tokens;
-          for (const key of [...Object.keys(context), "capability_revision", "capability_constraints"]) {
+          for (const key of [...Object.keys(context), "capability_revision", "capability_constraints", "privacy_count", "privacy_ms"]) {
             const value = values[key];
             if (["capability_revision", "capability_constraints"].includes(key)) {
               if (typeof value === "string" && /^[a-z0-9_,]{1,80}$/.test(value)) context[key] = value;continue;

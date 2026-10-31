@@ -18,6 +18,7 @@ import { createApiModelDisplayStore } from "./api-model-display.mjs";
 import { createCodexMemoryModel } from "./codex-memory-model.mjs";
 import { readClientGatewayKeys, gatewayClient } from "./client-gateway-keys.mjs";
 import { createClaudeGatewayHandler } from "./claude-gateway.mjs";
+import { createLocalPrivacy } from "./local-privacy.mjs";
 import {
   configureClaudeClients,
   restoreClaudeClients,
@@ -72,6 +73,7 @@ export function createConnectionRuntime({
     onTransfer: () => log("info", "Conversation continued on the selected source; original history kept"),
   });
   const memoryModel = createCodexMemoryModel({ ...options, corePort });
+  const privacy = createLocalPrivacy(options);
   let settings = readAccessSettings(options),
     managed = fs.existsSync(accessSettingsPath(options)),
     serial = Promise.resolve(),
@@ -1233,7 +1235,8 @@ export function createConnectionRuntime({
         state?.credentials || [],
         settings.apis.filter(api => api.enabled && api.secret_ref).map(api => api.secret_ref)
       ),
-    busy: () =>
+    privacy,
+    busy: () => privacy.busy() ||
       operations > 0 ||
       active.size > 0 ||
       Boolean(syncFlight) ||
@@ -1468,6 +1471,8 @@ export function createConnectionRuntime({
           provider: catalog,
           acquireRequest: acquireClaudeRequest,
           apiKey: identities()[id],
+          privacy,
+          privacyClient: id,
           env,
           log,
           performance: legacy.claudePerformance,
@@ -1655,6 +1660,7 @@ export function createConnectionRuntime({
     },
     async close() {
       closed = true;
+      privacy.close();
       await memoryModel.close();
       await catalogRefresh.close();
       await serial;

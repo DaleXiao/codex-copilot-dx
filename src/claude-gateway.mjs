@@ -61,12 +61,12 @@ function authenticated(headers, key) {
 // Observe bounded SSE frames. Alias clients rewrite only message_start.model;
 // other frames retain their wire text. Client backpressure controls upstream reads.
 export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clientModel = null) {
-  const decoder = new TextDecoder("utf-8", { fatal: Boolean(clientModel) });let fragments = [], lineBytes = 0, data = [], frameBytes = 0, wire = [], wireBytes = 0, output = [];
+  const decoder = new TextDecoder("utf-8", { fatal: true });let fragments = [], lineBytes = 0, data = [], frameBytes = 0, wire = [], wireBytes = 0, output = [];
   const frame = () => {
     let value;
     if (data.length) { try { value = JSON.parse(data.join("\n")); } catch { throw new Error("Invalid Claude stream event"); }onEvent(value); }
-    if (clientModel && wire.length) {
-      if (value?.type === "message_start" && value.message && typeof value.message === "object" && !Array.isArray(value.message)) {
+    if (wire.length) {
+      if (clientModel && value?.type === "message_start" && value.message && typeof value.message === "object" && !Array.isArray(value.message)) {
         const replacement = JSON.stringify({ ...value, message: { ...value.message, model: clientModel } });let replaced = false;
         wire = wire.map(line => {
           if (!line.startsWith("data:")) return line;
@@ -79,7 +79,7 @@ export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clie
     data = [];frameBytes = 0;
   };
   const line = (value, newline = true) => {
-    if (clientModel) {
+    {
       wireBytes += Buffer.byteLength(value) + (newline ? 1 : 0);
       if (wireBytes > maxBytes) throw new Error("Claude stream event exceeds its limit");
       wire.push(value + (newline ? "\n" : ""));
@@ -96,18 +96,18 @@ export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clie
     while (start < text.length) {
       const newline = text.indexOf("\n", start), end = newline < 0 ? text.length : newline, part = text.slice(start, end);
       lineBytes += Buffer.byteLength(part);
-      if (lineBytes > maxBytes || clientModel && wireBytes + lineBytes > maxBytes) throw new Error("Claude stream line exceeds its limit");
+      if (lineBytes > maxBytes || wireBytes + lineBytes > maxBytes) throw new Error("Claude stream line exceeds its limit");
       fragments.push(part);
       if (newline < 0) break;
       line(fragments.join(""));fragments = [];lineBytes = 0;start = newline + 1;
     }
   }
   return { write(chunk) { output = [];consume(decoder.decode(chunk, { stream: true }));return output; },
-    finish() { output = [];consume(decoder.decode());if (fragments.length) line(fragments.join(""), false);frame();return output; } };
+    finish() { output = [];consume(decoder.decode());if (fragments.length) line(fragments.join(""), false);if (wire.length && !/\r?\n\r?\n$/.test(wire.join(""))) wire.push("\n\n");frame();return output; } };
 }
 
 export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = false, log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,
-  resolveRequest, record = recordUsage, acquireRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 }) } = {}) {
+  resolveRequest, privacy, privacyClient = "claude", record = recordUsage, acquireRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 }) } = {}) {
   if (!provider || !isProviderId(provider.id) || typeof apiKey !== "string" || apiKey.length < 32) throw new Error("Claude gateway requires a provider and private local key");
   const config = loadRuntimeConfig(env), performance = sharedPerformance || createStreamPerformanceMetrics({ routeNames: ["messages"] });
   const decodedLimit = decodedBodyLimitPreference({ env }).bytes;
@@ -179,7 +179,8 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         conversation = validateConversation?.(body, req.headers, selectedProvider);
         if (!countTokens) observeContextSession(body, req.headers, selectedProvider, "messages");
         terminalOrigin = "transport";
-        const upstream = await selectedProvider.client.messages(body, { headers: req.headers, countTokens, signal: abort.signal,
+        const call = privacy?.wrap(selectedProvider.client.messages, { res, protocol: "messages", client: privacyClient }) || selectedProvider.client.messages;
+        const upstream = await call(body, { headers: req.headers, countTokens, signal: abort.signal,
           onCountObservation(value) {
             context.countObservation = { ...context.countObservation, ...value };
             if (value.upstream) { context.upstreamAttempts = (context.upstreamAttempts || 0) + 1;tracker?.upstreamStarted(false); }
@@ -242,7 +243,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
               tracker?.upstreamActivity();abort.setTimeout(config.streamIdleTimeoutMs, "stream_idle_timeout");
               const frames = observer.write(value);
               let writable = true;
-              for (const chunk of clientModel ? frames : [value]) if (!await writeOrDrain(res, chunk, { signal: abort.signal })) { writable = false;break; }
+              for (const chunk of frames) if (!await writeOrDrain(res, chunk, { signal: abort.signal })) { writable = false;break; }
               if (!writable) break;
               if (sawStop || failedEvent) break;
             }

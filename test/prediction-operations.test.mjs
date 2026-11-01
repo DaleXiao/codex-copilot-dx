@@ -11,7 +11,10 @@ test("native configuration executes off the gateway event loop and keeps failure
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));fs.mkdirSync(path.join(home, ".codex"));
   let ticks = 0;const timer = setInterval(() => ticks++, 1);
   try {
-    const result = await runPredictionOperation("display", { home, env: {}, enabled: false });
+    // Real PowerShell requires its OS runtime variables; exclude credentials
+    // and keep all native configuration rooted in the disposable home.
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => ["SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP", "PSMODULEPATH"].includes(key.toUpperCase())));
+    const result = await runPredictionOperation("display", { home, env, enabled: false });
     assert.equal(typeof result.pending, "boolean");assert.ok(ticks > 0, "native discovery must not block main-thread timers");
     await assert.rejects(runPredictionOperation("invalid", { home, env: {} }), /Unknown/);
     assert.equal(fs.existsSync(path.join(home, ".codex/auth.json")), false);

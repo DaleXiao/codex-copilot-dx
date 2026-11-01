@@ -5,11 +5,17 @@ import { runInBackground } from "./startup.mjs";
 import { createPredictionState } from "./native-prediction-state.mjs";
 import { supervisePrediction } from "./native-prediction-recovery.mjs";
 import { operationErrorDetails } from "./operation-error.mjs";
+import { runPredictionOperation } from "./prediction-operations.mjs";
 
 // The CLI composes the services; this module owns optional client integration
 // lifecycle. It never forwards model requests or depends on dashboard rendering.
 export function createClientIntegration({ port, host, info = () => {}, warning = () => {}, configLog,
-  startPrediction = async options => (await import("./native-prediction.mjs")).startNativePrediction(options) } = {}) {
+  startPrediction = async options => {
+    const preparation = options.environment ? { configured: true, environment: options.environment }
+      : await runPredictionOperation("startup", { autoSetup: options.autoSetup, env: process.env, platform: process.platform });
+    if (!preparation.configured) { options.state?.configure(false);return null; }
+    return (await import("./native-prediction.mjs")).startNativePrediction({ ...options, autoSetup: false, environment: preparation.environment });
+  } } = {}) {
   const prediction = createPredictionState();
   let native = null;
   let operation = null, operationName = null, closed = false;

@@ -111,7 +111,7 @@ if (CLI.command === "prediction") {
       const running = await checkRunningAdapter({ host: address.adapterHost, port: address.adapterPort });
       const operation = { on: "setup", off: "remove", fix: "repair" }[CLI.action] || CLI.action;
       if (running.ok) {
-        const data = await dashboardToolRequest({ host: address.adapterHost, port: address.adapterPort, path: "settings", body: { action: "prediction", operation }, detailedErrors: true, timeoutMs: 65000 });
+        const data = await dashboardToolRequest({ host: address.adapterHost, port: address.adapterPort, path: "settings", body: { action: "prediction", operation }, detailedErrors: true, timeoutMs: 210000 });
         const result = data.last_operation?.result || data.features?.prediction;
         console.log(JSON.stringify(result));process.exit(result?.status === "failed" ? 1 : 0);
       }

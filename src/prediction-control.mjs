@@ -1,10 +1,10 @@
 import fs from "node:fs";
-import { readPredictionSettings, predictionPaths, writePredictionSettings, assertCodexClosed } from "./native-prediction-profile.mjs";
-import { runPredictionCommand } from "./native-prediction.mjs";
-import { predictionDisplayPreference, writePredictionDisplayPreference } from "./prediction-preference.mjs";
+import { readPredictionSettings, predictionPaths, writePredictionSettings } from "./native-prediction-profile.mjs";
+import { predictionDisplayPreference } from "./prediction-preference.mjs";
 import { servicePreferences, writeServicePreference } from "./user-settings.mjs";
 import { openCodex } from "./launcher.mjs";
 import { withFileLock } from "./lock.mjs";
+import { runPredictionOperation } from "./prediction-operations.mjs";
 
 export function predictionControlSnapshot(options = {}) {
   const saved = readPredictionSettings(options);
@@ -14,7 +14,7 @@ export function predictionControlSnapshot(options = {}) {
     display_pending: saved.displayPending === true };
 }
 
-export async function controlPrediction(operation, { integration, ...options } = {}) {
+export async function controlPrediction(operation, { integration, nativeOperation = runPredictionOperation, ...options } = {}) {
   if (!["enable", "disable", "setup", "remove", "pause", "resume", "repair", "open"].includes(operation)) throw new Error("Unknown prediction operation");
   const settings = readPredictionSettings(options);
   if (operation === "repair" && !settings.displayPending) return integration?.fix() || { status: "needs_service" };
@@ -22,7 +22,7 @@ export async function controlPrediction(operation, { integration, ...options } =
     if (!integration) throw new Error("Start CCDX before opening Codex from this control");
     if (!settings.enabled) throw new Error("Enable predictions before opening Codex");
     if (settings.displayPending) {
-      writePredictionDisplayPreference(servicePreferences(options).prediction_enabled, options);
+      await nativeOperation("display", { ...options, enabled: servicePreferences(options).prediction_enabled, requireClosed: true });
       writePredictionSettings({ ...settings, displayPending: false }, options);
     }
     const native = await integration.start();
@@ -39,20 +39,14 @@ export async function controlPrediction(operation, { integration, ...options } =
     return { ...predictionControlSnapshot(options), status: "needs_setup" };
   }
   if (enabled && (!settings.enabled || operation === "setup")) {
-    await runPredictionCommand({ ...options, action: "on", output() {} });
+    await nativeOperation("command", { ...options, action: "on" });
     reconfigured = true;
   } else if (operation === "remove") {
     integration?.setPredictionActive(false);
-    await runPredictionCommand({ ...options, action: "off", output() {} });
+    await nativeOperation("command", { ...options, action: "off" });
     writeServicePreference("prediction_enabled", false, options);
   }
-  let pending = false;
-  try { assertCodexClosed(options); }
-  catch (error) {
-    if (!/Quit Codex/.test(error.message)) throw error;
-    pending = true;
-  }
-  if (!pending) writePredictionDisplayPreference(enabled, options);
+  const { pending } = await nativeOperation("display", { ...options, enabled });
   writeServicePreference("prediction_enabled", enabled, options);
   await withFileLock(`${predictionPaths(options).settings}.lock`, () => {
     writePredictionSettings({ ...readPredictionSettings(options), displayPending: pending }, options);

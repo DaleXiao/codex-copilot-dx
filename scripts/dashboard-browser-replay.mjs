@@ -12,6 +12,7 @@ import { summarizeUsage } from "../src/usage-store.mjs";
 import { statusSummary } from "../src/status-summary.mjs";
 import { createActivityEvents, createChangeSignal } from "../src/activity-events.mjs";
 import { writePredictionSettings } from "../src/native-prediction-profile.mjs";
+import { handlePredictionOperation } from "../src/prediction-operations.mjs";
 import { controlPrediction } from "../src/prediction-control.mjs";
 import { configureImageSetup } from "../src/image-setup.mjs";
 import { requestApplication } from "../src/request-application.mjs";
@@ -70,7 +71,7 @@ let m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", aut
 let manualUpdates = 0;
 const serviceControl = createServiceControl({ home, env: {},
   manualUpdate: () => { manualUpdates++;return { status: "queued" }; },
-  predictionControl: (operation, opts) => controlPrediction(operation, { ...opts, platform: "darwin", exec: () => { throw Object.assign(Error("closed"), { status: 1 }); } }),
+  predictionControl: (operation, opts) => controlPrediction(operation, { ...opts, nativeOperation: handlePredictionOperation, platform: "darwin", exec: () => { throw Object.assign(Error("closed"), { status: 1 }); } }),
   imageControl: (input, opts) => configureImageSetup(input, { ...opts, fetchImpl: async (url, init) => {
     if (url.endsWith("/models")) return Response.json({ data: [{ id: "gpt-image-1" }] });
     assert.equal(JSON.parse(init.body).prompt, undefined);return Response.json({ error: { message: "prompt required" } }, { status: 400 });

@@ -138,7 +138,8 @@ test("explicit reconfiguration replaces the running bridge after committing trus
   const opts = fixture(t), run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => app, output() {} };
   await runPredictionCommand({ ...run, action: "on" });const calls = [];
   const { controlPrediction } = await import("../src/prediction-control.mjs");
-  const result = await controlPrediction("setup", { ...run, integration: {
+  const { handlePredictionOperation } = await import("../src/prediction-operations.mjs");
+  const result = await controlPrediction("setup", { ...run, nativeOperation: handlePredictionOperation, integration: {
     setPredictionActive() {}, pauseForUpdate: async () => calls.push("close-old"), start: async () => calls.push("start-new"),
     fix: async () => { calls.push("check-new");return { status: "ready", prediction: { bridge: "running" } }; },
   } });

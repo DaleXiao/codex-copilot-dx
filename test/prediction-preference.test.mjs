@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseCodexToml } from "../src/config-toml.mjs";
 import { predictionDisplayPreference, writePredictionDisplayPreference } from "../src/prediction-preference.mjs";
+import { handlePredictionOperation } from "../src/prediction-operations.mjs";
 import { controlPrediction } from "../src/prediction-control.mjs";
 import { writePredictionSettings, readPredictionSettings } from "../src/native-prediction-profile.mjs";
 import { servicePreferences } from "../src/user-settings.mjs";
@@ -13,7 +14,7 @@ function fixture(t) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-prediction-control-"));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   fs.mkdirSync(path.join(home, ".codex"));
-  return { home, env: {}, platform: "darwin", exec() { throw Object.assign(new Error("closed"), { status: 1 }); } };
+  return { nativeOperation: handlePredictionOperation, home, env: {}, platform: "darwin", exec() { throw Object.assign(new Error("closed"), { status: 1 }); } };
 }
 const file = options => path.join(options.home, ".codex/config.toml");
 const legacy = options => path.join(options.home, ".codex/.codex-global-state.json");

@@ -46,7 +46,10 @@ export function assertPredictionProxyCompatible({ env = process.env, systemProxy
 }
 
 export function assertCodexClosed({ exec = execFileSync, platform = process.platform, ...options } = {}) {
-  if (platform === "win32") return assertWindowsCodexClosed({ ...options, exec });
+  if (platform === "win32") {
+    try { return assertWindowsCodexClosed({ ...options, exec }); }
+    catch (error) { if (/Quit Codex/.test(error.message)) error.code = "ccdx_prediction_app_open";throw error; }
+  }
   for (const name of ["ChatGPT", "Codex"]) {
     try {
       exec("/usr/bin/pgrep", ["-x", name], { stdio: "pipe", timeout: 2000 });
@@ -54,7 +57,7 @@ export function assertCodexClosed({ exec = execFileSync, platform = process.plat
       if (error.status === 1) continue;
       throw new Error("Could not check whether Codex is closed; prediction setup was skipped");
     }
-    throw new Error("Quit Codex App before changing native prediction setup; no running App will be stopped");
+    throw Object.assign(new Error("Quit Codex App before changing native prediction setup; no running App will be stopped"), { code: "ccdx_prediction_app_open" });
   }
 }
 

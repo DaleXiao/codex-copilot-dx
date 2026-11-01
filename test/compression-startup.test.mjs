@@ -1,3 +1,4 @@
+import { startupFixtureEnvironment } from "../scripts/replay-fixtures/startup-env.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -11,6 +12,12 @@ import { parse } from "smol-toml";
 
 const cli = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
 const preload = fileURLToPath(new URL("../scripts/replay-fixtures/config-startup-preload.cjs", import.meta.url));
+
+function withoutPredictionDisplay(content) {
+  const value = parse(content);
+  if (value.desktop) { delete value.desktop["composer-predictions-enabled"];if (!Object.keys(value.desktop).length) delete value.desktop; }
+  return value;
+}
 
 async function until(check, label) {
   const deadline = Date.now() + 8000;
@@ -42,7 +49,7 @@ for (const mode of ["pending", "default-on", "removed", "timeout", "write-failur
     await fs.writeFile(token, "synthetic-offline-github-token");
     const before = `openai_base_url = "http://127.0.0.1:${port}/v1"\nmodel_context_window = 1000000\nmodel_auto_compact_token_limit = 900000\n[features]\ncontext_management = true\n${mode === "opt-out" ? "local_thread_store_compression = false\n" : ""}`;
     await fs.writeFile(config, before);
-    const env = { PATH: process.env.PATH, TMPDIR: home, CCDX_TEST_HOME: home,
+    const env = { ...startupFixtureEnvironment(home), CCDX_TEST_HOME: home,
       XDG_CONFIG_HOME: path.join(home, ".config"), XDG_CACHE_HOME: path.join(home, ".cache"),
       ADAPTER_HOST: "127.0.0.1", ADAPTER_PORT: String(port), CCDX_AUTO_LAUNCH: "0",
       CCDX_MODEL_REFRESH_INTERVAL_MS: "0", CCDX_DISABLE_TOKEN_DISCOVERY: "1", CCDX_TEST_COMPRESSION_MODE: mode };
@@ -68,7 +75,7 @@ for (const mode of ["pending", "default-on", "removed", "timeout", "write-failur
     await core();
     if (mode === "pending") {
       await until(() => cold.output().includes("Compression fixture probe received"), "probe");
-      assert.equal(await fs.readFile(config, "utf8"), before);
+      assert.deepEqual(withoutPredictionDisplay(await fs.readFile(config, "utf8")), parse(before));
       cold.child.send("release-compression-fixture");
       await until(() => cold.output().includes("Enabled Codex local history compression"), "compression setup");
     } else if (mode === "write-failure") await until(() => cold.output().includes("Optional Codex history compression setup was skipped"), "optional warning");
@@ -82,7 +89,7 @@ for (const mode of ["pending", "default-on", "removed", "timeout", "write-failur
     assert.equal(reuse.child.exitCode, 0, reuse.output());
     const after = await fs.readFile(config, "utf8");
     if (mode === "pending") assert.equal(parse(after).features.local_thread_store_compression, true);
-    else assert.equal(after, before);
+    else assert.deepEqual(withoutPredictionDisplay(after), parse(before));
     for (const run of runs) {
       assert.doesNotMatch(run.output(), /private fixture|Image guidance|Image MCP setup|Enabled Codex local history compression.*private/);
       if (mode === "opt-out" || (mode === "pending" && run === reuse)) assert.doesNotMatch(run.output(), /Compression fixture probe received/);

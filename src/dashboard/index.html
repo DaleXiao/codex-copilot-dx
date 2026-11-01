@@ -23,6 +23,7 @@
     <script src="/animation.js" defer></script>
     <script src="/ui.js" defer></script>
     <script src="/preferences.js" defer></script>
+    <script src="/features.js" defer></script>
     <script src="/console.js" defer></script>
     <script src="/tools.js" defer></script>
     <script src="/connections.js" defer></script>
@@ -119,15 +120,15 @@
         </section>
         <details class="panel dashboard-section" id="prediction-settings" open>
           <summary class="panel-heading"><h2 data-i18n="codex_input_predictions">INPUT SUGGESTIONS</h2><span data-i18n="codex_only">CODEX ONLY</span></summary>
-          <div class="setting-row"><label for="setting-prediction_enabled" data-i18n="allow_prediction_configuration">Allow suggestion updates</label><input id="setting-prediction_enabled" type="checkbox" role="switch" disabled><span id="effect-prediction_enabled" class="hint" role="status"></span></div>
-          <p class="hint" data-i18n="pause_keeps_the_existing_trust_and_route_codex_may_retain_cached">Pause keeps existing trust and routing. Cached suggestions may still appear. First quit Codex, then run ccdx prediction on.</p>
+          <div class="setting-row"><label for="setting-prediction_enabled" data-i18n="predictions_enable">Input suggestions</label><input id="setting-prediction_enabled" type="checkbox" role="switch" disabled><span id="effect-prediction_enabled" class="hint" role="status"></span></div>
+          <p id="prediction-action-note" class="hint" role="status"></p><div class="section-actions"><button id="prediction-continue" type="button" data-i18n="feature_continue" hidden>Continue setup</button><button id="prediction-open" type="button" data-i18n="prediction_open">Open Codex</button></div>
           <details class="tool-details"><summary data-i18n="status_and_repair">Status and repair</summary>
           <dl class="stats"><div><dt data-i18n="prediction_integration_setup">Suggestion setup</dt><dd id="prediction-preference">—</dd></div><div><dt data-i18n="local_bridge">Local service</dt><dd id="prediction-bridge">—</dd></div><div><dt data-i18n="client_route">App settings requests</dt><dd id="prediction-route">—</dd></div><div><dt data-i18n="visible_candidate">Suggestion displayed</dt><dd id="prediction-candidate">—</dd></div></dl>
           <p id="prediction-note" class="hint">—</p>
-          <p class="hint" data-i18n="configured_does_not_mean_displayed_use_ccdx_prediction_status_fo">Enabled does not mean a suggestion appeared. Details: ccdx prediction status.</p>
+
 
           <div class="section-actions"><button id="fix-prediction" type="button" data-i18n="check_and_repair">Check and repair</button></div>
-          <p class="hint" data-i18n="prediction_first_setup">Quit Codex before first setup: ccdx prediction on</p>
+          <button id="prediction-setup" type="button" data-i18n="prediction_setup_again">Set up again</button><button id="prediction-remove" type="button" data-i18n="feature_remove">Remove setup</button>
           </details>
         </details>
         <details class="panel dashboard-section" id="additional-capabilities">
@@ -135,7 +136,7 @@
           <strong id="image">—</strong><p id="image-detail" class="hint">—</p>
           <div class="setting-row"><label for="setting-image_enabled" data-i18n="allow_new_image_calls">Allow image requests</label><input id="setting-image_enabled" type="checkbox" role="switch" disabled><span id="effect-image_enabled" class="hint" role="status"></span></div>
           <p class="hint" data-i18n="pause_keeps_the_provider_configuration_running_calls_can_finish_">Existing image requests can finish after pausing.</p>
-          <details class="tool-details"><summary data-i18n="status_and_repair">Status and repair</summary><p class="hint" data-i18n="image_first_setup">First setup: ccdx enable-image</p></details>
+          <details class="tool-details" id="image-setup-panel"><summary data-i18n="image_setup">Configure image generation</summary><form id="image-setup-form"><div class="connection-fields"><label><span data-i18n="api_base">API address</span><input id="image-setup-endpoint" type="url" required maxlength="2048" autocomplete="off" spellcheck="false"></label><label>API Key<input id="image-setup-key" type="password" maxlength="8192" autocomplete="off"><span class="hint" data-i18n="image_key_keep">Leave empty to keep the key for the same address.</span></label><label><span data-i18n="model">Model</span><select id="image-setup-model" required></select></label></div><div class="section-actions"><button id="image-setup-inspect" type="button" data-i18n="api_read_models">Read models</button><button type="submit" id="image-setup-save" data-i18n="api_save">Save</button><button id="image-setup-remove" type="button" data-i18n="feature_remove">Remove setup</button></div></form><p id="image-setup-note" class="hint" role="status"></p></details>
         </details>
         <details class="panel dashboard-section" id="runtime-resources">
           <summary data-i18n="codex_conversation_buffer">CONVERSATION BUFFER</summary>
@@ -284,8 +285,8 @@
           </details>
           <details class="panel dashboard-section"><summary data-i18n="more_checks_reports">MORE CHECKS AND REPORTS</summary>
             <div class="section-actions"><button id="check-network" type="button" data-i18n="tools_network_check">Network settings</button></div><p id="network-check-result" class="hint" role="status"></p>
-            <h3 data-i18n="tools_compatibility">Model compatibility</h3><p class="hint" data-i18n="tools_compatibility_scope">This test sends model requests and uses quota. Run it explicitly in your terminal:</p><pre class="tool-code">ccdx doctor --compat</pre>
-            <div class="tool-details"><h3 data-i18n="diagnostic_report">Diagnostic report</h3><p class="hint" data-i18n="tools_report_scope">Reports omit credentials, account details and chat content.</p><div class="section-actions"><button id="export-report" type="button" data-i18n="tools_export_report">Export report</button></div></div>
+            <h3 data-i18n="tools_compatibility">Model compatibility</h3><p class="hint" data-i18n="compatibility_scope">Tests Codex Responses, streaming and compaction. Uses quota.</p><p id="compatibility-note" class="hint" role="status"></p>
+            <div class="tool-details"><h3 data-i18n="diagnostic_report">Diagnostic report</h3><p class="hint" data-i18n="tools_report_scope">Reports omit credentials, account details and chat content.</p><div class="section-actions"><button id="check-compatibility" type="button" data-i18n="compatibility_test">Test Codex model compatibility</button><button id="export-report" type="button" data-i18n="tools_export_report">Export report</button></div></div>
           </details>
         </div>
         <div data-view="usage" hidden>
@@ -427,7 +428,7 @@
             <div id="nightly-rules" hidden><dl class="nightly-rules"><div><dt data-i18n="nightly_window">Update window</dt><dd data-i18n="nightly_window_value">00:00–04:00 · Local time</dd></div><div><dt data-i18n="nightly_when">When to update</dt><dd data-i18n="nightly_when_value">Idle for 10 minutes, after checks pass</dd></div><div><dt data-i18n="nightly_versions">Versions</dt><dd data-i18n="nightly_versions_value">Stable patches released at least 24 hours ago</dd></div><div><dt data-i18n="nightly_failure">If an update fails</dt><dd data-i18n="nightly_failure_value">Try restoring the previous version and pause this update</dd></div></dl></div>
           </div>
           <p id="update-state" class="hint" role="status" data-i18n="reading">READING</p>
-          <div id="update-command-row" class="update-command"><code id="update-command">ccdx update github</code><button type="button" id="copy-update" data-i18n="copy_command">Copy command</button></div>
+          <div class="section-actions"><button id="install-update" type="button" data-i18n="update_install_now" disabled>Install update</button><span id="manual-update-note" class="hint" role="status"></span></div><details class="tool-details" id="update-advanced"><summary data-i18n="advanced_terminal">Advanced: terminal commands</summary><div id="update-command-row" class="update-command"><code id="update-command">ccdx update github</code><button type="button" id="copy-update" data-i18n="copy_command">Copy command</button></div>
           <p class="hint" data-i18n="update_restart">Run in your terminal, then restart CCDX.</p>
           <p id="update-checked" class="refresh-time"></p>
           <details class="update-install"><summary data-i18n="update_install_help">Update failed? View full installation commands</summary><p class="hint" data-i18n="update_install_hint">Download the official installer. No Git required.</p>
@@ -435,7 +436,7 @@
             <div class="install-command-heading"><span id="install-shell" class="hint">macOS · Terminal</span><button type="button" id="copy-install" data-i18n="copy_command">Copy command</button></div><pre id="install-command" class="install-command"></pre>
             <p class="hint" data-i18n="update_install_policy">Reuses compatible Node/npm or installs a private runtime. Keeps your registry, proxy, certificates and shell policy.</p>
             <p id="install-windows-policy" class="hint" hidden data-i18n="update_windows_policy">If scripts are blocked, use your company’s approved installation method.</p>
-          </details><p id="update-copy-note" class="hint" role="status"></p>
+          </details></details><p id="update-copy-note" class="hint" role="status"></p>
         </section>
         <section class="panel dashboard-section" id="privacy-settings" aria-labelledby="privacy-heading">
           <h2 id="privacy-heading" data-i18n="privacy_heading">ADVANCED</h2>
@@ -449,6 +450,7 @@
           <div class="section-actions"><button id="privacy-cancel" type="button" hidden data-i18n="cancel">Cancel</button><button id="privacy-retry" type="button" hidden data-i18n="view_retry">Retry</button><button id="privacy-remove" type="button" hidden data-i18n="privacy_remove">Delete model</button><p id="privacy-error" class="hint" role="alert"></p></div>
         </section>
         <dialog id="privacy-dialog" class="preferences-dialog" aria-labelledby="privacy-dialog-title"><h2 id="privacy-dialog-title" data-i18n="privacy_enable">Local masking</h2><p data-i18n="privacy_download">Downloads about 39 MB plus the local component. Checks may add delay or mistake ordinary text.</p><p data-i18n="privacy_fail_closed">If a check cannot finish, the request is not sent.</p><div class="section-actions"><button id="privacy-dialog-cancel" type="button" data-i18n="cancel">Cancel</button><button id="privacy-dialog-confirm" type="button" data-i18n="privacy_confirm">Download &amp; enable</button></div></dialog>
+        <details class="panel dashboard-section" id="request-limits"><summary data-i18n="advanced_limits">Advanced: request limits</summary><div class="section-actions"><label><span data-i18n="decoded_limit">Decoded request limit (MiB)</span><input id="decoded-limit" type="number" min="128" max="512" step="1"></label><button id="decoded-limit-save" type="button" data-i18n="api_save">Save</button><button id="decoded-limit-default" type="button" data-i18n="limit_default">Use default</button></div><p id="decoded-limit-note" class="hint" role="status"></p></details>
         <section class="panel dashboard-section" id="settings-preferences" aria-labelledby="preferences-heading">
           <h2 id="preferences-heading" data-i18n="preferences_heading">SAVE &amp; RESTORE</h2>
           <div class="preferences-row"><div><label for="preferences-auto" data-i18n="preferences_auto">Save changes automatically</label><p class="hint" data-i18n="preferences_auto_hint">Valid changes on this page save automatically.</p></div><input id="preferences-auto" type="checkbox" role="switch" disabled checked></div>

@@ -237,12 +237,12 @@ export async function handleDashboardApi(req, res, pathname, {
     if (!/^application\/json(?:\s*;|$)/i.test(req.headers["content-type"] || "")) { sendJson(res, 415, { error: "Expected application/json" });return; }
     const abort = createRequestAbort(req, res);abort.setTimeout(5000, "request_body_timeout");
     try {
-      const input = await readJsonBody(req, { maxBodyBytes: 4096, maxDecodedBodyBytes: 4096, signal: abort.signal });
+      const input = await readJsonBody(req, { maxBodyBytes: 16384, maxDecodedBodyBytes: 16384, signal: abort.signal });
       abort.clearTimeout();const data = await serviceControl.action(input);
       if (!res.destroyed && !res.writableEnded) sendJson(res, 200, data);
     } catch (error) {
       sendJson(res, error.statusCode || (error.code?.startsWith("ccdx_cache_") ? 409 : 400), { error: safeText(error.message, 300),
-        ...(/^(?:m365_[a-z_]+|ccdx_settings_[a-z_]+)$/.test(error.code || "") ? { code: error.code } : {}) });
+        ...(/^(?:m365_[a-z_]+|ccdx_settings_[a-z_]+|ccdx_prediction_app_open)$/.test(error.code || "") ? { code: error.code } : {}) });
     } finally { abort.cleanup(); }
     return;
   }

@@ -1,3 +1,4 @@
+import { startupFixtureEnvironment } from "../scripts/replay-fixtures/startup-env.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -15,7 +16,7 @@ test("interactive CLI startup retains auth instructions and replaces duplicate c
   await new Promise(resolve => reserve.close(resolve));
   const token = path.join(home, ".local/share/copilot-api/github_token");await fs.mkdir(path.dirname(token), { recursive: true });await fs.writeFile(token, "synthetic-offline-github-token");
   const child = spawn(process.execPath, ["--require", fileURLToPath(new URL("../scripts/replay-fixtures/config-startup-preload.cjs", import.meta.url)), fileURLToPath(new URL("../bin/cli.mjs", import.meta.url)), "--no-browser"], {
-    env: { PATH: process.env.PATH, TMPDIR: home, CCDX_TEST_HOME: home, CCDX_TEST_TTY: "1", CI: "0", TERM: "xterm-256color", XDG_CONFIG_HOME: path.join(home, ".config"), XDG_CACHE_HOME: path.join(home, ".cache"),
+    env: { ...startupFixtureEnvironment(home), CCDX_TEST_HOME: home, CCDX_TEST_TTY: "1", CI: "0", TERM: "xterm-256color", XDG_CONFIG_HOME: path.join(home, ".config"), XDG_CACHE_HOME: path.join(home, ".cache"),
       ADAPTER_PORT: String(port), ADAPTER_HOST: "127.0.0.1", CCDX_AUTO_LAUNCH: "0", CCDX_M365: "0", CCDX_MODEL_REFRESH_INTERVAL_MS: "0", CCDX_DISABLE_TOKEN_DISCOVERY: "1", CCDX_DISABLE_USAGE: "1" },
     stdio: ["ignore", "pipe", "pipe", "ipc"],
   });

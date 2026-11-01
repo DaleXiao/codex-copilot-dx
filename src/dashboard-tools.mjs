@@ -24,12 +24,13 @@ export function createDashboardTools(options = {}) {
         const input = await readJsonBody(req, { maxBodyBytes: 4096, maxDecodedBodyBytes: 4096, signal: abort.signal });
         abort.clearTimeout();
         const fields = account ? { check: ["action"], start: ["action", "reauth"], cancel: ["action", "id"], logout: ["action", "confirmed"], reload: ["action"] }
-          : { check: ["action"], preview: ["action"], repair: ["action", "revision"], network: ["action"], report: ["action"] };
+          : { check: ["action"], preview: ["action"], repair: ["action", "revision"], network: ["action"], report: ["action"], compatibility: ["action", "confirmed"] };
         const allowed = input && typeof input === "object" && !Array.isArray(input) && fields[input.action];
         if (!allowed || Object.keys(input).some(key => !allowed.includes(key)) || (input.action === "start" && input.reauth !== undefined && typeof input.reauth !== "boolean")) {
           sendJson(res, 400, { error: "tools_invalid_action", code: "tools_invalid_action" });return;
         }
         const target = account ? accounts : local;
+        if (input.action === "compatibility" && input.confirmed !== true) { sendJson(res, 400, { error: "Confirm model requests and quota use" });return; }
         if (!account && input.action === "report" && !local.snapshot().checked_at) await local.check();
         const value = await (input.action === "start" ? target.start({ reauth: input.reauth })
           : input.action === "cancel" ? target.cancel(input.id) : input.action === "logout" ? target.logout(input)

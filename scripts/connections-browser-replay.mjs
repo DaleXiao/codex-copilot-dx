@@ -206,7 +206,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         assert.equal(await page.locator("#connection-sources #connection-disabled-sources").count(), 1);
         assert.equal(await page.locator("#connection-clients #connection-disabled-source-list").count(), 0);
         await page.locator("#connection-disabled-sources > summary").click();
-        await page.locator("#connection-disabled-source-list .connection-row").filter({ hasText: sampleName }).locator("button").click();await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).waitFor();
+        await page.locator("#connection-disabled-source-list .connection-row").filter({ hasText: sampleName }).locator('[data-i18n="api_restore"]').click();await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).waitFor();
         assert.equal(await page.locator("#connection-disabled-source-list .connection-row").filter({ hasText: sampleName }).count(), 0);
         assert.equal(await page.locator("#connection-disabled-sources").isHidden(), !runtime.connections().providers.some(p => !p.enabled));
         assert.equal(runtime.selection().codex, null);assert.equal(values.size, 1);

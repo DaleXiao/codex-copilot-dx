@@ -29,7 +29,7 @@ test("canonical prediction commands keep setup/removal semantics and safety note
   assert.equal(parseCliArgs(["app", "codex", "prediction", "status"]).command, "prediction");
   assert.throws(() => parseCliArgs(["app", "codex", "prediction", "model"]));
   const help = cliHelp("ccdx", "app codex prediction");
-  for (const text of [/off by default/, /decrypted locally/, /Git\/OpenSSL is not required/, /port persists across restarts\/updates/]) assert.match(help, text);
+  for (const text of [/New Codex integrations/, /decrypted locally/, /Git\/OpenSSL is not required/, /port persists across restarts\/updates/]) assert.match(help, text);
 });
 
 test("default and status do not create files, probe an App, or start a bridge", async (t) => {
@@ -105,13 +105,13 @@ test("modified trust and unknown DB schemas are preserved", async (t) => {
   await assert.rejects(updatePredictionTrust(paths.store, cert), /Unknown certificate-store/);
 });
 
-test("explicit on/off supports profile changes and never writes config.toml", async (t) => {
+test("explicit setup/removal supports profile changes and enables only native prediction display", async (t) => {
   const opts = fixture(t), paths = predictionPaths(opts);
   const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => app, output() {} };
   await runPredictionCommand({ ...run, action: "on" });
   const settings = readPredictionSettings(opts);
   assert.equal(settings.enabled, true);
-  assert.equal(fs.existsSync(path.join(opts.home, ".codex", "config.toml")), false);
+  assert.match(fs.readFileSync(path.join(opts.home, ".codex", "config.toml"), "utf8"), /desktop.composer-predictions-enabled = true/);
   await runPredictionCommand({ ...run, action: "off" });
   const disabled = readPredictionSettings(opts);
   assert.equal(disabled.enabled, false); assert.equal(disabled.store, undefined); assert.equal(disabled.certificateHash, undefined);
@@ -132,6 +132,18 @@ test("failed activation removes only newly added trust and generated keys", asyn
   assert.deepEqual(fs.readdirSync(paths.directory), []);
   const db = new DatabaseSync(paths.store, { readOnly: true });
   assert.equal(db.prepare("SELECT count(*) AS count FROM certificates").get().count, 0); db.close();
+});
+
+test("explicit reconfiguration replaces the running bridge after committing trust", async t => {
+  const opts = fixture(t), run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => app, output() {} };
+  await runPredictionCommand({ ...run, action: "on" });const calls = [];
+  const { controlPrediction } = await import("../src/prediction-control.mjs");
+  const { handlePredictionOperation } = await import("../src/prediction-operations.mjs");
+  const result = await controlPrediction("setup", { ...run, nativeOperation: handlePredictionOperation, integration: {
+    setPredictionActive() {}, pauseForUpdate: async () => calls.push("close-old"), start: async () => calls.push("start-new"),
+    fix: async () => { calls.push("check-new");return { status: "ready", prediction: { bridge: "running" } }; },
+  } });
+  assert.deepEqual(calls, ["close-old", "start-new", "check-new"]);assert.equal(result.status, "ready");
 });
 
 test("off stops overlay even when App is open and defers trust cleanup", async (t) => {

@@ -11,6 +11,10 @@ import { createAdapterHandler } from "../src/adapter.mjs";
 import { summarizeUsage } from "../src/usage-store.mjs";
 import { statusSummary } from "../src/status-summary.mjs";
 import { createActivityEvents, createChangeSignal } from "../src/activity-events.mjs";
+import { writePredictionSettings } from "../src/native-prediction-profile.mjs";
+import { handlePredictionOperation } from "../src/prediction-operations.mjs";
+import { controlPrediction } from "../src/prediction-control.mjs";
+import { configureImageSetup } from "../src/image-setup.mjs";
 import { requestApplication } from "../src/request-application.mjs";
 
 const args = process.argv.slice(2);
@@ -26,6 +30,7 @@ globalThis.fetch = async () => { throw Error("Real provider calls are forbidden"
 let models = 0, summaries = 0;
 let updateReads = 0, updateState = "checked", latestVersion = "1.2.4";
 const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-dashboard-replay-"));
+writePredictionSettings({ version: 1, enabled: true }, { home, env: {} });
 let predictionActive = true, codexSource = "github", m365Enabled = true;
 const accountChoices = ["a", "b"].map(letter => ({ id: letter.repeat(64), login: `${letter}@example.test`, tenant: `company-${letter}` }));
 let companyAccount = accountChoices[0], accountChecks = 0, accountChanges = 0, refuseAccountChange = false;
@@ -63,8 +68,15 @@ const localTools = {
 };
 const networkDiagnostic = { source: "system", stage: "proxy_config", cause_code: "proxy_bypass_invalid" };
 let m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
-const serviceControl = createServiceControl({ home, env: {}, readImages: () => ({}), readPrediction: () => ({ enabled: true }),
-  clientIntegration: { snapshot: () => ({ prediction: { configured: true, bridge: "running", active: predictionActive } }), setPredictionActive(value) { predictionActive = value; }, fix: async () => {} },
+let manualUpdates = 0;
+const serviceControl = createServiceControl({ home, env: {},
+  manualUpdate: () => { manualUpdates++;return { status: "queued" }; },
+  predictionControl: (operation, opts) => controlPrediction(operation, { ...opts, nativeOperation: handlePredictionOperation, platform: "darwin", exec: () => { throw Object.assign(Error("closed"), { status: 1 }); } }),
+  imageControl: (input, opts) => configureImageSetup(input, { ...opts, fetchImpl: async (url, init) => {
+    if (url.endsWith("/models")) return Response.json({ data: [{ id: "gpt-image-1" }] });
+    assert.equal(JSON.parse(init.body).prompt, undefined);return Response.json({ error: { message: "prompt required" } }, { status: 400 });
+  } }), readImages: () => ({}), readPrediction: () => ({ enabled: true }),
+  clientIntegration: { snapshot: () => ({ prediction: { configured: true, bridge: "running", active: predictionActive } }), setPredictionActive(value) { predictionActive = value; }, start: async () => null, fix: async () => {} },
   providerRuntime: { snapshot: () => ({ codex_provider: codexSource, github: { preference: { model: "gpt-6.1-sol", reasoningEffort: "low" } }, m365: { preference: m365Preference, state: m365Enabled ? "ready" : "disabled", enabled: m365Enabled, account: { ...companyAccount, selection_source: "manual" } } }),
     async action(input) {
       if (input.action === "switch") { codexSource = input.provider;if (input.provider === "m365") m365Preference = { ...m365Preference, model: input.model, ...(input.auto_review_model ? { auto_review_model: input.auto_review_model, auto_review_effort: input.auto_review_effort } : {}) }; }
@@ -356,11 +368,11 @@ try {
         assert.equal(await page.locator("#source-review").inputValue(), "gpt-second", "Refresh keeps the unsaved review choice");
         await page.locator("#save-review").click();await page.waitForFunction(() => !document.getElementById("save-review").disabled);
         assert.equal(m365Preference.auto_review_model, "gpt-second");
-        await page.route("**/_ccdx/ui/settings", route => route.request().method() === "POST" && route.request().postDataJSON()?.key === "prediction_enabled"
+        await page.route("**/_ccdx/ui/settings", route => route.request().method() === "POST" && route.request().postDataJSON()?.action === "prediction"
           ? route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "synthetic prediction save refused" }) }) : route.continue());
         const predictionBefore = await page.locator("#setting-prediction_enabled").isChecked();
         await page.locator("#setting-prediction_enabled").click();
-        await page.waitForFunction(() => document.getElementById("effect-prediction_enabled").textContent.includes("synthetic prediction save refused"));
+        await page.waitForFunction(() => document.getElementById("prediction-action-note").textContent.includes("synthetic prediction save refused"));
         assert.equal(await page.locator("#setting-prediction_enabled").isChecked(), predictionBefore, "A failed save restores the confirmed switch");
         for (const id of ["source-control-note", "m365-control-note", "review-control-note", "effect-history", "settings-note"]) {
           assert.doesNotMatch(await page.locator(`#${id}`).textContent(), /synthetic prediction save refused/, "Save errors stay beside the affected control");
@@ -698,6 +710,7 @@ try {
         assert.match(await page.locator("#update-current-date").innerText(), /2026-10-19/);
         assert.equal(await page.locator(".terminal-animation-toggle").evaluate(node => getComputedStyle(node).borderBottomWidth), "0px");
         assert.equal(await page.locator("#animation-settings").evaluate(node => getComputedStyle(node).borderTopWidth), "0px");
+        await page.locator("#update-advanced").evaluate(node => { node.open = true; });
         await page.locator(".update-install > summary").click();
         assert.match(await page.locator("#install-command").innerText(), /v1\.2\.4\/install\.sh/);
         const selectedPlatform = await page.locator('[data-install-platform="macos"]').evaluate(node => ({ color: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor }));
@@ -732,6 +745,7 @@ try {
         assert.equal(await page.locator("#update-command-row").isVisible(), true);
         updateState = "checked";latestVersion = "1.2.4";
         await page.locator("#check-updates").click();await page.waitForFunction(() => !document.getElementById("check-updates").disabled);
+        await page.locator("#update-advanced").evaluate(node => { node.open = true; });
         await page.locator(".update-install > summary").click();
         await page.waitForFunction(() => !document.getElementById("terminal-color-theme").disabled);
         assert.equal(await page.locator("#web-color-theme").inputValue(), palette);
@@ -774,7 +788,7 @@ try {
         const protectedSettings = { image: serviceControl.snapshot().saved.image_enabled, prediction: serviceControl.snapshot().saved.prediction_enabled, source: codexSource };
         assert.equal(await page.locator("#preferences-auto").isChecked(), true);
         assert.equal(await page.locator("#privacy-settings").evaluate(node => node.previousElementSibling.id), "version-updates");
-        assert.equal(await page.locator("#settings-preferences").evaluate(node => node.previousElementSibling.id), "privacy-dialog");
+        assert.equal(await page.locator("#settings-preferences").evaluate(node => node.previousElementSibling.id), "request-limits");
         await page.locator("#preferences-auto").uncheck();await settlePreferences();
         assert.equal(serviceControl.snapshot().preferences.values.auto_save_settings, false);
         await page.locator("#terminal-color-theme").selectOption("pink");
@@ -868,6 +882,26 @@ try {
           await page.evaluate(() => { ccdxDashboardUsage.create = window.workingUsageCreate; });
           await nav("usage");await page.locator("#usage-analytics .view-error button").click();
           await page.locator("#usage-analytics .view-error").waitFor({ state: "hidden" });
+        }
+        if (palette === "green" && theme === "light") {
+          await nav("codex");
+          await page.locator("#image-setup-panel").evaluate(node => { for (let current = node; current; current = current.parentElement) if (current.tagName === "DETAILS") current.open = true; });
+          await page.locator("#image-setup-endpoint").fill("https://images.example.test/v1");
+          await page.locator("#image-setup-key").fill("SYNTHETIC_IMAGE_KEY");
+          await page.locator("#image-setup-inspect").click();
+          await page.waitForFunction(() => !document.getElementById("image-setup-inspect").hasAttribute("aria-busy"));
+          await page.waitForFunction(() => document.getElementById("image-setup-model").value === "gpt-image-1");
+          await page.locator("#image-setup-save").click();
+          await page.waitForFunction(() => document.getElementById("image-setup-key").value === "");
+          assert.equal(serviceControl.snapshot().features.image.configured, true);
+          assert.doesNotMatch(await page.locator("body").innerText(), /SYNTHETIC_IMAGE_KEY/);
+          await nav("system");
+          await page.locator("#request-limits").evaluate(node => { node.open = true; });
+          await page.locator("#decoded-limit").fill("256");await page.locator("#decoded-limit-save").click();
+          await page.waitForFunction(() => !document.getElementById("decoded-limit-save").hasAttribute("aria-busy"));
+          assert.equal(serviceControl.snapshot().decoded_body.bytes, 256 * 1048576);
+          const beforeUpdate = manualUpdates;page.once("dialog", dialog => dialog.accept());await page.locator("#install-update").click();
+          await page.waitForFunction(() => !document.getElementById("install-update").hasAttribute("aria-busy"));assert.equal(manualUpdates, beforeUpdate + 1);
         }
         assert.equal(errors.length, 0, errors.join("\n"));
         if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-overview.png`), fullPage: true });

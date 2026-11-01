@@ -8,10 +8,11 @@ import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { inspectPredictionEnvironment } from "./native-prediction-environment.mjs";
 import { formatPredictionEnvironment } from "./native-prediction-state.mjs";
 import { localPackageVersion } from "./version.mjs";
+import { inspectAdapterCompatibility } from "./doctor-compat.mjs";
 
 export function createLocalTools({ home = os.homedir(), env = process.env, host = "127.0.0.1", port = 2026,
   platform = process.platform, collect = collectDoctorChecks, inspectConfig = inspectCodexConfig, repairConfig = repairCodexConfig,
-  inspectNetwork = inspectPredictionEnvironment } = {}) {
+  inspectNetwork = inspectPredictionEnvironment, inspectCompatibility = inspectAdapterCompatibility } = {}) {
   const options = { home, env, host, port, platform };
   let last = null, flight = null;
   const safe = text => redactDiagnosticText(String(text || "")).split(home).join("~")
@@ -48,6 +49,11 @@ export function createLocalTools({ home = os.homedir(), env = process.env, host 
     const value = inspectNetwork({ env, platform });
     return { source: "network_check", checked_at: new Date().toISOString(), summary: safe(formatPredictionEnvironment(value.summary)) };
   }
-  return { snapshot, check, preview, repair, network, busy: () => Boolean(flight), report: () => ({ version: localPackageVersion(),
+  async function compatibility() {
+    if (flight) throw new Error("A diagnostic operation is already running");
+    flight = Promise.resolve().then(async () => ({ source: "compatibility_check", checked_at: new Date().toISOString(), checks: project(await inspectCompatibility(options)) })).finally(() => { flight = null; });
+    return flight;
+  }
+  return { snapshot, check, preview, repair, network, compatibility, busy: () => Boolean(flight), report: () => ({ version: localPackageVersion(),
     exported_at: new Date().toISOString(), scope: "local checks only; accounts and credentials omitted", ...snapshot() }) };
 }

@@ -1,5 +1,8 @@
 import { CODEX_AUTO_REVIEW_MODEL } from "./models.mjs";
 import { readBoundedResponseText } from "./upstream-body.mjs";
+import { readClientGatewayKeys } from "./client-gateway-keys.mjs";
+import { isLoopbackHost } from "./security.mjs";
+import { redactDiagnosticText } from "./diagnostic-text.mjs";
 
 function localGatewayBaseUrl(host, port) {
   const normalized = host === "0.0.0.0" ? "127.0.0.1" : host === "::" ? "::1" : host;
@@ -20,10 +23,8 @@ export function selectCompatibilityModels(models) {
   const candidates = copilotModelData(models)
     .filter((model) => model?.model_picker_enabled !== false)
     .filter((model) => {
-      const id = String(model?.id || "");
       const endpoints = modelEndpoints(model);
-      return id.startsWith("gpt-")
-        && (endpoints.includes("/responses") || endpoints.includes("/v1/responses"));
+      return endpoints.includes("/responses") || endpoints.includes("/v1/responses");
     });
   const responsesOnly = [...candidates].reverse()
     .find((model) => !modelEndpoints(model).includes("/chat/completions"));
@@ -34,7 +35,7 @@ async function fetchTextWithTimeout(fetchImpl, url, init, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const resp = await fetchImpl(url, { ...init, signal: controller.signal });
+    const resp = await fetchImpl(url, { ...init, redirect: "error", signal: controller.signal });
     return { resp, text: await readBoundedResponseText(resp, { maxBytes: 4 * 1024 * 1024, signal: controller.signal, label: "Doctor response" }) };
   } finally {
     clearTimeout(timer);
@@ -42,14 +43,14 @@ async function fetchTextWithTimeout(fetchImpl, url, init, timeoutMs) {
 }
 
 function responseFailure(resp, text) {
-  const detail = String(text || "").replace(/\s+/g, " ").trim().slice(0, 240);
+  const detail = redactDiagnosticText(String(text || "")).replace(/\s+/g, " ").trim().slice(0, 240);
   return new Error(`HTTP ${resp.status}${detail ? `: ${detail}` : ""}`);
 }
 
-async function compatibilityRequest(fetchImpl, url, body, timeoutMs) {
+async function compatibilityRequest(fetchImpl, url, body, timeoutMs, headers) {
   const { resp, text } = await fetchTextWithTimeout(fetchImpl, url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: body.stream ? "text/event-stream" : "application/json" },
+    headers: { ...headers, "Content-Type": "application/json", Accept: body.stream ? "text/event-stream" : "application/json" },
     body: JSON.stringify(body),
   }, timeoutMs);
   if (!resp.ok) throw responseFailure(resp, text);
@@ -92,11 +93,16 @@ export async function inspectAdapterCompatibility({
   port = 2026,
   fetchImpl = fetch,
   timeoutMs = 120000,
+  home, env = process.env,
 } = {}) {
   const baseUrl = localGatewayBaseUrl(host, port);
+  let headers = {};
+  if (isLoopbackHost(new URL(baseUrl).hostname)) {
+    try { headers = { Authorization: `Bearer ${readClientGatewayKeys({ home, env, create: false }).codex}` }; } catch { /* Unconfigured credentials remain a normal access-check failure. */ }
+  }
   const checks = [];
   const models = await runCompatibilityCheck(checks, "Compatibility model discovery", async () => {
-    const { resp, text } = await fetchTextWithTimeout(fetchImpl, `${baseUrl}/v1/models`, { headers: { Accept: "application/json" } }, timeoutMs);
+    const { resp, text } = await fetchTextWithTimeout(fetchImpl, `${baseUrl}/v1/models`, { headers: { ...headers, Accept: "application/json" } }, timeoutMs);
     if (!resp.ok) throw responseFailure(resp, text);
     const parsed = JSON.parse(text);
     if (!copilotModelData(parsed).length) throw new Error("model list is empty");
@@ -106,7 +112,7 @@ export async function inspectAdapterCompatibility({
 
   const { responsesModel } = selectCompatibilityModels(models);
   if (!responsesModel) {
-    checks.push({ kind: "err", message: "Compatibility Responses check failed: no GPT model advertises /responses" });
+    checks.push({ kind: "err", message: "Compatibility Responses check failed: no selected model advertises /responses" });
     return checks;
   }
 
@@ -115,7 +121,7 @@ export async function inspectAdapterCompatibility({
       model: CODEX_AUTO_REVIEW_MODEL,
       stream: false,
       input: "Reply with OK only.",
-    }, timeoutMs);
+    }, timeoutMs, headers);
     parseResponseObject(text);
   });
 
@@ -124,7 +130,7 @@ export async function inspectAdapterCompatibility({
       model: responsesModel,
       stream: false,
       input: "Reply with OK only.",
-    }, timeoutMs);
+    }, timeoutMs, headers);
     return parseResponseObject(text);
   });
 
@@ -135,7 +141,7 @@ export async function inspectAdapterCompatibility({
         stream: true,
         previous_response_id: firstResponse.id,
         input: "Reply with OK again.",
-      }, timeoutMs);
+      }, timeoutMs, headers);
       const events = text.split(/\r?\n\r?\n/).map(block => {
         const data = block.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n");
         try { return JSON.parse(data); } catch { return null; }
@@ -152,7 +158,7 @@ export async function inspectAdapterCompatibility({
       model: responsesModel,
       stream: false,
       input: "Compact this short context.",
-    }, timeoutMs);
+    }, timeoutMs, headers);
     parseCompactionResponse(text);
   });
 

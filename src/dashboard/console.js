@@ -68,13 +68,14 @@
   async function api(body) {
     const response = await fetch("/_ccdx/ui/settings", { method: body ? "POST" : "GET", cache: "no-store",
       headers: { "X-CCDX-Dashboard": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
-      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(body?.operation === "account" ? 65000 : 15000) });
+      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(body?.action === "prediction" ? 210000 : body?.action === "image" || body?.operation === "account" ? 65000 : 15000) });
     const data = await response.json();if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`), { code: data.code });return data;
   }
   const preferences = globalThis.ccdxDashboardPreferences?.create({ element: el, api, applied: applySettings, time,
     selectAnimation: theme => animationView.select(theme),
     refreshAnimation() { dashboardRefresh.invalidate("animation");if (current === "system") void dashboardRefresh.refresh("animation", { force: true }); } });
   globalThis.ccdxSettingsPreferences = preferences;
+  const features = globalThis.ccdxDashboardFeatures?.create({ element: el, api, apply: applySettings, change, localize: label });
   const states = { immediate: "effective_now", terminal_unavailable: "terminal_animation_unavailable_in_this_output_mode", next_start: "next_ccdx_start", next_call: "applies_to_new_calls", needs_setup: "setup_required",
     next_config_request: "next_configuration_request_cached_suggestions_may_remain", needs_app_relaunch: "reopen_the_client_to_finish", needs_service_restart: "restart_ccdx_to_finish" };
   const selectedSource = () => providerEntries.find(source => source.id === el("source-provider").value);
@@ -115,6 +116,7 @@
   function applySettings(data, meta) {
     globalThis.ccdxPrivacy?.sync(data.local_privacy);
     settings = data;
+    features?.render(data);
     const nightly = data.nightly_update;
     el("nightly-update").checked = nightly?.enabled === true;el("nightly-update").disabled = false;
     el("nightly-rules").hidden = nightly?.enabled !== true;
@@ -125,7 +127,7 @@
     el("animation-settings").dataset.terminalPalette = data.color_theme || "green";
     label(el("terminal-color-note"), data.terminal?.mode !== "status"
       ? "terminal_theme_unavailable" : "terminal_theme_applied");
-    for (const key of ["terminal_animation_enabled", "open_webui", "image_enabled", "prediction_enabled"]) {
+    for (const key of ["terminal_animation_enabled", "open_webui", "image_enabled"]) {
       const input = el(`setting-${key}`), effective = data.effective[key];
       input.checked = data.saved[key];input.disabled = Boolean(effective.locked);
       label(el(`effect-${key}`), data.saved[key] === effective.value && !effective.locked ? "preference_effect" : "saved_saved_effective_effective_state", {
@@ -195,9 +197,9 @@
     if (settingsPending) return;
     settingsPending = true;
     syncAccountControls();
-    const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-enabled")];
+    const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-enabled, #prediction-continue, #prediction-open, #prediction-setup, #prediction-remove, #image-setup-form input, #image-setup-form select, #image-setup-form button, #decoded-limit, #decoded-limit-save, #decoded-limit-default, #install-update")];
     controls.forEach(input => { input.disabled = true; });
-    const note = el(body.action === "nightly_update" ? "nightly-state" : body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
+    const note = el(body.action === "prediction" ? "prediction-action-note" : body.action === "image" ? "image-setup-note" : body.action === "update" ? "manual-update-note" : body.action === "decoded_limit" ? "decoded-limit-note" : body.action === "nightly_update" ? "nightly-state" : body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
       : body.action.startsWith("history_") ? "effect-history" : body.action === "prediction_fix" ? "prediction-note"
         : body.operation === "switch" ? "source-control-note" : body.operation === "auto-review" ? "review-control-note"
           : body.operation === "account" ? "m365-account-note" : "m365-control-note");
@@ -219,22 +221,26 @@
         label(el("m365-account-note"), "company_account_checked");
       }
       if (body.action !== "color_theme") { await refreshStatus();await dashboardRefresh.refresh("auth", { force: true }); }
+      return data;
     }
     catch (error) {
       if (settings) applySettings(settings);
       if (body.operation === "account") { label(el("m365-account-note"), "company_account_not_saved", { reason: { key: accountReasons.has(error.code) ? error.code : error.message } });return; }
       if (body.action === "color_theme") { label(el("terminal-color-note"), "not_saved_error", { error: error.message });return; }
-      note.textContent = error.message;
+      if (error.code === "ccdx_prediction_app_open") label(note, error.code);
+      else note.textContent = error.message;
     } finally {
       settingsPending = false;controls.forEach(input => { input.disabled = false; });
       syncAccountControls();
       if (settings) for (const [key, value] of Object.entries(settings.effective)) if (value.locked) el(`setting-${key}`).disabled = true;
       if (settings?.history.source === "environment") el("save-history").disabled = true;
       el("apply-source").disabled = !sourceReady();el("source-model").disabled = !selectedSource()?.selection.models_required;syncReviewButton();
+      features?.render(settings, { notes: false });
       button?.removeAttribute("aria-busy");
     }
   }
   for (const input of document.querySelectorAll('[role=switch][id^="setting-"]')) input.addEventListener("change", () => {
+    if (input.id === "setting-prediction_enabled") return;
     if (preferences && input.closest('[data-view="system"]')) return;
     void change({ action: "preference", key: input.id.slice("setting-".length), value: input.checked }, input);
   });
@@ -243,7 +249,7 @@
   el("clean-history").addEventListener("click", () => {
     if (window.confirm(globalThis.ccdxLanguage.format("clear_inactive_codex_conversation_data_older_continuation_ids_ma"))) void change({ action: "history_clean" }, el("clean-history"));
   });
-  el("fix-prediction").addEventListener("click", () => void change({ action: "prediction_fix" }, el("fix-prediction")));
+
   el("m365-enabled").addEventListener("change", () => {
     const operation = el("m365-enabled").checked ? "on" : "off";
     if (operation === "off" && !window.confirm(globalThis.ccdxLanguage.format("confirm_disable_m365"))) {

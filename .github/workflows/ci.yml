@@ -73,7 +73,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Verify Windows updater process, certificates, worker, profile, ACL, launch and recovery
-        run: node --test --test-concurrency=2 test/package-update.test.mjs test/package-update-windows.test.mjs test/release-install.test.mjs test/bounded-file.test.mjs test/auth.test.mjs test/auth-profile.test.mjs test/doctor.test.mjs test/adapter.test.mjs test/response-failures.test.mjs test/native-prediction-windows.test.mjs test/launcher.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs test/dashboard-refresh.test.mjs test/dashboard-updates.test.mjs test/dashboard-analytics-ui.test.mjs test/dashboard-language.test.mjs test/dashboard-time.test.mjs test/dashboard-theme.test.mjs test/dashboard-status-ui.test.mjs test/upstream-headers.test.mjs test/module-boundaries.test.mjs test/http-transport.test.mjs
+        run: node --test --test-concurrency=2 test/package-update.test.mjs test/package-update-windows.test.mjs test/release-install.test.mjs test/bounded-file.test.mjs test/auth.test.mjs test/auth-profile.test.mjs test/doctor.test.mjs test/adapter.test.mjs test/response-failures.test.mjs test/native-prediction-windows.test.mjs test/launcher.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs test/dashboard-refresh.test.mjs test/dashboard-updates.test.mjs test/dashboard-analytics-ui.test.mjs test/dashboard-language.test.mjs test/dashboard-time.test.mjs test/dashboard-theme.test.mjs test/dashboard-status-ui.test.mjs test/upstream-headers.test.mjs test/module-boundaries.test.mjs test/http-transport.test.mjs test/prediction-preference.test.mjs test/prediction-operations.test.mjs test/prediction-handoff.test.mjs test/webui-feature-control.test.mjs test/manual-update.test.mjs
       - name: Verify startup presentation and bounded prediction recovery on Windows
         run: node --test test/startup-ui.test.mjs test/quiet-startup.test.mjs test/terminal-startup.test.mjs test/native-prediction-route.test.mjs test/native-prediction-recovery.test.mjs test/native-prediction-protocol.test.mjs test/prediction-fix.test.mjs test/network-route.test.mjs test/network-environment.test.mjs
       - name: Verify command ownership, credential discovery and bounded doctor repairs
@@ -155,6 +155,8 @@ jobs:
         run: |
           node scripts/privacy-client-replay.mjs --client codex --binary "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --privacy on
           node scripts/privacy-client-replay.mjs --client codex --binary "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --privacy off
+      - name: Verify prediction display and retained native ChatGPT sign-in
+        run: node scripts/prediction-client-replay.mjs --binary "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
       - name: Verify real Codex configuration, catalog and synthetic Responses
         run: node scripts/codex-message-id-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
       - name: Verify native recorded compaction and local plaintext recovery without live provider calls
@@ -204,6 +206,8 @@ jobs:
           $codex = (Get-ChildItem "$env:RUNNER_TEMP/ccdx-native-clients/node_modules" -Recurse -Filter codex.exe | Select-Object -First 1).FullName
           $claude = (Get-ChildItem "$env:RUNNER_TEMP/ccdx-native-clients/node_modules" -Recurse -Filter claude.exe | Select-Object -First 1).FullName
           if (!$codex -or !$claude) { throw "Native client executables were not installed" }
+          node scripts/prediction-client-replay.mjs --binary $codex
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/privacy-client-replay.mjs --client codex --binary $codex --privacy on
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/privacy-client-replay.mjs --client codex --binary $codex --privacy off

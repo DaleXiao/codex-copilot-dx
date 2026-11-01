@@ -242,9 +242,38 @@ client after its owned configuration changes. All tests using sample capabilitie
 are isolated; they do not assign sample limits to a user's real models.
 
 
+## WebUI and CLI controls
+
+Normal management belongs in the WebUI. CLI provides the same backend operations plus scripting and recovery:
+
+| WebUI task | CLI | Effect |
+| --- | --- | --- |
+| Accounts, APIs and models | `source`, `app <id> models` | Shared connection graph, catalogs and credential storage |
+| Client access and synchronization | `app <id> enable/disable/sync` | Preview/recheck ownership; no forced App exit |
+| Delete a disabled, unbound API | `source <id> remove` | Shared impact revision; selected consumers block deletion |
+| Input suggestions: enable/disable | `app codex prediction enable/disable` | Synchronize bridge preference and native Show predictions |
+| Prediction setup/remove/repair/open | `app codex prediction setup/remove/repair/open` | Shared control; App closure may be required |
+| Images: configure/remove/pause/resume | `app codex image setup/remove/pause/resume` | Shared image configuration transaction; keys never returned by WebUI |
+| Install a stable update | `update apply --yes` | Same supervisor request; download, verify and idle service handoff |
+| Standalone update/recovery | `update github/npm`, `doctor` | Available when service management is unavailable |
+| Local/network checks, repair and report | `doctor`, `doctor network/report`, `doctor --fix` | Existing checks and configuration repair |
+| Explicit model compatibility test | `doctor --compat` | Finite Codex Responses/stream/compaction requests; supports vendor IDs; local client credential stays on loopback; WebUI confirms quota use |
+| Decoded request limit | `config limits --decoded <MiB>` | 128–512 MiB; saved for next start; launch environment has priority |
+| Usage, requests, appearance and backups | `usage`, `requests`, `config` | Shared service data/preferences; browser appearance stays browser-local |
+
+CLI-only interaction forms include JSON output, file input, key stdin and shell pipelines. Initial installation/startup, a failed service and headless hosts need an external launch/recovery entrypoint. These are not prerequisites for prediction or image configuration. Full runtime-cache purges, batch/file/key-stdin input, JSON formatting and one-installation remote-download exceptions remain advanced CLI operations. Company policy changes remain outside CCDX control.
+
+## Prediction controls
+
+WebUI → Codex → Input suggestions is the complete enable/disable control. Setup and explicit enable write only `desktop.composer-predictions-enabled` in Codex TOML and its legacy persisted-atom equivalent; unrelated configuration/state remains intact. Writes require Codex to be closed. An open App keeps a pending display change; quit it and Continue setup, or normally launch CCDX again. The WebUI can open Codex after setup without a terminal command. No running App is forcibly closed.
+
+Native configuration and startup environment checks use temporary work threads so OS/crypto work does not block the core service. Missing Apps are checked before trust/proxy setup. A normal cold startup attempts setup once when no CCDX prediction record exists, prediction access is allowed, and the App display preference is not saved off. Failed setup leaves core startup available and can be completed in WebUI. Saved off records and App off choices are preserved. Explicit enable intentionally overrides a prior App display-off setting. Repair keeps the selected on/off intent. Disable retains trust and routing; Remove setup owns trust/route cleanup and may defer cleanup until Codex closes. Visible predictions still require native App/thread eligibility and an actual returned suggestion.
+
+Installed command launches use the existing supervisor and immutable workers. WebUI updates preserve accounts, models and request continuation through verified handoff; failure rolls back to the previous installation/runtime. Warm version handoff does not perform first-time setup or apply pending App display writes. Prediction intent/trust participates in the handoff fingerprint; port allocation and App stat bookkeeping are runtime data. Manual updates do not enable the overnight schedule, do not downgrade, and defer while requests or settings operations are active. Launches outside a writable matched installation display their limitation explicitly.
+
 ## Optional native predictions
 
-Native next-message predictions are **off by default** and use no MCP, Hook, skill,
+New native next-message integrations **attempt setup by default when Codex is closed**. Existing CCDX or App off choices are retained. They use no MCP, Hook, skill,
 panel, renderer injection, or client-program modification. This compatibility
 feature uses the App's existing composer UI and the conversation's
 selected model through CCDX. Suggestions are not sent automatically. Native
@@ -429,9 +458,9 @@ No extra inference or bridge exists for users who leave the feature disabled.
 When enabled, prediction requests consume Copilot usage; the setting does not
 provide a separate prediction-model picker.
 
-`prediction off` immediately disables new local overlays. Quit/reopen Codex to
+`app codex prediction remove` immediately disables new local overlays. Quit/reopen Codex to
 clear its cached predictions and temporary route. If the App is still running,
-trust removal is deferred; quit it and run `prediction off` again. Only the exact
+trust removal is deferred; quit it and use Remove setup in WebUI again. Only the exact
 owned certificate record is removed, never the whole store. A CCDX-owned persistent
 proxy preference is restored first, preserving all unrelated preference values.
 User-replaced proxy preferences are not restored over. Failed activation
@@ -542,7 +571,7 @@ was recreated on the original address, not that gray text appeared.
 
 ## Optional image generation
 
-Image generation is disabled by default. Configure it interactively only when you want Codex App to receive the local CCDX image tool:
+Image generation is disabled by default. Configure it in WebUI → Codex → Image generation: enter an HTTPS address and key, read models, choose one and save. An empty key retains the existing key only for the same origin. Discovery and saving use the existing missing-prompt protocol check; they do not generate an image. Removing setup deletes the saved image credential and only CCDX-owned configuration/guidance. Existing calls may finish when pausing. The same setup transaction is available interactively for advanced CLI use:
 
 ```bash
 ccdx app codex image setup
@@ -554,7 +583,7 @@ An empty key answer retains the saved key only when the normalized endpoint has 
 
 The provider credential is stored in `~/.config/codex-copilot-dx/image-provider.json`, or under `XDG_CONFIG_HOME`, with mode `0600`. The API key is never written to `~/.codex/config.toml`; that file receives only a marked local MCP entry pointing to the running CCDX adapter with a 210-second tool timeout. Only after enabling, CCDX installs `ccdx-image` guidance under `~/.codex/skills`, with a self-contained Node helper. The concise `SKILL.md` keeps operation selection, safety, and final-image delivery rules; editing details and helper instructions live in references read only for those operations. Codex uses the MCP tool directly, including through deferred tool search; an already-open task without that tool can use the helper to call the same local service and display the saved image. Neither route requires Python, an OpenAI SDK, or copying credentials. Built-in skills and unrelated tools are not modified.
 
-The enable command verifies the local MCP handshake and generation-tool directory without generating an image. It reports provider configuration separately from local service readiness; it cannot assert that every running Codex task has refreshed its catalog. Codex normally detects changed skills; restart Codex App once if an open task has not refreshed them. Normal CCDX startup installs or updates this guidance only for an already-enabled provider, without repeating API setup. Without `enable-image`, it installs neither this skill nor the MCP registration. Unchanged guidance is not rewritten. The existing adapter can remain running because provider settings are loaded when the tool is invoked.
+The enable command verifies the local MCP handshake and generation-tool directory without generating an image. It reports provider configuration separately from local service readiness; it cannot assert that every running Codex task has refreshed its catalog. Codex normally detects changed skills; restart Codex App once if an open task has not refreshed them. Normal CCDX startup installs or updates this guidance only for an already-enabled provider, without repeating API setup. Without image setup, it installs neither this skill nor the MCP registration. Unchanged guidance is not rewritten. The existing adapter can remain running because provider settings are loaded when the tool is invoked.
 
 For Qwen-style image responses, CCDX accepts canonical PNG, JPEG, or WebP `data:image/...;base64,` output within the existing 32 MiB image limit. Public HTTPS image URLs still use the same pinned-DNS download checks; HTTP, private-network targets, and URLs with embedded credentials remain rejected.
 

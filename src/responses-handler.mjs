@@ -399,7 +399,7 @@ export function createResponsesHandler(options) {
             res.end(JSON.stringify(response));
           } catch (error) {
             const responseError = applyAdaptiveTimeout(error);
-            markResponseErrorOrigin(responseError?.statusCode >= 400 && responseError.statusCode < 500
+            markResponseErrorOrigin(responseError?.origin === "privacy" ? "privacy" : responseError?.statusCode >= 400 && responseError.statusCode < 500
               ? "client_validation" : "transport");
             logRequestFailure("Responses", responseError, abort);
             sendJsonError(res, responseError, 502);
@@ -410,7 +410,7 @@ export function createResponsesHandler(options) {
       }
     } catch (error) {
       const responseError = applyAdaptiveTimeout(error);
-      markResponseErrorOrigin(responseError?.statusCode >= 400 && responseError.statusCode < 500
+      markResponseErrorOrigin(responseError?.origin === "privacy" ? "privacy" : responseError?.statusCode >= 400 && responseError.statusCode < 500
         ? "client_validation" : "transport");
       logRequestFailure("Responses", responseError, abort);
       sendJsonError(res, responseError, 502);

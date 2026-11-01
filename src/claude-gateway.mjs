@@ -150,6 +150,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         abort.setTimeout(config.upstreamTimeoutMs, "messages_prepare_timeout");
         observeRequestedModel(body);
         context.requestOptions = requestOptionsEvidence(body);
+        if (context.requestOptions.client_tool_errors_received) markRequestObservation({ client_tool_errors_received: context.requestOptions.client_tool_errors_received });
         if (!body || typeof body.model !== "string" || !Array.isArray(body.messages)) {
           send(res, 400, apiError("ccdx_messages_invalid", "Expected a model and messages array"));return;
         }
@@ -257,7 +258,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         const detail = operationErrorDetails(error, { reason: abort.reason });
         outcome = detail.source === "cancelled" ? "cancelled" : "failed";
         const statusCode = detail.status || (abort.reason ? abortErrorStatusCode(abort.reason) : 502);
-        failureStatus = statusCode;terminalOrigin = outcome === "cancelled" ? "client_disconnect" : statusCode < 500 && statusCode !== 429 ? "client_validation" : "transport";
+        failureStatus = statusCode;terminalOrigin = outcome === "cancelled" ? "client_disconnect" : error.origin === "privacy" ? "privacy" : statusCode < 500 && statusCode !== 429 ? "client_validation" : "transport";
         context.errorOrigin = terminalOrigin;
         const message = redactDiagnosticText(error.message).split(apiKey).join("[redacted]").slice(0, 240);
         const diagnostic = error.code === "ccdx_api_network_unavailable" ? transportErrorDetails(error) : null;

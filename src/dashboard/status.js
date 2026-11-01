@@ -389,7 +389,8 @@
           ["time", Number.isFinite(at) ? time(at, { date: true }) : "—"],
           ["wire_mib", finite(context.payload_bytes) ? `${(Number(context.payload_bytes) / 1048576).toFixed(2)} MiB` : "—"],
           ["images", number(context.images)], ["model_window", number(context.context_window_tokens)], ["input_window", ratio],
-          ["output_requested", number(context.max_output_tokens_requested)], ["output_sent", number(context.max_output_tokens_sent)], ["output_used", number(context.output_tokens)], ["stop_reason", request.stop_reason || "—"]]) {
+          ["output_requested", number(context.max_output_tokens_requested)], ["output_sent", number(context.max_output_tokens_sent)], ["output_used", number(context.output_tokens)], ["stop_reason", request.stop_reason || "—"],
+          ...(context.client_tool_errors_received > 0 ? [["client_tool_errors_received", number(context.client_tool_errors_received)]] : [])]) {
           const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);detail.textContent = value;fields.append(term, detail);
         }
         row.children[5].append(details);body.append(row);

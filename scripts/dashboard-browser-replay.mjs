@@ -889,6 +889,7 @@ try {
           await page.locator("#image-setup-endpoint").fill("https://images.example.test/v1");
           await page.locator("#image-setup-key").fill("SYNTHETIC_IMAGE_KEY");
           await page.locator("#image-setup-inspect").click();
+          await page.waitForFunction(() => !document.getElementById("image-setup-inspect").hasAttribute("aria-busy"));
           await page.waitForFunction(() => document.getElementById("image-setup-model").value === "gpt-image-1");
           await page.locator("#image-setup-save").click();
           await page.waitForFunction(() => document.getElementById("image-setup-key").value === "");

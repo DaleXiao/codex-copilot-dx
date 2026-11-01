@@ -67,5 +67,9 @@
   "cpu": [
     "x64",
     "arm64"
-  ]
+  ],
+  "devDependencies": {
+    "@anthropic-ai/sdk": "1.3.0",
+    "openai": "7.43.0"
+  }
 }

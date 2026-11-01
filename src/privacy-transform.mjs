@@ -111,7 +111,7 @@ export async function maskPrivacyRequest(body, { protocol, client = "api", perso
 
 export function createPrivacyStream(session) {
   let pending = "", bytes = 0;const channels = new Map(), decoder = new StringDecoder("utf8");
-  const frame = value => `data: ${JSON.stringify(value)}\n\n`;
+  const frame = value => `event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`;
   function transform(wire) {
     const data = wire.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
     if (!data || data === "[DONE]") return wire;
@@ -119,7 +119,7 @@ export function createPrivacyStream(session) {
     if (["thinking_delta", "signature_delta"].includes(event.delta?.type) || /\.reasoning(?:_|\.)/.test(event.type || "")) return wire;
     const isMessages = event.type === "content_block_delta", delta = isMessages ? event.delta : event;
     const tool = delta?.type === "input_json_delta" || event.type === "response.function_call_arguments.delta";
-    const text = delta?.type === "text_delta" || event.type === "response.output_text.delta";
+    const text = delta?.type === "text_delta" || ["response.output_text.delta", "response.custom_tool_call_input.delta"].includes(event.type);
     let before = "";
     const key = isMessages ? `m:${event.index}` : `r:${event.item_id || event.item?.id || event.output_index}:${event.content_index || 0}`;
     if (tool || text) {

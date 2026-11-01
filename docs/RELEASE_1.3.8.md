@@ -12,4 +12,6 @@ The confirmed Codex compatibility test uses the same CLI/WebUI checker. It suppo
 
 Validation distinguishes native execution, synthetic accounts and visible App behavior. Native App-bundled Codex config/account reads verified on/off/on display values, unchanged model and preserved synthetic ChatGPT sign-in/auth bytes. This is not a visible-prediction or real-account-entitlement test. Native Codex privacy-on/off MCP and terminal execution/return/continuation passed locally. Signed Claude App validation remains user-owned from the authorized 1.3.7 handoff; it is not recorded as passed. Cross-platform CI, package installation/upgrade and public download receipts are recorded separately.
 
-See [control mapping](REFERENCE.md#webui-and-cli-controls) and the verification receipt for final publication evidence. The active service is not changed by publication.
+Published to [npm](https://www.npmjs.com/package/codex-copilot-dx/v/1.3.8) and [GitHub](https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.3.8). Both pre-merge and release-commit CI passed all 18 jobs. The publication pipeline passed all six jobs, including public npm byte equality and a fresh native install. All 13 public GitHub assets were downloaded and matched exact bytes, server SHA-256 and SHA256SUMS. The configured enterprise mirror returned E404 for 1.3.8 at publication; its policy was preserved.
+
+See [control mapping](REFERENCE.md#webui-and-cli-controls) and the [verification receipt](RELEASE_1.3.8-VERIFICATION.json). The active service is not changed by publication.

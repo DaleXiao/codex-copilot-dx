@@ -1,7 +1,7 @@
 {
   "version": "1.3.8",
   "baseline": "1.3.7",
-  "stage": "candidate",
+  "stage": "published",
   "local_verify": {
     "tests": 1770,
     "passed": 1760,
@@ -15,7 +15,8 @@
     "chromium_matrix_cases": 16,
     "final_controls_cases": 4,
     "real_provider_calls": 0,
-    "webkit_cases": 8
+    "webkit_cases": 8,
+    "source_restore_final_cases": 8
   },
   "native_config_and_auth": {
     "results": [
@@ -181,14 +182,167 @@
     "rollbacks": 1
   },
   "release_pack": {
-    "bytes": 689705,
+    "bytes": 689766,
     "files": 247,
-    "sha256": "d5c290a450f7aa9ea0192bbfecd63eac01663ad976f71a14adff37fada7e6eb6"
+    "sha256": "0b31c803dda351889e2b13d26dec9ae4ff8b79133fcf5435dab5bd0b6ffac5ef",
+    "public_npm_bytes_equal": true
   },
   "publication": {
-    "status": "pending"
+    "status": "complete",
+    "npm_url": "https://www.npmjs.com/package/codex-copilot-dx/v/1.3.8",
+    "github_url": "https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.3.8",
+    "published_at": "2026-11-01T13:19:31Z",
+    "pipeline": {
+      "id": 41309902639,
+      "head_sha": "33ceec90ec984351fb1ac0603fe85f6699fd7b01",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/DaleXiao/codex-copilot-dx/actions/runs/41309902639",
+      "jobs": [
+        {
+          "id": 124857896407,
+          "name": "runtime-packages / runtime (macos-latest, darwin-arm64)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857896575,
+          "name": "runtime-packages / runtime (windows-latest, win32-x64)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857896592,
+          "name": "runtime-packages / runtime (windows-11-arm, win32-arm64)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857896617,
+          "name": "runtime-packages / runtime (macos-15-intel, darwin-x64)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124858778071,
+          "name": "publish",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124859096789,
+          "name": "verify-public",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "public_npm": {
+      "name": "codex-copilot-dx",
+      "version": "1.3.8",
+      "latest": "1.3.8",
+      "bytes": 689766,
+      "sha256": "0b31c803dda351889e2b13d26dec9ae4ff8b79133fcf5435dab5bd0b6ffac5ef",
+      "integrity": "sha512-FitDNGiPBQ9ghJP4lav20UInGh+A9KArlKuu34NVYAtclm1lw+GplyKl/Z/uMAjE+XTGSD4/7TXd6eSqhXyq8w==",
+      "installed_cli": true,
+      "native_modules": true
+    },
+    "github_assets": {
+      "assets": [
+        {
+          "name": "SHA256SUMS",
+          "bytes": 1151,
+          "sha256": "b493241d876c22687a1a20448ce31ad50dddb4a8ac39530ddc9f17cdc1c16142",
+          "downloaded_bytes_equal": true
+        },
+        {
+          "name": "ccdx-install.mjs",
+          "bytes": 16601,
+          "sha256": "9236f2e5e0367d3cc093aaa5a9450928d36614164acb82582e97e140f185f898",
+          "downloaded_bytes_equal": true
+        },
+        {
+          "name": "ccdx-privacy-guard-1-darwin-arm64",
+          "bytes": 3053986,
+          "sha256": "29bfd990c37de093b1e892e1896e2c96bc6465fe3f46b5334d96c9c71591f7ef",
+          "downloaded_bytes_equal": true
+        },
+        {
+          "name": "ccdx-privacy-guard-1-darwin-x64",
+          "bytes": 3239416,
+          "sha256": "2b4131cf52a2b3cecd152050b95902d94c695e595bcff18430ab970c26efa3ab",
+          "downloaded_bytes_equal": true
+        },
+        {
+          "name": "ccdx-privacy-guard-1-win32-arm64.exe",
+          "bytes": 2872320,
+          "sha256": "2df9be2d8f1e1b651d8de61f56304ee2b50e8a6064dfbf1f712c22368b6dc4f0",
+          "downloaded_bytes_equal": true
+        },
+        {
+          "name": "ccdx-privacy-guard-1-win32-x64.exe",
+          "bytes": 3125248,
+          "sha256": "73e2cc4f8e9ccec8082cc5c25d11dcd7d770b97ad9be6a2cbdd7b77ceb156a72",
+          "downloaded_bytes_equal": true
+        },
+        {
+          "name": "codex-copilot-dx-1.3.8-darwin-arm64.tgz",
+          "bytes": 11601150,
+          "sha256": "f1aa11107c18b90f1369243c52172470f160f3481fd0a402748453adf549e8ac",
+          "downloaded_bytes_equal": true
+        },
+        {
+          "name": "codex-copilot-dx-1.3.8-darwin-x64.tgz",
+          "bytes": 12411643,
+          "sha256": "561c2716c14fcb3990b86724ac10d729181aba970146b89c8b8265a9a7b14af9",
+          "downloaded_bytes_equal": true
+        },
+        {
+          "name": "codex-copilot-dx-1.3.8-win32-arm64.tgz",
+          "bytes": 10391717,
+          "sha256": "94d4a3a204bb0d86ad9395a15facdf1d4097e6969efafa949ec0ec50ebd31e62",
+          "downloaded_bytes_equal": true
+        },
+        {
+          "name": "codex-copilot-dx-1.3.8-win32-x64.tgz",
+          "bytes": 11134565,
+          "sha256": "7dd34eff1d90243bb5b3b299d37cfbe8e7a572ae16e7cf8603a228f23b8454d5",
+          "downloaded_bytes_equal": true
+        },
+        {
+          "name": "codex-copilot-dx-1.3.8.tgz",
+          "bytes": 689766,
+          "sha256": "0b31c803dda351889e2b13d26dec9ae4ff8b79133fcf5435dab5bd0b6ffac5ef",
+          "downloaded_bytes_equal": true
+        },
+        {
+          "name": "install.ps1",
+          "bytes": 4609,
+          "sha256": "540a6c40747793cd6ed707f13ef40b12b7a4a0e3dbddb7e5f1fe6e5257822e49",
+          "downloaded_bytes_equal": true
+        },
+        {
+          "name": "install.sh",
+          "bytes": 3521,
+          "sha256": "b7a5ea5e170cd8f65739fffd143212339dd0c3c6b70739daa82b7cbe3f9b0288",
+          "downloaded_bytes_equal": true
+        }
+      ],
+      "all_public_asset_bytes_equal": true,
+      "checksum_manifest_verified": true
+    },
+    "configured_mirror": {
+      "configuration_changed": false,
+      "registry_overridden": false,
+      "version": null,
+      "exit_code": 1,
+      "error_codes": [
+        "E404"
+      ],
+      "state": "not_available_or_not_confirmed"
+    }
   },
-  "preservation": "Native Codex config/auth and Claude config hashes unchanged; service remains the original healthy 1.3.6 PID/instance. Active App state and connection bookkeeping are allowed to evolve.",
+  "preservation": "Original healthy 1.3.6 service PID/instance retained. Native Codex config/auth and CCDX config hashes unchanged. Active Claude config changed during the release window; this release did not write or restore it. App state and connection bookkeeping may evolve during active work.",
   "isolated_upgrade": {
     "baseline": "1.3.7",
     "verified_baseline_sha256": "7b68f70fe2fa4bf9bb121a1e3fb765778eaa79ac70db206777d9dbb59ec100ab",
@@ -199,11 +353,265 @@
     "company_policy_preserved": true
   },
   "ci": {
-    "status": "pending_final_run",
+    "status": "success",
+    "pre_merge": {
+      "id": 41304178300,
+      "head_sha": "3686d3c1b1fb861c3c426ccfc96779f73e71d03a",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "macos (24.x)",
+          "conclusion": "success",
+          "id": 124841081399
+        },
+        {
+          "name": "windows-prediction (22.15.0)",
+          "conclusion": "success",
+          "id": 124841081516
+        },
+        {
+          "name": "bootstrap (windows-latest)",
+          "conclusion": "success",
+          "id": 124841081520
+        },
+        {
+          "name": "dashboard-browsers (webkit)",
+          "conclusion": "success",
+          "id": 124841081533
+        },
+        {
+          "name": "prediction-browsers (windows-latest)",
+          "conclusion": "success",
+          "id": 124841081534
+        },
+        {
+          "name": "macos (22.15.0)",
+          "conclusion": "success",
+          "id": 124841081541
+        },
+        {
+          "name": "dashboard-browsers (chromium)",
+          "conclusion": "success",
+          "id": 124841081544
+        },
+        {
+          "name": "npm12-install (windows-latest)",
+          "conclusion": "success",
+          "id": 124841081555
+        },
+        {
+          "name": "privacy-native-windows",
+          "conclusion": "success",
+          "id": 124841081556
+        },
+        {
+          "name": "bootstrap (macos-latest)",
+          "conclusion": "success",
+          "id": 124841081560
+        },
+        {
+          "name": "codex-client",
+          "conclusion": "success",
+          "id": 124841081572
+        },
+        {
+          "name": "runtime-packages / runtime (windows-11-arm, win32-arm64)",
+          "conclusion": "success",
+          "id": 124841081586
+        },
+        {
+          "name": "windows-prediction (24.x)",
+          "conclusion": "success",
+          "id": 124841081603
+        },
+        {
+          "name": "npm12-install (macos-latest)",
+          "conclusion": "success",
+          "id": 124841081649
+        },
+        {
+          "name": "runtime-packages / runtime (windows-latest, win32-x64)",
+          "conclusion": "success",
+          "id": 124841081651
+        },
+        {
+          "name": "runtime-packages / runtime (macos-15-intel, darwin-x64)",
+          "conclusion": "success",
+          "id": 124841081683
+        },
+        {
+          "name": "prediction-browsers (macos-latest)",
+          "conclusion": "success",
+          "id": 124841081742
+        },
+        {
+          "name": "runtime-packages / runtime (macos-latest, darwin-arm64)",
+          "conclusion": "success",
+          "id": 124841081759
+        }
+      ]
+    },
+    "release_commit": {
+      "id": 41309748274,
+      "head_sha": "33ceec90ec984351fb1ac0603fe85f6699fd7b01",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/DaleXiao/codex-copilot-dx/actions/runs/41309748274",
+      "jobs": [
+        {
+          "id": 124857436009,
+          "name": "bootstrap (macos-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436179,
+          "name": "npm12-install (macos-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436188,
+          "name": "prediction-browsers (macos-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436205,
+          "name": "prediction-browsers (windows-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436226,
+          "name": "macos (24.x)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436254,
+          "name": "bootstrap (windows-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436267,
+          "name": "npm12-install (windows-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436273,
+          "name": "codex-client",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436274,
+          "name": "macos (22.15.0)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436281,
+          "name": "windows-prediction (24.x)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436288,
+          "name": "privacy-native-windows",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436300,
+          "name": "runtime-packages / runtime (macos-latest, darwin-arm64)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436303,
+          "name": "dashboard-browsers (chromium)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436307,
+          "name": "runtime-packages / runtime (macos-15-intel, darwin-x64)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436316,
+          "name": "runtime-packages / runtime (windows-latest, win32-x64)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436325,
+          "name": "windows-prediction (22.15.0)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436373,
+          "name": "dashboard-browsers (webkit)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 124857436375,
+          "name": "runtime-packages / runtime (windows-11-arm, win32-arm64)",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "prior_failed_runs_retained": true,
     "prior_failures_fixed": [
       "Windows startup OS checks moved off the event loop",
       "PowerShell OS environment restored in integration fixture",
-      "old terminal-command UI assertion updated; legacy/current error formats covered"
+      "legacy and current diagnostic formats mapped to WebUI",
+      "image controls remain disabled until inspection finishes",
+      "source restore selects its own control beside API deletion"
     ]
+  },
+  "release_commit": "33ceec90ec984351fb1ac0603fe85f6699fd7b01",
+  "platform_runtime_packages": {
+    "build_run": 41309902639,
+    "targets": [
+      "darwin-arm64",
+      "darwin-x64",
+      "win32-arm64",
+      "win32-x64"
+    ],
+    "source_files_byte_identical": 246,
+    "windows_cli_file_mode": {
+      "source": "0755",
+      "runtime": "0644",
+      "native_install_and_command_shim_verified": true
+    },
+    "native_privacy_inference": true
+  },
+  "regression_preservation": {
+    "baseline": "1.3.7",
+    "candidate": "1.3.8",
+    "protected_modules_byte_identical": [
+      "src/privacy-transform.mjs",
+      "src/local-privacy.mjs",
+      "src/claude-gateway.mjs",
+      "src/responses-handler.mjs",
+      "src/codex-api-config.mjs",
+      "src/connection-runtime.mjs",
+      "src/config.mjs",
+      "src/image-provider-config.mjs"
+    ],
+    "changed_shipping_files": 30,
+    "shipping_files": 246
+  },
+  "cleanup": {
+    "scope": "release-owned worktree, temporary artifacts, fixtures, install prefixes and in-memory publication credential",
+    "pre_existing_user_files_preserved": true
   }
 }

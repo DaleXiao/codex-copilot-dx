@@ -1,3 +1,4 @@
+import { startupFixtureEnvironment } from "../scripts/replay-fixtures/startup-env.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -59,7 +60,7 @@ for (const [mode, executable] of [["new", cli], ["current", cli], ["offline", cl
     await fs.writeFile(token, "synthetic-offline-github-token", { mode: 0o600 });
     const adapterPort = await port();
     const origin = `http://127.0.0.1:${adapterPort}`;
-    const env = { PATH: process.env.PATH, TMPDIR: home, CCDX_TEST_HOME: home,
+    const env = { ...startupFixtureEnvironment(home), CCDX_TEST_HOME: home,
       XDG_CONFIG_HOME: path.join(home, ".config"), XDG_CACHE_HOME: path.join(home, ".cache"),
       CCDX_TEST_UPDATE_MODE: mode, ADAPTER_PORT: String(adapterPort), ADAPTER_HOST: "127.0.0.1",
       CCDX_AUTO_LAUNCH: "0", CCDX_MODEL_REFRESH_INTERVAL_MS: "0", CCDX_DISABLE_TOKEN_DISCOVERY: "1" };

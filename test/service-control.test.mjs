@@ -7,11 +7,15 @@ import { createServiceControl } from "../src/service-control.mjs";
 import { readUserSettings, writeServicePreference } from "../src/user-settings.mjs";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { invokeAdapter } from "../test-support/adapter.mjs";
+import { controlPrediction } from "../src/prediction-control.mjs";
+import { handlePredictionOperation } from "../src/prediction-operations.mjs";
 
 function fixture(t, env = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-control-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   let active = true;const themes = [], actions = [];
   const control = createServiceControl({ home, env, readImages: () => ({ api_key: "NEVER_EXPOSE" }), readPrediction: () => ({ enabled: true }),
+    predictionControl: (operation, options) => controlPrediction(operation, { ...options, nativeOperation: handlePredictionOperation,
+      platform: "darwin", exec() { throw Object.assign(new Error("fixture App closed"), { status: 1 }); } }),
     terminal: { apply: value => themes.push(value) }, clientIntegration: { snapshot: () => ({ prediction: { bridge: "running", active } }),
       setPredictionActive: value => { active = value; }, fix: async () => {} },
     providerRuntime: { snapshot: () => ({ codex_provider: "github", m365: { state: "ready" } }), action: async input => actions.push(input) } });

@@ -1,4 +1,4 @@
-# CCDX 1.3.7 candidate
+# CCDX 1.3.7
 
 Baseline: 1.3.6. This patch repairs local-masking transport and tool-data boundaries. MCP search, model sources, native credentials, image setup, prediction routing and the active service remain outside the change.
 
@@ -10,6 +10,6 @@ Anthropic/OpenAI SDKs are fixed development-only test dependencies. Native clien
 
 ## Verification status
 
-Required before publication: full verify, SDK/gateway regression matrix, native Codex and Claude Code execution/return/continuation, an independent Claude App tool-host replay, macOS/Windows CI and browser contracts, package/runtime checks, isolated upgrades and public npm/GitHub asset byte verification.
+Publication checks include full verify, SDK/gateway regressions, native Codex/Claude Code execution/return/continuation, macOS/Windows CI and browser contracts, package/runtime checks, isolated upgrades and public npm/GitHub asset verification. The user authorized publication and will perform the remaining Claude App tool-host test; that test is not recorded as passed.
 
-Local `npm run verify` passed: 1,736 tests passed, ten skipped, zero failed, plus HTTP/SSE smoke, performance/resource and package checks. Native Codex masking-on/off execution/return/continuation passed, including its current code-mode MCP and harmless terminal calls. Native Claude Code masking-on execution/return/continuation passed before the user deferred further Claude testing. Claude App replay is deferred at the user's request while active work runs. The signed App's debugging/data-directory restrictions prevented the attempted local isolation; this was not counted as a pass. Publication remains pending until the App gate and all release checks complete.
+Local `npm run verify` passed: 1,736 tests passed, ten skipped, zero failed, plus HTTP/SSE smoke, performance/resource and package checks. Native Codex masking-on/off execution/return/continuation passed, including its current code-mode MCP and harmless terminal calls. Native Claude Code masking-on execution/return/continuation passed before the user deferred further Claude testing. The signed App's debugging/data-directory restrictions prevented the attempted local isolation; this was not counted as a pass. The user is taking over Claude App validation after publication. No active service is restarted by publication.

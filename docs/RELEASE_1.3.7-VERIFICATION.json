@@ -1,0 +1,245 @@
+{
+  "version": "1.3.7",
+  "release_commit": "4071fafefe479432ef67090032b41dcb1dcfc474",
+  "validated_candidate": "2532922092fc7ea4306e6c9109ff8a213751c965",
+  "ci": {
+    "run": 41279962555,
+    "passed": 18,
+    "total": 18
+  },
+  "local_verify": {
+    "passed": 1736,
+    "skipped": 10,
+    "failed": 0
+  },
+  "publication": {
+    "run": 41280918763,
+    "attempt": 2,
+    "result": "success",
+    "first_public_verify": "HTTP 404 during npm processing; only verification was rerun"
+  },
+  "npm": {
+    "name": "codex-copilot-dx",
+    "version": "1.3.7",
+    "latest": "1.3.7",
+    "bytes": 677384,
+    "sha256": "7b68f70fe2fa4bf9bb121a1e3fb765778eaa79ac70db206777d9dbb59ec100ab",
+    "integrity": "sha512-sesISlphiW1MvFNmW38SxTqL1hwgvKSaEFuaP7q0G3iv6wk3zOKHTnG/7vHz2wKB72GcbpesyJbNePU6gMTPgw==",
+    "installed_cli": true,
+    "native_modules": true
+  },
+  "github": {
+    "url": "https://github.com/DaleXiao/codex-copilot-dx/releases/tag/v1.3.7",
+    "published_at": "2026-11-01T06:42:02Z",
+    "assets": [
+      {
+        "name": "ccdx-install.mjs",
+        "bytes": 16601,
+        "sha256": "9236f2e5e0367d3cc093aaa5a9450928d36614164acb82582e97e140f185f898"
+      },
+      {
+        "name": "ccdx-privacy-guard-1-darwin-arm64",
+        "bytes": 3053986,
+        "sha256": "29bfd990c37de093b1e892e1896e2c96bc6465fe3f46b5334d96c9c71591f7ef"
+      },
+      {
+        "name": "ccdx-privacy-guard-1-darwin-x64",
+        "bytes": 3239416,
+        "sha256": "2b4131cf52a2b3cecd152050b95902d94c695e595bcff18430ab970c26efa3ab"
+      },
+      {
+        "name": "ccdx-privacy-guard-1-win32-arm64.exe",
+        "bytes": 2872320,
+        "sha256": "2df9be2d8f1e1b651d8de61f56304ee2b50e8a6064dfbf1f712c22368b6dc4f0"
+      },
+      {
+        "name": "ccdx-privacy-guard-1-win32-x64.exe",
+        "bytes": 3125248,
+        "sha256": "73e2cc4f8e9ccec8082cc5c25d11dcd7d770b97ad9be6a2cbdd7b77ceb156a72"
+      },
+      {
+        "name": "codex-copilot-dx-1.3.7-darwin-arm64.tgz",
+        "bytes": 11589636,
+        "sha256": "d5248c1f6cc1f50ebe8cec99bb6a379df40aada8e0d9d602e49cdb278390b1bf"
+      },
+      {
+        "name": "codex-copilot-dx-1.3.7-darwin-x64.tgz",
+        "bytes": 12399176,
+        "sha256": "df481aa60897263caee7d9be0e696294033422fea20d7e30f35f8c2623be1bce"
+      },
+      {
+        "name": "codex-copilot-dx-1.3.7-win32-arm64.tgz",
+        "bytes": 10378638,
+        "sha256": "cc6eba573df385a727b51eee5158c8f7a1ec421ad7dee5091aa5cd4ae15357f3"
+      },
+      {
+        "name": "codex-copilot-dx-1.3.7-win32-x64.tgz",
+        "bytes": 11121413,
+        "sha256": "b926b72c5b26159c0bbce4577d2c7d1dce7ede1e58a9f0328e8efd87edbc3652"
+      },
+      {
+        "name": "codex-copilot-dx-1.3.7.tgz",
+        "bytes": 677384,
+        "sha256": "7b68f70fe2fa4bf9bb121a1e3fb765778eaa79ac70db206777d9dbb59ec100ab"
+      },
+      {
+        "name": "install.ps1",
+        "bytes": 4609,
+        "sha256": "95a966e0e11526b641e015f8cf050628ed218d187710b702b95af8f0acd7d019"
+      },
+      {
+        "name": "install.sh",
+        "bytes": 3521,
+        "sha256": "e2129ca3d04018fc1bf681b68456bf931fc0e26fe9b0e0a48b434771f2f98892"
+      },
+      {
+        "name": "SHA256SUMS",
+        "bytes": 1151,
+        "sha256": "b4493235c22379831922b31417efe01e908448d47f55cfa5e0bb1d79441c59a0"
+      }
+    ]
+  },
+  "artifact_consistency": "The local and npm archives had identical 242 file contents and modes but different packing bytes; the GitHub source asset was standardized to the exact npm tarball. All 13 final public assets match original bytes and published SHA256 digests.",
+  "native_components": {
+    "source_head": "2532922092fc7ea4306e6c9109ff8a213751c965",
+    "targets": [
+      {
+        "target": "darwin-arm64",
+        "source_files_equal": 241,
+        "package_bytes": 11589636,
+        "package_sha256": "d5248c1f6cc1f50ebe8cec99bb6a379df40aada8e0d9d602e49cdb278390b1bf",
+        "helper_bytes": 3053986,
+        "helper_sha256": "29bfd990c37de093b1e892e1896e2c96bc6465fe3f46b5334d96c9c71591f7ef",
+        "native": {
+          "results": [
+            {
+              "stage": "load",
+              "ms": 1503,
+              "backend": "CoreML",
+              "device": "CPU"
+            },
+            {
+              "stage": "check",
+              "bytes": 62,
+              "ms": 45,
+              "spans": 1
+            },
+            {
+              "stage": "check",
+              "bytes": 6016,
+              "ms": 167,
+              "spans": 0
+            }
+          ]
+        }
+      },
+      {
+        "target": "darwin-x64",
+        "source_files_equal": 241,
+        "package_bytes": 12399176,
+        "package_sha256": "df481aa60897263caee7d9be0e696294033422fea20d7e30f35f8c2623be1bce",
+        "helper_bytes": 3239416,
+        "helper_sha256": "2b4131cf52a2b3cecd152050b95902d94c695e595bcff18430ab970c26efa3ab",
+        "native": {
+          "results": [
+            {
+              "stage": "load",
+              "ms": 13287,
+              "backend": "CoreML",
+              "device": "CPU"
+            },
+            {
+              "stage": "check",
+              "bytes": 62,
+              "ms": 1550,
+              "spans": 1
+            },
+            {
+              "stage": "check",
+              "bytes": 6016,
+              "ms": 7131,
+              "spans": 0
+            }
+          ]
+        }
+      },
+      {
+        "target": "win32-arm64",
+        "source_files_equal": 241,
+        "package_bytes": 10378638,
+        "package_sha256": "cc6eba573df385a727b51eee5158c8f7a1ec421ad7dee5091aa5cd4ae15357f3",
+        "helper_bytes": 2872320,
+        "helper_sha256": "2df9be2d8f1e1b651d8de61f56304ee2b50e8a6064dfbf1f712c22368b6dc4f0",
+        "native": {
+          "results": [
+            {
+              "stage": "load",
+              "ms": 174,
+              "backend": "CPU",
+              "device": "CPU"
+            },
+            {
+              "stage": "check",
+              "bytes": 62,
+              "ms": 15,
+              "spans": 1
+            },
+            {
+              "stage": "check",
+              "bytes": 6016,
+              "ms": 2526,
+              "spans": 0
+            }
+          ]
+        }
+      },
+      {
+        "target": "win32-x64",
+        "source_files_equal": 241,
+        "package_bytes": 11121413,
+        "package_sha256": "b926b72c5b26159c0bbce4577d2c7d1dce7ede1e58a9f0328e8efd87edbc3652",
+        "helper_bytes": 3125248,
+        "helper_sha256": "73e2cc4f8e9ccec8082cc5c25d11dcd7d770b97ad9be6a2cbdd7b77ceb156a72",
+        "native": {
+          "results": [
+            {
+              "stage": "load",
+              "ms": 166,
+              "backend": "CPU",
+              "device": "CPU"
+            },
+            {
+              "stage": "check",
+              "bytes": 62,
+              "ms": 31,
+              "spans": 1
+            },
+            {
+              "stage": "check",
+              "bytes": 6016,
+              "ms": 5208,
+              "spans": 0
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "client_validation": {
+    "codex": "Actual MCP and terminal execution, result return and continuation passed with masking on/off, including native Windows CI",
+    "claude_code": "Actual MCP execution, result return and continuation passed, including native macOS/Windows CI",
+    "claude_app": "Not verified by this agent. User explicitly authorized publication and is taking over App testing."
+  },
+  "installation": {
+    "isolated_upgrade": "1.3.6 -> 1.3.7 passed",
+    "darwin_arm64_offline_empty_cache": true,
+    "strict_npm12_four_targets": true
+  },
+  "configured_mirror": {
+    "version_query": "1.3.7",
+    "result": "E404",
+    "retries": 0,
+    "configuration_changed": false
+  },
+  "active_service": "Publication does not switch the current 1.3.6 process. Native config/auth hashes remained unchanged."
+}

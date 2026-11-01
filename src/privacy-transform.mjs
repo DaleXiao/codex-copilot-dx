@@ -9,12 +9,12 @@ const secretPatterns = [
 ];
 const secretField = /(?:["']?\b(?:password|passwd|api_key|apikey|access_token|refresh_token|client_secret|secret_key|auth_token|db_password)\b["']?\s*[:=]\s*)(?:"((?:\\.|[^"\\\r\n])+)"|'((?:\\.|[^'\\\r\n])+)'|([^\s,;\r\n}]+))/gdi;
 const personalKinds = new Set(["email", "phone", "account", "payment_card", "private_address", "private_date", "private_person"]);
-const kept = new Set(["model", "id", "type", "role", "name", "call_id", "tool_use_id", "signature", "encrypted_content", "thought_signature", "thoughtSignature", "data", "url", "file_id"]);
+const kept = new Set(["model", "id", "type", "role", "name", "namespace", "server_label", "server_name", "call_id", "tool_use_id", "item_id", "signature", "encrypted_content", "thought_signature", "thoughtSignature", "data", "url", "file_id", "previous_response_id", "prompt_cache_key", "media_type", "mime_type", "stop_reason", "finish_reason", "status", "object", "event"]);
 function leaves(value, add, inArguments = false) {
   if (typeof value === "string") return;
   if (Array.isArray(value)) { for (let i = 0; i < value.length; i++) typeof value[i] === "string" ? add(value, i, value[i], inArguments) : leaves(value[i], add, inArguments);return; }
   if (!value || typeof value !== "object") return;
-  if (value.encrypted_content || ["thinking", "reasoning"].includes(value.type)) return;
+  if (!inArguments && (value.encrypted_content || ["thinking", "redacted_thinking", "reasoning"].includes(value.type))) return;
   for (const [key, item] of Object.entries(value)) {
     if (!inArguments && kept.has(key)) continue;
     if (typeof item === "string") add(value, key, item, inArguments);
@@ -50,7 +50,8 @@ function requestTexts(body, protocol) {
     text(body, "instructions");
     if (typeof body.input === "string") add(body, "input", body.input);
     else for (const item of body.input || []) {
-      if (item.type === "function_call") args(item, "arguments");
+      if (["additional_tools", "tool_search_output"].includes(item.type)) descriptions(item.tools);
+      else if (item.type === "function_call") args(item, "arguments");
       else if (["function_call_output", "custom_tool_call_output"].includes(item.type)) text(item, "output");
       else if (item.type === "custom_tool_call") text(item, "input");
       else text(item, "content");
@@ -97,38 +98,52 @@ export async function maskPrivacyRequest(body, { protocol, client = "api", perso
   }
   if (total.count) for (const item of nested) item.parent[item.key] = JSON.stringify(item.value);
   const restoreText = text => text.replace(tokenPattern, token => values.get(token) ?? token);
-  function restoreValue(value) {
+  function restoreValue(value, inToolData = false) {
     if (typeof value === "string") return restoreText(value);
-    if (Array.isArray(value)) return value.map(restoreValue);
+    if (Array.isArray(value)) return value.map(item => restoreValue(item, inToolData));
     if (!value || typeof value !== "object") return value;
-    if (value.encrypted_content || ["thinking", "reasoning"].includes(value.type)) return value;
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, ["signature", "encrypted_content", "thought_signature", "thoughtSignature", "data"].includes(key) ? item
-      : key === "arguments" && typeof item === "string" && item ? restoreArguments(item) : restoreValue(item)]));
+    if (!inToolData && (value.encrypted_content || ["thinking", "redacted_thinking", "reasoning"].includes(value.type))) return value;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, !inToolData && kept.has(key) ? item
+      : !inToolData && key === "arguments" && typeof item === "string" && item ? restoreArguments(item)
+        : restoreValue(item, inToolData || key === "input" && ["tool_use", "server_tool_use", "mcp_tool_use"].includes(value.type))]));
   }
-  function restoreArguments(text) { try { return JSON.stringify(restoreValue(JSON.parse(text))); } catch { return restoreText(text); } }
-  return { body: total.count ? copy : body, count: total.count, kinds, restoreText, restoreValue, release: () => values.clear() };
+  function restoreArguments(text) { try { return JSON.stringify(restoreValue(JSON.parse(text), true)); } catch { return restoreText(text); } }
+  return { body: total.count ? copy : body, count: total.count, kinds, restoreText, restoreValue,
+    restoreToolValue: value => restoreValue(value, true), release: () => values.clear() };
+}
+
+function rewritePrivacyFrame(wire, value, named = false) {
+  let written = false;
+  const lines = wire.split(/(?<=\n)/).map(line => {
+    if (!line.startsWith("data:")) return line;
+    if (written) return "";
+    written = true;
+    return `data: ${JSON.stringify(value)}${line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : ""}`;
+  }).join("");
+  return named && !/^event:/m.test(wire) ? `event: ${value.type}\n${lines}` : lines;
 }
 
 export function createPrivacyStream(session) {
+  const fail = code => privacyFailure(code, "response");
   let pending = "", bytes = 0;const channels = new Map(), decoder = new StringDecoder("utf8");
-  const frame = value => `data: ${JSON.stringify(value)}\n\n`;
   function transform(wire) {
     const data = wire.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
     if (!data || data === "[DONE]") return wire;
-    let event;try { event = JSON.parse(data); } catch { throw privacyFailure("stream_invalid"); }
+    let event;try { event = JSON.parse(data); } catch { throw fail("stream_invalid"); }
+    if (["error", "response.failed", "response.incomplete"].includes(event.type)) { channels.clear();return rewritePrivacyFrame(wire, session.restoreValue(event)); }
     if (["thinking_delta", "signature_delta"].includes(event.delta?.type) || /\.reasoning(?:_|\.)/.test(event.type || "")) return wire;
     const isMessages = event.type === "content_block_delta", delta = isMessages ? event.delta : event;
     const tool = delta?.type === "input_json_delta" || event.type === "response.function_call_arguments.delta";
-    const text = delta?.type === "text_delta" || event.type === "response.output_text.delta";
+    const text = delta?.type === "text_delta" || ["response.output_text.delta", "response.custom_tool_call_input.delta"].includes(event.type);
     let before = "";
     const key = isMessages ? `m:${event.index}` : `r:${event.item_id || event.item?.id || event.output_index}:${event.content_index || 0}`;
     if (tool || text) {
       const field = tool ? isMessages ? "partial_json" : "delta" : isMessages ? "text" : "delta";
-      if (typeof delta[field] !== "string") throw privacyFailure("stream_invalid");
-      const channel = channels.get(key) || { tail: "", tool, field, template: event };channel.template = event;
+      if (typeof delta[field] !== "string") throw fail("stream_invalid");
+      const channel = channels.get(key) || { tail: "", tool, field };channel.template = event;channel.wire = wire;
       let value = channel.tail + delta[field];
-      if (Buffer.byteLength(value) > 8 * 1024 * 1024) throw privacyFailure("stream_limit");
-      if (tool) { channel.tail = value;delta[field] = ""; }
+      if (Buffer.byteLength(value) > 8 * 1024 * 1024) throw fail("stream_limit");
+      if (tool) { channel.tail = value;channels.set(key, channel);return ""; }
       else {
         let cut = value.length;
         const at = value.lastIndexOf("{{CCDX_");
@@ -143,24 +158,23 @@ export function createPrivacyStream(session) {
     for (const [id, channel] of channels) if (terminal || id === stopKey) {
       if (channel.tail) {
         const value = structuredClone(channel.template), target = value.type === "content_block_delta" ? value.delta : value;
-        target[channel.field] = channel.tool ? JSON.stringify(session.restoreValue(JSON.parse(channel.tail))) : session.restoreText(channel.tail);
-        before += frame(value);
+        try { target[channel.field] = channel.tool ? JSON.stringify(session.restoreToolValue(JSON.parse(channel.tail))) : session.restoreText(channel.tail); }
+        catch { throw fail("stream_invalid"); }
+        before += rewritePrivacyFrame(channel.wire, value, true);
       }
       channels.delete(id);
     }
     event = session.restoreValue(event);
-    const lines = wire.split(/\r?\n/);let written = false;
-    const changed = lines.map(line => { if (!line.startsWith("data:")) return line;if (written) return null;written = true;return `data: ${JSON.stringify(event)}`; }).filter(line => line !== null).join("\n");
-    return before + changed;
+    return before + rewritePrivacyFrame(wire, event);
   }
   return {
     push(chunk) {
-      pending += decoder.write(chunk);bytes += chunk.length;if (bytes > 8 * 1024 * 1024) throw privacyFailure("stream_limit");
+      pending += decoder.write(chunk);bytes += chunk.length;if (bytes > 8 * 1024 * 1024) throw fail("stream_limit");
       let output = "", match;
       while ((match = /\r?\n\r?\n/.exec(pending))) { const end = match.index + match[0].length;output += transform(pending.slice(0, end));pending = pending.slice(end);bytes = Buffer.byteLength(pending); }
       return output;
     },
-    finish() { pending += decoder.end();if (pending) { const output = transform(pending + "\n\n");pending = "";return output; }if (channels.size) throw privacyFailure("stream_incomplete");return ""; },
+    finish() { pending += decoder.end();if (pending) { const output = transform(pending + "\n\n");pending = "";return output; }if (channels.size) throw fail("stream_incomplete");return ""; },
   };
 }
 
@@ -178,7 +192,7 @@ export function protectPrivacyResponse(res, session) {
   res.write = (value, encoding, callback) => {
     const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value, typeof encoding === "string" ? encoding : undefined);
     if (mode === "stream") { try { const output = stream.push(bytes);return output ? write(output, typeof encoding === "function" ? encoding : callback) : true; }catch (error) { detach();throw error; } }
-    size += bytes.length;if (size > 16 * 1024 * 1024) throw privacyFailure("response_limit");parts.push(bytes);return true;
+    size += bytes.length;if (size > 16 * 1024 * 1024) throw privacyFailure("response_limit", "response");parts.push(bytes);return true;
   };
   res.end = (value, encoding, callback) => {
     if (value !== undefined && value !== null) res.write(value, encoding);

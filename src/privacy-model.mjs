@@ -15,10 +15,12 @@ export const PRIVACY_MODEL_FILES = Object.freeze([
   { name: "tokenizer.json", bytes: 1502881, sha256: "0cf3b235ef125658015a6c8026a5fe6f28088bf825101a990ec18a10200feef4" },
 ]);
 export const PRIVACY_DOWNLOAD_BYTES = PRIVACY_MODEL_FILES.reduce((n, file) => n + file.bytes, 0);
-export const privacyFailure = code => Object.assign(new Error("Local privacy check could not finish. Nothing was sent; review Settings."), {
-  code: `ccdx_privacy_${code}`, statusCode: 503,
-  jsonBody: { error: { type: "api_error", code: `ccdx_privacy_${code}`, message: "Local privacy check could not finish. Nothing was sent; review Settings." } },
-});
+export function privacyFailure(code, phase = "check") {
+  const message = phase === "response" ? "Local privacy response restoration failed. The response was stopped; review Settings."
+    : "Local privacy check could not finish. Nothing was sent; review Settings.";
+  return Object.assign(new Error(message), { code: `ccdx_privacy_${code}`, statusCode: 503, origin: "privacy",
+    jsonBody: { error: { type: "api_error", code: `ccdx_privacy_${code}`, message } } });
+}
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 export function privacyPaths({ home = os.homedir(), env = process.env, platform = process.platform, arch = process.arch } = {}) {
   const root = path.join(env.XDG_CACHE_HOME || (platform === "win32" ? env.LOCALAPPDATA || path.join(home, "AppData", "Local") : path.join(home, ".cache")), "codex-copilot-dx", "privacy");

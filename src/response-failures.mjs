@@ -127,7 +127,12 @@ export function requestOptionsEvidence(body) {
   if (["text", "json_object", "json_schema"].includes(body.text?.format?.type)) result.output_format = body.text.format.type;
   if (Number.isSafeInteger(body.max_output_tokens) && body.max_output_tokens >= 0) result.max_output_tokens = body.max_output_tokens;
   if (Number.isSafeInteger(body.max_tokens) && body.max_tokens >= 0) result.max_tokens = body.max_tokens;
-  if (Array.isArray(body.tools)) result.tools = body.tools.length;
+  const countTools = tools => Array.isArray(tools) ? tools.reduce((n, tool) => n + (tool?.type === "namespace" ? countTools(tool.tools) : 1), 0) : 0;
+  const inline = Array.isArray(body.input) ? body.input.filter(item => ["additional_tools", "tool_search_output"].includes(item?.type)) : [];
+  if (Array.isArray(body.tools) || inline.length) result.tools = countTools(body.tools) + inline.reduce((n, item) => n + countTools(item.tools), 0);
+  const last = Array.isArray(body.messages) ? body.messages.at(-1) : null;
+  const clientErrors = last?.role === "user" && Array.isArray(last.content) ? last.content.filter(block => block?.type === "tool_result" && block.is_error === true).length : 0;
+  if (clientErrors) result.client_tool_errors_received = clientErrors;
   if (Array.isArray(body.input)) result.input_items = body.input.length;
   return result;
 }
@@ -192,7 +197,8 @@ export function buildHttpFailureDetails({ statusCode, route, requestId, model, c
   }
   const message = (Object.hasOwn(reasons, reason) ? reasons[reason] : null) || (route === "messages_count_tokens" && statusCode === 404 ? "The source's token-count endpoint returned HTTP 404. Message generation is separate."
     : code === "ccdx_api_network_unavailable" ? "Connection to the model source failed."
-      : origin === "client_validation" ? "The request was rejected locally before an upstream call."
+      : origin === "privacy" ? "Local privacy processing failed. Review its error code and request timeline."
+        : origin === "client_validation" ? "The request was rejected locally before an upstream call."
       : error_body === "empty" ? "Upstream returned no error details." : "HTTP request failed; original response was preserved.");
   const details = responseFailureDetails({ model, error: { code: typeof code === "string" && /^[a-z\d_.:-]{1,80}$/i.test(code) ? code : `http_${statusCode}`,
     message: model_error ? "The model source reported an error; the original HTTP response was preserved." : message } }, model_error ? "model.error" : "http.error", { headers, provider });

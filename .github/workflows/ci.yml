@@ -80,6 +80,8 @@ jobs:
         run: node --test test/windows-command.test.mjs test/auth-sources.test.mjs test/doctor-repair.test.mjs test/cli-options.test.mjs test/codex-config-doctor.test.mjs test/lock.test.mjs
       - name: Verify streaming delivery and Chat semantic validation on Windows
         run: node --test test/stream-delivery.test.mjs test/responses-bridge.test.mjs test/responses-chat-http.test.mjs test/responses-native-http.test.mjs test/stream-performance.test.mjs test/cli-status.test.mjs
+      - name: Verify privacy restoration through real SDKs and isolated gateways
+        run: node --test test/privacy-transform.test.mjs test/privacy-sdk.test.mjs test/privacy-http.test.mjs test/local-privacy.test.mjs
       - name: Verify isolated provider, broker, gateway, ownership and system network contracts
         run: node --test test/claude-models.test.mjs test/m365-auth.test.mjs test/m365-accounts.test.mjs test/m365-account-selection.test.mjs test/m365-provider.test.mjs test/m365-catalog-diagnostic.test.mjs test/m365-network.test.mjs test/provider-runtime.test.mjs test/provider-registry.test.mjs test/client-integration-state.test.mjs test/claude-gateway.test.mjs test/claude-client-config.test.mjs test/cli-m365.test.mjs test/shared-listener.test.mjs test/service-control.test.mjs test/terminal-console.test.mjs test/browser-launch.test.mjs test/listener-lifecycle.test.mjs test/dashboard-activity.test.mjs
       - name: Verify manual API, native credentials and client authorization boundaries
@@ -149,6 +151,10 @@ jobs:
       - run: npm ci
       - name: Provision latest official Codex on the CI runner
         run: npm install --prefix "$RUNNER_TEMP/ccdx-codex" @openai/codex@latest
+      - name: Verify native Codex privacy tool execution and continuation
+        run: |
+          node scripts/privacy-client-replay.mjs --client codex --binary "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --privacy on
+          node scripts/privacy-client-replay.mjs --client codex --binary "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --privacy off
       - name: Verify real Codex configuration, catalog and synthetic Responses
         run: node scripts/codex-message-id-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
       - name: Verify native recorded compaction and local plaintext recovery without live provider calls
@@ -159,6 +165,10 @@ jobs:
         run: node scripts/codex-image-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --edit
       - name: Provision official Claude Code for isolated gateway replay
         run: npm install --prefix "$RUNNER_TEMP/ccdx-claude" @anthropic-ai/claude-code
+      - name: Verify native Claude Code privacy tool execution and continuation
+        run: |
+          node scripts/privacy-client-replay.mjs --client claude --binary "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude" --privacy on
+          node scripts/privacy-client-replay.mjs --client claude --binary "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude" --privacy off
       - name: Verify native Claude Code effort fields through the candidate Messages gateway
         run: node scripts/claude-effort-replay.mjs --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
       - name: Verify native custom model context budgets, reasoning and output limits
@@ -175,6 +185,33 @@ jobs:
         run: npm install --prefix "$RUNNER_TEMP/ccdx-codex-baseline" @openai/codex@0.164.0
       - name: Verify baseline sign-in and first catalog across cold and warm starts
         run: node scripts/codex-native-provider-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex-baseline/node_modules/.bin/codex"
+  privacy-native-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - name: Provision isolated native client binaries
+        shell: pwsh
+        run: npm install --prefix "$env:RUNNER_TEMP/ccdx-native-clients" @openai/codex@latest @anthropic-ai/claude-code
+      - name: Verify native Windows privacy tool rounds
+        shell: pwsh
+        run: |
+          $codex = (Get-ChildItem "$env:RUNNER_TEMP/ccdx-native-clients/node_modules" -Recurse -Filter codex.exe | Select-Object -First 1).FullName
+          $claude = (Get-ChildItem "$env:RUNNER_TEMP/ccdx-native-clients/node_modules" -Recurse -Filter claude.exe | Select-Object -First 1).FullName
+          if (!$codex -or !$claude) { throw "Native client executables were not installed" }
+          node scripts/privacy-client-replay.mjs --client codex --binary $codex --privacy on
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/privacy-client-replay.mjs --client codex --binary $codex --privacy off
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/privacy-client-replay.mjs --client claude --binary $claude --privacy on
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/privacy-client-replay.mjs --client claude --binary $claude --privacy off
+          exit $LASTEXITCODE
   dashboard-browsers:
     runs-on: macos-latest
     timeout-minutes: 15

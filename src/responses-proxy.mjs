@@ -520,7 +520,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       if (!res.writableEnded) res.end();
       return { successful: Boolean(streamState.completed), compacted: false };
     } catch (error) {
-      markResponseErrorOrigin("transport");
+      markResponseErrorOrigin(error.origin === "privacy" ? "privacy" : "transport");
       markStreamFailure();
       logRequestFailure("Responses", error, options.abort);
       writeHeaders();

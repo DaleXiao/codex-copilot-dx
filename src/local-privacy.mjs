@@ -82,6 +82,7 @@ export function createLocalPrivacy(options = {}) {
         current = { count: session.count, sessions,
           restoreText: value => sessions.reduce((text, item) => item.restoreText(text), value),
           restoreValue: value => sessions.reduce((text, item) => item.restoreValue(text), value),
+          restoreToolValue: value => sessions.reduce((text, item) => item.restoreToolValue(text), value),
           release: () => { sessions.forEach(item => item.release());sessions.length = 0;responses.delete(res); } };
         responses.set(res, current);sessions.push(session);protectPrivacyResponse(res, current);
       } else current.sessions.push(session);

@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "description": "Local gateway for Codex and Claude with Copilot, Microsoft 365 and custom APIs",
   "author": "Dale Xiao",
   "type": "module",
@@ -67,5 +67,9 @@
   "cpu": [
     "x64",
     "arm64"
-  ]
+  ],
+  "devDependencies": {
+    "@anthropic-ai/sdk": "1.3.0",
+    "openai": "7.43.0"
+  }
 }

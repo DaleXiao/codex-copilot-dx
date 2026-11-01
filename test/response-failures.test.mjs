@@ -98,6 +98,16 @@ test("HTTP diagnostics retain status and safe codes but no original error body",
     assert.doesNotMatch(JSON.stringify(details), /private input/);
   }
 });
+test("privacy failures and explicit client tool errors retain their own diagnostic meaning", () => {
+  const failure = buildHttpFailureDetails({ statusCode: 503, route: "messages", requestId: "fixture", model: "fixture",
+    code: "ccdx_privacy_stream_invalid", origin: "privacy" });
+  assert.equal(failure.origin, "privacy");assert.match(failure.message, /Local privacy processing/);
+  assert.doesNotMatch(failure.message, /original response was preserved|Nothing was sent/);
+  const body = { input: [{ type: "additional_tools", tools: [{ type: "namespace", name: "functions", tools: [{ type: "function", name: "one" }, { type: "custom", name: "two" }] }] }],
+    messages: [{ role: "user", content: [{ type: "tool_result", is_error: true, content: "private text" }, { type: "tool_result", is_error: false }] }] };
+  assert.deepEqual(requestOptionsEvidence(body), { tools: 2, client_tool_errors_received: 1, input_items: 1 });
+  assert.doesNotMatch(JSON.stringify(requestOptionsEvidence(body)), /private text/);
+});
 
 test("failure diagnostics redact short credential forms and labelled upstream input echoes", () => {
   for (const message of [

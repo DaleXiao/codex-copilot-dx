@@ -11,7 +11,7 @@ const TERMINAL_OUTCOMES = Object.freeze(["completed", "incomplete", "failed", "c
 const INCOMPLETE_REASONS = new Set(["max_output_tokens", "max_messages", "content_filter", "steered"]);
 const TERMINAL_ORIGINS = new Set([
   "upstream_response", "upstream_event", "chat_completion", "client_validation",
-  "upstream_http", "transport", "client_disconnect", "unclassified",
+  "upstream_http", "transport", "privacy", "client_disconnect", "unclassified",
 ]);
 const MAX_MODEL_OUTCOME_LABELS = 32;
 const MAX_RECENT_REQUESTS = 20;
@@ -342,7 +342,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         observeContext(values) {
           if (finished || !values || typeof values !== "object") return;
           if (Number.isSafeInteger(values.cached_input_tokens) && values.cached_input_tokens >= 0) cachedInput = values.cached_input_tokens;
-          for (const key of [...Object.keys(context), "capability_revision", "capability_constraints", "privacy_count", "privacy_ms"]) {
+          for (const key of [...Object.keys(context), "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "client_tool_errors_received"]) {
             const value = values[key];
             if (["capability_revision", "capability_constraints"].includes(key)) {
               if (typeof value === "string" && /^[a-z0-9_,]{1,80}$/.test(value)) context[key] = value;continue;

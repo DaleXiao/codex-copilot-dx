@@ -746,10 +746,14 @@ Covered text includes conversation instructions, message text, tool results, too
 
 Rules and a local model replace detected values with stable placeholders. Replies and tool arguments restore their values before delivery. The placeholder seed is private local configuration; original-value mappings live only with the request and are never added to CCDX logs or backups. A restart retains the seed, not the mappings. Local history keeps client-visible text rather than placeholders.
 
+Tool data is interpreted in its own context: ordinary argument fields named `id`, `signature`, `data` or `type` are restored, while protocol identifiers and signed blocks remain unchanged. Streaming restoration retains SSE event metadata and restores Responses custom-tool text across fragments. Incomplete parameters are discarded when the upstream emits a failure rather than replacing that failure with a restoration error.
+
 Each request pins its masking choice, including compatibility retries. A check exceeding 15 seconds is rejected before any upstream call; bounded local work can continue for up to five minutes so a retry can reuse its complete results. No request is sent using an incomplete model check. Model work is capped at eight jobs and 16 MiB queued input; text input per call is capped at 8 MiB. Detection metadata uses a 5,000-entry/4 MiB memory cache. CPU-only first checks of long histories can take substantially longer than cached checks.
 
 Turning masking off affects subsequent requests. Existing protected replies keep their restoration mappings until they finish. The downloaded component can then be deleted separately. Settings reset backs up and resets masking choices while keeping accounts, model selections, client connections, images and prediction access. Older settings backups inherit masking off.
 
 Try locally sends sample text only to the local component. Request records show the number of replacements and elapsed local-check time, never the original values. Download failures keep protection off; configured but unavailable protection refuses covered requests. Downloads retain the selected npm's proxy, certificate and offline policy, with no automatic policy relaxation or alternate downloader.
+
+Privacy failures have a separate local diagnostic origin. Response-restoration failures report that the response was stopped; request-check failures report that nothing was sent. When the latest Messages input explicitly contains failed tool results, request details show their count without retaining their content. HTTP success describes the model response, not proof that a client executed its tools successfully.
 
 The optional component is pinned to the v1.3.6 Release; later code-only updates can reuse it. Its source and license notices are in `native/privacy-guard` and `src/privacy-notices.txt`. AstrLink Guard model files use their publisher's Apache-2.0 license.

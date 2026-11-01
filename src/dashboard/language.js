@@ -142,6 +142,7 @@
     "output_used": ["Returned output tokens", "返回输出用量"],
     "stop_reason": ["Stop reason", "停止原因"],
     "transport": ["Network details", "网络详情"],
+    "client_tool_errors_received": ["Client-reported tool errors", "客户端回传的工具错误"],
     "output_limit_reached": ["Output limit reached.", "本次生成达到输出上限。"],
     "source_connection_failed": ["Connection to the model source failed.", "与模型来源的连接失败。"],
     "issue_category": ["Issue category", "问题分类"],

@@ -32,6 +32,40 @@ test("tool argument values are masked, ids and structure survive, and JSON-escap
   assert.equal(session.body.input[0].id, key);assert.equal(session.body.input[0].call_id, key);
   assert.deepEqual(JSON.parse(session.restoreValue({ arguments: session.body.input[0].arguments }).arguments), { name: key, items: [key] });
 });
+test("tool data keeps its own field meanings while protocol signatures and identities remain opaque", async () => {
+  const data = { type: "thinking", id: key, name: key, signature: key, encrypted_content: key, data: key, nested: [{ arguments: JSON.stringify({ value: key }), enabled: true, count: 2, absent: null }] };
+  const input = body(key);
+  input.messages.push({ role: "assistant", content: [{ type: "tool_use", id: "tool_protocol", name: "fixture", input: data }] });
+  const session = await maskPrivacyRequest(input, options), masked = session.body.messages[1].content[0].input;
+  assert.doesNotMatch(JSON.stringify(masked), /ghp_/);
+  const event = session.restoreValue({ type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tool_protocol", name: "fixture", input: masked } });
+  assert.deepEqual(event.content_block.input, data);assert.equal(event.content_block.id, "tool_protocol");
+  const token = session.body.messages[0].content;
+  assert.deepEqual(session.restoreValue({ type: "thinking", thinking: token, signature: token }), { type: "thinking", thinking: token, signature: token });
+  assert.deepEqual(session.restoreValue({ type: "function_call", id: token, call_id: token, name: "fixture", arguments: JSON.stringify({ signature: token, data: token }) }),
+    { type: "function_call", id: token, call_id: token, name: "fixture", arguments: JSON.stringify({ signature: key, data: key }) });
+  session.release();
+});
+test("Responses Lite inline descriptions are masked while definitions and grammars stay intact", async () => {
+  const input = { model: "model", input: [{ type: "additional_tools", tools: [{ type: "namespace", name: "functions", tools: [
+    { type: "custom", name: "fixture", description: key, format: { type: "grammar", definition: key } },
+  ] }] }] };
+  const session = await maskPrivacyRequest(input, { ...options, protocol: "responses" });
+  assert.notEqual(session.body.input[0].tools[0].tools[0].description, key);
+  assert.equal(session.body.input[0].tools[0].tools[0].format.definition, key);assert.equal(session.body.input[0].tools[0].name, "functions");session.release();
+});
+test("restored tool frames preserve their wire metadata and upstream errors discard incomplete parameters", async () => {
+  const session = await maskPrivacyRequest(body(key), options), token = session.body.messages[0].content;
+  const stream = createPrivacyStream(session), args = JSON.stringify({ signature: token, data: token });
+  const output = stream.push(Buffer.from(`event: content_block_delta\r\nid: tool-fragment\r\nretry: 1000\r\n: upstream note\r\ndata: ${JSON.stringify({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: args } })}\r\n\r\nevent: content_block_stop\r\ndata: {"type":"content_block_stop","index":1}\r\n\r\n`)) + stream.finish();
+  assert.equal((output.match(/id: tool-fragment/g) || []).length, 1);assert.match(output, /retry: 1000\r\n: upstream note/);
+  const data = output.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5)));
+  assert.deepEqual(JSON.parse(data.find(event => event.delta?.type === "input_json_delta").delta.partial_json), { signature: key, data: key });
+  const failed = createPrivacyStream(session);
+  failed.push(Buffer.from('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"unfinished\\":"}}\n\n'));
+  const error = 'event: error\ndata: {"type":"error","error":{"type":"api_error","message":"upstream stopped"}}\n\n';
+  assert.match(failed.push(Buffer.from(error)), /upstream stopped/);assert.equal(failed.finish(), "");session.release();
+});
 test("streaming restores placeholders across deltas and UTF-8 transport splits without corrupting events", async () => {
   const session = await maskPrivacyRequest(body(key), options), token = session.body.messages[0].content;
   const events = [

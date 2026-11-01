@@ -1,17 +1,22 @@
 import { serviceSettingsSnapshot, servicePreferences, writeServicePreference,
   writeTerminalAnimationTheme, writeTerminalColorTheme, responseHistoryLimitPreference, writeResponseHistoryLimitMib,
-  nightlyUpdatePreference, writeNightlyUpdatePreference } from "./user-settings.mjs";
+  nightlyUpdatePreference, writeNightlyUpdatePreference, decodedBodyLimitPreference, writeDecodedBodyLimitMib } from "./user-settings.mjs";
 import { readImageProviderConfig } from "./image-provider-config.mjs";
 import { readPredictionSettings } from "./native-prediction-profile.mjs";
 import { cacheRuntimeSnapshot, cleanRuntimeCaches, setHistoryCacheLimit } from "./cache-control.mjs";
 import { isTerminalAnimationTheme } from "./terminal-animation.mjs";
 import { settingsPreferencesSnapshot, writeSettingsPreferences } from "./settings-preferences.mjs";
+import { predictionControlSnapshot, controlPrediction } from "./prediction-control.mjs";
+import { imageSetupSummary, configureImageSetup } from "./image-setup.mjs";
 
 export function createServiceControl({ env = process.env, home, providerRuntime, clientIntegration, terminal,
   nightlyStatus = () => null, nightlyChanged = () => {},
+  manualUpdate, predictionControl = controlPrediction, imageControl = configureImageSetup,
+  adapterPort = 2026, adapterHost = "127.0.0.1",
   readImages = () => readImageProviderConfig({ env, home }), readPrediction = () => readPredictionSettings({ env, home }) } = {}) {
   const options = { env, home };
-  let serial = Promise.resolve();
+  let serial = Promise.resolve(), lastOperation = null, pending = 0;
+  const featureSnapshot = read => { try { return read(options); } catch { return { status: "unavailable" }; } };
   function snapshot() {
     const { saved, theme, color_theme, historyLimit } = serviceSettingsSnapshot(options), prediction = clientIntegration?.snapshot().prediction;
     let imageConfigured = false, predictionConfigured = false;
@@ -19,6 +24,8 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     try { predictionConfigured = readPrediction().enabled === true; } catch {}
     const enabled = nightlyUpdatePreference(options), nightly = nightlyStatus();
     return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options), local_privacy: providerRuntime?.privacy?.snapshot(),
+      features: { prediction: { ...featureSnapshot(predictionControlSnapshot), bridge: prediction?.bridge || "stopped", active: prediction?.active === true }, image: featureSnapshot(imageSetupSummary) },
+      decoded_body: decodedBodyLimitPreference(options), manual_update: { available: typeof manualUpdate === "function" }, last_operation: lastOperation,
       nightly_update: { enabled, ...nightly, effect: enabled && !nightly ? "next_start" : "immediate" },
       effective: {
         terminal_animation_enabled: { value: terminal?.enabled === true && saved.terminal_animation_enabled && !/^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || ""),
@@ -34,10 +41,26 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid setting action");
     const allowed = { preference: ["action", "key", "value"], nightly_update: ["action", "enabled"], animation: ["action", "theme"], color_theme: ["action", "theme"],
       history_limit: ["action", "mib"], history_clean: ["action"], prediction_fix: ["action"],
+      prediction: ["action", "operation"], image: ["action", "operation", "endpoint", "key", "model"],
+      update: ["action", "confirmed"], decoded_limit: ["action", "mib"],
       preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id", "scope"], restore_preferences: ["action", "revision", "backup_id", "scope"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
     if (!allowed || Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unknown setting action or field");
-    if (["preferences", "reset_preferences", "restore_preferences"].includes(input.action)) {
+    lastOperation = null;
+    if (input.action === "prediction") {
+      lastOperation = { feature: "prediction", result: await predictionControl(input.operation, { ...options, integration: clientIntegration }) };
+    } else if (input.action === "image") {
+      for (const [key, limit] of [["endpoint", 2048], ["key", 8192], ["model", 200]]) if (input[key] !== undefined && (typeof input[key] !== "string" || input[key].length > limit)) throw new Error("Invalid image setup input");
+      if (["pause", "resume"].includes(input.operation)) writeServicePreference("image_enabled", input.operation === "resume", options);
+      else lastOperation = { feature: "image", result: await imageControl(input, { ...options, adapterPort, adapterHost }) };
+    } else if (input.action === "update") {
+      if (input.confirmed !== true) throw new Error("Confirm installation and the idle service switch");
+      if (!manualUpdate) throw new Error("This launch cannot update itself; use the installer or start CCDX from its installed command");
+      lastOperation = { feature: "update", result: await manualUpdate() };
+    } else if (input.action === "decoded_limit") {
+      if (decodedBodyLimitPreference(options).source === "environment") throw new Error("Request limit is controlled by the launch environment");
+      writeDecodedBodyLimitMib(input.mib, options);
+    } else if (["preferences", "reset_preferences", "restore_preferences"].includes(input.action)) {
       const before = nightlyUpdatePreference(options);
       writeSettingsPreferences(input, options);
       if (input.action !== "preferences" || Object.keys(input.values || {}).some(key => key.startsWith("privacy_"))) providerRuntime?.privacy?.settingsChanged();
@@ -47,8 +70,8 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     } else if (input.action === "nightly_update") {
       writeNightlyUpdatePreference(input.enabled, options);nightlyChanged(input.enabled);
     } else if (input.action === "preference") {
-      writeServicePreference(input.key, input.value, options);
-      if (input.key === "prediction_enabled") clientIntegration?.setPredictionActive(input.value);
+      if (input.key === "prediction_enabled") await predictionControl(input.value ? "enable" : "disable", { ...options, integration: clientIntegration });
+      else writeServicePreference(input.key, input.value, options);
       terminal?.apply?.({ ...servicePreferences(options) });
     } else if (input.action === "color_theme") {
       writeTerminalColorTheme(input.theme, options);terminal?.apply?.({ color_theme: input.theme });
@@ -57,7 +80,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
       writeTerminalAnimationTheme(input.theme, options);terminal?.apply?.({ theme: input.theme });
     } else if (input.action === "prediction_fix") {
       if (!clientIntegration) throw new Error("Prediction integration is unavailable");
-      await clientIntegration.fix();
+      await predictionControl("repair", { ...options, integration: clientIntegration });
     } else if (input.action === "history_limit") {
       if (responseHistoryLimitPreference(options).source === "environment") throw new Error("History limit is controlled by CCDX_RESPONSE_HISTORY_MAX_BYTES");
       if (!Number.isSafeInteger(input.mib)) throw new Error("History limit must be an integer MiB value");
@@ -74,5 +97,8 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     }
     return snapshot();
   }
-  return { snapshot, action(input) { const operation = serial.then(() => apply(input));serial = operation.catch(() => {});return operation; } };
+  return { snapshot, busy: () => pending > 0, action(input) {
+    const counted = input?.action !== "update";if (counted) pending++;
+    const operation = serial.then(() => apply(input)).finally(() => { if (counted) pending--; });serial = operation.catch(() => {});return operation;
+  } };
 }

@@ -12,6 +12,12 @@ import { parse } from "smol-toml";
 const cli = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
 const preload = fileURLToPath(new URL("../scripts/replay-fixtures/config-startup-preload.cjs", import.meta.url));
 
+function withoutPredictionDisplay(content) {
+  const value = parse(content);
+  if (value.desktop) { delete value.desktop["composer-predictions-enabled"];if (!Object.keys(value.desktop).length) delete value.desktop; }
+  return value;
+}
+
 async function until(check, label) {
   const deadline = Date.now() + 8000;
   while (!await check()) {
@@ -68,7 +74,7 @@ for (const mode of ["pending", "default-on", "removed", "timeout", "write-failur
     await core();
     if (mode === "pending") {
       await until(() => cold.output().includes("Compression fixture probe received"), "probe");
-      assert.equal(await fs.readFile(config, "utf8"), before);
+      assert.deepEqual(withoutPredictionDisplay(await fs.readFile(config, "utf8")), parse(before));
       cold.child.send("release-compression-fixture");
       await until(() => cold.output().includes("Enabled Codex local history compression"), "compression setup");
     } else if (mode === "write-failure") await until(() => cold.output().includes("Optional Codex history compression setup was skipped"), "optional warning");
@@ -82,7 +88,7 @@ for (const mode of ["pending", "default-on", "removed", "timeout", "write-failur
     assert.equal(reuse.child.exitCode, 0, reuse.output());
     const after = await fs.readFile(config, "utf8");
     if (mode === "pending") assert.equal(parse(after).features.local_thread_store_compression, true);
-    else assert.equal(after, before);
+    else assert.deepEqual(withoutPredictionDisplay(after), parse(before));
     for (const run of runs) {
       assert.doesNotMatch(run.output(), /private fixture|Image guidance|Image MCP setup|Enabled Codex local history compression.*private/);
       if (mode === "opt-out" || (mode === "pending" && run === reuse)) assert.doesNotMatch(run.output(), /Compression fixture probe received/);

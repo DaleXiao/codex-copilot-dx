@@ -38,6 +38,15 @@ if (CLI.command === "manage") {
     process.exit(1);
   }
 }
+if (CLI.command === "update-managed") {
+  try {
+    if (!CLI.yes) throw new Error("Confirm with --yes to install and switch the idle service. You can also use Settings in the WebUI.");
+    const { dashboardToolRequest } = await import("../src/cli-tools.mjs");
+    const address = parseAdapterAddressOptions(process.env);
+    console.log(JSON.stringify((await dashboardToolRequest({ host: address.adapterHost, port: address.adapterPort, path: "settings", body: { action: "update", confirmed: true }, detailedErrors: true })).last_operation));
+    process.exit(0);
+  } catch (error) { console.error(status("err", error.message));process.exit(1); }
+}
 if (CLI.command === "web") {
   try {
     const { runWebCommand } = await import("../src/cli-web.mjs");
@@ -95,11 +104,21 @@ if (CLI.command === "image") {
 }
 if (CLI.command === "prediction") {
   try {
-    if (["pause", "resume"].includes(CLI.action)) {
-      const { pauseServiceFeature } = await import("../src/cli-tools.mjs");
+    if (!["status", "fix"].includes(CLI.action)) {
+      const { checkRunningAdapter } = await import("../src/running-adapter.mjs");
+      const { dashboardToolRequest } = await import("../src/cli-tools.mjs");
       const address = parseAdapterAddressOptions(process.env);
-      console.log(await pauseServiceFeature({ feature: "prediction", action: CLI.action, host: address.adapterHost, port: address.adapterPort }));
-      process.exit(0);
+      const running = await checkRunningAdapter({ host: address.adapterHost, port: address.adapterPort });
+      const operation = { on: "setup", off: "remove", fix: "repair" }[CLI.action] || CLI.action;
+      if (running.ok) {
+        const data = await dashboardToolRequest({ host: address.adapterHost, port: address.adapterPort, path: "settings", body: { action: "prediction", operation }, detailedErrors: true, timeoutMs: 65000 });
+        const result = data.last_operation?.result || data.features?.prediction;
+        console.log(JSON.stringify(result));process.exit(result?.status === "failed" ? 1 : 0);
+      }
+      if (["enable", "disable", "setup", "remove", "pause", "resume", "open"].includes(operation)) {
+        const { controlPrediction } = await import("../src/prediction-control.mjs");
+        console.log(JSON.stringify(await controlPrediction(operation)));process.exit(0);
+      }
     }
     const { readAdapterStatus } = await import("../src/cli-status.mjs");
     const { runPredictionCommand } = await import("../src/native-prediction.mjs");
@@ -234,6 +253,24 @@ if (CLI.command === "doctor" && CLI.configOnly) {
   process.exit(checks.some((check) => check.kind === "err") ? 1 : 0);
 }
 
+let serviceWorker = null;
+if (CLI.command === "start" && !(process.send && process.env.CCDX_SUPERVISED_SERVICE === "1")) {
+  const { nightlyUpdatePreference } = await import("../src/user-settings.mjs");
+  const { checkRunningAdapter } = await import("../src/running-adapter.mjs");
+
+  const { installedUpdateEnvironment } = await import("../src/nightly-update.mjs");
+  const address = parseAdapterProbeOptions(process.env);
+  const existing = await checkRunningAdapter({ host: address.adapterHost, port: address.adapterPort, timeoutMs: address.existingAdapterTimeoutMs });
+  let environment;
+  try { if (!existing.ok && !existing.incompatible) environment = installedUpdateEnvironment(); }
+  catch { if (nightlyUpdatePreference()) console.warn(status("warn", "Dashboard updates need a writable, matching npm installation. Starting without automatic updates.")); }
+  if (environment) {
+    const { runServiceSupervisor } = await import("../src/service-supervisor.mjs");
+    try { process.exit(await runServiceSupervisor({ environment })); }
+    catch { console.warn(status("warn", "Nightly runtime preparation failed. Starting without automatic updates.")); }
+  }
+}
+
 // Startup components are loaded only after read-only and local tool commands exit.
 const { ensureAuth, openCodex } = await import("../src/launcher.mjs");
 const { startAdapter } = await import("../src/adapter.mjs");
@@ -257,24 +294,9 @@ const { createTerminalConsole } = await import("../src/terminal-console.mjs");
 const { createServiceControl } = await import("../src/service-control.mjs");
 const { openDashboard } = await import("../src/browser-launch.mjs");
 
-let serviceWorker = null;
-if (CLI.command === "start") {
-  if (process.send && process.env.CCDX_SUPERVISED_SERVICE === "1") {
-    const { createServiceWorker } = await import("../src/service-worker.mjs");
-    serviceWorker = await createServiceWorker();
-  } else if (nightlyUpdatePreference()) {
-    const { installedUpdateEnvironment } = await import("../src/nightly-update.mjs");
-    const address = parseAdapterProbeOptions(process.env);
-    const existing = await checkRunningAdapter({ host: address.adapterHost, port: address.adapterPort, timeoutMs: address.existingAdapterTimeoutMs });
-    let environment;
-    try { if (!existing.ok && !existing.incompatible) environment = installedUpdateEnvironment(); }
-    catch { console.warn(status("warn", "Nightly updates need a writable, matching npm installation. Starting without automatic updates.")); }
-    if (environment) {
-      const { runServiceSupervisor } = await import("../src/service-supervisor.mjs");
-      try { process.exit(await runServiceSupervisor({ environment })); }
-      catch { console.warn(status("warn", "Nightly runtime preparation failed. Starting without automatic updates.")); }
-    }
-  }
+if (CLI.command === "start" && process.send && process.env.CCDX_SUPERVISED_SERVICE === "1") {
+  const { createServiceWorker } = await import("../src/service-worker.mjs");
+  serviceWorker = await createServiceWorker();
 }
 
 let RUNTIME;
@@ -415,10 +437,9 @@ try {
       else if (command.status === "preserved") console.warn(startupCheck("warn", "Command", "Existing launcher preserved; use ccdx.cmd doctor to inspect it"));
     } catch { console.warn(startupCheck("warn", "Command", "Command setup skipped; service will start")); }
   }
-  const updateNotice = runInBackground(printUpdateNotice);
   if (!serviceWorker?.warming && await reuseRunningAdapterIfAvailable()) {
     // Ready is already displayed; finish the bounded check before this short-lived CLI exits.
-    await updateNotice;
+    await printUpdateNotice();
     serviceWorker?.reused();
     startupPresentation.finish();await LOGGING.cleanup();
     process.exit(0);
@@ -445,7 +466,7 @@ try {
     githubCredentialFingerprint: () => profileRuntime.codexCredentialFingerprint,
     log: (kind, message) => console.log(startupComplete ? status(kind, message) : startupCheck(kind, "M365", message)) });
   const codexEnabled = providerRuntime.connections().clients.find(client => client.id === "codex").enabled;
-  const predictionSetup = codexEnabled && !serviceWorker?.warming ? runInBackground(() => earlyIntegration.start()) : Promise.resolve(null);
+  const predictionSetup = codexEnabled && !serviceWorker?.warming ? runInBackground(() => earlyIntegration.start({ autoSetup: !serviceWorker?.preserving })) : Promise.resolve(null);
   const m365Setup = runInBackground(() => providerRuntime.start());
   if (providerRuntime.selection().codex === "github") {
     try { await ensureAuth({ log: startupLogger("Sign-in"), interactive: serviceWorker?.preserving !== true,
@@ -483,7 +504,9 @@ try {
     snapshot: () => activeServer?.ccdxSnapshot?.() || {},
     subscribe: listener => activeServer?.ccdxSubscribeActivity?.(listener),
     preferences: () => { const { saved, theme, color_theme } = serviceSettingsSnapshot();return { ...saved, theme, color_theme }; } });
-  const serviceControl = createServiceControl({ providerRuntime, clientIntegration: earlyIntegration, terminal: terminalConsole, nightlyStatus: () => serviceWorker?.status() || null, nightlyChanged: enabled => serviceWorker?.preferenceChanged(enabled) });
+  const serviceControl = createServiceControl({ providerRuntime, clientIntegration: earlyIntegration, terminal: terminalConsole,
+    adapterPort: ADAPTER_PORT, adapterHost: ADAPTER_HOST, manualUpdate: serviceWorker ? () => serviceWorker.requestUpdate() : undefined,
+    nightlyStatus: () => serviceWorker?.status() || null, nightlyChanged: enabled => serviceWorker?.preferenceChanged(enabled) });
   const codexModelCatalog = createCodexModelCatalog();
   activeServer = await startAdapter(serviceWorker?.warming ? 0 : ADAPTER_PORT, serviceWorker?.warming ? "127.0.0.1" : ADAPTER_HOST, {
     log: startupLogger("Service"),
@@ -503,7 +526,7 @@ try {
       credentialsChanged: () => { defaultCopilotClient.invalidateCredentials();profileRuntime = createProfileRuntime({ codexClient: defaultCopilotClient }); },
       applyAnimation: theme => terminalConsole.apply({ theme }) },
     nativePredictionPac: () => clientIntegration?.pacUrl() || null,
-    fixPrediction: async () => (await clientIntegrations()).fix(),
+    fixPrediction: async () => (await import("../src/prediction-control.mjs")).controlPrediction("repair", { integration: await clientIntegrations() }),
     clientIntegrationSnapshot: () => clientIntegration?.snapshot() || null,
   });
 
@@ -536,6 +559,7 @@ try {
 
   startupComplete = true;
   if (!startupPresentation.enabled) console.log(startupReady({ baseUrl: adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT), commandName: CLI_NAME }));
+  runInBackground(printUpdateNotice);
   await launchDashboard();
   if (!serviceWorker?.warming) {
     startupPresentation.finish();for (const [method, args] of startupPresentation.warnings) terminalConsole.log(method, args);
@@ -571,7 +595,7 @@ try {
     const { clientStateFingerprint, serviceBusinessState } = await import("../src/service-worker.mjs");
     if (serviceWorker.preserving) providerRuntime.validateLocalKeys();
     await serviceWorker.ready({
-      notice: code => console.warn(status("warn", `Nightly update paused: ${code}. Run ccdx update github for details.`)),
+      notice: code => console.warn(status("warn", `Update notice: ${code}. See Checks & repairs in the WebUI.`)),
       stop: () => shutdown("supervisor"),
       exportState: () => ({ ...activeServer.ccdxExportState(), providers: providerRuntime.exportPrivateState() }),
       importState: async state => { await activeServer.ccdxImportState(state);providerRuntime.importPrivateState(state.providers); },
@@ -582,13 +606,13 @@ try {
       },
       resume: async () => {
         if (!activeServer.listening) await new Promise((resolve, reject) => { activeServer.once("error", reject);activeServer.listen(ADAPTER_PORT, ADAPTER_HOST, () => { activeServer.off("error", reject);resolve(); }); });
-        await earlyIntegration.start();earlyIntegration.setPredictionActive(servicePreferences().prediction_enabled);
+        await earlyIntegration.start({ autoSetup: false });earlyIntegration.setPredictionActive(servicePreferences().prediction_enabled);
         await LOGGING.cleanup();LOGGING = configureLogging();terminalConsole.start();LOGGING.setTerminalSink((method, args) => terminalConsole.log(method, args));
       },
       promote: async () => {
         await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs });
         await new Promise((resolve, reject) => { activeServer.once("error", reject);activeServer.listen(ADAPTER_PORT, ADAPTER_HOST, () => { activeServer.off("error", reject);resolve(); }); });
-        if (codexEnabled) { nativePrediction = await earlyIntegration.start();await nativePrediction?.prepareRoute();earlyIntegration.setPredictionActive(servicePreferences().prediction_enabled); }
+        if (codexEnabled) { nativePrediction = await earlyIntegration.start({ autoSetup: false });await nativePrediction?.prepareRoute();earlyIntegration.setPredictionActive(servicePreferences().prediction_enabled); }
       },
       activate: async () => {
         await LOGGING.cleanup();try { LOGGING = configureLogging(); } catch { LOGGING = configureLogging({ env: { ...process.env, CCDX_LOG_PATH: "" } }); }
@@ -598,7 +622,7 @@ try {
         const data = activeServer.ccdxSnapshot(), routes = data.requests.by_route;
         let fingerprint = null;try { fingerprint = clientStateFingerprint(); } catch {}
         return { version: LOCAL_VERSION, fingerprint, business: serviceBusinessState(providerRuntime),
-          busy: !fingerprint || activeServer.ccdxBusy() || clientIntegration.busy() || data.models.refresh_in_flight === true || data.model_activity.active === null,
+          busy: !fingerprint || activeServer.ccdxBusy() || clientIntegration.busy() || serviceControl.busy() || data.models.refresh_in_flight === true || data.model_activity.active === null,
           health: { github: profileRuntime.codexClient.runtimeStatus().token_cached === true && !profileModels.codexRegistry.lastError,
             m365: data.providers?.m365?.state === "ready", prediction: earlyIntegration.bridgeHealthy() },
           activity: { active: data.model_activity.active || 0, total: ["responses", "responses_compact", "messages"].reduce((n, key) => n + (routes[key]?.total || 0), data.image_generation?.total || 0) } };

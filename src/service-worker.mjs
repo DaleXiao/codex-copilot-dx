@@ -8,13 +8,15 @@ import { userSettingsPath } from './user-settings.mjs';
 import { readBoundedFileSync } from './bounded-file.mjs';
 import { authProfilePaths, readAuthProfileCredentials } from './auth-profile.mjs';
 import { m365Paths } from './m365-settings.mjs';
+import { imageProviderConfigPath } from './image-provider-config.mjs';
+import { readPredictionSettings } from './native-prediction-profile.mjs';
 
 export const HANDOFF_MAX_BYTES = 64 * 1024 * 1024;
 export function clientStateFingerprint(options = {}) {
   const codex = codexPaths(options), connections = accessSettingsPath(options);
   const github = authProfilePaths('codex', options);
   const files = [codex.config, path.join(codex.directory, 'auth.json'), connections, userSettingsPath(options),
-    github.tokenPath, m365Paths(options).settings, m365Paths(options).gateway,
+    github.tokenPath, imageProviderConfigPath(options), m365Paths(options).settings, m365Paths(options).gateway,
     path.join(path.dirname(connections), 'client-gateway-keys.json'), path.join(path.dirname(connections), 'codex-gateway-owner.json'), ...Object.values(claudeClientPaths(options))];
   const hash = createHash('sha256');
   const credentials = readAuthProfileCredentials('codex', options);
@@ -23,6 +25,11 @@ export function clientStateFingerprint(options = {}) {
     hash.update(file);try { hash.update(readBoundedFileSync(file, { maxBytes: 8 * 1024 * 1024 })); }
     catch (error) { if (error.code !== 'ENOENT') throw error;hash.update('missing'); }
   }
+  const prediction = readPredictionSettings(options);
+  // Port allocation and App stat bookkeeping can change when the new listener
+  // starts. User intent and trust ownership must stay stable across handoff.
+  hash.update(JSON.stringify([prediction.enabled, prediction.store ?? null, prediction.certificateHash ?? null,
+    prediction.credentialsDirectory ?? null, prediction.app?.app ?? null, prediction.app?.profile ?? null]));
   return hash.digest('hex');
 }
 export function serviceBusinessState(runtime) {
@@ -81,6 +88,11 @@ export async function createServiceWorker({ processObj = process } = {}) {
     takeState() { const state = boot.state;boot.state = undefined;return state; },
     status: () => updateStatus,
     preferenceChanged(enabled) { if (processObj.connected !== false) processObj.send({ type: 'ccdx:preference', enabled }, () => {}); },
+    requestUpdate() {
+      if (warming || draining || processObj.connected === false) throw new Error('Service update is unavailable during a version switch');
+      processObj.send({ type: 'ccdx:manual-update' });
+      return { status: 'queued' };
+    },
     reused() { processObj.send({ type: 'ccdx:ready', protocol: 1, value: { reused: true } }); },
     async ready(value) { handlers = value;if (stopRequested) { await handlers.stop();return; }processObj.send({ type: 'ccdx:ready', protocol: 1, value: handlers.inspect() }); },
   };

@@ -76,7 +76,7 @@ for (const [mode, executable] of [["new", cli], ["current", cli], ["offline", cl
       assert.equal(pendingCore.status, 200);
       assert.match(await pendingCore.text(), /startup fixture response/);
       assert.doesNotMatch(cold.output(), /Update available:/);
-      cold.child.send("release-update-fixture");
+      await marker(cold, "Update fixture request received");cold.child.send("release-update-fixture");
       await marker(cold, "update github to update");
     } else if (mode === "timeout") {
       await marker(cold, "Update fixture cancelled");
@@ -91,7 +91,7 @@ for (const [mode, executable] of [["new", cli], ["current", cli], ["offline", cl
     if (mode === "new") {
       assert.equal(reuse.child.exitCode, null, "Reuse must not exit with a pending notice");
       assert.doesNotMatch(reuse.output(), /Update available:/);
-      reuse.child.send("release-update-fixture");
+      await marker(reuse, "Update fixture request received");reuse.child.send("release-update-fixture");
     }
     assert.equal((await bounded(reuse.done))[0], 0, reuse.output());
     for (const run of [cold, reuse]) {

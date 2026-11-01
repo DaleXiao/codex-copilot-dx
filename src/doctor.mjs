@@ -295,7 +295,7 @@ export async function collectDoctorChecks({
       checks.push({ kind: "err", message: "Compatibility checks require a running, version-compatible codex-copilot-dx adapter" });
     } else {
       checks.push(...await inspectAdapterCompatibilityFn({
-        host,
+        home, env, host,
         port,
         fetchImpl,
         timeoutMs: compatTimeoutMs,

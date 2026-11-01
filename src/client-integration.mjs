@@ -14,8 +14,9 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
   let native = null;
   let operation = null, operationName = null, closed = false;
   let pendingRoutePid = null, codexSetup = null;
-  async function startPredictionBridge(expectedPort, environment) {
+  async function startPredictionBridge(expectedPort, environment, autoSetup = false) {
     const started = await startPrediction({ state: prediction, warning: info,
+      autoSetup,
       ...(environment ? { environment } : {}), ...(expectedPort ? { expectedPort } : {}) });
     if (!started) return null;
     if (closed) { await started.close();return null; }
@@ -65,9 +66,9 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
       }
       return { imageEnabled: enabled, imageMcpSkipped, compressionSetup: runInBackground(ensureCodexThreadCompression) };
     },
-    start() { return serialize("start", async () => {
+    start({ autoSetup = true } = {}) { return serialize("start", async () => {
       try {
-        native ||= await startPredictionBridge();
+        native ||= await startPredictionBridge(undefined, undefined, autoSetup);
       } catch (error) { prediction.unavailable(error); warning(`${error.message}. Core startup will continue.`); }
       return native;
     }); },

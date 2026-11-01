@@ -126,8 +126,8 @@ export const MANAGED_COMMANDS = [
       outputFormat: flags.format,
     })
   ),
-  ...["setup", "remove", "pause", "resume", "repair"].map(action =>
-    command(`app codex prediction ${action}`, "Manage the optional Codex prediction integration", {}, () => ({
+  ...["enable", "disable", "setup", "remove", "pause", "resume", "repair", "open"].map(action =>
+    command(`app codex prediction ${action}`, ({ enable: "Enable suggestions and synchronize native display", disable: "Disable suggestions; synchronize display after App closure", setup: "Configure or renew App trust and suggestion display", remove: "Remove owned prediction trust and routing", pause: "Pause suggestions while retaining setup", resume: "Resume a configured prediction integration", repair: "Check and restore the selected prediction state", open: "Open Codex with the configured prediction route" })[action], {}, () => ({
       command: "prediction",
       action: { setup: "on", remove: "off", repair: "fix" }[action] || action,
     }))
@@ -188,6 +188,7 @@ export const MANAGED_COMMANDS = [
     "--provider": "value",
   }),
   command("update check", "Check a stable release without installing", read),
+  command("update apply", "Request the WebUI's verified idle service update", { "--yes": "flag" }, flags => ({ command: "update-managed", yes: !!flags.yes })),
 ];
 
 function pathMatch(pattern, values, partial = false) {

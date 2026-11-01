@@ -4,9 +4,10 @@ import { fork } from 'node:child_process';
 import { nightlyUpdatePreference, userSettingsPath } from './user-settings.mjs';
 import { atomicWriteFileIfChangedSync } from './atomic-file.mjs';
 import { createNpmReleaseFetch } from './release-install.mjs';
+import { isVersionGreater } from './version.mjs';
 import { installedUpdateEnvironment, retainCurrentRuntime, lookupNightlyRelease, eligiblePatch, nightlyWindow, nightlyDay, NIGHTLY_IDLE_MS, prepareNightlyRelease, verifyNightlyRuntime, readNightlyState } from './nightly-update.mjs';
 
-export function launchServiceWorker(target, { args = [], env = process.env, state, preserve = false, warm = false, sources = [], onPreference = () => {}, forkImpl = fork } = {}) {
+export function launchServiceWorker(target, { args = [], env = process.env, state, preserve = false, warm = false, sources = [], onPreference = () => {}, onManualUpdate = () => {}, forkImpl = fork } = {}) {
   const child = forkImpl(path.join(target,'bin/cli.mjs'),preserve ? [...args.filter(value=>value!=='--no-browser'),'--no-browser'] : args, {
     env:{...env,CCDX_SUPERVISED_SERVICE:'1',...(preserve?{CCDX_AUTO_LAUNCH:'0'}:{})},stdio:['inherit','inherit','inherit','ipc'],serialization:'advanced',windowsHide:true,
   });
@@ -21,6 +22,7 @@ export function launchServiceWorker(target, { args = [], env = process.env, stat
     if(message?.type==='ccdx:boot'){child.send({type:'ccdx:init',protocol:1,preserve,warm,sources,state});state=undefined;}
     else if(message?.type==='ccdx:ready'){settled=true;clearTimeout(timer);readyResolve(message.value);}
     else if(message?.type==='ccdx:preference')onPreference(message.enabled===true);
+    else if(message?.type==='ccdx:manual-update')onManualUpdate();
     else if(message?.type==='ccdx:reply'){
       const entry=pending.get(message.id);if(!entry)return;pending.delete(message.id);message.error?entry.reject(new Error(message.error)):entry.resolve(message.value);
     }
@@ -130,9 +132,9 @@ export async function runServiceSupervisor({args=process.argv.slice(2),env=proce
  now=()=>new Date(),launch=launchServiceWorker,prepare=prepareNightlyRelease,lookup,processObj=process,log=message=>console.log(message),
  retain=retainCurrentRuntime,verify=verifyNightlyRuntime,timers={setInterval,clearInterval}}={}) {
  let current=retain(environment),version=JSON.parse(fs.readFileSync(path.join(current.target,'package.json'))).version;
- let stopping=false,worker,pendingWorker,timer,scheduler;const retired=new Set();
- const start=(target,options={})=>pendingWorker=launch(target,{args,env,...options,onPreference:enabled=>{if(!enabled)scheduler?.cancel();}});
- const stop=()=>{if(stopping)return;stopping=true;timers.clearInterval(timer);scheduler?.cancel();void worker?.stop().catch(()=>{});if(pendingWorker!==worker)void pendingWorker?.stop().catch(()=>{});for(const item of retired)void item.worker.stop().catch(()=>{});};
+ let stopping=false,worker,pendingWorker,timer,scheduler,manualFlight=null,manualController=null,requestManualUpdate;const retired=new Set();
+ const start=(target,options={})=>pendingWorker=launch(target,{args,env,...options,onPreference:enabled=>{if(!enabled)scheduler?.cancel();},onManualUpdate:()=>{void requestManualUpdate?.();}});
+ const stop=()=>{if(stopping)return;stopping=true;timers.clearInterval(timer);scheduler?.cancel();manualController?.abort();void worker?.stop().catch(()=>{});if(pendingWorker!==worker)void pendingWorker?.stop().catch(()=>{});for(const item of retired)void item.worker.stop().catch(()=>{});};
  processObj.once('SIGINT',stop);processObj.once('SIGTERM',stop);
  try{
   await verify(current.target,version,{brokerRequired:fs.existsSync(path.join(current.target,'node_modules/@azure/msal-node-runtime'))});
@@ -142,27 +144,46 @@ export async function runServiceSupervisor({args=process.argv.slice(2),env=proce
   const stateFile=path.join(path.dirname(userSettingsPath({env})),'nightly-update-state.json');let state;
   try{state=readNightlyState(stateFile);}catch{state=null;worker.status({phase:'unavailable'});worker.notice('update_records_unreadable');}
   let fetchImpl;
-  scheduler=createNightlyScheduler({enabled:()=>!stopping&&retired.size===0&&state!==null&&nightlyUpdatePreference({env}),now,currentVersion:()=>version,state:state||undefined,
+  const readRelease=lookup|| (async options=>{fetchImpl||=createNpmReleaseFetch(environment.npmCli,{env});return lookupNightlyRelease(fetchImpl,options);});
+  async function installCandidate(candidate,baseline,options,manual=false) {
+    try {
+      if(JSON.parse(fs.readFileSync(path.join(environment.target,'package.json'))).version!==version){candidate.cleanup();throw new Error('installation_changed');}
+      const result=await switchServiceVersion({worker,current,candidate,baseline,launch:start,stopped:()=>stopping,
+        cancelled:()=>stopping||!manual&&(!nightlyUpdatePreference({env})||!nightlyWindow(now())),onPhase:phase=>worker.status({phase,version:candidate.version}),signal:options.signal});
+      worker=result.worker;current=result.current;version=result.version;
+      if(result.retired)retired.add(result.retired);
+    }catch(error){if(error.restoredWorker)worker=error.restoredWorker;throw error;}
+  }
+  async function manualUpdate() {
+    if(stopping||manualFlight)return;
+    scheduler?.cancel();
+    manualController=new AbortController();
+    manualFlight=(async()=>{
+      await scheduler?.wait();worker.status({phase:'checking',manual:true});
+      const baseline=await worker.call('inspect');
+      if(baseline.busy||baseline.activity.active)throw new Error('service_busy');
+      const release=await readRelease({currentVersion:version,signal:manualController.signal});
+      if(!release||!isVersionGreater(release.version,version)){worker.status({phase:'current',manual:true});return;}
+      worker.status({phase:'preparing',version:release.version,manual:true});
+      const candidate=await prepare(release,{environment,env,fetchImpl,signal:manualController.signal});
+      try {await installCandidate(candidate,baseline,{signal:manualController.signal},true);worker.status({phase:'updated',version,manual:true});}
+      catch(error){candidate.cleanup();throw error;}
+    })().catch(error=>{worker.status({phase:error.message==='service_busy'?'deferred':'failed',manual:true});worker.notice('manual_update_failed');}).finally(()=>{manualFlight=null;manualController=null;});
+    await manualFlight;
+  }
+  requestManualUpdate=manualUpdate;
+  scheduler=createNightlyScheduler({enabled:()=>!stopping&&!manualFlight&&retired.size===0&&state!==null&&nightlyUpdatePreference({env}),now,currentVersion:()=>version,state:state||undefined,
    persist:value=>atomicWriteFileIfChangedSync(stateFile,JSON.stringify(value)+'\n',{mode:0o600}),
    inspect:()=>worker.call('inspect'),status:value=>worker.status(value),
    onFailure:code=>worker.notice(code),
-   lookup:lookup|| (async options=>{fetchImpl||=createNpmReleaseFetch(environment.npmCli,{env});return lookupNightlyRelease(fetchImpl,options);}),
+   lookup:readRelease,
    prepare:(release,options)=>prepare(release,{environment,env,...options,fetchImpl}),
-   apply:async(candidate,baseline,options)=>{
-    try{
-     const globalVersion=JSON.parse(fs.readFileSync(path.join(environment.target,'package.json'))).version;
-     if(globalVersion!==version){candidate.cleanup();throw new Error('installation_changed');}
-     const result=await switchServiceVersion({worker,current,candidate,baseline,launch:start,stopped:()=>stopping,
-       cancelled:()=>stopping||!nightlyUpdatePreference({env})||!nightlyWindow(now()),onPhase:phase=>worker.status({phase,version:candidate.version}),signal:options.signal});
-     worker=result.worker;current=result.current;version=result.version;
-     if(result.retired)retired.add(result.retired);
-    }catch(error){if(error.restoredWorker)worker=error.restoredWorker;throw error;}
-   },
+   apply:installCandidate,
   });
   timer=timers.setInterval(()=>scheduler.tick(),60000);timer.unref?.();
   // An unexpected worker exit is reported once. A deliberate Ctrl+C never restarts it.
-  while(!stopping){const observed=worker;await observed.exited;if(scheduler.busy){await scheduler.wait();if(worker!==observed)continue;}break;}
+  while(!stopping){const observed=worker;await observed.exited;if(manualFlight)await manualFlight;if(scheduler.busy)await scheduler.wait();if(worker!==observed)continue;break;}
   const deliberate=stopping;stop();await scheduler.close();await worker.stop();return deliberate?0:1;
  }catch(error){if(!worker&&!stopping)throw error;if(!stopping)log('[WARN] Nightly supervisor could not continue; run ccdx again.');const deliberate=stopping;stop();return deliberate?0:1;}
- finally{timers.clearInterval(timer);processObj.off('SIGINT',stop);processObj.off('SIGTERM',stop);if(stopping)await worker?.stop();for(const item of retired){try{await item.worker.stop();item.current.cleanup();}catch{}}current.cleanup();}
+ finally{timers.clearInterval(timer);processObj.off('SIGINT',stop);processObj.off('SIGTERM',stop);if(stopping)await worker?.stop();if(manualFlight)await manualFlight;for(const item of retired){try{await item.worker.stop();item.current.cleanup();}catch{}}current.cleanup();}
 }

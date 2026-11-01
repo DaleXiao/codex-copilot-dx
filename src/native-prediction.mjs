@@ -11,6 +11,8 @@ import { updatePredictionRoute } from "./native-prediction-route.mjs";
 import { inspectPredictionEnvironment } from "./native-prediction-environment.mjs";
 import { formatPredictionEnvironment } from "./native-prediction-state.mjs";
 import { servicePreferences, writeServicePreference } from "./user-settings.mjs";
+import { predictionDisplayPreference, writePredictionDisplayPreference } from "./prediction-preference.mjs";
+import { atomicWriteFileSync } from "./atomic-file.mjs";
 
 function certificateDirectory(settings, paths) {
   if (!settings.credentialsDirectory) return paths.directory;
@@ -56,7 +58,7 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
     return { ...result, exitCode: ["ready", "disabled"].includes(result.status) ? 0 : 1 };
   }
   if (action === "status") {
-    output(`Native prediction preference: ${settings.enabled ? "on" : "off"} (default: off)`);
+    output(`Native prediction preference: ${settings.enabled ? "on" : "off"} (new integrations: on)`);
     if (settings.enabled && !servicePreferences(opts).prediction_enabled) output("Prediction configuration adaptation: paused by the WebUI preference; trust and route are retained.");
     output("Uses the conversation's model.");
     if (settings.enabled && !predictionAppMatches(settings.app)) output("Codex App changed; bridge startup will recheck compatibility. Unsupported changes still require explicit setup.");
@@ -127,15 +129,19 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
   const next = { version: 1, enabled: true, app, store: paths.store, certificateHash: certificate.hash, credentialsDirectory,
     ...(Number.isInteger(settings.bridgePort) ? { bridgePort: settings.bridgePort } : {}) };
   let trustAdded = false;
+  const previousSettings = fs.existsSync(paths.settings) ? fs.readFileSync(paths.settings) : null;
   try {
     // Add the new trust before committing activation; retain the old record
     // until the commit succeeds so a failed write cannot break an existing setup.
     trustAdded = await updatePredictionTrust(paths.store, certificate);
     writeSettings(next, opts);
+    writePredictionDisplayPreference(true, opts);
   }
   catch (error) {
     if (trustAdded) await updatePredictionTrust(paths.store, certificate, { remove: true }).catch(() => {});
     if (generated) fs.rmSync(credentialsDirectory, { recursive: true, force: true });
+    if (previousSettings !== null) atomicWriteFileSync(paths.settings, previousSettings);
+    else if (fs.existsSync(paths.settings)) fs.unlinkSync(paths.settings);
     throw error;
   }
   if (previous && previous.hash !== certificate.hash) {
@@ -155,7 +161,17 @@ async function runPredictionCommandUnlocked({ action = "status", env = process.e
 export async function startNativePrediction({ env = process.env, platform = process.platform,
   warning = () => {}, state, ...options } = {}) {
   const opts = { ...options, env, platform };
-  const settings = readPredictionSettings(opts);
+  if (options.autoSetup === true && ["darwin", "win32"].includes(platform)
+    && !fs.existsSync(predictionPaths(opts).settings) && servicePreferences(opts).prediction_enabled && predictionDisplayPreference(opts).enabled) {
+    await runPredictionCommand({ ...opts, action: "on", output: warning });
+  }
+  let settings = readPredictionSettings(opts);
+  if (settings.displayPending && options.autoSetup === true) {
+    try {
+      writePredictionDisplayPreference(servicePreferences(opts).prediction_enabled, opts);
+      settings = { ...settings, displayPending: false };writePredictionSettings(settings, opts);
+    } catch (error) { if (!/Quit Codex/.test(error.message)) throw error; }
+  }
   state?.configure(settings.enabled);
   if (!settings.enabled) return null;
   if (!["darwin", "win32"].includes(platform)) throw new Error("Native predictions were skipped: unsupported platform");

@@ -69,6 +69,10 @@
         const toggle = node("input");toggle.type = "checkbox";toggle.checked = true;toggle.setAttribute("role", "switch");toggle.setAttribute("aria-label", format("api_disable_source") + " " + provider.name);
         toggle.addEventListener("change", () => { toggle.checked = true;disableSource(provider); });const hit = node("label", undefined, "switch-hit");hit.append(toggle);actions.append(hit);
       } else actions.append(button("api_restore", () => void change({ operation: "provider", id: provider.id, enabled: true })));
+      if (!provider.builtin && !provider.enabled) {
+        const remove = button("api_remove_source", () => { if (window.confirm(format("api_remove_source_confirm"))) void change({ operation: "remove_api", id: provider.id, impact_revision: data.source_impacts?.[provider.id]?.revision }); });
+        remove.disabled = data.clients.some(c => c.source === provider.id || c.deployments?.some(item => item.source === provider.id));actions.append(remove);
+      }
       row.append(info, actions);if (!provider.enabled) disabledSources.append(row);else if (provider.id === selectedProvider) providerList.append(row);
     }
     const current = editingClient && client(editingClient);

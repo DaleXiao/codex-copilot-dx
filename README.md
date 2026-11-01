@@ -17,8 +17,8 @@ ccdx
 
 Without Node.js, download and run the installer for your system:
 
-- macOS: [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.7/install.sh), then `sh install.sh`.
-- Windows: [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.7/install.ps1), then `./install.ps1` under your current shell policy.
+- macOS: [install.sh](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.8/install.sh), then `sh install.sh`.
+- Windows: [install.ps1](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.8/install.ps1), then `./install.ps1` under your current shell policy.
 
 The installer reuses a compatible Node.js or installs a private, verified copy. Git and a compiler are not required. Complete platform packages include their dependencies. Company registry, proxy, certificate and shell policies are kept.
 
@@ -57,22 +57,13 @@ Use `ccdx help` or `ccdx <command> --help` for options. The CLI uses English; th
 
 **1.3 uses one command tree.** Old command names and the `codex-copilot-dx` executable have been removed. This changes command entrypoints, not saved accounts, model selections or chats. See the [command reference](docs/REFERENCE.md#commands).
 
-## Optional features
+## Features and maintenance
 
-Images, native input suggestions and overnight updates are **off by default**. Existing enabled settings are retained.
+Use the Web UI for accounts, APIs, models, client access, input suggestions, image setup, local masking, appearance, diagnostics and updates. CLI commands remain available for automation and recovery. See the [control reference](docs/REFERENCE.md#webui-and-cli-controls).
 
-- **Images:** `ccdx app codex image setup`. [Image guide](docs/REFERENCE.md#optional-image-generation).
-- **Input suggestions:** `ccdx app codex prediction setup`. Setup adds trust within the Codex profile and locally decrypts traffic for the configured prediction hosts. Read the [setup and removal guide](docs/REFERENCE.md#optional-native-predictions) first.
-- **Appearance and updates:** open Settings. Web and terminal colors are independent.
-
-## Update and troubleshoot
-
-Finish active tasks before updating the active installation. Install the update, then restart CCDX normally:
-
-```sh
-ccdx update github
-ccdx version
-```
+- **Input suggestions:** new integrations attempt setup by default when Codex is closed. Saved off choices are retained. The Web UI can enable, disable, finish setup, open Codex and repair the bridge. Setup synchronizes Show predictions, adds App-profile trust and locally decrypts the prediction hosts' HTTPS traffic. App/thread eligibility still applies. [Details](docs/REFERENCE.md#optional-native-predictions).
+- **Images:** configure the address, key and model in Codex → Image generation. Image setup and overnight updates remain off by default.
+- **Updates:** Settings → Install update downloads and verifies a stable release, then switches the installed service when idle. Busy work postpones the switch. Unmanaged launches require the installer or an installed command. [Details](docs/REFERENCE.md#installation-and-updates).
 
 Web UI activity updates through server push; the terminal uses the same in-process activity feed. Reconnecting restores current state and bounded recent records.
 

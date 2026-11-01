@@ -3,8 +3,8 @@
 This report preserves intermediate evidence from Windows candidates `.0`–`.4`.
 The `.4` native composer flow was confirmed by the user on 2026-10-13 and promoted
 to `0.9.26`. Earlier failures and pending checks below describe their original
-stage, not the current release. Prediction remains off by default; images retain
-their separate opt-in. See [the final release report](RELEASE_0.9.26.md).
+stage, not the current release. Prediction was off by default at that stage; see
+[the current controls](REFERENCE.md#prediction-controls). Images retain their separate opt-in. See [the final release report](RELEASE_0.9.26.md).
 
 ## Implemented boundary
 

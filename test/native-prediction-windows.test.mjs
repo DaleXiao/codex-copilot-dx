@@ -229,7 +229,7 @@ test("Windows default-off startup and status make no platform probes or writes",
   assert.deepEqual(fs.readdirSync(home), []);
 });
 
-test("Windows on/off lifecycle preserves App trust and never changes Codex configuration", async t => {
+test("Windows setup/removal preserves App trust and changes only prediction display", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-win-lifecycle-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const profile = path.join(home, "app-profile");
   const fixtureArchive = path.join(home, "app.asar");fs.writeFileSync(fixtureArchive, "fixture program identity");
@@ -276,7 +276,7 @@ test("Windows on/off lifecycle preserves App trust and never changes Codex confi
   assert.equal(disabled.enabled, false);assert.deepEqual(disabled.app, app);
   assert.equal(disabled.store, undefined);assert.equal(disabled.certificateHash, undefined);
   const after = new DatabaseSync(settings.store);assert.equal(after.prepare("SELECT count(*) AS n FROM certificates").get().n, 1);after.close();
-  assert.equal(fs.existsSync(path.join(home, ".codex", "config.toml")), false);
+  assert.match(fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8"), /desktop.composer-predictions-enabled = true/);
   await runPredictionCommand({ ...options, action: "off", writeSettings() { assert.fail("repeated off must not rewrite the profile binding"); } });
   let preferredProfile;
   await runPredictionCommand({ ...options, action: "on", resolveApp(opts) { preferredProfile = opts.preferredProfile;return app; } });

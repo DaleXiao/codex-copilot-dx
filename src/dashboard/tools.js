@@ -43,7 +43,7 @@
   async function api(path, body) {
     const response = await fetch(`/_ccdx/ui/${path}`, { method: body ? "POST" : "GET", cache: "no-store",
       headers: { "X-CCDX-Dashboard": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
-      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(35000) });
+      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(body?.action === "compatibility" ? 600000 : 35000) });
     const data = await response.json();
     if (!response.ok) throw Object.assign(new Error("tools_action_failed"), { code: data.code || "tools_action_failed" });
     return data;
@@ -165,6 +165,8 @@
         field(fields, "tools_backup", data.backup);
         el("config-preview-details").textContent = data.checks.map(check => check.message).join("\n");
         text("checks-note", "tools_review_repair");
+      } else if (action.action === "compatibility") {
+        el("compatibility-note").textContent = (data.checks || []).map(check => check.message).join(" · ");
       } else if (action.action === "repair") {
         el("config-repair-preview").hidden = true;repairPreview = null;
         if (data.local?.checked_at) renderChecks(data.local);
@@ -181,6 +183,7 @@
   for (const [id, action] of [["check-local", "check"], ["check-network", "network"], ["export-report", "report"], ["preview-config-repair", "preview"]]) {
     el(id).addEventListener("click", () => void localAction({ action }, el(id)));
   }
+  el("check-compatibility")?.addEventListener("click", () => { if (window.confirm(language.format("compatibility_scope"))) void localAction({ action: "compatibility", confirmed: true }, el("check-compatibility")); });
   el("apply-config-repair").addEventListener("click", () => { if (repairPreview) void localAction({ action: "repair", revision: repairPreview.revision }, el("apply-config-repair")); });
   el("cancel-config-repair").addEventListener("click", () => { repairPreview = null;el("config-repair-preview").hidden = true; });
   el("check-account-link").addEventListener("click", () => { chooseProvider("github");location.hash = "models"; });

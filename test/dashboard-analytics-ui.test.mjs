@@ -259,15 +259,15 @@ test("English copy and Chinese failures keep raw values, missing states and diag
   assert.equal(literal.children.at(-1).textContent, "已复制");
 });
 
-test("model HTTP errors localize only the known CCDX message and retain status codes", async () => {
-  let message = "Live model lookup failed (HTTP 403). Run ccdx models for details.";
+for (const command of ["ccdx models", "ccdx app codex models"]) test("model HTTP errors preserve status and keep setup in WebUI: " + command, async () => {
+  let message = `Live model lookup failed (HTTP 403). Run ${command} for details.`;
   const h = harness({ language: true, savedLanguage: "zh", fetchFn: (url) => url.includes("/models/")
     ? { ok: false, json: async () => ({ error: message }) } : undefined });
   await flush();
   assert.equal(h.nodes.get("models-state").textContent, "查询失败");
   const reason = () => { const fields = h.nodes.get("model-check-fields").children;return fields[fields.findIndex(node => node.getAttribute("data-i18n") === "source_check_reason") + 1].textContent; };
   assert.match(reason(), /模型查询失败：HTTP 403/);
-  assert.match(reason(), /ccdx models/);
+  assert.match(reason(), /所选来源/);assert.doesNotMatch(reason(), /ccdx/);
   assert.equal(h.nodes.get("models-note").hasAttribute("data-i18n"), false);
   assert.match(h.nodes.get("models-note").children[2].textContent, /暂无可用的旧模型列表/);
   const requests = h.requests.length;

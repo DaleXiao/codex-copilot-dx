@@ -339,7 +339,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
         if (!state.error) catalogReadDetails(evidence);
         if (state.error) {
           const message = String(state.error.message || state.error).slice(0, 240);
-          const httpError = /^Live model lookup failed \(HTTP (\d{3})\)\. Run ccdx models for details\.$/.exec(message);
+          const httpError = /^Live model lookup failed \(HTTP (\d{3})\)\. Run ccdx (?:app codex )?models for details\.$/.exec(message);
           const sourceReason = /^Model catalog unavailable \/ (m365_[a-z0-9_]+)$/.exec(message);
           const diagnostic = state.error.diagnostic || {}, network = diagnostic.network, catalog = diagnostic.catalog;
           const reason = catalog ? phrase(`catalog_cause_${catalog.cause_code}`) : network ? phrase(`network_cause_${network.cause_code}`) : httpError ? phrase("live_model_lookup_failed_http_status_run_ccdx_models_for_details", { status: httpError[1] })

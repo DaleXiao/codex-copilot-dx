@@ -3,8 +3,8 @@
   "baseline": "1.3.7",
   "stage": "candidate",
   "local_verify": {
-    "tests": 1766,
-    "passed": 1756,
+    "tests": 1770,
+    "passed": 1760,
     "failed": 0,
     "skipped": 10,
     "http_sse_smoke": true,
@@ -14,7 +14,8 @@
   "local_browser": {
     "chromium_matrix_cases": 16,
     "final_controls_cases": 4,
-    "real_provider_calls": 0
+    "real_provider_calls": 0,
+    "webkit_cases": 8
   },
   "native_config_and_auth": {
     "results": [
@@ -180,11 +181,29 @@
     "rollbacks": 1
   },
   "release_pack": {
-    "bytes": 688153,
-    "files": 246
+    "bytes": 689705,
+    "files": 247,
+    "sha256": "d5c290a450f7aa9ea0192bbfecd63eac01663ad976f71a14adff37fada7e6eb6"
   },
   "publication": {
     "status": "pending"
   },
-  "preservation": "Native Codex config/auth and Claude config hashes unchanged; service remains the original healthy 1.3.6 PID/instance. Active App state and connection bookkeeping are allowed to evolve."
+  "preservation": "Native Codex config/auth and Claude config hashes unchanged; service remains the original healthy 1.3.6 PID/instance. Active App state and connection bookkeeping are allowed to evolve.",
+  "isolated_upgrade": {
+    "baseline": "1.3.7",
+    "verified_baseline_sha256": "7b68f70fe2fa4bf9bb121a1e3fb765778eaa79ac70db206777d9dbb59ec100ab",
+    "cli": true,
+    "sharp": true,
+    "supported_native_broker": true,
+    "prefix": "disposable",
+    "company_policy_preserved": true
+  },
+  "ci": {
+    "status": "pending_final_run",
+    "prior_failures_fixed": [
+      "Windows startup OS checks moved off the event loop",
+      "PowerShell OS environment restored in integration fixture",
+      "old terminal-command UI assertion updated; legacy/current error formats covered"
+    ]
+  }
 }

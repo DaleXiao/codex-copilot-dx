@@ -12,6 +12,7 @@ import packageJson from "../package.json" with { type: "json" };
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
+const offlineDoctorPreload = fileURLToPath(new URL("./fixtures/offline-doctor.cjs", import.meta.url));
 const nonDarwinPlatformPreload = fileURLToPath(new URL("./fixtures/non-darwin-platform.cjs", import.meta.url));
 
 test("package exposes only the ccdx command", () => {
@@ -58,7 +59,7 @@ context_management = false
     require("node:module").syncBuiltinESMExports();
   `);
   const env = {
-    ...process.env, HOME: home, ADAPTER_HOST: "127.0.0.1", ADAPTER_PORT: "2026",
+    ...process.env, HOME: home, USERPROFILE: home, ADAPTER_HOST: "127.0.0.1", ADAPTER_PORT: "2026",
     CCDX_UPSTREAM_TIMEOUT_MS: "invalid", CCDX_EXISTING_ADAPTER_TIMEOUT_MS: "invalid",
     CCDX_LOG_PATH: path.join(home, "logs", "must-not-exist.log"),
     XDG_CACHE_HOME: path.join(home, "cache"),
@@ -170,9 +171,9 @@ test("CLI reject non-interactive animation selection before startup side effects
 
 test("cli doctor exits without starting the adapter", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-doctor-"));
-  const { stdout, stderr } = await execFileAsync(process.execPath, ["--require", nonDarwinPlatformPreload, cliPath, "doctor"], {
+  const { stdout, stderr } = await execFileAsync(process.execPath, ["--require", nonDarwinPlatformPreload, "--require", offlineDoctorPreload, cliPath, "doctor"], {
     timeout: 2000,
-    env: { ...process.env, HOME: home, ADAPTER_PORT: "9" },
+    env: { ...process.env, HOME: home, USERPROFILE: home, ADAPTER_PORT: "9" },
   });
 
   assert.match(stdout, /ccdx doctor/);
@@ -186,9 +187,9 @@ test("cli doctor ignores retired Claude settings and remains Codex-only", async 
   fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
   fs.writeFileSync(path.join(home, ".claude", "settings.json"), "{broken");
 
-  const { stdout, stderr } = await execFileAsync(process.execPath, ["--require", nonDarwinPlatformPreload, cliPath, "doctor"], {
+  const { stdout, stderr } = await execFileAsync(process.execPath, ["--require", nonDarwinPlatformPreload, "--require", offlineDoctorPreload, cliPath, "doctor"], {
     timeout: 2000,
-    env: { ...process.env, HOME: home, ADAPTER_PORT: "9" },
+    env: { ...process.env, HOME: home, USERPROFILE: home, ADAPTER_PORT: "9" },
   });
 
   assert.match(stdout, /^ccdx doctor/m);
@@ -256,7 +257,7 @@ test("removed command roots fail before authentication, file writes or service s
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   for (const root of ["auth", "models", "m365", "prediction", "image-status", "suggestion", "animation"]) {
     await assert.rejects(execFileAsync(process.execPath, [cliPath, root], {
-      timeout: 5000, env: { ...process.env, HOME: home, ADAPTER_PORT: "invalid", CCDX_AUTO_LAUNCH: "1", CCDX_LOG_PATH: path.join(home, "must-not-exist.log") },
+      timeout: 5000, env: { ...process.env, HOME: home, USERPROFILE: home, ADAPTER_PORT: "invalid", CCDX_AUTO_LAUNCH: "1", CCDX_LOG_PATH: path.join(home, "must-not-exist.log") },
     }), error => error.code === 2 && /Unknown command/.test(error.stderr) && !/ADAPTER_PORT|Ready|Starting/.test(error.stdout));
   }
   assert.deepEqual(fs.readdirSync(home), []);
@@ -266,8 +267,8 @@ test("recorded usage stays readable offline and malformed records do not leak in
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-usage-"));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const file = path.join(home, "usage.jsonl");
-  const run = target => execFileAsync(process.execPath, [cliPath, "usage", "--format", "json"], { timeout: 5000, env: { ...process.env, HOME: home, CCDX_USAGE_PATH: target } });
-  const plain = await execFileAsync(process.execPath, [cliPath, "usage"], { timeout: 5000, env: { ...process.env, HOME: home, CCDX_USAGE_PATH: file } });
+  const run = target => execFileAsync(process.execPath, [cliPath, "usage", "--format", "json"], { timeout: 5000, env: { ...process.env, HOME: home, USERPROFILE: home, CCDX_USAGE_PATH: target } });
+  const plain = await execFileAsync(process.execPath, [cliPath, "usage"], { timeout: 5000, env: { ...process.env, HOME: home, USERPROFILE: home, CCDX_USAGE_PATH: file } });
   assert.match(plain.stdout, /No usage records yet/);
   const missing = await run(file);assert.equal(JSON.parse(missing.stdout).requests, 0);assert.equal(fs.existsSync(file), false);
   fs.writeFileSync(file, "PRIVATE-MALFORMED-RECORD\n");

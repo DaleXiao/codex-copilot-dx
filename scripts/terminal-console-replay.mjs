@@ -45,13 +45,14 @@ for (const columns of [40, 80, 120]) for (const rows of [16, 24]) for (const col
   const visible = lines();
   const tableStart = visible.findIndex(line => line.startsWith("┌"));
   const offset = visible[tableStart + 1].includes("Usage / this run") ? 3 : 1;
-  assert.ok(tableStart > 0);assert.match(visible[tableStart + offset + 6], /^└.*┴.*┘$/);
+  assert.ok(tableStart > 0);assert.match(visible[tableStart + offset + 7], /^└.*┴.*┘$/);
   if (offset === 1) assert.match(visible.join("\n"), /Apps:.*configured/);
   else { assert.match(visible.join("\n"), /Claude App\s+Configured/);assert.match(visible.join("\n"), /Claude Code\s+Configured/); }
   assert.match(visible.join("\n"), /Enabled sources: 2/);
   assert.match(visible[tableStart + offset + 1], /Input\s+1\.7M.*Active\s+2/);
   assert.match(visible[tableStart + offset + 2], /Reused(?: input)?\s+1\.1M.*Completed\s+5/);
-  assert.match(visible[tableStart + offset + 5], /Cache hit\s+64\.7%.*Cancelled\s+0/);
+  assert.match(visible[tableStart + offset + 5], /Cancelled\s+0/);
+  assert.match(visible[tableStart + offset + 6], /Cache hit\s+64\.7%/);
   assert.match(visible.at(-2), /^11 notices/);assert.match(visible.at(-1), /^\[.*\] Active$/);
   if (columns === 80 && rows === 24 && !color && options.get("--output")) await fs.writeFile(options.get("--output"), visible.join("\n") + "\n");
   finish();finishSecond();data.runtime_usage.output_tokens = 6000;

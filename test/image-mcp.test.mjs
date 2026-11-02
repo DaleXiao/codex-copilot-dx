@@ -10,7 +10,7 @@ import { createImageMcpHandler as createHandler } from "../src/image-mcp.mjs";
 import { createImageReferenceStore } from "../src/image-references.mjs";
 
 const imageDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-image-chat-"));
-after(() => fs.rmSync(imageDirectory, { recursive: true, force: true }));
+after(() => fs.rmSync(imageDirectory, { recursive: true, force: true, maxRetries: 3 }));
 const createImageMcpHandler = (options) => createHandler({ imageDirectory, ...options });
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
 
@@ -331,7 +331,7 @@ test("image MCP delivers immutable local images and safe final-chat Markdown wit
   const firstPath = first._meta["ccdx/image_path"];
   assert.equal(calls, 1);
   assert.ok(path.isAbsolute(firstPath));
-  assert.equal(path.dirname(firstPath), fs.realpathSync(directory));
+  assert.equal(fs.realpathSync.native(path.dirname(firstPath)), fs.realpathSync.native(directory));
   assert.deepEqual(fs.readFileSync(firstPath), Buffer.from(PNG, "base64"));
   const markdown = first.content[1].text.match(/!\[Generated image\]\(<([^>]+)>\)/);
   assert.ok(markdown);

@@ -270,7 +270,7 @@ test("recordUsage: serializes rotation and append across processes", async (t) =
 
 test("readUsageRecords: skips invalid lines, preserves valid records, and warns once safely", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-usage-invalid-"));
-  const filePath = path.join(dir, "usage\nlog\u009b\u202e.jsonl");
+  const filePath = path.join(dir, process.platform === "win32" ? "usage-log\u009b\u202e.jsonl" : "usage\nlog\u009b\u202e.jsonl");
   const warnings = [];
   await fs.writeFile(filePath, [
     JSON.stringify({ model: "first", usage: { total_tokens: 1 } }),
@@ -288,7 +288,7 @@ test("readUsageRecords: skips invalid lines, preserves valid records, and warns 
   assert.match(warnings[0], /ignored 4 invalid records/);
   assert.doesNotMatch(warnings[0], /broken|forged warning|\u001b/);
   assert.doesNotMatch(warnings[0], /\u009b|\u202e/);
-  assert.ok(warnings[0].includes("usage\\nlog"));
+  assert.ok(warnings[0].includes(process.platform === "win32" ? "usage-log" : "usage\\nlog"));
 });
 
 test("summarizeUsageLogs: invalid rotated lines do not hide valid totals from either file", async () => {

@@ -73,7 +73,7 @@ test("unsupported systems and running Apps cause no setup writes", async (t) => 
   assert.equal(fs.existsSync(predictionPaths(opts).settings), false);
 });
 
-test("private certificate and profile trust preserve unrelated records and can be removed", async (t) => {
+test("private certificate and profile trust preserve unrelated records and can be removed", { skip: process.platform === "win32" && "macOS profile filesystem and certificate permissions; Windows ACL lifecycle has dedicated coverage" }, async (t) => {
   const opts = fixture(t), paths = predictionPaths(opts);
   const cert = createPredictionCertificate(paths.directory);
   assert.equal(fs.statSync(path.join(paths.directory, "bridge.key")).mode & 0o077, 0);
@@ -105,7 +105,7 @@ test("modified trust and unknown DB schemas are preserved", async (t) => {
   await assert.rejects(updatePredictionTrust(paths.store, cert), /Unknown certificate-store/);
 });
 
-test("explicit setup/removal supports profile changes and enables only native prediction display", async (t) => {
+test("explicit setup/removal supports profile changes and enables only native prediction display", { skip: process.platform === "win32" && "macOS profile filesystem and certificate permissions; Windows ACL lifecycle has dedicated coverage" }, async (t) => {
   const opts = fixture(t), paths = predictionPaths(opts);
   const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => app, output() {} };
   await runPredictionCommand({ ...run, action: "on" });
@@ -124,7 +124,7 @@ test("explicit setup/removal supports profile changes and enables only native pr
   assert.equal(db.prepare("SELECT count(*) AS count FROM certificates").get().count, 0); db.close();
 });
 
-test("failed activation removes only newly added trust and generated keys", async (t) => {
+test("failed activation removes only newly added trust and generated keys", { skip: process.platform === "win32" && "macOS profile filesystem and certificate permissions; Windows ACL lifecycle has dedicated coverage" }, async (t) => {
   const opts = fixture(t), paths = predictionPaths(opts);
   await assert.rejects(runPredictionCommand({ ...opts, platform: "darwin", action: "on", exec: noRunningApp,
     resolveApp: () => app, output() {}, writeSettings() { throw new Error("fixture disk failure"); } }), /disk failure/);
@@ -134,7 +134,7 @@ test("failed activation removes only newly added trust and generated keys", asyn
   assert.equal(db.prepare("SELECT count(*) AS count FROM certificates").get().count, 0); db.close();
 });
 
-test("explicit reconfiguration replaces the running bridge after committing trust", async t => {
+test("explicit reconfiguration replaces the running bridge after committing trust", { skip: process.platform === "win32" && "macOS profile filesystem and certificate permissions; Windows ACL lifecycle has dedicated coverage" }, async t => {
   const opts = fixture(t), run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => app, output() {} };
   await runPredictionCommand({ ...run, action: "on" });const calls = [];
   const { controlPrediction } = await import("../src/prediction-control.mjs");
@@ -146,7 +146,7 @@ test("explicit reconfiguration replaces the running bridge after committing trus
   assert.deepEqual(calls, ["close-old", "start-new", "check-new"]);assert.equal(result.status, "ready");
 });
 
-test("off stops overlay even when App is open and defers trust cleanup", async (t) => {
+test("off stops overlay even when App is open and defers trust cleanup", { skip: process.platform === "win32" && "macOS profile filesystem and certificate permissions; Windows ACL lifecycle has dedicated coverage" }, async (t) => {
   const opts = fixture(t);
   const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => app, output() {} };
   await runPredictionCommand({ ...run, action: "on" });
@@ -156,7 +156,7 @@ test("off stops overlay even when App is open and defers trust cleanup", async (
   assert.equal(readPredictionSettings(opts).store, undefined);
 });
 
-test("failed reactivation preserves an existing trust record and preference", async (t) => {
+test("failed reactivation preserves an existing trust record and preference", { skip: process.platform === "win32" && "macOS profile filesystem and certificate permissions; Windows ACL lifecycle has dedicated coverage" }, async (t) => {
   const opts = fixture(t);
   const run = { ...opts, platform: "darwin", exec: noRunningApp, resolveApp: () => app, output() {} };
   await runPredictionCommand({ ...run, action: "on" });
@@ -167,7 +167,7 @@ test("failed reactivation preserves an existing trust record and preference", as
   assert.equal(db.prepare("SELECT count(*) AS count FROM certificates WHERE sha256hash_hex=?").get(before.certificateHash).count, 1);db.close();
 });
 
-test("expired renewal commit failure retains old trust and off can still remove it", async (t) => {
+test("expired renewal commit failure retains old trust and off can still remove it", { skip: process.platform === "win32" && "macOS profile filesystem and certificate permissions; Windows ACL lifecycle has dedicated coverage" }, async (t) => {
   const opts = fixture(t), paths = predictionPaths(opts);
   const directory = path.join(paths.directory, "credentials-expired");
   const expireLeaf = (command, args, options) => {

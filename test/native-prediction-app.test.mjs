@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import { installedPredictionApp, predictionAppMatches } from "../src/native-prediction-app.mjs";
 
 function fixture(t) {
-  const app = "/Applications/ChatGPT.app", metadata = app + "/Contents/Info.plist", executable = app + "/Contents/MacOS/ChatGPT";
+  const app = "/Applications/ChatGPT.app", metadata = path.join(app, "Contents/Info.plist"), executable = path.join(app, "Contents/MacOS/ChatGPT");
   let generation = 1;
   t.mock.method(fs, "existsSync", file => file === metadata);
   t.mock.method(fs, "statSync", file => {

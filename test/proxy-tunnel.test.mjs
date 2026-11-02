@@ -8,7 +8,6 @@ import https from "node:https";
 import net from "node:net";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 import { createPredictionCertificate } from "../src/native-prediction-profile.mjs";
 import { resolveNetworkRoute } from "../src/network-route.mjs";
 import { createProxyAgent } from "../src/proxy-tunnel.mjs";
@@ -109,8 +108,8 @@ test("HTTPS proxies verify both TLS layers and preserve CONNECT routing", { time
   await assert.rejects(request(rejected), /certificate|issuer|self.signed/i);
   assert.equal(connects, 0);
   const code = `import https from 'node:https';
-    import {createProxyAgent} from ${JSON.stringify(fileURLToPath(new URL("../src/proxy-tunnel.mjs", import.meta.url)))};
-    import {resolveNetworkRoute} from ${JSON.stringify(fileURLToPath(new URL("../src/network-route.mjs", import.meta.url)))};
+    import {createProxyAgent} from ${JSON.stringify(new URL("../src/proxy-tunnel.mjs", import.meta.url).href)};
+    import {resolveNetworkRoute} from ${JSON.stringify(new URL("../src/network-route.mjs", import.meta.url).href)};
     const agent=createProxyAgent(resolveNetworkRoute({env:{HTTPS_PROXY:${JSON.stringify(address)}}}));
     await new Promise((resolve,reject)=>{https.get({host:'chatgpt.com',path:'/fixture',agent,ca:${JSON.stringify(certificate.ca)},
       headers:{authorization:'Bearer fixture-client'}},res=>{let text='';res.on('data',x=>text+=x);res.on('end',()=>{process.stdout.write(text);resolve();});res.on('error',reject);}).on('error',reject);}).finally(()=>agent.destroy());`;

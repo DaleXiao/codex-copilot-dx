@@ -80,8 +80,8 @@ function normalizeResponsesUsage(usage) {
     reasoning_output_tokens: count(usage.reasoning_output_tokens ?? usage.output_tokens_details?.reasoning_tokens),
     total_tokens: count(usage.total_tokens),
   });
-  if (out.total_tokens === undefined && (out.input_tokens !== undefined || out.output_tokens !== undefined)) {
-    out.total_tokens = (out.input_tokens || 0) + (out.output_tokens || 0);
+  if (out.total_tokens === undefined && out.input_tokens !== undefined && out.output_tokens !== undefined) {
+    out.total_tokens = out.input_tokens + out.output_tokens;
   }
   return Object.keys(out).length ? out : undefined;
 }

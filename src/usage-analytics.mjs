@@ -29,9 +29,10 @@ export function createUsageAnalytics({ timeZone = "UTC", now = Date.now(), quali
   function row(values = {}) {
     return {
       requests: values.requests || 0,
-      input_tokens: values.input_tokens || 0,
-      output_tokens: values.output_tokens || 0,
-      total_tokens: values.total_tokens ?? (values.input_tokens || 0) + (values.output_tokens || 0),
+      input_tokens: values.input_tokens ?? (values.requests ? null : 0),
+      output_tokens: values.output_tokens ?? (values.requests ? null : 0),
+      total_tokens: values.total_tokens ?? (!values.tokens_partial && Number.isFinite(values.input_tokens) && Number.isFinite(values.output_tokens)
+        ? values.input_tokens + values.output_tokens : values.requests ? null : 0),
       cache_read_tokens: cacheReadTokens(values) ?? null,
       cache_write_input_tokens: values.cache_write_input_tokens ?? null,
       cache_hit_rate: usageCacheHitRate(values),

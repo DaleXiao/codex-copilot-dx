@@ -28,7 +28,7 @@ function fmt(n) {
   return Number.isFinite(n) ? n.toLocaleString("en-US") : "0";
 }
 
-const writeTokens = n => Number.isFinite(n) ? fmt(n) : "—";
+const tokenCount = n => Number.isFinite(n) ? fmt(n) : "—";
 
 function tableNumber(n) {
   return Number.isFinite(n) ? n.toLocaleString("en-US") : undefined;
@@ -55,13 +55,13 @@ function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {
   }
   lines.push(
     `Records: ${fmt(summary.requests)}`,
-    `Tokens: input=${fmt(summary.totals.input_tokens)} cache_read=${fmt(cacheReadTokens(summary.totals))} cache_write=${writeTokens(summary.totals.cache_write_input_tokens)} output=${fmt(summary.totals.output_tokens)} total=${fmt(summary.totals.total_tokens)}`,
+    `Tokens: input=${tokenCount(summary.totals.input_tokens)} cache_read=${tokenCount(cacheReadTokens(summary.totals))} cache_write=${tokenCount(summary.totals.cache_write_input_tokens)} output=${tokenCount(summary.totals.output_tokens)} total=${tokenCount(summary.totals.total_tokens)}`,
     `Cache hit: ${cacheHitPercent(summary.totals)} (cached/input tokens; valid paired records only)`,
     "",
     "By model:",
   );
   for (const [model, row] of Object.entries(usageModelGroups(summary))) {
-    lines.push(`  ${terminalCell(model)}: records=${fmt(row.requests)} input=${fmt(row.input_tokens)} cache_read=${fmt(cacheReadTokens(row))} cache_write=${writeTokens(row.cache_write_input_tokens)} output=${fmt(row.output_tokens)} total=${fmt(row.total_tokens)} cache_hit=${cacheHitPercent(row)}`);
+    lines.push(`  ${terminalCell(model)}: records=${fmt(row.requests)} input=${tokenCount(row.input_tokens)} cache_read=${tokenCount(cacheReadTokens(row))} cache_write=${tokenCount(row.cache_write_input_tokens)} output=${tokenCount(row.output_tokens)} total=${tokenCount(row.total_tokens)} cache_hit=${cacheHitPercent(row)}`);
   }
   return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
 }
@@ -87,7 +87,7 @@ function usageTableRow(model, usage) {
 }
 
 function usageDetailLine(model, usage) {
-  return `${terminalCell(model)}: input=${fmt(usage.input_tokens)} cache_read=${fmt(cacheReadTokens(usage))} cache_write=${writeTokens(usage.cache_write_input_tokens)} output=${fmt(usage.output_tokens)} cache_hit=${cacheHitPercent(usage)}`;
+  return `${terminalCell(model)}: input=${tokenCount(usage.input_tokens)} cache_read=${tokenCount(cacheReadTokens(usage))} cache_write=${tokenCount(usage.cache_write_input_tokens)} output=${tokenCount(usage.output_tokens)} cache_hit=${cacheHitPercent(usage)}`;
 }
 
 function formatTableUsageSummary(summary, filePath, output) {
@@ -128,8 +128,8 @@ function formatTableUsageSummary(summary, filePath, output) {
   }
   const lines = [`Usage log: ${safePath}`, ...providerSummaryLines(summary), "", table.output];
   if (writeOmitted && !table.compact && Number.isFinite(totalUsage.cache_write_input_tokens)) {
-    lines.push("", "Cache writes:", `TOTAL: ${writeTokens(totalUsage.cache_write_input_tokens)}`,
-      ...modelUsage.filter(({ row }) => Number.isFinite(row.cache_write_input_tokens)).map(({ model, row }) => `${terminalCell(model)}: ${writeTokens(row.cache_write_input_tokens)}`));
+    lines.push("", "Cache writes:", `TOTAL: ${tokenCount(totalUsage.cache_write_input_tokens)}`,
+      ...modelUsage.filter(({ row }) => Number.isFinite(row.cache_write_input_tokens)).map(({ model, row }) => `${terminalCell(model)}: ${tokenCount(row.cache_write_input_tokens)}`));
   }
   if (table.compact) {
     lines.push(

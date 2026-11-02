@@ -56,6 +56,14 @@ test("M365 daily rates use paired evidence while retaining all input and output 
   assert.equal(data.models[0].model, "m365 / claude-test");assert.equal(data.models[0].cache_hit_rate, .95);
 });
 
+test("daily unknown counters stay unknown while explicit zeros and days without records remain zero", () => {
+  const unknown = collect([record("2026-10-01T10:00:00Z", "partial", { input_tokens: 100 })]).days.at(-1);
+  assert.equal(unknown.input_tokens, 100);assert.equal(unknown.output_tokens, null);assert.equal(unknown.total_tokens, null);assert.equal(unknown.tokens_partial, true);
+  const zero = collect([record("2026-10-01T10:00:00Z", "zero", { input_tokens: 0, output_tokens: 0, total_tokens: 0 })]).days.at(-1);
+  assert.equal(zero.input_tokens, 0);assert.equal(zero.output_tokens, 0);assert.equal(zero.total_tokens, 0);
+  const empty = collect([]).days.at(-1);assert.equal(empty.requests, 0);assert.equal(empty.total_tokens, 0);
+});
+
 test("analytics excludes invalid/future timestamps and marks partial or invalid token counts", () => {
   const data = collect([record("invalid"), record("2026-10-02T00:00:00Z"), record("2026-10-01T00:00:00Z", "unknown", { input_tokens: 10 }), record("2026-10-01T00:00:00Z", "bad", { input_tokens: -1, output_tokens: 5 })]);
   assert.equal(data.undated_records, 2);

@@ -320,6 +320,9 @@ test("buildResponsesUsageRecord: skips absent usage while preserving explicitly 
   assert.equal(buildResponsesUsageRecord({ response: { usage: {} } }), null);
   const cached = buildResponsesUsageRecord({ response: { usage: { input_tokens: 100, output_tokens: 0, total_tokens: 100, input_tokens_details: { cached_tokens: 95 } } } });
   assert.equal(cached.usage.output_tokens, 0);assert.equal(usageCacheHitRate(cached.usage), .95);
+  for (const usage of [{ input_tokens: 100 }, { output_tokens: 20 }]) {
+    const partial = buildResponsesUsageRecord({ response: { usage } });assert.equal(partial.usage.total_tokens, undefined);
+  }
 });
 
 test("cache hit rate preserves explicit zero reports and distinguishes missing data", () => {
@@ -519,7 +522,7 @@ test("formatUsageSummary: both formats combine cache fields and use dashes for m
     filePath: "/tmp/usage.jsonl",
     format: "plain",
     output: { isTTY: true, columns: 120 },
-  }), /Tokens: input=0 cache_read=12 cache_write=— output=2 total=14/);
+  }), /Tokens: input=— cache_read=12 cache_write=— output=2 total=14/);
 });
 
 test("formatUsageSummary: auto keeps plain output when stdout is not a TTY", () => {

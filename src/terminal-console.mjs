@@ -55,13 +55,13 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
     const rate = usage.cache_hit_rate;
     const cacheHit = Number.isFinite(rate) && rate >= 0 && rate <= 1 ? `${usage.cache_hit_rate_partial ? "~" : ""}${(rate * 100).toFixed(1)}%` : "—";
     const usageRows = [[left < 23 ? "Records" : "Usage records", usage.records ?? null], ["Input", usage.input_tokens ?? null], [left < 23 ? "Reused" : "Reused input", usage.cached_input_tokens ?? null],
-      ["Output", usage.output_tokens ?? null], [left < 23 ? "Partial" : "Partial records", usage.partial_records ?? null], ["Cache hit", cacheHit]];
+      [left < 23 ? "Written" : "Cache write", usage.cache_write_input_tokens ?? null], ["Output", usage.output_tokens ?? null], [left < 23 ? "Partial" : "Partial records", usage.partial_records ?? null], ["Cache hit", cacheHit]];
     const requestRows = [["Total", requests], ["Active", inferenceActive], ["Completed", sum("completed")], ["Incomplete", sum("incomplete")], ["Failed", sum("failed")], ["Cancelled", sum("cancelled")]];
     if (sum("unknown")) { usageRows.push(["", ""]);requestRows.push(["Unknown", sum("unknown")]); }
     const title = compactTitle ? [`┌─ Usage ${"─".repeat(left - 8)}┬─ Requests ${"─".repeat(right - 11)}┐`]
       : [rule("┌", "┬", "┐"), row(cell("Usage / this run", undefined, left), cell(right < 23 ? "Requests" : "Model requests", undefined, right)), rule("├", "┼", "┤")];
     return [...title,
-      ...usageRows.map(([label, value], index) => row(cell(label, value === undefined ? (label ? null : undefined) : value, left), cell(...requestRows[index], right))), rule("└", "┴", "┘")];
+      ...usageRows.map(([label, value], index) => row(cell(label, value === undefined ? (label ? null : undefined) : value, left), cell(...(requestRows[index] || ["", undefined]), right))), rule("└", "┴", "┘")];
   }
   function render() {
     if (!running || !supported() || verbose) { frameDelay = 1000;return; }

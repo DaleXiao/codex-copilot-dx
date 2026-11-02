@@ -106,7 +106,7 @@ Catalog diagnostics distinguish local cached data from an online response and ex
 - **Local checks:** `doctor` is read-only by default. `--online` checks access; `--compat` sends minimal inference and consumes usage. `--fix` backs up owned configuration and performs bounded repairs. It does not enable optional features, change company policy or force-restart apps. Partial repairs exit 1.
 - **Cache cleanup:** adding `--history` can break the next continuation. It does not delete client transcripts or generated images.
 
-Request inspection covers bounded retained records, not a full conversation archive. Unidentified clients stay unidentified. Routine diagnostics omit secrets, prompts and error bodies. Explicit error excerpts use bounded, redacted collection. The usage JSON `requests` field counts recorded usage rows, not HTTP calls. Usage is returned token metadata; cache hit is reused input divided by input, with unknown/partial data indicated. It is not a request-based cache rate or a billing receipt.
+Request inspection covers bounded retained records, not a full conversation archive. Unidentified clients stay unidentified. Routine diagnostics omit secrets, prompts and error bodies. Explicit error excerpts use bounded, redacted collection. The usage JSON `requests` field counts recorded usage rows, not HTTP calls. Usage is returned token metadata; cache hit is reused input divided by input from records with valid counts for both. Unknown/invalid records remain in token totals but are excluded from both sides of the rate, with partial coverage indicated. It is not a request-based cache rate or a billing receipt.
 
 ## Settings and appearance
 
@@ -684,7 +684,13 @@ When upstream responses contain usage fields, CCDX records token counts, model n
 ccdx usage
 ```
 
-The summary covers the current log and its single rotated backup, not an unbounded lifetime history. It reports recorded responses and per-model input, cache-read, output, and total token metadata.
+The summary covers the current log and its single rotated backup, not an unbounded lifetime history. It reports recorded responses and per-model input, cache-read, cache-write, output, and total token metadata.
+
+M365 preserves system instructions at their original mid-conversation position. This avoids moving each new reminder ahead of the already cached history. Other Claude App API endpoints keep legacy behavior unless the model's `mid_conversation_system` capability is explicitly true. A false override selects legacy hoisting; Responses and Chat use their existing paths. This preserves instruction priority rather than converting system messages to user text.
+
+Messages input is the sum of Anthropic uncached input, cache-read and cache-creation tokens. Cache creation is new input, not a cache hit; output tokens, including thinking output, are not added to the cache-hit denominator. M365 follows this same protocol accounting. Cache writes are shown separately when reported; missing write counts remain unknown. Stream usage updates replace cumulative counters, preserve earlier values when a later field is null or absent, and retain explicit zero. Each gateway request writes at most one usage row; forwarded usage is unchanged.
+
+CLI/TUI, WebUI totals and daily analytics use the same paired evidence for cache rates. Aggregate JSON exposes `cache_hit_known_requests`, `cache_hit_unknown_requests`, `cache_hit_input_tokens` and `cache_hit_read_tokens` so the rate and its coverage can be checked. `~` marks incomplete coverage; a rate without a positive known input basis remains unknown. Historical logs are re-aggregated without rewriting their records, and unknown cache values are never filled with zero.
 
 Usage writes are asynchronous and batched under the existing cross-process rotation lock. Pending and in-flight records share a 4096-record / 4 MiB ceiling. If either ceiling is reached, new excess records are dropped with a warning and a status counter; inference does not wait or retry. Normal records and per-record rotation boundaries are unchanged. The bounded shutdown flush remains 1.5 seconds; disk failures and shutdown deadlines can prevent persistence, so usage is diagnostic rather than a billing ledger.
 
@@ -769,7 +775,7 @@ Usage queries share a bounded aggregate checkpoint only when file identities, fi
 
 ## Local masking
 
-Settings → Advanced → Local masking is off by default. Enabling it downloads the optional local component and AstrLink Guard 0.1.3, verifies their checksums and loads the model before activating protection. The npm package and ordinary installation do not contain model weights or require Go, Python or CUDA. The model and tokenizer total 38,958,270 bytes; the executable and optional macOS acceleration cache require additional space.
+Settings → Advanced → Local masking is off by default. Enabling it downloads the optional local component and AstrLink Guard 0.1.3, verifies their checksums and loads the model before activating protection. The npm package and ordinary installation do not contain model weights or require Go, Python or CUDA. The model and tokenizer total 38,958,270 bytes; the executable and optional macOS acceleration cache require additional space. Component upgrades stage in a separate version directory. A verified compatible older component keeps serving during a failed download; the staged component takes over on the next engine load. Model weights with matching checksums are reused.
 
 Covered text includes conversation instructions, message text, tool results, tool argument values and tool descriptions on Responses, Chat and Messages routes. Protocol identifiers, tool schemas, authentication headers, images, signed thinking and encrypted reasoning retain their current behavior. Masking cannot retroactively remove data already sent to a service or control an agent's file/tool permissions. Personal-information detection is a separate opt-in; detection can miss values or mistake ordinary text.
 
@@ -781,8 +787,8 @@ Each request pins its masking choice, including compatibility retries. A check e
 
 Turning masking off affects subsequent requests. Existing protected replies keep their restoration mappings until they finish. The downloaded component can then be deleted separately. Settings reset backs up and resets masking choices while keeping accounts, model selections, client connections, images and prediction access. Older settings backups inherit masking off.
 
-Try locally sends sample text only to the local component. Request records show the number of replacements and elapsed local-check time, never the original values. Download failures keep protection off; configured but unavailable protection refuses covered requests. Downloads retain the selected npm's proxy, certificate and offline policy, with no automatic policy relaxation or alternate downloader.
+Try locally sends sample text only to the local component. Request records show the number of replacements and elapsed local-check time, never the original values. Initial setup failures keep protection off; failed component upgrades retain verified compatible protection. Configured but unavailable protection refuses covered requests. Downloads retain the selected npm's proxy, certificate and offline policy, with no automatic policy relaxation or alternate downloader.
 
 Privacy failures have a separate local diagnostic origin. Response-restoration failures report that the response was stopped; request-check failures report that nothing was sent. When the latest Messages input explicitly contains failed tool results, request details show their count without retaining their content. HTTP success describes the model response, not proof that a client executed its tools successfully.
 
-The optional component is pinned to the v1.3.6 Release; later code-only updates can reuse it. Its source and license notices are in `native/privacy-guard` and `src/privacy-notices.txt`. AstrLink Guard model files use their publisher's Apache-2.0 license.
+The optional component targets the v1.3.9 Release; later code-only updates can reuse it. A verified ABI-compatible v1.3.6 installation can continue serving while the new component is staged. Its source and license notices are in `native/privacy-guard` and `src/privacy-notices.txt`. AstrLink Guard model files use their publisher's Apache-2.0 license.

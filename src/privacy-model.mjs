@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { createNpmReleaseFetch, releaseBytes, releaseChecksum, RELEASE_BASE } from "./release-install.mjs";
 
 export const PRIVACY_MODEL_REVISION = "7216b6a3b897ef903d4b1ba367ae6fb95b0fa5e4";
-export const PRIVACY_COMPONENT_RELEASE = "1.3.6";
+export const PRIVACY_COMPONENT_RELEASE = "1.3.9";
 export const PRIVACY_MODEL_FILES = Object.freeze([
   { name: "model_int8.onnx", bytes: 330781, sha256: "0a070d3113615e33ba3b84d6bd486f663a377c04c4b056e7381732179f51832a" },
   { name: "model_int8.onnx_data", bytes: 37124608, sha256: "0ba34216ceead01e0ae2dfd8e46d52b67e7aee80b04f722d9b758613a91c0067" },
@@ -25,7 +25,8 @@ const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 export function privacyPaths({ home = os.homedir(), env = process.env, platform = process.platform, arch = process.arch } = {}) {
   const root = path.join(env.XDG_CACHE_HOME || (platform === "win32" ? env.LOCALAPPDATA || path.join(home, "AppData", "Local") : path.join(home, ".cache")), "codex-copilot-dx", "privacy");
   const name = `ccdx-privacy-guard-1-${platform}-${arch}${platform === "win32" ? ".exe" : ""}`;
-  return { root, model: path.join(root, PRIVACY_MODEL_REVISION), name, runner: path.join(root, name), receipt: path.join(root, name + ".json") };
+  const component = path.join(root, "components", PRIVACY_COMPONENT_RELEASE);
+  return { root, model: path.join(root, PRIVACY_MODEL_REVISION), name, runner: path.join(component, name), receipt: path.join(component, name + ".json"), legacyRunner: path.join(root, name), legacyReceipt: path.join(root, name + ".json") };
 }
 async function downloader(env) {
   const names = [env.npm_execpath];
@@ -45,26 +46,36 @@ async function downloader(env) {
 }
 export function createPrivacyModel(options = {}) {
   const env = options.env || process.env, paths = privacyPaths(options), changed = options.changed || (() => {});
+  const modelFiles = options.modelFiles || PRIVACY_MODEL_FILES;
+  let activeRunner = paths.runner, componentRelease = null, upgradeAttempted = false;
   let child, serial = 0, ready = null, install = null, downloadAbort, line = "", stopped = false;
   let state = { state: "not_downloaded", downloaded_bytes: 0, download_bytes: PRIVACY_DOWNLOAD_BYTES, backend: null, device: null, error: null };
   const jobs = new Map();
   const set = next => { state = { ...state, ...next };changed(); };
-  async function installed() {
+  async function installed({ current = false } = {}) {
     try {
-      const receipt = JSON.parse(await fs.readFile(paths.receipt, "utf8"));
-      if (!/^[a-f0-9]{64}$/.test(receipt.sha256) || receipt.release !== PRIVACY_COMPONENT_RELEASE) return false;
-      if (digest(await fs.readFile(paths.runner)) !== receipt.sha256) return false;
-      for (const file of PRIVACY_MODEL_FILES) if (digest(await fs.readFile(path.join(paths.model, file.name))) !== file.sha256) return false;
-      return true;
+      for (const file of modelFiles) if (digest(await fs.readFile(path.join(paths.model, file.name))) !== file.sha256) return false;
+      const candidates = [[paths.runner, paths.receipt, PRIVACY_COMPONENT_RELEASE], ...(!current ? [[paths.legacyRunner, paths.legacyReceipt, "1.3.6"]] : [])];
+      for (const [runner, receiptFile, release] of candidates) {
+        try {
+          const receipt = JSON.parse(await fs.readFile(receiptFile, "utf8"));
+          if (!/^[a-f0-9]{64}$/.test(receipt.sha256) || receipt.release !== release || digest(await fs.readFile(runner)) !== receipt.sha256) continue;
+          if (!child) { activeRunner = runner;componentRelease = release; }
+          return true;
+        } catch { /* Missing targets never hide a verified ABI-compatible legacy component. */ }
+      }
+      return false;
     } catch { return false; }
   }
-  async function download() {
+  async function download({ background = false } = {}) {
     if (install) return install;
     stopped = false;downloadAbort = new AbortController();const signal = downloadAbort.signal;
+    const report = next => background && child ? set({ component_update: next.state, component_update_error: next.error || null }) : set(next);
     install = (async () => {
-      set({ state: "downloading", error: null, downloaded_bytes: 0 });
+      report({ state: "downloading", error: null, downloaded_bytes: 0 });
       const fetchImpl = options.fetchImpl || await downloader(env);
       await fs.mkdir(paths.model, { recursive: true, mode: 0o700 });
+      await fs.mkdir(path.dirname(paths.runner), { recursive: true, mode: 0o700 });
       const base = `${RELEASE_BASE}/v${PRIVACY_COMPONENT_RELEASE}`;
       const sums = await releaseBytes(`${base}/SHA256SUMS`, { fetchImpl, maxBytes: 65536, signal });
       const expected = releaseChecksum(sums, paths.name);
@@ -74,9 +85,9 @@ export function createPrivacyModel(options = {}) {
       try { await fs.writeFile(tempRunner, runner, { mode: 0o700, flag: "wx" });await fs.rename(tempRunner, paths.runner); }
       finally { await fs.rm(tempRunner, { force: true }); }
       await fs.writeFile(paths.receipt, JSON.stringify({ release: PRIVACY_COMPONENT_RELEASE, sha256: expected }) + "\n", { mode: 0o600 });
-      for (const file of PRIVACY_MODEL_FILES) {
+      for (const file of modelFiles) {
         const target = path.join(paths.model, file.name);
-        try { if (digest(await fs.readFile(target)) === file.sha256) { set({ downloaded_bytes: state.downloaded_bytes + file.bytes });continue; } } catch {}
+        try { if (digest(await fs.readFile(target)) === file.sha256) { report({ downloaded_bytes: state.downloaded_bytes + file.bytes });continue; } } catch {}
         const response = await fetchImpl(`https://huggingface.co/QuantumNous/astrlink-guard/resolve/${PRIVACY_MODEL_REVISION}/int8/${file.name}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(180000)]), redirect: "follow" });
         const host = response.url && new URL(response.url);
         if (!response.ok || host && (host.protocol !== "https:" || !/^(?:huggingface\.co|[a-z0-9.-]+\.(?:huggingface\.co|hf\.co))$/.test(host.hostname))) { await response.body?.cancel();throw privacyFailure("download_unavailable"); }
@@ -85,15 +96,15 @@ export function createPrivacyModel(options = {}) {
           for await (const bytes of response.body || []) {
             if (signal.aborted) throw signal.reason;
             total += bytes.length;if (total > file.bytes) throw privacyFailure("download_invalid");
-            hash.update(bytes);await output.write(bytes);set({ downloaded_bytes: state.downloaded_bytes + bytes.length });
+            hash.update(bytes);await output.write(bytes);report({ downloaded_bytes: state.downloaded_bytes + bytes.length });
           }
           if (total !== file.bytes || hash.digest("hex") !== file.sha256) throw privacyFailure("download_invalid");
           await output.sync();await output.close();await fs.rename(temp, target);
         } finally { await output.close().catch(() => {});await fs.rm(temp, { force: true }); }
       }
       if (signal.aborted || stopped) throw privacyFailure("cancelled");
-      set({ state: "installed" });
-    })().catch(error => { if (signal.aborted || stopped) { set({ state: "not_downloaded", error: null });throw privacyFailure("cancelled"); }set({ state: "error", error: error.code?.startsWith("ccdx_privacy_") ? error.code : "ccdx_privacy_download_unavailable" });throw privacyFailure("download_unavailable"); })
+      report({ state: background ? "staged" : "installed", error: null });
+    })().catch(error => { if (signal.aborted || stopped) { report({ state: "not_downloaded", error: null });throw privacyFailure("cancelled"); }report({ state: "error", error: error.code?.startsWith("ccdx_privacy_") ? error.code : "ccdx_privacy_download_unavailable" });throw privacyFailure("download_unavailable"); })
       .finally(() => { install = null;downloadAbort = null; });
     return install;
   }
@@ -112,7 +123,7 @@ export function createPrivacyModel(options = {}) {
       return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { reject(privacyFailure("load_timeout"));fail(); }, 60000);
       const workerEnv = Object.fromEntries(["PATH", "SystemRoot", "WINDIR", "TMP", "TEMP", "TMPDIR", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "GOMAXPROCS"].filter(key => typeof env[key] === "string").map(key => [key, env[key]]));
-      const current = child = (options.spawnImpl || spawn)(paths.runner, [paths.model], { env: workerEnv, stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+      const current = child = (options.spawnImpl || spawn)(activeRunner, [paths.model], { env: workerEnv, stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
       current.stdout.on("data", bytes => {
         if (current !== child) return;
         line += bytes.toString("utf8");if (Buffer.byteLength(line) > 8 * 1024 * 1024) { fail();return; }
@@ -121,7 +132,7 @@ export function createPrivacyModel(options = {}) {
           const part = line.slice(0, end);line = line.slice(end + 1);
           try {
             const value = JSON.parse(part);
-            if (value.ready === true) { clearTimeout(timer);set({ state: "ready", backend: value.backend === "CoreML" ? "CoreML" : "CPU", device: ["CPU", "GPU", "Neural Engine"].includes(value.device) ? value.device : null });resolve(); }
+            if (value.ready === true) { clearTimeout(timer);set({ state: "ready", backend: value.backend === "CoreML" ? "CoreML" : "CPU", device: ["CPU", "GPU", "Neural Engine"].includes(value.device) ? value.device : null });resolve();if (componentRelease !== PRIVACY_COMPONENT_RELEASE && !upgradeAttempted) { upgradeAttempted = true;void download({ background: true }).catch(() => {}); } }
             else if (jobs.has(value.id)) { const job = jobs.get(value.id);jobs.delete(value.id);clearTimeout(job.timer);job.resolve(value.found);changed();if (stopped && !jobs.size) stop(); }
           } catch { fail(); }
         }
@@ -139,7 +150,10 @@ export function createPrivacyModel(options = {}) {
     if (Buffer.byteLength(input) > 8 * 1024 * 1024) throw privacyFailure("request_too_large");
     if ([...jobs.values()].reduce((n, job) => n + job.bytes, Buffer.byteLength(input)) > 16 * 1024 * 1024) throw privacyFailure("busy");
     return new Promise((resolve, reject) => {
-      const cancelled = () => { if (jobs.has(id)) { jobs.delete(id);clearTimeout(timer);reject(signal?.reason || privacyFailure("cancelled")); } };
+      // The helper may still be executing after a waiter leaves. Keep its slot
+      // and byte budget until its actual reply or deadline, never admit an
+      // unbounded queue by reporting cancelled native work as already idle.
+      const cancelled = () => { if (jobs.has(id)) { jobs.get(id).cancelled = true;signal?.removeEventListener("abort", cancelled);reject(signal?.reason || privacyFailure("cancelled"));changed(); } };
       const finish = fn => value => { signal?.removeEventListener("abort", cancelled);fn(value); };
       const timer = setTimeout(() => { reject(privacyFailure("check_timeout"));fail(); }, 300000);
       jobs.set(id, { resolve: finish(resolve), reject: finish(reject), timer, bytes: Buffer.byteLength(input) });signal?.addEventListener("abort", cancelled, { once: true });changed();
@@ -150,12 +164,12 @@ export function createPrivacyModel(options = {}) {
   function snapshot() {
     if (!child && !install && ["installed", "not_downloaded"].includes(state.state)) {
       try {
-        const stat = fsSync.lstatSync(paths.runner);
-        const cached = stat.isFile() && stat.size > 0 && stat.size <= 16 * 1024 * 1024 && PRIVACY_MODEL_FILES.every(file => fsSync.lstatSync(path.join(paths.model, file.name)).size === file.bytes);
+        const stat = fsSync.lstatSync(fsSync.existsSync(paths.runner) ? paths.runner : paths.legacyRunner);
+        const cached = stat.isFile() && stat.size > 0 && stat.size <= 16 * 1024 * 1024 && modelFiles.every(file => fsSync.lstatSync(path.join(paths.model, file.name)).size === file.bytes);
         state = { ...state, state: cached ? "installed" : "not_downloaded" };
       } catch { state = { ...state, state: "not_downloaded" }; }
     }
-    return { ...state, pending_checks: jobs.size };
+    return { ...state, component_release: componentRelease, target_component_release: PRIVACY_COMPONENT_RELEASE, pending_checks: jobs.size, cancelled_checks: [...jobs.values()].filter(job => job.cancelled).length };
   }
   return { paths, snapshot, installed, download, load, find, stop,
     async remove() { stop();await install?.catch(() => {});if (jobs.size) throw privacyFailure("busy");await fs.rm(paths.root, { recursive: true, force: true });set({ state: "not_downloaded", downloaded_bytes: 0 }); },

@@ -41,6 +41,21 @@ test("calendar days remain contiguous across DST and zero usage differs from abs
   assert.equal(collect([]).days.every(({ available }) => available === false), true);
 });
 
+test("M365 daily rates use paired evidence while retaining all input and output totals", () => {
+  const rows = [
+    { ...record("2026-10-01T10:00:00Z", "claude-test", { input_tokens: 100, cached_input_tokens: 95, output_tokens: 2, total_tokens: 102 }), provider: "m365" },
+    { ...record("2026-10-01T10:01:00Z", "claude-test", { input_tokens: 900, output_tokens: 3, total_tokens: 903 }), provider: "m365" },
+    { ...record("2026-10-01T10:02:00Z", "claude-test", { cached_input_tokens: 200, output_tokens: 4 }), provider: "m365" },
+  ];
+  const data = collect(rows, { qualifyProviders: true }).days.at(-1);
+  assert.equal(data.input_tokens, 1000);assert.equal(data.output_tokens, 9);
+  assert.equal(data.cache_read_tokens, 295);
+  assert.equal(data.cache_hit_rate, .95);assert.equal(data.cache_hit_rate_partial, true);
+  assert.equal(data.cache_hit_known_requests, 1);assert.equal(data.cache_hit_unknown_requests, 2);
+  assert.equal(data.cache_hit_input_tokens, 100);assert.equal(data.cache_hit_read_tokens, 95);
+  assert.equal(data.models[0].model, "m365 / claude-test");assert.equal(data.models[0].cache_hit_rate, .95);
+});
+
 test("analytics excludes invalid/future timestamps and marks partial or invalid token counts", () => {
   const data = collect([record("invalid"), record("2026-10-02T00:00:00Z"), record("2026-10-01T00:00:00Z", "unknown", { input_tokens: 10 }), record("2026-10-01T00:00:00Z", "bad", { input_tokens: -1, output_tokens: 5 })]);
   assert.equal(data.undated_records, 2);

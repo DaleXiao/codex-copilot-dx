@@ -17,6 +17,8 @@ import { operationErrorDetails, transportErrorDetails } from "./operation-error.
 import { requestApplication } from "./request-application.mjs";
 import { observeContextSession } from "./context-metrics.mjs";
 import { catalogCapabilities } from "./model-capabilities.mjs";
+import { applyMessagesSystemPolicy } from "./messages-system-policy.mjs";
+import { createApiTokenCounter } from "./providers/api-token-count.mjs";
 
 function observeMessagesWindow(provider, model, capability, entry) {
   try {
@@ -39,19 +41,6 @@ function send(res, code, value) {
 const apiError = (code, message) => ({ type: "error", error: { type: "api_error", code, message } });
 const hasMessageState = block => Boolean(block && (block.id || block.signature || block.data
   || typeof block.text === "string" && block.text.length || typeof block.thinking === "string" && block.thinking.length));
-function desktopMessages(body) {
-  const messages = [], instructions = [];
-  const blocks = content => {
-    if (typeof content === "string") return [{ type: "text", text: content }];
-    if (Array.isArray(content) && content.every(block => block?.type === "text" && typeof block.text === "string")) return content;
-    throw Object.assign(new Error("System instructions must contain text"), { code: "ccdx_messages_system_invalid", statusCode: 400 });
-  };
-  for (const message of body.messages) {
-    if (message?.role === "system") instructions.push(...blocks(message.content));
-    else messages.push(message);
-  }
-  return instructions.length ? { ...body, system: [...(body.system === undefined ? [] : blocks(body.system)), ...instructions], messages } : body;
-}
 function authenticated(headers, key) {
   const candidates = [headers["x-api-key"], typeof headers.authorization === "string" ? /^Bearer (.+)$/i.exec(headers.authorization)?.[1] : null];
   const expected = Buffer.from(key);
@@ -106,12 +95,13 @@ export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clie
     finish() { output = [];consume(decoder.decode());if (fragments.length) line(fragments.join(""), false);if (wire.length && !/\r?\n\r?\n$/.test(wire.join(""))) wire.push("\n\n");frame();return output; } };
 }
 
-export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = false, log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,
+export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = false, messagesSystemMode = "passthrough", log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,
   resolveRequest, privacy, privacyClient = "claude", record = recordUsage, acquireRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 }) } = {}) {
   if (!provider || !isProviderId(provider.id) || typeof apiKey !== "string" || apiKey.length < 32) throw new Error("Claude gateway requires a provider and private local key");
   const config = loadRuntimeConfig(env), performance = sharedPerformance || createStreamPerformanceMetrics({ routeNames: ["messages"] });
   const decodedLimit = decodedBodyLimitPreference({ env }).bytes;
   const stats = { total: 0, active: 0, completed: 0, incomplete: 0, failed: 0, cancelled: 0, last_request_at: null, last_model: null };
+  const countCoordinators = new WeakMap();
   async function dispatch(req, res) {
     let selectedProvider = provider, finishProvider = () => {};
     if (!isLoopbackAddress(req.socket?.remoteAddress) || req.headers.host === undefined || !isLoopbackHostHeader(req.headers.host)
@@ -162,7 +152,8 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           body = { ...body, model: configuredModel };tracker?.setProvider(selectedProvider.id);
           const context = currentRequestContext();if (context) context.provider = selectedProvider.id;
         }
-        if (desktopAliases) body = desktopMessages(body);
+        const inlineSystem = selectedCapability?.values?.mid_conversation_system;
+        body = applyMessagesSystemPolicy(body, inlineSystem === true ? "native" : inlineSystem === false ? "legacy" : selectedProvider.messagesSystemMode ?? messagesSystemMode);
         model = body.model;streamed = !countTokens && body.stream === true;
         if (!resolveRequest && (provider.configuredModels || desktopAliases)) {
           selectedModel = resolveClaudeModel(provider.models("claude"), model, { desktopAliases });
@@ -181,7 +172,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (!countTokens) observeContextSession(body, req.headers, selectedProvider, "messages");
         terminalOrigin = "transport";
         const call = privacy?.wrap(selectedProvider.client.messages, { res, protocol: "messages", client: privacyClient }) || selectedProvider.client.messages;
-        const upstream = await call(body, { headers: req.headers, countTokens, signal: abort.signal,
+        const callOptions = { headers: req.headers, countTokens, signal: abort.signal,
           onCountObservation(value) {
             context.countObservation = { ...context.countObservation, ...value };
             if (value.upstream) { context.upstreamAttempts = (context.upstreamAttempts || 0) + 1;tracker?.upstreamStarted(false); }
@@ -191,7 +182,16 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
             const timeout = streamed ? config.streamHandshakeTimeoutMs : config.upstreamTimeoutMs;
             if (countTokens) countDeadline ??= Date.now() + timeout;
             abort.setTimeout(countTokens ? Math.max(1, countDeadline - Date.now()) : timeout, "upstream_timeout");
-          } });
+          } };
+        let upstream;
+        if (countTokens && selectedProvider.coordinateMessagesCounts) {
+          let counter = countCoordinators.get(selectedProvider);
+          if (!counter) {
+            counter = createApiTokenCounter({ request: (value, options) => options.perform(value, options) });
+            countCoordinators.set(selectedProvider, counter);
+          }
+          upstream = await counter.count(body, { ...callOptions, perform: call });
+        } else upstream = await call(body, callOptions);
         body = null;
         terminalOrigin = upstream.ok ? "upstream_response" : "upstream_http";
         tracker?.upstreamHeaders(upstream.status);
@@ -234,7 +234,10 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
               || event.type === "content_block_delta" && (isMessagesOutputDelta(event.delta) || event.delta?.type === "signature_delta" && event.delta.signature)) conversation?.commit?.({ tool: event.content_block?.type === "tool_use" });
             if (event.type === "message_start") { responseId = event.message?.id;model = event.message?.model || model;usage = event.message?.usage || {}; }
             if (event.type === "content_block_delta" && isMessagesOutputDelta(event.delta)) tracker?.firstOutput();
-            if (event.type === "message_delta") { usage = { ...usage, ...event.usage };stopReason = event.delta?.stop_reason || stopReason; }
+            if (event.type === "message_delta") {
+              usage = { ...usage, ...Object.fromEntries(Object.entries(event.usage || {}).filter(([, value]) => value != null)) };
+              stopReason = event.delta?.stop_reason || stopReason;
+            }
             if (event.type === "message_stop") { sawStop = true;outcome = stopReason === "max_tokens" ? "incomplete" : "completed"; }
           }, config.maxSseBufferBytes, clientModel);
           const reader = upstream.body.getReader();

@@ -177,7 +177,7 @@ test("auto-review selector: two numeric steps save together and retry invalid ef
     assert.equal(result.reasoningEffort, "high");
     assert.equal(catalogCalls, 1);
     assert.deepEqual(readUserSettings(options), { terminal_animation: "twin", untouched: 42, auto_review_reasoning: { model: "gpt-6.1-sol", effort: "high" } });
-    assert.equal(fs.statSync(filePath).mode & 0o777, 0o640);
+    if (process.platform !== "win32") assert.equal(fs.statSync(filePath).mode & 0o777, 0o640);
     assert.equal(fs.readdirSync(path.dirname(filePath)).length, 1);
     assert.match(output.text(), /Reasoning for gpt-6\.1-sol/);
     assert.match(output.text(), /1\. low \[default\]/);

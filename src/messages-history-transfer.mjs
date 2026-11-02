@@ -11,6 +11,7 @@ const digest = value => createHash("sha256").update(JSON.stringify(value, (key, 
 const semanticDigest = value => createHash("sha256").update(JSON.stringify(value, (_key, entry) => entry && typeof entry === "object" && !Array.isArray(entry)
   ? Object.fromEntries(Object.keys(entry).sort().map(key => [key, entry[key]])) : entry)).digest("hex");
 const parts = message => Array.isArray(message?.content) ? message.content : [];
+const historyMessages = messages => messages.filter(message => message?.role !== "system");
 const thinking = part => ["thinking", "redacted_thinking", "reasoning"].includes(part?.type);
 const history = body => body.messages.some(message => message?.role === "assistant" || parts(message).some(part => part?.type === "tool_result"))
   || body.messages.filter(message => message?.role === "user").length > 1;
@@ -44,21 +45,29 @@ function canonicalBlock(block) {
 function canonicalItems(messages) {
   const out = [];
   for (const message of messages) {
-    if (!message || typeof message !== "object" || !["user", "assistant"].includes(message.role)) fail("ccdx_history_transfer_invalid", "Message history is incomplete or invalid.");
+    if (!message || typeof message !== "object" || !["user", "assistant", "system"].includes(message.role)) fail("ccdx_history_transfer_invalid", "Message history is incomplete or invalid.");
     const { content, cache_control, ...fields } = message;
     const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
     if (!Array.isArray(blocks)) fail("ccdx_history_transfer_invalid", "Message history is incomplete or invalid.");
+    // Instructions have the same ownership semantics as top-level system text.
+    // Keep them on the wire without shifting an existing signed tool prefix.
+    if (message.role === "system") {
+      if (!blocks.every(block => block?.type === "text" && typeof block.text === "string")) fail("ccdx_history_transfer_content_unsupported", "Inline system instructions must contain text.");
+      continue;
+    }
     for (const block of blocks.length ? blocks : [null]) out.push({ ...fields, block: canonicalBlock(block) });
   }
   return out;
 }
 function checkpoint(owner, messages) {
+  messages = historyMessages(messages);
   const items = canonicalItems(messages), raw = { owner, count: messages.length, prefix: digest(messages) };
   return { raw, canonical: { owner, count: items.length, prefix: semanticDigest(items), raw_count: raw.count, raw_prefix: raw.prefix } };
 }
 function knownPrefix(entry, messages, items) {
   if (entry.canonical) return items.length >= entry.canonical.count
     && semanticDigest(items.slice(0, entry.canonical.count)) === entry.canonical.prefix ? { count: entry.canonical.count } : null;
+  messages = historyMessages(messages);
   if (messages.length < entry.count) return null;
   const prefix = messages.slice(0, entry.count);
   const forms = [prefix,
@@ -93,7 +102,7 @@ function checkHistory(body, counting) {
   }
   const pending = new Set();
   for (const message of body.messages) {
-    if (!message || !["user", "assistant"].includes(message.role) || !(typeof message.content === "string" || Array.isArray(message.content))) {
+    if (!message || !["user", "assistant", "system"].includes(message.role) || !(typeof message.content === "string" || Array.isArray(message.content))) {
       fail("ccdx_history_transfer_invalid", "Message history is incomplete or invalid. The original conversation was kept.");
     }
     if (message.role === "assistant" && pending.size) fail("ccdx_history_transfer_tool_incomplete", "Finish the current tool operation before switching. No tool was repeated.", "tool_call_pending");
@@ -115,6 +124,7 @@ function checkHistory(body, counting) {
 function project(body, count) {
   let removed = 0, index = 0;
   body.messages = body.messages.map(message => {
+    if (message.role === "system") return message;
     const start = index;index += Array.isArray(message.content) ? Math.max(1, message.content.length) : 1;
     if (start >= count || message.role !== "assistant") return message;
     const out = { ...message };delete out.reasoning_content;

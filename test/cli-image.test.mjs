@@ -120,8 +120,8 @@ test("image CLI: enable, status, and disable form one safe configuration lifecyc
   for (const reference of ["editing.md", "helper.md"]) assert.equal(fs.existsSync(path.join(path.dirname(skillPath), "references", reference)), true);
   const saved = readImageProviderConfig({ home, env: {}, strict: true });
   assert.equal(saved.api_key, "secret-value");
-  assert.equal(fs.statSync(imageProviderConfigPath({ home, env: {} })).mode & 0o777, 0o600);
-  assert.equal(fs.statSync(codexPath).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(imageProviderConfigPath({ home, env: {} })).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(codexPath).mode & 0o777, 0o600);
   const codex = fs.readFileSync(codexPath, "utf8");
   assert.match(codex, /^# ccdx:image-mcp:start$/m);
   assert.match(codex, /^\[mcp_servers\.ccdx_image\]$/m);

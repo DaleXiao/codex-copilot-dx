@@ -20,7 +20,7 @@ test("Codex model cache round-trips a valid last-known-good model list at the le
   assert.equal(modelCachePath(home), path.join(home, ".local", "share", "codex-copilot-dx", "models.json"));
   assert.equal(saveModelCache(models, { home }), true);
   assert.deepEqual(loadModelCache({ home }), models);
-  assert.equal(fs.statSync(modelCachePath(home)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(modelCachePath(home)).mode & 0o777, 0o600);
 });
 
 test("model cache ignores stale and malformed data", () => {

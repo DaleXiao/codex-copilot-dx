@@ -1,11 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { maskPrivacyRequest, createPrivacyStream, protectPrivacyResponse } from "../src/privacy-transform.mjs";
+import { maskPrivacyRequest, createPrivacyStream, protectPrivacyResponse, createPrivacyRuleCache } from "../src/privacy-transform.mjs";
 
 const secret = Buffer.alloc(32, 7), noModel = async texts => texts.map(() => []);
 const key = "ghp_" + "a".repeat(36);
 const options = { protocol: "messages", client: "claude_app", secret, find: noModel };
 const body = text => ({ model: "model", messages: [{ role: "user", content: text }], max_tokens: 64 });
+test("rule result cache bounds memory, isolates personal policy and returns independent spans", () => {
+  const cache = createPrivacyRuleCache({ maxBytes: 512, maxEntries: 2 }), text = "long history ".repeat(30) + key;
+  const one = cache.find(text, false);assert.equal(one.length, 1);one[0].start = -1;
+  assert.ok(cache.find(text, false)[0].start >= 0);assert.equal(cache.stats().hits, 1);
+  cache.find(text, true);assert.equal(cache.stats().scans, 2);
+  for (let i = 0; i < 10; i++) cache.find(text + i, false);
+  assert.ok(cache.stats().entries <= 2);assert.ok(cache.stats().bytes <= 512);cache.clear();assert.equal(cache.stats().bytes, 0);
+});
+test("model false-positive filters retain actual labelled numeric secrets and ordinary secret detection", async () => {
+  for (const [prefix, label, value, count] of [["secret: ", "common_secret", "123456", 1], ["budget ", "common_secret", "128000", 0], ["token budget: ", "common_secret", "128000", 0], ["PIN: ", "common_secret", "123456", 1], ["密码是 ", "common_secret", "123456", 1], ["const ", "private_person", "Alice", 0], ["Contact ", "private_person", "Alice", 1], ["value ", "common_secret", "aBcd-sensitive", 1]]) {
+    const text = prefix + value, start = Buffer.byteLength(prefix);
+    const session = await maskPrivacyRequest(body(text), { ...options, personal: true, find: async () => [[{ start, end: start + Buffer.byteLength(value), label, score: 0.99 }]] });
+    assert.equal(session.count, count, text);assert.equal(session.restoreText(session.body.messages[0].content), text);
+  }
+});
 test("masking leaves protocol fields and signed blocks intact, restores values and preserves the source object", async () => {
   const input = body(`API key: ${key} and PASSWORD="a\\\"b"`);
   input.messages.push({ role: "assistant", content: [{ type: "thinking", thinking: key, signature: "sealed" }] });
@@ -106,4 +121,10 @@ test("invalid stream restoration detaches before the handler sends its terminal 
   res.end('event: error\ndata: {"error":"closed"}\n\n');assert.equal(written.length, 1);assert.match(written[0], /event: error/);
   const other = await maskPrivacyRequest(body(key), options);written.length = 0;
   protectPrivacyResponse(res, other);res.writeHead(403, { "Content-Type": "text/plain" });res.end("Access denied");assert.equal(written.join(""), "Access denied");
+});
+
+test("numeric tool secrets remain protected independently of model false-positive filtering", async () => {
+  const input = { model: "model", messages: [{ role: "assistant", content: [{ type: "tool_use", id: "call", name: "example", input: { secret: "123456" } }] }] };
+  const session = await maskPrivacyRequest(input, options);assert.equal(session.count, 1);
+  assert.notEqual(session.body.messages[0].content[0].input.secret, "123456");assert.deepEqual(session.restoreToolValue(session.body.messages[0].content[0].input), { secret: "123456" });
 });

@@ -46,7 +46,7 @@ test("user settings: review model and bound effort save together and resolve wit
     writeAutoReviewModel("gpt-5.5", { ...options, reasoningEffort: null });
     assert.equal(autoReviewPreference(options).reasoningEffort, null);
     assert.equal(readUserSettings(options).terminal_animation, "twin");
-    assert.equal(fs.statSync(filePath).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal(fs.statSync(filePath).mode & 0o777, 0o600);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -75,7 +75,7 @@ test("user settings: honors XDG_CONFIG_HOME and stores model changes atomically"
   assert.equal(filePath, path.join(home, "xdg", "codex-copilot-dx", "config.json"));
   assert.equal(writeAutoReviewModel("gpt-5.6-terra", { env, home }).changed, true);
   assert.equal(savedAutoReviewModel({ env, home }), "gpt-5.6-terra");
-  assert.equal(fs.statSync(filePath).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(filePath).mode & 0o777, 0o600);
   assert.equal(writeAutoReviewModel("gpt-5.6-terra", { env, home }).changed, false);
   assert.equal(writeAutoReviewModel("", { env, home }).changed, true);
   assert.equal(savedAutoReviewModel({ env, home }), "");
@@ -112,7 +112,7 @@ test("user settings: decoded-body limit is bounded, atomic, and preserves other 
     });
     assert.equal(writeDecodedBodyLimitMib(256, { env, home }).changed, true);
     assert.equal(writeDecodedBodyLimitMib(256, { env, home }).changed, false);
-    assert.equal(fs.statSync(userSettingsPath({ env, home })).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal(fs.statSync(userSettingsPath({ env, home })).mode & 0o777, 0o600);
     assert.deepEqual(decodedBodyLimitPreference({ env, home }), {
       bytes: 256 * 1024 * 1024, mib: 256, source: "settings",
     });
@@ -241,7 +241,7 @@ test("user settings: stores animation choices, preserves other keys, and clears 
     future_setting: { enabled: true },
     terminal_animation: "twin",
   });
-  assert.equal(fs.statSync(filePath).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(filePath).mode & 0o777, 0o600);
 
   assert.equal(writeTerminalAnimationTheme("comet", { env, home }).changed, true);
   assert.equal(savedTerminalAnimationTheme({ env, home }), "");

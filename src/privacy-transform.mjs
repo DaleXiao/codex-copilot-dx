@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import { privacyFailure } from "./privacy-model.mjs";
 
@@ -23,7 +23,7 @@ function leaves(value, add, inArguments = false) {
 }
 function requestTexts(body, protocol) {
   const items = [], nested = [];
-  const add = (parent, key, text) => { if (text && !text.startsWith("data:")) items.push({ parent, key, text, secret: /^(?:password|passwd|api_key|apikey|access_token|refresh_token|client_secret|secret_key|auth_token|db_password|credential|token)$/i.test(String(key)) }); };
+  const add = (parent, key, text) => { if (text && !text.startsWith("data:")) items.push({ parent, key, text, secret: /^(?:password|passwd|api_key|apikey|access_token|refresh_token|client_secret|secret_key|auth_token|db_password|credential|secret|token)$/i.test(String(key)) }); };
   const text = (parent, key) => { if (typeof parent?.[key] === "string") add(parent, key, parent[key]);else if (Array.isArray(parent?.[key])) for (const block of parent[key]) if (["text", "input_text", "output_text"].includes(block?.type)) add(block, "text", block.text); };
   const args = (parent, key) => {
     if (typeof parent[key] === "string") {
@@ -69,18 +69,49 @@ function ruleSpans(text, personal) {
   }
   return spans;
 }
-export async function maskPrivacyRequest(body, { protocol, client = "api", personal = false, secret, find, signal }) {
+export function createPrivacyRuleCache({ maxBytes = 1024 * 1024, maxEntries = 2048 } = {}) {
+  const entries = new Map();let bytes = 0, hits = 0, scans = 0;
+  return {
+    find(text, personal) {
+      if (text.length < 256) { scans++;return ruleSpans(text, personal); }
+      const key = `${personal ? 1 : 0}:` + createHash("sha256").update(text).digest("hex");
+      if (entries.has(key)) {
+        const entry = entries.get(key);entries.delete(key);entries.set(key, entry);hits++;
+        return entry.spans.map(span => ({ ...span }));
+      }
+      scans++;const spans = ruleSpans(text, personal), cost = Buffer.byteLength(JSON.stringify(spans)) + 128;
+      if (cost <= maxBytes) {
+        entries.set(key, { spans: spans.map(span => ({ ...span })), cost });bytes += cost;
+        while (entries.size > maxEntries || bytes > maxBytes) { const oldest = entries.keys().next().value;bytes -= entries.get(oldest).cost;entries.delete(oldest); }
+      }
+      return spans;
+    },
+    clear() { entries.clear();bytes = 0; },
+    stats: () => ({ entries: entries.size, bytes, hits, scans, max_bytes: maxBytes }),
+  };
+}
+function modelSpanFits(text, start, end, label) {
+  const value = text.slice(start, end);
+  if (label === "common_secret" && /^\d+$/.test(value)) {
+    return /(?:\b(?:api_key|apikey|access_token|refresh_token|client_secret|secret_key|auth_token|db_password|password|passwd|passcode|secret|token|pin)|密钥|密码|令牌|口令)["'`]?[\s:=：]*(?:(?:is|was|是|为|為)\s*)?["'`]?$/i.test(text.slice(Math.max(0, start - 96), start));
+  }
+  if (label === "private_person" && /^[A-Za-z_$][\w$]*$/.test(value)
+    && /\b(?:function|class|const|let|var)\s+$/.test(text.slice(Math.max(0, start - 32), start))) return false;
+  return true;
+}
+export async function maskPrivacyRequest(body, { protocol, client = "api", personal = false, secret, find, signal, rules = ruleSpans }) {
   const copy = structuredClone(body), { items, nested } = requestTexts(copy, protocol), texts = items.map(item => item.text);
   if (items.length > 8192 || texts.reduce((n, text) => n + Buffer.byteLength(text), 0) > 8 * 1024 * 1024) throw privacyFailure("request_too_large");
   const found = texts.length ? await find(texts, { signal }) : [], values = new Map(), kinds = {}, total = { count: 0, bytes: 0 };
   if (!Array.isArray(found) || found.length !== texts.length) throw privacyFailure("engine_invalid");
   for (let i = 0; i < items.length; i++) {
-    const item = items[i], bytes = Buffer.from(item.text), spans = ruleSpans(item.text, personal);
+    const item = items[i], bytes = Buffer.from(item.text), spans = rules(item.text, personal);
     if (item.secret) spans.push({ start: 0, end: item.text.length, kind: "secret" });
     for (const span of found[i] || []) {
       if (!Number.isInteger(span.start) || !Number.isInteger(span.end) || span.start < 0 || span.end <= span.start || span.end > bytes.length || !Number.isFinite(span.score)) throw privacyFailure("engine_invalid");
       if (span.score < 0.8 || span.label !== "common_secret" && !(personal && personalKinds.has(span.label))) continue;
       const start = bytes.subarray(0, span.start).toString("utf8").length, end = bytes.subarray(0, span.end).toString("utf8").length;
+      if (!modelSpanFits(item.text, start, end, span.label)) continue;
       spans.push({ start, end, kind: span.label === "common_secret" ? "secret" : span.label });
     }
     spans.sort((a, b) => a.start - b.start || b.end - a.end);

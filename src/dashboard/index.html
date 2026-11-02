@@ -69,7 +69,7 @@
           <summary class="panel-heading"><h2 data-i18n="client_connections">APP SETUP</h2><span data-i18n="configuration_observation">SETUP AND ACTIVITY</span></summary>
           <div class="table-wrap"><table><thead><tr><th data-i18n="client">APP</th><th data-i18n="current_source">Current source</th><th data-i18n="connection_setup" data-i18n-title="configured_not_successful">Setup</th><th data-i18n="local_bridge">Local service</th><th data-i18n="last_request">LAST REQUEST</th></tr></thead><tbody id="provider-clients"></tbody></table></div>
         </details>
-        <section class="panel dashboard-section"><h2 data-i18n="this_run_usage">THIS RUN</h2><p id="runtime-usage" class="table-note"></p><p class="table-note"><span data-i18n="approx_cache_hit_rate">Approx. cache hit rate</span>: <strong id="runtime-cache-hit" data-i18n-title="runtime_cache_hit_basis" title="Reused input / input tokens. ~ Partial counts. — Unknown or invalid.">—</strong></p><p class="hint" data-i18n="updated_from_returned_usage_not_a_live_bill_pending_usage_is_not">Counts returned usage only. Pending usage is not included. This is not a live bill.</p></section>
+        <section class="panel dashboard-section"><h2 data-i18n="this_run_usage">THIS RUN</h2><p id="runtime-usage" class="table-note"></p><p class="table-note"><span data-i18n="approx_cache_hit_rate">Approx. cache hit rate</span>: <strong id="runtime-cache-hit" data-i18n-title="runtime_cache_hit_basis" title="Reused / input tokens from records with valid counts for both. ~ Partial coverage. — No valid input basis.">—</strong></p><p class="hint" data-i18n="updated_from_returned_usage_not_a_live_bill_pending_usage_is_not">Counts returned usage only. Pending usage is not included. This is not a live bill.</p></section>
         </div>
         <div data-view="codex" hidden>
 <div id="codex-model-management">  <section class="connection-access" id="connection-clients">
@@ -127,8 +127,7 @@
           <p id="prediction-note" class="hint">—</p>
 
 
-          <div class="section-actions"><button id="fix-prediction" type="button" data-i18n="check_and_repair">Check and repair</button></div>
-          <button id="prediction-setup" type="button" data-i18n="prediction_setup_again">Set up again</button><button id="prediction-remove" type="button" data-i18n="feature_remove">Remove setup</button>
+          <div class="section-actions"><button id="fix-prediction" type="button" data-i18n="check_and_repair">Check and repair</button><button id="prediction-setup" type="button" data-i18n="prediction_setup_again">Set up again</button><button id="prediction-remove" type="button" data-i18n="feature_remove">Remove setup</button></div>
           </details>
         </details>
         <details class="panel dashboard-section" id="additional-capabilities">
@@ -314,9 +313,9 @@
           <summary class="panel-heading"><h2 data-i18n="usage_totals">USAGE TOTALS</h2><span id="usage-state" data-i18n="reading_log">COUNTING</span></summary>
           <div class="section-actions"><button id="clear-usage-day" type="button" hidden data-i18n="all_history">Show all</button></div>
           <p id="usage-note" class="table-note" data-i18n="aggregating_local_usage_metadata">Counting local usage…</p>
-          <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="calls">REQUESTS</th><th scope="col" data-i18n="input">INPUT USAGE</th><th scope="col" data-i18n="cache_read">REUSED INPUT</th><th scope="col" data-i18n="output">OUTPUT USAGE</th><th scope="col" data-i18n="total">TOTAL</th><th scope="col" data-i18n="cache_hit">REUSE RATE</th></tr></thead><tbody id="usage-body"><tr><td colspan="7" data-i18n="loading">Loading…</td></tr></tbody></table></div>
-          <p class="hint" data-i18n="cache_hit_recorded_cached_input_tokens_incomplete_history_unavai">Unit: Token. Reused input is part of input.
-~ Partial records. — Unknown or invalid.</p>
+          <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="calls">REQUESTS</th><th scope="col" data-i18n="input">INPUT USAGE</th><th scope="col" data-i18n="cache_read">REUSED INPUT</th><th scope="col" data-i18n="cache_write">CACHE WRITE</th><th scope="col" data-i18n="output">OUTPUT USAGE</th><th scope="col" data-i18n="total">TOTAL</th><th scope="col" data-i18n="cache_hit">REUSE RATE</th></tr></thead><tbody id="usage-body"><tr><td colspan="8" data-i18n="loading">Loading…</td></tr></tbody></table></div>
+          <p class="hint" data-i18n="cache_hit_recorded_cached_input_tokens_incomplete_history_unavai">Unit: Token. Reused input is part of input. Rate uses records with valid input and cache-read counts.
+~ Partial coverage. — No valid input basis.</p>
 
         </details>
         </div>

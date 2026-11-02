@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CCDX_M365: "0"
 
@@ -49,15 +53,20 @@ jobs:
         with:
           node-version: 24.x
           cache: npm
-      - run: npm ci
+      - id: deps
+        run: npm ci
       - name: Verify configured proxy and private CA for Release downloads
         shell: bash
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: npm run test:release-network
       - name: Verify no-Git installation, missing Node bootstrap, native modules and corrupt-download retention
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/bootstrap-replay.mjs
       - name: Verify real service version handoff, old conversations and rollback
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/service-update-replay.mjs
       - name: Verify staged nightly npm installation, native modules and rollback
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: npm run test:nightly-package
   windows-prediction:
     runs-on: windows-latest
@@ -71,34 +80,25 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - run: npm ci
-      - name: Verify Windows updater process, certificates, worker, profile, ACL, launch and recovery
-        run: node --test --test-concurrency=2 test/package-update.test.mjs test/package-update-windows.test.mjs test/release-install.test.mjs test/bounded-file.test.mjs test/auth.test.mjs test/auth-profile.test.mjs test/doctor.test.mjs test/adapter.test.mjs test/response-failures.test.mjs test/native-prediction-windows.test.mjs test/launcher.test.mjs test/windows-prediction-network.test.mjs test/local-compaction-recovery.test.mjs test/dashboard-refresh.test.mjs test/dashboard-updates.test.mjs test/dashboard-analytics-ui.test.mjs test/dashboard-language.test.mjs test/dashboard-time.test.mjs test/dashboard-theme.test.mjs test/dashboard-status-ui.test.mjs test/upstream-headers.test.mjs test/module-boundaries.test.mjs test/http-transport.test.mjs test/prediction-preference.test.mjs test/prediction-operations.test.mjs test/prediction-handoff.test.mjs test/webui-feature-control.test.mjs test/manual-update.test.mjs
-      - name: Verify startup presentation and bounded prediction recovery on Windows
-        run: node --test test/startup-ui.test.mjs test/quiet-startup.test.mjs test/terminal-startup.test.mjs test/native-prediction-route.test.mjs test/native-prediction-recovery.test.mjs test/native-prediction-protocol.test.mjs test/prediction-fix.test.mjs test/network-route.test.mjs test/network-environment.test.mjs
-      - name: Verify command ownership, credential discovery and bounded doctor repairs
-        run: node --test test/windows-command.test.mjs test/auth-sources.test.mjs test/doctor-repair.test.mjs test/cli-options.test.mjs test/codex-config-doctor.test.mjs test/lock.test.mjs
-      - name: Verify streaming delivery and Chat semantic validation on Windows
-        run: node --test test/stream-delivery.test.mjs test/responses-bridge.test.mjs test/responses-chat-http.test.mjs test/responses-native-http.test.mjs test/stream-performance.test.mjs test/cli-status.test.mjs
-      - name: Verify privacy restoration through real SDKs and isolated gateways
-        run: node --test test/privacy-transform.test.mjs test/privacy-sdk.test.mjs test/privacy-http.test.mjs test/local-privacy.test.mjs
-      - name: Verify isolated provider, broker, gateway, ownership and system network contracts
-        run: node --test test/claude-models.test.mjs test/m365-auth.test.mjs test/m365-accounts.test.mjs test/m365-account-selection.test.mjs test/m365-provider.test.mjs test/m365-catalog-diagnostic.test.mjs test/m365-network.test.mjs test/provider-runtime.test.mjs test/provider-registry.test.mjs test/client-integration-state.test.mjs test/claude-gateway.test.mjs test/claude-client-config.test.mjs test/cli-m365.test.mjs test/shared-listener.test.mjs test/service-control.test.mjs test/terminal-console.test.mjs test/browser-launch.test.mjs test/listener-lifecycle.test.mjs test/dashboard-activity.test.mjs
-      - name: Verify manual API, native credentials and client authorization boundaries
-        run: node --test test/cli-management.test.mjs test/cli-management-http.test.mjs test/api-initialization.test.mjs test/claude-preparation.test.mjs test/account-tools.test.mjs test/dashboard-flow.test.mjs test/api-token-count.test.mjs test/api-model-display.test.mjs test/model-display.test.mjs test/codex-memory-model.test.mjs test/settings-preferences.test.mjs test/status-summary.test.mjs test/request-evidence.test.mjs test/api-catalog-refresh.test.mjs test/nightly-update.test.mjs test/service-state.test.mjs test/dashboard-boundary.test.mjs test/activity-events.test.mjs test/dashboard-live.test.mjs test/connections.test.mjs test/connections-http.test.mjs test/api-network.test.mjs test/api-model-metadata.test.mjs test/model-capabilities.test.mjs
+      - id: deps
+        run: npm ci
+      - name: Verify all unit contracts on Windows
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: npm test -- --test-concurrency=2
       - name: Provision test-only Playwright for native Windows typography
-        if: matrix.node == '24.x'
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' && matrix.node == '24.x' }}
         run: npm install --prefix "${{ runner.temp }}/ccdx-browser" playwright@1.62.1
       - name: Verify native Edge Chinese fonts, flow alignment and monochrome themes
-        if: matrix.node == '24.x'
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' && matrix.node == '24.x' }}
         run: node scripts/dashboard-browser-replay.mjs --playwright "${{ runner.temp }}/ccdx-browser/node_modules/playwright/index.js" --engines chromium --channel msedge --palettes green,mono
       - name: Verify native Edge live activity and reconnect snapshots
-        if: matrix.node == '24.x'
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' && matrix.node == '24.x' }}
         run: node scripts/activity-browser-replay.mjs --playwright "${{ runner.temp }}/ccdx-browser/node_modules/playwright/index.js" --engines chromium --channel msedge
       - name: Verify optional masking controls and preference revisions in native Edge
-        if: matrix.node == '24.x'
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' && matrix.node == '24.x' }}
         run: node scripts/privacy-browser-replay.mjs --playwright "${{ runner.temp }}/ccdx-browser/node_modules/playwright/index.js" --engines chromium --channel msedge
-      - run: npm run test:package
+      - if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: npm run test:package
   prediction-browsers:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -111,16 +111,21 @@ jobs:
         with:
           node-version: 24.x
           cache: npm
-      - run: npm ci
+      - id: deps
+        run: npm ci
       - name: Provision test-only Chromium
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: |
           npm install --prefix "${{ runner.temp }}/ccdx-browser" playwright@1.62.1 @xterm/headless@6.0.0
           node "${{ runner.temp }}/ccdx-browser/node_modules/playwright/cli.js" install chromium
       - name: Verify repeated recovery in the same browser process and preserve company fallback
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/prediction-browser-replay.mjs --playwright "${{ runner.temp }}/ccdx-browser/node_modules/playwright/index.js"
       - name: Verify terminal table, animation, cursor updates and resize in xterm
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/terminal-console-replay.mjs --xterm "${{ runner.temp }}/ccdx-browser/node_modules/@xterm/headless/lib-headless/xterm-headless.js"
       - name: Verify revised PAC and default credential denial handling
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node --test test/prediction-pac.test.mjs test/copilot-auth-recovery.test.mjs
   macos:
     runs-on: macos-latest
@@ -134,12 +139,17 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - run: npm ci
-      - run: npm run verify
+      - id: deps
+        run: npm ci
+      - if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: npm run verify
       - name: Verify held-stream load, management responsiveness and cancellation
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/source-load-replay.mjs
-      - run: npm run test:package
-      - run: node scripts/config-startup-replay.mjs
+      - if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: npm run test:package
+      - if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: node scripts/config-startup-replay.mjs
   codex-client:
     runs-on: macos-latest
     steps:
@@ -148,44 +158,66 @@ jobs:
         with:
           node-version: 24.x
           cache: npm
-      - run: npm ci
-      - name: Provision latest official Codex on the CI runner
-        run: npm install --prefix "$RUNNER_TEMP/ccdx-codex" @openai/codex@latest
+      - id: deps
+        run: npm ci
+      - name: Provision pinned official Codex on the CI runner
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: npm install --prefix "$RUNNER_TEMP/ccdx-codex" @openai/codex@0.166.0
       - name: Verify native Codex privacy tool execution and continuation
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: |
-          node scripts/privacy-client-replay.mjs --client codex --binary "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --privacy on
-          node scripts/privacy-client-replay.mjs --client codex --binary "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --privacy off
+          status=0
+          node scripts/privacy-client-replay.mjs --client codex --binary "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --privacy on || status=1
+          node scripts/privacy-client-replay.mjs --client codex --binary "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --privacy off || status=1
+          exit "$status"
       - name: Verify prediction display and retained native ChatGPT sign-in
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/prediction-client-replay.mjs --binary "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
       - name: Verify real Codex configuration, catalog and synthetic Responses
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/codex-message-id-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
       - name: Verify native recorded compaction and local plaintext recovery without live provider calls
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/codex-history-recovery-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
       - name: Verify native reasoning declaration handling with an isolated synthetic provider
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/codex-reasoning-header-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
       - name: Verify native Codex image discovery, delivery and edit handles without live generation
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/codex-image-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --edit
       - name: Provision official Claude Code for isolated gateway replay
-        run: npm install --prefix "$RUNNER_TEMP/ccdx-claude" @anthropic-ai/claude-code
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: npm install --prefix "$RUNNER_TEMP/ccdx-claude" @anthropic-ai/claude-code@2.1.316
       - name: Verify native Claude Code privacy tool execution and continuation
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: |
-          node scripts/privacy-client-replay.mjs --client claude --binary "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude" --privacy on
-          node scripts/privacy-client-replay.mjs --client claude --binary "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude" --privacy off
+          status=0
+          node scripts/privacy-client-replay.mjs --client claude --binary "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude" --privacy on || status=1
+          node scripts/privacy-client-replay.mjs --client claude --binary "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude" --privacy off || status=1
+          exit "$status"
       - name: Verify native Claude Code effort fields through the candidate Messages gateway
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/claude-effort-replay.mjs --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
       - name: Verify native custom model context budgets, reasoning and output limits
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/claude-capabilities-replay.mjs --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
       - name: Verify native custom model catalogs and independent client credentials on one listener
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
       - name: Verify native Codex source-qualified deployment routes
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --bindings models
       - name: Verify native ChatGPT sign-in survives model binding changes
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --bindings models --signed-in chatgpt
       - name: Verify native OpenAI mode and complete first catalog across cold and warm starts
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/codex-native-provider-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
       - name: Provision verified Codex compatibility baseline
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: npm install --prefix "$RUNNER_TEMP/ccdx-codex-baseline" @openai/codex@0.164.0
       - name: Verify baseline sign-in and first catalog across cold and warm starts
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/codex-native-provider-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex-baseline/node_modules/.bin/codex"
   privacy-native-windows:
     runs-on: windows-latest
@@ -196,12 +228,15 @@ jobs:
         with:
           node-version: 24.x
           cache: npm
-      - run: npm ci
+      - id: deps
+        run: npm ci
       - name: Provision isolated native client binaries
         shell: pwsh
-        run: npm install --prefix "$env:RUNNER_TEMP/ccdx-native-clients" @openai/codex@latest @anthropic-ai/claude-code
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: npm install --prefix "$env:RUNNER_TEMP/ccdx-native-clients" @openai/codex@0.166.0 @anthropic-ai/claude-code@2.1.316
       - name: Verify native Windows privacy tool rounds
         shell: pwsh
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: |
           $codex = (Get-ChildItem "$env:RUNNER_TEMP/ccdx-native-clients/node_modules" -Recurse -Filter codex.exe | Select-Object -First 1).FullName
           $claude = (Get-ChildItem "$env:RUNNER_TEMP/ccdx-native-clients/node_modules" -Recurse -Filter claude.exe | Select-Object -First 1).FullName
@@ -223,23 +258,39 @@ jobs:
       fail-fast: false
       matrix:
         engine: [chromium, webkit]
+        palette: [green, klein, pink, mono]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24.x
           cache: npm
-      - run: npm ci
+      - id: deps
+        run: npm ci
       - name: Provision matching test-only Playwright package
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: npm install --prefix "$RUNNER_TEMP/ccdx-browser" playwright@1.62.1
-      - run: node "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/cli.js" install ${{ matrix.engine }}
+      - if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: node "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/cli.js" install ${{ matrix.engine }}
       - name: Verify bilingual themes, small screens, timer and user-state preservation
-        run: node scripts/dashboard-browser-replay.mjs --engines ${{ matrix.engine }} --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js" --output "$RUNNER_TEMP/ccdx-dashboard-screenshots"
-      - name: Verify API creation, many-to-many access, disabling and recovery
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: node scripts/dashboard-browser-replay.mjs --palettes ${{ matrix.palette }} --engines ${{ matrix.engine }} --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js" --output "$RUNNER_TEMP/ccdx-dashboard-screenshots"
+      - if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' && matrix.palette == 'green' }}
+        name: Verify API creation, many-to-many access, disabling and recovery
         run: node scripts/connections-browser-replay.mjs --engines ${{ matrix.engine }} --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js" --output "$RUNNER_TEMP/ccdx-connection-screenshots"
-      - name: Verify optional masking interactions without downloading a model
+      - if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' && matrix.palette == 'green' }}
+        name: Verify optional masking interactions without downloading a model
         run: node scripts/privacy-browser-replay.mjs --engines ${{ matrix.engine }} --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js"
-      - name: Verify disclosure motion, keyboard operation and reduced motion
+      - if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' && matrix.palette == 'green' }}
+        name: Verify disclosure motion, keyboard operation and reduced motion
         run: node scripts/disclosure-browser-replay.mjs --engines ${{ matrix.engine }} --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js"
-      - name: Verify live activity, three-app concurrency and reconnect snapshots
+      - if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' && matrix.palette == 'green' }}
+        name: Verify live activity, three-app concurrency and reconnect snapshots
         run: node scripts/activity-browser-replay.mjs --engines ${{ matrix.engine }} --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: dashboard-${{ matrix.engine }}-${{ matrix.palette }}
+          path: ${{ runner.temp }}/ccdx-*-screenshots/
+          if-no-files-found: ignore
+          retention-days: 7

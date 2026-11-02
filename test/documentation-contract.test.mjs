@@ -11,13 +11,13 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8")
   + "\n" + fs.readFileSync(path.join(root, "docs/REFERENCE.md"), "utf8");
 
-test("current installation links and both bootstrap scripts target the shipped package", () => {
+test("installation links target stable installers or the shipped package, with pinned bootstrap versions", () => {
   const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"))).version;
-  const links = [...readme.matchAll(/https:\/\/github\.com\/DaleXiao\/codex-copilot-dx\/releases\/download\/v([\d.]+)\/(install\.(?:sh|ps1)|codex-copilot-dx-[\d.]+\.tgz)/gi)];
+  const links = [...readme.matchAll(/https:\/\/github\.com\/DaleXiao\/codex-copilot-dx\/releases\/(?:download\/v([\d.]+)|latest\/download)\/(install\.(?:sh|ps1)|codex-copilot-dx-[\d.]+\.tgz)/gi)];
   assert.ok(links.some(link => link[2] === "install.sh"));
   assert.ok(links.some(link => link[2] === "install.ps1"));
   for (const [, tag, asset] of links) {
-    assert.equal(tag, version);
+    if (tag !== undefined) assert.equal(tag, version);
     if (asset.endsWith(".tgz")) assert.equal(asset, `codex-copilot-dx-${version}.tgz`);
   }
   assert.ok(fs.readFileSync(path.join(root, "install/install.sh"), "utf8").includes(`version=${version}`));

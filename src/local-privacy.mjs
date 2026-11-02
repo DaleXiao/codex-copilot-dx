@@ -6,12 +6,13 @@ import { withFileLockSync } from "./lock.mjs";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { createChangeSignal } from "./activity-events.mjs";
 import { createPrivacyModel, privacyFailure } from "./privacy-model.mjs";
-import { maskPrivacyRequest, protectPrivacyResponse } from "./privacy-transform.mjs";
+import { maskPrivacyRequest, protectPrivacyResponse, createPrivacyRuleCache } from "./privacy-transform.mjs";
 import { markRequestObservation } from "./stream-performance.mjs";
 
 export function createLocalPrivacy(options = {}) {
   const changes = createChangeSignal(), secret = randomBytes(32), cache = new Map(), flights = new Map(), responses = new WeakMap(), policies = new WeakMap();
   const model = options.model || createPrivacyModel({ ...options, changed: changes.changed });
+  const rules = createPrivacyRuleCache();
   let cacheBytes = 0, generation = 0, pending = null, disposed = false;
   let keyLoaded = false, actionError = null;
   const settings = () => {
@@ -19,7 +20,7 @@ export function createLocalPrivacy(options = {}) {
     return { enabled: saved.privacy_enabled === true, personal: saved.privacy_personal === true };
   };
   const revision = saved => createHash("sha256").update(JSON.stringify(saved)).digest("hex");
-  const snapshot = () => { const saved = settings();return { ...model.snapshot(), ...saved, ...(actionError ? { error: actionError } : {}), revision: revision(saved), action_pending: Boolean(pending), scope: "conversation_text" }; };
+  const snapshot = () => { const saved = settings();return { ...model.snapshot(), ...saved, rule_cache: rules.stats(), ...(actionError ? { error: actionError } : {}), revision: revision(saved), action_pending: Boolean(pending), scope: "conversation_text" }; };
   function loadKey() {
     if (keyLoaded) return;
     const file = path.join(path.dirname(userSettingsPath(options)), "privacy-key");fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -37,18 +38,21 @@ export function createLocalPrivacy(options = {}) {
     });changes.changed();
   }
   async function find(texts, { signal } = {}) {
-    const waiting = [], fresh = [], entries = [];
+    const waiting = [], fresh = [], entries = [], batches = new Set();
+    const batch = { controller: new AbortController(), waiters: 0, settled: false };
     for (const text of texts) {
       const key = createHash("sha256").update(text).digest("hex");
       if (cache.has(key)) {
         const saved = cache.get(key);cache.delete(key);cache.set(key, saved);waiting.push(Promise.resolve(saved.found));
-      } else if (flights.has(key)) waiting.push(flights.get(key).promise);
+      } else if (flights.has(key) && !flights.get(key).batch.controller.signal.aborted) { const entry = flights.get(key);waiting.push(entry.promise);batches.add(entry.batch); }
       else {
-        const entry = Promise.withResolvers();entry.key = key;flights.set(key, entry);
+        const entry = Promise.withResolvers();entry.key = key;entry.batch = batch;flights.set(key, entry);batches.add(batch);
         waiting.push(entry.promise);fresh.push(text);entries.push(entry);
       }
     }
-    if (fresh.length) void model.find(fresh).then(found => {
+    for (const work of batches) work.waiters++;
+    if (fresh.length) void model.find(fresh, { signal: batch.controller.signal }).then(found => {
+      if (batch.controller.signal.aborted) throw privacyFailure("cancelled");
       if (!Array.isArray(found) || found.length !== fresh.length) throw privacyFailure("engine_invalid");
       for (let i = 0; i < found.length; i++) {
         const cost = Buffer.byteLength(JSON.stringify(found[i] || [])) + 128, entry = entries[i];
@@ -59,11 +63,11 @@ export function createLocalPrivacy(options = {}) {
         }
         entry.resolve(found[i] || []);
       }
-    }).catch(error => entries.forEach(entry => entry.reject(error))).finally(() => entries.forEach(entry => { if (flights.get(entry.key) === entry) flights.delete(entry.key); }));
+    }).catch(error => entries.forEach(entry => entry.reject(error))).finally(() => { batch.settled = true;entries.forEach(entry => { if (flights.get(entry.key) === entry) flights.delete(entry.key); }); });
     let listener;
     const aborted = new Promise((_, reject) => { listener = () => reject(signal.reason);if (signal?.aborted) listener();else signal?.addEventListener("abort", listener, { once: true }); });
     try { return await (signal ? Promise.race([Promise.all(waiting), aborted]) : Promise.all(waiting)); }
-    finally { signal?.removeEventListener("abort", listener); }
+    finally { signal?.removeEventListener("abort", listener);for (const work of batches) if (--work.waiters === 0 && !work.settled) work.controller.abort(privacyFailure("cancelled")); }
   }
   async function prepare(body, { protocol, client, signal, res, policy } = {}) {
     const saved = policy || settings();if (!saved.enabled) return body;
@@ -71,7 +75,7 @@ export function createLocalPrivacy(options = {}) {
     loadKey();
     const start = performance.now();
     const deadline = AbortSignal.timeout(15000);let session;
-    try { session = await maskPrivacyRequest(body, { protocol, client, personal: saved.personal, secret, find, signal: signal ? AbortSignal.any([signal, deadline]) : deadline }); }
+    try { session = await maskPrivacyRequest(body, { protocol, client, personal: saved.personal, secret, find, rules: rules.find, signal: signal ? AbortSignal.any([signal, deadline]) : deadline }); }
     catch (error) { if (deadline.aborted && !signal?.aborted) throw privacyFailure("check_timeout");throw error; }
     if (signal?.aborted) { session.release();throw signal.reason; }
     markRequestObservation({ privacy_count: session.count, privacy_ms: Math.round(performance.now() - start), privacy_state: "checked" });
@@ -107,7 +111,7 @@ export function createLocalPrivacy(options = {}) {
       const current = ++generation;
       const work = (async () => {
         actionError = null;loadKey();
-        if (!await model.installed()) await model.download();
+        if (!await model.installed({ current: true })) await model.download();
         if (current !== generation) return;
         await model.load();if (current !== generation) return;
         save({ privacy_enabled: true }, input.revision);
@@ -132,5 +136,5 @@ export function createLocalPrivacy(options = {}) {
     },
     restoreResponse: (res, value) => responses.get(res)?.restoreValue(value) || value,
     settingsChanged() { actionError = null;if (!settings().enabled) { generation++;model.stop(); }else warm();changes.changed(); },
-    close() { disposed = true;generation++;model.close();cache.clear();cacheBytes = 0;secret.fill(0); } };
+    close() { disposed = true;generation++;model.close();cache.clear();rules.clear();cacheBytes = 0;secret.fill(0); } };
 }

@@ -126,7 +126,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     const serialized = body ? options.bodyText ?? JSON.stringify(body) : undefined;
     if (serialized !== undefined) requestHeaders["Content-Length"] = String(Buffer.byteLength(serialized));
     options.onUpstreamStart?.();
-    if (body) { markUpstreamStarted(body.stream === true);if (!options.countTokens) markRequestObservation({ max_output_tokens_sent: endpoint.includes("messages") ? body.max_tokens : body.max_output_tokens }); }
+    if (body) { if (options.observeUpstream !== false) markUpstreamStarted(body.stream === true);if (!options.countTokens) markRequestObservation({ max_output_tokens_sent: endpoint.includes("messages") ? body.max_tokens : body.max_output_tokens }); }
     try {
       const send = fetchImpl || await transport(options.signal);
       const response = await send(`${M365_API_BASE}${endpoint}`, { method: body ? "POST" : "GET", headers: requestHeaders,
@@ -233,12 +233,15 @@ export function createM365Provider({ home, env = process.env, account: accountOv
       const adjusted = limitM365CacheTtl(body);
       if (adjusted.changed && !cacheTtlAdjustments) log("info", "Microsoft 365 supports 5m prompt caching; 1h cache retention is capped to 5m. Content and breakpoints are unchanged.");
       cacheTtlAdjustments += adjusted.changed;
-      return request(options.countTokens ? "/v1/messages/count_tokens" : "/v1/messages", model.id === adjusted.body.model ? adjusted.body : { ...adjusted.body, model: model.id }, options);
+      const requestBody = model.id === adjusted.body.model ? adjusted.body : { ...adjusted.body, model: model.id };
+      return request(options.countTokens ? "/v1/messages/count_tokens" : "/v1/messages", requestBody, requestBody === body ? options : { ...options, bodyText: undefined });
     },
     runtimeStatus: () => ({ ...auth.snapshot(), account_bound: Boolean(account), upstream_host: new URL(M365_API_BASE).hostname,
       model_endpoint_cache_entries: catalog?.data.length || 0, model_list_flights: flight ? 1 : 0 }),
   };
   return {
+    messagesSystemMode: "native",
+    coordinateMessagesCounts: true,
     id: "m365", client, registry, auth, refresh, profileId: profile,
     models: family => m365Models(catalog, family),
     catalog: () => catalog?.data || [],

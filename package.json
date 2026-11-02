@@ -1,6 +1,6 @@
 {
   "name": "codex-copilot-dx",
-  "version": "1.3.8",
+  "version": "1.3.9",
   "description": "Local gateway for Codex and Claude with Copilot, Microsoft 365 and custom APIs",
   "author": "Dale Xiao",
   "type": "module",
@@ -38,7 +38,7 @@
     "node": ">=22.15.0"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node scripts/run-tests.mjs",
     "test:smoke": "node scripts/offline-smoke.mjs && node scripts/sse-idle-replay.mjs",
     "test:package": "node scripts/package-lifecycle-smoke.mjs",
     "test:nightly-package": "node scripts/nightly-package-replay.mjs",
@@ -47,7 +47,7 @@
     "bench:payload": "node scripts/benchmark.mjs --large-payload",
     "bench:check": "node scripts/benchmark.mjs --check",
     "pack:check": "npm pack --dry-run --json",
-    "verify": "npm test && npm run test:smoke && npm run bench:check && npm run pack:check",
+    "verify": "node scripts/verify.mjs",
     "prepublishOnly": "npm run verify",
     "release:pack": "node scripts/release-artifacts.mjs",
     "release:runtime": "node scripts/runtime-package.mjs",

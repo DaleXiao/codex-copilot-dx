@@ -7,6 +7,7 @@ import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   buildResponsesUsageRecord,
+  buildMessagesUsageRecord,
   formatUsageSummary,
   flushUsageWrites,
   flushUsageWritesForTests,
@@ -269,7 +270,7 @@ test("recordUsage: serializes rotation and append across processes", async (t) =
 
 test("readUsageRecords: skips invalid lines, preserves valid records, and warns once safely", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-usage-invalid-"));
-  const filePath = path.join(dir, "usage\nlog\u009b\u202e.jsonl");
+  const filePath = path.join(dir, process.platform === "win32" ? "usage-log\u009b\u202e.jsonl" : "usage\nlog\u009b\u202e.jsonl");
   const warnings = [];
   await fs.writeFile(filePath, [
     JSON.stringify({ model: "first", usage: { total_tokens: 1 } }),
@@ -287,7 +288,7 @@ test("readUsageRecords: skips invalid lines, preserves valid records, and warns 
   assert.match(warnings[0], /ignored 4 invalid records/);
   assert.doesNotMatch(warnings[0], /broken|forged warning|\u001b/);
   assert.doesNotMatch(warnings[0], /\u009b|\u202e/);
-  assert.ok(warnings[0].includes("usage\\nlog"));
+  assert.ok(warnings[0].includes(process.platform === "win32" ? "usage-log" : "usage\\nlog"));
 });
 
 test("summarizeUsageLogs: invalid rotated lines do not hide valid totals from either file", async () => {
@@ -329,7 +330,31 @@ test("cache hit rate preserves explicit zero reports and distinguishes missing d
   assert.equal(usageCacheHitRate(summarizeUsage([absent]).totals), null);
 });
 
-test("cache hit rate weights recorded totals without hiding computable incomplete history", () => {
+test("M365 Messages retain raw counts and separate total input from cache-hit evidence", async t => {
+  const raw = { input_tokens: 100, cache_read_input_tokens: 95000, cache_creation_input_tokens: 4900, output_tokens: 23 };
+  const known = buildMessagesUsageRecord({ provider: "m365", client: "claude_app", model: "claude-test", usage: raw });
+  assert.deepEqual(known.anthropic_usage, raw);
+  assert.equal(known.usage.input_tokens, 100000);assert.equal(known.usage.total_tokens, 100023);
+  const unknown = buildMessagesUsageRecord({ provider: "m365", model: "claude-test", usage: { input_tokens: 900000, output_tokens: 7 } });
+  const summary = summarizeUsage([known, unknown], { provider: "m365" });
+  assert.equal(summary.totals.input_tokens, 1000000);assert.equal(summary.totals.output_tokens, 30);
+  assert.equal(summary.totals.cache_hit_known_requests, 1);assert.equal(summary.totals.cache_hit_unknown_requests, 1);
+  assert.equal(summary.totals.cache_hit_input_tokens, 100000);assert.equal(summary.totals.cache_hit_read_tokens, 95000);
+  assert.equal(usageCacheHitRate(summary.totals), .95);
+  assert.equal(usageCacheHitRate(summary.bySourceModel["m365 / claude-test"]), .95);
+  const zero = buildMessagesUsageRecord({ provider: "m365", usage: { input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 0 } });
+  assert.equal(zero.usage.total_tokens, 0);assert.equal(usageCacheHitRate(zero.usage), null);
+  const old = process.env.CCDX_DISABLE_USAGE;process.env.CCDX_DISABLE_USAGE = "1";
+  t.after(() => { if (old === undefined) delete process.env.CCDX_DISABLE_USAGE;else process.env.CCDX_DISABLE_USAGE = old; });
+  await recordUsage({ ...known, provider: "m365_paired_fixture" });await recordUsage({ ...unknown, provider: "m365_paired_fixture" });
+  const { runtimeUsageSnapshot } = await import("../src/usage-store.mjs");
+  const runtime = runtimeUsageSnapshot().by_provider.m365_paired_fixture;
+  assert.equal(runtime.input_tokens, 1000000);assert.equal(runtime.cache_hit_rate, .95);
+  assert.equal(runtime.cache_hit_input_tokens, 100000);assert.equal(runtime.cache_hit_read_tokens, 95000);
+  assert.equal(runtime.cache_hit_rate_partial, true);
+});
+
+test("cache hit rate weights paired evidence without diluting it with unknown history", () => {
   const records = [
     { model: "a", usage: { input_tokens: 10, cached_input_tokens: 10 } },
     { model: "b", usage: { input_tokens: 90, cache_read_input_tokens: 0 } },
@@ -339,7 +364,7 @@ test("cache hit rate weights recorded totals without hiding computable incomplet
   assert.equal(usageCacheHitRate(summary.byModel.a), 1);
   assert.equal(usageCacheHitRate(summary.byModel.b), 0);
   for (const [usage, expected] of [
-    [undefined, 0.1], [null, 0.1], [{ input_tokens: 30 }, 10 / 130], [{ cached_input_tokens: 3 }, 0.13],
+    [undefined, 0.1], [null, 0.1], [{ input_tokens: 30 }, 0.1], [{ cached_input_tokens: 3 }, 0.1],
   ]) {
     const partial = summarizeUsage([...records, { model: "partial", usage }]);
     assert.equal(usageCacheHitRate(partial.totals), expected);
@@ -353,7 +378,7 @@ test("cache hit rate weights recorded totals without hiding computable incomplet
     { input_tokens: 10, cached_input_tokens: NaN },
     { input_tokens: -10, cached_input_tokens: 0 },
   ]) {
-    assert.equal(usageCacheHitRate(summarizeUsage([...records, { model: "bad", usage }]).totals), null);
+    assert.equal(usageCacheHitRate(summarizeUsage([...records, { model: "bad", usage }]).totals), 0.1);
   }
   assert.equal(usageCacheHitRate({ input_tokens: 0, cached_input_tokens: 0 }), null);
 });
@@ -369,9 +394,9 @@ test("cache hit rate aggregates paired counts across current and rotated logs", 
   assert.equal(usageCacheHitRate(summary.byModel.a), 0.1);
   await fs.appendFile(filePath, `${JSON.stringify({ model: "a", usage: { input_tokens: 3 } })}\n`);
   const incomplete = await summarizeUsageLogs(filePath);
-  assert.equal(usageCacheHitRate(incomplete.totals), 10 / 103);
-  assert.equal(usageCacheHitRate(incomplete.byModel.a), 10 / 103);
-  assert.match(formatUsageSummary(incomplete, { format: "plain", filePath }), /Cache hit: ~9\.7%/);
+  assert.equal(usageCacheHitRate(incomplete.totals), 0.1);
+  assert.equal(usageCacheHitRate(incomplete.byModel.a), 0.1);
+  assert.match(formatUsageSummary(incomplete, { format: "plain", filePath }), /Cache hit: ~10\.0%/);
 });
 
 test("recordUsage: appends JSONL records to CCDX_USAGE_PATH", async () => {
@@ -418,12 +443,12 @@ test("formatUsageSummary: plain layout remains compatible and combines cache fie
   }), [
     "Usage log: /tmp/usage.jsonl",
     "Records: 2",
-    "Tokens: input=12 cache_read=5 output=3 total=15",
-    "Cache hit: 41.7% (cached/input tokens)",
+    "Tokens: input=12 cache_read=5 cache_write=— output=3 total=15",
+    "Cache hit: 41.7% (cached/input tokens; valid paired records only)",
     "",
     "By model:",
-    "  b: records=1 input=4 cache_read=2 output=1 total=5 cache_hit=50.0%",
-    "  a: records=1 input=8 cache_read=3 output=2 total=10 cache_hit=37.5%",
+    "  b: records=1 input=4 cache_read=2 cache_write=— output=1 total=5 cache_hit=50.0%",
+    "  a: records=1 input=8 cache_read=3 cache_write=— output=2 total=10 cache_hit=37.5%",
   ].join("\n"));
 });
 
@@ -438,11 +463,11 @@ test("formatUsageSummary: auto uses a full table on a wide TTY and sorts models 
     format: "auto",
     output: { isTTY: true, columns: 120 },
   });
-  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\n\nMODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+OUTPUT\s+TOTAL\s+HIT %/m);
+  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\n\nMODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+CACHE WRITE\s+OUTPUT\s+TOTAL\s+HIT %/m);
   assert.ok(output.indexOf("TOTAL") < output.indexOf("large-a"));
   assert.ok(output.indexOf("large-a") < output.indexOf("large-b"));
   assert.ok(output.indexOf("large-b") < output.indexOf("small"));
-  assert.match(output, /TOTAL\s+3\s+15\s+6\s+8\s+23\s+40\.0%/);
+  assert.match(output, /TOTAL\s+3\s+15\s+6\s+—\s+8\s+23\s+40\.0%/);
 });
 
 test("formatUsageSummary: large totals still fit a standard 80-column terminal", () => {
@@ -476,13 +501,13 @@ test("formatUsageSummary: both formats combine cache fields and use dashes for m
     format: "table",
     output: { isTTY: false, columns: 120 },
   });
-  assert.match(output, /mixed\s+2\s+—\s+12\s+—\s+12\s+—/);
-  assert.match(output, /missing\s+1\s+—\s+—\s+2\s+2\s+—/);
+  assert.match(output, /mixed\s+2\s+—\s+12\s+—\s+—\s+12\s+—/);
+  assert.match(output, /missing\s+1\s+—\s+—\s+—\s+2\s+2\s+—/);
   assert.match(formatUsageSummary(summary, {
     filePath: "/tmp/usage.jsonl",
     format: "plain",
     output: { isTTY: true, columns: 120 },
-  }), /Tokens: input=0 cache_read=12 output=2 total=14/);
+  }), /Tokens: input=0 cache_read=12 cache_write=— output=2 total=14/);
 });
 
 test("formatUsageSummary: auto keeps plain output when stdout is not a TTY", () => {
@@ -509,7 +534,7 @@ test("formatUsageSummary: compact table preserves totals and appends omitted tok
   assert.doesNotMatch(output, /CACHE READ/);
   assert.match(output, /wide-model-name\s+1\s+124,245/);
   assert.match(output, /Details:/);
-  assert.match(output, /wide-model-name: input=123,456 cache_read=100,000 output=789/);
+  assert.match(output, /wide-model-name: input=123,456 cache_read=100,000 cache_write=— output=789/);
   assert.match(output, /wide-model-name: .*cache_hit=81\.0%/);
 });
 
@@ -563,7 +588,7 @@ test("source-qualified rows retain invalid cache-count evidence after aggregatio
     { provider: "third", model: "same", usage: { input_tokens: 90, cached_input_tokens: 0 } },
   ]);
   assert.equal(summary.bySourceModel["third / same"].cache_hit_invalid_requests, 1);
-  assert.equal(usageCacheHitRate(summary.bySourceModel["third / same"]), null);
+  assert.equal(usageCacheHitRate(summary.bySourceModel["third / same"]), 0);
 });
 
 test("returned process usage separates source totals, partial evidence and snapshots without persistence", async t => {
@@ -597,7 +622,7 @@ test("current-run cache rate is token-weighted and separates zero, missing, part
   assert.equal(providers.cache_weighted.cache_hit_rate_partial, false);
   assert.equal(providers.cache_zero.cache_hit_rate, 0);
   assert.equal(providers.cache_missing.cache_hit_rate, null);
-  assert.equal(providers.cache_partial.cache_hit_rate, 0.25);assert.equal(providers.cache_partial.cache_hit_rate_partial, true);
+  assert.equal(providers.cache_partial.cache_hit_rate, 0.5);assert.equal(providers.cache_partial.cache_hit_rate_partial, true);
   assert.equal(providers.cache_bad.cache_hit_rate, null);
   assert.equal(providers.cache_no_output.cache_hit_rate, 0.5);assert.equal(providers.cache_no_output.cache_hit_rate_partial, false);
 });

@@ -1477,6 +1477,7 @@ export function createConnectionRuntime({
           log,
           performance: legacy.claudePerformance,
           desktopAliases: id === "claude_app",
+          messagesSystemMode: id === "claude_app" ? "legacy" : "passthrough",
           resolveRequest(body) {
             const record = resolveDeployment(id, body.model),
               finish = track(record.provider);

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import Anthropic from "@anthropic-ai/sdk";
 import { startClaudeGateway, createMessagesObserver } from "../src/claude-gateway.mjs";
 import { buildMessagesUsageRecord, usageCacheHitRate } from "../src/usage-store.mjs";
 import { currentRequestContext } from "../src/request-context.mjs";
@@ -117,6 +118,43 @@ test("Claude gateway preserves stream bytes, completes at message_stop and cance
   assert.equal(g.server.snapshot().performance.by_route.messages.terminal_outcomes.by_model["claude-opus-5.5"].completed, 1);
 });
 
+test("M365 cumulative stream usage matches the official SDK across null, zero and repeated counters", async t => {
+  const initial = { input_tokens: 100, cache_read_input_tokens: 95000, cache_creation_input_tokens: 4900, output_tokens: 1 };
+  const fixtures = [
+    { name: "nullable input fields", updates: [{ input_tokens: null, cache_read_input_tokens: null, cache_creation_input_tokens: null, output_tokens: 5 }, { output_tokens: 23 }], rate: .95 },
+    { name: "cumulative replacements", updates: [{ input_tokens: 100, cache_read_input_tokens: 98000, cache_creation_input_tokens: 1900, output_tokens: 23 }, { input_tokens: 100, cache_read_input_tokens: 98000, cache_creation_input_tokens: 1900, output_tokens: 23 }], rate: .98 },
+    { name: "explicit zero cache read", updates: [{ input_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 99900, output_tokens: 23 }], rate: 0 },
+  ];
+  for (const fixture of fixtures) await t.test(fixture.name, async t => {
+    const events = [
+      { type: "message_start", message: { ...message, content: [], stop_reason: null, usage: initial } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "synthetic" } },
+      { type: "content_block_stop", index: 0 },
+      ...fixture.updates.map(usage => ({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage })),
+      { type: "message_stop" },
+    ];
+    const bytes = Buffer.from(events.map(event => `event: ${event.type}\r\ndata: ${JSON.stringify(event)}\r\n\r\n`).join(""));
+    let offset = 0;
+    const g = await gateway(t, async () => new Response(new ReadableStream({
+      pull(controller) {
+        if (offset >= bytes.length) { controller.close();return; }
+        const end = Math.min(bytes.length, offset + 11);controller.enqueue(bytes.subarray(offset, end));offset = end;
+      },
+    }), { headers: { "content-type": "text/event-stream" } }));
+    const response = await g.request({ model: message.model, messages: [], stream: true });
+    assert.equal(response.status, 200);assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+    const client = new Anthropic({ ["api" + "Key"]: "synthetic-sdk-fixture", maxRetries: 0,
+      fetch: async () => new Response(bytes, { headers: { "content-type": "text/event-stream" } }) });
+    const expected = await client.messages.stream({ model: message.model, max_tokens: 32, messages: [{ role: "user", content: "synthetic" }] }).finalMessage();
+    assert.equal(g.records.length, 1);
+    const record = g.records[0];assert.equal(record.provider, "m365");
+    assert.deepEqual(record.anthropic_usage, expected.usage);
+    assert.equal(record.usage.input_tokens, 100000);assert.equal(record.usage.total_tokens, 100023);
+    assert.equal(usageCacheHitRate(record.usage), fixture.rate);
+  });
+});
+
 test("empty and signature-only Claude deltas do not count as first model output", async t => {
   const events = [{ type: "message_start", message: { ...message, content: [] } },
     { type: "content_block_delta", index: 4, delta: { type: "text_delta", text: "" } },
@@ -219,7 +257,7 @@ test("App alias streaming changes only the model event across fragmented multili
   const bytes = Buffer.from(': keep comment\r\nevent: message_start\r\nid: frame-1\r\ndata: {"type":"message_start",\r\ndata: "message":' + JSON.stringify(first.message) + '}\r\n\r\n' + tail);
   for (const size of [1, 7, 65536]) {
     let offset = 0;const calls = [];
-    const g = await gateway(t, null, { desktopAliases: true, provider: { id: "api_test", configuredModels: true, models: () => models,
+    const g = await gateway(t, null, { desktopAliases: true, messagesSystemMode: "legacy", provider: { id: "api_test", configuredModels: true, models: () => models,
       client: { messages: async body => { calls.push(body);return new Response(new ReadableStream({ pull(controller) {
         if (offset === bytes.length) { controller.close();return; }
         controller.enqueue(bytes.subarray(offset, offset + size));offset = Math.min(bytes.length, offset + size);
@@ -239,7 +277,7 @@ test("App alias streaming changes only the model event across fragmented multili
 
 test("App aliases cover JSON and count_tokens while bounded framing rejects oversized comments", async t => {
   const actual = "qwen3.8-max", models = [{ id: actual, capability: { values: { context_window: 234567 } } }], alias = claudeModelEntries(models, { desktopAliases: true })[0].name, calls = [];
-  const g = await gateway(t, null, { desktopAliases: true, provider: { id: "api_test", configuredModels: true, models: () => models, client: {
+  const g = await gateway(t, null, { desktopAliases: true, messagesSystemMode: "legacy", provider: { id: "api_test", configuredModels: true, models: () => models, client: {
     messages: async (body, options) => { calls.push({ body, options });return Response.json(options.countTokens ? { input_tokens: 42 } : { ...message, model: actual }); },
   } } });
   assert.equal((await (await g.request({ model: alias, messages: [] })).json()).model, alias);
@@ -254,7 +292,7 @@ test("App aliases cover JSON and count_tokens while bounded framing rejects over
 
 test("custom App system messages become ordered top-level text without changing conversation blocks", async t => {
   const calls = [], models = [{ id: "vendor-model" }], alias = claudeModelEntries(models, { desktopAliases: true })[0].name;
-  const g = await gateway(t, null, { desktopAliases: true, provider: { id: "api_test", configuredModels: true, models: () => models,
+  const g = await gateway(t, null, { desktopAliases: true, messagesSystemMode: "legacy", provider: { id: "api_test", configuredModels: true, models: () => models,
     client: { messages: async body => { calls.push(body);return Response.json({ ...message, model: body.model }); } } } });
   const cache = { type: "text", text: "second", cache_control: { type: "ephemeral" } }, conversation = [{ role: "user", content: [{ type: "text", text: "request" }] }];
   const input = { model: alias, system: "original", messages: [{ role: "system", content: "first" }, { role: "system", content: [cache] }, ...conversation], max_tokens: 8 };

@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { fileURLToPath } from "node:url";
 import { codexPaths } from "../src/codex-paths.mjs";
 import { ensureCodexConfig } from "../src/config.mjs";
 import { inspectCodexConfig } from "../src/codex-config-doctor.mjs";
@@ -28,8 +27,8 @@ test("cross-process settings writes reread after acquiring the same lock", { tim
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-settings-lock-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const directory = path.join(home, ".config", "codex-copilot-dx"), file = path.join(directory, "config.json");
   fs.mkdirSync(directory, { recursive: true });fs.writeFileSync(file, '{"user_owned":true}\n');
-  const lockModule = fileURLToPath(new URL("../src/lock.mjs", import.meta.url));
-  const settingsModule = fileURLToPath(new URL("../src/user-settings.mjs", import.meta.url));
+  const lockModule = new URL("../src/lock.mjs", import.meta.url).href;
+  const settingsModule = new URL("../src/user-settings.mjs", import.meta.url).href;
   const first = spawn(process.execPath, ["--input-type=module", "-e", `
     import fs from 'node:fs';import {withFileLockSync} from ${JSON.stringify(lockModule)};
     withFileLockSync(${JSON.stringify(file+".lock")},()=>{process.stdout.write('locked\\n');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,150);

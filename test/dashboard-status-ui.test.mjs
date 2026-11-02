@@ -105,20 +105,20 @@ test("Overview groups apps by their selected source without hiding sources or gu
   assert.equal(nodes.get("provider-clients").children[0].children[2].textContent, "Access paused");
 });
 
-test("dashboard usage renders percentages, zero hits and unknown rates in the seventh column", () => {
+test("dashboard usage renders percentages, zero hits and unknown rates alongside separate cache-write counts", () => {
   const usageValues = runInNewContext(`${viewScripts}\nglobalThis.ccdxDashboardUsage.create({ number }).usageValues;`, {
     number: (value) => value ?? "—",
   });
   const row = { model: "test", requests: 1, input_tokens: 100, cache_read_tokens: 80,
     output_tokens: 3, total_tokens: 103, cache_hit_rate: 0.8 };
-  assert.deepEqual(Array.from(usageValues(row)), ["test", 1, 100, 80, 3, 103, "80.0%"]);
+  assert.deepEqual(Array.from(usageValues(row)), ["test", 1, 100, 80, "—", 3, 103, "80.0%"]);
   for (const [rate, expected] of [[0, "0.0%"], [1, "100.0%"], [null, "—"], [undefined, "—"], [1.2, "—"]]) {
     assert.equal(usageValues({ ...row, cache_hit_rate: rate }).at(-1), expected);
   }
   assert.equal(usageValues({ ...row, cache_hit_rate_partial: true }).at(-1), "~80.0%");
   assert.equal(usageValues({ ...row, cache_hit_rate: null, cache_hit_rate_partial: true }).at(-1), "—");
   assert.match(html, /<th scope="col" data-i18n="cache_hit">REUSE RATE<\/th>/);
-  assert.match(html, /id="usage-body"><tr><td colspan="7" data-i18n="loading">Loading/);
+  assert.match(html, /id="usage-body"><tr><td colspan="8" data-i18n="loading">Loading/);
 });
 
 test("dashboard shows active per-request caps separately from history occupancy", () => {

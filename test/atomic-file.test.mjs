@@ -13,7 +13,7 @@ test("atomicWriteFileSync: replaces content, preserves mode, and removes temp fi
   atomicWriteFileSync(filePath, "after");
 
   assert.equal(fs.readFileSync(filePath, "utf8"), "after");
-  assert.equal(fs.statSync(filePath).mode & 0o777, 0o640);
+  if (process.platform !== "win32") assert.equal(fs.statSync(filePath).mode & 0o777, 0o640);
   assert.deepEqual(fs.readdirSync(dir), ["config.json"]);
 });
 
@@ -25,7 +25,7 @@ test("atomicWriteFileSync: can explicitly replace an existing mode", () => {
   atomicWriteFileSync(filePath, "after", { mode: 0o600, preserveMode: false });
 
   assert.equal(fs.readFileSync(filePath, "utf8"), "after");
-  assert.equal(fs.statSync(filePath).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(filePath).mode & 0o777, 0o600);
 });
 
 test("atomicWriteFileIfChangedSync: does not replace identical content", async () => {

@@ -16,7 +16,7 @@ test("client diagnosis is bounded/read-only and distinguishes App version, obser
   let statusCalls = 0;
   const checks = await inspectCodexClient({
     platform: "darwin", home: "/fixture", running: { ok: true },
-    readFileFn: (file) => { if (!file.startsWith("/Applications/ChatGPT.app/")) throw Error("missing"); return '<key>CFBundleShortVersionString</key><string>0.162.0</string>'; },
+    readFileFn: (file) => { file = file.replaceAll("\\", "/");if (!file.startsWith("/Applications/ChatGPT.app/")) throw Error("missing"); return '<key>CFBundleShortVersionString</key><string>0.162.0</string>'; },
     execFileFn: async (...args) => { commands.push(args); return { stdout: "10 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT" }; },
     readStatus: async () => { statusCalls += 1; return { data: { version: "0.9.14", models: { source: "cache", client_catalog: { last_request: {
       client_version: "0.161.0", application: "ChatGPT.app", source: "bundled", matched: true,
@@ -53,8 +53,9 @@ test("older adapters without catalog diagnostics are not labelled as having no c
 test("client diagnosis compares optional cache and bundled CLI metadata without executing a binary", async () => {
   const run = async version => inspectCodexClient({ platform: "darwin", home: "/fixture", env: {}, execFileFn: async () => ({ stdout: "" }),
     readFileFn: file => {
+      file = file.replaceAll("\\", "/");
       if (file === "/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-package.json") return JSON.stringify({ version: "0.164.0-alpha.11.1" });
-      if (file === "/fixture/.codex/models_cache.json") return JSON.stringify({ client_version: version, models: [{ prompt: "never report" }] });
+      if (file.endsWith("/fixture/.codex/models_cache.json")) return JSON.stringify({ client_version: version, models: [{ prompt: "never report" }] });
       throw Error("missing");
     } });
   const changed = await run("0.163.0");assert.ok(changed.some(check => check.kind === "warn" && /Model cache client 0.163.0/.test(check.message)));

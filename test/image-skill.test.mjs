@@ -39,7 +39,7 @@ test("image skill is absent by default and installs a self-contained helper only
   assert.deepEqual(references, ["references/editing.md", "references/helper.md"]);
   assert.doesNotMatch(guidance, /```sh|--image-id|\{\{/);
   for (const reference of references) assert.ok(fs.readFileSync(path.join(fixtureData.skillDirectory, reference), "utf8").length > 0);
-  for (const file of fixtureData.files) assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  if (process.platform !== "win32") for (const file of fixtureData.files) assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   const help = execFileSync(process.execPath, [fixtureData.helperPath, "--help"], { encoding: "utf8", cwd: fixtureData.home });
   assert.match(help, /^Usage: generate\.mjs/);
   assert.match(help, /--image-id/);

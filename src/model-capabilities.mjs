@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 export const MODEL_PROTOCOLS = Object.freeze(["messages", "responses", "chat"]);
 export const REASONING_EFFORTS = Object.freeze(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const limits = ["context_window", "max_input_tokens", "max_output_tokens", "reasoning_budget_min", "reasoning_budget_max"];
-const flags = ["reasoning", "reasoning_required", "reasoning_adaptive", "tools", "parallel_tools", "streaming", "structured_output"];
+const flags = ["reasoning", "reasoning_required", "reasoning_adaptive", "tools", "parallel_tools", "streaming", "structured_output", "mid_conversation_system"];
 export const CAPABILITY_FIELDS = Object.freeze([...limits, ...flags, "reasoning_efforts", "reasoning_format", "thinking_modes", "input_modalities", "web_search"]);
 const object = value => value && typeof value === "object" && !Array.isArray(value);
 export function validCapabilities(value) {
@@ -39,7 +39,7 @@ export function catalogCapabilities(model) {
     reasoning: first(typeof caps.reasoning === "boolean" ? caps.reasoning : undefined, supports.reasoning),
     reasoning_efforts: first(model.reasoning_efforts, supports.reasoning_effort),
     input_modalities: first(model.input_modalities, caps.input_modalities, supports.vision === true ? ["text", "image"] : undefined),
-    tools: first(supports.tools, supports.tool_calls), parallel_tools: supports.parallel_tool_calls, streaming: supports.streaming,
+    tools: first(supports.tools, supports.tool_calls), parallel_tools: supports.parallel_tool_calls, streaming: supports.streaming, mid_conversation_system: supports.mid_conversation_system,
     structured_output: first(supports.structured_output, supports.structured_outputs), web_search: first(model.web_search, caps.web_search), thinking_modes: first(model.thinking_modes, caps.thinking_modes),
     ...Object.fromEntries(["reasoning_required", "reasoning_adaptive", "reasoning_budget_min", "reasoning_budget_max", "reasoning_format"].map(key => [key, first(model[key], caps[key])])),
   };

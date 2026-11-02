@@ -24,7 +24,7 @@ test("image provider config: defaults disabled and stores a validated secret wit
   }, { home, env: {} });
 
   assert.equal(saved.filePath, imageProviderConfigPath({ home, env: {} }));
-  assert.equal(fs.statSync(saved.filePath).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(saved.filePath).mode & 0o777, 0o600);
   assert.deepEqual(readImageProviderConfig({ home, env: {}, strict: true }), {
     enabled: true,
     endpoint: "https://images.example/v1/images/generations",
@@ -90,7 +90,7 @@ test("image provider config: persists a base URL as its canonical generation end
   }, { home, env: {} });
   assert.equal(saved.config.endpoint, "https://images.example/proxy/v1/images/generations");
   assert.equal(readImageProviderConfig({ home, env: {}, strict: true }).endpoint, saved.config.endpoint);
-  assert.equal(fs.statSync(saved.filePath).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(saved.filePath).mode & 0o777, 0o600);
 });
 
 test("image provider inspection detects qwen messages without generating an image", async () => {

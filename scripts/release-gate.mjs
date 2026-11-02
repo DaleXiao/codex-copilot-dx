@@ -1,0 +1,10 @@
+import { execFileSync } from "node:child_process";
+const runId = process.env.CCDX_CI_RUN, repository = process.env.GITHUB_REPOSITORY;
+if (!/^\d+$/.test(runId || "") || !/^[\w.-]+\/[\w.-]+$/.test(repository || "")) throw Error("Supply the complete CI run and repository");
+const api = route => JSON.parse(execFileSync("gh", ["api", `repos/${repository}/${route}`], { encoding: "utf8" }));
+const run = api(`actions/runs/${runId}`), sha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+if (run.head_sha !== sha || run.event !== "push" || run.head_branch !== "main" || run.path !== ".github/workflows/ci.yml" || run.status !== "completed" || run.conclusion !== "success") throw Error("Release requires successful full CI on these exact source bytes");
+const jobs = api(`actions/runs/${runId}/jobs?per_page=100`);
+if (jobs.total_count !== jobs.jobs.length || jobs.jobs.length < 20 || jobs.jobs.some(job => job.conclusion !== "success")) throw Error("CI jobs are incomplete or did not all succeed");
+for (const name of ["codex-client", "privacy-native-windows", "macos", "windows-prediction", "dashboard-browsers", "runtime-packages / runtime"]) if (!jobs.jobs.some(job => job.name.startsWith(name))) throw Error(`Missing release gate: ${name}`);
+console.log(JSON.stringify({ commit: sha, ci_run: runId, jobs: jobs.jobs.length, passed: true }));

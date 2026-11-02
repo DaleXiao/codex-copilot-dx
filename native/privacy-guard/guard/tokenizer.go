@@ -243,8 +243,10 @@ func (t *tokenizer) normalize(text string, base int) []nchar {
 		// the first characters of to are the first of part's, in turn;
 		// any more are put after the last
 		var orig [][2]int
-		for i, r := range part {
-			orig = append(orig, [2]int{base + at + i, base + at + i + utf8.RuneLen(r)})
+		for i := 0; i < len(part); {
+			_, width := utf8.DecodeRuneInString(part[i:])
+			orig = append(orig, [2]int{base + at + i, base + at + i + width})
+			i += width
 		}
 		k := 0
 		for _, r := range to {
@@ -262,13 +264,15 @@ func (t *tokenizer) normalize(text string, base int) []nchar {
 				continue
 			}
 		}
-		for i, r := range gr {
-			part := gr[i : i+utf8.RuneLen(r)]
+		for i := 0; i < len(gr); {
+			r, width := utf8.DecodeRuneInString(gr[i:])
+			part := gr[i : i+width]
 			if to, ok := t.transform(part); ok {
 				add(part, at+i, to)
 			} else {
 				out = append(out, nchar{r, base + at + i, base + at + i + len(part)})
 			}
+			i += width
 		}
 	}
 	return out

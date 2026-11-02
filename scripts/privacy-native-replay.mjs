@@ -13,7 +13,9 @@ const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-privacy-native-"
 const model = process.argv[3] || temporary, results = [];
 let child;
 try {
-  if (!process.argv[3]) for (const file of PRIVACY_MODEL_FILES) {
+  await fs.mkdir(model, { recursive: true });
+  for (const file of PRIVACY_MODEL_FILES) {
+    try { const bytes = await fs.readFile(path.join(model, file.name));if (bytes.length === file.bytes && createHash("sha256").update(bytes).digest("hex") === file.sha256) continue; } catch {}
     const response = await fetch(`https://huggingface.co/QuantumNous/astrlink-guard/resolve/${PRIVACY_MODEL_REVISION}/int8/${file.name}`, { signal: AbortSignal.timeout(90000) });
     assert.equal(response.status, 200);const bytes = Buffer.from(await response.arrayBuffer());assert.equal(bytes.length, file.bytes);
     assert.equal(createHash("sha256").update(bytes).digest("hex"), file.sha256);await fs.writeFile(path.join(model, file.name), bytes);

@@ -147,6 +147,7 @@ test("Chinese functional names remain translated and preserve their meaning", ()
   }
   const reuseHint = page.language.format("Cache hit = recorded cached / input tokens. ~ = incomplete history. — = unavailable or invalid counts.");
   assert.match(reuseHint, /Token/);
-  assert.match(reuseHint, /~.*部分记录/);
+  assert.match(reuseHint, /输入和缓存读取均有效/);
+  assert.match(reuseHint, /~.*覆盖不完整/);
   assert.match(reuseHint, /—.*未知/);
 });

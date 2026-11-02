@@ -203,7 +203,7 @@ function scheduleUsageWriteDrain() {
 export function recordUsage(record) {
   if (!record) return Promise.resolve();
   const usage = record.usage || {};
-  const { cached, unknown, invalid } = usageCacheEvidence(usage);
+  const { cached } = usageCacheEvidence(usage);
   const provider = usageProvider(record), label = runtimeUsageByProvider.has(provider) || runtimeUsageByProvider.size < 18 ? provider : "other";
   if (!runtimeUsageByProvider.has(label)) runtimeUsageByProvider.set(label, { records: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, partial_records: 0 });
   for (const totals of [runtimeUsage, runtimeUsageByProvider.get(label)]) {
@@ -212,8 +212,7 @@ export function recordUsage(record) {
       if (Number.isFinite(value) && value >= 0) totals[target] += value;
     }
     if (!Number.isFinite(usage.input_tokens) || !Number.isFinite(usage.output_tokens) || cached === undefined) totals.partial_records++;
-    if (unknown) totals.cache_hit_unknown_requests = (totals.cache_hit_unknown_requests || 0) + 1;
-    if (invalid) totals.cache_hit_invalid_requests = (totals.cache_hit_invalid_requests || 0) + 1;
+    addCacheEvidence(totals, usage);
   }
   if (process.env.CCDX_DISABLE_USAGE === "1") return Promise.resolve();
   const filePath = usageLogPath();
@@ -341,15 +340,13 @@ export function summarizeUsage(records, { provider = "" } = {}) {
     const modelTotals = summary.byModel[model];
     modelTotals.requests += 1;
     addUsageTotals(modelTotals, record.usage);
-    const { unknown, invalid } = usageCacheEvidence(record.usage || {});
     const qualified = `${source} / ${model}`;
     if (!Object.hasOwn(summary.bySourceModel, qualified)) summary.bySourceModel[qualified] = { requests: 0 };
     const sourceTotals = summary.bySourceModel[qualified];
     sourceTotals.requests++;
     addUsageTotals(sourceTotals, record.usage);
     for (const target of [summary.totals, modelTotals, sourceTotals]) {
-      if (unknown) target.cache_hit_unknown_requests = (target.cache_hit_unknown_requests || 0) + 1;
-      if (invalid) target.cache_hit_invalid_requests = (target.cache_hit_invalid_requests || 0) + 1;
+      addCacheEvidence(target, record.usage || {});
     }
   }
   return summary;
@@ -436,11 +433,27 @@ export function cacheReadTokens(usage = {}) {
 }
 
 export function usageCacheHitRate(usage = {}) {
+  if (usage.cache_hit_known_requests !== undefined || usage.cache_hit_unknown_requests !== undefined) {
+    const input = usage.cache_hit_input_tokens, cached = usage.cache_hit_read_tokens;
+    return usage.cache_hit_known_requests > 0 && Number.isFinite(input) && input > 0
+      && Number.isFinite(cached) && cached >= 0 && cached <= input ? cached / input : null;
+  }
   const input = usage.input_tokens;
   const cached = cacheReadTokens(usage);
   if (usage.cache_hit_invalid_requests > 0 || !Number.isFinite(input) || input <= 0
     || !Number.isFinite(cached) || cached < 0 || cached > input) return null;
   return cached / input;
+}
+
+function addCacheEvidence(target, usage) {
+  const { cached, unknown, invalid } = usageCacheEvidence(usage);
+  if (unknown) target.cache_hit_unknown_requests = (target.cache_hit_unknown_requests || 0) + 1;
+  else {
+    target.cache_hit_known_requests = (target.cache_hit_known_requests || 0) + 1;
+    target.cache_hit_input_tokens = (target.cache_hit_input_tokens || 0) + usage.input_tokens;
+    target.cache_hit_read_tokens = (target.cache_hit_read_tokens || 0) + cached;
+  }
+  if (invalid) target.cache_hit_invalid_requests = (target.cache_hit_invalid_requests || 0) + 1;
 }
 
 function usageCacheEvidence(usage) {

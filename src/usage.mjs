@@ -54,7 +54,7 @@ function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {
   lines.push(
     `Records: ${fmt(summary.requests)}`,
     `Tokens: input=${fmt(summary.totals.input_tokens)} cache_read=${fmt(cacheReadTokens(summary.totals))} output=${fmt(summary.totals.output_tokens)} total=${fmt(summary.totals.total_tokens)}`,
-    `Cache hit: ${cacheHitPercent(summary.totals)} (cached/input tokens)`,
+    `Cache hit: ${cacheHitPercent(summary.totals)} (cached/input tokens; valid paired records only)`,
     "",
     "By model:",
   );

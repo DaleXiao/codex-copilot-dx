@@ -355,7 +355,11 @@ test("dashboard cache hit rate matches CLI and marks computable incomplete total
   assert.equal(first.body.rows.find(({ model }) => model === "b").cache_hit_rate, 0);
   records.push({ model: "old-log", usage: { input_tokens: 5 } });
   const incomplete = await invoke(handler, { url: "/_ccdx/ui/usage" });
-  assert.equal(incomplete.body.total.cache_hit_rate, 10 / 105);
+  assert.equal(incomplete.body.total.cache_hit_rate, 0.1);
+  assert.equal(incomplete.body.total.cache_hit_input_tokens, 100);
+  assert.equal(incomplete.body.total.cache_hit_read_tokens, 10);
+  assert.equal(incomplete.body.total.cache_hit_known_requests, 2);
+  assert.equal(incomplete.body.total.cache_hit_unknown_requests, 1);
   assert.equal(incomplete.body.total.cache_hit_rate_partial, true);
   assert.equal(incomplete.body.rows.find(({ model }) => model === "old-log").cache_hit_rate, null);
   assert.equal(incomplete.body.rows.find(({ model }) => model === "a").cache_hit_rate, 1);

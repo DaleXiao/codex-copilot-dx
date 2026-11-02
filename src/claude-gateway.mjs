@@ -234,7 +234,10 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
               || event.type === "content_block_delta" && (isMessagesOutputDelta(event.delta) || event.delta?.type === "signature_delta" && event.delta.signature)) conversation?.commit?.({ tool: event.content_block?.type === "tool_use" });
             if (event.type === "message_start") { responseId = event.message?.id;model = event.message?.model || model;usage = event.message?.usage || {}; }
             if (event.type === "content_block_delta" && isMessagesOutputDelta(event.delta)) tracker?.firstOutput();
-            if (event.type === "message_delta") { usage = { ...usage, ...event.usage };stopReason = event.delta?.stop_reason || stopReason; }
+            if (event.type === "message_delta") {
+              usage = { ...usage, ...Object.fromEntries(Object.entries(event.usage || {}).filter(([, value]) => value != null)) };
+              stopReason = event.delta?.stop_reason || stopReason;
+            }
             if (event.type === "message_stop") { sawStop = true;outcome = stopReason === "max_tokens" ? "incomplete" : "completed"; }
           }, config.maxSseBufferBytes, clientModel);
           const reader = upstream.body.getReader();

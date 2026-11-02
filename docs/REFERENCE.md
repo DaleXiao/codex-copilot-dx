@@ -106,7 +106,7 @@ Catalog diagnostics distinguish local cached data from an online response and ex
 - **Local checks:** `doctor` is read-only by default. `--online` checks access; `--compat` sends minimal inference and consumes usage. `--fix` backs up owned configuration and performs bounded repairs. It does not enable optional features, change company policy or force-restart apps. Partial repairs exit 1.
 - **Cache cleanup:** adding `--history` can break the next continuation. It does not delete client transcripts or generated images.
 
-Request inspection covers bounded retained records, not a full conversation archive. Unidentified clients stay unidentified. Routine diagnostics omit secrets, prompts and error bodies. Explicit error excerpts use bounded, redacted collection. The usage JSON `requests` field counts recorded usage rows, not HTTP calls. Usage is returned token metadata; cache hit is reused input divided by input, with unknown/partial data indicated. It is not a request-based cache rate or a billing receipt.
+Request inspection covers bounded retained records, not a full conversation archive. Unidentified clients stay unidentified. Routine diagnostics omit secrets, prompts and error bodies. Explicit error excerpts use bounded, redacted collection. The usage JSON `requests` field counts recorded usage rows, not HTTP calls. Usage is returned token metadata; cache hit is reused input divided by input from records with valid counts for both. Unknown/invalid records remain in token totals but are excluded from both sides of the rate, with partial coverage indicated. It is not a request-based cache rate or a billing receipt.
 
 ## Settings and appearance
 
@@ -685,6 +685,10 @@ ccdx usage
 ```
 
 The summary covers the current log and its single rotated backup, not an unbounded lifetime history. It reports recorded responses and per-model input, cache-read, output, and total token metadata.
+
+Messages input is the sum of Anthropic uncached input, cache-read and cache-creation tokens. Cache creation is new input, not a cache hit; output tokens, including thinking output, are not added to the cache-hit denominator. M365 follows this same protocol accounting. Stream usage updates replace cumulative counters, preserve earlier values when a later field is null or absent, and retain explicit zero. Each gateway request writes at most one usage row; forwarded usage is unchanged.
+
+CLI/TUI, WebUI totals and daily analytics use the same paired evidence for cache rates. Aggregate JSON exposes `cache_hit_known_requests`, `cache_hit_unknown_requests`, `cache_hit_input_tokens` and `cache_hit_read_tokens` so the rate and its coverage can be checked. `~` marks incomplete coverage; a rate without a positive known input basis remains unknown. Historical logs are re-aggregated without rewriting their records, and unknown cache values are never filled with zero.
 
 Usage writes are asynchronous and batched under the existing cross-process rotation lock. Pending and in-flight records share a 4096-record / 4 MiB ceiling. If either ceiling is reached, new excess records are dropped with a warning and a status counter; inference does not wait or retry. Normal records and per-record rotation boundaries are unchanged. The bounded shutdown flush remains 1.5 seconds; disk failures and shutdown deadlines can prevent persistence, so usage is diagnostic rather than a billing ledger.
 

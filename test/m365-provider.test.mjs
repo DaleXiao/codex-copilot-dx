@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { createM365Provider, m365Headers, m365ConversationId, m365Catalog, m365Models } from "../src/providers/m365.mjs";
 import { m365Paths, writeM365Json, m365AccountKey } from "../src/m365-settings.mjs";
+import { runWithRequestContext } from "../src/request-context.mjs";
+import { createApiTokenCounter } from "../src/providers/api-token-count.mjs";
 import { limitM365CacheTtl } from "../src/providers/m365-messages-policy.mjs";
 
 const account = { id: "id-a", tenant: "tenant-a", login: "user@example.test" };
@@ -203,4 +205,22 @@ test('M365 cache publication is account-and-origin bound; old environment files 
   const p = createM365Provider({ home, auth: auth(), fetchImpl: async () => Response.json(catalog) });await p.refresh();p.close();
   assert.equal(JSON.parse(fs.readFileSync(paths.catalog)).service_origin, 'https://loki.delve.office.com');
   const cached = createM365Provider({ home, auth: auth() });assert.equal(cached.catalog().length, catalog.data.length);cached.close();
+});
+
+test("coordinated M365 count evidence records one real upstream attempt and zero cached attempts", async t => {
+  let posts = 0;
+  const p = createM365Provider({ home: fixture(t), auth: auth(), persist: false, fetchImpl: async (_url, init) => {
+    if (init.method === "GET") return Response.json(catalog);
+    const sent = JSON.parse(init.body);assert.equal(sent.model, "claude-opus-5.5");assert.equal(sent.system[0].cache_control.ttl, "5m");
+    posts++;return Response.json({ error: { type: "not_found_error" } }, { status: 404 });
+  } });t.after(() => p.close());await p.refresh();
+  const counter = createApiTokenCounter({ request: (body, options) => p.client.messages(body, options) });
+  const body = { model: "claude-opus-5-5", system: [{ type: "text", text: "fixed", cache_control: { type: "ephemeral", ttl: "1h" } }], messages: [{ role: "user", content: "synthetic" }] };
+  for (const expected of [1, 0]) {
+    const context = {}, response = await runWithRequestContext(context, () => counter.count(body, { countTokens: true,
+      onCountObservation(value) { if (value.upstream) context.upstreamAttempts = (context.upstreamAttempts || 0) + 1; } }));
+    assert.equal(response.status, 404);assert.equal(context.upstreamAttempts || 0, expected);await response.body.cancel();
+  }
+  assert.equal(posts, 1);assert.equal(body.system[0].cache_control.ttl, "1h");
+  const context = {};await runWithRequestContext(context, () => p.client.messages(body));assert.equal(context.upstreamAttempts, 1);
 });

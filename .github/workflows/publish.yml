@@ -72,6 +72,11 @@ jobs:
           fi
           gh release upload "v$RELEASE_VERSION" "$RUNNER_TEMP/ccdx-release/"*.tgz "$RUNNER_TEMP/ccdx-release/"ccdx-privacy-guard-1-*arm64 "$RUNNER_TEMP/ccdx-release/"ccdx-privacy-guard-1-*x64 "$RUNNER_TEMP/ccdx-release/"*.exe "$RUNNER_TEMP/ccdx-release/ccdx-install.mjs" "$RUNNER_TEMP/ccdx-release/install.sh" "$RUNNER_TEMP/ccdx-release/install.ps1" "$RUNNER_TEMP/ccdx-release/SHA256SUMS" --clobber
           node scripts/verify-release-assets.mjs "$RUNNER_TEMP/ccdx-release" draft
+      - name: Make verified component assets available before npm discovery
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: gh release edit "v$RELEASE_VERSION" --draft=false --latest=false
       - name: Publish the verified source tarball to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

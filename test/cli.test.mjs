@@ -189,7 +189,7 @@ test("cli doctor ignores retired Claude settings and remains Codex-only", async 
 
   const { stdout, stderr } = await execFileAsync(process.execPath, ["--require", nonDarwinPlatformPreload, "--require", offlineDoctorPreload, cliPath, "doctor"], {
     timeout: 2000,
-    env: { ...process.env, HOME: home, USERPROFILE: home, ADAPTER_PORT: "9" },
+    env: { ...process.env, HOME: home, USERPROFILE: home, PATH: "", ADAPTER_PORT: "9" },
   });
 
   assert.match(stdout, /^ccdx doctor/m);

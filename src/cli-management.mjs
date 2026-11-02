@@ -134,6 +134,17 @@ export async function runManagementCommand(command, options = {}) {
     const { dashboardUpdateStatus } = await import("./dashboard-updates.mjs");return print(await dashboardUpdateStatus());
   }
   if (group === "config") {
+    const changePrivacy = async (operation, extra = {}) => {
+      const state = await request({ path: "privacy" });
+      if (typeof state.revision !== "string") throw new Error("Update the running CCDX service to manage local masking.");
+      return request({ path: "privacy", body: { action: operation, revision: state.revision, ...extra } });
+    };
+    if (path[1] === "privacy") {
+      if (action === "status") return print(await request({ path: "privacy" }));
+      if (flags.preview) return print({ operation: action, saved: false, effect: action === "enable" ? "Download and prepare before activation" : "Existing protected replies retain restoration" });
+      await confirm(action === "enable" ? "Download and prepare local masking before enabling it?" : action === "remove" ? "Disable masking and delete its downloaded component and model?" : "Disable masking for later requests?");
+      return print(await changePrivacy(action));
+    }
     const preferenceOptions = { ...options, backupScope: "service" }, local = settingsPreferencesSnapshot(preferenceOptions);
     const effective = live => Object.fromEntries(Object.entries(live.effective || {}).filter(([key]) => Object.hasOwn(local.defaults, key)));
     if (action === "show") {
@@ -163,8 +174,10 @@ export async function runManagementCommand(command, options = {}) {
       if (!/not running/.test(error.message)) throw error;
     }
     if (running && operation !== "preferences") { await connection();requireManagement(); }
-    const risk = values?.nightly_updates ? "Overnight updates can interrupt task continuation. Save this preference?" : "Save these service preferences?";
+    const risk = values?.privacy_enabled ? "Download and prepare local masking before enabling it?" : values?.nightly_updates ? "Overnight updates can interrupt task continuation. Save this preference?" : "Save these service preferences?";
     await confirm(risk);
+    if (running && values && Object.hasOwn(values, "privacy_enabled")) return print(await changePrivacy(values.privacy_enabled ? "enable" : "disable"));
+    if (running && values && Object.hasOwn(values, "privacy_personal")) return print(await changePrivacy("personal", { personal: values.privacy_personal }));
     const body = { action: operation, revision: local.revision, ...(values ? { values } : { backup_id, scope: "service" }) };
     if (running) { const result = await request({ path: "settings", body });return print({ saved: result.preferences.values, effective: effective(result), nightly_update: result.nightly_update, effect: "Saved; restart requirements are shown in effective state" }); }
     writeSettingsPreferences(body, preferenceOptions);return print({ saved: settingsPreferencesSnapshot(preferenceOptions).values, effect: "Saved for the next CCDX start; no service was started" });

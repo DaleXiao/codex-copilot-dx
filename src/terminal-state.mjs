@@ -46,7 +46,8 @@ export function projectTerminalState(data = {}) {
   if (lastFailure) {
     const app = TERMINAL_CLIENT_NAMES[appIds[lastFailure.application]] || "Unidentified client";
     const source = connection?.providers?.find(item => item.id === lastFailure.provider)?.name || ({ github: "GitHub Copilot", m365: "Microsoft 365" }[lastFailure.provider]) || lastFailure.provider || "Unknown source";
-    const causes = { m365_network_error: "Network request failed", m365_catalog_http_403: "Model catalog access denied", ccdx_api_model_unavailable: "Selected model is unavailable", ccdx_client_source_disabled: "Model access is paused" };
+    const causes = { m365_network_error: "Network request failed", m365_catalog_http_403: "Model catalog access denied", ccdx_api_model_unavailable: "Selected model is unavailable", ccdx_client_source_disabled: "Model access is paused",
+      ccdx_privacy_busy: "Local masking is busy; nothing was sent", ccdx_privacy_check_timeout: "Local masking check timed out; nothing was sent", ccdx_privacy_engine_invalid: "Local masking result was invalid; nothing was sent" };
     const message = causes[lastFailure.code] || (lastFailure.route === "messages_count_tokens" ? "Token-count check failed" : lastFailure.http_status === 401 ? "Sign-in was rejected" : lastFailure.http_status === 403 ? "Access was denied" : lastFailure.http_status === 429 ? "Request limit reached" : "Request failed");
     issue = { label: `${terminalCell(app)} / ${terminalCell(source)}: ${message}`, request_id: lastFailure.request_id, application: lastFailure.application };
   }

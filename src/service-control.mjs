@@ -23,11 +23,13 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     try { imageConfigured = Boolean(readImages()); } catch {}
     try { predictionConfigured = readPrediction().enabled === true; } catch {}
     const enabled = nightlyUpdatePreference(options), nightly = nightlyStatus();
-    return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options), local_privacy: providerRuntime?.privacy?.snapshot(),
+    const localPrivacy = providerRuntime?.privacy?.snapshot();
+    return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options), local_privacy: localPrivacy,
       features: { prediction: { ...featureSnapshot(predictionControlSnapshot), bridge: prediction?.bridge || "stopped", active: prediction?.active === true }, image: featureSnapshot(imageSetupSummary) },
       decoded_body: decodedBodyLimitPreference(options), manual_update: { available: typeof manualUpdate === "function" }, last_operation: lastOperation,
       nightly_update: { enabled, ...nightly, effect: enabled && !nightly ? "next_start" : "immediate" },
       effective: {
+        privacy_enabled: { value: localPrivacy?.effective_enabled === true, state: !localPrivacy ? "unavailable" : !localPrivacy.enabled ? "off" : localPrivacy.state === "ready" ? "ready" : "not_ready" },
         terminal_animation_enabled: { value: terminal?.enabled === true && saved.terminal_animation_enabled && !/^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || ""),
           state: terminal?.enabled === true ? "immediate" : "terminal_unavailable", locked: /^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || "") },
         open_webui: { value: saved.open_webui, state: "next_start" },
@@ -61,6 +63,10 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
       if (decodedBodyLimitPreference(options).source === "environment") throw new Error("Request limit is controlled by the launch environment");
       writeDecodedBodyLimitMib(input.mib, options);
     } else if (["preferences", "reset_preferences", "restore_preferences"].includes(input.action)) {
+      if (input.action === "preferences" && Object.hasOwn(input.values || {}, "privacy_enabled")
+        && input.values.privacy_enabled !== settingsPreferencesSnapshot(options).values.privacy_enabled) {
+        throw Object.assign(new Error("Use local masking controls to prepare or disable protection"), { code: "ccdx_settings_privacy_action_required", statusCode: 400 });
+      }
       const before = nightlyUpdatePreference(options);
       writeSettingsPreferences(input, options);
       if (input.action !== "preferences" || Object.keys(input.values || {}).some(key => key.startsWith("privacy_"))) providerRuntime?.privacy?.settingsChanged();

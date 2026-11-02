@@ -81,6 +81,27 @@ test("invalid detector results never poison a text's cache and failures can reco
   assert.equal(await f.privacy.prepare(value, { protocol: "responses" }), value);assert.equal(calls, 2);
 });
 
+test("cancelled histories retain completed batches and skip work that was not submitted", async t => {
+  const jobs = [], f = fixture(t, { find: texts => new Promise(resolve => { jobs.push({ texts, resolve }); }) }, { batchBytes: 16 });await enable(f);
+  const value = { messages: ["first whole text", "second whole text", "third whole text"].map(content => ({ role: "user", content })) }, abort = new AbortController();
+  const pending = f.privacy.prepare(value, { protocol: "messages", signal: abort.signal });await new Promise(setImmediate);assert.equal(jobs.length, 1);
+  abort.abort(Error("cancelled"));await assert.rejects(pending, /cancelled/);
+  jobs[0].resolve([[]]);await new Promise(setImmediate);assert.equal(jobs.length, 1);
+  const retry = f.privacy.prepare(value, { protocol: "messages" });await new Promise(setImmediate);assert.deepEqual(jobs[1].texts, ["second whole text"]);
+  jobs[1].resolve([[]]);await new Promise(setImmediate);assert.deepEqual(jobs[2].texts, ["third whole text"]);
+  jobs[2].resolve([[]]);assert.equal(await retry, value);
+  assert.equal(await f.privacy.prepare(value, { protocol: "messages" }), value);assert.equal(jobs.length, 3);
+});
+
+test("one caller leaving does not discard an unsubmitted text still needed by another", async t => {
+  const jobs = [], f = fixture(t, { find: texts => new Promise(resolve => { jobs.push({ texts, resolve }); }) }, { batchBytes: 16 });await enable(f);
+  const abort = new AbortController(), first = f.privacy.prepare({ messages: ["first whole text", "second whole text", "shared whole text"].map(content => ({ role: "user", content })) }, { protocol: "messages", signal: abort.signal });
+  await new Promise(setImmediate);
+  const second = f.privacy.prepare({ input: "shared whole text" }, { protocol: "responses" });
+  abort.abort(Error("cancelled"));await assert.rejects(first, /cancelled/);jobs[0].resolve([[]]);await new Promise(setImmediate);
+  assert.deepEqual(jobs[1].texts, ["shared whole text"]);jobs[1].resolve([[]]);await second;assert.equal(jobs.length, 2);
+});
+
 test("a request pins protection across an off switch while a later request keeps the original provider function", async t => {
   const f = fixture(t);await enable(f);
   const res = { write: () => true, end() {}, writeHead() {}, removeHeader() {}, getHeader() {}, once() {} };

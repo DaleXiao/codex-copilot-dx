@@ -51,6 +51,12 @@ test("settings browser API requires loopback, a same-origin write, bounded JSON 
   const invalid = await invokeAdapter(options, { url: "/_ccdx/ui/settings", headers, body: { ...body, value: "false" } });assert.equal(invalid.status, 400);
 });
 
+test("generic preferences cannot activate masking before the model preparation transaction", async t => {
+  const f = fixture(t), { settingsPreferencesSnapshot } = await import("../src/settings-preferences.mjs");
+  await assert.rejects(f.control.action({ action: "preferences", values: { privacy_enabled: true }, revision: settingsPreferencesSnapshot({ home: f.home, env: {} }).revision }), { code: "ccdx_settings_privacy_action_required" });
+  assert.equal(settingsPreferencesSnapshot({ home: f.home, env: {} }).values.privacy_enabled, false);
+});
+
 test("damaged saved settings cannot reopen paused optional capabilities", async t => {
   const f = fixture(t);await f.control.action({ action: "preference", key: "image_enabled", value: false });
   const { servicePreferences, userSettingsPath } = await import("../src/user-settings.mjs");

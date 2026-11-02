@@ -224,6 +224,8 @@ export function createAdapterHandler(options = {}) {
         snapshot.routing = { ...snapshot.routing, responses: providers.codex_provider };
         snapshot.models = { ...snapshot.models, provider: providers.codex_provider, source: "configured", models: source?.codex_model_count || 0, refresh_in_flight: false };
       }
+      try { snapshot.local_privacy = privacy.snapshot(); }
+      catch { snapshot.local_privacy = { state: "error", error: "ccdx_privacy_settings_invalid" }; }
       return { ...snapshot, http_errors: httpErrors.snapshot(), ...(providers ? { providers } : {}) };
     },
   });

@@ -14,13 +14,16 @@ export function createLocalPrivacy(options = {}) {
   const model = options.model || createPrivacyModel({ ...options, changed: changes.changed });
   const rules = createPrivacyRuleCache();
   let cacheBytes = 0, generation = 0, pending = null, disposed = false;
-  let keyLoaded = false, actionError = null;
+  let keyLoaded = false, actionError = null, lastCheck = null;
   const settings = () => {
     const saved = readUserSettings({ ...options, strict: true });
     return { enabled: saved.privacy_enabled === true, personal: saved.privacy_personal === true };
   };
   const revision = saved => createHash("sha256").update(JSON.stringify(saved)).digest("hex");
-  const snapshot = () => { const saved = settings();return { ...model.snapshot(), ...saved, rule_cache: rules.stats(), ...(actionError ? { error: actionError } : {}), revision: revision(saved), action_pending: Boolean(pending), scope: "conversation_text" }; };
+  const snapshot = () => { const saved = settings(), detector = model.snapshot();return { ...detector, ...saved,
+    effective_enabled: saved.enabled && detector.state === "ready", last_check: lastCheck && { ...lastCheck,
+      ...(lastCheck.continuing ? { continuing: flights.size > 0 || detector.pending_checks > 0 } : {}) }, rule_cache: rules.stats(),
+    ...(actionError ? { error: actionError } : {}), revision: revision(saved), action_pending: Boolean(pending), scope: "conversation_text" }; };
   function loadKey() {
     if (keyLoaded) return;
     const file = path.join(path.dirname(userSettingsPath(options)), "privacy-key");fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -38,36 +41,62 @@ export function createLocalPrivacy(options = {}) {
     });changes.changed();
   }
   async function find(texts, { signal } = {}) {
+    if (signal?.aborted) throw signal.reason;
     const waiting = [], fresh = [], entries = [];
     for (const text of texts) {
       const key = createHash("sha256").update(text).digest("hex");
       if (cache.has(key)) {
         const saved = cache.get(key);cache.delete(key);cache.set(key, saved);waiting.push(Promise.resolve(saved.found));
-      } else if (flights.has(key)) waiting.push(flights.get(key).promise);
-      else {
-        const entry = Promise.withResolvers();entry.key = key;flights.set(key, entry);
-        waiting.push(entry.promise);fresh.push(text);entries.push(entry);
+      } else {
+        let entry = flights.get(key);
+        if (!entry) {
+          entry = Promise.withResolvers();Object.assign(entry, { key, text, waiters: 0, done: false });
+          flights.set(key, entry);fresh.push(entry);
+        }
+        entry.waiters++;entries.push(entry);waiting.push(entry.promise);
       }
     }
-    // Submitted native work cannot be interrupted. Keep its shared result alive
-    // after a caller stops waiting so retries reuse the work and its cache.
-    if (fresh.length) void model.find(fresh).then(value => {
-      const found = validatePrivacyFindings(fresh, value);
-      for (let i = 0; i < found.length; i++) {
-        const cost = Buffer.byteLength(JSON.stringify(found[i] || [])) + 128, entry = entries[i];
-        if (cost <= 1024 * 1024) {
-          const previous = cache.get(entry.key);if (previous) cacheBytes -= previous.bytes;
-          cache.set(entry.key, { found: found[i] || [], bytes: cost });cacheBytes += cost;
-          while (cache.size > 5000 || cacheBytes > 4 * 1024 * 1024) { const oldest = cache.keys().next().value;cacheBytes -= cache.get(oldest).bytes;cache.delete(oldest); }
+    const finish = (entry, value, error) => {
+      if (entry.done) return;
+      entry.done = true;entry.text = null;
+      if (flights.get(entry.key) === entry) flights.delete(entry.key);
+      if (error) entry.reject(error);else entry.resolve(value);
+    };
+    const run = async () => {
+      let at = 0;
+      try {
+        while (at < fresh.length) {
+          const batch = [];let bytes = 0;
+          while (at < fresh.length && batch.length < 64) {
+            const entry = fresh[at];
+            if (!entry.waiters) { finish(entry, null, privacyFailure("cancelled"));at++;continue; }
+            const size = Buffer.byteLength(entry.text);
+            if (batch.length && bytes + size > (options.batchBytes ?? 64 * 1024)) break;
+            batch.push(entry);bytes += size;at++;
+          }
+          if (!batch.length) continue;
+          // A submitted batch finishes even if its callers leave. Whole text
+          // entries keep their context; later batches can yield unused work.
+          const input = batch.map(entry => entry.text), found = validatePrivacyFindings(input, await model.find(input));
+          for (let i = 0; i < found.length; i++) {
+            const cost = Buffer.byteLength(JSON.stringify(found[i])) + 128, entry = batch[i];
+            if (cost <= 1024 * 1024) {
+              const previous = cache.get(entry.key);if (previous) cacheBytes -= previous.bytes;
+              cache.set(entry.key, { found: found[i], bytes: cost });cacheBytes += cost;
+              while (cache.size > 5000 || cacheBytes > 4 * 1024 * 1024) { const oldest = cache.keys().next().value;cacheBytes -= cache.get(oldest).bytes;cache.delete(oldest); }
+            }
+            finish(entry, found[i]);
+          }
         }
-        entry.resolve(found[i] || []);
+      } catch (error) {
+        for (const entry of fresh) finish(entry, null, error);
       }
-    }).catch(error => entries.forEach(entry => { if (flights.get(entry.key) === entry) flights.delete(entry.key);entry.reject(error); }))
-      .finally(() => entries.forEach(entry => { if (flights.get(entry.key) === entry) flights.delete(entry.key); }));
+    };
+    if (fresh.length) void run();
     let listener;
     const aborted = new Promise((_, reject) => { listener = () => reject(signal.reason);if (signal?.aborted) listener();else signal?.addEventListener("abort", listener, { once: true }); });
     try { return await (signal ? Promise.race([Promise.all(waiting), aborted]) : Promise.all(waiting)); }
-    finally { signal?.removeEventListener("abort", listener); }
+    finally { signal?.removeEventListener("abort", listener);for (const entry of entries) entry.waiters--; }
   }
   async function prepare(body, { protocol, client, signal, res, policy } = {}) {
     const saved = policy || settings();if (!saved.enabled) return body;
@@ -76,9 +105,16 @@ export function createLocalPrivacy(options = {}) {
     const start = performance.now();
     const deadline = AbortSignal.timeout(options.checkTimeoutMs ?? 15000);let session;
     try { session = await maskPrivacyRequest(body, { protocol, client, personal: saved.personal, secret, find, rules: rules.find, signal: signal ? AbortSignal.any([signal, deadline]) : deadline }); }
-    catch (error) { if (deadline.aborted && !signal?.aborted) throw privacyFailure("check_timeout", "waiting");throw error; }
+    catch (error) {
+      const failure = deadline.aborted && !signal?.aborted ? privacyFailure("check_timeout", "waiting") : error;
+      const elapsed = Math.round(performance.now() - start), cancelled = signal?.aborted === true;
+      lastCheck = { state: cancelled ? "cancelled" : "failed", at: new Date().toISOString(), elapsed_ms: elapsed,
+        code: /^ccdx_privacy_[a-z_]+$/.test(failure?.code || "") ? failure.code : cancelled ? "ccdx_privacy_cancelled" : "ccdx_privacy_unavailable", continuing: !cancelled && failure?.retryAfter === 5 };
+      markRequestObservation({ privacy_ms: elapsed, privacy_state: cancelled ? "cancelled" : "failed" });changes.changed();throw failure;
+    }
     if (signal?.aborted) { session.release();throw signal.reason; }
     markRequestObservation({ privacy_count: session.count, privacy_ms: Math.round(performance.now() - start), privacy_state: "checked" });
+    lastCheck = { state: "checked", at: new Date().toISOString(), elapsed_ms: Math.round(performance.now() - start), count: session.count };changes.changed();
     if (res && session.count) {
       let current = responses.get(res);
       if (!current) {

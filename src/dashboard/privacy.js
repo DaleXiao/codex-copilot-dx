@@ -23,7 +23,9 @@
     const status = ["downloading", "loading", "error"].includes(state.state) ? state.state : state.enabled ? state.state === "ready" ? state.pending_checks ? "checking" : "ready" : "error" : state.state === "installed" || state.state === "ready" ? "installed" : "off";
     words("privacy-status", `privacy_state_${status}`, { percent: Math.min(100, Math.round((state.downloaded_bytes || 0) * 100 / Math.max(1, state.download_bytes))) });
     el("privacy-device").textContent = state.backend || "";
+    const check = state.enabled && state.last_check?.state === "failed" ? state.last_check : null;
     if (state.error) words("privacy-error", state.error.includes("download") ? "privacy_download_error" : "privacy_error");
+    else if (check) words("privacy-error", check.code === "ccdx_privacy_busy" ? "privacy_busy" : check.code === "ccdx_privacy_check_timeout" && check.continuing ? "privacy_wait_timeout" : check.code === "ccdx_privacy_engine_invalid" ? "privacy_invalid_result" : "privacy_error");
     else { el("privacy-error").textContent = "";el("privacy-error").removeAttribute("data-i18n"); }
     clearTimeout(timer);
     if (busy && visible()) timer = setTimeout(() => { if (Date.now() - pushed > 2500) void load();else render(); }, 3000);
@@ -34,10 +36,10 @@
   }
   async function act(action, extra = {}) {
     if (!state || pending) return;
-    pending = true;render();
+    pending = true;render();let reload = false;
     try { apply(await request({ action, revision: state.revision, ...extra })); }
-    catch (error) { words("privacy-error", error.code === "ccdx_privacy_settings_changed" ? "privacy_changed" : "privacy_error");await load(); }
-    finally { pending = false;render(); }
+    catch (error) { reload = true;words("privacy-error", error.code === "ccdx_privacy_settings_changed" ? "privacy_changed" : "privacy_error"); }
+    finally { pending = false;render();if (reload) await load(); }
   }
   function enable() { el("privacy-dialog").showModal(); }
   el("privacy-enabled").addEventListener("change", () => {

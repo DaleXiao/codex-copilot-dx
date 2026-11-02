@@ -36,6 +36,23 @@ function fixture() {
   const run = args => runManagementCommand(parseCliArgs(args), options);
   return { state, data, calls, output, options, run };
 }
+test("privacy commands and the existing running preference alias use the WebUI preparation transaction", async t => {
+  const f = fixture(), home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-privacy-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  f.options.home = home;f.options.env = {};
+  const original = f.options.request;
+  f.options.request = async input => {
+    if (input.path !== "privacy") return original(input);
+    f.calls.push(input);return { revision: "privacy-revision", enabled: false, state: input.body ? "downloading" : "not_downloaded", action_pending: Boolean(input.body) };
+  };
+  const result = JSON.parse(await f.run(["config", "privacy", "enable", "--yes", "--format", "json"]));
+  assert.equal(result.enabled, false);assert.equal(result.action_pending, true);
+  assert.deepEqual(f.calls.filter(call => call.body).map(call => call.body), [{ action: "enable", revision: "privacy-revision" }]);
+  f.calls.length = 0;
+  await f.run(["config", "set", "privacy_enabled", "true", "--yes"]);
+  assert.deepEqual(f.calls.filter(call => call.body).map(call => call.body), [{ action: "enable", revision: "privacy-revision" }]);
+  assert.equal(readUserSettings({ home, env: {} }).privacy_enabled, undefined);
+  f.calls.length = 0;await f.run(["config", "privacy", "remove", "--preview"]);assert.equal(f.calls.length, 0);
+});
 test("canonical routes and deep help share one public grammar", () => {
   for (const spec of MANAGED_COMMANDS) {
     const args = spec.path.map(token => ({ "<source>": "api_work", "<app>": "codex", "<request>": "request-1", "<key>": "open_webui", "<value>": "false" }[token] || token));

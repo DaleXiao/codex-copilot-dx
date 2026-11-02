@@ -13,6 +13,7 @@ if (files.some(file => !file.endsWith(".test.mjs") || !fs.statSync(path.resolve(
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-tests-"));
 const env = testEnvironment(home, { CCDX_M365: "0", CCDX_AUTO_LAUNCH: "0", CCDX_DISABLE_TOKEN_DISCOVERY: "1" });
 const flags = args.filter(value => value.startsWith("--"));
+if (!flags.some(value => value.startsWith("--test-concurrency="))) flags.push(`--test-concurrency=${Math.max(1, Math.min(4, os.availableParallelism() - 1))}`);
 const child = spawn(process.execPath, ["--test", ...flags, ...(files.length ? files : discover(path.join(root, "test")).sort())], { cwd: root, env, stdio: "inherit" });
 const stop = signal => child.kill(signal);
 const interrupt = () => stop("SIGINT"), terminate = () => stop("SIGTERM");

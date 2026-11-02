@@ -147,7 +147,7 @@ export function createLocalPrivacy(options = {}) {
       const current = ++generation;
       const work = (async () => {
         actionError = null;loadKey();
-        if (!await model.installed({ current: true })) await model.download();
+        if (!await model.installed({ current: true })) await model.download({ background: model.snapshot().state === "ready" });
         if (current !== generation) return;
         await model.load();if (current !== generation) return;
         save({ privacy_enabled: true }, input.revision);

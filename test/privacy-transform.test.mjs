@@ -6,6 +6,25 @@ const secret = Buffer.alloc(32, 7), noModel = async texts => texts.map(() => [])
 const key = "ghp_" + "a".repeat(36);
 const options = { protocol: "messages", client: "claude_app", secret, find: noModel };
 const body = text => ({ model: "model", messages: [{ role: "user", content: text }], max_tokens: 64 });
+test("tool argument buffering scans input linearly rather than rescanning the accumulated prefix", t => {
+  const argument = JSON.stringify({ value: "x".repeat(128 * 1024) }), frames = [];
+  const frame = event => Buffer.from(`data: ${JSON.stringify(event)}\n\n`);
+  for (let at = 0; at < argument.length; at += 512) frames.push(frame({ type: "response.function_call_arguments.delta", item_id: "tool", delta: argument.slice(at, at + 512) }));
+  frames.push(frame({ type: "response.function_call_arguments.done", item_id: "tool", arguments: argument }));
+  const original = Buffer.byteLength;let scanned = 0;
+  t.mock.method(Buffer, "byteLength", (value, ...args) => { const size = original(value, ...args);scanned += size;return size; });
+  const stream = createPrivacyStream({ restoreValue: value => value, restoreToolValue: value => value }), output = frames.map(bytes => stream.push(bytes)).join("") + stream.finish();
+  const delta = output.split("\n").filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5))).find(event => event.type === "response.function_call_arguments.delta");
+  assert.equal(delta.delta, argument);assert.ok(scanned <= frames.reduce((sum, bytes) => sum + bytes.length, 0) * 5, `scanned ${scanned} bytes for a bounded input`);
+});
+
+test("UTF-8 buffer accounting keeps surrogate pairs split across tool deltas within their true byte budget", () => {
+  const argument = JSON.stringify({ text: "😀".repeat(128) }), stream = createPrivacyStream({ restoreValue: value => value, restoreToolValue: value => value }, { maxBufferedBytes: 800 });
+  for (let at = 0; at < argument.length; at++) stream.push(Buffer.from(`data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "u", delta: argument[at] })}\n\n`));
+  const output = stream.push(Buffer.from('data: {"type":"response.function_call_arguments.done","item_id":"u"}\n\n'));
+  const delta = output.split("\n").filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5))).find(event => event.type === "response.function_call_arguments.delta");
+  assert.equal(delta.delta, argument);assert.equal(stream.finish(), "");
+});
 test("parallel tool buffers obey an aggregate budget and release unfinished values on failure", () => {
   const session = { restoreText: value => value, restoreValue: value => value, restoreToolValue: value => value };
   const wire = (id, value) => Buffer.from(`data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: id, delta: value })}\n\n`);

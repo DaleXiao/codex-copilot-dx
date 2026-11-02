@@ -37,6 +37,16 @@ test("download failure never activates protection or overwrites saved preference
   const f = fixture(t), before = fs.readFileSync(f.file);f.fail(true);await enable(f);
   assert.equal(f.privacy.snapshot().enabled, false);assert.deepEqual(fs.readFileSync(f.file), before);assert.equal(f.privacy.snapshot().error, "ccdx_privacy_unavailable");
 });
+test("preparing a component upgrade does not demote working compatible protection when downloading fails", async t => {
+  let state = "ready";
+  const f = fixture(t, { snapshot: () => ({ state }), installed: async () => false, load: async () => {},
+    download: async options => { if (!options?.background) state = "error";throw Object.assign(Error("download failed"), { code: "ccdx_privacy_download_unavailable" }); } });
+  fs.writeFileSync(f.file, JSON.stringify({ privacy_enabled: true }));
+  await f.privacy.action({ action: "enable", revision: f.privacy.snapshot().revision });await new Promise(setImmediate);
+  assert.equal(f.privacy.snapshot().enabled, true);assert.equal(f.privacy.snapshot().effective_enabled, true);
+  assert.equal(f.privacy.snapshot().error, "ccdx_privacy_download_unavailable");
+  assert.deepEqual(await f.privacy.prepare({ input: "synthetic continued protection" }, { protocol: "responses" }), { input: "synthetic continued protection" });
+});
 test("a successful detector recovery clears a stale startup error without changing saved intent", async t => {
   let ready = false;
   const f = fixture(t, { snapshot: () => ({ state: ready ? "ready" : "error" }), load: async () => { if (!ready) throw Error("startup unavailable"); },

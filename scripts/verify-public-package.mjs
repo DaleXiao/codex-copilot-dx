@@ -5,7 +5,7 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { verifyPackageRuntime } from "../src/release-install.mjs";
-import { waitForPublicPackage } from "./public-npm-state.mjs";
+import { waitForPublicPackage, verificationTag } from "./public-npm-state.mjs";
 
 const directory = process.argv[2];
 if (!path.isAbsolute(directory || "")) throw Error("Supply the downloaded source artifact directory");
@@ -28,6 +28,7 @@ async function read(url, limit, timeoutMs = 20000) {
   return Buffer.concat(chunks);
 }
 const published = await waitForPublicPackage({ name, version, integrity: manifest.integrity,
+  requireLatest: false,
   readJson: async (url, timeout) => JSON.parse(await read(url, 2 * 1024 * 1024, timeout)),
   onWait: () => console.log("Waiting for public npm processing; the original artifact is retained") });
 const url = `https://registry.npmjs.org/${name}/-/${filename}`;
@@ -45,7 +46,7 @@ try {
   verifyPackageRuntime(installed, version, { brokerRequired: true });
   const output = execFileSync(process.execPath, [path.join(installed, "bin/cli.mjs"), "version"], { encoding: "utf8", timeout: 15000 });
   if (!output.includes(`ccdx v${version} `)) throw Error("Public installed CLI version differs");
-  const receipt = { name, version, latest: version, bytes: actual.length, sha256: digest(actual), integrity: manifest.integrity, installed_cli: true, native_modules: true };
+  const receipt = { name, version, latest: null, verification_tag: verificationTag(version), bytes: actual.length, sha256: digest(actual), integrity: manifest.integrity, installed_cli: true, native_modules: true };
   fs.writeFileSync(path.join(directory, "public-npm-receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
   console.log(JSON.stringify(receipt));
 } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }

@@ -98,15 +98,27 @@ jobs:
         run: node scripts/publish-packed.mjs "$RUNNER_TEMP/ccdx-release"
       - name: Verify public npm bytes and fresh native install
         run: node scripts/verify-public-package.mjs "$RUNNER_TEMP/ccdx-release"
-      - name: Publish verification receipt and GitHub release
+      - name: Verify the public receipt and all shipping assets before latest promotion
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           node scripts/release-receipt.mjs "$RUNNER_TEMP/ccdx-release"
           gh release upload "v$RELEASE_VERSION" "$RUNNER_TEMP/ccdx-release/release-receipt.json" --clobber
-          gh release edit "v$RELEASE_VERSION" --draft=false --latest
           node scripts/verify-release-assets.mjs "$RUNNER_TEMP/ccdx-release" public
+      - name: Promote the verified npm version without publishing again
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node scripts/promote-public-package.mjs "$RUNNER_TEMP/ccdx-release"
+      - name: Finalize the truthful receipt and GitHub latest pointer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node scripts/release-receipt.mjs "$RUNNER_TEMP/ccdx-release"
+          gh release upload "v$RELEASE_VERSION" "$RUNNER_TEMP/ccdx-release/release-receipt.json" --clobber
+          node scripts/verify-release-assets.mjs "$RUNNER_TEMP/ccdx-release" receipt
+          gh release edit "v$RELEASE_VERSION" --draft=false --latest
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

@@ -188,22 +188,26 @@ export function createPrivacyStream(session, { maxBufferedBytes = 32 * 1024 * 10
       const field = tool ? isMessages ? "partial_json" : "delta" : isMessages ? "text" : "delta";
       if (typeof delta[field] !== "string") throw fail("stream_invalid");
       const channel = channels.get(key) || { tail: "", tool, field };
+      const last = channel.tail.charCodeAt(channel.tail.length - 1), first = delta[field].charCodeAt(0);
+      const joinsPair = last >= 0xD800 && last <= 0xDBFF && first >= 0xDC00 && first <= 0xDFFF;
+      const valueBytes = (channel.tailBytes || 0) + Buffer.byteLength(delta[field]) - (joinsPair ? 2 : 0);
       let value = channel.tail + delta[field];
-      if (Buffer.byteLength(value) > 8 * 1024 * 1024) throw fail("stream_limit");
-      if (tool) channel.tail = value;
+      if (valueBytes > 8 * 1024 * 1024) throw fail("stream_limit");
+      if (tool) { channel.tail = value;channel.tailBytes = valueBytes; }
       else {
         let cut = value.length;
         const at = value.lastIndexOf("{{CCDX_");
         if (at >= 0 && !value.slice(at).includes("}}")) cut = at;
         else for (let n = 1; n < TOKEN_START.length; n++) if (value.endsWith(TOKEN_START.slice(0, n))) cut = value.length - n;
         channel.tail = value.slice(cut);delta[field] = session.restoreText(value.slice(0, cut));
+        channel.tailBytes = cut === 0 ? valueBytes : Buffer.byteLength(channel.tail);
       }
       if (tool || channel.tail) {
         // Retain metadata and the unfinished value once, rather than retaining
         // the full latest delta in both the template and its original frame.
         channel.template = isMessages ? { ...event, delta: { ...delta, [field]: "" } } : { ...event, [field]: "" };
         channel.wire = rewritePrivacyFrame(wire, channel.template);
-        const cost = Buffer.byteLength(channel.tail) + Buffer.byteLength(channel.wire) + Buffer.byteLength(JSON.stringify(channel.template));
+        const cost = channel.tailBytes + Buffer.byteLength(channel.wire) + Buffer.byteLength(JSON.stringify(channel.template));
         bufferedBytes += cost - (channel.bytes || 0);channel.bytes = cost;channels.set(key, channel);
         if (bufferedBytes > maxBufferedBytes || channels.size > maxChannels) throw fail("stream_limit");
       } else forget(key);

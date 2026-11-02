@@ -14,10 +14,10 @@ globalThis.fetch = async () => { throw Error("Live provider requests are forbidd
 const report = [];
 for (const [name, engine] of [["chromium", chromium], ["webkit", webkit]].filter(([name]) => !options.get("--engines") || options.get("--engines").split(",").includes(name))) {
   for (const [palette, language, mode, width] of [["green", "en", "light", 1280], ["mono", "zh", "dark", 420]]) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-privacy-browser-"));let stage = "not_downloaded", downloads = 0, calls = 0;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-privacy-browser-"));let stage = "not_downloaded", downloads = 0, calls = 0, invalid = false;
     const model = { snapshot: () => ({ state: stage, download_bytes: 38958270, downloaded_bytes: stage === "ready" ? 38958270 : 0, backend: "CPU" }),
       installed: async () => stage !== "not_downloaded", download: async () => { downloads++;stage = "installed"; }, load: async () => { stage = "ready"; },
-      find: async texts => { calls++;return texts.map(() => []); }, stop: () => { stage = "installed"; }, remove: async () => { stage = "not_downloaded"; }, close() {}, busy: () => false };
+      find: async texts => { calls++;if (invalid) throw Object.assign(Error("synthetic invalid result"), { code: "ccdx_privacy_engine_invalid" });return texts.map(() => []); }, stop: () => { stage = "installed"; }, remove: async () => { stage = "not_downloaded"; }, close() {}, busy: () => false };
     const privacy = createLocalPrivacy({ home, env: {}, model }), runtime = { privacy, snapshot: () => null };
     const serviceControl = createServiceControl({ home, env: {}, providerRuntime: runtime });
     const handler = createAdapterHandler({ privacy, env: {}, dashboardOptions: { home, env: {}, serviceControl, authStatusFn: () => ({ profiles: {} }) } });
@@ -38,7 +38,21 @@ for (const [name, engine] of [["chromium", chromium], ["webkit", webkit]].filter
       await page.locator(".privacy-preview summary").click();await page.locator("#privacy-text").fill("api_key=local-only-demo");await page.locator("#privacy-preview").click();
       await page.waitForFunction(() => !document.getElementById("privacy-result").hidden);
       assert.match(await page.locator("#privacy-result").textContent(), /\{\{CCDX_/);assert.doesNotMatch(await page.locator("#privacy-result").textContent(), /local-only-demo/);
-      await page.locator("#privacy-personal").click();await page.waitForFunction(() => document.getElementById("privacy-personal").checked && !document.getElementById("privacy-personal").disabled);
+      invalid = true;await assert.rejects(privacy.prepare({ input: "synthetic check recovery" }, { protocol: "responses" }), { code: "ccdx_privacy_engine_invalid" });
+      await page.waitForFunction(() => /invalid|无效/.test(document.getElementById("privacy-error").textContent));
+      invalid = false;await privacy.prepare({ input: "synthetic check recovery" }, { protocol: "responses" });
+      await page.waitForFunction(() => document.getElementById("privacy-error").textContent === "");
+      let stale = true, reads = 0;
+      page.on("request", request => { if (request.method() === "GET" && request.url().endsWith("/_ccdx/ui/privacy")) reads++; });
+      await page.route("**/_ccdx/ui/privacy", async route => {
+        if (stale && route.request().method() === "POST" && route.request().postDataJSON().action === "personal") {
+          stale = false;await privacy.action({ action: "personal", personal: true, revision: privacy.snapshot().revision });
+        }
+        await route.continue();
+      });
+      await page.locator("#privacy-personal").click();
+      await page.waitForFunction(() => document.getElementById("privacy-personal").checked && !document.getElementById("privacy-personal").disabled);
+      await page.waitForTimeout(100);assert.ok(reads > 0, "a stale action must reload authoritative state after pending ends");await page.unroute("**/_ccdx/ui/privacy");
       await page.locator("#terminal-color-theme").selectOption("orange");
       await page.waitForTimeout(700);assert.equal(await page.locator("#preferences-error").textContent(), "");
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);assert.deepEqual(errors, []);

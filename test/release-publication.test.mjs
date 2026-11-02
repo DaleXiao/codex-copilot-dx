@@ -4,8 +4,51 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { waitForPublicPackage } from "../scripts/public-npm-state.mjs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { waitForPublicPackage, verificationTag } from "../scripts/public-npm-state.mjs";
 import { stageReleaseAssets } from "../scripts/stage-release-assets.mjs";
+import { promotePublicPackage } from "../scripts/promote-public-package.mjs";
+
+test("the original npm upload uses a verification tag and an existing version is never uploaded again", t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-publish-tag-"));t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(directory, "package-manifest.json"), JSON.stringify({ name: "codex-copilot-dx", version: "1.3.10", filename: "source.tgz", integrity: "synthetic" }));
+  const preload = path.join(directory, "npm.cjs"), calls = path.join(directory, "calls.json");
+  fs.writeFileSync(preload, `const cp=require('node:child_process'),fs=require('node:fs');
+    cp.spawnSync=()=>process.env.NPM_FIXTURE==='existing'?{status:0,stdout:JSON.stringify('synthetic')}:{status:1,stdout:JSON.stringify({error:{code:'E404'}})};
+    cp.execFileSync=(cmd,args)=>{fs.writeFileSync(process.env.NPM_CALLS,JSON.stringify(args));return '';};require('node:module').syncBuiltinESMExports();`);
+  for (const mode of ["fresh", "existing"]) {
+    fs.rmSync(calls, { force: true });
+    const result = spawnSync(process.execPath, ["--require", preload, fileURLToPath(new URL("../scripts/publish-packed.mjs", import.meta.url)), directory],
+      { env: { ...process.env, NPM_FIXTURE: mode, NPM_CALLS: calls }, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    if (mode === "existing") assert.equal(fs.existsSync(calls), false);
+    else { const args = JSON.parse(fs.readFileSync(calls));assert.equal(args[args.indexOf("--tag") + 1], verificationTag("1.3.10"));assert.ok(!args.includes("latest")); }
+  }
+});
+
+test("pre-promotion verification reads the immutable version without requiring latest to move", async () => {
+  const result = { version: "1.3.10", dist: { integrity: "synthetic" } };
+  assert.equal(await waitForPublicPackage({ name: "fixture", version: result.version, integrity: "synthetic", requireLatest: false,
+    readJson: async url => { assert.ok(!url.endsWith("/latest"));return result; } }), result);
+});
+
+test("npm latest promotion requires the public installation and all asset proofs and never republishes", async () => {
+  const version = "1.3.10", filename = `codex-copilot-dx-${version}.tgz`, manifest = { name: "codex-copilot-dx", version, filename, integrity: "synthetic", size: 12 };
+  const receipt = { version, integrity: "synthetic", sha256: "a".repeat(64), installed_cli: true, native_modules: true };
+  const assets = { version, verified: true, assets: [{ name: filename, bytes: 12, sha256: receipt.sha256 }, ...Array.from({ length: 13 }, (_, i) => ({ name: `asset-${i}` }))] };
+  for (const mode of ["normal", "already_latest", "newer", "incomplete"]) {
+    const commands = [], run = args => { commands.push(args);return args[0] === "view" ? JSON.stringify({ latest: mode === "newer" ? "1.4.0" : mode === "already_latest" ? version : "1.3.9", [verificationTag(version)]: version }) : ""; };
+    const invoke = () => promotePublicPackage({ manifest, receipt, assets: mode === "incomplete" ? { ...assets, assets: assets.assets.slice(1) } : assets, run, verify: async () => {} });
+    if (["newer", "incomplete"].includes(mode)) { await assert.rejects(invoke, /downgrade|verified/);assert.ok(commands.every(args => args[0] === "view")); }
+    else {
+      const result = await invoke();assert.equal(result.latest, version);assert.equal(result.latest_verified, true);
+      assert.equal(commands.some(args => args[0] === "dist-tag" && args[1] === "add"), mode !== "already_latest");
+      assert.ok(commands.some(args => args[0] === "dist-tag" && args[1] === "rm"));
+    }
+    assert.ok(commands.every(args => !args.includes("publish")));
+  }
+});
 
 test("npm processing beyond three minutes can finish within one bounded verification without republishing", async () => {
   let time = 0;

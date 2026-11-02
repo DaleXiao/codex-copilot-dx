@@ -7,7 +7,7 @@ const opts=new Map(process.argv.slice(2).reduce((a,v,i,all)=>i%2?a:[...a,[v,all[
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'ccdx-private-client-')),profile=path.join(root,kind),work=path.join(root,'workspace');fs.mkdirSync(profile);fs.mkdirSync(work);
 const env=testEnvironment(root,{XDG_CONFIG_HOME:path.join(root,'config'),XDG_CACHE_HOME:path.join(root,'cache')}),settings=userSettingsPath({home:root,env});fs.mkdirSync(path.dirname(settings),{recursive:true});fs.writeFileSync(settings,JSON.stringify({privacy_enabled:mode==='on'}));
 const sentinel='ghp_'+ 'p'.repeat(36),receipt=path.join(root,'mcp-result.json'),component=opts.get('--component-dir'),weights=opts.get('--model-dir');
-let rounds=0,returned=false,calls=[],checks=0,recovery=null;let server,child,privacy,detector;
+let rounds=0,returned=false,calls=[],checks=0,recovery=null;const checkWork=[];let server,child,privacy,detector;
 function declarations(tools,namespace){return (tools||[]).flatMap(t=>t.type==='namespace'?declarations(t.tools,t.name):[{name:t.name||t.function?.name,type:t.type||'function',...(namespace?{namespace}:{})}]);}
 function requestTools(body){return [...(body.tools||[]),...(body.input||[]).flatMap(item=>item.type==='additional_tools'?item.tools||[]:[])];}
 function chosen(body,needle){return declarations(requestTools(body)).find(t=>t.name?.includes(needle));}
@@ -43,7 +43,10 @@ try{
   for(const file of PRIVACY_MODEL_FILES)fs.copyFileSync(path.join(weights,file.name),path.join(detector.paths.model,file.name));
   const runner=fs.readFileSync(path.join(component,detector.paths.name)),target=release==='1.3.6'?detector.paths.legacyRunner:path.join(detector.paths.components,release,detector.paths.name);fs.mkdirSync(path.dirname(target),{recursive:true});
   fs.writeFileSync(target,runner,{mode:0o700});fs.writeFileSync(target+'.json',JSON.stringify({release,abi:PRIVACY_COMPONENT_ABI,model_revision:PRIVACY_MODEL_REVISION,sha256:createHash('sha256').update(runner).digest('hex')}));
-  await detector.load();model={...detector,find:async texts=>{checks++;return detector.find(texts);}};
+  await detector.load();model={...detector,find:async texts=>{
+    checks++;const sizes=texts.map(text=>Buffer.byteLength(text)),row={texts:texts.length,bytes:sizes.reduce((a,b)=>a+b,0),max_text_bytes:Math.max(...sizes)},start=performance.now();
+    if(checkWork.length<64)checkWork.push(row);try{return await detector.find(texts);}finally{row.elapsed_ms=Math.round(performance.now()-start);}
+  }};
  }
  const privacyOptions={home:root,env,model};privacy=createLocalPrivacy(privacyOptions);
  if(detector){
@@ -72,7 +75,7 @@ try{
  }
  child=spawn(binary,args,{cwd:work,env:childEnv,detached:process.platform!=='win32',stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',b=>stdout+=b);child.stderr.on('data',b=>stderr+=b);
  const timer=setTimeout(()=>{try{if(process.platform==='win32')child.kill();else process.kill(-child.pid,'SIGTERM');}catch{}},detector?180000:90000);const code=await new Promise((resolve,reject)=>{child.on('exit',resolve);child.on('error',reject);});clearTimeout(timer);
- const executed=fs.existsSync(receipt)?JSON.parse(fs.readFileSync(receipt)):null;console.log(JSON.stringify({client:kind,privacy:mode,detector:detector?'native':'simulated',component_release:detector?.snapshot().component_release,checks,recovery,code,rounds,calls,executed,returned,continued:stdout.includes('NATIVE_TOOL_ROUND_OK'),stderr_tail:stderr.slice(-1400)}));
+ const executed=fs.existsSync(receipt)?JSON.parse(fs.readFileSync(receipt)):null;console.log(JSON.stringify({client:kind,privacy:mode,detector:detector?'native':'simulated',component_release:detector?.snapshot().component_release,checks,check_work:checkWork,recovery,code,rounds,calls,executed,returned,continued:stdout.includes('NATIVE_TOOL_ROUND_OK'),stderr_tail:stderr.slice(-1400)}));
  assert.equal(code,0);assert.ok(executed?.valid&&returned&&stdout.includes('NATIVE_TOOL_ROUND_OK'),'native tool execution/return/continuation did not complete');
 }finally{
  if(child&&child.exitCode===null){try{if(process.platform==='win32')child.kill();else process.kill(-child.pid,'SIGTERM');}catch{}}

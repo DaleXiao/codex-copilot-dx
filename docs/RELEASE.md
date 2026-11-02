@@ -1,15 +1,10 @@
-# CCDX 1.3.10
+# CCDX 1.3.11
 
-Fixes the 1.3.9 local-masking regression that could leave Codex and Claude requests repeatedly returning 503.
+Completes the verified publication flow when npm permits latest promotion but denies removal of a temporary verification tag.
 
-- Keep submitted local detection alive after request timeout or cancellation. Retries reuse in-flight work and valid completed batches; unused batches are skipped before submission. Invalid results never enter the detection cache.
-- Preserve explicit zero usage and distinguish conflicting cache aliases. Keep native Messages prefixes, signed history and existing account/configuration ownership unchanged.
-- Bound total unfinished stream-channel data, count fragmented argument bytes incrementally and release delivered text without retaining duplicate deltas. Preserve tool restoration, event metadata and original upstream failures.
-- Share masking preparation between WebUI and `config privacy` controls. Show effective readiness separately from the latest check; temporary waits include an accurate retry message.
-- Use native int8 for short Intel CoreML-CPU windows while retaining longer-window, GPU, Neural Engine and ARM policy. Stage component upgrades with ABI/model provenance and adopt them only when detection is idle.
-- Verify real classifiers with real native clients and tool continuation on all four platform builders. Retain the separate simulated-classifier, browser, installation and historical regression gates.
-- Verify public package installation and assets before latest promotion. Resume interrupted publication from its original artifact without rebuilding, replacing shipping assets or uploading npm again, within finite verification deadlines.
+- Record denied verification-tag cleanup without failing an already verified publication. Keep the registry permission policy and report the retained tag in the public receipt. Unexpected cleanup errors still fail closed.
+- Retain 1.3.10's privacy timeout recovery, valid-result caching, whole-text batch progress, bounded stream restoration, accurate usage and shared WebUI/CLI masking controls.
+- Retain the measured Intel short-window backend policy and idle, ABI/model-verified component migration. The optional component remains pinned to 1.3.10; model weights are reused.
+- Keep exact-source full CI, real classifier/native-client gates on four targets, installation upgrades and downloaded public npm/GitHub byte verification.
 
-The component targets 1.3.10 and reuses unchanged model weights; verified 1.3.6/1.3.9 components remain compatible. Whole text entries retain their detection context; raw text splitting was not adopted after the isolated comparison showed additional cost. Complete model checks remain required before upstream dispatch.
-
-Release work does not switch the active service or restart desktop applications. Native CLI and protocol replays do not establish acceptance of every signed Claude App UI workflow. Final public checks are recorded in the [release receipt](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.10/release-receipt.json).
+No active service or desktop application is restarted by publication. Signed Claude App UI acceptance remains separate from CLI/protocol coverage. Public shipping proofs and cleanup status are in the [release receipt](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.11/release-receipt.json).

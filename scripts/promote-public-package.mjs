@@ -21,8 +21,15 @@ export async function promotePublicPackage({ manifest, receipt, assets, run, ver
   if (tags.latest !== version) run(["dist-tag", "add", `${manifest.name}@${version}`, "latest"]);
   await verify({ name: manifest.name, version, integrity: manifest.integrity,
     onWait: () => console.log("Waiting for the verified npm latest tag") });
-  if (tags[verificationTag(version)] === version) run(["dist-tag", "rm", manifest.name, verificationTag(version)]);
-  return { ...receipt, latest: version, latest_verified: true };
+  let cleanup = "not_present";
+  if (tags[verificationTag(version)] === version) {
+    try { run(["dist-tag", "rm", manifest.name, verificationTag(version)]);cleanup = "removed"; }
+    catch (error) {
+      if (error.statusCode !== 403 && !/\bE403\b|403 Forbidden|HTTP 403/.test(String(error.stderr || ""))) throw error;
+      cleanup = "denied";console.warn("npm denied verification-tag cleanup; the verified latest version is retained. No permission or policy change was attempted.");
+    }
+  }
+  return { ...receipt, latest: version, latest_verified: true, verification_tag_cleanup: cleanup };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

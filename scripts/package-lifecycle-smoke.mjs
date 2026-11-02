@@ -19,7 +19,7 @@ const runNpm = args => execFileSync(process.execPath, [npm, ...args], {
 const packageRoot = path.join(prefix, ...(process.platform === "win32" ? [] : ["lib"]), "node_modules", "codex-copilot-dx");
 const version = () => execFileSync(process.execPath, [path.join(packageRoot, "bin", "cli.mjs"), "version"], { encoding: "utf8", timeout: 10000 }).trim();
 const args = process.argv.slice(2);
-const baseline = "1.3.9";
+const baseline = "1.3.10";
 if (args.length && (args.length !== 2 || args[0] !== "--baseline" || !path.isAbsolute(args[1]) || !fs.statSync(args[1]).isFile())) throw new Error("Use --baseline /absolute/path/to/package.tgz for a local baseline artifact");
 try {
   const install = spec => runNpm(["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", spec]);

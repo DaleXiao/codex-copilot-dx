@@ -39,7 +39,8 @@ try {
     const expectedBytes = fs.readFileSync(path.join(directory, name));let actual;
     if (mode === "draft") actual = fs.readFileSync(path.join(downloaded, name));
     else {
-      const response = await fetch(`https://github.com/${repository}/releases/download/v${version}/${name}`, { signal: AbortSignal.timeout(60000) });
+      const suffix = name === "release-receipt.json" ? `?ccdx_sha256=${sha(expectedBytes)}` : "";
+      const response = await fetch(`https://github.com/${repository}/releases/download/v${version}/${name}${suffix}`, { signal: AbortSignal.timeout(60000) });
       if (!response.ok) throw Error(`Public asset HTTP ${response.status}: ${name}`);
       const chunks = [];let size = 0;
       for await (const chunk of response.body) { size += chunk.length;if (size > expectedBytes.length) throw Error(`Oversized public asset: ${name}`);chunks.push(chunk); }

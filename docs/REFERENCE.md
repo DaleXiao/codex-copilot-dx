@@ -686,6 +686,8 @@ ccdx usage
 
 The summary covers the current log and its single rotated backup, not an unbounded lifetime history. It reports recorded responses and per-model input, cache-read, cache-write, output, and total token metadata.
 
+M365 preserves system instructions at their original mid-conversation position. This avoids moving each new reminder ahead of the already cached history. Other Claude App API endpoints keep legacy behavior unless the model's `mid_conversation_system` capability is explicitly true. A false override selects legacy hoisting; Responses and Chat use their existing paths. This preserves instruction priority rather than converting system messages to user text.
+
 Messages input is the sum of Anthropic uncached input, cache-read and cache-creation tokens. Cache creation is new input, not a cache hit; output tokens, including thinking output, are not added to the cache-hit denominator. M365 follows this same protocol accounting. Cache writes are shown separately when reported; missing write counts remain unknown. Stream usage updates replace cumulative counters, preserve earlier values when a later field is null or absent, and retain explicit zero. Each gateway request writes at most one usage row; forwarded usage is unchanged.
 
 CLI/TUI, WebUI totals and daily analytics use the same paired evidence for cache rates. Aggregate JSON exposes `cache_hit_known_requests`, `cache_hit_unknown_requests`, `cache_hit_input_tokens` and `cache_hit_read_tokens` so the rate and its coverage can be checked. `~` marks incomplete coverage; a rate without a positive known input basis remains unknown. Historical logs are re-aggregated without rewriting their records, and unknown cache values are never filled with zero.

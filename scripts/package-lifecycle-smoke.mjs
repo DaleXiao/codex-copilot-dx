@@ -24,7 +24,7 @@ try {
   const install = spec => runNpm(["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", spec]);
   install(args[1] || "codex-copilot-dx@1.3.8");
   const baselineVersion = version();
-  assert.match(baselineVersion, args[1] ? /ccdx v\d+\.\d+\.\d+ / : /ccdx v1\.2\.33 /);
+  assert.match(baselineVersion, args[1] ? /ccdx v\d+\.\d+\.\d+ / : /ccdx v1\.3\.8 /);
   const expected = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")).version;
   const result = JSON.parse(runNpm(["pack", "--json", "--ignore-scripts", "--pack-destination", root]));
   // npm 10/11 return an array; npm 12 keys pack results by package name.

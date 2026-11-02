@@ -15,7 +15,7 @@ test("rule result cache bounds memory, isolates personal policy and returns inde
   assert.ok(cache.stats().entries <= 2);assert.ok(cache.stats().bytes <= 512);cache.clear();assert.equal(cache.stats().bytes, 0);
 });
 test("model false-positive filters retain actual labelled numeric secrets and ordinary secret detection", async () => {
-  for (const [prefix, label, value, count] of [["budget ", "common_secret", "128000", 0], ["token budget: ", "common_secret", "128000", 0], ["PIN: ", "common_secret", "123456", 1], ["密码是 ", "common_secret", "123456", 1], ["const ", "private_person", "Alice", 0], ["Contact ", "private_person", "Alice", 1], ["value ", "common_secret", "aBcd-sensitive", 1]]) {
+  for (const [prefix, label, value, count] of [["secret: ", "common_secret", "123456", 1], ["budget ", "common_secret", "128000", 0], ["token budget: ", "common_secret", "128000", 0], ["PIN: ", "common_secret", "123456", 1], ["密码是 ", "common_secret", "123456", 1], ["const ", "private_person", "Alice", 0], ["Contact ", "private_person", "Alice", 1], ["value ", "common_secret", "aBcd-sensitive", 1]]) {
     const text = prefix + value, start = Buffer.byteLength(prefix);
     const session = await maskPrivacyRequest(body(text), { ...options, personal: true, find: async () => [[{ start, end: start + Buffer.byteLength(value), label, score: 0.99 }]] });
     assert.equal(session.count, count, text);assert.equal(session.restoreText(session.body.messages[0].content), text);
@@ -121,4 +121,10 @@ test("invalid stream restoration detaches before the handler sends its terminal 
   res.end('event: error\ndata: {"error":"closed"}\n\n');assert.equal(written.length, 1);assert.match(written[0], /event: error/);
   const other = await maskPrivacyRequest(body(key), options);written.length = 0;
   protectPrivacyResponse(res, other);res.writeHead(403, { "Content-Type": "text/plain" });res.end("Access denied");assert.equal(written.join(""), "Access denied");
+});
+
+test("numeric tool secrets remain protected independently of model false-positive filtering", async () => {
+  const input = { model: "model", messages: [{ role: "assistant", content: [{ type: "tool_use", id: "call", name: "example", input: { secret: "123456" } }] }] };
+  const session = await maskPrivacyRequest(input, options);assert.equal(session.count, 1);
+  assert.notEqual(session.body.messages[0].content[0].input.secret, "123456");assert.deepEqual(session.restoreToolValue(session.body.messages[0].content[0].input), { secret: "123456" });
 });

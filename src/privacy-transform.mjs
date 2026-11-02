@@ -23,7 +23,7 @@ function leaves(value, add, inArguments = false) {
 }
 function requestTexts(body, protocol) {
   const items = [], nested = [];
-  const add = (parent, key, text) => { if (text && !text.startsWith("data:")) items.push({ parent, key, text, secret: /^(?:password|passwd|api_key|apikey|access_token|refresh_token|client_secret|secret_key|auth_token|db_password|credential|token)$/i.test(String(key)) }); };
+  const add = (parent, key, text) => { if (text && !text.startsWith("data:")) items.push({ parent, key, text, secret: /^(?:password|passwd|api_key|apikey|access_token|refresh_token|client_secret|secret_key|auth_token|db_password|credential|secret|token)$/i.test(String(key)) }); };
   const text = (parent, key) => { if (typeof parent?.[key] === "string") add(parent, key, parent[key]);else if (Array.isArray(parent?.[key])) for (const block of parent[key]) if (["text", "input_text", "output_text"].includes(block?.type)) add(block, "text", block.text); };
   const args = (parent, key) => {
     if (typeof parent[key] === "string") {
@@ -93,7 +93,7 @@ export function createPrivacyRuleCache({ maxBytes = 1024 * 1024, maxEntries = 20
 function modelSpanFits(text, start, end, label) {
   const value = text.slice(start, end);
   if (label === "common_secret" && /^\d+$/.test(value)) {
-    return /(?:\b(?:api_key|apikey|access_token|refresh_token|client_secret|secret_key|auth_token|db_password|password|passwd|passcode|token|pin)|密钥|密码|令牌|口令)["'`]?[\s:=：]*(?:(?:is|was|是|为|為)\s*)?["'`]?$/i.test(text.slice(Math.max(0, start - 96), start));
+    return /(?:\b(?:api_key|apikey|access_token|refresh_token|client_secret|secret_key|auth_token|db_password|password|passwd|passcode|secret|token|pin)|密钥|密码|令牌|口令)["'`]?[\s:=：]*(?:(?:is|was|是|为|為)\s*)?["'`]?$/i.test(text.slice(Math.max(0, start - 96), start));
   }
   if (label === "private_person" && /^[A-Za-z_$][\w$]*$/.test(value)
     && /\b(?:function|class|const|let|var)\s+$/.test(text.slice(Math.max(0, start - 32), start))) return false;

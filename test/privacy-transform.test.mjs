@@ -6,6 +6,30 @@ const secret = Buffer.alloc(32, 7), noModel = async texts => texts.map(() => [])
 const key = "ghp_" + "a".repeat(36);
 const options = { protocol: "messages", client: "claude_app", secret, find: noModel };
 const body = text => ({ model: "model", messages: [{ role: "user", content: text }], max_tokens: 64 });
+test("parallel tool buffers obey an aggregate budget and release unfinished values on failure", () => {
+  const session = { restoreText: value => value, restoreValue: value => value, restoreToolValue: value => value };
+  const wire = (id, value) => Buffer.from(`data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: id, delta: value })}\n\n`);
+  const stream = createPrivacyStream(session, { maxBufferedBytes: 4096 });
+  assert.equal(stream.push(wire("one", JSON.stringify({ value: "x".repeat(2500) }))), "");
+  assert.throws(() => stream.push(wire("two", JSON.stringify({ value: "y".repeat(2500) }))), { code: "ccdx_privacy_stream_limit" });
+  assert.equal(stream.finish(), "");
+  const channels = createPrivacyStream(session, { maxChannels: 2 });
+  channels.push(wire("one", "{}"));channels.push(wire("two", "{}"));
+  assert.throws(() => channels.push(wire("three", "{}")), { code: "ccdx_privacy_stream_limit" });
+});
+
+test("a large emitted text delta retains only its unfinished placeholder suffix", () => {
+  const stream = createPrivacyStream({ restoreText: value => value, restoreValue: value => value }, { maxBufferedBytes: 1024 });
+  const wire = text => Buffer.from(`data: ${JSON.stringify({ type: "response.output_text.delta", item_id: "text", delta: text })}\n\n`);
+  assert.ok(stream.push(wire("x".repeat(1024 * 1024) + "{{CCD")).length > 1024 * 1024);
+  assert.ok(stream.push(wire("X_012345678901234567890123}}")).includes("{{CCDX_"));assert.equal(stream.finish(), "");
+});
+
+test("EOF cannot silently drop unfinished tool data in a final unterminated SSE frame", () => {
+  const stream = createPrivacyStream({ restoreText: value => value, restoreValue: value => value });
+  stream.push(Buffer.from('data: {"type":"response.function_call_arguments.delta","item_id":"tool","delta":"{\\"value\\":"}'));
+  assert.throws(() => stream.finish(), { code: "ccdx_privacy_stream_incomplete" });
+});
 test("rule result cache bounds memory, isolates personal policy and returns independent spans", () => {
   const cache = createPrivacyRuleCache({ maxBytes: 512, maxEntries: 2 }), text = "long history ".repeat(30) + key;
   const one = cache.find(text, false);assert.equal(one.length, 1);one[0].start = -1;

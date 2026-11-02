@@ -71,18 +71,19 @@ function hasPositiveTokenValue(usage) {
 
 function normalizeResponsesUsage(usage) {
   if (!usage || typeof usage !== "object") return undefined;
+  const count = value => Number.isFinite(value) && value >= 0 ? value : undefined;
   const cachedInput = numberOrUndefined(usage.cached_input_tokens ?? usage.input_tokens_details?.cached_tokens);
   const out = compactObject({
-    input_tokens: positiveNumber(usage.input_tokens),
+    input_tokens: count(usage.input_tokens),
     cached_input_tokens: cachedInput >= 0 ? cachedInput : undefined,
-    output_tokens: positiveNumber(usage.output_tokens),
-    reasoning_output_tokens: positiveNumber(usage.reasoning_output_tokens ?? usage.output_tokens_details?.reasoning_tokens),
-    total_tokens: positiveNumber(usage.total_tokens),
+    output_tokens: count(usage.output_tokens),
+    reasoning_output_tokens: count(usage.reasoning_output_tokens ?? usage.output_tokens_details?.reasoning_tokens),
+    total_tokens: count(usage.total_tokens),
   });
   if (out.total_tokens === undefined && (out.input_tokens !== undefined || out.output_tokens !== undefined)) {
     out.total_tokens = (out.input_tokens || 0) + (out.output_tokens || 0);
   }
-  return hasPositiveTokenValue(out) ? out : undefined;
+  return Object.keys(out).length ? out : undefined;
 }
 
 function normalizeCopilotUsage(copilotUsage) {
@@ -330,7 +331,12 @@ export function summarizeUsage(records, { provider = "" } = {}) {
     if (provider && provider !== source) continue;
     summary.providers[source] = (summary.providers[source] || 0) + 1;
     summary.requests += 1;
-    addUsageTotals(summary.totals, record.usage);
+    let observed = record.usage;
+    if (observed?.cached_input_tokens != null && observed?.cache_read_input_tokens != null) {
+      observed = { ...observed };delete observed.cache_read_input_tokens;
+      if (cacheReadTokens(record.usage) === undefined) delete observed.cached_input_tokens;
+    }
+    addUsageTotals(summary.totals, observed);
     if (record.copilot_usage) {
       summary.totals.copilot_total_tokens = (summary.totals.copilot_total_tokens || 0) + (record.copilot_usage.total_tokens || 0);
       summary.totals.total_nano_aiu = (summary.totals.total_nano_aiu || 0) + (record.copilot_usage.total_nano_aiu || 0);
@@ -339,12 +345,12 @@ export function summarizeUsage(records, { provider = "" } = {}) {
     if (!Object.hasOwn(summary.byModel, model)) Object.defineProperty(summary.byModel, model, { value: { requests: 0 }, enumerable: true, configurable: true, writable: true });
     const modelTotals = summary.byModel[model];
     modelTotals.requests += 1;
-    addUsageTotals(modelTotals, record.usage);
+    addUsageTotals(modelTotals, observed);
     const qualified = `${source} / ${model}`;
     if (!Object.hasOwn(summary.bySourceModel, qualified)) summary.bySourceModel[qualified] = { requests: 0 };
     const sourceTotals = summary.bySourceModel[qualified];
     sourceTotals.requests++;
-    addUsageTotals(sourceTotals, record.usage);
+    addUsageTotals(sourceTotals, observed);
     for (const target of [summary.totals, modelTotals, sourceTotals]) {
       addCacheEvidence(target, record.usage || {});
     }
@@ -426,6 +432,11 @@ export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = con
 }
 
 export function cacheReadTokens(usage = {}) {
+  if (usage.cached_input_tokens != null && usage.cache_read_input_tokens != null
+    && usage.cache_hit_known_requests === undefined && usage.cache_hit_unknown_requests === undefined) {
+    return Number.isFinite(usage.cached_input_tokens) && usage.cached_input_tokens >= 0
+      && usage.cached_input_tokens === usage.cache_read_input_tokens ? usage.cached_input_tokens : undefined;
+  }
   const values = [usage.cache_read_input_tokens, usage.cached_input_tokens]
     .filter((value) => Number.isFinite(value));
   const value = values.length > 0 ? values.reduce((total, current) => total + current, 0) : undefined;
@@ -460,6 +471,7 @@ function usageCacheEvidence(usage) {
   const input = usage.input_tokens, cached = cacheReadTokens(usage);
   const unknown = !Number.isFinite(input) || input < 0 || !Number.isFinite(cached) || cached < 0 || cached > input;
   const invalid = (input != null && (!Number.isFinite(input) || input < 0))
+    || (usage.cached_input_tokens != null && usage.cache_read_input_tokens != null && cached === undefined)
     || [usage.cached_input_tokens, usage.cache_read_input_tokens].some(value => value != null && (!Number.isFinite(value) || value < 0))
     || (Number.isFinite(input) && Number.isFinite(cached) && cached > input);
   return { cached, unknown, invalid };

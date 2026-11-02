@@ -312,11 +312,14 @@ test("summarizeUsageLogs: invalid rotated lines do not hide valid totals from ei
   assert.ok(warnings[0].includes(JSON.stringify(`${filePath}.1`)));
 });
 
-test("buildResponsesUsageRecord: skips empty usage", () => {
+test("buildResponsesUsageRecord: skips absent usage while preserving explicitly reported zero", () => {
   const record = buildResponsesUsageRecord({
     response: { id: "resp_1", model: "gpt-5.5", usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } },
   });
-  assert.equal(record, null);
+  assert.deepEqual(record.usage, { input_tokens: 0, output_tokens: 0, total_tokens: 0 });
+  assert.equal(buildResponsesUsageRecord({ response: { usage: {} } }), null);
+  const cached = buildResponsesUsageRecord({ response: { usage: { input_tokens: 100, output_tokens: 0, total_tokens: 100, input_tokens_details: { cached_tokens: 95 } } } });
+  assert.equal(cached.usage.output_tokens, 0);assert.equal(usageCacheHitRate(cached.usage), .95);
 });
 
 test("cache hit rate preserves explicit zero reports and distinguishes missing data", () => {
@@ -328,6 +331,15 @@ test("cache hit rate preserves explicit zero reports and distinguishes missing d
   const absent = buildResponsesUsageRecord({ response: { usage: { input_tokens: 10 } } });
   assert.equal(absent.usage.cached_input_tokens, undefined);
   assert.equal(usageCacheHitRate(summarizeUsage([absent]).totals), null);
+});
+
+test("cache aliases within one report are deduplicated and conflicting reports remain unknown", () => {
+  const record = { model: "fixture", usage: { input_tokens: 100, cached_input_tokens: 80, cache_read_input_tokens: 80 } };
+  assert.equal(usageCacheHitRate(record.usage), .8);
+  const summary = summarizeUsage([record]);assert.equal(summary.totals.cached_input_tokens, 80);assert.equal(usageCacheHitRate(summary.totals), .8);
+  const conflict = summarizeUsage([{ ...record, usage: { ...record.usage, cache_read_input_tokens: 20 } }]);
+  assert.equal(usageCacheHitRate(conflict.totals), null);assert.equal(conflict.totals.cached_input_tokens, undefined);
+  assert.equal(conflict.totals.cache_hit_invalid_requests, 1);assert.equal(conflict.totals.cache_hit_unknown_requests, 1);
 });
 
 test("M365 Messages retain raw counts and separate total input from cache-hit evidence", async t => {

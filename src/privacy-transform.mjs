@@ -168,14 +168,16 @@ function rewritePrivacyFrame(wire, value, named = false) {
   return named && !/^event:/m.test(wire) ? `event: ${value.type}\n${lines}` : lines;
 }
 
-export function createPrivacyStream(session) {
+export function createPrivacyStream(session, { maxBufferedBytes = 32 * 1024 * 1024, maxChannels = 1024 } = {}) {
   const fail = code => privacyFailure(code, "response");
-  let pending = "", bytes = 0;const channels = new Map(), decoder = new StringDecoder("utf8");
+  let pending = "", bytes = 0, bufferedBytes = 0;const channels = new Map(), decoder = new StringDecoder("utf8");
+  const forget = id => { bufferedBytes -= channels.get(id)?.bytes || 0;channels.delete(id); };
+  const clear = () => { channels.clear();bufferedBytes = 0; };
   function transform(wire) {
     const data = wire.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
     if (!data || data === "[DONE]") return wire;
     let event;try { event = JSON.parse(data); } catch { throw fail("stream_invalid"); }
-    if (["error", "response.failed", "response.incomplete"].includes(event.type)) { channels.clear();return rewritePrivacyFrame(wire, session.restoreValue(event)); }
+    if (["error", "response.failed", "response.incomplete"].includes(event.type)) { clear();return rewritePrivacyFrame(wire, session.restoreValue(event)); }
     if (["thinking_delta", "signature_delta"].includes(event.delta?.type) || /\.reasoning(?:_|\.)/.test(event.type || "")) return wire;
     const isMessages = event.type === "content_block_delta", delta = isMessages ? event.delta : event;
     const tool = delta?.type === "input_json_delta" || event.type === "response.function_call_arguments.delta";
@@ -185,10 +187,10 @@ export function createPrivacyStream(session) {
     if (tool || text) {
       const field = tool ? isMessages ? "partial_json" : "delta" : isMessages ? "text" : "delta";
       if (typeof delta[field] !== "string") throw fail("stream_invalid");
-      const channel = channels.get(key) || { tail: "", tool, field };channel.template = event;channel.wire = wire;
+      const channel = channels.get(key) || { tail: "", tool, field };
       let value = channel.tail + delta[field];
       if (Buffer.byteLength(value) > 8 * 1024 * 1024) throw fail("stream_limit");
-      if (tool) { channel.tail = value;channels.set(key, channel);return ""; }
+      if (tool) channel.tail = value;
       else {
         let cut = value.length;
         const at = value.lastIndexOf("{{CCDX_");
@@ -196,7 +198,16 @@ export function createPrivacyStream(session) {
         else for (let n = 1; n < TOKEN_START.length; n++) if (value.endsWith(TOKEN_START.slice(0, n))) cut = value.length - n;
         channel.tail = value.slice(cut);delta[field] = session.restoreText(value.slice(0, cut));
       }
-      channels.set(key, channel);
+      if (tool || channel.tail) {
+        // Retain metadata and the unfinished value once, rather than retaining
+        // the full latest delta in both the template and its original frame.
+        channel.template = isMessages ? { ...event, delta: { ...delta, [field]: "" } } : { ...event, [field]: "" };
+        channel.wire = rewritePrivacyFrame(wire, channel.template);
+        const cost = Buffer.byteLength(channel.tail) + Buffer.byteLength(channel.wire) + Buffer.byteLength(JSON.stringify(channel.template));
+        bufferedBytes += cost - (channel.bytes || 0);channel.bytes = cost;channels.set(key, channel);
+        if (bufferedBytes > maxBufferedBytes || channels.size > maxChannels) throw fail("stream_limit");
+      } else forget(key);
+      if (tool) return "";
     }
     const stopKey = event.type === "content_block_stop" ? `m:${event.index}` : /\.done$/.test(event.type || "") ? key : null;
     const terminal = ["message_stop", "response.completed", "response.incomplete", "error", "response.failed"].includes(event.type);
@@ -207,19 +218,26 @@ export function createPrivacyStream(session) {
         catch { throw fail("stream_invalid"); }
         before += rewritePrivacyFrame(channel.wire, value, true);
       }
-      channels.delete(id);
+      forget(id);
     }
     event = session.restoreValue(event);
     return before + rewritePrivacyFrame(wire, event);
   }
   return {
     push(chunk) {
+      try {
       pending += decoder.write(chunk);bytes += chunk.length;if (bytes > 8 * 1024 * 1024) throw fail("stream_limit");
       let output = "", match;
       while ((match = /\r?\n\r?\n/.exec(pending))) { const end = match.index + match[0].length;output += transform(pending.slice(0, end));pending = pending.slice(end);bytes = Buffer.byteLength(pending); }
       return output;
+      } catch (error) { clear();pending = "";bytes = 0;throw error; }
     },
-    finish() { pending += decoder.end();if (pending) { const output = transform(pending + "\n\n");pending = "";return output; }if (channels.size) throw fail("stream_incomplete");return ""; },
+    finish() {
+      try {
+        pending += decoder.end();const output = pending ? transform(pending + "\n\n") : "";pending = "";
+        if (channels.size) throw fail("stream_incomplete");return output;
+      } finally { clear();pending = "";bytes = 0; }
+    },
   };
 }
 

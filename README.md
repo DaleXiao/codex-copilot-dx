@@ -51,6 +51,7 @@ Model availability depends on your account and service. Microsoft 365 also requi
 | Inspect failures | `ccdx requests --failed` |
 | Read usage | `ccdx usage` / `ccdx usage --scope run` |
 | Inspect preferences | `ccdx config show --effective` |
+| Inspect local masking | `ccdx config privacy status` |
 | Check local setup | `ccdx doctor` |
 
 Use `ccdx help` or `ccdx <command> --help` for options. The CLI uses English; the Web UI supports English and Chinese.

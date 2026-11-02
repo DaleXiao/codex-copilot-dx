@@ -4,8 +4,8 @@ import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { setTimeout as delay } from "node:timers/promises";
 import { verifyPackageRuntime } from "../src/release-install.mjs";
+import { waitForPublicPackage } from "./public-npm-state.mjs";
 
 const directory = process.argv[2];
 if (!path.isAbsolute(directory || "")) throw Error("Supply the downloaded source artifact directory");
@@ -16,9 +16,9 @@ const expected = fs.readFileSync(path.join(directory, filename));
 const digest = value => createHash("sha256").update(value).digest("hex");
 if (expected.length !== manifest.size || `sha512-${createHash("sha512").update(expected).digest("base64")}` !== manifest.integrity) throw Error("Source artifact differs from its manifest");
 
-async function read(url, limit) {
-  const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(20000) });
-  if (!response.ok) { await response.body?.cancel();throw Error(`Public npm HTTP ${response.status}`); }
+async function read(url, limit, timeoutMs = 20000) {
+  const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
+  if (!response.ok) { await response.body?.cancel();throw Object.assign(Error(`Public npm HTTP ${response.status}`), { statusCode: response.status }); }
   const chunks = [];let size = 0;
   for await (const chunk of response.body) {
     size += chunk.length;
@@ -27,18 +27,9 @@ async function read(url, limit) {
   }
   return Buffer.concat(chunks);
 }
-let published;
-for (let attempt = 0; attempt < 18; attempt++) {
-  try {
-    const record = JSON.parse(await read(`https://registry.npmjs.org/${name}/${version}`, 2 * 1024 * 1024));
-    const latest = JSON.parse(await read(`https://registry.npmjs.org/${name}/latest`, 2 * 1024 * 1024));
-    if (record.version !== version || latest.version !== version) throw Error("Public version/latest is not ready");
-    published = record;break;
-  } catch (error) {
-    if (attempt === 17) throw error;
-    console.log(`Waiting for public npm processing (${attempt + 1}/18)`);await delay(10000);
-  }
-}
+const published = await waitForPublicPackage({ name, version, integrity: manifest.integrity,
+  readJson: async (url, timeout) => JSON.parse(await read(url, 2 * 1024 * 1024, timeout)),
+  onWait: () => console.log("Waiting for public npm processing; the original artifact is retained") });
 const url = `https://registry.npmjs.org/${name}/-/${filename}`;
 if (published.dist?.tarball !== url || published.dist.integrity !== manifest.integrity) throw Error("Public npm metadata differs from the packed release");
 const actual = await read(url, 16 * 1024 * 1024);

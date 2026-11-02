@@ -31,6 +31,8 @@ For installation and first use, start with the [README](../README.md). This refe
 | `ccdx app codex review status` / `select` | Read or choose the review model |
 | `ccdx config show [--effective]` | Read saved preferences and effective state |
 | `ccdx config set <key> <value>` | Save a validated preference |
+| `ccdx config privacy status` | Read model readiness and the latest local check |
+| `ccdx config privacy enable` / `disable` / `remove` | Prepare protection, stop later checks, or delete its model |
 | `ccdx config terminal` / `animation` | Choose terminal appearance |
 | `ccdx config limits [--decoded MiB]` | Read or change the decoded request limit |
 | `ccdx config reset --preview` / `restore` | Preview defaults or restore the pre-reset backup |
@@ -255,6 +257,8 @@ Normal management belongs in the WebUI. CLI provides the same backend operations
 | Prediction setup/remove/repair/open | `app codex prediction setup/remove/repair/open` | Shared control; App closure may be required |
 | Images: configure/remove/pause/resume | `app codex image setup/remove/pause/resume` | Shared image configuration transaction; keys never returned by WebUI |
 | Install a stable update | `update apply --yes` | Same supervisor request; download, verify and idle service handoff |
+| Local masking: prepare/disable/delete | `config privacy enable/disable/remove` | Same verified model lifecycle; existing protected replies retain restoration |
+| Local masking status and personal information | `config privacy status`, `config set privacy_personal true/false` | Read readiness or change the personal-information choice |
 | Standalone update/recovery | `update github/npm`, `doctor` | Available when service management is unavailable |
 | Local/network checks, repair and report | `doctor`, `doctor network/report`, `doctor --fix` | Existing checks and configuration repair |
 | Explicit model compatibility test | `doctor --compat` | Finite Codex Responses/stream/compaction requests; supports vendor IDs; local client credential stays on loopback; WebUI confirms quota use |
@@ -783,9 +787,13 @@ Rules and a local model replace detected values with stable placeholders. Replie
 
 Tool data is interpreted in its own context: ordinary argument fields named `id`, `signature`, `data` or `type` are restored, while protocol identifiers and signed blocks remain unchanged. Streaming restoration retains SSE event metadata and restores Responses custom-tool text across fragments. Incomplete parameters are discarded when the upstream emits a failure rather than replacing that failure with a restoration error.
 
-Each request pins its masking choice, including compatibility retries. A check exceeding 15 seconds is rejected before any upstream call; bounded local work can continue for up to five minutes so a retry can reuse its complete results. No request is sent using an incomplete model check. Model work is capped at eight jobs and 16 MiB queued input; text input per call is capped at 8 MiB. Detection metadata uses a 5,000-entry/4 MiB memory cache. CPU-only first checks of long histories can take substantially longer than cached checks.
+Each request pins its masking choice, including compatibility retries. A check exceeding 15 seconds is rejected before any upstream call. The submitted native batch continues, validates its results and caches them for a retry; the retry also shares work still in progress. Whole text entries are grouped toward 16 KiB or 64 entries per batch. A larger individual text stays whole. Completed batches remain reusable; later work with no waiting request is skipped. No request is sent using an incomplete model check. A native job has a five-minute processing deadline. Model work remains capped at eight jobs and 16 MiB queued input; text input per call is capped at 8 MiB. Detection metadata uses a 5,000-entry/4 MiB memory cache. CPU-only first checks of long histories can take substantially longer than cached checks.
+
+Streaming restoration limits each unfinished value to 8 MiB, total retained channel data to 32 MiB and active channels to 1,024. Completed text is released as it is delivered. A timeout or busy check reports that nothing was sent, with `Retry-After` for temporary waits. Model readiness and the latest check are separate: a loaded model does not establish that a request or client tool completed.
 
 Turning masking off affects subsequent requests. Existing protected replies keep their restoration mappings until they finish. The downloaded component can then be deleted separately. Settings reset backs up and resets masking choices while keeping accounts, model selections, client connections, images and prediction access. Older settings backups inherit masking off.
+
+WebUI controls and `ccdx config privacy` use the same preparation transaction. While the service runs, `config set privacy_enabled true/false` and the personal-information preference use these same controls. Offline preference writes and backup restoration retain saved intent; they do not prove model readiness or download a missing model. Unavailable configured protection holds requests back. Use Enable/Retry or `config privacy enable` to prepare it.
 
 Try locally sends sample text only to the local component. Request records show the number of replacements and elapsed local-check time, never the original values. Initial setup failures keep protection off; failed component upgrades retain verified compatible protection. Configured but unavailable protection refuses covered requests. Downloads retain the selected npm's proxy, certificate and offline policy, with no automatic policy relaxation or alternate downloader.
 

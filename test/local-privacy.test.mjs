@@ -37,6 +37,15 @@ test("download failure never activates protection or overwrites saved preference
   const f = fixture(t), before = fs.readFileSync(f.file);f.fail(true);await enable(f);
   assert.equal(f.privacy.snapshot().enabled, false);assert.deepEqual(fs.readFileSync(f.file), before);assert.equal(f.privacy.snapshot().error, "ccdx_privacy_unavailable");
 });
+test("a successful detector recovery clears a stale startup error without changing saved intent", async t => {
+  let ready = false;
+  const f = fixture(t, { snapshot: () => ({ state: ready ? "ready" : "error" }), load: async () => { if (!ready) throw Error("startup unavailable"); },
+    find: async texts => { ready = true;return texts.map(() => []); } });
+  fs.writeFileSync(f.file, JSON.stringify({ privacy_enabled: true }));f.privacy.settingsChanged();await new Promise(setImmediate);
+  assert.equal(f.privacy.snapshot().error, "ccdx_privacy_unavailable");
+  await f.privacy.prepare({ input: "synthetic recovery" }, { protocol: "responses" });
+  assert.equal(f.privacy.snapshot().error, undefined);assert.equal(f.privacy.snapshot().effective_enabled, true);
+});
 test("failed checks never invoke the provider and stale settings cannot be applied", async t => {
   const f = fixture(t);await enable(f);f.fail(true);let calls = 0;
   const invoke = f.privacy.wrap(async () => { calls++; }, { protocol: "responses", client: "codex" });

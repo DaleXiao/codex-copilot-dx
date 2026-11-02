@@ -19,12 +19,13 @@ const runNpm = args => execFileSync(process.execPath, [npm, ...args], {
 const packageRoot = path.join(prefix, ...(process.platform === "win32" ? [] : ["lib"]), "node_modules", "codex-copilot-dx");
 const version = () => execFileSync(process.execPath, [path.join(packageRoot, "bin", "cli.mjs"), "version"], { encoding: "utf8", timeout: 10000 }).trim();
 const args = process.argv.slice(2);
+const baseline = "1.3.9";
 if (args.length && (args.length !== 2 || args[0] !== "--baseline" || !path.isAbsolute(args[1]) || !fs.statSync(args[1]).isFile())) throw new Error("Use --baseline /absolute/path/to/package.tgz for a local baseline artifact");
 try {
   const install = spec => runNpm(["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", spec]);
-  install(args[1] || "codex-copilot-dx@1.3.8");
+  install(args[1] || `codex-copilot-dx@${baseline}`);
   const baselineVersion = version();
-  assert.match(baselineVersion, args[1] ? /ccdx v\d+\.\d+\.\d+ / : /ccdx v1\.3\.8 /);
+  assert.match(baselineVersion, args[1] ? /ccdx v\d+\.\d+\.\d+ / : new RegExp(`ccdx v${baseline.replaceAll(".", "\\.")} `));
   const expected = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")).version;
   const result = JSON.parse(runNpm(["pack", "--json", "--ignore-scripts", "--pack-destination", root]));
   // npm 10/11 return an array; npm 12 keys pack results by package name.

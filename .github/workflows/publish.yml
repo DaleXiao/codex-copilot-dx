@@ -11,6 +11,11 @@ on:
         description: Successful full CI run on the exact release commit
         required: true
         type: string
+      resume_run:
+        description: Original publication run whose immutable artifact should be verified again
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -22,6 +27,7 @@ concurrency:
 
 env:
   CCDX_CI_RUN: ${{ inputs.ci_run }}
+  CCDX_RESUME_RUN: ${{ inputs.resume_run }}
 
 jobs:
   publish:
@@ -46,8 +52,10 @@ jobs:
         run: |
           test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
           node scripts/release-gate.mjs
-      - run: npm ci
+      - if: ${{ inputs.resume_run == '' }}
+        run: npm ci
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: ${{ inputs.resume_run == '' }}
         with:
           run-id: ${{ inputs.ci_run }}
           github-token: ${{ github.token }}
@@ -55,22 +63,28 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/ccdx-release
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: ${{ inputs.resume_run == '' }}
         with:
           run-id: ${{ inputs.ci_run }}
           github-token: ${{ github.token }}
           pattern: privacy-*
           merge-multiple: true
           path: ${{ runner.temp }}/ccdx-release
-      - run: npm run release:pack -- "$RUNNER_TEMP/ccdx-release"
+      - if: ${{ inputs.resume_run == '' }}
+        run: npm run release:pack -- "$RUNNER_TEMP/ccdx-release"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: ${{ inputs.resume_run != '' }}
+        with:
+          run-id: ${{ inputs.resume_run }}
+          github-token: ${{ github.token }}
+          name: release-${{ inputs.version }}
+          path: ${{ runner.temp }}/ccdx-release
       - name: Stage exact shipping assets in GitHub draft
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          if ! gh release view "v$RELEASE_VERSION" >/dev/null 2>&1; then
-            gh release create "v$RELEASE_VERSION" --draft --verify-tag --title "CCDX $RELEASE_VERSION" --notes-file docs/RELEASE.md
-          fi
-          gh release upload "v$RELEASE_VERSION" "$RUNNER_TEMP/ccdx-release/"*.tgz "$RUNNER_TEMP/ccdx-release/"ccdx-privacy-guard-1-*arm64 "$RUNNER_TEMP/ccdx-release/"ccdx-privacy-guard-1-*x64 "$RUNNER_TEMP/ccdx-release/"*.exe "$RUNNER_TEMP/ccdx-release/ccdx-install.mjs" "$RUNNER_TEMP/ccdx-release/install.sh" "$RUNNER_TEMP/ccdx-release/install.ps1" "$RUNNER_TEMP/ccdx-release/SHA256SUMS" --clobber
+          node scripts/stage-release-assets.mjs "$RUNNER_TEMP/ccdx-release"
           node scripts/verify-release-assets.mjs "$RUNNER_TEMP/ccdx-release" draft
       - name: Make verified component assets available before npm discovery
         env:
@@ -78,6 +92,7 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: gh release edit "v$RELEASE_VERSION" --draft=false --latest=false
       - name: Publish the verified source tarball to npm
+        if: ${{ inputs.resume_run == '' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: node scripts/publish-packed.mjs "$RUNNER_TEMP/ccdx-release"

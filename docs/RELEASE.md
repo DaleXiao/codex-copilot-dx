@@ -1,10 +1,14 @@
-# CCDX 1.3.9
+# CCDX 1.3.10
 
-- Preserve M365 inline system instructions and existing cache prefixes, independently of Claude App aliases. Keep current tool continuations compatible with both canonical and legacy ownership journals. Explicit model capability overrides remain available for other endpoints.
-- Keep cumulative token counters across null stream updates. Share token-weighted cache-rate evidence across CLI, TUI and WebUI, distinguish missing data, and show cache writes separately.
-- Share unsupported M365 count-token probes before privacy detection. Bound long-history rule caching and cancel unused shared checks without freeing occupied native slots early.
-- Stage verified privacy components separately, reuse model weights, and keep compatible installed protection working during failed upgrades. Correct invalid UTF-8 token offsets.
-- Align prediction repair controls in one responsive action group and preserve unsaved request-limit edits through refresh.
-- Discover all unit tests on both supported systems, shard full browser theme coverage, pin native client versions, and require exact-commit CI plus downloaded npm/GitHub artifact verification for publication.
+Fixes the 1.3.9 local-masking regression that could leave Codex and Claude requests repeatedly returning 503.
 
-The active desktop applications are not restarted by this release work. Synthetic native client replays validate tool execution; they do not establish acceptance of every signed Claude App workflow. Cache recovery depends on the upstream service and the actual conversation prefix; no target hit rate is fabricated.
+- Keep submitted local detection alive after request timeout or cancellation. Retries reuse in-flight work and valid completed batches; unused batches are skipped before submission. Invalid results never enter the detection cache.
+- Preserve explicit zero usage and distinguish conflicting cache aliases. Keep native Messages prefixes, signed history and existing account/configuration ownership unchanged.
+- Bound total unfinished stream-channel data and release delivered text without retaining duplicate deltas. Preserve tool restoration, event metadata and original upstream failures.
+- Share masking preparation between WebUI and `config privacy` controls. Show effective readiness separately from the latest check; temporary waits include an accurate retry message.
+- Verify real classifiers with real native clients and tool continuation on all four platform builders. Retain the separate simulated-classifier, browser, installation and historical regression gates.
+- Resume interrupted publication from its original artifact without rebuilding, replacing shipping assets or uploading npm again. Verify delayed npm processing within a finite deadline.
+
+The model component remains pinned to 1.3.9. Whole text entries retain their detection context; raw text splitting was not adopted after the isolated comparison showed additional cost. Complete model checks remain required before upstream dispatch.
+
+Release work does not switch the active service or restart desktop applications. Native CLI and protocol replays do not establish acceptance of every signed Claude App UI workflow. Final public checks are recorded in the [release receipt](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.10/release-receipt.json).

@@ -114,7 +114,7 @@ export function createLocalPrivacy(options = {}) {
     }
     if (signal?.aborted) { session.release();throw signal.reason; }
     markRequestObservation({ privacy_count: session.count, privacy_ms: Math.round(performance.now() - start), privacy_state: "checked" });
-    lastCheck = { state: "checked", at: new Date().toISOString(), elapsed_ms: Math.round(performance.now() - start), count: session.count };changes.changed();
+    actionError = null;lastCheck = { state: "checked", at: new Date().toISOString(), elapsed_ms: Math.round(performance.now() - start), count: session.count };changes.changed();
     if (res && session.count) {
       let current = responses.get(res);
       if (!current) {

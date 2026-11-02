@@ -37,7 +37,9 @@ func TestBackendCostComparison(t *testing.T) {
 		for _, group := range []struct {
 			name  string
 			texts []string
-		}{{"short-fields", texts}, {"code-6KiB", []string{strings.Repeat("const options = { timeout: 5000, retries: 2 };\n", 128)}}} {
+		}{{"short-fields", texts}, {"tokens-64", []string{strings.Repeat("ordinary ", 64)}},
+			{"tokens-128", []string{strings.Repeat("ordinary ", 128)}}, {"tokens-256", []string{strings.Repeat("ordinary ", 256)}},
+			{"code-6KiB", []string{strings.Repeat("const options = { timeout: 5000, retries: 2 };\n", 128)}}} {
 			start := time.Now()
 			spans, secrets := 0, 0
 			for _, text := range group.texts {
@@ -52,7 +54,7 @@ func TestBackendCostComparison(t *testing.T) {
 			}
 			via, device, _ := m.Backend()
 			row, _ := json.Marshal(map[string]any{"backend": backend, "actual_backend": via, "device": device, "case": group.name,
-				"elapsed_ms": time.Since(start).Milliseconds(), "texts": len(group.texts), "spans": spans, "secret_spans": secrets})
+				"elapsed_ms": time.Since(start).Milliseconds(), "first_tokens": len(m.tok.encode(group.texts[0])) + 2, "texts": len(group.texts), "spans": spans, "secret_spans": secrets})
 			fmt.Println("BACKEND_COST", string(row))
 		}
 	}

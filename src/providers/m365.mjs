@@ -239,6 +239,8 @@ export function createM365Provider({ home, env = process.env, account: accountOv
       model_endpoint_cache_entries: catalog?.data.length || 0, model_list_flights: flight ? 1 : 0 }),
   };
   return {
+    messagesSystemMode: "native",
+    coordinateMessagesCounts: true,
     id: "m365", client, registry, auth, refresh, profileId: profile,
     models: family => m365Models(catalog, family),
     catalog: () => catalog?.data || [],

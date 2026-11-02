@@ -1,11 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { maskPrivacyRequest, createPrivacyStream, protectPrivacyResponse } from "../src/privacy-transform.mjs";
+import { maskPrivacyRequest, createPrivacyStream, protectPrivacyResponse, createPrivacyRuleCache } from "../src/privacy-transform.mjs";
 
 const secret = Buffer.alloc(32, 7), noModel = async texts => texts.map(() => []);
 const key = "ghp_" + "a".repeat(36);
 const options = { protocol: "messages", client: "claude_app", secret, find: noModel };
 const body = text => ({ model: "model", messages: [{ role: "user", content: text }], max_tokens: 64 });
+test("rule result cache bounds memory, isolates personal policy and returns independent spans", () => {
+  const cache = createPrivacyRuleCache({ maxBytes: 512, maxEntries: 2 }), text = "long history ".repeat(30) + key;
+  const one = cache.find(text, false);assert.equal(one.length, 1);one[0].start = -1;
+  assert.ok(cache.find(text, false)[0].start >= 0);assert.equal(cache.stats().hits, 1);
+  cache.find(text, true);assert.equal(cache.stats().scans, 2);
+  for (let i = 0; i < 10; i++) cache.find(text + i, false);
+  assert.ok(cache.stats().entries <= 2);assert.ok(cache.stats().bytes <= 512);cache.clear();assert.equal(cache.stats().bytes, 0);
+});
+test("model false-positive filters retain actual labelled numeric secrets and ordinary secret detection", async () => {
+  for (const [prefix, label, value, count] of [["budget ", "common_secret", "128000", 0], ["token budget: ", "common_secret", "128000", 0], ["PIN: ", "common_secret", "123456", 1], ["密码是 ", "common_secret", "123456", 1], ["const ", "private_person", "Alice", 0], ["Contact ", "private_person", "Alice", 1], ["value ", "common_secret", "aBcd-sensitive", 1]]) {
+    const text = prefix + value, start = Buffer.byteLength(prefix);
+    const session = await maskPrivacyRequest(body(text), { ...options, personal: true, find: async () => [[{ start, end: start + Buffer.byteLength(value), label, score: 0.99 }]] });
+    assert.equal(session.count, count, text);assert.equal(session.restoreText(session.body.messages[0].content), text);
+  }
+});
 test("masking leaves protocol fields and signed blocks intact, restores values and preserves the source object", async () => {
   const input = body(`API key: ${key} and PASSWORD="a\\\"b"`);
   input.messages.push({ role: "assistant", content: [{ type: "thinking", thinking: key, signature: "sealed" }] });

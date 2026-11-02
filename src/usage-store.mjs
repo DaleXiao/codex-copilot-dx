@@ -208,8 +208,8 @@ export function recordUsage(record) {
   if (!runtimeUsageByProvider.has(label)) runtimeUsageByProvider.set(label, { records: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, partial_records: 0 });
   for (const totals of [runtimeUsage, runtimeUsageByProvider.get(label)]) {
     totals.records++;
-    for (const [target, value] of [["input_tokens", usage.input_tokens], ["cached_input_tokens", cached], ["output_tokens", usage.output_tokens]]) {
-      if (Number.isFinite(value) && value >= 0) totals[target] += value;
+    for (const [target, value] of [["input_tokens", usage.input_tokens], ["cached_input_tokens", cached], ["cache_write_input_tokens", usage.cache_write_input_tokens], ["output_tokens", usage.output_tokens]]) {
+      if (Number.isFinite(value) && value >= 0) totals[target] = (totals[target] || 0) + value;
     }
     if (!Number.isFinite(usage.input_tokens) || !Number.isFinite(usage.output_tokens) || cached === undefined) totals.partial_records++;
     addCacheEvidence(totals, usage);

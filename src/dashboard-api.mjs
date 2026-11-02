@@ -95,6 +95,7 @@ function usageRow(model, values) {
     requests: finite(values.requests),
     input_tokens: finite(values.input_tokens),
     cache_read_tokens: cacheReadTokens(values) ?? null,
+    cache_write_input_tokens: values.cache_write_input_tokens ?? null,
     cache_hit_rate: usageCacheHitRate(values),
     cache_hit_known_requests: values.cache_hit_known_requests ?? null,
     cache_hit_unknown_requests: values.cache_hit_unknown_requests || 0,

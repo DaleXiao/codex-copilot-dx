@@ -684,9 +684,9 @@ When upstream responses contain usage fields, CCDX records token counts, model n
 ccdx usage
 ```
 
-The summary covers the current log and its single rotated backup, not an unbounded lifetime history. It reports recorded responses and per-model input, cache-read, output, and total token metadata.
+The summary covers the current log and its single rotated backup, not an unbounded lifetime history. It reports recorded responses and per-model input, cache-read, cache-write, output, and total token metadata.
 
-Messages input is the sum of Anthropic uncached input, cache-read and cache-creation tokens. Cache creation is new input, not a cache hit; output tokens, including thinking output, are not added to the cache-hit denominator. M365 follows this same protocol accounting. Stream usage updates replace cumulative counters, preserve earlier values when a later field is null or absent, and retain explicit zero. Each gateway request writes at most one usage row; forwarded usage is unchanged.
+Messages input is the sum of Anthropic uncached input, cache-read and cache-creation tokens. Cache creation is new input, not a cache hit; output tokens, including thinking output, are not added to the cache-hit denominator. M365 follows this same protocol accounting. Cache writes are shown separately when reported; missing write counts remain unknown. Stream usage updates replace cumulative counters, preserve earlier values when a later field is null or absent, and retain explicit zero. Each gateway request writes at most one usage row; forwarded usage is unchanged.
 
 CLI/TUI, WebUI totals and daily analytics use the same paired evidence for cache rates. Aggregate JSON exposes `cache_hit_known_requests`, `cache_hit_unknown_requests`, `cache_hit_input_tokens` and `cache_hit_read_tokens` so the rate and its coverage can be checked. `~` marks incomplete coverage; a rate without a positive known input basis remains unknown. Historical logs are re-aggregated without rewriting their records, and unknown cache values are never filled with zero.
 
@@ -773,7 +773,7 @@ Usage queries share a bounded aggregate checkpoint only when file identities, fi
 
 ## Local masking
 
-Settings → Advanced → Local masking is off by default. Enabling it downloads the optional local component and AstrLink Guard 0.1.3, verifies their checksums and loads the model before activating protection. The npm package and ordinary installation do not contain model weights or require Go, Python or CUDA. The model and tokenizer total 38,958,270 bytes; the executable and optional macOS acceleration cache require additional space.
+Settings → Advanced → Local masking is off by default. Enabling it downloads the optional local component and AstrLink Guard 0.1.3, verifies their checksums and loads the model before activating protection. The npm package and ordinary installation do not contain model weights or require Go, Python or CUDA. The model and tokenizer total 38,958,270 bytes; the executable and optional macOS acceleration cache require additional space. Component upgrades stage in a separate version directory. A verified compatible older component keeps serving during a failed download; the staged component takes over on the next engine load. Model weights with matching checksums are reused.
 
 Covered text includes conversation instructions, message text, tool results, tool argument values and tool descriptions on Responses, Chat and Messages routes. Protocol identifiers, tool schemas, authentication headers, images, signed thinking and encrypted reasoning retain their current behavior. Masking cannot retroactively remove data already sent to a service or control an agent's file/tool permissions. Personal-information detection is a separate opt-in; detection can miss values or mistake ordinary text.
 

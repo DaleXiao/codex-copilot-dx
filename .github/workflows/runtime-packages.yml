@@ -52,11 +52,18 @@ jobs:
         with:
           go-version: "1.27.3"
           cache-dependency-path: native/privacy-guard/go.sum
+      - name: Verify native tokenizer offsets
+        working-directory: native/privacy-guard
+        run: go test -mod=vendor ./guard
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/ccdx-privacy-model
+          key: privacy-model-7216b6a3b897ef903d4b1ba367ae6fb95b0fa5e4
       - name: Build optional privacy component and verify native inference
         shell: bash
         run: |
           node scripts/privacy-component.mjs "$RUNNER_TEMP/privacy-component" "${{ matrix.target }}"
-          node scripts/privacy-native-replay.mjs "$RUNNER_TEMP/privacy-component"
+          node scripts/privacy-native-replay.mjs "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/ccdx-privacy-model"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: privacy-${{ matrix.target }}

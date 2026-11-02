@@ -257,7 +257,7 @@ test("App alias streaming changes only the model event across fragmented multili
   const bytes = Buffer.from(': keep comment\r\nevent: message_start\r\nid: frame-1\r\ndata: {"type":"message_start",\r\ndata: "message":' + JSON.stringify(first.message) + '}\r\n\r\n' + tail);
   for (const size of [1, 7, 65536]) {
     let offset = 0;const calls = [];
-    const g = await gateway(t, null, { desktopAliases: true, provider: { id: "api_test", configuredModels: true, models: () => models,
+    const g = await gateway(t, null, { desktopAliases: true, messagesSystemMode: "legacy", provider: { id: "api_test", configuredModels: true, models: () => models,
       client: { messages: async body => { calls.push(body);return new Response(new ReadableStream({ pull(controller) {
         if (offset === bytes.length) { controller.close();return; }
         controller.enqueue(bytes.subarray(offset, offset + size));offset = Math.min(bytes.length, offset + size);
@@ -277,7 +277,7 @@ test("App alias streaming changes only the model event across fragmented multili
 
 test("App aliases cover JSON and count_tokens while bounded framing rejects oversized comments", async t => {
   const actual = "qwen3.8-max", models = [{ id: actual, capability: { values: { context_window: 234567 } } }], alias = claudeModelEntries(models, { desktopAliases: true })[0].name, calls = [];
-  const g = await gateway(t, null, { desktopAliases: true, provider: { id: "api_test", configuredModels: true, models: () => models, client: {
+  const g = await gateway(t, null, { desktopAliases: true, messagesSystemMode: "legacy", provider: { id: "api_test", configuredModels: true, models: () => models, client: {
     messages: async (body, options) => { calls.push({ body, options });return Response.json(options.countTokens ? { input_tokens: 42 } : { ...message, model: actual }); },
   } } });
   assert.equal((await (await g.request({ model: alias, messages: [] })).json()).model, alias);
@@ -292,7 +292,7 @@ test("App aliases cover JSON and count_tokens while bounded framing rejects over
 
 test("custom App system messages become ordered top-level text without changing conversation blocks", async t => {
   const calls = [], models = [{ id: "vendor-model" }], alias = claudeModelEntries(models, { desktopAliases: true })[0].name;
-  const g = await gateway(t, null, { desktopAliases: true, provider: { id: "api_test", configuredModels: true, models: () => models,
+  const g = await gateway(t, null, { desktopAliases: true, messagesSystemMode: "legacy", provider: { id: "api_test", configuredModels: true, models: () => models,
     client: { messages: async body => { calls.push(body);return Response.json({ ...message, model: body.model }); } } } });
   const cache = { type: "text", text: "second", cache_control: { type: "ephemeral" } }, conversation = [{ role: "user", content: [{ type: "text", text: "request" }] }];
   const input = { model: alias, system: "original", messages: [{ role: "system", content: "first" }, { role: "system", content: [cache] }, ...conversation], max_tokens: 8 };

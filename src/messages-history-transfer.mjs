@@ -44,7 +44,7 @@ function canonicalBlock(block) {
 function canonicalItems(messages) {
   const out = [];
   for (const message of messages) {
-    if (!message || typeof message !== "object" || !["user", "assistant"].includes(message.role)) fail("ccdx_history_transfer_invalid", "Message history is incomplete or invalid.");
+    if (!message || typeof message !== "object" || !["user", "assistant", "system"].includes(message.role)) fail("ccdx_history_transfer_invalid", "Message history is incomplete or invalid.");
     const { content, cache_control, ...fields } = message;
     const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
     if (!Array.isArray(blocks)) fail("ccdx_history_transfer_invalid", "Message history is incomplete or invalid.");
@@ -93,7 +93,7 @@ function checkHistory(body, counting) {
   }
   const pending = new Set();
   for (const message of body.messages) {
-    if (!message || !["user", "assistant"].includes(message.role) || !(typeof message.content === "string" || Array.isArray(message.content))) {
+    if (!message || !["user", "assistant", "system"].includes(message.role) || !(typeof message.content === "string" || Array.isArray(message.content))) {
       fail("ccdx_history_transfer_invalid", "Message history is incomplete or invalid. The original conversation was kept.");
     }
     if (message.role === "assistant" && pending.size) fail("ccdx_history_transfer_tool_incomplete", "Finish the current tool operation before switching. No tool was repeated.", "tool_call_pending");

@@ -302,6 +302,7 @@
     "cap_field_parallel_tools": ["Parallel tool calls", "并行工具调用"],
     "cap_field_streaming": ["Streaming", "流式输出"],
     "cap_field_structured_output": ["Structured output", "结构化输出"],
+    "cap_field_mid_conversation_system": ["Native mid-conversation system messages", "原位中途系统消息"],
     "cap_field_web_search": ["Native search APIs (messages, responses, chat)", "原生搜索接口（messages、responses、chat）"],
 
     "api_add": ["Add API", "添加 API"],
@@ -892,6 +893,7 @@
     "aggregating_local_usage_metadata": ["Counting local usage…", "正在统计本机用量。"],
     "calls": ["REQUESTS", "请求次数"],
     "input": ["INPUT USAGE", "输入用量"],
+    "cache_write": ["CACHE WRITE", "缓存写入"],
     "cache_read": ["REUSED INPUT", "复用输入"],
     "output": ["OUTPUT USAGE", "输出用量"],
     "total": ["TOTAL", "总用量"],

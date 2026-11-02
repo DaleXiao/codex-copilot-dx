@@ -18,7 +18,7 @@ function fixture(tty = true) {
   return { terminal, writes, errors, tick() { const [fn, ms] = [...timers][0];timers.delete(fn);time += ms;fn(); } };
 }
 
-test("live cache hit keeps zero, partial and unknown evidence aligned without adding rows", () => {
+test("live cache hit keeps zero, partial and unknown evidence aligned with cache-write evidence", () => {
   for (const columns of [40, 80, 120]) for (const [rate, partial, expected] of [[0, false, "0.0%"], [2 / 3, true, "~66.7%"], [1, false, "100.0%"], [null, false, "—"], [undefined, true, "—"], [1.1, false, "—"]]) {
     const writes = [];
     const terminal = createTerminalConsole({ output: { isTTY: true, columns, rows: 24, write: value => writes.push(value) }, errorOutput: { isTTY: true }, env: {},
@@ -29,7 +29,7 @@ test("live cache hit keeps zero, partial and unknown evidence aligned without ad
     const row = lines.find(line => line.includes("Cache hit"));
     assert.ok(row.includes(expected), row);
     assert.ok(lines.every(line => displayWidth(line) < columns));
-    assert.equal(lines.filter(line => line.startsWith("│") && !line.includes("Usage / this run")).length, 6);
+    assert.equal(lines.filter(line => line.startsWith("│") && !line.includes("Usage / this run")).length, 7);
   }
 });
 test("terminal uses a fixed region, suppresses request detail and restores output on cleanup", () => {
@@ -55,7 +55,7 @@ test("status table fits supported widths, separates notices and motion, and redr
     assert.ok(screen.length >= 15 && screen.length < 24);
     for (const line of screen) assert.ok(displayWidth(line.trim()) < columns, `${columns}: ${line}`);
     const borders = screen.filter(line => /^[┌├└│]/.test(line));
-    assert.equal(borders.length, 10);assert.ok(borders.every(line => displayWidth(line.trim()) === columns - 1));
+    assert.equal(borders.length, 11);assert.ok(borders.every(line => displayWidth(line.trim()) === columns - 1));
     assert.match(screen.join("\n"), /Input\s+1\.7M/);assert.match(screen.join("\n"), /Reused(?: input)?\s+1\.1M/);
     assert.match(screen.join("\n"), /Total\s+7/);assert.match(screen.join("\n"), /Completed\s+5/);assert.match(screen.join("\n"), /Failed\s+1/);
     assert.match(screen.join("\n"), /Active\s+2/);

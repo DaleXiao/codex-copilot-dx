@@ -51,6 +51,14 @@ test("cancellation detaches one waiter while shared local detection can finish f
   const two = f.privacy.prepare(value, { protocol: "responses" });controller.abort(Error("cancelled"));
   await assert.rejects(one, /cancelled/);resolve([[]]);assert.equal(await two, value);
 });
+test("the final waiter cancels unused detection and the next request starts fresh work", async t => {
+  const jobs = [];
+  const f = fixture(t, { find: (texts, { signal }) => new Promise((resolve, reject) => { jobs.push({ texts, signal, resolve });signal.addEventListener("abort", () => reject(signal.reason), { once: true }); }) });await enable(f);
+  const abort = new AbortController(), value = { input: "unshared synthetic text" };
+  const pending = f.privacy.prepare(value, { protocol: "responses", signal: abort.signal });await new Promise(setImmediate);
+  abort.abort(Error("cancelled"));await assert.rejects(pending, /cancelled/);assert.equal(jobs[0].signal.aborted, true);
+  const next = f.privacy.prepare(value, { protocol: "responses" });await new Promise(setImmediate);assert.equal(jobs.length, 2);jobs[1].resolve([[]]);assert.equal(await next, value);
+});
 
 test("a request pins protection across an off switch while a later request keeps the original provider function", async t => {
   const f = fixture(t);await enable(f);

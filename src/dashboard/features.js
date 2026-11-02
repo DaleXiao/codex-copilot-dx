@@ -1,6 +1,6 @@
 (() => {
   function create({ element: el, change, localize }) {
-    let saved = null, imageDirty = false;
+    let saved = null, imageDirty = false, limitDirty = false;
     const prediction = operation => change({ action: "prediction", operation }, el("prediction-continue"));
     el("setting-prediction_enabled").addEventListener("change", () => void prediction(el("setting-prediction_enabled").checked ? "enable" : "disable"));
     el("prediction-continue").addEventListener("click", () => void prediction(saved?.features?.prediction?.enabled ? "enable" : "disable"));
@@ -31,8 +31,13 @@
       const data = await change({ action: "image", operation: "remove" }, el("image-setup-remove"));
       if (data) { imageDirty = false;el("image-setup-key").value = "";render(data); }
     });
-    el("decoded-limit-save").addEventListener("click", () => void change({ action: "decoded_limit", mib: Number(el("decoded-limit").value) }, el("decoded-limit-save")));
-    el("decoded-limit-default").addEventListener("click", () => void change({ action: "decoded_limit", mib: null }, el("decoded-limit-default")));
+    el("decoded-limit").addEventListener("input", () => { limitDirty = true; });
+    const saveLimit = async mib => {
+      const data = await change({ action: "decoded_limit", mib }, el(mib === null ? "decoded-limit-default" : "decoded-limit-save"));
+      if (data?.decoded_body) { limitDirty = false;render(data); }
+    };
+    el("decoded-limit-save").addEventListener("click", () => void saveLimit(Number(el("decoded-limit").value)));
+    el("decoded-limit-default").addEventListener("click", () => void saveLimit(null));
     el("install-update").addEventListener("click", () => {
       if (window.confirm(globalThis.ccdxLanguage.format("update_install_confirm"))) void change({ action: "update", confirmed: true }, el("install-update"));
     });
@@ -55,7 +60,7 @@
       }
       el("image-setup-remove").disabled = !image?.configured;
       const limit = data.decoded_body;
-      if (document.activeElement !== el("decoded-limit")) el("decoded-limit").value = limit?.bytes / 1048576 || 128;
+      if (!limitDirty && document.activeElement !== el("decoded-limit")) el("decoded-limit").value = limit?.bytes / 1048576 || 128;
       el("decoded-limit").disabled = el("decoded-limit-save").disabled = el("decoded-limit-default").disabled = !limit || limit.source === "environment";
       localize(el("decoded-limit-note"), limit?.source === "environment" ? "controlled_by_environment" : "next_ccdx_start");
       el("install-update").disabled = !data.manual_update?.available;

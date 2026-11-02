@@ -1,4 +1,4 @@
-name: Publish npm
+name: Publish npm and GitHub
 
 on:
   workflow_dispatch:
@@ -7,47 +7,29 @@ on:
         description: Version to publish
         required: true
         type: string
+      ci_run:
+        description: Successful full CI run on the exact release commit
+        required: true
+        type: string
 
 permissions:
   contents: read
+  actions: read
+
+concurrency:
+  group: publish-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  CCDX_CI_RUN: ${{ inputs.ci_run }}
 
 jobs:
-  runtime-packages:
-    uses: ./.github/workflows/runtime-packages.yml
-    with:
-      ref: v${{ inputs.version }}
   publish:
-    needs: runtime-packages
     runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: v${{ inputs.version }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 24.x
-          registry-url: https://registry.npmjs.org/
-          cache: npm
-      - name: Verify release version
-        env:
-          RELEASE_VERSION: ${{ inputs.version }}
-        run: test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
-      - run: npm ci
-      - run: npm run verify
-      - run: npm run release:pack -- "$RUNNER_TEMP/ccdx-release"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: release-source-${{ inputs.version }}
-          path: ${{ runner.temp }}/ccdx-release/
-          if-no-files-found: error
-          retention-days: 7
-      - run: npm publish "$RUNNER_TEMP/ccdx-release/codex-copilot-dx-${{ inputs.version }}.tgz" --tag latest
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-  verify-public:
-    needs: publish
-    runs-on: macos-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -56,14 +38,59 @@ jobs:
         with:
           node-version: 24.x
           registry-url: https://registry.npmjs.org/
+          cache: npm
+      - name: Require exact version and complete successful CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
+          node scripts/release-gate.mjs
+      - run: npm ci
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: release-source-${{ inputs.version }}
-          path: ${{ runner.temp }}/ccdx-public-source
-      - run: node scripts/verify-public-package.mjs "$RUNNER_TEMP/ccdx-public-source"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+          run-id: ${{ inputs.ci_run }}
+          github-token: ${{ github.token }}
+          pattern: complete-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/ccdx-release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: public-npm-${{ inputs.version }}
-          path: ${{ runner.temp }}/ccdx-public-source/public-npm-receipt.json
-          if-no-files-found: error
+          run-id: ${{ inputs.ci_run }}
+          github-token: ${{ github.token }}
+          pattern: privacy-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/ccdx-release
+      - run: npm run release:pack -- "$RUNNER_TEMP/ccdx-release"
+      - name: Stage exact shipping assets in GitHub draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if ! gh release view "v$RELEASE_VERSION" >/dev/null 2>&1; then
+            gh release create "v$RELEASE_VERSION" --draft --verify-tag --title "CCDX $RELEASE_VERSION" --notes-file docs/RELEASE.md
+          fi
+          gh release upload "v$RELEASE_VERSION" "$RUNNER_TEMP/ccdx-release/"*.tgz "$RUNNER_TEMP/ccdx-release/"ccdx-privacy-guard-1-*arm64 "$RUNNER_TEMP/ccdx-release/"ccdx-privacy-guard-1-*x64 "$RUNNER_TEMP/ccdx-release/"*.exe "$RUNNER_TEMP/ccdx-release/ccdx-install.mjs" "$RUNNER_TEMP/ccdx-release/install.sh" "$RUNNER_TEMP/ccdx-release/install.ps1" "$RUNNER_TEMP/ccdx-release/SHA256SUMS" --clobber
+          node scripts/verify-release-assets.mjs "$RUNNER_TEMP/ccdx-release" draft
+      - name: Publish the verified source tarball to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node scripts/publish-packed.mjs "$RUNNER_TEMP/ccdx-release"
+      - name: Verify public npm bytes and fresh native install
+        run: node scripts/verify-public-package.mjs "$RUNNER_TEMP/ccdx-release"
+      - name: Publish verification receipt and GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node scripts/release-receipt.mjs "$RUNNER_TEMP/ccdx-release"
+          gh release upload "v$RELEASE_VERSION" "$RUNNER_TEMP/ccdx-release/release-receipt.json" --clobber
+          gh release edit "v$RELEASE_VERSION" --draft=false --latest
+          node scripts/verify-release-assets.mjs "$RUNNER_TEMP/ccdx-release" public
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: release-${{ inputs.version }}
+          path: ${{ runner.temp }}/ccdx-release/
+          if-no-files-found: warn
           retention-days: 7

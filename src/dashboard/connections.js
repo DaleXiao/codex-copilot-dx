@@ -178,7 +178,7 @@
     const note = node("p", undefined, "hint");words(note, "cap_metadata_scope");advanced.append(note);
     const fields = node("div", undefined, "connection-fields");
     const numeric = ["context_window", "max_input_tokens", "max_output_tokens", "reasoning_budget_min", "reasoning_budget_max"];
-    const flags = ["reasoning", "reasoning_required", "reasoning_adaptive", "tools", "parallel_tools", "streaming", "structured_output"];
+    const flags = ["reasoning", "reasoning_required", "reasoning_adaptive", "tools", "parallel_tools", "streaming", "structured_output", "mid_conversation_system"];
     const arrays = ["reasoning_efforts", "thinking_modes", "input_modalities", "web_search"];
     for (const key of [...numeric, ...flags, ...arrays, "reasoning_format"]) {
       const label = node("label"), title = node("span");words(title, "cap_field_" + key);label.append(title);

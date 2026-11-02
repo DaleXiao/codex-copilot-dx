@@ -28,6 +28,8 @@ function fmt(n) {
   return Number.isFinite(n) ? n.toLocaleString("en-US") : "0";
 }
 
+const writeTokens = n => Number.isFinite(n) ? fmt(n) : "—";
+
 function tableNumber(n) {
   return Number.isFinite(n) ? n.toLocaleString("en-US") : undefined;
 }
@@ -53,13 +55,13 @@ function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {
   }
   lines.push(
     `Records: ${fmt(summary.requests)}`,
-    `Tokens: input=${fmt(summary.totals.input_tokens)} cache_read=${fmt(cacheReadTokens(summary.totals))} output=${fmt(summary.totals.output_tokens)} total=${fmt(summary.totals.total_tokens)}`,
+    `Tokens: input=${fmt(summary.totals.input_tokens)} cache_read=${fmt(cacheReadTokens(summary.totals))} cache_write=${writeTokens(summary.totals.cache_write_input_tokens)} output=${fmt(summary.totals.output_tokens)} total=${fmt(summary.totals.total_tokens)}`,
     `Cache hit: ${cacheHitPercent(summary.totals)} (cached/input tokens; valid paired records only)`,
     "",
     "By model:",
   );
   for (const [model, row] of Object.entries(usageModelGroups(summary))) {
-    lines.push(`  ${terminalCell(model)}: records=${fmt(row.requests)} input=${fmt(row.input_tokens)} cache_read=${fmt(cacheReadTokens(row))} output=${fmt(row.output_tokens)} total=${fmt(row.total_tokens)} cache_hit=${cacheHitPercent(row)}`);
+    lines.push(`  ${terminalCell(model)}: records=${fmt(row.requests)} input=${fmt(row.input_tokens)} cache_read=${fmt(cacheReadTokens(row))} cache_write=${writeTokens(row.cache_write_input_tokens)} output=${fmt(row.output_tokens)} total=${fmt(row.total_tokens)} cache_hit=${cacheHitPercent(row)}`);
   }
   return (sanitize ? lines.map((line) => terminalCell(line, { fallback: "" })) : lines).join("\n");
 }
@@ -77,6 +79,7 @@ function usageTableRow(model, usage) {
     records: tableNumber(usage.requests),
     input: tableNumber(usage.input_tokens),
     cacheRead: tableNumber(cacheReadTokens(usage)),
+    cacheWrite: tableNumber(usage.cache_write_input_tokens),
     output: tableNumber(usage.output_tokens),
     total: tableNumber(usage.total_tokens),
     cacheHit: cacheHitPercent(usage),
@@ -84,7 +87,7 @@ function usageTableRow(model, usage) {
 }
 
 function usageDetailLine(model, usage) {
-  return `${terminalCell(model)}: input=${fmt(usage.input_tokens)} cache_read=${fmt(cacheReadTokens(usage))} output=${fmt(usage.output_tokens)} cache_hit=${cacheHitPercent(usage)}`;
+  return `${terminalCell(model)}: input=${fmt(usage.input_tokens)} cache_read=${fmt(cacheReadTokens(usage))} cache_write=${writeTokens(usage.cache_write_input_tokens)} output=${fmt(usage.output_tokens)} cache_hit=${cacheHitPercent(usage)}`;
 }
 
 function formatTableUsageSummary(summary, filePath, output) {
@@ -95,10 +98,11 @@ function formatTableUsageSummary(summary, filePath, output) {
     { key: "records", label: "RECORDS", align: "right" },
     { key: "input", label: "INPUT", align: "right" },
     { key: "cacheRead", label: "CACHE READ", align: "right" },
+    { key: "cacheWrite", label: "CACHE WRITE", align: "right" },
     { key: "output", label: "OUTPUT", align: "right" },
     { key: "total", label: "TOTAL", align: "right" },
   ];
-  const compactColumns = [columns[0], columns[1], columns[5]];
+  const compactColumns = [columns[0], columns[1], columns[6]];
   const modelUsage = Object.entries(usageModelGroups(summary))
     .map(([model, row]) => ({ model, row }))
     .sort(compareModelUsage);
@@ -111,6 +115,11 @@ function formatTableUsageSummary(summary, filePath, output) {
     width: cliOutputWidth(output),
     gap: 1,
   });
+  const writeOmitted = table.compact || table.overflow;
+  if (writeOmitted) {
+    columns.splice(columns.findIndex(column => column.key === "cacheWrite"), 1);
+    table = formatResponsiveCliTable({ columns: [...columns, { key: "cacheHit", label: "HIT %", align: "right" }], compactColumns: columns, rows, width: cliOutputWidth(output), gap: 1 });
+  }
   const rateFits = !table.compact;
   if (table.overflow) {
     table = formatResponsiveCliTable({ columns, compactColumns, rows, width: cliOutputWidth(output), gap: 1 });
@@ -118,6 +127,10 @@ function formatTableUsageSummary(summary, filePath, output) {
     table.compact = false;
   }
   const lines = [`Usage log: ${safePath}`, ...providerSummaryLines(summary), "", table.output];
+  if (writeOmitted && !table.compact && Number.isFinite(totalUsage.cache_write_input_tokens)) {
+    lines.push("", "Cache writes:", `TOTAL: ${writeTokens(totalUsage.cache_write_input_tokens)}`,
+      ...modelUsage.filter(({ row }) => Number.isFinite(row.cache_write_input_tokens)).map(({ model, row }) => `${terminalCell(model)}: ${writeTokens(row.cache_write_input_tokens)}`));
+  }
   if (table.compact) {
     lines.push(
       "",

@@ -11,7 +11,7 @@
     function usageValues(row) {
       const rate = Number.isFinite(row.cache_hit_rate) && row.cache_hit_rate >= 0 && row.cache_hit_rate <= 1
         ? `${row.cache_hit_rate_partial ? "~" : ""}${(row.cache_hit_rate * 100).toFixed(1)}%` : "—";
-      return [row.model, number(row.requests), number(row.input_tokens), number(row.cache_read_tokens), number(row.output_tokens), number(row.total_tokens), rate];
+      return [row.model, number(row.requests), number(row.input_tokens), number(row.cache_read_tokens), number(row.cache_write_input_tokens), number(row.output_tokens), number(row.total_tokens), rate];
     }
     
     let usageData = null;
@@ -112,7 +112,7 @@
       if (total.requests > 0) {
         body.append(tableRow(usageValues(total), { total: true }));
         for (const row of rows) body.append(tableRow(usageValues(row)));
-      } else { emptyTable("usage-body", 7, "no_usage_records"); }
+      } else { emptyTable("usage-body", 8, "no_usage_records"); }
       element("clear-usage-day").hidden = !day;
       text("usage-state", day ? day.date : "local_log");
       text("usage-note", "records_records_shown_of_models_models_shown_day", {

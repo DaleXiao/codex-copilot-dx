@@ -443,12 +443,12 @@ test("formatUsageSummary: plain layout remains compatible and combines cache fie
   }), [
     "Usage log: /tmp/usage.jsonl",
     "Records: 2",
-    "Tokens: input=12 cache_read=5 output=3 total=15",
+    "Tokens: input=12 cache_read=5 cache_write=— output=3 total=15",
     "Cache hit: 41.7% (cached/input tokens; valid paired records only)",
     "",
     "By model:",
-    "  b: records=1 input=4 cache_read=2 output=1 total=5 cache_hit=50.0%",
-    "  a: records=1 input=8 cache_read=3 output=2 total=10 cache_hit=37.5%",
+    "  b: records=1 input=4 cache_read=2 cache_write=— output=1 total=5 cache_hit=50.0%",
+    "  a: records=1 input=8 cache_read=3 cache_write=— output=2 total=10 cache_hit=37.5%",
   ].join("\n"));
 });
 
@@ -463,11 +463,11 @@ test("formatUsageSummary: auto uses a full table on a wide TTY and sorts models 
     format: "auto",
     output: { isTTY: true, columns: 120 },
   });
-  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\n\nMODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+OUTPUT\s+TOTAL\s+HIT %/m);
+  assert.match(output, /^Usage log: \/tmp\/usage\.jsonl\n\nMODEL\s+RECORDS\s+INPUT\s+CACHE READ\s+CACHE WRITE\s+OUTPUT\s+TOTAL\s+HIT %/m);
   assert.ok(output.indexOf("TOTAL") < output.indexOf("large-a"));
   assert.ok(output.indexOf("large-a") < output.indexOf("large-b"));
   assert.ok(output.indexOf("large-b") < output.indexOf("small"));
-  assert.match(output, /TOTAL\s+3\s+15\s+6\s+8\s+23\s+40\.0%/);
+  assert.match(output, /TOTAL\s+3\s+15\s+6\s+—\s+8\s+23\s+40\.0%/);
 });
 
 test("formatUsageSummary: large totals still fit a standard 80-column terminal", () => {
@@ -501,13 +501,13 @@ test("formatUsageSummary: both formats combine cache fields and use dashes for m
     format: "table",
     output: { isTTY: false, columns: 120 },
   });
-  assert.match(output, /mixed\s+2\s+—\s+12\s+—\s+12\s+—/);
-  assert.match(output, /missing\s+1\s+—\s+—\s+2\s+2\s+—/);
+  assert.match(output, /mixed\s+2\s+—\s+12\s+—\s+—\s+12\s+—/);
+  assert.match(output, /missing\s+1\s+—\s+—\s+—\s+2\s+2\s+—/);
   assert.match(formatUsageSummary(summary, {
     filePath: "/tmp/usage.jsonl",
     format: "plain",
     output: { isTTY: true, columns: 120 },
-  }), /Tokens: input=0 cache_read=12 output=2 total=14/);
+  }), /Tokens: input=0 cache_read=12 cache_write=— output=2 total=14/);
 });
 
 test("formatUsageSummary: auto keeps plain output when stdout is not a TTY", () => {
@@ -534,7 +534,7 @@ test("formatUsageSummary: compact table preserves totals and appends omitted tok
   assert.doesNotMatch(output, /CACHE READ/);
   assert.match(output, /wide-model-name\s+1\s+124,245/);
   assert.match(output, /Details:/);
-  assert.match(output, /wide-model-name: input=123,456 cache_read=100,000 output=789/);
+  assert.match(output, /wide-model-name: input=123,456 cache_read=100,000 cache_write=— output=789/);
   assert.match(output, /wide-model-name: .*cache_hit=81\.0%/);
 });
 

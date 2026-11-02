@@ -55,7 +55,7 @@ test("client diagnosis compares optional cache and bundled CLI metadata without 
     readFileFn: file => {
       file = file.replaceAll("\\", "/");
       if (file === "/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-package.json") return JSON.stringify({ version: "0.164.0-alpha.11.1" });
-      if (file === "/fixture/.codex/models_cache.json") return JSON.stringify({ client_version: version, models: [{ prompt: "never report" }] });
+      if (file.endsWith("/fixture/.codex/models_cache.json")) return JSON.stringify({ client_version: version, models: [{ prompt: "never report" }] });
       throw Error("missing");
     } });
   const changed = await run("0.163.0");assert.ok(changed.some(check => check.kind === "warn" && /Model cache client 0.163.0/.test(check.message)));

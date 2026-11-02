@@ -455,7 +455,7 @@ test("image MCP preserves JPEG and WebP bytes and uses their matching file exten
     const output = result._meta["ccdx/image_path"];
     assert.equal(path.extname(output), extension);
     assert.deepEqual(fs.readFileSync(output), pixels);
-    assert.equal((await sharp(output).metadata()).format, format);
+    assert.equal((await sharp(fs.readFileSync(output)).metadata()).format, format);
   }
 });
 

@@ -890,6 +890,7 @@ try {
           assert.ok(actions.every(action => action.parent.includes("section-actions") && action.height === 32));
           for (let i = 0; i < actions.length; i++) for (let j = i + 1; j < actions.length; j++) assert.ok(actions[j].x >= actions[i].right + 8 || actions[j].y >= actions[i].bottom + 8, "Prediction actions have real horizontal or wrapped vertical spacing");
           if (width >= 1280) assert.ok(actions.every(action => action.y === actions[0].y));
+          if (output && language === "zh") await page.locator("#prediction-settings").screenshot({ path: path.join(output, `${engine}-prediction-actions-${width}.png`) });
           await page.locator("#image-setup-panel").evaluate(node => { for (let current = node; current; current = current.parentElement) if (current.tagName === "DETAILS") current.open = true; });
           await page.locator("#image-setup-endpoint").fill("https://images.example.test/v1");
           await page.locator("#image-setup-key").fill("SYNTHETIC_IMAGE_KEY");

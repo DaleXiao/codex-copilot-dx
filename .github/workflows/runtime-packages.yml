@@ -64,6 +64,12 @@ jobs:
         run: |
           node scripts/privacy-component.mjs "$RUNNER_TEMP/privacy-component" "${{ matrix.target }}"
           node scripts/privacy-native-replay.mjs "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/ccdx-privacy-model"
+      - name: Provision fixed native clients for real classifier integration
+        shell: bash
+        run: npm install --prefix "$RUNNER_TEMP/privacy-clients" --no-audit --no-fund @openai/codex@0.166.0 @anthropic-ai/claude-code@2.1.316
+      - name: Verify native classifier timeout recovery and native tool continuations
+        shell: bash
+        run: node scripts/privacy-platform-replay.mjs "$RUNNER_TEMP/privacy-clients" "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/ccdx-privacy-model"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: privacy-${{ matrix.target }}

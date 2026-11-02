@@ -10,6 +10,28 @@ import { startAdapter } from "../src/adapter.mjs";
 import { createLocalPrivacy } from "../src/local-privacy.mjs";
 import { userSettingsPath } from "../src/user-settings.mjs";
 
+for (const protocol of ["responses", "messages"]) test(`${protocol} privacy timeout preserves work, sends Retry-After, and recovers without an upstream retry`, async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-timeout-http-")), env = {}, file = userSettingsPath({ home, env }), jobs = [];
+  fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, '{"privacy_enabled":true}');
+  const model = { load: async () => {}, snapshot: () => ({ state: "ready" }), find: texts => new Promise(resolve => jobs.push({ texts, resolve })), close() {}, busy: () => false };
+  const privacy = createLocalPrivacy({ home, env, model, checkTimeoutMs: 5 });let upstream = 0;
+  const reply = async body => { upstream++;return Response.json(protocol === "responses"
+    ? { id: "synthetic", status: "completed", model: body.model, output: [], usage: { input_tokens: 1, output_tokens: 0 } }
+    : { id: "synthetic", type: "message", model: body.model, role: "assistant", content: [], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 0 } }); };
+  const key = "a".repeat(64), server = protocol === "responses"
+    ? await startAdapter(0, "127.0.0.1", { privacy, env, dashboardOptions: { home, env }, responsesFn: reply,
+      codexClient: { getCachedModelEndpoints: () => ["/responses"] }, modelRegistry: { models: { data: [{ id: "fixture", supported_endpoints: ["/responses"] }] } } })
+    : await startClaudeGateway({ port: 0, apiKey: key, privacy, env, record() {}, provider: { id: "m365", models: () => [{ id: "fixture" }], client: { messages: reply } } });
+  t.after(async () => { if (protocol === "responses") { server.closeAllConnections();await new Promise(resolve => server.close(resolve)); } else await server.close();privacy.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const port = protocol === "responses" ? server.address().port : server.port, body = protocol === "responses" ? { model: "fixture", input: "synthetic slow history", stream: false }
+    : { model: "fixture", messages: [{ role: "user", content: "synthetic slow history" }], max_tokens: 1 };
+  const send = () => fetch(`http://127.0.0.1:${port}/v1/${protocol}`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const timed = await send();assert.equal(timed.status, 503);assert.equal(timed.headers.get("retry-after"), "5");
+  assert.equal((await timed.json()).error.code, "ccdx_privacy_check_timeout");assert.equal(upstream, 0);assert.equal(jobs.length, 1);
+  jobs[0].resolve(jobs[0].texts.map(() => []));await new Promise(setImmediate);
+  const retry = await send();assert.equal(retry.status, 200);await retry.text();assert.equal(upstream, 1);assert.equal(jobs.length, 1);
+});
+
 test("Messages JSON, streaming and token counting share masking while client credentials remain unchanged", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-privacy-http-")), env = {}, file = userSettingsPath({ home, env });
   fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, '{"privacy_enabled":true}');

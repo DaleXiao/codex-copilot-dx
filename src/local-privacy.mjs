@@ -71,7 +71,7 @@ export function createLocalPrivacy(options = {}) {
             const entry = fresh[at];
             if (!entry.waiters) { finish(entry, null, privacyFailure("cancelled"));at++;continue; }
             const size = Buffer.byteLength(entry.text);
-            if (batch.length && bytes + size > (options.batchBytes ?? 64 * 1024)) break;
+            if (batch.length && bytes + size > (options.batchBytes ?? 16 * 1024)) break;
             batch.push(entry);bytes += size;at++;
           }
           if (!batch.length) continue;

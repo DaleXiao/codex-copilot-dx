@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import http from 'node:http';import {spawn} from 'node:child_process';import {fileURLToPath} from 'node:url';
 import {createLocalPrivacy} from '../src/local-privacy.mjs';import {startAdapter} from '../src/adapter.mjs';import {startClaudeGateway} from '../src/claude-gateway.mjs';import {userSettingsPath} from '../src/user-settings.mjs';
+import {createPrivacyModel,PRIVACY_COMPONENT_RELEASE,PRIVACY_MODEL_FILES} from '../src/privacy-model.mjs';import {createHash} from 'node:crypto';import {testEnvironment} from '../test/helpers/environment.mjs';
 process.env.CCDX_DISABLE_USAGE='1';
 const opts=new Map(process.argv.slice(2).reduce((a,v,i,all)=>i%2?a:[...a,[v,all[i+1]]],[]));const binary=opts.get('--binary'),kind=opts.get('--client'),mode=opts.get('--privacy')||'on';assert.ok(path.isAbsolute(binary)&&fs.existsSync(binary)&&['codex','claude'].includes(kind)&&['on','off'].includes(mode));
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'ccdx-private-client-')),profile=path.join(root,kind),work=path.join(root,'workspace');fs.mkdirSync(profile);fs.mkdirSync(work);
-const env={XDG_CONFIG_HOME:path.join(root,'config')},settings=userSettingsPath({home:root,env});fs.mkdirSync(path.dirname(settings),{recursive:true});fs.writeFileSync(settings,JSON.stringify({privacy_enabled:mode==='on'}));
-const sentinel='ghp_'+ 'p'.repeat(36),receipt=path.join(root,'mcp-result.json');const model={load:async()=>{},find:async texts=>texts.map(()=>[]),snapshot:()=>({state:'ready'}),close(){},busy:()=>false};const privacy=createLocalPrivacy({home:root,env,model});
-let rounds=0,returned=false,calls=[];let server,child;
+const env=testEnvironment(root,{XDG_CONFIG_HOME:path.join(root,'config'),XDG_CACHE_HOME:path.join(root,'cache')}),settings=userSettingsPath({home:root,env});fs.mkdirSync(path.dirname(settings),{recursive:true});fs.writeFileSync(settings,JSON.stringify({privacy_enabled:mode==='on'}));
+const sentinel='ghp_'+ 'p'.repeat(36),receipt=path.join(root,'mcp-result.json'),component=opts.get('--component-dir'),weights=opts.get('--model-dir');
+let rounds=0,returned=false,calls=[],checks=0,recovery=null;let server,child,privacy,detector;
 function declarations(tools,namespace){return (tools||[]).flatMap(t=>t.type==='namespace'?declarations(t.tools,t.name):[{name:t.name||t.function?.name,type:t.type||'function',...(namespace?{namespace}:{})}]);}
 function requestTools(body){return [...(body.tools||[]),...(body.input||[]).flatMap(item=>item.type==='additional_tools'?item.tools||[]:[])];}
 function chosen(body,needle){return declarations(requestTools(body)).find(t=>t.name?.includes(needle));}
-function tokenIn(body){const text=JSON.stringify(body);if(mode==='on'){assert.ok(!text.includes(sentinel),'original synthetic credential reached mock upstream');const m=text.match(/\{\{CCDX_[a-f0-9]{24}\}\}/);assert.ok(m,'masked request has no placeholder');return m[0];}return sentinel;}
+function tokenIn(body){const text=JSON.stringify(body);if(mode==='on'){assert.ok(!text.includes(sentinel),'original synthetic credential reached mock upstream');const m=text.match(/Credential: (\{\{CCDX_[a-f0-9]{24}\}\})/);assert.ok(m,'mock model cannot locate the requested credential placeholder');return m[1];}return sentinel;}
 function response(body,protocol){
  rounds++;assert.ok(rounds<=4,'unexpected extra model round');const token=tokenIn(body);
  if(rounds>1){const text=JSON.stringify(body);returned=text.includes('MCP_EXECUTED:')&&(kind!=='codex'||text.includes('SHELL_EXECUTED:'))&&fs.existsSync(receipt)&&JSON.parse(fs.readFileSync(receipt)).valid;}
@@ -34,13 +35,35 @@ function response(body,protocol){
 function sse(events){return new Response(events.map(e=>`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join(''),{headers:{'Content-Type':'text/event-stream'}});}
 const fixture=fileURLToPath(new URL('./replay-fixtures/privacy-mcp.mjs',import.meta.url));const key='a'.repeat(64);
 try{
+ let model={load:async()=>{},find:async texts=>texts.map(()=>[]),snapshot:()=>({state:'ready'}),close(){},busy:()=>false};
+ if(component){
+  assert.ok(mode==='on'&&path.isAbsolute(component)&&path.isAbsolute(weights));
+  const release=opts.get('--component-release')||PRIVACY_COMPONENT_RELEASE;assert.ok([PRIVACY_COMPONENT_RELEASE,'1.3.6'].includes(release));
+  detector=createPrivacyModel({home:root,env,fetchImpl:async()=>{throw Error('Replay forbids background downloads');}});fs.mkdirSync(detector.paths.model,{recursive:true});fs.mkdirSync(path.dirname(detector.paths.runner),{recursive:true});
+  for(const file of PRIVACY_MODEL_FILES)fs.copyFileSync(path.join(weights,file.name),path.join(detector.paths.model,file.name));
+  const runner=fs.readFileSync(path.join(component,detector.paths.name)),target=release===PRIVACY_COMPONENT_RELEASE?detector.paths.runner:detector.paths.legacyRunner;
+  fs.writeFileSync(target,runner,{mode:0o700});fs.writeFileSync(target+'.json',JSON.stringify({release,sha256:createHash('sha256').update(runner).digest('hex')}));
+  await detector.load();model={...detector,find:async texts=>{checks++;return detector.find(texts);}};
+ }
+ const privacyOptions={home:root,env,model};privacy=createLocalPrivacy(privacyOptions);
+ if(detector){
+  privacyOptions.checkTimeoutMs=1;
+  const sample={input:'Synthetic cold history with ordinary text. '.repeat(512)};
+  await assert.rejects(privacy.prepare(sample,{protocol:'responses'}),{code:'ccdx_privacy_check_timeout'});
+  const pending=detector.snapshot().pending_checks;assert.ok(pending>0,'the real native job must survive its waiter');
+  const deadline=Date.now()+180000;
+  while(privacy.busy()&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(privacy.busy(),false);const before=checks;
+  assert.equal(await privacy.prepare(sample,{protocol:'responses'}),sample);assert.equal(checks,before,'retry repeated completed native work');
+  recovery={timed_out:true,physical_jobs_after_timeout:pending,repeated_checks:checks-before};privacyOptions.checkTimeoutMs=15000;
+ }
  server=kind==='codex'?await startAdapter(0,'127.0.0.1',{privacy,env,dashboardOptions:{home:root,env},modelRegistry:{models:{data:[{id:'gpt-6.1-sol',supported_endpoints:['/responses'],capabilities:{supports:{tool_calls:true}}}]}},codexClient:{getCachedModelEndpoints:()=>['/responses']},responsesFn:async body=>response(body,'responses')}):await startClaudeGateway({port:0,apiKey:key,privacy,privacyClient:'claude_code',env,record(){},provider:{id:'m365',models:()=>[{id:'claude-opus-5.5'}],client:{messages:async body=>response(body,'messages')}}});
  const port=kind==='codex'?server.address().port:server.port;
- const childEnv=Object.fromEntries(Object.entries(process.env).filter(([k])=>['PATH','SystemRoot','WINDIR','TMPDIR','TMP','TEMP','LANG'].includes(k)));
+ const childEnv=testEnvironment(root);
  childEnv.CCDX_DISABLE_USAGE='1';let args;
  if(kind==='codex'){
   childEnv.CODEX_HOME=profile;childEnv.CCDX_FIXTURE_KEY='synthetic';
-  fs.writeFileSync(path.join(profile,'config.toml'),`model_provider="privacy_fixture"\nmodel="gpt-6.1-sol"\nmodel_reasoning_effort="low"\nweb_search="disabled"\n[features]\napps=false\nplugins=false\nremote_plugin=false\n[model_providers.privacy_fixture]\nname="Privacy fixture"\nbase_url="http://127.0.0.1:${port}/v1"\nwire_api="responses"\nenv_key="CCDX_FIXTURE_KEY"\nsupports_websockets=false\nrequest_max_retries=0\nstream_max_retries=0\n[mcp_servers.privacy_fixture]\ncommand=${JSON.stringify(process.execPath)}\nargs=${JSON.stringify([fixture,receipt,sentinel])}\n`);
+  fs.writeFileSync(path.join(profile,'config.toml'),`model_provider="privacy_fixture"\nmodel="gpt-6.1-sol"\nmodel_reasoning_effort="low"\nweb_search="disabled"\n[features]\napps=false\nplugins=false\nremote_plugin=false\n[model_providers.privacy_fixture]\nname="Privacy fixture"\nbase_url="http://127.0.0.1:${port}/v1"\nwire_api="responses"\nenv_key="CCDX_FIXTURE_KEY"\nsupports_websockets=false\nrequest_max_retries=${detector?3:0}\nstream_max_retries=0\n[mcp_servers.privacy_fixture]\ncommand=${JSON.stringify(process.execPath)}\nargs=${JSON.stringify([fixture,receipt,sentinel])}\n`);
   args=['exec','--ephemeral','--json','--skip-git-repo-check','--sandbox','read-only','--cd',work,`Synthetic tool privacy test. Credential: ${sentinel}. Use the fixture echo tool, then report the result.`];
  }else{
   childEnv.CLAUDE_CONFIG_DIR=profile;childEnv.ANTHROPIC_BASE_URL=`http://127.0.0.1:${port}`;childEnv.ANTHROPIC_AUTH_TOKEN=key;childEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1';
@@ -48,10 +71,10 @@ try{
   args=['-p',`Synthetic tool privacy test. Credential: ${sentinel}. Use the fixture echo tool, then report the result.`,'--model','claude-opus-5.5','--output-format','stream-json','--verbose','--mcp-config',cfg,'--strict-mcp-config','--allowedTools','mcp__privacy_fixture__echo'];
  }
  child=spawn(binary,args,{cwd:work,env:childEnv,detached:process.platform!=='win32',stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',b=>stdout+=b);child.stderr.on('data',b=>stderr+=b);
- const timer=setTimeout(()=>{try{if(process.platform==='win32')child.kill();else process.kill(-child.pid,'SIGTERM');}catch{}},90000);const code=await new Promise((resolve,reject)=>{child.on('exit',resolve);child.on('error',reject);});clearTimeout(timer);
- const executed=fs.existsSync(receipt)?JSON.parse(fs.readFileSync(receipt)):null;console.log(JSON.stringify({client:kind,privacy:mode,code,rounds,calls,executed,returned,continued:stdout.includes('NATIVE_TOOL_ROUND_OK'),stderr_tail:stderr.slice(-1400)}));
+ const timer=setTimeout(()=>{try{if(process.platform==='win32')child.kill();else process.kill(-child.pid,'SIGTERM');}catch{}},detector?180000:90000);const code=await new Promise((resolve,reject)=>{child.on('exit',resolve);child.on('error',reject);});clearTimeout(timer);
+ const executed=fs.existsSync(receipt)?JSON.parse(fs.readFileSync(receipt)):null;console.log(JSON.stringify({client:kind,privacy:mode,detector:detector?'native':'simulated',component_release:detector?.snapshot().component_release,checks,recovery,code,rounds,calls,executed,returned,continued:stdout.includes('NATIVE_TOOL_ROUND_OK'),stderr_tail:stderr.slice(-1400)}));
  assert.equal(code,0);assert.ok(executed?.valid&&returned&&stdout.includes('NATIVE_TOOL_ROUND_OK'),'native tool execution/return/continuation did not complete');
 }finally{
  if(child&&child.exitCode===null){try{if(process.platform==='win32')child.kill();else process.kill(-child.pid,'SIGTERM');}catch{}}
- if(kind==='codex'&&server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}else await server?.close();privacy.close();fs.rmSync(root,{recursive:true,force:true});
+ if(kind==='codex'&&server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}else await server?.close();privacy?.close();detector?.close();fs.rmSync(root,{recursive:true,force:true,maxRetries:3});
 }

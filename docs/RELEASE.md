@@ -1,6 +1,6 @@
 # CCDX 1.3.9
 
-- Preserve M365 inline system instructions and existing cache prefixes, independently of Claude App aliases. Explicit model capability overrides remain available for other endpoints.
+- Preserve M365 inline system instructions and existing cache prefixes, independently of Claude App aliases. Keep current tool continuations compatible with both canonical and legacy ownership journals. Explicit model capability overrides remain available for other endpoints.
 - Keep cumulative token counters across null stream updates. Share token-weighted cache-rate evidence across CLI, TUI and WebUI, distinguish missing data, and show cache writes separately.
 - Share unsupported M365 count-token probes before privacy detection. Bound long-history rule caching and cancel unused shared checks without freeing occupied native slots early.
 - Stage verified privacy components separately, reuse model weights, and keep compatible installed protection working during failed upgrades. Correct invalid UTF-8 token offsets.

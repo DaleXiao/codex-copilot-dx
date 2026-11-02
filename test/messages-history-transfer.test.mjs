@@ -23,6 +23,18 @@ function fixture(t) {
   const seed = prepare("source-one", { model: "one", messages: [user("Remember PRIVATE-ALPHA")] });seed?.commit();seed?.release();
   return { options, headers, file: messagesTransferPath(options), prepare, restart };
 }
+test("inline system instructions preserve old canonical and legacy ownership during a current tool turn", t => {
+  for (const legacy of [false, true]) {
+    const f = fixture(t), original = body(), first = f.prepare("source-two", structuredClone(original));first.commit();first.release();
+    if (legacy) fs.unlinkSync(path.join(path.dirname(f.file), "conversation-prefixes.json"));f.restart();
+    const next = structuredClone(original), instruction = { role: "system", content: [{ type: "text", text: "current reminder", cache_control: { type: "ephemeral" } }] };
+    next.messages.splice(1, 0, instruction);
+    next.messages.push({ role: "assistant", content: [{ type: "thinking", thinking: "owned", signature: "own-signature" }, { type: "tool_use", id: "current", name: "read", input: {} }] }, user([{ type: "tool_result", tool_use_id: "current", content: "done" }]));
+    const plan = f.prepare("source-two", next);assert.equal(next.messages.at(-2).content[0].signature, "own-signature");assert.equal(next.messages[1], instruction);plan.commit();plan.release();
+    const malformed = structuredClone(next);malformed.messages[1] = { role: "system", content: [{ type: "tool_use", id: "smuggled", name: "read", input: {} }] };
+    assert.throws(() => f.prepare("source-two", malformed), { code: "ccdx_history_transfer_content_unsupported" });
+  }
+});
 test("Messages transfer preserves original history, tools and new-source thinking across restart and return", t => {
   const f = fixture(t), input = body(), original = structuredClone(input), plan = f.prepare("source-two", input);
   assert.deepEqual(input.messages[1].content, [{ type: "text", text: "ALPHA" }]);assert.deepEqual(input.tools, original.tools);assert.deepEqual(input.thinking, original.thinking);

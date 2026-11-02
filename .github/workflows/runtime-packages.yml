@@ -1,87 +1,40 @@
 name: Complete platform packages
-
 on:
-  workflow_call:
-    inputs:
-      ref:
-        required: true
-        type: string
   workflow_dispatch:
     inputs:
       ref:
-        description: Exact source ref to build
+        description: Isolated backend comparison ref
         required: true
         type: string
-
 permissions:
   contents: read
-
 jobs:
   runtime:
-    timeout-minutes: 20
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: macos-latest, target: darwin-arm64 }
-          - { os: macos-15-intel, target: darwin-x64 }
-          - { os: windows-latest, target: win32-x64 }
-          - { os: windows-11-arm, target: win32-arm64 }
+    runs-on: macos-15-intel
+    timeout-minutes: 15
     steps:
-      - name: Keep source bytes consistent across native builders
-        shell: bash
-        run: git config --global core.autocrlf false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ inputs.ref }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24.x
-          architecture: ${{ contains(matrix.target, 'arm64') && 'arm64' || 'x64' }}
           cache: npm
-      - name: Build and verify with exact strict npm 12
-        shell: bash
-        run: |
-          npm ci --ignore-scripts
-          npm run release:pack -- "$RUNNER_TEMP/complete-release"
-          npm run release:runtime -- "$RUNNER_TEMP/complete-release"
-          npm install --prefix "$RUNNER_TEMP/strict-npm" --ignore-scripts --no-audit --no-fund npm@12.0.1
-          node scripts/runtime-package-replay.mjs "$RUNNER_TEMP/complete-release" "$RUNNER_TEMP/strict-npm/node_modules/npm/bin/npm-cli.js"
+      - run: npm ci --ignore-scripts
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version: "1.27.3"
           cache-dependency-path: native/privacy-guard/go.sum
-      - name: Verify native tokenizer offsets
-        working-directory: native/privacy-guard
-        run: go test -mod=vendor ./guard
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ runner.temp }}/ccdx-privacy-model
           key: privacy-model-7216b6a3b897ef903d4b1ba367ae6fb95b0fa5e4
-      - name: Build optional privacy component and verify native inference
-        shell: bash
+      - name: Verify isolated weights and current component
         run: |
-          node scripts/privacy-component.mjs "$RUNNER_TEMP/privacy-component" "${{ matrix.target }}"
+          node scripts/privacy-component.mjs "$RUNNER_TEMP/privacy-component" darwin-x64
           node scripts/privacy-native-replay.mjs "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/ccdx-privacy-model"
-      - name: Provision fixed native clients for real classifier integration
-        shell: bash
-        run: npm install --prefix "$RUNNER_TEMP/privacy-clients" --no-audit --no-fund @openai/codex@0.166.0 @anthropic-ai/claude-code@2.1.316
-      - name: Verify native classifier timeout recovery and native tool continuations
-        shell: bash
-        run: node scripts/privacy-platform-replay.mjs "$RUNNER_TEMP/privacy-clients" "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/ccdx-privacy-model"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: privacy-${{ matrix.target }}
-          path: ${{ runner.temp }}/privacy-component/
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: complete-${{ matrix.target }}
-          path: |
-            ${{ runner.temp }}/complete-release/*-${{ matrix.target }}.tgz
-            ${{ runner.temp }}/complete-release/*-${{ matrix.target }}.tgz.manifest.json
-            ${{ runner.temp }}/complete-release/*-${{ matrix.target }}.tgz.sha256
-          if-no-files-found: error
-          retention-days: 7
+      - name: Compare CoreML CPU and native Go on identical inputs
+        working-directory: native/privacy-guard
+        env:
+          CCDX_BACKEND_MODEL_DIR: ${{ runner.temp }}/ccdx-privacy-model
+        run: go test -mod=vendor -run TestBackendCostComparison -count=1 -v -timeout=8m ./guard

@@ -5,10 +5,11 @@ import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createNpmReleaseFetch, releaseBytes, releaseChecksum, RELEASE_BASE } from "./release-install.mjs";
+import { createNpmReleaseFetch, releaseBytes, releaseChecksum, RELEASE_BASE, stableVersion } from "./release-install.mjs";
 
 export const PRIVACY_MODEL_REVISION = "7216b6a3b897ef903d4b1ba367ae6fb95b0fa5e4";
-export const PRIVACY_COMPONENT_RELEASE = "1.3.9";
+export const PRIVACY_COMPONENT_RELEASE = "1.3.10";
+export const PRIVACY_COMPONENT_ABI = 1;
 export const PRIVACY_MODEL_FILES = Object.freeze([
   { name: "model_int8.onnx", bytes: 330781, sha256: "0a070d3113615e33ba3b84d6bd486f663a377c04c4b056e7381732179f51832a" },
   { name: "model_int8.onnx_data", bytes: 37124608, sha256: "0ba34216ceead01e0ae2dfd8e46d52b67e7aee80b04f722d9b758613a91c0067" },
@@ -29,9 +30,9 @@ export function privacyFailure(code, phase = "check") {
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 export function privacyPaths({ home = os.homedir(), env = process.env, platform = process.platform, arch = process.arch } = {}) {
   const root = path.join(env.XDG_CACHE_HOME || (platform === "win32" ? env.LOCALAPPDATA || path.join(home, "AppData", "Local") : path.join(home, ".cache")), "codex-copilot-dx", "privacy");
-  const name = `ccdx-privacy-guard-1-${platform}-${arch}${platform === "win32" ? ".exe" : ""}`;
-  const component = path.join(root, "components", PRIVACY_COMPONENT_RELEASE);
-  return { root, model: path.join(root, PRIVACY_MODEL_REVISION), name, runner: path.join(component, name), receipt: path.join(component, name + ".json"), legacyRunner: path.join(root, name), legacyReceipt: path.join(root, name + ".json") };
+  const name = `ccdx-privacy-guard-${PRIVACY_COMPONENT_ABI}-${platform}-${arch}${platform === "win32" ? ".exe" : ""}`;
+  const components = path.join(root, "components"), component = path.join(components, PRIVACY_COMPONENT_RELEASE);
+  return { root, components, model: path.join(root, PRIVACY_MODEL_REVISION), name, runner: path.join(component, name), receipt: path.join(component, name + ".json"), legacyRunner: path.join(root, name), legacyReceipt: path.join(root, name + ".json") };
 }
 async function downloader(env) {
   const names = [env.npm_execpath];
@@ -57,14 +58,27 @@ export function createPrivacyModel(options = {}) {
   let state = { state: "not_downloaded", downloaded_bytes: 0, download_bytes: PRIVACY_DOWNLOAD_BYTES, backend: null, device: null, error: null };
   const jobs = new Map();
   const set = next => { state = { ...state, ...next };changed(); };
+  const compareVersions = (a, b) => { const x = a.split(".").map(Number), y = b.split(".").map(Number);return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; };
+  function candidates(current = false) {
+    const result = [[paths.runner, paths.receipt, PRIVACY_COMPONENT_RELEASE]];
+    if (current) return result;
+    try {
+      const versions = fsSync.readdirSync(paths.components, { withFileTypes: true }).filter(entry => (entry.isDirectory() || entry.isSymbolicLink())
+        && stableVersion(entry.name) === entry.name && compareVersions(entry.name, PRIVACY_COMPONENT_RELEASE) < 0)
+        .map(entry => entry.name).sort((a, b) => compareVersions(b, a)).slice(0, 16);
+      for (const version of versions) { const runner = path.join(paths.components, version, paths.name);result.push([runner, runner + ".json", version]); }
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
+    result.push([paths.legacyRunner, paths.legacyReceipt, "1.3.6"]);return result;
+  }
   async function installed({ current = false } = {}) {
     try {
       for (const file of modelFiles) if (digest(await fs.readFile(path.join(paths.model, file.name))) !== file.sha256) return false;
-      const candidates = [[paths.runner, paths.receipt, PRIVACY_COMPONENT_RELEASE], ...(!current ? [[paths.legacyRunner, paths.legacyReceipt, "1.3.6"]] : [])];
-      for (const [runner, receiptFile, release] of candidates) {
+      for (const [runner, receiptFile, release] of candidates(current)) {
         try {
           const receipt = JSON.parse(await fs.readFile(receiptFile, "utf8"));
           if (!/^[a-f0-9]{64}$/.test(receipt.sha256) || receipt.release !== release || digest(await fs.readFile(runner)) !== receipt.sha256) continue;
+          const legacy = PRIVACY_COMPONENT_ABI === 1 && ["1.3.6", "1.3.9"].includes(release) && receipt.abi === undefined && receipt.model_revision === undefined;
+          if (!legacy && (receipt.abi !== PRIVACY_COMPONENT_ABI || receipt.model_revision !== PRIVACY_MODEL_REVISION)) continue;
           if (!child) { activeRunner = runner;componentRelease = release; }
           return true;
         } catch { /* Missing targets never hide a verified ABI-compatible legacy component. */ }
@@ -89,7 +103,8 @@ export function createPrivacyModel(options = {}) {
       const tempRunner = paths.runner + "." + randomUUID();
       try { await fs.writeFile(tempRunner, runner, { mode: 0o700, flag: "wx" });await fs.rename(tempRunner, paths.runner); }
       finally { await fs.rm(tempRunner, { force: true }); }
-      await fs.writeFile(paths.receipt, JSON.stringify({ release: PRIVACY_COMPONENT_RELEASE, sha256: expected }) + "\n", { mode: 0o600 });
+      await fs.writeFile(paths.receipt, JSON.stringify({ release: PRIVACY_COMPONENT_RELEASE, abi: PRIVACY_COMPONENT_ABI,
+        model_revision: PRIVACY_MODEL_REVISION, sha256: expected }) + "\n", { mode: 0o600 });
       for (const file of modelFiles) {
         const target = path.join(paths.model, file.name);
         try { if (digest(await fs.readFile(target)) === file.sha256) { report({ downloaded_bytes: state.downloaded_bytes + file.bytes });continue; } } catch {}
@@ -119,12 +134,13 @@ export function createPrivacyModel(options = {}) {
     jobs.clear();set({ state: stopped ? "installed" : "error", error: stopped ? null : "ccdx_privacy_engine_unavailable" });
   }
   function load() {
+    if (child && state.state === "ready" && !install && !jobs.size && componentRelease !== PRIVACY_COMPONENT_RELEASE && state.component_update === "staged") stop();
     stopped = false;
     if (ready) return ready;
     ready = (async () => {
       if (!await installed()) { set({ state: "not_downloaded" });throw privacyFailure("not_downloaded"); }
       if (stopped) throw privacyFailure("cancelled");
-      set({ state: "loading", error: null });
+      set({ state: "loading", error: null, ...(componentRelease === PRIVACY_COMPONENT_RELEASE ? { component_update: null, component_update_error: null } : {}) });
       return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { reject(privacyFailure("load_timeout"));fail(); }, 60000);
       const workerEnv = Object.fromEntries(["PATH", "SystemRoot", "WINDIR", "TMP", "TEMP", "TMPDIR", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "GOMAXPROCS"].filter(key => typeof env[key] === "string").map(key => [key, env[key]]));
@@ -169,7 +185,8 @@ export function createPrivacyModel(options = {}) {
   function snapshot() {
     if (!child && !install && ["installed", "not_downloaded"].includes(state.state)) {
       try {
-        const stat = fsSync.lstatSync(fsSync.existsSync(paths.runner) ? paths.runner : paths.legacyRunner);
+        const runner = candidates().find(([file]) => fsSync.existsSync(file))?.[0];
+        const stat = fsSync.lstatSync(runner || paths.runner);
         const cached = stat.isFile() && stat.size > 0 && stat.size <= 16 * 1024 * 1024 && modelFiles.every(file => fsSync.lstatSync(path.join(paths.model, file.name)).size === file.bytes);
         state = { ...state, state: cached ? "installed" : "not_downloaded" };
       } catch { state = { ...state, state: "not_downloaded" }; }

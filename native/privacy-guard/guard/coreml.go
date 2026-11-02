@@ -37,6 +37,17 @@ var coremlLayout []byte
 // bert.go is as quick as a padded window (8 tokens 9 ms, 16 tokens 17).
 const coremlMin = 16
 
+// Intel's CPU plan still pads each read to 512 tokens. Native int8 is
+// faster for short windows there; longer windows retain CoreML. Other
+// devices keep the existing cutoff, including Apple CPU/NE/GPU plans.
+func coremlWindow(arch, device string, tokens int) bool {
+	minimum := coremlMin
+	if arch == "amd64" && device == "CPU" {
+		minimum = 128
+	}
+	return tokens >= minimum
+}
+
 // openCoreML opens the program for nt, compiling it into dir/coreml
 // first if it isn't there.
 func openCoreML(dir string, nt *net) (*coreml.Model, error) {

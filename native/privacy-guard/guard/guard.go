@@ -40,7 +40,8 @@ type Model struct {
 	mlFail atomic.Pointer[string]
 }
 
-// Backend is what reads the model now, as Settings › Privacy names it:
+// Backend is the primary backend, as Settings › Privacy names it;
+// short windows can use the native CPU reader instead:
 // via "CoreML" on the device its compute plan puts most of the program
 // on ("Neural Engine", "GPU" or "CPU"; "" where the plan can't be read),
 // or bert.go on the CPU (via ""), and then on a Mac why not CoreML: it
@@ -107,7 +108,7 @@ func Load(dir string) (*Model, error) {
 // and the window is long enough to gain by it, else over procs goroutines
 // (0: as many of cores as are free, holding them while it reads).
 func (m *Model) logits(ids []int, procs int) []float32 {
-	if m.ml != nil && len(ids) >= coremlMin {
+	if m.ml != nil && coremlWindow(runtime.GOARCH, m.ml.Device, len(ids)) {
 		lg, err := coremlRead(m.ml, m.net, ids)
 		if err == nil {
 			m.mlFail.Store(nil)

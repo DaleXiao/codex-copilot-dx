@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import http from 'node:http';import {spawn} from 'node:child_process';import {fileURLToPath} from 'node:url';
 import {createLocalPrivacy} from '../src/local-privacy.mjs';import {startAdapter} from '../src/adapter.mjs';import {startClaudeGateway} from '../src/claude-gateway.mjs';import {userSettingsPath} from '../src/user-settings.mjs';
-import {createPrivacyModel,PRIVACY_COMPONENT_RELEASE,PRIVACY_MODEL_FILES} from '../src/privacy-model.mjs';import {createHash} from 'node:crypto';import {testEnvironment} from '../test/helpers/environment.mjs';
+import {createPrivacyModel,PRIVACY_COMPONENT_RELEASE,PRIVACY_COMPONENT_ABI,PRIVACY_MODEL_REVISION,PRIVACY_MODEL_FILES} from '../src/privacy-model.mjs';import {createHash} from 'node:crypto';import {testEnvironment} from '../test/helpers/environment.mjs';
 process.env.CCDX_DISABLE_USAGE='1';
 const opts=new Map(process.argv.slice(2).reduce((a,v,i,all)=>i%2?a:[...a,[v,all[i+1]]],[]));const binary=opts.get('--binary'),kind=opts.get('--client'),mode=opts.get('--privacy')||'on';assert.ok(path.isAbsolute(binary)&&fs.existsSync(binary)&&['codex','claude'].includes(kind)&&['on','off'].includes(mode));
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'ccdx-private-client-')),profile=path.join(root,kind),work=path.join(root,'workspace');fs.mkdirSync(profile);fs.mkdirSync(work);
@@ -38,11 +38,11 @@ try{
  let model={load:async()=>{},find:async texts=>texts.map(()=>[]),snapshot:()=>({state:'ready'}),close(){},busy:()=>false};
  if(component){
   assert.ok(mode==='on'&&path.isAbsolute(component)&&path.isAbsolute(weights));
-  const release=opts.get('--component-release')||PRIVACY_COMPONENT_RELEASE;assert.ok([PRIVACY_COMPONENT_RELEASE,'1.3.6'].includes(release));
+  const release=opts.get('--component-release')||PRIVACY_COMPONENT_RELEASE;assert.ok([PRIVACY_COMPONENT_RELEASE,'1.3.6','1.3.9'].includes(release));
   detector=createPrivacyModel({home:root,env,fetchImpl:async()=>{throw Error('Replay forbids background downloads');}});fs.mkdirSync(detector.paths.model,{recursive:true});fs.mkdirSync(path.dirname(detector.paths.runner),{recursive:true});
   for(const file of PRIVACY_MODEL_FILES)fs.copyFileSync(path.join(weights,file.name),path.join(detector.paths.model,file.name));
-  const runner=fs.readFileSync(path.join(component,detector.paths.name)),target=release===PRIVACY_COMPONENT_RELEASE?detector.paths.runner:detector.paths.legacyRunner;
-  fs.writeFileSync(target,runner,{mode:0o700});fs.writeFileSync(target+'.json',JSON.stringify({release,sha256:createHash('sha256').update(runner).digest('hex')}));
+  const runner=fs.readFileSync(path.join(component,detector.paths.name)),target=release==='1.3.6'?detector.paths.legacyRunner:path.join(detector.paths.components,release,detector.paths.name);fs.mkdirSync(path.dirname(target),{recursive:true});
+  fs.writeFileSync(target,runner,{mode:0o700});fs.writeFileSync(target+'.json',JSON.stringify({release,abi:PRIVACY_COMPONENT_ABI,model_revision:PRIVACY_MODEL_REVISION,sha256:createHash('sha256').update(runner).digest('hex')}));
   await detector.load();model={...detector,find:async texts=>{checks++;return detector.find(texts);}};
  }
  const privacyOptions={home:root,env,model};privacy=createLocalPrivacy(privacyOptions);

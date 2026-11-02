@@ -22,7 +22,7 @@
     el("privacy-remove").hidden = busy || state.state === "not_downloaded";el("privacy-remove").disabled = pending;
     const status = ["downloading", "loading", "error"].includes(state.state) ? state.state : state.enabled ? state.state === "ready" ? state.pending_checks ? "checking" : "ready" : "error" : state.state === "installed" || state.state === "ready" ? "installed" : "off";
     words("privacy-status", `privacy_state_${status}`, { percent: Math.min(100, Math.round((state.downloaded_bytes || 0) * 100 / Math.max(1, state.download_bytes))) });
-    el("privacy-device").textContent = state.backend || "";
+    el("privacy-device").textContent = state.backend ? state.device && state.device !== state.backend ? `${state.backend} · ${state.device}` : state.backend : "";
     const check = state.enabled && state.last_check?.state === "failed" ? state.last_check : null;
     if (state.error) words("privacy-error", state.error.includes("download") ? "privacy_download_error" : "privacy_error");
     else if (check) words("privacy-error", check.code === "ccdx_privacy_busy" ? "privacy_busy" : check.code === "ccdx_privacy_check_timeout" && check.continuing ? "privacy_wait_timeout" : check.code === "ccdx_privacy_engine_invalid" ? "privacy_invalid_result" : "privacy_error");

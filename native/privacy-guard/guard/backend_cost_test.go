@@ -28,7 +28,7 @@ func TestBackendCostComparison(t *testing.T) {
 	for i := 0; i < 16; i++ {
 		texts = append(texts, fmt.Sprintf("Tool %d reads a file and returns its contents without changing user settings.", i))
 	}
-	for _, backend := range []string{"CoreML", "Go"} {
+	for _, backend := range []string{"current-policy", "Go"} {
 		m.ml = ml
 		if backend == "Go" {
 			m.ml = nil
@@ -53,7 +53,7 @@ func TestBackendCostComparison(t *testing.T) {
 				}
 			}
 			via, device, _ := m.Backend()
-			row, _ := json.Marshal(map[string]any{"backend": backend, "actual_backend": via, "device": device, "case": group.name,
+			row, _ := json.Marshal(map[string]any{"backend": backend, "primary_backend": via, "device": device, "case": group.name,
 				"elapsed_ms": time.Since(start).Milliseconds(), "first_tokens": len(m.tok.encode(group.texts[0])) + 2, "texts": len(group.texts), "spans": spans, "secret_spans": secrets})
 			fmt.Println("BACKEND_COST", string(row))
 		}

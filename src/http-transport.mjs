@@ -271,6 +271,7 @@ export function sendJsonError(res, err, fallbackStatus = 400) {
   context?.onHttpError?.({ code: err?.code || err?.jsonBody?.error?.code,
     origin: context.errorOrigin || (statusCode < 500 ? "client_validation" : "local_transport") });
   const headers = { "Content-Type": "application/json" };
+  if (err?.origin === "privacy" && Number.isInteger(err.retryAfter) && err.retryAfter > 0) headers["Retry-After"] = String(err.retryAfter);
   if (statusCode === 408 || statusCode === 413) headers.Connection = "close";
   res.writeHead(statusCode, headers);
   res.end(JSON.stringify(err?.jsonBody || { error: err?.message || "Request failed" }));

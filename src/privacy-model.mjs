@@ -17,8 +17,13 @@ export const PRIVACY_MODEL_FILES = Object.freeze([
 export const PRIVACY_DOWNLOAD_BYTES = PRIVACY_MODEL_FILES.reduce((n, file) => n + file.bytes, 0);
 export function privacyFailure(code, phase = "check") {
   const message = phase === "response" ? "Local privacy response restoration failed. The response was stopped; review Settings."
+    : phase === "waiting" ? "Local privacy detection is still running. Nothing was sent; retry shortly to reuse its results."
+    : code === "busy" ? "Local privacy detection is busy. Nothing was sent; retry shortly."
+    : code === "engine_invalid" ? "The local privacy detector returned an invalid result. Nothing was sent; retry or check Settings."
+    : code === "check_timeout" ? "The local privacy detector reached its processing deadline. Nothing was sent; check Settings."
     : "Local privacy check could not finish. Nothing was sent; review Settings.";
   return Object.assign(new Error(message), { code: `ccdx_privacy_${code}`, statusCode: 503, origin: "privacy",
+    ...(phase === "waiting" || code === "busy" ? { retryAfter: 5 } : {}),
     jsonBody: { error: { type: "api_error", code: `ccdx_privacy_${code}`, message } } });
 }
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");

@@ -6,13 +6,13 @@ import path from "node:path";
 import { createLocalPrivacy } from "../src/local-privacy.mjs";
 import { userSettingsPath, readUserSettings } from "../src/user-settings.mjs";
 
-function fixture(t, extra = {}) {
+function fixture(t, extra = {}, privacyOptions = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-privacy-")), options = { home, env: {} }, file = userSettingsPath(options);
   fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, JSON.stringify({ terminal_color_theme: "pink", future: "retained" }));
   let state = "not_downloaded", calls = 0, fail = false;
   const model = { snapshot: () => ({ state }), installed: async () => state !== "not_downloaded", download: async () => { if (fail) throw Error("offline");state = "installed"; }, load: async () => { state = "ready"; },
     find: async texts => { calls++;if (fail) throw Error("offline");return texts.map(() => []); }, stop: () => { state = "installed"; }, remove: async () => { state = "not_downloaded"; }, close() {}, busy: () => false, ...extra };
-  const privacy = createLocalPrivacy({ ...options, model });t.after(() => { privacy.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const privacy = createLocalPrivacy({ ...options, model, ...privacyOptions });t.after(() => { privacy.close();fs.rmSync(home, { recursive: true, force: true }); });
   return { privacy, model, file, options, calls: () => calls, fail: value => { fail = value; } };
 }
 async function enable(f) {
@@ -51,13 +51,34 @@ test("cancellation detaches one waiter while shared local detection can finish f
   const two = f.privacy.prepare(value, { protocol: "responses" });controller.abort(Error("cancelled"));
   await assert.rejects(one, /cancelled/);resolve([[]]);assert.equal(await two, value);
 });
-test("the final waiter cancels unused detection and the next request starts fresh work", async t => {
+test("the final waiter leaves submitted work available to retries and the completion cache", async t => {
   const jobs = [];
-  const f = fixture(t, { find: (texts, { signal }) => new Promise((resolve, reject) => { jobs.push({ texts, signal, resolve });signal.addEventListener("abort", () => reject(signal.reason), { once: true }); }) });await enable(f);
+  const f = fixture(t, { find: texts => new Promise(resolve => { jobs.push({ texts, resolve }); }) });await enable(f);
   const abort = new AbortController(), value = { input: "unshared synthetic text" };
   const pending = f.privacy.prepare(value, { protocol: "responses", signal: abort.signal });await new Promise(setImmediate);
-  abort.abort(Error("cancelled"));await assert.rejects(pending, /cancelled/);assert.equal(jobs[0].signal.aborted, true);
-  const next = f.privacy.prepare(value, { protocol: "responses" });await new Promise(setImmediate);assert.equal(jobs.length, 2);jobs[1].resolve([[]]);assert.equal(await next, value);
+  abort.abort(Error("cancelled"));await assert.rejects(pending, /cancelled/);
+  const next = f.privacy.prepare(value, { protocol: "responses" });await new Promise(setImmediate);assert.equal(jobs.length, 1);
+  jobs[0].resolve([[]]);assert.equal(await next, value);
+  assert.equal(await f.privacy.prepare(value, { protocol: "responses" }), value);assert.equal(jobs.length, 1);
+});
+
+test("a slow check survives the request deadline and warms the next attempt without upstream disclosure", async t => {
+  let calls = 0, upstream = 0, finish;
+  const f = fixture(t, { find: () => { calls++;return new Promise(resolve => { finish = resolve; }); } }, { checkTimeoutMs: 10 });await enable(f);
+  const value = { input: "long synthetic history" }, invoke = f.privacy.wrap(async body => { upstream++;return body; }, { protocol: "responses" });
+  const keepAlive = setTimeout(() => {}, 1000);t.after(() => clearTimeout(keepAlive));
+  await assert.rejects(invoke(value), error => error.code === "ccdx_privacy_check_timeout" && error.retryAfter === 5 && /still running/.test(error.message));
+  assert.equal(upstream, 0);assert.equal(calls, 1);finish([[]]);await new Promise(setImmediate);
+  assert.equal(await invoke(value), value);assert.equal(calls, 1);assert.equal(upstream, 1);
+});
+
+test("invalid detector results never poison a text's cache and failures can recover", async t => {
+  let calls = 0;
+  const f = fixture(t, { find: async texts => { calls++;return calls === 1 ? [[{ start: 0, end: 9999, label: "common_secret", score: .99 }]] : texts.map(() => null); } });await enable(f);
+  const value = { input: "synthetic text" };
+  await assert.rejects(f.privacy.prepare(value, { protocol: "responses" }), { code: "ccdx_privacy_engine_invalid" });
+  assert.equal(await f.privacy.prepare(value, { protocol: "responses" }), value);assert.equal(calls, 2);
+  assert.equal(await f.privacy.prepare(value, { protocol: "responses" }), value);assert.equal(calls, 2);
 });
 
 test("a request pins protection across an off switch while a later request keeps the original provider function", async t => {

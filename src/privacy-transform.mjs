@@ -99,6 +99,20 @@ function modelSpanFits(text, start, end, label) {
     && /\b(?:function|class|const|let|var)\s+$/.test(text.slice(Math.max(0, start - 32), start))) return false;
   return true;
 }
+export function validatePrivacyFindings(texts, found) {
+  if (!Array.isArray(found) || found.length !== texts.length) throw privacyFailure("engine_invalid");
+  return found.map((items, index) => {
+    if (items === null) return [];
+    if (!Array.isArray(items)) throw privacyFailure("engine_invalid");
+    const bytes = Buffer.byteLength(texts[index]);
+    for (const span of items) {
+      if (!span || !Number.isInteger(span.start) || !Number.isInteger(span.end) || span.start < 0 || span.end <= span.start
+        || span.end > bytes || !Number.isFinite(span.score) || span.score < 0 || span.score > 1 || typeof span.label !== "string") throw privacyFailure("engine_invalid");
+    }
+    return items;
+  });
+}
+
 export async function maskPrivacyRequest(body, { protocol, client = "api", personal = false, secret, find, signal, rules = ruleSpans }) {
   const copy = structuredClone(body), { items, nested } = requestTexts(copy, protocol), texts = items.map(item => item.text);
   if (items.length > 8192 || texts.reduce((n, text) => n + Buffer.byteLength(text), 0) > 8 * 1024 * 1024) throw privacyFailure("request_too_large");

@@ -270,6 +270,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         context.onHttpError?.({ code: detail.code, origin: terminalOrigin, ...(rejectionReason ? { reason: rejectionReason } : {}), ...(diagnostic ? { transport: diagnostic } : {}) });
         if (outcome === "cancelled") return;
         if (!res.headersSent) {
+          if (error.origin === "privacy" && Number.isInteger(error.retryAfter) && error.retryAfter > 0) res.setHeader("Retry-After", String(error.retryAfter));
           const value = apiError(abort.reason || error.code || "ccdx_gateway_error", message);
           if (rejectionReason) value.error.reason = rejectionReason;
           if (diagnostic) value.error.diagnostic = diagnostic;

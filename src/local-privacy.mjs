@@ -6,7 +6,7 @@ import { withFileLockSync } from "./lock.mjs";
 import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { createChangeSignal } from "./activity-events.mjs";
 import { createPrivacyModel, privacyFailure } from "./privacy-model.mjs";
-import { maskPrivacyRequest, protectPrivacyResponse, createPrivacyRuleCache } from "./privacy-transform.mjs";
+import { maskPrivacyRequest, protectPrivacyResponse, createPrivacyRuleCache, validatePrivacyFindings } from "./privacy-transform.mjs";
 import { markRequestObservation } from "./stream-performance.mjs";
 
 export function createLocalPrivacy(options = {}) {
@@ -38,22 +38,21 @@ export function createLocalPrivacy(options = {}) {
     });changes.changed();
   }
   async function find(texts, { signal } = {}) {
-    const waiting = [], fresh = [], entries = [], batches = new Set();
-    const batch = { controller: new AbortController(), waiters: 0, settled: false };
+    const waiting = [], fresh = [], entries = [];
     for (const text of texts) {
       const key = createHash("sha256").update(text).digest("hex");
       if (cache.has(key)) {
         const saved = cache.get(key);cache.delete(key);cache.set(key, saved);waiting.push(Promise.resolve(saved.found));
-      } else if (flights.has(key) && !flights.get(key).batch.controller.signal.aborted) { const entry = flights.get(key);waiting.push(entry.promise);batches.add(entry.batch); }
+      } else if (flights.has(key)) waiting.push(flights.get(key).promise);
       else {
-        const entry = Promise.withResolvers();entry.key = key;entry.batch = batch;flights.set(key, entry);batches.add(batch);
+        const entry = Promise.withResolvers();entry.key = key;flights.set(key, entry);
         waiting.push(entry.promise);fresh.push(text);entries.push(entry);
       }
     }
-    for (const work of batches) work.waiters++;
-    if (fresh.length) void model.find(fresh, { signal: batch.controller.signal }).then(found => {
-      if (batch.controller.signal.aborted) throw privacyFailure("cancelled");
-      if (!Array.isArray(found) || found.length !== fresh.length) throw privacyFailure("engine_invalid");
+    // Submitted native work cannot be interrupted. Keep its shared result alive
+    // after a caller stops waiting so retries reuse the work and its cache.
+    if (fresh.length) void model.find(fresh).then(value => {
+      const found = validatePrivacyFindings(fresh, value);
       for (let i = 0; i < found.length; i++) {
         const cost = Buffer.byteLength(JSON.stringify(found[i] || [])) + 128, entry = entries[i];
         if (cost <= 1024 * 1024) {
@@ -63,20 +62,21 @@ export function createLocalPrivacy(options = {}) {
         }
         entry.resolve(found[i] || []);
       }
-    }).catch(error => entries.forEach(entry => entry.reject(error))).finally(() => { batch.settled = true;entries.forEach(entry => { if (flights.get(entry.key) === entry) flights.delete(entry.key); }); });
+    }).catch(error => entries.forEach(entry => { if (flights.get(entry.key) === entry) flights.delete(entry.key);entry.reject(error); }))
+      .finally(() => entries.forEach(entry => { if (flights.get(entry.key) === entry) flights.delete(entry.key); }));
     let listener;
     const aborted = new Promise((_, reject) => { listener = () => reject(signal.reason);if (signal?.aborted) listener();else signal?.addEventListener("abort", listener, { once: true }); });
     try { return await (signal ? Promise.race([Promise.all(waiting), aborted]) : Promise.all(waiting)); }
-    finally { signal?.removeEventListener("abort", listener);for (const work of batches) if (--work.waiters === 0 && !work.settled) work.controller.abort(privacyFailure("cancelled")); }
+    finally { signal?.removeEventListener("abort", listener); }
   }
   async function prepare(body, { protocol, client, signal, res, policy } = {}) {
     const saved = policy || settings();if (!saved.enabled) return body;
     if (disposed) throw privacyFailure("engine_unavailable");
     loadKey();
     const start = performance.now();
-    const deadline = AbortSignal.timeout(15000);let session;
+    const deadline = AbortSignal.timeout(options.checkTimeoutMs ?? 15000);let session;
     try { session = await maskPrivacyRequest(body, { protocol, client, personal: saved.personal, secret, find, rules: rules.find, signal: signal ? AbortSignal.any([signal, deadline]) : deadline }); }
-    catch (error) { if (deadline.aborted && !signal?.aborted) throw privacyFailure("check_timeout");throw error; }
+    catch (error) { if (deadline.aborted && !signal?.aborted) throw privacyFailure("check_timeout", "waiting");throw error; }
     if (signal?.aborted) { session.release();throw signal.reason; }
     markRequestObservation({ privacy_count: session.count, privacy_ms: Math.round(performance.now() - start), privacy_state: "checked" });
     if (res && session.count) {

@@ -174,9 +174,31 @@ func (m *Model) Find(text string) []Span {
 	return spans
 }
 
+// Warm the selected backend before advertising readiness. A short tokenizer
+// probe can select the native CPU fallback even when CoreML is available.
+func (m *Model) Warm() error {
+	const sample = "Local privacy detection is ready for English and 中文 text."
+	text := sample
+	if m.ml != nil {
+		for !coremlWindow(runtime.GOARCH, m.ml.Device, len(m.tok.encode(text))+2) {
+			text += " " + sample
+		}
+	}
+	if _, _, complete := m.FindContext(context.Background(), text, true); !complete {
+		return errors.New("backend warmup failed")
+	}
+	return nil
+}
+
 // FindContext preserves tokenization, natural window boundaries and decoding.
 // Cancellation leaves computed windows cached and stops scheduling new ones.
 func (m *Model) FindContext(ctx context.Context, text string, reuse bool) ([]Span, WindowWork, bool) {
+	return m.FindPlanned(ctx, text, reuse, nil)
+}
+
+// FindPlanned reports pending natural windows before a long text is evaluated.
+// The plan is advisory; every window still must complete before decoding.
+func (m *Model) FindPlanned(ctx context.Context, text string, reuse bool, onPlan func(int, int)) ([]Span, WindowWork, bool) {
 	if ctx.Err() != nil {
 		return nil, WindowWork{}, false
 	}
@@ -191,6 +213,22 @@ func (m *Model) FindContext(ctx context.Context, text string, reuse bool) ([]Spa
 		if start+window >= n {
 			break
 		}
+	}
+	if onPlan != nil && len(starts) > 1 {
+		pending := 0
+		for _, start := range starts {
+			end := min(start+window, n)
+			ids := make([]int, 0, end-start+2)
+			ids = append(ids, 0)
+			for _, t := range toks[start:end] {
+				ids = append(ids, t.id)
+			}
+			ids = append(ids, 2)
+			if !reuse || m.windows.pending(ids) {
+				pending++
+			}
+		}
+		onPlan(pending, len(starts))
 	}
 	results := make([]*windowResult, len(starts))
 	var evaluated, hits, shared atomic.Int32

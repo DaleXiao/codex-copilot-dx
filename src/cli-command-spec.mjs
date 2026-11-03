@@ -149,7 +149,7 @@ export const MANAGED_COMMANDS = [
   })),
   command("config show", "Show service and terminal preferences", { ...read, "--effective": "flag" }),
   command("config set <key> <value>", "Save a validated service preference", confirm),
-  command("config privacy status", "Show masking readiness, pending detection and the latest reply failure", read),
+  command("config privacy status", "Show masking readiness, detection work, wait budget and the latest reply failure", read),
   ...["enable", "disable", "remove"].map(action => command(`config privacy ${action}`,
     action === "enable" ? "Download, verify and prepare local masking before activation" : action === "remove" ? "Disable masking and delete its local model" : "Disable masking for later requests", { ...read, ...confirm })),
   command("config terminal", "Choose terminal color", {}),

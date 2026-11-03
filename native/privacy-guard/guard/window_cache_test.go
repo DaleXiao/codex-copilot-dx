@@ -25,6 +25,9 @@ func TestWindowCacheIdentityAndExactScores(t *testing.T) {
 	if calls != 3 {
 		t.Fatal("different token IDs or lengths reused a result")
 	}
+	if c.pending([]int{0, 4, 8, 2}) || !c.pending([]int{0, 99, 2}) {
+		t.Fatal("planning must distinguish fully cached and unevaluated windows")
+	}
 }
 
 func TestWindowCacheSharesAndKeepsCanceledWork(t *testing.T) {

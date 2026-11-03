@@ -55,3 +55,12 @@ test("native window work counts are separate from submitted whole-text bytes", a
   const detection=createPrivacyDetection({find:async(texts,options)=>{options.onSubmitted();options.onWindowWork({evaluated:2,hits:3,shared:1,total:6});return texts.map(()=>[]);}});t.after(()=>detection.close());
   await detection.find(["ordinary full text"]);const stats=detection.snapshot();assert.equal(stats.window_evaluations,2);assert.equal(stats.window_hits,3);assert.equal(stats.window_shared,1);assert.equal(stats.submitted_batches,1);
 });
+
+test("window plans reach each active shared waiter and later joiners without another native call", async t => {
+  const calls=[],a=[],b=[],c=[];const detection=createPrivacyDetection({find:(texts,options)=>new Promise(resolve=>calls.push({texts,options,resolve}))});t.after(()=>detection.close());
+  const first=detection.find(["same history"],{onPlan:value=>a.push(value)}),second=detection.find(["same history"],{onPlan:value=>b.push(value)});
+  calls[0].options.onPlan({text_index:0,pending_windows:4,total_windows:6});
+  const third=detection.find(["same history"],{onPlan:value=>c.push(value)});
+  for(const values of [a,b,c])assert.deepEqual(values.at(-1),{pending_windows:4,total_windows:6});
+  calls[0].resolve([[]]);await Promise.all([first,second,third]);assert.equal(calls.length,1);
+});

@@ -1,10 +1,11 @@
-# CCDX 1.3.11
+# CCDX 1.3.12
 
-Completes the verified publication flow when npm permits latest promotion but denies removal of a temporary verification tag.
+Reduces repeated local privacy work and preserves valid tool continuations, with a smaller WebUI copy change that keeps existing layouts, fonts, icons and controls.
 
-- Record denied verification-tag cleanup without failing an already verified publication. Keep the registry permission policy and report the retained tag in the public receipt. Unexpected cleanup errors still fail closed.
-- Retain 1.3.10's privacy timeout recovery, valid-result caching, whole-text batch progress, bounded stream restoration, accurate usage and shared WebUI/CLI masking controls.
-- Retain the measured Intel short-window backend policy and idle, ABI/model-verified component migration. The optional component remains pinned to 1.3.10; model weights are reused.
-- Keep exact-source full CI, real classifier/native-client gates on four targets, installation upgrades and downloaded public npm/GitHub byte verification.
+- Restore streaming tool arguments incrementally with JSON escaping, content-part isolation and terminal validation. Preserve opaque protocol identities, signed state and complete client-visible values.
+- Reuse exact natural classifier windows in bounded memory. A canceled caller leaves completed windows reusable; native admission remains held until physical acknowledgement. Older ABI-compatible components remain usable.
+- Warm the selected backend before advertising readiness. Give uncached text beyond one 16 KiB batch, or a native plan with multiple pending windows, the existing bounded 60-second wait. Complete checks still precede every covered upstream request.
+- Remove redundant branding, category tags and normal switch-state prefixes. Preserve unknown states, setup prerequisites, protection scope, errors, update effects and operation confirmations. WebUI and CLI share the same controls; command names remain unchanged.
+- Isolate every executable verification check. Enforce cold and startup-plus-cold performance thresholds in native CI, retain failed receipts and verify classifier-result digests. CI and new prebuilt assets cover macOS ARM64 and Windows x64/ARM64; Intel code remains available.
 
-No active service or desktop application is restarted by publication. Signed Claude App UI acceptance remains separate from CLI/protocol coverage. Public shipping proofs and cleanup status are in the [release receipt](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.11/release-receipt.json).
+No active service or desktop application is restarted by publication. CLI/protocol checks do not substitute for signed Claude App UI acceptance. Public shipping proofs are recorded in the [release receipt](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.12/release-receipt.json).

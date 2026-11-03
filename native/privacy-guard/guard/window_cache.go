@@ -51,6 +51,15 @@ func windowKey(ids []int) [32]byte {
 	return sha256.Sum256(b)
 }
 
+// Planning does not claim work or hold CPU admission. In-flight windows are
+// still pending; only a fully published cached result needs no model work.
+func (c *windowCache) pending(ids []int) bool {
+	key := windowKey(ids)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.entries[key] == nil
+}
+
 // An identical-window waiter holds no CPU admission slot. The owner finishes
 // its current computation even if its caller left and publishes before waking.
 func (c *windowCache) read(ctx context.Context, ids []int, compute func() *windowResult) (*windowResult, string) {

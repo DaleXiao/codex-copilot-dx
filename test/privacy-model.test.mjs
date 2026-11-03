@@ -9,14 +9,14 @@ import { PassThrough, Writable } from "node:stream";
 import { createPrivacyModel, PRIVACY_COMPONENT_RELEASE, PRIVACY_COMPONENT_ABI, PRIVACY_MODEL_REVISION } from "../src/privacy-model.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
-async function fixture(t, { legacy = false, offline = false, release = legacy ? "1.3.6" : PRIVACY_COMPONENT_RELEASE, holdDownload = false, windowSupport = false } = {}) {
+async function fixture(t, { legacy = false, offline = false, release = legacy ? "1.3.6" : PRIVACY_COMPONENT_RELEASE, holdDownload = false, windowSupport = false, planSupport = false } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-model-unit-"));
   const weights = Buffer.from("synthetic weights"), runner = Buffer.from("synthetic runner"), requests = [], jobs = [];
   let child, spawned, killed = 0, spawns = 0, releaseDownload;
   const gate = holdDownload ? new Promise(resolve => { releaseDownload = resolve; }) : Promise.resolve();
   const model = createPrivacyModel({ home, env: {}, modelFiles: [{ name: "model", bytes: weights.length, sha256: sha(weights) }],
     fetchImpl: async url => { requests.push(url);if (offline) throw Error("offline");await gate;return new Response(url.endsWith("SHA256SUMS") ? `${sha(runner)}  ${model.paths.name}\n` : runner); },
-    spawnImpl: file => { spawned = file;spawns++;child = new EventEmitter();child.stdout = new PassThrough();child.stdin = new Writable({ write(bytes, _encoding, done) { jobs.push(JSON.parse(bytes));done(); } });child.kill = () => { killed++; };setImmediate(() => child.stdout.write(JSON.stringify({ready:true,backend:"CPU",window_cache:windowSupport,cancel_between_windows:windowSupport})+"\n"));return child; },
+    spawnImpl: file => { spawned = file;spawns++;child = new EventEmitter();child.stdout = new PassThrough();child.stdin = new Writable({ write(bytes, _encoding, done) { jobs.push(JSON.parse(bytes));done(); } });child.kill = () => { killed++; };setImmediate(() => child.stdout.write(JSON.stringify({ready:true,backend:"CPU",window_cache:windowSupport,window_plan:planSupport,cancel_between_windows:windowSupport})+"\n"));return child; },
   });
   t.after(async () => { model.close();await fs.rm(home, { recursive: true, force: true }); });
   await fs.mkdir(model.paths.model, { recursive: true });await fs.writeFile(path.join(model.paths.model, "model"), weights);
@@ -51,6 +51,30 @@ test("a work lease does not send unsupported cancellation commands to legacy com
   const pending = f.model.find(["synthetic input"], { workSignal: controller.signal });await new Promise(setImmediate);
   controller.abort(Error("waiter left"));await new Promise(setImmediate);
   assert.equal(f.jobs.length, 1);f.reply(f.jobs[0].id);assert.deepEqual(await pending, [[]]);
+});
+
+test("a negotiated window plan does not finish or release the native job", async t => {
+  const f = await fixture(t, { planSupport: true });await f.model.load();const plans = [];
+  const pending = f.model.find(["compact unicode history"], { onPlan: plan => plans.push(plan) });await new Promise(setImmediate);
+  assert.equal(f.jobs[0].plan_windows, true);
+  f.reply(f.jobs[0].id, undefined, { phase: "plan", text_index: 0, pending_windows: 8, total_windows: 10 });
+  assert.equal(f.model.snapshot().pending_checks, 1);assert.deepEqual(plans, [{ text_index: 0, pending_windows: 8, total_windows: 10 }]);
+  f.reply(f.jobs[0].id);assert.deepEqual(await pending, [[]]);assert.equal(f.model.snapshot().pending_checks, 0);
+});
+
+test("legacy components never receive unsupported window planning requests", async t => {
+  const f = await fixture(t);await f.model.load();let plans = 0;
+  const pending = f.model.find(["synthetic"], { onPlan: () => plans++ });await new Promise(setImmediate);
+  assert.equal(f.jobs[0].plan_windows, undefined);f.reply(f.jobs[0].id);await pending;assert.equal(plans, 0);
+});
+
+test("invalid window plans fail closed while observer errors cannot consume completion", async t => {
+  const f = await fixture(t, { planSupport: true });await f.model.load();
+  const invalid = f.model.find(["synthetic"], { onPlan() {} });await new Promise(setImmediate);
+  f.reply(f.jobs[0].id, undefined, { phase: "plan", text_index: 1, pending_windows: 1, total_windows: 2 });await assert.rejects(invalid);
+  await f.model.load();const valid = f.model.find(["synthetic"], { onPlan() { throw Error("observer"); } });await new Promise(setImmediate);
+  const id = f.jobs.at(-1).id;f.reply(id, undefined, { phase: "plan", text_index: 0, pending_windows: 1, total_windows: 2 });
+  assert.equal(f.model.snapshot().pending_checks, 1);f.reply(id);assert.deepEqual(await valid, [[]]);
 });
 
 test("modern component compatibility is bound to the protocol ABI and model revision", async t => {

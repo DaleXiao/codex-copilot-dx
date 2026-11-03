@@ -16,6 +16,7 @@ type request struct {
 	Texts        []string `json:"texts"`
 	CancelID     int      `json:"cancel_id"`
 	CacheWindows *bool    `json:"cache_windows"`
+	PlanWindows  bool     `json:"plan_windows"`
 }
 type span struct {
 	Start int     `json:"start"`
@@ -32,11 +33,13 @@ func main() {
 	if err != nil {
 		os.Exit(3)
 	}
-	m.Find("Local privacy detection is ready for English and 中文 text.")
+	if err := m.Warm(); err != nil {
+		os.Exit(3)
+	}
 	out := json.NewEncoder(os.Stdout)
 	via, device, _ := m.Backend()
 	initialEntries, initialBytes := m.WindowCacheUsage()
-	out.Encode(map[string]any{"ready": true, "backend": via, "device": device, "window_cache": true, "cancel_between_windows": true, "window_cache_entries": initialEntries, "window_cache_bytes": initialBytes})
+	out.Encode(map[string]any{"ready": true, "backend": via, "device": device, "window_cache": true, "window_plan": true, "cancel_between_windows": true, "window_cache_entries": initialEntries, "window_cache_bytes": initialBytes})
 	var outputMu, activeMu sync.Mutex
 	active := map[int]context.CancelFunc{}
 	var jobs sync.WaitGroup
@@ -107,7 +110,15 @@ func main() {
 			found = make([][]span, len(r.Texts))
 			complete = true
 			for i, text := range r.Texts {
-				spans, one, done := m.FindContext(ctx, text, reuse)
+				var plan func(int, int)
+				if r.PlanWindows {
+					plan = func(pending, total int) {
+						outputMu.Lock()
+						out.Encode(map[string]any{"id": r.ID, "phase": "plan", "text_index": i, "pending_windows": pending, "total_windows": total})
+						outputMu.Unlock()
+					}
+				}
+				spans, one, done := m.FindPlanned(ctx, text, reuse, plan)
 				work.Evaluated += one.Evaluated
 				work.Hits += one.Hits
 				work.Shared += one.Shared

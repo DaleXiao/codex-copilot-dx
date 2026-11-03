@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import { privacyFailure } from "./privacy-model.mjs";
 import { validatePrivacyFindings } from "./privacy-findings.mjs";
 
+export const PRIVACY_BATCH_BYTES = 16 * 1024;
+
 // Whole-text memoization remains compatible with older components. The new
 // component reuses its natural token windows, without extra text overlaps.
 export function createPrivacyDetection(model, {
-  batchBytes = 16 * 1024, maxCacheBytes = 4 * 1024 * 1024, maxCacheEntries = 5000,
+  batchBytes = PRIVACY_BATCH_BYTES, maxCacheBytes = 4 * 1024 * 1024, maxCacheEntries = 5000,
   maxPendingBytes = 16 * 1024 * 1024, maxPendingEntries = 8192, maxConcurrent = 2,
 } = {}) {
   if (!Number.isSafeInteger(batchBytes) || batchBytes < 1) throw new Error("Invalid privacy batch budget");
@@ -30,7 +32,7 @@ export function createPrivacyDetection(model, {
   }
   function finish(entry, found, error) {
     if (entry.done) return;
-    entry.done = true;entry.text = null;entry.batch = null;
+    entry.done = true;entry.text = null;entry.batch = null;entry.plans.clear();
     if (flights.get(entry.key) === entry) { flights.delete(entry.key);pendingBytes -= entry.bytes; }
     if (error) entry.reject(error);else entry.resolve(found);
   }
@@ -52,6 +54,11 @@ export function createPrivacyDetection(model, {
         const input = batch.map(entry => entry.text), result = await model.find(input, {
           isNeeded: () => batch.some(entry => entry.waiters > 0), workSignal: lease.controller.signal, onSubmitted,
           onWindowWork(work) { stats.window_evaluations += work.evaluated || 0;stats.window_hits += work.hits || 0;stats.window_shared += work.shared || 0; },
+          onPlan(plan) {
+            const entry = batch[plan.text_index];if (!entry || entry.done) return;
+            entry.nativePlan = { pending_windows: plan.pending_windows, total_windows: plan.total_windows };
+            for (const notify of entry.plans) notify(entry.nativePlan);
+          },
         });
         onSubmitted();const found = validatePrivacyFindings(input, result);
         for (let index = 0; index < batch.length; index++) { put(batch[index].key, found[index]);finish(batch[index], found[index]); }
@@ -78,7 +85,7 @@ export function createPrivacyDetection(model, {
       if (known !== undefined) { results.push(Promise.resolve(known));continue; }
       let entry = flights.get(key) || staged.get(key);
       if (!entry) {
-        entry = Promise.withResolvers();Object.assign(entry, { key, text, bytes: Buffer.byteLength(text), waiters: 0, done: false, submitted: false, batch: null });
+        entry = Promise.withResolvers();Object.assign(entry, { key, text, bytes: Buffer.byteLength(text), waiters: 0, done: false, submitted: false, batch: null, plans: new Set(), nativePlan: null });
         staged.set(key, entry);newBytes += entry.bytes;
       } else stats.shared_hits++;
       if (!waiters.has(entry)) waitingBytes += entry.bytes;
@@ -87,7 +94,10 @@ export function createPrivacyDetection(model, {
     if (pendingBytes + newBytes > maxPendingBytes || flights.size + staged.size > maxPendingEntries) throw privacyFailure("busy");
     onPlan?.({ pending_bytes: waitingBytes, new_bytes: newBytes, texts: waiters.size });
     for (const entry of staged.values()) { flights.set(entry.key, entry);pendingBytes += entry.bytes; }
-    for (const entry of waiters) entry.waiters++;
+    for (const entry of waiters) {
+      entry.waiters++;
+      if (onPlan) { entry.plans.add(onPlan);if (entry.nativePlan) onPlan(entry.nativePlan); }
+    }
     const work = Promise.all(results);
     if (staged.size) { turns.push({ entries: [...staged.values()], at: 0 });void pump(); }
     let listener;
@@ -96,6 +106,7 @@ export function createPrivacyDetection(model, {
     finally {
       signal?.removeEventListener("abort", listener);
       for (const entry of waiters) {
+        if (onPlan) entry.plans.delete(onPlan);
         entry.waiters--;const lease = entry.batch;
         if (lease && lease.entries.every(item => !item.waiters)) lease.controller.abort(privacyFailure("cancelled"));
       }

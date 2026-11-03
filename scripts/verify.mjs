@@ -15,6 +15,7 @@ const npmEnv = { ...env, npm_config_userconfig: process.env.npm_config_userconfi
 for (const [key, value] of Object.entries(process.env)) {
   if (/^npm_config_/i.test(key) && !/auth|token|password/i.test(key)) npmEnv[key] = value;
 }
+npmEnv.npm_config_cache = path.join(home, "npm-cache");
 const checks = [["unit", ["scripts/run-tests.mjs"]], ["CI paths", ["scripts/check-ci-test-lists.mjs"]], ["smoke", ["scripts/offline-smoke.mjs"]], ["SSE idle", ["scripts/sse-idle-replay.mjs"]], ["performance", ["scripts/benchmark.mjs", "--check"]], ["package", [process.env.npm_execpath, "pack", "--dry-run", "--json"]]];
 let failed = false;
 try {

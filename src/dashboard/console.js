@@ -130,7 +130,7 @@
     for (const key of ["terminal_animation_enabled", "open_webui", "image_enabled"]) {
       const input = el(`setting-${key}`), effective = data.effective[key];
       input.checked = data.saved[key];input.disabled = Boolean(effective.locked);
-      label(el(`effect-${key}`), data.saved[key] === effective.value && !effective.locked ? "preference_effect" : "saved_saved_effective_effective_state", {
+      label(el(`effect-${key}`), data.saved[key] === effective.value && !effective.locked ? states[effective.state] || effective.state : "saved_saved_effective_effective_state", {
         saved: { key: data.saved[key] ? "on" : "off" }, effective: { key: effective.value ? "on" : "off" },
         state: { key: effective.locked ? "controlled_by_environment" : states[effective.state] || effective.state } });
     }

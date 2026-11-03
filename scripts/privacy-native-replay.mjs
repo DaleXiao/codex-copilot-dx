@@ -23,7 +23,7 @@ try {
   const start = performance.now();child = spawn(path.join(directory, name), [model], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
   const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
   const read = async () => { const result = await Promise.race([lines.next(), new Promise((_, reject) => { const timer = setTimeout(() => reject(Error("Native component timed out")), 60000);timer.unref(); })]);assert.equal(result.done, false);return JSON.parse(result.value); };
-  const ready = await read();assert.equal(ready.ready, true);results.push({ stage: "load", ms: Math.round(performance.now() - start), backend: ready.backend || "CPU", device: ready.device });
+  const ready = await read();assert.equal(ready.ready, true);assert.equal(ready.window_plan, true);results.push({ stage: "load", ms: Math.round(performance.now() - start), backend: ready.backend || "CPU", device: ready.device });
   const texts = ["The password is my-private-passphrase. Please keep it private.", "const options = { timeout: 5000, retries: 2 };\n".repeat(128)];
   for (let i = 0; i < texts.length; i++) {
     const time = performance.now();child.stdin.write(JSON.stringify({ id: i + 1, texts: [texts[i]] }) + "\n");const value = await read();

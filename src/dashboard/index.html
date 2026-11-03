@@ -33,7 +33,7 @@
   <body>
     <div class="shell">
       <aside class="sidebar">
-        <a class="sidebar-brand" href="#overview"><svg id="status-icon" class="status-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><ellipse cx="32" cy="32" rx="26" ry="10"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(60 32 32)"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(120 32 32)"/></g><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg><span class="brand-name">CCDX</span><span class="brand-caption" data-i18n="local_control">LOCAL CONTROL</span></a>
+        <a class="sidebar-brand" href="#overview"><svg id="status-icon" class="status-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><ellipse cx="32" cy="32" rx="26" ry="10"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(60 32 32)"/><ellipse cx="32" cy="32" rx="26" ry="10" transform="rotate(120 32 32)"/></g><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg><span class="brand-name">CCDX</span></a>
         <nav aria-label="Navigation" data-i18n-label="main_navigation">
           <a href="#overview" data-route="overview" aria-current="page"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span data-i18n="overview">Overview</span></a>
           <span class="nav-group" data-i18n="clients">Apps</span>
@@ -48,7 +48,7 @@
       </aside>
 
       <header class="topbar">
-        <div class="brand">CCDX <span class="brand-detail" data-i18n="local_status">/ DASHBOARD</span></div>
+        <div class="brand">CCDX </div>
         <div class="topbar-actions"><span id="connection" class="badge neutral" role="status" data-i18n="reading">READING</span><button id="theme-toggle" class="icon-button" type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg><svg class="icon-moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 3A9 9 0 1 0 21 12 7 7 0 0 1 12 3Z"/></svg></button><button id="language-toggle" class="icon-button language-button" type="button" aria-label="Switch to Chinese" title="Switch to Chinese">中文</button><button id="auto-refresh" type="button" aria-pressed="true" data-i18n-title="activity_updates_live" title="Activity updates live. Catalogs and retained usage refresh on demand or every 30 minutes while open."><span class="auto-refresh-measure" aria-hidden="true" data-i18n="auto_refresh_off">Auto refresh · OFF</span><span id="auto-refresh-label" data-i18n="auto_refresh_on">Auto refresh · ON</span></button><button id="refresh" type="button" data-i18n="refresh">Refresh</button></div>
       </header>
 
@@ -66,7 +66,7 @@
         </div>
         <section class="overview" aria-label="Overview" data-i18n-label="overview"><article class="card"><h2 data-i18n="adapter">SERVICE</h2><strong id="version">—</strong><p id="uptime">—</p><p id="updated" class="refresh-time" data-i18n="reading_status">Reading status…</p></article><article class="card"><h2 data-i18n="sources">SOURCES</h2><strong id="source-summary">—</strong><p id="source-detail">—</p></article></section>
         <details class="panel dashboard-section" id="client-features" open>
-          <summary class="panel-heading"><h2 data-i18n="client_connections">APP SETUP</h2><span data-i18n="configuration_observation">SETUP AND ACTIVITY</span></summary>
+          <summary class="panel-heading"><h2 data-i18n="client_connections">APP SETUP</h2></summary>
           <div class="table-wrap"><table><thead><tr><th data-i18n="client">APP</th><th data-i18n="current_source">Current source</th><th data-i18n="connection_setup" data-i18n-title="configured_not_successful">Setup</th><th data-i18n="local_bridge">Local service</th><th data-i18n="last_request">LAST REQUEST</th></tr></thead><tbody id="provider-clients"></tbody></table></div>
         </details>
         <section class="panel dashboard-section"><h2 data-i18n="this_run_usage">THIS RUN</h2><p id="runtime-usage" class="table-note"></p><p class="table-note"><span data-i18n="approx_cache_hit_rate">Approx. cache hit rate</span>: <strong id="runtime-cache-hit" data-i18n-title="runtime_cache_hit_basis" title="Reused / input tokens from records with valid counts for both. ~ Partial coverage. — No valid input basis.">—</strong></p><p class="hint" data-i18n="updated_from_returned_usage_not_a_live_bill_pending_usage_is_not">Counts returned usage only. Pending usage is not included. This is not a live bill.</p></section>
@@ -119,7 +119,7 @@
           <p id="review-control-note" class="hint" role="status"></p>
         </section>
         <details class="panel dashboard-section" id="prediction-settings" open>
-          <summary class="panel-heading"><h2 data-i18n="codex_input_predictions">INPUT SUGGESTIONS</h2><span data-i18n="codex_only">CODEX ONLY</span></summary>
+          <summary class="panel-heading"><h2 data-i18n="codex_input_predictions">INPUT SUGGESTIONS</h2></summary>
           <div class="setting-row"><label for="setting-prediction_enabled" data-i18n="predictions_enable">Input suggestions</label><input id="setting-prediction_enabled" type="checkbox" role="switch" disabled><span id="effect-prediction_enabled" class="hint" role="status"></span></div>
           <p id="prediction-action-note" class="hint" role="status"></p><div class="section-actions"><button id="prediction-continue" type="button" data-i18n="feature_continue" hidden>Continue setup</button><button id="prediction-open" type="button" data-i18n="prediction_open">Open Codex</button></div>
           <details class="tool-details"><summary data-i18n="status_and_repair">Status and repair</summary>
@@ -131,7 +131,7 @@
           </details>
         </details>
         <details class="panel dashboard-section" id="additional-capabilities">
-          <summary class="panel-heading"><h2 data-i18n="codex_image_generation">IMAGE GENERATION</h2><span data-i18n="codex_only">CODEX ONLY</span></summary>
+          <summary class="panel-heading"><h2 data-i18n="codex_image_generation">IMAGE GENERATION</h2></summary>
           <strong id="image">—</strong><p id="image-detail" class="hint">—</p>
           <div class="setting-row"><label for="setting-image_enabled" data-i18n="allow_new_image_calls">Allow image requests</label><input id="setting-image_enabled" type="checkbox" role="switch" disabled><span id="effect-image_enabled" class="hint" role="status"></span></div>
           <p class="hint" data-i18n="pause_keeps_the_provider_configuration_running_calls_can_finish_">Existing image requests can finish after pausing.</p>
@@ -437,8 +437,7 @@
             <p id="install-windows-policy" class="hint" hidden data-i18n="update_windows_policy">If scripts are blocked, use your company’s approved installation method.</p>
           </details></details><p id="update-copy-note" class="hint" role="status"></p>
         </section>
-        <section class="panel dashboard-section" id="privacy-settings" aria-labelledby="privacy-heading">
-          <h2 id="privacy-heading" data-i18n="privacy_heading">ADVANCED</h2>
+        <section class="panel dashboard-section" id="privacy-settings" aria-label="Local masking" data-i18n-label="privacy_enable">
           <div class="setting-row"><label for="privacy-enabled" data-i18n="privacy_enable">Local masking</label><input id="privacy-enabled" type="checkbox" role="switch" disabled><span id="privacy-status" class="hint" role="status" aria-live="polite"></span></div>
           <p class="hint" data-i18n="privacy_scope">Conversation and tool text. Images and predictions keep their current behavior.</p>
           <div id="privacy-options" hidden>

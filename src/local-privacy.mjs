@@ -7,7 +7,7 @@ import { atomicWriteFileIfChangedSync } from "./atomic-file.mjs";
 import { createChangeSignal } from "./activity-events.mjs";
 import { createPrivacyModel, privacyFailure } from "./privacy-model.mjs";
 import { maskPrivacyRequest, protectPrivacyResponse, createPrivacyRuleCache } from "./privacy-transform.mjs";
-import { createPrivacyDetection } from "./privacy-detection.mjs";
+import { createPrivacyDetection, PRIVACY_BATCH_BYTES } from "./privacy-detection.mjs";
 import { markRequestObservation } from "./stream-performance.mjs";
 
 export function createLocalPrivacy(options = {}) {
@@ -54,8 +54,9 @@ export function createLocalPrivacy(options = {}) {
       timer.unref?.();
     };
     const onPlan = plan => {
-      if (options.checkTimeoutMs === undefined && plan.pending_bytes >= 64 * 1024) { budget = 60000;arm(); }
-      markRequestObservation({ privacy_pending_bytes: plan.pending_bytes, privacy_new_bytes: plan.new_bytes, privacy_wait_budget_ms: budget });
+      if (options.checkTimeoutMs === undefined && (plan.pending_bytes >= PRIVACY_BATCH_BYTES || plan.pending_windows > 1)) { budget = 60000;arm(); }
+      markRequestObservation({ ...(Number.isSafeInteger(plan.pending_bytes) ? { privacy_pending_bytes: plan.pending_bytes, privacy_new_bytes: plan.new_bytes } : {}),
+        ...(Number.isSafeInteger(plan.pending_windows) ? { privacy_pending_windows: plan.pending_windows } : {}), privacy_wait_budget_ms: budget });
     };
     arm();
     try { session = await maskPrivacyRequest(body, { protocol, client, personal: saved.personal, secret, find, rules: rules.find, onPlan,
@@ -69,7 +70,7 @@ export function createLocalPrivacy(options = {}) {
     } finally { clearTimeout(timer); }
     if (signal?.aborted) { session.release();throw signal.reason; }
     markRequestObservation({ privacy_count: session.count, privacy_ms: Math.round(performance.now() - start), privacy_state: "checked" });
-    actionError = null;lastCheck = { state: "checked", at: new Date().toISOString(), elapsed_ms: Math.round(performance.now() - start), count: session.count };changes.changed();
+    actionError = null;lastCheck = { state: "checked", at: new Date().toISOString(), elapsed_ms: Math.round(performance.now() - start), count: session.count, wait_budget_ms: budget };changes.changed();
     if (res && session.count) {
       let current = responses.get(res);
       if (!current) {

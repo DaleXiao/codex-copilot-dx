@@ -153,9 +153,17 @@ export function createPrivacyModel(options = {}) {
           const part = line.slice(0, end);line = line.slice(end + 1);
           try {
             const value = JSON.parse(part);
-            if (value.ready === true) { clearTimeout(timer);set({ state: "ready", backend: value.backend === "CoreML" ? "CoreML" : "CPU", device: ["CPU", "GPU", "Neural Engine"].includes(value.device) ? value.device : null, window_cache: value.window_cache === true, cancel_between_windows: value.cancel_between_windows === true, window_cache_entries: Number.isSafeInteger(value.window_cache_entries) ? value.window_cache_entries : null, window_cache_bytes: Number.isSafeInteger(value.window_cache_bytes) ? value.window_cache_bytes : null });resolve();if (componentRelease !== PRIVACY_COMPONENT_RELEASE && !upgradeAttempted) { upgradeAttempted = true;void download({ background: true }).catch(() => {}); } }
+            if (value.ready === true) { clearTimeout(timer);set({ state: "ready", backend: value.backend === "CoreML" ? "CoreML" : "CPU", device: ["CPU", "GPU", "Neural Engine"].includes(value.device) ? value.device : null, window_cache: value.window_cache === true, window_plan: value.window_plan === true, cancel_between_windows: value.cancel_between_windows === true, window_cache_entries: Number.isSafeInteger(value.window_cache_entries) ? value.window_cache_entries : null, window_cache_bytes: Number.isSafeInteger(value.window_cache_bytes) ? value.window_cache_bytes : null });resolve();if (componentRelease !== PRIVACY_COMPONENT_RELEASE && !upgradeAttempted) { upgradeAttempted = true;void download({ background: true }).catch(() => {}); } }
             else if (jobs.has(value.id)) {
-              const job = jobs.get(value.id);jobs.delete(value.id);clearTimeout(job.timer);
+              const job = jobs.get(value.id);
+              if (value.phase === "plan") {
+                if (!state.window_plan || !Number.isSafeInteger(value.text_index) || value.text_index < 0 || value.text_index >= job.texts
+                  || !Number.isSafeInteger(value.pending_windows) || value.pending_windows < 0 || !Number.isSafeInteger(value.total_windows)
+                  || value.total_windows < value.pending_windows) throw privacyFailure("engine_invalid");
+                try { job.onPlan?.({ text_index: value.text_index, pending_windows: value.pending_windows, total_windows: value.total_windows }); } catch { /* Planning observations do not own native completion. */ }
+                continue;
+              }
+              jobs.delete(value.id);clearTimeout(job.timer);
               if (value.window_work && typeof value.window_work === "object") {
                 const work = Object.fromEntries(["evaluated", "hits", "shared", "total"].filter(key => Number.isSafeInteger(value.window_work[key]) && value.window_work[key] >= 0).map(key => [key, value.window_work[key]]));
                 set({ last_window_work: work, window_cache_entries: Number.isSafeInteger(value.window_cache_entries) ? value.window_cache_entries : null,
@@ -175,11 +183,12 @@ export function createPrivacyModel(options = {}) {
     })().catch(error => { ready = null;throw error; });
     return ready;
   }
-  async function find(texts, { signal, isNeeded, onSubmitted, workSignal, cacheWindows, onWindowWork } = {}) {
+  async function find(texts, { signal, isNeeded, onSubmitted, workSignal, cacheWindows, onWindowWork, onPlan } = {}) {
     if (signal?.aborted) throw signal.reason;await load();if (signal?.aborted) throw signal.reason;
     if (isNeeded && !isNeeded()) throw privacyFailure("cancelled");
     if (jobs.size >= 8) throw privacyFailure("busy");
-    const id = ++serial, input = JSON.stringify({ id, texts, ...(cacheWindows === false ? { cache_windows: false } : {}) }) + "\n";
+    const id = ++serial, input = JSON.stringify({ id, texts, ...(cacheWindows === false ? { cache_windows: false } : {}),
+      ...(state.window_plan && onPlan ? { plan_windows: true } : {}) }) + "\n";
     if (Buffer.byteLength(input) > 8 * 1024 * 1024) throw privacyFailure("request_too_large");
     if ([...jobs.values()].reduce((n, job) => n + job.bytes, Buffer.byteLength(input)) > 16 * 1024 * 1024) throw privacyFailure("busy");
     return new Promise((resolve, reject) => {
@@ -195,7 +204,7 @@ export function createPrivacyModel(options = {}) {
       };
       const finish = fn => value => { signal?.removeEventListener("abort", cancelled);workSignal?.removeEventListener("abort", cancelWork);fn(value); };
       const timer = setTimeout(() => { reject(privacyFailure("check_timeout"));fail(); }, 300000);
-      jobs.set(id, { resolve: finish(resolve), reject: finish(reject), timer, bytes: Buffer.byteLength(input), onWindowWork });signal?.addEventListener("abort", cancelled, { once: true });changed();
+      jobs.set(id, { resolve: finish(resolve), reject: finish(reject), timer, bytes: Buffer.byteLength(input), texts: texts.length, onWindowWork, onPlan });signal?.addEventListener("abort", cancelled, { once: true });changed();
       try { onSubmitted?.(); } catch { /* Submission diagnostics do not own the native job. */ }
       child.stdin.write(input, error => { if (error) fail(); });
       workSignal?.addEventListener("abort", cancelWork, { once: true });if (workSignal?.aborted) cancelWork();

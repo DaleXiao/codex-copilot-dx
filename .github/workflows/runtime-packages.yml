@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   runtime:
-    timeout-minutes: 20
+    timeout-minutes: 30
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -84,6 +84,7 @@ jobs:
           gh release download v1.3.11 --repo "$GITHUB_REPOSITORY" --pattern "$baseline_name" --pattern SHA256SUMS --dir "$RUNNER_TEMP/privacy-baseline"
           node scripts/privacy-candidate-replay.mjs "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/ccdx-privacy-model" "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/privacy-baseline"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: privacy-${{ matrix.target }}
           path: ${{ runner.temp }}/privacy-component/

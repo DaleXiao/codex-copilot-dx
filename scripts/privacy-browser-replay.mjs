@@ -31,10 +31,15 @@ for (const [name, engine] of [["chromium", chromium], ["webkit", webkit]].filter
       await page.goto(`http://127.0.0.1:${server.address().port}/#system`);
       await page.waitForFunction(() => !document.getElementById("privacy-enabled").disabled);
       assert.equal(await page.locator("#privacy-enabled").isChecked(), false);assert.equal(downloads, 0);assert.equal(calls, 0);
+      assert.equal(await page.locator("#privacy-status").isVisible(), false, "normal off is already expressed by the switch");
       await page.locator("#privacy-enabled").click();assert.equal(await page.locator("#privacy-dialog").isVisible(), true);assert.equal(downloads, 0);
       await page.locator("#privacy-dialog-cancel").click();assert.equal(downloads, 0);
       await page.locator("#privacy-enabled").click();await page.locator("#privacy-dialog-confirm").click();
       await page.waitForFunction(() => document.getElementById("privacy-enabled").checked);assert.equal(downloads, 1);
+      await page.waitForFunction(() => /keys and passwords|密钥与密码/i.test(document.getElementById("privacy-status").textContent));
+      assert.equal(await page.locator("#privacy-status").isVisible(), true, "protection scope remains visible");
+      assert.equal(await page.locator("[data-i18n=privacy_scope]").isVisible(), true);
+      assert.equal(await page.locator("[data-i18n=privacy_personal_hint]").isVisible(), true);
       await page.locator(".privacy-preview summary").click();await page.locator("#privacy-text").fill("api_key=local-only-demo");await page.locator("#privacy-preview").click();
       await page.waitForFunction(() => !document.getElementById("privacy-result").hidden);
       assert.match(await page.locator("#privacy-result").textContent(), /\{\{CCDX_/);assert.doesNotMatch(await page.locator("#privacy-result").textContent(), /local-only-demo/);

@@ -52,7 +52,8 @@
       el("prediction-open").disabled = !value?.configured;
       el("prediction-remove").disabled = !value?.configured;
       if (notes) localize(el("prediction-action-note"), !value ? "feature_unavailable" : value.status === "unavailable" ? "feature_read_failed" : pending ? "prediction_quit_continue" : value.enabled && value.bridge !== "running" ? "prediction_bridge_missing" : value.enabled ? "prediction_ready" : "prediction_disabled");
-      localize(el("effect-prediction_enabled"), pending ? "feature_pending" : value?.enabled ? "on" : "off");
+      el("effect-prediction_enabled").hidden = !pending;
+      if (pending) localize(el("effect-prediction_enabled"), "feature_pending");
       const image = data.features?.image;
       if (!imageDirty) {
         el("image-setup-endpoint").value = image?.endpoint || "";

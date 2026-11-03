@@ -48,6 +48,37 @@ test("explicit detector wait budgets remain authoritative for isolated timeout a
   tracker.finish({ statusCode: 200 });
   assert.equal(metrics.snapshot().recent_requests.at(-1).context.privacy_wait_budget_ms, 500);
 });
+
+test("production wait covers uncached texts between one native batch and the old 64 KiB cutoff", async t => {
+  const jobs=[];const f=fixture(t,{find:(texts,options)=>new Promise(resolve=>jobs.push({texts,options,resolve}))});await enable(f);
+  t.mock.timers.enable({apis:["setTimeout"]});
+  const input=Array.from({length:480},(_,i)=>"line "+i+" contains ordinary sample text for an isolated history.\n").join("");
+  assert.ok(Buffer.byteLength(input)>16*1024&&Buffer.byteLength(input)<64*1024);
+  let forwarded=0;const wrapped=f.privacy.wrap(async()=>{forwarded++;return "ok";},{protocol:"responses"});
+  const result=wrapped({input});await waitForJobs(jobs,1);t.mock.timers.tick(18000);await new Promise(setImmediate);
+  assert.equal(forwarded,0,"provider must await the complete protected check");
+  jobs[0].resolve([[]]);assert.equal(await result,"ok");assert.equal(forwarded,1);assert.equal(f.privacy.snapshot().last_check.wait_budget_ms,60000);
+});
+
+test("compact multi-window native plans extend the default budget while short checks retain 15 seconds", async t => {
+  const jobs=[];const f=fixture(t,{find:(texts,options)=>new Promise(resolve=>jobs.push({texts,options,resolve}))});await enable(f);
+  t.mock.timers.enable({apis:["setTimeout"]});
+  const long=f.privacy.prepare({input:"compact model input"},{protocol:"responses"});await waitForJobs(jobs,1);
+  jobs[0].options.onPlan({text_index:0,pending_windows:3,total_windows:4});
+  let finished=false;long.finally(()=>{finished=true;}).catch(()=>{});t.mock.timers.tick(15001);await new Promise(setImmediate);assert.equal(finished,false);
+  jobs[0].resolve([[]]);await long;assert.equal(f.privacy.snapshot().last_check.wait_budget_ms,60000);
+  const short=f.privacy.prepare({input:"another short input"},{protocol:"responses"});await waitForJobs(jobs,2);
+  const failed=assert.rejects(short,{code:"ccdx_privacy_check_timeout"});t.mock.timers.tick(15001);await failed;jobs[1].resolve([[]]);
+});
+
+test("explicit wait limits cannot be overridden by native planning", async t => {
+  const jobs=[];const f=fixture(t,{find:(texts,options)=>new Promise(resolve=>jobs.push({texts,options,resolve}))},{checkTimeoutMs:500});await enable(f);
+  t.mock.timers.enable({apis:["setTimeout"]});
+  const result=f.privacy.prepare({input:"compact input"},{protocol:"responses"});await waitForJobs(jobs,1);
+  jobs[0].options.onPlan({text_index:0,pending_windows:20,total_windows:20});
+  const failed=assert.rejects(result,{code:"ccdx_privacy_check_timeout"});t.mock.timers.tick(501);await failed;jobs[0].resolve([[]]);
+  assert.equal(f.privacy.snapshot().last_check.wait_budget_ms,500);
+});
 test("default-off requests keep identity and never load the model or write settings", async t => {
   const f = fixture(t), before = fs.readFileSync(f.file), value = { model: "one", input: "api_key=private-value" };
   assert.equal(await f.privacy.prepare(value, { protocol: "responses" }), value);assert.equal(f.calls(), 0);

@@ -211,6 +211,10 @@ func quant(x []float32) (q []uint8, scale float32, zp int32) {
 // kernels take int8 on both sides, so x's uint8 q goes as q-128, and
 // Σ q·w = Σ (q-128)·w + 128·Σ w.
 func (m *qmat) matmul(x []float32, rows, t int) []float32 {
+	return m.matmulInto(x, rows, t, make([]float32, rows*m.n))
+}
+
+func (m *qmat) matmulInto(x []float32, rows, t int, out []float32) []float32 {
 	q, xs, xz := quant(x)
 	s := make([]int8, len(q))
 	xsum := make([]int32, rows)
@@ -222,7 +226,6 @@ func (m *qmat) matmul(x []float32, rows, t int) []float32 {
 		}
 		xsum[r] = sum
 	}
-	out := make([]float32, rows*m.n)
 	groups := (m.n + 3) / 4
 	parallel(t, groups, func(g0, g1 int) {
 		var acc [4]int32
@@ -318,20 +321,25 @@ func (nt *net) embed(ids []int, rows int) []float32 {
 // encode is the classifier's scores for embeddings x of n tokens, over
 // procs goroutines.
 func (nt *net) encode(x []float32, n, procs int) []float32 {
+	qkvBuffer := make([]float32, n*3*hidden)
+	contextBuffer := make([]float32, n*hidden)
+	attentionBuffer := make([]float32, n*hidden)
+	hiddenBuffer := make([]float32, n*inter)
+	outputBuffer := make([]float32, n*hidden)
 	for i := range nt.layers {
 		l := &nt.layers[i]
-		qkv := l.qkv.matmul(x, n, procs)
+		qkv := l.qkv.matmulInto(x, n, procs, qkvBuffer)
 		for t := 0; t < n; t++ {
 			row := qkv[t*3*hidden : t*3*hidden+3*hidden]
 			for i, b := range l.qkvBias {
 				row[i] += b
 			}
 		}
-		ctx := attention(qkv, n, procs)
-		a := l.attnOut.matmul(ctx, n, procs)
+		ctx := attention(qkv, n, procs, contextBuffer)
+		a := l.attnOut.matmulInto(ctx, n, procs, attentionBuffer)
 		skipNorm(a, x, n, l.attnBias, l.ln1w, l.ln1b)
 		x = a
-		h := l.up.matmul(x, n, procs)
+		h := l.up.matmulInto(x, n, procs, hiddenBuffer)
 		for t := 0; t < n; t++ {
 			row := h[t*inter : t*inter+inter]
 			for i, v := range row {
@@ -339,7 +347,7 @@ func (nt *net) encode(x []float32, n, procs int) []float32 {
 				row[i] = gelu(v) * l.smooth[i]
 			}
 		}
-		o := l.down.matmul(h, n, procs)
+		o := l.down.matmulInto(h, n, procs, outputBuffer)
 		skipNorm(o, x, n, l.downBias, l.ln2w, l.ln2b)
 		x = o
 	}
@@ -368,10 +376,9 @@ func skipNorm(out, skip []float32, rows int, bias, w, b []float32) {
 // attention is the self-attention of qkv [n, 3*hidden] (Q, K, V side by
 // side, each head's 32 columns together), every token seeing every other.
 // It runs over procs goroutines.
-func attention(qkv []float32, n, procs int) []float32 {
+func attention(qkv []float32, n, procs int, ctx []float32) []float32 {
 	const d = hidden / heads
 	scale := float32(1 / math.Sqrt(d))
-	ctx := make([]float32, n*hidden)
 	// Each head's q and v laid out [n][d], and its k transposed, [d][np]
 	// with np = n rounded up to 16 (the rest zero), so the kernels read
 	// contiguous rows.

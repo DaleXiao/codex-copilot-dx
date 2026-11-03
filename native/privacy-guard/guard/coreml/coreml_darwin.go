@@ -39,6 +39,15 @@ static char *gmlCompile(const char *pkg, const char *out) {
 	}
 }
 
+typedef struct {
+	void *model;
+	void *inputs;
+	float *x;
+	float *mask;
+	long s;
+	long h;
+} gmlContext;
+
 static void *gmlOpen(const char *path, char **errp) {
 	@autoreleasepool {
 		MLModelConfiguration *cfg = [MLModelConfiguration new];
@@ -49,11 +58,19 @@ static void *gmlOpen(const char *path, char **errp) {
 			*errp = gmlErr(err, "loading failed");
 			return NULL;
 		}
-		return (__bridge_retained void *)m;
+		gmlContext *context = calloc(1, sizeof(gmlContext));
+		if (context == NULL) { *errp = strdup("model context allocation failed"); return NULL; }
+		context->model = (__bridge_retained void *)m;
+		return context;
 	}
 }
 
-static void gmlClose(void *m) { CFRelease(m); }
+static void gmlClose(void *p) {
+	gmlContext *context = p;
+	if (context->inputs != NULL) CFRelease(context->inputs);
+	CFRelease(context->model);
+	free(context);
+}
 
 // gmlWalk adds each operation's estimated cost in b, and its blocks', to
 // cost by the device CoreML's plan prefers for it: the Neural Engine, the
@@ -107,11 +124,12 @@ static MLMultiArray *gmlArray(const float *src, NSArray<NSNumber *> *shape, NSAr
 		strides:strides deallocator:^(void *p) { free(p); } error:err];
 }
 
-// gmlRun reads x [1, s, h] and mask [1, 1, 1, s] into out [s, k].
-static char *gmlRun(void *mp, const float *x, const float *mask, long s, long h, float *out, long k) {
-	@autoreleasepool {
-		MLModel *m = (__bridge MLModel *)mp;
+// Run's Go mutex serializes these C-owned arrays. Their contents are cleared
+// after every prediction, including errors; no Go memory is retained by CoreML.
+static char *gmlPredict(gmlContext *context, const float *x, const float *mask, long s, long h, float *out, long k) {
+		MLModel *m = (__bridge MLModel *)context->model;
 		NSError *err = nil;
+		if (context->inputs == NULL) {
 		MLMultiArray *xa = gmlArray(x, @[@1, @(s), @(h)], @[@(s * h), @(h), @1], s * h, &err);
 		if (xa == nil) return gmlErr(err, "x");
 		MLMultiArray *ma = gmlArray(mask, @[@1, @1, @1, @(s)], @[@(s), @(s), @(s), @1], s, &err);
@@ -121,6 +139,16 @@ static char *gmlRun(void *mp, const float *x, const float *mask, long s, long h,
 			@"mask": [MLFeatureValue featureValueWithMultiArray:ma],
 		} error:&err];
 		if (in == nil) return gmlErr(err, "inputs");
+		context->inputs = (__bridge_retained void *)in;
+		context->x = xa.dataPointer;
+		context->mask = ma.dataPointer;
+		context->s = s;
+		context->h = h;
+		}
+		if (context->s != s || context->h != h) return strdup("input dimensions changed");
+		memcpy(context->x, x, s * h * sizeof(float));
+		memcpy(context->mask, mask, s * sizeof(float));
+		MLDictionaryFeatureProvider *in = (__bridge MLDictionaryFeatureProvider *)context->inputs;
 		id<MLFeatureProvider> r = [m predictionFromFeatures:in error:&err];
 		if (r == nil) return gmlErr(err, "prediction failed");
 		MLMultiArray *lg = [r featureValueForName:@"logits"].multiArrayValue;
@@ -137,6 +165,17 @@ static char *gmlRun(void *mp, const float *x, const float *mask, long s, long h,
 			}
 		}];
 		return NULL;
+
+}
+
+// gmlRun reads x [1, s, h] and mask [1, 1, 1, s] into out [s, k].
+static char *gmlRun(void *mp, const float *x, const float *mask, long s, long h, float *out, long k) {
+	@autoreleasepool {
+		gmlContext *context = mp;
+		char *error = gmlPredict(context, x, mask, s, h, out, k);
+		if (context->x != NULL) memset(context->x, 0, context->s * context->h * sizeof(float));
+		if (context->mask != NULL) memset(context->mask, 0, context->s * sizeof(float));
+		return error;
 	}
 }
 */

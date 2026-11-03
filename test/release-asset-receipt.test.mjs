@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 test("latest promotion can amend its receipt after every public shipping asset was byte-verified", t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-public-receipt-"));t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  const version = "1.3.10", targets = ["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"];
+  const version = "1.3.10", targets = ["darwin-arm64", "win32-arm64", "win32-x64"];
   const names = [`codex-copilot-dx-${version}.tgz`, "ccdx-install.mjs", "install.sh", "install.ps1",
     ...targets.map(target => `codex-copilot-dx-${version}-${target}.tgz`), ...targets.map(target => `ccdx-privacy-guard-1-${target}${target.startsWith("win32") ? ".exe" : ""}`)];
   const sha = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -31,11 +31,11 @@ test("latest promotion can amend its receipt after every public shipping asset w
       return new Response(bytes);};require('node:module').syncBuiltinESMExports();`);
   const run = mode => spawnSync(process.execPath, ["--require", preload, fileURLToPath(new URL("../scripts/verify-release-assets.mjs", import.meta.url)), directory, mode],
     { env: { ...process.env, ASSET_FIXTURE: directory, GITHUB_REPOSITORY: "fixture/repo" }, encoding: "utf8" });
-  const first = run("public");assert.equal(first.status, 0, first.stderr);assert.equal(JSON.parse(fs.readFileSync(calls)).length, 14);
+  const first = run("public");assert.equal(first.status, 0, first.stderr);assert.equal(JSON.parse(fs.readFileSync(calls)).length, 12);
   const before = JSON.parse(fs.readFileSync(path.join(directory, "public-assets-receipt.json")));
   fs.writeFileSync(path.join(directory, "release-receipt.json"), '{"npm":{"latest":"1.3.10"}}');fs.writeFileSync(calls, "[]");
   const updated = run("receipt");assert.equal(updated.status, 0, updated.stderr);assert.deepEqual(JSON.parse(fs.readFileSync(calls)), ["release-receipt.json"]);
-  const after = JSON.parse(fs.readFileSync(path.join(directory, "public-assets-receipt.json")));assert.equal(after.assets.length, 14);
+  const after = JSON.parse(fs.readFileSync(path.join(directory, "public-assets-receipt.json")));assert.equal(after.assets.length, 12);
   assert.deepEqual(after.assets.filter(row => row.name !== "release-receipt.json"), before.assets.filter(row => row.name !== "release-receipt.json"));
   assert.notEqual(after.assets.at(-1).sha256, before.assets.at(-1).sha256);
   fs.appendFileSync(path.join(directory, names[0]), "changed");fs.writeFileSync(calls, "[]");

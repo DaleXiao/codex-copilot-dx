@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { createLocalPrivacy } from "../src/local-privacy.mjs";
 import { userSettingsPath, readUserSettings } from "../src/user-settings.mjs";
+import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
+import { runWithRequestContext } from "../src/request-context.mjs";
 
 function fixture(t, extra = {}, privacyOptions = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-privacy-")), options = { home, env: {} }, file = userSettingsPath(options);
@@ -15,10 +17,37 @@ function fixture(t, extra = {}, privacyOptions = {}) {
   const privacy = createLocalPrivacy({ ...options, model, ...privacyOptions });t.after(() => { privacy.close();fs.rmSync(home, { recursive: true, force: true }); });
   return { privacy, model, file, options, calls: () => calls, fail: value => { fail = value; } };
 }
+async function waitForJobs(jobs, count) {
+  for (let attempt = 0; attempt < 30 && jobs.length < count; attempt++) await new Promise(setImmediate);
+  assert.equal(jobs.length, count);
+}
 async function enable(f) {
   await f.privacy.action({ action: "enable", revision: f.privacy.snapshot().revision });
   for (let i = 0; i < 40 && f.privacy.snapshot().action_pending; i++) await new Promise(resolve => setTimeout(resolve, 5));
 }
+test("cold detection gets a bounded longer wait while exact hot history submits no new work", async t => {
+  const f = fixture(t);await enable(f);
+  const input = Array.from({ length: 2200 }, (_, i) => "ordinary history line " + i + " with additional text 中文\n").join("");
+  const metrics = createStreamPerformanceMetrics();
+  const observe = async () => {
+    const tracker = metrics.begin("responses", { requestId: "isolated" });
+    await runWithRequestContext({ streamPerformance: tracker }, () => f.privacy.prepare({ input }, { protocol: "responses" }));
+    tracker.finish({ statusCode: 200 });return metrics.snapshot().recent_requests.at(-1).context;
+  };
+  const cold = await observe(), before = f.calls();
+  assert.ok(cold.privacy_pending_bytes >= 64 * 1024);assert.equal(cold.privacy_wait_budget_ms, 60000);
+  const hot = await observe();assert.equal(hot.privacy_pending_bytes, 0);assert.equal(hot.privacy_wait_budget_ms, 15000);
+  assert.equal(f.calls(), before);
+});
+
+test("explicit detector wait budgets remain authoritative for isolated timeout and recovery tests", async t => {
+  const f = fixture(t, {}, { checkTimeoutMs: 500 });await enable(f);
+  const input = Array.from({ length: 1500 }, (_, i) => "varied ordinary line " + i + " ".repeat(40) + "\n").join("");
+  const metrics = createStreamPerformanceMetrics(), tracker = metrics.begin("responses", { requestId: "isolated" });
+  await runWithRequestContext({ streamPerformance: tracker }, () => f.privacy.prepare({ input }, { protocol: "responses" }));
+  tracker.finish({ statusCode: 200 });
+  assert.equal(metrics.snapshot().recent_requests.at(-1).context.privacy_wait_budget_ms, 500);
+});
 test("default-off requests keep identity and never load the model or write settings", async t => {
   const f = fixture(t), before = fs.readFileSync(f.file), value = { model: "one", input: "api_key=private-value" };
   assert.equal(await f.privacy.prepare(value, { protocol: "responses" }), value);assert.equal(f.calls(), 0);
@@ -106,8 +135,8 @@ test("cancelled histories retain completed batches and skip work that was not su
   const pending = f.privacy.prepare(value, { protocol: "messages", signal: abort.signal });await new Promise(setImmediate);assert.equal(jobs.length, 1);
   abort.abort(Error("cancelled"));await assert.rejects(pending, /cancelled/);
   jobs[0].resolve([[]]);await new Promise(setImmediate);assert.equal(jobs.length, 1);
-  const retry = f.privacy.prepare(value, { protocol: "messages" });await new Promise(setImmediate);assert.deepEqual(jobs[1].texts, ["second whole text"]);
-  jobs[1].resolve([[]]);await new Promise(setImmediate);assert.deepEqual(jobs[2].texts, ["third whole text"]);
+  const retry = f.privacy.prepare(value, { protocol: "messages" });await waitForJobs(jobs, 2);assert.deepEqual(jobs[1].texts, ["second whole text"]);
+  jobs[1].resolve([[]]);await waitForJobs(jobs, 3);assert.deepEqual(jobs[2].texts, ["third whole text"]);
   jobs[2].resolve([[]]);assert.equal(await retry, value);
   assert.equal(await f.privacy.prepare(value, { protocol: "messages" }), value);assert.equal(jobs.length, 3);
 });
@@ -118,7 +147,7 @@ test("one caller leaving does not discard an unsubmitted text still needed by an
   await new Promise(setImmediate);
   const second = f.privacy.prepare({ input: "shared whole text" }, { protocol: "responses" });
   abort.abort(Error("cancelled"));await assert.rejects(first, /cancelled/);jobs[0].resolve([[]]);await new Promise(setImmediate);
-  assert.deepEqual(jobs[1].texts, ["shared whole text"]);jobs[1].resolve([[]]);await second;assert.equal(jobs.length, 2);
+  await waitForJobs(jobs, 2);assert.deepEqual(jobs[1].texts, ["shared whole text"]);jobs[1].resolve([[]]);await second;assert.equal(jobs.length, 2);
 });
 
 test("a request pins protection across an off switch while a later request keeps the original provider function", async t => {

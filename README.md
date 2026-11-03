@@ -1,8 +1,10 @@
 # CCDX
 
+**1.3.12 candidate: unpublished. Public installation remains on 1.3.11 until approval.**
+
 Use your model services in **Codex App, Claude App and Claude Code** through one local gateway.
 
-Connect GitHub Copilot, Microsoft 365 or your own API. Choose which apps can use each source, then select their models. CCDX supports **macOS and Windows**, on Apple Silicon/ARM64 and x64.
+Connect GitHub Copilot, Microsoft 365 or your own API. Choose which apps can use each source, then select their models. CI and prebuilt releases cover **macOS on Apple Silicon** and **Windows on x64/ARM64**. Intel Mac code remains available, without CI coverage or new prebuilt assets.
 
 Optional local masking is off by default. Enable it in Settings → Advanced to download the model and component. Checks run locally and may add delay or mistake ordinary text; an unfinished check holds the request back. See [local masking](docs/REFERENCE.md#local-masking).
 

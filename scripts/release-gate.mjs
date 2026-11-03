@@ -10,7 +10,7 @@ const required = ["codex-client", "privacy-native-windows",
   ...["22.15.0", "24.x"].flatMap(node => [`macos (${node})`, `windows-prediction (${node})`]),
   ...["macos-latest", "windows-latest"].flatMap(os => ["prediction-browsers", "npm12-install", "bootstrap"].map(job => `${job} (${os})`)),
   ...["chromium", "webkit"].flatMap(engine => ["green", "klein", "pink", "mono"].map(palette => `dashboard-browsers (${engine}, ${palette})`)),
-  ...[["macos-latest", "darwin-arm64"], ["macos-15-intel", "darwin-x64"], ["windows-latest", "win32-x64"], ["windows-11-arm", "win32-arm64"]]
+  ...[["macos-latest", "darwin-arm64"], ["windows-latest", "win32-x64"], ["windows-11-arm", "win32-arm64"]]
     .map(([os, target]) => `runtime-packages / runtime (${os}, ${target})`)];
 for (const name of required) if (!jobs.jobs.some(job => job.name === name)) throw Error(`Missing release gate: ${name}`);
 if (process.env.CCDX_RESUME_RUN) {

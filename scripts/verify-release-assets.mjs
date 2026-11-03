@@ -3,11 +3,12 @@ import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { RELEASE_TARGETS } from "./release-targets.mjs";
 const directory = process.argv[2], mode = process.argv[3] || "draft";
 if (!path.isAbsolute(directory || "") || !["draft", "public", "receipt"].includes(mode)) throw Error("Supply an absolute release directory and draft/public/receipt mode");
 const manifest = JSON.parse(fs.readFileSync(path.join(directory, "package-manifest.json"))), version = manifest.version;
 if (!/^\d+\.\d+\.\d+$/.test(version)) throw Error("Invalid release version");
-const targets = ["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"];
+const targets = RELEASE_TARGETS;
 const names = [`codex-copilot-dx-${version}.tgz`, "ccdx-install.mjs", "install.sh", "install.ps1", ...targets.map(target => `codex-copilot-dx-${version}-${target}.tgz`), ...targets.map(target => `ccdx-privacy-guard-1-${target}${target.startsWith("win32") ? ".exe" : ""}`), "SHA256SUMS"];
 const sha = bytes => createHash("sha256").update(bytes).digest("hex");
 const sums = new Map(fs.readFileSync(path.join(directory, "SHA256SUMS"), "utf8").trim().split("\n").map(line => { const match = /^([a-f0-9]{64})  ([\w.-]+)$/.exec(line);if (!match) throw Error("Invalid checksum entry");return [match[2], match[1]]; }));
@@ -51,5 +52,5 @@ try {
   }
   if (mode === "draft") fs.writeFileSync(path.join(directory, "verified-assets.json"), JSON.stringify(assets, null, 2) + "\n");
   else fs.writeFileSync(path.join(directory, "public-assets-receipt.json"), JSON.stringify({ version, assets, verified: true }, null, 2) + "\n");
-  console.log(mode === "receipt" ? "Verified updated receipt with 13 preserved public shipping assets" : `Verified ${expected.length} ${mode} assets byte-for-byte`);
+  console.log(mode === "receipt" ? `Verified updated receipt with ${names.length} preserved public shipping assets` : `Verified ${expected.length} ${mode} assets byte-for-byte`);
 } finally { fs.rmSync(downloaded, { recursive: true, force: true, maxRetries: 3 }); }

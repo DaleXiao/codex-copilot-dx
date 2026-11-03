@@ -369,7 +369,8 @@ export function createRequestAbort(req, res) {
 
 export function logRequestFailure(label, err, abort) {
   if (!isAbortLikeError(err) && !abort?.reason) {
-    console.error(status("err", `${label} request failed: ${redactDiagnosticText(err.message)}`));
+    const privacyCode = err.origin === "privacy" && /^ccdx_privacy_[a-z_]+$/.test(err.code || "") ? err.code + ": " : "";
+    console.error(status("err", `${label} request failed: ${privacyCode}${redactDiagnosticText(err.message)}`));
     return;
   }
 

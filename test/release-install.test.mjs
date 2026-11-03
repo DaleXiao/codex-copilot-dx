@@ -45,6 +45,16 @@ test("unsupported platforms are rejected before downloads or writes", async t =>
   }
 });
 
+test("Intel Macs retain the source-package fallback when no prebuilt runtime is published", async t => {
+  const root = directory(t), bytes = artifact(), name = "codex-copilot-dx-1.2.1.tgz", calls = [];
+  assert.equal(runtimeReleaseTarget({ platform: "darwin", arch: "x64" }), "darwin-x64");
+  const result = await downloadRelease("v1.2.1", { directory: root, platform: "darwin", arch: "x64", preferComplete: true,
+    fetchImpl: async url => { calls.push(url);return new Response(url.endsWith("SHA256SUMS")
+      ? `${createHash("sha256").update(bytes).digest("hex")}  ${name}\n` : bytes); } });
+  assert.equal(result.complete, false);assert.equal(result.name, name);
+  assert.equal(calls.length, 2);assert.ok(calls[1].endsWith(`/${name}`));assert.deepEqual(fs.readFileSync(result.file), bytes);
+});
+
 test("corrupt, wrong-version and wrong-package release artifacts never reach installation", async t => {
   const root = directory(t), name = "codex-copilot-dx-1.2.1.tgz";
   for (const [bytes, checksum] of [[artifact(), "0".repeat(64)], [artifact("1.2.0"), null], [artifact("1.2.1", "other"), null]]) {

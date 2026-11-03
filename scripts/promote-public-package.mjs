@@ -3,13 +3,14 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { stableVersion } from "../src/release-install.mjs";
+import { RELEASE_TARGETS } from "./release-targets.mjs";
 import { verificationTag, waitForPublicPackage } from "./public-npm-state.mjs";
 
 export async function promotePublicPackage({ manifest, receipt, assets, run, verify = waitForPublicPackage }) {
   const version = manifest.version, source = assets.assets?.find(asset => asset.name === manifest.filename);
   if (manifest.name !== "codex-copilot-dx" || !stableVersion(version) || manifest.filename !== `${manifest.name}-${version}.tgz`
     || !Number.isSafeInteger(manifest.size) || !source || receipt.version !== version || receipt.integrity !== manifest.integrity
-    || receipt.installed_cli !== true || receipt.native_modules !== true || assets.version !== version || !assets.verified || assets.assets?.length !== 14
+    || receipt.installed_cli !== true || receipt.native_modules !== true || assets.version !== version || !assets.verified || assets.assets?.length !== 6 + 2 * RELEASE_TARGETS.length
     || source?.sha256 !== receipt.sha256 || source?.bytes !== manifest.size) throw Error("Public package installation and all assets must be verified before promotion");
   const tags = JSON.parse(run(["view", manifest.name, "dist-tags", "--registry=https://registry.npmjs.org/", "--json"]));
   if (tags.latest && !stableVersion(tags.latest)) throw Error("The existing npm latest version cannot be compared safely");

@@ -19,9 +19,9 @@ test("publication rejects a green PR, wrong source bytes or incomplete job evide
         'prediction-browsers (macos-latest)','prediction-browsers (windows-latest)','npm12-install (macos-latest)','npm12-install (windows-latest)','bootstrap (macos-latest)','bootstrap (windows-latest)',
         'dashboard-browsers (chromium, green)','dashboard-browsers (chromium, klein)','dashboard-browsers (chromium, pink)','dashboard-browsers (chromium, mono)',
         'dashboard-browsers (webkit, green)','dashboard-browsers (webkit, klein)','dashboard-browsers (webkit, pink)','dashboard-browsers (webkit, mono)',
-        'runtime-packages / runtime (macos-latest, darwin-arm64)','runtime-packages / runtime (macos-15-intel, darwin-x64)','runtime-packages / runtime (windows-latest, win32-x64)','runtime-packages / runtime (windows-11-arm, win32-arm64)'];
-      if(mode==='missing_platform')names[23]=names[22];
-      const jobs=names.map((name,i)=>({name,conclusion:mode==='failed'&&i===0?'failure':'success'}));return JSON.stringify({total_count:mode==='incomplete'?25:24,jobs});
+        'runtime-packages / runtime (macos-latest, darwin-arm64)','runtime-packages / runtime (windows-latest, win32-x64)','runtime-packages / runtime (windows-11-arm, win32-arm64)'];
+      if(mode==='missing_platform')names[22]=names[21];
+      const jobs=names.map((name,i)=>({name,conclusion:mode==='failed'&&i===0?'failure':'success'}));return JSON.stringify({total_count:mode==='incomplete'?24:23,jobs});
     }
     return JSON.stringify({head_sha:(mode==='wrong'?'b':'a').repeat(40),path:'.github/workflows/ci.yml',status:'completed',conclusion:'success',event:mode==='pr'?'pull_request':'push',head_branch:'main'});
   };require('node:module').syncBuiltinESMExports();`);

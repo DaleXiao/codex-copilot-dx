@@ -25,6 +25,7 @@
     el("privacy-device").textContent = state.backend ? state.device && state.device !== state.backend ? `${state.backend} · ${state.device}` : state.backend : "";
     const check = state.enabled && state.last_check?.state === "failed" ? state.last_check : null;
     if (state.error) words("privacy-error", state.error.includes("download") ? "privacy_download_error" : "privacy_error");
+    else if (state.enabled && state.last_response?.state === "failed") words("privacy-error", "privacy_response_error", { code: state.last_response.privacy_error || "ccdx_privacy_response_invalid" });
     else if (check) words("privacy-error", check.code === "ccdx_privacy_busy" ? "privacy_busy" : check.code === "ccdx_privacy_check_timeout" && check.continuing ? "privacy_wait_timeout" : check.code === "ccdx_privacy_engine_invalid" ? "privacy_invalid_result" : "privacy_error");
     else { el("privacy-error").textContent = "";el("privacy-error").removeAttribute("data-i18n"); }
     clearTimeout(timer);

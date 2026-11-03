@@ -9,6 +9,7 @@ test("release packaging refuses a stale current installer link before invoking n
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-release-doc-gate-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "scripts"));fs.mkdirSync(path.join(root, "docs"));
+  fs.copyFileSync(new URL("../scripts/release-targets.mjs", import.meta.url), path.join(root, "scripts/release-targets.mjs"));
   fs.copyFileSync(new URL("../scripts/release-artifacts.mjs", import.meta.url), path.join(root, "scripts/release-artifacts.mjs"));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "1.2.10" }));
   for (const file of ["README.md", "docs/REFERENCE.md"]) {

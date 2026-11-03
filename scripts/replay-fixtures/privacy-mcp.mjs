@@ -9,7 +9,8 @@ for await(const line of readline.createInterface({input:process.stdin})){
  else if(request.method==='tools/list')result={tools:[{name:'echo',description:'Echo synthetic tool values for a privacy contract test.',inputSchema:schema,annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}}]};
  else if(request.method==='tools/call'){
   const input=request.params.arguments||{};const valid=input.type==='thinking'&&['id','name','signature','encrypted_content','data'].every(k=>input[k]===expected);
-  fs.writeFileSync(file,JSON.stringify({executed:true,valid,keys:Object.keys(input)})+'\n');result={isError:!valid,content:[{type:'text',text:valid?`MCP_EXECUTED:${expected}`:'MCP_INPUT_INVALID'}]};
+  const executions=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')).executions||0:0;
+  fs.writeFileSync(file,JSON.stringify({executed:true,valid,executions:executions+1,keys:Object.keys(input)})+'\n');result={isError:!valid,content:[{type:'text',text:valid?`MCP_EXECUTED:${expected}`:'MCP_INPUT_INVALID'}]};
  }else result={};
  process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:request.id,result})+'\n');
 }

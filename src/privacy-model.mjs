@@ -164,8 +164,9 @@ export function createPrivacyModel(options = {}) {
     })().catch(error => { ready = null;throw error; });
     return ready;
   }
-  async function find(texts, { signal } = {}) {
+  async function find(texts, { signal, isNeeded, onSubmitted } = {}) {
     if (signal?.aborted) throw signal.reason;await load();if (signal?.aborted) throw signal.reason;
+    if (isNeeded && !isNeeded()) throw privacyFailure("cancelled");
     if (jobs.size >= 8) throw privacyFailure("busy");
     const id = ++serial, input = JSON.stringify({ id, texts }) + "\n";
     if (Buffer.byteLength(input) > 8 * 1024 * 1024) throw privacyFailure("request_too_large");
@@ -178,6 +179,7 @@ export function createPrivacyModel(options = {}) {
       const finish = fn => value => { signal?.removeEventListener("abort", cancelled);fn(value); };
       const timer = setTimeout(() => { reject(privacyFailure("check_timeout"));fail(); }, 300000);
       jobs.set(id, { resolve: finish(resolve), reject: finish(reject), timer, bytes: Buffer.byteLength(input) });signal?.addEventListener("abort", cancelled, { once: true });changed();
+      try { onSubmitted?.(); } catch { /* Submission diagnostics do not own the native job. */ }
       child.stdin.write(input, error => { if (error) fail(); });
     });
   }

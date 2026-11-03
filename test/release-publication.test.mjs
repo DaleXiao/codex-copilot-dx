@@ -36,7 +36,7 @@ test("pre-promotion verification reads the immutable version without requiring l
 test("npm latest promotion requires the public installation and all asset proofs and never republishes", async () => {
   const version = "1.3.10", filename = `codex-copilot-dx-${version}.tgz`, manifest = { name: "codex-copilot-dx", version, filename, integrity: "synthetic", size: 12 };
   const receipt = { version, integrity: "synthetic", sha256: "a".repeat(64), installed_cli: true, native_modules: true };
-  const assets = { version, verified: true, assets: [{ name: filename, bytes: 12, sha256: receipt.sha256 }, ...Array.from({ length: 13 }, (_, i) => ({ name: `asset-${i}` }))] };
+  const assets = { version, verified: true, assets: [{ name: filename, bytes: 12, sha256: receipt.sha256 }, ...Array.from({ length: 11 }, (_, i) => ({ name: `asset-${i}` }))] };
   for (const mode of ["normal", "already_latest", "newer", "incomplete", "cleanup_denied"]) {
     const commands = [], run = args => { commands.push(args);
       if (mode === "cleanup_denied" && args[0] === "dist-tag" && args[1] === "rm") throw Object.assign(Error("cleanup denied"), { statusCode: 403 });

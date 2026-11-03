@@ -23,7 +23,7 @@ for (const name of ["codex", "claude"]) {
   const binary = executable(name);
   if (!binary || !fs.existsSync(binary)) { console.error(`Missing isolated ${name} executable`);failed = true;continue; }
   const result = spawnSync(process.execPath, [fileURLToPath(new URL("./privacy-client-replay.mjs", import.meta.url)),
-    "--client", name, "--binary", binary, "--privacy", "on", "--component-dir", component, "--model-dir", weights],
+    "--client", name, "--binary", binary, "--privacy", "on", "--rounds", "10", "--component-dir", component, "--model-dir", weights],
   { stdio: "inherit", timeout: 360000 });
   if (result.status !== 0 || result.error) failed = true;
 }

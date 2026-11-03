@@ -1,6 +1,10 @@
 import { createHash, createHmac } from "node:crypto";
-import { StringDecoder } from "node:string_decoder";
+import { createPrivacyStream } from "./privacy-stream.mjs";
+export { createPrivacyStream };
 import { privacyFailure } from "./privacy-model.mjs";
+import { validatePrivacyFindings } from "./privacy-findings.mjs";
+export { validatePrivacyFindings };
+import { markRequestObservation, markResponseTerminal } from "./stream-performance.mjs";
 
 const TOKEN_START = "{{CCDX_", tokenPattern = /\{\{CCDX_[a-f0-9]{24}\}\}/g;
 const secretPatterns = [
@@ -63,7 +67,17 @@ function ruleSpans(text, personal) {
   const spans = [];
   for (const pattern of secretPatterns) { pattern.lastIndex = 0;for (const m of text.matchAll(pattern)) spans.push({ start: m.index, end: m.index + m[0].length, kind: "secret" }); }
   secretField.lastIndex = 0;
-  for (const m of text.matchAll(secretField)) { const at = m.indices[1] || m.indices[2] || m.indices[3];spans.push({ start: at[0], end: at[1], kind: "secret" }); }
+  let match;
+  while ((match = secretField.exec(text))) {
+    const at = match.indices[1] || match.indices[2] || match.indices[3];
+    // An empty unquoted value followed by another assignment belongs to the
+    // next field. Restart there so its own secret field is still checked.
+    if (match.indices[3] && /\s/.test(text[at[0] - 1] || "")
+      && /^[A-Za-z_][\w.-]*=(?=\S)/.test(text.slice(at[0], at[1]))) {
+      secretField.lastIndex = at[0];continue;
+    }
+    spans.push({ start: at[0], end: at[1], kind: "secret" });
+  }
   if (personal) for (const m of text.matchAll(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi)) {
     if (!/@(?:example\.(?:com|org|net)|[^@]*\.(?:test|invalid))$/i.test(m[0])) spans.push({ start: m.index, end: m.index + m[0].length, kind: "email" });
   }
@@ -92,6 +106,8 @@ export function createPrivacyRuleCache({ maxBytes = 1024 * 1024, maxEntries = 20
 }
 function modelSpanFits(text, start, end, label) {
   const value = text.slice(start, end);
+  if (label === "common_secret" && text[end] === "("
+    && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(value)) return false;
   if (label === "common_secret" && /^\d+$/.test(value)) {
     return /(?:\b(?:api_key|apikey|access_token|refresh_token|client_secret|secret_key|auth_token|db_password|password|passwd|passcode|secret|token|pin)|密钥|密码|令牌|口令)["'`]?[\s:=：]*(?:(?:is|was|是|为|為)\s*)?["'`]?$/i.test(text.slice(Math.max(0, start - 96), start));
   }
@@ -99,24 +115,10 @@ function modelSpanFits(text, start, end, label) {
     && /\b(?:function|class|const|let|var)\s+$/.test(text.slice(Math.max(0, start - 32), start))) return false;
   return true;
 }
-export function validatePrivacyFindings(texts, found) {
-  if (!Array.isArray(found) || found.length !== texts.length) throw privacyFailure("engine_invalid");
-  return found.map((items, index) => {
-    if (items === null) return [];
-    if (!Array.isArray(items)) throw privacyFailure("engine_invalid");
-    const bytes = Buffer.byteLength(texts[index]);
-    for (const span of items) {
-      if (!span || !Number.isInteger(span.start) || !Number.isInteger(span.end) || span.start < 0 || span.end <= span.start
-        || span.end > bytes || !Number.isFinite(span.score) || span.score < 0 || span.score > 1 || typeof span.label !== "string") throw privacyFailure("engine_invalid");
-    }
-    return items;
-  });
-}
-
-export async function maskPrivacyRequest(body, { protocol, client = "api", personal = false, secret, find, signal, rules = ruleSpans }) {
+export async function maskPrivacyRequest(body, { protocol, client = "api", personal = false, secret, find, signal, onPlan, rules = ruleSpans }) {
   const copy = structuredClone(body), { items, nested } = requestTexts(copy, protocol), texts = items.map(item => item.text);
   if (items.length > 8192 || texts.reduce((n, text) => n + Buffer.byteLength(text), 0) > 8 * 1024 * 1024) throw privacyFailure("request_too_large");
-  const found = texts.length ? await find(texts, { signal }) : [], values = new Map(), kinds = {}, total = { count: 0, bytes: 0 };
+  const found = texts.length ? await find(texts, { signal, onPlan }) : [], values = new Map(), kinds = {}, total = { count: 0, bytes: 0 };
   if (!Array.isArray(found) || found.length !== texts.length) throw privacyFailure("engine_invalid");
   for (let i = 0; i < items.length; i++) {
     const item = items[i], bytes = Buffer.from(item.text), spans = rules(item.text, personal);
@@ -157,99 +159,17 @@ export async function maskPrivacyRequest(body, { protocol, client = "api", perso
     restoreToolValue: value => restoreValue(value, true), release: () => values.clear() };
 }
 
-function rewritePrivacyFrame(wire, value, named = false) {
-  let written = false;
-  const lines = wire.split(/(?<=\n)/).map(line => {
-    if (!line.startsWith("data:")) return line;
-    if (written) return "";
-    written = true;
-    return `data: ${JSON.stringify(value)}${line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : ""}`;
-  }).join("");
-  return named && !/^event:/m.test(wire) ? `event: ${value.type}\n${lines}` : lines;
-}
-
-export function createPrivacyStream(session, { maxBufferedBytes = 32 * 1024 * 1024, maxChannels = 1024 } = {}) {
-  const fail = code => privacyFailure(code, "response");
-  let pending = "", bytes = 0, bufferedBytes = 0;const channels = new Map(), decoder = new StringDecoder("utf8");
-  const forget = id => { bufferedBytes -= channels.get(id)?.bytes || 0;channels.delete(id); };
-  const clear = () => { channels.clear();bufferedBytes = 0; };
-  function transform(wire) {
-    const data = wire.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
-    if (!data || data === "[DONE]") return wire;
-    let event;try { event = JSON.parse(data); } catch { throw fail("stream_invalid"); }
-    if (["error", "response.failed", "response.incomplete"].includes(event.type)) { clear();return rewritePrivacyFrame(wire, session.restoreValue(event)); }
-    if (["thinking_delta", "signature_delta"].includes(event.delta?.type) || /\.reasoning(?:_|\.)/.test(event.type || "")) return wire;
-    const isMessages = event.type === "content_block_delta", delta = isMessages ? event.delta : event;
-    const tool = delta?.type === "input_json_delta" || event.type === "response.function_call_arguments.delta";
-    const text = delta?.type === "text_delta" || ["response.output_text.delta", "response.custom_tool_call_input.delta"].includes(event.type);
-    let before = "";
-    const key = isMessages ? `m:${event.index}` : `r:${event.item_id || event.item?.id || event.output_index}:${event.content_index || 0}`;
-    if (tool || text) {
-      const field = tool ? isMessages ? "partial_json" : "delta" : isMessages ? "text" : "delta";
-      if (typeof delta[field] !== "string") throw fail("stream_invalid");
-      const channel = channels.get(key) || { tail: "", tool, field };
-      const last = channel.tail.charCodeAt(channel.tail.length - 1), first = delta[field].charCodeAt(0);
-      const joinsPair = last >= 0xD800 && last <= 0xDBFF && first >= 0xDC00 && first <= 0xDFFF;
-      const valueBytes = (channel.tailBytes || 0) + Buffer.byteLength(delta[field]) - (joinsPair ? 2 : 0);
-      let value = channel.tail + delta[field];
-      if (valueBytes > 8 * 1024 * 1024) throw fail("stream_limit");
-      if (tool) { channel.tail = value;channel.tailBytes = valueBytes; }
-      else {
-        let cut = value.length;
-        const at = value.lastIndexOf("{{CCDX_");
-        if (at >= 0 && !value.slice(at).includes("}}")) cut = at;
-        else for (let n = 1; n < TOKEN_START.length; n++) if (value.endsWith(TOKEN_START.slice(0, n))) cut = value.length - n;
-        channel.tail = value.slice(cut);delta[field] = session.restoreText(value.slice(0, cut));
-        channel.tailBytes = cut === 0 ? valueBytes : Buffer.byteLength(channel.tail);
-      }
-      if (tool || channel.tail) {
-        // Retain metadata and the unfinished value once, rather than retaining
-        // the full latest delta in both the template and its original frame.
-        channel.template = isMessages ? { ...event, delta: { ...delta, [field]: "" } } : { ...event, [field]: "" };
-        channel.wire = rewritePrivacyFrame(wire, channel.template);
-        const cost = channel.tailBytes + Buffer.byteLength(channel.wire) + Buffer.byteLength(JSON.stringify(channel.template));
-        bufferedBytes += cost - (channel.bytes || 0);channel.bytes = cost;channels.set(key, channel);
-        if (bufferedBytes > maxBufferedBytes || channels.size > maxChannels) throw fail("stream_limit");
-      } else forget(key);
-      if (tool) return "";
-    }
-    const stopKey = event.type === "content_block_stop" ? `m:${event.index}` : /\.done$/.test(event.type || "") ? key : null;
-    const terminal = ["message_stop", "response.completed", "response.incomplete", "error", "response.failed"].includes(event.type);
-    for (const [id, channel] of channels) if (terminal || id === stopKey) {
-      if (channel.tail) {
-        const value = structuredClone(channel.template), target = value.type === "content_block_delta" ? value.delta : value;
-        try { target[channel.field] = channel.tool ? JSON.stringify(session.restoreToolValue(JSON.parse(channel.tail))) : session.restoreText(channel.tail); }
-        catch { throw fail("stream_invalid"); }
-        before += rewritePrivacyFrame(channel.wire, value, true);
-      }
-      forget(id);
-    }
-    event = session.restoreValue(event);
-    return before + rewritePrivacyFrame(wire, event);
-  }
-  return {
-    push(chunk) {
-      try {
-      pending += decoder.write(chunk);bytes += chunk.length;if (bytes > 8 * 1024 * 1024) throw fail("stream_limit");
-      let output = "", match;
-      while ((match = /\r?\n\r?\n/.exec(pending))) { const end = match.index + match[0].length;output += transform(pending.slice(0, end));pending = pending.slice(end);bytes = Buffer.byteLength(pending); }
-      return output;
-      } catch (error) { clear();pending = "";bytes = 0;throw error; }
-    },
-    finish() {
-      try {
-        pending += decoder.end();const output = pending ? transform(pending + "\n\n") : "";pending = "";
-        if (channels.size) throw fail("stream_incomplete");return output;
-      } finally { clear();pending = "";bytes = 0; }
-    },
-  };
-}
-
-export function protectPrivacyResponse(res, session) {
+export function protectPrivacyResponse(res, session, { onFailure, onComplete } = {}) {
   if (!session.count) return;
   const write = res.write.bind(res), end = res.end.bind(res), writeHead = res.writeHead.bind(res), stream = createPrivacyStream(session);
-  let mode = null, parts = [], size = 0;
+  let mode = null, parts = [], size = 0, released = false;
   const detach = () => { res.write = write;res.end = end;res.writeHead = writeHead;parts = [];session.release(); };
+  const failed = error => {
+    const details = error.privacyDiagnostic || { privacy_error: error.code || "ccdx_privacy_response_invalid" };
+    markRequestObservation(details);markResponseTerminal("failed", { origin: "privacy" });
+    try { onFailure?.(details); } catch { /* A diagnostic observer cannot replace the original failure. */ }
+    detach();
+  };
   res.writeHead = (code, ...args) => {
     const headers = args.find(value => value && typeof value === "object" && !Array.isArray(value));
     if (headers) { const copy = { ...headers };for (const key of Object.keys(copy)) if (key.toLowerCase() === "content-length") delete copy[key];args[args.indexOf(headers)] = copy; }
@@ -258,16 +178,28 @@ export function protectPrivacyResponse(res, session) {
   };
   res.write = (value, encoding, callback) => {
     const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value, typeof encoding === "string" ? encoding : undefined);
-    if (mode === "stream") { try { const output = stream.push(bytes);return output ? write(output, typeof encoding === "function" ? encoding : callback) : true; }catch (error) { detach();throw error; } }
+    if (mode === "stream") {
+      let output;try { output = stream.push(bytes); } catch (error) { failed(error);throw error; }
+      return output ? write(output, typeof encoding === "function" ? encoding : callback) : true;
+    }
     size += bytes.length;if (size > 16 * 1024 * 1024) throw privacyFailure("response_limit", "response");parts.push(bytes);return true;
   };
   res.end = (value, encoding, callback) => {
     if (value !== undefined && value !== null) res.write(value, encoding);
     let output;
-    if (mode === "stream") { try { output = stream.finish(); }catch (error) { detach();throw error; } }
+    if (mode === "stream") { try { output = stream.finish(); }catch (error) { failed(error);throw error; } }
     else if (parts.length) { const text = Buffer.concat(parts).toString("utf8");try { output = JSON.stringify(session.restoreValue(JSON.parse(text))); }catch { output = session.restoreText(text); }parts = []; }
     return end(output || undefined, typeof encoding === "function" ? encoding : callback);
   };
-  const release = () => { session.release();parts = []; };
-  res.once("finish", release);res.once("close", release);
+  const release = () => {
+    if (released) return;released = true;
+    session.release();parts = [];
+  };
+  res.once("finish", () => {
+    if (!released && mode === "stream" && stream.completed() && res.statusCode >= 200 && res.statusCode < 300) {
+      try { onComplete?.(); } catch { /* Diagnostic-only callback. */ }
+    }
+    release();
+  });
+  res.once("close", release);
 }

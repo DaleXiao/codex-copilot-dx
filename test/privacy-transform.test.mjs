@@ -14,23 +14,25 @@ test("tool argument buffering scans input linearly rather than rescanning the ac
   const original = Buffer.byteLength;let scanned = 0;
   t.mock.method(Buffer, "byteLength", (value, ...args) => { const size = original(value, ...args);scanned += size;return size; });
   const stream = createPrivacyStream({ restoreValue: value => value, restoreToolValue: value => value }), output = frames.map(bytes => stream.push(bytes)).join("") + stream.finish();
-  const delta = output.split("\n").filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5))).find(event => event.type === "response.function_call_arguments.delta");
-  assert.equal(delta.delta, argument);assert.ok(scanned <= frames.reduce((sum, bytes) => sum + bytes.length, 0) * 5, `scanned ${scanned} bytes for a bounded input`);
+  const delta = output.split("\n").filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5))).filter(event => event.type === "response.function_call_arguments.delta").map(event => event.delta).join("");
+  assert.equal(delta, argument);assert.ok(scanned <= frames.reduce((sum, bytes) => sum + bytes.length, 0) * 5, `scanned ${scanned} bytes for a bounded input`);
 });
 
 test("UTF-8 buffer accounting keeps surrogate pairs split across tool deltas within their true byte budget", () => {
   const argument = JSON.stringify({ text: "😀".repeat(128) }), stream = createPrivacyStream({ restoreValue: value => value, restoreToolValue: value => value }, { maxBufferedBytes: 800 });
-  for (let at = 0; at < argument.length; at++) stream.push(Buffer.from(`data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "u", delta: argument[at] })}\n\n`));
-  const output = stream.push(Buffer.from('data: {"type":"response.function_call_arguments.done","item_id":"u"}\n\n'));
-  const delta = output.split("\n").filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5))).find(event => event.type === "response.function_call_arguments.delta");
-  assert.equal(delta.delta, argument);assert.equal(stream.finish(), "");
+  let output = "";
+  for (let at = 0; at < argument.length; at++) output += stream.push(Buffer.from(`data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "u", delta: argument[at] })}\n\n`));
+  output += stream.push(Buffer.from('data: {"type":"response.function_call_arguments.done","item_id":"u"}\n\n'));
+  const delta = output.split("\n").filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5))).filter(event => event.type === "response.function_call_arguments.delta").map(event => event.delta).join("");
+  assert.equal(delta, argument);assert.equal(stream.finish(), "");
 });
 test("parallel tool buffers obey an aggregate budget and release unfinished values on failure", () => {
   const session = { restoreText: value => value, restoreValue: value => value, restoreToolValue: value => value };
-  const wire = (id, value) => Buffer.from(`data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: id, delta: value })}\n\n`);
+  const wire = (id, value) => Buffer.from(`data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: id, delta: value, opaque: "x".repeat(1100) })}\n\n`);
   const stream = createPrivacyStream(session, { maxBufferedBytes: 4096 });
-  assert.equal(stream.push(wire("one", JSON.stringify({ value: "x".repeat(2500) }))), "");
-  assert.throws(() => stream.push(wire("two", JSON.stringify({ value: "y".repeat(2500) }))), { code: "ccdx_privacy_stream_limit" });
+  const partial = JSON.stringify({ value: "{{CCD" }).slice(0, -2);
+  assert.ok(stream.push(wire("one", partial)).length > 0, "Safe argument prefixes stream immediately");
+  assert.throws(() => stream.push(wire("two", partial)), { code: "ccdx_privacy_stream_limit" });
   assert.equal(stream.finish(), "");
   const channels = createPrivacyStream(session, { maxChannels: 2 });
   channels.push(wire("one", "{}"));channels.push(wire("two", "{}"));

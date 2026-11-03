@@ -342,9 +342,12 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         observeContext(values) {
           if (finished || !values || typeof values !== "object") return;
           if (Number.isSafeInteger(values.cached_input_tokens) && values.cached_input_tokens >= 0) cachedInput = values.cached_input_tokens;
-          for (const key of [...Object.keys(context), "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "privacy_state", "client_tool_errors_received"]) {
+          for (const key of [...Object.keys(context), "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "privacy_state", "privacy_pending_bytes", "privacy_new_bytes", "privacy_wait_budget_ms", "privacy_error", "privacy_event_type", "privacy_channel_type", "privacy_buffered_bytes", "privacy_terminal_seen", "client_tool_errors_received"]) {
             const value = values[key];
             if (key === "privacy_state") { if (["checked", "failed", "cancelled"].includes(value)) context[key] = value;continue; }
+            if (["privacy_error", "privacy_event_type", "privacy_channel_type"].includes(key)) {
+              if (typeof value === "string" && /^[a-z0-9_.]{1,80}$/.test(value)) context[key] = value;continue;
+            }
             if (["capability_revision", "capability_constraints"].includes(key)) {
               if (typeof value === "string" && /^[a-z0-9_,]{1,80}$/.test(value)) context[key] = value;continue;
             }
@@ -355,7 +358,8 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           if (TERMINAL_ORIGINS.has(value)) errorOrigin = value;
         },
         terminal(outcome, { model: terminalModel, origin, reason, stopReason: stopped } = {}) {
-          if (finished || terminalOutcome || !TERMINAL_OUTCOMES.includes(outcome)) return;
+          if (finished || !TERMINAL_OUTCOMES.includes(outcome)
+            || terminalOutcome && !(terminalOutcome === "completed" && outcome === "failed" && origin === "privacy")) return;
           terminalOutcome = outcome;
           terminalAt = now();
           if (terminalModel !== undefined) model = modelLabel(terminalModel);

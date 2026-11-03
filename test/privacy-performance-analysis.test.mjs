@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { comparePerformancePairs, qualifyPerformanceControl, summarizePerformanceSamples } from "../scripts/privacy-performance-analysis.mjs";
+import { comparePerformancePairs, qualifyPerformanceControl, summarizePerformanceSamples, applyPerformanceRepeatability } from "../scripts/privacy-performance-analysis.mjs";
 
 const pairs = (ratio, count = 20) => Array.from({ length: count }, (_, i) => ({ before_ms: 100 + i * 10, after_ms: (100 + i * 10) * ratio }));
 
@@ -38,4 +38,16 @@ test("phase comparisons preserve matching trials despite speed drift", () => {
   const result = summarizePerformanceSamples(samples);
   assert.equal(result.decision, "pass");assert.equal(result.comparisons[0].phases.hot.tolerance, 0);
   assert.ok(result.comparisons[0].phases.cold.confidence_coverage >= .95);
+});
+
+test("repeatability equivalence is limited to the approved phases and measured A/A upper bound", () => {
+  const phase = (low, high) => ({ interval: { low, high }, decision: "inconclusive" });
+  const candidate = { decision: "inconclusive", comparisons: [{ workload: "one", phases: { cold: phase(.99, 1.11), append: phase(.99, 1.02), hot: phase(.98, 1.03) } }] };
+  const control = { decision: "qualified", comparisons: [{ workload: "one", phases: { cold: phase(.98, 1.04), append: phase(.98, 1.025), hot: phase(.98, 1.02) } }] };
+  const result = applyPerformanceRepeatability(candidate, control);
+  assert.equal(result.comparisons[0].phases.cold.decision, "inconclusive");
+  assert.equal(result.comparisons[0].phases.append.decision, "equivalent");
+  assert.equal(result.comparisons[0].phases.hot.decision, "inconclusive");
+  assert.equal(result.decision, "inconclusive");
+  assert.throws(() => applyPerformanceRepeatability(candidate, { ...control, decision: "unqualified" }));
 });

@@ -1,7 +1,7 @@
 // Paired, distribution-free median intervals. No runtime dependency or
 // historical-receipt-specific threshold is used by this development tool.
 export const PRIVACY_PERFORMANCE_POLICY = Object.freeze({
-  schema: 1, confidence: 0.95, pairs: 20,
+  schema: 2, confidence: 0.95, pairs: 20, hot_repetitions: 1000, repeatability_equivalence: true,
   tolerances: Object.freeze({ cold: 0.10, startup_cold: 0.10, append: 0, hot: 0 }),
 });
 
@@ -79,4 +79,24 @@ export function summarizePerformanceSamples(samples, { control = false } = {}) {
     decision: control ? comparisons.every(row => row.qualified) ? "qualified" : "unqualified"
       : comparisons.some(row => Object.values(row.phases).some(phase => phase.decision === "regression")) ? "regression"
         : comparisons.every(row => Object.values(row.phases).every(phase => phase.decision === "pass")) ? "pass" : "inconclusive" };
+}
+
+export function applyPerformanceRepeatability(result, control) {
+  if (control.decision !== "qualified") throw Error("Performance repeatability requires qualified A/A evidence");
+  const comparisons = result.comparisons.map(row => {
+    const reference = control.comparisons.find(value => value.workload === row.workload);
+    if (!reference) throw Error("Missing matching A/A workload");
+    const phases = Object.fromEntries(Object.entries(row.phases).map(([phase, value]) => {
+      if (!["append", "hot"].includes(phase) || value.decision === "pass") return [phase, value];
+      const band = reference.phases[phase].interval;
+      const qualified = band.high !== null && band.low <= 1 && band.high >= 1 && band.high <= 1.10;
+      const equivalent = qualified && value.interval.high !== null && value.interval.high <= band.high;
+      return [phase, { ...value, repeatability_upper: band.high, repeatability_qualified: qualified,
+        decision: equivalent ? "equivalent" : value.decision }];
+    }));
+    return { ...row, phases };
+  });
+  return { ...result, comparisons,
+    decision: comparisons.every(row => Object.values(row.phases).every(value => ["pass", "equivalent"].includes(value.decision))) ? "pass"
+      : comparisons.some(row => Object.values(row.phases).some(value => value.decision === "regression")) ? "regression" : "inconclusive" };
 }

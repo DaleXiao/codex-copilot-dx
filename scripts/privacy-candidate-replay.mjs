@@ -16,7 +16,7 @@ const [component, weights, output, baselineComponent] = process.argv.slice(2);
 assert.ok([component,weights,output,baselineComponent].every(value=>value&&path.isAbsolute(value)));
 const options = new Map();for(let at=6;at<process.argv.length;at+=2)options.set(process.argv[at],process.argv[at+1]);
 const control=options.get("--mode")==="aa",timingMode=options.get("--timing")||"gate",trials=Number(options.get("--pairs")||PRIVACY_PERFORMANCE_POLICY.pairs);
-const machine=options.get("--machine")||"hosted-ci",hotRepetitions=200;
+const machine=options.get("--machine")||"hosted-ci",hotRepetitions=PRIVACY_PERFORMANCE_POLICY.hot_repetitions;
 assert.ok(["aa","compare"].includes(options.get("--mode")||"compare")&&["gate","report"].includes(timingMode));
 assert.ok(Number.isSafeInteger(trials)&&trials>=5&&trials<=40);
 const root=fs.mkdtempSync(path.join(os.tmpdir(),"ccdx-candidate-native-")),repository=fileURLToPath(new URL("../",import.meta.url));

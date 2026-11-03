@@ -9,14 +9,14 @@ import { PassThrough, Writable } from "node:stream";
 import { createPrivacyModel, PRIVACY_COMPONENT_RELEASE, PRIVACY_COMPONENT_ABI, PRIVACY_MODEL_REVISION } from "../src/privacy-model.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
-async function fixture(t, { legacy = false, offline = false, release = legacy ? "1.3.6" : PRIVACY_COMPONENT_RELEASE, holdDownload = false } = {}) {
+async function fixture(t, { legacy = false, offline = false, release = legacy ? "1.3.6" : PRIVACY_COMPONENT_RELEASE, holdDownload = false, windowSupport = false } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-model-unit-"));
   const weights = Buffer.from("synthetic weights"), runner = Buffer.from("synthetic runner"), requests = [], jobs = [];
   let child, spawned, killed = 0, spawns = 0, releaseDownload;
   const gate = holdDownload ? new Promise(resolve => { releaseDownload = resolve; }) : Promise.resolve();
   const model = createPrivacyModel({ home, env: {}, modelFiles: [{ name: "model", bytes: weights.length, sha256: sha(weights) }],
     fetchImpl: async url => { requests.push(url);if (offline) throw Error("offline");await gate;return new Response(url.endsWith("SHA256SUMS") ? `${sha(runner)}  ${model.paths.name}\n` : runner); },
-    spawnImpl: file => { spawned = file;spawns++;child = new EventEmitter();child.stdout = new PassThrough();child.stdin = new Writable({ write(bytes, _encoding, done) { jobs.push(JSON.parse(bytes));done(); } });child.kill = () => { killed++; };setImmediate(() => child.stdout.write('{"ready":true,"backend":"CPU"}\n'));return child; },
+    spawnImpl: file => { spawned = file;spawns++;child = new EventEmitter();child.stdout = new PassThrough();child.stdin = new Writable({ write(bytes, _encoding, done) { jobs.push(JSON.parse(bytes));done(); } });child.kill = () => { killed++; };setImmediate(() => child.stdout.write(JSON.stringify({ready:true,backend:"CPU",window_cache:windowSupport,cancel_between_windows:windowSupport})+"\n"));return child; },
   });
   t.after(async () => { model.close();await fs.rm(home, { recursive: true, force: true }); });
   await fs.mkdir(model.paths.model, { recursive: true });await fs.writeFile(path.join(model.paths.model, "model"), weights);
@@ -24,13 +24,33 @@ async function fixture(t, { legacy = false, offline = false, release = legacy ? 
   await fs.mkdir(path.dirname(file), { recursive: true });await fs.writeFile(file, runner);await fs.writeFile(receipt, JSON.stringify({ release, sha256: sha(runner),
     ...(["1.3.6", "1.3.9"].includes(release) ? {} : { abi: PRIVACY_COMPONENT_ABI, model_revision: PRIVACY_MODEL_REVISION }) }));
   return { model, requests, jobs, receipt, releaseDownload, spawned: () => spawned, spawns: () => spawns, killed: () => killed,
-    reply: (id, found = [[]]) => child.stdout.write(JSON.stringify({ id, found }) + "\n") };
+    reply: (id, found = [[]], extra = {}) => child.stdout.write(JSON.stringify({ id, found, ...extra }) + "\n") };
 }
 
 test("versioned compatible components survive an unavailable upgrade without pretending to be current", async t => {
   const f = await fixture(t, { release: "1.3.9", offline: true });assert.equal(await f.model.installed({ current: true }), false);
   await f.model.load();await f.model.download({ background: true }).catch(() => {});
   assert.equal(f.model.snapshot().state, "ready");assert.equal(f.model.snapshot().component_release, "1.3.9");
+});
+
+test("window cancellation keeps its native slot until acknowledgement and reports work without values", async t => {
+  const f = await fixture(t, { windowSupport: true });await f.model.load();
+  const controller = new AbortController(), work = [];
+  const pending = f.model.find(["synthetic input"], { workSignal: controller.signal, onWindowWork: value => work.push(value) });
+  await new Promise(setImmediate);let settled = false;pending.finally(() => { settled = true; }).catch(() => {});
+  controller.abort(Error("waiter left"));await new Promise(setImmediate);
+  assert.equal(settled, false);assert.equal(f.model.snapshot().pending_checks, 1);
+  assert.ok(f.jobs.some(job => job.cancel_id === f.jobs[0].id));
+  f.reply(f.jobs[0].id, null, { complete: false, error: "cancelled", window_work: { evaluated: 1, hits: 0, shared: 0, total: 4 }, window_cache_entries: 1, window_cache_bytes: 256 });
+  await assert.rejects(pending, { code: "ccdx_privacy_cancelled" });
+  assert.equal(f.model.snapshot().pending_checks, 0);assert.deepEqual(work, [{ evaluated: 1, hits: 0, shared: 0, total: 4 }]);
+});
+
+test("a work lease does not send unsupported cancellation commands to legacy components", async t => {
+  const f = await fixture(t);await f.model.load();const controller = new AbortController();
+  const pending = f.model.find(["synthetic input"], { workSignal: controller.signal });await new Promise(setImmediate);
+  controller.abort(Error("waiter left"));await new Promise(setImmediate);
+  assert.equal(f.jobs.length, 1);f.reply(f.jobs[0].id);assert.deepEqual(await pending, [[]]);
 });
 
 test("modern component compatibility is bound to the protocol ABI and model revision", async t => {

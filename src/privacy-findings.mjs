@@ -14,22 +14,3 @@ export function validatePrivacyFindings(texts, found) {
     return items;
   });
 }
-
-export function mergePrivacyFindings(spans) {
-  const labels = new Map(), result = [];
-  for (const span of spans) {
-    if (span.score < 0.8) { result.push({ ...span });continue; }
-    if (!labels.has(span.label)) labels.set(span.label, []);
-    labels.get(span.label).push(span);
-  }
-  for (const group of labels.values()) {
-    group.sort((a, b) => a.start - b.start || a.end - b.end);
-    let previous;
-    for (const span of group) {
-      if (previous && span.start <= previous.end) {
-        previous.end = Math.max(previous.end, span.end);previous.score = Math.max(previous.score, span.score);
-      } else { previous = { ...span };result.push(previous); }
-    }
-  }
-  return result.sort((a, b) => a.start - b.start || b.end - a.end);
-}

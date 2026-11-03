@@ -39,19 +39,20 @@ try{
  let model={load:async()=>{},find:async texts=>texts.map(()=>[]),snapshot:()=>({state:'ready'}),close(){},busy:()=>false};
  if(component){
   assert.ok(mode==='on'&&path.isAbsolute(component)&&path.isAbsolute(weights));
-  const release=opts.get('--component-release')||PRIVACY_COMPONENT_RELEASE;assert.ok([PRIVACY_COMPONENT_RELEASE,'1.3.6','1.3.9'].includes(release));
+  const release=opts.get('--component-release')||PRIVACY_COMPONENT_RELEASE;assert.ok([PRIVACY_COMPONENT_RELEASE,'1.3.6','1.3.9','1.3.10'].includes(release));
   detector=createPrivacyModel({home:root,env,fetchImpl:async()=>{throw Error('Replay forbids background downloads');}});fs.mkdirSync(detector.paths.model,{recursive:true});fs.mkdirSync(path.dirname(detector.paths.runner),{recursive:true});
   for(const file of PRIVACY_MODEL_FILES)fs.copyFileSync(path.join(weights,file.name),path.join(detector.paths.model,file.name));
   const runner=fs.readFileSync(path.join(component,detector.paths.name)),target=release==='1.3.6'?detector.paths.legacyRunner:path.join(detector.paths.components,release,detector.paths.name);fs.mkdirSync(path.dirname(target),{recursive:true});
   fs.writeFileSync(target,runner,{mode:0o700});fs.writeFileSync(target+'.json',JSON.stringify({release,abi:PRIVACY_COMPONENT_ABI,model_revision:PRIVACY_MODEL_REVISION,sha256:createHash('sha256').update(runner).digest('hex')}));
   await detector.load();model={...detector,find:async (texts,options={})=>{
     checks++;const sizes=texts.map(text=>Buffer.byteLength(text)),row={texts:texts.length,bytes:sizes.reduce((a,b)=>a+b,0),max_text_bytes:Math.max(...sizes),hashes:texts.map(text=>createHash('sha256').update(text).digest('hex')),submitted:false},start=performance.now();
-    if(checkWork.length<64)checkWork.push(row);try{return await detector.find(texts,{...options,onSubmitted(){row.submitted=true;options.onSubmitted?.();}});}finally{row.elapsed_ms=Math.round(performance.now()-start);}
+    if(checkWork.length<64)checkWork.push(row);try{return await detector.find(texts,{...options,onSubmitted(){row.submitted=true;options.onSubmitted?.();},onWindowWork(work){row.window_work=work;options.onWindowWork?.(work);}});}finally{row.elapsed_ms=Math.round(performance.now()-start);}
   }};
  }
  const privacyOptions={home:root,env,model};privacy=createLocalPrivacy(privacyOptions);
  if(detector){
   privacyOptions.checkTimeoutMs=1;
+  const initialCache=detector.snapshot().window_cache_entries;
   const sample={input:'Synthetic cold history with ordinary text. '.repeat(512)};
   await assert.rejects(privacy.prepare(sample,{protocol:'responses'}),{code:'ccdx_privacy_check_timeout'});
   const pending=detector.snapshot().pending_checks;assert.ok(pending>0,'the real native job must survive its waiter');
@@ -59,9 +60,11 @@ try{
   while(privacy.busy()&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));
   assert.equal(privacy.busy(),false);const completed=new Set(checkWork.filter(row=>row.submitted).flatMap(row=>row.hashes)),before=checkWork.length;privacyOptions.checkTimeoutMs=15000;
   assert.equal(await privacy.prepare(sample,{protocol:'responses'}),sample);
-  const newPieces=checkWork.slice(before).filter(row=>row.submitted).flatMap(row=>row.hashes);assert.ok(newPieces.every(hash=>!completed.has(hash)),'retry repeated a completed native piece');
+  const newPieces=checkWork.slice(before).filter(row=>row.submitted).flatMap(row=>row.hashes);
+  if(detector.snapshot().window_cache){const evaluated=checkWork.reduce((sum,row)=>sum+(row.window_work?.evaluated||0),0);assert.equal(detector.snapshot().window_cache_entries-initialCache,evaluated,'a native window was evaluated twice instead of reused');assert.ok(checkWork.slice(before).some(row=>(row.window_work?.hits||0)+(row.window_work?.shared||0)>0),'retry did not reuse completed windows');}
+  else assert.ok(newPieces.every(hash=>!completed.has(hash)),'retry repeated completed legacy work');
   const hot=checks;assert.equal(await privacy.prepare(sample,{protocol:'responses'}),sample);assert.equal(checks,hot,'exact hot history repeated native work');
-  recovery={timed_out:true,physical_jobs_after_timeout:pending,repeated_pieces:0,remaining_pieces:newPieces.length,hot_repeated_checks:checks-hot};
+  recovery={timed_out:true,physical_jobs_after_timeout:pending,repeated_windows:0,resumed_batches:checkWork.length-before,hot_repeated_checks:checks-hot};
  }
  server=kind==='codex'?await startAdapter(0,'127.0.0.1',{privacy,env,dashboardOptions:{home:root,env},modelRegistry:{models:{data:[{id:'gpt-6.1-sol',supported_endpoints:['/responses'],capabilities:{supports:{tool_calls:true}}}]}},codexClient:{getCachedModelEndpoints:()=>['/responses']},responsesFn:async body=>response(body,'responses')}):await startClaudeGateway({port:0,apiKey:key,privacy,privacyClient:'claude_code',env,record(){},provider:{id:'m365',models:()=>[{id:'claude-opus-5.5'}],client:{messages:async body=>response(body,'messages')}}});
  const port=kind==='codex'?server.address().port:server.port;

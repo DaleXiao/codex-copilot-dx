@@ -6,6 +6,7 @@
 package guard
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -37,7 +38,8 @@ type Model struct {
 	MLErr error
 	// mlFail is why CoreML's last read failed and bert.go read the window
 	// instead; nil once one doesn't.
-	mlFail atomic.Pointer[string]
+	mlFail  atomic.Pointer[string]
+	windows windowCache
 }
 
 // Backend is the primary backend, as Settings › Privacy names it;
@@ -168,80 +170,145 @@ func give(n int) {
 // more as are free, up to its share of them, so a lone short text is read
 // on every core and several texts at once a core each.
 func (m *Model) Find(text string) []Span {
+	spans, _, _ := m.FindContext(context.Background(), text, true)
+	return spans
+}
+
+// FindContext preserves tokenization, natural window boundaries and decoding.
+// Cancellation leaves computed windows cached and stops scheduling new ones.
+func (m *Model) FindContext(ctx context.Context, text string, reuse bool) ([]Span, WindowWork, bool) {
+	if ctx.Err() != nil {
+		return nil, WindowWork{}, false
+	}
 	toks := m.tok.encode(text)
 	n := len(toks)
 	if n == 0 {
-		return nil
+		return nil, WindowWork{}, true
 	}
 	var starts []int
-	for start := 0; ; start = start + window - overlap {
+	for start := 0; ; start += window - overlap {
 		starts = append(starts, start)
 		if start+window >= n {
 			break
 		}
 	}
-	lgs := make([][]float32, len(starts))
-	ids := func(w int) []int {
-		start := starts[w]
-		end := min(start+window, n)
+	results := make([]*windowResult, len(starts))
+	var evaluated, hits, shared atomic.Int32
+	var failed atomic.Bool
+	read := func(w, procs int) {
+		defer func() {
+			if recover() != nil {
+				failed.Store(true)
+				results[w] = nil
+			}
+		}()
+		if ctx.Err() != nil {
+			return
+		}
+		start, end := starts[w], min(starts[w]+window, n)
 		ids := make([]int, 0, end-start+2)
 		ids = append(ids, 0)
 		for _, t := range toks[start:end] {
 			ids = append(ids, t.id)
 		}
-		return append(ids, 2)
+		ids = append(ids, 2)
+		compute := func() *windowResult {
+			var lg []float32
+			if m.ml != nil {
+				lg = m.logits(ids, 0)
+			} else {
+				held := take(procs)
+				func() { defer give(held); lg = m.net.logits(ids, held) }()
+			}
+			result := &windowResult{}
+			k := len(labels)
+			for i := 0; i < end-start; i++ {
+				row := lg[(i+1)*k : (i+2)*k]
+				best, mx := 0, row[0]
+				for c, v := range row {
+					if v > mx {
+						best, mx = c, v
+					}
+				}
+				if best == 0 {
+					continue
+				}
+				var sum float64
+				for _, v := range row {
+					sum += math.Exp(float64(v - mx))
+				}
+				result.scores = append(result.scores, tokenScore{uint16(i), uint8(best), 1 / sum})
+			}
+			return result
+		}
+		if reuse {
+			var kind string
+			results[w], kind = m.windows.read(ctx, ids, compute)
+			switch kind {
+			case "evaluated":
+				evaluated.Add(1)
+			case "hit":
+				hits.Add(1)
+			case "shared":
+				shared.Add(1)
+			}
+		} else {
+			results[w] = compute()
+			evaluated.Add(1)
+		}
+		if results[w] == nil && ctx.Err() == nil {
+			failed.Store(true)
+		}
 	}
 	if m.ml != nil {
 		for w := range starts {
-			lgs[w] = m.logits(ids(w), 0)
+			if ctx.Err() != nil || failed.Load() {
+				break
+			}
+			read(w, 0)
 		}
 	} else {
-		at := min(Cores(), len(starts))
+		workers := min(Cores(), len(starts))
 		var next atomic.Int32
 		var wg sync.WaitGroup
-		for range at {
+		for range workers {
 			wg.Go(func() {
-				for w := int(next.Add(1)) - 1; w < len(starts); w = int(next.Add(1)) - 1 {
-					procs := take(max(1, Cores()/at))
-					lgs[w] = m.net.logits(ids(w), procs)
-					give(procs)
+				for w := int(next.Add(1)) - 1; w < len(starts) && ctx.Err() == nil && !failed.Load(); w = int(next.Add(1)) - 1 {
+					read(w, max(1, Cores()/workers))
 				}
 			})
 		}
 		wg.Wait()
 	}
-	lab := make([]int, n)
-	prob := make([]float64, n)
-	margin := make([]int, n)
+	work := WindowWork{int(evaluated.Load()), int(hits.Load()), int(shared.Load()), len(starts)}
+	for _, result := range results {
+		if result == nil {
+			return nil, work, false
+		}
+	}
+	lab, prob, margin := make([]int, n), make([]float64, n), make([]int, n)
 	for i := range margin {
 		margin[i] = -1
 	}
-	k := len(labels)
 	for w, start := range starts {
 		end := min(start+window, n)
-		lg := lgs[w]
+		result, cursor := results[w], 0
 		for i := 0; i < end-start; i++ {
-			j := start + i
-			mg := min(i, end-start-1-i)
-			if mg <= margin[j] {
-				continue
+			best, score := 0, float64(0)
+			if cursor < len(result.scores) && int(result.scores[cursor].at) == i {
+				best, score = int(result.scores[cursor].label), result.scores[cursor].prob
+				cursor++
 			}
-			row := lg[(i+1)*k : (i+2)*k]
-			best, mx := 0, row[0]
-			for c, v := range row {
-				if v > mx {
-					best, mx = c, v
-				}
+			j, mg := start+i, min(i, end-start-1-i)
+			if mg > margin[j] {
+				margin[j], lab[j], prob[j] = mg, best, score
 			}
-			var sum float64
-			for _, v := range row {
-				sum += math.Exp(float64(v - mx))
-			}
-			margin[j], lab[j], prob[j] = mg, best, 1/sum
 		}
 	}
-	return decode(toks, lab, prob)
+	return decode(toks, lab, prob), work, true
 }
+
+func (m *Model) WindowCacheUsage() (entries, bytes int) { return m.windows.usage() }
 
 // decode reads the tokens' BIO tags (lab, by index into labels) into
 // spans: a B tag, or an I tag of another kind than the span before it,

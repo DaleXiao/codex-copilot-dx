@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { createNpmReleaseFetch, releaseBytes, releaseChecksum, RELEASE_BASE, stableVersion } from "./release-install.mjs";
 
 export const PRIVACY_MODEL_REVISION = "7216b6a3b897ef903d4b1ba367ae6fb95b0fa5e4";
-export const PRIVACY_COMPONENT_RELEASE = "1.3.10";
+export const PRIVACY_COMPONENT_RELEASE = "1.3.12";
 export const PRIVACY_COMPONENT_ABI = 1;
 export const PRIVACY_MODEL_FILES = Object.freeze([
   { name: "model_int8.onnx", bytes: 330781, sha256: "0a070d3113615e33ba3b84d6bd486f663a377c04c4b056e7381732179f51832a" },
@@ -153,8 +153,19 @@ export function createPrivacyModel(options = {}) {
           const part = line.slice(0, end);line = line.slice(end + 1);
           try {
             const value = JSON.parse(part);
-            if (value.ready === true) { clearTimeout(timer);set({ state: "ready", backend: value.backend === "CoreML" ? "CoreML" : "CPU", device: ["CPU", "GPU", "Neural Engine"].includes(value.device) ? value.device : null });resolve();if (componentRelease !== PRIVACY_COMPONENT_RELEASE && !upgradeAttempted) { upgradeAttempted = true;void download({ background: true }).catch(() => {}); } }
-            else if (jobs.has(value.id)) { const job = jobs.get(value.id);jobs.delete(value.id);clearTimeout(job.timer);job.resolve(value.found);changed();if (stopped && !jobs.size) stop(); }
+            if (value.ready === true) { clearTimeout(timer);set({ state: "ready", backend: value.backend === "CoreML" ? "CoreML" : "CPU", device: ["CPU", "GPU", "Neural Engine"].includes(value.device) ? value.device : null, window_cache: value.window_cache === true, cancel_between_windows: value.cancel_between_windows === true, window_cache_entries: Number.isSafeInteger(value.window_cache_entries) ? value.window_cache_entries : null, window_cache_bytes: Number.isSafeInteger(value.window_cache_bytes) ? value.window_cache_bytes : null });resolve();if (componentRelease !== PRIVACY_COMPONENT_RELEASE && !upgradeAttempted) { upgradeAttempted = true;void download({ background: true }).catch(() => {}); } }
+            else if (jobs.has(value.id)) {
+              const job = jobs.get(value.id);jobs.delete(value.id);clearTimeout(job.timer);
+              if (value.window_work && typeof value.window_work === "object") {
+                const work = Object.fromEntries(["evaluated", "hits", "shared", "total"].filter(key => Number.isSafeInteger(value.window_work[key]) && value.window_work[key] >= 0).map(key => [key, value.window_work[key]]));
+                set({ last_window_work: work, window_cache_entries: Number.isSafeInteger(value.window_cache_entries) ? value.window_cache_entries : null,
+                  window_cache_bytes: Number.isSafeInteger(value.window_cache_bytes) ? value.window_cache_bytes : null });
+                job.onWindowWork?.(work);
+              }
+              if (value.error || value.complete === false) job.reject(privacyFailure(value.error === "cancelled" ? "cancelled" : "engine_invalid"));
+              else job.resolve(value.found);
+              changed();if (stopped && !jobs.size) stop();
+            }
           } catch { fail(); }
         }
       });
@@ -164,11 +175,11 @@ export function createPrivacyModel(options = {}) {
     })().catch(error => { ready = null;throw error; });
     return ready;
   }
-  async function find(texts, { signal, isNeeded, onSubmitted } = {}) {
+  async function find(texts, { signal, isNeeded, onSubmitted, workSignal, cacheWindows, onWindowWork } = {}) {
     if (signal?.aborted) throw signal.reason;await load();if (signal?.aborted) throw signal.reason;
     if (isNeeded && !isNeeded()) throw privacyFailure("cancelled");
     if (jobs.size >= 8) throw privacyFailure("busy");
-    const id = ++serial, input = JSON.stringify({ id, texts }) + "\n";
+    const id = ++serial, input = JSON.stringify({ id, texts, ...(cacheWindows === false ? { cache_windows: false } : {}) }) + "\n";
     if (Buffer.byteLength(input) > 8 * 1024 * 1024) throw privacyFailure("request_too_large");
     if ([...jobs.values()].reduce((n, job) => n + job.bytes, Buffer.byteLength(input)) > 16 * 1024 * 1024) throw privacyFailure("busy");
     return new Promise((resolve, reject) => {
@@ -176,11 +187,18 @@ export function createPrivacyModel(options = {}) {
       // and byte budget until its actual reply or deadline, never admit an
       // unbounded queue by reporting cancelled native work as already idle.
       const cancelled = () => { if (jobs.has(id)) { jobs.get(id).cancelled = true;signal?.removeEventListener("abort", cancelled);reject(signal?.reason || privacyFailure("cancelled"));changed(); } };
-      const finish = fn => value => { signal?.removeEventListener("abort", cancelled);fn(value); };
+      const cancelWork = () => {
+        const job = jobs.get(id);
+        if (!job || !state.cancel_between_windows || job.cancelRequested) return;
+        job.cancelRequested = true;changed();
+        child.stdin.write(JSON.stringify({ cancel_id: id }) + "\n", error => { if (error) fail(); });
+      };
+      const finish = fn => value => { signal?.removeEventListener("abort", cancelled);workSignal?.removeEventListener("abort", cancelWork);fn(value); };
       const timer = setTimeout(() => { reject(privacyFailure("check_timeout"));fail(); }, 300000);
-      jobs.set(id, { resolve: finish(resolve), reject: finish(reject), timer, bytes: Buffer.byteLength(input) });signal?.addEventListener("abort", cancelled, { once: true });changed();
+      jobs.set(id, { resolve: finish(resolve), reject: finish(reject), timer, bytes: Buffer.byteLength(input), onWindowWork });signal?.addEventListener("abort", cancelled, { once: true });changed();
       try { onSubmitted?.(); } catch { /* Submission diagnostics do not own the native job. */ }
       child.stdin.write(input, error => { if (error) fail(); });
+      workSignal?.addEventListener("abort", cancelWork, { once: true });if (workSignal?.aborted) cancelWork();
     });
   }
   function stop() { stopped = true;downloadAbort?.abort();if (!jobs.size) { child?.kill();child = null;ready = null;line = "";set({ state: "installed", error: null }); } }
@@ -193,7 +211,7 @@ export function createPrivacyModel(options = {}) {
         state = { ...state, state: cached ? "installed" : "not_downloaded" };
       } catch { state = { ...state, state: "not_downloaded" }; }
     }
-    return { ...state, component_release: componentRelease, target_component_release: PRIVACY_COMPONENT_RELEASE, pending_checks: jobs.size, cancelled_checks: [...jobs.values()].filter(job => job.cancelled).length };
+    return { ...state, component_release: componentRelease, target_component_release: PRIVACY_COMPONENT_RELEASE, pending_checks: jobs.size, cancelled_checks: [...jobs.values()].filter(job => job.cancelled || job.cancelRequested).length };
   }
   return { paths, snapshot, installed, download, load, find, stop,
     async remove() { stop();await install?.catch(() => {});if (jobs.size) throw privacyFailure("busy");await fs.rm(paths.root, { recursive: true, force: true });set({ state: "not_downloaded", downloaded_bytes: 0 }); },

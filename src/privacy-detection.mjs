@@ -1,44 +1,21 @@
 import { createHash } from "node:crypto";
 import { privacyFailure } from "./privacy-model.mjs";
-import { validatePrivacyFindings, mergePrivacyFindings } from "./privacy-findings.mjs";
+import { validatePrivacyFindings } from "./privacy-findings.mjs";
 
-const hash = text => createHash("sha256").update(text).digest("hex");
-export function privacyPieces(text, { pieceBytes = 4096, overlapBytes = 1024 } = {}) {
-  if (!Number.isSafeInteger(pieceBytes) || pieceBytes < 16 || !Number.isSafeInteger(overlapBytes)
-    || overlapBytes < 0 || overlapBytes >= pieceBytes / 2) throw new Error("Invalid privacy piece budget");
-  const bytes = Buffer.from(text), result = [];
-  if (bytes.length <= pieceBytes) return [{ text, offset: 0 }];
-  for (let start = 0; start < bytes.length;) {
-    let end = Math.min(start + pieceBytes, bytes.length);
-    if (end < bytes.length) {
-      while ((bytes[end] & 0xC0) === 0x80) end--;
-      const boundary = Math.max(bytes.lastIndexOf(10, end - 1), bytes.lastIndexOf(32, end - 1));
-      if (boundary >= start + pieceBytes / 2) end = boundary + 1;
-    }
-    result.push({ text: bytes.subarray(start, end).toString("utf8"), offset: start });
-    if (end === bytes.length) break;
-    start = end - overlapBytes;
-    while ((bytes[start] & 0xC0) === 0x80) start++;
-  }
-  return result;
-}
-
-// The cache and in-flight table own the same text pieces. A caller's abort
-// removes only its waiter; a submitted native batch completes and stays reusable.
+// Whole-text memoization remains compatible with older components. The new
+// component reuses its natural token windows, without extra text overlaps.
 export function createPrivacyDetection(model, {
-  batchBytes = 16 * 1024, pieceBytes = 4096, overlapBytes = 1024,
-  maxCacheBytes = 4 * 1024 * 1024, maxCacheEntries = 5000,
+  batchBytes = 16 * 1024, maxCacheBytes = 4 * 1024 * 1024, maxCacheEntries = 5000,
   maxPendingBytes = 16 * 1024 * 1024, maxPendingEntries = 8192, maxConcurrent = 2,
 } = {}) {
   if (!Number.isSafeInteger(batchBytes) || batchBytes < 1) throw new Error("Invalid privacy batch budget");
   if (!Number.isSafeInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 8) throw new Error("Invalid privacy concurrency budget");
   const cache = new Map(), flights = new Map(), turns = [];
   let cacheBytes = 0, pendingBytes = 0, running = 0, closed = false;
-  const stats = { submitted_batches: 0, submitted_bytes: 0, cache_hits: 0, shared_hits: 0, skipped_pieces: 0 };
+  const stats = { submitted_batches: 0, submitted_bytes: 0, cache_hits: 0, shared_hits: 0, skipped_texts: 0, window_evaluations: 0, window_hits: 0, window_shared: 0 };
   const copy = value => value.map(span => ({ ...span }));
   function get(key) {
-    const entry = cache.get(key);
-    if (!entry) return undefined;
+    const entry = cache.get(key);if (!entry) return undefined;
     cache.delete(key);cache.set(key, entry);stats.cache_hits++;return copy(entry.found);
   }
   function put(key, found) {
@@ -53,92 +30,84 @@ export function createPrivacyDetection(model, {
   }
   function finish(entry, found, error) {
     if (entry.done) return;
-    entry.done = true;entry.text = null;
+    entry.done = true;entry.text = null;entry.batch = null;
     if (flights.get(entry.key) === entry) { flights.delete(entry.key);pendingBytes -= entry.bytes; }
     if (error) entry.reject(error);else entry.resolve(found);
   }
   async function pump() {
     if (running >= maxConcurrent || closed || !turns.length) return;
-    running++;const turn = turns.shift();let batch = [], bytes = 0;
+    running++;const turn = turns.shift(), batch = [];let bytes = 0;
+    const lease = { controller: new AbortController(), entries: batch };
     try {
       while (turn.at < turn.entries.length && batch.length < 64) {
         const entry = turn.entries[turn.at];
         if (entry.done) { turn.at++;continue; }
-        if (!entry.waiters) { stats.skipped_pieces++;finish(entry, null, privacyFailure("cancelled"));turn.at++;continue; }
+        if (!entry.waiters) { stats.skipped_texts++;finish(entry, null, privacyFailure("cancelled"));turn.at++;continue; }
         if (batch.length && bytes + entry.bytes > batchBytes) break;
-        batch.push(entry);bytes += entry.bytes;entry.submitted = true;turn.at++;
+        batch.push(entry);bytes += entry.bytes;entry.submitted = true;entry.batch = lease;turn.at++;
       }
       if (batch.length) {
-        const input = batch.map(entry => entry.text);
         let submitted = false;
-        const onSubmitted = () => {
-          if (!submitted) { submitted = true;stats.submitted_batches++;stats.submitted_bytes += bytes; }
-        };
-        const result = await model.find(input, { isNeeded: () => batch.some(entry => entry.waiters > 0), onSubmitted });
-        onSubmitted(); // In-process detectors have no separate native submission seam.
-        const found = validatePrivacyFindings(input, result);
+        const onSubmitted = () => { if (!submitted) { submitted = true;stats.submitted_batches++;stats.submitted_bytes += bytes; } };
+        const input = batch.map(entry => entry.text), result = await model.find(input, {
+          isNeeded: () => batch.some(entry => entry.waiters > 0), workSignal: lease.controller.signal, onSubmitted,
+          onWindowWork(work) { stats.window_evaluations += work.evaluated || 0;stats.window_hits += work.hits || 0;stats.window_shared += work.shared || 0; },
+        });
+        onSubmitted();const found = validatePrivacyFindings(input, result);
         for (let index = 0; index < batch.length; index++) { put(batch[index].key, found[index]);finish(batch[index], found[index]); }
       }
     } catch (error) {
-      for (const entry of batch.length ? batch : turn.entries) finish(entry, null, error);
+      for (const entry of batch.length ? batch : turn.entries) {
+        // A new waiter that joined a canceling native job resumes only after
+        // physical acknowledgement; completed native windows remain reusable.
+        if (!closed && error.code === "ccdx_privacy_cancelled" && entry.waiters > 0) {
+          entry.submitted = false;entry.batch = null;turn.entries.push(entry);
+        } else finish(entry, null, error);
+      }
     } finally {
       running--;
       if (!closed && turn.at < turn.entries.length) turns.push(turn);
-      // Give waiter continuations and new short requests a turn before another
-      // native batch. Completed pieces are committed before yielding.
       if (!closed && turns.length) setImmediate(() => { for (let worker = running; worker < maxConcurrent && turns.length; worker++) void pump(); });
     }
   }
   async function find(texts, { signal, onPlan } = {}) {
-    if (closed) throw privacyFailure("engine_unavailable");
-    if (signal?.aborted) throw signal.reason;
-    const staged = new Map(), waiters = new Set(), plans = [];let newBytes = 0, waitingBytes = 0;
+    if (closed) throw privacyFailure("engine_unavailable");if (signal?.aborted) throw signal.reason;
+    const staged = new Map(), waiters = new Set(), results = [];let newBytes = 0, waitingBytes = 0;
     for (const text of texts) {
-      const fullKey = "full:" + hash(text), full = get(fullKey);
-      if (full !== undefined) { plans.push({ full });continue; }
-      const pieces = [], units = privacyPieces(text, { pieceBytes, overlapBytes });
-      for (const piece of units) {
-        const key = units.length === 1 ? fullKey : "piece:" + hash(piece.text), known = units.length === 1 ? undefined : get(key);
-        if (known !== undefined) { pieces.push({ offset: piece.offset, known });continue; }
-        let entry = flights.get(key) || staged.get(key);
-        if (!entry) {
-          entry = Promise.withResolvers();Object.assign(entry, { key, text: piece.text, bytes: Buffer.byteLength(piece.text), waiters: 0, done: false, submitted: false });
-          staged.set(key, entry);newBytes += entry.bytes;
-        } else stats.shared_hits++;
-        if (!waiters.has(entry)) waitingBytes += entry.bytes;
-        waiters.add(entry);pieces.push({ offset: piece.offset, entry });
-      }
-      plans.push({ fullKey, pieces, text });
+      const key = createHash("sha256").update(text).digest("hex"), known = get(key);
+      if (known !== undefined) { results.push(Promise.resolve(known));continue; }
+      let entry = flights.get(key) || staged.get(key);
+      if (!entry) {
+        entry = Promise.withResolvers();Object.assign(entry, { key, text, bytes: Buffer.byteLength(text), waiters: 0, done: false, submitted: false, batch: null });
+        staged.set(key, entry);newBytes += entry.bytes;
+      } else stats.shared_hits++;
+      if (!waiters.has(entry)) waitingBytes += entry.bytes;
+      waiters.add(entry);results.push(entry.promise);
     }
     if (pendingBytes + newBytes > maxPendingBytes || flights.size + staged.size > maxPendingEntries) throw privacyFailure("busy");
-    onPlan?.({ pending_bytes: waitingBytes, new_bytes: newBytes, pieces: waiters.size });
+    onPlan?.({ pending_bytes: waitingBytes, new_bytes: newBytes, texts: waiters.size });
     for (const entry of staged.values()) { flights.set(entry.key, entry);pendingBytes += entry.bytes; }
     for (const entry of waiters) entry.waiters++;
-    const work = Promise.all(plans.map(async plan => {
-      if (plan.full) return plan.full;
-      const results = await Promise.all(plan.pieces.map(async piece => {
-        const found = piece.known ?? await piece.entry.promise;
-        return found.map(span => ({ ...span, start: span.start + piece.offset, end: span.end + piece.offset }));
-      }));
-      const merged = mergePrivacyFindings(results.flat());validatePrivacyFindings([plan.text], [merged]);put(plan.fullKey, merged);return merged;
-    }));
+    const work = Promise.all(results);
     if (staged.size) { turns.push({ entries: [...staged.values()], at: 0 });void pump(); }
     let listener;
-    const aborted = new Promise((_, reject) => {
-      listener = () => reject(signal.reason);
-      if (signal?.aborted) listener();else signal?.addEventListener("abort", listener, { once: true });
-    });
+    const aborted = new Promise((_, reject) => { listener = () => reject(signal.reason);if (signal?.aborted) listener();else signal?.addEventListener("abort", listener, { once: true }); });
     try { return await (signal ? Promise.race([work, aborted]) : work); }
-    finally { signal?.removeEventListener("abort", listener);for (const entry of waiters) entry.waiters--; }
+    finally {
+      signal?.removeEventListener("abort", listener);
+      for (const entry of waiters) {
+        entry.waiters--;const lease = entry.batch;
+        if (lease && lease.entries.every(item => !item.waiters)) lease.controller.abort(privacyFailure("cancelled"));
+      }
+    }
   }
   function cancelQueued() {
-    for (const turn of turns) for (const entry of turn.entries) if (!entry.submitted) finish(entry, null, privacyFailure("cancelled"));
-    turns.length = 0;
+    for (const entry of flights.values()) if (!entry.submitted) finish(entry, null, privacyFailure("cancelled"));turns.length = 0;
   }
   return {
     find, cancelQueued,
-    snapshot: () => ({ ...stats, cache_entries: cache.size, cache_bytes: cacheBytes, pending_pieces: flights.size, pending_bytes: pendingBytes,
-      max_cache_bytes: maxCacheBytes, max_pending_bytes: maxPendingBytes, piece_bytes: pieceBytes, batch_bytes: batchBytes, max_concurrent: maxConcurrent }),
+    snapshot: () => ({ ...stats, cache_entries: cache.size, cache_bytes: cacheBytes, pending_texts: flights.size, pending_bytes: pendingBytes,
+      max_cache_bytes: maxCacheBytes, max_pending_bytes: maxPendingBytes, batch_bytes: batchBytes, max_concurrent: maxConcurrent }),
     busy: () => running > 0 || flights.size > 0,
     close() { closed = true;cancelQueued();for (const entry of flights.values()) finish(entry, null, privacyFailure("engine_unavailable"));cache.clear();cacheBytes = 0; },
   };

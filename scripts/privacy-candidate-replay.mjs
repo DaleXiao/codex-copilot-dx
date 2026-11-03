@@ -17,13 +17,17 @@ assert.ok([component,weights,output,baselineComponent].every(value=>value&&path.
 const options = new Map();for(let at=6;at<process.argv.length;at+=2)options.set(process.argv[at],process.argv[at+1]);
 const control=options.get("--mode")==="aa",timingMode=options.get("--timing")||"gate",trials=Number(options.get("--pairs")||PRIVACY_PERFORMANCE_POLICY.pairs);
 const machine=options.get("--machine")||"hosted-ci",hotRepetitions=PRIVACY_PERFORMANCE_POLICY.hot_repetitions;
+const worker=options.has("--sample")?JSON.parse(options.get("--sample")):null;
 assert.ok(["aa","compare"].includes(options.get("--mode")||"compare")&&["gate","report"].includes(timingMode));
 assert.ok(Number.isSafeInteger(trials)&&trials>=5&&trials<=40);
 const root=fs.mkdtempSync(path.join(os.tmpdir(),"ccdx-candidate-native-")),repository=fileURLToPath(new URL("../",import.meta.url));
 const baselineCommit="cac4722b87d96d870f154edb46a300a5cf458d3a",samples=[];
-const modelDirectory=path.join(root,"shared-model");fs.mkdirSync(modelDirectory,{recursive:true});
-for(const file of PRIVACY_MODEL_FILES){const bytes=fs.readFileSync(path.join(weights,file.name));assert.equal(bytes.length,file.bytes);assert.equal(createHash("sha256").update(bytes).digest("hex"),file.sha256);fs.copyFileSync(path.join(weights,file.name),path.join(modelDirectory,file.name));}
-if(fs.existsSync(path.join(weights,"coreml")))fs.cpSync(path.join(weights,"coreml"),path.join(modelDirectory,"coreml"),{recursive:true});
+const modelDirectory=worker?options.get("--model-directory"):path.join(root,"shared-model");assert.ok(path.isAbsolute(modelDirectory||""));
+if(!worker){
+ fs.mkdirSync(modelDirectory,{recursive:true});
+ for(const file of PRIVACY_MODEL_FILES){const bytes=fs.readFileSync(path.join(weights,file.name));assert.equal(bytes.length,file.bytes);assert.equal(createHash("sha256").update(bytes).digest("hex"),file.sha256);fs.copyFileSync(path.join(weights,file.name),path.join(modelDirectory,file.name));}
+ if(fs.existsSync(path.join(weights,"coreml")))fs.cpSync(path.join(weights,"coreml"),path.join(modelDirectory,"coreml"),{recursive:true});
+}
 const source=execFileSync("git",["show",baselineCommit+":src/local-privacy.mjs"],{cwd:repository,encoding:"utf8"})
   .replace(/from "\.\/([^"]+)"/g,(_,name)=>"from "+JSON.stringify(pathToFileURL(path.join(repository,"src",name)).href));
 const {createLocalPrivacy:baseline}=await import("data:text/javascript;base64,"+Buffer.from(source).toString("base64"));
@@ -33,8 +37,17 @@ const workloads=[{name:"short-fields",values:Array.from({length:80},(_,i)=>"ordi
   {name:"long-chinese",values:[makeText(200,true)],append:makeText(10,true)}];
 try {
  for(const workload of workloads) for(let trial=0;trial<trials;trial++) {
+  if(worker&&(worker.workload!==workload.name||worker.trial!==trial))continue;
   const variants=trial%2?[["candidate-1.3.12",control?baseline:createLocalPrivacy],["baseline-1.3.11-detection",baseline]]:[["baseline-1.3.11-detection",baseline],["candidate-1.3.12",control?baseline:createLocalPrivacy]];
   for(const [label,factory] of variants) {
+   if(worker&&worker.label!==label)continue;
+   if(!worker){
+    const value=execFileSync(process.execPath,[fileURLToPath(import.meta.url),component,weights,output,baselineComponent,
+      "--mode",control?"aa":"compare","--pairs",String(trials),"--timing","report","--machine",machine,
+      "--sample",JSON.stringify({workload:workload.name,trial,label}),"--model-directory",modelDirectory],{
+      cwd:repository,env:testEnvironment(root,{PATH:path.dirname(process.execPath)+path.delimiter+(process.env.PATH||"")}),encoding:"utf8",timeout:240000,maxBuffer:4*1024*1024});
+    samples.push(JSON.parse(value));console.log(JSON.stringify({workload:workload.name,trial,variant:label,completed:true}));continue;
+   }
    const home=path.join(root,workload.name,String(trial),label),env=testEnvironment(home,{XDG_CONFIG_HOME:path.join(home,"config"),XDG_CACHE_HOME:path.join(home,"cache")});
    const detector=createPrivacyModel({home,env,fetchImpl:async()=>{throw Error("Candidate replay forbids downloads")},
      spawnImpl:(file,_args,options)=>spawn(file,[modelDirectory],options)});let privacy;
@@ -67,10 +80,12 @@ try {
     }
     const probe=["The password is "+["hun","terTwo","Three"].join("")+". Please keep it private.","张三的邮箱是 "+["private","sample"].join(".")+"@example.org。"];
     const probeResult=await detector.find(probe,{cacheWindows:!isBaseline});
-    samples.push({probe:probeResult,component_release:detector.snapshot().component_release,component_sha256:createHash("sha256").update(binary).digest("hex"),workload:workload.name,variant:label,trial,input_bytes:workload.values.reduce((sum,text)=>sum+Buffer.byteLength(text),0),load_ms:loadMs,backend:detector.snapshot().backend,device:detector.snapshot().device,timings});
+    samples.push({probe:probeResult,js_process_id:process.pid,component_release:detector.snapshot().component_release,component_sha256:createHash("sha256").update(binary).digest("hex"),workload:workload.name,variant:label,trial,input_bytes:workload.values.reduce((sum,text)=>sum+Buffer.byteLength(text),0),load_ms:loadMs,backend:detector.snapshot().backend,device:detector.snapshot().device,timings});
    }finally{privacy?.close();detector.close();fs.rmSync(home,{recursive:true,force:true,maxRetries:3})}
   }
  }
+ if(worker){assert.equal(samples.length,1);console.log(JSON.stringify(samples[0]));}
+ else{
  const analysis=summarizePerformanceSamples(samples,{control});
  for(const workload of workloads){
   const before=samples.filter(s=>s.workload===workload.name&&s.variant.startsWith("baseline")),after=samples.filter(s=>s.workload===workload.name&&s.variant.startsWith("candidate"));
@@ -83,7 +98,7 @@ try {
   }
  }
  const result={version:JSON.parse(fs.readFileSync(path.join(repository,"package.json"))).version,platform:process.platform,arch:process.arch,baseline_commit:baselineCommit,
-  comparison_scope:"Verified 1.3.11 baseline, paired fresh-process trials, same owned model directory with copied weights and acceleration cache. Detector caches are empty for cold input. Candidate uses production waits. Hot means amortized repeated same-body checks. No downloads, cloud inference or signed App execution.",
+  comparison_scope:"Verified 1.3.11 baseline, paired fresh JS and native processes for every sample, same owned model directory with copied weights and acceleration cache. Detector caches are empty for cold input. Candidate uses production waits. Hot means amortized repeated same-body checks. No downloads, cloud inference or signed App execution.",
   mode:control?"aa":"compare",machine,runtime_fingerprint:privacyRuntimeFingerprint(repository),measurement_fingerprint:privacyMeasurementFingerprint(repository),
   machine_configuration:{platform:process.platform,arch:process.arch,os_release:os.release(),available_parallelism:os.availableParallelism()},samples,...analysis};
  fs.mkdirSync(output,{recursive:true});fs.writeFileSync(path.join(output,"privacy-candidate-"+process.platform+"-"+process.arch+".json"),JSON.stringify(result,null,2)+"\n");console.log(JSON.stringify(result));
@@ -93,4 +108,5 @@ try {
  }
  if(timingMode==="gate")assert.equal(result.decision,control?"qualified":"pass","Privacy performance evidence did not pass; receipt retained");
  else if(result.decision!==(control?"qualified":"pass"))console.log("::warning::Privacy timing "+result.decision+"; correctness remains blocking, fixed-machine release evidence required");
+ }
 }finally{fs.rmSync(root,{recursive:true,force:true,maxRetries:3})}

@@ -1,0 +1,72 @@
+name: Privacy performance qualification
+
+on:
+  push:
+    branches: ["codex/privacy-perf-qualification"]
+  workflow_dispatch:
+    inputs:
+      mode:
+        required: true
+        type: choice
+        options: [aa, compare]
+      platform:
+        required: true
+        type: choice
+        options: [macos, windows]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  performance:
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON((inputs.platform || 'macos') == 'macos' && '[{"os":"macos-latest","target":"darwin-arm64"}]' || '[{"os":"windows-latest","target":"win32-x64"},{"os":"windows-11-arm","target":"win32-arm64"}]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.x
+      - run: npm ci --ignore-scripts
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: "1.27.3"
+          cache-dependency-path: native/privacy-guard/go.sum
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ${{ runner.temp }}/ccdx-privacy-model/model_int8.onnx
+            ${{ runner.temp }}/ccdx-privacy-model/model_int8.onnx_data
+            ${{ runner.temp }}/ccdx-privacy-model/tokenizer.json
+          key: privacy-weights-v2-7216b6a3b897ef903d4b1ba367ae6fb95b0fa5e4
+      - name: Prepare verified component and weights
+        shell: bash
+        run: |
+          node scripts/privacy-component.mjs "$RUNNER_TEMP/privacy-component" "${{ matrix.target }}"
+          node scripts/privacy-native-replay.mjs "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/ccdx-privacy-model"
+      - name: Run pre-registered paired qualification
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PERF_MODE: ${{ inputs.mode || 'aa' }}
+          PERF_TARGET: ${{ matrix.target }}
+        run: |
+          git fetch --no-tags --depth=1 origin cac4722b87d96d870f154edb46a300a5cf458d3a
+          mkdir -p "$RUNNER_TEMP/privacy-baseline"
+          baseline_name="ccdx-privacy-guard-1-$PERF_TARGET"
+          if [[ "$PERF_TARGET" == win32-* ]]; then baseline_name="$baseline_name.exe"; fi
+          gh release download v1.3.11 --repo "$GITHUB_REPOSITORY" --pattern "$baseline_name" --pattern SHA256SUMS --dir "$RUNNER_TEMP/privacy-baseline"
+          timing=report
+          if [[ "$PERF_MODE" == compare && "$PERF_TARGET" == win32-* ]]; then timing=gate; fi
+          node scripts/privacy-candidate-replay.mjs "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/ccdx-privacy-model" "$RUNNER_TEMP/performance" "$RUNNER_TEMP/privacy-baseline" --mode "$PERF_MODE" --pairs 20 --timing "$timing" --machine "hosted-$PERF_TARGET"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: performance-${{ inputs.mode || 'aa' }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/performance/*.json
+          if-no-files-found: warn
+          retention-days: 7

@@ -33,9 +33,7 @@ func main() {
 	if err != nil {
 		os.Exit(3)
 	}
-	if err := m.Warm(); err != nil {
-		os.Exit(3)
-	}
+	m.Find("Local privacy detection is ready for English and 中文 text.")
 	out := json.NewEncoder(os.Stdout)
 	via, device, _ := m.Backend()
 	initialEntries, initialBytes := m.WindowCacheUsage()

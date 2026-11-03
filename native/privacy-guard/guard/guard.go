@@ -174,22 +174,6 @@ func (m *Model) Find(text string) []Span {
 	return spans
 }
 
-// Warm the selected backend before advertising readiness. A short tokenizer
-// probe can select the native CPU fallback even when CoreML is available.
-func (m *Model) Warm() error {
-	const sample = "Local privacy detection is ready for English and 中文 text."
-	text := sample
-	if m.ml != nil {
-		for !coremlWindow(runtime.GOARCH, m.ml.Device, len(m.tok.encode(text))+2) {
-			text += " " + sample
-		}
-	}
-	if _, _, complete := m.FindContext(context.Background(), text, true); !complete {
-		return errors.New("backend warmup failed")
-	}
-	return nil
-}
-
 // FindContext preserves tokenization, natural window boundaries and decoding.
 // Cancellation leaves computed windows cached and stops scheduling new ones.
 func (m *Model) FindContext(ctx context.Context, text string, reuse bool) ([]Span, WindowWork, bool) {

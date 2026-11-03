@@ -64,3 +64,11 @@ test("window plans reach each active shared waiter and later joiners without ano
   for(const values of [a,b,c])assert.deepEqual(values.at(-1),{pending_windows:4,total_windows:6});
   calls[0].resolve([[]]);await Promise.all([first,second,third]);assert.equal(calls.length,1);
 });
+
+test("fully cached checks do not submit or attach a waiting listener, but still honor cancellation", async t => {
+  let calls=0;const detection=createPrivacyDetection({find:async texts=>{calls++;return texts.map(()=>[]);}});t.after(()=>detection.close());
+  await detection.find(["hot text"]);const controller=new AbortController();let listeners=0;
+  const original=controller.signal.addEventListener.bind(controller.signal);controller.signal.addEventListener=(...args)=>{listeners++;return original(...args);};
+  assert.deepEqual(await detection.find(["hot text"],{signal:controller.signal}),[[]]);assert.equal(listeners,0);assert.equal(calls,1);
+  const canceled=detection.find(["hot text"],{signal:controller.signal});controller.abort(Error("caller canceled"));await assert.rejects(canceled,/caller canceled/);
+});

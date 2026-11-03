@@ -93,6 +93,11 @@ export function createPrivacyDetection(model, {
     }
     if (pendingBytes + newBytes > maxPendingBytes || flights.size + staged.size > maxPendingEntries) throw privacyFailure("busy");
     onPlan?.({ pending_bytes: waitingBytes, new_bytes: newBytes, texts: waiters.size });
+    if (!waiters.size) {
+      const found = await Promise.all(results);
+      if (signal?.aborted) throw signal.reason;
+      return found;
+    }
     for (const entry of staged.values()) { flights.set(entry.key, entry);pendingBytes += entry.bytes; }
     for (const entry of waiters) {
       entry.waiters++;

@@ -54,11 +54,12 @@ export function createLocalPrivacy(options = {}) {
       timer.unref?.();
     };
     const onPlan = plan => {
-      if (options.checkTimeoutMs === undefined && (plan.pending_bytes >= PRIVACY_BATCH_BYTES || plan.pending_windows > 1)) { budget = 60000;arm(); }
+      const previous = budget;
+      if (options.checkTimeoutMs === undefined && (plan.pending_bytes >= PRIVACY_BATCH_BYTES || plan.pending_windows > 1)) budget = 60000;
+      if ((budget !== previous && timer) || (!timer && (plan.texts > 0 || plan.pending_windows > 0))) arm();
       markRequestObservation({ ...(Number.isSafeInteger(plan.pending_bytes) ? { privacy_pending_bytes: plan.pending_bytes, privacy_new_bytes: plan.new_bytes } : {}),
         ...(Number.isSafeInteger(plan.pending_windows) ? { privacy_pending_windows: plan.pending_windows } : {}), privacy_wait_budget_ms: budget });
     };
-    arm();
     try { session = await maskPrivacyRequest(body, { protocol, client, personal: saved.personal, secret, find, rules: rules.find, onPlan,
       signal: signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal }); }
     catch (error) {

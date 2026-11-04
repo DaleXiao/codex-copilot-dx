@@ -1,10 +1,10 @@
 # 1.3.12 privacy candidate
 
-This candidate is not published and does not replace the running service.
+This document records the initial candidate stage. Current delivery is described in [release notes](RELEASE.md).
 
 Reference: Magpie 7c115f6f5b838c5c57ab3f5fb2942f540a86a971. Read its masking wrapper, detector, per-piece cache and exact native window reuse, in-flight ownership, execution turns, JSON contexts and streaming writer together. CCDX keeps its existing complete-check-before-send policy, private per-client mappings, optional ABI 1 and bounded memory; Magpie's partial-model fallback and disk detection cache are not adopted.
 
-Work and acceptance:
+Initial work and acceptance:
 
 1. Reproduce stream boundary failures with isolated synthetic Responses and Messages events; verify original frame order, tool argument escaping/types, terminal/error events and no premature tool execution.
 2. Add bounded diagnostics for exact privacy error and event/channel types; verify that no request/response text, argument value, mapping or credential enters diagnostics.

@@ -7,6 +7,8 @@ Reduces repeated local privacy work and preserves valid tool continuations, with
 - Reuse CPU intermediate matrices within each inference and C-owned CoreML input arrays within the serialized model. Clear retained input arrays after successful and failed predictions; model mathematics and threading are unchanged.
 - Keep the existing inexpensive startup preflight. Give uncached text beyond one 16 KiB batch, or a native plan with multiple pending windows, the existing bounded 60-second wait. Complete checks still precede every covered upstream request.
 - Remove redundant branding, category tags and normal switch-state prefixes. Preserve unknown states, setup prerequisites, protection scope, errors, update effects and operation confirmations. WebUI and CLI share the same controls; command names remain unchanged.
-- Isolate every executable verification check. Enforce cold and startup-plus-cold performance thresholds in native CI, retain failed receipts and verify classifier-result digests. CI and new prebuilt assets cover macOS ARM64 and Windows x64/ARM64; Intel code remains available.
+- CI and new prebuilt assets cover macOS ARM64 and Windows x64/ARM64; Intel code remains available.
 
-No active service or desktop application is restarted by publication. CLI/protocol checks do not substitute for signed Claude App UI acceptance. Public shipping proofs are recorded in the [release receipt](https://github.com/DaleXiao/codex-copilot-dx/releases/download/v1.3.12/release-receipt.json).
+Fixed-Mac measurements found substantially faster long-text appends, with about 0.010 ms added to cached Chinese checks and 0.069 ms added to short-field appends. Timing differences are reported; use request records to observe local-check duration and errors after upgrading.
+
+Unverified: sustained real-use performance and signed Claude App UI acceptance.

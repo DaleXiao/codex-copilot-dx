@@ -114,6 +114,6 @@ try {
   fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,`\nPrivacy performance: ${result.decision}\n\n| Workload | Phase | Paired median | Confidence interval | Decision |\n|---|---|---|---|---|\n${rows.join("\n")}\n`);
  }
  if(timingMode==="gate")assert.equal(result.decision,control?"qualified":"pass","Privacy performance evidence did not pass; receipt retained");
- else if(result.decision!==(control?"qualified":"pass"))console.log("::warning::Privacy timing "+result.decision+"; correctness remains blocking, fixed-machine release evidence required");
+ else if(result.decision!==(control?"qualified":"pass"))console.log("::warning::Privacy timing "+result.decision+"; timing is report-only and correctness assertions remain blocking");
  }
 }finally{fs.rmSync(root,{recursive:true,force:true,maxRetries:3})}

@@ -211,7 +211,7 @@ heuristic or original-vendor limit is applied to an arbitrary relay deployment.
 
 Claude configuration and gateway catalogs use the same compiled model plan.
 Explicit App bindings use opaque source-qualified aliases and actual model/source
-labels. Verified 3.x App adapters can use a reasoning-compatible route when the
+labels. Verified 3.x and 4.x App adapters can use a reasoning-compatible route when the
 advertised levels form a client-expressible contiguous set. Older compatibility
 routes remain resolvable for that authorized deployment. Gapped or unexpressible
 levels are reported as limited; unsupported effort requests fail explicitly.
@@ -786,3 +786,5 @@ Privacy failures have a separate local diagnostic origin. Response-restoration f
 The optional component is pinned to v1.3.13. Verified older components, including 1.3.10, retain their original whole-text behavior. ABI 1 is unchanged; window reuse, advisory window plans and acknowledged cancellation are advertised capabilities. Plans contain only text indices and window counts, never request text. Startup retains its previous inexpensive preflight; accelerator initialization remains lazy. Native CI checks both cold detection and startup-plus-cold cost. Verified 1.3.6 and 1.3.9 installations remain compatible. New component receipts bind their protocol ABI and model revision before older versioned components can be reused. On Intel Macs where CoreML selects CPU, windows below 128 tokens use the existing native int8 reader; longer windows, GPU, Neural Engine and ARM selection retain their prior policy. Its source and license notices are in `native/privacy-guard` and `src/privacy-notices.txt`. AstrLink Guard model files use their publisher's Apache-2.0 license.
 
 Paired timing comparisons report cold, startup-plus-first-check, append and hot-check observations without blocking publication. Classifier correctness, byte verification and reuse assertions remain blocking. Real-use request records expose local-check duration and errors for observation after upgrading; fixed-machine results do not establish sustained real-use performance.
+
+Usage tables and analytics model selectors display the current saved name for a configured custom API source. Filtering and aggregation retain the stable provider/model keys. Renaming a source updates its label without merging records; a deleted or unknown source keeps its ID. Existing historical records are not rewritten.

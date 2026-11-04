@@ -256,6 +256,10 @@ try {
             `Auto refresh text must be centered, not just its span: ${JSON.stringify(geometry)}`);
         };
         const brandIcon = await page.locator(".sidebar-brand #status-icon").boundingBox();
+        const brandText = await page.locator(".sidebar-brand .brand-name").boundingBox();
+        assert.ok(brandIcon && brandText && Math.abs(brandIcon.y + brandIcon.height / 2 - brandText.y - brandText.height / 2) <= 1,
+          "Sidebar brand icon and text must share a vertical center at every viewport");
+        if (output && language === "zh" && palette === "mono") await page.locator(".sidebar-brand").screenshot({ path: path.join(output, `${engine}-${width}-${theme}-brand.png`) });
         for (const selector of ["#refresh", "#auto-refresh"]) assert.equal((await page.locator(selector).boundingBox()).height, 32, "Compact desktop controls retain their target height");
         await assertAutoRefreshCentered();
         assert.ok(brandIcon && brandIcon.width >= 40 && brandIcon.height >= 40 && brandIcon.x >= 0 && brandIcon.x + brandIcon.width <= width);

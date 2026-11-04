@@ -201,6 +201,9 @@ jobs:
       - name: Verify native custom model context budgets, reasoning and output limits
         if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/claude-capabilities-replay.mjs --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"
+      - name: Verify App 4.x adapter routes and all declared efforts through the native host
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: node scripts/claude-capabilities-replay.mjs --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude" --client claude_app
       - name: Verify native custom model catalogs and independent client credentials on one listener
         if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/api-client-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --claude "$RUNNER_TEMP/ccdx-claude/node_modules/.bin/claude"

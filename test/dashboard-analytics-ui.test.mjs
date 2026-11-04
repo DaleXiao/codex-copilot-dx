@@ -155,6 +155,34 @@ test("source selection refreshes usage and its analytics without touching other 
   const calls = h.requests.length;h.nodes.get("analytics-range").listeners.change();assert.equal(h.requests.length, calls);
 });
 
+test("custom source labels can change without changing usage keys, totals or selected chart model", async () => {
+  const first = "api_0000000000000001", second = "api_0000000000000002", deleted = "api_0000000000000003";
+  let providers = [{ id: first, name: "dalet" }, { id: second, name: "other source" }];
+  const records = [first, second, deleted].map((provider, index) => ({ ts: "2026-10-01T00:00:00Z", provider, model: "same-model", usage: { input_tokens: 100 + index, output_tokens: 10, total_tokens: 110 + index } }));
+  const collector = createUsageAnalytics({ now: Date.parse("2026-10-01T12:00:00Z"), qualifyProviders: true });
+  records.forEach(record => collector.record(record, summarizeUsage([record])));
+  const rows = records.map(record => ({ model: `${record.provider} / ${record.model}`, requests: 1, ...record.usage }));
+  const data = { source: "local_usage_log", provider: "all", providers: Object.fromEntries(records.map(record => [record.provider, 1])), total: { model: "TOTAL", requests: 3, input_tokens: 303, output_tokens: 30, total_tokens: 333 }, rows, model_count: 3, analytics: collector.snapshot() };
+  const h = harness({ fetchFn: url => url === "/_ccdx/ui/providers" ? { ok: true, json: async () => ({ source: "provider_status", providers: providers.map(provider => ({ ...provider, enabled: true, clients: [] })) }) }
+    : url.includes("/usage") ? { ok: true, json: async () => data } : undefined });
+  await flush();await flush();
+  const labels = () => h.nodes.get("usage-body").children.slice(1).map(row => row.children[0].textContent);
+  assert.deepEqual(labels(), ["dalet / same-model", "other source / same-model", `${deleted} / same-model`]);
+  const selected = `${first} / same-model`;
+  h.nodes.get("analytics-model").value = selected;h.api.selectUsageDay("2026-10-01");
+  const chart = [...h.nodes.get("daily-bars").children];
+  providers = [{ id: first, name: "renamed source" }];
+  await h.api.loadAuth();await flush();
+  assert.equal(h.nodes.get("analytics-model").value, selected);
+  assert.deepEqual(labels(), ["renamed source / same-model"]);
+  assert.deepEqual(h.nodes.get("daily-bars").children, chart);
+  assert.equal(h.nodes.get("usage-body").children[0].children[1].textContent, "1");
+  const options = h.nodes.get("analytics-model").children;
+  assert.equal(options.find(option => option.value === selected).textContent, "renamed source / same-model");
+  assert.equal(options.find(option => option.value === `${second} / same-model`).textContent, `${second} / same-model`);
+  assert.deepEqual(rows.map(row => row.model), records.map(record => `${record.provider} / same-model`));
+});
+
 test("language switch preserves unsaved animation, chart nodes/selection and expanded failures without fetching", async () => {
   let copied;
   const h = harness({ language: true, clipboard: async (value) => { copied = value; } });

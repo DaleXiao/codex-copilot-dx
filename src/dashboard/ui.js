@@ -16,10 +16,10 @@ const finite = (value) => value !== null && value !== undefined && Number.isFini
 const number = (value) => finite(value) ? Math.max(0, Math.round(Number(value))).toLocaleString() : "—";
 const mib = (value) => finite(value) ? `${(Number(value) / 1048576).toFixed(1)} MiB` : "—";
 const time = (value, options) => globalThis.ccdxTime?.format(value, options) ?? (value ? new Date(value).toLocaleTimeString() : "—");
-const viewHelpers = { time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator: globalThis.navigator,
+const viewHelpers = { time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator: globalThis.navigator, modelLabel: usageModelLabel,
   motionAllowed: () => !reducedMotion.matches && document.visibilityState === "visible" && element("usage-analytics").open && !element("usage-analytics").closest("[hidden]") };
 const { render, renderActivity, renderProviders, renderFailures, renderContext } = globalThis.ccdxViewBoundary.create("client-features", () => globalThis.ccdxDashboardStatus.create(viewHelpers), ["render", "renderActivity", "renderProviders", "renderFailures", "renderContext"]);
-const usageView = globalThis.ccdxViewBoundary.create("usage-analytics", () => globalThis.ccdxDashboardUsage.create(viewHelpers), ["applyUsage", "renderUsageState", "renderAnalytics", "renderUsageTable", "selectUsageDay", "usageValues", "setChartVisible", "revealChart", "stopMotion"]);
+const usageView = globalThis.ccdxViewBoundary.create("usage-analytics", () => globalThis.ccdxDashboardUsage.create(viewHelpers), ["applyUsage", "renderUsageState", "renderAnalytics", "renderUsageTable", "selectUsageDay", "usageValues", "setChartVisible", "revealChart", "stopMotion", "refreshModelLabels"]);
 const { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay } = usageView;
 const loadAuth = () => dashboardRefresh.refresh("auth", { force: true });
 
@@ -74,6 +74,13 @@ function tableRow(values, { total = false, labels = [] } = {}) {
 let providerEntries = [];
 let usageProviders = {};
 let selectedProvider = "";
+function usageModelLabel(value) {
+  if (typeof value !== "string") return value;
+  const at = value.indexOf(" / "), id = value.slice(0, at);
+  if (at < 0 || !id.startsWith("api_")) return value;
+  const name = providerEntries.find(provider => provider.id === id)?.name;
+  return name ? name + value.slice(at) : value;
+}
 const modelSnapshots = new Map();
 const providerTabs = new Map();
 try { selectedProvider = localStorage.getItem("ccdx.dashboard.modelProvider") || ""; } catch { /* Page-local choice still works. */ }
@@ -134,6 +141,7 @@ function applyProviders(data, { changed }) {
   }
   if (changed || dashboardRefresh.state("auth").error) renderProviders(data);
   syncUsageProviders();
+  if (sourceChoicesChanged) usageView.refreshModelLabels();
   const available = providerEntries.some(provider => provider.id === selectedProvider);
   if (!available) selectedProvider = providerEntries.find(provider => provider.clients?.some(client => client.id === "codex" && client.selected))?.id || providerEntries[0]?.id || "";
   syncProviderDetails();

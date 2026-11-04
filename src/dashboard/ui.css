@@ -233,6 +233,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; color: 
 .shell { max-width: 1520px; min-height: 100vh; display: grid; grid-template-columns: 204px minmax(0, 1fr); grid-template-rows: 64px minmax(0, 1fr) auto; column-gap: 34px; padding: 0 28px; }
 .sidebar { grid-row: 1 / 4; position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 28px 22px 24px 0; border-right: 1px solid var(--border); }
 .sidebar-brand { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; column-gap: 12px; color: var(--accent); text-decoration: none; font-size: 23px; font-weight: 750; letter-spacing: .04em; }
+.sidebar-brand > .status-icon, .sidebar-brand > .brand-name { grid-row: 1; }
 
 .sidebar nav { display: flex; flex-direction: column; gap: 5px; margin-top: 28px; }
 .sidebar nav a { color: var(--muted); text-decoration: none; padding: 8px 12px; font-size: 13px; border-left: 2px solid transparent; }

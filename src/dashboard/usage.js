@@ -7,11 +7,11 @@
     }).join(" ");
   }
 
-  function create({ time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator, motionAllowed = () => false }) {
+  function create({ time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator, modelLabel = value => value, motionAllowed = () => false }) {
     function usageValues(row) {
       const rate = Number.isFinite(row.cache_hit_rate) && row.cache_hit_rate >= 0 && row.cache_hit_rate <= 1
         ? `${row.cache_hit_rate_partial ? "~" : ""}${(row.cache_hit_rate * 100).toFixed(1)}%` : "—";
-      return [row.model, number(row.requests), number(row.input_tokens), number(row.cache_read_tokens), number(row.cache_write_input_tokens), number(row.output_tokens), number(row.total_tokens), rate];
+      return [modelLabel(row.model), number(row.requests), number(row.input_tokens), number(row.cache_read_tokens), number(row.cache_write_input_tokens), number(row.output_tokens), number(row.total_tokens), rate];
     }
     
     let usageData = null;
@@ -117,7 +117,7 @@
       text("usage-state", day ? day.date : "local_log");
       text("usage-note", "records_records_shown_of_models_models_shown_day", {
         records: number(total.requests), shown: number(rows.length), models: number(day ? rows.length : usageData.model_count),
-        day: day ? phrase("zone_model", { zone: usageData.analytics.time_zone, model: model || phrase("all_models") }) : "",
+        day: day ? phrase("zone_model", { zone: usageData.analytics.time_zone, model: model ? modelLabel(model) : phrase("all_models") }) : "",
       });
     }
     
@@ -219,7 +219,7 @@
       for (const model of [...new Set(["", ...usageData.analytics.models, ...(previous ? [previous] : [])])]) {
         const option = document.createElement("option");
         option.value = model;
-        if (model) option.textContent = model;
+        if (model) option.textContent = modelLabel(model);
         else localize(option, "all_models");
         select.append(option);
       }
@@ -239,7 +239,12 @@
         text("analytics-updated", "updated_time", { time: time(Date.now()) });
       }
     }
-    return { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay, usageValues, setChartVisible, revealChart, stopMotion, get data() { return usageData; }, get selectedDate() { return selectedUsageDate; } };
+    function refreshModelLabels() {
+      if (!usageData) return;
+      if (usageData.analytics) updateAnalyticsModels();
+      renderUsageTable();
+    }
+    return { applyUsage, renderUsageState, renderAnalytics, renderUsageTable, selectUsageDay, usageValues, setChartVisible, revealChart, stopMotion, refreshModelLabels, get data() { return usageData; }, get selectedDate() { return selectedUsageDate; } };
   }
   globalThis.ccdxDashboardUsage = { create, curvePath };
 })();

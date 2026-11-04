@@ -5,13 +5,61 @@ import os from "node:os";
 import path from "node:path";
 import { validCapabilities, catalogCapabilities, deploymentRevision, resolveModelCapabilities, constrainModelRequest, deploymentModelId } from "../src/model-capabilities.mjs";
 import { compileClientModels, sourceModels } from "../src/client-model-plan.mjs";
-import { claudeSharedCapabilityPlan, syncClaudeCapabilities } from "../src/claude-capability-config.mjs";
+import { claudeSharedCapabilityPlan, syncClaudeCapabilities, inspectClaudeCapabilitySupport } from "../src/claude-capability-config.mjs";
 import { claudeClientPaths, restoreClaudeClients, configureClaudeClients } from "../src/claude-client-config.mjs";
 import { defaultAccessSettings, accessSettingsPath, readAccessSettings, updateAccessSettings } from "../src/access-settings.mjs";
 import { m365Paths } from "../src/m365-settings.mjs";
 
 const temporary = t => { const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-capabilities-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));return { home, env: {}, platform: "linux" }; };
 const model = (id, window, output = 16000) => ({ id, public_id: id, client_id: id, capability: { values: { ...(window ? { context_window: window } : {}), max_output_tokens: output, reasoning_efforts: ["low", "medium", "high"] } } });
+
+test("verified Claude App 3.x and 4.x retain reasoning routes while unknown major versions stay conservative", () => {
+  for (const appVersion of ["3.10.0", "4.29.0", "4.4212.0"]) {
+    const support = inspectClaudeCapabilitySupport({ appVersion, codeVersion: "2.1.316" });
+    assert.equal(support.app, true, appVersion);
+    const source = { id: "api_one", name: "Source", models: () => [{ id: "independent-reasoner", supported_endpoints: ["/v1/messages"], capability: { values: { context_window: 256000, reasoning_efforts: ["low", "medium", "high"] } } }] };
+    const binding = { enabled: true, source: source.id, allowed: [source.id], deployments: [{ source: source.id, model: "independent-reasoner" }] };
+    const plan = compileClientModels({ client: "claude_app", binding, source: () => source, enabled: () => true, desktopEffortAliases: support.app });
+    assert.match(plan.models[0].public_id, /^mythos-ccdx-/);
+    const shared = claudeSharedCapabilityPlan({ app: plan.models, support });
+    assert.ok(shared.capabilities.includes(plan.models[0].public_id + "=effort"));
+    assert.equal(shared.limitations.some(item => item.code === "client_version_unknown"), false);
+    const legacy = plan.models[0].public_id.replace("mythos-ccdx-", "ccdx/claude-compatible-");
+    assert.equal(plan.routes.get(legacy).upstreamModel, "independent-reasoner");
+  }
+  for (const appVersion of ["2.999.0", "5.0.0", "unverified"]) assert.equal(inspectClaudeCapabilitySupport({ appVersion, codeVersion: "2.1.316" }).app, false);
+});
+
+test("App 4.x resync preserves long-context choice and replaces owned legacy capability IDs", t => {
+  const options = temporary(t), paths = claudeClientPaths(options);
+  const source = { id: "api_one", name: "Source", models: () => [{ id: "independent-reasoner", supported_endpoints: ["/v1/messages"], capability: { values: { context_window: 1000000, reasoning_efforts: ["low", "medium", "high"] } } }] };
+  const binding = { enabled: true, source: source.id, allowed: [source.id], deployments: [{ source: source.id, model: "independent-reasoner" }] };
+  const compile = desktopEffortAliases => compileClientModels({ client: "claude_app", binding, source: () => source, enabled: () => true, desktopEffortAliases });
+  const before = compile(false), input = { ...options, client: "claude_app", desktopInstalled: true, desktopManaged: false, baseUrl: "http://127.0.0.1:2026/anthropic", apiKey: "synthetic", models: before.models, defaultModel: before.defaultModel };
+  configureClaudeClients(input);syncClaudeCapabilities(claudeSharedCapabilityPlan({ app: before.models, support: { app: true } }), options);
+  const profile = JSON.parse(fs.readFileSync(paths.profile)), entries = JSON.parse(profile.inferenceModels);
+  entries[0].prefer1m = false;profile.inferenceModels = JSON.stringify(entries);fs.writeFileSync(paths.profile, JSON.stringify(profile));
+  const after = compile(true), result = configureClaudeClients({ ...input, models: after.models, defaultModel: after.defaultModel });
+  syncClaudeCapabilities(claudeSharedCapabilityPlan({ app: after.models, support: { app: true } }), options);
+  const saved = JSON.parse(fs.readFileSync(paths.profile)), selected = JSON.parse(saved.inferenceModels)[0], settings = JSON.parse(fs.readFileSync(paths.code));
+  assert.equal(result.app, "configured");assert.equal(selected.name, after.models[0].public_id);
+  assert.equal(selected.prefer1m, false);assert.equal(selected.maxEffort, "high");
+  assert.equal(settings.env.CLAUDE_CODE_MODEL_CAPABILITIES, `${selected.name}=effort`);
+  assert.equal(after.routes.get(before.models[0].public_id).upstreamModel, "independent-reasoner");
+});
+
+test("App 4.x keeps non-contiguous upstream effort declarations limited without inventing levels", () => {
+  const capability = { values: { context_window: 1000000, reasoning_efforts: ["low", "high", "max"] } };
+  const source = { id: "api_one", models: () => [{ id: "gapped-reasoner", supported_endpoints: ["/v1/messages"], capability }] };
+  const binding = { enabled: true, source: source.id, allowed: [source.id], deployments: [{ source: source.id, model: "gapped-reasoner" }] };
+  const support = inspectClaudeCapabilitySupport({ appVersion: "4.4212.0", codeVersion: "2.1.316" });
+  const plan = compileClientModels({ client: "claude_app", binding, source: () => source, enabled: () => true, desktopEffortAliases: support.app });
+  const shared = claudeSharedCapabilityPlan({ app: plan.models, support });
+  assert.match(plan.models[0].public_id, /^ccdx\/claude-compatible-/);
+  assert.equal(shared.capabilities, "");assert.ok(shared.limitations.some(item => item.code === "reasoning_levels_limited"));
+  assert.deepEqual(plan.models[0].capability.values.reasoning_efforts, ["low", "high", "max"]);
+  assert.throws(() => constrainModelRequest({ output_config: { effort: "medium" } }, capability, "messages"), { code: "ccdx_api_effort_unavailable" });
+});
 
 test("an unverified client version preserves the existing capability configuration", t => {
   const options = temporary(t), file = claudeClientPaths(options).code;

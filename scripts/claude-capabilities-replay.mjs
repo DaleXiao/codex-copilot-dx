@@ -14,11 +14,15 @@ import { readClientGatewayKeys } from "../src/client-gateway-keys.mjs";
 import { claudeSharedCapabilityPlan, syncClaudeCapabilities } from "../src/claude-capability-config.mjs";
 import { claudeClientPaths } from "../src/claude-client-config.mjs";
 
-const [flag, executable] = process.argv.slice(2);assert.ok(flag === "--claude" && path.isAbsolute(executable), "Use --claude /absolute/path/to/claude");
+const [flag, executable, clientFlag, clientValue] = process.argv.slice(2);assert.ok(flag === "--claude" && path.isAbsolute(executable), "Use --claude /absolute/path/to/claude");
+const clientId = clientFlag === "--client" ? clientValue : "claude_code", app = clientId === "claude_app";
+assert.ok((clientFlag === undefined || clientFlag === "--client") && ["claude_app", "claude_code"].includes(clientId), "Use --client claude_app or claude_code");
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-native-capabilities-")), env = { CCDX_M365: "0" }, calls = [], stored = new Map();let handler;
+process.env.CCDX_DISABLE_USAGE = "1";
+process.env.CCDX_USAGE_PATH = path.join(home, "usage.jsonl");
 const server = http.createServer((req, res) => handler(req, res));await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const port = server.address().port, run = promisify(execFile), marker = "CCDX_NATIVE_CAPABILITIES_OK";
-const runtime = createProviderRuntime({ home, env, platform: "linux", corePort: port, githubClient: {}, githubRegistry: { models: { data: [] } },
+const runtime = createProviderRuntime({ home, env, platform: "linux", appVersion: app ? "4.4212.0" : undefined, codeVersion: "2.1.316", desktopInstalled: app, corePort: port, githubClient: {}, githubRegistry: { models: { data: [] } },
   secretStore: { get: async id => stored.get(id), set: async (id, value) => stored.set(id, value), remove: async id => stored.delete(id), close() {} },
   createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, async fetch(url, init) {
     const body = init.body ? JSON.parse(init.body) : null;
@@ -35,30 +39,31 @@ const runtime = createProviderRuntime({ home, env, platform: "linux", corePort: 
 handler = createAdapterHandler({ providerRuntime: runtime, codexClient: {} });
 try {
   const state = await runtime.manageConnections({ operation: "save_api", config: { name: "Native replay", base_url: "https://synthetic.test/v1", endpoints: { messages: "https://synthetic.test/v1/messages" }, auth_header: "bearer",
-    models: ["small", "large"].map(id => ({ id, protocols: ["messages"] })) }, key: "synthetic-only", allowed: ["claude_code"] });
-  const source = state.providers.find(p => !p.builtin).id, client = state.clients.find(c => c.id === "claude_code");
+    models: ["small", "large"].map(id => ({ id, protocols: ["messages"] })) }, key: "synthetic-only", allowed: [clientId] });
+  const source = state.providers.find(p => !p.builtin).id, client = state.clients.find(c => c.id === clientId);
   // Saving is independent of the catalog read; join it before inspecting the
   // capability plan used to configure the isolated native client.
   await runtime.manageConnections({ operation: "discover", id: source });
-  await runtime.manageConnections({ operation: "client", id: "claude_code", enabled: true, allowed: client.allowed, deployments: ["small", "large"].map(model => ({ source, model })) });
-  const compiled = runtime.connections().clients.find(c => c.id === "claude_code").model_plan.models;
+  await runtime.manageConnections({ operation: "client", id: clientId, enabled: true, allowed: client.allowed, deployments: ["small", "large"].map(model => ({ source, model })) });
+  const compiled = runtime.connections().clients.find(c => c.id === clientId).model_plan.models;
   const models = compiled.map(model => ({ id: model.id, public_id: model.public_id, client_id: model.public_id, capability: model.capability }));
-  const plan = claudeSharedCapabilityPlan({ code: models, support: { code: true } });syncClaudeCapabilities(plan, { home, env, platform: "linux" });
+  const plan = claudeSharedCapabilityPlan({ [app ? "app" : "code"]: models, support: { app: true, code: true } });syncClaudeCapabilities(plan, { home, env, platform: "linux" });
   const settings = JSON.parse(fs.readFileSync(claudeClientPaths({ home, env, platform: "linux" }).code));
   const isolated = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
-    ...settings.env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}/anthropic`, ANTHROPIC_AUTH_TOKEN: readClientGatewayKeys({ home, env }).claude_code,
+    ...settings.env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}/anthropic`, ANTHROPIC_AUTH_TOKEN: readClientGatewayKeys({ home, env })[clientId],
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_AUTOUPDATER: "1", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" };
   for (const key of ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "NODE_OPTIONS"]) delete isolated[key];
+  isolated.ANTHROPIC_CUSTOM_HEADERS = `X-CCDX-Client: ${app ? "claude-app" : "claude-code"}`;
   const version = (await run(executable, ["--version"], { env: isolated, cwd: home, timeout: 15000 })).stdout.trim(), results = [];
-  for (const model of models) {
-    const start = calls.length, reply = await run(executable, ["--bare", "-p", `Reply with ${marker}.`, "--model", model.public_id, "--effort", "high", "--tools", "", "--no-session-persistence", "--output-format", "json", "--max-turns", "1"], { env: isolated, cwd: home, timeout: 60000, maxBuffer: 2 * 1024 * 1024 });
+  for (const model of models) for (const effort of app ? ["low", "medium", "high"] : ["high"]) {
+    const start = calls.length, reply = await run(executable, ["--bare", "-p", `Reply with ${marker}.`, "--model", model.public_id, "--effort", effort, "--tools", "", "--no-session-persistence", "--output-format", "json", "--max-turns", "1"], { env: isolated, cwd: home, timeout: 60000, maxBuffer: 2 * 1024 * 1024 });
     assert.match(reply.stdout, new RegExp(marker));const value = JSON.parse(reply.stdout), requests = calls.slice(start);
-    assert.ok(requests.some(request => request.model === model.id && request.effort === "high" && request.max_tokens === model.capability.values.max_output_tokens));
+    assert.ok(requests.some(request => request.model === model.id && request.effort === effort && request.max_tokens === model.capability.values.max_output_tokens));
     const usage = Object.values(value.modelUsage || {})[0];
-    results.push({ model: model.id, declared_context: model.capability.values.context_window, client_context: usage?.contextWindow || null,
+    results.push({ model: model.id, effort, declared_context: model.capability.values.context_window, client_context: usage?.contextWindow || null,
       client_output_limit: usage?.maxOutputTokens || null, configured_budget: settings.modelSettings?.[model.public_id]?.autoCompactWindow,
       requests, marker_received: true });
   }
-  console.log(JSON.stringify({ version, host_context: settings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, host_output: settings.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS,
+  console.log(JSON.stringify({ version, client: clientId, host_context: settings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, host_output: settings.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS,
     results, live_provider_calls: 0, tools_executed: 0 }));
 } finally { handler.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime.close();fs.rmSync(home, { recursive: true, force: true }); }

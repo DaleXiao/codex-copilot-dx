@@ -21,9 +21,9 @@ export function inspectClaudeCapabilitySupport({ platform = process.platform, en
   if (!appVersion && platform === "darwin") {
     try { appVersion = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(readBoundedFileSync("/Applications/Claude.app/Contents/Info.plist", { maxBytes: 65536, encoding: "utf8" }))?.[1]; } catch { /* Unknown builds keep the conservative alias. */ }
   }
-  // The 3.x App schema/host was independently inspected. Other versions keep
+  // The 3.x and 4.x App schema/host were independently inspected. Other versions keep
   // working catalogs without claiming adoption of undocumented host controls.
-  return { app_version: appVersion || null, app: /^3\./.test(appVersion || ""), code_version: codeVersion || null, code: /^2\.1\./.test(codeVersion || "") && Number(codeVersion.split(".")[2]) >= 293 };
+  return { app_version: appVersion || null, app: /^[34]\./.test(appVersion || ""), code_version: codeVersion || null, code: /^2\.1\./.test(codeVersion || "") && Number(codeVersion.split(".")[2]) >= 293 };
 }
 
 export function claudeSharedCapabilityPlan({ app = [], code = [], support = {} } = {}) {

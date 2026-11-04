@@ -9,6 +9,7 @@ import { atomicWriteFileSync } from "./atomic-file.mjs";
 import { withFileLockSync } from "./lock.mjs";
 import { m365Paths, readM365Json, writeM365Json } from "./m365-settings.mjs";
 import { claudeClientModelId, claudeModelEntries } from "./claude-models.mjs";
+import { claudeRouteAliases } from "./clients/claude-models.mjs";
 
 export const M365_CLAUDE_PROFILE_ID = "00000000-0000-4000-8000-000000202700";
 const M365_CLAUDE_PROFILE_NAME = "CCDX Microsoft 365";
@@ -266,12 +267,13 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
         return [typeof name === "string" ? claudeClientModelId(name) : "", index];
       }));
       const previousByName = new Map((Array.isArray(previousModels) ? previousModels : []).filter(model => model && typeof model === "object").map(model => [model.name, model]));
-      const desktopEntries = (desktopAliases ? claudeModelEntries(models, { desktopAliases }) : entries).map(entry => {
-        const previous = previousByName.get(entry.name);
+      const previousNames = models.map(model => model.route_id ? claudeRouteAliases(model, model.route_id, true).slice(2) : []);
+      const desktopEntries = (desktopAliases ? claudeModelEntries(models, { desktopAliases }) : entries).map((entry, index) => {
+        const previous = previousByName.get(entry.name) || previousNames[index].map(name => previousByName.get(name)).find(Boolean);
         return entry.supports1m ? { ...entry, prefer1m: typeof previous?.prefer1m === "boolean" ? previous.prefer1m : true } : entry;
       });
       for (let index = 0; index < models.length; index++) {
-        const old = order.get(claudeClientModelId(models[index].id));
+        const old = previousNames[index].map(name => order.get(name)).find(value => value !== undefined) ?? order.get(claudeClientModelId(models[index].id));
         if (old !== undefined && !order.has(desktopEntries[index].name)) order.set(desktopEntries[index].name, old);
       }
       const orderedEntries = [...desktopEntries].sort((left, right) => defaultModel && (left.name === defaultModel || right.name === defaultModel)

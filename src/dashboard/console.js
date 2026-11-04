@@ -178,7 +178,7 @@
     el("process-notice").textContent = data.terminal?.last_notice || "";
     preferences?.sync(data, meta);
   }
-  window.addEventListener("ccdx:connections", () => { if (current === "codex") void loadSettings(); });
+  window.addEventListener("ccdx:connections", event => { if (current === "codex" && event.detail?.imageChanged) void loadSettings(); });
   async function loadSettings() {
     if (settingsPending) return;
     settingsPending = true;

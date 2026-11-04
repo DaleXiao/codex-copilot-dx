@@ -100,8 +100,13 @@
     try { const result = await api();if (current !== generation) return;data = result;mountClient();list(); }
     catch (error) { if (!data) message(error.message); }
   }
+  const imageViewRevision = value => {
+    const c = value?.clients.find(client => client.id === "codex"), image = c?.model_plan?.image;
+    return JSON.stringify([c?.enabled, image?.selected_model, image?.selected_available, image?.models]);
+  };
   async function change(input, done) {
     if (busy) return;busy = true;generation++;
+    const previousImage = imageViewRevision(data);
     const trigger = ["client", "image_model"].includes(input.operation) ? clientForm.querySelector('button[type="submit"]') : input.operation === "preview_client" ? el("connection-sync-preview")
       : input.operation === "save_api" ? apiForm.querySelector('button[type="submit"]') : document.activeElement;
     const oldKey = trigger?.dataset.i18n, oldText = trigger?.textContent;
@@ -123,7 +128,7 @@
       if (input.operation === "save_api" && input.config.models.length) for (const c of data.clients.filter(c => c.enabled && input.allowed.includes(c.id))) {
         const link = node("a", c.name, "section-link");link.href = c.id === "codex" ? "#codex" : "#claude";link.addEventListener("click", event => { event.preventDefault();editClient(c); });el("connection-note").append(" ", link);
       }
-    }window.dispatchEvent(new CustomEvent("ccdx:connections"));void dashboardRefresh.refresh("auth", { force: true });void dashboardRefresh.refresh("status", { force: true }); }
+    }if (input.operation !== "preview_client") window.dispatchEvent(new CustomEvent("ccdx:connections", { detail: { imageChanged: imageViewRevision(data) !== previousImage } }));void dashboardRefresh.refresh("auth", { force: true });void dashboardRefresh.refresh("status", { force: true }); }
     catch (error) {
       if (input.operation === "provider" && !input.enabled && error.message === "ccdx_connections_conflict") {
         try { data = await api();list();disableSource(source(input.id));message("api_impact_changed"); } catch { message(error.message); }return;

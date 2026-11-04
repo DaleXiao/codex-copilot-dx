@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { createNpmReleaseFetch, releaseBytes, releaseChecksum, RELEASE_BASE, stableVersion } from "./release-install.mjs";
 
 export const PRIVACY_MODEL_REVISION = "7216b6a3b897ef903d4b1ba367ae6fb95b0fa5e4";
-export const PRIVACY_COMPONENT_RELEASE = "1.3.12";
+export const PRIVACY_COMPONENT_RELEASE = "1.3.13";
 export const PRIVACY_COMPONENT_ABI = 1;
 export const PRIVACY_MODEL_FILES = Object.freeze([
   { name: "model_int8.onnx", bytes: 330781, sha256: "0a070d3113615e33ba3b84d6bd486f663a377c04c4b056e7381732179f51832a" },
@@ -153,7 +153,7 @@ export function createPrivacyModel(options = {}) {
           const part = line.slice(0, end);line = line.slice(end + 1);
           try {
             const value = JSON.parse(part);
-            if (value.ready === true) { clearTimeout(timer);set({ state: "ready", backend: value.backend === "CoreML" ? "CoreML" : "CPU", device: ["CPU", "GPU", "Neural Engine"].includes(value.device) ? value.device : null, window_cache: value.window_cache === true, window_plan: value.window_plan === true, cancel_between_windows: value.cancel_between_windows === true, window_cache_entries: Number.isSafeInteger(value.window_cache_entries) ? value.window_cache_entries : null, window_cache_bytes: Number.isSafeInteger(value.window_cache_bytes) ? value.window_cache_bytes : null });resolve();if (componentRelease !== PRIVACY_COMPONENT_RELEASE && !upgradeAttempted) { upgradeAttempted = true;void download({ background: true }).catch(() => {}); } }
+            if (value.ready === true) { clearTimeout(timer);set({ state: "ready", backend: value.backend === "CoreML" ? "CoreML" : "CPU", device: ["CPU", "GPU", "Neural Engine"].includes(value.device) ? value.device : null, window_cache: value.window_cache === true, window_plan: value.window_plan === true, cancel_between_windows: value.cancel_between_windows === true, cpu_short_batch: value.cpu_short_batch === true, window_cache_entries: Number.isSafeInteger(value.window_cache_entries) ? value.window_cache_entries : null, window_cache_bytes: Number.isSafeInteger(value.window_cache_bytes) ? value.window_cache_bytes : null });resolve();if (componentRelease !== PRIVACY_COMPONENT_RELEASE && !upgradeAttempted) { upgradeAttempted = true;void download({ background: true }).catch(() => {}); } }
             else if (jobs.has(value.id)) {
               const job = jobs.get(value.id);
               if (value.phase === "plan") {
@@ -165,7 +165,7 @@ export function createPrivacyModel(options = {}) {
               }
               jobs.delete(value.id);clearTimeout(job.timer);
               if (value.window_work && typeof value.window_work === "object") {
-                const work = Object.fromEntries(["evaluated", "hits", "shared", "total"].filter(key => Number.isSafeInteger(value.window_work[key]) && value.window_work[key] >= 0).map(key => [key, value.window_work[key]]));
+                const work = Object.fromEntries(["evaluated", "hits", "shared", "total", "cpu_batch_groups", "cpu_batch_windows"].filter(key => Number.isSafeInteger(value.window_work[key]) && value.window_work[key] >= 0).map(key => [key, value.window_work[key]]));
                 set({ last_window_work: work, window_cache_entries: Number.isSafeInteger(value.window_cache_entries) ? value.window_cache_entries : null,
                   window_cache_bytes: Number.isSafeInteger(value.window_cache_bytes) ? value.window_cache_bytes : null });
                 job.onWindowWork?.(work);

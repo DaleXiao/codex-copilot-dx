@@ -52,8 +52,8 @@ test("pending and cache budgets remain bounded and snapshots contain no text", a
 });
 
 test("native window work counts are separate from submitted whole-text bytes", async t => {
-  const detection=createPrivacyDetection({find:async(texts,options)=>{options.onSubmitted();options.onWindowWork({evaluated:2,hits:3,shared:1,total:6});return texts.map(()=>[]);}});t.after(()=>detection.close());
-  await detection.find(["ordinary full text"]);const stats=detection.snapshot();assert.equal(stats.window_evaluations,2);assert.equal(stats.window_hits,3);assert.equal(stats.window_shared,1);assert.equal(stats.submitted_batches,1);
+  const detection=createPrivacyDetection({find:async(texts,options)=>{options.onSubmitted();options.onWindowWork({evaluated:2,hits:3,shared:1,total:6,cpu_batch_groups:1,cpu_batch_windows:2});return texts.map(()=>[]);}});t.after(()=>detection.close());
+  await detection.find(["ordinary full text"]);const stats=detection.snapshot();assert.equal(stats.window_evaluations,2);assert.equal(stats.window_hits,3);assert.equal(stats.window_shared,1);assert.equal(stats.submitted_batches,1);assert.equal(stats.cpu_batch_groups,1);assert.equal(stats.cpu_batch_windows,2);
 });
 
 test("window plans reach each active shared waiter and later joiners without another native call", async t => {

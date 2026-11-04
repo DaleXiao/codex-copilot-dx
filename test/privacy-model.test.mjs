@@ -9,14 +9,14 @@ import { PassThrough, Writable } from "node:stream";
 import { createPrivacyModel, PRIVACY_COMPONENT_RELEASE, PRIVACY_COMPONENT_ABI, PRIVACY_MODEL_REVISION } from "../src/privacy-model.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
-async function fixture(t, { legacy = false, offline = false, release = legacy ? "1.3.6" : PRIVACY_COMPONENT_RELEASE, holdDownload = false, windowSupport = false, planSupport = false } = {}) {
+async function fixture(t, { legacy = false, offline = false, release = legacy ? "1.3.6" : PRIVACY_COMPONENT_RELEASE, holdDownload = false, windowSupport = false, planSupport = false, cpuBatchSupport = false } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-model-unit-"));
   const weights = Buffer.from("synthetic weights"), runner = Buffer.from("synthetic runner"), requests = [], jobs = [];
   let child, spawned, killed = 0, spawns = 0, releaseDownload;
   const gate = holdDownload ? new Promise(resolve => { releaseDownload = resolve; }) : Promise.resolve();
   const model = createPrivacyModel({ home, env: {}, modelFiles: [{ name: "model", bytes: weights.length, sha256: sha(weights) }],
     fetchImpl: async url => { requests.push(url);if (offline) throw Error("offline");await gate;return new Response(url.endsWith("SHA256SUMS") ? `${sha(runner)}  ${model.paths.name}\n` : runner); },
-    spawnImpl: file => { spawned = file;spawns++;child = new EventEmitter();child.stdout = new PassThrough();child.stdin = new Writable({ write(bytes, _encoding, done) { jobs.push(JSON.parse(bytes));done(); } });child.kill = () => { killed++; };setImmediate(() => child.stdout.write(JSON.stringify({ready:true,backend:"CPU",window_cache:windowSupport,window_plan:planSupport,cancel_between_windows:windowSupport})+"\n"));return child; },
+    spawnImpl: file => { spawned = file;spawns++;child = new EventEmitter();child.stdout = new PassThrough();child.stdin = new Writable({ write(bytes, _encoding, done) { jobs.push(JSON.parse(bytes));done(); } });child.kill = () => { killed++; };setImmediate(() => child.stdout.write(JSON.stringify({ready:true,backend:"CPU",window_cache:windowSupport,window_plan:planSupport,cancel_between_windows:windowSupport,cpu_short_batch:cpuBatchSupport})+"\n"));return child; },
   });
   t.after(async () => { model.close();await fs.rm(home, { recursive: true, force: true }); });
   await fs.mkdir(model.paths.model, { recursive: true });await fs.writeFile(path.join(model.paths.model, "model"), weights);
@@ -31,6 +31,18 @@ test("versioned compatible components survive an unavailable upgrade without pre
   const f = await fixture(t, { release: "1.3.9", offline: true });assert.equal(await f.model.installed({ current: true }), false);
   await f.model.load();await f.model.download({ background: true }).catch(() => {});
   assert.equal(f.model.snapshot().state, "ready");assert.equal(f.model.snapshot().component_release, "1.3.9");
+});
+
+test("CPU short-batch capability and work counters remain compatible with older components", async t => {
+  const legacy = await fixture(t);await legacy.model.load();assert.equal(legacy.model.snapshot().cpu_short_batch, false);
+  const current = await fixture(t, { windowSupport: true, cpuBatchSupport: true });await current.model.load();
+  assert.equal(current.model.snapshot().cpu_short_batch, true);
+  const observed = [], pending = current.model.find(["left field", "right field"], { onWindowWork: value => observed.push(value) });
+  await new Promise(setImmediate);
+  const work = { evaluated: 2, hits: 0, shared: 0, total: 2, cpu_batch_groups: 1, cpu_batch_windows: 2 };
+  current.reply(current.jobs[0].id, [[], []], { window_work: { ...work, text: "discarded" } });
+  assert.deepEqual(await pending, [[], []]);assert.deepEqual(observed, [work]);
+  assert.deepEqual(current.model.snapshot().last_window_work, work);assert.equal(current.model.snapshot().pending_checks, 0);
 });
 
 test("window cancellation keeps its native slot until acknowledgement and reports work without values", async t => {

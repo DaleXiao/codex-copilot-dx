@@ -36,10 +36,12 @@ type windowCache struct {
 	bytes   int
 }
 type WindowWork struct {
-	Evaluated int `json:"evaluated"`
-	Hits      int `json:"hits"`
-	Shared    int `json:"shared"`
-	Total     int `json:"total"`
+	Evaluated       int `json:"evaluated"`
+	Hits            int `json:"hits"`
+	Shared          int `json:"shared"`
+	Total           int `json:"total"`
+	CPUBatchGroups  int `json:"cpu_batch_groups"`
+	CPUBatchWindows int `json:"cpu_batch_windows"`
 }
 
 func windowKey(ids []int) [32]byte {
@@ -58,6 +60,13 @@ func (c *windowCache) pending(ids []int) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.entries[key] == nil
+}
+
+func (c *windowCache) fresh(ids []int) bool {
+	key := windowKey(ids)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.entries[key] == nil && c.reading[key] == nil
 }
 
 // An identical-window waiter holds no CPU admission slot. The owner finishes

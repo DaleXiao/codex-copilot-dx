@@ -21,16 +21,22 @@ const worker=options.has("--sample")?JSON.parse(options.get("--sample")):null;
 assert.ok(["aa","compare"].includes(options.get("--mode")||"compare")&&["gate","report"].includes(timingMode));
 assert.ok(Number.isSafeInteger(trials)&&trials>=5&&trials<=40);
 const root=fs.mkdtempSync(path.join(os.tmpdir(),"ccdx-candidate-native-")),repository=fileURLToPath(new URL("../",import.meta.url));
-const baselineCommit="cac4722b87d96d870f154edb46a300a5cf458d3a",samples=[];
+const baselineCommit="164edd0af96fa6563d34b50125ce6158797263f3",samples=[];
 const modelDirectory=worker?options.get("--model-directory"):path.join(root,"shared-model");assert.ok(path.isAbsolute(modelDirectory||""));
 if(!worker){
  fs.mkdirSync(modelDirectory,{recursive:true});
  for(const file of PRIVACY_MODEL_FILES){const bytes=fs.readFileSync(path.join(weights,file.name));assert.equal(bytes.length,file.bytes);assert.equal(createHash("sha256").update(bytes).digest("hex"),file.sha256);fs.copyFileSync(path.join(weights,file.name),path.join(modelDirectory,file.name));}
  if(fs.existsSync(path.join(weights,"coreml")))fs.cpSync(path.join(weights,"coreml"),path.join(modelDirectory,"coreml"),{recursive:true});
 }
-const source=execFileSync("git",["show",baselineCommit+":src/local-privacy.mjs"],{cwd:repository,encoding:"utf8"})
-  .replace(/from "\.\/([^"]+)"/g,(_,name)=>"from "+JSON.stringify(pathToFileURL(path.join(repository,"src",name)).href));
-const {createLocalPrivacy:baseline}=await import("data:text/javascript;base64,"+Buffer.from(source).toString("base64"));
+const baselineFiles=new Set(["local-privacy.mjs","privacy-model.mjs","privacy-detection.mjs"]),baselineRoot=path.join(root,"baseline-source");
+fs.mkdirSync(baselineRoot,{recursive:true});
+for(const name of baselineFiles){
+ const source=execFileSync("git",["show",baselineCommit+":src/"+name],{cwd:repository,encoding:"utf8"})
+  .replace(/from "\.\/([^"]+)"/g,(_,file)=>"from "+JSON.stringify(pathToFileURL(path.join(baselineFiles.has(file)?baselineRoot:path.join(repository,"src"),file)).href));
+ fs.writeFileSync(path.join(baselineRoot,name),source);
+}
+const {createLocalPrivacy:baseline}=await import(pathToFileURL(path.join(baselineRoot,"local-privacy.mjs")).href);
+const {createPrivacyModel:baselineModel}=await import(pathToFileURL(path.join(baselineRoot,"privacy-model.mjs")).href);
 const makeText=(count,chinese)=>Array.from({length:count},(_,i)=>chinese?"第"+i+"行包含普通说明文字和测试数据，不包含真实账户信息。\n":"line "+i+" contains ordinary sample text for an isolated history.\n").join("");
 const workloads=[{name:"short-fields",values:Array.from({length:80},(_,i)=>"ordinary field "+i),append:"one additional field"},
   {name:"long-english",values:[makeText(480,false)],append:makeText(20,false)},
@@ -38,7 +44,7 @@ const workloads=[{name:"short-fields",values:Array.from({length:80},(_,i)=>"ordi
 try {
  for(const workload of workloads) for(let trial=0;trial<trials;trial++) {
   if(worker&&(worker.workload!==workload.name||worker.trial!==trial))continue;
-  const variants=trial%2?[["candidate-1.3.12",control?baseline:createLocalPrivacy],["baseline-1.3.11-detection",baseline]]:[["baseline-1.3.11-detection",baseline],["candidate-1.3.12",control?baseline:createLocalPrivacy]];
+  const variants=trial%2?[["candidate-"+PRIVACY_COMPONENT_RELEASE,control?baseline:createLocalPrivacy],["baseline-1.3.12-detection",baseline]]:[["baseline-1.3.12-detection",baseline],["candidate-"+PRIVACY_COMPONENT_RELEASE,control?baseline:createLocalPrivacy]];
   for(const [label,factory] of variants) {
    if(worker&&worker.label!==label)continue;
    if(!worker){
@@ -49,37 +55,37 @@ try {
     samples.push(JSON.parse(value));console.log(JSON.stringify({workload:workload.name,trial,variant:label,completed:true}));continue;
    }
    const home=path.join(root,workload.name,String(trial),label),env=testEnvironment(home,{XDG_CONFIG_HOME:path.join(home,"config"),XDG_CACHE_HOME:path.join(home,"cache")});
-   const detector=createPrivacyModel({home,env,fetchImpl:async()=>{throw Error("Candidate replay forbids downloads")},
-     spawnImpl:(file,_args,options)=>spawn(file,[modelDirectory],options)});let privacy;
    const isBaseline=control||label.startsWith("baseline");
+   const detector=(isBaseline?baselineModel:createPrivacyModel)({home,env,fetchImpl:async()=>{throw Error("Candidate replay forbids downloads")},
+     spawnImpl:(file,_args,options)=>spawn(file,[modelDirectory],options)});let privacy;
    try {
     fs.mkdirSync(detector.paths.model,{recursive:true});fs.mkdirSync(path.dirname(detector.paths.runner),{recursive:true});
     for(const file of PRIVACY_MODEL_FILES)fs.linkSync(path.join(modelDirectory,file.name),path.join(detector.paths.model,file.name));
     const directory=isBaseline?baselineComponent:component,binary=fs.readFileSync(path.join(directory,detector.paths.name));
     if(isBaseline){const manifest=fs.readFileSync(path.join(directory,"SHA256SUMS"),"utf8");const expected=manifest.split("\n").find(line=>line.endsWith("  "+detector.paths.name))?.slice(0,64);assert.equal(createHash("sha256").update(binary).digest("hex"),expected,"Baseline component bytes changed");}
-    const release=isBaseline?"1.3.10":PRIVACY_COMPONENT_RELEASE,runner=path.join(detector.paths.components,release,detector.paths.name);fs.mkdirSync(path.dirname(runner),{recursive:true});fs.writeFileSync(runner,binary,{mode:0o700});
+    const release=isBaseline?"1.3.12":PRIVACY_COMPONENT_RELEASE,runner=path.join(detector.paths.components,release,detector.paths.name);fs.mkdirSync(path.dirname(runner),{recursive:true});fs.writeFileSync(runner,binary,{mode:0o700});
     fs.writeFileSync(runner+".json",JSON.stringify({release,abi:PRIVACY_COMPONENT_ABI,model_revision:PRIVACY_MODEL_REVISION,sha256:createHash("sha256").update(binary).digest("hex")}));
     const load=performance.now();await detector.load();if(!isBaseline)assert.equal(detector.snapshot().window_cache,true,"Window reuse capability missing");
     assert.equal(detector.snapshot().component_release,release,"The selected component changed during measurement");
     const loadMs=performance.now()-load,settings=userSettingsPath({home,env});fs.mkdirSync(path.dirname(settings),{recursive:true});fs.writeFileSync(settings,JSON.stringify({privacy_enabled:true}));
-    let calls=0,bytes=0,evaluations=0,hits=0,totals=0;const findings=new Map();
-    const model={...detector,close(){},stop(){},find:async(texts,options={})=>{const found=await detector.find(texts,{...options,cacheWindows:!isBaseline,
-      onWindowWork(work){evaluations+=work.evaluated;hits+=work.hits+work.shared;totals+=work.total;options.onWindowWork?.(work)},
+    let calls=0,bytes=0,evaluations=0,hits=0,totals=0,cpuGroups=0,cpuWindows=0;const findings=new Map();
+    const model={...detector,close(){},stop(){},find:async(texts,options={})=>{const found=await detector.find(texts,{...options,cacheWindows:true,
+      onWindowWork(work){evaluations+=work.evaluated;hits+=work.hits+work.shared;totals+=work.total;cpuGroups+=work.cpu_batch_groups||0;cpuWindows+=work.cpu_batch_windows||0;options.onWindowWork?.(work)},
       onSubmitted(){calls++;bytes+=texts.reduce((sum,text)=>sum+Buffer.byteLength(text),0);options.onSubmitted?.()}});
       texts.forEach((text,index)=>findings.set(createHash("sha256").update(text).digest("hex"),found[index]));return found;}};
     privacy=factory({home,env,model,...(isBaseline?{checkTimeoutMs:180000}:{})});
     const first={messages:workload.values.map(content=>({role:"user",content}))},next=workload.name==="short-fields"?{messages:[...first.messages,{role:"user",content:workload.append}]}:{messages:[{role:"user",content:workload.values[0]+workload.append}]};
     const timings=[];
     for(const [phase,body]of [["cold",first],["append",next],["hot",next]]) {
-      findings.clear();const oldCalls=calls,oldBytes=bytes,oldEvaluations=evaluations,oldHits=hits,oldTotals=totals,start=performance.now(),repetitions=phase==="hot"?hotRepetitions:1;
+      findings.clear();const oldCalls=calls,oldBytes=bytes,oldEvaluations=evaluations,oldHits=hits,oldTotals=totals,oldCpuGroups=cpuGroups,oldCpuWindows=cpuWindows,start=performance.now(),repetitions=phase==="hot"?hotRepetitions:1;
       for(let at=0;at<repetitions;at++)await privacy.prepare(body,{protocol:"messages",client:"isolated_candidate"});
-      const sample={phase,ms:(performance.now()-start)/repetitions,repetitions,submitted_batches:calls-oldCalls,submitted_bytes:bytes-oldBytes,window_evaluations:evaluations-oldEvaluations,window_hits:hits-oldHits,window_total:totals-oldTotals,
+      const sample={phase,ms:(performance.now()-start)/repetitions,repetitions,submitted_batches:calls-oldCalls,submitted_bytes:bytes-oldBytes,window_evaluations:evaluations-oldEvaluations,window_hits:hits-oldHits,window_total:totals-oldTotals,cpu_batch_groups:cpuGroups-oldCpuGroups,cpu_batch_windows:cpuWindows-oldCpuWindows,
         wait_budget_ms:privacy.snapshot().last_check?.wait_budget_ms||180000,
         finding_digest:createHash("sha256").update(JSON.stringify([...findings].sort(([a],[b])=>a.localeCompare(b)))).digest("hex")};timings.push(sample);
       if(phase==="hot")assert.equal(sample.submitted_batches,0,"Exact hot history repeated native work");
     }
     const probe=["The password is "+["hun","terTwo","Three"].join("")+". Please keep it private.","张三的邮箱是 "+["private","sample"].join(".")+"@example.org。"];
-    const probeResult=await detector.find(probe,{cacheWindows:!isBaseline});
+    const probeResult=await detector.find(probe,{cacheWindows:true});
     samples.push({probe:probeResult,js_process_id:process.pid,component_release:detector.snapshot().component_release,component_sha256:createHash("sha256").update(binary).digest("hex"),workload:workload.name,variant:label,trial,input_bytes:workload.values.reduce((sum,text)=>sum+Buffer.byteLength(text),0),load_ms:loadMs,backend:detector.snapshot().backend,device:detector.snapshot().device,timings});
    }finally{privacy?.close();detector.close();fs.rmSync(home,{recursive:true,force:true,maxRetries:3})}
   }
@@ -94,11 +100,12 @@ try {
     if(!control)assert.equal(after[trial].timings[0].window_evaluations,after[trial].timings[0].window_total,"Cold input must not reuse calibration windows or duplicate inference");
     assert.equal(after[trial].timings[0].finding_digest,before[trial].timings[0].finding_digest,"Cold classifier results changed");
     assert.equal(after[trial].timings[1].finding_digest,before[trial].timings[1].finding_digest,"Append classifier results changed");
+    if(!control&&workload.name==="short-fields")assert.ok(after[trial].timings[0].cpu_batch_groups>0,"CPU short-field batch path was not exercised");
     if(!control&&workload.name!=="short-fields")assert.ok(after[trial].timings[1].window_evaluations<after[trial].timings[1].window_total/2,"Append repeated unchanged windows");
   }
  }
  const result={version:JSON.parse(fs.readFileSync(path.join(repository,"package.json"))).version,platform:process.platform,arch:process.arch,baseline_commit:baselineCommit,
-  comparison_scope:"Verified 1.3.11 baseline, paired fresh JS and native processes for every sample, same owned model directory with copied weights and acceleration cache. Detector caches are empty for cold input. Candidate uses production waits. Hot means amortized repeated same-body checks. No downloads, cloud inference or signed App execution.",
+  comparison_scope:"Verified 1.3.12 baseline, paired fresh JS and native processes for every sample, same owned model directory with copied weights and acceleration cache. Detector caches are empty for cold input. Candidate uses production waits. Hot means amortized repeated same-body checks. No downloads, cloud inference or signed App execution.",
   mode:control?"aa":"compare",machine,runtime_fingerprint:privacyRuntimeFingerprint(repository),measurement_fingerprint:privacyMeasurementFingerprint(repository),
   machine_configuration:{platform:process.platform,arch:process.arch,os_release:os.release(),available_parallelism:os.availableParallelism()},samples,...analysis};
  fs.mkdirSync(output,{recursive:true});fs.writeFileSync(path.join(output,"privacy-candidate-"+process.platform+"-"+process.arch+".json"),JSON.stringify(result,null,2)+"\n");console.log(JSON.stringify(result));

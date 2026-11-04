@@ -37,7 +37,7 @@ func main() {
 	out := json.NewEncoder(os.Stdout)
 	via, device, _ := m.Backend()
 	initialEntries, initialBytes := m.WindowCacheUsage()
-	out.Encode(map[string]any{"ready": true, "backend": via, "device": device, "window_cache": true, "window_plan": true, "cancel_between_windows": true, "window_cache_entries": initialEntries, "window_cache_bytes": initialBytes})
+	out.Encode(map[string]any{"ready": true, "backend": via, "device": device, "window_cache": true, "window_plan": true, "cancel_between_windows": true, "cpu_short_batch": true, "window_cache_entries": initialEntries, "window_cache_bytes": initialBytes})
 	var outputMu, activeMu sync.Mutex
 	active := map[int]context.CancelFunc{}
 	var jobs sync.WaitGroup
@@ -105,31 +105,26 @@ func main() {
 			}
 			defer func() { <-sem }()
 			reuse := r.CacheWindows == nil || *r.CacheWindows
+			var plan func(int, int, int)
+			if r.PlanWindows {
+				plan = func(index, pending, total int) {
+					outputMu.Lock()
+					out.Encode(map[string]any{"id": r.ID, "phase": "plan", "text_index": index, "pending_windows": pending, "total_windows": total})
+					outputMu.Unlock()
+				}
+			}
+			var results [][]guard.Span
+			results, work, complete = m.FindTextsPlanned(ctx, r.Texts, reuse, plan)
+			if !complete {
+				if ctx.Err() != nil {
+					failure = "cancelled"
+				} else {
+					failure = "engine_invalid"
+				}
+				return
+			}
 			found = make([][]span, len(r.Texts))
-			complete = true
-			for i, text := range r.Texts {
-				var plan func(int, int)
-				if r.PlanWindows {
-					plan = func(pending, total int) {
-						outputMu.Lock()
-						out.Encode(map[string]any{"id": r.ID, "phase": "plan", "text_index": i, "pending_windows": pending, "total_windows": total})
-						outputMu.Unlock()
-					}
-				}
-				spans, one, done := m.FindPlanned(ctx, text, reuse, plan)
-				work.Evaluated += one.Evaluated
-				work.Hits += one.Hits
-				work.Shared += one.Shared
-				work.Total += one.Total
-				if !done {
-					complete = false
-					if ctx.Err() != nil {
-						failure = "cancelled"
-					} else {
-						failure = "engine_invalid"
-					}
-					return
-				}
+			for i, spans := range results {
 				for _, s := range spans {
 					if s.Score >= guard.MinScore {
 						found[i] = append(found[i], span{s.Start, s.End, s.Label, s.Score})

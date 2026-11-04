@@ -53,11 +53,11 @@ jobs:
           PERF_MODE: ${{ inputs.mode || 'aa' }}
           PERF_TARGET: ${{ matrix.target }}
         run: |
-          git fetch --no-tags --depth=1 origin cac4722b87d96d870f154edb46a300a5cf458d3a
+          git fetch --no-tags --depth=1 origin 164edd0af96fa6563d34b50125ce6158797263f3
           mkdir -p "$RUNNER_TEMP/privacy-baseline"
           baseline_name="ccdx-privacy-guard-1-$PERF_TARGET"
           if [[ "$PERF_TARGET" == win32-* ]]; then baseline_name="$baseline_name.exe"; fi
-          gh release download v1.3.11 --repo "$GITHUB_REPOSITORY" --pattern "$baseline_name" --pattern SHA256SUMS --dir "$RUNNER_TEMP/privacy-baseline"
+          gh release download v1.3.12 --repo "$GITHUB_REPOSITORY" --pattern "$baseline_name" --pattern SHA256SUMS --dir "$RUNNER_TEMP/privacy-baseline"
           node scripts/privacy-candidate-replay.mjs "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/ccdx-privacy-model" "$RUNNER_TEMP/performance" "$RUNNER_TEMP/privacy-baseline" --mode "$PERF_MODE" --pairs 20 --timing report --machine "hosted-$PERF_TARGET"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()

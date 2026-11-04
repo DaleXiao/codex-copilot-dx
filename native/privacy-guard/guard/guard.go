@@ -186,7 +186,13 @@ func (m *Model) FindPlanned(ctx context.Context, text string, reuse bool, onPlan
 	if ctx.Err() != nil {
 		return nil, WindowWork{}, false
 	}
-	toks := m.tok.encode(text)
+	return m.findTokensPlanned(ctx, m.tok.encode(text), reuse, onPlan, 0)
+}
+
+func (m *Model) findTokensPlanned(ctx context.Context, toks []token, reuse bool, onPlan func(int, int), cpuCores int) ([]Span, WindowWork, bool) {
+	if ctx.Err() != nil {
+		return nil, WindowWork{}, false
+	}
 	n := len(toks)
 	if n == 0 {
 		return nil, WindowWork{}, true
@@ -236,7 +242,10 @@ func (m *Model) FindPlanned(ctx context.Context, text string, reuse bool, onPlan
 		ids = append(ids, 2)
 		compute := func() *windowResult {
 			var lg []float32
-			if m.ml != nil {
+			if cpuCores > 0 {
+				held := take(cpuCores)
+				func() { defer give(held); lg = m.net.logits(ids, held) }()
+			} else if m.ml != nil {
 				lg = m.logits(ids, 0)
 			} else {
 				held := take(procs)
@@ -282,7 +291,7 @@ func (m *Model) FindPlanned(ctx context.Context, text string, reuse bool, onPlan
 			failed.Store(true)
 		}
 	}
-	if m.ml != nil {
+	if m.ml != nil || cpuCores > 0 {
 		for w := range starts {
 			if ctx.Err() != nil || failed.Load() {
 				break
@@ -302,7 +311,7 @@ func (m *Model) FindPlanned(ctx context.Context, text string, reuse bool, onPlan
 		}
 		wg.Wait()
 	}
-	work := WindowWork{int(evaluated.Load()), int(hits.Load()), int(shared.Load()), len(starts)}
+	work := WindowWork{Evaluated: int(evaluated.Load()), Hits: int(hits.Load()), Shared: int(shared.Load()), Total: len(starts)}
 	for _, result := range results {
 		if result == nil {
 			return nil, work, false

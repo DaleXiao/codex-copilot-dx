@@ -14,7 +14,7 @@ export function createPrivacyDetection(model, {
   if (!Number.isSafeInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 8) throw new Error("Invalid privacy concurrency budget");
   const cache = new Map(), flights = new Map(), turns = [];
   let cacheBytes = 0, pendingBytes = 0, running = 0, closed = false;
-  const stats = { submitted_batches: 0, submitted_bytes: 0, cache_hits: 0, shared_hits: 0, skipped_texts: 0, window_evaluations: 0, window_hits: 0, window_shared: 0 };
+  const stats = { submitted_batches: 0, submitted_bytes: 0, cache_hits: 0, shared_hits: 0, skipped_texts: 0, window_evaluations: 0, window_hits: 0, window_shared: 0, cpu_batch_groups: 0, cpu_batch_windows: 0 };
   const copy = value => value.map(span => ({ ...span }));
   function get(key) {
     const entry = cache.get(key);if (!entry) return undefined;
@@ -53,7 +53,7 @@ export function createPrivacyDetection(model, {
         const onSubmitted = () => { if (!submitted) { submitted = true;stats.submitted_batches++;stats.submitted_bytes += bytes; } };
         const input = batch.map(entry => entry.text), result = await model.find(input, {
           isNeeded: () => batch.some(entry => entry.waiters > 0), workSignal: lease.controller.signal, onSubmitted,
-          onWindowWork(work) { stats.window_evaluations += work.evaluated || 0;stats.window_hits += work.hits || 0;stats.window_shared += work.shared || 0; },
+          onWindowWork(work) { stats.window_evaluations += work.evaluated || 0;stats.window_hits += work.hits || 0;stats.window_shared += work.shared || 0;stats.cpu_batch_groups += work.cpu_batch_groups || 0;stats.cpu_batch_windows += work.cpu_batch_windows || 0; },
           onPlan(plan) {
             const entry = batch[plan.text_index];if (!entry || entry.done) return;
             entry.nativePlan = { pending_windows: plan.pending_windows, total_windows: plan.total_windows };

@@ -66,6 +66,12 @@ jobs:
         run: |
           node scripts/privacy-component.mjs "$RUNNER_TEMP/privacy-component" "${{ matrix.target }}"
           node scripts/privacy-native-replay.mjs "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/ccdx-privacy-model"
+      - name: Verify independent CPU short batches with actual model weights
+        shell: bash
+        working-directory: native/privacy-guard
+        env:
+          CCDX_TEST_PRIVACY_MODEL: ${{ runner.temp }}/ccdx-privacy-model
+        run: go test -mod=vendor ./guard
       - name: Provision fixed native clients for real classifier integration
         shell: bash
         run: npm install --prefix "$RUNNER_TEMP/privacy-clients" --no-audit --no-fund @openai/codex@0.166.0 @anthropic-ai/claude-code@2.1.316
@@ -77,11 +83,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          git fetch --no-tags --depth=1 origin cac4722b87d96d870f154edb46a300a5cf458d3a
+          git fetch --no-tags --depth=1 origin 164edd0af96fa6563d34b50125ce6158797263f3
           mkdir -p "$RUNNER_TEMP/privacy-baseline"
           baseline_name="ccdx-privacy-guard-1-${{ matrix.target }}"
           if [[ "${{ matrix.target }}" == win32-* ]]; then baseline_name="$baseline_name.exe"; fi
-          gh release download v1.3.11 --repo "$GITHUB_REPOSITORY" --pattern "$baseline_name" --pattern SHA256SUMS --dir "$RUNNER_TEMP/privacy-baseline"
+          gh release download v1.3.12 --repo "$GITHUB_REPOSITORY" --pattern "$baseline_name" --pattern SHA256SUMS --dir "$RUNNER_TEMP/privacy-baseline"
           node scripts/privacy-candidate-replay.mjs "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/ccdx-privacy-model" "$RUNNER_TEMP/privacy-component" "$RUNNER_TEMP/privacy-baseline" --mode compare --pairs 5 --timing report --machine "hosted-${{ matrix.target }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()

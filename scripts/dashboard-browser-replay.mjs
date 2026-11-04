@@ -888,7 +888,7 @@ try {
           if (width >= 1280) assert.ok(actions.every(action => action.y === actions[0].y));
           if (output && language === "zh") await page.locator("#prediction-settings").screenshot({ path: path.join(output, `${engine}-prediction-actions-${width}.png`) });
           assert.equal(await page.locator("#image-setup-form").count(), 0);
-          assert.match(await page.locator('[data-i18n="native_image_service"]').textContent(), /GPT Image 2.5 Flare/);
+          assert.equal(await page.locator("#image-models").count(), 1);
           await nav("system");
           await page.locator("#request-limits").evaluate(node => { node.open = true; });
           await page.locator("#decoded-limit").fill("257");await page.locator("#decoded-limit").blur();

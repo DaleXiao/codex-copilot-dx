@@ -43,7 +43,7 @@ test("network diagnostics do not execute macOS discovery on Linux", () => {
 });
 
 test("new command tools accept only explicit supported actions and expose help", () => {
-  for (const args of [["web"], ["source", "github", "status"], ["app", "codex", "image", "pause"], ["app", "codex", "prediction", "resume"], ["source", "github", "reauth"], ["source", "github", "check"], ["source", "github", "logout", "--yes"], ["doctor", "network"], ["doctor", "report"]]) assert.ok(parseCliArgs(args).command);
+  for (const args of [["web"], ["source", "github", "status"], ["app", "codex", "image", "disable"], ["app", "codex", "prediction", "resume"], ["source", "github", "reauth"], ["source", "github", "check"], ["source", "github", "logout", "--yes"], ["doctor", "network"], ["doctor", "report"]]) assert.ok(parseCliArgs(args).command);
   for (const args of [["web", "--help"], ["source", "--help"], ["app", "codex", "image", "--help"], ["source", "github", "login", "--help"], ["doctor", "network", "--help"]]) {
     const parsed = parseCliArgs(args);assert.equal(parsed.command, "help");assert.match(cliHelp("ccdx", parsed.helpTopic), /Usage:/);
   }
@@ -55,7 +55,7 @@ test("pause and resume retain setup, and offline operation explicitly requires s
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const request = async () => { throw Error("offline"); };
   for (const feature of ["image", "prediction"]) {
-    const paused = await pauseServiceFeature({ home, env: {}, feature, action: "pause", request });assert.match(paused, /paused.*Setup and credentials kept.*restart/);
+    const paused = await pauseServiceFeature({ home, env: {}, feature, action: "pause", request });assert.match(paused, feature === "image" ? /paused.*GitHub account and model selection kept.*restart/ : /paused.*Setup and credentials kept.*restart/);
     assert.equal(servicePreferences({ home, env: {} })[`${feature}_enabled`], false);
     await pauseServiceFeature({ home, env: {}, feature, action: "resume", request });assert.equal(servicePreferences({ home, env: {} })[`${feature}_enabled`], true);
   }

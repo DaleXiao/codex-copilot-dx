@@ -76,7 +76,7 @@
     refreshAnimation() { dashboardRefresh.invalidate("animation");if (current === "system") void dashboardRefresh.refresh("animation", { force: true }); } });
   globalThis.ccdxSettingsPreferences = preferences;
   const features = globalThis.ccdxDashboardFeatures?.create({ element: el, api, apply: applySettings, change, localize: label });
-  const states = { immediate: "effective_now", terminal_unavailable: "terminal_animation_unavailable_in_this_output_mode", next_start: "next_ccdx_start", next_call: "applies_to_new_calls", needs_setup: "setup_required",
+  const states = { needs_github_access: "image_needs_github", image_model_unavailable: "image_no_models", immediate: "effective_now", terminal_unavailable: "terminal_animation_unavailable_in_this_output_mode", next_start: "next_ccdx_start", next_call: "applies_to_new_calls", needs_setup: "setup_required",
     next_config_request: "next_configuration_request_cached_suggestions_may_remain", needs_app_relaunch: "reopen_the_client_to_finish", needs_service_restart: "restart_ccdx_to_finish" };
   const selectedSource = () => providerEntries.find(source => source.id === el("source-provider").value);
   const sourceReady = () => Boolean(selectedSource()) && (!selectedSource().selection.models_required || Boolean(modelsSource === selectedSource().id && el("source-model").value && el("source-review").value));
@@ -178,6 +178,7 @@
     el("process-notice").textContent = data.terminal?.last_notice || "";
     preferences?.sync(data, meta);
   }
+  window.addEventListener("ccdx:connections", () => { if (current === "codex") void loadSettings(); });
   async function loadSettings() {
     if (settingsPending) return;
     settingsPending = true;
@@ -197,7 +198,7 @@
     if (settingsPending) return;
     settingsPending = true;
     syncAccountControls();
-    const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-enabled, #prediction-continue, #prediction-open, #prediction-setup, #prediction-remove, #decoded-limit, #decoded-limit-save, #decoded-limit-default, #install-update")];
+    const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-enabled, #prediction-continue, #prediction-open, #prediction-setup, #prediction-remove, #image-models input, #decoded-limit, #decoded-limit-save, #decoded-limit-default, #install-update")];
     controls.forEach(input => { input.disabled = true; });
     const note = el(body.action === "prediction" ? "prediction-action-note" : body.action === "image" ? "effect-image_enabled" : body.action === "update" ? "manual-update-note" : body.action === "decoded_limit" ? "decoded-limit-note" : body.action === "nightly_update" ? "nightly-state" : body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
       : body.action.startsWith("history_") ? "effect-history" : body.action === "prediction_fix" ? "prediction-note"
@@ -213,6 +214,7 @@
       if (body.action === "provider" && body.operation === "off") { sourceDirty = false;reviewDirty = false; }
       el("review-control-note").textContent = "";
       applySettings(data);
+      if (body.action === "image") void globalThis.ccdxConnections?.load();
       if (initialSourceSave) label(el("source-control-note"), "source_initial_review_saved");
       if (body.operation === "account") {
         sourceDirty = false;reviewDirty = false;sourceGeneration++;
@@ -271,7 +273,7 @@
     try {
       const data = await readModelCatalog(source.id);
       if (generation !== sourceGeneration) return;
-      const models = data.models.filter(model => model.selectable && model.clients.includes("codex"));
+      const models = data.models.filter(model => model.kind !== "image" && model.selectable && model.clients.includes("codex"));
       sourceModels = models;
       const preference = settings?.providers?.[source.id]?.preference;
       for (const [id, key] of [["source-model", "model"], ["source-review", "auto_review_model"]]) {

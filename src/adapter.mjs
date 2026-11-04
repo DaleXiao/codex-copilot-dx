@@ -1,3 +1,4 @@
+import { imageModelCatalog } from "./image-models.mjs";
 import http from "node:http";
 import { createNativeImagesHandler } from "./native-images.mjs";
 import { defaultCopilotClient } from "./copilot.mjs";
@@ -180,6 +181,8 @@ export function createAdapterHandler(options = {}) {
   const privacy = options.privacy || options.providerRuntime?.privacy || createLocalPrivacy({ env: options.env, home: options.dashboardOptions?.home });
   const httpErrors = createHttpFailureDiagnostics();
   const nativeImages = createNativeImagesHandler({ client: codexClient, acquireRequest, privacy, env: options.env, home: options.dashboardOptions?.home,
+    models: options.imageModels || (() => options.providerRuntime?.imageModels?.().models || imageModelCatalog(codexModelRegistry?.models)),
+    selection: options.imageSelection || (options.providerRuntime?.imageModels ? () => options.providerRuntime.imageModels().selected_model : undefined),
     requestBodyTimeoutMs, timeoutMs: options.imageTimeoutMs, enabled: options.imagesEnabled, allowed: options.imagesAllowed });
   const optionalRoutes = createOptionalRoutes({ ...options, dashboardOptions: { ...options.dashboardOptions,
     privacy,

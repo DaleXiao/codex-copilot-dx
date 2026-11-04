@@ -1,12 +1,13 @@
 import { createRequestAbort, readJsonBody, readBoundedResponseText, sendJsonError, sendUpstreamError, logRequestFailure } from "./http-transport.mjs";
 import { httpError } from "./http-errors.mjs";
 import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
+import { DEFAULT_IMAGE_MODEL, imageModelSelection } from "./image-models.mjs";
 import { readAccessSettings } from "./access-settings.mjs";
 import { servicePreferences } from "./user-settings.mjs";
 import { observeRequestedModel, currentRequestContext } from "./request-context.mjs";
 import { recordResponsesUsage } from "./usage-store.mjs";
 
-export const NATIVE_IMAGE_MODEL = "gpt-image-2.5-flare";
+export const NATIVE_IMAGE_MODEL = DEFAULT_IMAGE_MODEL;
 export const IMAGE_MAX_BYTES = 32 * 1024 * 1024;
 const INPUT_MAX_BYTES = 10 * 1024 * 1024;
 const BODY_MAX_BYTES = 64 * 1024 * 1024;
@@ -26,9 +27,9 @@ async function checkedImage(value, maxBytes, mime) {
   if (!type || mime && mime !== type) throw httpError("Image format does not match its data", 400);
 }
 
-export async function nativeImageRequest(body, operation) {
+export async function nativeImageRequest(body, operation, selectedModel = DEFAULT_IMAGE_MODEL) {
   if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !FIELDS.has(key))) throw httpError("Unsupported image request field", 400);
-  if (!["gpt-image-2", NATIVE_IMAGE_MODEL].includes(body.model)) throw httpError(`Image model must be ${NATIVE_IMAGE_MODEL}`, 400);
+  if (!["gpt-image-2", selectedModel].includes(body.model)) throw httpError("Choose an available image model", 400);
   if (typeof body.prompt !== "string" || !body.prompt.trim() || Buffer.byteLength(body.prompt) > 128 * 1024) throw httpError("Image prompt is required and must not exceed 128 KiB", 400);
   if (body.n !== undefined && body.n !== 1) throw httpError("Request one image at a time", 400);
   if (body.quality !== undefined && !["auto", "low", "medium", "high"].includes(body.quality)) throw httpError("Unsupported image quality", 400);
@@ -44,7 +45,7 @@ export async function nativeImageRequest(body, operation) {
       await checkedImage(match[2], INPUT_MAX_BYTES, match[1]);
     }
   }
-  return { ...body, model: NATIVE_IMAGE_MODEL, n: 1 };
+  return { ...body, model: selectedModel, n: 1 };
 }
 
 export function nativeImageAccess(options = {}) {
@@ -53,6 +54,7 @@ export function nativeImageAccess(options = {}) {
 }
 
 export function createNativeImagesHandler({ client, acquireRequest, privacy, env = process.env, home,
+  models = () => [], selection = () => readAccessSettings({ env, home }).clients.codex.image_model,
   requestBodyTimeoutMs = 120000, timeoutMs = 180000, enabled = () => servicePreferences({ env, home }).image_enabled,
   allowed = () => nativeImageAccess({ env, home }) } = {}) {
   let active = 0;
@@ -72,7 +74,12 @@ export function createNativeImagesHandler({ client, acquireRequest, privacy, env
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       release = await acquireRequest(req, { signal: abort.signal });
       const parsed = await readJsonBody(req, { admission: release, signal: abort.signal, maxBodyBytes: BODY_MAX_BYTES, maxDecodedBodyBytes: BODY_MAX_BYTES });
-      const body = await nativeImageRequest(parsed, operation);
+      const available = models();
+      const image = parsed?.model === "gpt-image-2" ? imageModelSelection(available, selection()).selected_model : parsed?.model;
+      const selected = available.find(model => model.id === image);
+      if (!selected) throw httpError("The selected image model is unavailable; refresh the GitHub catalog or choose another image model", parsed?.model === "gpt-image-2" ? 503 : 400);
+      if (operation === "edits" && !selected.editing) throw httpError("The selected image model does not support editing", 400);
+      const body = await nativeImageRequest(parsed, operation, image);
       observeRequestedModel(body);
       const context = currentRequestContext();
       if (context) { context.provider = "github";context.streamPerformance?.setProvider?.("github"); }
@@ -88,8 +95,8 @@ export function createNativeImagesHandler({ client, acquireRequest, privacy, env
       try { await checkedImage(result.data[0]?.b64_json, IMAGE_MAX_BYTES); }
       catch { throw httpError("Copilot returned invalid image data", 502); }
       abort.signal.throwIfAborted();
-      void recordResponsesUsage({ surface: "images", mode: operation, model: NATIVE_IMAGE_MODEL, response: result });
-      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store", "X-CCDX-Image-Model": NATIVE_IMAGE_MODEL });
+      void recordResponsesUsage({ surface: "images", mode: operation, model: body.model, response: result });
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store", "X-CCDX-Image-Model": body.model });
       res.end(text);
       metrics.succeeded++;
     } catch (error) {
@@ -99,6 +106,6 @@ export function createNativeImagesHandler({ client, acquireRequest, privacy, env
       sendJsonError(res, error, error.statusCode || 502);
     } finally { release();if (admitted) active--;abort.cleanup(); }
   };
-  handler.stats = () => ({ ...metrics, active, native: true, model: NATIVE_IMAGE_MODEL });
+  handler.stats = () => ({ ...metrics, active, native: true, model: imageModelSelection(models(), selection()).selected_model });
   return handler;
 }

@@ -1,3 +1,4 @@
+import { isImageModel } from "./image-models.mjs";
 import { deploymentModelId, resolveModelCapabilities } from "./model-capabilities.mjs";
 import { claudeModelEntries } from "./claude-models.mjs";
 import { claudeDeploymentId, claudeRouteAliases } from "./clients/claude-models.mjs";
@@ -10,6 +11,7 @@ export function clientModelExclusion({ client, binding, sourceId, sourceEnabled,
   if (!binding.allowed.includes(sourceId)) return "source_not_allowed";
   if (!model) return "model_missing";
   if (["restricted", "hidden"].includes(model.state)) return "source_restricted";
+  if (model.kind === "image") return client === "codex" && sourceId === "github" && model.endpoints.includes("images") ? selected ? null : "model_not_selected" : "protocol_unsupported";
   const protocol = client === "codex" ? "responses" : "messages";
   if (!model.endpoints.includes(protocol) && !(client === "codex" && sourceId === "github" && model.endpoints.includes("chat"))) return "protocol_unsupported";
   return selected ? null : "model_not_selected";
@@ -17,7 +19,7 @@ export function clientModelExclusion({ client, binding, sourceId, sourceEnabled,
 export function sourceModels(source, client) {
   if (!source) return [];
   const models = source.models?.(client === "codex" ? "gpt" : "claude") || source.registry?.models?.data || [];
-  return models.filter(model => model.supported_endpoints?.some(endpoint => endpoints[client].includes(endpoint)
+  return models.filter(model => !isImageModel(model) && model.supported_endpoints?.some(endpoint => endpoints[client].includes(endpoint)
     || client === "codex" && source.id === "github" && ["/chat/completions", "/v1/chat/completions"].includes(endpoint)))
     .map(model => model.protocol_capabilities ? { ...model, capability: model.protocol_capabilities[client === "codex" ? "responses" : "messages"] } : model);
 }

@@ -668,3 +668,8 @@ input[role="switch"]:disabled { opacity: .5; cursor: wait; }
 @media (max-width:640px) { .context-metrics { grid-template-columns:repeat(2,minmax(0,1fr));gap:18px; } .context-metrics dd { font-size:21px; } }
 
 @media (pointer:coarse) { :root { --control-height:44px; --inline-control-height:44px; } }
+
+.image-models { display: grid; gap: 8px; margin-block: 12px; }
+.image-model-choice { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.image-model-choice input { flex: 0 0 auto; }
+.image-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

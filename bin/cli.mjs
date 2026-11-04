@@ -76,25 +76,18 @@ if (CLI.command === "animation") {
 }
 if (CLI.command === "image") {
   try {
-    if (["pause", "resume"].includes(CLI.action)) {
-      const { pauseServiceFeature } = await import("../src/cli-tools.mjs");
-      const address = parseAdapterAddressOptions(process.env);
-      console.log(await pauseServiceFeature({ feature: "image", action: CLI.action, host: address.adapterHost, port: address.adapterPort }));
-      process.exit(0);
-    }
-    const address = CLI.action === "enable"
-      ? parseAdapterAddressOptions(process.env)
-      : { adapterPort: 2026, adapterHost: "127.0.0.1" };
+    const address = parseAdapterAddressOptions(process.env);
     const { runImageCommand } = await import("../src/cli-image.mjs");
     const lines = [], structured = CLI.outputFormat === "json";
     const result = await runImageCommand({
       action: CLI.action,
+      model: CLI.imageModel,
       commandName: CLI_NAME,
       adapterPort: address.adapterPort,
       adapterHost: address.adapterHost,
       ...(structured ? { output: { write: text => lines.push(String(text)) } } : {}),
     });
-    if (structured) console.log(JSON.stringify({ client: "codex", feature: "image", configured: result.enabled === true, details: lines.join("").trim() }));
+    if (structured) console.log(JSON.stringify({ client: "codex", feature: "image", ...result, details: lines.join("").trim() }));
     process.exit(0);
   } catch (e) {
     if (CLI.outputFormat === "json") console.log(JSON.stringify({ error: { code: e.code || "ccdx_image_status_failed", message: e.message } }));

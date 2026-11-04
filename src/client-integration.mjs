@@ -1,3 +1,4 @@
+import { servicePreferences } from "./user-settings.mjs";
 import { ensureCodexConfig } from "./config.mjs";
 import { retireLegacyImages } from "./image-retirement.mjs";
 import { ensureCodexThreadCompression } from "./codex-thread-compression.mjs";
@@ -56,7 +57,7 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
     try {
       const retired = retireLegacyImages({ adapterPort: port, adapterHost: host });
       if (retired.preserved) warning("User-modified legacy image files were preserved; review them manually. The old image service is retired.");
-    } catch { warning("Legacy image cleanup was incomplete; use ccdx app codex image setup to retry. The old image service is retired."); }
+    } catch { warning("Legacy image cleanup was incomplete; review the old image files before the next CCDX start. The old image service is retired."); }
   }
   return {
     retireImages,
@@ -70,7 +71,7 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
         codexSetup = { setup: result.coreSetup, checked_at: new Date().toISOString() };
       } catch (error) { codexSetup = { setup: "configuration_unavailable", checked_at: new Date().toISOString() };throw error; }
       retireImages();
-      return { imageEnabled: true, imageMcpSkipped: false, compressionSetup: runInBackground(ensureCodexThreadCompression) };
+      return { imageEnabled: servicePreferences().image_enabled, imageMcpSkipped: false, compressionSetup: runInBackground(ensureCodexThreadCompression) };
     },
     start({ autoSetup = true } = {}) { return serialize("start", async () => {
       try {

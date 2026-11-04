@@ -32,7 +32,7 @@ let child, nextId = 0, buffer = "", stderr = "", sequence = 0, imageIndex = 0, s
 const finalMessage = () => ({ id: `msg_${sequence}`, type: "message", role: "assistant", phase: "final_answer", status: "completed", content: [{ type: "output_text", text: "Native image complete.", annotations: [] }] });
 const client = {
   getCachedModelEndpoints: () => ["/responses"],
-  listModels: async () => ({ status: 200, body: JSON.stringify({ data: [{ id: "gpt-6.1-sol", vendor: "OpenAI", model_picker_enabled: true, policy: { state: "enabled" }, supported_endpoints: ["/responses"], capabilities: { type: "chat", supports: { reasoning_effort: ["low", "high"] } } }] }) }),
+  listModels: async () => ({ status: 200, body: JSON.stringify({ data: [{ id: "gpt-6.1-sol", vendor: "OpenAI", model_picker_enabled: true, policy: { state: "enabled" }, supported_endpoints: ["/responses"], capabilities: { type: "chat", supports: { reasoning_effort: ["low", "high"] } } }, { id: "gpt-image-2.5-flare", name: "GPT Image 2.5 Flare", model_picker_enabled: false, capabilities: { type: "image" }, supported_endpoints: ["/v1/images/generations", "/v1/images/edits"] }] }) }),
   images: async (operation, body) => {
     calls.push({ operation, body });assert.equal(body.model, "gpt-image-2.5-flare");
     if (edit) { assert.equal(operation, "edits");assert.equal(body.images.length, 1);assert.equal(body.images[0].image_url, `data:image/png;base64,${returnedPixels[imageIndex - 1]}`); }
@@ -61,7 +61,7 @@ const client = {
   },
 };
 const handler = createAdapterHandler({ codexClient: client, responsesFn: client.responses, getCachedModelEndpointsFn: client.getCachedModelEndpoints, codexModelCatalog: { load: async () => catalog },
-  env: {}, dashboardOptions: { home: root }, imagesEnabled: () => true, imagesAllowed: () => true });
+  env: {}, dashboardOptions: { home: root }, imageModels: () => [{ id: "gpt-image-2.5-flare", editing: true }], imagesEnabled: () => true, imagesAllowed: () => true });
 const server = http.createServer((req, res) => {
   if (req.url.startsWith("/api/codex/accounts/check")) { res.writeHead(200, { "Content-Type": "application/json" });res.end(JSON.stringify({ accounts: [{ id: "synthetic-account", name: "Synthetic", plan_type: "plus", workspace_backend_origin: "https://chatgpt.com", account_routing_override: "NO_CONSTRAINT" }] }));return; }
   handler(req, res);
@@ -148,6 +148,9 @@ try {
     }
   });
   await call("initialize", { clientInfo: { name: "Codex Desktop", version: "1.0" }, capabilities: { experimentalApi: true } });child.stdin.write('{"method":"initialized","params":{}}\n');
+  const available = await call("model/list", { includeHidden: false, cursor: null, limit: 100 });
+  assert.ok(available.data.some(model => model.id === "gpt-6.1-sol"));
+  assert.ok(available.data.every(model => model.id !== "gpt-image-2.5-flare"), "Images must not enter the native conversation picker");
   const thread = await call("thread/start", { cwd, model: "gpt-6.1-sol", modelProvider: "openai", serviceName: "codex_work_desktop", approvalPolicy: "never", sandbox: "workspace-write" });threadId = thread.thread.id;
   const saved = [];
   for (const editing of [false, true]) {
@@ -163,7 +166,7 @@ try {
   const history = await call("thread/read", { threadId, includeTurns: true });
   assert.equal(history.thread.turns.flatMap(t => t.items).filter(i => i.type === "imageGeneration").length, 2);
   assert.equal(calls.length, 2);assert.equal(await fs.stat(path.join(profile, "skills", "ccdx-image")).then(() => true, () => false), false);
-  console.log(JSON.stringify({ version, offline: !live, provider: live ? "github-live" : "synthetic", nativeGeneration: true, nativeEdit: true, nativeItems: 2, savedOriginalPreserved: true, noMcpOrSkill: true, imagesApiCalls: calls.length }));
+  console.log(JSON.stringify({ version, offline: !live, provider: live ? "github-live" : "synthetic", nativeGeneration: true, nativeEdit: true, nativeItems: 2, imageHiddenFromConversationPicker: true, savedOriginalPreserved: true, noMcpOrSkill: true, imagesApiCalls: calls.length }));
 } finally {
   if (child && child.exitCode === null) { child.kill("SIGTERM");await bounded(once(child, "exit"), "shutdown", 3000).catch(() => child.kill("SIGKILL")); }
   server.closeAllConnections();await new Promise(resolve => server.close(resolve));handler.cleanup();await fs.rm(root, { recursive: true, force: true, maxRetries: 3 });

@@ -1,3 +1,4 @@
+import { isImageModel, imageModelCatalog } from "./image-models.mjs";
 import os from "node:os";
 import { publicModelCatalog } from "./provider-metadata.mjs";
 import { createAbortAwareSingleflight } from "./bounded-result-cache.mjs";
@@ -140,7 +141,7 @@ async function lookupLiveModels(credentials, { fetchImpl, timeoutMs, vscodeVersi
     if (includeAll) {
       const selected = new Set(catalog.models.map(model => model.id));
       catalog.models = publicModelCatalog(Array.isArray(payload) ? payload : payload.data, {
-        selectable: model => selected.has(model.id), clients: model => selected.has(model.id) ? ["codex"] : [],
+        selectable: model => selected.has(model.id) || imageModelCatalog([model]).length > 0, clients: model => selected.has(model.id) || isImageModel(model) ? ["codex"] : [],
       });
     }
     let upstreamHost = "GitHub Copilot";

@@ -2,7 +2,7 @@
   const el = id => document.getElementById(id), root = el("connection-sources");if (!root) return;
   const words = (node, key, args) => globalThis.ccdxLanguage.set(node, key, args), format = key => globalThis.ccdxLanguage.format(key);
   let data = null, editing = null, editingClient = null, disabling = null, models = [], selectedModels = new Set(), busy = false, generation = 0;
-  let claudeClient = "claude_app", bindingSelection = new Set(), bindingDefault = null, bindingDirty = false;
+  let claudeClient = "claude_app", bindingSelection = new Set(), bindingDefault = null, bindingImageModel = null, bindingImageDirty = false, bindingDirty = false;
   let memoryAction = null, memoryOrigin = null;
   let disableRevision = null;
   const drafts = new Map();let editorOrigin = null, discovery = null, desiredSource = null;
@@ -102,16 +102,16 @@
   }
   async function change(input, done) {
     if (busy) return;busy = true;generation++;
-    const trigger = input.operation === "client" ? clientForm.querySelector('button[type="submit"]') : input.operation === "preview_client" ? el("connection-sync-preview")
+    const trigger = ["client", "image_model"].includes(input.operation) ? clientForm.querySelector('button[type="submit"]') : input.operation === "preview_client" ? el("connection-sync-preview")
       : input.operation === "save_api" ? apiForm.querySelector('button[type="submit"]') : document.activeElement;
     const oldKey = trigger?.dataset.i18n, oldText = trigger?.textContent;
     if (trigger?.tagName === "BUTTON") { trigger.setAttribute("aria-busy", "true");trigger.disabled = true;words(trigger, input.operation === "preview_client" ? "api_reading" : "api_saving"); }
-    try { if (input.operation === "save_api") await stopDiscovery();data = await api(input);if (input.operation === "client") { drafts.delete(input.id);if (editingClient === input.id) bindingDirty = false; }mountClient();list();done?.(data);if (!done) {
+    try { if (input.operation === "save_api") await stopDiscovery();data = await api(input);if (["client", "image_model"].includes(input.operation)) { drafts.delete(input.id);if (editingClient === input.id) bindingDirty = false; }mountClient();list();done?.(data);if (!done) {
       if (input.operation === "save_api") {
         desiredSource = input.id || data.providers.find(p => !p.builtin && p.name === input.config.name)?.id;
         stopDiscovery();
       } else if (input.operation === "provider" && input.enabled) desiredSource = input.id;
-      panels();let key = input.operation === "save_api" ? "api_config_saved" : input.operation === "provider" ? input.enabled ? "api_provider_enabled" : "api_provider_disabled"
+      panels();let key = input.operation === "image_model" ? "api_saved" : input.operation === "save_api" ? "api_config_saved" : input.operation === "provider" ? input.enabled ? "api_provider_enabled" : "api_provider_disabled"
         : !input.enabled ? "api_client_disabled" : !input.source ? "api_client_enabled" : "api_saved";
       const setup = data.clients.find(c => c.id === input.id)?.setup;
       if (input.operation === "client" && ["preserved", "partially_preserved"].includes(setup)) key = "api_client_preserved";
@@ -128,10 +128,10 @@
       if (input.operation === "provider" && !input.enabled && error.message === "ccdx_connections_conflict") {
         try { data = await api();list();disableSource(source(input.id));message("api_impact_changed"); } catch { message(error.message); }return;
       }
-      if (input.operation === "source_access") accessError = error.message;else if (input.operation === "client") words(el("connection-client-note"), error.message);else message(error.message);return;
+      if (input.operation === "source_access") accessError = error.message;else if (["client", "image_model"].includes(input.operation)) words(el("connection-client-note"), error.message);else message(error.message);return;
     }
     finally { busy = false;if (trigger?.tagName === "BUTTON") { trigger.removeAttribute("aria-busy");trigger.disabled = false;if (oldKey) words(trigger, oldKey);else trigger.textContent = oldText; }
-      if (["client", "preview_client"].includes(input.operation)) bindingRows();
+      if (["client", "preview_client", "image_model"].includes(input.operation)) bindingRows();
       if (input.operation === "source_access") renderAccess();
       if (input.operation === "save_api") words(apiForm.querySelector('button[type="submit"]'), editing ? "api_save" : "api_save_read");
     }
@@ -226,6 +226,7 @@
         node("td", count(preview?.shared?.budgets?.[proposed?.public_id])), node("td", reasoningText(values)), node("td", searchText(values)));body.append(row);
     }
     const wrap = node("div", undefined, "table-wrap");wrap.append(table);result.append(wrap);
+    if (preview?.image?.selected_model) { const image = node("p");image.textContent = `${format("image_model")}: ${preview.image.selected_model}`;result.append(image); }
     const note = node("p", undefined, "hint");words(note, "cap_preview_scope");result.append(note);
     const sync = preview?.shared || c.model_plan?.sync;
     if (c.credential_state === "encrypted_unverified") { const kept = node("p", undefined, "hint");words(kept, "client_key_encrypted_kept");result.append(kept); }
@@ -359,7 +360,7 @@
   const bindingKey = (source, model) => source + "\0" + model;
   const routeId = item => item.route_id || item.public_id;
   function rememberDraft() {
-    if (editingClient && bindingDirty) drafts.set(editingClient, { selection: new Set(bindingSelection), defaultModel: bindingDefault, autoSync: el("connection-auto-sync").checked });
+    if (editingClient && bindingDirty) drafts.set(editingClient, { selection: new Set(bindingSelection), defaultModel: bindingDefault, imageModel: bindingImageModel, imageDirty: bindingImageDirty, autoSync: el("connection-auto-sync").checked });
   }
   function mountClient(force = false) {
     if (!data) return;
@@ -374,9 +375,12 @@
       const selected = Array.isArray(c.deployments) ? c.deployments : (c.model_plan?.models || []).map(model => ({ source: model.source, model: model.id }));
       bindingSelection = draft ? new Set(draft.selection) : new Set(selected.map(item => bindingKey(item.source, item.model)));
       bindingDefault = draft ? draft.defaultModel : c.default_model || c.model_plan?.models.find(model => model.public_id === c.model_plan?.default_model)?.route_id || null;
+      bindingImageModel = draft?.imageDirty ? draft.imageModel : c.image_model || c.model_plan?.image?.selected_model || null;
+      bindingImageDirty = draft?.imageDirty === true;
       el("connection-auto-sync").checked = draft ? draft.autoSync : c.auto_sync !== false;
       el("connection-sync-result").hidden = true;el("connection-client-note").textContent = "";
     }
+    if (id === "codex" && !bindingImageDirty) bindingImageModel = c.image_model || c.model_plan?.image?.selected_model || null;
     bindingRows(document.activeElement?.name === "binding-model" ? { kind: "selection", key: document.activeElement.value } : document.activeElement?.dataset.binding ? { kind: "default", key: document.activeElement.dataset.binding } : null);words(el("connection-client-title"), "cap_visible_model");list();
   }
   function bindingRows(focus) {
@@ -408,6 +412,19 @@
       details.forEach((cell, i) => cell.dataset.label = format(["source", "cap_context", "cap_reasoning"][i]));
       row.append(name, ...details, cell);body.append(row);
     }
+    if (editingClient === "codex") {
+      for (const image of c.model_plan?.image?.models || []) {
+        const row = node("tr"), name = node("td"), label = node("label"), radio = node("input");
+        radio.type = "radio";radio.name = "binding-image-model";radio.value = image.id;radio.checked = bindingImageModel === image.id;
+        radio.addEventListener("change", () => { if (radio.checked) { bindingImageModel = image.id;bindingImageDirty = true;bindingDirty = true;rememberDraft();bindingRows({ kind: "image", key: image.id }); } });
+        label.append(radio, node("span", image.name || image.id));name.append(label);
+        const purpose = node("td");words(purpose, "image_purpose");
+        row.dataset.imageModel = image.id;row.append(name, node("td", source("github")?.name || "GitHub Copilot"), node("td", "—"), node("td", "—"), purpose);body.append(row);
+      }
+      if (bindingImageModel && !c.model_plan?.image?.models.some(model => model.id === bindingImageModel)) {
+        const row = node("tr"), cell = node("td", bindingImageModel);cell.colSpan = 5;const warning = node("span", undefined, "hint binding-unavailable");words(warning, "image_selected_unavailable");cell.append(" ", warning);row.append(cell);body.append(row);
+      }
+    }
     const unavailableDefault = bindingSelection.size > 0 && !available.some(item => routeId(item) === bindingDefault && bindingSelection.has(bindingKey(item.source, item.id)));
     const warning = el("connection-default-note");warning.hidden = !unavailableDefault;words(warning, "cap_default_unavailable");
     clientForm.querySelector('button[type="submit"]').disabled = unavailableDefault || busy;
@@ -419,7 +436,7 @@
     const capabilityNote = el("connection-capability-state");capabilityNote.hidden = !c.model_plan?.sync?.limitations?.some(item => item.code === "client_version_unknown");
     if (!capabilityNote.hidden) words(capabilityNote, "sync_capability_unverified");
     words(clientForm.querySelector('button[type="submit"]'), el("connection-auto-sync").checked ? "cap_save_sync" : "api_save");
-    if (focus) { const selector = focus.kind === "selection" ? 'input[name="binding-model"]' : 'button[data-binding]';[...body.querySelectorAll(selector)].find(input => (input.value || input.dataset.binding) === focus.key)?.focus(); }
+    if (focus) { const selector = focus.kind === "selection" ? 'input[name="binding-model"]' : focus.kind === "image" ? 'input[name="binding-image-model"]' : 'button[data-binding]';[...body.querySelectorAll(selector)].find(input => (input.value || input.dataset.binding) === focus.key)?.focus(); }
     if (!body.children.length) { const row = node("tr"), cell = node("td");cell.colSpan = 5;words(cell, "cap_no_models");const link = node("a");link.href = "#models";words(link, "model_services");cell.append(" ", link);row.append(cell);body.append(row); }
   }
   function editClient(c) { location.hash = c.id === "codex" ? "codex" : "claude";if (c.id !== "codex") claudeClient = c.id;mountClient(true); }
@@ -430,8 +447,17 @@
   el("connection-auto-sync").addEventListener("change", () => { bindingDirty = true;rememberDraft();el("connection-client-cancel").disabled = false;words(el("connection-draft-state"), "cap_unsaved");words(clientForm.querySelector('button[type="submit"]'), el("connection-auto-sync").checked ? "cap_save_sync" : "api_save"); });
   el("connection-client-cancel").addEventListener("click", () => { drafts.delete(editingClient);bindingDirty = false;mountClient(true); });
   function bindingInput(operation) {
-    const c = client(editingClient);return { operation, id: c.id, enabled: true, allowed: c.allowed,
+    const c = client(editingClient);
+    if (operation === "client" && editingClient === "codex" && bindingImageModel && bindingImageModel !== c.model_plan?.image?.selected_model) {
+      const selected = c.deployments || c.model_plan?.models.map(model => ({ source: model.source, model: model.id })) || [];
+      const keys = selected.map(item => bindingKey(item.source, item.model));
+      const defaultModel = c.default_model || c.model_plan?.models.find(model => model.public_id === c.model_plan?.default_model)?.route_id || null;
+      if (keys.length === bindingSelection.size && keys.every(key => bindingSelection.has(key)) && defaultModel === bindingDefault && (c.auto_sync !== false) === el("connection-auto-sync").checked)
+        return { operation: "image_model", id: "codex", model: bindingImageModel, client_revision: c.revision };
+    }
+    return { operation, id: c.id, enabled: true, allowed: c.allowed,
       deployments: [...bindingSelection].map(key => { const [source, model] = key.split("\0");return { source, model }; }),
+      ...(editingClient === "codex" && bindingImageModel ? { image_model: bindingImageModel } : {}),
       default_model: bindingDefault, auto_sync: el("connection-auto-sync").checked };
   }
   clientForm.addEventListener("submit", event => { event.preventDefault();void change(bindingInput("client")); });

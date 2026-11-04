@@ -1,3 +1,4 @@
+import { imageModelCatalog, imageModelSelection } from "./image-models.mjs";
 import fs from "node:fs";
 import { randomBytes, createHash } from "node:crypto";
 import {
@@ -313,6 +314,11 @@ export function createConnectionRuntime({
       });
     return summaries.get(api);
   }
+  function imageModels() {
+    const c = binding("codex");
+    return imageModelSelection(enabled("github") && c.allowed.includes("github")
+      ? imageModelCatalog(legacy.github?.registry?.models) : [], c.image_model);
+  }
   function clientSnapshot(id, config, compact, readPlan) {
     const base = {
       id,
@@ -330,6 +336,7 @@ export function createConnectionRuntime({
       ...base,
       revision,
       model_plan: {
+        ...(id === "codex" ? { image: imageModels() } : {}),
         default_model: compiled.defaultModel,
         default_unavailable: compiled.defaultUnavailable,
         models: compiled.models.map(model => ({
@@ -378,7 +385,7 @@ export function createConnectionRuntime({
     const selected = new Map(CLIENT_IDS.map(id => [id, new Set(plan(id).models.filter(model => model.source_id === sourceId).map(model => model.id))]));
     return { ...catalog, models: catalog.models.map(model => ({ ...model,
       client_visibility: CLIENT_IDS.map(id => ({ client: id,
-        reason: modelExclusion(id, sourceId, model.id, model, selected.get(id).has(model.id)) })) })) };
+        reason: modelExclusion(id, sourceId, model.id, model, selected.get(id).has(model.id) || id === "codex" && sourceId === "github" && model.kind === "image" && imageModels().selected_model === model.id) })) })) };
   }
   function snapshot(compact = false) {
     const state = legacy.snapshot(),
@@ -912,6 +919,10 @@ export function createConnectionRuntime({
       ...(input.auto_review_model ? { auto_review_model: input.auto_review_model } : {}),
       ...(input.auto_review_effort !== undefined ? { auto_review_effort: input.auto_review_effort } : {}),
     };
+    if (input.image_model !== undefined) {
+      if (input.id !== "codex" || input.image_model !== old.image_model && !imageModels().models.some(model => model.id === input.image_model)) throw accessError("ccdx_api_model_unavailable");
+      next.clients.codex.image_model = input.image_model;
+    }
     if (input.id !== "codex") next.claude_private_keys = true;
     if (old.source !== input.source) next.clients[input.id].history_isolation = true;
     const c = next.clients[input.id];
@@ -1001,6 +1012,7 @@ export function createConnectionRuntime({
       return {
         ...snapshot(),
         preview: {
+          ...(input.id === "codex" ? { image: imageModelSelection(imageModels().models, c.image_model) } : {}),
           models: proposed.models.map(model => ({
             source: model.source_id,
             id: model.id,
@@ -1090,22 +1102,30 @@ export function createConnectionRuntime({
         "deployments",
         "default_model",
         "auto_sync",
+        "image_model",
         "client_revision",
       ])
     )
       throw accessError("ccdx_connections_action_invalid");
     if (
-      ["client", "preview_client", "sync_client", "client_state"].includes(input.operation) &&
+      ["client", "preview_client", "sync_client", "client_state", "image_model"].includes(input.operation) &&
       input.client_revision !== undefined &&
       (!CLIENT_IDS.includes(input.id) || input.client_revision !== clientRevision(input.id))
     )
       throw accessError("ccdx_connections_conflict", 409);
     if (
-      !["client", "preview_client", "sync_client", "client_state"].includes(input.operation) &&
+      !["client", "preview_client", "sync_client", "client_state", "image_model"].includes(input.operation) &&
       input.impact_revision !== undefined &&
       input.impact_revision !== sourceImpact(input.id).revision
     )
       throw accessError("ccdx_connections_conflict", 409);
+    if (input.operation === "image_model") {
+      if (!validObject(input, ["operation", "id", "model", "client_revision"]) || input.id !== "codex"
+        || !imageModels().models.some(model => model.id === input.model)) throw accessError("ccdx_api_model_unavailable");
+      const next = editable();next.clients.codex.image_model = input.model;save(next);
+      await syncClients(["codex"]);
+      return snapshot();
+    }
     if (input.operation === "sync_client") {
       if (
         !validObject(input, ["operation", "id", "client_revision"]) ||
@@ -1279,6 +1299,7 @@ export function createConnectionRuntime({
         void catalogRefresh.refresh(input.id).catch(() => {});
       return input.operation === "save_api" ? snapshot() : result;
     },
+    imageModels,
     async start() {
       if (binding("codex").enabled) void memoryModel.refresh();
       const old = legacy.start();

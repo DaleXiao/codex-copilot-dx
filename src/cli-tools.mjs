@@ -22,5 +22,5 @@ export async function pauseServiceFeature({ feature, action, home, env = process
   writeServicePreference(key, value, { home, env });
   let applied = false;
   try { await request({ host, port, path: "settings", body: { action: "preference", key, value } });applied = true; } catch {}
-  return `${feature === "image" ? "Image requests" : "Prediction adaptation"}: ${value ? "resumed" : "paused"}. Setup and credentials kept.${applied ? "" : " Start or restart CCDX to apply."}`;
+  return `${feature === "image" ? "Image requests" : "Prediction adaptation"}: ${value ? "resumed" : "paused"}. ${feature === "image" ? "GitHub account and model selection kept." : "Setup and credentials kept."}${applied ? "" : " Start or restart CCDX to apply."}`;
 }

@@ -27,7 +27,7 @@ For installation and first use, start with the [README](../README.md). This refe
 | `ccdx app <id> sync` | Write client settings owned by CCDX |
 | `ccdx app <id> enable` / `disable` | Change access without quitting the app |
 | `ccdx app codex prediction …` | Native suggestion setup and diagnostics |
-| `ccdx app codex image …` | Image setup and diagnostics |
+| `ccdx app codex image …` | Native image controls and model selection |
 | `ccdx app codex review status` / `select` | Read or choose the review model |
 | `ccdx config show [--effective]` | Read saved preferences and effective state |
 | `ccdx config set <key> <value>` | Save a validated preference |
@@ -257,7 +257,7 @@ Normal management belongs in the WebUI. CLI provides the same backend operations
 | Delete a disabled, unbound API | `source <id> remove` | Shared impact revision; selected consumers block deletion |
 | Input suggestions: enable/disable | `app codex prediction enable/disable` | Synchronize bridge preference and native Show predictions |
 | Prediction setup/remove/repair/open | `app codex prediction setup/remove/repair/open` | Shared control; App closure may be required |
-| Images: enable/remove/pause/resume | `app codex image setup/remove/pause/resume` | Native GHC images; no independent image credential |
+| Images: enable/disable/select | `app codex image enable/disable/select` | Native GHC images; no independent image credential |
 | Install a stable update | `update apply --yes` | Same supervisor request; download, verify and idle service handoff |
 | Local masking: prepare/disable/delete | `config privacy enable/disable/remove` | Same verified model lifecycle; existing protected replies retain restoration |
 | Local masking status and personal information | `config privacy status`, `config set privacy_personal true/false` | Read readiness or change the personal-information choice |
@@ -577,21 +577,23 @@ was recreated on the original address, not that gray text appeared.
 
 ## Native image generation
 
-Codex’s built-in `image_gen.imagegen` tool uses the current CCDX address for separate Images API requests. CCDX serves `POST /v1/images/generations` and `POST /v1/images/edits`, reuses the existing GitHub Copilot authentication, and maps the native client’s `gpt-image-2` request to `gpt-image-2.5-flare`. The `X-CCDX-Image-Model` response header identifies the actual model. Image usage counts toward the GitHub account’s image credits; organization model policies still apply. The image model does not replace the selected conversation model.
+Codex’s built-in `image_gen.imagegen` tool uses the current CCDX address for separate Images API requests. CCDX serves `POST /v1/images/generations` and `POST /v1/images/edits`, reuses the existing GitHub Copilot authentication, and maps the native client’s `gpt-image-2` request to the selected available GHC image model. GPT Image 2.5 Flare is the default when advertised. The `X-CCDX-Image-Model` response header identifies the actual model. Image usage counts toward the GitHub account’s image credits; organization model policies still apply. The image model does not replace the selected conversation model.
 
 Codex owns native progress events, previews, saved output files and references for subsequent edits. CCDX returns the Images API JSON with base64 pixels. No separate image address or key, MCP registration, CCDX image skill, helper command, or adapter-managed edit handle is required. Native image tool availability still depends on the installed client and thread. A successful direct API request alone does not establish visible App behavior.
 
-The WebUI’s image switch pauses or resumes new requests. Saved pause choices survive upgrades, and active calls may finish. The CLI uses the same preference:
+The WebUI’s image switch is on by default and pauses or resumes new requests. A previously saved off choice is preserved. Available GHC image models appear below the switch; multiple models use one radio selection. The same image purpose appears in Model sources and Codex model configuration. Image models stay out of Codex’s conversation-model picker and conversation default selection. Saved pause choices survive upgrades, and active calls may finish. The CLI uses the same preference:
 
 ```bash
 ccdx app codex image status
-ccdx app codex image setup
-ccdx app codex image pause
-ccdx app codex image resume
-ccdx app codex image remove
+ccdx app codex image models
+ccdx app codex image select --id gpt-image-2.5-flare
+ccdx app codex image enable
+ccdx app codex image disable
 ```
 
-`setup` enables native image requests and cleans up old CCDX image integration; it no longer prompts for a URL or key. `remove` pauses native image requests and performs the same cleanup. `status` inspects local account/access configuration without a model request and does not claim that upstream image access has been tested. GitHub must remain enabled and allowed for Codex, regardless of which source supplies the conversation model.
+`enable` and `disable` change only the image preference; the GitHub account and selected model are retained. `models` reads the running service's available image catalog; `select --id` saves one advertised GHC image model. `status` can fall back to local configuration when the service is stopped, without a model request. The old `setup`, `remove`, `pause` and `resume` image commands are retired. GitHub must remain enabled and allowed for Codex, regardless of which source supplies the conversation model.
+
+The selected image model is stored as `clients.codex.image_model` in CCDX's connections configuration. Codex model configuration and sync previews include this image selection, while native client configuration retains a conversation model as its `model`. Native Images requests use the saved image selection through the existing gateway address. No unsupported image-model setting is written into Codex TOML. A saved image model that disappears from the available catalog fails explicitly rather than switching models.
 
 Requests accept one generated image, `auto` or the three existing sizes (`1024x1024`, `1536x1024`, `1024x1536`), `auto`/`low`/`medium`/`high` quality, and `auto`/`opaque`/`transparent` backgrounds. Edits accept one to five inline PNG, JPEG or WebP images, each at most 10 MiB. Remote URLs, ChatGPT file IDs, masks, GIF output and unrecognized fields fail explicitly. Output is bounded at 32 MiB per image. Upstream capabilities remain authoritative; unsupported options fail without silently changing the requested operation or model.
 

@@ -1,6 +1,6 @@
 (() => {
   function create({ element: el, change, localize }) {
-    let saved = null, limitDirty = false;
+    let saved = null, limitDirty = false, imageSignature = "";
     const prediction = operation => change({ action: "prediction", operation }, el("prediction-continue"));
     el("setting-prediction_enabled").addEventListener("change", () => void prediction(el("setting-prediction_enabled").checked ? "enable" : "disable"));
     el("prediction-continue").addEventListener("click", () => void prediction(saved?.features?.prediction?.enabled ? "enable" : "disable"));
@@ -31,6 +31,25 @@
       if (notes) localize(el("prediction-action-note"), !value ? "feature_unavailable" : value.status === "unavailable" ? "feature_read_failed" : pending ? "prediction_quit_continue" : value.enabled && value.bridge !== "running" ? "prediction_bridge_missing" : value.enabled ? "prediction_ready" : "prediction_disabled");
       el("effect-prediction_enabled").hidden = !pending;
       if (pending) localize(el("effect-prediction_enabled"), "feature_pending");
+      const image = data.features?.image, signature = JSON.stringify(image || null);
+      if (signature !== imageSignature) {
+        imageSignature = signature;
+        const list = el("image-models"), focus = list.contains(document.activeElement) ? document.activeElement.value : null;
+        list.replaceChildren();
+        for (const model of image?.models || []) {
+          const label = document.createElement("label"), name = document.createElement("span");name.textContent = model.name || model.id;
+          label.className = "image-model-choice";label.dataset.model = model.id;
+          if (image.models.length > 1 || image.selected_model !== model.id) {
+            const radio = document.createElement("input");radio.type = "radio";radio.name = "image-model";radio.value = model.id;radio.checked = image.selected_model === model.id;
+            radio.addEventListener("change", () => { if (radio.checked) void change({ action: "image", operation: "select", model: model.id }, radio); });label.append(radio);
+          }
+          label.append(name);list.append(label);
+        }
+        const note = el("image-model-note");note.hidden = image?.availability === "ready";
+        if (!note.hidden) localize(note, image?.availability === "needs_github_access" ? "image_needs_github" : image?.availability === "selected_unavailable" ? "image_selected_unavailable" : "image_no_models");
+        if (focus) [...list.querySelectorAll("input")].find(input => input.value === focus)?.focus();
+      }
+      for (const radio of el("image-models").querySelectorAll('input[name="image-model"]')) radio.checked = radio.value === image?.selected_model;
       const limit = data.decoded_body;
       if (!limitDirty && document.activeElement !== el("decoded-limit")) el("decoded-limit").value = limit?.bytes / 1048576 || 128;
       el("decoded-limit").disabled = el("decoded-limit-save").disabled = el("decoded-limit-default").disabled = !limit || limit.source === "environment";

@@ -21,10 +21,11 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     let imageConfigured = false, predictionConfigured = false;
     try { imageConfigured = Boolean(readImages()); } catch {}
     try { predictionConfigured = readPrediction().enabled === true; } catch {}
+    const image = featureSnapshot(() => imageSetupSummary({ ...options, models: providerRuntime?.imageModels?.().models || [] }));
     const enabled = nightlyUpdatePreference(options), nightly = nightlyStatus();
     const localPrivacy = providerRuntime?.privacy?.snapshot();
     return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options), local_privacy: localPrivacy,
-      features: { prediction: { ...featureSnapshot(predictionControlSnapshot), bridge: prediction?.bridge || "stopped", active: prediction?.active === true }, image: featureSnapshot(imageSetupSummary) },
+      features: { prediction: { ...featureSnapshot(predictionControlSnapshot), bridge: prediction?.bridge || "stopped", active: prediction?.active === true }, image },
       decoded_body: decodedBodyLimitPreference(options), manual_update: { available: typeof manualUpdate === "function" }, last_operation: lastOperation,
       nightly_update: { enabled, ...nightly, effect: enabled && !nightly ? "next_start" : "immediate" },
       effective: {
@@ -32,7 +33,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
         terminal_animation_enabled: { value: terminal?.enabled === true && saved.terminal_animation_enabled && !/^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || ""),
           state: terminal?.enabled === true ? "immediate" : "terminal_unavailable", locked: /^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || "") },
         open_webui: { value: saved.open_webui, state: "next_start" },
-        image_enabled: { value: saved.image_enabled && imageConfigured, state: imageConfigured ? "next_call" : "needs_github_access", configured: imageConfigured },
+        image_enabled: { value: saved.image_enabled && imageConfigured && image.selected_available === true, state: !imageConfigured ? "needs_github_access" : image.selected_available ? "next_call" : "image_model_unavailable", configured: imageConfigured },
         prediction_enabled: { value: prediction?.active === true, state: !predictionConfigured ? "needs_setup"
           : prediction?.environment?.status === "needs_app_relaunch" ? "needs_app_relaunch" : prediction?.bridge !== "running" ? "needs_service_restart" : "next_config_request", configured: predictionConfigured },
       }, history: { ...historyLimit, ...cacheRuntimeSnapshot().response_history },
@@ -42,7 +43,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid setting action");
     const allowed = { preference: ["action", "key", "value"], nightly_update: ["action", "enabled"], animation: ["action", "theme"], color_theme: ["action", "theme"],
       history_limit: ["action", "mib"], history_clean: ["action"], prediction_fix: ["action"],
-      prediction: ["action", "operation"], image: ["action", "operation"],
+      prediction: ["action", "operation"], image: ["action", "operation", "model"],
       update: ["action", "confirmed"], decoded_limit: ["action", "mib"],
       preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id", "scope"], restore_preferences: ["action", "revision", "backup_id", "scope"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
@@ -52,7 +53,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
       lastOperation = { feature: "prediction", result: await predictionControl(input.operation, { ...options, integration: clientIntegration }) };
     } else if (input.action === "image") {
       if (["pause", "resume"].includes(input.operation)) writeServicePreference("image_enabled", input.operation === "resume", options);
-      else lastOperation = { feature: "image", result: await imageControl(input, { ...options, adapterPort, adapterHost }) };
+      else lastOperation = { feature: "image", result: await imageControl(input, { ...options, providerRuntime, adapterPort, adapterHost }) };
     } else if (input.action === "update") {
       if (input.confirmed !== true) throw new Error("Confirm installation and the idle service switch");
       if (!manualUpdate) throw new Error("This launch cannot update itself; use the installer or start CCDX from its installed command");

@@ -15,7 +15,7 @@ const request = { model: "gpt-image-2", prompt: "A blue circle", background: "op
 const result = { created: 1, background: "opaque", quality: "low", size: "1024x1024", data: [{ b64_json: png }], usage: { input_tokens: 2, output_tokens: 3 } };
 function fixture(extra = {}) {
   const calls = [];
-  return { calls, options: { imagesEnabled: () => true, imagesAllowed: () => true,
+  return { calls, options: { imagesEnabled: () => true, imagesAllowed: () => true, imageModels: () => [{ id: NATIVE_IMAGE_MODEL, editing: true }],
     privacy: { close() {}, snapshot: () => ({}), wrap: fn => fn, close() {} },
     codexClient: { images: async (operation, body) => { calls.push({ operation, body });return Response.json(result); } }, ...extra } };
 }

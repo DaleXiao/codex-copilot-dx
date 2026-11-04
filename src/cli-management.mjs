@@ -89,7 +89,7 @@ export async function runManagementCommand(command, options = {}) {
   const getClient = (graph, id) => { const client = graph.clients.find(item => item.id === id);if (!client) throw new Error("Client is not registered.");return client; };
   const getSource = (graph, id) => { const source = graph.providers.find(item => item.id === id);if (!source) throw new Error("Source is not registered.");return source; };
   const clientBody = client => ({ operation: "client", id: client.id, client_revision: client.revision, enabled: client.enabled, allowed: client.allowed, source: client.source,
-    ...(Array.isArray(client.deployments) ? { deployments: client.deployments, default_model: client.default_model, auto_sync: client.auto_sync } : {}) });
+    ...(Array.isArray(client.deployments) ? { deployments: client.deployments, default_model: client.default_model, auto_sync: client.auto_sync, ...(client.image_model ? { image_model: client.image_model } : {}) } : {}) });
   const readFile = () => JSON.parse(readBoundedFileSync(flags.file, { encoding: "utf8", maxBytes: 256 * 1024 }));
   if (group === "status") {
     const { data, baseUrl } = await readStatus();
@@ -205,13 +205,15 @@ export async function runManagementCommand(command, options = {}) {
     if (action === "models" && !flags.edit) {
       if (flags.format === "json") return print(modelPlan);
       return print([...(modelPlan?.models || []).map(model => ({ source: model.source, model: model.display_name || model.id, id: model.id, state: "Selected", default: [model.route_id, model.public_id].includes(modelPlan.default_model) })),
+        ...(id === "codex" ? (modelPlan?.image?.models || []).map(model => ({ source: "github", model: model.name, id: model.id, state: modelPlan.image.selected_model === model.id ? "Selected image" : "Image", default: false })) : []),
+        ...(id === "codex" && modelPlan?.image?.selected_model && !modelPlan.image.selected_available ? [{ source: "github", model: modelPlan.image.selected_model, id: modelPlan.image.selected_model, state: "Image unavailable; retained", default: false }] : []),
         ...(modelPlan?.unavailable || []).map(model => ({ source: model.source, model: model.id, id: model.id, state: !client.enabled && modelPlan?.available.some(item => item.source === model.source && item.id === model.id) ? "Retained; access disabled" : "Unavailable; retained", default: model.route_id === modelPlan.default_model }))], [["model", "Model"], ["source", "Source"], ["state", "Selection"], ["default", "Default"]]);
     }
     if (action === "sync") {
-      const preview = { client: ids.app, models: modelPlan?.models.map(model => ({ source: model.source, model: model.display_name || model.id, id: model.id, context_window: model.capability?.values.context_window ?? null, reasoning_efforts: model.capability?.values.reasoning_efforts ?? null })), unavailable: modelPlan?.unavailable, default_model: modelPlan?.default_model,
+      const preview = { client: ids.app, models: modelPlan?.models.map(model => ({ source: model.source, model: model.display_name || model.id, id: model.id, context_window: model.capability?.values.context_window ?? null, reasoning_efforts: model.capability?.values.reasoning_efforts ?? null })), unavailable: modelPlan?.unavailable, default_model: modelPlan?.default_model, image: modelPlan?.image,
         current_setup: clientSetup(client), note: "Model/configuration plan only, not a byte-level file diff. Ownership is rechecked on sync; no App is restarted." };
       if (flags.preview) return print(preview);output.write(print(preview) + "\n");await confirm("Write CCDX-owned client settings now?");
-      const result = await save({ operation: "sync_client", id, client_revision: client.revision });return print({ client: ids.app, setup: getClient(result, id).setup, app_adoption: "Not verified by writing configuration" });
+      const result = await save({ operation: "sync_client", id, client_revision: client.revision });return print({ client: ids.app, setup: getClient(result, id).setup, image: getClient(result, id).model_plan?.image, app_adoption: "Not verified by writing configuration" });
     }
     if (["enable", "disable"].includes(action)) {
       const enabled = action === "enable", preview = { client: ids.app, access: enabled ? "Enabled" : "Disabled", retained_source: client.source,
@@ -224,7 +226,7 @@ export async function runManagementCommand(command, options = {}) {
     const body = clientBody(client);
     if (action === "models") {
       if (flags.file) {
-        const file = readFile();if (Object.keys(file).some(key => !["deployments", "default_model", "auto_sync"].includes(key))) throw new Error("Model files allow deployments, default_model and auto_sync only.");
+        const file = readFile();if (Object.keys(file).some(key => !["deployments", "default_model", "auto_sync", "image_model"].includes(key))) throw new Error("Model files allow deployments, default_model, auto_sync and image_model only.");
         if (!Array.isArray(file.deployments)) throw new Error("Model files require an explicit deployments array; use [] to pause access.");
         Object.assign(body, file);if (!body.deployments.length) body.default_model = null;
       } else {
@@ -241,6 +243,13 @@ export async function runManagementCommand(command, options = {}) {
           body.default_model = defaults[value ? Number(value) - 1 : Math.max(0, defaults.indexOf(body.default_model))];
         } else body.default_model = null;
       }
+      if (id === "codex" && !flags.file && modelPlan?.image?.models?.length) {
+        const images = modelPlan.image.models, current = images.findIndex(model => model.id === modelPlan.image.selected_model);
+        output.write(images.map((model, i) => `${i + 1} ${model.name || model.id} [Image]`).join("\n") + "\n");
+        const answer = (await ask(`Image model number [${Math.max(1, current + 1)}]: `)).trim();
+        if (answer && (!/^\d+$/.test(answer) || Number(answer) < 1 || Number(answer) > images.length)) throw new Error("Choose a listed image model number.");
+        body.image_model = images[answer ? Number(answer) - 1 : Math.max(0, current)].id;
+      }
       if (body.deployments?.some(item => modelPlan?.unavailable.some(row => row.source === item.source && row.id === item.model))) throw new Error("Unavailable selections were kept. Wait for the catalog or explicitly deselect them before saving a changed plan.");
     } else throw new Error("Unsupported client action.");
     const memory = id === "codex" ? client.memory_model?.model : null;
@@ -250,11 +259,17 @@ export async function runManagementCommand(command, options = {}) {
     if (memory && (client.deployments || modelPlan?.models || []).some(memoryMatch) && Array.isArray(body.deployments) && !body.deployments.some(memoryMatch)) {
       output.write(`Warning: ${terminalCell(memory)} is an observed memory dependency; memory writing may fail if it is unselected.\n`);
     }
+    const previousModels = client.deployments || modelPlan?.models.map(model => ({ source: model.source, model: model.id })) || [];
+    const previousKeys = new Set(previousModels.map(item => item.source + "\0" + item.model));
+    const previousDefault = client.default_model || modelPlan?.models.find(model => model.public_id === modelPlan.default_model)?.route_id || null;
+    const imageOnly = id === "codex" && body.image_model && body.image_model !== modelPlan?.image?.selected_model
+      && body.deployments?.length === previousKeys.size && body.deployments.every(item => previousKeys.has(item.source + "\0" + item.model))
+      && body.default_model === previousDefault && (body.auto_sync !== false) === (client.auto_sync !== false);
     const checked = await save({ ...body, operation: "preview_client" });
     output.write(print({ client: ids.app, planned_models: checked.preview?.models.map(model => ({ source: model.source, id: model.id })), change: action, enabled: body.enabled, deployments: body.deployments, default_model: body.default_model }) + "\n");
     if (flags.preview) return "Preview only; no settings changed.";
     await confirm(body.enabled ? "Save this client selection?" : "Disable gateway access? Later turns may fail; the client program stays open.");
-    const result = await save(body);return print({ client: ids.app, setup: getClient(result, id).setup, saved: true, app_adoption: "Not verified" });
+    const result = await save(imageOnly ? { operation: "image_model", id: "codex", model: body.image_model, client_revision: client.revision } : body);return print({ client: ids.app, setup: getClient(result, id).setup, saved: true, app_adoption: "Not verified" });
   }
   if (group !== "source") throw new Error("Unknown management command.");
   let graph = await connection();

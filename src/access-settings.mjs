@@ -78,10 +78,11 @@ export function checkedAccessSettings(value) {
   }
   for (const id of CLIENT_IDS) {
     const client = value.clients[id];
-    if (!fields(client, ["enabled", "allowed", "source", "model", "auto_review_model", "auto_review_effort", "history_isolation", "deployments", "default_model", "auto_sync"])
+    if (!fields(client, ["enabled", "allowed", "source", "model", "auto_review_model", "auto_review_effort", "history_isolation", "deployments", "default_model", "auto_sync", "image_model"])
       || typeof client.enabled !== "boolean" || !Array.isArray(client.allowed) || client.allowed.length > 18 || new Set(client.allowed).size !== client.allowed.length
       || client.allowed.some(source => !ids.has(source)) || client.source !== null && !client.allowed.includes(client.source)
       || ["model", "auto_review_model"].some(key => client[key] !== undefined && !modelId(client[key]))
+      || client.image_model !== undefined && (id !== "codex" || !modelId(client.image_model))
       || client.auto_sync !== undefined && typeof client.auto_sync !== "boolean"
       || client.default_model !== undefined && client.default_model !== null && !modelId(client.default_model)
       || client.deployments !== undefined && client.deployments !== null && (!Array.isArray(client.deployments) || client.deployments.length > 1000

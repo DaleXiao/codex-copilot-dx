@@ -279,6 +279,9 @@ jobs:
         name: Verify API creation, many-to-many access, disabling and recovery
         run: node scripts/connections-browser-replay.mjs --engines ${{ matrix.engine }} --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js" --output "$RUNNER_TEMP/ccdx-connection-screenshots"
       - if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' && matrix.palette == 'green' }}
+        name: Verify native image switch, single-choice models and Codex configuration
+        run: node scripts/image-controls-browser-replay.mjs --engines ${{ matrix.engine }} --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js"
+      - if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' && matrix.palette == 'green' }}
         name: Verify optional masking interactions without downloading a model
         run: node scripts/privacy-browser-replay.mjs --engines ${{ matrix.engine }} --playwright "$RUNNER_TEMP/ccdx-browser/node_modules/playwright/index.js"
       - if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' && matrix.palette == 'green' }}

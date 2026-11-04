@@ -132,10 +132,10 @@
         </details>
         <details class="panel dashboard-section" id="additional-capabilities">
           <summary class="panel-heading"><h2 data-i18n="codex_image_generation">IMAGE GENERATION</h2></summary>
-          <strong id="image">—</strong><p id="image-detail" class="hint">—</p>
-          <p class="hint" data-i18n="native_image_service">GPT Image 2.5 Flare · GitHub Copilot · Built-in Codex tool</p>
           <div class="setting-row"><label for="setting-image_enabled" data-i18n="allow_new_image_calls">Allow image requests</label><input id="setting-image_enabled" type="checkbox" role="switch" disabled><span id="effect-image_enabled" class="hint" role="status"></span></div>
-          <p class="hint" data-i18n="pause_keeps_the_provider_configuration_running_calls_can_finish_">Existing image requests can finish after pausing.</p>
+          <div id="image-models" class="image-models" role="group" aria-label="Image model" data-i18n-label="image_model"></div>
+          <p id="image-model-note" class="hint" role="status" hidden></p>
+          <div class="image-metrics hint"><strong id="image">—</strong><span id="image-detail">—</span></div>
         </details>
         <details class="panel dashboard-section" id="runtime-resources">
           <summary data-i18n="codex_conversation_buffer">CONVERSATION BUFFER</summary>

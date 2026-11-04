@@ -1,3 +1,4 @@
+import { isImageModel, imageModelCatalog } from "./image-models.mjs";
 import fs from "node:fs";
 import { providerDescriptors } from "./provider-descriptors.mjs";
 import { autoReviewPreference, writeAutoReviewModel } from "./user-settings.mjs";
@@ -251,7 +252,7 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGit
         const selected = new Set(selectableCopilotModels(catalog).models.map(model => model.id));
         const upstreamHost = githubClient.runtimeStatus?.().upstream_host;
         return { source: "live", checkedAt: new Date().toISOString(), upstreamHost: upstreamHost && upstreamHost !== "unknown" ? upstreamHost : "GitHub Copilot", advertised: catalog.data.length,
-          models: publicModelCatalog(catalog.data, { selectable: model => selected.has(model.id), clients: model => selected.has(model.id) ? ["codex"] : [] }) };
+          models: publicModelCatalog(catalog.data, { selectable: model => selected.has(model.id) || imageModelCatalog([model]).length > 0, clients: model => selected.has(model.id) || isImageModel(model) ? ["codex"] : [] }) };
       }
       if (provider !== "m365") throw Object.assign(new Error("Unknown provider"), { statusCode: 400 });
       if (!enabled || !["darwin", "win32"].includes(platform)) throw unavailable(!enabled ? "m365_disabled" : "m365_unsupported");

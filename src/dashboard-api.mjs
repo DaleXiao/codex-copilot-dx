@@ -339,8 +339,9 @@ export async function handleDashboardApi(req, res, pathname, {
         selectable: models.filter(model => model.selectable !== false).length,
         models: models.slice(0, 500).map((model) => ({
           id: safeText(model.id, 160),
+          ...(model.kind === "image" ? { kind: "image", display_name: safeText(model.display_name || model.id, 160) } : {}),
           vendor: safeText(model.vendor, 80),
-          endpoints: Array.isArray(model.endpoints) ? model.endpoints.filter((value) => ["responses", "chat", "messages"].includes(value)) : [],
+          endpoints: Array.isArray(model.endpoints) ? model.endpoints.filter((value) => ["responses", "chat", "messages", "images", "image_edits"].includes(value)) : [],
           preview: model.preview === true,
           selectable: model.selectable !== false,
           clients: Array.isArray(model.clients) ? model.clients.filter(value => typeof value === "string").slice(0, 8).map(value => safeText(value, 40)) : [],

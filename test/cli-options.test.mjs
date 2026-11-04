@@ -16,7 +16,9 @@ test("one command grammar exposes grouped management and rejects removed entrypo
   assert.equal(parseCliArgs(["usage", "--format", "table"]).flags.format, "table");
   assert.equal(parseCliArgs(["source", "github", "reauth", "--login", "user"]).expectedLogin, "user");
   assert.equal(parseCliArgs(["source", "m365", "account", "--id", "a".repeat(64)]).accountId, "a".repeat(64));
-  assert.equal(parseCliArgs(["app", "codex", "image", "setup"]).action, "enable");
+  assert.equal(parseCliArgs(["app", "codex", "image", "enable"]).action, "enable");
+  assert.equal(parseCliArgs(["app", "codex", "image", "select", "--id", "render-two"]).imageModel, "render-two");
+  for (const action of ["setup", "remove", "pause", "resume"]) assert.throws(() => parseCliArgs(["app", "codex", "image", action]));
   assert.equal(parseCliArgs(["app", "codex", "prediction", "repair"]).action, "fix");
   assert.equal(parseCliArgs(["doctor", "cache", "--clean", "--history", "--yes"]).history, true);
   assert.equal(parseCliArgs(["config", "limits", "--decoded", "256"]).limitMib, 256);

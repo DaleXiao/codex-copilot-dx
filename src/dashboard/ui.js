@@ -203,6 +203,7 @@ function applyModels(data, { changed }) {
     for (const model of data.models) {
       const clients = (model.clients || []).map(id => ({ codex: "Codex App", claude_app: "Claude App", claude_code: "Claude Code" })[id] || id).join(" / ") || "—";
       const row = tableRow([model.display_name || model.id, clients, ""]);row.children[0].className = "model-name";
+      if (model.kind === "image") { const badge = document.createElement("span");badge.className = "model-maker";localize(badge, "image_purpose");row.children[0].append(badge); }
       if (model.vendor && model.vendor !== "Unknown") { const maker = document.createElement("span");maker.className = "model-maker";maker.textContent = model.vendor;row.children[0].append(maker); }
       const details = document.createElement("details"), summary = document.createElement("summary"), fields = document.createElement("dl");
       details.dataset.model = model.id;details.open = expanded.has(model.id);fields.className = "failure-detail";

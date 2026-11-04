@@ -132,17 +132,10 @@ export const MANAGED_COMMANDS = [
       action: { setup: "on", remove: "off", repair: "fix" }[action] || action,
     }))
   ),
-  command("app codex image status", "Show local Codex image setup; do not generate", read, flags => ({
-    command: "image",
-    action: "status",
-    outputFormat: flags.format,
-  })),
-  ...["setup", "remove", "pause", "resume"].map(action =>
-    command(`app codex image ${action}`, "Manage the Codex image integration", {}, () => ({
-      command: "image",
-      action: { setup: "enable", remove: "disable" }[action] || action,
-    }))
+  ...["status", "models", "enable", "disable"].map(action =>
+    command(`app codex image ${action}`, ({ status: "Show native image status", models: "List available GitHub image models", enable: "Enable native images", disable: "Disable native images" })[action], read, flags => ({ command: "image", action, outputFormat: flags.format }))
   ),
+  command("app codex image select", "Choose the native image model", { "--id": "value", ...read }, flags => ({ command: "image", action: "select", imageModel: flags.id, outputFormat: flags.format })),
   command("app codex review status", "Show the Codex Auto-review selection", read),
   command("app codex review select", "Choose the Codex Auto-review model", {}, () => ({
     command: "auto-review-model",
@@ -260,7 +253,7 @@ export function parseManagedCommand(args) {
     ids = pathMatch(definition.path, words);
   if (values.login && !/^[a-z\d_-]{1,39}$/i.test(values.login))
     throw new Error("Enter a GitHub account name");
-  if (values.id && !/^[a-f0-9]{64}$/.test(values.id))
+  if (words.join(" ") === "source m365 account" && values.id && !/^[a-f0-9]{64}$/.test(values.id))
     throw new Error("Use an account ID from source m365 accounts");
   if (
     words.join(" ") === "doctor cache" &&

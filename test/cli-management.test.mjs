@@ -70,7 +70,7 @@ test("canonical routes and deep help share one public grammar", () => {
 test("canonical feature help retains the existing integration safety and data-loss boundaries", () => {
   assert.match(cliHelp("ccdx", "app codex prediction setup"), /decrypted locally/);
   assert.match(cliHelp("ccdx", "app codex prediction setup"), /Codex to be closed/);
-  assert.match(cliHelp("ccdx", "app codex image remove"), /stored image credential/);
+  assert.match(cliHelp("ccdx", "app codex image select"), /existing GitHub account/);
   assert.match(cliHelp("ccdx", "doctor cache"), /break chat continuation/);
   assert.match(cliHelp("ccdx", "update"), /entire dependency tree/);
 });

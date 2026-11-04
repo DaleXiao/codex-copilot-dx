@@ -172,7 +172,7 @@ test("image setup recognizes quoted, dotted, inline, and commented user-owned se
     'mcp_servers = { ccdx_image = { url = "http://example.test/mcp" } }\n',
   ]) {
     assert.doesNotThrow(() => parse(before));
-    assert.throws(() => computeImageMcpCodexConfig(before, { enabled: true }), /outside the CCDX-managed block/);
+    assert.throws(() => computeImageMcpCodexConfig(before, { enabled: true }), /retired/);
   }
 });
 
@@ -204,7 +204,7 @@ url = "http://127.0.0.1:2026/mcp/image"
 trust_level = "trusted"
 # ccdx:image-mcp:end
 `;
-  for (const enabled of [true, false]) {
+  for (const enabled of [false]) {
     const result = computeImageMcpCodexConfig(before, { enabled });
     assert.equal(result.content, before);
     assert.deepEqual(parse(result.content).projects, parse(before).projects);
@@ -226,10 +226,9 @@ context_management = false
   assert.match(content, /# endpoint/);
 });
 
-test("empty MCP parent tables survive an enable-disable round trip", () => {
-  const before = '[mcp_servers]\n';
-  const enabled = computeImageMcpCodexConfig(before, { enabled: true });
-  assert.deepEqual(computeImageMcpCodexConfig(enabled.content, { enabled: false }), { content: before, changed: true });
+test("empty MCP parent tables survive legacy image retirement", () => {
+  const before = "[mcp_servers]\n";
+  assert.equal(computeImageMcpCodexConfig(before, { enabled: false }).content, before);
 });
 
 test("computeUpdatedCodexConfig: does not treat a section key as top-level openai_base_url", () => {

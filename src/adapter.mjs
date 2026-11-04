@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createNativeImagesHandler } from "./native-images.mjs";
 import { defaultCopilotClient } from "./copilot.mjs";
 import { buildCodexModelResponse } from "./codex-model-catalog.mjs";
 import { isValidModelList } from "./model-cache.mjs";
@@ -178,6 +179,8 @@ export function createAdapterHandler(options = {}) {
   const responseFailures = options.responseFailures || createResponseFailureDiagnostics();
   const privacy = options.privacy || options.providerRuntime?.privacy || createLocalPrivacy({ env: options.env, home: options.dashboardOptions?.home });
   const httpErrors = createHttpFailureDiagnostics();
+  const nativeImages = createNativeImagesHandler({ client: codexClient, acquireRequest, privacy, env: options.env, home: options.dashboardOptions?.home,
+    requestBodyTimeoutMs, timeoutMs: options.imageTimeoutMs, enabled: options.imagesEnabled, allowed: options.imagesAllowed });
   const optionalRoutes = createOptionalRoutes({ ...options, dashboardOptions: { ...options.dashboardOptions,
     privacy,
     contextSnapshotFn: () => {
@@ -193,7 +196,7 @@ export function createAdapterHandler(options = {}) {
   const activityEvents = createActivityEvents({
     sources: [requestMetrics, streamPerformanceMetrics, options.providerRuntime?.claudePerformance, privacy],
     snapshot: () => {
-      const requests = requestMetrics.snapshot(), image = optionalRoutes.imageStats();
+      const requests = requestMetrics.snapshot(), image = nativeImages.stats();
       const active = ["responses", "responses_compact", "messages"].reduce((sum, route) => sum + requests.by_route[route].active, image?.active || 0);
       const claude = options.providerRuntime?.claudePerformance?.activitySnapshot?.();
       return { ...adapterHealthPayload(), scope: "activity", uptime_ms: Math.round(process.uptime() * 1000), local_privacy: privacy.snapshot(),
@@ -209,7 +212,7 @@ export function createAdapterHandler(options = {}) {
     nativePredictionPac: options.nativePredictionPac, fixPrediction: options.fixPrediction, requestBodyTimeoutMs,
     statusSnapshot: statusSnapshot = () => {
       const snapshot = runtimeStatusPayload({ metrics: requestMetrics, streamPerformance: streamPerformanceMetrics, admission: acquireRequest,
-        imagePressure, responseFailures, imageGeneration: optionalRoutes.imageStats(),
+        imagePressure, responseFailures, imageGeneration: nativeImages.stats(),
         modelRegistry: codexModelRegistry, codexClient, codexModelRegistry, codexModelCatalog,
         clientIntegrations: options.clientIntegrationSnapshot?.() });
       const providers = options.providerRuntime?.snapshot();
@@ -313,6 +316,10 @@ export function createAdapterHandler(options = {}) {
       error.jsonBody = { error: { message: error.message, type: "invalid_request_error", code: "ccdx_browser_origin_forbidden" } };
       sendJsonError(res, error, 403);
       return;
+    }
+    if (["/v1/images/generations", "/v1/images/edits"].includes(pathname)) {
+      if (req.method !== "POST") { res.setHeader?.("Allow", "POST");sendJsonError(res, httpError("Images require POST", 405));return; }
+      return nativeImages(req, res, pathname.split("/").at(-1));
     }
     if (isOptionalRoute(req.method, pathname)) return optionalRoutes.handle(req, res, pathname);
     if (isManagementRoute(req.method, pathname)) return managementHandler(req, res, pathname);
@@ -437,7 +444,7 @@ export function createAdapterHandler(options = {}) {
     const complete = trackRequest ? requestMetrics.begin(routeName) : () => {};
     const streamPerformance = trackRequest && !isDiscoveryRequest(req.method, pathname) ? streamPerformanceMetrics.begin(routeName, { requestId, application: requestApplication(req.headers) }) : null;
     let finishTerminalActivity = () => {};
-    if (trackRequest && !isDiscoveryRequest(req.method, pathname) && ["responses", "responses_compact", "messages", "image_mcp"].includes(routeName)) {
+    if (trackRequest && !isDiscoveryRequest(req.method, pathname) && ["responses", "responses_compact", "messages", "images", "image_mcp"].includes(routeName)) {
       try {
         const finish = options.terminalActivity?.beginRequest?.();
         if (typeof finish === "function") finishTerminalActivity = finish;
@@ -451,7 +458,7 @@ export function createAdapterHandler(options = {}) {
       if (trackRequest && (statusCode >= 400 || httpEvidence.model_error === true)) {
         try { httpErrors.record(buildHttpFailureDetails({ ...httpEvidence, statusCode, route: routeName, requestId, model: context?.model || context?.requestedModel,
           method: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"].includes(req.method) ? req.method : "OTHER",
-          target: ["/v1/responses", "/v1/responses/compact", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens", "/anthropic/v1/models", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",
+          target: ["/v1/images/generations", "/v1/images/edits", "/v1/responses", "/v1/responses/compact", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens", "/anthropic/v1/models", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",
           request_options: context?.requestOptions, upstream_attempts: streamPerformance?.attemptCount?.() ?? context?.upstreamAttempts ?? 0,
           attempt_timings: streamPerformance?.attemptTimings?.(),
           requested_model: context?.requestedModel, provider: context?.provider, application: context?.application || requestApplication(req.headers),

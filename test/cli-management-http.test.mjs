@@ -94,7 +94,7 @@ test("canonical native feature status stays available offline without enabling e
   for (const feature of ["image", "prediction"]) {
     const args = [localCli, "app", "codex", feature, "status"];
     const plain = await execFileAsync(process.execPath, args, { env, timeout: 5000 });
-    assert.match(plain.stdout, feature === "image" ? /Image generation: disabled/ : /Native prediction preference: off/);
+    assert.match(plain.stdout, feature === "image" ? /Native Codex images: needs GitHub access/ : /Native prediction preference: off/);
     assert.doesNotMatch(plain.stdout, /Ready|Starting|GitHub token/);
     const json = await execFileAsync(process.execPath, [...args, "--format", "json"], { env, timeout: 5000 });
     const state = JSON.parse(json.stdout);assert.equal(state.configured, false);assert.equal(state.feature, feature);assert.ok(state.details);

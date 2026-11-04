@@ -11,7 +11,7 @@ Client integration, image tools and the dashboard are not a general plugin frame
 | Provider composition | `provider-runtime.mjs`, `connection-runtime.mjs`, provider/access settings | Explicit selection, lifecycle, history namespaces and snapshots |
 | Claude clients | `claude-gateway.mjs`, `claude-client-lifecycle.mjs`, `claude-client-config.mjs`, `claude-models.mjs` | Native Messages relay and field-owned reversible client setup |
 | Client integration | `client-integration.mjs`, Codex config, native prediction | Client setup, optional start/stop, diagnostic snapshots |
-| Optional images | Image provider, CLI setup, image MCP and skill | Opt-in API access and image delivery; failures do not block core startup |
+| Native images | Images routes, GHC client, preference controls and legacy retirement | Native Codex generation/editing through the existing GitHub account; no image MCP or separate credential |
 | Management | CLI, dashboard, observability, package updates | Bounded metadata and explicit user actions |
 | Shared foundations | Codex paths, file locks, atomic files, network routes | No dependency on inference or dashboard rendering |
 
@@ -257,7 +257,7 @@ management/MCP routes separate from the Responses path.
 `management-routes.mjs` owns status, health, cache control and prediction repair
 HTTP checks. It receives a snapshot callback and the existing explicit repair
 action, not a model client or a second recovery lifecycle.
-`optional-routes.mjs` owns lazy WebUI/API and image-MCP dispatch and image stats.
+`optional-routes.mjs` owns lazy WebUI/API dispatch and the retired image-MCP HTTP 410 response. `native-images.mjs` owns separate Images API validation, admission, prompt masking, cancellation and operation stats.
 The adapter remains the HTTP composition root; neither extracted route module
 imports it. Native prediction belongs to client integration, WebUI to management,
 and terminal animation to presentation. Input-image optimization remains core
@@ -846,8 +846,7 @@ validation; rollback resumes it rather than rebuilding a cold directory. GitHub
 identity comparisons ignore refreshed verification timestamps.
 
 `response-history.mjs` validates complete acyclic source-namespaced history and
-its byte/entry budget before publication. `image-references.mjs` validates
-provider-scoped image handles before importing its bounded LRU. `api-secrets.mjs` permits private transfer only of cached references still allowed
+its byte/entry budget before publication. Retired image handles are discarded; saved image files remain user artifacts. `api-secrets.mjs` permits private transfer only of cached references still allowed
 by the unchanged configuration. Those plaintext in-memory values remain confined
 to inherited IPC; they are never written to a checkpoint, UI snapshot or log. The snapshot is consumed and released during
 private handoff; no plaintext disk checkpoint or key-store rewrite is added.
@@ -1076,9 +1075,9 @@ Claude passthrough now holds incomplete SSE frames and validates complete data b
 
 `service-control.mjs` serializes management actions and projects saved/effective state. WebUI and CLI prediction/update commands call this same boundary. `prediction-control.mjs` coordinates existing native setup, bridge lifecycle and App launch; `prediction-preference.mjs` owns the closed-App display-setting transaction across desktop TOML and legacy state. A pending display write is explicit and never reported as visible-suggestion proof. Fresh default setup runs only before App launch and preserves saved off choices.
 
-`image-setup.mjs` owns image provider inspection and the existing atomic config/credential and guidance transaction. CLI owns terminal prompts; `dashboard/features.js` owns browser forms. Neither renderer receives saved image keys. The model compatibility action uses `doctor-compat.mjs` through local tools and requires explicit quota confirmation.
+`image-setup.mjs` projects native GHC image configuration and owns enable/pause controls. `image-retirement.mjs` removes the independent image credential, recognizable old MCP declarations and unmodified guidance. Customized files are preserved with a warning. Codex’s native image extension sends separate JSON generation/edit requests through its configured provider, saves the resulting pixels and emits image items to the App; CCDX reuses GHC authentication and explicitly maps the native model to Flare. The browser has no image API address/key form. The model compatibility action uses `doctor-compat.mjs` through local tools and requires explicit quota confirmation.
 
-The existing supervisor accepts a bounded manual update request as well as its optional nightly scheduler. Both use the same staged package verification, immutable worker, state-transfer, installation commit and rollback path. Manual and scheduled updates are mutually exclusive; settings operations contribute to busy state and image configuration and stable prediction intent/trust participate in the state fingerprint; native port allocation and App stat bookkeeping do not. Warm handoff suppresses first-time prediction setup and pending display writes. Explicit prediction reconfiguration replaces the old bridge after committing trust. An unowned installation falls back to the existing standalone launch and exposes that self-update is unavailable. No inference protocol, privacy transport or native authentication path is changed by these controls.
+The existing supervisor accepts a bounded manual update request as well as its optional nightly scheduler. Both use the same staged package verification, immutable worker, state-transfer, installation commit and rollback path. Manual and scheduled updates are mutually exclusive; settings operations contribute to busy state and stable prediction intent/trust participate in the state fingerprint; the legacy image credential path remains in this fingerprint for old-worker compatibility, and legacy image cleanup runs only after activation; native port allocation and App stat bookkeeping do not. Warm handoff suppresses first-time prediction setup and pending display writes. Explicit prediction reconfiguration replaces the old bridge after committing trust. An unowned installation falls back to the existing standalone launch and exposes that self-update is unavailable. No inference protocol, privacy transport or native authentication path is changed by these controls.
 
 Native discovery, configuration and startup environment inspection run in bounded temporary `prediction-operations.mjs` workers. PowerShell, certificate and filesystem work do not block the gateway event loop. Registered-App discovery precedes default trust/proxy setup; missing Apps leave core startup available. Private environment results feed only bridge initialization and are not returned by WebUI actions.
 

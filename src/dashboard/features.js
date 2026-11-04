@@ -1,6 +1,6 @@
 (() => {
   function create({ element: el, change, localize }) {
-    let saved = null, imageDirty = false, limitDirty = false;
+    let saved = null, limitDirty = false;
     const prediction = operation => change({ action: "prediction", operation }, el("prediction-continue"));
     el("setting-prediction_enabled").addEventListener("change", () => void prediction(el("setting-prediction_enabled").checked ? "enable" : "disable"));
     el("prediction-continue").addEventListener("click", () => void prediction(saved?.features?.prediction?.enabled ? "enable" : "disable"));
@@ -8,29 +8,6 @@
     el("prediction-open").addEventListener("click", () => void prediction("open"));
     el("prediction-setup").addEventListener("click", () => void prediction("setup"));
     el("prediction-remove").addEventListener("click", () => { if (window.confirm(globalThis.ccdxLanguage.format("prediction_remove_confirm"))) void prediction("remove"); });
-    const imageInput = operation => ({ action: "image", operation, endpoint: el("image-setup-endpoint").value,
-      key: el("image-setup-key").value, model: el("image-setup-model").value || undefined });
-    el("image-setup-form").addEventListener("input", () => { imageDirty = true; });
-    el("image-setup-inspect").addEventListener("click", async () => {
-      const data = await change(imageInput("inspect"), el("image-setup-inspect"));
-      const result = data?.last_operation?.result;
-      if (!Array.isArray(result?.models)) return;
-      imageDirty = true;
-      const current = el("image-setup-model").value;
-      el("image-setup-model").replaceChildren(...result.models.map(id => { const item = document.createElement("option");item.value = item.textContent = id;return item; }));
-      if (result.models.includes(current)) el("image-setup-model").value = current;
-      localize(el("image-setup-note"), "image_models_ready");
-    });
-    el("image-setup-form").addEventListener("submit", async event => {
-      event.preventDefault();
-      const data = await change(imageInput("setup"), el("image-setup-save"));
-      if (data?.last_operation?.result?.configured) { imageDirty = false;el("image-setup-key").value = "";render(data);localize(el("image-setup-note"), "image_setup_saved"); }
-    });
-    el("image-setup-remove").addEventListener("click", async () => {
-      if (!window.confirm(globalThis.ccdxLanguage.format("image_remove_confirm"))) return;
-      const data = await change({ action: "image", operation: "remove" }, el("image-setup-remove"));
-      if (data) { imageDirty = false;el("image-setup-key").value = "";render(data); }
-    });
     el("decoded-limit").addEventListener("input", () => { limitDirty = true; });
     const saveLimit = async mib => {
       const data = await change({ action: "decoded_limit", mib }, el(mib === null ? "decoded-limit-default" : "decoded-limit-save"));
@@ -54,12 +31,6 @@
       if (notes) localize(el("prediction-action-note"), !value ? "feature_unavailable" : value.status === "unavailable" ? "feature_read_failed" : pending ? "prediction_quit_continue" : value.enabled && value.bridge !== "running" ? "prediction_bridge_missing" : value.enabled ? "prediction_ready" : "prediction_disabled");
       el("effect-prediction_enabled").hidden = !pending;
       if (pending) localize(el("effect-prediction_enabled"), "feature_pending");
-      const image = data.features?.image;
-      if (!imageDirty) {
-        el("image-setup-endpoint").value = image?.endpoint || "";
-        const option = document.createElement("option");option.value = option.textContent = image?.model || "";el("image-setup-model").replaceChildren(option);
-      }
-      el("image-setup-remove").disabled = !image?.configured;
       const limit = data.decoded_body;
       if (!limitDirty && document.activeElement !== el("decoded-limit")) el("decoded-limit").value = limit?.bytes / 1048576 || 128;
       el("decoded-limit").disabled = el("decoded-limit-save").disabled = el("decoded-limit-default").disabled = !limit || limit.source === "environment";

@@ -466,6 +466,7 @@ try {
     githubCredentialFingerprint: () => profileRuntime.codexCredentialFingerprint,
     log: (kind, message) => console.log(startupComplete ? status(kind, message) : startupCheck(kind, "M365", message)) });
   const codexEnabled = providerRuntime.connections().clients.find(client => client.id === "codex").enabled;
+  if (!codexEnabled && !serviceWorker?.warming && !serviceWorker?.preserving) earlyIntegration.retireImages();
   const predictionSetup = codexEnabled && !serviceWorker?.warming ? runInBackground(() => earlyIntegration.start({ autoSetup: !serviceWorker?.preserving })) : Promise.resolve(null);
   const m365Setup = runInBackground(() => providerRuntime.start());
   if (providerRuntime.selection().codex === "github") {
@@ -617,6 +618,7 @@ try {
       activate: async () => {
         await LOGGING.cleanup();try { LOGGING = configureLogging(); } catch { LOGGING = configureLogging({ env: { ...process.env, CCDX_LOG_PATH: "" } }); }
         terminalConsole.start();LOGGING.setTerminalSink((method, args) => terminalConsole.log(method, args));
+        earlyIntegration.retireImages();
       },
       inspect: () => {
         const data = activeServer.ccdxSnapshot(), routes = data.requests.by_route;

@@ -14,7 +14,6 @@ import { createActivityEvents, createChangeSignal } from "../src/activity-events
 import { writePredictionSettings } from "../src/native-prediction-profile.mjs";
 import { handlePredictionOperation } from "../src/prediction-operations.mjs";
 import { controlPrediction } from "../src/prediction-control.mjs";
-import { configureImageSetup } from "../src/image-setup.mjs";
 import { requestApplication } from "../src/request-application.mjs";
 
 const args = process.argv.slice(2);
@@ -72,10 +71,7 @@ let manualUpdates = 0;
 const serviceControl = createServiceControl({ home, env: {},
   manualUpdate: () => { manualUpdates++;return { status: "queued" }; },
   predictionControl: (operation, opts) => controlPrediction(operation, { ...opts, nativeOperation: handlePredictionOperation, platform: "darwin", exec: () => { throw Object.assign(Error("closed"), { status: 1 }); } }),
-  imageControl: (input, opts) => configureImageSetup(input, { ...opts, fetchImpl: async (url, init) => {
-    if (url.endsWith("/models")) return Response.json({ data: [{ id: "gpt-image-1" }] });
-    assert.equal(JSON.parse(init.body).prompt, undefined);return Response.json({ error: { message: "prompt required" } }, { status: 400 });
-  } }), readImages: () => ({}), readPrediction: () => ({ enabled: true }),
+  readImages: () => ({}), readPrediction: () => ({ enabled: true }),
   clientIntegration: { snapshot: () => ({ prediction: { configured: true, bridge: "running", active: predictionActive } }), setPredictionActive(value) { predictionActive = value; }, start: async () => null, fix: async () => {} },
   providerRuntime: { snapshot: () => ({ codex_provider: codexSource, github: { preference: { model: "gpt-6.1-sol", reasoningEffort: "low" } }, m365: { preference: m365Preference, state: m365Enabled ? "ready" : "disabled", enabled: m365Enabled, account: { ...companyAccount, selection_source: "manual" } } }),
     async action(input) {
@@ -891,16 +887,8 @@ try {
           for (let i = 0; i < actions.length; i++) for (let j = i + 1; j < actions.length; j++) assert.ok(actions[j].x >= actions[i].right + 8 || actions[j].y >= actions[i].bottom + 8, "Prediction actions have real horizontal or wrapped vertical spacing");
           if (width >= 1280) assert.ok(actions.every(action => action.y === actions[0].y));
           if (output && language === "zh") await page.locator("#prediction-settings").screenshot({ path: path.join(output, `${engine}-prediction-actions-${width}.png`) });
-          await page.locator("#image-setup-panel").evaluate(node => { for (let current = node; current; current = current.parentElement) if (current.tagName === "DETAILS") current.open = true; });
-          await page.locator("#image-setup-endpoint").fill("https://images.example.test/v1");
-          await page.locator("#image-setup-key").fill("SYNTHETIC_IMAGE_KEY");
-          await page.locator("#image-setup-inspect").click();
-          await page.waitForFunction(() => !document.getElementById("image-setup-inspect").hasAttribute("aria-busy"));
-          await page.waitForFunction(() => document.getElementById("image-setup-model").value === "gpt-image-1");
-          await page.locator("#image-setup-save").click();
-          await page.waitForFunction(() => document.getElementById("image-setup-key").value === "");
-          assert.equal(serviceControl.snapshot().features.image.configured, true);
-          assert.doesNotMatch(await page.locator("body").innerText(), /SYNTHETIC_IMAGE_KEY/);
+          assert.equal(await page.locator("#image-setup-form").count(), 0);
+          assert.match(await page.locator('[data-i18n="native_image_service"]').textContent(), /GPT Image 2.5 Flare/);
           await nav("system");
           await page.locator("#request-limits").evaluate(node => { node.open = true; });
           await page.locator("#decoded-limit").fill("257");await page.locator("#decoded-limit").blur();

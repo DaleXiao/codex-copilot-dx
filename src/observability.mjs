@@ -22,6 +22,7 @@ const ROUTE_NAMES = Object.freeze([
   "messages_count_tokens",
   "claude_models",
   "image_mcp",
+  "images",
   "not_found",
 ]);
 
@@ -110,6 +111,7 @@ export function classifyAdapterRoute(method, pathname) {
   if (method === "POST" && pathname === "/v1/responses") return "responses";
   if (method === "POST" && pathname === "/v1/responses/compact") return "responses_compact";
   if (method === "GET" && pathname === "/v1/models") return "models";
+  if (["/v1/images/generations", "/v1/images/edits"].includes(pathname)) return "images";
   if (pathname === "/mcp/image") return "image_mcp";
   return "not_found";
 }

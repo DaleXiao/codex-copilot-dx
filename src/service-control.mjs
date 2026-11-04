@@ -1,7 +1,6 @@
 import { serviceSettingsSnapshot, servicePreferences, writeServicePreference,
   writeTerminalAnimationTheme, writeTerminalColorTheme, responseHistoryLimitPreference, writeResponseHistoryLimitMib,
   nightlyUpdatePreference, writeNightlyUpdatePreference, decodedBodyLimitPreference, writeDecodedBodyLimitMib } from "./user-settings.mjs";
-import { readImageProviderConfig } from "./image-provider-config.mjs";
 import { readPredictionSettings } from "./native-prediction-profile.mjs";
 import { cacheRuntimeSnapshot, cleanRuntimeCaches, setHistoryCacheLimit } from "./cache-control.mjs";
 import { isTerminalAnimationTheme } from "./terminal-animation.mjs";
@@ -13,7 +12,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
   nightlyStatus = () => null, nightlyChanged = () => {},
   manualUpdate, predictionControl = controlPrediction, imageControl = configureImageSetup,
   adapterPort = 2026, adapterHost = "127.0.0.1",
-  readImages = () => readImageProviderConfig({ env, home }), readPrediction = () => readPredictionSettings({ env, home }) } = {}) {
+  readImages = () => imageSetupSummary({ env, home }).configured, readPrediction = () => readPredictionSettings({ env, home }) } = {}) {
   const options = { env, home };
   let serial = Promise.resolve(), lastOperation = null, pending = 0;
   const featureSnapshot = read => { try { return read(options); } catch { return { status: "unavailable" }; } };
@@ -33,7 +32,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
         terminal_animation_enabled: { value: terminal?.enabled === true && saved.terminal_animation_enabled && !/^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || ""),
           state: terminal?.enabled === true ? "immediate" : "terminal_unavailable", locked: /^(0|false|no|off)$/i.test(env.CCDX_TERMINAL_ANIMATION || "") },
         open_webui: { value: saved.open_webui, state: "next_start" },
-        image_enabled: { value: saved.image_enabled && imageConfigured, state: imageConfigured ? "next_call" : "needs_setup", configured: imageConfigured },
+        image_enabled: { value: saved.image_enabled && imageConfigured, state: imageConfigured ? "next_call" : "needs_github_access", configured: imageConfigured },
         prediction_enabled: { value: prediction?.active === true, state: !predictionConfigured ? "needs_setup"
           : prediction?.environment?.status === "needs_app_relaunch" ? "needs_app_relaunch" : prediction?.bridge !== "running" ? "needs_service_restart" : "next_config_request", configured: predictionConfigured },
       }, history: { ...historyLimit, ...cacheRuntimeSnapshot().response_history },
@@ -43,7 +42,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid setting action");
     const allowed = { preference: ["action", "key", "value"], nightly_update: ["action", "enabled"], animation: ["action", "theme"], color_theme: ["action", "theme"],
       history_limit: ["action", "mib"], history_clean: ["action"], prediction_fix: ["action"],
-      prediction: ["action", "operation"], image: ["action", "operation", "endpoint", "key", "model"],
+      prediction: ["action", "operation"], image: ["action", "operation"],
       update: ["action", "confirmed"], decoded_limit: ["action", "mib"],
       preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id", "scope"], restore_preferences: ["action", "revision", "backup_id", "scope"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
@@ -52,7 +51,6 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (input.action === "prediction") {
       lastOperation = { feature: "prediction", result: await predictionControl(input.operation, { ...options, integration: clientIntegration }) };
     } else if (input.action === "image") {
-      for (const [key, limit] of [["endpoint", 2048], ["key", 8192], ["model", 200]]) if (input[key] !== undefined && (typeof input[key] !== "string" || input[key].length > limit)) throw new Error("Invalid image setup input");
       if (["pause", "resume"].includes(input.operation)) writeServicePreference("image_enabled", input.operation === "resume", options);
       else lastOperation = { feature: "image", result: await imageControl(input, { ...options, adapterPort, adapterHost }) };
     } else if (input.action === "update") {

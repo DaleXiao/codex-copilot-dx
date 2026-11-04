@@ -60,10 +60,10 @@ Use `ccdx help` or `ccdx <command> --help` for options. The CLI uses English; th
 
 ## Features and maintenance
 
-Use the Web UI for accounts, APIs, models, client access, input suggestions, image setup, local masking, appearance, diagnostics and updates. CLI commands remain available for automation and recovery. See the [control reference](docs/REFERENCE.md#webui-and-cli-controls).
+Use the Web UI for accounts, APIs, models, client access, input suggestions, native images, local masking, appearance, diagnostics and updates. CLI commands remain available for automation and recovery. See the [control reference](docs/REFERENCE.md#webui-and-cli-controls).
 
 - **Input suggestions:** new integrations attempt setup by default when Codex is closed. Saved off choices are retained. The Web UI can enable, disable, finish setup, open Codex and repair the bridge. Setup synchronizes Show predictions, adds App-profile trust and locally decrypts the prediction hosts' HTTPS traffic. App/thread eligibility still applies. [Details](docs/REFERENCE.md#optional-native-predictions).
-- **Images:** configure the address, key and model in Codex → Image generation. Image setup and overnight updates remain off by default.
+- **Images:** Codex’s built-in image tool uses GPT Image 2.5 Flare through the existing GitHub Copilot account. Generate and edit images without an extra image API key, MCP or CCDX image skill. Existing pause choices remain effective. [Details](docs/REFERENCE.md#native-image-generation).
 - **Updates:** Settings → Install update downloads and verifies a stable release, then switches the installed service when idle. Busy work postpones the switch. Unmanaged launches require the installer or an installed command. [Details](docs/REFERENCE.md#installation-and-updates).
 
 Web UI activity updates through server push; the terminal uses the same in-process activity feed. Reconnecting restores current state and bounded recent records.

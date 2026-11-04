@@ -133,9 +133,9 @@
         <details class="panel dashboard-section" id="additional-capabilities">
           <summary class="panel-heading"><h2 data-i18n="codex_image_generation">IMAGE GENERATION</h2></summary>
           <strong id="image">—</strong><p id="image-detail" class="hint">—</p>
+          <p class="hint" data-i18n="native_image_service">GPT Image 2.5 Flare · GitHub Copilot · Built-in Codex tool</p>
           <div class="setting-row"><label for="setting-image_enabled" data-i18n="allow_new_image_calls">Allow image requests</label><input id="setting-image_enabled" type="checkbox" role="switch" disabled><span id="effect-image_enabled" class="hint" role="status"></span></div>
           <p class="hint" data-i18n="pause_keeps_the_provider_configuration_running_calls_can_finish_">Existing image requests can finish after pausing.</p>
-          <details class="tool-details" id="image-setup-panel"><summary data-i18n="image_setup">Configure image generation</summary><form id="image-setup-form"><div class="connection-fields"><label><span data-i18n="api_base">API address</span><input id="image-setup-endpoint" type="url" required maxlength="2048" autocomplete="off" spellcheck="false"></label><label>API Key<input id="image-setup-key" type="password" maxlength="8192" autocomplete="off"><span class="hint" data-i18n="image_key_keep">Leave empty to keep the key for the same address.</span></label><label><span data-i18n="model">Model</span><select id="image-setup-model" required></select></label></div><div class="section-actions"><button id="image-setup-inspect" type="button" data-i18n="api_read_models">Read models</button><button type="submit" id="image-setup-save" data-i18n="api_save">Save</button><button id="image-setup-remove" type="button" data-i18n="feature_remove">Remove setup</button></div></form><p id="image-setup-note" class="hint" role="status"></p></details>
         </details>
         <details class="panel dashboard-section" id="runtime-resources">
           <summary data-i18n="codex_conversation_buffer">CONVERSATION BUFFER</summary>

@@ -91,7 +91,7 @@ test("optional handlers remain lazy and HTTP dispatch no longer owns their imple
   const optional = fs.readFileSync(new URL("../src/optional-routes.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(adapter, /import\("\.\/(?:dashboard|dashboard-api|image-mcp)\.mjs"\)/);
   assert.doesNotMatch(optional, /^import .*(?:image-mcp|dashboard-api|dashboard\.mjs)/m);
-  for (const name of ["dashboard", "dashboard-api", "image-mcp"]) assert.ok(optional.includes(`import("./${name}.mjs")`));
+  for (const name of ["dashboard", "dashboard-api"]) assert.ok(optional.includes(`import("./${name}.mjs")`));
 });
 
 test("static source imports remain acyclic after extraction", () => {

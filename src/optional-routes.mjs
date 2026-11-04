@@ -9,22 +9,16 @@ export function isOptionalRoute(method, pathname) {
 // Optional handlers load only on their own routes. Failure is contained by the
 // shared HTTP dispatcher and cannot initialize or change core inference.
 export function createOptionalRoutes(options = {}) {
-  let imageMcpHandler = options.imageMcpHandler || null;
   let tools = null;
   let pending = 0;
   return {
     dispose() { tools?.dispose(); },
     busy: () => pending > 0 || tools?.busy?.() === true,
-    exportState() { const images = imageMcpHandler?.exportState?.() || [];return { images, bytes: (imageMcpHandler?.referenceBytes?.() || 0) + images.length * 64 }; },
+    exportState() { return { images: [], bytes: 0 }; },
     async importState(state) {
       if (!state || !Array.isArray(state.images)) throw new Error("Invalid optional-service handoff");
-      if (state.images.length) {
-        const { createImageMcpHandler } = await import("./image-mcp.mjs");
-        imageMcpHandler ||= createImageMcpHandler({ localHostname: options.imageMcpHostname });
-        imageMcpHandler.importState(state.images);
-      }
+      // Old edit handles are retired; completed files remain user artifacts.
     },
-    imageStats() { return imageMcpHandler?.stats?.(); },
     async handle(req, res, pathname) {
       pending++;
       try {
@@ -41,11 +35,8 @@ export function createOptionalRoutes(options = {}) {
         return await serveDashboard(req, res, pathname);
       }
       if (pathname === "/mcp/image") {
-        if (imageMcpHandler) return await imageMcpHandler(req, res);
-        return await import("./image-mcp.mjs").then(({ createImageMcpHandler }) => {
-          imageMcpHandler ||= createImageMcpHandler({ localHostname: options.imageMcpHostname });
-          return imageMcpHandler(req, res);
-        });
+        res.writeHead(410, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: { code: "ccdx_image_mcp_retired", message: "Use Codex's built-in image tool through CCDX. The image MCP is retired." } }));
       }
       } finally { pending--; }
     },

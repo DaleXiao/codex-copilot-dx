@@ -1,5 +1,5 @@
 import { ensureCodexConfig } from "./config.mjs";
-import { readImageProviderConfig } from "./image-provider-config.mjs";
+import { retireLegacyImages } from "./image-retirement.mjs";
 import { ensureCodexThreadCompression } from "./codex-thread-compression.mjs";
 import { runInBackground } from "./startup.mjs";
 import { createPredictionState } from "./native-prediction-state.mjs";
@@ -52,25 +52,25 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
     operation = Promise.resolve().then(task).finally(() => { operation = null;operationName = null; });
     return operation;
   }
+  function retireImages() {
+    try {
+      const retired = retireLegacyImages({ adapterPort: port, adapterHost: host });
+      if (retired.preserved) warning("User-modified legacy image files were preserved; review them manually. The old image service is retired.");
+    } catch { warning("Legacy image cleanup was incomplete; use ccdx app codex image setup to retry. The old image service is retired."); }
+  }
   return {
+    retireImages,
     async configure() {
       try {
         const { retirePredictionIntegration } = await import("./prediction-retirement.mjs");
         retirePredictionIntegration();
       } catch { /* Legacy cleanup is optional; never interrupt or clutter core startup. */ }
-      const enabled = Boolean(readImageProviderConfig());
-      let imageMcpSkipped;
       try {
-        const result = ensureCodexConfig(port, { host, imageProviderEnabled: enabled, ...(configLog ? { log: configLog } : {}) });
-        imageMcpSkipped = result.imageMcpSkipped;codexSetup = { setup: result.coreSetup, checked_at: new Date().toISOString() };
+        const result = ensureCodexConfig(port, { host, ...(configLog ? { log: configLog } : {}) });
+        codexSetup = { setup: result.coreSetup, checked_at: new Date().toISOString() };
       } catch (error) { codexSetup = { setup: "configuration_unavailable", checked_at: new Date().toISOString() };throw error; }
-      if (enabled && !imageMcpSkipped) {
-        try {
-          const { syncEnabledImageSkill } = await import("./cli-image.mjs");
-          syncEnabledImageSkill({ adapterPort: port, adapterHost: host });
-        } catch (error) { warning(`Image guidance could not be updated: ${error.message}`); }
-      }
-      return { imageEnabled: enabled, imageMcpSkipped, compressionSetup: runInBackground(ensureCodexThreadCompression) };
+      retireImages();
+      return { imageEnabled: true, imageMcpSkipped: false, compressionSetup: runInBackground(ensureCodexThreadCompression) };
     },
     start({ autoSetup = true } = {}) { return serialize("start", async () => {
       try {

@@ -1,8 +1,5 @@
-// Optional installed-runtime regression: node scripts/codex-image-replay.mjs --codex /absolute/path/to/codex
-// All model responses and generated pixels are synthetic. No installed configuration or credentials are used.
-// Optional --live-model MODEL uses the running loopback CCDX for one real model-selection check; pixels stay synthetic.
-// Add --edit to verify generation followed by two edits, including the prior image handle and preserved originals.
-// Every image turn verifies final chat image Markdown; redisplay must reuse the prior file without an image call.
+// Runs the installed Codex app-server against the candidate Images routes.
+// Models and pixels are synthetic; no installed profile or cloud credential is used.
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
@@ -11,217 +8,96 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
-import { computeImageMcpCodexConfig } from "../src/config.mjs";
-import { createImageMcpHandler } from "../src/image-mcp.mjs";
-import { updateImageSkill } from "../src/image-skill.mjs";
-import { parseImageToolArgs } from "../src/image-tool-client.mjs";
+import { createAdapterHandler } from "../src/adapter.mjs";
+import { createCopilotClient } from "../src/copilot.mjs";
+import { readAuthProfileCredentials } from "../src/auth-profile.mjs";
+import { testEnvironment } from "../test/helpers/environment.mjs";
 
-const args = process.argv.slice(2);
-let codex = process.env.CCDX_CODEX_BINARY;
-let liveModel;
-let adapterUrl = "http://127.0.0.1:2026";
-let withoutMcp = false;
-let editing = false;
-for (let index = 0; index < args.length; index += 1) {
-  if (args[index] === "--without-mcp") { withoutMcp = true; continue; }
-  if (args[index] === "--edit") { editing = true; continue; }
-  assert.ok(args[index + 1], `Missing value for ${args[index]}`);
-  if (args[index] === "--codex") codex = args[index + 1];
-  else if (args[index] === "--live-model") liveModel = args[index + 1];
-  else if (args[index] === "--adapter-url") adapterUrl = args[index + 1];
-  else assert.fail(`Unknown argument: ${args[index]}`);
-  index += 1;
-}
-assert.ok(!withoutMcp || liveModel, "--without-mcp requires --live-model");
-const adapter = new URL(adapterUrl);
-assert.ok(adapter.protocol === "http:" && ["127.0.0.1", "[::1]"].includes(adapter.hostname)
-  && !adapter.username && !adapter.password && adapter.pathname === "/" && !adapter.search && !adapter.hash, "Use a plain loopback adapter URL");
-adapterUrl = adapter.origin;
-assert.ok(codex && path.isAbsolute(codex), "Supply --codex /absolute/path/to/codex or CCDX_CODEX_BINARY");
-const loopbackFetch = fetch;
-globalThis.fetch = async () => { throw new Error("Network fetch is forbidden in this offline replay"); };
-const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-image-replay-")));
-const home = path.join(root, "codex");
-const cwd = path.join(root, "project");
-const imageDirectory = path.join(root, "mcp-images");
-const codexPath = path.join(home, "config.toml");
-const helperPath = path.join(home, "skills", "ccdx-image", "scripts", "generate.mjs");
-const imageDimension = liveModel ? 1024 : 64;
-const pngs = await Promise.all(["#2060c0", "#c02020", "#209040"].map(async (color) => {
-  const pixels = liveModel
-    ? sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="1024" height="1024" fill="white"/><circle cx="512" cy="512" r="300" fill="${color}"/></svg>`))
-    : sharp({ create: { width: 64, height: 64, channels: 3, background: color } });
-  return (await pixels.png().toBuffer()).toString("base64");
-}));
-const imageIdPattern = /^ccdx_img_[0-9a-f-]{36}$/;
-const syntheticPrompts = ["A synthetic blue square.", "Make the square red; keep everything else unchanged.", "Make the square green; keep everything else unchanged."];
-const toolNamespace = "mcp__ccdx_image";
-const model = liveModel || "gpt-5.5";
-const timeoutMs = liveModel ? 120_000 : 30_000;
-let child;
-let client;
-let stderr = "";
-let scenario;
-let upstreamCount = 0;
-let generationCount = 0;
-let editCount = 0;
-let fixtureApprovals = 0;
-let helperApprovals = 0;
-let serverError;
-const summaries = [];
-const imageCalls = [];
-const knownImages = new Map();
-const savedImages = new Map();
-const deliveredImages = new Map();
-let latestImageId;
-let latestChatImage;
-
-function runtimeEnv() {
-  return {
-    PATH: [path.dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(path.delimiter),
-    TMPDIR: root,
-    LANG: process.env.LANG || "en_US.UTF-8",
-    CODEX_HOME: home,
-  };
-}
-
-async function bounded(promise, label, milliseconds = timeoutMs) {
-  let timer;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out`)), milliseconds);
-      }),
-    ]);
-  } finally { clearTimeout(timer); }
-}
-
-function helperCommandArguments(command, workdir, allowShellWrapper = true) {
-  // Accept only a single literal Node invocation: no shell expansion, redirection, or compound commands.
-  if (!withoutMcp || typeof command !== "string" || /[\r\n]/.test(command) || path.resolve(workdir || "") !== cwd) return null;
-  const words = [];
-  let word = "";
-  let quote = "";
-  let active = false;
-  for (let index = 0; index < command.length; index += 1) {
-    const char = command[index];
-    if (quote === "'") {
-      if (char === "'") quote = "";
-      else word += char;
-    } else if (char === "\\") {
-      if (++index >= command.length) return null;
-      word += command[index];
-      active = true;
-    } else if (quote === '"') {
-      if (char === '"') quote = "";
-      else if (char === "$" || char === "`") return null;
-      else word += char;
-    } else if (char === "'" || char === '"') {
-      quote = char;
-      active = true;
-    } else if (/\s/.test(char)) {
-      if (active) { words.push(word); word = ""; active = false; }
-    } else {
-      if (/[;&|<>(){}\[\]?*~$`#]/.test(char)) return null;
-      word += char;
-      active = true;
+const args = process.argv.slice(2), binary = args[args.indexOf("--codex") + 1];
+assert.ok(args.includes("--codex") && path.isAbsolute(binary), "Supply --codex /absolute/path/to/codex");
+process.env.CCDX_DISABLE_USAGE = "1";
+const live = args.includes("--live-ghc");
+const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-native-images-")));
+const profile = path.join(root, "profile"), cwd = path.join(root, "project");
+await fs.mkdir(profile);await fs.mkdir(cwd);
+const pngs = await Promise.all(["blue", "red", "green"].map(async background => (await sharp({ create: { width: 64, height: 64, channels: 3, background } }).png().toBuffer()).toString("base64")));
+const calls = [], events = [], pending = new Map(), continuations = [];
+let catalog;
+const returnedPixels = [];
+const credentials = live ? readAuthProfileCredentials("codex") : null;
+if (live) assert.ok(credentials.valid && credentials.identity, "Live GHC replay requires the existing bound account");
+const ghc = live ? createCopilotClient({ readGithubCredentials: () => credentials, allowTokenDiscovery: false,
+  readGithubIdentity: () => credentials.identity, writeGithubIdentity() {} }) : null;
+let child, nextId = 0, buffer = "", stderr = "", sequence = 0, imageIndex = 0, step = 0, edit = false, threadId;
+const finalMessage = () => ({ id: `msg_${sequence}`, type: "message", role: "assistant", phase: "final_answer", status: "completed", content: [{ type: "output_text", text: "Native image complete.", annotations: [] }] });
+const client = {
+  getCachedModelEndpoints: () => ["/responses"],
+  listModels: async () => ({ status: 200, body: JSON.stringify({ data: [{ id: "gpt-6.1-sol", vendor: "OpenAI", model_picker_enabled: true, policy: { state: "enabled" }, supported_endpoints: ["/responses"], capabilities: { type: "chat", supports: { reasoning_effort: ["low", "high"] } } }] }) }),
+  images: async (operation, body) => {
+    calls.push({ operation, body });assert.equal(body.model, "gpt-image-2.5-flare");
+    if (edit) { assert.equal(operation, "edits");assert.equal(body.images.length, 1);assert.equal(body.images[0].image_url, `data:image/png;base64,${returnedPixels[imageIndex - 1]}`); }
+    else assert.equal(operation, "generations");
+    if (live) {
+      const response = await ghc.images(operation, body, { signal: AbortSignal.timeout(180000) });
+      assert.equal(response.status, 200, `Live GHC ${operation} failed`);
+      const result = await response.json();returnedPixels.push(result.data[0].b64_json);imageIndex++;
+      return Response.json(result);
     }
-  }
-  if (quote) return null;
-  if (active) words.push(word);
-  if (allowShellWrapper && words.length === 3
-    && ["/bin/zsh", "/bin/bash", "/bin/sh"].includes(words[0])
-    && ["-lc", "-c"].includes(words[1])) {
-    return helperCommandArguments(words[2], workdir, false);
-  }
-  if (words[0] !== process.execPath || words[1] !== helperPath) return null;
-  try {
-    const parsed = parseImageToolArgs(words.slice(2));
-    if (parsed.help) return null;
-    const output = path.resolve(cwd, parsed.out || "output/imagegen");
-    if (!output.startsWith(`${cwd}${path.sep}`)) return null;
-    return parsed;
-  } catch { return null; }
-}
-
-function createClient(process) {
-  const pending = new Map();
-  const events = [];
-  const listeners = new Set();
-  let nextId = 0;
-  let buffer = "";
-  const fail = (error) => {
-    for (const request of pending.values()) request.reject(error);
-    pending.clear();
-    for (const listener of listeners) listener.reject(error);
-    listeners.clear();
-  };
-  process.on("error", fail);
-  process.on("exit", (code, signal) => fail(new Error(`Codex exited: ${code ?? signal}`)));
-  process.stdin.on("error", fail);
-  process.stdout.on("data", (chunk) => {
-    buffer += chunk;
-    for (;;) {
-      const delimiter = buffer.indexOf("\n");
-      if (delimiter < 0) break;
-      const line = buffer.slice(0, delimiter);
-      buffer = buffer.slice(delimiter + 1);
-      if (!line) continue;
-      let event;
-      try { event = JSON.parse(line); } catch (error) { fail(error); continue; }
-      if (pending.has(event.id)) {
-        const request = pending.get(event.id);
-        pending.delete(event.id);
-        if (event.error) request.reject(new Error(JSON.stringify(event.error)));
-        else request.resolve(event.result);
-      } else if (event.method) {
-        if (event.id !== undefined) {
-          const approval = event.params;
-          if (scenario?.image && event.method === "mcpServer/elicitation/request"
-            && approval.serverName === "ccdx_image"
-            && approval._meta?.codex_approval_kind === "mcp_tool_call"
-            && approval.message?.includes(scenario?.editStep ? '"edit_image"' : '"generate_image"')
-            && typeof approval._meta?.tool_params?.prompt === "string"
-            && (liveModel || approval._meta.tool_params.prompt === syntheticPrompts[scenario?.editStep || 0])
-            && (scenario?.editStep ? approval._meta.tool_params.image_id === scenario.imageId : approval._meta.tool_params.image_id === undefined)
-            && [undefined, "1024x1024", "1536x1024", "1024x1536"].includes(approval._meta.tool_params.size)) {
-            fixtureApprovals += 1;
-            process.stdin.write(`${JSON.stringify({ id: event.id, result: { action: "accept", content: {} } })}\n`);
-          } else if (scenario?.image && event.method === "item/commandExecution/requestApproval"
-            && helperCommandArguments(approval.command, approval.cwd)) {
-            helperApprovals += 1;
-            process.stdin.write(`${JSON.stringify({ id: event.id, result: { decision: "accept" } })}\n`);
-          } else fail(new Error(`Unexpected client approval/tool request: ${event.method}`));
-          continue;
-        }
-        events.push(event);
-        for (const listener of listeners) {
-          if (listener.matches(event)) { listeners.delete(listener); listener.resolve(event); }
-        }
-      }
+    returnedPixels.push(pngs[imageIndex]);
+    return Response.json({ created: 1, background: "opaque", quality: "low", size: "1024x1024", data: [{ b64_json: pngs[imageIndex++] }] });
+  },
+  responses: async body => {
+    if (step++ % 2 === 0) {
+      const tools = [...(body.tools || []), ...(body.input?.flatMap(i => i.tools || []) || [])];
+      const direct = tools.some(t => t.type === "namespace" && t.name === "image_gen" && t.tools?.some(f => f.name === "imagegen"));
+      assert.ok(direct || tools.some(t => t.type === "namespace" && t.name === "functions" && t.tools?.some(f => f.name === "exec")), "The client must expose native image generation directly or through code mode");
+      const arguments_ = { prompt: edit ? "Make it red" : "A blue square", transparent_background: false, ...(edit ? { num_last_images_to_include: 1 } : {}) };
+      return new Response(syntheticResponse([{ type: direct ? "function_call" : "custom_tool_call", id: `fc_${sequence}`, call_id: `call_${sequence}`,
+        name: direct ? "imagegen" : "exec", namespace: direct ? "image_gen" : "functions",
+        ...(direct ? { arguments: JSON.stringify(arguments_) } : { input: `const result = await tools.image_gen__imagegen(${JSON.stringify(arguments_)}); generatedImage(result);` }) }], `resp_${sequence++}`), { headers: { "content-type": "text/event-stream" } });
     }
-  });
-  return {
-    events,
-    notify(method) { process.stdin.write(`${JSON.stringify({ method, params: {} })}\n`); },
-    call(method, params) {
-      const id = ++nextId;
-      return bounded(new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        process.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
-      }), method).finally(() => pending.delete(id));
-    },
-    waitFor(matches, label, after = events.length) {
-      const existing = events.slice(after).find(matches);
-      if (existing) return Promise.resolve(existing);
-      let listener;
-      return bounded(new Promise((resolve, reject) => {
-        listener = { matches, resolve, reject };
-        listeners.add(listener);
-      }), label).finally(() => listeners.delete(listener));
-    },
-  };
+    continuations.push(body.input.filter(i => /tool.*output|function_call_output/.test(i.type || "")));
+    return new Response(syntheticResponse([finalMessage()], `resp_${sequence++}`), { headers: { "content-type": "text/event-stream" } });
+  },
+};
+const handler = createAdapterHandler({ codexClient: client, responsesFn: client.responses, getCachedModelEndpointsFn: client.getCachedModelEndpoints, codexModelCatalog: { load: async () => catalog },
+  env: {}, dashboardOptions: { home: root }, imagesEnabled: () => true, imagesAllowed: () => true });
+const server = http.createServer((req, res) => {
+  if (req.url.startsWith("/api/codex/accounts/check")) { res.writeHead(200, { "Content-Type": "application/json" });res.end(JSON.stringify({ accounts: [{ id: "synthetic-account", name: "Synthetic", plan_type: "plus", workspace_backend_origin: "https://chatgpt.com", account_routing_override: "NO_CONSTRAINT" }] }));return; }
+  handler(req, res);
+});
+server.on("upgrade", (_req, socket) => socket.end("HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"));
+await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+const base = `http://127.0.0.1:${server.address().port}/v1`;
+const runtimeEnv = testEnvironment(root, { CODEX_HOME: profile, OPENAI_BASE_URL: base,
+  HTTP_PROXY: "http://127.0.0.1:1", HTTPS_PROXY: "http://127.0.0.1:1", NO_PROXY: "127.0.0.1,localhost" });
+const config = `model = "gpt-6.1-sol"
+model_provider = "openai"
+openai_base_url = "${base}"
+chatgpt_base_url = "http://127.0.0.1:${server.address().port}"
+check_for_update_on_startup = false
+[features]
+shell_snapshot = false
+plugins = false
+remote_plugin = false
+apps = false
+skill_search = false
+[analytics]
+enabled = false
+[feedback]
+enabled = false
+`;
+await fs.writeFile(path.join(profile, "config.toml"), config);
+const encode = value => Buffer.from(JSON.stringify(value)).toString("base64url");
+const token = `${encode({ alg: "none" })}.${encode({ email: "synthetic@example.test", exp: 4102444800, "https://api.openai.com/auth": { chatgpt_account_id: "synthetic-account", chatgpt_plan_type: "plus" } })}.synthetic`;
+await fs.writeFile(path.join(profile, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", OPENAI_API_KEY: null, tokens: { id_token: token, access_token: "synthetic-access", refresh_token: "synthetic-refresh", account_id: "synthetic-account" }, last_refresh: new Date().toISOString() }), { mode: 0o600 });
+
+function bounded(promise, label, ms = live ? 180000 : 30000) { let timer;return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Error(`${label} timed out: ${stderr.slice(-1800)}`)), ms); })]).finally(() => clearTimeout(timer)); }
+function call(method, params) { const id = ++nextId;return bounded(new Promise((resolve, reject) => { pending.set(id, { resolve, reject });child.stdin.write(JSON.stringify({ id, method, params }) + "\n"); }), method); }
+async function waitFor(method, after) {
+  let interval;
+  try { return await bounded(new Promise(resolve => { interval = setInterval(() => { const event = events.slice(after).find(e => e.method === method);if (event) resolve(event.params); }, 10); }), method); }
+  finally { clearInterval(interval); }
 }
 
 function syntheticResponse(output, id) {
@@ -240,6 +116,9 @@ function syntheticResponse(output, id) {
     if (item.type === "function_call") {
       emit("response.function_call_arguments.delta", { output_index: index, item_id: item.id, delta: item.arguments });
       emit("response.function_call_arguments.done", { output_index: index, item_id: item.id, arguments: item.arguments });
+    } else if (item.type === "custom_tool_call") {
+      emit("response.custom_tool_call_input.delta", { output_index: index, item_id: item.id, delta: item.input });
+      emit("response.custom_tool_call_input.done", { output_index: index, item_id: item.id, input: item.input });
     } else if (item.type === "message") {
       const location = { output_index: index, content_index: 0, item_id: item.id };
       emit("response.content_part.added", { ...location, part: { ...item.content[0], text: "" } });
@@ -253,364 +132,39 @@ function syntheticResponse(output, id) {
   return events.join("");
 }
 
-function finalMessage(label, imageMarkdown = "") {
-  return { id: `msg_${label}`, type: "message", role: "assistant", phase: "final_answer", status: "completed", content: [{ type: "output_text", text: `SYNTHETIC ${label} COMPLETE.${imageMarkdown ? `\n\n${imageMarkdown}` : ""}`, annotations: [] }] };
-}
-
-function displayedImagePaths(text) {
-  const prose = String(text || "").replace(/```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g, "");
-  return [...prose.matchAll(/!\[[^\]\r\n]*\]\(\s*(?:<([^>\r\n]+)>|([^\s)]+))\s*\)/g)].map((match) => {
-    try { return decodeURIComponent(match[1] || match[2]); } catch { return ""; }
-  });
-}
-
-const imageMcp = createImageMcpHandler({
-  imageDirectory,
-  configLoader: () => ({ model: "qwen-image-3.0-pro", protocol: "qwen-messages", api_key: "unused-offline-fixture" }),
-  generateImageFn: async (_config, args) => {
-    assert.ok(scenario?.image, "Image provider called outside an image turn");
-    if (!liveModel) {
-      assert.equal(args.prompt, syntheticPrompts[scenario.editStep]);
-      assert.equal(args.size, "1024x1024");
-    }
-    assert.ok(typeof args.prompt === "string" && args.prompt.trim() && args.prompt.length <= 16000);
-    assert.equal(scenario.providerCalls++, 0, "Exactly one synthetic provider call is permitted per image turn");
-    if (scenario.editStep) {
-      assert.equal(args.image, `data:image/png;base64,${knownImages.get(scenario.imageId)}`, "Edit must receive the exact previous image pixels");
-      editCount += 1;
-    } else assert.equal(args.image, undefined, "Fresh generation must not carry a source image");
-    generationCount += 1;
-    return { data: pngs[scenario.editStep], mimeType: "image/png", width: imageDimension, height: imageDimension, size: args.size, model: "qwen-image-3.0-pro" };
-  },
-});
-let catalog;
-const server = http.createServer((req, res) => {
-  (async () => {
-    if (req.url === "/mcp/image") {
-      if (req.method !== "POST") return imageMcp(req, res);
-      const record = {};
-      const chunks = [];
-      req.on("data", (chunk) => chunks.push(chunk));
-      req.once("end", () => {
-        if (!chunks.length) return;
-        record.request = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        if (record.request.method === "tools/call") imageCalls.push(record);
-      });
-      const end = res.end;
-      res.end = function (body, ...rest) {
-        if (body) record.response = JSON.parse(String(body));
-        return end.call(this, body, ...rest);
-      };
-      return imageMcp(req, res);
-    }
-    if (req.method === "GET" && req.url.startsWith("/v1/models")) {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(catalog));
-      return;
-    }
-    if (req.method === "GET") {
-      res.writeHead(404);
-      res.end();
-      return;
-    }
-    assert.equal(req.method, "POST");
-    assert.equal(req.url, "/v1/responses");
-    const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
-    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    upstreamCount += 1;
-    assert.ok(scenario, "Unexpected fixture inference request");
-    assert.equal(body.model, model);
-    assert.equal(body.stream, true);
-    if (scenario.requireSkill) {
-      assert.ok(JSON.stringify(body.input).includes("ccdx-image"), "Next turn did not discover newly installed ccdx-image before explicit skill/MCP reload");
-    }
-    const step = scenario.steps++;
-    if (liveModel && (scenario.image || scenario.redisplay)) {
-      assert.ok(step < 12, "Live replay exceeded its bounded model request budget");
-      assert.ok(JSON.stringify(body.input).includes("ccdx-image"), "Managed skill missing from live model context");
-      const upstream = await loopbackFetch(`${adapterUrl}/v1/responses`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      res.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") || "application/json" });
-      for await (const chunk of upstream.body) res.write(chunk);
-      res.end();
-      return;
-    }
-    assert.ok(step < (scenario.image ? 3 : 1), "Unexpected model retry or repeated tool invocation");
-    let output = [finalMessage(scenario.label, scenario.redisplay ? latestChatImage.markdown : "")];
-    const toolName = scenario.editStep ? "edit_image" : "generate_image";
-    if (scenario.image && step === 0) {
-      assert.ok(body.tools.some((tool) => tool.type === "tool_search"), "Actual Codex must expose discovery for deferred MCP tools");
-      assert.ok(JSON.stringify(body.input).includes("ccdx-image"), "CCDX image skill missing from actual Codex input context");
-      output = [{ id: `search_${scenario.label}`, type: "tool_search_call", execution: "client", call_id: `search_${scenario.label}`, status: "completed", arguments: { query: `+ccdx_image ${toolName}`, limit: 5 } }];
-    } else if (scenario.image && step === 1) {
-      const discovery = body.input.find((item) => item.type === "tool_search_output" && item.call_id === `search_${scenario.label}`);
-      assert.ok(discovery?.tools.some((tool) => tool.name === toolNamespace && tool.tools?.some((nested) => nested.name === toolName)), "CCDX image tool missing from actual Codex deferred-tool discovery");
-      output = [{ id: `fc_${scenario.label}`, type: "function_call", namespace: toolNamespace, name: toolName, call_id: `call_${scenario.label}`, status: "completed", arguments: JSON.stringify({ prompt: syntheticPrompts[scenario.editStep], size: "1024x1024", ...(scenario.editStep ? { image_id: scenario.imageId } : {}) }) }];
-    } else if (scenario.image) {
-      const result = body.input.find((item) => item.type === "function_call_output" && item.call_id === `call_${scenario.label}`);
-      assert.ok(result, "Image MCP call output missing from follow-up model request");
-      assert.ok(Array.isArray(result.output), `Native image output was replaced: ${JSON.stringify(result.output).slice(0, 700)}`);
-      const image = result.output.find((part) => part.type === "input_image" && part.image_url?.startsWith("data:image/"));
-      assert.ok(image, "Generated image not preserved as native image input");
-      const metadata = await sharp(Buffer.from(image.image_url.split(",")[1], "base64")).metadata();
-      assert.equal(metadata.width, 64);
-      assert.equal(metadata.height, 64);
-      assert.equal(image.image_url, `data:image/png;base64,${pngs[scenario.editStep]}`, "Model continuation must receive the latest image pixels");
-      const returned = imageCalls.at(-1)?.response?.result;
-      const text = returned?.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
-      const markdown = text?.match(/!\[[^\]\r\n]*\]\(<[^>\r\n]+>\)/)?.[0];
-      assert.ok(markdown, "Production image result must supply ready-to-use chat Markdown");
-      assert.ok(result.output.some((part) => typeof part.text === "string" && part.text.includes(markdown)), "Image delivery Markdown missing from the model continuation");
-      assert.deepEqual(displayedImagePaths(markdown), [returned._meta?.["ccdx/image_path"]]);
-      output = [finalMessage(scenario.label, markdown)];
-    }
-    res.writeHead(200, { "Content-Type": "text/event-stream" });
-    res.end(syntheticResponse(output, `resp_${scenario.label}_${step}`));
-  })().catch((error) => {
-    serverError = error;
-    if (!res.headersSent) res.writeHead(500);
-    res.end();
-  });
-});
-
-async function startClient() {
-  stderr = "";
-  child = spawn(codex, ["app-server", "--stdio"], { cwd, env: runtimeEnv(), detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"] });
-  child.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
-  client = createClient(child);
-  await client.call("initialize", { clientInfo: { name: "ccdx-image-replay", version: "1.0" }, capabilities: { experimentalApi: true } });
-  client.notify("initialized");
-}
-
-async function stopClient() {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  const exited = once(child, "exit");
-  const signal = value => { if (process.platform === "win32") child.kill(value);else { try { process.kill(-child.pid, value); } catch (error) { if (error.code !== "ESRCH") throw error; } } };
-  signal("SIGTERM");
-  try { await bounded(exited, "Codex shutdown", 2_000); } catch {
-    signal("SIGKILL");
-    await bounded(exited, "Codex forced shutdown", 2_000);
-  }
-}
-
-async function runTurn(threadId, label, image, requireSkill = false, editStep = 0, redisplay = false) {
-  const imageId = editStep ? latestImageId : undefined;
-  if (editStep) assert.match(imageId, imageIdPattern, "An edit requires the preceding result handle");
-  const priorChatImage = latestChatImage;
-  if (redisplay) assert.ok(priorChatImage, "Redisplay requires a preceding delivered image");
-  scenario = { label, image, requireSkill, steps: 0, providerCalls: 0, editStep, imageId, redisplay };
-  const offset = client.events.length;
-  const before = generationCount;
-  const editsBefore = editCount;
-  const callsBefore = imageCalls.length;
-  const prompt = liveModel
-    ? ["画一张蓝色圆形，纯白背景，正方形，生成图片。", "把刚才蓝色圆形改成红色，其他不变。", "把刚才红色圆形改成绿色，其他不变。"][editStep]
-    : ["Generate a synthetic blue square.", "Edit the preceding blue square to red; preserve everything else.", "Edit the preceding red square to green; preserve everything else."][editStep];
-  await client.call("turn/start", { threadId, input: [{ type: "text", text: redisplay ? "图呢，请在聊天中展示刚才那张原图。" : image ? prompt : "Save this synthetic pre-image thread.", text_elements: [] }] });
-  const completed = await client.waitFor((event) => event.method === "turn/completed" && event.params.threadId === threadId, `${label} turn completion`, offset);
-  if (serverError) throw serverError;
-  assert.equal(completed.params.turn.status, "completed", JSON.stringify(completed.params.turn.error));
-  if (!liveModel || (!image && !redisplay)) assert.equal(scenario.steps, image ? 3 : 1);
-  assert.equal(generationCount - before, image ? 1 : 0, JSON.stringify(client.events.slice(offset)
-    .filter((event) => event.method === "item/completed" && ["agentMessage", "commandExecution"].includes(event.params.item.type))
-    .map((event) => ({ type: event.params.item.type, text: event.params.item.text,
-      command: event.params.item.command, exitCode: event.params.item.exitCode,
-      output: String(event.params.item.aggregatedOutput || "").slice(0, 1200) }))));
-  const toolItems = client.events.slice(offset).filter((event) => event.method === "item/completed" && event.params.item.type === "mcpToolCall");
-  let resultImageId;
-  let chatImagePath;
-  if (image) {
-    const calls = imageCalls.slice(callsBefore);
-    assert.equal(calls.length, 1, "Exactly one image tool call reaches the local MCP service");
-    assert.equal(calls[0].request.params.name, editStep ? "edit_image" : "generate_image");
-    assert.equal(calls[0].request.params.arguments.image_id, imageId, "Edit must use the exact preceding result handle");
-    assert.equal(calls[0].response.result.isError, undefined, "Image tool returned an error");
-    resultImageId = calls[0].response.result._meta?.["ccdx/image_id"];
-    assert.match(resultImageId, imageIdPattern, "Production MCP result must return an image handle");
-    assert.equal(knownImages.has(resultImageId), false, "Every edit and generation must return a fresh image handle");
-    const returned = calls[0].response.result.content.find((part) => part.type === "image");
-    assert.equal(returned?.data, pngs[editStep]);
-    chatImagePath = calls[0].response.result._meta?.["ccdx/image_path"];
-    if (withoutMcp) {
-      assert.equal(calls[0].request.params._meta?.["ccdx/client_saves_image"], true, "Helper must declare its single local image save");
-      assert.equal(chatImagePath, undefined, "MCP must not return a second delivery path when the helper saves the image");
-    } else {
-      assert.ok(typeof chatImagePath === "string" && path.isAbsolute(chatImagePath), "Production MCP result must return a saved absolute image path");
-      assert.equal(path.dirname(chatImagePath), imageDirectory, "Replay image delivery must stay in its isolated output directory");
-      assert.ok((await fs.lstat(chatImagePath)).isFile(), "Chat image must be a regular file");
-      assert.equal((await fs.readFile(chatImagePath)).toString("base64"), returned.data, "Chat thumbnail file must contain the original generated image bytes");
-      assert.equal(deliveredImages.has(chatImagePath), false, "Generation and edits must preserve earlier delivery files");
-      deliveredImages.set(chatImagePath, returned.data);
-    }
-    knownImages.set(resultImageId, returned.data);
-    latestImageId = resultImageId;
-  }
-  if (image && !withoutMcp) {
-    assert.equal(toolItems.length, 1, "Exactly one completed native MCP image item");
-    const item = toolItems[0].params.item;
-    assert.equal(item.status, "completed");
-    assert.ok(JSON.stringify(item.result).includes(pngs[editStep]), "Native image content missing from completed MCP item");
-    assert.ok(JSON.stringify(item.result).includes(resultImageId), "Image handle missing from completed native MCP item");
-  }
-  if (liveModel) {
-    const commands = client.events.slice(offset).filter((event) => event.method === "item/started" && event.params.item.type === "commandExecution");
-    assert.ok(commands.every((event) => !/\b(?:python\d*|pip\d*|uv|curl|wget)\b|image_gen\.py/i.test(event.params.item.command || "")), "Live model attempted a Python/SDK/alternate HTTP fallback");
-    if (image && withoutMcp) {
-      assert.equal(toolItems.length, 0, "Missing-MCP scenario must exercise the Node helper");
-      const succeeded = client.events.slice(offset).filter((event) => event.method === "item/completed"
-        && event.params.item.type === "commandExecution"
-        && event.params.item.exitCode === 0
-        && helperCommandArguments(event.params.item.command, event.params.item.cwd || cwd));
-      assert.equal(succeeded.length, 1, "Exactly one successful literal image-helper execution");
-      const helperArgs = helperCommandArguments(succeeded[0].params.item.command, succeeded[0].params.item.cwd || cwd);
-      assert.equal(helperArgs.imageId, imageId, "Helper must use --image-id with the exact preceding result handle");
-      assert.ok(String(succeeded[0].params.item.aggregatedOutput || "").includes(`CCDX image_id: ${resultImageId}`), "Helper must report the reusable image handle");
-      const files = (await fs.readdir(cwd, { recursive: true })).filter((file) => /\.(?:png|jpe?g|webp)$/i.test(file));
-      assert.equal(files.length, savedImages.size + 1, "Each turn saves exactly one new image and preserves existing images");
-      for (const [file, data] of savedImages) assert.equal((await fs.readFile(file)).toString("base64"), data, "Editing must not change any earlier saved image");
-      const reportedPaths = String(succeeded[0].params.item.aggregatedOutput || "").split(/\r?\n/).map((line) => line.trim())
-        .filter((line) => path.isAbsolute(line) && /\.(?:png|jpe?g|webp)$/i.test(line));
-      assert.equal(reportedPaths.length, 1, "Successful helper output must report its one saved absolute image path");
-      const output = reportedPaths[0];
-      assert.deepEqual(files.map((file) => path.join(cwd, file)).filter((file) => !savedImages.has(file)), [output], "Helper-reported path must be the only newly saved image");
-      assert.ok((await fs.lstat(output)).isFile(), "Helper output must be a regular file");
-      const metadata = await sharp(output).metadata();
-      assert.equal(metadata.width, 1024);
-      assert.equal(metadata.height, 1024);
-      const data = (await fs.readFile(output)).toString("base64");
-      assert.equal(data, pngs[editStep], "Helper must save the latest returned image");
-      savedImages.set(output, data);
-      chatImagePath = output;
-    }
-  }
-  if (redisplay) {
-    assert.equal(imageCalls.length, callsBefore, "Redisplay must not call generate_image or edit_image");
-    assert.equal(editCount, editsBefore, "Redisplay must not dispatch an edit");
-    assert.equal(latestImageId, priorChatImage.imageId, "Redisplay must retain the original image handle");
-    chatImagePath = priorChatImage.filePath;
-  }
-  if (image || redisplay) {
-    const finalItem = client.events.slice(offset).filter((event) => event.method === "item/completed" && event.params.item.type === "agentMessage").at(-1)?.params.item;
-    const finalText = String(finalItem?.text || "");
-    assert.ok(displayedImagePaths(finalText).includes(chatImagePath), `Final assistant reply did not embed the actual saved image: ${finalText.slice(0, 1800)}`);
-    for (const [file, data] of [...deliveredImages, ...savedImages]) {
-      assert.equal((await fs.readFile(file)).toString("base64"), data, "Generation, editing and redisplay must preserve prior image bytes");
-    }
-    if (withoutMcp) {
-      const mcpFiles = await fs.readdir(imageDirectory).catch((error) => {
-        if (error.code === "ENOENT") return [];
-        throw error;
-      });
-      assert.equal(mcpFiles.length, 0, "Helper generation and redisplay must not create a duplicate MCP image file");
-    } else assert.equal((await fs.readdir(imageDirectory)).length, deliveredImages.size, "Redisplay must not create another image delivery file");
-    if (image) {
-      const markdown = finalText.match(/!\[[^\]\r\n]*\]\(\s*(?:<[^>\r\n]+>|[^\s)]+)\s*\)/g)?.find((value) => displayedImagePaths(value).includes(chatImagePath));
-      latestChatImage = { imageId: resultImageId, filePath: chatImagePath, markdown };
-    }
-  }
-  const guidanceRead = [...new Set(client.events.slice(offset).filter(event => event.method === "item/completed" && event.params.item.type === "commandExecution")
-    .flatMap(event => {
-      const output = String(event.params.item.aggregatedOutput || "");
-      return [["SKILL.md", "# CCDX image generation"], ["editing.md", "# Edit a CCDX result"], ["helper.md", "# MCP-unavailable fallback"]]
-        .filter(([, heading]) => output.includes(heading)).map(([name]) => name);
-    }))];
-  summaries.push({ scenario: label, modelRequests: scenario.steps, imageCalls: generationCount - before, edit: Boolean(editStep), nativeImageResult: image && !withoutMcp, savedImage: image && withoutMcp, finalChatImage: image || redisplay, ...(liveModel ? { guidanceRead } : {}), ...(redisplay ? { redisplay: true } : {}), ...(image ? { imageId: resultImageId, ...(imageId ? { sourceImageId: imageId } : {}) } : {}) });
-  scenario = null;
-}
-
 try {
-  await fs.mkdir(home);
-  await fs.mkdir(cwd);
-  const options = { cwd, env: runtimeEnv(), encoding: "utf8", timeout: timeoutMs, stdio: ["ignore", "pipe", "pipe"] };
-  const version = execFileSync(codex, ["--version"], options).trim();
-  catalog = JSON.parse(execFileSync(codex, ["debug", "models", "--bundled"], { ...options, maxBuffer: 8 * 1024 * 1024 }));
-  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
-  const port = server.address().port;
-  const base = `model = ${JSON.stringify(model)}\nmodel_provider = "replay"\ncheck_for_update_on_startup = false\n[model_providers.replay]\nname = "CCDX image replay"\nbase_url = "http://127.0.0.1:${port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\nsupports_websockets = false\nrequest_max_retries = 0\nstream_max_retries = 0\n[features]\nshell_snapshot = false\nplugins = false\nremote_plugin = false\napps = false\n[analytics]\nenabled = false\n[feedback]\nenabled = false\n`;
-  await fs.writeFile(codexPath, withoutMcp ? `${base}[sandbox_workspace_write]\nwritable_roots = [${JSON.stringify(cwd)}]\nnetwork_access = false\nexclude_tmpdir_env_var = true\nexclude_slash_tmp = true\n` : base);
-  if (liveModel) {
-    // Reproduce the installed App skill alongside the CCDX skill without modifying either installed location.
-    const builtinImagegen = path.join(os.homedir(), ".codex", "skills", ".system", "imagegen");
-    await fs.access(path.join(builtinImagegen, "SKILL.md"));
-    await fs.cp(builtinImagegen, path.join(home, "skills", ".system", "imagegen"), { recursive: true });
-    if (!withoutMcp) {
-      await fs.writeFile(codexPath, computeImageMcpCodexConfig(base, { enabled: true, adapterPort: port }).content);
-      await updateImageSkill({ enabled: true, codexPath, adapterPort: port, adapterHost: "127.0.0.1" });
+  const version = execFileSync(binary, ["--version"], { env: runtimeEnv, encoding: "utf8" }).trim();
+  catalog = JSON.parse(execFileSync(binary, ["debug", "models", "--bundled"], { env: runtimeEnv, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }));
+  child = spawn(binary, ["app-server", "--stdio"], { env: runtimeEnv, cwd, stdio: ["pipe", "pipe", "pipe"] });
+  child.stderr.on("data", chunk => { stderr = (stderr + chunk).slice(-8000); });child.stdin.on("error", () => {});
+  child.stdout.setEncoding("utf8");child.stdout.on("data", chunk => {
+    buffer += chunk;let boundary;
+    while ((boundary = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, boundary);buffer = buffer.slice(boundary + 1);if (!line) continue;
+      const event = JSON.parse(line), request = pending.get(event.id);
+      if (request) { pending.delete(event.id);event.error ? request.reject(Error(JSON.stringify(event.error))) : request.resolve(event.result); }
+      else if (event.id !== undefined) { child.stdin.write(JSON.stringify({ id: event.id, error: { code: -32601, message: "Unexpected client request" } }) + "\n"); }
+      else events.push(event);
     }
-    await startClient();
-    const listed = await client.call("skills/list", { cwds: [cwd], forceReload: true });
-    const skills = listed.data.flatMap((entry) => entry.skills).filter((skill) => skill.enabled).map((skill) => skill.name);
-    assert.equal(skills.includes("ccdx-image"), !withoutMcp, "Managed skill registration must match the setup stage");
-    assert.ok(skills.includes("imagegen"), "Live routing check requires coexistence with built-in imagegen skill");
-    const fresh = await client.call("thread/start", { cwd, model, modelProvider: "replay", approvalPolicy: "on-request", sandbox: withoutMcp ? "workspace-write" : "read-only" });
-    if (withoutMcp) {
-      const servers = await client.call("mcpServerStatus/list", { threadId: fresh.thread.id });
-      assert.ok(servers.data.every((entry) => entry.name !== "ccdx_image"), "Stale helper scenario must have no image MCP registration");
-      await runTurn(fresh.thread.id, "preexisting_thread_without_image", false);
-      await updateImageSkill({ enabled: true, codexPath, adapterPort: port, adapterHost: "127.0.0.1" });
-    }
-    await runTurn(fresh.thread.id, withoutMcp ? "stale_task_without_mcp_live_selection" : "natural_language_live_selection", true, withoutMcp);
-    await runTurn(fresh.thread.id, "natural_language_original_redisplay", false, false, 0, true);
-    if (editing) {
-      await runTurn(fresh.thread.id, "natural_language_first_edit", true, false, 1);
-      await runTurn(fresh.thread.id, "natural_language_second_edit", true, false, 2);
-      assert.equal(editCount, 2, "Natural-language edit chain must issue exactly two edits");
-    }
-    console.log(JSON.stringify({ version, liveModel, withoutMcp, editing, localAdapter: adapterUrl, syntheticPixels: true, builtinSkillCoexists: true, upstreamCount, generationCount, editCount, fixtureApprovals, helperApprovals, summaries }, null, 2));
-    console.log(editing
-      ? "PASS: real model delivered and edited CCDX images with final chat Markdown, correct handles, and zero-call original redisplay."
-      : "PASS: real model selected CCDX once, embedded its saved image in final chat Markdown, and redisplayed the original without an image call.");
-  } else {
-  await startClient();
-  const started = await client.call("thread/start", { cwd, model: "gpt-5.5", modelProvider: "replay", approvalPolicy: "on-request", sandbox: "read-only", experimentalRawEvents: false });
-  const threadId = started.thread.id;
-  const disabled = await client.call("mcpServerStatus/list", { threadId });
-  assert.equal(disabled.data.some((entry) => entry.name === "ccdx_image"), false);
-  const disabledSkills = await client.call("skills/list", { cwds: [cwd], forceReload: true });
-  assert.equal(disabledSkills.data.flatMap((entry) => entry.skills).some((skill) => skill.name === "ccdx-image"), false);
-  assert.equal(await fs.stat(path.join(home, "skills", "ccdx-image")).then(() => true, (error) => { if (error.code === "ENOENT") return false; throw error; }), false);
-  await runTurn(threadId, "before_enable", false);
-
-  await fs.writeFile(codexPath, computeImageMcpCodexConfig(base, { enabled: true, adapterPort: port }).content);
-  await updateImageSkill({ enabled: true, codexPath, adapterPort: port, adapterHost: "127.0.0.1" });
-  await runTurn(threadId, "skill_installed_before_mcp_reload", false, true);
-  await client.call("config/mcpServer/reload", {});
-  const skills = await client.call("skills/list", { cwds: [cwd], forceReload: true });
-  assert.ok(skills.data.flatMap((entry) => entry.skills).some((skill) => skill.name === "ccdx-image" && skill.enabled), "Installed Codex must discover the managed CCDX image skill");
-  for (const reference of ["editing.md", "helper.md"]) await fs.access(path.join(home, "skills", "ccdx-image", "references", reference));
-  const enabled = await client.call("mcpServerStatus/list", { threadId });
-  const imageServer = enabled.data.find((entry) => entry.name === "ccdx_image");
-  assert.ok(imageServer && Object.values(imageServer.tools).some((tool) => tool.name === "generate_image"), "Reloaded Codex must discover production MCP image tool");
-  if (editing) assert.ok(Object.values(imageServer.tools).some((tool) => tool.name === "edit_image"), "Reloaded Codex must discover production MCP edit tool for the eligible provider");
-  await runTurn(threadId, "same_thread_after_reload", true);
-  await runTurn(threadId, "same_thread_original_redisplay", false, false, 0, true);
-  if (editing) await runTurn(threadId, "same_thread_first_edit", true, false, 1);
-
-  await stopClient();
-  await startClient();
-  await client.call("thread/resume", { threadId, cwd, modelProvider: "replay", approvalPolicy: "on-request", sandbox: "read-only" });
-  await runTurn(threadId, editing ? "saved_thread_second_edit_after_restart" : "saved_thread_after_restart", true, false, editing ? 2 : 0);
-  const read = await client.call("thread/read", { threadId, includeTurns: true });
-  assert.equal(read.thread.turns.length, editing ? 6 : 5, "Saved original thread retains every completed turn");
-  const fresh = await client.call("thread/start", { cwd, model: "gpt-5.5", modelProvider: "replay", approvalPolicy: "on-request", sandbox: "read-only" });
-  await runTurn(fresh.thread.id, "new_thread_enabled", true);
-  if (editing) assert.equal(editCount, 2, "Offline edit chain must issue exactly two edits");
-  console.log(JSON.stringify({ version, offline: true, editing, skillDiscovered: true, mcpReload: true, upstreamCount, generationCount, editCount, fixtureApprovals, summaries }, null, 2));
-  console.log(editing
-    ? "PASS: installed Codex generated and edited twice with final chat image Markdown, zero-call redisplay, and preserved handles through saved-task resume."
-    : "PASS: installed Codex discovers CCDX images and preserves native output, final chat image Markdown, and zero-call redisplay through task reload/resume.");
+  });
+  await call("initialize", { clientInfo: { name: "Codex Desktop", version: "1.0" }, capabilities: { experimentalApi: true } });child.stdin.write('{"method":"initialized","params":{}}\n');
+  const thread = await call("thread/start", { cwd, model: "gpt-6.1-sol", modelProvider: "openai", serviceName: "codex_work_desktop", approvalPolicy: "never", sandbox: "workspace-write" });threadId = thread.thread.id;
+  const saved = [];
+  for (const editing of [false, true]) {
+    edit = editing;const offset = events.length;
+    await call("turn/start", { threadId, input: [{ type: "text", text: edit ? "Make it red" : "Generate a blue square", text_elements: [] }] });
+    const completed = await waitFor("turn/completed", offset);assert.equal(completed.turn.status, "completed", JSON.stringify(completed));
+    const image = events.slice(offset).find(e => e.method === "item/completed" && e.params.item.type === "imageGeneration")?.params.item;
+    assert.ok(image, "A native imageGeneration item must reach the App protocol: " + JSON.stringify(continuations).slice(0,2000));assert.equal(image.status, "completed");
+    assert.ok(image.savedPath, "Native executor must save its generated image");
+    const bytes = await fs.readFile(image.savedPath);assert.equal(bytes.toString("base64"), returnedPixels[editing ? 1 : 0]);saved.push(image.savedPath);
   }
-} catch (error) {
-  throw new Error(`${serverError?.message || error.message}\n${stderr}`, { cause: error });
+  assert.notEqual(saved[0], saved[1]);assert.equal((await fs.readFile(saved[0])).toString("base64"), returnedPixels[0]);
+  const history = await call("thread/read", { threadId, includeTurns: true });
+  assert.equal(history.thread.turns.flatMap(t => t.items).filter(i => i.type === "imageGeneration").length, 2);
+  assert.equal(calls.length, 2);assert.equal(await fs.stat(path.join(profile, "skills", "ccdx-image")).then(() => true, () => false), false);
+  console.log(JSON.stringify({ version, offline: !live, provider: live ? "github-live" : "synthetic", nativeGeneration: true, nativeEdit: true, nativeItems: 2, savedOriginalPreserved: true, noMcpOrSkill: true, imagesApiCalls: calls.length }));
 } finally {
-  try { await stopClient(); } finally {
-    server.closeAllConnections();
-    if (server.listening) await new Promise((resolve) => server.close(resolve));
-    await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  }
+  if (child && child.exitCode === null) { child.kill("SIGTERM");await bounded(once(child, "exit"), "shutdown", 3000).catch(() => child.kill("SIGKILL")); }
+  server.closeAllConnections();await new Promise(resolve => server.close(resolve));handler.cleanup();await fs.rm(root, { recursive: true, force: true, maxRetries: 3 });
 }

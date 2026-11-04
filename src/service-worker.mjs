@@ -8,15 +8,15 @@ import { userSettingsPath } from './user-settings.mjs';
 import { readBoundedFileSync } from './bounded-file.mjs';
 import { authProfilePaths, readAuthProfileCredentials } from './auth-profile.mjs';
 import { m365Paths } from './m365-settings.mjs';
-import { imageProviderConfigPath } from './image-provider-config.mjs';
 import { readPredictionSettings } from './native-prediction-profile.mjs';
+import { legacyImageProviderPath } from './image-retirement.mjs';
 
 export const HANDOFF_MAX_BYTES = 64 * 1024 * 1024;
 export function clientStateFingerprint(options = {}) {
   const codex = codexPaths(options), connections = accessSettingsPath(options);
   const github = authProfilePaths('codex', options);
   const files = [codex.config, path.join(codex.directory, 'auth.json'), connections, userSettingsPath(options),
-    github.tokenPath, imageProviderConfigPath(options), m365Paths(options).settings, m365Paths(options).gateway,
+    github.tokenPath, legacyImageProviderPath(options), m365Paths(options).settings, m365Paths(options).gateway,
     path.join(path.dirname(connections), 'client-gateway-keys.json'), path.join(path.dirname(connections), 'codex-gateway-owner.json'), ...Object.values(claudeClientPaths(options))];
   const hash = createHash('sha256');
   const credentials = readAuthProfileCredentials('codex', options);

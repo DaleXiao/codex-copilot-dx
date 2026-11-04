@@ -95,13 +95,14 @@ test("request metrics use fixed protocol route buckets and complete exactly once
     "messages_count_tokens",
     "claude_models",
     "image_mcp",
+    "images",
     "not_found",
   ]);
 });
 
 test("model activity excludes catalogs, token counting and image tool discovery and ends once", () => {
   const metrics = createRequestMetrics();
-  for (const route of ["models", "messages_count_tokens", "claude_models", "image_mcp", "not_found"]) metrics.begin(route);
+  for (const route of ["models", "messages_count_tokens", "claude_models", "image_mcp", "images", "not_found"]) metrics.begin(route);
   assert.equal(runtimeStatusPayload({ metrics }).model_activity.active, 0);
   const finish = metrics.begin("responses"), compact = metrics.begin("responses_compact"), claude = metrics.begin("messages");
   assert.equal(runtimeStatusPayload({ metrics, imageGeneration: { active: 2 } }).model_activity.active, 5);
@@ -120,10 +121,10 @@ test("route classification recognizes only supported Codex routes", () => {
   assert.equal(classifyAdapterRoute("GET", "/other"), "not_found");
 });
 
-test("unused image status stays uninitialized and contains only local logging counters", async () => {
+test("native image status reports local zero counters without an upstream request", async () => {
   const result = await invoke(createAdapterHandler(), { url: ADAPTER_STATUS_PATH });
   const payload = JSON.parse(result.body);
-  assert.equal(payload.image_generation, null);
+  assert.equal(payload.image_generation.native, true);assert.equal(payload.image_generation.total, 0);
   assert.equal(payload.requests.by_route.image_mcp.total, 0);
   assert.equal(payload.logging.debug.enabled, false);
   assert.equal(payload.logging.usage.pending_records, 0);
@@ -166,7 +167,7 @@ test("dashboard assets serve on loopback without initializing image tools or aff
   assert.equal(head.body, "");
   assert.equal(metrics.snapshot().total, 0);
   const snapshot = await invoke(handler, { url: ADAPTER_STATUS_PATH, ...request });
-  assert.equal(JSON.parse(snapshot.body).image_generation, null);
+  assert.equal(JSON.parse(snapshot.body).image_generation.native, true);assert.equal(JSON.parse(snapshot.body).image_generation.total, 0);
   assert.equal(JSON.parse(snapshot.body).requests.total, 0);
 });
 

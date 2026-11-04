@@ -115,42 +115,32 @@ try {
           }
         })(), "background model log layout");
       }
-      assert.equal(await fs.readFile(codexPath, "utf8"), before);
-      assert.equal(cold.output().includes("Image MCP setup was skipped"), ["conflict", "image-write-failure"].includes(mode));
-      assert.equal(cold.output().includes("Image guidance could not be updated"), mode === "skill-conflict");
+      const after = await fs.readFile(codexPath, "utf8");
+      assert.equal(Boolean(parse(after).mcp_servers?.ccdx_image), mode === "conflict");
+      assert.equal(cold.output().includes("The old image service is retired"), ["conflict", "skill-conflict", "disabled-dirty"].includes(mode));
+      assert.equal(await fs.stat(providerPath).then(() => true, () => false), false);
       assert.doesNotMatch(cold.output(), /private-fixture|synthetic-image-key|synthetic-offline-github-token/);
       const skillExists = await fs.stat(path.join(home, ".codex", "skills", "ccdx-image")).then(() => true, error => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return false; throw error; });
-      assert.equal(skillExists, ["markerless", "skill-conflict", "runtime-image-failure"].includes(mode));
-      if (disabled) assert.doesNotMatch(cold.output(), /Image MCP setup|Image guidance/);
+      assert.equal(skillExists, mode === "skill-conflict");
       if (mode === "skill-conflict") assert.equal(await fs.readFile(path.join(home, ".codex", "skills", "ccdx-image", "SKILL.md"), "utf8"), "user-owned guidance");
       if (mode === "disabled-dirty") assert.equal(await fs.readFile(path.join(home, ".codex", "skills"), "utf8"), "must remain untouched");
-      if (mode === "runtime-image-failure") {
-        let settled = false;
-        const pending = fetch(`${origin}/mcp/image`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "generate_image", arguments: { prompt: "synthetic pending image" } } }), signal: AbortSignal.timeout(8000) })
-          .then(response => response.json()).finally(() => { settled = true; });
-        await ready(cold, "Image fixture request pending");
-        await checkCore(origin);
-        assert.equal(settled, false, "GPT must respond while the image provider is pending");
-        cold.child.send("release-image-fixture");
-        assert.equal((await pending).result.isError, true);
-        await checkCore(origin);
-        assert.equal(cold.output().split("Image fixture request pending").length - 1, 1);
-      }
+      const retired = await fetch(`${origin}/mcp/image`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+      assert.equal(retired.status, 410);
       if (mode === "disabled") assert.equal(parse(before).mcp_servers?.ccdx_image, undefined);
       const stat = await fs.stat(codexPath);
       reused = start(env);
       const [code] = await bounded(reused.done, "existing-adapter reuse");
       assert.equal(code, 0, reused.output());
       assert.match(reused.output(), /Using running service:/);
-      assert.equal(await fs.readFile(codexPath, "utf8"), before);
+      assert.equal(await fs.readFile(codexPath, "utf8"), after);
       assert.equal((await fs.stat(codexPath)).mtimeMs, stat.mtimeMs);
       await checkCore(origin);
       const combinedOutput = cold.output() + reused.output();
       const imageMcpRequests = combinedOutput.split("Image fixture MCP request received").length - 1;
       const imageUpstreamRequests = combinedOutput.split("Image fixture outbound request").length - 1;
-      assert.equal(imageMcpRequests, mode === "runtime-image-failure" ? 1 : 0);
-      assert.equal(imageUpstreamRequests, mode === "runtime-image-failure" ? 1 : 0);
-      summaries.push({ mode, coldStart: true, reuse: true, coreResponses: true, configUnchanged: true, imageSkillPresent: skillExists, imageMcpRequests, imageUpstreamRequests, ...(mode === "runtime-image-failure" ? { coreDuringPendingImage: true, coreAfterImageFailure: true, imageDispatches: 1 } : {}) });
+      assert.equal(imageMcpRequests, 1);
+      assert.equal(imageUpstreamRequests, 0);
+      summaries.push({ mode, coldStart: true, reuse: true, coreResponses: true, legacyImagesRetired: true, imageSkillPresent: skillExists, imageMcpRequests, imageUpstreamRequests, nativeImagesOnly: true });
     } finally {
       for (const run of [reused, cold]) {
         if (!run || run.child.exitCode !== null || run.child.signalCode) continue;

@@ -8,7 +8,7 @@ import { formatResponsiveCliTable, cliOutputWidth, terminalCell } from "./cli-ta
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { settingsPreferencesSnapshot, writeSettingsPreferences, checkedPreferenceValues } from "./settings-preferences.mjs";
 import { checkedApi } from "./access-settings.mjs";
-import { hiddenQuestion } from "./cli-image.mjs";
+import { hiddenQuestion } from "./cli-secret.mjs";
 import { readBoundedFileSync } from "./bounded-file.mjs";
 import { deploymentModelId } from "./model-capabilities.mjs";
 import { TERMINAL_COLOR_THEMES } from "./terminal-colors.mjs";

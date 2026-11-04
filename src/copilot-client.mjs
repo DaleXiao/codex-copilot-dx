@@ -5,7 +5,7 @@ import { debugLog } from "./log.mjs";
 import { enforceResponsesPayloadByteBudget } from "./responses-byte-budget.mjs";
 import { status } from "./status.mjs";
 import { withChatStreamUsage } from "./stream-contract.mjs";
-import { markRequestObservation, markUpstreamStarted } from "./stream-performance.mjs";
+import { markRequestObservation, markUpstreamStarted, markUpstreamHeaders } from "./stream-performance.mjs";
 import { currentRequestContext } from "./request-context.mjs";
 import { requestOptionsEvidence } from "./response-failures.mjs";
 
@@ -205,6 +205,20 @@ export function createCopilotClientRuntime({
     }
   }
 
+  async function images(operation, body, { signal, fetchImpl } = {}) {
+    if (!["generations", "edits"].includes(operation)) throw new Error("Unsupported image operation");
+    const token = await tokenSession.getToken({ signal });
+    const headers = buildHeaders({ token, version: getVSCodeVersion(), initiator: "user", vision: operation === "edits" });
+    const bodyText = JSON.stringify(body);
+    markRequestObservation({ payload_bytes: Buffer.byteLength(bodyText), images: body.images?.length || 0 });
+    markUpstreamStarted(false);
+    const response = await fetchCopilotUpstream(`${tokenSession.getApiBase()}/v1/images/${operation}`, {
+      method: "POST", headers, body: bodyText, signal, redirect: "error",
+    }, { fetchImpl, retries: 0 });
+    markUpstreamHeaders(response.status);
+    return response;
+  }
+
   function responsesCompact(reqBody, options = {}) {
     return responses(reqBody, options);
   }
@@ -239,6 +253,7 @@ export function createCopilotClientRuntime({
     resetModelListSingleflightForTests,
     responses,
     responsesCompact,
+    images,
     resetForTests,
   });
 }

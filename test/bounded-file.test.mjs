@@ -7,7 +7,6 @@ import { execFileSync } from "node:child_process";
 import { readBoundedFileSync } from "../src/bounded-file.mjs";
 import { inspectCredentialPermissions } from "../src/credential-permissions.mjs";
 import { readUserSettings, userSettingsPath } from "../src/user-settings.mjs";
-import { readImageProviderConfig, imageProviderConfigPath } from "../src/image-provider-config.mjs";
 import { loadModelCache, modelCachePath } from "../src/model-cache.mjs";
 
 function fixture(t) {
@@ -33,12 +32,10 @@ test("bounded file handles growth, empty files and missing files without overwri
 });
 test("oversized local settings retain strict/non-strict behavior and preserve files", t => {
   const { root } = fixture(t), options = { home: root, env: {} };
-  for (const [file, read] of [[userSettingsPath(options), () => readUserSettings({ ...options, strict: true })],
-    [imageProviderConfigPath(options), () => readImageProviderConfig({ ...options, strict: true })]]) {
+  for (const [file, read] of [[userSettingsPath(options), () => readUserSettings({ ...options, strict: true })]]) {
     fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, "");fs.truncateSync(file, 1024 * 1024 + 1);
     assert.throws(read, /read limit/);assert.equal(fs.statSync(file).size, 1024 * 1024 + 1);
   }
-  assert.equal(readImageProviderConfig(options), null);
   const model = modelCachePath(root);fs.mkdirSync(path.dirname(model), { recursive: true });fs.writeFileSync(model, "");fs.truncateSync(model, 9 * 1024 * 1024 + 1);
   assert.equal(loadModelCache({ home: root }), null);
 });

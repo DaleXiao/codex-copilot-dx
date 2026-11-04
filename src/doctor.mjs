@@ -13,14 +13,13 @@ import { adapterBaseUrl, checkRunningAdapter } from "./running-adapter.mjs";
 import { inspectCodexConfig } from "./codex-config-doctor.mjs";
 import { inspectPackageUpdateEnvironment } from "./package-update.mjs";
 import { inspectCredentialPermissions } from "./credential-permissions.mjs";
-import { imageProviderConfigPath } from "./image-provider-config.mjs";
 import { terminalCell } from "./terminal-text.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { inspectWindowsCommand } from "./windows-command.mjs";
 import { readPredictionSettings } from "./native-prediction-profile.mjs";
 import { inspectPredictionEnvironment } from "./native-prediction-environment.mjs";
 import { formatPredictionEnvironment } from "./native-prediction-state.mjs";
-import { readImageProviderConfig } from "./image-provider-config.mjs";
+import { imageSetupSummary } from "./image-setup.mjs";
 import { inspectAdapterCompatibility } from "./doctor-compat.mjs";
 import { readProviderSettings } from "./provider-settings.mjs";
 export { selectCompatibilityModels, inspectAdapterCompatibility } from "./doctor-compat.mjs";
@@ -197,7 +196,7 @@ export async function collectDoctorChecks({
   inspectWindowsCommandFn = inspectWindowsCommand,
   readPredictionSettingsFn = readPredictionSettings,
   inspectPredictionEnvironmentFn = inspectPredictionEnvironment,
-  readImageProviderConfigFn = readImageProviderConfig,
+  readImageProviderConfigFn = imageSetupSummary,
   providerControlFn,
 } = {}) {
   if (configOnly) return inspectCodexConfig({ home, env, host, port });
@@ -227,7 +226,7 @@ export async function collectDoctorChecks({
   } catch { checks.push({ kind: "warn", message: "Prediction environment could not be verified; existing routing and trust settings preserved", fix: "ccdx app codex prediction status" }); }
   try {
     const image = readImageProviderConfigFn({ home, env, strict: true });
-    checks.push({ kind: "info", message: image ? "Image generation configured; no provider request was made" : "Image generation is off; optional checks skipped" });
+    checks.push({ kind: "info", message: image?.configured ? "Native images use GitHub Copilot; no provider request was made" : "Native images need GitHub Copilot access" });
   } catch { checks.push({ kind: "warn", message: "Image provider configuration is invalid; core service is unaffected", fix: "ccdx app codex image status" }); }
   const updateEnvironment = inspectUpdateEnvironmentFn();
   const updateMessage = updateEnvironment.state === "different" ? "npm update target differs from this CCDX installation; review PATH/prefix before updating"
@@ -237,7 +236,7 @@ export async function collectDoctorChecks({
     .filter(key => updateEnvironment[key]).map(key => `${key}=${terminalCell(updateEnvironment[key])}`).join(" / ");
   checks.push({ kind: updateEnvironment.state === "different" || updateEnvironment.state === "unavailable" ? "warn" : "ok",
     message: `${updateMessage}${updatePaths ? ` / ${updatePaths}` : ""}` });
-  for (const [label, file] of [["GitHub token", githubTokenPath(home)], ["Image API key", imageProviderConfigPath({ home })]]) {
+  for (const [label, file] of [["GitHub token", githubTokenPath(home)]]) {
     const permissions = inspectCredentialPermissionsFn(file);
     if (permissions === "missing") continue;
     checks.push({ kind: permissions === "review" || permissions === "unavailable" ? "warn" : "ok",

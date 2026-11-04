@@ -68,10 +68,9 @@ test("HTTP parameter diagnostics preserve upstream errors and opt into bounded p
   }
 });
 
-test("optional image route failure cannot block the following inference or management request", async () => {
-  const handler = createAdapterHandler({ imageMcpHandler: () => { throw new Error("optional fixture failed"); },
-    getCachedModelEndpointsFn: () => ["/responses"], responsesFn: async () => Response.json({ id: "resp_healthy", status: "completed", output: [] }) });
-  for (const [url, expected] of [["/mcp/image", 500], ["/v1/responses", 200], ["/_ccdx/status", 200]]) {
+test("retired image route cannot block the following inference or management request", async () => {
+  const handler = createAdapterHandler({ getCachedModelEndpointsFn: () => ["/responses"], responsesFn: async () => Response.json({ id: "resp_healthy", status: "completed", output: [] }) });
+  for (const [url, expected] of [["/mcp/image", 410], ["/v1/responses", 200], ["/_ccdx/status", 200]]) {
     const req = jsonRequest(Buffer.from(JSON.stringify({ model: "gpt-5.6-sol", input: "fixture", stream: false })));
     Object.assign(req, { url, method: url === "/_ccdx/status" ? "GET" : "POST", socket: { remoteAddress: "127.0.0.1" } });
     const result = await invokeAdapterRequest({}, req, handler);

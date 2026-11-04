@@ -13,20 +13,15 @@ const readme = fs.readFileSync(path.join(root, "README.md"), "utf8")
 
 test("installation links target stable installers or the shipped package, with pinned bootstrap versions", () => {
   const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"))).version;
-  const shell = fs.readFileSync(path.join(root, "install/install.sh"), "utf8");
-  const powershell = fs.readFileSync(path.join(root, "install/install.ps1"), "utf8");
-  const stable = shell.match(/version=(\d+\.\d+\.\d+)/)?.[1];
-  assert.ok(stable, "Bootstrap must pin a stable version");
-  assert.ok(powershell.includes(`$version = '${stable}'`));
-  if (!version.includes("-")) assert.equal(stable, version);
-  else assert.ok(stable.split(".").map(Number).some((n, i) => n < Number(version.split("-")[0].split(".")[i]) && stable.split(".").slice(0, i).every((v, j) => v === version.split("-")[0].split(".")[j])), "An unpublished candidate retains the earlier stable installer");
   const links = [...readme.matchAll(/https:\/\/github\.com\/DaleXiao\/codex-copilot-dx\/releases\/(?:download\/v([\d.]+)|latest\/download)\/(install\.(?:sh|ps1)|codex-copilot-dx-[\d.]+\.tgz)/gi)];
   assert.ok(links.some(link => link[2] === "install.sh"));
   assert.ok(links.some(link => link[2] === "install.ps1"));
   for (const [, tag, asset] of links) {
-    if (tag !== undefined) assert.equal(tag, stable);
-    if (asset.endsWith(".tgz")) assert.equal(asset, `codex-copilot-dx-${stable}.tgz`);
+    if (tag !== undefined) assert.equal(tag, version);
+    if (asset.endsWith(".tgz")) assert.equal(asset, `codex-copilot-dx-${version}.tgz`);
   }
+  assert.ok(fs.readFileSync(path.join(root, "install/install.sh"), "utf8").includes(`version=${version}`));
+  assert.ok(fs.readFileSync(path.join(root, "install/install.ps1"), "utf8").includes(`$version = '${version}'`));
 });
 
 

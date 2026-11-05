@@ -376,6 +376,7 @@ async function reuseRunningAdapterIfAvailable() {
     }
   } catch (error) { console.warn(status("warn", error.message)); }
   if (codexEnabled) await openCodex({ predictionPacUrl, predictionApp, predictionProfile, persistedPredictionRoute,
+    imageHost: imageEnabled ? await (await clientIntegrations()).imageHostLaunch() : null,
     onPredictionRoute: route => { launchRoute = route; }, log: startupLogger("App") });
   console.log(predictionStartupCheck({ configured: predictionConfigured, bridge: predictionPacUrl ? "running" : "unknown", launch_route: launchRoute }));
   console.log(startupCheck(imageEnabled && imageMcpSkipped ? "warn" : "info", "Images", imageEnabled
@@ -533,6 +534,7 @@ try {
 
   // Launch Codex when available. A running App is never forcibly restarted.
   if (codexEnabled) await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app, predictionProfile: nativePrediction?.profile,
+    imageHost: imageEnabled ? await clientIntegration.imageHostLaunch() : null,
     preparePredictionRoute: () => nativePrediction?.prepareRoute(), persistedPredictionRoute: persistentRoute?.status === "installed",
     onPredictionRoute: route => clientIntegration?.launched(route), log: startupLogger("App") });
   console.log(predictionStartupCheck(clientIntegration?.snapshot().prediction));

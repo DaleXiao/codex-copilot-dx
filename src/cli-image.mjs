@@ -22,6 +22,6 @@ export async function runImageCommand({ action, model, output = process.stdout, 
   if (result.availability === "selected_unavailable") output.write("Saved image model is unavailable; choose an available model.\n");
   for (const item of result.models || []) output.write(`${item.id === result.selected_model ? "*" : " "} ${terminalCell(item.name || item.id)} (${terminalCell(item.id)})\n`);
   if (!result.models?.length) output.write("Read the GitHub catalog in Model sources or use source github models --refresh.\n");
-  output.write("Uses the built-in Codex image tool and existing GitHub account.\n");
+  output.write("Uses Codex native host tools and the existing GitHub account. Start Codex through CCDX, then use a new chat.\n");
   return result;
 }

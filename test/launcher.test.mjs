@@ -23,6 +23,16 @@ test("autoLaunchEnabled defaults to true", () => {
   assert.equal(autoLaunchEnabled({ CCDX_AUTO_LAUNCH: "1" }), true);
 });
 
+test("image host launch uses only the verified App and composes with prediction arguments", async () => {
+  const args = ["/Applications/ChatGPT.app", "--env", "CODEX_CLI_PATH=/owned/image-host", "--args", "--proxy-pac-url=http://127.0.0.1:12345/proxy.pac"];
+  const { spawnImpl, calls } = fakeSpawn({ [JSON.stringify(args)]: 0 });let inspections = 0;
+  assert.equal(await openCodex({ env: {}, platform: "darwin", spawnImpl, log() {},
+    imageHost: { app: "/Applications/ChatGPT.app", env: { CODEX_CLI_PATH: "/owned/image-host" } },
+    predictionPacUrl: "http://127.0.0.1:12345/proxy.pac", predictionApp: "/Applications/ChatGPT.app",
+    macAppProcesses: () => ++inspections === 1 ? [] : [{ pid: 123, readable: true, route: "http://127.0.0.1:12345/proxy.pac" }] }), true);
+  assert.deepEqual(calls, [args]);
+});
+
 test("autoLaunchEnabled honors disabling values", () => {
   for (const v of ["0", "false", "no", "off", "OFF"]) {
     assert.equal(autoLaunchEnabled({ CCDX_AUTO_LAUNCH: v }), false, v);

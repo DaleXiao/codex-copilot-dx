@@ -60,6 +60,10 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
     } catch { warning("Legacy image cleanup was incomplete; review the old image files before the next CCDX start. The old image service is retired."); }
   }
   return {
+    async imageHostLaunch(options = {}) {
+      try { return await (await import("./codex-image-host-launch.mjs")).prepareImageHostLaunch({ host, port, ...options }); }
+      catch (error) { warning(error.message);return null; }
+    },
     retireImages,
     async configure() {
       try {

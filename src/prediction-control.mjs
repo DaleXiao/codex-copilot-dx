@@ -29,6 +29,7 @@ export async function controlPrediction(operation, { integration, nativeOperatio
     if (!native) throw new Error("Prediction bridge is unavailable");
     await native.prepareRoute?.();
     return { opened: await openCodex({ predictionPacUrl: native.pacUrl, predictionApp: native.app, predictionProfile: native.profile,
+      imageHost: await integration.imageHostLaunch?.({ env: { ...(options.env || process.env), CCDX_AUTO_LAUNCH: "1" } }),
       env: { ...(options.env || process.env), CCDX_AUTO_LAUNCH: "1" }, persistedPredictionRoute: false,
       preparePredictionRoute: () => native.prepareRoute?.(), onPredictionRoute: value => integration.launched(value) }) };
   }

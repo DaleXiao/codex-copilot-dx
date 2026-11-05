@@ -61,7 +61,7 @@ export function macPredictionAppProcesses(app, { exec = execFileSync } = {}) {
   return rows;
 }
 
-export async function openCodex({ env = process.env, spawnImpl = spawn, platform = process.platform, predictionPacUrl = null, predictionApp = null, predictionProfile = null,
+export async function openCodex({ env = process.env, spawnImpl = spawn, platform = process.platform, predictionPacUrl = null, predictionApp = null, predictionProfile = null, imageHost = null,
   preparePredictionRoute, persistedPredictionRoute = false, onPredictionRoute = () => {}, log = console.log,
   resolveWindowsApp = installedWindowsPredictionApp, windowsAppProcesses = windowsPredictionAppProcesses,
   macAppProcesses = macPredictionAppProcesses } = {}) {
@@ -124,6 +124,9 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
     return false;
   }
 
+  const imageArgs = platform === "darwin" && imageHost?.env?.CODEX_CLI_PATH
+    ? ["--env", "CODEX_CLI_PATH=" + imageHost.env.CODEX_CLI_PATH] : [];
+  if (imageArgs.length) log(status("info", "Image host configured for the next Codex launch and new chats; a running App is not restarted"));
   const extraArgs = isPredictionPacUrl(predictionPacUrl)
     && APP_PATH_CANDIDATES.includes(predictionApp)
     ? ["--args", `--proxy-pac-url=${predictionPacUrl}`] : [];
@@ -140,7 +143,7 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
         throw new Error("Running Codex App uses an old or unverified prediction route. Fully quit the App, then run ccdx again; no process was stopped");
       }
       await preparePredictionRoute?.();
-      if (!await tryOpen([predictionApp, ...extraArgs], { spawnImpl })) {
+      if (!await tryOpen([predictionApp, ...imageArgs, ...extraArgs], { spawnImpl })) {
         onPredictionRoute("unverified");log(status("warn", "Could not open Codex App"));return false;
       }
       for (let attempt = 0; attempt < 10; attempt++) {
@@ -157,9 +160,9 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
       onPredictionRoute("unverified");log(status("warn", `Optional macOS prediction launch skipped: ${error.message}`));return false;
     }
   }
-  const attempts = launchAttempts();
+  const attempts = imageArgs.length && APP_PATH_CANDIDATES.includes(imageHost.app) ? [[imageHost.app]] : launchAttempts();
   for (const attempt of attempts) {
-    const args = [...attempt, ...extraArgs];
+    const args = [...attempt, ...imageArgs, ...extraArgs];
     if (await tryOpen(args, { spawnImpl })) {
       log(status("ok", "Codex opened"));
       return true;

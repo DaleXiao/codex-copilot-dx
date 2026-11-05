@@ -29,7 +29,7 @@ test("CLI reads the shared image inventory and toggles requests without image cr
     return { features: { image: { native: true, configured: true, enabled: readUserSettings(f).image_enabled !== false, selected_model: "render-two", models: [{ id: "render-two", name: "Render Two" }] } } };
   };
   const result = await runImageCommand({ ...f, action: "enable", request, output: { write: v => { text += v; } } });
-  assert.equal(result.native, true);assert.match(text, /built-in Codex image tool/);
+  assert.equal(result.native, true);assert.match(text, /Codex native host tools/);
   assert.equal(fs.existsSync(path.join(f.home, ".codex", "skills", "ccdx-image")), false);
   assert.equal(fs.existsSync(legacyImageProviderPath(f)), false);
   await runImageCommand({ ...f, action: "disable", request, output: { write() {} } });assert.equal(readUserSettings(f).image_enabled, false);

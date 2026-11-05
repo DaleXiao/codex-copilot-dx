@@ -11,7 +11,7 @@ Client integration, image tools and the dashboard are not a general plugin frame
 | Provider composition | `provider-runtime.mjs`, `connection-runtime.mjs`, provider/access settings | Explicit selection, lifecycle, history namespaces and snapshots |
 | Claude clients | `claude-gateway.mjs`, `claude-client-lifecycle.mjs`, `claude-client-config.mjs`, `claude-models.mjs` | Native Messages relay and field-owned reversible client setup |
 | Client integration | `client-integration.mjs`, Codex config, native prediction | Client setup, optional start/stop, diagnostic snapshots |
-| Native images | Images routes, GHC client, preference controls and legacy retirement | Native Codex generation/editing through the existing GitHub account; no image MCP or separate credential |
+| Native images | Images routes, native SDK host tools, GHC client, preference controls and legacy retirement | Native tool progress and generated-gallery images through the existing GitHub account; ChatGPT Apps and sign-in retained, no image MCP or separate credential |
 | Management | CLI, dashboard, observability, package updates | Bounded metadata and explicit user actions |
 | Shared foundations | Codex paths, file locks, atomic files, network routes | No dependency on inference or dashboard rendering |
 

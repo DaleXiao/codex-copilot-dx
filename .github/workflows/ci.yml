@@ -185,6 +185,9 @@ jobs:
       - name: Verify native Codex image generation, edits and App protocol without cloud calls
         if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: node scripts/codex-image-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex" --edit
+      - name: Verify Free sign-in, native image host tools and retained Apps
+        if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
+        run: node scripts/codex-image-host-replay.mjs --codex "$RUNNER_TEMP/ccdx-codex/node_modules/.bin/codex"
       - name: Provision official Claude Code for isolated gateway replay
         if: ${{ !cancelled() && always() && steps.deps.outcome == 'success' }}
         run: npm install --prefix "$RUNNER_TEMP/ccdx-claude" @anthropic-ai/claude-code@2.1.316

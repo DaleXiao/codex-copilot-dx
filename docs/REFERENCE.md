@@ -586,6 +586,19 @@ On macOS with Codex 0.166 or later, CCDX launches the unchanged Codex CLI throug
 
 The adapter uses `CODEX_CLI_PATH` only for the App launch requested by CCDX. It does not modify App binaries, ChatGPT authentication files, credential storage mode or account-plan declarations. All other app-server traffic, including Apps and approval requests, passes through to the original CLI. Existing custom CLI routes and unowned launcher files are preserved. A running App retains its existing launch environment. If its image tool is missing, fully quit the App, start Codex through CCDX, and use a new chat. CCDX does not forcibly restart the App. Native built-in image tool availability still depends on the installed client and thread. A successful direct API request alone does not establish visible App behavior.
 
+On macOS, **Dock 启动自动接入 / Automatic host for Dock launches** opts into a user graphical-session `CODEX_CLI_PATH` value. The same operations are available in the terminal:
+
+```bash
+ccdx app codex image dock status
+ccdx app codex image dock enable
+ccdx app codex image dock repair
+ccdx app codex image dock disable
+```
+
+The CCDX backend service must be running for image tools to register. This scope includes other processes reading that variable. Enabling refuses an existing custom value. A user LaunchAgent runs a small activation script at login; adding `EnvironmentVariables` only to the agent is not used as a substitute for setting the GUI session environment. Fully quit and reopen Codex and create a new chat for first adoption. Saved setup, session environment and chat tool registration are distinct; tool loading remains unconfirmed until independently observed. Enabling does not restart the App or service.
+
+CCDX refreshes the owned launcher on service startup and update activation. If the backing host runtime is removed, the launcher falls back to the original Codex CLI, and login activation leaves an invalid host unset. Use `dock disable` before uninstalling CCDX. Disabling restores the previously unset session value only while it is still CCDX's value; external value or file edits are preserved. Missing files and failed environment operations are reported for repair. Real Dock inheritance and login restoration require a live graphical-session acceptance check.
+
 The WebUI’s image switch is on by default and pauses or resumes new requests. A previously saved off choice is preserved. Available GHC image models appear below the switch; multiple models use one radio selection. The same image purpose appears in Model sources and Codex model configuration. Image models stay out of Codex’s conversation-model picker and conversation default selection. Saved pause choices survive upgrades, and active calls may finish. The CLI uses the same preference:
 
 ```bash

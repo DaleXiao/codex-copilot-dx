@@ -10,12 +10,14 @@ import { authProfilePaths, readAuthProfileCredentials } from './auth-profile.mjs
 import { m365Paths } from './m365-settings.mjs';
 import { readPredictionSettings } from './native-prediction-profile.mjs';
 import { legacyImageProviderPath } from './image-retirement.mjs';
+import { imageDockPaths } from './codex-image-dock.mjs';
 
 export const HANDOFF_MAX_BYTES = 64 * 1024 * 1024;
 export function clientStateFingerprint(options = {}) {
   const codex = codexPaths(options), connections = accessSettingsPath(options);
   const github = authProfilePaths('codex', options);
-  const files = [codex.config, path.join(codex.directory, 'auth.json'), connections, userSettingsPath(options),
+  const dock = imageDockPaths(options);
+  const files = [dock.state, dock.script, dock.agent, codex.config, path.join(codex.directory, 'auth.json'), connections, userSettingsPath(options),
     github.tokenPath, legacyImageProviderPath(options), m365Paths(options).settings, m365Paths(options).gateway,
     path.join(path.dirname(connections), 'client-gateway-keys.json'), path.join(path.dirname(connections), 'codex-gateway-owner.json'), ...Object.values(claudeClientPaths(options))];
   const hash = createHash('sha256');

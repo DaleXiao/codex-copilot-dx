@@ -21,6 +21,16 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
   let native = null;
   let operation = null, operationName = null, closed = false;
   let pendingRoutePid = null, codexSetup = null;
+  let dockRefresh;
+  function refreshDock() {
+    return dockRefresh ||= (async () => {
+      try {
+        const { createImageDockControl } = await import("./codex-image-dock.mjs");
+        const dock = createImageDockControl({ host, port });
+        if (dock.snapshot().saved) await dock.action("repair");
+      } catch (error) { warning(`Dock image setup needs review: ${error.message}`); }
+    })();
+  }
   async function startPredictionBridge(expectedPort, environment, autoSetup = false) {
     const started = await startPrediction({ state: prediction, warning: info,
       autoSetup,
@@ -75,12 +85,14 @@ export function createClientIntegration({ port, host, info = () => {}, warning =
         codexSetup = { setup: result.coreSetup, checked_at: new Date().toISOString() };
       } catch (error) { codexSetup = { setup: "configuration_unavailable", checked_at: new Date().toISOString() };throw error; }
       retireImages();
+      await refreshDock();
       return { imageEnabled: servicePreferences().image_enabled, imageMcpSkipped: false, compressionSetup: runInBackground(ensureCodexThreadCompression) };
     },
     start({ autoSetup = true } = {}) { return serialize("start", async () => {
       try {
         native ||= await startPredictionBridge(undefined, undefined, autoSetup);
       } catch (error) { prediction.unavailable(error); warning(`${error.message}. Core startup will continue.`); }
+      if (!closed) await refreshDock();
       return native;
     }); },
     fix() { return serialize("fix", async () => {

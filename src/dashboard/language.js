@@ -1,5 +1,15 @@
 (() => {
   const translations = {
+    image_dock_enable: ["Automatic host for Dock launches", "Dock 启动自动接入"],
+    image_dock_check: ["Check Dock setup", "检查 Dock 接入"],
+    image_dock_scope: ["Applies to this graphical login session, including other processes reading CODEX_CLI_PATH. Fully quit and reopen Codex, then use a new chat.", "作用于当前用户图形登录会话，也会影响其他读取 CODEX_CLI_PATH 的进程。首次生效需完整退出并重开 Codex，再新建聊天。"],
+    image_dock_disabled: ["Dock setup is off. Chat tool loading is unconfirmed.", "Dock 接入已关闭；聊天工具加载未确认。"],
+    image_dock_pending_reopen: ["Saved in this session. Reopen Codex and use a new chat; tool loading is unconfirmed.", "本会话接入已保存。请重开 Codex 并新建聊天；工具加载未确认。"],
+    image_dock_unconfirmed: ["Dock setup is saved; session environment and chat tools are unconfirmed. Check setup.", "Dock 接入已保存；会话环境与聊天工具尚未确认，请检查接入。"],
+    image_dock_needs_repair: ["Dock setup needs repair. Chat tools are unconfirmed.", "Dock 接入需要修复；聊天工具未确认。"],
+    image_dock_conflict: ["A custom value or modified file was preserved. Review Dock setup.", "已保留自定义值或外部修改的文件，请检查 Dock 接入。"],
+    image_dock_unreadable: ["Dock ownership could not be read; settings were preserved.", "无法读取 Dock 接入所有权，原设置已保留。"],
+    image_dock_unsupported: ["Automatic Dock setup is available on macOS only.", "Dock 自动接入仅支持 macOS。"],
     limit_default: ["Use default", "使用默认值"],
     ccdx_prediction_app_open: ["Quit Codex, then continue setup here.", "请退出 Codex，再在此继续配置。"], feature_read_failed: ["Settings could not be read. Existing files were preserved.", "无法读取设置，原有文件已保留。"],
     prediction_setup_again: ["Set up again", "重新配置"], prediction_bridge_missing: ["Not ready. Check and repair, or quit Codex and set up again.", "尚未就绪。请检查修复，或退出 Codex 后重新配置。"],

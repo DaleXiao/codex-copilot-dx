@@ -136,6 +136,9 @@ export const MANAGED_COMMANDS = [
     command(`app codex image ${action}`, ({ status: "Show native image status", models: "List available GitHub image models", enable: "Enable native images", disable: "Disable native images" })[action], read, flags => ({ command: "image", action, outputFormat: flags.format }))
   ),
   command("app codex image select", "Choose the native image model", { "--id": "value", ...read }, flags => ({ command: "image", action: "select", imageModel: flags.id, outputFormat: flags.format })),
+  ...["status", "enable", "disable", "repair"].map(action =>
+    command(`app codex image dock ${action}`, `Dock image host: ${action}`, read, flags => ({ command: "image", action: `dock-${action}`, outputFormat: flags.format }))
+  ),
   command("app codex review status", "Show the Codex Auto-review selection", read),
   command("app codex review select", "Choose the Codex Auto-review model", {}, () => ({
     command: "auto-review-model",

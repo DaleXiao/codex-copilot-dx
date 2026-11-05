@@ -135,6 +135,10 @@
           <div class="setting-row"><label for="setting-image_enabled" data-i18n="allow_new_image_calls">Allow image requests</label><input id="setting-image_enabled" type="checkbox" role="switch" disabled><span id="effect-image_enabled" class="hint" role="status"></span></div>
           <div id="image-models" class="image-models" role="group" aria-label="Image model" data-i18n-label="image_model"></div>
           <p id="image-model-note" class="hint" role="status" hidden></p>
+          <div class="setting-row"><label for="image-dock-enabled" data-i18n="image_dock_enable">Automatic host for Dock launches</label><input id="image-dock-enabled" type="checkbox" role="switch" disabled></div>
+          <p class="hint" data-i18n="image_dock_scope">Applies to this graphical login session. Fully quit and reopen Codex, then use a new chat. Other processes reading the Codex CLI override also inherit it.</p>
+          <p id="image-dock-status" class="hint" role="status"></p>
+          <div class="section-actions"><button id="image-dock-check" type="button" data-i18n="image_dock_check">Check Dock setup</button><button id="image-dock-repair" type="button" data-i18n="check_and_repair">Check and repair</button></div>
           <div class="image-metrics hint"><strong id="image">—</strong><span id="image-detail">—</span></div>
         </details>
         <details class="panel dashboard-section" id="runtime-resources">

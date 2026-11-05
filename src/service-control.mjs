@@ -7,13 +7,15 @@ import { isTerminalAnimationTheme } from "./terminal-animation.mjs";
 import { settingsPreferencesSnapshot, writeSettingsPreferences } from "./settings-preferences.mjs";
 import { predictionControlSnapshot, controlPrediction } from "./prediction-control.mjs";
 import { imageSetupSummary, configureImageSetup } from "./image-setup.mjs";
+import { createImageDockControl } from "./codex-image-dock.mjs";
 
 export function createServiceControl({ env = process.env, home, providerRuntime, clientIntegration, terminal,
   nightlyStatus = () => null, nightlyChanged = () => {},
-  manualUpdate, predictionControl = controlPrediction, imageControl = configureImageSetup,
+  manualUpdate, predictionControl = controlPrediction, imageControl = configureImageSetup, imageDock,
   adapterPort = 2026, adapterHost = "127.0.0.1",
   readImages = () => imageSetupSummary({ env, home }).configured, readPrediction = () => readPredictionSettings({ env, home }) } = {}) {
   const options = { env, home };
+  const dock = imageDock || createImageDockControl({ ...options, host: adapterHost, port: adapterPort });
   let serial = Promise.resolve(), lastOperation = null, pending = 0;
   const featureSnapshot = read => { try { return read(options); } catch { return { status: "unavailable" }; } };
   function snapshot() {
@@ -25,7 +27,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     const enabled = nightlyUpdatePreference(options), nightly = nightlyStatus();
     const localPrivacy = providerRuntime?.privacy?.snapshot();
     return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options), local_privacy: localPrivacy,
-      features: { prediction: { ...featureSnapshot(predictionControlSnapshot), bridge: prediction?.bridge || "stopped", active: prediction?.active === true }, image },
+      features: { prediction: { ...featureSnapshot(predictionControlSnapshot), bridge: prediction?.bridge || "stopped", active: prediction?.active === true }, image: { ...image, dock: dock.snapshot() } },
       decoded_body: decodedBodyLimitPreference(options), manual_update: { available: typeof manualUpdate === "function" }, last_operation: lastOperation,
       nightly_update: { enabled, ...nightly, effect: enabled && !nightly ? "next_start" : "immediate" },
       effective: {
@@ -52,7 +54,8 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (input.action === "prediction") {
       lastOperation = { feature: "prediction", result: await predictionControl(input.operation, { ...options, integration: clientIntegration }) };
     } else if (input.action === "image") {
-      if (["pause", "resume"].includes(input.operation)) writeServicePreference("image_enabled", input.operation === "resume", options);
+      if (["dock-status", "dock-enable", "dock-disable", "dock-repair"].includes(input.operation)) lastOperation = { feature: "image_dock", result: await dock.action(input.operation.slice(5)) };
+      else if (["pause", "resume"].includes(input.operation)) writeServicePreference("image_enabled", input.operation === "resume", options);
       else lastOperation = { feature: "image", result: await imageControl(input, { ...options, providerRuntime, adapterPort, adapterHost }) };
     } else if (input.action === "update") {
       if (input.confirmed !== true) throw new Error("Confirm installation and the idle service switch");

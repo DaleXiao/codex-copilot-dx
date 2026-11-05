@@ -1,6 +1,14 @@
 (() => {
   function create({ element: el, change, localize }) {
     let saved = null, limitDirty = false, imageSignature = "";
+    const dock = operation => change({ action: "image", operation: "dock-" + operation }, el("image-dock-enabled"));
+    el("image-dock-enabled").addEventListener("change", () => {
+      const enabled = el("image-dock-enabled").checked;
+      if (enabled && !window.confirm(globalThis.ccdxLanguage.format("image_dock_scope"))) { el("image-dock-enabled").checked = false;return; }
+      void dock(enabled ? "enable" : "disable");
+    });
+    el("image-dock-check").addEventListener("click", () => void dock("status"));
+    el("image-dock-repair").addEventListener("click", () => void dock("repair"));
     const prediction = operation => change({ action: "prediction", operation }, el("prediction-continue"));
     el("setting-prediction_enabled").addEventListener("change", () => void prediction(el("setting-prediction_enabled").checked ? "enable" : "disable"));
     el("prediction-continue").addEventListener("click", () => void prediction(saved?.features?.prediction?.enabled ? "enable" : "disable"));
@@ -32,6 +40,12 @@
       el("effect-prediction_enabled").hidden = !pending;
       if (pending) localize(el("effect-prediction_enabled"), "feature_pending");
       const image = data.features?.image, signature = JSON.stringify(image || null);
+      const docking = image?.dock;
+      el("image-dock-enabled").checked = docking?.saved === true;
+      el("image-dock-enabled").disabled = !docking?.supported;
+      el("image-dock-check").disabled = !docking?.supported;
+      el("image-dock-repair").disabled = !docking?.supported || !docking.saved;
+      localize(el("image-dock-status"), "image_dock_" + (docking?.state || "unsupported"));
       if (signature !== imageSignature) {
         imageSignature = signature;
         const list = el("image-models"), focus = list.contains(document.activeElement) ? document.activeElement.value : null;

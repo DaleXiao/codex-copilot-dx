@@ -19,8 +19,9 @@ export function imageHostLauncherPath(options = {}) {
 
 export async function prepareImageHostLaunch({ env = process.env, home, platform = process.platform, host = "127.0.0.1", port = 2026,
   discoverApp = installedPredictionApp, exec = execute, node = process.execPath,
+  persistent = false,
   entry = fileURLToPath(new URL("../bin/codex-image-host.mjs", import.meta.url)) } = {}) {
-  if (platform !== "darwin" || !autoLaunchEnabled(env) || !servicePreferences({ env, home }).image_enabled) return null;
+  if (platform !== "darwin" || !persistent && (!autoLaunchEnabled(env) || !servicePreferences({ env, home }).image_enabled)) return null;
   const wrapper = imageHostLauncherPath({ env, home });
   if (env.CODEX_CLI_PATH?.trim() && path.resolve(env.CODEX_CLI_PATH) !== wrapper) throw new Error("A custom Codex CLI route is already configured; image host setup was preserved");
   const app = await discoverApp({ env, platform });
@@ -31,7 +32,10 @@ export async function prepareImageHostLaunch({ env = process.env, home, platform
   if (!match || Number(match[1]) < 166) throw new Error("Native host tools require Codex 0.166 or later");
   for (const value of [node, entry, codex]) if (!path.isAbsolute(value) || /[\0\r\n]/.test(value)) throw new Error("Invalid image host executable path");
   if (fs.existsSync(wrapper) && !fs.readFileSync(wrapper, "utf8").startsWith(PREFIX)) throw new Error("Image host launcher ownership conflict; existing file preserved");
-  const content = PREFIX + "exec " + [node, entry, "--codex", codex, "--base-url", adapterBaseUrl(host, port) + "/v1", "--"].map(quote).join(" ") + ' "$@"\n';
+  const check = `[ -x ${quote(node)} ] && [ -r ${quote(entry)} ] && [ -x ${quote(codex)} ]`;
+  const content = PREFIX + `if [ "\${1-}" = --ccdx-host-check ]; then ${check}; exit $?; fi\n`
+    + `if ! ( ${check} ); then exec ${quote(codex)} "$@"; fi\n`
+    + "exec " + [node, entry, "--codex", codex, "--base-url", adapterBaseUrl(host, port) + "/v1", "--"].map(quote).join(" ") + ' "$@"\n';
   fs.mkdirSync(path.dirname(wrapper), { recursive: true, mode: 0o700 });
   atomicWriteFileIfChangedSync(wrapper, content, { mode: 0o700 });fs.chmodSync(wrapper, 0o700);
   return { app: app.app, env: { CODEX_CLI_PATH: wrapper } };

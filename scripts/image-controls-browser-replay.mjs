@@ -28,7 +28,10 @@ for (const engine of (args.get("--engines") || "chromium,webkit").split(",")) {
     const base = `http://127.0.0.1:${server.address().port}`, client = { runtimeStatus: () => ({}), images: async (_op,body) => { dispatches++;selectedRequest=body.model;return Response.json({ error: { message: "synthetic quota" } }, { status: 429 }); } };
     const runtime = createProviderRuntime({ home: root, env, platform: "linux", corePort: server.address().port, githubClient: client, githubRegistry: registry,
       refreshGithubCatalog: async()=>registry.models, inspectDesktop: async()=>false, secretStore: { get: async()=>null,close(){} },restoreClaude:()=>({preserved:0}) });
-    const controls = createServiceControl({ home:root,env,providerRuntime:runtime });
+    let dockSaved = false;const dockCalls = [];
+    const dockSnapshot = () => ({ supported: true, saved: dockSaved, state: dockSaved ? "pending_reopen" : "disabled", tool_registration: "unconfirmed" });
+    const controls = createServiceControl({ home:root,env,providerRuntime:runtime, imageDock: { snapshot: dockSnapshot,
+      async action(operation) { dockCalls.push(operation);if (operation === "enable") dockSaved = true;if (operation === "disable") dockSaved = false;return dockSnapshot(); } } });
     handler=createAdapterHandler({ codexClient:client,providerRuntime:runtime,dashboardOptions:{home:root,env,serviceControl:controls,authStatusFn:()=>({profiles:{codex:{configured:true,valid:true}}}),updateStatusFn:async()=>({status:"unavailable"})} });
     const context=await browser.newContext({viewport:{width:language==="zh"?360:1280,height:1000}});
     await context.addInitScript(language=>{localStorage.setItem("ccdx.dashboard.language",language);localStorage.setItem("ccdx.dashboard.autoRefresh","off");},language);
@@ -38,6 +41,13 @@ for (const engine of (args.get("--engines") || "chromium,webkit").split(",")) {
     try {
       await page.goto(base+"/#codex");await page.locator('#image-models input[value="render-one"]:checked').waitFor({state:"attached"});await open("#image-models");
       assert.equal(await page.locator("#setting-image_enabled").isChecked(),true);assert.equal(await page.locator("#image-setup-form").count(),0);
+      page.once("dialog", dialog => dialog.accept());
+      let dockReply = post(r => r.url().includes("/_ccdx/ui/settings"));await page.locator("#image-dock-enabled").check();assert.equal((await dockReply).status(),200);
+      await page.waitForFunction(() => document.getElementById("image-dock-status").textContent.includes("unconfirmed") || document.getElementById("image-dock-status").textContent.includes("未确认"));
+      dockReply = post(r => r.url().includes("/_ccdx/ui/settings"));await page.locator("#image-dock-check").click();assert.equal((await dockReply).status(),200);
+      dockReply = post(r => r.url().includes("/_ccdx/ui/settings"));await page.locator("#image-dock-repair").click();assert.equal((await dockReply).status(),200);
+      dockReply = post(r => r.url().includes("/_ccdx/ui/settings"));await page.locator("#image-dock-enabled").uncheck();assert.equal((await dockReply).status(),200);
+      assert.deepEqual(dockCalls,["enable","status","repair","disable"]);
       assert.equal(await page.locator('#image-models input[type="radio"]').count(),2);
       await open("#connection-bindings");
       const conversation = page.locator('#connection-bindings input[name="binding-model"][value*="gpt-conversation"]');await conversation.uncheck();await conversation.check();

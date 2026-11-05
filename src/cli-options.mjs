@@ -94,7 +94,7 @@ const integrationNotes = {
   prediction:
     "New Codex integrations attempt prediction setup by default and preserve saved off choices. Setup enables native Show predictions; enable/disable synchronizes display, with pending changes while Codex is running. WebUI provides setup, removal, repair and App opening. Windows requires the initialized official MSIX App profile, Windows PowerShell and .NET Framework 4.7.2+; Git/OpenSSL is not required. The bridge port persists across restarts/updates; a busy saved port disables predictions only. Setup/removal requires Codex to be closed; WebUI starts the bridge without a core restart. Offline CLI setup needs the next normal CCDX launch. HTTPS on chatgpt.com and ab.chatgpt.com is decrypted locally; only prediction configuration is changed. App-profile trust and routing are used; no OS trust or client program files are changed. Proxy/PAC policy is preserved. Repair never enables predictions or force-restarts Codex. Environment trust changes require a service restart.",
   image:
-    "Native images use the existing GitHub account. Use status or models to inspect, enable/disable to switch image requests, and select --id MODEL to choose an available image model. Manual image API setup is retired.",
+    "Native images use the existing GitHub account. Use status or models to inspect, enable/disable to switch image requests, select --id MODEL to choose an image model, or dock status/enable/disable/repair for macOS Dock activation. Dock activation affects the graphical login session and requires reopening Codex with a new chat.",
   review:
     "Select an available model and reasoning level. Enter keeps the choice; q cancels without saving. The next review request uses the saved choice.",
   doctor:

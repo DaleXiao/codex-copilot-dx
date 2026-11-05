@@ -12,12 +12,14 @@ import { createApiProvider } from "../src/providers/api.mjs";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { readClientGatewayKeys } from "../src/client-gateway-keys.mjs";
 import { claudeSharedCapabilityPlan, syncClaudeCapabilities } from "../src/claude-capability-config.mjs";
-import { claudeClientPaths } from "../src/claude-client-config.mjs";
+import { claudeClientPaths, configureClaudeClients } from "../src/claude-client-config.mjs";
+import { claudeDeploymentId } from "../src/clients/claude-models.mjs";
 
 const [flag, executable, clientFlag, clientValue] = process.argv.slice(2);assert.ok(flag === "--claude" && path.isAbsolute(executable), "Use --claude /absolute/path/to/claude");
 const clientId = clientFlag === "--client" ? clientValue : "claude_code", app = clientId === "claude_app";
 assert.ok((clientFlag === undefined || clientFlag === "--client") && ["claude_app", "claude_code"].includes(clientId), "Use --client claude_app or claude_code");
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-native-capabilities-")), env = { CCDX_M365: "0" }, calls = [], stored = new Map();let handler;
+const samples = [["small", 128000, 16000], ["large", 1000000, 64000], ...(app ? [["gapped", 1000000, 64000]] : [])];
 process.env.CCDX_DISABLE_USAGE = "1";
 process.env.CCDX_USAGE_PATH = path.join(home, "usage.jsonl");
 const server = http.createServer((req, res) => handler(req, res));await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -26,8 +28,8 @@ const runtime = createProviderRuntime({ home, env, platform: "linux", appVersion
   secretStore: { get: async id => stored.get(id), set: async (id, value) => stored.set(id, value), remove: async id => stored.delete(id), close() {} },
   createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, async fetch(url, init) {
     const body = init.body ? JSON.parse(init.body) : null;
-    if (!body) return Response.json({ data: [["small", 128000, 16000], ["large", 1000000, 64000]].map(([id, max_input_tokens, max_tokens]) => ({ id, type: "model", max_input_tokens, max_tokens,
-      capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true } } } })) });
+    if (!body) return Response.json({ data: samples.map(([id, max_input_tokens, max_tokens]) => ({ id, type: "model", max_input_tokens, max_tokens,
+      capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true }, ...(id === "gapped" ? { max: { supported: true } } : {}) } } })) });
     if (url.endsWith("count_tokens")) return Response.json({ input_tokens: 100 });
     calls.push({ model: body.model, max_tokens: body.max_tokens, effort: body.output_config?.effort, thinking: body.thinking?.type });
     const message = { id: "msg_replay_" + calls.length, type: "message", role: "assistant", model: body.model, content: [], usage: { input_tokens: 100, output_tokens: 1 } };
@@ -39,16 +41,27 @@ const runtime = createProviderRuntime({ home, env, platform: "linux", appVersion
 handler = createAdapterHandler({ providerRuntime: runtime, codexClient: {} });
 try {
   const state = await runtime.manageConnections({ operation: "save_api", config: { name: "Native replay", base_url: "https://synthetic.test/v1", endpoints: { messages: "https://synthetic.test/v1/messages" }, auth_header: "bearer",
-    models: ["small", "large"].map(id => ({ id, protocols: ["messages"] })) }, key: "synthetic-only", allowed: [clientId] });
+    models: samples.map(([id]) => ({ id, protocols: ["messages"] })) }, key: "synthetic-only", allowed: [clientId] });
   const source = state.providers.find(p => !p.builtin).id, client = state.clients.find(c => c.id === clientId);
   // Saving is independent of the catalog read; join it before inspecting the
   // capability plan used to configure the isolated native client.
   await runtime.manageConnections({ operation: "discover", id: source });
-  await runtime.manageConnections({ operation: "client", id: clientId, enabled: true, allowed: client.allowed, deployments: ["small", "large"].map(model => ({ source, model })) });
+  await runtime.manageConnections({ operation: "client", id: clientId, enabled: true, allowed: client.allowed, deployments: samples.map(([model]) => ({ source, model })) });
   const compiled = runtime.connections().clients.find(c => c.id === clientId).model_plan.models;
-  const models = compiled.map(model => ({ id: model.id, public_id: model.public_id, client_id: model.public_id, capability: model.capability }));
+  const models = compiled.map(model => {
+    const publicId = app ? claudeDeploymentId(model, model.route_id, { desktopEffortAliases: true }) : model.public_id;
+    return { id: model.id, route_id: model.route_id, public_id: publicId, client_id: publicId, capability: model.capability };
+  });
+  if (app) configureClaudeClients({ home, env, platform: "linux", client: "claude_app", desktopInstalled: true, desktopManaged: false, desktopAliases: true,
+    baseUrl: `http://127.0.0.1:${port}/anthropic`, apiKey: readClientGatewayKeys({ home, env })[clientId], models, defaultModel: models[0].public_id });
   const plan = claudeSharedCapabilityPlan({ [app ? "app" : "code"]: models, support: { app: true, code: true } });syncClaudeCapabilities(plan, { home, env, platform: "linux" });
   const settings = JSON.parse(fs.readFileSync(claudeClientPaths({ home, env, platform: "linux" }).code));
+  if (app) {
+    const gap = models.find(model => model.id === "gapped");
+    const profile = JSON.parse(fs.readFileSync(claudeClientPaths({ home, env, platform: "linux" }).profile));
+    assert.equal(JSON.parse(profile.inferenceModels).find(entry => entry.name === gap.public_id).maxEffort, "high");
+    assert.ok(plan.limitations.some(item => item.model === gap.id && item.code === "reasoning_levels_limited"));
+  }
   const isolated = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
     ...settings.env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}/anthropic`, ANTHROPIC_AUTH_TOKEN: readClientGatewayKeys({ home, env })[clientId],
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_AUTOUPDATER: "1", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" };

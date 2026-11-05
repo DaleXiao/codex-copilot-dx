@@ -212,9 +212,12 @@ heuristic or original-vendor limit is applied to an arbitrary relay deployment.
 Claude configuration and gateway catalogs use the same compiled model plan.
 Explicit App bindings use opaque source-qualified aliases and actual model/source
 labels. Verified 3.x and 4.x App adapters can use a reasoning-compatible route when the
-advertised levels form a client-expressible contiguous set. Older compatibility
-routes remain resolvable for that authorized deployment. Gapped or unexpressible
-levels are reported as limited; unsupported effort requests fail explicitly.
+advertised levels form a client-expressible contiguous set. When a declaration has
+a gap after at least two lower levels, the App can select that safe lower prefix;
+the higher levels are reported as limited and remain in the source declaration.
+For example, `low/medium/high/max` shows `low/medium/high` without inventing
+`xhigh`. Older compatibility routes remain resolvable for that authorized
+deployment. Unsupported effort requests fail explicitly.
 No tool permission or safety-review setting is disabled for compatibility.
 
 The App Code host and independent Code share some settings. CCDX plans them once,

@@ -75,6 +75,15 @@ export function claudeEffortsExpressible(values = {}) {
   return levels.length > 0 && levels.every(value => native.includes(value)) && native.slice(0, Math.max(...levels.map(value => native.indexOf(value))) + 1).every(value => levels.includes(value));
 }
 
+export function claudeEffortPrefix(values = {}) {
+  const levels = values.reasoning === false ? [] : values.reasoning_efforts || [];
+  const native = ["low", "medium", "high", "xhigh", "max"];
+  if (!Array.isArray(levels) || !levels.length || new Set(levels).size !== levels.length || levels.some(value => !native.includes(value))) return [];
+  const missing = native.findIndex(value => !levels.includes(value));
+  const prefix = native.slice(0, missing < 0 ? native.length : missing);
+  return prefix.length === levels.length || prefix.length >= 2 ? prefix : [];
+}
+
 export function constrainModelRequest(body, capability, protocol) {
   const values = capability?.values || {}, outputKey = protocol === "messages" ? "max_tokens" : protocol === "responses" ? "max_output_tokens" : "max_completion_tokens";
   let result = body;const applied = [];

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readBoundedFileSync } from "./bounded-file.mjs";
 import { m365Paths, readM365Json } from "./m365-settings.mjs";
-import { claudeEffortsExpressible } from "./model-capabilities.mjs";
+import { claudeEffortsExpressible, claudeEffortPrefix } from "./model-capabilities.mjs";
 import { claudeModelEntries } from "./claude-models.mjs";
 import { claudeClientPaths, reconcileClaudeConfiguration } from "./claude-client-config.mjs";
 
@@ -41,7 +41,8 @@ export function claudeSharedCapabilityPlan({ app = [], code = [], support = {} }
     output = Math.max(output, values.max_output_tokens || 0);
     const efforts = values.reasoning === false ? [] : values.reasoning_efforts || [];
     if (efforts.length && !claudeEffortsExpressible(values)) limitations.push({ model: model.id, code: "reasoning_levels_limited" });
-    if (claudeEffortsExpressible(values)) caps.push(`${id.toLowerCase()}=${["effort", ...(efforts.includes("xhigh") ? ["xhigh_effort"] : []), ...(efforts.includes("max") ? ["max_effort"] : [])].join(",")}`);
+    const visibleEfforts = desktop && /^mythos-ccdx-\d+$/.test(id) ? claudeEffortPrefix(values) : claudeEffortsExpressible(values) ? efforts : [];
+    if (visibleEfforts.length) caps.push(`${id.toLowerCase()}=${["effort", ...(visibleEfforts.includes("xhigh") ? ["xhigh_effort"] : []), ...(visibleEfforts.includes("max") ? ["max_effort"] : [])].join(",")}`);
     if (values.web_search && !values.web_search.includes("messages")) limitations.push({ model: model.id, code: "search_messages_unavailable" });
   }
   if (!safeContext) context = 0;

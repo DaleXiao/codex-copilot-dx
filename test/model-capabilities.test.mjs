@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { validCapabilities, catalogCapabilities, deploymentRevision, resolveModelCapabilities, constrainModelRequest, deploymentModelId } from "../src/model-capabilities.mjs";
+import { validCapabilities, catalogCapabilities, deploymentRevision, resolveModelCapabilities, constrainModelRequest, deploymentModelId, claudeEffortPrefix } from "../src/model-capabilities.mjs";
 import { compileClientModels, sourceModels } from "../src/client-model-plan.mjs";
 import { claudeSharedCapabilityPlan, syncClaudeCapabilities, inspectClaudeCapabilitySupport } from "../src/claude-capability-config.mjs";
 import { claudeClientPaths, restoreClaudeClients, configureClaudeClients } from "../src/claude-client-config.mjs";
@@ -59,6 +59,31 @@ test("App 4.x keeps non-contiguous upstream effort declarations limited without 
   assert.equal(shared.capabilities, "");assert.ok(shared.limitations.some(item => item.code === "reasoning_levels_limited"));
   assert.deepEqual(plan.models[0].capability.values.reasoning_efforts, ["low", "high", "max"]);
   assert.throws(() => constrainModelRequest({ output_config: { effort: "medium" } }, capability, "messages"), { code: "ccdx_api_effort_unavailable" });
+});
+
+test("App shows the safe lower effort levels when a supported maximum has a gap", t => {
+  const options = temporary(t), paths = claudeClientPaths(options);
+  const capability = { values: { context_window: 1000000, reasoning_efforts: ["low", "medium", "high", "max"] } };
+  const source = { id: "api_one", name: "Source", models: () => [{ id: "independent-reasoner", supported_endpoints: ["/v1/messages"], capability }] };
+  const binding = { enabled: true, source: source.id, allowed: [source.id], deployments: [{ source: source.id, model: "independent-reasoner" }] };
+  const compile = desktopEffortAliases => compileClientModels({ client: "claude_app", binding, source: () => source, enabled: () => true, desktopEffortAliases });
+  const before = compile(false), plan = compile(true), selected = plan.models[0];
+  assert.match(selected.public_id, /^mythos-ccdx-/);
+  assert.equal(plan.routes.get(before.models[0].public_id).upstreamModel, selected.id);
+  const input = { ...options, client: "claude_app", desktopInstalled: true, desktopManaged: false, baseUrl: "http://127.0.0.1:2026/anthropic", apiKey: "synthetic-gateway-key-0123456789", models: before.models, defaultModel: before.defaultModel };
+  configureClaudeClients(input);
+  const previous = JSON.parse(fs.readFileSync(paths.profile)), previousEntries = JSON.parse(previous.inferenceModels);
+  previousEntries[0].prefer1m = false;previous.inferenceModels = JSON.stringify(previousEntries);fs.writeFileSync(paths.profile, JSON.stringify(previous));
+  configureClaudeClients({ ...input, models: plan.models, defaultModel: plan.defaultModel });
+  const entries = JSON.parse(JSON.parse(fs.readFileSync(paths.profile)).inferenceModels);
+  assert.equal(entries[0].maxEffort, "high");assert.equal(entries[0].prefer1m, false);
+  const shared = claudeSharedCapabilityPlan({ app: plan.models, support: { app: true } });
+  assert.equal(shared.capabilities, `${selected.public_id}=effort`);
+  assert.ok(shared.limitations.some(item => item.code === "reasoning_levels_limited"));
+  assert.deepEqual(selected.capability.values.reasoning_efforts, ["low", "medium", "high", "max"]);
+  assert.doesNotThrow(() => constrainModelRequest({ output_config: { effort: "max" } }, capability, "messages"));
+  assert.throws(() => constrainModelRequest({ output_config: { effort: "xhigh" } }, capability, "messages"), { code: "ccdx_api_effort_unavailable" });
+  for (const invalid of ["high", ["low", "low"], ["low", "medium", "future"]]) assert.deepEqual(claudeEffortPrefix({ reasoning_efforts: invalid }), []);
 });
 
 test("an unverified client version preserves the existing capability configuration", t => {

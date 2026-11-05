@@ -89,6 +89,12 @@ export function predictionStartupCheck(prediction) {
   return lines.join("\n");
 }
 
+export function imageStartupCheck({ enabled, prepared, skipped } = {}) {
+  if (!enabled) return startupCheck("info", "Images", "Off");
+  if (!prepared || skipped) return startupCheck("warn", "Images", "App host not prepared");
+  return startupCheck("info", "Images", "App launch prepared; not tested");
+}
+
 // Catalog discovery, client configuration and inference access are distinct.
 export function providerStartupSummary(data = {}) {
   if (!data.providers) return { catalogs: "Status unavailable; see WebUI", claude: "Configuration not checked", warning: false };

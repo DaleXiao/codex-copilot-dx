@@ -1,9 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { stripVTControlCharacters } from "node:util";
-import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck, providerStartupChecks, providerStartupSummary } from "../src/startup-ui.mjs";
+import { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck, imageStartupCheck, providerStartupChecks, providerStartupSummary } from "../src/startup-ui.mjs";
 import { status } from "../src/status.mjs";
 import { createStartupPresentation } from "../src/startup-ui.mjs";
+
+test("image startup distinguishes an unprepared App host from a prepared launch", () => {
+  assert.match(imageStartupCheck({ enabled: false }), /Images\s+Off/);
+  assert.match(imageStartupCheck({ enabled: true, prepared: false }), /\[WARN\].*App host not prepared/);
+  assert.match(imageStartupCheck({ enabled: true, prepared: true, skipped: true }), /\[WARN\].*App host not prepared/);
+  assert.match(imageStartupCheck({ enabled: true, prepared: true }), /App launch prepared; not tested/);
+});
 
 test("interactive startup replaces ordinary checks while retaining device codes and scoped warnings", () => {
   const writes = [], errors = [], presentation = createStartupPresentation({ output: { isTTY: true, columns: 80, rows: 24, write: text => writes.push(text) },

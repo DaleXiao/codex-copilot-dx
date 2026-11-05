@@ -57,16 +57,16 @@ const client = {
   },
 };
 const handler = createAdapterHandler({ codexClient: client, responsesFn: client.responses, getCachedModelEndpointsFn: client.getCachedModelEndpoints, codexModelCatalog: { load: async () => catalog },
-  env: {}, dashboardOptions: { home: root }, imageModels: () => [{ id: "gpt-image-2.5-flare", editing: true }], imagesEnabled: () => true, imagesAllowed: () => true });
+  env: {}, dashboardOptions: { home: root, serviceControl: { snapshot: () => ({ features: { image: { enabled: true } } }) } },
+  imageModels: () => [{ id: "gpt-image-2.5-flare", editing: true }], imagesEnabled: () => true, imagesAllowed: () => true });
 const server = http.createServer((req, res) => {
   if (req.url.startsWith("/api/codex/accounts/check")) { res.writeHead(200, { "Content-Type": "application/json" });res.end(JSON.stringify({ accounts: [{ id: "synthetic-account", name: "Synthetic", plan_type: "free", workspace_backend_origin: "https://chatgpt.com", account_routing_override: "NO_CONSTRAINT" }] }));return; }
-  if(req.url==="/_ccdx/settings"){res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({features:{image:{enabled:true}}}));return;}
   if(req.url.includes("/mcp")&&req.method==="POST"){
     const chunks=[];req.on("data",c=>chunks.push(c));req.on("end",()=>{const q=JSON.parse(Buffer.concat(chunks));mcpCalls.push(q.method);if(q.id===undefined){res.writeHead(202);res.end();return;}
       const result=q.method==="initialize"?{protocolVersion:q.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:"Apps Fixture",version:"1"}}:q.method==="tools/list"?{tools:[{name:"coexist_ping",connector_id:"connector_fixture",connector_name:"Fixture Apps",connector_description:"Read-only fixture",description:"Read-only fixture",_meta:{_codex_apps:{connector_id:"connector_fixture",connector_name:"Fixture Apps",synthetic_link:false}},inputSchema:{type:"object",properties:{},additionalProperties:false},annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}}]}:q.method==="tools/call"?{content:[{type:"text",text:"fixture pong"}]}:{};
       res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({jsonrpc:"2.0",id:q.id,result}));});return;
   }
-  if(req.method==="GET"&&!req.url.startsWith("/v1/")){res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({apps:[{id:"connector_fixture",name:"Fixture Apps",description:"Read-only fixture"}],next_token:null}));return;}
+  if(req.method==="GET"&&!req.url.startsWith("/v1/")&&!req.url.startsWith("/_ccdx/")){res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({apps:[{id:"connector_fixture",name:"Fixture Apps",description:"Read-only fixture"}],next_token:null}));return;}
   handler(req,res);
 });
 server.on("upgrade", (_req, socket) => socket.end("HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"));

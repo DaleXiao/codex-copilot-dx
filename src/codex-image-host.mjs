@@ -66,7 +66,9 @@ export function createImageHostBridge({ baseUrl, codexHome, sendToCodex, fetchIm
   const folder = id => path.join(root, createHash("sha256").update(id).digest("hex").slice(0, 32));
   const enabled = imageEnabled || (async () => {
     try {
-      const response = await fetchImpl(baseUrl.replace(/\/v1$/, "/_ccdx/settings"), { signal: AbortSignal.timeout(1000) });
+      const response = await fetchImpl(baseUrl.replace(/\/v1$/, "/_ccdx/ui/settings"), {
+        headers: { "X-CCDX-Dashboard": "1" }, signal: AbortSignal.timeout(1000),
+      });
       if (!response.ok) return false;
       const settings = await boundedJson(response);return settings.features?.image?.enabled === true;
     } catch { return false; }

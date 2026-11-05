@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import http from "node:http";
 import { once } from "node:events";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { addImageHostTool, createImageHostBridge, imageHostBaseUrl, runCodexImageHost } from "../src/codex-image-host.mjs";
 import { prepareImageHostLaunch } from "../src/codex-image-host-launch.mjs";
+import { createAdapterHandler } from "../src/adapter.mjs";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jJ1sAAAAASUVORK5CYII=", "base64");
 test("host registration preserves existing native tools and rejects namespace collisions", () => {
@@ -89,4 +91,28 @@ test("stdio pass-through preserves credential frames and stops reading when Code
   const running = runCodexImageHost({ codex: process.execPath, argv: [script, "app-server", "--stdio"], baseUrl: "http://127.0.0.1:2026/v1", env: { ...process.env, CODEX_HOME: root }, input, output, error });
   const frame = ' {"id":1,"method":"account/login/start","params":{"token":"sensitive sentinel"}}\n';input.end(frame);
   assert.equal(await running, 0);assert.equal(text, frame);assert.equal(input.listenerCount("data"), 0);
+});
+
+test("the real host entry reads the protected image setting and fails closed", async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-image-setting-test-"));t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const script = path.join(root, "echo.mjs");await fs.writeFile(script, 'process.stdin.pipe(process.stdout);process.stdin.on("end",()=>process.exit(0));');
+  let state = true, reads = 0;
+  const handler = createAdapterHandler({ env: {}, dashboardOptions: { home: root, env: {}, serviceControl: { snapshot() {
+    reads++;if (state === "error") throw new Error("settings unavailable");return { features: { image: { enabled: state } } };
+  } } } });
+  const server = http.createServer(handler);await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => { server.closeAllConnections();await new Promise(resolve => server.close(resolve));handler.cleanup(); });
+  const baseUrl = `http://127.0.0.1:${server.address().port}/v1`;
+  const existing = { type: "function", name: "existing_tool", description: "", inputSchema: {} };
+  for (const [setting, experimental, registered] of [[true, true, true], [false, true, false], ["error", true, false], [true, false, false]]) {
+    state = setting;const before = reads, input = new PassThrough(), output = new PassThrough(), error = new PassThrough();let text = "";
+    output.on("data", chunk => { text += chunk; });
+    const running = runCodexImageHost({ codex: process.execPath, argv: [script, "app-server", "--stdio"], baseUrl, env: { ...process.env, CODEX_HOME: root }, input, output, error });
+    input.end([JSON.stringify({ id: 1, method: "initialize", params: { capabilities: { experimentalApi: experimental } } }),
+      JSON.stringify({ id: 2, method: "thread/start", params: { cwd: root, dynamicTools: [existing] } })].join("\n") + "\n");
+    assert.equal(await running, 0);
+    const forwarded = text.trim().split("\n").map(line => JSON.parse(line)).find(frame => frame.id === 2);
+    assert.deepEqual(forwarded.params.dynamicTools.map(tool => tool.name), registered ? ["existing_tool", "ccdx_images"] : ["existing_tool"]);
+    assert.equal(reads - before, experimental ? 1 : 0);
+  }
 });

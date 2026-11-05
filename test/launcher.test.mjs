@@ -33,6 +33,23 @@ test("image host launch uses only the verified App and composes with prediction 
   assert.deepEqual(calls, [args]);
 });
 
+test("an already running App is not relaunched and reports how to activate a missing image tool", async () => {
+  const imageHost = { app: "/Applications/ChatGPT.app", env: { CODEX_CLI_PATH: "/owned/image-host" } };
+  const args = [imageHost.app, "--env", "CODEX_CLI_PATH=/owned/image-host"], attempt = fakeSpawn({ [JSON.stringify(args)]: 0 }), logs = [];
+  const running = () => [{ pid: 123, readable: true, route: "http://127.0.0.1:12345/proxy.pac" }];
+  assert.equal(await openCodex({ env: {}, platform: "darwin", imageHost, spawnImpl: attempt.spawnImpl, macAppProcesses: running, log: value => logs.push(value) }), true);
+  assert.deepEqual(attempt.calls, [args]);assert.match(logs.join("\n"), /already running.*fully quit/i);
+  logs.length = 0;
+  assert.equal(await openCodex({ env: {}, platform: "darwin", imageHost, macAppProcesses: running,
+    predictionApp: imageHost.app, predictionPacUrl: "http://127.0.0.1:12345/proxy.pac", log: value => logs.push(value),
+    spawnImpl() { assert.fail("the running App must not be restarted"); } }), true);
+  assert.match(logs.join("\n"), /already running.*fully quit/i);
+  logs.length = 0;
+  assert.equal(await openCodex({ env: {}, platform: "darwin", imageHost, spawnImpl: attempt.spawnImpl,
+    macAppProcesses() { throw new Error("process access unavailable"); }, log: value => logs.push(value) }), true);
+  assert.match(logs.join("\n"), /could not check.*running Codex App/i);
+});
+
 test("autoLaunchEnabled honors disabling values", () => {
   for (const v of ["0", "false", "no", "off", "OFF"]) {
     assert.equal(autoLaunchEnabled({ CCDX_AUTO_LAUNCH: v }), false, v);

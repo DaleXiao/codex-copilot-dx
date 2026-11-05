@@ -127,6 +127,8 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
   const imageArgs = platform === "darwin" && imageHost?.env?.CODEX_CLI_PATH
     ? ["--env", "CODEX_CLI_PATH=" + imageHost.env.CODEX_CLI_PATH] : [];
   if (imageArgs.length) log(status("info", "Image host configured for the next Codex launch and new chats; a running App is not restarted"));
+  const imageApp = imageArgs.length && APP_PATH_CANDIDATES.includes(imageHost.app) ? imageHost.app : null;
+  const warnRunningImageApp = () => log(status("warn", "Codex is already running. If the image tool is missing, fully quit the App and start it through CCDX."));
   const extraArgs = isPredictionPacUrl(predictionPacUrl)
     && APP_PATH_CANDIDATES.includes(predictionApp)
     ? ["--args", `--proxy-pac-url=${predictionPacUrl}`] : [];
@@ -134,6 +136,7 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
     try {
       const running = macAppProcesses(predictionApp);
       if (running.length) {
+        if (imageApp === predictionApp) warnRunningImageApp();
         if (running.length === 1 && running[0].readable && running[0].route === predictionPacUrl) {
           onPredictionRoute("verified");log(status("ok", "Codex already running"));return true;
         }
@@ -159,6 +162,10 @@ export async function openCodex({ env = process.env, spawnImpl = spawn, platform
     } catch (error) {
       onPredictionRoute("unverified");log(status("warn", `Optional macOS prediction launch skipped: ${error.message}`));return false;
     }
+  }
+  if (imageApp) {
+    try { if (macAppProcesses(imageApp).length) warnRunningImageApp(); }
+    catch { log(status("warn", "Could not check the running Codex App. If the image tool is missing, start the App through CCDX after quitting it.")); }
   }
   const attempts = imageArgs.length && APP_PATH_CANDIDATES.includes(imageHost.app) ? [[imageHost.app]] : launchAttempts();
   for (const attempt of attempts) {

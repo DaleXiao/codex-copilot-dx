@@ -282,7 +282,7 @@ const { createProfileModelRuntime } = await import("../src/profile-model-runtime
 const { createCodexModelCatalog } = await import("../src/codex-model-catalog.mjs");
 const { createProviderRuntime } = await import("../src/provider-runtime.mjs");
 const { setResponseHistoryMaxBytes } = await import("../src/response-history.mjs");
-const { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck, providerStartupChecks, createStartupPresentation } = await import("../src/startup-ui.mjs");
+const { startupBanner, startupCheck, startupReady, startupLogger, predictionStartupCheck, imageStartupCheck, providerStartupChecks, createStartupPresentation } = await import("../src/startup-ui.mjs");
 const { createTerminalConsole } = await import("../src/terminal-console.mjs");
 const { createServiceControl } = await import("../src/service-control.mjs");
 const { openDashboard } = await import("../src/browser-launch.mjs");
@@ -375,12 +375,11 @@ async function reuseRunningAdapterIfAvailable() {
       if (!predictionPacUrl) console.warn(status("warn", "Restart ccdx to activate the newly enabled prediction bridge"));
     }
   } catch (error) { console.warn(status("warn", error.message)); }
-  if (codexEnabled) await openCodex({ predictionPacUrl, predictionApp, predictionProfile, persistedPredictionRoute,
-    imageHost: imageEnabled ? await (await clientIntegrations()).imageHostLaunch() : null,
+  const imageHost = codexEnabled && imageEnabled ? await (await clientIntegrations()).imageHostLaunch() : null;
+  if (codexEnabled) await openCodex({ predictionPacUrl, predictionApp, predictionProfile, persistedPredictionRoute, imageHost,
     onPredictionRoute: route => { launchRoute = route; }, log: startupLogger("App") });
   console.log(predictionStartupCheck({ configured: predictionConfigured, bridge: predictionPacUrl ? "running" : "unknown", launch_route: launchRoute }));
-  console.log(startupCheck(imageEnabled && imageMcpSkipped ? "warn" : "info", "Images", imageEnabled
-    ? imageMcpSkipped ? "App setup skipped; see warning" : "Configured; not tested" : "Off"));
+  console.log(imageStartupCheck({ enabled: imageEnabled, prepared: Boolean(imageHost), skipped: imageMcpSkipped }));
   console.log(providerStartupChecks((await serviceStatus)?.data));
   console.log(startupReady({ baseUrl: running.baseUrl, commandName: CLI_NAME, reused: true }));
   await launchDashboard();
@@ -533,13 +532,12 @@ try {
   const persistentRoute = await nativePrediction?.prepareRoute();
 
   // Launch Codex when available. A running App is never forcibly restarted.
-  if (codexEnabled) await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app, predictionProfile: nativePrediction?.profile,
-    imageHost: imageEnabled ? await clientIntegration.imageHostLaunch() : null,
+  const imageHost = codexEnabled && imageEnabled ? await clientIntegration.imageHostLaunch() : null;
+  if (codexEnabled) await openCodex({ predictionPacUrl: nativePrediction?.pacUrl, predictionApp: nativePrediction?.app, predictionProfile: nativePrediction?.profile, imageHost,
     preparePredictionRoute: () => nativePrediction?.prepareRoute(), persistedPredictionRoute: persistentRoute?.status === "installed",
     onPredictionRoute: route => clientIntegration?.launched(route), log: startupLogger("App") });
   console.log(predictionStartupCheck(clientIntegration?.snapshot().prediction));
-  console.log(startupCheck(imageEnabled && imageMcpSkipped ? "warn" : "info", "Images", imageEnabled
-    ? imageMcpSkipped ? "App setup skipped; see warning" : "Configured; not tested" : "Off"));
+  console.log(imageStartupCheck({ enabled: imageEnabled, prepared: Boolean(imageHost), skipped: imageMcpSkipped }));
   console.log(providerStartupChecks(activeServer.ccdxSnapshot?.()));
 
   // Periodically refresh the model list + endpoint cache so a long-running

@@ -67,8 +67,9 @@ const localTools = {
 };
 const networkDiagnostic = { source: "system", stage: "proxy_config", cause_code: "proxy_bypass_invalid" };
 let m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
-let manualUpdates = 0;
+let manualUpdates = 0;const imageActions = [];
 const serviceControl = createServiceControl({ home, env: {},
+  imageHostControl: async operation => { imageActions.push(operation);return { status: operation === "check" ? "checked" : operation === "repair" ? "prepared" : "needs_app_relaunch", connection: { state: "verified", scope: "node_loopback", app_path: "unconfirmed" } }; },
   manualUpdate: () => { manualUpdates++;return { status: "queued" }; },
   predictionControl: (operation, opts) => controlPrediction(operation, { ...opts, nativeOperation: handlePredictionOperation, platform: "darwin", exec: () => { throw Object.assign(Error("closed"), { status: 1 }); } }),
   readImages: () => ({}), readPrediction: () => ({ enabled: true }),
@@ -349,6 +350,13 @@ try {
         await page.waitForFunction(value => !document.getElementById("setting-image_enabled").disabled && document.getElementById("setting-image_enabled").checked === value, !imageBefore);
         await page.locator("#setting-image_enabled").setChecked(imageBefore);
         await page.waitForFunction(() => !document.getElementById("setting-image_enabled").disabled);
+        for (const operation of ["check", "repair", "open"]) {
+          await page.locator("#image-" + operation).click();
+          await page.waitForFunction(operation => !document.getElementById("image-" + operation).disabled, operation);
+          assert.equal(imageActions.at(-1), operation);
+          assert.equal(await page.locator("#image-action-note").isVisible(), true);
+        }
+        assert.match(await page.locator("#image-action-note").innerText(), /Quit Codex|退出 Codex/);
         if (output && width === 1280 && language === "zh") { await page.evaluate(() => window.scrollTo(0, 0));await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-codex.png`), fullPage: true }); }
         await nav("claude");
         assert.match(await page.locator("#claude-route").textContent(), /\/anthropic/);

@@ -1,6 +1,14 @@
 (() => {
   function create({ element: el, change, localize }) {
     let saved = null, limitDirty = false, imageSignature = "";
+    for (const operation of ["check", "repair", "open"]) el("image-" + operation).addEventListener("click", async () => {
+      const data = await change({ action: "image", operation }, el("image-" + operation));
+      const result = data?.last_operation?.feature === "image" ? data.last_operation.result : null;
+      if (result) {
+        el("image-action-note").hidden = false;
+        localize(el("image-action-note"), operation === "check" ? "image_connection_" + result.connection?.state : "image_action_" + result.status);
+      }
+    });
     const prediction = operation => change({ action: "prediction", operation }, el("prediction-continue"));
     el("setting-prediction_enabled").addEventListener("change", () => void prediction(el("setting-prediction_enabled").checked ? "enable" : "disable"));
     el("prediction-continue").addEventListener("click", () => void prediction(saved?.features?.prediction?.enabled ? "enable" : "disable"));
@@ -31,7 +39,9 @@
       if (notes) localize(el("prediction-action-note"), !value ? "feature_unavailable" : value.status === "unavailable" ? "feature_read_failed" : pending ? "prediction_quit_continue" : value.enabled && value.bridge !== "running" ? "prediction_bridge_missing" : value.enabled ? "prediction_ready" : "prediction_disabled");
       el("effect-prediction_enabled").hidden = !pending;
       if (pending) localize(el("effect-prediction_enabled"), "feature_pending");
-      const image = data.features?.image, signature = JSON.stringify(image || null);
+      const runtime = data.features?.image?.runtime;
+      localize(el("image-host-note"), runtime?.tool_registration === "observed" ? "image_host_registered" : runtime?.connected ? "image_host_connected" : "image_host_unconfirmed");
+      const image = data.features?.image, signature = JSON.stringify(image ? { ...image, runtime: undefined } : null);
       if (signature !== imageSignature) {
         imageSignature = signature;
         const list = el("image-models"), focus = list.contains(document.activeElement) ? document.activeElement.value : null;

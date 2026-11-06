@@ -42,7 +42,9 @@ export function createManagementHandler({ statusSnapshot, activityEvents, native
       const predictionPac = isLoopbackAddress(req.socket?.remoteAddress) && isLoopbackHostHeader(req.headers?.host)
         ? options.nativePredictionPac?.() : null;
       const health = adapterHealthPayload();
+      const nonce = new URL(req.url, "http://localhost").searchParams.get("nonce");
       res.end(JSON.stringify({ ...health,
+        ...(/^[a-f0-9-]{36}$/.test(nonce || "") ? { nonce } : {}),
         capabilities: [...health.capabilities, ...(typeof options.fixPrediction === "function" ? [PREDICTION_FIX_CAPABILITY] : [])],
         ...(predictionPac ? { native_prediction_pac: predictionPac } : {}) }));
       return;

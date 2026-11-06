@@ -68,7 +68,7 @@
   async function api(body) {
     const response = await fetch("/_ccdx/ui/settings", { method: body ? "POST" : "GET", cache: "no-store",
       headers: { "X-CCDX-Dashboard": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
-      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(body?.action === "prediction" ? 210000 : body?.action === "image" || body?.operation === "account" ? 65000 : 15000) });
+      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout((body?.action === "prediction" || body?.action === "image" && body?.operation === "open") ? 210000 : body?.action === "image" || body?.operation === "account" ? 65000 : 15000) });
     const data = await response.json();if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`), { code: data.code });return data;
   }
   const preferences = globalThis.ccdxDashboardPreferences?.create({ element: el, api, applied: applySettings, time,

@@ -184,3 +184,12 @@ test("the retention budget also accounts for the incremental validator's nesting
   assert.throws(() => stream.push(wire({ type: "response.function_call_arguments.delta", output_index: 0, delta: "[".repeat(40) })), { code: "ccdx_privacy_stream_limit" });
   assert.equal(stream.finish(), "");
 });
+
+test("heartbeats preserve split placeholder tool arguments", () => {
+  const stream = createPrivacyStream(session()), encoded = JSON.stringify({ value: placeholder });
+  let output = stream.push(wire({ type: "response.function_call_arguments.delta", output_index: 0, delta: encoded.slice(0, 20) }));
+  output += stream.push(': heartbeat\n\n');
+  output += stream.push(wire({ type: "response.function_call_arguments.delta", output_index: 0, delta: encoded.slice(20) }));
+  output += stream.push(wire({ type: "response.function_call_arguments.done", output_index: 0, arguments: encoded }));
+  assert.deepEqual(JSON.parse(argsFor(output, 0)), { value: restored });assert.equal(stream.finish(), "");
+});

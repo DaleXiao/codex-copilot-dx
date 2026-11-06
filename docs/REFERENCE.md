@@ -580,9 +580,13 @@ was recreated on the original address, not that gray text appeared.
 
 ## Native image generation
 
-Codex’s built-in `image_gen.imagegen` tool uses the current CCDX address for separate Images API requests. CCDX serves `POST /v1/images/generations` and `POST /v1/images/edits`, reuses the existing GitHub Copilot authentication, and maps the native client’s `gpt-image-2` request to the selected available GHC image model. GPT Image 2.5 Flare is the default when advertised. The `X-CCDX-Image-Model` response header identifies the actual model. Image usage counts toward the GitHub account’s image credits; organization model policies still apply. The image model does not replace the selected conversation model.
+The native image host uses the current CCDX address for separate Images API requests. CCDX serves `POST /v1/images/generations` and `POST /v1/images/edits`, reuses the existing GitHub Copilot authentication, and maps the native client’s `gpt-image-2` request to the selected available GHC image model. GPT Image 2.5 Flare is the default when advertised. The `X-CCDX-Image-Model` response header identifies the actual model. Image usage counts toward the GitHub account’s image credits; organization model policies still apply. The image model does not replace the selected conversation model.
 
 On macOS with Codex 0.166 or later, CCDX launches the unchanged Codex CLI through a local stdio host adapter. The adapter registers `ccdx_images.imagegen` using Codex’s native `dynamicTools` interface. Codex emits native tool progress and includes image content in the chat history; display in the signed App depends on the client and requires a real-window check. CCDX saves image files under the active Codex home’s `generated_images/ccdx/` directory and uses these files for later edits, including after a host restart. No separate image address or key, image MCP registration, or CCDX image skill is required. Windows continues to expose the Images API; automatic host activation on Windows is not yet provided.
+
+The Web UI image panel and terminal `check`, `repair`, and `open` controls share the service's image controller. `check` verifies the Node loopback response with a fresh nonce and checks the launcher and runtime evidence; it does not prove the Codex App's proxy route. `repair` prepares owned launch files and client configuration without opening or closing the App. `open` preserves the established prediction route and opens Codex only when it is closed. A running App produces `needs_app_relaunch`; finish tasks and quit it yourself, then use `open` and a new chat. Disabled image settings and custom launch routes are preserved.
+
+The runtime separately reports host initialization, accepted new-chat registration and image-call outcomes. Reports contain only host PID, anonymous host/chat identifiers, event type and time, remain in bounded process memory, and are not an automatic image-generation probe. Registration evidence applies to observed chats, not every existing conversation. Dead host processes are unconfirmed. The TUI exposes the repair command; terminal image status includes the same host state. Request details show anonymous session correlation and the previous retained request's outcome when supplied session metadata allows it; missing identity stays unassigned.
 
 The adapter uses `CODEX_CLI_PATH` only for the App launch requested by CCDX. It does not modify App binaries, ChatGPT authentication files, credential storage mode or account-plan declarations. All other app-server traffic, including Apps and approval requests, passes through to the original CLI. Existing custom CLI routes and unowned launcher files are preserved. A running App retains its existing launch environment. If its image tool is missing, fully quit the App, start Codex through CCDX, and use a new chat. CCDX does not forcibly restart the App. Native built-in image tool availability still depends on the installed client and thread. A successful direct API request alone does not establish visible App behavior.
 
@@ -590,6 +594,9 @@ The WebUI’s image switch is on by default and pauses or resumes new requests. 
 
 ```bash
 ccdx app codex image status
+ccdx app codex image check
+ccdx app codex image repair
+ccdx app codex image open
 ccdx app codex image models
 ccdx app codex image select --id gpt-image-2.5-flare
 ccdx app codex image enable

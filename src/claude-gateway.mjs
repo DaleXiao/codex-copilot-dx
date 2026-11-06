@@ -75,6 +75,13 @@ export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clie
     }
     if (value.endsWith("\r")) value = value.slice(0, -1);
     if (!value) frame();
+    else if (value.startsWith("{")) {
+      let error;try { error = JSON.parse(value); } catch {}
+      if (error?.type === "error" || error?.error && typeof error.error === "object") {
+        onEvent({ ...error, type: "error" });
+        throw new Error("Upstream returned a JSON error outside an SSE data frame");
+      }
+    }
     else if (value.startsWith("data:")) {
       const part = value.slice(5).replace(/^ /, "");frameBytes += Buffer.byteLength(part);
       if (frameBytes > maxBytes) throw new Error("Claude stream event exceeds its limit");data.push(part);

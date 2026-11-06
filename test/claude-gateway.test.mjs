@@ -346,3 +346,9 @@ test('capability waiting does not restart a count caller\'s upstream timeout bud
  const r=await fetch(`http://127.0.0.1:${g.server.port}/v1/messages/count_tokens`,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key},body:JSON.stringify({model:'claude-opus-5.5',messages:[]}),signal:AbortSignal.timeout(3000)});
  assert.equal(r.status,504);await r.text();assert.equal(continued,true);assert.equal(g.server.snapshot().failed,0,'A count timeout is not a generation failure');
 });
+
+test("bare upstream JSON errors fail promptly instead of waiting for message_stop", () => {
+  const seen = [], observer = createMessagesObserver(value => seen.push(value));
+  assert.throws(() => observer.write(Buffer.from('{"error":{"type":"overloaded_error","message":"busy"}}\n')), /outside an SSE/);
+  assert.equal(seen[0].type, "error");assert.equal(seen[0].error.type, "overloaded_error");
+});

@@ -134,6 +134,9 @@
           <summary class="panel-heading"><h2 data-i18n="codex_image_generation">IMAGE GENERATION</h2></summary>
           <div class="setting-row"><label for="setting-image_enabled" data-i18n="allow_new_image_calls">Allow image requests</label><input id="setting-image_enabled" type="checkbox" role="switch" disabled><span id="effect-image_enabled" class="hint" role="status"></span></div>
           <div id="image-models" class="image-models" role="group" aria-label="Image model" data-i18n-label="image_model"></div>
+          <div class="section-actions"><button id="image-check" type="button" data-i18n="image_check">Check access</button><button id="image-repair" type="button" data-i18n="image_repair">Repair access</button><button id="image-open" type="button" data-i18n="image_open">Open Codex</button></div>
+          <p id="image-host-note" class="hint" role="status"></p>
+          <p id="image-action-note" class="hint" role="status" hidden></p>
           <p id="image-model-note" class="hint" role="status" hidden></p>
           <div class="image-metrics hint"><strong id="image">—</strong><span id="image-detail">—</span></div>
         </details>

@@ -1,3 +1,5 @@
+import { createImageHostState } from "./image-host-state.mjs";
+import { controlImage } from "./image-control.mjs";
 import { serviceSettingsSnapshot, servicePreferences, writeServicePreference,
   writeTerminalAnimationTheme, writeTerminalColorTheme, responseHistoryLimitPreference, writeResponseHistoryLimitMib,
   nightlyUpdatePreference, writeNightlyUpdatePreference, decodedBodyLimitPreference, writeDecodedBodyLimitMib } from "./user-settings.mjs";
@@ -10,10 +12,11 @@ import { imageSetupSummary, configureImageSetup } from "./image-setup.mjs";
 
 export function createServiceControl({ env = process.env, home, providerRuntime, clientIntegration, terminal,
   nightlyStatus = () => null, nightlyChanged = () => {},
-  manualUpdate, predictionControl = controlPrediction, imageControl = configureImageSetup,
+  manualUpdate, predictionControl = controlPrediction, imageControl = configureImageSetup, imageHostControl = controlImage,
   adapterPort = 2026, adapterHost = "127.0.0.1",
   readImages = () => imageSetupSummary({ env, home }).configured, readPrediction = () => readPredictionSettings({ env, home }) } = {}) {
   const options = { env, home };
+  const imageHostState = createImageHostState();
   let serial = Promise.resolve(), lastOperation = null, pending = 0;
   const featureSnapshot = read => { try { return read(options); } catch { return { status: "unavailable" }; } };
   function snapshot() {
@@ -25,7 +28,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     const enabled = nightlyUpdatePreference(options), nightly = nightlyStatus();
     const localPrivacy = providerRuntime?.privacy?.snapshot();
     return { source: "service_settings", saved, theme, color_theme, preferences: settingsPreferencesSnapshot(options), local_privacy: localPrivacy,
-      features: { prediction: { ...featureSnapshot(predictionControlSnapshot), bridge: prediction?.bridge || "stopped", active: prediction?.active === true }, image },
+      features: { prediction: { ...featureSnapshot(predictionControlSnapshot), bridge: prediction?.bridge || "stopped", active: prediction?.active === true }, image: { ...image, runtime: imageHostState.snapshot() } },
       decoded_body: decodedBodyLimitPreference(options), manual_update: { available: typeof manualUpdate === "function" }, last_operation: lastOperation,
       nightly_update: { enabled, ...nightly, effect: enabled && !nightly ? "next_start" : "immediate" },
       effective: {
@@ -43,7 +46,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid setting action");
     const allowed = { preference: ["action", "key", "value"], nightly_update: ["action", "enabled"], animation: ["action", "theme"], color_theme: ["action", "theme"],
       history_limit: ["action", "mib"], history_clean: ["action"], prediction_fix: ["action"],
-      prediction: ["action", "operation"], image: ["action", "operation", "model"],
+      prediction: ["action", "operation"], image: ["action", "operation", "model", "evidence"],
       update: ["action", "confirmed"], decoded_limit: ["action", "mib"],
       preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id", "scope"], restore_preferences: ["action", "revision", "backup_id", "scope"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
@@ -52,7 +55,9 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (input.action === "prediction") {
       lastOperation = { feature: "prediction", result: await predictionControl(input.operation, { ...options, integration: clientIntegration }) };
     } else if (input.action === "image") {
-      if (["pause", "resume"].includes(input.operation)) writeServicePreference("image_enabled", input.operation === "resume", options);
+      if (input.operation === "report") { imageHostState.report(input.evidence);terminal?.image?.(imageHostState.snapshot()); }
+      else if (["check", "repair", "open"].includes(input.operation)) lastOperation = { feature: "image", result: await imageHostControl(input.operation, { ...options, host: adapterHost, port: adapterPort, integration: clientIntegration, state: imageHostState, models: providerRuntime?.imageModels?.().models || [] }) };
+      else if (["pause", "resume"].includes(input.operation)) writeServicePreference("image_enabled", input.operation === "resume", options);
       else lastOperation = { feature: "image", result: await imageControl(input, { ...options, providerRuntime, adapterPort, adapterHost }) };
     } else if (input.action === "update") {
       if (input.confirmed !== true) throw new Error("Confirm installation and the idle service switch");

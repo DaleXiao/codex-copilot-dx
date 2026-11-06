@@ -60,6 +60,8 @@ Use `ccdx help` or `ccdx <command> --help` for options. The CLI uses English; th
 
 ## Features and maintenance
 
+Start CCDX to open Codex with native image tools, then use a new chat. If image access is missing, use the Web UI image checks or `ccdx app codex image check`, `repair` and `open`. Running Apps are never forcibly restarted.
+
 Use the Web UI for accounts, APIs, models, client access, input suggestions, native images, local masking, appearance, diagnostics and updates. CLI commands remain available for automation and recovery. See the [control reference](docs/REFERENCE.md#webui-and-cli-controls).
 
 - **Input suggestions:** new integrations attempt setup by default when Codex is closed. Saved off choices are retained. The Web UI can enable, disable, finish setup, open Codex and repair the bridge. Setup synchronizes Show predictions, adds App-profile trust and locally decrypts the prediction hosts' HTTPS traffic. App/thread eligibility still applies. [Details](docs/REFERENCE.md#optional-native-predictions).

@@ -116,3 +116,16 @@ test("the real host entry reads the protected image setting and fails closed", a
     assert.equal(reads - before, experimental ? 1 : 0);
   }
 });
+
+test("host evidence follows accepted initialization and thread registration, not a prepared request", async () => {
+  const events = [];
+  const bridge = createImageHostBridge({ baseUrl: "http://127.0.0.1:2026/v1", codexHome: "/unused", imageEnabled: async () => true, onEvent: event => events.push(event) });
+  await bridge.client({ id: 1, method: "initialize", params: { capabilities: { experimentalApi: true } } });
+  assert.equal(events.length, 0);bridge.codex({ id: 1, result: { userAgent: "fixture" } });assert.equal(events[0].event, "connected");
+  await bridge.client({ id: 2, method: "thread/start", params: { cwd: "/tmp" } });assert.equal(events.length, 1);
+  bridge.codex({ id: 2, error: { code: -1 } });assert.equal(events.length, 1);
+  await bridge.client({ id: 3, method: "thread/start", params: { cwd: "/tmp" } });
+  bridge.codex({ id: 3, result: { thread: { id: "private-chat-id", cwd: "/tmp" } } });
+  assert.equal(events[1].event, "registered");assert.match(events[1].thread, /^[a-f0-9]{32}$/);assert.doesNotMatch(JSON.stringify(events), /private-chat-id/);
+  bridge.close();assert.equal(events.at(-1).event, "closed");
+});

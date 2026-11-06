@@ -58,10 +58,11 @@ function imageType(bytes) {
 const inside = (root, file) => file === root || file.startsWith(root + path.sep);
 
 export function createImageHostBridge({ baseUrl, codexHome, sendToCodex, fetchImpl = fetch, imageEnabled,
-  now = Date.now } = {}) {
+  now = Date.now, onEvent = () => {} } = {}) {
   baseUrl = imageHostBaseUrl(baseUrl);
   const requests = new Map(), threads = new Map(), active = new Map();
   let experimental = false, sequence = 0;
+  const observe = (event, thread) => { try { onEvent({ event, ...(thread ? { thread: createHash("sha256").update(thread).digest("hex").slice(0, 32) } : {}) }); } catch {} };
   const root = path.join(codexHome, "generated_images", "ccdx");
   const folder = id => path.join(root, createHash("sha256").update(id).digest("hex").slice(0, 32));
   const enabled = imageEnabled || (async () => {
@@ -140,10 +141,14 @@ export function createImageHostBridge({ baseUrl, codexHome, sendToCodex, fetchIm
 
   return {
     async client(message) {
-      if (message.method === "initialize") experimental = message.params?.capabilities?.experimentalApi === true;
+      if (message.method === "initialize") {
+        experimental = message.params?.capabilities?.experimentalApi === true;
+        requests.set(JSON.stringify(message.id), { method: "initialize" });
+      }
       if (["thread/start", "thread/resume", "thread/fork"].includes(message.method)) {
-        requests.set(JSON.stringify(message.id), { method: message.method, params: message.params || {} });
-        if (message.method === "thread/start" && experimental && await enabled()) return { ...message, params: addImageHostTool(message.params || {}) };
+        const registered = message.method === "thread/start" && experimental && await enabled();
+        requests.set(JSON.stringify(message.id), { method: message.method, params: message.params || {}, registered });
+        if (registered) return { ...message, params: addImageHostTool(message.params || {}) };
       }
       if (message.method === "turn/start") {
         const context = threads.get(message.params?.threadId);
@@ -157,6 +162,8 @@ export function createImageHostBridge({ baseUrl, codexHome, sendToCodex, fetchIm
       const pending = requests.get(JSON.stringify(message.id));
       if (pending && !message.method) {
         requests.delete(JSON.stringify(message.id));const thread = message.result?.thread;
+        if (!message.error && message.result && pending.method === "initialize") observe("connected");
+        if (thread?.id && pending.registered) observe("registered", thread.id);
         if (thread?.id && thread.cwd) threads.set(thread.id, { cwd: thread.cwd, roots: pending.params.runtimeWorkspaceRoots || [], attachments: [], generated: [] });
       }
       if (message.method === "item/completed" && message.params?.item?.type === "imageGeneration" && message.params.item.savedPath) {
@@ -166,12 +173,12 @@ export function createImageHostBridge({ baseUrl, codexHome, sendToCodex, fetchIm
       const controller = new AbortController(), key = JSON.stringify(message.id);
       active.set(key, { controller, threadId: message.params.threadId });
       void runImage(message.params, AbortSignal.any([controller.signal, AbortSignal.timeout(180000)]))
-        .then(result => sendToCodex({ id: message.id, result }))
-        .catch(error => sendToCodex({ id: message.id, result: { success: false, contentItems: [{ type: "inputText", text: error.message }] } }))
+        .then(result => { observe("generated", message.params.threadId);sendToCodex({ id: message.id, result }); })
+        .catch(error => { observe("failed", message.params.threadId);sendToCodex({ id: message.id, result: { success: false, contentItems: [{ type: "inputText", text: error.message }] } }); })
         .finally(() => active.delete(key));
       return true;
     },
-    close() { for (const value of active.values()) value.controller.abort(new Error("Image host closed")); },
+    close() { observe("closed");for (const value of active.values()) value.controller.abort(new Error("Image host closed")); },
   };
 }
 
@@ -195,10 +202,23 @@ export async function runCodexImageHost({ codex, argv, baseUrl, env = process.en
   const child = spawnImpl(codex, args, { env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
   child.stdin.on("error", () => {});child.stderr.pipe(error, { end: false });
   let bridge, queue = Promise.resolve();const cleanups = [];
+  const reportingAbort = new AbortController();
+  const hostId = randomUUID();let reporting = Promise.resolve(), pendingReports = 0;
+  const report = evidence => {
+    if (pendingReports >= 16) return;
+    pendingReports++;
+    reporting = reporting.then(async () => {
+      const url = new URL(baseUrl);url.pathname = "/_ccdx/ui/settings";
+      const response = await fetch(url, { method: "POST", redirect: "error", signal: AbortSignal.any([reportingAbort.signal, AbortSignal.timeout(1000)]),
+        headers: { "X-CCDX-Dashboard": "1", Origin: url.origin, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "image", operation: "report", evidence: { ...evidence, id: hostId, pid: process.pid } }) });
+      await response.body?.cancel();
+    }).catch(() => {}).finally(() => { pendingReports--; });
+  };
   const write = message => { if (!child.stdin.destroyed) child.stdin.write(JSON.stringify(message) + "\n"); };
   if (!stdio) { input.pipe(child.stdin);child.stdout.pipe(output, { end: false }); }
   else {
-    bridge = createImageHostBridge({ baseUrl, codexHome: path.resolve(env.CODEX_HOME || path.join(env.HOME || process.env.HOME, ".codex")), sendToCodex: write });
+    bridge = createImageHostBridge({ baseUrl, codexHome: path.resolve(env.CODEX_HOME || path.join(env.HOME || process.env.HOME, ".codex")), sendToCodex: write, onEvent: report });
     cleanups.push(lines(input, raw => {
       queue = queue.then(async () => {
         let message;try { message = JSON.parse(raw); } catch { child.stdin.write(raw + "\n");return; }
@@ -214,5 +234,5 @@ export async function runCodexImageHost({ codex, argv, baseUrl, env = process.en
   const interrupt = () => stop("SIGINT"), terminate = () => stop("SIGTERM");
   process.once("SIGINT", interrupt);process.once("SIGTERM", terminate);
   try { const [code, signal] = await once(child, "exit");await queue;return code ?? (signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 1); }
-  finally { bridge?.close();for (const cleanup of cleanups) cleanup();input.unpipe(child.stdin);input.pause();process.removeListener("SIGINT", interrupt);process.removeListener("SIGTERM", terminate); }
+  finally { bridge?.close();reportingAbort.abort();for (const cleanup of cleanups) cleanup();input.unpipe(child.stdin);input.pause();process.removeListener("SIGINT", interrupt);process.removeListener("SIGTERM", terminate); }
 }

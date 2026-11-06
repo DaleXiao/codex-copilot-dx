@@ -92,6 +92,8 @@
       let tr = detailRows.get(id);
       if (!tr) { tr = entry("tr");for (let i = 0; i < 6; i++) tr.append(entry("td"));detailRows.set(id, tr); }
       const values = [appName(row.application), sourceName(row.provider), modelName(row.model), format(fresh ? status(row) : "flow_last_observed"), `${((row.elapsed_ms + Math.max(0, Date.now() - sampledAt)) / 1000).toFixed(1)} s`, row.upstream_attempts.toLocaleString()];
+      if (row.previous_request) values[3] += " · " + format("flow_previous_result", { reason: row.previous_request.stop_reason || row.previous_request.outcome || "—", seconds: (row.previous_request.elapsed_ms / 1000).toFixed(1) });
+      tr.title = row.session_id ? format("flow_session_previous", { session: row.session_id, reason: row.previous_request?.stop_reason || row.previous_request?.outcome || "—", seconds: row.previous_request ? (row.previous_request.elapsed_ms / 1000).toFixed(1) : "—" }) : format("flow_session_unknown");
       values.forEach((value, i) => { if (tr.children[i].textContent !== value) tr.children[i].textContent = value; });
       if (body.children[index] !== tr) body.insertBefore(tr, body.children[index] || null);
     }
@@ -189,6 +191,8 @@
       if (!parts.length || parts.some(part => !integer(part.active_total) || !Array.isArray(part.active_requests))) { unavailable();return; }
       const values = parts.flatMap(part => part.active_requests).slice(0, 128);
       rows = values.filter(row => row && typeof row.model === "string" && integer(row.upstream_attempts) && Number.isFinite(row.elapsed_ms) && row.elapsed_ms >= 0).map(row => ({
+        session_id: typeof row.session_id === "string" && /^[a-f0-9]{16}$/.test(row.session_id) ? row.session_id : null,
+        previous_request: row.previous_request && Number.isFinite(row.previous_request.elapsed_ms) ? { elapsed_ms: row.previous_request.elapsed_ms, stop_reason: row.previous_request.stop_reason, outcome: row.previous_request.outcome } : null,
         request_id: typeof row.request_id === "string" ? row.request_id.slice(0, 80) : null,
         application: clients.has(row.application) ? row.application : "api", provider: typeof row.provider === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(row.provider) ? row.provider : "unknown",
         model: row.model.slice(0, 160), phase: String(row.phase || "").slice(0, 40), elapsed_ms: row.elapsed_ms,

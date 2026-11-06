@@ -14,7 +14,7 @@ export function autoReviewReasoningEfforts(model) {
 
 function hasOpenAIEndpoint(model) {
   const endpoints = Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];
-  return endpoints.includes("/responses") || endpoints.includes("/v1/responses") || endpoints.includes("/chat/completions");
+  return endpoints.includes("/responses") || endpoints.includes("/v1/responses") || (endpoints.includes("/chat/completions") || endpoints.includes("/v1/chat/completions"));
 }
 
 // Endpoint-based routing helpers. A model is "responses-only" when it exposes a
@@ -25,13 +25,13 @@ export function modelEndpoints(model) {
 }
 
 export function modelSupportsChatCompletions(model) {
-  return modelEndpoints(model).includes("/chat/completions");
+  return modelEndpoints(model).some(path => ["/chat/completions", "/v1/chat/completions"].includes(path));
 }
 
 export function modelIsResponsesOnly(model) {
   const endpoints = modelEndpoints(model);
   const hasResponses = endpoints.includes("/responses") || endpoints.includes("/v1/responses");
-  return hasResponses && !endpoints.includes("/chat/completions");
+  return hasResponses && !(endpoints.includes("/chat/completions") || endpoints.includes("/v1/chat/completions"));
 }
 
 export function resolveCopilotPriorityTierModel(model, serviceTier, models) {

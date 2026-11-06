@@ -135,3 +135,12 @@ test("codexAutoReviewModelStatus: validates the configured Responses target", ()
     reason: "model is not advertised",
   });
 });
+
+test("versioned Chat endpoint declarations do not become Responses-only models", async () => {
+  const { modelSupportsChatCompletions, modelIsResponsesOnly } = await import("../src/models.mjs");
+  for (const chat of ["/chat/completions", "/v1/chat/completions"]) {
+    const model = { supported_endpoints: ["/v1/responses", chat] };
+    assert.equal(modelSupportsChatCompletions(model), true);assert.equal(modelIsResponsesOnly(model), false);
+  }
+  assert.equal(modelSupportsChatCompletions({ supported_endpoints: ["/v1/responses"] }), false);
+});

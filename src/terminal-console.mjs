@@ -15,6 +15,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
   snapshot = () => ({}), subscribe, preferences = () => ({}), baseUrl = "", verbose = false,
   timers = { setTimeout, clearTimeout }, now = Date.now } = {}) {
   let running = false, timer = null, lines = 0, frame = 0, lastRead = 0, data = {}, projection = projectTerminalState();
+  let imageRuntime = null;
   let notices = 0, lastNotice = "", lastPrintedNotice = "", previous = [];
   let content = [], dirty = true, readFailed = false, updatedAt = null, fits = true;
   let current = { theme: DEFAULT_TERMINAL_ANIMATION_THEME, color_theme: "green", terminal_animation_enabled: true };
@@ -87,7 +88,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
       const appSize = width < 64 ? 13 : 15, setupSize = Math.max(10, Math.min(20, width - appSize - 7));
       const appRows = view.clients.map(client => `${clip(client.name, appSize - 1).padEnd(appSize)}${clip(client.setup, setupSize - 1).padEnd(setupSize)}${String(readFailed || client.active === null ? "—" : client.active).padStart(6)}`);
       const issue = view.issue?.label;
-      const notice = notices ? `${notices} ${notices === 1 ? "notice" : "notices"}${issue ? ` · last model issue: ${issue}` : " · ccdx status --details"}` : issue ? `Last model issue: ${issue}` : "No notices";
+      const notice = notices ? `${notices} ${notices === 1 ? "notice" : "notices"}${issue ? ` · last model issue: ${issue}` : " · ccdx status --details"}` : issue ? `Last model issue: ${issue}` : `Image evidence: ${imageRuntime?.tool_registration === "observed" ? "tool registered" : imageRuntime?.connected ? "host connected" : "unconfirmed"} · ccdx app codex image repair`;
       content = [clip(heading, width), clip(webAddress, width), sourceHeader,
         ...(view.sources ? wrap(view.sources.map(source => source.name).join(" · "), width) : []),
         `${"App".padEnd(appSize)}${"Setup".padEnd(setupSize)}${"Active".padStart(6)}`, ...appRows,
@@ -144,6 +145,7 @@ export function createTerminalConsole({ output = process.stdout, errorOutput = p
       });
     },
     pause() { running = false;unsubscribe?.();unsubscribe = null;if (timer) timers.clearTimeout(timer);timer = null;if (lines) output.write("\n");lines = 0;previous = [];dirty = true; },
+    image(value) { imageRuntime = value;dirty = true; },
     beginRequest() { dirty = true;return () => { dirty = true; }; },
     log(method, args) {
       const message = redactDiagnosticText(format(...args));

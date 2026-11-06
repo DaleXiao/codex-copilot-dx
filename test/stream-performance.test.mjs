@@ -531,3 +531,15 @@ test("source metrics pin request identity, separate same-model outcomes and boun
   const unknown = createStreamPerformanceMetrics();unknown.begin("responses").finish();
   assert.equal(unknown.snapshot().by_route.responses.by_provider.unknown.terminal_outcomes.totals.unknown, 1);
 });
+
+test("same-session follow-up identifies the previous tool request without joining another session", () => {
+  const metrics = createStreamPerformanceMetrics();
+  const first = metrics.begin("responses", { requestId: "first", application: "codex" });
+  first.setProvider("github");first.observeSession("a".repeat(64));first.terminal("completed", { origin: "upstream_event" });first.finish();
+  const next = metrics.begin("responses", { requestId: "next", application: "codex" });next.setProvider("github");next.observeSession("a".repeat(64));
+  const other = metrics.begin("responses", { requestId: "other", application: "codex" });other.setProvider("github");other.observeSession("b".repeat(64));
+  const rows = metrics.snapshot().active_requests;
+  assert.equal(rows.find(row => row.request_id === "next").previous_request.request_id, "first");
+  assert.equal(rows.find(row => row.request_id === "other").previous_request, null);
+  next.finish();other.finish();
+});

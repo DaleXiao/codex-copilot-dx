@@ -260,9 +260,13 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       let stopReason = null;
       const elapsed = (time) => time === null ? null : Number(Math.max(0, time - requestStartedAt).toFixed(1));
       if (activeRequests.size < MAX_ACTIVE_REQUESTS) activeRequests.set(activeId, () => ({
-        request_id: safeRequestId, application: client, route: routeName, provider, model, phase,
+        request_id: safeRequestId, session_id: session ? session.slice(0, 16) : null, application: client, route: routeName, provider, model, phase,
         started_at: at, elapsed_ms: elapsed(now()), first_output_ms: elapsed(firstOutputAt),
         upstream_attempts: attempts, terminal_outcome: terminalOutcome,
+        previous_request: session ? (() => {
+          const previous = recentRequests.findLast(row => row.session_id === session.slice(0, 16) && row.application === client && row.provider === provider);
+          return previous ? { request_id: previous.request_id, stop_reason: previous.stop_reason || null, outcome: previous.outcome, elapsed_ms: previous.timings_ms.finished } : null;
+        })() : null,
         attempts: attemptTimings.map(attempt => ({ ...attempt })),
       }));
       changes.changed();
@@ -404,7 +408,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
             finished: finishedAt, request_id: safeRequestId, outcome, context, cached_input_tokens: cachedInput });
           // Only scalar, allowlisted metadata survives the request; never retain payloads.
           recentRequests.push({
-            request_id: safeRequestId, application: client,
+            request_id: safeRequestId, ...(session ? { session_id: session.slice(0, 16) } : {}), application: client,
             at, route: routeName, model, outcome, origin, phase,
             ...(["ccdx_model_not_selected", "ccdx_client_source_disabled"].includes(rejectionReason) ? { rejection_reason: rejectionReason } : {}),
             ...(stopReason ? { stop_reason: stopReason } : {}),

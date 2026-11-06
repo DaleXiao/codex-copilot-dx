@@ -140,15 +140,18 @@ export function createImageHostBridge({ baseUrl, codexHome, sendToCodex, fetchIm
   }
 
   return {
-    async client(message) {
+    client(message) {
       if (message.method === "initialize") {
         experimental = message.params?.capabilities?.experimentalApi === true;
         requests.set(JSON.stringify(message.id), { method: "initialize" });
       }
       if (["thread/start", "thread/resume", "thread/fork"].includes(message.method)) {
-        const registered = message.method === "thread/start" && experimental && await enabled();
-        requests.set(JSON.stringify(message.id), { method: message.method, params: message.params || {}, registered });
-        if (registered) return { ...message, params: addImageHostTool(message.params || {}) };
+        const remember = registered => {
+          requests.set(JSON.stringify(message.id), { method: message.method, params: message.params || {}, registered });
+          return registered ? { ...message, params: addImageHostTool(message.params || {}) } : message;
+        };
+        if (message.method === "thread/start" && experimental) return Promise.resolve(enabled()).then(remember);
+        return remember(false);
       }
       if (message.method === "turn/start") {
         const context = threads.get(message.params?.threadId);
@@ -173,8 +176,8 @@ export function createImageHostBridge({ baseUrl, codexHome, sendToCodex, fetchIm
       const controller = new AbortController(), key = JSON.stringify(message.id);
       active.set(key, { controller, threadId: message.params.threadId });
       void runImage(message.params, AbortSignal.any([controller.signal, AbortSignal.timeout(180000)]))
-        .then(result => { observe("generated", message.params.threadId);sendToCodex({ id: message.id, result }); })
-        .catch(error => { observe("failed", message.params.threadId);sendToCodex({ id: message.id, result: { success: false, contentItems: [{ type: "inputText", text: error.message }] } }); })
+        .then(async result => { observe("generated", message.params.threadId);await sendToCodex({ id: message.id, result }); })
+        .catch(async error => { observe("failed", message.params.threadId);try { await sendToCodex({ id: message.id, result: { success: false, contentItems: [{ type: "inputText", text: error.message }] } }); } catch {} })
         .finally(() => active.delete(key));
       return true;
     },
@@ -182,15 +185,77 @@ export function createImageHostBridge({ baseUrl, codexHome, sendToCodex, fetchIm
   };
 }
 
-function lines(stream, accept) {
-  const decoder = new StringDecoder("utf8");let buffer = "";
-  const data = chunk => {
-    buffer += decoder.write(chunk);let boundary;
-    while ((boundary = buffer.indexOf("\n")) >= 0) { const line = buffer.slice(0, boundary);buffer = buffer.slice(boundary + 1);accept(line); }
+function waitStream(stream, event, signal) {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      stream.off(event, ready);stream.off("end", ended);stream.off("close", ended);stream.off("error", failed);
+      signal?.removeEventListener("abort", ended);
+    };
+    const ready = () => { cleanup();resolve(true); }, ended = () => { cleanup();resolve(false); }, failed = error => { cleanup();reject(error); };
+    stream.once(event, ready);stream.once("end", ended);stream.once("close", ended);stream.once("error", failed);
+    signal?.addEventListener("abort", ended, { once: true });
+    if (signal?.aborted || stream.destroyed) ended();
+  });
+}
+
+function pumpLines(stream, accept, signal, flush = () => {}) {
+  const decoder = new StringDecoder("utf8");let buffer = "", ended = false, pending = false, stopped = false;
+  let resolve, reject;
+  const done = new Promise((ok, fail) => { resolve = ok;reject = fail; });
+  const stop = error => {
+    if (stopped) return;stopped = true;
+    stream.off("data", data);stream.off("end", end);stream.off("close", end);stream.off("error", stop);
+    signal.removeEventListener("abort", abort);stream.pause();
+    if (error) reject(error);else resolve();
   };
-  const end = () => { buffer += decoder.end();if (buffer) accept(buffer); };
-  stream.on("data", data);stream.on("end", end);
-  return () => { stream.removeListener("data", data);stream.removeListener("end", end); };
+  const abort = () => stop();
+  const wait = operation => {
+    pending = true;stream.pause();
+    operation.then(() => { pending = false;consume(); }, stop);
+  };
+  const consume = () => {
+    if (stopped || pending) return;
+    try {
+      let boundary;
+      while ((boundary = buffer.indexOf("\n")) >= 0) {
+        const wire = buffer.slice(0, boundary + 1);buffer = buffer.slice(boundary + 1);
+        const operation = accept(wire.slice(0, -1), wire);
+        if (operation?.then) { wait(operation);return; }
+      }
+      if (ended && buffer) {
+        const wire = buffer;buffer = "";const operation = accept(wire, wire);
+        if (operation?.then) { wait(operation);return; }
+      }
+      const operation = flush();
+      if (operation?.then) { wait(operation);return; }
+      if (ended) stop();else stream.resume();
+    } catch (error) { stop(error); }
+  };
+  const data = chunk => { buffer += decoder.write(chunk);consume(); };
+  const end = () => { if (!ended) { ended = true;buffer += decoder.end();consume(); } };
+  stream.on("data", data);stream.once("end", end);stream.once("close", end);stream.once("error", stop);
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();else if (stream.readableEnded || stream.destroyed) end();
+  return done;
+}
+
+function hostWriter(stream, signal) {
+  let pending = null;
+  const direct = chunk => {
+    if (signal.aborted || stream.destroyed || stream.writableEnded) throw new Error("Image host destination closed");
+    if (!stream.write(chunk)) return waitStream(stream, "drain", signal).then(ready => { if (!ready) throw new Error("Image host destination closed"); });
+  };
+  return {
+    get pending() { return pending; },
+    write(chunk) {
+      const next = pending ? pending.then(() => direct(chunk)) : direct(chunk);
+      if (next) {
+        pending = next;
+        next.then(() => { if (pending === next) pending = null; }, () => {});
+      }
+      return next;
+    },
+  };
 }
 
 export async function runCodexImageHost({ codex, argv, baseUrl, env = process.env, input = process.stdin, output = process.stdout, error = process.stderr, spawnImpl = spawn } = {}) {
@@ -200,9 +265,13 @@ export async function runCodexImageHost({ codex, argv, baseUrl, env = process.en
     && (rest.indexOf("--listen") < 0 || rest[rest.indexOf("--listen") + 1] === "stdio://");
   const childEnv = { ...env, CODEX_APP_RUNTIME_CLI_PATH: codex };delete childEnv.CODEX_CLI_PATH;
   const child = spawnImpl(codex, args, { env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
-  child.stdin.on("error", () => {});child.stderr.pipe(error, { end: false });
-  let bridge, queue = Promise.resolve();const cleanups = [];
-  const reportingAbort = new AbortController();
+  const completed = once(child, "close");completed.catch(() => {});
+  const inputAbort = new AbortController(), outputAbort = new AbortController(), reportingAbort = new AbortController();
+  let bridge, failure;
+  const fail = cause => { if (failure) return;failure = cause;inputAbort.abort();outputAbort.abort();bridge?.close();child.kill("SIGTERM"); };
+  const inputClosed = () => inputAbort.abort();
+  child.stdin.on("error", inputClosed);child.stdin.on("close", inputClosed);input.on("error", fail);child.stdout.on("error", fail);output.on("error", fail);
+  child.stderr.pipe(error, { end: false });
   const hostId = randomUUID();let reporting = Promise.resolve(), pendingReports = 0;
   const report = evidence => {
     if (pendingReports >= 16) return;
@@ -215,24 +284,48 @@ export async function runCodexImageHost({ codex, argv, baseUrl, env = process.en
       await response.body?.cancel();
     }).catch(() => {}).finally(() => { pendingReports--; });
   };
-  const write = message => { if (!child.stdin.destroyed) child.stdin.write(JSON.stringify(message) + "\n"); };
+  const destination = hostWriter(child.stdin, inputAbort.signal), client = hostWriter(output, outputAbort.signal);
+  const write = message => destination.write(JSON.stringify(message) + "\n");
+  let inputPump = Promise.resolve(), outputPump = Promise.resolve();
   if (!stdio) { input.pipe(child.stdin);child.stdout.pipe(output, { end: false }); }
   else {
     bridge = createImageHostBridge({ baseUrl, codexHome: path.resolve(env.CODEX_HOME || path.join(env.HOME || process.env.HOME, ".codex")), sendToCodex: write, onEvent: report });
-    cleanups.push(lines(input, raw => {
-      queue = queue.then(async () => {
-        let message;try { message = JSON.parse(raw); } catch { child.stdin.write(raw + "\n");return; }
-        try { const next = await bridge.client(message);if (next === message) child.stdin.write(raw + "\n");else write(next); }
-        catch (failure) { output.write(JSON.stringify({ id: message.id, error: { code: -32602, message: failure.message } }) + "\n"); }
-      });
-    }));
-    cleanups.push(lines(child.stdout, raw => { let value;try { value = JSON.parse(raw); } catch {}if (!value || !bridge.codex(value)) output.write(raw + "\n"); }));
-    const end = () => { void queue.finally(() => { bridge.close();child.stdin.end(); }); };
-    input.on("end", end);cleanups.push(() => input.removeListener("end", end));
+    inputPump = pumpLines(input, (raw, wire) => {
+      let message;try { message = JSON.parse(raw); } catch { return destination.write(wire); }
+      const forward = next => next === message ? destination.write(wire) : write(next);
+      const invalid = failure => client.write(JSON.stringify({ id: message.id, error: { code: -32602, message: failure.message } }) + "\n");
+      let next;try { next = bridge.client(message); } catch (failure) { return invalid(failure); }
+      return next?.then ? next.then(forward, invalid) : forward(next);
+    }, inputAbort.signal).then(() => {
+      if (!inputAbort.signal.aborted) { bridge.close();child.stdin.end(); }
+    }).catch(cause => { if (!inputAbort.signal.aborted) fail(cause); });
+    let buffered = "", bytes = 0;
+    const flush = () => {
+      if (!buffered) return;
+      const wire = buffered;buffered = "";bytes = 0;return client.write(wire);
+    };
+    const accept = (value, wire) => {
+      if (!value || !bridge.codex(value)) { buffered += wire;bytes += Buffer.byteLength(wire); }
+      if (bytes >= (output.writableHighWaterMark || 1)) return flush();
+    };
+    outputPump = pumpLines(child.stdout, (raw, wire) => {
+      let value;try { value = JSON.parse(raw); } catch {}
+      if (value?.method === "item/tool/call" && value.params?.namespace === IMAGE_HOST_NAMESPACE && destination.pending) return destination.pending.then(() => accept(value, wire));
+      return accept(value, wire);
+    }, outputAbort.signal, flush).catch(fail);
   }
-  const stop = signal => { bridge?.close();child.kill(signal); };
+  const stop = signal => { bridge?.close();inputAbort.abort();outputAbort.abort();child.kill(signal); };
   const interrupt = () => stop("SIGINT"), terminate = () => stop("SIGTERM");
   process.once("SIGINT", interrupt);process.once("SIGTERM", terminate);
-  try { const [code, signal] = await once(child, "exit");await queue;return code ?? (signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 1); }
-  finally { bridge?.close();reportingAbort.abort();for (const cleanup of cleanups) cleanup();input.unpipe(child.stdin);input.pause();process.removeListener("SIGINT", interrupt);process.removeListener("SIGTERM", terminate); }
+  try {
+    const [code, signal] = await completed;
+    bridge?.close();inputAbort.abort();await inputPump;await outputPump;
+    if (failure) throw failure;
+    return code ?? (signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 1);
+  } finally {
+    bridge?.close();inputAbort.abort();outputAbort.abort();reportingAbort.abort();
+    input.unpipe(child.stdin);input.pause();
+    child.stdin.off("error", inputClosed);child.stdin.off("close", inputClosed);input.off("error", fail);child.stdout.off("error", fail);output.off("error", fail);
+    process.removeListener("SIGINT", interrupt);process.removeListener("SIGTERM", terminate);
+  }
 }

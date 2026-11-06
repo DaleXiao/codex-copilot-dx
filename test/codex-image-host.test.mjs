@@ -19,7 +19,7 @@ test("host registration preserves existing native tools and rejects namespace co
   assert.equal(output.dynamicTools[0], other);assert.equal(input.dynamicTools.length, 1);
   assert.equal(output.dynamicTools[1].name, "ccdx_images");
   assert.throws(() => addImageHostTool({ dynamicTools: [{ name: "ccdx_images" }] }), /already configured/);
-  assert.equal(imageHostBaseUrl("http://127.0.0.1:2026/v1"), "http://127.0.0.1:2026/v1");
+  assert.equal(imageHostBaseUrl("http://127.0.0.1:1/v1"), "http://127.0.0.1:1/v1");
   for (const url of ["https://example.com/v1", "http://user:key@127.0.0.1/v1", "http://127.0.0.1/v1?key=x"]) assert.throws(() => imageHostBaseUrl(url));
 });
 
@@ -27,7 +27,7 @@ async function fixture(t, imageFetch) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-image-host-test-"));t.after(() => fs.rm(root, { recursive: true, force: true }));
   const workspace = path.join(root, "project");await fs.mkdir(workspace);
   const events = new EventEmitter(), calls = [];
-  const bridge = createImageHostBridge({ baseUrl: "http://127.0.0.1:2026/v1", codexHome: path.join(root, "profile"), imageEnabled: async () => true,
+  const bridge = createImageHostBridge({ baseUrl: "http://127.0.0.1:1/v1", codexHome: path.join(root, "profile"), imageEnabled: async () => true,
     sendToCodex: value => events.emit("response", value), fetchImpl: async (url, options) => {
       calls.push({ url, ...options });
       return imageFetch ? imageFetch(url, options) : Response.json({ data: [{ b64_json: png.toString("base64") }] }, { headers: { "X-CCDX-Image-Model": "gpt-image-2.5-flare" } });
@@ -88,7 +88,7 @@ test("stdio pass-through preserves credential frames and stops reading when Code
   const script = path.join(root, "echo.mjs");await fs.writeFile(script, 'process.stdin.pipe(process.stdout);process.stdin.on("end",()=>process.exit(0));');
   const input = new PassThrough(), output = new PassThrough(), error = new PassThrough();let text = "";
   output.on("data", value => { text += value; });
-  const running = runCodexImageHost({ codex: process.execPath, argv: [script, "app-server", "--stdio"], baseUrl: "http://127.0.0.1:2026/v1", env: { ...process.env, CODEX_HOME: root }, input, output, error });
+  const running = runCodexImageHost({ codex: process.execPath, argv: [script, "app-server", "--stdio"], baseUrl: "http://127.0.0.1:1/v1", env: { ...process.env, CODEX_HOME: root }, input, output, error });
   const frame = ' {"id":1,"method":"account/login/start","params":{"token":"sensitive sentinel"}}\n';input.end(frame);
   assert.equal(await running, 0);assert.equal(text, frame);assert.equal(input.listenerCount("data"), 0);
 });
@@ -119,7 +119,7 @@ test("the real host entry reads the protected image setting and fails closed", a
 
 test("host evidence follows accepted initialization and thread registration, not a prepared request", async () => {
   const events = [];
-  const bridge = createImageHostBridge({ baseUrl: "http://127.0.0.1:2026/v1", codexHome: "/unused", imageEnabled: async () => true, onEvent: event => events.push(event) });
+  const bridge = createImageHostBridge({ baseUrl: "http://127.0.0.1:1/v1", codexHome: "/unused", imageEnabled: async () => true, onEvent: event => events.push(event) });
   await bridge.client({ id: 1, method: "initialize", params: { capabilities: { experimentalApi: true } } });
   assert.equal(events.length, 0);bridge.codex({ id: 1, result: { userAgent: "fixture" } });assert.equal(events[0].event, "connected");
   await bridge.client({ id: 2, method: "thread/start", params: { cwd: "/tmp" } });assert.equal(events.length, 1);
@@ -128,4 +128,70 @@ test("host evidence follows accepted initialization and thread registration, not
   bridge.codex({ id: 3, result: { thread: { id: "private-chat-id", cwd: "/tmp" } } });
   assert.equal(events[1].event, "registered");assert.match(events[1].thread, /^[a-f0-9]{32}$/);assert.doesNotMatch(JSON.stringify(events), /private-chat-id/);
   bridge.close();assert.equal(events.at(-1).event, "closed");
+});
+
+function fakeHost() {
+  const child = new EventEmitter();child.stdin = new PassThrough();child.stdout = new PassThrough();child.stderr = new PassThrough();
+  child.kill = () => { child.stdout.end();child.stderr.end();queueMicrotask(() => child.emit('close', null, 'SIGTERM'));return true; };
+  return child;
+}
+
+test('host drains stdout after exit and preserves a final frame without a newline', async () => {
+  const child = fakeHost(), input = new PassThrough(), output = new PassThrough();let text = '';
+  output.on('data', value => { text += value; });
+  const pending = runCodexImageHost({ codex: '/fixture', argv: ['app-server'], baseUrl: 'http://127.0.0.1:1/v1', input, output, error: new PassThrough(), spawnImpl: () => child });
+  child.stdout.write('{"method":"first"}\n');child.emit('exit', 0, null);
+  child.stdout.end('{"method":"last"}');child.stderr.end();child.emit('close', 0, null);
+  assert.equal(await pending, 0);assert.equal(text, '{"method":"first"}\n{"method":"last"}');
+  assert.equal(input.listenerCount('readable'), 0);
+});
+
+test('slow client output pauses forwarding and destination close ends the host', async () => {
+  const { Writable } = await import('node:stream');
+  const child = fakeHost(), input = new PassThrough();let accepted = 0;
+  const output = new Writable({ highWaterMark: 16, write(_chunk, _encoding, _callback) { accepted++; } });
+  const pending = runCodexImageHost({ codex: '/fixture', argv: ['app-server'], baseUrl: 'http://127.0.0.1:1/v1', input, output, error: new PassThrough(), spawnImpl: () => child });
+  child.stdout.write(Array.from({ length: 256 }, () => JSON.stringify({ method: 'notification', data: 'a'.repeat(4096) }) + '\n').join(''));
+  await new Promise(setImmediate);assert.equal(accepted, 1);assert.ok(output.writableLength < 8192);
+  const rejected = assert.rejects(pending, /destination closed/);output.destroy();await rejected;
+});
+
+test('slow child input bounds the client processing queue and resumes after drain', async () => {
+  const { Writable } = await import('node:stream');
+  const child = fakeHost(), input = new PassThrough(), output = new PassThrough();let release, accepted = 0, blocked = true;
+  child.stdin = new Writable({ highWaterMark: 16, write(_chunk, _encoding, callback) { accepted++;if (blocked) release = callback;else callback(); } });
+  const pending = runCodexImageHost({ codex: '/fixture', argv: ['app-server'], baseUrl: 'http://127.0.0.1:1/v1', input, output, error: new PassThrough(), spawnImpl: () => child });
+  input.end(Array.from({ length: 256 }, () => JSON.stringify({ method: 'pass', data: 'a'.repeat(4096) }) + '\n').join(''));
+  await new Promise(setImmediate);assert.equal(accepted, 1);assert.ok(child.stdin.writableLength < 8192);
+  blocked = false;release();await new Promise(resolve => child.stdin.once('finish', resolve));
+  assert.equal(accepted, 256);child.stdout.end();child.stderr.end();child.emit('close', 0, null);assert.equal(await pending, 0);
+});
+
+test('a missing native binary rejects without leaving active host readers', async () => {
+  const input = new PassThrough();
+  await assert.rejects(runCodexImageHost({ codex: '/ccdx-missing-fixture-binary', argv: ['app-server'], baseUrl: 'http://127.0.0.1:1/v1', input, output: new PassThrough(), error: new PassThrough() }));
+  assert.equal(input.listenerCount('readable'), 0);
+});
+
+test('stdout drain resumes in order across UTF-8 fragments and exit', async () => {
+  const { Writable } = await import('node:stream');
+  const child = fakeHost(), input = new PassThrough();let release, blocked = true, text = '';
+  const output = new Writable({ highWaterMark: 16, write(chunk, _encoding, callback) { text += chunk;if (blocked) release = callback;else callback(); } });
+  const pending = runCodexImageHost({ codex: '/fixture', argv: ['app-server'], baseUrl: 'http://127.0.0.1:1/v1', input, output, error: new PassThrough(), spawnImpl: () => child });
+  const frame = Buffer.from('{"method":"note","text":"中文😀"}\n{"method":"tail"}');
+  child.stdout.write(frame.subarray(0, 27));child.stdout.end(frame.subarray(27));
+  child.emit('exit', 0, null);child.stderr.end();child.emit('close', 0, null);
+  await new Promise(setImmediate);assert.equal(text.includes('tail'), false);blocked = false;release();
+  assert.equal(await pending, 0);assert.equal(text, frame.toString());
+});
+
+test('closed child stdin does not discard remaining stdout during shutdown', async () => {
+  const { Writable } = await import('node:stream');
+  const child = fakeHost(), input = new PassThrough(), output = new PassThrough();let text = '';
+  output.on('data', chunk => { text += chunk; });
+  child.stdin = new Writable({ highWaterMark: 1, write(_chunk, _encoding, _callback) {} });
+  const pending = runCodexImageHost({ codex: '/fixture', argv: ['app-server'], baseUrl: 'http://127.0.0.1:1/v1', input, output, error: new PassThrough(), spawnImpl: () => child });
+  input.write('{"method":"request"}\n');await new Promise(setImmediate);child.stdin.destroy();
+  child.stdout.end('{"method":"final"}');child.stderr.end();child.emit('close', 0, null);
+  assert.equal(await pending, 0);assert.equal(text, '{"method":"final"}');
 });

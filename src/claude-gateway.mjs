@@ -175,7 +175,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           observeMessagesWindow(selectedProvider, configuredModel || model, selectedCapability, selectedModel);
         }
         tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });
-        conversation = validateConversation?.(body, req.headers, selectedProvider);
+        conversation = await validateConversation?.(body, req.headers, selectedProvider, abort.signal);
         if (!countTokens) observeContextSession(body, req.headers, selectedProvider, "messages");
         terminalOrigin = "transport";
         const call = privacy?.wrap(selectedProvider.client.messages, { res, protocol: "messages", client: privacyClient }) || selectedProvider.client.messages;
@@ -220,7 +220,8 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           if (!upstream.ok) context.onHttpError?.({ ...upstreamErrorEvidence(raw),
             origin: context.countObservation?.cached ? "capability_cache" : "upstream_http", headers: upstream.headers });
           if (!countTokens && upstream.ok && value?.type === "message" && Array.isArray(value.content)) {
-            if (value.content.some(hasMessageState)) conversation?.commit?.({ tool: value.content.some(block => block?.type === "tool_use") });
+            if (value.content.some(hasMessageState)) await conversation?.commit?.({ tool: value.content.some(block => block?.type === "tool_use") });
+            abort.signal.throwIfAborted();
             model = value.model || model;responseId = value.id;usage = value.usage;stopReason = value.stop_reason;
             sawStop = typeof stopReason === "string";outcome = stopReason === "max_tokens" ? "incomplete" : sawStop ? "completed" : "failed";
           } else if (countTokens && upstream.ok && !modelFailure) outcome = "completed";
@@ -230,6 +231,14 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           if (!/^text\/event-stream(?:\s*;|$)/i.test(upstream.headers.get("content-type") || "")) throw new Error("Expected a Claude event stream");
           abort.setTimeout(config.streamIdleTimeoutMs, "stream_idle_timeout");
           res.writeHead(upstream.status, { ...headers, "Cache-Control": "no-cache" });
+          let commitState = null, conversationCommitted = false;
+          const commitOutput = async () => {
+            if (commitState && !conversationCommitted && conversation?.commit) {
+              conversationCommitted = await conversation.commit(commitState) === true;
+              abort.signal.throwIfAborted();
+            }
+            commitState = null;
+          };
           const observer = createMessagesObserver(event => {
             if (event.type === "error") {
               failedEvent = true;outcome = "failed";
@@ -238,7 +247,9 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
             }
             if (sawStop || failedEvent) return;
             if (event.type === "content_block_start" && hasMessageState(event.content_block)
-              || event.type === "content_block_delta" && (isMessagesOutputDelta(event.delta) || event.delta?.type === "signature_delta" && event.delta.signature)) conversation?.commit?.({ tool: event.content_block?.type === "tool_use" });
+              || event.type === "content_block_delta" && (isMessagesOutputDelta(event.delta) || event.delta?.type === "signature_delta" && event.delta.signature)) {
+              if (!conversationCommitted) commitState = { tool: commitState?.tool === true || event.content_block?.type === "tool_use" };
+            }
             if (event.type === "message_start") { responseId = event.message?.id;model = event.message?.model || model;usage = event.message?.usage || {}; }
             if (event.type === "content_block_delta" && isMessagesOutputDelta(event.delta)) tracker?.firstOutput();
             if (event.type === "message_delta") {
@@ -253,12 +264,14 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
               const { value, done } = await reader.read();if (done) break;
               tracker?.upstreamActivity();abort.setTimeout(config.streamIdleTimeoutMs, "stream_idle_timeout");
               const frames = observer.write(value);
+              await commitOutput();
               let writable = true;
               for (const chunk of frames) if (!await writeOrDrain(res, chunk, { signal: abort.signal })) { writable = false;break; }
               if (!writable) break;
               if (sawStop || failedEvent) break;
             }
-            for (const chunk of observer.finish()) if (!await writeOrDrain(res, chunk, { signal: abort.signal })) break;
+            const tail = observer.finish();await commitOutput();
+            for (const chunk of tail) if (!await writeOrDrain(res, chunk, { signal: abort.signal })) break;
             if (!sawStop && !failedEvent) throw new Error("Claude stream ended before message_stop");
             if (!res.writableEnded) res.end();
           } finally { await reader.cancel().catch(() => {});reader.releaseLock(); }

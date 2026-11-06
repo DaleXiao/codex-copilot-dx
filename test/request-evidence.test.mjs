@@ -52,14 +52,14 @@ test('diagnostic model capture rejects credential forms and arbitrary body conte
  for(const model of ['sk-private-value','Bearer private','x'.repeat(200),{value:'private'}]){const c={};runWithRequestContext(c,()=>observeRequestedModel({model}));assert.equal(c.requestedModel,undefined);}
 });
 
-test('a Claude child keeps a separate source guard while the parent and each child remain pinned',t=>{
+test('a Claude child keeps a separate source guard while the parent and each child remain pinned',async t=>{
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'ccdx-child-scope-'));t.after(()=>fs.rmSync(home,{recursive:true,force:true}));
  const guard=createConversationSourceGuard({home,env:{}}),body={messages:[{role:'user',content:'synthetic'}]},headers={'x-claude-code-session-id':'session-one'},salt='synthetic-key';
- guard('claude_code','source-a',body,headers,salt);
- guard('claude_code','source-b',body,{...headers,'x-claude-code-agent-id':'child-one'},salt);
- guard('claude_code','source-a',body,headers,salt);
- assert.throws(()=>guard('claude_code','source-c',body,{...headers,'x-claude-code-agent-id':'child-one'},salt),{code:'ccdx_conversation_source_changed'});
- assert.throws(()=>guard('claude_code','source-b',body,headers,salt),{code:'ccdx_conversation_source_changed'});
+ await guard('claude_code','source-a',body,headers,salt);
+ await guard('claude_code','source-b',body,{...headers,'x-claude-code-agent-id':'child-one'},salt);
+ await guard('claude_code','source-a',body,headers,salt);
+ await assert.rejects(()=>guard('claude_code','source-c',body,{...headers,'x-claude-code-agent-id':'child-one'},salt),{code:'ccdx_conversation_source_changed'});
+ await assert.rejects(()=>guard('claude_code','source-b',body,headers,salt),{code:'ccdx_conversation_source_changed'});
 });
 
 test('manual Messages preserve declared budget adjustments, stop reason and safe transport causes',async t=>{

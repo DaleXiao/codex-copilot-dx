@@ -218,7 +218,8 @@ export function createResponsesHandler(options) {
         autoReviewModelResolver = () => options.providerPreference?.(provider.id);
         if (provider.id !== "github") openAIModelEnv = { ...openAIModelEnv, CCDX_AUTO_REVIEW_MODEL: "" };
       }
-      options.validateConversation?.(parsed, req.headers, provider);
+      const validation = options.validateConversation?.(parsed, req.headers, provider, abort.signal);
+      if (validation?.then) await validation;
       observeContextSession(parsed, req.headers, provider);
       activeDeadline = now() + upstreamTimeoutMs;
       activeTimeoutReason = "responses_prepare_timeout";
@@ -509,7 +510,8 @@ export function createResponsesCompactHandler(options) {
         autoReviewModelResolver = () => options.providerPreference?.(provider.id);
         if (provider.id !== "github") openAIModelEnv = { ...openAIModelEnv, CCDX_AUTO_REVIEW_MODEL: "" };
       }
-      options.validateConversation?.(parsed, req.headers, provider);
+      const validation = options.validateConversation?.(parsed, req.headers, provider, abort.signal);
+      if (validation?.then) await validation;
       observeContextSession(parsed, req.headers, provider);
       activeDeadline = now() + upstreamTimeoutMs;
       activeTimeoutReason = "responses_prepare_timeout";

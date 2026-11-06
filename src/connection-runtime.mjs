@@ -658,7 +658,7 @@ export function createConnectionRuntime({
     if (!source) throw accessError("ccdx_api_not_ready", 503);
     return source;
   }
-  function validateConversation(body, headers, source, client = "codex") {
+  function validateConversation(body, headers, source, signal, client = "codex") {
     if (!body || typeof body !== "object" || Array.isArray(body)) return;
     if (
       managed &&
@@ -683,7 +683,8 @@ export function createConnectionRuntime({
         body,
         headers,
         identities()[client],
-        transfer
+        transfer,
+        signal
       );
     }
   }
@@ -1509,7 +1510,7 @@ export function createConnectionRuntime({
               finish,
             };
           },
-          validateConversation: (body, headers, source) => validateConversation(body, headers, source, id),
+          validateConversation: (body, headers, source, signal) => validateConversation(body, headers, source, signal, id),
           onRequest() {
             lastClients[id] = new Date().toISOString();
           },

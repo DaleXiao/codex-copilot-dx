@@ -26,3 +26,19 @@ export function readBoundedFileSync(filePath, { maxBytes = MAX_SETTINGS_FILE_BYT
     return encoding ? value.toString(encoding) : value;
   } finally { fs.closeSync(fd); }
 }
+
+export async function readBoundedFile(filePath, { maxBytes = MAX_SETTINGS_FILE_BYTES, encoding } = {}) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new RangeError("Invalid local file byte limit");
+  const file = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+  try {
+    const stat = await file.stat();
+    if (!stat.isFile() || stat.size > maxBytes) throw Object.assign(new Error("Local configuration file exceeds its read limit or is not a regular file"), { code: "ccdx_local_file_limit" });
+    const buffer = Buffer.alloc(stat.size + 1);let size = 0;
+    while (size < buffer.length) {
+      const { bytesRead } = await file.read(buffer, size, buffer.length - size, size);
+      if (!bytesRead) break;size += bytesRead;
+    }
+    if (size > stat.size) throw Object.assign(new Error("Local configuration file grew during reading; retry after the write finishes"), { code: "ccdx_local_file_changed" });
+    const value = buffer.subarray(0, size);return encoding ? value.toString(encoding) : value;
+  } finally { await file.close(); }
+}

@@ -207,7 +207,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     cacheModelEndpoints() {},
     async responses(body, options = {}) {
       const model = selectedModel(body.model, "gpt");
-      if (account) guardConversation(account, body, currentRequestContext()?.clientHeaders || options.headers);
+      if (account) { const admission = guardConversation(account, body, currentRequestContext()?.clientHeaders || options.headers, { signal: options.signal });if (admission?.then) await admission; }
       const prepared = await prepareResponsesPayload(body, { ...options.payloadOptions, assertActive: options.assertActive,
         currentInputStart: options.currentInputStart || 0, signal: options.signal,
         profiles: options.payloadPrepared ? [] : options.payloadOptions?.profiles,
@@ -225,7 +225,7 @@ export function createM365Provider({ home, env = process.env, account: accountOv
     async messages(body, options = {}) {
       if (catalog && now() - catalogAt >= SOFT_TTL_MS && !flight) void refresh().catch(() => {});
       const model = selectedModel(body.model, "claude");
-      if (account) guardConversation(account, body, options.headers, { profile: profile(), countTokens: options.countTokens === true });
+      if (account) { const admission = guardConversation(account, body, options.headers, { profile: profile(), countTokens: options.countTokens === true, signal: options.signal });if (admission?.then) await admission; }
       const efforts = modelReasoningEfforts(model);
       if (body.output_config?.effort !== undefined && efforts && !efforts.includes(body.output_config.effort)) {
         throw protocolError("m365_effort_unavailable", "The selected effort is not advertised by this model. Refresh its model list and select an available effort.");

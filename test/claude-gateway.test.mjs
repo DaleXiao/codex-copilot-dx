@@ -352,3 +352,23 @@ test("bare upstream JSON errors fail promptly instead of waiting for message_sto
   assert.throws(() => observer.write(Buffer.from('{"error":{"type":"overloaded_error","message":"busy"}}\n')), /outside an SSE/);
   assert.equal(seen[0].type, "error");assert.equal(seen[0].error.type, "overloaded_error");
 });
+
+test('Messages output waits for checkpoint commit in JSON and SSE delivery', { timeout: 5000 }, async () => {
+  const { Readable } = await import('node:stream'), { EventEmitter } = await import('node:events');
+  const { createClaudeGatewayHandler } = await import('../src/claude-gateway.mjs');
+  for (const stream of [false, true]) for (const failed of [false, true]) {
+    let enter, finish, committed = false, delivered = '', released = false;
+    const entered = new Promise(resolve => { enter = resolve; }), gate = new Promise((resolve, reject) => { finish = failed ? () => reject(Error("Checkpoint denied")) : resolve; });
+    const handler = createClaudeGatewayHandler({ apiKey: key, record() {}, validateConversation: async () => ({ async commit() { enter();await gate;committed = true;return true; }, release() { released = true; } }),
+      provider: { id: 'm365', models: () => [], client: { messages: async () => stream ? new Response([
+        { type: 'message_start', message: { ...message, content: [] } }, { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ALPHA' } },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' } }, { type: 'message_stop' }].map(value => `data: ${JSON.stringify(value)}\n\n`).join(''), { headers: { 'Content-Type': 'text/event-stream' } }) : Response.json({ ...message, content: [{ type: 'text', text: 'ALPHA' }] }) } } });
+    const req = Readable.from([JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'synthetic' }], stream })]);
+    req.method = 'POST';req.url = '/v1/messages';req.headers = { host: '127.0.0.1', 'content-type': 'application/json', 'x-api-key': key };req.socket = { remoteAddress: '127.0.0.1' };
+    const res = new EventEmitter();res.headersSent = false;res.writableEnded = false;
+    res.writeHead = () => { res.headersSent = true; };res.write = chunk => { if (String(chunk).includes("ALPHA")) assert.equal(committed, true);delivered += chunk;return true; };
+    res.end = chunk => { if (chunk) { if (String(chunk).includes("ALPHA")) assert.equal(committed, true);delivered += chunk; }res.writableEnded = true;res.emit('finish'); };
+    const pending = handler(req, res);await entered;assert.equal(delivered, '');finish();await pending;
+    if (failed) assert.doesNotMatch(delivered, /ALPHA/);else assert.match(delivered, /ALPHA/);assert.equal(released, true);
+  }
+});

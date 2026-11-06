@@ -135,3 +135,45 @@ export function atomicWriteFileIfChangedSync(filePath, data, options = {}) {
   atomicWriteFileSync(filePath, data, options);
   return true;
 }
+
+export async function atomicWriteFile(filePath, data, { mode = 0o600, preserveMode = true } = {}) {
+  const io = fs.promises, directory = path.dirname(filePath);
+  let finalMode = mode;
+  if (preserveMode) { try { finalMode = (await io.stat(filePath)).mode & 0o777; } catch (error) { if (error.code !== "ENOENT") throw error; } }
+  await io.mkdir(directory, { recursive: true, mode: 0o700 });
+  const tempPath = path.join(directory, `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
+  let file;
+  try {
+    file = await io.open(tempPath, "wx", finalMode);await file.writeFile(data);await file.sync();await file.close();file = null;
+    await io.rename(tempPath, filePath);await io.chmod(filePath, finalMode);
+    if (process.platform !== "win32") {
+      let dir;
+      try { dir = await io.open(directory, "r");await dir.sync(); }
+      catch (error) { if (!["EINVAL", "ENOTSUP", "EBADF"].includes(error.code)) throw error; }
+      finally { await dir?.close(); }
+    }
+  } finally {
+    await file?.close();
+    try { await io.unlink(tempPath); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+}
+
+export async function atomicWriteFilePair(primaryPath, primaryData, secondaryPath, secondaryData, { mode = 0o600, writeFile = atomicWriteFile, unlinkFile = file => fs.promises.unlink(file) } = {}) {
+  const snapshot = async file => {
+    try { return { data: await fs.promises.readFile(file), mode: (await fs.promises.stat(file)).mode & 0o777 }; }
+    catch (error) { if (error.code === "ENOENT") return null;throw error; }
+  };
+  const remove = async file => { try { await unlinkFile(file); } catch (error) { if (error.code !== "ENOENT") throw error; } };
+  const write = (file, data, mode) => writeFile(file, data, { mode, preserveMode: false });
+  const before = [await snapshot(primaryPath), await snapshot(secondaryPath)];
+  try {
+    await write(primaryPath, primaryData, mode);
+    if (secondaryData === null) await remove(secondaryPath);else await write(secondaryPath, secondaryData, mode);
+  } catch (error) {
+    for (const [file, saved] of [[primaryPath, before[0]], [secondaryPath, before[1]]]) {
+      try { if (saved) await write(file, saved.data, saved.mode);else await remove(file); }
+      catch (cause) { error.rollbackError ||= cause; }
+    }
+    throw error;
+  }
+}

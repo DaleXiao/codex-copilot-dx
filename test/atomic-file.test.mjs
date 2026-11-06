@@ -42,3 +42,16 @@ test("atomicWriteFileIfChangedSync: does not replace identical content", async (
   assert.equal(atomicWriteFileIfChangedSync(filePath, "changed"), true);
   assert.equal(fs.readFileSync(filePath, "utf8"), "changed");
 });
+
+test('async paired writes restore both files when the activation write fails', async t => {
+  const { atomicWriteFile, atomicWriteFilePair } = await import('../src/atomic-file.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccdx-async-pair-'));t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const a = path.join(dir, 'primary'), b = path.join(dir, 'marker');
+  await atomicWriteFile(a, 'before-a');await atomicWriteFile(b, 'before-b');let reject = true;
+  await assert.rejects(atomicWriteFilePair(a, 'after-a', b, 'after-b', { writeFile: async (file, value, options) => {
+    if (file === b && reject) { reject = false;throw Error('fixture activation failed'); }
+    await atomicWriteFile(file, value, options);
+  } }), /activation failed/);
+  assert.equal(fs.readFileSync(a, 'utf8'), 'before-a');assert.equal(fs.readFileSync(b, 'utf8'), 'before-b');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['marker', 'primary']);
+});

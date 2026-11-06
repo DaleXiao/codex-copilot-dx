@@ -1,10 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+import { setTimeout as delay } from "node:timers/promises";
 
 // Synchronous configuration writers share the same cross-process lock format.
 // Readers never take the lock. A live lock is never stolen on timeout.
@@ -269,6 +266,7 @@ export async function withFileLock(lockPath, fn, {
   now = Date.now,
   fsImpl = fs,
   processAlive = processIsAlive,
+  signal,
 } = {}) {
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   const started = now();
@@ -277,12 +275,13 @@ export async function withFileLock(lockPath, fn, {
   const guardPath = reclaimGuardPath(lockPath);
 
   while (fd === null) {
+    signal?.throwIfAborted();
     const beforeAcquire = now();
     if (lockPathExists(guardPath, fsImpl)) {
       maybeRemoveAbandonedGuard(guardPath, staleMs, beforeAcquire, fsImpl, processAlive);
       if (lockPathExists(guardPath, fsImpl)) {
         if (beforeAcquire - started >= timeoutMs) throw new Error(`Timed out waiting for lock: ${lockPath}`);
-        await sleep(Math.min(pollMs, Math.max(1, timeoutMs - (beforeAcquire - started))));
+        await delay(Math.min(pollMs, Math.max(1, timeoutMs - (beforeAcquire - started))), undefined, { signal });
         continue;
       }
     }
@@ -306,11 +305,12 @@ export async function withFileLock(lockPath, fn, {
       if (nowMs - started >= timeoutMs) {
         throw new Error(`Timed out waiting for lock: ${lockPath}`);
       }
-      await sleep(Math.min(pollMs, Math.max(1, timeoutMs - (nowMs - started))));
+      await delay(Math.min(pollMs, Math.max(1, timeoutMs - (nowMs - started))), undefined, { signal });
     }
   }
 
   try {
+    signal?.throwIfAborted();
     return await fn();
   } finally {
     try {

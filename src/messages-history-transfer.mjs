@@ -1,10 +1,10 @@
-import fs from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { accessSettingsPath } from "./access-settings.mjs";
-import { readBoundedFileSync } from "./bounded-file.mjs";
-import { atomicWriteFilePairSync } from "./atomic-file.mjs";
-import { withFileLockSync } from "./lock.mjs";
+import { readBoundedFile } from "./bounded-file.mjs";
+import { atomicWriteFilePair } from "./atomic-file.mjs";
+import { withFileLock } from "./lock.mjs";
 
 const grants = new WeakMap(), HASH = /^[a-f0-9]{64}$/, LIMIT = 1024;
 const digest = value => createHash("sha256").update(JSON.stringify(value, (key, entry) => key === "cache_control" ? undefined : entry)).digest("hex");
@@ -141,29 +141,29 @@ function project(body, count) {
 // fingerprints; it neither changes routing nor stores conversation contents.
 export function createMessagesHistoryTransfer(options = {}) {
   const file = messagesTransferPath(options), canonicalFile = path.join(path.dirname(file), "conversation-prefixes.json"), active = new Map();let records;
-  function readFile(target, canonical = false) {
-    try { return checkedRecords(JSON.parse(readBoundedFileSync(target, { encoding: "utf8", maxBytes: 512 * 1024 })), canonical); }
+  async function readFile(target, canonical = false) {
+    try { return checkedRecords(JSON.parse(await readBoundedFile(target, { encoding: "utf8", maxBytes: 512 * 1024 })), canonical); }
     catch (error) { if (error.code === "ENOENT") return {};invalidState(); }
   }
-  function read() {
-    const raw = readFile(file), canonical = readFile(canonicalFile, true);
+  async function read() {
+    const raw = await readFile(file), canonical = await readFile(canonicalFile, true);
     return Object.fromEntries(Object.entries(raw).map(([key, record]) => [key, { ...record,
       ...(canonical[key]?.owner === record.owner && canonical[key].raw_count === record.count && canonical[key].raw_prefix === record.prefix ? { canonical: canonical[key] } : {}) }]));
   }
-  function save(key, record) {
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    withFileLockSync(`${file}.lock`, () => {
-      const next = read();delete next[key];next[key] = { ...record.raw, canonical: record.canonical };
+  async function save(key, record, signal) {
+    await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    await withFileLock(`${file}.lock`, async () => {
+      const next = await read();delete next[key];next[key] = { ...record.raw, canonical: record.canonical };
       while (Object.keys(next).length > LIMIT) delete next[Object.keys(next)[0]];
       const raw = Object.fromEntries(Object.entries(next).map(([key, { canonical, ...value }]) => [key, value]));
       const canonical = Object.fromEntries(Object.entries(next).filter(([, value]) => value.canonical).map(([key, value]) => [key, value.canonical]));
       checkedRecords({ version: 1, records: raw });checkedRecords({ version: 1, records: canonical }, true);
-      atomicWriteFilePairSync(file, JSON.stringify({ version: 1, records: raw }) + "\n", canonicalFile, JSON.stringify({ version: 1, records: canonical }) + "\n");records = next;
-    });
+      await atomicWriteFilePair(file, JSON.stringify({ version: 1, records: raw }) + "\n", canonicalFile, JSON.stringify({ version: 1, records: canonical }) + "\n");records = next;
+    }, { timeoutMs: 1000, staleMs: 60_000, pollMs: 10, signal });
   }
-  return { prepare({ key, owner, previousOwner, profile, body, countTokens = false, knownOwners = [] }) {
+  return { async prepare({ key, owner, previousOwner, profile, body, countTokens = false, knownOwners = [], signal }) {
     if (!Array.isArray(body?.messages) || body.input !== undefined) return null;
-    records ||= read();const entry = records[key], changed = entry ? entry.owner !== owner : Boolean(previousOwner && previousOwner !== owner);
+    if (!records) records = await read();const entry = records[key], changed = entry ? entry.owner !== owner : Boolean(previousOwner && previousOwner !== owner);
     const initial = knownOwners.includes(entry?.owner || previousOwner);
     const hasHistory = history(body), noncommitting = countTokens || Boolean(changed || entry) && !hasHistory;
     const items = changed || entry ? canonicalItems(body.messages) : null;
@@ -175,17 +175,19 @@ export function createMessagesHistoryTransfer(options = {}) {
       }
       const grant = { profile, noncommitting: true, initial, active: true };grants.set(body, grant);
       const nextCheckpoint = countTokens ? null : checkpoint(owner, body.messages);
-      let toolLease, committed = false;
-      return { handled: true, commit(state) {
+      let toolLease, committed = false, released = false, committing;
+      return { handled: true, async commit(state) {
         // A no-history model probe must not pin the conversation. An actual
         // tool call must: its following results continue this very same turn.
-        if (countTokens || !state?.tool || committed) return;
+        if (committing) return committing;
+        if (countTokens || !state?.tool || committed || released) return committed;
         const lease = active.get(key);
         if (lease && lease.owner !== owner) fail("ccdx_history_transfer_busy", "Wait for the current response to finish before switching sources.");
-        save(key, nextCheckpoint);committed = true;
         toolLease = lease || { owner, count: 0 };toolLease.count++;active.set(key, toolLease);
+        committing = save(key, nextCheckpoint, signal).then(() => { committed = true;return true; });
+        return committing;
       }, release() {
-        grant.active = false;if (toolLease && --toolLease.count === 0) active.delete(key);toolLease = null;
+        released = true;grant.active = false;if (toolLease && --toolLease.count === 0) active.delete(key);toolLease = null;
       } };
     }
     const lease = active.get(key);
@@ -205,12 +207,17 @@ export function createMessagesHistoryTransfer(options = {}) {
       removed = project(body, count);grant = { profile, noncommitting: false, initial, active: true };grants.set(body, grant);
     }
     const current = lease || { owner, count: 0 };current.count++;active.set(key, current);
-    let released = false, committed = false;
-    return { handled: Boolean(changed || entry), commit() {
-      if (committed || released) return;
-      if (candidate) save(key, candidate);
-      committed = true;
-      if (candidate && changed) options.onTransfer?.({ removed_thinking: removed });
+    let released = false, committed = false, committing;
+    return { handled: Boolean(changed || entry), async commit() {
+      if (committing) return committing;
+      if (committed || released) return committed;
+      committing = (async () => {
+        if (candidate) await save(key, candidate, signal);
+        committed = true;
+        if (candidate && changed) options.onTransfer?.({ removed_thinking: removed });
+        return true;
+      })();
+      return committing;
     }, release() {
       if (released) return;released = true;if (grant) grant.active = false;
       if (--current.count === 0) active.delete(key);

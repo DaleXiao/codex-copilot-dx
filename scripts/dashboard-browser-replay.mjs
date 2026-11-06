@@ -67,16 +67,26 @@ const localTools = {
 };
 const networkDiagnostic = { source: "system", stage: "proxy_config", cause_code: "proxy_bypass_invalid" };
 let m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
-let manualUpdates = 0;const imageActions = [], imageConfirmations = [];let imageApp = { status: "stopped" };
+let manualUpdates = 0;const imageActions = [], codexActions = [];let imageApp = { status: "stopped" }, codexPending = false;
 const serviceControl = createServiceControl({ home, env: {},
   imageHostControl: async (operation, options) => {
-    imageActions.push(operation);imageConfirmations.push(options.confirmed);
+    imageActions.push(operation);
     if (operation === "check") return { status: "checked", app: { ...imageApp }, connection: { state: "verified", scope: "node_loopback", app_path: "unconfirmed" } };
     if (operation === "repair") return { status: "prepared", app: { ...imageApp } };
-    if (operation === "open") { imageApp = { status: "running", host: "unconfirmed" };return { status: "opened_new_chat_required", app: { status: "unknown" } }; }
-    if (operation === "restart") { assert.equal(options.confirmed, true);imageApp = { status: "running", host: "connected", tool_registration: "observed" };return { status: "opened_new_chat_required", app: { status: "unknown" } }; }
-    if (operation === "focus") return { status: "focused", app: { ...imageApp } };
     throw new Error("Unexpected image operation");
+  },
+  codexLaunchControl: async (operation, options) => {
+    codexActions.push({ operation, intent: options.intent, confirmed: options.confirmed });
+    if (operation === "check") return { status: "checked", app: { ...imageApp } };
+    if (operation === "open") { imageApp = { status: "running", host: "unconfirmed", needs_restart: true };return { status: "opened_new_chat_required", app: { status: "unknown" } }; }
+    if (operation === "restart") {
+      assert.equal(options.confirmed, true);imageApp = { status: "running", host: "connected", tool_registration: "observed", needs_restart: false };
+      writePredictionSettings({ version: 1, enabled: true, displayPending: codexPending }, { home, env: {} });
+      return codexPending ? { status: "opened_with_pending", prediction_pending: true, app: { status: "unknown" } }
+        : { status: "opened_new_chat_required", app: { status: "unknown" } };
+    }
+    if (operation === "focus") return { status: "focused", app: { ...imageApp } };
+    throw new Error("Unexpected Codex operation");
   },
   manualUpdate: () => { manualUpdates++;return { status: "queued" }; },
   predictionControl: (operation, opts) => controlPrediction(operation, { ...opts, nativeOperation: handlePredictionOperation, platform: "darwin", exec: () => { throw Object.assign(Error("closed"), { status: 1 }); } }),
@@ -359,24 +369,43 @@ try {
         await page.waitForFunction(value => !document.getElementById("setting-image_enabled").disabled && document.getElementById("setting-image_enabled").checked === value, !imageBefore);
         await page.locator("#setting-image_enabled").setChecked(imageBefore);
         await page.waitForFunction(() => !document.getElementById("setting-image_enabled").disabled);
-        for (const operation of ["check", "repair", "open"]) {
+        for (const operation of ["check", "repair"]) {
           await page.locator("#image-" + operation).click();
           await page.waitForFunction(operation => !document.getElementById("image-" + operation).disabled && document.getElementById("image-action-note").dataset.operation === operation, operation);
           assert.equal(imageActions.at(-1), operation);
           assert.equal(await page.locator("#image-action-note").isVisible(), true);
         }
+        await page.locator("#image-open").click();
+        await page.waitForFunction(() => document.getElementById("image-action-note").dataset.operation === "open" && !document.getElementById("image-open").disabled);
+        assert.equal(codexActions.at(-1).operation, "open");assert.equal(codexActions.at(-1).intent, "image");
         await page.locator("#image-check").click();
         await page.waitForFunction(() => document.getElementById("image-open").getAttribute("data-i18n") === "image_restart" && !document.getElementById("image-open").disabled);
         assert.equal(await page.locator("#image-restart-warning").isVisible(), true);
         await page.locator("#image-open").click();
         await page.waitForFunction(() => document.getElementById("image-action-note").dataset.operation === "restart" && !document.getElementById("image-open").disabled);
-        assert.equal(imageActions.at(-1), "restart");assert.equal(imageConfirmations.at(-1), true);
+        assert.deepEqual(codexActions.at(-1), { operation: "restart", intent: "image", confirmed: true });
         await page.locator("#image-check").click();
         await page.waitForFunction(() => document.getElementById("image-open").getAttribute("data-i18n") === "image_focus" && !document.getElementById("image-open").disabled);
         assert.equal(await page.locator("#image-restart-warning").isVisible(), false);
         await page.locator("#image-open").click();
         await page.waitForFunction(() => document.getElementById("image-action-note").dataset.operation === "focus" && !document.getElementById("image-open").disabled);
-        assert.equal(imageActions.at(-1), "focus");
+        assert.equal(codexActions.at(-1).operation, "focus");
+        writePredictionSettings({ version: 1, enabled: true, displayPending: true }, { home, env: {} });
+        imageApp = { status: "running", host: "connected", tool_registration: "observed", needs_restart: true };
+        await page.locator("#refresh").click();await page.waitForFunction(() => !document.getElementById("refresh").disabled);
+        await page.locator("#image-check").click();
+        await page.waitForFunction(() => document.getElementById("prediction-open").getAttribute("data-i18n") === "image_restart" && !document.getElementById("prediction-open").disabled);
+        assert.equal(await page.locator("#prediction-restart-warning").isVisible(), true);
+        await page.locator("#prediction-open").click();
+        await page.waitForFunction(() => document.getElementById("prediction-action-note").dataset.operation === "restart" && !document.getElementById("prediction-open").disabled);
+        assert.deepEqual(codexActions.at(-1), { operation: "restart", intent: "prediction", confirmed: true });
+        codexPending = true;imageApp = { status: "running", host: "connected", needs_restart: true };
+        await page.locator("#image-check").click();
+        await page.waitForFunction(() => document.getElementById("prediction-open").getAttribute("data-i18n") === "image_restart" && !document.getElementById("prediction-open").disabled);
+        await page.locator("#prediction-open").click();
+        await page.waitForFunction(() => document.getElementById("prediction-action-note").getAttribute("data-i18n") === "codex_action_prediction_pending");
+        assert.match(await page.locator("#prediction-action-note").innerText(), /still need repair|仍需修复/);
+        codexPending = false;writePredictionSettings({ version: 1, enabled: true, displayPending: false }, { home, env: {} });
         if (output && width === 1280 && language === "zh") { await page.evaluate(() => window.scrollTo(0, 0));await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-codex.png`), fullPage: true }); }
         await nav("claude");
         assert.match(await page.locator("#claude-route").textContent(), /\/anthropic/);

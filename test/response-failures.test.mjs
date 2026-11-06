@@ -26,6 +26,17 @@ test("only known local GET/HEAD discovery replies are separated from failures", 
   assert.ok(state.actionable_recent.some(row => row.http_status === 403));assert.ok(state.actionable_recent.some(row => row.http_status === 401));
 });
 
+test("only status-compatible sanitized source codes reach local diagnostics", () => {
+  const text = JSON.stringify({ error: { code: "ccdx_api_http_429", upstream_code: "credit_balance_exhausted", message: "safe" } });
+  const accepted = upstreamErrorEvidence(text, { status: 429 });
+  assert.equal(accepted.upstream_code, "credit_balance_exhausted");
+  const record = buildHttpFailureDetails({ statusCode: 429, route: "responses", ...accepted });
+  assert.equal(record.upstream_code, "credit_balance_exhausted");
+  assert.equal(upstreamErrorEvidence(text, { status: 502 }).upstream_code, undefined);
+  assert.equal(buildHttpFailureDetails({ statusCode: 502, route: "responses", ...accepted }).upstream_code, undefined);
+  assert.equal(upstreamErrorEvidence(JSON.stringify({ error: { code: "insufficient_quota" } }), { status: 429 }).upstream_code, "insufficient_quota");
+});
+
 test("HTTP evidence is bounded technical metadata; arbitrary prose requires explicit opt-in", () => {
   const body = JSON.stringify({ error: { code: "unsupported_value", type: "invalid_request_error", param: "reasoning.effort", message: 'Rejected. prompt="private prompt" Bearer secret-token' } });
   assert.deepEqual(upstreamErrorEvidence(body), { error_body: "structured", code: "unsupported_value", error_type: "invalid_request_error", parameter: "reasoning.effort" });

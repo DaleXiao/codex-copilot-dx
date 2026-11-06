@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { invokeAdapter } from "../test-support/adapter.mjs";
+import { invokeAdapter, invokeAdapterRequest } from "../test-support/adapter.mjs";
+import { Readable } from "node:stream";
 import { createAdapterHandler } from "../src/adapter.mjs";
 import { NATIVE_IMAGE_MODEL, nativeImageRequest } from "../src/native-images.mjs";
 import { createCopilotClient } from "../src/copilot.mjs";
@@ -114,4 +115,47 @@ test("image HTTP errors are safe JSON with metadata and release the vendor body"
     assert.equal(r.headers['Content-Type'], 'application/json');assert.equal(r.headers['Retry-After'], '12');
     assert.equal(r.headers['Set-Cookie'], undefined);assert.equal(cancelled, 1);assert.equal(calls, 1);
   }
+});
+
+test("image errors expose only allowlisted source codes and preserve HTTP metadata", async () => {
+  for (const [status, upstream, expected] of [[429, "credit_balance_exhausted", "credit_balance_exhausted"],
+    [422, "context_length_exceeded", "context_length_exceeded"], [502, "context_length_exceeded", null], [422, "unrecognized", null]]) {
+    let calls = 0;const f = fixture({ codexClient: { images: async () => { calls++;
+      return Response.json({ error: { code: upstream, message: "private prompt synthetic-secret" } }, { status, headers: { "Retry-After": "12" } });
+    } } });
+    const r = await invokeAdapter(f.options, { url: "/v1/images/generations", body: request });
+    const error = JSON.parse(r.text).error;
+    assert.equal(r.status, status);assert.equal(error.code, `ccdx_images_http_${status}`);assert.equal(error.upstream_code || null, expected);
+    assert.equal(r.headers["Retry-After"], "12");assert.equal(calls, 1);assert.doesNotMatch(r.text, /private prompt|synthetic-secret/);
+  }
+});
+
+test("the retained image failure contains the safe source code, not vendor text", async t => {
+  const f = fixture({ codexClient: { images: async () => Response.json({ error: { code: "credit_balance_exhausted", message: "private-prompt fixture-secret" } }, { status: 429 }) } });
+  const handler = createAdapterHandler(f.options);t.after(() => handler.cleanup?.());
+  const bytes = Buffer.from(JSON.stringify(request)), req = Readable.from([bytes]);
+  req.headers = { "content-type": "application/json", "content-length": String(bytes.length) };
+  req.method = "POST";req.url = "/v1/images/generations";req.socket = { remoteAddress: "127.0.0.1" };
+  const response = await invokeAdapterRequest({}, req, handler);assert.equal(response.status, 429);
+  const issue = handler.snapshot().http_errors.actionable_recent.at(-1);
+  assert.equal(issue.code, "ccdx_images_http_429");assert.equal(issue.upstream_code, "credit_balance_exhausted");
+  assert.doesNotMatch(JSON.stringify(issue), /private-prompt|fixture-secret/);
+});
+
+test("slow upstream error bodies do not occupy the two image generation slots", async t => {
+  let reading = 0, ready;const started = new Promise(resolve => { ready = resolve; });
+  const f = fixture({ codexClient: { images: async (_operation, body) => {
+    if (body.prompt === "success") return Response.json(result);
+    return new Response(new ReadableStream({ pull() { if (++reading === 2) ready();return new Promise(() => {}); }, cancel() {} }), { status: 429 });
+  } } });
+  const handler = createAdapterHandler(f.options);t.after(() => handler.cleanup?.());
+  const call = prompt => {
+    const bytes = Buffer.from(JSON.stringify({ ...request, prompt })), req = Readable.from([bytes]);
+    req.headers = { "content-type": "application/json", "content-length": String(bytes.length) };
+    req.method = "POST";req.url = "/v1/images/generations";req.socket = { remoteAddress: "127.0.0.1" };
+    return invokeAdapterRequest({}, req, handler);
+  };
+  const errors = Promise.all([call("one"), call("two")]);await started;await new Promise(setImmediate);
+  const success = await call("success");assert.equal(success.status, 200);assert.equal(JSON.parse(success.text).data.length, 1);
+  for (const result of await errors) assert.equal(result.status, 429);
 });

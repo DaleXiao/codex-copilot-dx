@@ -25,7 +25,7 @@ test("runtime image evidence distinguishes registration, process exit and invali
 test("manual image repair prepares owned launch files and never reopens a running App", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-image-control-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   let running = true, opened = 0, configured = 0;
-  const options = { home, env: {}, integration: { configure: async () => { configured++; }, start: async () => ({ pacUrl: "route", app: "app", prepareRoute: async () => {} }) },
+  const options = { home, env: {}, readSummary: () => ({ enabled: true, configured: true, selected_available: true }), integration: { configure: async () => { configured++; }, start: async () => ({ pacUrl: "route", app: "app", prepareRoute: async () => {} }) },
     prepare: async () => ({ app: "app", env: { CODEX_CLI_PATH: "owned" } }), inspect: async () => running ? { status: "running", pid: 123, host: "unconfirmed" } : { status: "stopped" },
     launch: async value => { assert.equal(value.predictionPacUrl, "route");assert.equal(value.imageHost.env.CODEX_CLI_PATH, "owned");opened++;return true; } };
   assert.equal((await controlImage("open", options)).status, "needs_app_relaunch");assert.equal(opened, 0);
@@ -80,7 +80,7 @@ test("check and focus identify a connected App without claiming other chats have
     inspect: async () => ({ status: "running", pid: 123, host: "connected", tool_registration: "observed" }),
     appControl: async (_app, _pid, operation) => { actions.push(operation);return "sent"; },
     connection: async () => ({ state: "verified" }) };
-  const checked = await controlImage("check", options);assert.deepEqual(checked.app, { status: "running", host: "connected", tool_registration: "observed" });
+  const checked = await controlImage("check", options);assert.deepEqual(checked.app, { status: "running", host: "connected", tool_registration: "observed", needs_restart: false });
   assert.equal((await controlImage("focus", options)).status, "focused");assert.deepEqual(actions, ["activate"]);
 });
 

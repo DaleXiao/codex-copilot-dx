@@ -1,5 +1,6 @@
 import { createImageHostState } from "./image-host-state.mjs";
 import { controlImage } from "./image-control.mjs";
+import { controlCodexLaunch } from "./codex-launch-control.mjs";
 import { serviceSettingsSnapshot, servicePreferences, writeServicePreference,
   writeTerminalAnimationTheme, writeTerminalColorTheme, responseHistoryLimitPreference, writeResponseHistoryLimitMib,
   nightlyUpdatePreference, writeNightlyUpdatePreference, decodedBodyLimitPreference, writeDecodedBodyLimitMib } from "./user-settings.mjs";
@@ -12,7 +13,7 @@ import { imageSetupSummary, configureImageSetup } from "./image-setup.mjs";
 
 export function createServiceControl({ env = process.env, home, providerRuntime, clientIntegration, terminal,
   nightlyStatus = () => null, nightlyChanged = () => {},
-  manualUpdate, predictionControl = controlPrediction, imageControl = configureImageSetup, imageHostControl = controlImage,
+  manualUpdate, predictionControl = controlPrediction, imageControl = configureImageSetup, imageHostControl = controlImage, codexLaunchControl = controlCodexLaunch,
   adapterPort = 2026, adapterHost = "127.0.0.1",
   readImages = () => imageSetupSummary({ env, home }).configured, readPrediction = () => readPredictionSettings({ env, home }) } = {}) {
   const options = { env, home };
@@ -47,12 +48,16 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     const allowed = { preference: ["action", "key", "value"], nightly_update: ["action", "enabled"], animation: ["action", "theme"], color_theme: ["action", "theme"],
       history_limit: ["action", "mib"], history_clean: ["action"], prediction_fix: ["action"],
       prediction: ["action", "operation"], image: ["action", "operation", "model", "evidence", "confirmed"],
+      codex_app: ["action", "operation", "intent", "confirmed"],
       update: ["action", "confirmed"], decoded_limit: ["action", "mib"],
       preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id", "scope"], restore_preferences: ["action", "revision", "backup_id", "scope"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
     if (!allowed || Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unknown setting action or field");
     lastOperation = null;
-    if (input.action === "prediction") {
+    if (input.action === "codex_app") {
+      lastOperation = { feature: "codex_app", result: await codexLaunchControl(input.operation, { ...options, host: adapterHost, port: adapterPort,
+        integration: clientIntegration, state: imageHostState, intent: input.intent, confirmed: input.confirmed, models: providerRuntime?.imageModels?.().models || [] }) };
+    } else if (input.action === "prediction") {
       lastOperation = { feature: "prediction", result: await predictionControl(input.operation, { ...options, integration: clientIntegration }) };
     } else if (input.action === "image") {
       if (["check", "repair", "open", "focus", "restart"].includes(input.operation)) lastOperation = { feature: "image", result: await imageHostControl(input.operation, { ...options, host: adapterHost, port: adapterPort, integration: clientIntegration, state: imageHostState, confirmed: input.confirmed, models: providerRuntime?.imageModels?.().models || [] }) };

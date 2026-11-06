@@ -17,6 +17,18 @@ test('identical counts share one call and return independently readable response
  const again = counter.count(body);await turn();assert.equal(calls, 2);release();await again;
 });
 
+test('a late identical waiter releases admission when error headers have already arrived', async () => {
+ let finish, calls=0, notifications=[];
+ const counter=createApiTokenCounter({request:async(_body,options)=>{
+  calls++;options.onUpstreamStart();options.onUpstreamErrorHeaders(501);
+  await new Promise(resolve=>{finish=resolve;});return Response.json({error:{code:'unsupported'}},{status:501});
+ }});
+ const first=counter.count(body,{onUpstreamErrorHeaders:status=>notifications.push(['first',status])});await turn();
+ const second=counter.count(body,{onUpstreamErrorHeaders:status=>notifications.push(['second',status])});await turn();
+ assert.deepEqual(notifications,[['first',501],['second',501]]);assert.equal(calls,1);
+ finish();assert.equal((await first).status,501);assert.equal((await second).status,501);
+});
+
 test('cancelling one count waiter leaves another alive; all waiters abort the shared call', async () => {
  let release, signal;
  const counter = createApiTokenCounter({ request: async (_body, options) => {
@@ -43,7 +55,7 @@ test('a 404 is scoped to model and beta headers, expires, and does not cross pro
  await createApiTokenCounter({request:run}).count(body);assert.equal(calls,5);
 });
 
-for(const status of [401,403,405,429,500,503])test(`count HTTP ${status} retains status and Retry-After without a capability cache`,async()=>{
+for(const status of [401,403,405,429,500,501,503])test(`count HTTP ${status} retains status and Retry-After without a capability cache`,async()=>{
  let calls=0;const counter=createApiTokenCounter({request:async()=>{calls++;return Response.json({error:{code:'safe_error'}},{status,headers:{'Retry-After':'42'}});}});
  for(let i=0;i<2;i++){const response=await counter.count(body);assert.equal(response.status,status);assert.equal(response.headers.get('retry-after'),'42');assert.equal((await response.json()).error.code,'safe_error');}
  assert.equal(calls,2);

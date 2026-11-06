@@ -134,6 +134,10 @@
         details.open = expanded.has(details.dataset.key);
         const title = document.createElement("summary");
         const cause = failure.route === "messages_count_tokens" && [404, 405, 501].includes(failure.http_status) ? "issue_count_unavailable"
+          : ["credit_balance_exhausted", "insufficient_quota", "quota_exceeded"].includes(failure.upstream_code) ? "issue_source_quota"
+            : ["rate_limit_exceeded", "rate_limit_error"].includes(failure.upstream_code) ? "issue_source_rate"
+              : ["context_length_exceeded", "context_window_exceeded"].includes(failure.upstream_code) ? "issue_context_limit"
+                : failure.upstream_code === "content_policy_violation" ? "issue_content_policy"
           : ["rate_limit_error", "rate_limit_exceeded", "insufficient_quota", "http_429"].includes(failure.code) ? "issue_source_limit"
             : /^m365_catalog_http_/.test(failure.code || "") ? "issue_catalog_unavailable"
               : failure.reason === "ccdx_model_not_selected" ? "issue_model_not_selected"
@@ -169,7 +173,7 @@
           request_id: failure.request_id, outcome: timeline?.outcome, origin: failure.origin || timeline?.origin,
           phase: timeline?.phase, http_status: failure.http_status ?? timeline?.http_status, route: failure.route,
           upstream_attempts: failure.upstream_attempts ?? timeline?.upstream_attempts,
-          error_type: failure.error_type, parameter: failure.parameter, error_body: failure.error_body,
+          error_type: failure.error_type, upstream_code: failure.upstream_code, parameter: failure.parameter, error_body: failure.error_body,
           diagnostic_message: failure.diagnostic_message, method: failure.method, target: failure.target,
           request_options: failure.request_options ? JSON.stringify(failure.request_options) : undefined,
           transport: failure.transport ? JSON.stringify(failure.transport) : undefined,

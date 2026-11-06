@@ -280,7 +280,7 @@ export function sendJsonError(res, err, fallbackStatus = 400) {
 export function sendUpstreamError(res, response, text) {
   const context = currentRequestContext();
   if (context?.onHttpError) context.onHttpError({
-    ...upstreamErrorEvidence(text, { includeMessage: context.includeHttpErrorDetails === true }),
+    ...upstreamErrorEvidence(text, { includeMessage: context.includeHttpErrorDetails === true, status: response.status }),
     origin: "upstream_http", headers: response.headers,
   });
   if (!res.headersSent) {

@@ -6,6 +6,7 @@ import { readAccessSettings } from "./access-settings.mjs";
 import { servicePreferences } from "./user-settings.mjs";
 import { observeRequestedModel, currentRequestContext } from "./request-context.mjs";
 import { recordResponsesUsage } from "./usage-store.mjs";
+import { readSafeUpstreamReason } from "./safe-upstream-error.mjs";
 
 export const NATIVE_IMAGE_MODEL = DEFAULT_IMAGE_MODEL;
 export const IMAGE_MAX_BYTES = 32 * 1024 * 1024;
@@ -57,11 +58,11 @@ export function createNativeImagesHandler({ client, acquireRequest, privacy, env
   models = () => [], selection = () => readAccessSettings({ env, home }).clients.codex.image_model,
   requestBodyTimeoutMs = 120000, timeoutMs = 180000, enabled = () => servicePreferences({ env, home }).image_enabled,
   allowed = () => nativeImageAccess({ env, home }) } = {}) {
-  let active = 0;
+  let active = 0, processing = 0;
   const metrics = { total: 0, succeeded: 0, failed: 0, busy: 0, cancelled: 0 };
   const handler = async (req, res, operation) => {
     const abort = createRequestAbort(req, res);
-    let release = () => {}, admitted = false;
+    let release = () => {}, admitted = false, processingSlot = false;
     metrics.total++;
     try {
       if (!isLoopbackAddress(req.socket?.remoteAddress) || req.headers.host !== undefined && !isLoopbackHostHeader(req.headers.host)
@@ -69,8 +70,8 @@ export function createNativeImagesHandler({ client, acquireRequest, privacy, env
       if (String(req.headers["content-type"] || "").split(";", 1)[0].trim().toLowerCase() !== "application/json") throw httpError("Images require application/json", 415);
       if (!allowed()) throw httpError("GitHub Copilot access is disabled for Codex", 403);
       if (!enabled()) throw httpError("Image requests are paused", 503);
-      if (active >= 2) { metrics.busy++;throw httpError("Two image requests are already active", 503); }
-      active++;admitted = true;
+      if (processing >= 2) { metrics.busy++;throw httpError("Two image requests are already active", 503); }
+      active++;processing++;admitted = true;processingSlot = true;
       abort.setTimeout(requestBodyTimeoutMs, "request_body_timeout");
       release = await acquireRequest(req, { signal: abort.signal });
       const parsed = await readJsonBody(req, { admission: release, signal: abort.signal, maxBodyBytes: BODY_MAX_BYTES, maxDecodedBodyBytes: BODY_MAX_BYTES });
@@ -89,11 +90,15 @@ export function createNativeImagesHandler({ client, acquireRequest, privacy, env
       const response = await call({ input: body.prompt }, { signal: abort.signal });
       if (!response.ok) {
         metrics.failed++;
-        await response.body?.cancel().catch(() => {});
+        // The upstream request has finished. Do not hold image concurrency or
+        // body admission while an optional error reason is read.
+        release();release = () => {};processing--;processingSlot = false;
+        const reason = await readSafeUpstreamReason(response, { signal: abort.signal });
         abort.signal.throwIfAborted();
         const code = `ccdx_images_http_${response.status}`, headers = new Headers(response.headers);
         headers.set("Content-Type", "application/json");
-        sendUpstreamError(res, { status: response.status, headers }, JSON.stringify({ error: { type: "upstream_error", code, message: code } }));
+        sendUpstreamError(res, { status: response.status, headers }, JSON.stringify({ error: { type: "upstream_error", code,
+          message: reason?.message || code, ...(reason ? { upstream_code: reason.code } : {}) } }));
         return;
       }
       const text = await readBoundedResponseText(response, { maxBytes: RESPONSE_MAX_BYTES, signal: abort.signal, label: "Copilot image response" });
@@ -112,7 +117,7 @@ export function createNativeImagesHandler({ client, acquireRequest, privacy, env
       if (abort.reason === "client_closed" || abort.reason === "client_aborted") metrics.cancelled++;
       logRequestFailure("images", error, abort);
       sendJsonError(res, error, error.statusCode || 502);
-    } finally { release();if (admitted) active--;abort.cleanup(); }
+    } finally { release();if (admitted) active--;if (processingSlot) processing--;abort.cleanup(); }
   };
   handler.stats = () => ({ ...metrics, active, native: true, model: imageModelSelection(models(), selection()).selected_model });
   return handler;

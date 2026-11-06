@@ -179,7 +179,9 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (!countTokens) observeContextSession(body, req.headers, selectedProvider, "messages");
         terminalOrigin = "transport";
         const call = privacy?.wrap(selectedProvider.client.messages, { res, protocol: "messages", client: privacyClient }) || selectedProvider.client.messages;
+        let upstreamHeadersObserved = false;
         const callOptions = { headers: req.headers, countTokens, signal: abort.signal,
+          onUpstreamErrorHeaders(status) { upstreamHeadersObserved = true;tracker?.upstreamHeaders(status);body = null;release();release = () => {}; },
           onCountObservation(value) {
             context.countObservation = { ...context.countObservation, ...value };
             if (value.upstream) { context.upstreamAttempts = (context.upstreamAttempts || 0) + 1;tracker?.upstreamStarted(false); }
@@ -201,7 +203,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         } else upstream = await call(body, callOptions);
         body = null;
         terminalOrigin = upstream.ok ? "upstream_response" : "upstream_http";
-        tracker?.upstreamHeaders(upstream.status);
+        if (!upstreamHeadersObserved) tracker?.upstreamHeaders(upstream.status);
         release();release = () => {};
         try { onRequest({ client: req.headers["x-ccdx-client"] === "claude-app" ? "claude_app" : req.headers["x-ccdx-client"] === "claude-code" ? "claude_code" : "claude" }); } catch {}
         const headers = safeUpstreamResponseHeaders(upstream.headers);
@@ -217,7 +219,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
             const evidence = upstreamErrorEvidence(raw);
             context.onHttpError?.({ ...evidence, code: evidence.code || evidence.error_type || "upstream_error", model_error: true, origin: "upstream_response", headers: upstream.headers });
           }
-          if (!upstream.ok) context.onHttpError?.({ ...upstreamErrorEvidence(raw),
+          if (!upstream.ok) context.onHttpError?.({ ...upstreamErrorEvidence(raw, { status: upstream.status }),
             origin: context.countObservation?.cached ? "capability_cache" : "upstream_http", headers: upstream.headers });
           if (!countTokens && upstream.ok && value?.type === "message" && Array.isArray(value.content)) {
             if (value.content.some(hasMessageState)) await conversation?.commit?.({ tool: value.content.some(block => block?.type === "tool_use") });

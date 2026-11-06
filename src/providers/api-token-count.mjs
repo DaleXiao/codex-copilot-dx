@@ -19,7 +19,8 @@ export function createApiTokenCounter({ request, now = Date.now }) {
       const serialized = JSON.stringify(body), size = Buffer.byteLength(serialized), hash = size <= 1024 * 1024 ? createHash("sha256").update(scope).update(serialized).digest("hex") : null;
       const identity = hash || {};
       async function run(probe) {
-        const key = probe ? "probe:" + scope : "body:" + hash, waiter = { start: options.onUpstreamStart, observe: options.onCountObservation, signal: options.signal, identity };
+        const key = probe ? "probe:" + scope : "body:" + hash, waiter = { start: options.onUpstreamStart, observe: options.onCountObservation,
+          errorHeaders: options.onUpstreamErrorHeaders, signal: options.signal, identity };
         let flight = flights.get(key);
         if (flight && [...flight.waiters].every(item => item.signal?.aborted)) { flights.delete(key);bytes -= flight.bytes;flight = null; }
         const joinable = (probe || hash !== null) && (Boolean(flight) || flights.size < 16 && (probe || bytes + size <= 4 * 1024 * 1024));
@@ -33,11 +34,20 @@ export function createApiTokenCounter({ request, now = Date.now }) {
           item.observe?.(item.identity === flight.identity ? { upstream: true, shared: flight.shared } : { waited: true });
         };
         if (flight.started) start(waiter);
+        if (flight.errorStatus && (flight.errorStatus === 404 || waiter.identity === flight.identity)) {
+          try { waiter.errorHeaders?.(flight.errorStatus); } catch {}
+        }
         const task = async signal => {
           try {
             if (signal?.aborted) throw signal.reason;
             const response = await request(body, { ...options, bodyText: serialized, signal, observeUpstream: false,
-              onUpstreamStart() { flight.started = true;for (const item of flight.waiters) if (!item.signal?.aborted) start(item); } });
+              onUpstreamStart() { flight.started = true;for (const item of flight.waiters) if (!item.signal?.aborted) start(item); },
+              onUpstreamErrorHeaders(status) {
+                flight.errorStatus = status;
+                for (const item of flight.waiters) if (!item.signal?.aborted && (status === 404 || item.identity === flight.identity)) {
+                  try { item.errorHeaders?.(status); } catch {}
+                }
+              } });
             if (signal?.aborted) { await response.body?.cancel();throw signal.reason; }
             if (response.status === 404) {
               await response.body?.cancel();observe(scope, 404);const result = missed();

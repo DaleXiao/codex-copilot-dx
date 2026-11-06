@@ -68,7 +68,7 @@
   async function api(body) {
     const response = await fetch("/_ccdx/ui/settings", { method: body ? "POST" : "GET", cache: "no-store",
       headers: { "X-CCDX-Dashboard": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
-      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout((body?.action === "prediction" || body?.action === "image" && ["open", "restart"].includes(body?.operation)) ? 210000 : body?.action === "image" || body?.operation === "account" ? 65000 : 15000) });
+      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout((body?.action === "prediction" || ["image", "codex_app"].includes(body?.action) && ["open", "restart"].includes(body?.operation)) ? 210000 : ["image", "codex_app"].includes(body?.action) || body?.operation === "account" ? 65000 : 15000) });
     const data = await response.json();if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`), { code: data.code });return data;
   }
   const preferences = globalThis.ccdxDashboardPreferences?.create({ element: el, api, applied: applySettings, time,
@@ -200,7 +200,7 @@
     syncAccountControls();
     const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-enabled, #prediction-continue, #prediction-open, #prediction-setup, #prediction-remove, #image-models input, #image-check, #image-repair, #image-open, #decoded-limit, #decoded-limit-save, #decoded-limit-default, #install-update")];
     controls.forEach(input => { input.disabled = true; });
-    const note = el(body.action === "prediction" ? "prediction-action-note" : body.action === "image" ? "effect-image_enabled" : body.action === "update" ? "manual-update-note" : body.action === "decoded_limit" ? "decoded-limit-note" : body.action === "nightly_update" ? "nightly-state" : body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
+    const note = el(body.action === "codex_app" ? body.intent === "prediction" ? "prediction-action-note" : "image-action-note" : body.action === "prediction" ? "prediction-action-note" : body.action === "image" ? "effect-image_enabled" : body.action === "update" ? "manual-update-note" : body.action === "decoded_limit" ? "decoded-limit-note" : body.action === "nightly_update" ? "nightly-state" : body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
       : body.action.startsWith("history_") ? "effect-history" : body.action === "prediction_fix" ? "prediction-note"
         : body.operation === "switch" ? "source-control-note" : body.operation === "auto-review" ? "review-control-note"
           : body.operation === "account" ? "m365-account-note" : "m365-control-note");

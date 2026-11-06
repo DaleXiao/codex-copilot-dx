@@ -272,7 +272,7 @@ test("one client selects same-named models from two APIs on the shared port with
     secretStore: { get: async id => stored.get(id), set: async (id, key) => stored.set(id, key), remove: async id => stored.delete(id), close() {} },
     configureClaude: () => ({ app: "configured", code: "configured" }), inspectDesktop: async () => false, restoreClaude: () => ({ preserved: 0 }),
     createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, async fetch(url, init) {
-      const body = JSON.parse(init.body);calls.push({ url, model: body.model, max_tokens: body.max_tokens, auth: init.headers.Authorization });
+      const body = JSON.parse(init.body);calls.push({ url, model: body.model, max_tokens: body.max_tokens, auth: init.headers.Authorization, body });
       if (url.includes("two.test") && body.messages?.[0]?.content === "fail") return Response.json({ secret: "upstream-key-must-not-leak" }, { status: 500 });
       return url.endsWith("/messages") ? Response.json({ id: "msg_" + calls.length, type: "message", role: "assistant", model: body.model, content: [{ type: "text", text: "OK" }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } })
         : Response.json({ id: "resp_" + calls.length, object: "response", model: body.model, status: "completed", output: [{ id: "msg", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "OK", annotations: [] }] }], usage: { input_tokens: 1, output_tokens: 1 } });
@@ -315,10 +315,24 @@ test("one client selects same-named models from two APIs on the shared port with
   const recent = runtime.snapshot().claude.requests.performance.recent_requests;
   assert.ok(recent.some(row => row.provider === ids[0]));assert.ok(recent.some(row => row.provider === ids[1]));
   assert.equal(calls.length, 5);
+  const picture = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jJ1sAAAAASUVORK5CYII=", tool = { name: "read", input_schema: { type: "object" } };
+  for (let i = 0; i < 2; i++) {
+    const content = [{ type: "text", text: `image-${i}` }, { type: "image", source: { type: "base64", media_type: "image/png", data: picture } }];
+    const response = await fetch(base + "/anthropic/v1/messages", { method: "POST", headers: headers("claude_app"), body: JSON.stringify({ model: list.data[i].id, messages: [{ role: "user", content }], tools: [tool], max_tokens: 4 }) });
+    assert.equal(response.status, 200);await response.text();
+    assert.equal(calls.at(-1).url, `https://${["one", "two"][i]}.test/v1/messages`);assert.equal(calls.at(-1).auth, `Bearer synthetic-${["one", "two"][i]}`);
+    assert.deepEqual(calls.at(-1).body.messages[0].content, content);assert.deepEqual(calls.at(-1).body.tools, [tool]);
+    const input = [{ role: "user", content: [{ type: "input_text", text: `image-${i}` }, { type: "input_image", image_url: `data:image/png;base64,${picture}` }] }];
+    const nativeTool = { type: "function", name: "read", parameters: { type: "object", properties: {} } };
+    const codex = await fetch(base + "/v1/responses", { method: "POST", headers: headers("codex"), body: JSON.stringify({ model: catalog.models[i].slug, input, tools: [nativeTool] }) });
+    assert.equal(codex.status, 200);await codex.text();
+    assert.equal(calls.at(-1).url, `https://${["one", "two"][i]}.test/v1/responses`);assert.equal(calls.at(-1).auth, `Bearer synthetic-${["one", "two"][i]}`);
+    assert.deepEqual(calls.at(-1).body.input, input);assert.deepEqual(calls.at(-1).body.tools, [nativeTool]);
+  }
   const codexClient = runtime.connections().clients.find(c => c.id === "codex");
   await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: codexClient.allowed, deployments: [] });
   assert.equal(runtime.connections().clients.find(c => c.id === "codex").model_plan.models.length, 0);
   await runtime.action({ action: "switch", provider: ids[0] });
   assert.equal(runtime.selection().codex, ids[0]);assert.equal(runtime.connections().clients.find(c => c.id === "codex").deployments, null);
-  assert.equal(calls.length, 5, "Empty selection and legacy switching make no upstream request");
+  assert.equal(calls.length, 9, "Empty selection and legacy switching make no upstream request");
 });

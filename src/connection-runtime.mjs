@@ -1413,7 +1413,7 @@ export function createConnectionRuntime({
               }),
             }),
           },
-          codexCatalog: codexClientCatalog(compiled),
+          codexCatalog: codexClientCatalog(compiled, () => getSource("github")?.registry?.models),
         };
       }
       if (Array.isArray(c.deployments) && compiled.defaultUnavailable) {

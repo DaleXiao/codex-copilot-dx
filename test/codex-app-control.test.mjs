@@ -16,6 +16,23 @@ test("App inspection ties host evidence to the selected process ancestry", async
   await assert.rejects(inspectCodexApp("/Applications/Other.app", [], { platform: "darwin", exec }), /Unrecognized/);
 });
 
+test("prediction route is verified only for the selected App and exact PAC argument", async () => {
+  const executable = `${app}/Contents/MacOS/ChatGPT`, pac = "http://127.0.0.1:1234/proxy.pac?v=2";
+  const inspect = async args => inspectCodexApp(app, [], { platform: "darwin", predictionPacUrl: pac,
+    exec: async (_command, argv) => ({ stdout: argv[0] === "-axo" ? `20 1 ${executable}\n` : args }) });
+  assert.equal((await inspect(`${executable} --proxy-pac-url=${pac}`)).prediction_route, "verified");
+  assert.equal((await inspect(`${executable} --proxy-pac-url="${pac}"`)).prediction_route, "verified");
+  for (const args of [`${executable}`, `${executable} --proxy-pac-url=http://127.0.0.1:1235/proxy.pac?v=2`,
+    `${executable} --proxy-pac-url=${pac} --proxy-pac-url=${pac}`, `/other ${executable} --proxy-pac-url=${pac}`]) {
+    assert.equal((await inspect(args)).prediction_route, "unconfirmed");
+  }
+  const failed = await inspectCodexApp(app, [], { platform: "darwin", predictionPacUrl: pac, exec: async (_command, argv) => {
+    if (argv[0] !== "-axo") throw Error("process exited");
+    return { stdout: `20 1 ${executable}\n` };
+  } });
+  assert.equal(failed.prediction_route, "unconfirmed");
+});
+
 test("native App actions are limited to the exact App and never use force termination", async () => {
   const calls = [];
   const exec = async (command, args) => { calls.push({ command, args });return { stdout: "sent\n" }; };

@@ -110,6 +110,20 @@ test("image host evidence is accepted while a restart operation is waiting", asy
   release();assert.equal((await restart).last_operation.result.status, "opened_new_chat_required");
 });
 
+test("shared Codex restart forwards explicit intent and accepts host evidence while waiting", async t => {
+  const f = fixture(t);let entered, release, received;
+  const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const control = createServiceControl({ home: f.home, env: {}, readImages: () => false, readPrediction: () => ({ enabled: false }),
+    codexLaunchControl: async (operation, options) => { received = { operation, intent: options.intent, confirmed: options.confirmed };
+      entered();await gate;return { status: "opened_new_chat_required" }; } });
+  const restart = control.action({ action: "codex_app", operation: "restart", intent: "prediction", confirmed: true });await started;
+  const evidence = await control.action({ action: "image", operation: "report", evidence: { id: "11111111-1111-1111-1111-111111111111", pid: process.pid, event: "connected" } });
+  assert.equal(evidence.features.image.runtime.connected, true);
+  release();assert.equal((await restart).last_operation.result.status, "opened_new_chat_required");
+  assert.deepEqual(received, { operation: "restart", intent: "prediction", confirmed: true });
+  await assert.rejects(control.action({ action: "codex_app", operation: "restart", intent: "prediction", confirmed: true, extra: true }), /Unknown/);
+});
+
 test('nightly updates default off, require a boolean and do not enable other service features', async t => {
  const f=fixture(t);assert.equal(f.control.snapshot().nightly_update.enabled,false);
  await f.control.action({action:'preference',key:'image_enabled',value:false});

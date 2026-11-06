@@ -10,6 +10,7 @@ import { markUpstreamHeaders } from "../stream-performance.mjs";
 import { createApiNetwork } from "./api-network.mjs";
 import { checkedApiKey } from "../api-secrets.mjs";
 import { transportErrorDetails } from "../operation-error.mjs";
+import { readSafeUpstreamReason } from "../safe-upstream-error.mjs";
 import { resolveModelCapabilities, deploymentRevision, constrainModelRequest } from "../model-capabilities.mjs";
 import { apiModelMetadata } from "./api-model-metadata.mjs";
 import { markRequestObservation, markUpstreamStarted } from "../stream-performance.mjs";
@@ -85,11 +86,13 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       const result = await transport.fetch(url, { method: body ? "POST" : "GET", headers, body: serialized, signal: options.signal });
       if (result.status >= 300 && result.status < 400) { await result.body?.cancel();throw accessError("ccdx_api_redirect_refused", 502); }
       if (!result.ok) {
-        await result.body?.cancel();const code = `ccdx_api_http_${result.status}`;
+        try { options.onUpstreamErrorHeaders?.(result.status); } catch { /* Optional admission release cannot hide the upstream response. */ }
+        const reason = await readSafeUpstreamReason(result, { signal: options.signal });const code = `ccdx_api_http_${result.status}`;
         const safeHeaders = { "Content-Type": "application/json" }, retry = result.headers.get("retry-after");
         if (/^\d{1,8}$/.test(retry || "")) safeHeaders["Retry-After"] = retry;
         else if (retry && Number.isFinite(Date.parse(retry))) safeHeaders["Retry-After"] = new Date(retry).toUTCString();
-        return new Response(JSON.stringify({ type: "error", error: { type: "api_error", code, message: code } }), { status: result.status, headers: safeHeaders });
+        return new Response(JSON.stringify({ type: "error", error: { type: "api_error", code, message: reason?.message || code,
+          ...(reason ? { upstream_code: reason.code } : {}) } }), { status: result.status, headers: safeHeaders });
       }
       return result;
     } catch (error) {
@@ -160,8 +163,10 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     applyRequestPolicies() {},
     compatibility: { hasRetry: () => false, selectRetry: async () => null,
       async openResponse(context, upstream, options) {
-        const resp = await upstream(context.body, { assertActive: options.assertPrepareActive, signal: options.signal, currentInputStart: context.currentInputStart, onUpstreamStart: options.onUpstreamStart });
-        markUpstreamHeaders(resp.status);
+        let headersObserved = false;
+        const resp = await upstream(context.body, { assertActive: options.assertPrepareActive, signal: options.signal, currentInputStart: context.currentInputStart, onUpstreamStart: options.onUpstreamStart,
+          onUpstreamErrorHeaders(status) { headersObserved = true;markUpstreamHeaders(status);options.releaseRequest?.(context); } });
+        if (!headersObserved) markUpstreamHeaders(resp.status);
         // request() already discarded the vendor body and projected a safe error.
         if (!resp.ok) {
           const errorText = await readBoundedResponseText(resp, { maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES, signal: options.signal, label: "API error response" });

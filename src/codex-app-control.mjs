@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { isPredictionPacUrl } from "./prediction-pac.mjs";
 
 const execute = promisify(execFile);
 const apps = new Set(["/Applications/Codex.app", "/Applications/ChatGPT.app"]);
@@ -15,7 +16,7 @@ function run(argv) {
   return sent ? "sent" : "refused";
 }`;
 
-export async function inspectCodexApp(app, hosts = [], { platform = process.platform, exec = execute } = {}) {
+export async function inspectCodexApp(app, hosts = [], { platform = process.platform, exec = execute, predictionPacUrl } = {}) {
   if (platform !== "darwin") return { status: "unsupported" };
   if (!apps.has(app)) throw new Error("Unrecognized Codex App path");
   const result = await exec("/bin/ps", ["-axo", "pid=,ppid=,comm="], { encoding: "utf8", timeout: 3000, maxBuffer: 4 * 1024 * 1024 });
@@ -38,7 +39,19 @@ export async function inspectCodexApp(app, hosts = [], { platform = process.plat
     return false;
   };
   const linked = hosts.filter(belongsToApp);
+  let predictionRoute;
+  if (isPredictionPacUrl(predictionPacUrl)) {
+    predictionRoute = "unconfirmed";
+    try {
+      const result = await exec("/bin/ps", ["-p", String(pid), "-o", "args="], { encoding: "utf8", timeout: 3000, maxBuffer: 64 * 1024 });
+      const args = String(result?.stdout ?? result).trim(), executable = matches[0].command;
+      const route = /(?:^|\s)--proxy-pac-url=(?:"(http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac(?:\?v=2)?)"|(http:\/\/127\.0\.0\.1:\d{1,5}\/proxy\.pac(?:\?v=2)?)(?=\s|$))/.exec(args);
+      if ((args === executable || args.startsWith(executable + " ")) && (args.match(/(?:^|\s)--proxy-pac-url=/g) || []).length === 1
+        && (route?.[1] || route?.[2]) === predictionPacUrl) predictionRoute = "verified";
+    } catch { /* A missing route is not proof that the App uses one. */ }
+  }
   return { status: "running", pid, host: linked.length ? "connected" : "unconfirmed",
+    ...(predictionRoute ? { prediction_route: predictionRoute } : {}),
     tool_registration: linked.some(host => host.threads?.length) ? "observed" : "unconfirmed" };
 }
 

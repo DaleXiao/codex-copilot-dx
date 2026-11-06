@@ -2,6 +2,7 @@ import { boundedDiagnosticText, redactDiagnosticText } from "./diagnostic-text.m
 import { currentRequestContext } from "./request-context.mjs";
 import { isProviderId } from "./provider-metadata.mjs";
 import { transportErrorDetails } from "./operation-error.mjs";
+import { safeUpstreamReason } from "./safe-upstream-error.mjs";
 
 const DEFAULT_RECENT_FAILURES = 10;
 
@@ -104,7 +105,7 @@ export function createResponseFailureDiagnostics({
   };
 }
 
-export function upstreamErrorEvidence(text, { includeMessage = false } = {}) {
+export function upstreamErrorEvidence(text, { includeMessage = false, status = null } = {}) {
   const errorBody = !String(text || "").trim() ? "empty" : "unstructured";
   let error;
   try { const parsed = JSON.parse(text); error = parsed?.error; } catch {}
@@ -115,7 +116,10 @@ export function upstreamErrorEvidence(text, { includeMessage = false } = {}) {
   const param = typeof error.param === "string" && error.param.length <= 160
     && /^(?:model|input|tools|tool_choice|reasoning|text|temperature|top_p|max_output_tokens|service_tier|store|stream|include|previous_response_id|parallel_tool_calls)(?:\.[a-z_][a-z\d_]*|\[\d+\])*$/i.test(error.param)
     ? error.param : undefined;
+  const upstreamCode = (safeUpstreamReason(error.upstream_code, status) || safeUpstreamReason(error.code, status)
+    || safeUpstreamReason(error.type, status))?.code;
   return { error_body: "structured", code: technical(error.code), error_type: technical(error.type),
+    ...(upstreamCode ? { upstream_code: upstreamCode } : {}),
     parameter: param, ...(includeMessage && typeof error.message === "string" ? { diagnostic_message: safeFailureMessage(error.message) } : {}) };
 }
 
@@ -179,7 +183,7 @@ export function isDiscoveryRequest(method, pathname) {
 }
 
 export function buildHttpFailureDetails({ statusCode, route, requestId, model, code, origin, headers, model_error,
-  error_body, error_type, parameter, diagnostic_message, method, target, request_options, upstream_attempts, attempt_timings, requested_model, provider,
+  error_body, error_type, upstream_code, parameter, diagnostic_message, method, target, request_options, upstream_attempts, attempt_timings, requested_model, provider,
   application, reason, capability_cached, shared_upstream, transport }) {
   if (!reason && code === "ccdx_client_source_disabled" && upstream_attempts === 0 && origin !== "upstream_http") {
     reason = code;origin = "client_validation";
@@ -204,7 +208,8 @@ export function buildHttpFailureDetails({ statusCode, route, requestId, model, c
     message: model_error ? "The model source reported an error; the original HTTP response was preserved." : message } }, model_error ? "model.error" : "http.error", { headers, provider });
   return { ...details, request_id: requestId, http_status: statusCode, route,
     origin: origin || (route === "not_found" ? "route" : "unclassified"), local_message: true,
-    ...(error_body ? { error_body } : {}), ...(error_type ? { error_type } : {}), ...(parameter ? { parameter } : {}),
+    ...(error_body ? { error_body } : {}), ...(error_type ? { error_type } : {}),
+    ...(safeUpstreamReason(upstream_code, statusCode) ? { upstream_code } : {}), ...(parameter ? { parameter } : {}),
     ...(diagnostic_message ? { diagnostic_message } : {}),
     ...(method ? { method } : {}), ...(target ? { target } : {}),
     ...(request_options ? { request_options } : {}),

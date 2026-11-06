@@ -48,6 +48,29 @@ test('Claude API counts retain source, model, HTTP origin and real or cached cal
  assert.equal(handler.snapshot().http_errors.actionable_recent.length,0);
 });
 
+test('a count_tokens 501 is capability-only and does not disable subsequent Messages',async t=>{
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'ccdx-count-501-')),env={CCDX_M365:'0'};let counts=0,messages=0;
+ const {createApiProvider}=await import('../src/providers/api.mjs');
+ const runtime=createProviderRuntime({home,env,githubRegistry:{models:{data:[]}},secretStore:{set:async()=>{},get:async()=> 'synthetic-key',close(){}},inspectDesktop:async()=>false,
+  createApi:options=>createApiProvider({...options,networkFactory:async()=>({close(){},fetch:async(url)=>{
+   if(url.endsWith('/models'))return Response.json({data:[{id:'reasoner-model',supported_endpoints:['/v1/messages']}]});
+   if(url.endsWith('/count_tokens')){counts++;return Response.json({error:{code:'not_implemented'}},{status:501});}
+   messages++;return Response.json({id:'msg_fixture',type:'message',role:'assistant',model:'reasoner-model',content:[{type:'text',text:'OK'}],stop_reason:'end_turn',usage:{input_tokens:2,output_tokens:1}});
+  }})})});
+ const saved=await runtime.manageConnections({operation:'save_api',config:{name:'Example',base_url:'https://example.test/v1',endpoints:{messages:'https://example.test/v1/messages'},auth_header:'bearer',models:[{id:'reasoner-model',protocols:['messages']}]},key:'synthetic-key',allowed:['claude_app']});
+ const id=saved.providers.find(x=>!x.builtin).id;
+ await runtime.manageConnections({operation:'client',id:'claude_app',enabled:true,allowed:[id],deployments:[{source:id,model:'reasoner-model'}]});
+ const handler=createAdapterHandler({providerRuntime:runtime}),server=http.createServer(handler);await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ t.after(async()=>{handler.dispose?.();server.closeAllConnections();await new Promise(r=>server.close(r));await runtime.close();fs.rmSync(home,{recursive:true,force:true});});
+ const key=readClientGatewayKeys({home,env}).claude_app,base=`http://127.0.0.1:${server.address().port}/anthropic/v1/messages`;
+ const init={method:'POST',headers:{'Content-Type':'application/json','x-api-key':key},body:JSON.stringify({model:'reasoner-model',messages:[{role:'user',content:'synthetic'}],max_tokens:4})};
+ for(let i=0;i<2;i++){const response=await fetch(base+'/count_tokens',init);assert.equal(response.status,501);await response.text();}
+ const reply=await fetch(base,init);assert.equal(reply.status,200);assert.equal((await reply.json()).content[0].text,'OK');
+ const snapshot=handler.snapshot();assert.equal(counts,2);assert.equal(messages,1);assert.equal(snapshot.http_errors.by_category.inference,0);
+ assert.equal(snapshot.http_errors.capability_recent.at(-1).http_status,501);assert.equal(snapshot.http_errors.actionable_recent.length,0);
+ assert.equal(runtime.connections().providers.find(provider=>provider.id===id).enabled,true);
+});
+
 test('diagnostic model capture rejects credential forms and arbitrary body content',()=>{
  for(const model of ['sk-private-value','Bearer private','x'.repeat(200),{value:'private'}]){const c={};runWithRequestContext(c,()=>observeRequestedModel({model}));assert.equal(c.requestedModel,undefined);}
 });

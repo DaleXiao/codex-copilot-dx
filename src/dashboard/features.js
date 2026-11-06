@@ -1,13 +1,32 @@
 (() => {
   function create({ element: el, change, localize }) {
-    let saved = null, limitDirty = false, imageSignature = "", imageApp = { status: "unknown" };
+    let saved = null, limitDirty = false, imageSignature = "", imageApp = { status: "unknown" }, appInspectionStarted = false;
     function renderImageApp() {
       const connected = imageApp.status === "running" && imageApp.host === "connected";
-      const restart = imageApp.status === "running" && !connected;
-      localize(el("image-open"), connected ? "image_focus" : restart ? "image_restart" : imageApp.status === "stopped" ? "image_open" : "image_inspect");
+      const restart = imageApp.status === "running" && (imageApp.needs_restart === true || saved?.features?.prediction?.display_pending === true);
+      const action = restart ? "image_restart" : imageApp.status === "running" ? "image_focus" : imageApp.status === "stopped" ? "image_open" : "image_inspect";
+      localize(el("image-open"), action);
+      localize(el("prediction-open"), imageApp.status === "unsupported" ? "prediction_open" : action);
       el("image-restart-warning").hidden = !restart;
+      el("prediction-restart-warning").hidden = !restart;
       localize(el("image-host-note"), imageApp.status === "stopped" ? "image_app_stopped" : imageApp.status === "multiple" ? "image_action_multiple_apps"
         : connected ? imageApp.tool_registration === "observed" ? "image_host_registered" : "image_host_connected" : "image_host_unconfirmed");
+    }
+    async function codexAction(operation, intent, button, { quiet = false } = {}) {
+      const data = await change({ action: "codex_app", operation, intent, ...(operation === "restart" ? { confirmed: true } : {}) }, button);
+      const result = data?.last_operation?.feature === "codex_app" ? data.last_operation.result : null;
+      if (!result) return;
+      if (result.app) imageApp = result.app;
+      if (!quiet) {
+        const note = el(intent === "prediction" ? "prediction-action-note" : "image-action-note");
+        note.dataset.operation = operation;note.hidden = false;
+        const key = operation === "check" ? "codex_action_checked" : result.status === "opened_with_pending"
+          ? result.prediction_pending && result.image_pending ? "codex_action_both_pending" : result.prediction_pending ? "codex_action_prediction_pending" : "codex_action_image_pending"
+          : result.status === "already_connected" ? "codex_action_ready"
+            : result.status === "opened_new_chat_required" && intent === "prediction" ? "codex_action_opened" : "image_action_" + result.status;
+        localize(note, key);
+      }
+      renderImageApp();
     }
     async function imageAction(operation, button, { quiet = false } = {}) {
       const data = await change({ action: "image", operation, ...(operation === "restart" ? { confirmed: true } : {}) }, button);
@@ -24,19 +43,21 @@
     }
     el("image-check").addEventListener("click", () => void imageAction("check", el("image-check")));
     el("image-repair").addEventListener("click", () => void imageAction("repair", el("image-repair")));
-    el("image-open").addEventListener("click", () => {
-      const operation = imageApp.status === "running" ? imageApp.host === "connected" ? "focus" : "restart"
+    const appButton = (intent, button) => {
+      if (imageApp.status === "unsupported" && intent === "prediction") { void prediction("open");return; }
+      const operation = imageApp.status === "running" ? imageApp.needs_restart || saved?.features?.prediction?.display_pending ? "restart" : "focus"
         : imageApp.status === "stopped" ? "open" : "check";
-      void imageAction(operation, el("image-open"));
-    });
+      void codexAction(operation, intent, button);
+    };
+    el("image-open").addEventListener("click", () => appButton("image", el("image-open")));
     el("additional-capabilities").addEventListener("toggle", () => {
-      if (el("additional-capabilities").open) void imageAction("check", el("image-check"), { quiet: true });
+      if (el("additional-capabilities").open) void codexAction("check", "image", el("image-check"), { quiet: true });
     });
     const prediction = operation => change({ action: "prediction", operation }, el("prediction-continue"));
     el("setting-prediction_enabled").addEventListener("change", () => void prediction(el("setting-prediction_enabled").checked ? "enable" : "disable"));
     el("prediction-continue").addEventListener("click", () => void prediction(saved?.features?.prediction?.enabled ? "enable" : "disable"));
     el("fix-prediction").addEventListener("click", () => void prediction("repair"));
-    el("prediction-open").addEventListener("click", () => void prediction("open"));
+    el("prediction-open").addEventListener("click", () => appButton("prediction", el("prediction-open")));
     el("prediction-setup").addEventListener("click", () => void prediction("setup"));
     el("prediction-remove").addEventListener("click", () => { if (window.confirm(globalThis.ccdxLanguage.format("prediction_remove_confirm"))) void prediction("remove"); });
     el("decoded-limit").addEventListener("input", () => { limitDirty = true; });
@@ -57,7 +78,7 @@
       el("setting-prediction_enabled").disabled = !value || value.status === "unavailable";
       const pending = value?.display_pending || value?.enabled && (!value.configured || value.display?.enabled === false);
       el("prediction-continue").hidden = !pending;
-      el("prediction-open").disabled = !value?.configured;
+      el("prediction-open").disabled = !value?.configured && !value?.display_pending;
       el("prediction-remove").disabled = !value?.configured;
       if (notes) localize(el("prediction-action-note"), !value ? "feature_unavailable" : value.status === "unavailable" ? "feature_read_failed" : pending ? "prediction_quit_continue" : value.enabled && value.bridge !== "running" ? "prediction_bridge_missing" : value.enabled ? "prediction_ready" : "prediction_disabled");
       el("effect-prediction_enabled").hidden = !pending;
@@ -89,6 +110,9 @@
       el("install-update").disabled = !data.manual_update?.available;
       const update = data.nightly_update;
       if (notes) localize(el("manual-update-note"), !data.manual_update?.available ? "update_external_launch" : update?.manual ? `manual_update_${update.phase}` : "update_idle_switch");
+      if (!appInspectionStarted && el("prediction-open").closest('[data-view="codex"]')?.hidden === false) {
+        appInspectionStarted = true;setTimeout(() => void codexAction("check", "prediction", el("prediction-open"), { quiet: true }), 0);
+      }
     }
     return { render };
   }

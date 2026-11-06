@@ -578,6 +578,12 @@ unknown candidate-visibility value. A successful recovery only means the bridge
 was recreated on the original address, not that gray text appeared.
 
 
+## Error delivery and conversation commits
+
+Image upstream HTTP errors return safe JSON with a `ccdx_images_http_<status>` code, the original status and allowlisted response metadata. Vendor error bodies are cancelled rather than forwarded. Custom API Responses reuse the provider's already-sanitized JSON and validated Retry-After in both streaming and non-streaming requests; these changes do not introduce retries.
+
+Conversation-source admission and Messages checkpoint commits wait asynchronously for the existing cross-process locks. Cancellation ends lock waits. Checkpoint writes retain the primary/marker ordering and rollback behavior; the gateway awaits a successful commit before forwarding corresponding usable JSON or SSE output. Cached source checks keep their synchronous fast path. CLI configuration writers retain their existing synchronous behavior.
+
 ## Native image generation
 
 The native image host uses the current CCDX address for separate Images API requests. CCDX serves `POST /v1/images/generations` and `POST /v1/images/edits`, reuses the existing GitHub Copilot authentication, and maps the native client’s `gpt-image-2` request to the selected available GHC image model. GPT Image 2.5 Flare is the default when advertised. The `X-CCDX-Image-Model` response header identifies the actual model. Image usage counts toward the GitHub account’s image credits; organization model policies still apply. The image model does not replace the selected conversation model.
@@ -585,6 +591,8 @@ The native image host uses the current CCDX address for separate Images API requ
 On macOS with Codex 0.166 or later, CCDX launches the unchanged Codex CLI through a local stdio host adapter. The adapter registers `ccdx_images.imagegen` using Codex’s native `dynamicTools` interface. Codex emits native tool progress and includes image content in the chat history; display in the signed App depends on the client and requires a real-window check. CCDX saves image files under the active Codex home’s `generated_images/ccdx/` directory and uses these files for later edits, including after a host restart. No separate image address or key, image MCP registration, or CCDX image skill is required. Windows continues to expose the Images API; automatic host activation on Windows is not yet provided.
 
 The Web UI image panel and terminal `check`, `repair`, and `open` controls share the service's image controller. `check` verifies the Node loopback response with a fresh nonce and checks the launcher and runtime evidence; it does not prove the Codex App's proxy route. `repair` prepares owned launch files and client configuration without opening or closing the App. `open` preserves the established prediction route and opens Codex only when it is closed. A running App produces `needs_app_relaunch`; finish tasks and quit it yourself, then use `open` and a new chat. Disabled image settings and custom launch routes are preserved.
+
+The stdio host pauses each input source when its destination is blocked or an asynchronous frame operation is pending. Ordinary frames retain their synchronous path and original wire text; output batching follows the destination high-water mark. Shutdown waits for child close and queued stdout delivery, including a final frame without a newline. No arbitrary new protocol-frame byte limit is imposed.
 
 The runtime separately reports host initialization, accepted new-chat registration and image-call outcomes. Reports contain only host PID, anonymous host/chat identifiers, event type and time, remain in bounded process memory, and are not an automatic image-generation probe. Registration evidence applies to observed chats, not every existing conversation. Dead host processes are unconfirmed. The TUI exposes the repair command; terminal image status includes the same host state. Request details show anonymous session correlation and the previous retained request's outcome when supplied session metadata allows it; missing identity stays unassigned.
 

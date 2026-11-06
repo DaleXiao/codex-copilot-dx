@@ -352,7 +352,7 @@ try {
         await page.waitForFunction(() => !document.getElementById("setting-image_enabled").disabled);
         for (const operation of ["check", "repair", "open"]) {
           await page.locator("#image-" + operation).click();
-          await page.waitForFunction(operation => !document.getElementById("image-" + operation).disabled, operation);
+          await page.waitForFunction(operation => !document.getElementById("image-" + operation).disabled && document.getElementById("image-action-note").dataset.operation === operation, operation);
           assert.equal(imageActions.at(-1), operation);
           assert.equal(await page.locator("#image-action-note").isVisible(), true);
         }

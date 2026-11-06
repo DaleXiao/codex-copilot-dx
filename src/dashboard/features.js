@@ -5,6 +5,7 @@
       const data = await change({ action: "image", operation }, el("image-" + operation));
       const result = data?.last_operation?.feature === "image" ? data.last_operation.result : null;
       if (result) {
+        el("image-action-note").dataset.operation = operation;
         el("image-action-note").hidden = false;
         localize(el("image-action-note"), operation === "check" ? "image_connection_" + result.connection?.state : "image_action_" + result.status);
       }

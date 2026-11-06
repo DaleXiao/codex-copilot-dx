@@ -198,7 +198,7 @@
     if (settingsPending) return;
     settingsPending = true;
     syncAccountControls();
-    const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-enabled, #prediction-continue, #prediction-open, #prediction-setup, #prediction-remove, #image-models input, #decoded-limit, #decoded-limit-save, #decoded-limit-default, #install-update")];
+    const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-enabled, #prediction-continue, #prediction-open, #prediction-setup, #prediction-remove, #image-models input, #image-check, #image-repair, #image-open, #decoded-limit, #decoded-limit-save, #decoded-limit-default, #install-update")];
     controls.forEach(input => { input.disabled = true; });
     const note = el(body.action === "prediction" ? "prediction-action-note" : body.action === "image" ? "effect-image_enabled" : body.action === "update" ? "manual-update-note" : body.action === "decoded_limit" ? "decoded-limit-note" : body.action === "nightly_update" ? "nightly-state" : body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
       : body.action.startsWith("history_") ? "effect-history" : body.action === "prediction_fix" ? "prediction-note"

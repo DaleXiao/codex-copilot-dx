@@ -45,6 +45,7 @@ function collectResponseImages(inputItems, currentInputStart, assertActive) {
       originalOutput: options.originalOutput,
       usesAnthropicParts: false,
     };
+    const before = refs.length;
     for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
       if ((partIndex & 63) === 0) assertActive?.();
       const identity = inlineImageIdentity(parts[partIndex]);
@@ -57,7 +58,7 @@ function collectResponseImages(inputItems, currentInputStart, assertActive) {
         identity,
       });
     }
-    if (refs.some((ref) => ref.record === record)) records.push(record);
+    if (refs.length > before) records.push(record);
   };
 
   const historyBoundary = Math.min(Math.max(0, currentInputStart), inputItems.length);

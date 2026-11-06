@@ -186,3 +186,14 @@ test("byte budget never trims irreducible current input", () => {
   assert.equal(result.toolOutputsOmitted, 0);
   assert.deepEqual(body, original);
 });
+
+test('image collection does not rescan references from earlier containers', () => {
+  const body = { model: 'test', input: Array.from({ length: 1000 }, () => imageMessage('a', 8)) };
+  const original = Array.prototype.some;let comparisons = 0;
+  Array.prototype.some = function(predicate, that) {
+    return original.call(this, (value, index, list) => { if (value?.record && Number.isInteger(value.partIndex)) comparisons++;return predicate.call(that, value, index, list); });
+  };
+  try { trimResponsesHistoryToByteBudget(body, { currentInputStart: 1000, targetBytes: 1 }); }
+  finally { Array.prototype.some = original; }
+  assert.equal(body.input.length, 1000);assert.ok(comparisons <= 1000, String(comparisons));
+});

@@ -67,9 +67,17 @@ const localTools = {
 };
 const networkDiagnostic = { source: "system", stage: "proxy_config", cause_code: "proxy_bypass_invalid" };
 let m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
-let manualUpdates = 0;const imageActions = [];
+let manualUpdates = 0;const imageActions = [], imageConfirmations = [];let imageApp = { status: "stopped" };
 const serviceControl = createServiceControl({ home, env: {},
-  imageHostControl: async operation => { imageActions.push(operation);return { status: operation === "check" ? "checked" : operation === "repair" ? "prepared" : "needs_app_relaunch", connection: { state: "verified", scope: "node_loopback", app_path: "unconfirmed" } }; },
+  imageHostControl: async (operation, options) => {
+    imageActions.push(operation);imageConfirmations.push(options.confirmed);
+    if (operation === "check") return { status: "checked", app: { ...imageApp }, connection: { state: "verified", scope: "node_loopback", app_path: "unconfirmed" } };
+    if (operation === "repair") return { status: "prepared", app: { ...imageApp } };
+    if (operation === "open") { imageApp = { status: "running", host: "unconfirmed" };return { status: "opened_new_chat_required", app: { status: "unknown" } }; }
+    if (operation === "restart") { assert.equal(options.confirmed, true);imageApp = { status: "running", host: "connected", tool_registration: "observed" };return { status: "opened_new_chat_required", app: { status: "unknown" } }; }
+    if (operation === "focus") return { status: "focused", app: { ...imageApp } };
+    throw new Error("Unexpected image operation");
+  },
   manualUpdate: () => { manualUpdates++;return { status: "queued" }; },
   predictionControl: (operation, opts) => controlPrediction(operation, { ...opts, nativeOperation: handlePredictionOperation, platform: "darwin", exec: () => { throw Object.assign(Error("closed"), { status: 1 }); } }),
   readImages: () => ({}), readPrediction: () => ({ enabled: true }),
@@ -342,9 +350,10 @@ try {
         await page.locator("#codex-performance > summary").click();
         assert.match(await page.locator("#ttft").innerText(), /1250\.0 ms/);
         assert.match(await page.locator("#tpot").innerText(), /123\.4 token\/s/);
-        await page.locator("#additional-capabilities > summary").click();
+        imageApp = { status: "stopped" };await page.locator("#additional-capabilities > summary").click();
         await page.locator("#setting-image_enabled").waitFor({ state: "visible" });
         await page.waitForFunction(() => !document.getElementById("setting-image_enabled").disabled);
+        await page.waitForFunction(() => document.getElementById("image-open").getAttribute("data-i18n") === "image_open" && !document.getElementById("image-check").disabled);
         const imageBefore = await page.locator("#setting-image_enabled").isChecked();
         await page.locator("#setting-image_enabled").setChecked(!imageBefore);
         await page.waitForFunction(value => !document.getElementById("setting-image_enabled").disabled && document.getElementById("setting-image_enabled").checked === value, !imageBefore);
@@ -356,7 +365,18 @@ try {
           assert.equal(imageActions.at(-1), operation);
           assert.equal(await page.locator("#image-action-note").isVisible(), true);
         }
-        assert.match(await page.locator("#image-action-note").innerText(), /Quit Codex|退出 Codex/);
+        await page.locator("#image-check").click();
+        await page.waitForFunction(() => document.getElementById("image-open").getAttribute("data-i18n") === "image_restart" && !document.getElementById("image-open").disabled);
+        assert.equal(await page.locator("#image-restart-warning").isVisible(), true);
+        await page.locator("#image-open").click();
+        await page.waitForFunction(() => document.getElementById("image-action-note").dataset.operation === "restart" && !document.getElementById("image-open").disabled);
+        assert.equal(imageActions.at(-1), "restart");assert.equal(imageConfirmations.at(-1), true);
+        await page.locator("#image-check").click();
+        await page.waitForFunction(() => document.getElementById("image-open").getAttribute("data-i18n") === "image_focus" && !document.getElementById("image-open").disabled);
+        assert.equal(await page.locator("#image-restart-warning").isVisible(), false);
+        await page.locator("#image-open").click();
+        await page.waitForFunction(() => document.getElementById("image-action-note").dataset.operation === "focus" && !document.getElementById("image-open").disabled);
+        assert.equal(imageActions.at(-1), "focus");
         if (output && width === 1280 && language === "zh") { await page.evaluate(() => window.scrollTo(0, 0));await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-codex.png`), fullPage: true }); }
         await nav("claude");
         assert.match(await page.locator("#claude-route").textContent(), /\/anthropic/);

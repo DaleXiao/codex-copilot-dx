@@ -99,6 +99,17 @@ test("queued UI changes preserve concurrent CLI preferences and recover after a 
   assert.equal(applied[0].color_theme, "pink");
 });
 
+test("image host evidence is accepted while a restart operation is waiting", async t => {
+  const f = fixture(t);let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const control = createServiceControl({ home: f.home, env: {}, readImages: () => false, readPrediction: () => ({ enabled: false }),
+    imageHostControl: async () => { entered();await gate;return { status: "opened_new_chat_required" }; } });
+  const restart = control.action({ action: "image", operation: "restart", confirmed: true });await started;
+  const evidence = await control.action({ action: "image", operation: "report", evidence: { id: "11111111-1111-1111-1111-111111111111", pid: process.pid, event: "connected" } });
+  assert.equal(evidence.features.image.runtime.connected, true);
+  release();assert.equal((await restart).last_operation.result.status, "opened_new_chat_required");
+});
+
 test('nightly updates default off, require a boolean and do not enable other service features', async t => {
  const f=fixture(t);assert.equal(f.control.snapshot().nightly_update.enabled,false);
  await f.control.action({action:'preference',key:'image_enabled',value:false});

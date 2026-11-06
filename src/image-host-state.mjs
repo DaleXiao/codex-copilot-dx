@@ -10,7 +10,9 @@ export function createImageHostState({ now = Date.now, alive = pid => { try { pr
       const previous = hosts.get(value.id);
       if (previous && previous.pid !== value.pid) throw new Error("Image host identity changed");
       const host = previous || { id: value.id, pid: value.pid, connected: false, threads: [] };
-      if (value.event === "connected") host.connected = true;
+      // A later tool event also proves this host is live, including when CCDX
+      // restarted after the host's initial connection report.
+      if (["connected", "registered", "generated", "failed"].includes(value.event)) host.connected = true;
       if (value.event === "closed") host.connected = false;
       if (value.event === "registered" && value.thread && !host.threads.includes(value.thread)) host.threads = [...host.threads, value.thread].slice(-32);
       host.event = value.event;host.updated_at = now();

@@ -1,14 +1,36 @@
 (() => {
   function create({ element: el, change, localize }) {
-    let saved = null, limitDirty = false, imageSignature = "";
-    for (const operation of ["check", "repair", "open"]) el("image-" + operation).addEventListener("click", async () => {
-      const data = await change({ action: "image", operation }, el("image-" + operation));
+    let saved = null, limitDirty = false, imageSignature = "", imageApp = { status: "unknown" };
+    function renderImageApp() {
+      const connected = imageApp.status === "running" && imageApp.host === "connected";
+      const restart = imageApp.status === "running" && !connected;
+      localize(el("image-open"), connected ? "image_focus" : restart ? "image_restart" : imageApp.status === "stopped" ? "image_open" : "image_inspect");
+      el("image-restart-warning").hidden = !restart;
+      localize(el("image-host-note"), imageApp.status === "stopped" ? "image_app_stopped" : imageApp.status === "multiple" ? "image_action_multiple_apps"
+        : connected ? imageApp.tool_registration === "observed" ? "image_host_registered" : "image_host_connected" : "image_host_unconfirmed");
+    }
+    async function imageAction(operation, button, { quiet = false } = {}) {
+      const data = await change({ action: "image", operation, ...(operation === "restart" ? { confirmed: true } : {}) }, button);
       const result = data?.last_operation?.feature === "image" ? data.last_operation.result : null;
       if (result) {
-        el("image-action-note").dataset.operation = operation;
-        el("image-action-note").hidden = false;
-        localize(el("image-action-note"), operation === "check" ? "image_connection_" + result.connection?.state : "image_action_" + result.status);
+        if (result.app) imageApp = result.app;
+        if (!quiet) {
+          el("image-action-note").dataset.operation = operation;
+          el("image-action-note").hidden = false;
+          localize(el("image-action-note"), operation === "check" ? "image_connection_" + result.connection?.state : "image_action_" + result.status);
+        }
+        renderImageApp();
       }
+    }
+    el("image-check").addEventListener("click", () => void imageAction("check", el("image-check")));
+    el("image-repair").addEventListener("click", () => void imageAction("repair", el("image-repair")));
+    el("image-open").addEventListener("click", () => {
+      const operation = imageApp.status === "running" ? imageApp.host === "connected" ? "focus" : "restart"
+        : imageApp.status === "stopped" ? "open" : "check";
+      void imageAction(operation, el("image-open"));
+    });
+    el("additional-capabilities").addEventListener("toggle", () => {
+      if (el("additional-capabilities").open) void imageAction("check", el("image-check"), { quiet: true });
     });
     const prediction = operation => change({ action: "prediction", operation }, el("prediction-continue"));
     el("setting-prediction_enabled").addEventListener("change", () => void prediction(el("setting-prediction_enabled").checked ? "enable" : "disable"));
@@ -40,8 +62,7 @@
       if (notes) localize(el("prediction-action-note"), !value ? "feature_unavailable" : value.status === "unavailable" ? "feature_read_failed" : pending ? "prediction_quit_continue" : value.enabled && value.bridge !== "running" ? "prediction_bridge_missing" : value.enabled ? "prediction_ready" : "prediction_disabled");
       el("effect-prediction_enabled").hidden = !pending;
       if (pending) localize(el("effect-prediction_enabled"), "feature_pending");
-      const runtime = data.features?.image?.runtime;
-      localize(el("image-host-note"), runtime?.tool_registration === "observed" ? "image_host_registered" : runtime?.connected ? "image_host_connected" : "image_host_unconfirmed");
+      renderImageApp();
       const image = data.features?.image, signature = JSON.stringify(image ? { ...image, runtime: undefined } : null);
       if (signature !== imageSignature) {
         imageSignature = signature;

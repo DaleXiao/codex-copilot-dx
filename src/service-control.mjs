@@ -46,7 +46,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid setting action");
     const allowed = { preference: ["action", "key", "value"], nightly_update: ["action", "enabled"], animation: ["action", "theme"], color_theme: ["action", "theme"],
       history_limit: ["action", "mib"], history_clean: ["action"], prediction_fix: ["action"],
-      prediction: ["action", "operation"], image: ["action", "operation", "model", "evidence"],
+      prediction: ["action", "operation"], image: ["action", "operation", "model", "evidence", "confirmed"],
       update: ["action", "confirmed"], decoded_limit: ["action", "mib"],
       preferences: ["action", "values", "revision"], reset_preferences: ["action", "revision", "backup_id", "scope"], restore_preferences: ["action", "revision", "backup_id", "scope"],
       provider: ["action", "operation", "provider", "model", "auto_review_model", "auto_review_effort", "account_id"] }[input.action];
@@ -55,8 +55,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     if (input.action === "prediction") {
       lastOperation = { feature: "prediction", result: await predictionControl(input.operation, { ...options, integration: clientIntegration }) };
     } else if (input.action === "image") {
-      if (input.operation === "report") { imageHostState.report(input.evidence);terminal?.image?.(imageHostState.snapshot()); }
-      else if (["check", "repair", "open"].includes(input.operation)) lastOperation = { feature: "image", result: await imageHostControl(input.operation, { ...options, host: adapterHost, port: adapterPort, integration: clientIntegration, state: imageHostState, models: providerRuntime?.imageModels?.().models || [] }) };
+      if (["check", "repair", "open", "focus", "restart"].includes(input.operation)) lastOperation = { feature: "image", result: await imageHostControl(input.operation, { ...options, host: adapterHost, port: adapterPort, integration: clientIntegration, state: imageHostState, confirmed: input.confirmed, models: providerRuntime?.imageModels?.().models || [] }) };
       else if (["pause", "resume"].includes(input.operation)) writeServicePreference("image_enabled", input.operation === "resume", options);
       else lastOperation = { feature: "image", result: await imageControl(input, { ...options, providerRuntime, adapterPort, adapterHost }) };
     } else if (input.action === "update") {
@@ -108,6 +107,15 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     return snapshot();
   }
   return { snapshot, busy: () => pending > 0, action(input) {
+    // Image-host evidence must not wait behind a user-initiated App restart:
+    // the host sends it with a short deadline as the new App starts.
+    if (input?.action === "image" && input.operation === "report") {
+      try {
+        if (Object.keys(input).some(key => !["action", "operation", "evidence"].includes(key))) throw new Error("Unknown setting action or field");
+        imageHostState.report(input.evidence);terminal?.image?.(imageHostState.snapshot());
+        return Promise.resolve(snapshot());
+      } catch (error) { return Promise.reject(error); }
+    }
     const counted = input?.action !== "update";if (counted) pending++;
     const operation = serial.then(() => apply(input)).finally(() => { if (counted) pending--; });serial = operation.catch(() => {});return operation;
   } };

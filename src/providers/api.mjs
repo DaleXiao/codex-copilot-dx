@@ -5,7 +5,7 @@ import { publicModelCatalog } from "../provider-metadata.mjs";
 import { resolveClaudeModel } from "../claude-models.mjs";
 import { prepareResponsesPayload } from "../image-optimization.mjs";
 import { enforceResponsesPayloadByteBudget } from "../responses-byte-budget.mjs";
-import { MAX_UPSTREAM_MODEL_CATALOG_BYTES, readBoundedResponseText } from "../http-transport.mjs";
+import { MAX_UPSTREAM_MODEL_CATALOG_BYTES, MAX_UPSTREAM_ERROR_BODY_BYTES, readBoundedResponseText } from "../http-transport.mjs";
 import { markUpstreamHeaders } from "../stream-performance.mjs";
 import { createApiNetwork } from "./api-network.mjs";
 import { checkedApiKey } from "../api-secrets.mjs";
@@ -162,8 +162,11 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       async openResponse(context, upstream, options) {
         const resp = await upstream(context.body, { assertActive: options.assertPrepareActive, signal: options.signal, currentInputStart: context.currentInputStart, onUpstreamStart: options.onUpstreamStart });
         markUpstreamHeaders(resp.status);
-        // Upstream errors may echo its key; never forward its error body.
-        if (!resp.ok) { await resp.body?.cancel();const code = `ccdx_api_http_${resp.status}`;return { resp: new Response(JSON.stringify({ error: { code, message: code } }), { status: resp.status, headers: { "Content-Type": "application/json" } }), reqContext: context, errorText: code, usedRetryPolicies: new Set() }; }
+        // request() already discarded the vendor body and projected a safe error.
+        if (!resp.ok) {
+          const errorText = await readBoundedResponseText(resp, { maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES, signal: options.signal, label: "API error response" });
+          return { resp, reqContext: context, errorText, usedRetryPolicies: new Set() };
+        }
         return { resp, reqContext: context, errorText: undefined, usedRetryPolicies: new Set() };
       } },
     close() { closed = true;lifetime.abort();network?.close();for (const previous of retiring) previous.close();retiring.clear(); },

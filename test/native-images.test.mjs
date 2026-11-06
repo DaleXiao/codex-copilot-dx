@@ -102,3 +102,16 @@ test("GHC image transport reuses its token and advertised API host without infer
   await client.images("generations", { ...request, model: NATIVE_IMAGE_MODEL }, { fetchImpl });
   assert.equal(refreshes, 1);assert.equal(calls, 2);
 });
+
+test("image HTTP errors are safe JSON with metadata and release the vendor body", async () => {
+  for (const status of [401, 403, 429, 500, 503]) {
+    let cancelled = 0, calls = 0;
+    const response = new Response(new ReadableStream({ cancel() { cancelled++; } }), { status,
+      headers: { 'Content-Type': 'text/html', 'Retry-After': '12', 'Set-Cookie': 'private=sensitive', 'x-request-id': 'image-fixture' } });
+    const f = fixture({ codexClient: { images: async () => { calls++;return response; } } });
+    const r = await invokeAdapter(f.options, { url: '/v1/images/generations', body: request });
+    assert.equal(r.status, status);assert.equal(JSON.parse(r.text).error.code, `ccdx_images_http_${status}`);
+    assert.equal(r.headers['Content-Type'], 'application/json');assert.equal(r.headers['Retry-After'], '12');
+    assert.equal(r.headers['Set-Cookie'], undefined);assert.equal(cancelled, 1);assert.equal(calls, 1);
+  }
+});

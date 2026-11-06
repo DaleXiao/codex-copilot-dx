@@ -87,7 +87,15 @@ export function createNativeImagesHandler({ client, acquireRequest, privacy, env
       const forward = input => client.images(operation, { ...body, prompt: input.input }, { signal: abort.signal });
       const call = privacy?.wrap ? privacy.wrap(forward, { res, protocol: "responses", client: "codex" }) : forward;
       const response = await call({ input: body.prompt }, { signal: abort.signal });
-      if (!response.ok) { metrics.failed++;await sendUpstreamError(res, response, "images", { signal: abort.signal });return; }
+      if (!response.ok) {
+        metrics.failed++;
+        await response.body?.cancel().catch(() => {});
+        abort.signal.throwIfAborted();
+        const code = `ccdx_images_http_${response.status}`, headers = new Headers(response.headers);
+        headers.set("Content-Type", "application/json");
+        sendUpstreamError(res, { status: response.status, headers }, JSON.stringify({ error: { type: "upstream_error", code, message: code } }));
+        return;
+      }
       const text = await readBoundedResponseText(response, { maxBytes: RESPONSE_MAX_BYTES, signal: abort.signal, label: "Copilot image response" });
       let result;
       try { result = JSON.parse(text); } catch { throw httpError("Copilot returned invalid image JSON", 502); }

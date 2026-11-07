@@ -10,7 +10,6 @@ const results = [];
 for (const scenario of [
   { name: "baseline-idle-disconnect", keepalive: 0, upstreamIdle: 1000, timeout: true },
   { name: "heartbeat-completes", keepalive: 40, upstreamIdle: 1000, timeout: false },
-  { name: "codex-event-heartbeat-during-upstream-comments", keepalive: 40, upstreamIdle: 1000, timeout: false, codex: true, comments: true },
   { name: "heartbeat-does-not-extend-upstream-timeout", keepalive: 40, upstreamIdle: 350, timeout: false },
 ]) {
   let calls = 0;
@@ -22,23 +21,21 @@ for (const scenario of [
     responsesFn: async (_body, { signal }) => {
       calls += 1;
       markUpstreamStarted(true);
-      let timer, comments;
+      let timer;
       let onAbort;
       return new Response(new ReadableStream({
         start(controller) {
-          onAbort = () => { clearTimeout(timer);clearInterval(comments);cancelled = true; controller.error(signal.reason); };
+          onAbort = () => { clearTimeout(timer); cancelled = true; controller.error(signal.reason); };
           signal?.addEventListener("abort", onAbort, { once: true });
           controller.enqueue(encoder.encode('event: response.created\ndata: {"type":"response.created","response":{"id":"idle-fixture","status":"in_progress"}}\n\n'));
-          if (scenario.comments) comments = setInterval(() => controller.enqueue(encoder.encode(": upstream queue\n\n")), 15);
           timer = setTimeout(() => {
-            clearInterval(comments);
             controller.enqueue(encoder.encode('event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"OK","output_index":0}\n\n'));
             controller.enqueue(encoder.encode('event: response.completed\ndata: {"type":"response.completed","response":{"id":"idle-fixture","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":2}}}\n\n'));
             controller.close();
             signal?.removeEventListener("abort", onAbort);
           }, 600);
         },
-        cancel() { clearTimeout(timer);clearInterval(comments);cancelled = true; signal?.removeEventListener("abort", onAbort); },
+        cancel() { clearTimeout(timer); cancelled = true; signal?.removeEventListener("abort", onAbort); },
       }), { headers: { "Content-Type": "text/event-stream" } });
     },
   });
@@ -48,7 +45,7 @@ for (const scenario of [
       let watchdog;
       const finish = result => { clearTimeout(watchdog); resolve(result); };
       const request = http.request({ host: "127.0.0.1", port: server.address().port, path: "/v1/responses", method: "POST",
-        headers: { "Content-Type": "application/json", Connection: "close", ...(scenario.codex ? { originator: "Codex Desktop" } : {}) } }, response => {
+        headers: { "Content-Type": "application/json", Connection: "close" } }, response => {
         response.setTimeout(200, () => request.destroy(new Error("downstream idle timeout")));
         response.on("data", chunk => { body += chunk; });
         response.on("end", () => finish({ body, error: null }));
@@ -67,15 +64,15 @@ for (const scenario of [
       assert.equal(received.body.includes("response.completed"), false);
       assert.equal(cancelled, true);
     } else {
-      assert.equal(received.error, null, JSON.stringify({ scenario: scenario.name, received_bytes: Buffer.byteLength(received.body), keepalives: received.body.split(scenario.codex ? "event: response.in_progress" : ": ccdx keepalive").length - 1, error: received.error }));
-      assert.match(received.body, scenario.codex ? /event: response\.in_progress/ : /: ccdx keepalive/);
+      assert.equal(received.error, null, JSON.stringify({ scenario: scenario.name, received_bytes: Buffer.byteLength(received.body), keepalives: received.body.split(": ccdx keepalive").length - 1, error: received.error }));
+      assert.match(received.body, /: ccdx keepalive/);
       assert.match(received.body, /response.completed/);
       const route = metrics.snapshot().by_route.responses;
       assert.equal(route.success_with_output, 1);
       assert.ok(route.ttft_ms.avg >= 450, "heartbeats must not count as first model output");
     }
     results.push({ scenario: scenario.name, completed: received.body.includes("response.completed"),
-      keepalives: received.body.split(scenario.codex ? "event: response.in_progress" : ": ccdx keepalive").length - 1, calls, error: received.error });
+      keepalives: received.body.split(": ccdx keepalive").length - 1, calls, error: received.error });
   } finally {
     server.closeAllConnections();
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

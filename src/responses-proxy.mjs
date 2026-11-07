@@ -30,7 +30,7 @@ import {
 } from "./responses-compaction.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
-import { CODEX_RESPONSE_KEEPALIVE, createSseKeepalive, responseKeepaliveFrame } from "./sse-keepalive.mjs";
+import { createSseKeepalive } from "./sse-keepalive.mjs";
 import {
   incompleteUpstreamStream,
   invalidUpstreamStream,
@@ -204,9 +204,8 @@ function createResponseSseTransformer(state) {
       .find((line) => line.startsWith("event:"))
       ?.slice(6)
       .trim();
-    const dataLines = lines.filter((line) => line.startsWith("data:"));
-    if (state.trackEventActivity && dataLines.length) state.dataFrames += 1;
-    const data = dataLines
+    const data = lines
+      .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trimStart())
       .join("\n");
     const changed = data && inspectResponseSseEvent(state, eventName, data);
@@ -450,7 +449,7 @@ function recordResponseFailure(options, reqContext, resp, failure, {
   console.warn(status("warn", formatResponseFailureLog(details)));
 }
 
-async function proxyStreamingResponses(opened, req, res, upstream, options) {
+async function proxyStreamingResponses(opened, res, upstream, options) {
   while (true) {
     let {
       resp,
@@ -475,7 +474,6 @@ async function proxyStreamingResponses(opened, req, res, upstream, options) {
       res.writeHead(resp.status, headers);
     };
     const reader = resp.body.getReader();
-    const heartbeat = responseKeepaliveFrame(req?.headers);
     const streamState = {
       completed: null,
       incomplete: null,
@@ -484,8 +482,6 @@ async function proxyStreamingResponses(opened, req, res, upstream, options) {
       sawOutput: false,
       toolArgumentGuard: new ToolArgumentDeltaGuard(),
       messageIds: new Map(),
-      trackEventActivity: heartbeat === CODEX_RESPONSE_KEEPALIVE,
-      dataFrames: 0,
     };
     const transformer = createResponseSseTransformer(streamState);
     let holdPrelude = streamRetryEligible;
@@ -494,27 +490,21 @@ async function proxyStreamingResponses(opened, req, res, upstream, options) {
     let preludeBytes = 0;
     const keepalive = createSseKeepalive({ res, signal: options.signal,
       intervalMs: options.keepaliveIntervalMs,
-      frame: heartbeat,
       canWrite: () => !holdPrelude && !streamState.sawTerminal });
-    let deliveredDataFrames = 0;
-    const noteDelivery = () => {
-      if (!streamState.trackEventActivity || streamState.dataFrames !== deliveredDataFrames) keepalive.activity();
-      deliveredDataFrames = streamState.dataFrames;
-    };
     const flushPrelude = async () => {
       if (!preludeBytes) return true;
       writeHeaders();
       const body = prelude.length === 1 ? prelude[0] : Buffer.concat(prelude, preludeBytes);
       prelude.length = 0;
       preludeBytes = 0;
-      noteDelivery();
+      keepalive.activity();
       return writeOrDrain(res, body, { signal: options.signal });
     };
     const forwardFrame = async (frame) => {
       if (!frame) return true;
       if (!holdPrelude) {
         writeHeaders();
-        noteDelivery();
+        keepalive.activity();
         return writeOrDrain(res, frame, { signal: options.signal });
       }
       prelude.push(frame);
@@ -623,7 +613,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
   }
   reqContext = opened.reqContext;
   if (reqContext.body.stream) {
-    return proxyStreamingResponses(opened, req, res, upstream, options);
+    return proxyStreamingResponses(opened, res, upstream, options);
   }
 
   while (true) {

@@ -33,7 +33,7 @@ import {
 import { status } from "./status.mjs";
 import { observeRequestedModel } from "./request-context.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
-import { createSseKeepalive, responseKeepaliveFrame } from "./sse-keepalive.mjs";
+import { createSseKeepalive } from "./sse-keepalive.mjs";
 import { safeUpstreamResponseHeaders } from "./upstream-headers.mjs";
 import { recordResponsesUsage } from "./usage-store.mjs";
 import {
@@ -316,7 +316,7 @@ export function createResponsesHandler(options) {
         };
         if (streaming) {
           let streamResponseHeaders = null;
-          const keepalive = createSseKeepalive({ res, signal: abort.signal, intervalMs: keepaliveIntervalMs, frame: responseKeepaliveFrame(req.headers) });
+          const keepalive = createSseKeepalive({ res, signal: abort.signal, intervalMs: keepaliveIntervalMs });
           let successful;
           try { successful = await forwardToChat(chatReq, async (event, data) => {
             if (!res.headersSent) res.writeHead(200, {

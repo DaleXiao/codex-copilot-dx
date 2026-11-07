@@ -759,7 +759,7 @@ Downstream backpressure waits also observe cancellation and the stream deadline.
 
 Successful streaming responses are accepted only when the upstream body is SSE and reaches its protocol terminal event. Unexpected EOF becomes a protocol-native stream error, and repeated blank tool-argument deltas are stopped per tool call. Allowlisted rate-limit, retry, model, trace, and upstream request-ID metadata are forwarded; cookies, authorization, body-length, and encoding headers are not.
 
-Responses, Chat fallback, Messages and local response restoration accept LF, CRLF and CR SSE line endings. On already-started Responses streams, recognized Codex clients receive a small nonterminal idle event; other clients retain comment heartbeats. Upstream timeouts, retry eligibility, output and usage are unchanged. A retry-eligible held prelude remains held until its existing release condition.
+Responses, Chat fallback, Messages and local response restoration accept LF, CRLF and CR SSE line endings. Existing comment heartbeats, upstream timeouts, retry eligibility, output and usage remain unchanged.
 
 CCDX keeps each native Responses message on its first upstream ID when Copilot changes that ID during streaming. Message deltas, completion events, and cached history stay consistent, addressing this cause of duplicate live messages in Codex App. Tool identities, reasoning/encrypted content, message phases, and speed-tier routing are unchanged by this ID normalization. Stable events retain their original SSE bytes; changed events are rewritten with bounded, backpressured streaming.
 

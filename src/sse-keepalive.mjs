@@ -1,18 +1,9 @@
-import { requestApplication } from "./request-application.mjs";
-
 export const SSE_KEEPALIVE_INTERVAL_MS = 15_000;
-export const SSE_KEEPALIVE_COMMENT = ": ccdx keepalive\n\n";
-export const CODEX_RESPONSE_KEEPALIVE = 'event: response.in_progress\ndata: {"type":"response.in_progress"}\n\n';
 
-export function responseKeepaliveFrame(headers) {
-  return ["codex_app", "codex_cli", "codex"].includes(requestApplication(headers)) ? CODEX_RESPONSE_KEEPALIVE : SSE_KEEPALIVE_COMMENT;
-}
-
-// Downstream-only SSE heartbeats. Never read upstream, alter its deadlines, or
+// Downstream-only SSE comments. Never read upstream, alter its deadlines, or
 // write before valid stream headers / between pieces of a partially written frame.
 export function createSseKeepalive({
   res, signal, canWrite = () => true, intervalMs = SSE_KEEPALIVE_INTERVAL_MS,
-  frame = SSE_KEEPALIVE_COMMENT,
   now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
 } = {}) {
   let timer = null;
@@ -34,9 +25,9 @@ export function createSseKeepalive({
     const idle = Math.max(0, now() - lastWrite);
     try {
       if (idle >= intervalMs && res?.headersSent && !res.writableNeedDrain && canWrite()) {
-        // One small, complete frame is bounded even if this write reaches the
-        // high-water mark; no further heartbeats are sent while backpressured.
-        res.write(frame);
+        // One small, complete comment is bounded even if this write reaches the
+        // high-water mark; no further comments are sent while backpressured.
+        res.write(": ccdx keepalive\n\n");
         lastWrite = now();
       }
     } catch { return stop(); }

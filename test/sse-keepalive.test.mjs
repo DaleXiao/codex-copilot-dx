@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CODEX_RESPONSE_KEEPALIVE, SSE_KEEPALIVE_COMMENT, createSseKeepalive, responseKeepaliveFrame } from "../src/sse-keepalive.mjs";
+import { createSseKeepalive } from "../src/sse-keepalive.mjs";
 
 function fixture() {
   let time = 0;
@@ -50,12 +50,4 @@ test("SSE heartbeat never commits headers, writes after termination or bypasses 
   callback();
   assert.equal(writes.length, 0);
   held.stop();
-});
-
-test("only known Codex clients receive a nonterminal event instead of an SSE comment", () => {
-  for (const originator of ["Codex Desktop", "codex_cli_rs", "codex"]) assert.equal(responseKeepaliveFrame({ originator }), CODEX_RESPONSE_KEEPALIVE);
-  assert.equal(responseKeepaliveFrame({ originator: "unrecognized" }), SSE_KEEPALIVE_COMMENT);
-  assert.equal(responseKeepaliveFrame({ "x-ccdx-client": "claude-app", originator: "codex" }), SSE_KEEPALIVE_COMMENT);
-  assert.match(CODEX_RESPONSE_KEEPALIVE, /^event: response\.in_progress\ndata: \{"type":"response\.in_progress"\}\n\n$/);
-  assert.doesNotMatch(CODEX_RESPONSE_KEEPALIVE, /response\.completed|output_text|usage/);
 });

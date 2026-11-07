@@ -110,6 +110,17 @@ test("image host evidence is accepted while a restart operation is waiting", asy
   release();assert.equal((await restart).last_operation.result.status, "opened_new_chat_required");
 });
 
+test("version refresh is acknowledged without waiting for inspection or other settings actions", async t => {
+  const f = fixture(t);let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const versions = { snapshot: () => ({ checked_at: null, codex: [], claude: [] }), refresh: async () => { entered();await gate; } };
+  const control = createServiceControl({ home: f.home, env: {}, clientVersions: versions, readImages: () => false, readPrediction: () => ({ enabled: false }) });
+  const result = await control.action({ action: "client_versions" });assert.equal(result.scheduled, true);await started;
+  assert.equal((await control.action({ action: "preference", key: "open_webui", value: false })).saved.open_webui, false);
+  assert.deepEqual(control.snapshot().client_versions, versions.snapshot());
+  await assert.rejects(control.action({ action: "client_versions", extra: true }), /Unknown/);release();
+});
+
 test("shared Codex restart forwards explicit intent and accepts host evidence while waiting", async t => {
   const f = fixture(t);let entered, release, received;
   const started = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });

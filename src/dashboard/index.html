@@ -271,6 +271,9 @@
           <section class="panel dashboard-section">
             <h2 data-i18n="tools_check_local">Check this computer</h2>
             <p class="hint" data-i18n="tools_local_scope">Local checks do not contact external services.</p>
+            <p>Codex App: <strong id="client-version-codex">—</strong></p>
+            <p>Claude App: <strong id="client-version-claude">—</strong></p>
+            <p class="hint" data-i18n="client_versions_scope">Installed versions only; running App adoption and compatibility are separate.</p>
             <div class="section-actions"><button id="check-local" type="button" data-i18n="tools_check_local">Check this computer</button></div>
             <p id="checks-note" class="table-note" role="status" aria-live="polite" data-i18n="tools_checks_empty">Run a check to see the results.</p>
             <div class="table-wrap" id="checks-results" hidden><table class="checks-table"><thead><tr><th data-i18n="tools_check_item">Check</th><th data-i18n="state">State</th><th data-i18n="tools_details">Details</th></tr></thead><tbody id="checks-body"></tbody></table></div>

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { validCapabilities, catalogCapabilities, deploymentRevision, resolveModelCapabilities, constrainModelRequest, deploymentModelId, claudeEffortPrefix } from "../src/model-capabilities.mjs";
 import { compileClientModels, sourceModels } from "../src/client-model-plan.mjs";
-import { claudeSharedCapabilityPlan, syncClaudeCapabilities, inspectClaudeCapabilitySupport } from "../src/claude-capability-config.mjs";
+import { claudeSharedCapabilityPlan, claudeSupportForSync, syncClaudeCapabilities, inspectClaudeCapabilitySupport } from "../src/claude-capability-config.mjs";
 import { claudeClientPaths, restoreClaudeClients, configureClaudeClients } from "../src/claude-client-config.mjs";
 import { defaultAccessSettings, accessSettingsPath, readAccessSettings, updateAccessSettings } from "../src/access-settings.mjs";
 import { m365Paths } from "../src/m365-settings.mjs";
@@ -91,6 +91,18 @@ test("an unverified client version preserves the existing capability configurati
   fs.mkdirSync(path.dirname(file), { recursive: true });const before = '{"env":{"CLAUDE_CODE_MAX_CONTEXT_TOKENS":"128000"},"modelSettings":{"custom":{"autoCompactWindow":120000}}}';fs.writeFileSync(file, before);
   const result = syncClaudeCapabilities({ limitations: [{ code: "client_version_unknown" }] }, options);
   assert.equal(result.state, "partially_preserved");assert.equal(result.changed, false);assert.equal(fs.readFileSync(file, "utf8"), before);
+});
+
+test("an observed unknown Claude major preserves future shared configuration without changing runtime support", t => {
+  const options = temporary(t), file = claudeClientPaths(options).code, support = { app: true, code: true };
+  fs.mkdirSync(path.dirname(file), { recursive: true });const before = '{"env":{"CLAUDE_CODE_MAX_CONTEXT_TOKENS":"128000"}}';fs.writeFileSync(file, before);
+  const observed = { claude: [{ id: "claude_system_claude", version: "5.0.0" }] };
+  const guarded = claudeSupportForSync(support, observed);
+  const plan = claudeSharedCapabilityPlan({ app: [model("synthetic", 128000)], support: guarded });
+  assert.equal(guarded.app, false);assert.equal(support.app, true);assert.ok(plan.limitations.some(item => item.code === "client_version_unknown"));
+  assert.equal(syncClaudeCapabilities(plan, options).changed, false);assert.equal(fs.readFileSync(file, "utf8"), before);
+  assert.equal(claudeSupportForSync(support, { claude: [{ id: "claude_system_claude", version: "4.999.0" }] }), support);
+  assert.equal(claudeSupportForSync(support, null), support);
 });
 
 test("capabilities preserve explicit false, field evidence, unknowns and credential generations", () => {

@@ -185,8 +185,9 @@ export function runtimeStatusPayload({
       last_request: observed ? {
         client_version: version(observed.client_version),
         application: ["ChatGPT.app", "Codex.app", "custom binary"].includes(observed.application) ? observed.application : null,
-        source: observed.source === "bundled" ? "bundled" : "unavailable",
+        source: ["bundled", "cached_bundled"].includes(observed.source) ? observed.source : "unavailable",
         matched: observed.matched === true,
+        match_precision: ["exact", "core_only"].includes(observed.match_precision) ? observed.match_precision : null,
         observed_at: typeof observed.observed_at === "string" && /^\d{4}-\d{2}-\d{2}T[0-9:.]+Z$/.test(observed.observed_at) ? observed.observed_at : null,
       } : null,
       observed_versions: (Array.isArray(snapshot?.observed_versions) ? snapshot.observed_versions : []).filter(version).slice(0, 8),

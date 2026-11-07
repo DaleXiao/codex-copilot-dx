@@ -57,6 +57,14 @@ const WINDOWS_APP_SCRIPT = `$p=@(Get-AppxPackage -Name OpenAI.Codex | Where-Obje
     if($a.Count -ne 1){throw 'Unknown Windows App executable'};
     @{root=$p[0].InstallLocation;executable=$a[0].Executable;family=$p[0].PackageFamilyName} | ConvertTo-Json -Compress`;
 
+export async function inspectWindowsCodexVersion({ env = process.env, exec = execFileAsync } = {}) {
+  const script = `$p=@(Get-AppxPackage -Name OpenAI.Codex | Where-Object { [int]$_.Status -eq 0 -and [int]$_.SignatureKind -eq 3 -and $_.Publisher -eq '${WINDOWS_PUBLISHER}' -and $_.PackageFamilyName -eq '${WINDOWS_PACKAGE_FAMILY}' });if($p.Count -ne 1){throw 'Unknown App registration'};[string]$p[0].Version`;
+  const [command, args] = powershellCommand(script, env);
+  const result = await exec(command, args, { encoding: "utf8", timeout: 2500, maxBuffer: 4096, env: windowsPowerShellEnvironment(env), windowsHide: true });
+  const version = String(result?.stdout ?? result).trim();
+  return /^\d+(?:\.\d+){1,3}$/.test(version) ? version : null;
+}
+
 function registeredApp(raw) {
   let metadata;
   try { metadata = JSON.parse(raw); } catch { throw new Error("Could not read the registered Windows Codex App"); }

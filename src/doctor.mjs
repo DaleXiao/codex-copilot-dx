@@ -315,6 +315,14 @@ export async function runDoctor(options = {}) {
   ].filter(Boolean);
   if (!options.json) log(`${options.commandName || "ccdx"} doctor${options.configOnly ? " config" : flags.length ? ` ${flags.join(" ")}` : ""}`);
   let checks = await collectDoctorChecks(options);
+  if (!options.configOnly) {
+    try {
+      const { createClientVersionMonitor, clientVersionChecks } = await import("./client-versions.mjs");
+      const monitor = options.clientVersions || createClientVersionMonitor({ home: options.home, env: options.env, platform: options.platform, persist: false });
+      try { checks.push(...clientVersionChecks(await monitor.refresh())); }
+      finally { if (!options.clientVersions) monitor.close(); }
+    } catch { checks.push({ id: "client-versions", kind: "info", message: "App version observations are unavailable" }); }
+  }
   const before = options.fix ? checks : undefined;
   if (options.fix && !options.configOnly) {
     const repair = options.repairDoctorFn || (await import("./doctor-repair.mjs")).repairDoctor;

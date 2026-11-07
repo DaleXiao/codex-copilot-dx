@@ -237,7 +237,7 @@ export function createAdapterHandler(options = {}) {
   });
   const responsesHandler = createResponsesHandler({
     privacy,
-    validateConversation: (body, headers, source) => options.providerRuntime?.validateConversation?.(body, headers, source),
+    validateConversation: (body, headers, source, signal) => options.providerRuntime?.validateConversation?.(body, headers, source, signal),
     resolveProvider: (body, req) => options.providerRuntime?.resolveCodex?.(body, req),
     providerPreference: id => options.providerRuntime?.providerPreference?.(id),
     provider: options.provider || options.providerRuntime?.github,
@@ -260,7 +260,7 @@ export function createAdapterHandler(options = {}) {
   });
   const responsesCompactHandler = createResponsesCompactHandler({
     privacy,
-    validateConversation: (body, headers, source) => options.providerRuntime?.validateConversation?.(body, headers, source),
+    validateConversation: (body, headers, source, signal) => options.providerRuntime?.validateConversation?.(body, headers, source, signal),
     resolveProvider: (body, req) => options.providerRuntime?.resolveCodex?.(body, req),
     providerPreference: id => options.providerRuntime?.providerPreference?.(id),
     provider: options.provider || options.providerRuntime?.github,
@@ -282,7 +282,7 @@ export function createAdapterHandler(options = {}) {
     if (!provider || provider.id === "github") return githubHandlers;
     if (!providerHandlers.has(provider)) {
       const common = { provider, privacy, acquireRequest, imagePressure, keepaliveIntervalMs: options.keepaliveIntervalMs,
-        validateConversation: (body, headers, source) => options.providerRuntime?.validateConversation?.(body, headers, source),
+        validateConversation: (body, headers, source, signal) => options.providerRuntime?.validateConversation?.(body, headers, source, signal),
     resolveProvider: (body, req) => options.providerRuntime?.resolveCodex?.(body, req),
     providerPreference: id => options.providerRuntime?.providerPreference?.(id),
         modelRegistry: provider.registry, now: options.now, openAIModelEnv: { ...openAIModelEnv, CCDX_AUTO_REVIEW_MODEL: "" },

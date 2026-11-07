@@ -66,9 +66,13 @@ const localTools = {
   report: () => ({ source: "local_tools", checks: [], account: "[hidden]" }),
 };
 const networkDiagnostic = { source: "system", stage: "proxy_config", cause_code: "proxy_bypass_invalid" };
+const clientVersions = { snapshot: () => ({ checked_at: "2026-11-07T04:00:00.000Z",
+  codex: [{ name: "ChatGPT.app", version: "26.1103.32239", build: "25471", cli_version: "0.167.0-alpha.3.2", changed_at: null }],
+  claude: [{ name: "Claude.app", version: "4.23119.0", build: "101", previous: { version: "4.23118.0" }, changed_at: "2026-11-07T04:00:00.000Z" }] }),
+  refresh: async () => {} };
 let m365Preference = { model: "gpt-source", auto_review_model: "gpt-source", auto_review_effort: "low" };
 let manualUpdates = 0;const imageActions = [], codexActions = [];let imageApp = { status: "stopped" }, codexPending = false;
-const serviceControl = createServiceControl({ home, env: {},
+const serviceControl = createServiceControl({ home, env: {}, clientVersions,
   imageHostControl: async (operation, options) => {
     imageActions.push(operation);
     if (operation === "check") return { status: "checked", app: { ...imageApp }, connection: { state: "verified", scope: "node_loopback", app_path: "unconfirmed" } };
@@ -608,6 +612,9 @@ try {
         assert.equal(accountChecks, 1, "Navigation does not silently enumerate accounts");
         await nav("checks");await page.locator("#check-account-link").click();await page.waitForFunction(() => !document.getElementById("github-account").hidden);
         await nav("checks");await page.locator("#check-local").click();
+        await page.waitForFunction(() => document.getElementById("client-version-codex").textContent.includes("26.1103.32239"));
+        assert.match(await page.locator("#client-version-codex").innerText(), /0\.167\.0-alpha\.3\.2/);
+        assert.match(await page.locator("#client-version-claude").innerText(), language === "zh" ? /已更新，接入待确认/ : /updated, access unverified/);
         await page.waitForFunction(() => document.getElementById("checks-body").children.length > 0);
         assert.equal(await page.locator("#checks-body .state-warning .state-icon").count(), 1);
         await page.locator("#preview-config-repair").click();
@@ -747,6 +754,8 @@ try {
         assert.equal(await page.locator("#context-history-chart svg").count(), 1);
         assert.equal(await page.locator("#context-share").textContent(), "12.0%");
         assert.equal(await page.locator("#context-reuse").textContent(), "50.0%");
+        const pointTips = await page.locator("#context-history-chart .context-point title").allTextContents();
+        assert.equal(pointTips.length, 3);assert.match(pointTips[0], /60\.0%/);assert.match(pointTips[1], /30\.0%/);assert.match(pointTips[2], /50\.0%/);
         assert.match(await page.locator("#context-compactions").textContent(), /2.4 s/);
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-context.png`), fullPage: true });
         await page.locator("#context-sessions button").last().click();

@@ -182,7 +182,7 @@ test("cli doctor exits without starting the adapter", async () => {
 });
 
 
-test("cli doctor ignores retired Claude settings and remains Codex-only", async () => {
+test("cli doctor reports an unknown Claude App without reading retired settings", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-doctor-retired-"));
   fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
   fs.writeFileSync(path.join(home, ".claude", "settings.json"), "{broken");
@@ -193,7 +193,8 @@ test("cli doctor ignores retired Claude settings and remains Codex-only", async 
   });
 
   assert.match(stdout, /^ccdx doctor/m);
-  assert.doesNotMatch(stdout, /Claude|Anthropic/i);
+  assert.match(stdout, /Claude App: installed version not observed/);
+  assert.doesNotMatch(stdout, /Anthropic|\.claude\/settings|\{broken/i);
   assert.equal(stderr, "");
 });
 

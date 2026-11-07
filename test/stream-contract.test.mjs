@@ -60,6 +60,56 @@ function sseResponse(body) {
   return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream; charset=utf-8" } });
 }
 
+test("native Responses preserves LF, CRLF and CR frames across arbitrary chunks", async () => {
+  const delta = { type: "response.output_text.delta", delta: "hello 你好", output_index: 0 };
+  const done = { type: "response.completed", response: { id: "resp_line_endings", status: "completed", output: [] } };
+  for (const ending of ["\n", "\r\n", "\r"]) {
+    const body = [delta, done].map(event => `event: ${event.type}${ending}id: opaque${ending}: note${ending}data: ${JSON.stringify(event)}${ending}${ending}`).join("");
+    const bytes = Buffer.from(body);
+    for (const size of [1, 7, bytes.length]) {
+      const source = () => new Response(new ReadableStream({ start(controller) {
+        for (let at = 0; at < bytes.length; at += size) controller.enqueue(bytes.subarray(at, at + size));
+        controller.close();
+      } }), { headers: { "Content-Type": "text/event-stream" } });
+      const result = await invokeAdapter({ responsesFn: async () => source(), getCachedModelEndpointsFn: () => ["/responses"] },
+        { body: { model: "gpt-5.6-sol", stream: true, input: "synthetic" } });
+      assert.equal(result.status, 200);
+      assert.equal(result.text, body, `${JSON.stringify(ending)} split into ${size}-byte chunks`);
+    }
+  }
+});
+
+test("native Responses recognizes mixed line endings without changing frame bytes", async () => {
+  const delta = { type: "response.output_text.delta", delta: "mixed", output_index: 0 };
+  const done = { type: "response.completed", response: { id: "resp_mixed", status: "completed", output: [] } };
+  const body = `event: ${delta.type}\rdata: ${JSON.stringify(delta)}\r\r\n` + `event: ${done.type}\ndata: ${JSON.stringify(done)}\n\r`;
+  const bytes = Buffer.from(body);
+  const source = new Response(new ReadableStream({ start(controller) { for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));controller.close(); } }),
+    { headers: { "Content-Type": "text/event-stream" } });
+  const result = await invokeAdapter({ responsesFn: async () => source, getCachedModelEndpointsFn: () => ["/responses"] },
+    { body: { model: "gpt-5.6-sol", stream: true, input: "synthetic" } });
+  assert.equal(result.status, 200);assert.equal(result.text, body);
+});
+
+test("a CR-only Responses terminal completes without waiting for upstream socket EOF", async () => {
+  let cancelled = false;
+  const done = { type: "response.completed", response: { id: "resp_open_cr", status: "completed", output: [] } };
+  const body = `event: ${done.type}\rdata: ${JSON.stringify(done)}\r\r`;
+  const source = new Response(new ReadableStream({ start(controller) { controller.enqueue(Buffer.from(body)); }, cancel() { cancelled = true; } }),
+    { headers: { "Content-Type": "text/event-stream" } });
+  const result = await invokeAdapter({ responsesFn: async () => source, getCachedModelEndpointsFn: () => ["/responses"] },
+    { body: { model: "gpt-5.6-sol", stream: true, input: "synthetic" } });
+  assert.equal(result.text, body);assert.equal(cancelled, true);
+});
+
+test("Chat fallback accepts CR-only streamed events", async () => {
+  const source = `data: ${JSON.stringify({ choices: [{ delta: { content: "synthetic" }, finish_reason: null }] })}\r\r`
+    + `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\r\rdata: [DONE]\r\r`;
+  const result = await invokeAdapter({ chatCompletionsFn: async () => sseResponse(source) },
+    { body: { model: "gpt-4o", stream: true, input: "synthetic" } });
+  assert.equal(result.status, 200);assert.match(result.text, /response\.output_text\.delta/);assert.match(result.text, /response\.completed/);
+});
+
 test("stream preflight rejects non-SSE 2xx bodies for native Responses and Chat fallback without leaking them", async () => {
   const secret = "must-not-leak-upstream-body";
   const cases = [

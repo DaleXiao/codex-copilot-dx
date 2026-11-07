@@ -260,6 +260,8 @@ export function createCodexModelCatalog({
   const versionFailures = new Map();
   const versionPending = new Map();
   const catalogCache = new Map();
+  const exactCatalogCache = new Map();
+  const ambiguousVersions = new Set();
   const catalogFailures = new Map();
   const catalogPending = new Map();
   let activeBinaryKeys = new Set();
@@ -280,8 +282,8 @@ export function createCodexModelCatalog({
     const promise = (async () => {
       try {
         const stdout = await runCodexCommand(execFileFn, candidate.binaryPath, ["--version"], commandOptions);
-        const version = wholeSemver(parsedCodexVersion(stdout));
-        if (!version) throw new Error("Invalid Codex version output");
+        const version = parsedCodexVersion(stdout);
+        if (!wholeSemver(version)) throw new Error("Invalid Codex version output");
         if (activeBinaryKeys.has(candidate.key)) {
           versionCache.set(candidate.key, version);
           versionFailures.delete(candidate.key);
@@ -313,8 +315,10 @@ export function createCodexModelCatalog({
     if (!rawVersion) return installed[0];
     const expectedVersion = wholeSemver(rawVersion);
     if (!expectedVersion) return null;
+    const exact = rawVersion !== expectedVersion;
     for (const candidate of installed) {
-      if (await probeVersion(candidate) === expectedVersion) return candidate;
+      const version = await probeVersion(candidate);
+      if (version && (exact ? version === rawVersion : wholeSemver(version) === expectedVersion)) return { ...candidate, fullVersion: version, precision: exact ? "exact" : "core_only" };
     }
     return null;
   }
@@ -356,14 +360,33 @@ export function createCodexModelCatalog({
   }
 
   async function load({ clientVersion = "" } = {}) {
+    const requested = String(clientVersion || "").trim(), core = wholeSemver(requested);
+    const exact = Boolean(core && requested !== core);
     const candidate = await selectBinary(clientVersion);
-    const catalog = candidate ? await loadCatalog(candidate) : null;
-    const app = candidate?.binaryPath.match(/(?:^|\/)(ChatGPT|Codex)\.app\//)?.[1];
+    let catalog = candidate ? await loadCatalog(candidate) : null;
+    let app = candidate?.binaryPath.match(/(?:^|\/)(ChatGPT|Codex)\.app\//)?.[1];
+    let source = catalog ? "bundled" : "unavailable";
+    if (candidate && catalog && exact && !ambiguousVersions.has(requested)) {
+      const previous = exactCatalogCache.get(requested);
+      if (previous && previous.key !== candidate.key) {
+        exactCatalogCache.delete(requested);ambiguousVersions.add(requested);
+        if (ambiguousVersions.size > 8) ambiguousVersions.delete(ambiguousVersions.values().next().value);
+      } else if (!previous) try {
+        const stats = await statFn(candidate.binaryPath);
+        if (stats?.isFile?.() && binaryCacheKey(candidate.binaryPath, stats) === candidate.key) {
+          exactCatalogCache.set(requested, { key: candidate.key, catalog, app: app || null });
+          while (exactCatalogCache.size > 2) exactCatalogCache.delete(exactCatalogCache.keys().next().value);
+        }
+      } catch { /* A changing App cannot supply a verified retained catalog. */ }
+    } else if (!candidate && exact && exactCatalogCache.has(requested) && !ambiguousVersions.has(requested)) {
+      const previous = exactCatalogCache.get(requested);catalog = previous.catalog;app = previous.app;source = "cached_bundled";
+    }
     lastObservation = {
-      client_version: wholeSemver(clientVersion) || null,
-      application: app ? `${app}.app` : candidate ? "custom binary" : null,
-      source: catalog ? "bundled" : "unavailable",
-      matched: Boolean(catalog && wholeSemver(clientVersion)),
+      client_version: core || null,
+      application: app ? `${app}.app` : candidate || source === "cached_bundled" ? "custom binary" : null,
+      source,
+      matched: Boolean(catalog && core),
+      match_precision: catalog && core ? exact ? "exact" : "core_only" : null,
       observed_at: new Date(now()).toISOString(),
     };
     return catalog;
@@ -371,7 +394,7 @@ export function createCodexModelCatalog({
 
   return { load, snapshot: () => ({
     last_request: lastObservation ? { ...lastObservation } : null,
-    observed_versions: [...new Set(versionCache.values())].slice(0, 8),
+    observed_versions: [...new Set([...versionCache.values()].map(wholeSemver).filter(Boolean))].slice(0, 8),
     client_cache_verified: false,
   }) };
 }

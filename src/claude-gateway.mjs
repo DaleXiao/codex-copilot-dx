@@ -51,6 +51,7 @@ function authenticated(headers, key) {
 // other frames retain their wire text. Client backpressure controls upstream reads.
 export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clientModel = null) {
   const decoder = new TextDecoder("utf-8", { fatal: true });let fragments = [], lineBytes = 0, data = [], frameBytes = 0, wire = [], wireBytes = 0, output = [];
+  let pendingCR = false, bareCR = false, optionalLF = false;
   const frame = () => {
     let value;
     if (data.length) { try { value = JSON.parse(data.join("\n")); } catch { throw new Error("Invalid Claude stream event"); }onEvent(value); }
@@ -60,16 +61,16 @@ export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clie
         wire = wire.map(line => {
           if (!line.startsWith("data:")) return line;
           if (replaced) return "";replaced = true;
-          return `data: ${replacement}${line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : ""}`;
+          return `data: ${replacement}${line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : line.endsWith("\r") ? "\r" : ""}`;
         });
       }
       output.push(Buffer.from(wire.join("")));wire = [];wireBytes = 0;
     }
     data = [];frameBytes = 0;
   };
-  const line = (value, newline = true) => {
+  const line = (value, newline = true, bytes) => {
     {
-      wireBytes += Buffer.byteLength(value) + (newline ? 1 : 0);
+      wireBytes += (bytes ?? Buffer.byteLength(value)) + (newline ? 1 : 0);
       if (wireBytes > maxBytes) throw new Error("Claude stream event exceeds its limit");
       wire.push(value + (newline ? "\n" : ""));
     }
@@ -87,19 +88,63 @@ export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clie
       if (frameBytes > maxBytes) throw new Error("Claude stream event exceeds its limit");data.push(part);
     }
   };
+  const completeLine = ending => { line(fragments.join("") + (ending.startsWith("\r") ? "\r" : ""), ending.endsWith("\n"));fragments = [];lineBytes = 0; };
   function consume(text) {
     let start = 0;
+    if (!bareCR && text.length) {
+      const tailCR = fragments.at(-1)?.endsWith("\r") === true;
+      if (tailCR && text[0] !== "\n") {
+        bareCR = true;
+        fragments[fragments.length - 1] = fragments.at(-1).slice(0, -1);lineBytes--;
+        completeLine("\r");
+      }
+    }
+    if (!bareCR) {
+      let nextCR = text.indexOf("\r", start);
+      while (start < text.length) {
+        const newline = text.indexOf("\n", start), end = newline < 0 ? text.length : newline, part = text.slice(start, end);
+        if (nextCR >= 0 && nextCR < end - 1) { bareCR = true;break; }
+        lineBytes += Buffer.byteLength(part);
+        if (lineBytes > maxBytes || wireBytes + lineBytes > maxBytes) throw new Error("Claude stream line exceeds its limit");
+        fragments.push(part);
+        if (newline < 0) break;
+        line(fragments.length === 1 ? fragments[0] : fragments.join(""), true, lineBytes);
+        fragments = [];lineBytes = 0;start = newline + 1;
+        if (nextCR >= 0 && nextCR === end - 1) nextCR = text.indexOf("\r", start);
+      }
+      if (!bareCR) return;
+    }
+    if (optionalLF) {
+      optionalLF = false;
+      if (text.startsWith("\n")) { output.push(Buffer.from("\n"));start = 1; }
+    }
+    if (pendingCR && start < text.length) {
+      pendingCR = false;
+      if (text[start] === "\n") { completeLine("\r\n");start++; }
+      else { bareCR = true;completeLine("\r"); }
+    }
     while (start < text.length) {
-      const newline = text.indexOf("\n", start), end = newline < 0 ? text.length : newline, part = text.slice(start, end);
+      const lf = text.indexOf("\n", start), cr = text.indexOf("\r", start);
+      const end = lf < 0 ? (cr < 0 ? text.length : cr) : cr < 0 ? lf : Math.min(lf, cr);
+      const part = text.slice(start, end);
       lineBytes += Buffer.byteLength(part);
       if (lineBytes > maxBytes || wireBytes + lineBytes > maxBytes) throw new Error("Claude stream line exceeds its limit");
       fragments.push(part);
-      if (newline < 0) break;
-      line(fragments.join(""));fragments = [];lineBytes = 0;start = newline + 1;
+      if (end === text.length) break;
+      if (text[end] === "\n") { completeLine("\n");start = end + 1;continue; }
+      if (end + 1 === text.length) {
+        if (bareCR && lineBytes === 0) { completeLine("\r");optionalLF = true; }
+        else pendingCR = true;
+        break;
+      }
+      if (text[end + 1] === "\n") { completeLine("\r\n");start = end + 2; }
+      else { bareCR = true;completeLine("\r");start = end + 1; }
     }
   }
   return { write(chunk) { output = [];consume(decoder.decode(chunk, { stream: true }));return output; },
-    finish() { output = [];consume(decoder.decode());if (fragments.length) line(fragments.join(""), false);if (wire.length && !/\r?\n\r?\n$/.test(wire.join(""))) wire.push("\n\n");frame();return output; } };
+    finish() { output = [];consume(decoder.decode());if (pendingCR) { pendingCR = false;completeLine("\r"); }
+      if (!bareCR && fragments.at(-1)?.endsWith("\r")) { fragments[fragments.length - 1] = fragments.at(-1).slice(0, -1);lineBytes--;completeLine("\r"); }
+      if (fragments.length) completeLine("");if (wire.length) wire.push("\n\n");frame();return output; } };
 }
 
 export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = false, messagesSystemMode = "passthrough", log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,

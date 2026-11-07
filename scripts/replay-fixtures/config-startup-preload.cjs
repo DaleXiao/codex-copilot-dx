@@ -4,6 +4,14 @@ const http = require("node:http");
 const { syncBuiltinESMExports } = require("node:module");
 if (!process.env.CCDX_TEST_HOME) throw new Error("Startup replay requires an isolated profile");
 os.homedir = () => process.env.CCDX_TEST_HOME;
+if (process.env.CCDX_TEST_VERSION_SCAN_BLOCKED === "1") {
+  const io = require("node:fs/promises"), stat = io.stat;let reported = false;
+  io.stat = (file, ...args) => {
+    if (!String(file).endsWith(".app/Contents/Info.plist")) return stat(file, ...args);
+    if (!reported) { reported = true;console.log("App version fixture blocked"); }
+    return new Promise(() => {});
+  };
+}
 if (process.env.CCDX_TEST_TTY === "1") {
   Object.defineProperty(process.stdout, "isTTY", { value: true });
   Object.defineProperty(process.stderr, "isTTY", { value: true });

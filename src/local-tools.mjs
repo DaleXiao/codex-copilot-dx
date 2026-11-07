@@ -12,18 +12,21 @@ import { inspectAdapterCompatibility } from "./doctor-compat.mjs";
 
 export function createLocalTools({ home = os.homedir(), env = process.env, host = "127.0.0.1", port = 2026,
   platform = process.platform, collect = collectDoctorChecks, inspectConfig = inspectCodexConfig, repairConfig = repairCodexConfig,
-  inspectNetwork = inspectPredictionEnvironment, inspectCompatibility = inspectAdapterCompatibility } = {}) {
+  inspectNetwork = inspectPredictionEnvironment, inspectCompatibility = inspectAdapterCompatibility, clientVersions } = {}) {
   const options = { home, env, host, port, platform };
   let last = null, flight = null;
   const safe = text => redactDiagnosticText(String(text || "")).split(home).join("~")
     .replace(/[\w.+-]+@[\w.-]+/g, "[account]").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 600);
   const project = checks => checks.slice(0, 80).map(check => ({ id: /^[a-z-]{1,60}$/.test(check.id || "") ? check.id : "local",
     kind: ["ok", "info", "warn", "err"].includes(check.kind) ? check.kind : "info", message: safe(check.message) }));
-  function snapshot() { return { source: "local_tools", ...last }; }
+  function snapshot() { let versions = null;try { versions = clientVersions?.snapshot?.() || null; } catch {}return { source: "local_tools", ...last, ...(clientVersions ? { client_versions: versions } : {}) }; }
   async function check() {
     if (flight) return flight;
     flight = Promise.resolve().then(async () => {
-      last = { checked_at: new Date().toISOString(), checks: project(await collect({ ...options, checkAdapter: false })) };
+      const versions = clientVersions?.refresh ? Promise.resolve().then(() => clientVersions.refresh()).catch(() => null) : null;
+      const checks = await collect({ ...options, checkAdapter: false });
+      await versions;
+      last = { checked_at: new Date().toISOString(), checks: project(checks) };
       return snapshot();
     }).finally(() => { flight = null; });
     return flight;

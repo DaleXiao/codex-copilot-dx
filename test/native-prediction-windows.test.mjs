@@ -9,7 +9,7 @@ import { createPrivateKey, X509Certificate } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import http from "node:http";
 import https from "node:https";
-import { assertWindowsCodexClosed, installedWindowsPredictionApp, windowsPredictionProfile,
+import { assertWindowsCodexClosed, installedWindowsPredictionApp, inspectWindowsCodexVersion, windowsPredictionProfile,
   windowsProxyText, windowsSystemProxy, windowsPrivatePredictionPath, windowsPowerShellEnvironment, windowsPredictionAppProcesses } from "../src/native-prediction-windows.mjs";
 import { windowsPredictionCertificate } from "../src/windows-prediction-certificate.mjs";
 import { resolveNetworkRoute, networkProxyFor } from "../src/network-route.mjs";
@@ -45,6 +45,17 @@ test("Windows discovery uses registered Store metadata, not guessed executables 
     { root: "\\\\remote\\share" }, { family: "unrelated_package" }]) {
     assert.throws(() => installedWindowsPredictionApp({ exec: () => JSON.stringify({ ...registration, ...changed }) }), /Unknown Windows/);
   }
+});
+
+test("Windows version inspection reads only the verified registered package", async () => {
+  let call;
+  const version = await inspectWindowsCodexVersion({ env: { SystemRoot: "C:\\Windows" }, exec: async (command, args, options) => {
+    call = { command, args, options };return { stdout: "26.1103.32239.0\n" };
+  } });
+  assert.equal(version, "26.1103.32239.0");assert.match(call.args.at(-1), /SignatureKind -eq 3/);
+  assert.match(call.args.at(-1), /OpenAI\.Codex_2p2nqsd0c76g0/);assert.equal(call.options.timeout, 2500);assert.equal(call.options.windowsHide, true);
+  assert.equal(call.args.includes("-ExecutionPolicy"), false);
+  assert.equal(await inspectWindowsCodexVersion({ env: {}, exec: async () => ({ stdout: "unrecognized" }) }), null);
 });
 
 test("asynchronous Windows identity discovery requires no archive and preserves the selected profile", async t => {

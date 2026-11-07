@@ -237,7 +237,7 @@ test("collectDoctorChecks requires a compatible running adapter for compatibilit
   assert.equal(checks.some((check) => check.kind === "err" && /require a running/.test(check.message)), true);
 });
 
-test("runDoctor prints a bounded Codex-only summary", async () => {
+test("runDoctor reports both App observations in a bounded summary", async () => {
   const lines = [];
   const checks = await runDoctor({
     home: configuredHome(),
@@ -249,5 +249,7 @@ test("runDoctor prints a bounded Codex-only summary", async () => {
   assert.equal(checks.every((check) => ["ok", "info"].includes(check.kind)), true);
   assert.equal(lines[0], "ccdx doctor");
   assert.match(lines.at(-1), new RegExp(`Summary: ${checks.filter(check => check.kind === "ok").length} passed, 0 warning\\(s\\), 0 error\\(s\\)`));
-  assert.equal(lines.some((line) => /Claude|PM Studio/.test(line)), false);
+  assert.equal(lines.some((line) => /Claude App:/.test(line)), true);
+  assert.equal(lines.some((line) => /Codex App:/.test(line)), true);
+  assert.equal(lines.some((line) => /PM Studio/.test(line)), false);
 });

@@ -32,6 +32,40 @@ for (const protocol of ["responses", "messages"]) test(`${protocol} privacy time
   const retry = await send();assert.equal(retry.status, 200);await retry.text();assert.equal(upstream, 1);assert.equal(jobs.length, 1);
 });
 
+for (const protocol of ["responses", "messages"]) test(`${protocol} restores masked content from CR-only SSE`, async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-privacy-cr-")), env = {}, file = userSettingsPath({ home, env });
+  fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, '{"privacy_enabled":true}');
+  const model = { load: async () => {}, find: async texts => texts.map(() => []), snapshot: () => ({ state: "ready" }), close() {}, busy: () => false };
+  const privacy = createLocalPrivacy({ home, env, model }), original = "ghp_" + "x".repeat(36), key = "a".repeat(64);
+  const reply = async body => {
+    assert.doesNotMatch(JSON.stringify(body), /ghp_/);
+    const masked = protocol === "messages" ? body.messages[0].content : typeof body.input === "string" ? body.input : body.input[0].content[0].text;
+    const events = protocol === "messages" ? [
+      { type: "message_start", message: { id: "msg_cr", model: body.model, usage: { input_tokens: 1 } } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: masked } },
+      { type: "content_block_stop", index: 0 }, { type: "message_stop" },
+    ] : [
+      { type: "response.output_text.delta", output_index: 0, item_id: "text_cr", delta: masked },
+      { type: "response.output_text.done", output_index: 0, item_id: "text_cr", text: masked },
+      { type: "response.completed", response: { id: "response_cr", status: "completed", output: [] } },
+    ];
+    return new Response(events.map(event => `event: ${event.type}\rdata: ${JSON.stringify(event)}\r\r`).join(""), { headers: { "Content-Type": "text/event-stream" } });
+  };
+  const server = protocol === "responses" ? await startAdapter(0, "127.0.0.1", { privacy, env, dashboardOptions: { home, env }, responsesFn: reply,
+    getCachedModelEndpointsFn: () => ["/responses"] }) : await startClaudeGateway({ port: 0, apiKey: key, privacy, env, record() {},
+    provider: { id: "m365", models: () => [{ id: "fixture" }], client: { messages: reply } } });
+  t.after(async () => { if (protocol === "responses") { server.closeAllConnections();await new Promise(resolve => server.close(resolve)); } else await server.close();privacy.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const port = protocol === "responses" ? server.address().port : server.port;
+  const body = protocol === "responses" ? { model: "gpt-5.6-sol", input: original, stream: true }
+    : { model: "fixture", messages: [{ role: "user", content: original }], max_tokens: 4, stream: true };
+  const result = await fetch(`http://127.0.0.1:${port}/v1/${protocol}`, { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  assert.equal(result.status, 200);
+  const events = (await result.text()).split(/\r\n|\r|\n/).filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5)));
+  const text = events.filter(event => event.type === (protocol === "responses" ? "response.output_text.delta" : "content_block_delta"))
+    .map(event => protocol === "responses" ? event.delta : event.delta.text).join("");
+  assert.equal(text, original);assert.equal(events.at(-1).type, protocol === "responses" ? "response.completed" : "message_stop");
+});
+
 test("Messages JSON, streaming and token counting share masking while client credentials remain unchanged", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-privacy-http-")), env = {}, file = userSettingsPath({ home, env });
   fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, '{"privacy_enabled":true}');

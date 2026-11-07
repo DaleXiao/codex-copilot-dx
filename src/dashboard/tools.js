@@ -137,6 +137,7 @@
   el("github-logout").addEventListener("click", () => { if (window.confirm(language.format("tools_logout_confirm"))) void accountAction({ action: "logout", confirmed: true }); });
   async function loadAccount() { const generation = accountGeneration;try { const data = await api("account");if (generation === accountGeneration && !pending) renderAccount(data); } catch { if (generation === accountGeneration) text("github-account-note", "tools_read_failed"); } }
   function renderChecks(data) {
+    if (Object.hasOwn(data, "client_versions")) globalThis.ccdxClientVersions?.render(data.client_versions);
     const body = el("checks-body");body.replaceChildren();
     const groups = new Map();
     for (const check of data.checks || []) { if (!groups.has(check.id)) groups.set(check.id, []);groups.get(check.id).push(check); }

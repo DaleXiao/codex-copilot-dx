@@ -58,7 +58,7 @@ async function checkCore(origin) {
 }
 
 try {
-  for (const mode of ["markerless", "conflict", "image-write-failure", "skill-conflict", "provider-invalid", "runtime-image-failure", "disabled", "disabled-dirty", "invalid"]) {
+  for (const mode of ["markerless", "conflict", "image-write-failure", "skill-conflict", "provider-invalid", "runtime-image-failure", "disabled", "disabled-dirty", "invalid", ...(process.platform === "darwin" ? ["version-scan-blocked"] : [])]) {
     const home = path.join(root, mode);
     const port = await reservePort();
     const origin = `http://127.0.0.1:${port}`;
@@ -93,6 +93,7 @@ try {
     }
     if (mode === "image-write-failure") env.CCDX_TEST_IMAGE_WRITE_FAILURE = "1";
     if (mode === "runtime-image-failure") env.CCDX_TEST_PENDING_IMAGE = "1";
+    if (mode === "version-scan-blocked") env.CCDX_TEST_VERSION_SCAN_BLOCKED = "1";
     const cold = start(env);
     let reused;
     try {
@@ -108,6 +109,9 @@ try {
       }
       await ready(cold);
       await checkCore(origin);
+      if (mode === "version-scan-blocked") await bounded((async () => {
+        while (!cold.output().slice(cold.output().indexOf("Ready       Local service ready")).includes("App version fixture blocked")) await new Promise(resolve => setTimeout(resolve, 20));
+      })(), "background App version check");
       if (mode === "disabled") {
         await bounded((async () => {
           while (!cold.output().slice(cold.output().indexOf("Ready       Local service ready")).includes("[OK]    Model catalog refreshed: 1 GPT models")) {

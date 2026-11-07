@@ -315,6 +315,19 @@ let clientIntegration = null;
 let providerRuntime = null;
 let terminalConsole = null;
 const webUiUrl = `http://${ADAPTER_HOST === "::1" ? "[::1]" : "127.0.0.1"}:${ADAPTER_PORT}`;
+let versionMonitor = null, versionModule = null;
+const clientVersions = {
+  snapshot: () => versionMonitor?.snapshot() || null,
+  refresh() {
+    if (shuttingDown || serviceWorker?.warming || serviceWorker?.draining || serviceWorker?.preserving) return Promise.resolve(clientVersions.snapshot());
+    versionModule ||= import("../src/client-versions.mjs").then(({ createClientVersionMonitor }) => {
+      if (shuttingDown) return null;
+      versionMonitor = createClientVersionMonitor({ onChange: names => console.log(status("info", `Installed ${names.map(name => name === "codex" ? "Codex" : "Claude").join(" and ")} App updated; check integration in the WebUI or ccdx doctor`)) });
+      return versionMonitor;
+    }).catch(error => { versionModule = null;throw error; });
+    return versionModule.then(monitor => monitor?.refresh());
+  },
+};
 async function launchDashboard() {
   try {
     const result = await openDashboard(webUiUrl, { enabled: !CLI.noBrowser && servicePreferences().open_webui });
@@ -349,6 +362,8 @@ async function reuseRunningAdapterIfAvailable() {
   }
   if (!running.ok) return false;
 
+  void fetch(`${webUiUrl}/_ccdx/ui/settings`, { method: "POST", headers: { "X-CCDX-Dashboard": "1", Origin: webUiUrl, "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "client_versions" }), signal: AbortSignal.timeout(1000) }).catch(() => {});
   const serviceStatus = readAdapterStatus({ host: ADAPTER_HOST, port: ADAPTER_PORT }).catch(() => null);
   console.log(startupCheck("ok", "Service", `Using running service: ${running.baseUrl}`));
   console.log(startupCheck("info", "Sign-in", "Using saved sign-in; not rechecked"));
@@ -455,6 +470,7 @@ try {
   providerRuntime = createProviderRuntime({ githubClient: profileRuntime.codexClient, githubRegistry: profileModels.codexRegistry,
     refreshGithubCatalog: () => profileModels.refreshCodex({ strict: true }),
     corePort: ADAPTER_PORT, preserveClientConfiguration: () => serviceWorker?.preserving === true || serviceWorker?.draining === true,
+    clientVersionsSnapshot: clientVersions.snapshot,
     clientAccessChanged: async enabled => { earlyIntegration.setPredictionActive(enabled && servicePreferences().prediction_enabled);if (enabled) await earlyIntegration.configure(); },
     githubCredentialFingerprint: () => profileRuntime.codexCredentialFingerprint,
     log: (kind, message) => console.log(startupComplete ? status(kind, message) : startupCheck(kind, "M365", message)) });
@@ -498,7 +514,7 @@ try {
     snapshot: () => activeServer?.ccdxSnapshot?.() || {},
     subscribe: listener => activeServer?.ccdxSubscribeActivity?.(listener),
     preferences: () => { const { saved, theme, color_theme } = serviceSettingsSnapshot();return { ...saved, theme, color_theme }; } });
-  const serviceControl = createServiceControl({ providerRuntime, clientIntegration: earlyIntegration, terminal: terminalConsole,
+  const serviceControl = createServiceControl({ providerRuntime, clientIntegration: earlyIntegration, terminal: terminalConsole, clientVersions,
     adapterPort: ADAPTER_PORT, adapterHost: ADAPTER_HOST, manualUpdate: serviceWorker ? () => serviceWorker.requestUpdate() : undefined,
     nightlyStatus: () => serviceWorker?.status() || null, nightlyChanged: enabled => serviceWorker?.preferenceChanged(enabled) });
   const codexModelCatalog = createCodexModelCatalog();
@@ -516,7 +532,7 @@ try {
     terminalAnimationTheme,
     terminalActivity: terminalConsole,
     handoffState: serviceWorker?.takeState(), isDraining: () => serviceWorker?.draining === true,
-    dashboardOptions: { serviceControl, host: ADAPTER_HOST, port: ADAPTER_PORT,
+    dashboardOptions: { serviceControl, clientVersions, host: ADAPTER_HOST, port: ADAPTER_PORT,
       credentialsChanged: () => { defaultCopilotClient.invalidateCredentials();profileRuntime = createProfileRuntime({ codexClient: defaultCopilotClient }); },
       applyAnimation: theme => terminalConsole.apply({ theme }) },
     nativePredictionPac: () => clientIntegration?.pacUrl() || null,
@@ -547,12 +563,14 @@ try {
     modelRefreshTimer = setInterval(() => {
       if (providerRuntime.selection().codex === "github") profileModels.refreshAll().then(() => providerRuntime.selection().codex === "github" && providerRuntime.syncClients(["codex"])).catch(() => {});
       providerRuntime.refresh().catch(() => {});
+      void clientVersions.refresh().catch(() => {});
     }, refreshIntervalMs);
     modelRefreshTimer.unref?.();
   }
 
   startupComplete = true;
   if (!startupPresentation.enabled) console.log(startupReady({ baseUrl: adapterBaseUrl(ADAPTER_HOST, ADAPTER_PORT), commandName: CLI_NAME }));
+  void clientVersions.refresh().catch(() => {});
   runInBackground(printUpdateNotice);
   await launchDashboard();
   if (!serviceWorker?.warming) {
@@ -569,6 +587,7 @@ try {
     let exitCode = 0;
     try {
       if (modelRefreshTimer) clearInterval(modelRefreshTimer);
+      versionMonitor?.close();
       const result = await closeHttpServer(activeServer, { timeoutMs: RUNTIME.shutdownTimeoutMs });
       if (result.forced) console.warn(status("warn", "Remaining service connections closed"));
       await clientIntegration?.close();
@@ -612,6 +631,7 @@ try {
         await LOGGING.cleanup();try { LOGGING = configureLogging(); } catch { LOGGING = configureLogging({ env: { ...process.env, CCDX_LOG_PATH: "" } }); }
         terminalConsole.start();LOGGING.setTerminalSink((method, args) => terminalConsole.log(method, args));
         earlyIntegration.retireImages();
+        setImmediate(() => void clientVersions.refresh().catch(() => {}));
       },
       inspect: () => {
         const data = activeServer.ccdxSnapshot(), routes = data.requests.by_route;

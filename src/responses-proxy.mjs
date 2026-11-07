@@ -30,7 +30,7 @@ import {
 } from "./responses-compaction.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
 import { endStreamWithError } from "./stream-errors.mjs";
-import { createSseKeepalive } from "./sse-keepalive.mjs";
+import { CODEX_RESPONSE_KEEPALIVE, createSseKeepalive, responseKeepaliveFrame } from "./sse-keepalive.mjs";
 import {
   incompleteUpstreamStream,
   invalidUpstreamStream,
@@ -172,6 +172,7 @@ function createResponseSseTransformer(state) {
   let previous1 = -1;
   let previous2 = -1;
   let previous3 = -1;
+  let bareCR = false;
 
   const ensureCapacity = (required) => {
     if (required > MAX_SSE_BUFFER_BYTES + 4) {
@@ -198,13 +199,14 @@ function createResponseSseTransformer(state) {
       throw httpError(`Upstream SSE buffer exceeds ${MAX_SSE_BUFFER_BYTES} bytes`, 502);
     }
     const chunk = frame.subarray(0, contentLength).toString("utf8");
-    const lines = chunk.split(/\r?\n/);
+    const lines = bareCR ? chunk.split(/\r\n|\r|\n/) : chunk.split(/\r?\n/);
     const eventName = lines
       .find((line) => line.startsWith("event:"))
       ?.slice(6)
       .trim();
-    const data = lines
-      .filter((line) => line.startsWith("data:"))
+    const dataLines = lines.filter((line) => line.startsWith("data:"));
+    if (state.trackEventActivity && dataLines.length) state.dataFrames += 1;
+    const data = dataLines
       .map((line) => line.slice(5).trimStart())
       .join("\n");
     const changed = data && inspectResponseSseEvent(state, eventName, data);
@@ -216,7 +218,8 @@ function createResponseSseTransformer(state) {
       wroteData = true;
       return true;
     }).map((line) => line.startsWith("data:") ? `data: ${JSON.stringify(changed)}` : line);
-    return Buffer.from(rewritten.join(chunk.includes("\r\n") ? "\r\n" : "\n")
+    const newline = bareCR ? chunk.match(/\r\n|\r|\n/)?.[0] || "\n" : chunk.includes("\r\n") ? "\r\n" : "\n";
+    return Buffer.from(rewritten.join(newline)
       + frame.subarray(contentLength).toString("ascii"));
   };
 
@@ -233,40 +236,97 @@ function createResponseSseTransformer(state) {
         return output;
       };
       let segmentStart = 0;
+      if (!bareCR) {
+        if (previous1 === 0x0d && value.length && value[0] !== 0x0a) bareCR = true;
+        for (let at = value.indexOf(0x0d); !bareCR && at >= 0; at = value.indexOf(0x0d, at + 1)) {
+          if (at + 1 < value.length && value[at + 1] !== 0x0a) bareCR = true;
+        }
+      }
+      if (!bareCR) {
+        // The common LF/CRLF path searches newline bytes in native code;
+        // the three-byte carry keeps delimiters split across reads intact.
+        for (let index = value.indexOf(0x0a); index >= 0; index = value.indexOf(0x0a, index + 1)) {
+          const available = index - segmentStart;
+          const p1 = available >= 1 ? value[index - 1] : segmentStart === 0 ? previous1 : -1;
+          const p2 = available >= 2 ? value[index - 2] : segmentStart === 0 ? available === 1 ? previous1 : previous2 : -1;
+          const p3 = available >= 3 ? value[index - 3] : segmentStart === 0 ? available === 2 ? previous1 : available === 1 ? previous2 : previous3 : -1;
+          let delimiterLength = 0;
+          if (p1 === 0x0a) {
+            delimiterLength = p2 === 0x0d ? 3 : 2;
+          } else if (p1 === 0x0d && p2 === 0x0a) {
+            delimiterLength = p3 === 0x0d ? 4 : 3;
+          }
+          if (delimiterLength) {
+            let frame = value.subarray(segmentStart, index + 1);
+            if (eventLength > 0) {
+              append(frame);
+              if (eventLength > SSE_WRITE_BATCH_BYTES) {
+                frame = eventBuffer.subarray(0, eventLength);
+                eventBuffer = Buffer.allocUnsafe(Math.min(4096, MAX_SSE_BUFFER_BYTES + 4));
+              } else frame = Buffer.from(eventBuffer.subarray(0, eventLength));
+            }
+            eventLength = 0;previous1 = -1;previous2 = -1;previous3 = -1;segmentStart = index + 1;
+            const forwarded = inspectEvent(frame, delimiterLength), last = pending.at(-1);
+            if (last && last.buffer === forwarded.buffer && last.byteOffset + last.byteLength === forwarded.byteOffset)
+              pending[pending.length - 1] = Buffer.from(last.buffer, last.byteOffset, last.byteLength + forwarded.byteLength);
+            else pending.push(forwarded);
+            pendingBytes += forwarded.byteLength;
+            if (state.sawTerminal) return flush();
+          }
+        }
+        for (let index = Math.max(segmentStart, value.byteLength - 3); index < value.byteLength; index++) {
+          previous3 = previous2;previous2 = previous1;previous1 = value[index];
+        }
+        append(value.subarray(segmentStart));
+        if (eventLength > MAX_SSE_BUFFER_BYTES + 3) throw httpError(`Upstream SSE buffer exceeds ${MAX_SSE_BUFFER_BYTES} bytes`, 502);
+        return pendingBytes > 0 ? flush() : null;
+      }
+      const forward = (end, delimiterLength) => {
+        let frame = value.subarray(segmentStart, end);
+        if (eventLength > 0) {
+          append(frame);
+          // Writes may retain a Buffer after returning; never expose the reusable buffer.
+          if (eventLength > SSE_WRITE_BATCH_BYTES) {
+            frame = eventBuffer.subarray(0, eventLength);
+            eventBuffer = Buffer.allocUnsafe(Math.min(4096, MAX_SSE_BUFFER_BYTES + 4));
+          } else {
+            frame = Buffer.from(eventBuffer.subarray(0, eventLength));
+          }
+        }
+        eventLength = 0;
+        previous1 = -1;
+        previous2 = -1;
+        previous3 = -1;
+        segmentStart = end;
+        const forwarded = inspectEvent(frame, delimiterLength);
+        const last = pending.at(-1);
+        if (last && last.buffer === forwarded.buffer
+          && last.byteOffset + last.byteLength === forwarded.byteOffset) {
+          pending[pending.length - 1] = Buffer.from(last.buffer, last.byteOffset, last.byteLength + forwarded.byteLength);
+        } else {
+          pending.push(forwarded);
+        }
+        pendingBytes += forwarded.byteLength;
+      };
       for (let index = 0; index < value.byteLength; index += 1) {
         const byte = value[index];
+        // A CR after an LF may be the last byte of a blank line. Wait for
+        // the next byte so split CRLF frames retain their original bytes.
+        if (previous1 === 0x0d && previous2 === 0x0a && byte !== 0x0a) {
+          forward(index, previous3 === 0x0d ? 3 : 2);
+          if (state.sawTerminal) return flush();
+        }
         let delimiterLength = 0;
         if (byte === 0x0a && previous1 === 0x0a) {
           delimiterLength = previous2 === 0x0d ? 3 : 2;
         } else if (byte === 0x0a && previous1 === 0x0d && previous2 === 0x0a) {
           delimiterLength = previous3 === 0x0d ? 4 : 3;
+        } else if (byte === 0x0d && previous1 === 0x0d) {
+          delimiterLength = 2;
+          if (value[index + 1] === 0x0a) { index += 1;delimiterLength += 1; }
         }
         if (delimiterLength) {
-          let frame = value.subarray(segmentStart, index + 1);
-          if (eventLength > 0) {
-            append(frame);
-            // Writes may retain a Buffer after returning; never expose the reusable buffer.
-            if (eventLength > SSE_WRITE_BATCH_BYTES) {
-              frame = eventBuffer.subarray(0, eventLength);
-              eventBuffer = Buffer.allocUnsafe(Math.min(4096, MAX_SSE_BUFFER_BYTES + 4));
-            } else {
-              frame = Buffer.from(eventBuffer.subarray(0, eventLength));
-            }
-          }
-          eventLength = 0;
-          previous1 = -1;
-          previous2 = -1;
-          previous3 = -1;
-          segmentStart = index + 1;
-          const forwarded = inspectEvent(frame, delimiterLength);
-          const last = pending.at(-1);
-          if (last && last.buffer === forwarded.buffer
-            && last.byteOffset + last.byteLength === forwarded.byteOffset) {
-            pending[pending.length - 1] = Buffer.from(last.buffer, last.byteOffset, last.byteLength + forwarded.byteLength);
-          } else {
-            pending.push(forwarded);
-          }
-          pendingBytes += forwarded.byteLength;
+          forward(index + 1, delimiterLength);
           if (state.sawTerminal) return flush();
           continue;
         }
@@ -279,6 +339,14 @@ function createResponseSseTransformer(state) {
         throw httpError(`Upstream SSE buffer exceeds ${MAX_SSE_BUFFER_BYTES} bytes`, 502);
       }
       return pendingBytes > 0 ? flush() : null;
+    },
+    finish() {
+      if (previous1 !== 0x0d || previous2 !== 0x0a || !eventLength) return null;
+      bareCR = true;
+      const delimiterLength = previous3 === 0x0d ? 3 : 2;
+      const frame = Buffer.from(eventBuffer.subarray(0, eventLength));
+      eventLength = 0;previous1 = -1;previous2 = -1;previous3 = -1;
+      return inspectEvent(frame, delimiterLength);
     },
   };
 }
@@ -382,7 +450,7 @@ function recordResponseFailure(options, reqContext, resp, failure, {
   console.warn(status("warn", formatResponseFailureLog(details)));
 }
 
-async function proxyStreamingResponses(opened, res, upstream, options) {
+async function proxyStreamingResponses(opened, req, res, upstream, options) {
   while (true) {
     let {
       resp,
@@ -407,6 +475,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       res.writeHead(resp.status, headers);
     };
     const reader = resp.body.getReader();
+    const heartbeat = responseKeepaliveFrame(req?.headers);
     const streamState = {
       completed: null,
       incomplete: null,
@@ -415,6 +484,8 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       sawOutput: false,
       toolArgumentGuard: new ToolArgumentDeltaGuard(),
       messageIds: new Map(),
+      trackEventActivity: heartbeat === CODEX_RESPONSE_KEEPALIVE,
+      dataFrames: 0,
     };
     const transformer = createResponseSseTransformer(streamState);
     let holdPrelude = streamRetryEligible;
@@ -423,21 +494,27 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
     let preludeBytes = 0;
     const keepalive = createSseKeepalive({ res, signal: options.signal,
       intervalMs: options.keepaliveIntervalMs,
+      frame: heartbeat,
       canWrite: () => !holdPrelude && !streamState.sawTerminal });
+    let deliveredDataFrames = 0;
+    const noteDelivery = () => {
+      if (!streamState.trackEventActivity || streamState.dataFrames !== deliveredDataFrames) keepalive.activity();
+      deliveredDataFrames = streamState.dataFrames;
+    };
     const flushPrelude = async () => {
       if (!preludeBytes) return true;
       writeHeaders();
       const body = prelude.length === 1 ? prelude[0] : Buffer.concat(prelude, preludeBytes);
       prelude.length = 0;
       preludeBytes = 0;
-      keepalive.activity();
+      noteDelivery();
       return writeOrDrain(res, body, { signal: options.signal });
     };
     const forwardFrame = async (frame) => {
       if (!frame) return true;
       if (!holdPrelude) {
         writeHeaders();
-        keepalive.activity();
+        noteDelivery();
         return writeOrDrain(res, frame, { signal: options.signal });
       }
       prelude.push(frame);
@@ -452,6 +529,7 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
+          if (!await forwardFrame(transformer.finish())) return { successful: false, compacted: false };
           if (!streamState.sawTerminal) throw incompleteUpstreamStream("a terminal Responses event");
           break;
         }
@@ -545,7 +623,7 @@ export async function proxyCopilotResponses(reqContext, req, res, upstream = cop
   }
   reqContext = opened.reqContext;
   if (reqContext.body.stream) {
-    return proxyStreamingResponses(opened, res, upstream, options);
+    return proxyStreamingResponses(opened, req, res, upstream, options);
   }
 
   while (true) {

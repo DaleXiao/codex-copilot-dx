@@ -17,6 +17,35 @@ test("unaliased stream framing never forwards a severed JSON fragment and keeps 
   assert.equal(ended.write(Buffer.from('data: {"type":"message_stop"}')).length, 0);
   const final = Buffer.concat(ended.finish()).toString();assert.match(final, /message_stop/);assert.match(final, /\n\n$/);
 });
+test("Messages frames retain metadata and complete for every SSE line ending", () => {
+  for (const ending of ["\n", "\r\n", "\r"]) {
+    const observed = [], observer = createMessagesObserver(value => observed.push(value.type));
+    const frame = type => `event: ${type}${ending}id: opaque${ending}: note${ending}data: ${JSON.stringify({ type })}${ending}${ending}`;
+    const body = frame("message_start") + frame("message_stop"), bytes = Buffer.from(body), output = [];
+    for (const byte of bytes) output.push(...observer.write(Uint8Array.of(byte)));
+    assert.deepEqual(observed, ["message_start", "message_stop"]);
+    output.push(...observer.finish());
+    assert.equal(Buffer.concat(output).toString(), body);
+  }
+});
+
+test("Messages alias rewriting retains a standalone CR line ending", () => {
+  const observed = [], observer = createMessagesObserver(value => observed.push(value.type), 8192, "client-alias");
+  const start = { type: "message_start", message: { id: "msg", model: "upstream" } };
+  const body = `event: message_start\rdata: ${JSON.stringify(start)}\r\revent: message_stop\rdata: {"type":"message_stop"}\r\r`;
+  const output = [...observer.write(Buffer.from(body)), ...observer.finish()].map(value => value.toString()).join("");
+  assert.deepEqual(observed, ["message_start", "message_stop"]);
+  assert.match(output, /"model":"client-alias"/);assert.doesNotMatch(output, /\n/);
+});
+test("Messages preserve mixed CRLF and CR frames when the mode changes across reads", () => {
+  const body = 'event: message_start\r\ndata: {"type":"message_start"}\r\n\r\n'
+    + 'event: message_stop\rdata: {"type":"message_stop"}\r\r', bytes = Buffer.from(body);
+  for (const size of [1, 2, 5, bytes.length]) {
+    const seen = [], observer = createMessagesObserver(value => seen.push(value.type)), output = [];
+    for (let at = 0; at < bytes.length; at += size) output.push(...observer.write(bytes.subarray(at, at + size)));
+    output.push(...observer.finish());assert.deepEqual(seen, ["message_start", "message_stop"]);assert.equal(Buffer.concat(output).toString(), body);
+  }
+});
 const message = { id: "msg_synthetic", type: "message", role: "assistant", model: "claude-opus-5.5",
   content: [{ type: "text", text: "Hello 测试 😀" }], stop_reason: "end_turn",
   usage: { input_tokens: 2, cache_read_input_tokens: 8, cache_creation_input_tokens: 5, output_tokens: 3 } };
@@ -116,6 +145,17 @@ test("Claude gateway preserves stream bytes, completes at message_stop and cance
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);assert.equal(cancelled, true);
   assert.equal(g.server.snapshot().completed, 1);assert.equal(g.records.length, 1);
   assert.equal(g.server.snapshot().performance.by_route.messages.terminal_outcomes.by_model["claude-opus-5.5"].completed, 1);
+});
+
+test("a CR-only Messages terminal completes without waiting for upstream socket EOF", async t => {
+  let cancelled = false;
+  const events = [{ type: "message_start", message: { id: "msg_cr", model: "claude-opus-5.5", usage: { input_tokens: 1 } } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hello" } }, { type: "message_stop" }];
+  const wire = events.map(event => `event: ${event.type}\rdata: ${JSON.stringify(event)}\r\r`).join("");
+  const g = await gateway(t, async () => new Response(new ReadableStream({ start(controller) { controller.enqueue(Buffer.from(wire)); }, cancel() { cancelled = true; } }),
+    { headers: { "Content-Type": "text/event-stream" } }));
+  const response = await g.request({ model: "claude-opus-5.5", messages: [], max_tokens: 64, stream: true });
+  assert.equal(await response.text(), wire);assert.equal(cancelled, true);assert.equal(g.server.snapshot().completed, 1);
 });
 
 test("M365 cumulative stream usage matches the official SDK across null, zero and repeated counters", async t => {

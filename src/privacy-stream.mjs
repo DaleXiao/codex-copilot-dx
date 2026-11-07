@@ -114,12 +114,12 @@ function fragments(session, json, onRetained) {
 
 function rewrite(wire, event, named = false) {
   let written = false;
-  const output = wire.split(/(?<=\n)/).map(line => {
+  const output = wire.split(/(?<=\n)|(?<=\r)(?!\n)/).map(line => {
     if (!line.startsWith("data:")) return line;
     if (written) return "";written = true;
-    return "data: " + JSON.stringify(event) + (line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : "");
+    return "data: " + JSON.stringify(event) + (line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : line.endsWith("\r") ? "\r" : "");
   }).join("");
-  return named && !/^event:/m.test(output) ? "event: " + event.type + "\n" + output : output;
+  return named && !/^event:/m.test(output) ? "event: " + event.type + (wire.match(/\r\n|\r|\n/)?.[0] || "\n") + output : output;
 }
 
 export function createPrivacyStream(session, { maxBufferedBytes = 32 * 1024 * 1024, maxChannels = 1024 } = {}) {
@@ -184,7 +184,7 @@ export function createPrivacyStream(session, { maxBufferedBytes = 32 * 1024 * 10
     forget(id);return output;
   }
   function transform(wire) {
-    const lines = wire.split(/\r?\n/), data = lines.filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
+    const lines = wire.split(/\r\n|\r|\n/), data = lines.filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
     if (!data || data === "[DONE]") return wire;
     let event;
     try { event = JSON.parse(data); } catch { throw fail("stream_invalid"); }
@@ -269,8 +269,10 @@ export function createPrivacyStream(session, { maxBufferedBytes = 32 * 1024 * 10
         pending += decoder.write(chunk);pendingBytes += chunk.length;
         if (pendingBytes > 8 * 1024 * 1024) throw fail("stream_limit");
         let output = "", match;
-        while ((match = /\r?\n\r?\n/.exec(pending))) {
-          const end = match.index + match[0].length, wire = pending.slice(0, end);pending = pending.slice(end);
+        while ((match = /(?:\r\n|\r(?!\n)|(?<!\r)\n){2}/.exec(pending))) {
+          const end = match.index + match[0].length;
+          if (end === pending.length && match[0].endsWith("\r") && match[0].includes("\n")) break;
+          const wire = pending.slice(0, end);pending = pending.slice(end);
           pendingBytes = Buffer.byteLength(pending);output += transform(wire);
         }
         return output;
@@ -278,7 +280,8 @@ export function createPrivacyStream(session, { maxBufferedBytes = 32 * 1024 * 10
     },
     finish() {
       try {
-        pending += decoder.end();const output = pending ? transform(pending + "\n\n") : "";pending = "";
+        pending += decoder.end();const complete = /(?:\r\n|\r(?!\n)|(?<!\r)\n){2}$/.test(pending);
+        const output = pending ? transform(pending + (complete ? "" : "\n\n")) : "";pending = "";
         if (channels.size) throw fail("stream_incomplete");return output;
       } catch (error) { completed = false;throw error; }
       finally { clear();pending = "";pendingBytes = 0; }

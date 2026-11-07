@@ -80,6 +80,21 @@ test("unmodified event frames keep their wire metadata and bytes", () => {
   assert.equal(stream.push(Buffer.from(frame)), frame);assert.equal(stream.finish(), "");
 });
 
+test("privacy restores streamed values with CR, CRLF and LF framing", () => {
+  for (const ending of ["\n", "\r\n", "\r"]) {
+    const stream = createPrivacyStream(session());
+    const delta = { type: "response.output_text.delta", output_index: 0, delta: placeholder };
+    const done = { type: "response.completed", response: { id: "r", status: "completed", output: [] } };
+    const input = [delta, done].map(event => `event: ${event.type}${ending}id: opaque${ending}data: ${JSON.stringify(event)}${ending}${ending}`).join("");
+    const bytes = Buffer.from(input);let output = "";
+    for (let at = 0; at < bytes.length; at += 3) output += stream.push(bytes.subarray(at, at + 3));
+    output += stream.finish();
+    const parsed = output.split(/\r\n|\r|\n/).filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5)));
+    assert.equal(parsed[0].delta, restored);assert.equal(parsed.at(-1).type, "response.completed");
+    assert.equal(stream.completed(), true);assert.match(output, /id: opaque/);assert.doesNotMatch(output, /\{\{CCDX_/);
+  }
+});
+
 test("upstream failure releases unfinished state without manufacturing a completed tool", () => {
   const stream = createPrivacyStream(session());
   stream.push(wire({ type: "response.function_call_arguments.delta", output_index: 0, delta: '{"value":"{{CCD' }));

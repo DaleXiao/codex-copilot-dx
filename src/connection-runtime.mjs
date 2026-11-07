@@ -35,6 +35,7 @@ import { codexClientCatalog, codexSourceCatalog } from "./clients/codex-models.m
 import { currentRequestContext } from "./request-context.mjs";
 import {
   claudeSharedCapabilityPlan,
+  claudeSupportForSync,
   syncClaudeCapabilities,
   inspectClaudeCapabilitySupport,
   inspectClaudeCapabilityConfiguration,
@@ -61,6 +62,7 @@ export function createConnectionRuntime({
   inspectDesktop = inspectClaudeDesktopPolicy,
   clientAccessChanged,
   preserveClientConfiguration,
+  clientVersionsSnapshot,
   now = Date.now,
   log = () => {},
 } = {}) {
@@ -105,6 +107,12 @@ export function createConnectionRuntime({
     onState: (id, state) => (state ? discoveries.set(id, state) : discoveries.delete(id)),
   });
   const capabilitySupport = inspectClaudeCapabilitySupport(options);
+  function capabilitySupportForSync() {
+    try {
+      return claudeSupportForSync(capabilitySupport, clientVersionsSnapshot?.());
+    } catch { /* Optional observations cannot change routing or interrupt synchronization. */ }
+    return capabilitySupport;
+  }
   let sharedSync = null,
     syncFlight = null,
     syncAgain = false,
@@ -608,7 +616,7 @@ export function createConnectionRuntime({
     const shared = claudeSharedCapabilityPlan({
       app: setup.claude_app === "configured" ? plan("claude_app").models : [],
       code: setup.claude_code === "configured" ? plan("claude_code").models : [],
-      support: capabilitySupport,
+      support: capabilitySupportForSync(),
     });
     if (["claude_app", "claude_code"].some(id => setup[id] === "manual_sync")) {
       sharedSync = {
@@ -1008,7 +1016,7 @@ export function createConnectionRuntime({
           : claudeSharedCapabilityPlan({
               app: input.id === "claude_app" ? proposed.models : plan("claude_app").models,
               code: input.id === "claude_code" ? proposed.models : plan("claude_code").models,
-              support: capabilitySupport,
+              support: capabilitySupportForSync(),
             });
       return {
         ...snapshot(),

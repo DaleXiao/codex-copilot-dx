@@ -14,6 +14,7 @@ import { imageSetupSummary, configureImageSetup } from "./image-setup.mjs";
 export function createServiceControl({ env = process.env, home, providerRuntime, clientIntegration, terminal,
   nightlyStatus = () => null, nightlyChanged = () => {},
   manualUpdate, predictionControl = controlPrediction, imageControl = configureImageSetup, imageHostControl = controlImage, codexLaunchControl = controlCodexLaunch,
+  clientVersions,
   adapterPort = 2026, adapterHost = "127.0.0.1",
   readImages = () => imageSetupSummary({ env, home }).configured, readPrediction = () => readPredictionSettings({ env, home }) } = {}) {
   const options = { env, home };
@@ -41,7 +42,7 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
         prediction_enabled: { value: prediction?.active === true, state: !predictionConfigured ? "needs_setup"
           : prediction?.environment?.status === "needs_app_relaunch" ? "needs_app_relaunch" : prediction?.bridge !== "running" ? "needs_service_restart" : "next_config_request", configured: predictionConfigured },
       }, history: { ...historyLimit, ...cacheRuntimeSnapshot().response_history },
-      providers: providerRuntime?.snapshot() || null, terminal: terminal?.snapshot?.() || null };
+      providers: providerRuntime?.snapshot() || null, terminal: terminal?.snapshot?.() || null, client_versions: featureSnapshot(() => clientVersions?.snapshot?.() || null) };
   }
   async function apply(input) {
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid setting action");
@@ -112,6 +113,11 @@ export function createServiceControl({ env = process.env, home, providerRuntime,
     return snapshot();
   }
   return { snapshot, busy: () => pending > 0, action(input) {
+    if (input?.action === "client_versions") {
+      if (Object.keys(input).some(key => key !== "action")) return Promise.reject(new Error("Unknown setting action or field"));
+      if (clientVersions?.refresh) void Promise.resolve().then(() => clientVersions.refresh()).catch(() => {});
+      return Promise.resolve({ source: "client_versions", scheduled: Boolean(clientVersions) });
+    }
     // Image-host evidence must not wait behind a user-initiated App restart:
     // the host sends it with a short deadline as the new App starts.
     if (input?.action === "image" && input.operation === "report") {

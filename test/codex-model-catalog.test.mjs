@@ -122,6 +122,48 @@ test("an alpha Codex binary matches the whole semver sent by the App", async () 
   assert.equal(executions, 2);
 });
 
+test("an explicitly identified old alpha keeps its verified catalog after the installed binary changes", async () => {
+  let version = "0.158.0-alpha.2.1", mtime = 1;
+  const old = { models: [{ slug: "old-catalog" }] }, current = { models: [{ slug: "new-catalog" }] };
+  const loader = createCodexModelCatalog({ binaryPath: "/trusted/codex",
+    statFn: async () => ({ size: 1, mtimeMs: mtime, isFile: () => true }),
+    execFileFn: (_file, args, _options, done) => done(null, args[0] === "--version" ? `codex-cli ${version}\n` : JSON.stringify(mtime === 1 ? old : current), "") });
+  assert.deepEqual(await loader.load({ clientVersion: "0.158.0-alpha.2.1" }), old);
+  version = "0.158.0-alpha.3.0";mtime = 2;
+  assert.deepEqual(await loader.load({ clientVersion: "0.158.0-alpha.2.1" }), old);
+  assert.equal(loader.snapshot().last_request.source, "cached_bundled");
+  assert.deepEqual(await loader.load({ clientVersion: "0.158.0-alpha.3.0" }), current);
+  assert.deepEqual(await loader.load({ clientVersion: "0.158.0" }), current);
+  assert.equal(loader.snapshot().last_request.match_precision, "core_only");
+});
+
+test("an unseen alpha is not matched solely by its shared base version", async () => {
+  const loader = createCodexModelCatalog({ binaryPath: "/trusted/codex", statFn: async () => ({ size: 1, mtimeMs: 1, isFile: () => true }),
+    execFileFn: (_file, args, _options, done) => done(null, args[0] === "--version" ? "codex-cli 0.158.0-alpha.3.0\n" : JSON.stringify(bundledCatalog), "") });
+  assert.equal(await loader.load({ clientVersion: "0.158.0-alpha.2.1" }), null);
+});
+
+test("an App replaced during catalog extraction is never retained as a verified old version", async () => {
+  let version = "0.158.0-alpha.2.1", mtime = 1;
+  const loader = createCodexModelCatalog({ binaryPath: "/trusted/codex", statFn: async () => ({ size: 1, mtimeMs: mtime, isFile: () => true }),
+    execFileFn: (_file, args, _options, done) => {
+      if (args[0] === "--version") return done(null, `codex-cli ${version}\n`, "");
+      version = "0.158.0-alpha.3.0";mtime = 2;done(null, JSON.stringify(bundledCatalog), "");
+    } });
+  assert.deepEqual(await loader.load({ clientVersion: "0.158.0-alpha.2.1" }), bundledCatalog);
+  assert.equal(await loader.load({ clientVersion: "0.158.0-alpha.2.1" }), null);
+});
+
+test("different binaries with the same exact version are not retained as an unambiguous old catalog", async () => {
+  let version = "0.158.0-alpha.2.1", mtime = 1;
+  const loader = createCodexModelCatalog({ binaryPath: "/trusted/codex", statFn: async () => ({ size: 1, mtimeMs: mtime, isFile: () => true }),
+    execFileFn: (_file, args, _options, done) => done(null, args[0] === "--version" ? `codex-cli ${version}\n` : JSON.stringify(bundledCatalog), "") });
+  assert.deepEqual(await loader.load({ clientVersion: version }), bundledCatalog);
+  mtime = 2;assert.deepEqual(await loader.load({ clientVersion: version }), bundledCatalog);
+  version = "0.158.0-alpha.3.0";mtime = 3;
+  assert.equal(await loader.load({ clientVersion: "0.158.0-alpha.2.1" }), null);
+});
+
 test("Codex catalog loader selects the first installed trusted app binary", async () => {
   const checked = [];
   let executedPath;

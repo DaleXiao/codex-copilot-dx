@@ -43,7 +43,8 @@
       if (!valid(point.input_tokens)) { continuing = false;return; }
       path += `${continuing ? "L" : "M"}${x(index)} ${y(point.input_tokens)} `;continuing = true;
       const dot = shape("circle", { cx: x(index), cy: y(point.input_tokens), r: 3, class: "context-point" });
-      const title = document.createElementNS(ns, "title");title.textContent = `${time(point.at)} · ${number(point.input_tokens)} tokens`;dot.append(title);
+      const description = language.format("context_point_usage", { time: time(point.at), input: number(point.input_tokens), reuse: ratio(point.cached_input_tokens, point.input_tokens) });
+      const title = document.createElementNS(ns, "title");title.textContent = description;dot.setAttribute("aria-label", description);dot.append(title);
     });
     if (!entry.concurrent) shape("path", { d: path, class: "context-line" });
     for (const index of new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])) {

@@ -26,6 +26,12 @@ export function inspectClaudeCapabilitySupport({ platform = process.platform, en
   return { app_version: appVersion || null, app: /^[34]\./.test(appVersion || ""), code_version: codeVersion || null, code: /^2\.1\./.test(codeVersion || "") && Number(codeVersion.split(".")[2]) >= 293 };
 }
 
+export function claudeSupportForSync(support, observations) {
+  const rows = Array.isArray(observations?.claude) ? observations.claude : [];
+  const app = rows.find(entry => entry.id === "claude_system_claude");
+  return observations?.claude_unrecognized === true || app?.version && !/^[34]\./.test(app.version) ? { ...support, app: false } : support;
+}
+
 export function claudeSharedCapabilityPlan({ app = [], code = [], support = {} } = {}) {
   const limitations = [], budgets = {}, caps = [], consumers = [...app.map(model => ({ model, app: true })), ...code.map(model => ({ model, app: false }))];
   let context = 0, output = 0, safeContext = consumers.length > 0, knownAdapters = true;

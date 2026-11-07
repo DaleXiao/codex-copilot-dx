@@ -43,6 +43,22 @@ test("webStreamLines: strips CRLF carriage returns", async () => {
   assert.deepEqual(lines, ["data: a", "data: b"]);
 });
 
+test("webStreamLines: supports standalone CR and mixed endings across chunks", async () => {
+  const resp = responseFrom(["data: a\r", "data: b\r", "\ndata: c\n", "data: d\r", "data: e"]);
+  const lines = [];
+  for await (const line of webStreamLines(resp)) lines.push(line);
+  assert.deepEqual(lines, ["data: a", "data: b", "data: c", "data: d", "data: e"]);
+});
+
+test("webStreamLines: switches from split CRLF to bare CR without losing lines", async () => {
+  const input = "one\r\ntwo\nthree\rfour\r\nfive\r", bytes = Buffer.from(input);
+  for (const size of [1, 2, 5, bytes.length]) {
+    const chunks = [];for (let at = 0; at < bytes.length; at += size) chunks.push(bytes.subarray(at, at + size));
+    const lines = [];for await (const line of webStreamLines(responseFromBytes(chunks))) lines.push(line);
+    assert.deepEqual(lines, ["one", "two", "three", "four", "five"]);
+  }
+});
+
 test("webStreamLines: preserves UTF-8 code points split across chunks", async () => {
   const encoded = new TextEncoder().encode("data: 你好\n");
   const resp = responseFromBytes([

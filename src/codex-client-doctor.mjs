@@ -75,7 +75,9 @@ export async function inspectCodexClient({
       } else if (observed) {
         const version = /^[0-9]+\.[0-9]+\.[0-9]+$/.test(observed.client_version || "") ? observed.client_version : "unknown";
         const app = ["ChatGPT.app", "Codex.app", "custom binary"].includes(observed.application) ? observed.application : "unknown App";
-        checks.push({ kind: "info", message: `Last catalog request: client ${version}, ${app}, ${observed.source === "bundled" ? "bundled" : "unavailable"}; version match ${observed.matched === true ? "observed" : "not verified"}` });
+        const source = observed.source === "cached_bundled" ? "previously verified bundled" : observed.source === "bundled" ? "bundled" : "unavailable";
+        const precision = observed.match_precision === "exact" ? "exact version" : observed.match_precision === "core_only" ? "base version only" : "not specified";
+        checks.push({ kind: "info", message: `Last catalog request: client ${version}, ${app}, ${source}; version match ${observed.matched === true ? "observed" : "not verified"} (${precision})` });
       } else checks.push({ kind: "info", message: "No client model-catalog request observed by this adapter" });
     } catch { checks.push({ kind: "info", message: "Client model-catalog diagnostics unavailable from the running adapter" }); }
   }

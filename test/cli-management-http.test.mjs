@@ -12,6 +12,7 @@ import { createAdapterHandler } from "../src/adapter.mjs";
 import { createServiceControl } from "../src/service-control.mjs";
 import { createApiProvider } from "../src/providers/api.mjs";
 import { deploymentModelId } from "../src/model-capabilities.mjs";
+import { testEnvironment } from "./helpers/environment.mjs";
 
 test("actual CLI processes use the protected loopback API without starting apps or changing native Codex sign-in", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-http-")), env = { CCDX_M365: "0" };
@@ -87,6 +88,38 @@ test("actual CLI processes use the protected loopback API without starting apps 
 
 const execFileAsync = promisify(execFile);
 const localCli = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
+
+test("management CLI finishes large piped output and reports a closed pipe", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-pipe-"));
+  const entries = Array.from({ length: 100000 }, (_, index) => index);
+  const payload = JSON.stringify({ ok: true, name: "codex-copilot-dx", version: "1.3.20", pid: process.pid, entries });
+  const server = http.createServer((req, res) => {
+    if (req.url !== "/_ccdx/status") { res.writeHead(404).end();return; }
+    res.writeHead(200, { "Content-Type": "application/json" });res.end(payload);
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => { server.closeAllConnections();await new Promise(resolve => server.close(resolve));fs.rmSync(home, { recursive: true, force: true }); });
+  const env = testEnvironment(home, { ADAPTER_HOST: "127.0.0.1", ADAPTER_PORT: String(server.address().port), CCDX_M365: "0", CCDX_AUTO_LAUNCH: "0" });
+  const run = closeEarly => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [localCli, "status", "--details", "--format", "json"], { env, stdio: ["ignore", "pipe", "pipe"] });
+    const chunks = [];let stderr = "";
+    const timer = setTimeout(() => { child.kill();reject(new Error("CLI output timed out")); }, 15000);
+    child.stdout.once("data", chunk => {
+      if (closeEarly) { child.stdout.destroy();return; }
+      chunks.push(chunk);child.stdout.pause();
+      setTimeout(() => { child.stdout.on("data", bytes => chunks.push(bytes));child.stdout.resume(); }, 150);
+    });
+    child.stderr.on("data", bytes => { stderr += bytes; });
+    child.once("error", error => { clearTimeout(timer);reject(error); });
+    child.once("close", (code, signal) => { clearTimeout(timer);resolve({ code, signal, stdout: Buffer.concat(chunks).toString(), stderr }); });
+  });
+  const complete = await run(false);
+  assert.equal(complete.code, 0, complete.stderr);assert.ok(Buffer.byteLength(complete.stdout) > 65536);
+  const parsed = JSON.parse(complete.stdout);assert.equal(parsed.entries.length, entries.length);assert.ok(parsed.entries.every((value, index) => value === index));
+  const closed = await run(true);
+  assert.equal(closed.signal, null);assert.equal(closed.code, 1);assert.doesNotMatch(closed.stderr, /Unhandled 'error' event/);
+});
+
 test("canonical native feature status stays available offline without enabling either feature", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-feature-status-"));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));

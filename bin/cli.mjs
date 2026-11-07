@@ -30,7 +30,16 @@ if (CLI.command === "manage") {
     const { runManagementCommand } = await import("../src/cli-management.mjs");
     const address = parseAdapterAddressOptions(process.env);
     const result = await runManagementCommand(CLI, { host: address.adapterHost, port: address.adapterPort, version: LOCAL_VERSION });
-    if (result) console.log(result);
+    if (result) {
+      const error = await new Promise(resolve => {
+        process.stdout.once("error", resolve);
+        process.stdout.write(`${result}\n`, resolve);
+      });
+      if (error) {
+        if (error.code !== "EPIPE") console.error(status("err", `Could not write command output: ${error.message}`));
+        process.exit(1);
+      }
+    }
     process.exit(0);
   } catch (error) {
     if (CLI.flags?.format === "json") console.log(JSON.stringify({ error: { code: error.code || "ccdx_command_failed", message: error.message } }));

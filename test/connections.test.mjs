@@ -10,6 +10,7 @@ import { accessSettingsPath, readAccessSettings, updateAccessSettings, checkedAp
 import { createApiSecretStore } from "../src/api-secrets.mjs";
 import { createApiProvider } from "../src/providers/api.mjs";
 import { createProviderRuntime } from "../src/provider-runtime.mjs";
+import { createConnectionRuntime } from "../src/connection-runtime.mjs";
 import { readClientGatewayKeys } from "../src/client-gateway-keys.mjs";
 import { configureCodexApi } from "../src/codex-api-config.mjs";
 import { runWithRequestContext } from "../src/request-context.mjs";
@@ -134,6 +135,46 @@ test("source authorization is source-scoped, revision-checked and cannot grant i
   await assert.rejects(s.runtime.manageConnections({ operation: "source_access", id: api, allowed: [], impact_revision: before.source_impacts[api].revision }), { code: "ccdx_connections_conflict" });
   await assert.rejects(s.runtime.manageConnections({ operation: "source_access", id: "github", allowed: ["claude_app"] }), { code: "ccdx_api_protocol_required" });
 });
+
+test("revoking a shared M365 grant preserves the retained Claude client's sync choice", async t => {
+  for (const autoSync of [true, false]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-access-migration-")), env = {}, configured = [], restored = [];
+    const model = { id: "fixture-model", supported_endpoints: ["/v1/messages"] };
+    const m365 = { id: "m365", name: "Microsoft 365", registry: { generation: 1, models: { data: [model] } },
+      models: family => family === "claude" ? [model] : [], profileId: () => "m365:synthetic", close() {} };
+    const github = { id: "github", name: "GitHub Copilot", registry: { generation: 1, models: { data: [] } },
+      models: () => [], profileId: () => "github:synthetic", close() {} };
+    const legacy = { github, source: id => id === "m365" ? m365 : id === "github" ? github : null,
+      selection: () => ({ codex: "github", m365: null }), snapshot: () => ({ m365: { enabled: true, state: "ready", claude: { clients: {}, requests: { active: 0 } } } }),
+      track: () => () => {}, close: async () => {} };
+    const initial = defaultAccessSettings();initial.clients.codex = { enabled: true, allowed: ["github"], source: "github" };
+    for (const id of ["claude_app", "claude_code"]) initial.clients[id] = { enabled: true, allowed: ["m365"], source: "m365" };
+    initial.clients.claude_code.auto_sync = autoSync;updateAccessSettings(() => initial, { home, env });
+    const r = createConnectionRuntime({ home, env, platform: "linux", legacy, secretStore: { close() {} }, inspectDesktop: async () => false,
+      configureClaude: input => { configured.push(input);return { [input.client === "claude_app" ? "app" : "code"]: "configured" }; },
+      restoreClaude: ({ client }) => { restored.push(client);return { preserved: 1 }; } });
+    t.after(async () => { await r.close();fs.rmSync(home, { recursive: true, force: true }); });
+    const before = fs.readFileSync(accessSettingsPath({ home, env }));assert.equal(r.managesClaude(), false);
+    await assert.rejects(r.manageConnections({ operation: "source_access", id: "m365", allowed: ["claude_code", "claude_code"] }), { code: "ccdx_connections_action_invalid" });
+    assert.deepEqual(fs.readFileSync(accessSettingsPath({ home, env })), before);assert.equal(configured.length, 0);
+    const result = await r.manageConnections({ operation: "source_access", id: "m365", allowed: ["claude_code"] });
+    const saved = readAccessSettings({ home, env });
+    assert.equal(saved.claude_private_keys, true);assert.equal(r.managesClaude(), true);
+    assert.deepEqual(saved.clients.codex, initial.clients.codex);
+    assert.equal(saved.clients.claude_app.source, null);assert.deepEqual(saved.clients.claude_app.allowed, []);assert.equal(saved.clients.claude_app.history_isolation, true);
+    assert.equal(saved.clients.claude_code.source, "m365");assert.deepEqual(saved.clients.claude_code.allowed, ["m365"]);
+    assert.deepEqual(restored, ["claude_app"]);
+    assert.deepEqual(result.client_refresh, autoSync ? ["claude_code"] : []);
+    assert.deepEqual(result.client_review, autoSync ? [] : ["claude_code"]);
+    assert.equal(configured.length, autoSync ? 1 : 0);
+    if (autoSync) {
+      const keys = readClientGatewayKeys({ home, env, create: false });
+      assert.equal(configured[0].client, "claude_code");assert.ok(configured[0].apiKey === keys.claude_code);
+      assert.ok(configured[0].apiKey !== keys.claude_app);
+    }
+  }
+});
+
 test("removing an API requires disabled unbound state, removes its grants and cleans only its credential", async t => {
   const s = runtime(t), api = await save(s.runtime);
   await assert.rejects(s.runtime.manageConnections({ operation: "remove_api", id: api }), { code: "ccdx_source_in_use" });

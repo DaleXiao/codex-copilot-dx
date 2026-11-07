@@ -88,6 +88,39 @@ test("an ungranted Claude route returns exactly one error response and keeps the
   assert.deepEqual(writes, [1, 1]);
 });
 
+test("revoking a source grant rejects new Claude requests while an existing stream completes", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-revoke-stream-")), env = { CCDX_M365: "0" }, stored = new Map();
+  let handler, controller, ended = false, calls = 0;
+  const server = http.createServer((req, res) => handler(req, res));await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const runtime = createProviderRuntime({ home, env, corePort: server.address().port, githubClient: {}, githubRegistry: { models: { data: [] } },
+    secretStore: { get: async id => stored.get(id), set: async (id, value) => { stored.set(id, value); }, remove: async id => { stored.delete(id); }, close() {} },
+    inspectDesktop: async () => false, configureClaude: () => ({ app: "configured" }), restoreClaude: () => ({ preserved: 0 }),
+    createApi: options => createApiProvider({ ...options, networkFactory: async () => ({ close() {}, fetch: async (_url, init) => {
+      if (init.method === "GET") return Response.json({ data: [{ id: "demo", supported_endpoints: ["/v1/messages"] }] });
+      calls++;const stream = new ReadableStream({ start(value) { controller = value;value.enqueue(Buffer.from('event: message_start\ndata: {"type":"message_start","message":{"id":"held","model":"demo","usage":{"input_tokens":1}}}\n\n')); } });
+      return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+    } }) }) });
+  handler = createAdapterHandler({ providerRuntime: runtime, dashboardOptions: { home, env } });
+  t.after(async () => { if (controller && !ended) { try { controller.close(); } catch {} }handler.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const saved = await runtime.manageConnections({ operation: "save_api", config: { name: "Access test", base_url: "https://example.test/v1", endpoints: { messages: "https://example.test/v1/messages" },
+    auth_header: "bearer", models: [{ id: "demo", protocols: ["messages"] }] }, key: "synthetic-key", allowed: ["claude_app"] });
+  const source = saved.providers.find(p => !p.builtin).id;
+  await runtime.manageConnections({ operation: "client", id: "claude_app", enabled: true, source, allowed: [source] });
+  const base = `http://127.0.0.1:${server.address().port}`, key = readClientGatewayKeys({ home, env }).claude_app;
+  const send = () => fetch(base + "/anthropic/v1/messages", { method: "POST", headers: { "content-type": "application/json", "x-api-key": key },
+    body: JSON.stringify({ model: "demo", messages: [], max_tokens: 4, stream: true }), signal: AbortSignal.timeout(5000) });
+  const first = await send();assert.equal(first.status, 200);const reader = first.body.getReader();
+  let initial = "";
+  while (!initial.includes("message_start")) { const part = await reader.read();assert.equal(part.done, false);initial += Buffer.from(part.value).toString();assert.ok(initial.length < 4096); }
+  const revision = runtime.connections().source_impacts[source].revision;
+  await runtime.manageConnections({ operation: "source_access", id: source, allowed: [], impact_revision: revision });
+  const denied = await send();assert.equal(denied.status, 503);assert.equal((await denied.json()).error.code, "ccdx_client_source_disabled");assert.equal(calls, 1);
+  controller.enqueue(Buffer.from('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n'));
+  controller.close();ended = true;let tail = "";
+  for (;;) { const part = await reader.read();if (part.done) break;tail += Buffer.from(part.value).toString(); }
+  assert.match(tail, /message_stop/);
+});
+
 test("GitHub-only bindings retain an open native client's auth and expose only selected models", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-github-bindings-")), env = { CCDX_M365: "0" };
   const authFile = path.join(home, ".codex", "auth.json"), authBytes = JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "synthetic-only" } });

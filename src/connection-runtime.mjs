@@ -7,6 +7,7 @@ import {
   updateAccessSettings,
   checkedApi,
   checkedAccessSettings,
+  prepareSourceAccess,
   accessError,
   CLIENT_IDS,
   CLIENT_NAMES,
@@ -736,54 +737,6 @@ export function createConnectionRuntime({
     !closed && managed && !preserveClientConfiguration?.()
       ? catalogRefresh.refreshAll(settings.apis.filter(api => api.enabled).map(api => api.id))
       : Promise.resolve();
-  function prepareSourceAccess(input, next) {
-    if (
-      !["github", "m365", ...next.apis.map(api => api.id)].includes(input.id) ||
-      !Array.isArray(input.allowed) ||
-      new Set(input.allowed).size !== input.allowed.length ||
-      input.allowed.some(id => !CLIENT_IDS.includes(id))
-    )
-      throw accessError("ccdx_connections_action_invalid");
-    const api = next.apis.find(api => api.id === input.id);
-    if (
-      input.allowed.some(
-        id =>
-          (input.id === "github" && id !== "codex") ||
-          (api && !api.endpoints[id === "codex" ? "responses" : "messages"])
-      )
-    )
-      throw accessError("ccdx_api_protocol_required");
-    const affected = CLIENT_IDS.filter(
-      id => next.clients[id].allowed.includes(input.id) !== input.allowed.includes(id)
-    );
-    const sharedClaude = ["claude_app", "claude_code"].filter(
-      id => next.clients[id].enabled && next.clients[id].source === "m365"
-    );
-    const migrateClaude =
-      input.id === "m365" &&
-      !next.claude_private_keys &&
-      sharedClaude.length > 0 &&
-      affected.some(id => id !== "codex");
-    const targets = new Set();
-    for (const id of affected) {
-      const c = next.clients[id];
-      c.allowed = [
-        ...c.allowed.filter(source => source !== input.id),
-        ...(input.allowed.includes(id) ? [input.id] : []),
-      ];
-      if (!input.allowed.includes(id)) {
-        if (c.source === input.id || c.deployments?.some(item => item.source === input.id)) targets.add(id);
-        if (c.source === input.id) c.source = null;
-        if (Array.isArray(c.deployments))
-          c.deployments = c.deployments.filter(item => item.source !== input.id);
-        c.history_isolation = true;
-      }
-    }
-    if (migrateClaude) next.claude_private_keys = true;
-    if (migrateClaude)
-      for (const id of ["claude_app", "claude_code"]) if (next.clients[id].source === "m365") targets.add(id);
-    return { targets, migrateClaude };
-  }
   function removeApi(input, next) {
     const existing = next.apis.find(api => api.id === input.id);
     if (

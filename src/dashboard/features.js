@@ -13,12 +13,12 @@
         : connected ? imageApp.tool_registration === "observed" ? "image_host_registered" : "image_host_connected" : "image_host_unconfirmed");
     }
     async function codexAction(operation, intent, button, { quiet = false } = {}) {
-      const data = await change({ action: "codex_app", operation, intent, ...(operation === "restart" ? { confirmed: true } : {}) }, button);
+      const data = await change({ action: "codex_app", operation, intent, ...(operation === "restart" ? { confirmed: true } : {}) }, button, { quiet });
       const result = data?.last_operation?.feature === "codex_app" ? data.last_operation.result : null;
       if (!result) return;
       if (result.app) imageApp = result.app;
       if (!quiet) {
-        const note = el(intent === "prediction" ? "prediction-action-note" : "image-action-note");
+        const note = el(intent === "prediction" ? "prediction-open-note" : "image-action-note");
         note.dataset.operation = operation;note.hidden = false;
         const key = operation === "check" ? "codex_action_checked" : result.status === "opened_with_pending"
           ? result.prediction_pending && result.image_pending ? "codex_action_both_pending" : result.prediction_pending ? "codex_action_prediction_pending" : "codex_action_image_pending"
@@ -53,7 +53,7 @@
     el("additional-capabilities").addEventListener("toggle", () => {
       if (el("additional-capabilities").open) void codexAction("check", "image", el("image-check"), { quiet: true });
     });
-    const prediction = operation => change({ action: "prediction", operation }, el("prediction-continue"));
+    const prediction = operation => change({ action: "prediction", operation }, el(operation === "open" ? "prediction-open" : "prediction-continue"));
     el("setting-prediction_enabled").addEventListener("change", () => void prediction(el("setting-prediction_enabled").checked ? "enable" : "disable"));
     el("prediction-continue").addEventListener("click", () => void prediction(saved?.features?.prediction?.enabled ? "enable" : "disable"));
     el("fix-prediction").addEventListener("click", () => void prediction("repair"));
@@ -77,6 +77,7 @@
       el("setting-prediction_enabled").checked = value?.enabled === true;
       el("setting-prediction_enabled").disabled = !value || value.status === "unavailable";
       const pending = value?.display_pending || value?.enabled && (!value.configured || value.display?.enabled === false);
+      el("prediction-continue-actions").hidden = !pending;
       el("prediction-continue").hidden = !pending;
       el("prediction-open").disabled = !value?.configured && !value?.display_pending;
       el("prediction-remove").disabled = !value?.configured;

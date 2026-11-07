@@ -999,7 +999,7 @@
     "entries_entries_trees_trees_misses_misses_evicted_evicted": ["Records: {entries} / groups: {trees}\nNot found: {misses} / removed: {evicted}", "暂存：{entries}条／分组：{trees}\n未找到：{misses}\n清理后未找到：{evicted}"],
     "count_succeeded": ["{count} succeeded", "成功：{count}次"],
     "not_initialized": ["NOT CONFIRMED", "未确认"],
-    "active_active_failed_failed_delivery_failures_delivery": ["Running: {active} / generation failed: {failed}\nFile delivery failed: {delivery}", "进行中：{active}／生成失败：{failed}\n文件交付失败：{delivery}"],
+    "active_active_failed_failed_delivery_failures_delivery": ["Running: {active} / generation failed: {failed} / file delivery failed: {delivery}", "进行中：{active}／生成失败：{failed}／文件交付失败：{delivery}"],
     "setup_state_unknown_ccdx_image_status": ["Uses the existing GitHub Copilot account.", "使用现有 GitHub Copilot 账号。"],
     "snapshot_time": ["Status updated {time}", "状态更新：{time}"],
     "status_unavailable_check_ccdx_then_refresh": ["Cannot read status. Check CCDX and refresh.", "无法读取状态。\n请检查 CCDX 后刷新。"],

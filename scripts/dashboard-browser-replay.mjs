@@ -143,6 +143,7 @@ const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, servic
 function dashboardSnapshot() {
   return { ok: true, name: "codex-copilot-dx", version: "synthetic", instance_id: "dashboard-replay", activity_revision: fixtureRevision, pid: 1, uptime_ms: 1000,
       requests: { total: 1, active: 0 }, model_activity: { active: modelActivity }, models: { models: 1, source: "synthetic" },
+      image_generation: { succeeded: 0, active: 0, failed: 0, delivery_failures: 0 },
       stream_performance: { active_requests: flowRequests, active_total: flowRequests.length, recent_requests: [...extraRequests, { at: "2026-10-21T05:51:08Z", request_id: "synthetic-recent", provider: "github", model: "gpt-test", outcome: "completed",
         context: { payload_bytes: 1048576, images: 0, input_tokens: 150, context_window_tokens: 1000 } },
         { request_id: "synthetic-unknown", model: "<script>not-html</script>", outcome: "completed", context: {} }], by_route: { responses: {
@@ -363,6 +364,13 @@ try {
         imageApp = { status: "stopped" };await page.locator("#additional-capabilities > summary").click();
         await page.locator("#setting-image_enabled").waitFor({ state: "visible" });
         await page.waitForFunction(() => !document.getElementById("setting-image_enabled").disabled);
+        await page.waitForFunction(() => /File delivery failed|文件交付失败/i.test(document.getElementById("image-detail").textContent));
+        const imageMetric = await page.locator("#image-detail").evaluate(node => {
+          const range = document.createRange();range.selectNodeContents(node);
+          return { text: node.textContent, lines: range.getClientRects().length, overflow: document.documentElement.scrollWidth > innerWidth };
+        });
+        assert.doesNotMatch(imageMetric.text, /\n/);assert.equal(imageMetric.overflow, false);
+        if (width >= 1280) assert.equal(imageMetric.lines, 1, "Image delivery metrics stay on one line when there is room");
         await page.waitForFunction(() => document.getElementById("image-open").getAttribute("data-i18n") === "image_open" && !document.getElementById("image-check").disabled);
         const imageBefore = await page.locator("#setting-image_enabled").isChecked();
         await page.locator("#setting-image_enabled").setChecked(!imageBefore);
@@ -395,17 +403,38 @@ try {
         await page.locator("#refresh").click();await page.waitForFunction(() => !document.getElementById("refresh").disabled);
         await page.locator("#image-check").click();
         await page.waitForFunction(() => document.getElementById("prediction-open").getAttribute("data-i18n") === "image_restart" && !document.getElementById("prediction-open").disabled);
+        const predictionRepair = page.locator("#prediction-settings > .tool-details");
+        await predictionRepair.evaluate(node => { node.open = false; });
+        assert.equal(await page.locator("#prediction-open").isVisible(), false);
+        assert.equal(await page.locator("#prediction-restart-warning").isVisible(), false);
+        assert.equal(await page.locator("#prediction-continue").isVisible(), true);
+        await predictionRepair.evaluate(node => { node.open = true; });
         assert.equal(await page.locator("#prediction-restart-warning").isVisible(), true);
         await page.locator("#prediction-open").click();
-        await page.waitForFunction(() => document.getElementById("prediction-action-note").dataset.operation === "restart" && !document.getElementById("prediction-open").disabled);
+        await page.waitForFunction(() => document.getElementById("prediction-open-note").dataset.operation === "restart" && !document.getElementById("prediction-open").disabled);
         assert.deepEqual(codexActions.at(-1), { operation: "restart", intent: "prediction", confirmed: true });
         codexPending = true;imageApp = { status: "running", host: "connected", needs_restart: true };
         await page.locator("#image-check").click();
         await page.waitForFunction(() => document.getElementById("prediction-open").getAttribute("data-i18n") === "image_restart" && !document.getElementById("prediction-open").disabled);
         await page.locator("#prediction-open").click();
-        await page.waitForFunction(() => document.getElementById("prediction-action-note").getAttribute("data-i18n") === "codex_action_prediction_pending");
-        assert.match(await page.locator("#prediction-action-note").innerText(), /still need repair|仍需修复/);
+        await page.waitForFunction(() => document.getElementById("prediction-open-note").getAttribute("data-i18n") === "codex_action_prediction_pending");
+        assert.match(await page.locator("#prediction-open-note").innerText(), /still need repair|仍需修复/);
+        imageApp = { status: "running", host: "connected", needs_restart: true };
+        await page.locator("#image-check").click();
+        await page.waitForFunction(() => document.getElementById("prediction-open").getAttribute("data-i18n") === "image_restart" && !document.getElementById("prediction-open").disabled);
+        await page.route("**/_ccdx/ui/settings", route => route.request().method() === "POST" && route.request().postDataJSON()?.action === "codex_app"
+          ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "synthetic restart refused" }) }) : route.continue());
+        await page.locator("#prediction-open").click();
+        await page.waitForFunction(() => document.getElementById("prediction-open-note").textContent.includes("synthetic restart refused"));
+        assert.equal(await page.locator("#prediction-open-note").isVisible(), true);
+        assert.doesNotMatch(await page.locator("#prediction-action-note").textContent(), /synthetic restart refused/);
+        await page.unroute("**/_ccdx/ui/settings");
         codexPending = false;writePredictionSettings({ version: 1, enabled: true, displayPending: false }, { home, env: {} });
+        imageApp = { status: "unsupported" };await page.locator("#image-check").click();
+        await page.waitForFunction(() => document.getElementById("prediction-open").getAttribute("data-i18n") === "prediction_open" && !document.getElementById("prediction-open").disabled);
+        await page.locator("#prediction-open").click();
+        await page.waitForFunction(() => document.getElementById("prediction-open-note").textContent.includes("Prediction bridge is unavailable"));
+        assert.equal(await page.locator("#prediction-open-note").isVisible(), true);
         if (output && width === 1280 && language === "zh") { await page.evaluate(() => window.scrollTo(0, 0));await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-codex.png`), fullPage: true }); }
         await nav("claude");
         assert.match(await page.locator("#claude-route").textContent(), /\/anthropic/);

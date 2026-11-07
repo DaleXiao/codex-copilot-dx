@@ -194,18 +194,18 @@
     }
     finally { settingsPending = false;el("m365-enabled").disabled = !settings;el("terminal-color-theme").disabled = !settings;el("apply-source").disabled = !sourceReady();syncReviewButton();syncAccountControls(); }
   }
-  async function change(body, button) {
+  async function change(body, button, { quiet = false } = {}) {
     if (settingsPending) return;
     settingsPending = true;
     syncAccountControls();
     const controls = [...document.querySelectorAll("[role=switch], #save-history, #clean-history, #fix-prediction, #apply-source, #save-review, #source-provider, #source-model, #source-review, #source-review-effort, #terminal-color-theme, #m365-enabled, #prediction-continue, #prediction-open, #prediction-setup, #prediction-remove, #image-models input, #image-check, #image-repair, #image-open, #decoded-limit, #decoded-limit-save, #decoded-limit-default, #install-update")];
     controls.forEach(input => { input.disabled = true; });
-    const note = el(body.action === "codex_app" ? body.intent === "prediction" ? "prediction-action-note" : "image-action-note" : body.action === "prediction" ? "prediction-action-note" : body.action === "image" ? "effect-image_enabled" : body.action === "update" ? "manual-update-note" : body.action === "decoded_limit" ? "decoded-limit-note" : body.action === "nightly_update" ? "nightly-state" : body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
+    const note = el(body.action === "codex_app" ? body.intent === "prediction" ? "prediction-open-note" : "image-action-note" : body.action === "prediction" ? body.operation === "open" ? "prediction-open-note" : "prediction-action-note" : body.action === "image" ? "effect-image_enabled" : body.action === "update" ? "manual-update-note" : body.action === "decoded_limit" ? "decoded-limit-note" : body.action === "nightly_update" ? "nightly-state" : body.key ? `effect-${body.key}` : body.action === "color_theme" ? "terminal-color-note"
       : body.action.startsWith("history_") ? "effect-history" : body.action === "prediction_fix" ? "prediction-note"
         : body.operation === "switch" ? "source-control-note" : body.operation === "auto-review" ? "review-control-note"
           : body.operation === "account" ? "m365-account-note" : "m365-control-note");
     const initialSourceSave = body.operation === "switch" && Boolean(body.auto_review_model);
-    label(note, "applying");
+    if (!quiet) { if (note.id === "prediction-open-note") note.hidden = false;label(note, "applying"); }
     if (button) button.setAttribute("aria-busy", "true");
     try {
       const data = await api(body);
@@ -214,6 +214,7 @@
       if (body.action === "provider" && body.operation === "off") { sourceDirty = false;reviewDirty = false; }
       el("review-control-note").textContent = "";
       applySettings(data);
+      if (body.action === "prediction" && body.operation === "open") label(note, data.last_operation?.result?.opened ? "codex_action_opened" : "image_action_open_failed");
       if (body.action === "image") void globalThis.ccdxConnections?.load();
       if (initialSourceSave) label(el("source-control-note"), "source_initial_review_saved");
       if (body.operation === "account") {
@@ -227,6 +228,7 @@
     }
     catch (error) {
       if (settings) applySettings(settings);
+      if (note.id === "prediction-open-note") note.hidden = false;
       if (body.operation === "account") { label(el("m365-account-note"), "company_account_not_saved", { reason: { key: accountReasons.has(error.code) ? error.code : error.message } });return; }
       if (body.action === "color_theme") { label(el("terminal-color-note"), "not_saved_error", { error: error.message });return; }
       if (error.code === "ccdx_prediction_app_open") label(note, error.code);

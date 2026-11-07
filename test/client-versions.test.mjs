@@ -103,3 +103,16 @@ test("an unrecognized Claude major remains guarded through temporary observation
   observed = [];const missing = await monitor.refresh();assert.deepEqual(missing.claude, []);assert.equal(missing.claude_unrecognized, true);
   observed = [{ ...row, version: "4.999.0" }];assert.equal((await monitor.refresh()).claude_unrecognized, false);monitor.close();
 });
+
+test("temporarily unreadable optional metadata is unknown rather than a false App update", async t => {
+  const f = await fixture(t), row = { id: "codex_system_chatgpt", client: "codex", scope: "system", name: "ChatGPT.app",
+    version: "26.1.1", build: "100", cli_version: "0.167.0-alpha.1" };
+  let observed = [row], updates = 0;
+  const monitor = createClientVersionMonitor({ ...f, inspect: async () => observed, onChange: () => { updates++; } });
+  await monitor.refresh();observed = [{ ...row, build: null, cli_version: null }];
+  const missing = await monitor.refresh();assert.equal(missing.codex[0].build, null);assert.equal(missing.codex[0].cli_version, null);
+  assert.equal(missing.codex[0].changed_at, null);assert.equal(updates, 0);
+  observed = [row];assert.equal((await monitor.refresh()).codex[0].changed_at, null);assert.equal(updates, 0);
+  observed = [{ ...row, cli_version: "0.167.0-alpha.2" }];assert.ok((await monitor.refresh()).codex[0].changed_at);assert.equal(updates, 1);
+  monitor.close();
+});

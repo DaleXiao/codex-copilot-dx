@@ -14,8 +14,9 @@ const validEntry = value => fields(value, ["version", "build", "cli_version", "p
   && validVersion(value.version) && optionalVersion(value.build) && optionalVersion(value.cli_version)
   && validDate(value.changed_at) && (value.previous == null || fields(value.previous, ["version", "build", "cli_version"])
     && validVersion(value.previous.version) && optionalVersion(value.previous.build) && optionalVersion(value.previous.cli_version));
-const same = (left, right) => left?.version === right.version && (left?.build || null) === (right.build || null)
-  && (left?.cli_version || null) === (right.cli_version || null);
+const changed = (left, right) => left.version !== right.version
+  || Boolean(left.build && right.build && left.build !== right.build)
+  || Boolean(left.cli_version && right.cli_version && left.cli_version !== right.cli_version);
 const sameFile = (left, right) => left.size === right.size && left.mtimeMs === right.mtimeMs && left.ino === right.ino && left.dev === right.dev;
 const installed = value => ({ version: value.version, build: value.build || null, cli_version: value.cli_version || null });
 const tag = (text, key) => new RegExp(`<key>${key}</key>\\s*<(string|integer)>([^<]+)</\\1>`).exec(text)?.[2]?.trim();
@@ -80,25 +81,26 @@ export function createClientVersionMonitor({ home = os.homedir(), env = process.
   async function run() {
     const baseline = await load(), rows = await inspect({ home, env, platform, ...options });
     if (!Array.isArray(rows) || rows.length > 7) throw new Error("Invalid App version results");
-    const at = new Date(now()).toISOString(), next = { ...baseline }, changed = [];
+    const at = new Date(now()).toISOString(), next = { ...baseline }, updates = [];
     const groups = { codex: [], claude: [] };
     for (const row of rows) {
       if (!/^(?:codex|claude)_(?:system|user|windows)_(?:chatgpt|codex|claude)$/.test(row.id || "")
         || !["codex", "claude"].includes(row.client) || !validVersion(row.version) || !optionalVersion(row.build) || !optionalVersion(row.cli_version)) continue;
       const current = installed(row), previous = baseline[row.id];let entry;
       if (!previous) entry = { ...current, previous: null, changed_at: null };
-      else if (!same(previous, current)) {
-        entry = { ...current, previous: installed(previous), changed_at: at };changed.push(row.client);
-      } else entry = { ...current, previous: previous.previous || null, changed_at: previous.changed_at || null };
+      else if (changed(previous, current)) {
+        entry = { ...current, previous: installed(previous), changed_at: at };updates.push(row.client);
+      } else entry = { ...current, build: current.build || previous.build || null, cli_version: current.cli_version || previous.cli_version || null,
+        previous: previous.previous || null, changed_at: previous.changed_at || null };
       next[row.id] = entry;
-      groups[row.client].push({ id: row.id, name: row.name, scope: row.scope, ...entry, first_observed: !previous });
+      groups[row.client].push({ id: row.id, name: row.name, scope: row.scope, ...entry, ...current, first_observed: !previous });
     }
     if (closed) return snapshot();
     const modified = JSON.stringify(next) !== JSON.stringify(baseline);
     saved = next;
     const observed = { checked_at: at, ...groups, claude_unrecognized: Boolean(next.claude_system_claude?.version && !/^[34]\./.test(next.claude_system_claude.version)) };
     state = { ...observed, persistence: persist ? writable && modified ? "pending" : writable ? "saved" : "unavailable" : "read_only" };
-    if (changed.length) try { onChange([...new Set(changed)], snapshot()); } catch { /* Display only. */ }
+    if (updates.length) try { onChange([...new Set(updates)], snapshot()); } catch { /* Display only. */ }
     if (persist && writable && modified) try {
       await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
       if (!closed) await atomicWriteFile(file, `${JSON.stringify({ version: 1, apps: next })}\n`, { mode: 0o600, preserveMode: false });

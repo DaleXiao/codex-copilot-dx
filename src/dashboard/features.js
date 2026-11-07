@@ -81,7 +81,10 @@
       el("prediction-continue").hidden = !pending;
       el("prediction-open").disabled = !value?.configured && !value?.display_pending;
       el("prediction-remove").disabled = !value?.configured;
-      if (notes) localize(el("prediction-action-note"), !value ? "feature_unavailable" : value.status === "unavailable" ? "feature_read_failed" : pending ? "prediction_quit_continue" : value.enabled && value.bridge !== "running" ? "prediction_bridge_missing" : value.enabled ? "prediction_ready" : "prediction_disabled");
+      if (notes) {
+        el("prediction-open-note").hidden = true;
+        localize(el("prediction-action-note"), !value ? "feature_unavailable" : value.status === "unavailable" ? "feature_read_failed" : pending ? "prediction_quit_continue" : value.enabled && value.bridge !== "running" ? "prediction_bridge_missing" : value.enabled ? "prediction_ready" : "prediction_disabled");
+      }
       el("effect-prediction_enabled").hidden = !pending;
       if (pending) localize(el("effect-prediction_enabled"), "feature_pending");
       renderImageApp();

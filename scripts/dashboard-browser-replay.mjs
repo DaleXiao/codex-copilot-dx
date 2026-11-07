@@ -460,6 +460,7 @@ try {
         await page.locator("#setting-prediction_enabled").click();
         await page.waitForFunction(() => document.getElementById("prediction-action-note").textContent.includes("synthetic prediction save refused"));
         assert.equal(await page.locator("#setting-prediction_enabled").isChecked(), predictionBefore, "A failed save restores the confirmed switch");
+        assert.equal(await page.locator("#prediction-open-note").evaluate(node => node.hidden), true, "Settings refresh clears the previous restart result");
         for (const id of ["source-control-note", "m365-control-note", "review-control-note", "effect-history", "settings-note"]) {
           assert.doesNotMatch(await page.locator(`#${id}`).textContent(), /synthetic prediction save refused/, "Save errors stay beside the affected control");
         }

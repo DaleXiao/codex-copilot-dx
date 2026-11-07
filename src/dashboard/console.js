@@ -214,7 +214,7 @@
       if (body.action === "provider" && body.operation === "off") { sourceDirty = false;reviewDirty = false; }
       el("review-control-note").textContent = "";
       applySettings(data);
-      if (body.action === "prediction" && body.operation === "open") label(note, data.last_operation?.result?.opened ? "codex_action_opened" : "image_action_open_failed");
+      if (body.action === "prediction" && body.operation === "open") { note.hidden = false;label(note, data.last_operation?.result?.opened ? "codex_action_opened" : "image_action_open_failed"); }
       if (body.action === "image") void globalThis.ccdxConnections?.load();
       if (initialSourceSave) label(el("source-control-note"), "source_initial_review_saved");
       if (body.operation === "account") {

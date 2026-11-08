@@ -6,6 +6,63 @@ const secret = Buffer.alloc(32, 7), noModel = async texts => texts.map(() => [])
 const key = "ghp_" + "a".repeat(36);
 const options = { protocol: "messages", client: "claude_app", secret, find: noModel };
 const body = text => ({ model: "model", messages: [{ role: "user", content: text }], max_tokens: 64 });
+test("privacy masking preserves precise numeric literals in Responses function arguments", async () => {
+  const numbers = '"id":9007199254740993,"negative":-9007199254740993,"decimal":0.123456789012345678901,"large":1e400,"small":1e-400,"zero":-0';
+  const credential = 'a"b\\c\n中文';
+  const plain = `{${numbers}}`, protectedArgs = `{${numbers},"credential":${JSON.stringify(credential)}}`;
+  const input = { model: "model", input: [
+    { type: "message", role: "user", content: key },
+    { type: "function_call", id: "one", call_id: "call_one", name: "tool", arguments: plain },
+    { type: "function_call", id: "two", call_id: "call_two", name: "tool", arguments: protectedArgs },
+  ] };
+  const session = await maskPrivacyRequest(input, { ...options, protocol: "responses" });
+  assert.equal(session.body.input[1].arguments, plain, "An unrelated masked value must not change an argument");
+  const masked = session.body.input[2].arguments;
+  assert.ok(masked.includes(numbers));assert.ok(!masked.includes(JSON.stringify(credential)));
+  assert.equal(session.restoreValue({ arguments: masked }).arguments, protectedArgs);
+  const token = JSON.parse(masked).credential, escaped = masked.replace(token, "\\u007b" + token.slice(1));
+  assert.equal(session.restoreValue({ arguments: escaped }).arguments, protectedArgs, "Escaped placeholder characters still restore");
+  assert.equal(input.input[2].arguments, protectedArgs, "The caller's request is unchanged");
+  const untouched = { model: "model", input: [{ type: "function_call", arguments: plain }] };
+  const noMask = await maskPrivacyRequest(untouched, { ...options, protocol: "responses" });
+  assert.equal(noMask.body, untouched);assert.equal(noMask.body.input[0].arguments, plain);noMask.release();
+  const chat = { model: "model", messages: [{ role: "user", content: key }, { role: "assistant",
+    tool_calls: [{ type: "function", function: { name: "tool", arguments: protectedArgs } }] }] };
+  const chatSession = await maskPrivacyRequest(chat, { ...options, protocol: "chat" });
+  const chatArgs = chatSession.body.messages[1].tool_calls[0].function.arguments;
+  assert.ok(chatArgs.includes(numbers));assert.equal(chatSession.restoreValue({ arguments: chatArgs }).arguments, protectedArgs);chatSession.release();
+  await assert.rejects(maskPrivacyRequest({ input: [{ type: "function_call", arguments: '{"id":' }] },
+    { ...options, protocol: "responses" }), { code: "ccdx_privacy_arguments_invalid" });
+  session.release();
+});
+
+test("privacy restoration keeps streamed deltas and complete argument snapshots identical", async () => {
+  const session = await maskPrivacyRequest(body(key), options), token = session.body.messages[0].content;
+  const masked = `{"id":9007199254740993,"credential":${JSON.stringify(token)}}`;
+  const expected = `{"id":9007199254740993,"credential":${JSON.stringify(key)}}`;
+  const stream = createPrivacyStream(session), frames = [
+    { type: "response.function_call_arguments.delta", output_index: 0, item_id: "tool", delta: masked },
+    { type: "response.function_call_arguments.done", output_index: 0, item_id: "tool", arguments: masked },
+  ];
+  const output = frames.map(value => stream.push(Buffer.from(`data: ${JSON.stringify(value)}\n\n`))).join("") + stream.finish();
+  const events = output.split("\n").filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5)));
+  assert.equal(events[0].delta, expected);assert.equal(events[1].arguments, expected);session.release();
+});
+
+test("masked tool arguments preserve varied JSON number representations", async () => {
+  const numbers = ["0", "-0", "-0.0", "0.5", "1.2300", "0.000001", "0.0000001", "-0.0000001",
+    "1.23456789012345", "123456789012345.6", "9007199254740991", "9007199254740993", "-9007199254740993",
+    "1E+3", "1e400", "1e-400", "5e-324"];
+  for (const number of numbers) {
+    const argument = `{"number":${number},"credential":${JSON.stringify(key)}}`;
+    const input = { model: "model", input: [{ type: "function_call", name: "tool", arguments: argument }] };
+    const session = await maskPrivacyRequest(input, { ...options, protocol: "responses" });
+    const masked = session.body.input[0].arguments;
+    assert.ok(masked.includes(`"number":${number}`), number);
+    assert.equal(session.restoreValue({ arguments: masked }).arguments, argument, number);session.release();
+  }
+});
+
 test("tool argument buffering scans input linearly rather than rescanning the accumulated prefix", t => {
   const argument = JSON.stringify({ value: "x".repeat(128 * 1024) }), frames = [];
   const frame = event => Buffer.from(`data: ${JSON.stringify(event)}\n\n`);

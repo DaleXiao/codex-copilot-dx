@@ -316,6 +316,7 @@ export function createResponsesHandler(options) {
         };
         if (streaming) {
           let streamResponseHeaders = null;
+          const streamMetadata = { response: {}, model, sequenceNumber: 0 };
           const keepalive = createSseKeepalive({ res, signal: abort.signal, intervalMs: keepaliveIntervalMs });
           let successful;
           try { successful = await forwardToChat(chatReq, async (event, data) => {
@@ -327,6 +328,11 @@ export function createResponsesHandler(options) {
             keepalive.activity();
             const written = await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`, { signal: abort.signal });
             if (!written) return false;
+            if (data.response && typeof data.response === "object") {
+              for (const key of ["id", "created_at", "model"]) if (data.response[key] !== undefined) streamMetadata.response[key] = data.response[key];
+            }
+            streamMetadata.sequenceNumber = Number.isSafeInteger(data.sequence_number) && data.sequence_number >= streamMetadata.sequenceNumber
+              ? data.sequence_number + 1 : streamMetadata.sequenceNumber + 1;
             if (event === "response.completed" || event === "response.incomplete") {
               if (event === "response.completed") rememberResponseHistory(prepared, prepared.privacyRestore?.(data.response) || data.response);
               recordResponsesUsage({ surface: prepared.surface, mode: "stream", model, response: data.response, event: data });
@@ -345,7 +351,7 @@ export function createResponsesHandler(options) {
               sendJsonError(res, responseError, statusCode || 500);
               return;
             }
-            await endStreamWithError(res, error || new Error(errMsg), abort);
+            await endStreamWithError(res, error || new Error(errMsg), abort, streamMetadata);
           }, {
             signal: abort.signal,
             abort,

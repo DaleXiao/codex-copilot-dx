@@ -66,6 +66,52 @@ for (const protocol of ["responses", "messages"]) test(`${protocol} restores mas
   assert.equal(text, original);assert.equal(events.at(-1).type, protocol === "responses" ? "response.completed" : "message_stop");
 });
 
+test("Responses restores protected error text in a synthesized failure without waiting for EOF", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-privacy-failure-")), env = {}, file = userSettingsPath({ home, env });
+  fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, '{"privacy_enabled":true}');
+  const model = { load: async () => {}, find: async texts => texts.map(() => []), snapshot: () => ({ state: "ready" }), close() {}, busy: () => false };
+  const privacy = createLocalPrivacy({ home, env, model }), original = "ghp_" + "r".repeat(36);let cancelled = false;
+  const server = await startAdapter(0, "127.0.0.1", { privacy, env, dashboardOptions: { home, env }, responsesFn: async body => {
+    const masked = typeof body.input === "string" ? body.input : body.input[0].content[0].text;
+    assert.notEqual(masked, original);
+    const events = [{ type: "response.created", sequence_number: 0, response: { id: "resp_private", created_at: 1700000000, model: body.model, status: "in_progress", output: [] } },
+      { error: { code: "fixture_failure", message: "denied " + masked } }];
+    return new Response(new ReadableStream({ start(controller) { controller.enqueue(Buffer.from(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(""))); },
+      cancel() { cancelled = true; } }), { headers: { "Content-Type": "text/event-stream" } });
+  }, getCachedModelEndpointsFn: () => ["/responses"] });
+  t.after(async () => { server.closeAllConnections();await new Promise(resolve => server.close(resolve));privacy.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const result = await fetch(`http://127.0.0.1:${server.address().port}/v1/responses`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.6-sol", input: original, stream: true }) });
+  const events = (await result.text()).split("\n").filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5)));
+  assert.equal(cancelled, true);assert.equal(events.at(-1).type, "response.failed");
+  assert.equal(events.at(-1).response.error.message, "denied " + original);
+});
+
+test("Responses preserves precise tool arguments through privacy masking and JSON restoration", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-privacy-numbers-")), env = {}, file = userSettingsPath({ home, env });
+  fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, '{"privacy_enabled":true}');
+  const model = { load: async () => {}, find: async texts => texts.map(() => []), snapshot: () => ({ state: "ready" }), close() {}, busy: () => false };
+  const privacy = createLocalPrivacy({ home, env, model }), original = "ghp_" + "n".repeat(36);
+  const args = `{"id":9007199254740993,"decimal":0.123456789012345678901,"credential":${JSON.stringify(original)}}`;
+  let upstreamArgs;
+  const server = await startAdapter(0, "127.0.0.1", { privacy, env, dashboardOptions: { home, env }, responsesFn: async body => {
+    upstreamArgs = body.input.find(item => item.type === "function_call").arguments;
+    return Response.json({ id: "resp_numbers", status: "completed", model: body.model, output: [
+      { type: "function_call", id: "out", call_id: "call_out", name: "tool", arguments: upstreamArgs },
+    ] });
+  }, getCachedModelEndpointsFn: () => ["/responses"] });
+  t.after(async () => { server.closeAllConnections();await new Promise(resolve => server.close(resolve));privacy.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const result = await fetch(`http://127.0.0.1:${server.address().port}/v1/responses`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "gpt-5.6-sol", stream: false, input: [
+      { type: "message", role: "user", content: [{ type: "input_text", text: original }] },
+      { type: "function_call", id: "in", call_id: "call_in", name: "tool", arguments: args },
+      { type: "function_call_output", call_id: "call_in", output: "done" },
+    ] }) });
+  assert.equal(result.status, 200);assert.ok(upstreamArgs.includes('"id":9007199254740993'));
+  assert.ok(upstreamArgs.includes('"decimal":0.123456789012345678901'));assert.ok(!upstreamArgs.includes(original));
+  assert.equal((await result.json()).output[0].arguments, args);
+});
+
 test("Messages JSON, streaming and token counting share masking while client credentials remain unchanged", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-privacy-http-")), env = {}, file = userSettingsPath({ home, env });
   fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, '{"privacy_enabled":true}');

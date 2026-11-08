@@ -499,7 +499,7 @@ test("HTTP streaming responses time out when the upstream body becomes idle", as
 
   assert.equal(result.status, 200);
   assert.match(result.text, /response\.output_text\.delta/);
-  assert.match(result.text, /event: error\ndata: \{"type":"error"/);
+  assert.match(result.text, /event: response\.failed\ndata: \{"type":"response\.failed"/);
   assert.match(result.text, /stream_idle_timeout/);
 });
 
@@ -521,7 +521,7 @@ test("HTTP native Responses stream emits a valid SSE error after headers", async
 
   assert.equal(result.status, 200);
   assert.match(result.text, /response\.output_text\.delta/);
-  assert.match(result.text, /event: error\ndata: \{"type":"error"/);
+  assert.match(result.text, /event: response\.failed\ndata: \{"type":"response\.failed"/);
   assert.match(result.text, /stream_idle_timeout/);
 });
 
@@ -631,7 +631,7 @@ test("HTTP native Responses stream rejects an event above the configured byte li
 
   assert.equal(result.status, 200);
   assert.match(result.text, /SSE buffer exceeds 8388608 bytes/);
-  assert.match(result.text, /event: error/);
+  assert.match(result.text, /event: response\.failed/);
 });
 
 test("HTTP native unary Responses validates a successful envelope before forwarding", async () => {

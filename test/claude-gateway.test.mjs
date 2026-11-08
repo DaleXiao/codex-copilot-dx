@@ -7,6 +7,7 @@ import { buildMessagesUsageRecord, usageCacheHitRate } from "../src/usage-store.
 import { currentRequestContext } from "../src/request-context.mjs";
 import { claudeModelEntries } from "../src/claude-models.mjs";
 import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
+import { createApiNetwork } from "../src/providers/api-network.mjs";
 
 const key = "ccdx_m365_" + "a".repeat(64);
 test("unaliased stream framing never forwards a severed JSON fragment and keeps a complete final event", () => {
@@ -64,6 +65,70 @@ async function gateway(t, messages, extra = {}) {
   });
   return { server, records, calls, request };
 }
+
+test("Claude completes before upstream EOF and reuses the connection after bounded drain", { timeout: 5000 }, async t => {
+  const pool = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  let connections = 0, requests = 0, finishFirst, firstEnded = false;
+  const wire = Buffer.from('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+  const upstream = http.createServer((req, res) => {
+    req.resume();requests++;res.writeHead(200, { "Content-Type": "text/event-stream" });res.write(wire);
+    if (requests === 1) finishFirst = () => { firstEnded = true;res.end(); };
+    else res.end();
+  });
+  upstream.on("connection", () => { connections++; });
+  await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(async () => { pool.destroy();upstream.closeAllConnections();await new Promise(resolve => upstream.close(resolve)); });
+  const target = `https://api.test:${upstream.address().port}/v1/messages`;
+  const network = await createApiNetwork({ targets: [target], env: {}, platform: "linux",
+    requestImpl: (options, reply) => http.request({ ...options, protocol: "http:", hostname: "127.0.0.1", agent: pool }, reply) });
+  t.after(() => network.close());
+  const g = await gateway(t, (body, options) => network.fetch(target, { method: "POST", body: JSON.stringify(body), signal: options.signal }));
+  const body = { model: "claude-opus-5.5", messages: [], stream: true };
+  const first = await g.request(body);assert.deepEqual(Buffer.from(await first.arrayBuffer()), wire);
+  assert.equal(firstEnded, false, "The client must not wait for upstream EOF");
+  const secondRequest = g.request(body);finishFirst();
+  const second = await secondRequest;assert.deepEqual(Buffer.from(await second.arrayBuffer()), wire);
+  assert.equal(requests, 2);assert.equal(connections, 1);
+});
+
+test("Claude bounds post-terminal reads by bytes and time", { timeout: 5000 }, async t => {
+  const wire = 'event: message_stop\ndata: {"type":"message_stop"}\n\n';
+  for (const mode of ["bytes", "time"]) {
+    let cancelled, sent = false;const stopped = new Promise(resolve => { cancelled = resolve; });
+    const source = new ReadableStream({
+      start(controller) { controller.enqueue(Buffer.from(wire)); },
+      pull(controller) { if (mode === "bytes" && !sent) { sent = true;controller.enqueue(Buffer.alloc(64 * 1024 + 1, 120)); } },
+      cancel() { cancelled(); },
+    }, { highWaterMark: 0 });
+    const g = await gateway(t, async () => new Response(source, { headers: { "Content-Type": "text/event-stream" } }));
+    const response = await g.request({ model: "claude-opus-5.5", messages: [], stream: true });
+    assert.equal(await response.text(), wire);await stopped;
+  }
+});
+
+test("Claude cancels an upstream error terminal without a background drain", async t => {
+  let cancelled = false;
+  const wire = 'event: error\ndata: {"type":"error","error":{"type":"api_error","message":"synthetic failure"}}\n\n';
+  const source = new ReadableStream({ start(controller) { controller.enqueue(Buffer.from(wire)); }, cancel() { cancelled = true; } });
+  const g = await gateway(t, async () => new Response(source, { headers: { "Content-Type": "text/event-stream" } }));
+  const response = await g.request({ model: "claude-opus-5.5", messages: [], stream: true });
+  assert.equal(await response.text(), wire);assert.equal(cancelled, true);assert.equal(g.server.snapshot().failed, 1);
+});
+
+test("disconnect after partial Claude output aborts the upstream request", { timeout: 5000 }, async t => {
+  let notify;const upstreamAborted = new Promise(resolve => { notify = resolve; });
+  const g = await gateway(t, async (_body, { signal }) => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(Buffer.from('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}\n\n'));
+      signal.addEventListener("abort", () => { notify();controller.error(new DOMException("Aborted", "AbortError")); }, { once: true });
+    },
+  }), { headers: { "Content-Type": "text/event-stream" } }));
+  const controller = new AbortController();
+  const response = await fetch(`http://127.0.0.1:${g.server.port}/v1/messages`, { method: "POST", signal: controller.signal,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model: "claude-opus-5.5", messages: [], stream: true }) });
+  const reader = response.body.getReader();assert.equal((await reader.read()).done, false);controller.abort();await upstreamAborted;
+});
 
 test("Claude gateway delivers Messages JSON and normalizes cache accounting once", async t => {
   const performance = createStreamPerformanceMetrics({ routeNames: ["messages"] });
@@ -128,7 +193,7 @@ test("Claude API failures expose safe transport facts without raw causes or extr
   assert.match(logs[0][1], /ECONNRESET, tls/);assert.equal(JSON.stringify(logs).includes("synthetic-private-upstream-key"), false);
 });
 
-test("Claude gateway preserves stream bytes, completes at message_stop and cancels its upstream reader", async t => {
+test("Claude gateway preserves stream bytes and drains through upstream EOF after message_stop", async t => {
   const events = [
     { type: "message_start", message: { ...message, content: [], stop_reason: null } },
     { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello 测试 😀" } },
@@ -136,26 +201,29 @@ test("Claude gateway preserves stream bytes, completes at message_stop and cance
     { type: "message_stop" },
   ];
   const bytes = Buffer.from(events.map(e => `event: ${e.type}\r\ndata: ${JSON.stringify(e)}\r\n\r\n`).join(""));
-  let offset = 0, cancelled = false;
+  let offset = 0, cancelled = false, finish;const ended = new Promise(resolve => { finish = resolve; });
   const g = await gateway(t, async () => new Response(new ReadableStream({
-    pull(controller) { if (offset < bytes.length) { const end = Math.min(bytes.length, offset + 7);controller.enqueue(bytes.subarray(offset, end));offset = end; } },
+    pull(controller) {
+      if (offset < bytes.length) { const end = Math.min(bytes.length, offset + 7);controller.enqueue(bytes.subarray(offset, end));offset = end; }
+      else { controller.close();finish(); }
+    },
     cancel() { cancelled = true; },
   }), { headers: { "Content-Type": "text/event-stream" } }));
   const response = await g.request({ model: "claude-opus-5.5", messages: [], stream: true });
-  assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);assert.equal(cancelled, true);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);await ended;assert.equal(cancelled, false);
   assert.equal(g.server.snapshot().completed, 1);assert.equal(g.records.length, 1);
   assert.equal(g.server.snapshot().performance.by_route.messages.terminal_outcomes.by_model["claude-opus-5.5"].completed, 1);
 });
 
 test("a CR-only Messages terminal completes without waiting for upstream socket EOF", async t => {
-  let cancelled = false;
+  let cancelled = false, controller;
   const events = [{ type: "message_start", message: { id: "msg_cr", model: "claude-opus-5.5", usage: { input_tokens: 1 } } },
     { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hello" } }, { type: "message_stop" }];
   const wire = events.map(event => `event: ${event.type}\rdata: ${JSON.stringify(event)}\r\r`).join("");
-  const g = await gateway(t, async () => new Response(new ReadableStream({ start(controller) { controller.enqueue(Buffer.from(wire)); }, cancel() { cancelled = true; } }),
+  const g = await gateway(t, async () => new Response(new ReadableStream({ start(value) { controller = value;controller.enqueue(Buffer.from(wire)); }, cancel() { cancelled = true; } }),
     { headers: { "Content-Type": "text/event-stream" } }));
   const response = await g.request({ model: "claude-opus-5.5", messages: [], max_tokens: 64, stream: true });
-  assert.equal(await response.text(), wire);assert.equal(cancelled, true);assert.equal(g.server.snapshot().completed, 1);
+  assert.equal(await response.text(), wire);assert.equal(cancelled, false);controller.close();assert.equal(g.server.snapshot().completed, 1);
 });
 
 test("M365 cumulative stream usage matches the official SDK across null, zero and repeated counters", async t => {

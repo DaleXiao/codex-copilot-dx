@@ -13,21 +13,38 @@ const secretPatterns = [
 ];
 const secretField = /(?:["']?\b(?:password|passwd|api_key|apikey|access_token|refresh_token|client_secret|secret_key|auth_token|db_password)\b["']?\s*[:=]\s*)(?:"((?:\\.|[^"\\\r\n])+)"|'((?:\\.|[^'\\\r\n])+)'|([^\s,;\r\n}]+))/gdi;
 const personalKinds = new Set(["email", "phone", "account", "payment_card", "private_address", "private_date", "private_person"]);
+const secretKeyPattern = /^(?:password|passwd|api_key|apikey|access_token|refresh_token|client_secret|secret_key|auth_token|db_password|credential|secret|token)$/i;
 const kept = new Set(["model", "id", "type", "role", "name", "namespace", "server_label", "server_name", "call_id", "tool_use_id", "item_id", "signature", "encrypted_content", "thought_signature", "thoughtSignature", "data", "url", "file_id", "previous_response_id", "prompt_cache_key", "media_type", "mime_type", "stop_reason", "finish_reason", "status", "object", "event"]);
+function parseToolArguments(text) {
+  return JSON.parse(text, (_key, value, context) => typeof value === "number" && String(value) !== context.source
+    ? JSON.rawJSON(context.source) : value);
+}
+// Integers under 16 digits and ordinary short decimals round-trip as JSON text.
+// Preserve longer values and cases where JSON.stringify changes their spelling.
+const possibleLossyNumber = /(?:\d{16}|(?=\d+\.\d)(?=(?:\d|\.){17})\d+\.\d+|\d+\.\d*0(?=[,\]}\s]|$)|\b0\.0{6,}[1-9]|\d[eE][+-]?\d|-0(?=[,\]}\s]|$))/;
+function overlayToolStrings(target, source) {
+  if (typeof source === "string") return source;
+  if (!source || typeof source !== "object") return target;
+  for (const [key, value] of Object.entries(source)) {
+    if (typeof value === "string") target[key] = value;
+    else if (value && typeof value === "object") overlayToolStrings(target[key], value);
+  }
+  return target;
+}
 function leaves(value, add, inArguments = false) {
   if (typeof value === "string") return;
-  if (Array.isArray(value)) { for (let i = 0; i < value.length; i++) typeof value[i] === "string" ? add(value, i, value[i], inArguments) : leaves(value[i], add, inArguments);return; }
+  if (Array.isArray(value)) { for (let i = 0; i < value.length; i++) typeof value[i] === "string" ? add(value, i, value[i]) : leaves(value[i], add, inArguments);return; }
   if (!value || typeof value !== "object") return;
   if (!inArguments && (value.encrypted_content || ["thinking", "redacted_thinking", "reasoning"].includes(value.type))) return;
   for (const [key, item] of Object.entries(value)) {
     if (!inArguments && kept.has(key)) continue;
-    if (typeof item === "string") add(value, key, item, inArguments);
+    if (typeof item === "string") add(value, key, item);
     else leaves(item, add, inArguments);
   }
 }
 function requestTexts(body, protocol) {
   const items = [], nested = [];
-  const add = (parent, key, text) => { if (text && !text.startsWith("data:")) items.push({ parent, key, text, secret: /^(?:password|passwd|api_key|apikey|access_token|refresh_token|client_secret|secret_key|auth_token|db_password|credential|secret|token)$/i.test(String(key)) }); };
+  const add = (parent, key, text) => { if (text && !text.startsWith("data:")) items.push({ parent, key, text, secret: secretKeyPattern.test(String(key)) }); };
   const text = (parent, key) => { if (typeof parent?.[key] === "string") add(parent, key, parent[key]);else if (Array.isArray(parent?.[key])) for (const block of parent[key]) if (["text", "input_text", "output_text"].includes(block?.type)) add(block, "text", block.text); };
   const args = (parent, key) => {
     if (typeof parent[key] === "string") {
@@ -121,9 +138,10 @@ export async function maskPrivacyRequest(body, { protocol, client = "api", perso
   const found = texts.length ? await find(texts, { signal, onPlan }) : [], values = new Map(), kinds = {}, total = { count: 0, bytes: 0 };
   if (!Array.isArray(found) || found.length !== texts.length) throw privacyFailure("engine_invalid");
   for (let i = 0; i < items.length; i++) {
-    const item = items[i], bytes = Buffer.from(item.text), spans = rules(item.text, personal);
+    const item = items[i], spans = rules(item.text, personal);let bytes;
     if (item.secret) spans.push({ start: 0, end: item.text.length, kind: "secret" });
     for (const span of found[i] || []) {
+      bytes ||= Buffer.from(item.text);
       if (!Number.isInteger(span.start) || !Number.isInteger(span.end) || span.start < 0 || span.end <= span.start || span.end > bytes.length || !Number.isFinite(span.score)) throw privacyFailure("engine_invalid");
       if (span.score < 0.8 || span.label !== "common_secret" && !(personal && personalKinds.has(span.label))) continue;
       const start = bytes.subarray(0, span.start).toString("utf8").length, end = bytes.subarray(0, span.end).toString("utf8").length;
@@ -143,18 +161,25 @@ export async function maskPrivacyRequest(body, { protocol, client = "api", perso
     }
     if (end) item.parent[item.key] = output + item.text.slice(end);
   }
-  if (total.count) for (const item of nested) item.parent[item.key] = JSON.stringify(item.value);
+  if (total.count) for (const item of nested) {
+    const ordinary = JSON.stringify(item.value), original = item.parent[item.key];
+    item.parent[item.key] = ordinary !== original && possibleLossyNumber.test(original)
+      ? JSON.stringify(overlayToolStrings(parseToolArguments(original), item.value)) : ordinary;
+  }
   const restoreText = text => text.replace(tokenPattern, token => values.get(token) ?? token);
   function restoreValue(value, inToolData = false) {
     if (typeof value === "string") return restoreText(value);
     if (Array.isArray(value)) return value.map(item => restoreValue(item, inToolData));
-    if (!value || typeof value !== "object") return value;
+    if (!value || typeof value !== "object" || JSON.isRawJSON(value)) return value;
     if (!inToolData && (value.encrypted_content || ["thinking", "redacted_thinking", "reasoning"].includes(value.type))) return value;
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, !inToolData && kept.has(key) ? item
       : !inToolData && key === "arguments" && typeof item === "string" && item ? restoreArguments(item)
         : restoreValue(item, inToolData || key === "input" && ["tool_use", "server_tool_use", "mcp_tool_use"].includes(value.type))]));
   }
-  function restoreArguments(text) { try { return JSON.stringify(restoreValue(JSON.parse(text), true)); } catch { return restoreText(text); } }
+  function restoreArguments(text) {
+    if (!text.includes(TOKEN_START) && !text.includes("\\u")) return text;
+    try { return JSON.stringify(restoreValue(parseToolArguments(text), true)); } catch { return restoreText(text); }
+  }
   return { body: total.count ? copy : body, count: total.count, kinds, restoreText, restoreValue,
     restoreToolValue: value => restoreValue(value, true), release: () => values.clear() };
 }

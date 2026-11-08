@@ -29,7 +29,7 @@ import {
   parseResponsesCompactionResult,
 } from "./responses-compaction.mjs";
 import { loadRuntimeConfig } from "./runtime-config.mjs";
-import { endStreamWithError } from "./stream-errors.mjs";
+import { endStreamWithError, responseFailedEvent } from "./stream-errors.mjs";
 import { createSseKeepalive } from "./sse-keepalive.mjs";
 import {
   incompleteUpstreamStream,
@@ -89,7 +89,7 @@ function normalizeMessageIds(state, event, eventType) {
       state.messageIds.set(index, event.item.id);
     }
     const id = state.messageIds.get(index);
-    if (["response.output_item.added", "response.output_item.done"].includes(eventType)
+    if ((eventType === "response.output_item.added" || eventType === "response.output_item.done")
       && event.item?.type === "message") {
       replaceId(event.item, "id", id);
     } else if (MESSAGE_CONTENT_EVENT_TYPES.has(eventType)) {
@@ -122,7 +122,14 @@ function inspectResponseSseEvent(state, eventName, data) {
       "upstream_stream_json_invalid",
     );
   }
-  const eventType = event.type || eventName;
+  const eventType = event.type || (event.error ? "error" : eventName);
+  const previousSequence = state.lastSequence;
+  state.lastSequence = event.sequence_number ?? previousSequence + 1;
+  if (event.response && typeof event.response === "object" && !Array.isArray(event.response)) {
+    if (typeof event.response.id === "string" && event.response.id) state.response.id = event.response.id;
+    if (Number.isSafeInteger(event.response.created_at) && event.response.created_at >= 0) state.response.created_at = event.response.created_at;
+    if (typeof event.response.model === "string" && event.response.model) state.response.model = event.response.model;
+  }
   const changed = normalizeMessageIds(state, event, eventType);
   const outputTokens = event.response?.usage?.output_tokens ?? event.usage?.output_tokens;
   if (outputTokens !== undefined) markOutputTokens(outputTokens);
@@ -142,10 +149,20 @@ function inspectResponseSseEvent(state, eventName, data) {
     state.toolArgumentGuard.observe(event.output_index ?? event.item_id ?? event.call_id, event.delta);
   }
   if (!RESPONSES_TERMINAL_EVENT_TYPES.has(eventType)) return changed ? event : null;
+  if (eventType === "error" || eventType === "response.failed") {
+    const response = { ...(event.response && typeof event.response === "object" ? event.response : {}), ...state.response };
+    const sequenceNumber = Number.isSafeInteger(state.lastSequence) && state.lastSequence > previousSequence
+      ? state.lastSequence : Number.isSafeInteger(previousSequence) ? previousSequence + 1 : 0;
+    const failure = responseFailedEvent(event.response?.error ?? event.error ?? (eventType === "error" ? event : {}), {
+      response, model: state.model, sequenceNumber, template: eventType === "response.failed" ? event : undefined,
+    });
+    state.sawTerminal = true;
+    state.failure = { event: failure, eventType: "response.failed" };
+    return failure;
+  }
   const expectedStatus = {
     "response.completed": "completed",
     "response.incomplete": "incomplete",
-    "response.failed": "failed",
   }[eventType];
   if (expectedStatus && (!event.response?.id || event.response.status !== expectedStatus)) {
     throw invalidUpstreamStream(
@@ -154,9 +171,6 @@ function inspectResponseSseEvent(state, eventName, data) {
     );
   }
   state.sawTerminal = true;
-  if (eventType === "response.failed" || eventType === "error") {
-    state.failure = { event, eventType };
-  }
   if (eventType === "response.completed") {
     const response = event.response;
     state.completed = { response, event };
@@ -216,7 +230,9 @@ function createResponseSseTransformer(state) {
       if (wroteData) return false;
       wroteData = true;
       return true;
-    }).map((line) => line.startsWith("data:") ? `data: ${JSON.stringify(changed)}` : line);
+    }).map((line) => line.startsWith("data:") ? `data: ${JSON.stringify(changed)}`
+      : changed.type === "response.failed" && line.startsWith("event:") ? "event: response.failed" : line);
+    if (changed.type === "response.failed" && !eventName) rewritten.unshift("event: response.failed");
     const newline = bareCR ? chunk.match(/\r\n|\r|\n/)?.[0] || "\n" : chunk.includes("\r\n") ? "\r\n" : "\n";
     return Buffer.from(rewritten.join(newline)
       + frame.subarray(contentLength).toString("ascii"));
@@ -480,6 +496,9 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       failure: null,
       sawTerminal: false,
       sawOutput: false,
+      response: {},
+      model: reqContext.body?.model,
+      lastSequence: -1,
       toolArgumentGuard: new ToolArgumentDeltaGuard(),
       messageIds: new Map(),
     };
@@ -592,7 +611,9 @@ async function proxyStreamingResponses(opened, res, upstream, options) {
       markStreamFailure();
       logRequestFailure("Responses", error, options.abort);
       writeHeaders();
-      await endStreamWithError(res, error, options.abort);
+      await endStreamWithError(res, error, options.abort, {
+        response: streamState.response, model: streamState.model, sequenceNumber: streamState.lastSequence + 1,
+      });
       return { successful: false, compacted: false };
     } finally {
       keepalive.stop();

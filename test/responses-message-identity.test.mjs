@@ -264,6 +264,12 @@ test("native incomplete and failed snapshots use stable message IDs without cach
     expected[2].response.output[0].id = `${status}-start`;
 
     const result = await invokeNative(input, { chunkBytes: 7 });
+    if (status === "failed") {
+      assert.ok(Number.isSafeInteger(result.events[2].response.created_at));
+      assert.equal(result.events[2].response.model, "gpt-6-astra");
+      expected[2].response.created_at = result.events[2].response.created_at;
+      expected[2].response.model = "gpt-6-astra";
+    }
 
     assert.deepEqual(result.events, expected);
     assert.deepEqual(result.result, { successful: false, compacted: false });

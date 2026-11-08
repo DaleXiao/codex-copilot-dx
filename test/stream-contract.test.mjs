@@ -60,6 +60,71 @@ function sseResponse(body) {
   return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream; charset=utf-8" } });
 }
 
+test("native Responses turns upstream error frames into complete failures without waiting for EOF", async () => {
+  for (const ending of ["\n", "\r\n", "\r"]) {
+    for (const typed of [false, true]) {
+      let cancelled = false, timer;
+      const created = { type: "response.created", sequence_number: 4, response: {
+        id: "resp_fixture", object: "response", created_at: 1700000000, model: "upstream-model", status: "in_progress", output: [],
+      } };
+      const delta = { type: "response.output_text.delta", sequence_number: 5, output_index: 0, delta: "partial" };
+      const error = typed ? { type: "error", code: "fixture_overload", message: "synthetic failure" }
+        : { error: { code: "fixture_overload", message: "synthetic failure" } };
+      const frame = value => `${value.type ? `event: ${value.type}${ending}` : ""}data: ${JSON.stringify(value)}${ending}${ending}`;
+      const bytes = Buffer.from(frame(created) + frame(delta) + frame(error));
+      const source = new ReadableStream({
+        start(controller) {
+          for (let at = 0; at < bytes.length; at += 7) controller.enqueue(bytes.subarray(at, at + 7));
+          timer = setTimeout(() => controller.close(), 150);
+        },
+        cancel() { cancelled = true;clearTimeout(timer); },
+      });
+      const result = await invokeAdapter({ responsesFn: async () => new Response(source, { headers: { "Content-Type": "text/event-stream" } }) },
+        { body: { model: "gpt-5.6-sol", stream: true, input: "synthetic" } });
+      const events = result.text.split(/\r\n|\r|\n/).filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5)));
+      const failed = events.at(-1);
+      assert.equal(cancelled, true);assert.match(result.text, /event: response\.failed/);
+      assert.equal(failed.type, "response.failed");assert.equal(failed.sequence_number, 6);
+      assert.equal(failed.response.id, "resp_fixture");assert.equal(failed.response.created_at, 1700000000);
+      assert.equal(failed.response.model, "upstream-model");assert.equal(failed.response.object, "response");
+      assert.equal(failed.response.status, "failed");assert.deepEqual(failed.response.output, []);
+      assert.equal(failed.response.error.code, "fixture_overload");assert.equal(failed.response.error.message, "synthetic failure");
+      assert.doesNotMatch(result.text, /upstream_stream_incomplete|response\.completed/);
+    }
+  }
+});
+
+test("a truncated Responses stream reports its actual failure with a valid terminal envelope", async () => {
+  const created = { type: "response.created", sequence_number: 0, response: {
+    id: "resp_partial", object: "response", created_at: 1700000000, model: "fixture-model", status: "in_progress", output: [],
+  } };
+  const delta = { type: "response.output_text.delta", sequence_number: 1, output_index: 0, delta: "partial" };
+  const source = [created, delta].map(value => `event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`).join("");
+  const result = await invokeAdapter({ responsesFn: async () => sseResponse(source) },
+    { body: { model: "gpt-5.6-sol", stream: true, input: "synthetic" } });
+  const failed = result.text.split("\n").filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5))).at(-1);
+  assert.equal(failed.type, "response.failed");assert.equal(failed.sequence_number, 2);
+  assert.equal(failed.response.id, "resp_partial");assert.equal(failed.response.created_at, 1700000000);
+  assert.equal(failed.response.model, "fixture-model");assert.equal(failed.response.status, "failed");
+  assert.equal(failed.response.error.code, "upstream_stream_incomplete");
+  assert.match(failed.response.error.message, /upstream_stream_incomplete/);
+});
+
+test("an upstream error before response.created still produces a complete failed response", async () => {
+  let cancelled = false;
+  const source = new ReadableStream({
+    start(controller) { controller.enqueue(Buffer.from('data: {"error":{"code":"overloaded","message":"synthetic overload"}}\n\n')); },
+    cancel() { cancelled = true; },
+  });
+  const result = await invokeAdapter({ responsesFn: async () => new Response(source, { headers: { "Content-Type": "text/event-stream" } }) },
+    { body: { model: "gpt-5.6-sol", stream: true, input: "synthetic" } });
+  const failed = result.text.split("\n").filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5))).at(-1);
+  assert.equal(cancelled, true);assert.match(failed.response.id, /^resp_ccdx_/);
+  assert.equal(failed.type, "response.failed");assert.equal(failed.sequence_number, 0);
+  assert.equal(failed.response.model, "gpt-5.6-sol");assert.equal(failed.response.status, "failed");
+  assert.ok(Number.isSafeInteger(failed.response.created_at));assert.equal(failed.response.error.message, "synthetic overload");
+});
+
 test("native Responses preserves LF, CRLF and CR frames across arbitrary chunks", async () => {
   const delta = { type: "response.output_text.delta", delta: "hello 你好", output_index: 0 };
   const done = { type: "response.completed", response: { id: "resp_line_endings", status: "completed", output: [] } };
@@ -161,9 +226,14 @@ test("unexpected EOF is a protocol-native error on Responses and Chat streams", 
   for (const { options, request, forbidden } of cases) {
     const result = await invokeAdapter(options, request);
     assert.equal(result.status, 200);
-    assert.match(result.text, /event: error/);
+    assert.match(result.text, /event: response\.failed/);
     assert.match(result.text, /upstream_stream_incomplete/);
     assert.doesNotMatch(result.text, forbidden);
+    const events = result.text.split("\n").filter(line => line.startsWith("data:")).map(line => JSON.parse(line.slice(5)));
+    const failed = events.at(-1), created = events.find(event => event.response?.status === "in_progress");
+    assert.equal(failed.type, "response.failed");assert.equal(failed.response.status, "failed");
+    assert.equal(failed.response.error.code, "upstream_stream_incomplete");assert.ok(Number.isSafeInteger(failed.response.created_at));
+    if (created) assert.equal(failed.response.id, created.response.id);
   }
   assert.equal(responseHistoryStats().entries, 0);
   clearResponseHistoryForTests();
@@ -357,7 +427,8 @@ test("native Responses accepts incomplete, failed, and error terminals without i
     });
 
     assert.equal(result.status, 200);
-    assert.match(result.text, new RegExp(`event: ${terminal.type.replaceAll(".", "\\.")}`));
+    const expected = terminal.type === "error" ? "response.failed" : terminal.type;
+    assert.match(result.text, new RegExp(`event: ${expected.replaceAll(".", "\\.")}`));
     assert.doesNotMatch(result.text, /upstream_stream_incomplete/);
     assert.equal(cancelled, true);
   }
@@ -434,7 +505,7 @@ test("native Responses function and custom tool inputs use the same blank-delta 
   for (const { options, request } of cases) {
     const result = await invokeAdapter(options, request);
     assert.equal(result.status, 200);
-    assert.match(result.text, /event: error/);
+    assert.match(result.text, /event: response\.failed/);
     assert.match(result.text, /upstream_tool_arguments_stalled/);
     assert.doesNotMatch(result.text, /response\.completed/);
   }

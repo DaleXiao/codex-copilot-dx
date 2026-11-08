@@ -39,6 +39,25 @@ function send(res, code, value) {
   res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });res.end(JSON.stringify(value));
 }
 const apiError = (code, message) => ({ type: "error", error: { type: "api_error", code, message } });
+const MAX_TERMINAL_DRAIN_BYTES = 64 * 1024;
+const TERMINAL_DRAIN_TIMEOUT_MS = 1000;
+async function drainAfterMessageStop(reader) {
+  let bytes = 0, ended = false;
+  const cancel = () => { try { void reader.cancel().catch(() => {}); } catch {} };
+  const timer = setTimeout(cancel, TERMINAL_DRAIN_TIMEOUT_MS);timer.unref?.();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) { ended = true;break; }
+      bytes += value.byteLength;
+      if (bytes > MAX_TERMINAL_DRAIN_BYTES) break;
+    }
+  } catch { /* The response has already ended for the client. */ }
+  finally {
+    clearTimeout(timer);if (!ended) cancel();
+    try { reader.releaseLock(); } catch {}
+  }
+}
 const hasMessageState = block => Boolean(block && (block.id || block.signature || block.data
   || typeof block.text === "string" && block.text.length || typeof block.thinking === "string" && block.thinking.length));
 function authenticated(headers, key) {
@@ -306,6 +325,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
             if (event.type === "message_stop") { sawStop = true;outcome = stopReason === "max_tokens" ? "incomplete" : "completed"; }
           }, config.maxSseBufferBytes, clientModel);
           const reader = upstream.body.getReader();
+          let draining = false;
           try {
             while (true) {
               const { value, done } = await reader.read();if (done) break;
@@ -321,7 +341,12 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
             for (const chunk of tail) if (!await writeOrDrain(res, chunk, { signal: abort.signal })) break;
             if (!sawStop && !failedEvent) throw new Error("Claude stream ended before message_stop");
             if (!res.writableEnded) res.end();
-          } finally { await reader.cancel().catch(() => {});reader.releaseLock(); }
+            if (sawStop && !failedEvent && !abort.signal.aborted && !res.destroyed) {
+              draining = true;void drainAfterMessageStop(reader);
+            }
+          } finally {
+            if (!draining) { await reader.cancel().catch(() => {});reader.releaseLock(); }
+          }
         }
       } catch (error) {
         rejectionReason = error.jsonBody?.error?.reason || (error.code === "ccdx_client_source_disabled" ? error.code : undefined);

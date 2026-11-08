@@ -51,6 +51,18 @@ test("source impact includes nondefault deployments and rejects an outdated conf
   assert.deepEqual(app.deployments, [{ source: one, model: "any-message-model" }]);assert.equal(s.calls.length, 0);
 });
 
+test("concurrent source grants reject a stale revision without partial changes", async t => {
+  const s = runtime(t), id = await save(s.runtime), revision = s.runtime.connections().source_impacts[id].revision;
+  const [first, second] = await Promise.allSettled([
+    s.runtime.manageConnections({ operation: "source_access", id, allowed: ["codex", "claude_app"], impact_revision: revision }),
+    s.runtime.manageConnections({ operation: "source_access", id, allowed: ["codex", "claude_code"], impact_revision: revision }),
+  ]);
+  assert.equal(first.status, "fulfilled");assert.equal(second.status, "rejected");assert.equal(second.reason.code, "ccdx_connections_conflict");
+  const clients = s.runtime.connections().clients;
+  assert.deepEqual(clients.filter(client => client.allowed.includes(id)).map(client => client.id), ["codex", "claude_app"]);
+  assert.equal(s.stored.values.size, 1);
+});
+
 const apiConfig = { id: "api_example", name: "Example", enabled: true, base_url: "https://api.example.test/v1", endpoints: {
   messages: "https://api.example.test/v1/messages", responses: "https://api.example.test/v1/responses", chat: "https://api.example.test/v1/chat/completions" },
   auth_header: "x-api-key", secret_ref: "a".repeat(32), models: [{ id: "any-message-model", protocols: ["messages"] }, { id: "custom/response", protocols: ["responses"] }] };
@@ -105,6 +117,25 @@ test("explicit manual sync writes only the target, retains auto_sync false and r
   assert.equal(result.clients.find(client => client.id === "codex").setup, "configured");
   await assert.rejects(s.runtime.manageConnections({ operation: "sync_client", id: "codex", client_revision: client.revision }), { code: "ccdx_connections_conflict" });
   assert.equal(writes.length, before + 1);
+});
+
+test("concurrent client sync preserves a queued manual sync", async t => {
+  let block = false, entered, release;const started = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; }), writes = [];
+  t.after(() => release());
+  const s = runtime(t, { inspectDesktop: async () => { if (block) { entered();await gate; }return false; },
+    configureClaude: ({ client }) => { writes.push(client);return { [client === "claude_app" ? "app" : "code"]: "configured" }; } });
+  const id = await save(s.runtime);
+  await s.runtime.manageConnections({ operation: "client", id: "claude_app", enabled: true, allowed: [id], source: id });
+  await s.runtime.manageConnections({ operation: "client", id: "claude_code", enabled: true, allowed: [id], source: id,
+    deployments: [{ source: id, model: "any-message-model" }], default_model: deploymentModelId(id, "any-message-model"), auto_sync: false });
+  assert.equal(s.runtime.connections().clients.find(client => client.id === "claude_code").setup, "manual_sync");
+  writes.length = 0;block = true;
+  const first = s.runtime.syncClients(["claude_app"]);await started;
+  const second = s.runtime.syncClients(["claude_code"], { manual: true });release();
+  await Promise.all([first, second]);
+  assert.deepEqual(writes, ["claude_app", "claude_code"]);
+  assert.equal(s.runtime.connections().clients.find(client => client.id === "claude_code").setup, "configured");
 });
 
 test("a failed client write preserves the saved source and selected models with an explicit sync failure", async t => {

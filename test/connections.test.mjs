@@ -571,6 +571,22 @@ test("new requests cannot retain an old credential after its last pinned request
   await Promise.resolve();assert.equal(s.stored.values.has(oldRef), false);assert.equal(s.stored.values.size, 1);finishNew();
 });
 
+test("rotated credentials remain available until every pinned request has finished", async t => {
+  const s = runtime(t), id = await save(s.runtime), client = s.runtime.connections().clients.find(c => c.id === "codex");
+  await s.runtime.manageConnections({ operation: "client", id: client.id, source: id, enabled: true, allowed: client.allowed });
+  const old = s.runtime.current(), close = old.close;let closes = 0;
+  old.close = () => { closes++;return close.call(old); };
+  const first = s.runtime.track(old), second = s.runtime.track(old), oldRef = [...s.stored.values.keys()][0];
+  const { id: ignored, enabled, secret_ref, ...config } = structuredClone(apiConfig);
+  await s.runtime.manageConnections({ operation: "save_api", id, config, key: "rotated-synthetic-key", allowed: ["codex", "claude_app", "claude_code"] });
+  assert.notEqual(s.runtime.current(), old);assert.equal(s.stored.values.has(oldRef), true);assert.equal(closes, 0);
+  second();second();await new Promise(resolve => setImmediate(resolve));
+  assert.equal(s.stored.values.has(oldRef), true);assert.equal(closes, 0);
+  assert.equal((await old.client.responses({ model: "custom/response", input: [] })).status, 200);
+  first();await new Promise(resolve => setImmediate(resolve));
+  assert.equal(s.stored.values.has(oldRef), false);assert.equal(s.stored.values.size, 1);assert.equal(closes, 1);
+});
+
 test("the full declared source/model capacity reloads while live status stays compact", t => {
   const home = localHome(t), graph = defaultAccessSettings();graph.providers.m365 = false;graph.clients.codex.source = "github";
   graph.apis = Array.from({ length: 16 }, (_, index) => ({ ...structuredClone(apiConfig), id: "api_bulk_" + index, name: "Bulk " + index,

@@ -15,6 +15,7 @@ import {
 import { createApiSecretStore, checkedApiKey } from "./api-secrets.mjs";
 import { publicModelCatalog } from "./provider-metadata.mjs";
 import { createApiCatalogRefresh } from "./api-catalog-refresh.mjs";
+import { createSourceLifecycle } from "./source-lifecycle.mjs";
 import { createApiProvider } from "./providers/api.mjs";
 import { createApiModelDisplayStore } from "./api-model-display.mjs";
 import { createCodexMemoryModel } from "./codex-memory-model.mjs";
@@ -85,18 +86,14 @@ export function createConnectionRuntime({
     closed = false;
   const legacyClaudeAccess = fs.existsSync(m365Paths(options).ownership);
   const instances = new Map(),
-    active = new Map(),
-    retired = new Set(),
     handlers = new Map(),
     summaries = new WeakMap(),
-    sourceSecrets = new WeakMap(),
     setup = {},
     credentialStates = {},
     lastClients = {};
-  const retiredSecrets = new Map(),
-    cleanups = new Set(),
-    plans = new Map(),
+  const plans = new Map(),
     discoveries = new Map();
+  const lifecycle = createSourceLifecycle({ legacy, secrets, log }), { track, retire } = lifecycle;
   const catalogRefresh = createApiCatalogRefresh({
     config: id => settings.apis.find(api => api.id === id),
     source: getSource,
@@ -120,22 +117,6 @@ export function createConnectionRuntime({
     operations = 0;
   const syncTargets = new Set(),
     manualTargets = new Set();
-  function cleanSecrets(id) {
-    const refs = retiredSecrets.get(id);
-    if (!refs) return;
-    for (const ref of refs) {
-      if ([...active.keys()].some(source => sourceSecrets.get(source) === ref)) continue;
-      refs.delete(ref);
-      const task = secrets
-        .remove(ref)
-        .catch(() => {
-          log("warn", "Previous API credential cleanup needs review");
-        })
-        .finally(() => cleanups.delete(task));
-      cleanups.add(task);
-    }
-    if (!refs.size) retiredSecrets.delete(id);
-  }
   const identities = () => (keys ||= readClientGatewayKeys(options));
   const enabled = id =>
     id?.startsWith("api_")
@@ -196,7 +177,7 @@ export function createConnectionRuntime({
       modelDisplay: model => modelDisplay.get(id, revision, model),
     });
     instances.set(id, { signature, source, config, revision });
-    sourceSecrets.set(source, config.secret_ref);
+    lifecycle.rememberSource(source, config.secret_ref);
     if (previous) retire(previous.source);
     return source;
   }
@@ -263,27 +244,6 @@ export function createConnectionRuntime({
       return resolveDeployment(id, model);
     }
     return record;
-  }
-  function retire(source) {
-    if (active.get(source)) retired.add(source);
-    else source.close();
-  }
-  function track(source) {
-    const finishLegacy = legacy.track(source);
-    active.set(source, (active.get(source) || 0) + 1);
-    let done = false;
-    return () => {
-      if (done) return;
-      done = true;
-      finishLegacy?.();
-      const count = (active.get(source) || 1) - 1;
-      if (count) active.set(source, count);
-      else {
-        active.delete(source);
-        if (retired.delete(source)) source.close();
-        cleanSecrets(source.id);
-      }
-    };
   }
   function editable() {
     if (managed) return structuredClone(settings);
@@ -1159,9 +1119,7 @@ export function createConnectionRuntime({
     if (input.operation === "client" && input.id === "codex")
       await clientAccessChanged?.(binding("codex").enabled);
     if (previousRef && (freshRef || input.config?.key_env || input.operation === "remove_api")) {
-      if (!retiredSecrets.has(input.id)) retiredSecrets.set(input.id, new Set());
-      retiredSecrets.get(input.id).add(previousRef);
-      cleanSecrets(input.id);
+      lifecycle.retireSecret(input.id, previousRef);
     }
     return snapshot();
   }
@@ -1220,7 +1178,7 @@ export function createConnectionRuntime({
     privacy,
     busy: () => privacy.busy() ||
       operations > 0 ||
-      active.size > 0 ||
+      lifecycle.busy() ||
       Boolean(syncFlight) ||
       catalogRefresh.busy() ||
       legacy.snapshot().m365.account_change_in_flight === true ||
@@ -1650,10 +1608,7 @@ export function createConnectionRuntime({
       await serial;
       await syncFlight;
       for (const { source } of instances.values()) source.close();
-      for (const source of retired) source.close();
-      active.clear();
-      for (const id of retiredSecrets.keys()) cleanSecrets(id);
-      await Promise.allSettled([...cleanups]);
+      await lifecycle.close();
       secrets.close();
       await legacy.close();
     },

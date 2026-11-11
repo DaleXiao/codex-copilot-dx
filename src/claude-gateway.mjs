@@ -69,29 +69,10 @@ function authenticated(headers, key) {
 
 // Observe bounded SSE frames. Alias clients rewrite only message_start.model;
 // other frames retain their wire text. Client backpressure controls upstream reads.
-export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clientModel = null, frameFilter = null) {
+export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clientModel = null) {
   const decoder = new TextDecoder("utf-8", { fatal: true });let fragments = [], lineBytes = 0, data = [], frameBytes = 0, wire = [], wireBytes = 0, output = [];
   let pendingCR = false, bareCR = false, optionalLF = false;
-  const emitFiltered = frameFilter && ((value, chunk, raw) => { for (const item of frameFilter(value, chunk, raw)) {
-    if (item.event !== undefined) onEvent(item.event);output.push(item.chunk);
-  } });
-  const frame = frameFilter ? () => {
-    let value, raw;
-    if (data.length) { raw = data.join("\n");try { value = JSON.parse(raw); } catch { throw new Error("Invalid Claude stream event"); } }
-    if (wire.length) {
-      if (clientModel && value?.type === "message_start" && value.message && typeof value.message === "object" && !Array.isArray(value.message)) {
-        const replacement = JSON.stringify({ ...value, message: { ...value.message, model: clientModel } });let replaced = false;
-        wire = wire.map(line => {
-          if (!line.startsWith("data:")) return line;
-          if (replaced) return "";replaced = true;
-          return `data: ${replacement}${line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : line.endsWith("\r") ? "\r" : ""}`;
-        });
-      }
-      emitFiltered(value, Buffer.from(wire.join("")), raw);
-      wire = [];wireBytes = 0;
-    }
-    data = [];frameBytes = 0;
-  } : () => {
+  const frame = () => {
     let value;
     if (data.length) { try { value = JSON.parse(data.join("\n")); } catch { throw new Error("Invalid Claude stream event"); }onEvent(value); }
     if (wire.length) {
@@ -155,7 +136,7 @@ export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clie
     }
     if (optionalLF) {
       optionalLF = false;
-      if (text.startsWith("\n")) { const chunk = Buffer.from("\n");if (frameFilter) emitFiltered(undefined, chunk, "");else output.push(chunk);start = 1; }
+      if (text.startsWith("\n")) { output.push(Buffer.from("\n"));start = 1; }
     }
     if (pendingCR && start < text.length) {
       pendingCR = false;
@@ -184,6 +165,35 @@ export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clie
     finish() { output = [];consume(decoder.decode());if (pendingCR) { pendingCR = false;completeLine("\r"); }
       if (!bareCR && fragments.at(-1)?.endsWith("\r")) { fragments[fragments.length - 1] = fragments.at(-1).slice(0, -1);lineBytes--;completeLine("\r"); }
       if (fragments.length) completeLine("");if (wire.length) wire.push("\n\n");frame();return output; } };
+}
+
+// Only schema-recovery responses need this extra frame pass. Keep the ordinary
+// Messages parser unchanged so normal streams do not pay for tool validation.
+function createGuardedMessagesObserver(onEvent, maxBytes, clientModel, guard, restore) {
+  const pending = [], observer = createMessagesObserver(event => pending.push(event), maxBytes, clientModel);
+  const filter = frames => {
+    const output = [];
+    for (const chunk of frames) {
+      const parts = chunk.toString("utf8").split(/\r\n|\r|\n/).filter(line => line.startsWith("data:"))
+        .map(line => line.slice(5).replace(/^ /, ""));
+      if (parts.length && !pending.length) throw new Error("Missing Claude stream event");
+      const event = parts.length ? pending.shift() : undefined;
+      for (const result of guard.frame(event, chunk, parts.join("\n"), restore)) {
+        if (result.event !== undefined) onEvent(result.event);
+        output.push(result.chunk);
+      }
+    }
+    if (pending.length) throw new Error("Missing Claude stream frame");
+    return output;
+  };
+  const run = (method, chunk) => {
+    try { return filter(method === "write" ? observer.write(chunk) : observer.finish()); }
+    catch (error) {
+      for (const event of pending.splice(0)) if (event?.type === "error") onEvent(event);
+      throw error;
+    }
+  };
+  return { write: chunk => run("write", chunk), finish: () => run("finish") };
 }
 
 export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = false, messagesSystemMode = "passthrough", log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,
@@ -286,7 +296,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           upstream = await counter.count(body, { ...callOptions, perform: call });
         } else upstream = await call(body, callOptions);
         const toolGuard = upstream[MESSAGES_TOOL_GUARD];
-        const restoreToolInput = privacy?.restoreResponse ? value => privacy.restoreResponse(res, value) : null;
+        const restoreToolInput = toolGuard && privacy?.restoreResponse ? value => privacy.restoreResponse(res, value) : null;
         body = null;
         terminalOrigin = upstream.ok ? "upstream_response" : "upstream_http";
         if (!upstreamHeadersObserved) tracker?.upstreamHeaders(upstream.status);
@@ -329,7 +339,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
             }
             commitState = null;
           };
-          const observer = createMessagesObserver(event => {
+          const observe = event => {
             if (event.type === "error") {
               failedEvent = true;outcome = "failed";
               const evidence = upstreamErrorEvidence(JSON.stringify(event));
@@ -347,7 +357,10 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
               stopReason = event.delta?.stop_reason || stopReason;
             }
             if (event.type === "message_stop") { sawStop = true;outcome = stopReason === "max_tokens" ? "incomplete" : "completed"; }
-          }, config.maxSseBufferBytes, clientModel, toolGuard ? (event, chunk, raw) => toolGuard.frame(event, chunk, raw, restoreToolInput) : null);
+          };
+          const observer = toolGuard
+            ? createGuardedMessagesObserver(observe, config.maxSseBufferBytes, clientModel, toolGuard, restoreToolInput)
+            : createMessagesObserver(observe, config.maxSseBufferBytes, clientModel);
           const reader = upstream.body.getReader();
           let draining = false;
           try {

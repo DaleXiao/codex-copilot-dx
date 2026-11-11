@@ -108,6 +108,26 @@ test("Messages buffers adapted tool frames until the complete input is validated
   }
 });
 
+test("adapted Messages keep SSE bytes and validate tool input across fragmented line endings", async t => {
+  for (const ending of ["\n", "\r\n", "\r"]) {
+    for (const valid of [true, false]) {
+      const input = valid ? '{"code":"run"}' : '{"code":"run","completion_summary":"both"}';
+      const wire = (": synthetic comment\n\n" + stream(input)).replaceAll("\n", ending), bytes = Buffer.from(wire);
+      const f = await fixture(t, () => {
+        let at = 0;
+        return new Response(new ReadableStream({ pull(controller) {
+          if (at === bytes.length) { controller.close();return; }
+          const end = Math.min(bytes.length, at + 3);controller.enqueue(bytes.subarray(at, end));at = end;
+        } }), { headers: { "content-type": "text/event-stream" } });
+      });
+      const response = await f.send(true), text = await response.text();
+      assert.equal(response.status, 200);
+      if (valid) assert.equal(text, wire);
+      else { assert.match(text, /event: error/);assert.doesNotMatch(text, /content_block_start|content_block_delta|content_block_stop|message_stop/); }
+    }
+  }
+});
+
 test("Messages never rounds an unsafe integer when validating an adapted stream", async t => {
   const numeric = { ...tool, input_schema: { oneOf: [{ type: "object", properties: { value: { type: "integer" } }, required: ["value"], additionalProperties: false }] } };
   const f = await fixture(t, () => new Response(stream('{"value":9007199254740993}'), { headers: { "content-type": "text/event-stream" } }));

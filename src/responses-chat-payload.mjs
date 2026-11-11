@@ -32,8 +32,8 @@ function jsonPayload(value, assertActive) {
   });
 }
 
-function chatRequest(responsesBody, stream, reasoningEfforts) {
-  const chatReq = responsesToChat(responsesBody, { reasoningEfforts });
+function chatRequest(responsesBody, stream, reasoningEfforts, cacheSupport) {
+  const chatReq = responsesToChat(responsesBody, { reasoningEfforts, cacheSupport });
   chatReq.stream = Boolean(stream);
   delete chatReq.max_tokens;
   return stream ? withChatStreamUsage(chatReq) : chatReq;
@@ -82,12 +82,13 @@ export async function prepareResponsesChatPayload(reqContext, {
   assertActive,
   payloadOptions = {},
   reasoningEfforts,
+  cacheSupport,
   signal,
   stream = false,
 } = {}) {
   assertActive?.();
   const limit = configuredBodyLimit(payloadOptions);
-  let finalChatReq = chatRequest(reqContext.body, stream, reasoningEfforts);
+  let finalChatReq = chatRequest(reqContext.body, stream, reasoningEfforts, cacheSupport);
   assertActive?.();
   let finalChat = jsonPayload(finalChatReq, assertActive);
   const hasInlineImage = bodyHasInlineImage(reqContext.body, assertActive);
@@ -109,7 +110,7 @@ export async function prepareResponsesChatPayload(reqContext, {
     responsesPayload = { bodyText: prepared.bodyText, bodyBytes: prepared.bodyBytes };
     adapted = prepared.adapted;
     stage = prepared.stage;
-    finalChatReq = chatRequest(reqContext.body, stream, reasoningEfforts);
+    finalChatReq = chatRequest(reqContext.body, stream, reasoningEfforts, cacheSupport);
     assertActive?.();
     finalChat = jsonPayload(finalChatReq, assertActive);
   }
@@ -133,7 +134,7 @@ export async function prepareResponsesChatPayload(reqContext, {
       initialBodyBytes: responsesPayload.bodyBytes,
     });
     if (!trimmed.adapted) break;
-    const candidateChatReq = chatRequest(reqContext.body, stream, reasoningEfforts);
+    const candidateChatReq = chatRequest(reqContext.body, stream, reasoningEfforts, cacheSupport);
     assertActive?.();
     const candidateChat = jsonPayload(candidateChatReq, assertActive);
     if (candidateChat.bodyBytes >= finalChat.bodyBytes) {

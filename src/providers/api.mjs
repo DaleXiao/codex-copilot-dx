@@ -17,6 +17,9 @@ import { markRequestObservation, markUpstreamStarted } from "../stream-performan
 import { createAbortAwareSingleflight } from "../bounded-result-cache.mjs";
 import { createApiTokenCounter } from "./api-token-count.mjs";
 import { apiModelDisplay } from "../api-model-display.mjs";
+import { adaptCallLessContext, CALL_LESS_TOOL_RETRIED, normalizeCallLessToolOutputs } from "../responses-tool-output.mjs";
+import { adaptMessagesToolSchemas, hasRootToolSchema, MESSAGES_TOOL_GUARD } from "../messages-tool-schema.mjs";
+import { loadRuntimeConfig } from "../runtime-config.mjs";
 
 const paths = { messages: "/v1/messages", responses: "/v1/responses", chat: "/v1/chat/completions" };
 export function apiCatalog(config, env = process.env) {
@@ -86,8 +89,28 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       const result = await transport.fetch(url, { method: body ? "POST" : "GET", headers, body: serialized, signal: options.signal });
       if (result.status >= 300 && result.status < 400) { await result.body?.cancel();throw accessError("ccdx_api_redirect_refused", 502); }
       if (!result.ok) {
-        try { options.onUpstreamErrorHeaders?.(result.status); } catch { /* Optional admission release cannot hide the upstream response. */ }
-        const reason = await readSafeUpstreamReason(result, { signal: options.signal });const code = `ccdx_api_http_${result.status}`;
+        const adapted = api === "responses" && [400, 422].includes(result.status) && !options.compatibilityRetried && !options.skipCallLessRetry
+          ? normalizeCallLessToolOutputs(body) : null;
+        const schemaCandidate = api === "messages" && !options.countTokens && [400, 422].includes(result.status)
+          && !options.compatibilityRetried && hasRootToolSchema(body);
+        if (!adapted && !schemaCandidate) try { options.onUpstreamErrorHeaders?.(result.status); } catch { /* Optional admission release cannot hide the upstream response. */ }
+        const reason = await readSafeUpstreamReason(result, { signal: options.signal, missingCallId: Boolean(adapted), rootToolSchema: schemaCandidate });
+        if (adapted && reason?.code === "ccdx_missing_call_id") {
+          const recovered = await request(url, adapted, { ...options, bodyText: undefined, compatibilityRetried: true }, api);
+          if (recovered.ok) Object.defineProperty(recovered, CALL_LESS_TOOL_RETRIED, { value: true });
+          return recovered;
+        }
+        if (schemaCandidate && reason?.code === "ccdx_tool_schema_root_unsupported") {
+          const compatibility = await adaptMessagesToolSchemas(body, { maxBytes: loadRuntimeConfig(env).maxSseBufferBytes });
+          options.signal?.throwIfAborted();
+          if (compatibility) {
+            const recovered = await request(url, compatibility.body, { ...options, bodyText: undefined, compatibilityRetried: true }, api);
+            if (recovered.ok) Object.defineProperty(recovered, MESSAGES_TOOL_GUARD, { value: compatibility.guard });
+            return recovered;
+          }
+        }
+        if (adapted || schemaCandidate) try { options.onUpstreamErrorHeaders?.(result.status); } catch { /* Preserve the original upstream failure. */ }
+        const code = `ccdx_api_http_${result.status}`;
         const safeHeaders = { "Content-Type": "application/json" }, retry = result.headers.get("retry-after");
         if (/^\d{1,8}$/.test(retry || "")) safeHeaders["Retry-After"] = retry;
         else if (retry && Number.isFinite(Date.parse(retry))) safeHeaders["Retry-After"] = new Date(retry).toUTCString();
@@ -116,7 +139,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
       const final = enforceResponsesPayloadByteBudget(body, prepared, { assertActive: options.assertActive });
       return request(config.endpoints.responses, body, { ...options, bodyText: final.bodyText });
     },
-    responsesCompact(body, options = {}) { selected(body.model, "responses");return request(config.endpoints.responses.replace(/\/+$/, "") + "/compact", body, options); },
+    responsesCompact(body, options = {}) { selected(body.model, "responses");return request(config.endpoints.responses.replace(/\/+$/, "") + "/compact", body, { ...options, skipCallLessRetry: true }); },
     chatCompletions(body, options = {}) { selected(body.model, "chat");return request(config.endpoints.chat, body, options, "chat"); },
     messages(body, options = {}) {
       const model = selected(body.model, "messages");
@@ -167,6 +190,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         const resp = await upstream(context.body, { assertActive: options.assertPrepareActive, signal: options.signal, currentInputStart: context.currentInputStart, onUpstreamStart: options.onUpstreamStart,
           onUpstreamErrorHeaders(status) { headersObserved = true;markUpstreamHeaders(status);options.releaseRequest?.(context); } });
         if (!headersObserved) markUpstreamHeaders(resp.status);
+        if (resp[CALL_LESS_TOOL_RETRIED]) context = adaptCallLessContext(context) || context;
         // request() already discarded the vendor body and projected a safe error.
         if (!resp.ok) {
           const errorText = await readBoundedResponseText(resp, { maxBytes: MAX_UPSTREAM_ERROR_BODY_BYTES, signal: options.signal, label: "API error response" });

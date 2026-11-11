@@ -116,6 +116,31 @@ test("positional tools stay native on a dual-endpoint model and remain isolated 
   }
 });
 
+test("tool search, deferred tools, and allowed tool choices stay native when the model declares Responses", async () => {
+  const fn = { type: "function", name: "lookup", parameters: { type: "object" } };
+  const bodies = [
+    { input: "hello", tools: [{ type: "tool_search", execution: "client" }, { ...fn, defer_loading: true }] },
+    { input: "hello", tools: [{ ...fn, defer_loading: true }] },
+    { input: "hello", tools: [{ type: "namespace", name: "docs", tools: [fn] }] },
+    { input: [{ type: "function_call", namespace: "docs", name: "lookup", call_id: "call_1", arguments: "{}" }] },
+    { input: "hello", tools: [fn], tool_choice: { type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "lookup" }] } },
+  ];
+  for (const body of bodies) {
+    let seen;
+    const result = await invokeAdapter({ getCachedModelEndpointsFn: () => ["/responses", "/chat/completions"],
+      responsesFn: async value => { seen = structuredClone(value);return Response.json({ id: "resp_tools", status: "completed", output: [] }); },
+      chatCompletionsFn: () => assert.fail("advanced tools must remain native"),
+    }, { body: { model: "dual-endpoint", ...body } });
+    assert.equal(result.status, 200, result.text);
+    assert.deepEqual(seen.tools, body.tools);
+    assert.deepEqual(seen.tool_choice, body.tool_choice);
+  }
+  const result = await invokeAdapter({ getCachedModelEndpointsFn: () => ["/chat/completions"],
+    responsesFn: () => assert.fail("must not call native"), chatCompletionsFn: () => assert.fail("must not silently flatten deferred tools") },
+  { body: { model: "chat-only", input: "hello", tools: [{ ...fn, defer_loading: true }] } });
+  assert.equal(result.status, 400);
+});
+
 test("Auto Review defaults omitted reasoning to low without rewriting explicit efforts or foreground requests", async () => {
   for (const mode of ["json", "sse", "compact"]) {
     for (const model of ["codex-auto-review", "gpt-6.1-sol"]) {

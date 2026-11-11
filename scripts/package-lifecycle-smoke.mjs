@@ -75,6 +75,8 @@ try {
   }
   const checkNative = `const {createRequire}=require('node:module');const sharp=createRequire(${JSON.stringify(path.join(packageRoot, "package.json"))})('sharp');sharp({create:{width:8,height:8,channels:3,background:'white'}}).png().toBuffer({resolveWithObject:true}).then(({info})=>{if(info.width!==8)process.exit(1)}).catch(()=>process.exit(1));`;
   execFileSync(process.execPath, ["-e", checkNative], { encoding: "utf8", timeout: 30000 });
+  const checkToolSchema = `import {pathToFileURL} from 'node:url';const {adaptMessagesToolSchemas}=await import(pathToFileURL(${JSON.stringify(path.join(packageRoot, "src/messages-tool-schema.mjs"))}).href);const schema={oneOf:[{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false}]};const result=await adaptMessagesToolSchemas({tools:[{name:'fixture',input_schema:schema}]});if(!result)process.exit(1);result.guard.validateMessage(JSON.stringify({content:[{type:'tool_use',name:'fixture',input:{value:'ok'}}]}));`;
+  execFileSync(process.execPath, ["--input-type=module", "-e", checkToolSchema], { encoding: "utf8", timeout: 30000 });
   if (["darwin", "win32"].includes(process.platform)) {
     const checkBroker = `const {createRequire}=require('node:module');const sdk=createRequire(${JSON.stringify(path.join(packageRoot, "package.json"))})('@azure/msal-node-runtime');if(!sdk.msalNodeRuntime)process.exit(1);`;
     execFileSync(process.execPath, ["-e", checkBroker], { encoding: "utf8", timeout: 30000 });

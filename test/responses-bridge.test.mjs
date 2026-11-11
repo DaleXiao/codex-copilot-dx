@@ -33,6 +33,25 @@ test("Chat DONE is a hard boundary even with trailing errors or a source that ne
   }
 });
 
+test("Chat streaming never completes a tool outside an allowed list", async () => {
+  for (const [parts, valid] of [[['read'], true], [['write'], false], [['read', 'er'], false]]) {
+    const events = [];let failure;
+    const wire = parts.map((name, index) => `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0,
+      ...(index ? {} : { id: "call_1", type: "function" }), function: { name, ...(index ? {} : { arguments: "{}" }) } }] } }] })}\n\n`).join("") + 'data: [DONE]\n\n';
+    const chat = { model: "m", messages: [], tools: ["read", "write"].map(name => ({ type: "function", function: { name } })),
+      tool_choice: { type: "allowed_tools", allowed_tools: { mode: "required", tools: [{ type: "function", function: { name: "read" } }] } } };
+    const result = await forwardToChat(chat, async (type, data) => events.push({ type, data }), () => {},
+      (_status, _message, error) => { failure = error; },
+      { chatCompletionsFn: async () => new Response(wire, { headers: { "content-type": "text/event-stream" } }) });
+    assert.equal(result, valid);
+    if (valid) assert.equal(events.find(event => event.type === "response.output_item.done").data.item.name, "read");
+    else {
+      assert.equal(failure.code, "upstream_tool_not_allowed");
+      assert.equal(events.some(event => event.type === "response.output_item.done" || event.type === "response.completed"), false);
+    }
+  }
+});
+
 test("responsesToChat: preserves flat Responses function tools", () => {
   const converted = responsesToChat({
     model: "gpt-4o",

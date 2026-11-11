@@ -301,11 +301,13 @@ export function createResponsesHandler(options) {
         if (result?.successful) imagePressure?.markSuccess?.(responseHistoryPressureRootId(prepared));
         else markAdaptiveHttpTimeout(result?.upstreamStatus);
       } else if (routePlan.protocol === "openai-chat-completions") {
+        const chatSupport = (Array.isArray(modelRegistry?.models) ? modelRegistry.models : modelRegistry?.models?.data)
+          ?.find(model => model?.id === upstreamModel)?.capabilities?.supports;
         let { chatReq, bodyText } = await prepareResponsesChatPayload(prepared, {
           assertActive: assertPrepareActive,
           payloadOptions: responsesPayloadOptions,
-          reasoningEfforts: (Array.isArray(modelRegistry?.models) ? modelRegistry.models : modelRegistry?.models?.data)
-            ?.find(model => model?.id === upstreamModel)?.capabilities?.supports?.reasoning_effort,
+          reasoningEfforts: chatSupport?.reasoning_effort,
+          cacheSupport: chatSupport,
           signal: abort.signal,
           stream: streaming,
         });
@@ -369,6 +371,7 @@ export function createResponsesHandler(options) {
           if (successful) imagePressure?.markSuccess?.(responseHistoryPressureRootId(prepared));
         } else {
           try {
+            const toolChoice = chatReq.tool_choice;
             startUpstreamTimeout();
             const upstream = await chatCompletionsFn(chatReq, {
               signal: abort.signal,
@@ -393,7 +396,7 @@ export function createResponsesHandler(options) {
               sendUpstreamError(res, upstream, data);
               return;
             }
-            const response = chatToResponses(JSON.parse(data), model);
+            const response = chatToResponses(JSON.parse(data), model, { toolChoice });
             markResponseTerminal(response.status, {
               model: response.model || model, origin: "chat_completion", reason: response.incomplete_details?.reason,
             });

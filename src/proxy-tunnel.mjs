@@ -77,10 +77,26 @@ async function connectProxy(target, route, timeoutMs, pending) {
   } catch (error) { clearTimeout(timer); socket.destroy(); throw error; }
 }
 
-export function createProxyAgent(plan, { timeoutMs = 30_000 } = {}) {
+export function createProxyAgent(plan, { timeoutMs = 30_000, freeSocketTimeoutMs = 0 } = {}) {
   const pending = new Set();
   let closed = false;
   const agent = new https.Agent({ keepAlive: true, maxSockets: 32, maxFreeSockets: 4 });
+  if (freeSocketTimeoutMs > 0) {
+    const keepSocketAlive = agent.keepSocketAlive, reuseSocket = agent.reuseSocket;
+    agent.keepSocketAlive = function(socket) {
+      const hint = socket._httpMessage?.res?.headers?.["keep-alive"];
+      const seconds = /(?:^|[,;])\s*timeout\s*=\s*(\d+)\s*(?=[,;]|$)/i.exec(typeof hint === "string" ? hint : "")?.[1];
+      const serverTimeout = seconds === undefined ? Infinity : Number(seconds) * 1000 - 1000;
+      if (!keepSocketAlive.call(this, socket) || serverTimeout <= 0) return false;
+      const previousTimeout = socket.timeout > 0 ? socket.timeout : Infinity;
+      socket.setTimeout(Math.min(freeSocketTimeoutMs, serverTimeout, previousTimeout));
+      return true;
+    };
+    agent.reuseSocket = function(socket, request) {
+      socket.setTimeout(0);
+      reuseSocket.call(this, socket, request);
+    };
+  }
   const direct = agent.createConnection.bind(agent);
   agent.createConnection = (options, callback) => {
     if (closed) { queueMicrotask(() => callback(new Error("Proxy agent is closed"))); return undefined; }

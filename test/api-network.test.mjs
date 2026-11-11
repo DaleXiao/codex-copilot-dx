@@ -33,6 +33,16 @@ test("Mac proxy exceptions keep the previous short-CIDR fix and unsupported PAC 
   assert.equal((await network.fetch("https://api.test/messages")).status, 200);
   await assert.rejects(createApiNetwork({ targets: ["https://api.test/messages"], env: {}, platform: "darwin", exec: async () => ({ stdout: 'ProxyAutoConfigEnable : 1' }) }), { code: "proxy_dynamic_unsupported" });
 });
+test("Windows system-proxy API transport keeps its existing worker and request contract", async t => {
+  const calls = [];let workerOptions, closes = 0;
+  const network = await createApiNetwork({ targets: ["https://api.test/v1/messages"], env: {}, platform: "win32", startWindowsNetwork: async options => {
+    workerOptions = options;return { requestImpl: transport(calls), healthy: () => true, close() { closes++; } };
+  } });t.after(() => network.close());
+  assert.equal(workerOptions.target, "api");
+  assert.equal((await (await network.fetch("https://api.test/v1/messages", { method: "POST", body: "{}" })).json()).ok, true);
+  assert.equal(calls[0].agent, undefined);
+  network.close();assert.equal(closes, 1);
+});
 test("private helper environments retain enterprise routing and omit unrelated keys and Node hooks", () => {
   const value = privateHelperEnvironment({ HOME: "/kept", HTTPS_PROXY: "http://company.test:8080", NODE_EXTRA_CA_CERTS: "/company.pem", DBUS_SESSION_BUS_ADDRESS: "unix:test",
     GH_TOKEN: "never-export", ANTHROPIC_API_KEY: "never-export", CCDX_COMPANY_API_KEY: "never-export", NODE_OPTIONS: "--require bad" });

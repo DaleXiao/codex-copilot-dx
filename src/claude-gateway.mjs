@@ -19,6 +19,7 @@ import { observeContextSession } from "./context-metrics.mjs";
 import { catalogCapabilities } from "./model-capabilities.mjs";
 import { applyMessagesSystemPolicy } from "./messages-system-policy.mjs";
 import { createApiTokenCounter } from "./providers/api-token-count.mjs";
+import { MESSAGES_TOOL_GUARD } from "./messages-tool-schema.mjs";
 
 function observeMessagesWindow(provider, model, capability, entry) {
   try {
@@ -68,10 +69,29 @@ function authenticated(headers, key) {
 
 // Observe bounded SSE frames. Alias clients rewrite only message_start.model;
 // other frames retain their wire text. Client backpressure controls upstream reads.
-export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clientModel = null) {
+export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clientModel = null, frameFilter = null) {
   const decoder = new TextDecoder("utf-8", { fatal: true });let fragments = [], lineBytes = 0, data = [], frameBytes = 0, wire = [], wireBytes = 0, output = [];
   let pendingCR = false, bareCR = false, optionalLF = false;
-  const frame = () => {
+  const emitFiltered = frameFilter && ((value, chunk, raw) => { for (const item of frameFilter(value, chunk, raw)) {
+    if (item.event !== undefined) onEvent(item.event);output.push(item.chunk);
+  } });
+  const frame = frameFilter ? () => {
+    let value, raw;
+    if (data.length) { raw = data.join("\n");try { value = JSON.parse(raw); } catch { throw new Error("Invalid Claude stream event"); } }
+    if (wire.length) {
+      if (clientModel && value?.type === "message_start" && value.message && typeof value.message === "object" && !Array.isArray(value.message)) {
+        const replacement = JSON.stringify({ ...value, message: { ...value.message, model: clientModel } });let replaced = false;
+        wire = wire.map(line => {
+          if (!line.startsWith("data:")) return line;
+          if (replaced) return "";replaced = true;
+          return `data: ${replacement}${line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : line.endsWith("\r") ? "\r" : ""}`;
+        });
+      }
+      emitFiltered(value, Buffer.from(wire.join("")), raw);
+      wire = [];wireBytes = 0;
+    }
+    data = [];frameBytes = 0;
+  } : () => {
     let value;
     if (data.length) { try { value = JSON.parse(data.join("\n")); } catch { throw new Error("Invalid Claude stream event"); }onEvent(value); }
     if (wire.length) {
@@ -135,7 +155,7 @@ export function createMessagesObserver(onEvent, maxBytes = 8 * 1024 * 1024, clie
     }
     if (optionalLF) {
       optionalLF = false;
-      if (text.startsWith("\n")) { output.push(Buffer.from("\n"));start = 1; }
+      if (text.startsWith("\n")) { const chunk = Buffer.from("\n");if (frameFilter) emitFiltered(undefined, chunk, "");else output.push(chunk);start = 1; }
     }
     if (pendingCR && start < text.length) {
       pendingCR = false;
@@ -265,6 +285,8 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
           }
           upstream = await counter.count(body, { ...callOptions, perform: call });
         } else upstream = await call(body, callOptions);
+        const toolGuard = upstream[MESSAGES_TOOL_GUARD];
+        const restoreToolInput = privacy?.restoreResponse ? value => privacy.restoreResponse(res, value) : null;
         body = null;
         terminalOrigin = upstream.ok ? "upstream_response" : "upstream_http";
         if (!upstreamHeadersObserved) tracker?.upstreamHeaders(upstream.status);
@@ -275,7 +297,9 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         if (!upstream.ok || !streamed) {
           const raw = await readBoundedResponseText(upstream, { maxBytes: upstream.ok ? config.maxUpstreamResponsesResponseBytes : MAX_UPSTREAM_ERROR_BODY_BYTES,
             label: "Claude gateway response", signal: abort.signal });
-          let value;try { value = JSON.parse(raw); } catch {}
+          let value;
+          if (toolGuard && upstream.ok && !countTokens) value = toolGuard.validateMessage(raw, restoreToolInput);
+          else try { value = JSON.parse(raw); } catch {}
           const modelFailure = upstream.ok && (!value?.type || value.type === "error") && value?.error && typeof value.error === "object" && !Array.isArray(value.error)
             && ["code", "type", "message"].some(key => typeof value.error[key] === "string" && value.error[key].trim())
             && !["content", "output", "choices", "candidates"].some(key => Array.isArray(value[key]) && value[key].length);
@@ -323,7 +347,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
               stopReason = event.delta?.stop_reason || stopReason;
             }
             if (event.type === "message_stop") { sawStop = true;outcome = stopReason === "max_tokens" ? "incomplete" : "completed"; }
-          }, config.maxSseBufferBytes, clientModel);
+          }, config.maxSseBufferBytes, clientModel, toolGuard ? (event, chunk, raw) => toolGuard.frame(event, chunk, raw, restoreToolInput) : null);
           const reader = upstream.body.getReader();
           let draining = false;
           try {

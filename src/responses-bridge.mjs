@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chatCompletions } from "./copilot.mjs";
 import { webStreamLines } from "./stream.mjs";
+import { normalizeCallLessToolOutputs } from "./responses-tool-output.mjs";
 import {
   abortErrorStatusCode,
   isAbortLikeError,
@@ -47,9 +48,16 @@ function chatImagePart(part) {
 
 export function responsesBodyUsesCustomTools(body) {
   if (body?.tool_choice?.type === "custom") return true;
-  if (Array.isArray(body?.tools) && body.tools.some((tool) => tool?.type === "custom")) return true;
+  if (body?.tool_choice?.type === "function" && body.tool_choice.namespace != null) return true;
+  if (Array.isArray(body?.tools) && body.tools.some((tool) => tool?.defer_loading === true || (tool?.type === "function"
+    ? tool.namespace != null
+    : tool?.type === "custom" || tool?.type === "tool_search" || tool?.type === "namespace"))) return true;
   return Array.isArray(body?.input)
-    && body.input.some((item) => ["custom_tool_call", "custom_tool_call_output", "additional_tools", "tool_search_output"].includes(item?.type));
+    && body.input.some((item) => {
+      const type = item?.type;
+      return type !== "message" && (type === "function_call" ? item.namespace != null
+        : type === "custom_tool_call" || type === "custom_tool_call_output" || type === "additional_tools" || type === "tool_search_call" || type === "tool_search_output");
+    });
 }
 
 function chatCompatibilityError(kind, itemType) {
@@ -69,7 +77,7 @@ function chatCompatibilityError(kind, itemType) {
   return error;
 }
 
-export function responsesToChat(body, { reasoningEfforts } = {}) {
+export function responsesToChat(body, { reasoningEfforts, cacheSupport } = {}) {
   const messages = [];
   if (body.instructions) messages.push({ role: "system", content: body.instructions });
 
@@ -77,6 +85,7 @@ export function responsesToChat(body, { reasoningEfforts } = {}) {
     if (typeof content === "string") return content;
     if (content === null) return null;
     if (!Array.isArray(content)) throw chatCompatibilityError("message content", typeof content);
+    if (content.length === 1 && ["input_text", "output_text", "text"].includes(content[0]?.type) && typeof content[0].text === "string") return content[0].text;
     const parts = [];
     for (const part of content) {
       if (!part || typeof part !== "object") throw chatCompatibilityError("message content", part?.type);
@@ -137,6 +146,7 @@ export function responsesToChat(body, { reasoningEfforts } = {}) {
         const toolCalls = [];
         while (index < body.input.length && body.input[index]?.type === "function_call") {
           const call = body.input[index];
+          if (call.namespace != null) throw chatCompatibilityError("input item", "namespaced_function_call");
           toolCalls.push({
             id: call.call_id || randomUUID(),
             type: "function",
@@ -151,7 +161,13 @@ export function responsesToChat(body, { reasoningEfforts } = {}) {
           tool_calls: toolCalls,
         });
       } else if (item?.type === "function_call_output") {
-        messages.push({ role: "tool", tool_call_id: item.call_id, content: typeof item.output === "string" ? item.output : JSON.stringify(item.output) });
+        if (typeof item.call_id === "string" && item.call_id.trim()) {
+          messages.push({ role: "tool", tool_call_id: item.call_id, content: typeof item.output === "string" ? item.output : JSON.stringify(item.output) });
+        } else {
+          const adapted = normalizeCallLessToolOutputs({ input: [item] });
+          if (!adapted) throw chatCompatibilityError("input item", "function_call_output");
+          messages.push({ role: "user", content: messageContent(adapted.input[0].content) });
+        }
       } else {
         throw chatCompatibilityError("input item", item?.type);
       }
@@ -161,6 +177,14 @@ export function responsesToChat(body, { reasoningEfforts } = {}) {
   const chatReq = { model: body.model, messages, stream: true };
   for (const k of ["temperature", "top_p", "stop", "presence_penalty", "frequency_penalty"]) {
     if (body[k] !== undefined) chatReq[k] = body[k];
+  }
+  if (cacheSupport) {
+    if (cacheSupport.prompt_cache_key === true && typeof body.prompt_cache_key === "string" && body.prompt_cache_key.trim()) {
+      chatReq.prompt_cache_key = body.prompt_cache_key;
+    }
+    if (cacheSupport.prompt_cache_retention === true && ["in_memory", "24h"].includes(body.prompt_cache_retention)) {
+      chatReq.prompt_cache_retention = body.prompt_cache_retention;
+    }
   }
   const maxTok = body.max_output_tokens ?? body.max_tokens ?? body.max_completion_tokens;
   if (maxTok !== undefined) chatReq.max_completion_tokens = maxTok;
@@ -172,6 +196,7 @@ export function responsesToChat(body, { reasoningEfforts } = {}) {
     }
     chatReq.tools = body.tools
       .map((tool) => {
+        if (tool.defer_loading === true || tool.namespace != null) throw chatCompatibilityError("function tool", "deferred_or_namespaced");
         if (typeof (tool.function?.name ?? tool.name) !== "string" || !(tool.function?.name ?? tool.name).trim()) {
           throw chatCompatibilityError("function tool", "missing_name");
         }
@@ -191,10 +216,22 @@ export function responsesToChat(body, { reasoningEfforts } = {}) {
       if (!["auto", "none", "required"].includes(body.tool_choice)) throw chatCompatibilityError("tool choice", body.tool_choice);
       chatReq.tool_choice = body.tool_choice;
     } else if (body.tool_choice?.type === "function" && body.tool_choice.name) {
+      if (body.tool_choice.namespace != null) throw chatCompatibilityError("tool choice", "namespaced_function");
       if (!chatReq.tools?.some(tool => tool.function.name === body.tool_choice.name)) {
         throw chatCompatibilityError("tool choice", "undeclared_function");
       }
       chatReq.tool_choice = { type: "function", function: { name: body.tool_choice.name } };
+    } else if (body.tool_choice?.type === "allowed_tools") {
+      const { mode, tools } = body.tool_choice;
+      if (Object.keys(body.tool_choice).some(key => !["type", "mode", "tools"].includes(key))
+        || !["auto", "required"].includes(mode) || !Array.isArray(tools) || !tools.length
+        || tools.some(tool => !tool || tool.type !== "function" || typeof tool.name !== "string" || !tool.name.trim()
+          || Object.keys(tool).some(key => !["type", "name"].includes(key))
+          || !chatReq.tools?.some(declared => declared.function.name === tool.name))) {
+        throw chatCompatibilityError("tool choice", "allowed_tools");
+      }
+      chatReq.tool_choice = { type: "allowed_tools", allowed_tools: { mode,
+        tools: tools.map(tool => ({ type: "function", function: { name: tool.name } })) } };
     } else {
       throw chatCompatibilityError("tool choice", body.tool_choice?.type);
     }
@@ -236,9 +273,23 @@ function chatTerminal(finishReason) {
     : { status: "completed" };
 }
 
-export function chatToResponses(chatResp, model) {
+function allowedToolNames(choice) {
+  return choice?.type === "allowed_tools" && Array.isArray(choice.allowed_tools?.tools)
+    ? new Set(choice.allowed_tools.tools.map(tool => tool.function?.name).filter(Boolean)) : null;
+}
+
+function disallowedUpstreamTool() {
+  return invalidUpstreamStream("Upstream did not honor the allowed tools", "upstream_tool_not_allowed");
+}
+
+export function chatToResponses(chatResp, model, { toolChoice } = {}) {
   const id = `resp_${uid()}`, choice = chatResp.choices?.[0], msg = choice?.message, output = [];
   const terminal = chatTerminal(choice?.finish_reason);
+  const allowed = allowedToolNames(toolChoice);
+  if (allowed && (msg?.tool_calls?.some(call => {
+    const name = call?.function?.name || "";
+    return terminal.status === "completed" ? !allowed.has(name) : name && ![...allowed].some(candidate => candidate.startsWith(name));
+  }) || terminal.status === "completed" && toolChoice.allowed_tools.mode === "required" && !msg?.tool_calls?.length)) throw disallowedUpstreamTool();
   if (msg?.content) output.push({ type: "message", id: `msg_${uid()}`, role: "assistant", status: terminal.status, content: [{ type: "output_text", text: msg.content }] });
   if (msg?.tool_calls) for (const tc of msg.tool_calls) output.push({ type: "function_call", id: tc.id, call_id: tc.id, name: tc.function.name, arguments: tc.function.arguments, status: terminal.status });
   return { id, object: "response", ...terminal, model: chatResp.model || model, output, usage: chatResp.usage ? { input_tokens: chatResp.usage.prompt_tokens || 0, output_tokens: chatResp.usage.completion_tokens || 0, total_tokens: chatResp.usage.total_tokens || 0 } : undefined };
@@ -251,6 +302,8 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
   // Retain names only, not the request's schemas, images or message history.
   const declaredToolNames = new Set((Array.isArray(upstreamReq.tools) ? upstreamReq.tools : [])
     .map((tool) => tool?.function?.name).filter((name) => typeof name === "string" && name));
+  const allowed = allowedToolNames(upstreamReq.tool_choice), allowedRequired = upstreamReq.tool_choice?.allowed_tools?.mode === "required";
+  const allowedPrefix = name => !name || [...allowed].some(candidate => candidate.startsWith(name));
   let {
     abort,
     bodyText,
@@ -355,6 +408,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
       arguments: "",
       outputIndex: nextOutputIndex++,
     };
+    if (allowed && !allowedPrefix(tool.name)) throw disallowedUpstreamTool();
     toolCalls.set(key, tool);
     await emitEvent("response.output_item.added", {
       output_index: tool.outputIndex,
@@ -372,6 +426,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
 
   const emitTerminal = async () => {
     const terminal = chatTerminal(finishReason);
+    if (allowed && terminal.status === "completed" && ([...toolCalls.values()].some(tool => !allowed.has(tool.name)) || allowedRequired && !toolCalls.size)) throw disallowedUpstreamTool();
     if (!messageItem && toolCalls.size === 0) await ensureMessageItem();
     const output = [];
     if (messageItem) {
@@ -479,6 +534,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
             }
             if (!completeRepeat) tool.name += name;
           }
+          if (allowed && !allowedPrefix(tool.name)) throw disallowedUpstreamTool();
           const argumentDelta = tc.function?.arguments;
           toolArgumentGuard.observe(tool.outputIndex, argumentDelta);
           if (argumentDelta) {

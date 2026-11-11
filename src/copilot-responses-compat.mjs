@@ -18,6 +18,7 @@ import {
 import { responseFailureDetails } from "./response-failures.mjs";
 import { status } from "./status.mjs";
 import { markUpstreamHeaders } from "./stream-performance.mjs";
+import { adaptCallLessContext, isMissingCallIdError } from "./responses-tool-output.mjs";
 
 // Ordered Copilot-only fallbacks. Each policy is single-use and must be gated
 // by an exact upstream failure plus a request transformation that changes the
@@ -98,7 +99,7 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
   let payloadPrepared = false;
   let releaseRecovery;
   try {
-    for (let attempt = 0; attempt <= RETRY_POLICIES.length; attempt += 1) {
+    for (let attempt = 0; attempt <= RETRY_POLICIES.length + 1; attempt += 1) {
       let resp;
       try {
         options.assertPrepareActive?.();
@@ -123,6 +124,13 @@ export async function openCopilotResponse(reqContext, upstream = copilotResponse
         label: "Copilot Responses error body",
       });
       options.assertPrepareActive?.();
+      if (reqContext.surface !== "responses_compact" && !usedPolicies.has("call-less-tool-output") && isMissingCallIdError(resp.status, errorText)) {
+        const adapted = adaptCallLessContext(reqContext);
+        if (adapted) {
+          usedPolicies.add("call-less-tool-output");reqContext = adapted;payloadPrepared = false;
+          continue;
+        }
+      }
       let retry;
       try { retry = await selectCopilotResponseRetryWithHistory(reqContext, resp.status, errorText, usedPolicies, options); }
       catch (error) {

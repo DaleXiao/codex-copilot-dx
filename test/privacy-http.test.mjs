@@ -112,6 +112,32 @@ test("Responses preserves precise tool arguments through privacy masking and JSO
   assert.equal((await result.json()).output[0].arguments, args);
 });
 
+test("call-less compatibility preserves privacy and large integer tool arguments across a validation retry", async t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-privacy-receipt-")), env = {}, file = userSettingsPath({ home, env });
+  fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, '{"privacy_enabled":true}');
+  const model = { load: async () => {}, find: async texts => texts.map(() => []), snapshot: () => ({ state: "ready" }), close() {}, busy: () => false };
+  const privacy = createLocalPrivacy({ home, env, model }), secret = "ghp_" + "n".repeat(36), args = `{"id":9007199254740993,"secret":${JSON.stringify(secret)}}`, sent = [];
+  const server = await startAdapter(0, "127.0.0.1", { privacy, env, dashboardOptions: { home, env }, getCachedModelEndpointsFn: () => ["/responses"],
+    responsesFn: async body => {
+      sent.push(structuredClone(body));
+      if (sent.length === 1) return Response.json({ error: { message: "input: missing field `call_id` at line 1 column 42" } }, { status: 400 });
+      const echoed = body.input.find(item => item.type === "function_call").arguments;
+      return Response.json({ id: "resp_receipt", status: "completed", model: body.model,
+        output: [{ type: "function_call", id: "out", call_id: "call_out", name: "tool", arguments: echoed }] });
+    } });
+  t.after(async () => { server.closeAllConnections();await new Promise(resolve => server.close(resolve));privacy.close();fs.rmSync(home, { recursive: true, force: true }); });
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/v1/responses`, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "gpt-5.6-sol", input: [
+      { type: "function_call", call_id: "call_in", name: "tool", arguments: args },
+      { type: "function_call_output", call_id: "call_in", output: "done" },
+      { type: "function_call_output", name: "automation", output: `context ${secret}` },
+    ] }) });
+  assert.equal(response.status, 200);assert.equal(sent.length, 2);
+  assert.equal(JSON.stringify(sent).includes(secret), false);
+  assert.ok(sent[1].input.find(item => item.type === "function_call").arguments.includes('"id":9007199254740993'));
+  assert.equal((await response.json()).output[0].arguments, args);
+});
+
 test("Messages JSON, streaming and token counting share masking while client credentials remain unchanged", async t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-privacy-http-")), env = {}, file = userSettingsPath({ home, env });
   fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, '{"privacy_enabled":true}');

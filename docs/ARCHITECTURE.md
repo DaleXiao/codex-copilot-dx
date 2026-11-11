@@ -91,6 +91,10 @@ failed call; retirement waits for unrelated active responses to drain. Shutdown
 still closes all current/retiring transports. HTTP error statuses and intentional
 cancellation do not invalidate the transport. Node response streams are pulled
 on demand to avoid eager delivery into an already-cancelled Web stream.
+For the API's Node HTTPS agent, idle sockets expire after at most 60 seconds,
+or earlier when the server supplies a shorter keep-alive hint. The idle timeout
+is removed on reuse, before an active request is attached. WinHTTP keeps its
+existing OS-managed transport. Neither path retries an ambiguous sent request.
 `operation-error.mjs` projects fixed transport phases, a local error-code
 allowlist and socket-reuse evidence. API errors preserve their private cause,
 but client diagnostics/logs expose only those bounded fields, not raw causes,
@@ -635,6 +639,21 @@ Stream performance retains existing route totals and adds `by_route.<route>.by_p
 
 After Claude `message_stop`, the downstream response ends before an upstream drain. A complete drain permits connection reuse; cancellation, failure, one second or more than 64 KiB of tail bytes closes the reader. The last received chunk can exceed the byte threshold. Privacy masking preserves numeric literals in JSON-encoded tool arguments while restoring only mapped string values.
 
+Responses compatibility only rewrites a standalone tool output after an explicit
+missing-call-ID HTTP validation failure; the Chat bridge represents it as marked
+untrusted context. Valid paired outputs are unchanged. Tool-search, deferred and
+namespaced functions use native Responses when confirmed; Chat-only routes reject
+them instead of discarding those semantics. Allowed function lists retain their
+restriction and returned Chat calls are checked before completion. Chat cache
+fields are forwarded only when the catalog explicitly advertises each field.
+
+For an explicit root-combiner schema validation failure, the custom Messages
+provider may send a bounded, model-facing object schema while retaining the
+original validator for the response. Guarded tool frames are buffered until the
+complete input passes that validator; invalid or numerically unsafe input is not
+delivered as a tool call. Unsupported, complex or regular-expression schemas are
+left unchanged. Ordinary accepted requests and streams bypass this adaptation.
+
 Byte-weighted request admission is not a simultaneous-stream limit. The 1.2.0 load replay exercises 16/64/128 small-body held streams, management responsiveness and downstream cancellation against 1.1.1. It does not establish a universal safe concurrency maximum. Existing defaults remain unchanged; see the release receipt for measured bounds.
 
 ## Installation and release delivery
@@ -1133,7 +1152,7 @@ The image and input-suggestion panels share `codex-launch-control.mjs`. `codex-a
 
 The managed Codex catalog projects explicit source input modalities ahead of native templates and checks GitHub priority eligibility against the full live source registry. Unknown modality metadata keeps the prior fallback. Source identities, selected models and routing remain unchanged.
 
-`safe-upstream-error.mjs` reads only failed image or custom API responses, with a 64 KiB size bound, a 200 ms timer and four concurrent readers. Only fixed code/status pairs and local messages escape the reader. Original status, stable CCDX codes and validated Retry-After remain intact. Error-header callbacks release request admission before the optional body read; image processing slots are released at the same point. Count-token singleflight forwards those callbacks only to the appropriate waiters. Successful requests never invoke the reader.
+`safe-upstream-error.mjs` reads only failed image or custom API responses, with a 64 KiB size bound, a 200 ms timer and four concurrent readers. Only fixed code/status pairs and local messages escape the reader. Original status, stable CCDX codes and validated Retry-After remain intact. Error-header callbacks normally release request admission before the optional body read; an eligible explicit compatibility rejection retains admission through its one retry. Image processing slots are released before their error read. Count-token singleflight forwards callbacks only to the appropriate waiters. Successful requests never invoke the reader.
 
 ## Client updates and streaming boundaries (1.3.20)
 

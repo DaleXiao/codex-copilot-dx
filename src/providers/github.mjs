@@ -38,11 +38,12 @@ export function createGithubProvider({ client = defaultCopilotClient, profileId 
     route(body, { requestedModel, upstreamModel, forceResponses, surface, getCachedModelEndpoints = client.getCachedModelEndpoints }) {
       let protocol = "openai-responses";
       if (surface === "responses") {
-        const customTools = responsesBodyUsesCustomTools(body);
         const endpoints = getCachedModelEndpoints(upstreamModel);
-        const native = forceResponses || requestedModel === CODEX_AUTO_REVIEW_MODEL
-          || isResponsesOnly(upstreamModel, endpoints)
-          || (customTools && Array.isArray(endpoints) && (endpoints.includes("/responses") || endpoints.includes("/v1/responses")));
+        const nativeBase = forceResponses || requestedModel === CODEX_AUTO_REVIEW_MODEL || isResponsesOnly(upstreamModel, endpoints);
+        const customTools = nativeBase ? false : responsesBodyUsesCustomTools(body);
+        const native = nativeBase
+          || ((customTools || body?.tool_choice?.type === "allowed_tools") && Array.isArray(endpoints)
+            && (endpoints.includes("/responses") || endpoints.includes("/v1/responses")));
         if (customTools && !native) {
           const message = `Model ${upstreamModel} has custom tool items that cannot be represented by Chat Completions, and cached endpoint metadata does not confirm Responses support`;
           throw Object.assign(new Error(message), { statusCode: 400, code: "ccdx_custom_tools_require_responses",

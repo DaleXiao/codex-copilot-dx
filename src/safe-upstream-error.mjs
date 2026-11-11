@@ -1,3 +1,6 @@
+import { isMissingCallIdError } from "./responses-tool-output.mjs";
+import { isRootToolSchemaError } from "./messages-tool-schema.mjs";
+
 // Only fixed, documented-shaped codes leave this module; vendor messages and
 // request data are never returned or logged.
 const reasons = new Map([
@@ -36,7 +39,7 @@ function readChunk(reader, signal) {
 
 // Failure responses only. A stalled body or a stalled cancellation cannot delay
 // the caller beyond the budget. The original request's cancellation wins.
-export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200, maxBytes = 64 * 1024 } = {}) {
+export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200, maxBytes = 64 * 1024, missingCallId = false, rootToolSchema = false } = {}) {
   if (signal?.aborted) {
     cancelBody(response?.body);
     signal.throwIfAborted();
@@ -61,7 +64,10 @@ export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200
       if (bytes > maxBytes) return null;
       chunks.push(chunk);
     }
-    let value;try { value = JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")); } catch { return null; }
+    const text = Buffer.concat(chunks, bytes).toString("utf8");
+    if (missingCallId && isMissingCallIdError(response.status, text)) return { code: "ccdx_missing_call_id", message: "The source requires a tool call ID." };
+    if (rootToolSchema && isRootToolSchemaError(response.status, text)) return { code: "ccdx_tool_schema_root_unsupported", message: "The source rejected a tool's root schema." };
+    let value;try { value = JSON.parse(text); } catch { return null; }
     const error = value?.error;
     if (!error || typeof error !== "object" || Array.isArray(error)) return null;
     return safeUpstreamReason(error.code, response.status) || safeUpstreamReason(error.type, response.status);

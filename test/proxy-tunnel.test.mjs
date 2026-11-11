@@ -8,9 +8,11 @@ import https from "node:https";
 import net from "node:net";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 import { createPredictionCertificate } from "../src/native-prediction-profile.mjs";
 import { resolveNetworkRoute } from "../src/network-route.mjs";
 import { createProxyAgent } from "../src/proxy-tunnel.mjs";
+import { createApiNetwork } from "../src/providers/api-network.mjs";
 
 let directory, certificate;
 before(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-proxy-tunnel-test-")); certificate = createPredictionCertificate(directory); });
@@ -126,4 +128,78 @@ test("a stalled proxy handshake is bounded and agent closure aborts pending conn
   const agent = createProxyAgent(plan, { timeoutMs: 3000 });
   const result = request(agent);const rejection = assert.rejects(result, /closed|reset/i);
   setTimeout(() => agent.destroy(), 20);await rejection;
+});
+
+test("API idle timeout preserves active and warm proxied requests and honors a shorter server hint", { timeout: 7000 }, async t => {
+  const server = https.createServer(certificate, (req, res) => {
+    res.setHeader("Keep-Alive", req.url === "/short" ? "timeout=1, max=100" : "timeout=30");
+    if (req.url === "/slow") { res.write("first");setTimeout(() => res.end(" last"), 500); }
+    else res.end("ok");
+  });
+  server.keepAliveTimeout = 5000;
+  const targetPort = await listening(t, server);let connects = 0;
+  const proxy = http.createServer();proxy.on("connect", (_req, socket, head) => {
+    connects++;
+    const peer = net.connect(targetPort, "127.0.0.1", () => { socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");if (head.length) peer.write(head);socket.pipe(peer);peer.pipe(socket); });
+    socket.on("close", () => peer.destroy());peer.on("error", () => socket.destroy());
+  });
+  const port = await listening(t, proxy);
+  const agent = createProxyAgent(resolveNetworkRoute({ env: { HTTPS_PROXY: `http://127.0.0.1:${port}` } }), { freeSocketTimeoutMs: 200 });t.after(() => agent.destroy());
+  const get = path => new Promise((resolve, reject) => {
+    https.get({ host: "chatgpt.com", path, agent, ca: certificate.ca }, res => { let body = "";res.on("data", chunk => body += chunk);res.on("end", () => resolve(body));res.on("error", reject); }).on("error", reject);
+  });
+  assert.equal(await get("/first"), "ok");
+  assert.equal(await get("/slow"), "first last");assert.equal(connects, 1);
+  assert.equal(await get("/warm"), "ok");assert.equal(connects, 1);
+  await delay(350);
+  assert.equal(await get("/expired"), "ok");assert.equal(connects, 2);
+  assert.equal(await get("/short"), "ok");
+  assert.equal(await get("/after-short"), "ok");assert.equal(connects, 3);
+});
+
+test("expired blackholed proxy sockets are not reused and an earlier blackhole is never replayed", { timeout: 7000 }, async t => {
+  let upstreamRequests = 0;
+  const server = https.createServer(certificate, (_req, res) => { upstreamRequests++;res.setHeader("Keep-Alive", "timeout=30");res.end("ok"); });
+  const targetPort = await listening(t, server);let connects = 0;const tunnels = [];
+  const proxy = http.createServer();proxy.on("connect", (_req, socket, head) => {
+    connects++;
+    const peer = net.connect(targetPort, "127.0.0.1", () => { socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");if (head.length) peer.write(head);socket.pipe(peer);peer.pipe(socket); });
+    tunnels.push({ socket, peer });
+    socket.on("close", () => peer.destroy());peer.on("error", () => socket.destroy());
+  });
+  const port = await listening(t, proxy);
+  const agent = createProxyAgent(resolveNetworkRoute({ env: { HTTPS_PROXY: `http://127.0.0.1:${port}` } }), { freeSocketTimeoutMs: 300 });t.after(() => agent.destroy());
+  const post = signal => new Promise((resolve, reject) => {
+    const req = https.request({ host: "chatgpt.com", path: "/", method: "POST", agent, ca: certificate.ca, signal }, res => { res.resume();res.on("end", resolve);res.on("error", reject); });
+    req.on("error", reject);req.end("synthetic");
+  });
+  await post();assert.equal(connects, 1);assert.equal(upstreamRequests, 1);
+  const blackhole = ({ socket, peer }) => { socket.unpipe(peer);socket.on("data", () => {}); };
+  blackhole(tunnels[0]);
+  await assert.rejects(post(AbortSignal.timeout(80)), { name: "AbortError" });
+  assert.equal(connects, 1);assert.equal(upstreamRequests, 1);
+  // The aborted request destroys its socket. A fresh request establishes one connection.
+  await post();assert.equal(connects, 2);assert.equal(upstreamRequests, 2);
+
+  // A new blackholed idle socket expires before it can receive another POST.
+  const lastSocket = [...agent.freeSockets[Object.keys(agent.freeSockets)[0]]][0];
+  assert.ok(lastSocket);
+  blackhole(tunnels[1]);
+  await delay(450);assert.equal(lastSocket.destroyed, true);
+  await post();assert.equal(connects, 3);assert.equal(upstreamRequests, 3);
+});
+
+test("custom API transport applies the idle policy through a verified CONNECT tunnel", { timeout: 5000 }, async t => {
+  const server = https.createServer(certificate, (_req, res) => { res.setHeader("Keep-Alive", "timeout=1");res.end("ok"); });
+  const targetPort = await listening(t, server);let connects = 0;
+  const proxy = http.createServer();proxy.on("connect", (_req, socket, head) => {
+    connects++;const peer = net.connect(targetPort, "127.0.0.1", () => { socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");if (head.length) peer.write(head);socket.pipe(peer);peer.pipe(socket); });
+    socket.on("close", () => peer.destroy());peer.on("error", () => socket.destroy());
+  });
+  const port = await listening(t, proxy), url = "https://chatgpt.com/v1/messages";
+  const network = await createApiNetwork({ targets: [url], env: { HTTPS_PROXY: `http://127.0.0.1:${port}` }, platform: "linux",
+    requestImpl: (options, callback) => https.request({ ...options, ca: certificate.ca }, callback) });
+  t.after(() => network.close());
+  for (let i = 0; i < 2; i++) assert.equal(await (await network.fetch(url, { method: "POST", body: "{}" })).text(), "ok");
+  assert.equal(connects, 2);
 });

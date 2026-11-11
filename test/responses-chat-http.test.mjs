@@ -74,6 +74,18 @@ test("HTTP Chat reasoning uses catalog efforts without adding a lookup or changi
   assert.equal(native.status, 200);
 });
 
+test("HTTP Chat forwards explicitly advertised cache fields and does not inject defaults", async () => {
+  const codexModelRegistry = { models: { data: [{ id: "synthetic-chat", capabilities: { supports: { prompt_cache_key: true, prompt_cache_retention: true } } }] } };
+  const sent = [];
+  const chatCompletionsFn = async body => { sent.push(body);return Response.json({ choices: [{ message: { content: "OK" }, finish_reason: "stop" }] }); };
+  for (const extra of [{}, { prompt_cache_key: "cache-key", prompt_cache_retention: "24h" }]) {
+    const response = await invokeAdapter({ codexModelRegistry, chatCompletionsFn }, { body: { model: "synthetic-chat", input: "test", ...extra } });
+    assert.equal(response.status, 200);
+  }
+  assert.equal(Object.hasOwn(sent[0], "prompt_cache_key"), false);assert.equal(Object.hasOwn(sent[0], "prompt_cache_retention"), false);
+  assert.equal(sent[1].prompt_cache_key, "cache-key");assert.equal(sent[1].prompt_cache_retention, "24h");
+});
+
 test("HTTP non-stream Responses conversion preserves upstream error status", async () => {
   const streamPerformanceMetrics = createStreamPerformanceMetrics();
   const response = await invokeAdapter({

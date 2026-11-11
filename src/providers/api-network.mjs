@@ -24,7 +24,7 @@ export async function createApiNetwork({ targets, env = process.env, platform = 
       requestImpl = worker.requestImpl;
     }
   }
-  const agent = worker ? undefined : createProxyAgent(plan);let closed = false, broken = false, retiring = false, active = 0, finishRetiring;
+  const agent = worker ? undefined : createProxyAgent(plan, { freeSocketTimeoutMs: 60_000 });let closed = false, broken = false, retiring = false, active = 0, finishRetiring;
   const close = () => { if (closed) return;closed = true;agent?.destroy();worker?.close();finishRetiring?.(); };
   return {
     healthy: () => !closed && !broken && !retiring && (!worker || worker.healthy()),

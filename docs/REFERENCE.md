@@ -54,17 +54,23 @@ For scripts, source access accepts `--apps codex,claude-app` with `--edit`; edit
 
 An app model file contains `deployments: [{"source":"github","model":"<model-id>"}]`, with optional `default_model` and `auto_sync`. An explicit empty array clears the default and pauses access. A file without `deployments` is rejected. Unavailable saved selections remain visible until the user changes them.
 
-## Gemini App and Antigravity (candidate)
+## Antigravity in Gemini App
 
-The optional **Gemini** page and `ccdx app gemini status|models|enable|disable|open`
+The **Antigravity** page and `ccdx app antigravity status|models|enable|disable|open`
 manage the original macOS Gemini App. Enable requires acceptance of this data
 scope: Antigravity main answers follow the selected Google or Copilot model;
 all Antigravity summaries, searches and image generation use GitHub Copilot,
 including background work from Google-model sessions. Ordinary Gemini chat
 keeps its Google route. No OpenAI account or search fallback is used.
 
-`app list` uses already observed Gemini state without waiting for native App
-inspection. Use `app gemini status` to check the signed installation explicitly.
+`app list` includes Antigravity before its first WebUI visit and uses observed state without waiting for native App
+inspection. Use `app antigravity status` to check the signed installation explicitly.
+The old `app gemini` commands remain available. Authorize Antigravity on the GitHub
+Copilot source page, or with `source github access --edit --apps codex,antigravity --yes`.
+Choose its exposed models on the Antigravity page or with
+`app antigravity models --edit`. A model file uses `{"models":["<ccdx-copilot-model-id>"]}`.
+Saving model selection requires reopening Gemini through CCDX to reload its model list.
+The page distinguishes enabled access from an observed client connection.
 
 Carbon and Argon appear with Low, Medium and High reasoning levels when the
 Copilot account advertises them. Google models, account controls and defaults

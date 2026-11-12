@@ -1,8 +1,8 @@
 import { terminalCell } from "./terminal-text.mjs";
 
 const integer = value => Number.isSafeInteger(value) && value >= 0;
-const appIds = { codex_app: "codex", codex_cli: "codex", codex: "codex", claude_app: "claude_app", claude_code: "claude_code", gemini_app: "gemini" };
-export const TERMINAL_CLIENT_NAMES = Object.freeze({ codex: "Codex", claude_app: "Claude App", claude_code: "Claude Code", gemini: "Gemini · Antigravity" });
+const appIds = { codex_app: "codex", codex_cli: "codex", codex: "codex", claude_app: "claude_app", claude_code: "claude_code", gemini_app: "antigravity" };
+export const TERMINAL_CLIENT_NAMES = Object.freeze({ codex: "Codex", claude_app: "Claude App", claude_code: "Claude Code", gemini: "Antigravity", antigravity: "Antigravity" });
 const labels = { configured: "Configured", paused: "Paused", disabled: "Disabled", not_configured: "Not configured", not_installed: "Not installed",
   preserved: "Unchanged", partially_preserved: "Partly unchanged", manual_sync: "Manual sync", default_unavailable: "Default unavailable", configuration_unavailable: "Unreadable", unavailable: "Unavailable" };
 export function terminalUptime(milliseconds) {
@@ -37,7 +37,7 @@ export function projectTerminalState(data = {}) {
     ...[["app", "claude_app"], ["code", "claude_code"]].map(([key, id]) => ({ id, setup: data.providers?.m365?.claude?.clients?.[key] })),
   ]).map(client => ({ id: client.id, name: TERMINAL_CLIENT_NAMES[client.id] || terminalCell(client.name || client.id),
     setup: clientSetup(client.id === "codex" && !connection?.managed && !client.setup && data.client_integrations?.codex?.setup ? { ...client, setup: data.client_integrations.codex.setup } : client), active: running.length || active === 0 ? byApp.get(client.id) || 0 : null, observed_at: client.observed_at || null }));
-  if(data.gemini||byApp.has("gemini"))clients.push({id:"gemini",name:TERMINAL_CLIENT_NAMES.gemini,setup:data.gemini?.enabled?"Configured":"Paused",active:byApp.get("gemini")||0,observed_at:null});
+  if(data.gemini||byApp.has("antigravity"))clients.push({id:"antigravity",name:TERMINAL_CLIENT_NAMES.antigravity,setup:data.gemini?.enabled?"Configured":"Paused",active:byApp.get("antigravity")||0,observed_at:null});
   if (integer(active) && active > running.length) unidentified += active - running.length;
   if (unidentified) clients.push({ id: "other", name: "Other clients", setup: "Not identified", active: unidentified });
   const sources = connection?.providers?.filter(item => item.enabled && !(item.id === "m365" && data.providers?.m365?.enabled === false)).map(item => ({ id: item.id, name: terminalCell(item.name || item.id) }))

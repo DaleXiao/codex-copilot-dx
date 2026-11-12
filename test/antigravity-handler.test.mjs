@@ -82,3 +82,13 @@ test("privacy sessions restore split text tokens and release on completion",asyn
     client:{chatCompletions:async()=>new Response('data: '+JSON.stringify({choices:[{delta:{content:token.slice(0,12)}}]})+'\n\ndata: '+JSON.stringify({choices:[{delta:{content:token.slice(12)},finish_reason:"stop"}]})+'\n\ndata: [DONE]\n\n')}});
   const result=await invoke(f.handler,body()).done;assert.equal(masked,true);assert.equal(released,true);assert.match(result.text,/fixture-secret/);assert.doesNotMatch(result.text,/CCDX_aaaa/);
 });
+
+test("unselected Copilot models are absent from discovery and rejected before either provider receives history",async()=>{
+  const native={models:{native:{model:"NATIVE"}},agentModelSorts:[{groups:[{modelIds:["native"]}]}]};
+  const merged=mergeAntigravityModels(native,catalog,[alias]);assert.deepEqual(Object.keys(merged.models),["native",alias]);
+  assert.deepEqual(mergeAntigravityModels(native,catalog,[]),native);
+  const f=fixture({selectedModels:()=>[]});const result=await invoke(f.handler,body()).done;
+  assert.equal(result.status,503);assert.equal(f.google.length,0);assert.equal(f.copilot.length,0);
+  const background=await invoke(f.handler,body("gemini-3.8-flash","checkpoint")).done;
+  assert.equal(background.status,200);assert.equal(f.copilot.length,1);
+});

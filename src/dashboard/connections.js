@@ -62,7 +62,7 @@
       const row = node("div", undefined, "connection-row"), info = node("div"), actions = node("div", undefined, "connection-actions");info.append(node("h3", provider.name));
       if (!provider.builtin) info.append(node("p", provider.base_url, "hint"));
       if (provider.enabled) {
-        const allowed = data.clients.filter(c => c.enabled && c.allowed.includes(provider.id)).map(c => c.name).join(" / ");
+        const allowed = [...data.clients.filter(c => c.enabled && c.allowed.includes(provider.id)).map(c => c.name),...(provider.id === "github" && globalThis.ccdxGeminiStatus?.enabled ? ["Antigravity"] : [])].join(" / ");
         const line = node("p", undefined, "hint");words(line, "api_allowed_summary", { clients: allowed || format("api_none") });info.append(line);
         if (provider.discovery?.state === "stale") { const warning = node("p", undefined, "hint");words(warning, "cap_catalog_stale");warning.append(" ", provider.discovery.code);info.append(warning); }
         if (!provider.builtin) actions.append(button("api_manage", () => editApi(provider)));
@@ -493,6 +493,7 @@
   el("refresh").addEventListener("click", () => { if (["#models", "#codex", "#claude"].includes(location.hash)) void load(); });
   window.addEventListener("hashchange", () => { apiForm.elements.key.value = "";mountClient();if (["#models", "#claude", "#codex"].includes(location.hash)) void load(); });
   window.addEventListener("ccdx:choose-source", event => { if (typeof event.detail?.id === "string" && providerEntries.some(p => p.id === event.detail.id)) chooseProvider(event.detail.id); });
+  window.addEventListener("ccdx-gemini-state", () => { if (data) list(); });
   window.addEventListener("ccdx:source-view", () => { if (data) list(); });
   window.addEventListener("ccdx:providers", () => { if (desiredSource && providerEntries.some(p => p.id === desiredSource)) { const id = desiredSource;desiredSource = null;chooseProvider(id); }if (data) list(); });
   new MutationObserver(() => { if (data) list(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });

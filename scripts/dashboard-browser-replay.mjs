@@ -120,7 +120,10 @@ const providerState = () => [
       { id: "claude_code", name: "Claude Code", state: "preserved", gateway: "running" }], requests: { completed: 3, incomplete: 1, failed: 2 } },
   { id: "third", name: "Third source", enabled: false, state: "disabled", clients: [] },
 ];
-const handler = createAdapterHandler({ dashboardOptions: { home, env: {}, serviceControl, accountTools, localTools,
+const handler = createAdapterHandler({ env:{},
+  codexModelRegistry:{models:{data:[{id:"gemini-4-carbon",supported_endpoints:["/chat/completions"],capabilities:{supports:{reasoning_effort:["low","medium","high"]},limits:{max_context_window_tokens:1000000}}}]}},
+  antigravityOptions:{inspect:async()=>({status:"stopped",version:"synthetic",pids:[],app:"/Applications/Gemini.app"})},
+  dashboardOptions: { home, env: {}, serviceControl, accountTools, localTools,
   updateStatusFn: async () => { updateReads++;return { source: "release_status", status: updateState,
     current: { version: "1.2.3", published_at: "2026-10-19T02:36:27Z" }, latest: { version: latestVersion, published_at: "2026-10-19T10:00:00Z" },
     update_available: updateState === "checked" && latestVersion !== "1.2.3", checked_at: "2026-10-19T10:00:00Z" }; },
@@ -268,7 +271,8 @@ try {
         assert.equal(await page.locator("#source-detail span").count(), 3);
         assert.match(await page.locator("#source-detail").innerText(), /GitHub Copilot.*Microsoft 365.*Third source/s);
         assert.doesNotMatch(await page.locator("#source-detail").innerText(), /→|Codex|Claude/);
-        assert.equal(await page.locator("#provider-clients tr").count(), 3, "Each app has one row rather than one per source");
+        await page.waitForFunction(()=>globalThis.ccdxGeminiStatus);
+        assert.equal(await page.locator("#provider-clients tr").count(), 4, "Each app has one row rather than one per source");
         assert.match(await page.locator("#provider-clients tr").first().innerText(), /Codex App.*Microsoft 365/s);
         const assertAutoRefreshCentered = async () => {
           const geometry = await page.evaluate(() => {
@@ -1006,6 +1010,33 @@ try {
           const beforeUpdate = manualUpdates;page.once("dialog", dialog => dialog.accept());await page.locator("#install-update").click();
           await page.waitForFunction(() => !document.getElementById("install-update").hasAttribute("aria-busy"));assert.equal(manualUpdates, beforeUpdate + 1);
         }
+        assert.equal(await page.locator('[data-route="gemini"] span').innerText(),"Antigravity");
+        await page.locator('[data-route="gemini"]').click();
+        await page.waitForFunction(()=>!document.getElementById("gemini-enabled").disabled);
+        if(!await page.locator("#gemini-enabled").isChecked())await page.locator("#gemini-enabled").check();
+        await page.waitForFunction(()=>document.querySelectorAll('#gemini-models input').length===3&&!document.getElementById("gemini-enabled").disabled);
+        const modelBoxes=page.locator("#gemini-models input");
+        await modelBoxes.first().uncheck();
+        await page.locator("#gemini-save").click();
+        await page.waitForFunction(()=>document.getElementById("gemini-save").disabled&&!document.getElementById("gemini-refresh").disabled);
+        await page.locator("#gemini-refresh").click();
+        await page.waitForFunction(()=>!document.getElementById("gemini-refresh").disabled);
+        assert.equal(await modelBoxes.first().isChecked(),false);
+        await modelBoxes.first().check();await page.locator("#gemini-cancel").click();
+        assert.equal(await modelBoxes.first().isChecked(),false);
+        assert.equal(await page.locator("#gemini-reopen").isVisible(),true);
+        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,"Antigravity fits the existing responsive layout");
+        if(output)await page.screenshot({path:path.join(output,`${engine}-${palette}-${theme}-${width}-antigravity.png`),fullPage:true});
+        await modelBoxes.first().check();await page.locator("#gemini-save").click();
+        await page.waitForFunction(()=>!document.getElementById("gemini-refresh").disabled);
+        await page.locator('[data-route="models"]').click();
+        await page.locator("#model-provider-github").click();
+        await page.waitForFunction(()=>!document.getElementById("github-antigravity-enabled").disabled);
+        await page.locator("#github-antigravity-enabled").uncheck();
+        await page.waitForFunction(()=>!document.getElementById("github-antigravity-enabled").disabled&&!document.getElementById("github-antigravity-enabled").checked);
+        await page.locator("#github-antigravity-enabled").check();
+        await page.waitForFunction(()=>!document.getElementById("github-antigravity-enabled").disabled&&document.getElementById("github-antigravity-enabled").checked);
+        await page.locator('[data-route="overview"]').click();
         assert.equal(errors.length, 0, errors.join("\n"));
         if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-overview.png`), fullPage: true });
         results.push({ engine, language, theme, palette, width, passed: true });

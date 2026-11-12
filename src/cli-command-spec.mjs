@@ -106,8 +106,8 @@ export const MANAGED_COMMANDS = [
     )
   ),
   command("app list", "List client configuration and observed activity", read),
-  ...["status", "models", "enable", "disable", "open"].map(action => command(`app gemini ${action}`,
-    ({status:"Inspect Gemini App and Antigravity setup",models:"List Copilot models added to Antigravity",enable:"Enable Antigravity routing and Copilot background requests",disable:"Pause Antigravity Copilot access; reopen Gemini for native routing",open:"Open the original Gemini App with its prepared route"})[action], {...read,...confirm})),
+  ...["gemini", "antigravity"].flatMap(app => ["status", "models", "enable", "disable", "open"].map(action => command(`app ${app} ${action}`,
+    ({status:"Inspect Gemini App and Antigravity setup",models:"List Copilot models added to Antigravity",enable:"Enable Antigravity routing and Copilot background requests",disable:"Pause Antigravity Copilot access; reopen Gemini for native routing",open:"Open the original Gemini App with its prepared route"})[action], {...read,...confirm,...(action==="models"?{"--edit":"flag","--file":"value"}:{})}))),
   command("app <app> status", "Show configuration, not process liveness", { ...read, "--details": "flag" }),
   command("app <app> models", "Show or edit the client's selected model plan", {
     ...read,

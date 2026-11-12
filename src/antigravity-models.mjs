@@ -13,9 +13,9 @@ export function antigravityCopilotModels(catalog) {
     })));
 }
 
-export function mergeAntigravityModels(googleCatalog,copilotCatalog) {
+export function mergeAntigravityModels(googleCatalog,copilotCatalog,selection=null) {
   if(!googleCatalog?.models||typeof googleCatalog.models!=="object"||Array.isArray(googleCatalog.models))throw new Error("Unrecognized Google model catalog");
-  const entries=antigravityCopilotModels(copilotCatalog),models={...googleCatalog.models};
+  const entries=antigravityCopilotModels(copilotCatalog).filter(model=>selection===null||selection.includes(model.id)),models={...googleCatalog.models};
   if(!entries.length)return googleCatalog;
   const used=new Set(Object.values(models).map(model=>model?.model));let next=500;
   for(const entry of entries){

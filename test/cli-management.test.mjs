@@ -39,10 +39,10 @@ function fixture() {
 test("app list uses observed Gemini state without inspecting the native App",async()=>{
   const f=fixture();
   let rows=JSON.parse(await f.run(["app","list","--format","json"]));
-  assert.equal(rows.find(row=>row.id==="gemini").setup,"Not checked");
+  assert.equal(rows.find(row=>row.id==="antigravity").setup,"Not checked");
   f.data.gemini={enabled:true,activity:{active:0}};
   rows=JSON.parse(await f.run(["app","list","--format","json"]));
-  assert.equal(rows.filter(row=>row.id==="gemini").length,1);assert.equal(rows.find(row=>row.id==="gemini").setup,"Configured");
+  assert.equal(rows.filter(row=>row.id==="antigravity").length,1);assert.equal(rows.find(row=>row.id==="antigravity").setup,"Configured");
   assert.equal(f.calls.some(call=>call.path==="gemini"),false);
 });
 test("privacy commands and the existing running preference alias use the WebUI preparation transaction", async t => {
@@ -201,4 +201,15 @@ test("plain diagnostic keys cannot inject terminal controls or forged lines", ()
   const json = formatManagement(value, { format: "json" });
   assert.doesNotMatch(json, /\x1b/);
   assert.deepEqual(Object.keys(JSON.parse(json).models), [key]);
+});
+
+test("GitHub access can grant Antigravity through the existing integration API without a sign-in prompt",async()=>{
+  const f=fixture(),original=f.options.request;
+  f.options.request=async input=>{if(input.path.startsWith("gemini")){f.calls.push(input);return {enabled:false}}return original(input)};
+  await f.run(["source","github","access","--edit","--apps","codex,antigravity","--yes"]);
+  assert.deepEqual(f.calls.find(call=>call.body?.operation==="source_access").body.allowed,["codex"]);
+  assert.deepEqual(f.calls.find(call=>call.body?.action==="enable").body,{action:"enable",accept_background_copilot:true});
+  f.calls.length=0;await f.run(["source","github","access","--edit","--apps","antigravity","--preview"]);
+  assert.equal(f.calls.some(call=>call.body),false);
+  assert.equal(parseCliArgs(["app","antigravity","models","--edit","--yes"]).path[1],"antigravity");
 });

@@ -23,7 +23,7 @@ test("Gemini activity keeps its own terminal row and contributes to totals",()=>
   const view=projectTerminalState({gemini:{enabled:true},requests:{by_route:{antigravity:{active:1,total:2}}},
     stream_performance:{active_requests:[{route:"antigravity",request_id:"gemini",application:"gemini_app"}],by_route:{antigravity:{terminal_outcomes:{totals:{completed:1}}}}}});
   assert.equal(view.active,1);assert.equal(view.requests,2);assert.equal(view.outcomes.completed,1);
-  assert.deepEqual(view.clients.find(x=>x.id==="gemini"),{id:"gemini",name:"Gemini · Antigravity",setup:"Configured",active:1,observed_at:null});
+  assert.deepEqual(view.clients.find(x=>x.id==="antigravity"),{id:"antigravity",name:"Antigravity",setup:"Configured",active:1,observed_at:null});
   assert.equal(view.clients.some(x=>x.id==="other"),false);
 });
 

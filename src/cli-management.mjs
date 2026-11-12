@@ -183,11 +183,19 @@ export async function runManagementCommand(command, options = {}) {
     writeSettingsPreferences(body, preferenceOptions);return print({ saved: settingsPreferencesSnapshot(preferenceOptions).values, effect: "Saved for the next CCDX start; no service was started" });
   }
   if (group === "app") {
-    if (path[1] === "gemini") {
+    if (["gemini", "antigravity"].includes(path[1])) {
       if (["enable", "disable"].includes(action)) {
         const preview = { action, background_source: "GitHub Copilot (all Antigravity summaries, searches and image generation)", ordinary_Gemini_chat: "Google; no routing change" };
         if (flags.preview) return print(preview);
         output.write(print(preview) + "\n");await confirm(action === "enable" ? "Enable this Antigravity-only routing scope?" : "Pause Copilot access? Reopen Gemini afterward to restore its native route.");
+      }
+      if(action==="models"&&flags.edit){
+        const state=await request({path:"gemini"});
+        const ids=flags.file?readFile().models:(await choose(state.models.map(model=>model.name),state.models.flatMap((model,index)=>model.selected!==false?[index]:[]))).map(index=>state.models[index].id);
+        if(!Array.isArray(ids)||new Set(ids).size!==ids.length||ids.some(id=>!state.models.some(model=>model.id===id)))throw new Error("Choose listed Antigravity model IDs.");
+        if(flags.preview)return print({models:ids,saved:false});
+        await confirm("Save Antigravity model selection? Reopen Gemini afterward to reload it.");
+        return print(await request({path:"gemini",body:{action:"models",models:ids}}));
       }
       const state = await request({ path: "gemini", ...(["status", "models"].includes(action) ? {} : { body: { action: flags.preview ? "preview" : action, ...(action === "enable" ? { accept_background_copilot: true } : {}) }, timeoutMs: 20000 }) });
       return print(action === "models" ? state.models : state);
@@ -195,7 +203,7 @@ export async function runManagementCommand(command, options = {}) {
     const graph = await connection(), snapshot = (await readStatus()).data, view = projectTerminalState(snapshot);
     if (action === "list") {
       const clients=[...view.clients];
-      if(!clients.some(client=>client.id==="gemini"))clients.push({id:"gemini",name:"Gemini · Antigravity",setup:"Not checked",active:null});
+      if(!clients.some(client=>client.id==="antigravity"))clients.push({id:"antigravity",name:"Antigravity",setup:"Not checked",active:null});
       return print(clients, [["id", "ID"], ["name", "Client"], ["setup", "Setup"], ["active", "Active"]]);
     }
     const id = ids.app ? CLI_CLIENTS[ids.app] : "codex", client = getClient(graph, id), modelPlan = client.model_plan;
@@ -308,14 +316,22 @@ export async function runManagementCommand(command, options = {}) {
     return print(source.builtin ? await request({ path: `models/live?provider=${encodeURIComponent(id)}`, timeoutMs: 60000 }) : (await save({ operation: "discover", id })).discovered);
   }
   if (action === "access") {
-    const current = graph.clients.filter(client => client.allowed.includes(id)).map(client => client.id);
-    if (!flags.edit) return print({ source: id, authorized_clients: current.map(value => Object.keys(CLI_CLIENTS).find(key => CLI_CLIENTS[key] === value)), consuming_clients: graph.source_impacts?.[id]?.clients || [] });
-    const allowed = flags.apps !== undefined ? flags.apps === "none" ? [] : flags.apps.split(",").map(app => { if (!CLI_CLIENTS[app]) throw new Error("Use listed client IDs, or none.");return CLI_CLIENTS[app]; })
-      : (await choose(graph.clients.map(client => TERMINAL_CLIENT_NAMES[client.id]), graph.clients.flatMap((client, index) => current.includes(client.id) ? [index] : []))).map(index => graph.clients[index].id);
-    output.write(print({ source: id, before: current, after: allowed, effect: "Revoked routes are removed; added grants do not select models" }) + "\n");
+    const integration=id==="github"?await request({path:"gemini?scope=summary"}):null;
+    const candidates=[...graph.clients.filter(client=>id!=="github"||client.id==="codex"),...(integration?[{id:"antigravity",name:"Antigravity"}]:[])];
+    const current=[...graph.clients.filter(client=>client.allowed.includes(id)).map(client=>client.id),...(integration?.enabled?["antigravity"]:[])];
+    if (!flags.edit) return print({ source: id, authorized_clients: current.map(value => value==="antigravity"?value:Object.keys(CLI_CLIENTS).find(key => CLI_CLIENTS[key] === value)), consuming_clients: graph.source_impacts?.[id]?.clients || [] });
+    const allowed = flags.apps !== undefined ? flags.apps === "none" ? [] : flags.apps.split(",").map(app => { const client=app==="antigravity"?app:CLI_CLIENTS[app];if (!candidates.some(item=>item.id===client)) throw new Error("Use listed client IDs, or none.");return client; })
+      : (await choose(candidates.map(client => client.name||TERMINAL_CLIENT_NAMES[client.id]), candidates.flatMap((client, index) => current.includes(client.id) ? [index] : []))).map(index => candidates[index].id);
+    if(new Set(allowed).size!==allowed.length)throw new Error("Choose unique client IDs.");
+    output.write(print({ source: id, before: current, after: allowed, effect: integration?"Antigravity uses Copilot for models and background requests; ordinary Gemini chat keeps Google":"Revoked routes are removed; added grants do not select models" }) + "\n");
     if (flags.preview) return "Preview only; access unchanged.";await confirm("Save source authorization for these clients?");
-    const result = await save({ operation: "source_access", id, allowed, impact_revision: graph.source_impacts[id].revision });
-    return print({ source: id, authorized_clients: result.clients.filter(client => client.allowed.includes(id)).map(client => TERMINAL_CLIENT_NAMES[client.id]), saved: true });
+    const base=allowed.filter(value=>value!=="antigravity");
+    const result = await save({ operation: "source_access", id, allowed:base, impact_revision: graph.source_impacts[id].revision });
+    if(integration&&integration.enabled!==allowed.includes("antigravity")){
+      try{await request({path:"gemini",body:{action:allowed.includes("antigravity")?"enable":"disable",...(allowed.includes("antigravity")?{accept_background_copilot:true}:{})}})}
+      catch(error){throw new Error("Other client access was saved, but Antigravity access could not be changed: "+error.message)}
+    }
+    return print({ source: id, authorized_clients: [...result.clients.filter(client => client.allowed.includes(id)).map(client => TERMINAL_CLIENT_NAMES[client.id]),...(allowed.includes("antigravity")?["Antigravity"]:[])], saved: true });
   }
   if (["enable", "disable", "remove"].includes(action)) {
     const impact = graph.source_impacts?.[id];

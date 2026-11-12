@@ -20,7 +20,7 @@
           <span class="nav-group" data-i18n="clients">Apps</span>
           <a class="nav-child" href="#codex" data-route="codex"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m7 8 4 4-4 4m7 0h3"/></svg><span>Codex</span></a>
           <a class="nav-child" href="#claude" data-route="claude"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 15a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3Z"/></svg><span>Claude</span></a>
-          <a class="nav-child" href="#gemini" data-route="gemini"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c1 6 4 9 10 10-6 1-9 4-10 10C11 16 8 13 2 12c6-1 9-4 10-10Z"/></svg><span>Gemini</span></a>
+          <a class="nav-child" href="#gemini" data-route="gemini"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c1 6 4 9 10 10-6 1-9 4-10 10C11 16 8 13 2 12c6-1 9-4 10-10Z"/></svg><span>Antigravity</span></a>
           <a href="#models" data-route="models"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 3 10 5-10 5L2 8Zm-10 9 10 5 10-5M2 16l10 5 10-5"/></svg><span data-i18n="model_services">Model sources</span></a>
           <a href="#usage" data-route="usage"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 3v18h18M7 16v-5m5 5V7m5 9V4"/></svg><span data-i18n="usage_and_diagnostics">Usage</span></a>
           <a href="#requests" data-route="requests"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span data-i18n="request_records">Requests</span></a>
@@ -163,15 +163,26 @@
         </details>
         </div>
         <div data-view="gemini" hidden>
+          <section class="connection-access"><div class="connection-row"><strong>Antigravity</strong><label class="switch-hit"><input id="gemini-enabled" type="checkbox" role="switch" aria-label="Antigravity" disabled></label></div></section>
           <section class="panel dashboard-section">
-            <h2>Gemini · Antigravity</h2>
-            <p id="gemini-state" data-i18n="gemini_disabled">Copilot integration is off</p>
-            <p id="gemini-app-state">—</p><p><span data-i18n="gemini_version">Version</span>: <span id="gemini-version">—</span></p>
-            <p class="hint" data-i18n="gemini_scope">Antigravity summaries, searches and image generation use Copilot. Ordinary Gemini chat keeps Google.</p>
-            <div class="connection-actions"><button id="gemini-enable" type="button" data-i18n="gemini_enable">Enable Antigravity</button><button id="gemini-disable" type="button" data-i18n="gemini_disable">Pause Copilot</button><button id="gemini-open" type="button" data-i18n="gemini_open">Open Gemini</button><button id="gemini-refresh" type="button" data-i18n="refresh">Refresh</button></div>
-            <p id="gemini-reopen" class="hint" data-i18n="gemini_reopen" hidden>Quit Gemini, then open it here. Active apps are never restarted automatically.</p>
-            <ul id="gemini-models"></ul><p id="gemini-note" class="hint" role="status"></p>
+            <div class="panel-heading"><h2 data-i18n="model_catalog">Model list</h2><span id="gemini-state" role="status">—</span></div>
+            <p id="gemini-route-state" class="client-sync-state" role="status">—</p>
+            <p class="hint" data-i18n="gemini_scope">Antigravity models, summaries, searches and image generation use Copilot. Ordinary Gemini chat keeps Google.</p>
+            <form id="gemini-model-form">
+              <div class="table-wrap"><table class="binding-table"><thead><tr><th data-i18n="model">Model</th><th data-i18n="source">Source</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th></tr></thead><tbody id="gemini-models"></tbody></table></div>
+              <div class="section-actions"><button id="gemini-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="gemini-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button></div>
+            </form>
+            <p id="gemini-note" class="hint" role="status" aria-live="polite"></p>
           </section>
+          <details class="panel dashboard-section" open>
+            <summary data-i18n="connection_details">Connection details</summary>
+            <p id="gemini-app-state" class="table-note">—</p><p class="hint"><span data-i18n="gemini_version">Version</span>: <span id="gemini-version">—</span></p>
+            <p id="gemini-reopen" class="hint" data-i18n="gemini_reopen" hidden>Quit Gemini, then open it here to load CCDX models.</p>
+            <div class="section-actions"><button id="gemini-open" type="button" data-i18n="gemini_open">Open Antigravity</button><button id="gemini-refresh" type="button" data-i18n="refresh">Refresh</button><a class="section-link" href="#models" data-source-link="github">GitHub Copilot</a></div>
+          </details>
+          <details class="panel dashboard-section"><summary data-i18n="request_performance">Request performance</summary>
+            <dl class="stats"><div><dt data-i18n="active">Active</dt><dd id="gemini-active">—</dd></div><div><dt data-i18n="failed">Failed</dt><dd id="gemini-failed">—</dd></div><div><dt>Copilot</dt><dd id="gemini-copilot">—</dd></div><div><dt data-i18n="requests">Requests</dt><dd id="gemini-total">—</dd></div></dl>
+          </details>
         </div>
 
         <div data-view="models" hidden>
@@ -224,6 +235,11 @@
             <a id="github-authorize" class="tool-link button-link" href="https://github.com/login/device" target="_blank" rel="noopener noreferrer" data-i18n="tools_copy_open_github">Copy &amp; open GitHub</a>
             <button id="github-cancel" type="button" data-i18n="cancel">Cancel</button>
             <p class="hint" data-i18n="tools_keep_old_signin">Old sign-in is kept until verification succeeds.</p>
+          </section>
+          <section class="tool-details" id="github-app-access"><h3 data-i18n="api_allowed_clients">Allowed clients</h3>
+            <div class="setting-row"><span>Codex</span><a class="section-link" href="#codex" data-i18n="api_manage">Manage</a></div>
+            <div class="setting-row"><label for="github-antigravity-enabled">Antigravity</label><input id="github-antigravity-enabled" type="checkbox" role="switch" disabled><a class="section-link" href="#gemini" data-i18n="api_manage">Manage</a></div>
+            <p class="hint" data-i18n="gemini_scope">Antigravity uses Copilot; ordinary Gemini chat keeps Google.</p><p id="github-antigravity-note" class="hint" role="status"></p>
           </section>
           <p id="github-account-note" class="hint" role="status" aria-live="polite"></p>
           <details class="tool-details"><summary data-i18n="tools_details">Check details</summary><dl class="failure-detail"><dt data-i18n="tools_storage">Saved sign-in</dt><dd id="github-store">—</dd><dt data-i18n="tools_error_code">Error code</dt><dd id="github-check-code">—</dd><dt>HTTP</dt><dd id="github-check-http">—</dd><dt data-i18n="tools_github_identity">GitHub identity</dt><dd id="github-identity-detail">—</dd><dt data-i18n="last_verified">Last checked</dt><dd id="github-checked-at">—</dd></dl></details>

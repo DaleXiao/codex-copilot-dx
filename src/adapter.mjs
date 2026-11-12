@@ -1,5 +1,6 @@
 import { imageModelCatalog } from "./image-models.mjs";
 import http from "node:http";
+import { readUserSettings } from "./user-settings.mjs";
 import { createNativeImagesHandler } from "./native-images.mjs";
 import { defaultCopilotClient } from "./copilot.mjs";
 import { buildCodexModelResponse } from "./codex-model-catalog.mjs";
@@ -245,7 +246,10 @@ export function createAdapterHandler(options = {}) {
       }
       try { snapshot.local_privacy = privacy.snapshot(); }
       catch { snapshot.local_privacy = { state: "error", error: "ccdx_privacy_settings_invalid" }; }
-      return { ...snapshot, ...(antigravity ? { gemini: antigravity.snapshot() } : {}), http_errors: httpErrors.snapshot(), ...(providers ? { providers } : {}) };
+      let gemini;
+      try { const saved=readUserSettings({env:options.env,home:options.dashboardOptions?.home});gemini=antigravity?antigravity.snapshot():{configured:Object.hasOwn(saved,"gemini_antigravity_enabled"),enabled:saved.gemini_antigravity_enabled===true,route_observed:false}; }
+      catch { gemini={enabled:false,error:"ccdx_antigravity_settings_invalid"}; }
+      return { ...snapshot, gemini, http_errors: httpErrors.snapshot(), ...(providers ? { providers } : {}) };
     },
   });
   const responsesHandler = createResponsesHandler({

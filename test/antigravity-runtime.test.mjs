@@ -57,3 +57,26 @@ test("switching an existing Copilot conversation to Google is rejected before Go
   assert.equal(copilotCalls,1);assert.equal(googleCalls,0);
   const stored=fs.readFileSync(path.join(path.dirname(f.file),"conversation-sources.json"),"utf8");assert.doesNotMatch(stored,/private fixture|fixture-root/);
 });
+
+test("model selection persists without altering other settings and rejects unavailable or duplicate IDs",async t=>{
+  const f=fixture(t);await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");
+  const ids=f.runtime.snapshot().models.map(model=>model.id);
+  const saved=await f.runtime.action({action:"models",models:[ids[2]]},"http://127.0.0.1:2026");
+  assert.deepEqual(saved.models.filter(model=>model.selected).map(model=>model.id),[ids[2]]);
+  assert.equal(JSON.parse(fs.readFileSync(f.file)).future,"keep");
+  const before=fs.readFileSync(f.file,"utf8");
+  for(const models of [["unknown"],[ids[0],ids[0]],null,"all"])
+    await assert.rejects(f.runtime.action({action:"models",models},"http://127.0.0.1:2026"),/available/);
+  await assert.rejects(f.runtime.action({action:"enable",models:[]},"http://127.0.0.1:2026"),/Models require/);
+  assert.equal(fs.readFileSync(f.file,"utf8"),before);
+  const empty=await f.runtime.action({action:"models",models:[]},"http://127.0.0.1:2026");assert.equal(empty.models.filter(model=>model.selected).length,0);
+  assert.equal(empty.enabled,true);assert.equal(f.calls.length,0);
+});
+test("terminal status includes Antigravity before its first UI visit and summary never inspects the native App",async t=>{
+  const f=fixture(t);await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");
+  let inspections=0;const options={env:{},dashboardOptions:{home:f.home},antigravityOptions:{inspect:async()=>{inspections++;throw Error("should not inspect")}}};
+  const result=await invokeAdapter(options,{method:"GET",url:"/_ccdx/status",headers:{host:"127.0.0.1:2026"}});
+  assert.equal(JSON.parse(result.text).gemini.enabled,true);
+  const summary=await invokeAdapter(options,{method:"GET",url:"/_ccdx/ui/gemini?scope=summary",headers:{host:"127.0.0.1:2026","x-ccdx-dashboard":"1"}});
+  assert.equal(summary.status,200);assert.equal(JSON.parse(summary.text).enabled,true);assert.equal(inspections,0);
+});

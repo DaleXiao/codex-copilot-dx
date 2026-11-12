@@ -179,7 +179,7 @@ export async function handleDashboardApi(req, res, pathname, {
     if (req.method === "POST" && (!sameOrigin(req) || !/^application\/json(?:\s*;|$)/i.test(req.headers["content-type"] || ""))) { sendJson(res, 403, { error: "Gemini setup requires same-origin JSON" });return; }
     const abort = createRequestAbort(req, res);abort.setTimeout(5000, "request_body_timeout");
     try {
-      const input = req.method === "POST" ? await readJsonBody(req, { maxBodyBytes: 8192, maxDecodedBodyBytes: 8192, signal: abort.signal }) : {};
+      const input = req.method === "POST" ? await readJsonBody(req, { maxBodyBytes: 8192, maxDecodedBodyBytes: 8192, signal: abort.signal }) : new URL(req.url, "http://localhost").searchParams.get("scope")==="summary"?{action:"summary"}:{};
       abort.clearTimeout();sendJson(res, 200, await geminiFn(input, `http://${req.headers.host}`));
     } catch (error) { sendJson(res, error.statusCode || 400, { error: error.message }); }
     finally { abort.cleanup(); }return;

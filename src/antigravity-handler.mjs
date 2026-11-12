@@ -30,7 +30,7 @@ function groundedSearch(result,query){
     groundingMetadata:{webSearchQueries:[query],groundingChunks:sources.map(item=>({web:{uri:item.url,title:item.title||item.url}}))}}]};
 }
 
-export function createAntigravityHandler({client,models=()=>[],enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},
+export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},
   fetchGoogle=fetch,googleOrigin=GOOGLE_ORIGIN,requestBodyTimeoutMs=120000,upstreamTimeoutMs=180000,streamIdleTimeoutMs=60000}={}) {
   if(![GOOGLE_ORIGIN,"https://cloudcode-pa.googleapis.com"].includes(googleOrigin))throw new Error("Unrecognized Google control origin");
   let active=0,observed=false;
@@ -61,7 +61,7 @@ export function createAntigravityHandler({client,models=()=>[],enabled=()=>false
         if(generation)markUpstreamHeaders(upstream.status);
         if(method==="fetchAvailableModels"&&upstream.ok){
           const value=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:8*1024*1024,signal:abort.signal,label:"Google model catalog"}));
-          const merged=mergeAntigravityModels(value,models());
+          const merged=mergeAntigravityModels(value,models(),selectedModels());
           res.writeHead(200,{"Content-Type":"application/json","Cache-Control":"no-store"});res.end(JSON.stringify(merged));return;
         }
         res.writeHead(upstream.status,safeUpstreamResponseHeaders(upstream.headers));
@@ -74,7 +74,7 @@ export function createAntigravityHandler({client,models=()=>[],enabled=()=>false
         observed=true;return await native();
       }
       if(req.method!=="POST"||!body||typeof body.model!=="string"||!body.request)throw httpError("Invalid Antigravity generation request",400);
-      const copilotModels=antigravityCopilotModels(models()),selected=copilotModels.find(model=>model.id===body.model);
+      const selection=selectedModels(),copilotModels=antigravityCopilotModels(models()),selected=copilotModels.find(model=>model.id===body.model&&(selection===null||selection.includes(model.id)));
       if(body.requestType==="agent"&&!selected){
         if(body.model.startsWith(ANTIGRAVITY_MODEL_PREFIX))throw httpError("The selected Copilot model is unavailable",503);
         await guardSource?.(body,"google",abort.signal);

@@ -260,7 +260,9 @@ try {
         assert.equal(await page.evaluate(() => atomMotions[0].options.duration), 450);
         assert.equal(await page.locator(".sidebar-brand #status-icon").count(), 1);
         assert.equal(await page.locator("h1 #status-icon").count(), 0);
-        assert.equal(await page.locator(".sidebar nav a .nav-icon").count(), 8);
+        assert.equal(await page.locator(".sidebar nav a .nav-icon").count(), 9);
+        assert.equal(await page.locator('[data-route="gemini"] .nav-icon').count(), 1);
+        assert.equal(await page.locator('[data-view="gemini"]').count(), 1);
         assert.equal(await page.locator("#open-animation").count(), 0);
         assert.match(await page.locator("#source-summary").innerText(), /3/);
         assert.equal(await page.locator("#source-detail span").count(), 3);

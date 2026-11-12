@@ -36,6 +36,15 @@ function fixture() {
   const run = args => runManagementCommand(parseCliArgs(args), options);
   return { state, data, calls, output, options, run };
 }
+test("app list uses observed Gemini state without inspecting the native App",async()=>{
+  const f=fixture();
+  let rows=JSON.parse(await f.run(["app","list","--format","json"]));
+  assert.equal(rows.find(row=>row.id==="gemini").setup,"Not checked");
+  f.data.gemini={enabled:true,activity:{active:0}};
+  rows=JSON.parse(await f.run(["app","list","--format","json"]));
+  assert.equal(rows.filter(row=>row.id==="gemini").length,1);assert.equal(rows.find(row=>row.id==="gemini").setup,"Configured");
+  assert.equal(f.calls.some(call=>call.path==="gemini"),false);
+});
 test("privacy commands and the existing running preference alias use the WebUI preparation transaction", async t => {
   const f = fixture(), home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-cli-privacy-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   f.options.home = home;f.options.env = {};

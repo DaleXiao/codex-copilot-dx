@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 import {inspectGeminiApp,planGeminiAppLaunch} from "../src/gemini-app.mjs";
 
 const info={CFBundleIdentifier:"com.google.GeminiMacOS",CFBundleExecutable:"Gemini",CFBundleShortVersionString:"1.135.1.1291"};
 const options=(metadata=info,processes="")=>{const calls=[];return {calls,platform:"darwin",exists:()=>true,exec:async(command,args)=>{calls.push({command,args});return {stdout:command.endsWith("plutil")?JSON.stringify(metadata):command.endsWith("ps")?processes:""}}}};
 
 test("native Gemini identity and existing process are inspected without controlling it",async()=>{
-  const input=options(info,"38378 /Applications/Gemini.app/Contents/MacOS/Gemini\n38444 /Applications/Gemini.app/Contents/Helpers/agy");
+  const input=options(info,"38378 "+path.join("/Applications/Gemini.app","Contents/MacOS/Gemini")+"\n38444 "+path.join("/Applications/Gemini.app","Contents/Helpers/agy"));
   const state=await inspectGeminiApp(input);assert.equal(state.status,"running");assert.deepEqual(state.pids,[38378]);
   assert.deepEqual(input.calls.map(x=>x.command),["/usr/bin/plutil","/usr/bin/codesign","/bin/ps"]);
 });
@@ -31,5 +32,5 @@ test("remote routes and overrides of existing gateways are refused",()=>{
 });
 test("unsupported platforms and missing native helpers remain explicit",async()=>{
   assert.equal((await inspectGeminiApp({platform:"win32"})).status,"unsupported");
-  const input=options();input.exists=file=>!file.endsWith("/agy");assert.equal((await inspectGeminiApp(input)).status,"antigravity_unavailable");
+  const input=options();input.exists=file=>path.basename(file)!=="agy";assert.equal((await inspectGeminiApp(input)).status,"antigravity_unavailable");
 });

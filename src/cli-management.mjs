@@ -194,8 +194,8 @@ export async function runManagementCommand(command, options = {}) {
     }
     const graph = await connection(), snapshot = (await readStatus()).data, view = projectTerminalState(snapshot);
     if (action === "list") {
-      const clients=view.clients.filter(client=>client.id!=="gemini");
-      try { const state=await request({path:"gemini",timeoutMs:20000});if(state.source==="gemini_antigravity")clients.push({id:"gemini",name:"Gemini · Antigravity",setup:state.enabled?"configured":"paused",active:state.activity.active}); } catch { /* Older running services do not provide Gemini setup. */ }
+      const clients=[...view.clients];
+      if(!clients.some(client=>client.id==="gemini"))clients.push({id:"gemini",name:"Gemini · Antigravity",setup:"Not checked",active:null});
       return print(clients, [["id", "ID"], ["name", "Client"], ["setup", "Setup"], ["active", "Active"]]);
     }
     const id = ids.app ? CLI_CLIENTS[ids.app] : "codex", client = getClient(graph, id), modelPlan = client.model_plan;

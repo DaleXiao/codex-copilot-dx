@@ -63,6 +63,9 @@ all Antigravity summaries, searches and image generation use GitHub Copilot,
 including background work from Google-model sessions. Ordinary Gemini chat
 keeps its Google route. No OpenAI account or search fallback is used.
 
+`app list` uses already observed Gemini state without waiting for native App
+inspection. Use `app gemini status` to check the signed installation explicitly.
+
 Carbon and Argon appear with Low, Medium and High reasoning levels when the
 Copilot account advertises them. Google models, account controls and defaults
 are retained. Conversations keep their initial Google/Copilot source; start a

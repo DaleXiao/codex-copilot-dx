@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { codexClientCatalog } from "../src/clients/codex-models.mjs";
+import { codexClientCatalog, codexSourceCatalog } from "../src/clients/codex-models.mjs";
 
 const model = { id: "gpt-fixture", public_id: "gpt-fixture", source_id: "github", source_name: "GitHub",
   capability: { values: { input_modalities: ["text"], reasoning_efforts: ["low", "high"] } } };
@@ -30,4 +30,16 @@ test("unknown modalities retain the existing native template while explicit visi
   assert.deepEqual(project({}).input_modalities, ["text", "image"]);
   assert.deepEqual(project({ input_modalities: ["text", "image"] }).input_modalities, ["text", "image"]);
   assert.deepEqual(project({ input_modalities: ["text"] }).input_modalities, ["text"]);
+});
+
+test("only GitHub Carbon uses Responses Lite for the native standalone web tool", () => {
+  const carbon = { ...model, id: "gemini-4-carbon", public_id: "gemini-4-carbon" };
+  const apiCarbon = { ...carbon, source_id: "api_other", public_id: "api_other/carbon" };
+  const result = codexClientCatalog({ models: [carbon, model, apiCarbon] })({ data: [] },
+    { models: [{ slug: "gemini-4-carbon", use_responses_lite: false }, { slug: "gpt-fixture", use_responses_lite: false }] });
+  assert.equal(result.models[0].use_responses_lite, true);
+  assert.equal(result.models[1].use_responses_lite, false);
+  assert.equal(result.models[2].use_responses_lite, undefined);
+  assert.equal(codexSourceCatalog({ id: "github", models: () => [carbon] })({}).models[0].use_responses_lite, true);
+  assert.equal(codexSourceCatalog({ id: "api_other", models: () => [carbon] })({}).models[0].use_responses_lite, undefined);
 });

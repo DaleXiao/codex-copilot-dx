@@ -78,6 +78,7 @@ function requestTexts(body, protocol) {
       else text(item, "content");
     }
   }
+  if (protocol === "search") leaves(body.commands, add);
   return { items, nested };
 }
 function ruleSpans(text, personal) {

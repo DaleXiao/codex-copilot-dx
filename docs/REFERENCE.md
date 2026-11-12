@@ -246,7 +246,8 @@ history to fit a budget. Reasoning-budget conflicts and unsupported declared
 levels fail locally. Native search is recorded per protocol: Responses support
 does not imply Messages support. Native tool/citation/replay data remains on the
 existing protocol path; no shared search executor or external search account is
-added. Exact input counting and compression thresholds are not proven by a small
+added for custom APIs. GitHub Copilot's Gemini 4 Carbon uses its separate search
+path described below. Exact input counting and compression thresholds are not proven by a small
 reply; the upstream still enforces its actual limits.
 
 Automatic sync can be disabled per client. Shared Claude fields are preserved
@@ -746,6 +747,24 @@ For `/v1/responses/compact`, CCDX sends one terminal `compaction_trigger`, valid
 Changing the model or transport of a continuation can require removing incompatible encrypted history from the forwarded request. A specific upstream encrypted-state verification failure can also trigger one sanitized retry, including when a nominally successful HTTP response ends with `response.failed`. CCDX withholds only the pre-output prelude of an encrypted continuation while evaluating that terminal event; it never retries after visible model output, so it cannot duplicate an already-started answer. Unrelated failures are not retried. CCDX does not decrypt that state locally.
 
 Native Responses forwards Codex `agent_message` items unchanged. When a model requires Chat Completions, CCDX frames them as messages from another agent, not human input or approval, retaining author/recipient, typed text/refusal/reasoning and representable image/screenshot content. Content unsupported by Chat, including file, audio or opaque encrypted parts, receives an explicit compatibility error instead of being serialized into ordinary text. This projection does not introduce another model request or change native Responses, Fast, Auto-review or compaction routing.
+
+GitHub Copilot's `gemini-4-carbon` uses Chat Completions. CCDX maps Codex custom,
+namespaced and client-side tool-search calls to function tools and restores their
+original identities in the reply and conversation history. The upstream receives
+ordinary function tools; free-form grammar constraints are included in the tool
+description rather than enforced by the Chat protocol. Other models retain their
+existing routing and compatibility checks.
+
+Carbon's standalone web search uses the current GitHub Copilot account. Only
+search queries and requested constraints are sent to its search endpoint; the
+conversation input and ChatGPT credentials are not forwarded. With live web
+access, opening a page uses the installed macOS Copilot runtime and contacts the
+page from the local machine. Cached mode returns indexed excerpts. Page reads
+are limited to the first 20,000 characters, and image/literature search, PDF
+screenshots, finance, weather and sports are not supported. Search references
+are process-local and may expire; date restrictions are not guaranteed. A
+configured domain policy that cannot be enforced is rejected. Local privacy
+masking applies to the search commands when enabled.
 
 After the stream handshake succeeds, stream liveness uses the idle timeout rather than the expired handshake deadline. Eligible HTTP-200 failure recovery acquires a bounded preparation budget and history admission before rebuilding its payload, then releases those reservations when the retry opens upstream or fails. Normal streams still release preparation admission after their response headers arrive.
 

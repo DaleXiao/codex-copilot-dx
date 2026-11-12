@@ -282,7 +282,7 @@ function disallowedUpstreamTool() {
   return invalidUpstreamStream("Upstream did not honor the allowed tools", "upstream_tool_not_allowed");
 }
 
-export function chatToResponses(chatResp, model, { toolChoice } = {}) {
+export function chatToResponses(chatResp, model, { toolChoice, toolAdapter } = {}) {
   const id = `resp_${uid()}`, choice = chatResp.choices?.[0], msg = choice?.message, output = [];
   const terminal = chatTerminal(choice?.finish_reason);
   const allowed = allowedToolNames(toolChoice);
@@ -291,7 +291,9 @@ export function chatToResponses(chatResp, model, { toolChoice } = {}) {
     return terminal.status === "completed" ? !allowed.has(name) : name && ![...allowed].some(candidate => candidate.startsWith(name));
   }) || terminal.status === "completed" && toolChoice.allowed_tools.mode === "required" && !msg?.tool_calls?.length)) throw disallowedUpstreamTool();
   if (msg?.content) output.push({ type: "message", id: `msg_${uid()}`, role: "assistant", status: terminal.status, content: [{ type: "output_text", text: msg.content }] });
-  if (msg?.tool_calls) for (const tc of msg.tool_calls) output.push({ type: "function_call", id: tc.id, call_id: tc.id, name: tc.function.name, arguments: tc.function.arguments, status: terminal.status });
+  if (msg?.tool_calls) for (const tc of msg.tool_calls) output.push(toolAdapter
+    ? toolAdapter.outputItem({ id: tc.id, callId: tc.id, name: tc.function?.name, arguments: tc.function?.arguments }, terminal.status)
+    : { type: "function_call", id: tc.id, call_id: tc.id, name: tc.function.name, arguments: tc.function.arguments, status: terminal.status });
   return { id, object: "response", ...terminal, model: chatResp.model || model, output, usage: chatResp.usage ? { input_tokens: chatResp.usage.prompt_tokens || 0, output_tokens: chatResp.usage.completion_tokens || 0, total_tokens: chatResp.usage.total_tokens || 0 } : undefined };
 }
 
@@ -313,6 +315,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
     releaseRequest,
     signal,
     streamIdleTimeoutMs,
+    toolAdapter,
   } = options;
   options = undefined;
   if (upstreamReq !== chatReq) bodyText = undefined;
@@ -408,9 +411,10 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
       arguments: "",
       outputIndex: nextOutputIndex++,
     };
+    if (toolAdapter) tool.upstreamIdKnown = Boolean(chunk.id);
     if (allowed && !allowedPrefix(tool.name)) throw disallowedUpstreamTool();
     toolCalls.set(key, tool);
-    await emitEvent("response.output_item.added", {
+    if (!toolAdapter) await emitEvent("response.output_item.added", {
       output_index: tool.outputIndex,
       item: {
         type: "function_call",
@@ -443,6 +447,10 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
       output[messageItem.outputIndex] = item;
     }
     for (const tool of toolCalls.values()) {
+      if (toolAdapter) {
+        output[tool.outputIndex] = await toolAdapter.finish(tool, terminal, emitEvent);
+        continue;
+      }
       const item = {
         type: "function_call",
         id: tool.id,
@@ -522,7 +530,7 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
           const { tool, created } = await ensureToolCall(tc);
-          if (tc.id) tool.callId = tc.id;
+          if (tc.id) { tool.callId = tc.id;if (toolAdapter) tool.upstreamIdKnown = true; }
           if (!created && tc.function?.name) {
             const name = tc.function.name;
             let completeRepeat = name === tool.name && declaredToolNames.has(name);
@@ -539,12 +547,13 @@ export async function forwardToChat(chatReq, emitEvent, onDone, onError, options
           toolArgumentGuard.observe(tool.outputIndex, argumentDelta);
           if (argumentDelta) {
             tool.arguments += argumentDelta;
-            await emitEvent("response.function_call_arguments.delta", {
+            if (!toolAdapter) await emitEvent("response.function_call_arguments.delta", {
               output_index: tool.outputIndex,
               item_id: tool.id,
               delta: argumentDelta,
             });
           }
+          if (toolAdapter) await toolAdapter.update(tool, emitEvent);
         }
       }
     }

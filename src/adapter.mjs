@@ -179,6 +179,7 @@ export function createAdapterHandler(options = {}) {
   const imagePressure = options.imagePressure || createResponsesImagePressureController();
   const responseFailures = options.responseFailures || createResponseFailureDiagnostics();
   const privacy = options.privacy || options.providerRuntime?.privacy || createLocalPrivacy({ env: options.env, home: options.dashboardOptions?.home });
+  let carbonSearch = null, copilotWeb = null;
   const httpErrors = createHttpFailureDiagnostics();
   const nativeImages = createNativeImagesHandler({ client: codexClient, acquireRequest, privacy, env: options.env, home: options.dashboardOptions?.home,
     models: options.imageModels || (() => options.providerRuntime?.imageModels?.().models || imageModelCatalog(codexModelRegistry?.models)),
@@ -200,7 +201,7 @@ export function createAdapterHandler(options = {}) {
     sources: [requestMetrics, streamPerformanceMetrics, options.providerRuntime?.claudePerformance, privacy],
     snapshot: () => {
       const requests = requestMetrics.snapshot(), image = nativeImages.stats();
-      const active = ["responses", "responses_compact", "messages"].reduce((sum, route) => sum + requests.by_route[route].active, image?.active || 0);
+      const active = ["responses", "responses_compact", "messages", "search"].reduce((sum, route) => sum + requests.by_route[route].active, image?.active || 0);
       const claude = options.providerRuntime?.claudePerformance?.activitySnapshot?.();
       return { ...adapterHealthPayload(), scope: "activity", uptime_ms: Math.round(process.uptime() * 1000), local_privacy: privacy.snapshot(),
         model_activity: { active }, requests, runtime_usage: runtimeUsageSnapshot(),
@@ -301,6 +302,23 @@ export function createAdapterHandler(options = {}) {
   const dispatch = async (req, res, pathname) => {
     if (options.isDraining?.() && ![ADAPTER_STATUS_PATH, ADAPTER_HEALTH_PATH].includes(pathname)) {
       res.setHeader("Retry-After", "1");sendJsonError(res, httpError("CCDX is switching versions; retry shortly", 503));return;
+    }
+    if (pathname === "/v1/alpha/search") {
+      if (req.method !== "POST") { res.setHeader?.("Allow", "POST");sendJsonError(res, httpError("Search requires POST", 405));return; }
+      if (!isLoopbackAddress(req.socket?.remoteAddress) || !req.headers?.host || !isLoopbackHostHeader(req.headers.host)
+        || Object.hasOwn(req.headers, "origin")) { sendJsonError(res, httpError("Search requires native local clients", 403));return; }
+      if (!carbonSearch) {
+        const { createCarbonSearchHandler } = await import("./carbon-search.mjs");
+        if (!options.carbonSearchFn) {
+          const { createCopilotWeb } = await import("./copilot-web.mjs");
+          copilotWeb = createCopilotWeb({ client: codexClient });
+        }
+        carbonSearch = createCarbonSearchHandler({ acquireRequest, privacy, requestBodyTimeoutMs, upstreamTimeoutMs,
+          searchFn: options.carbonSearchFn || copilotWeb.search,
+          resolveProvider: options.providerRuntime ? (body, request) =>
+            options.providerRuntime.resolveCodex?.(body, request) || options.providerRuntime.current(request) : undefined });
+      }
+      return carbonSearch(req, res);
     }
     if (pathname.startsWith("/anthropic/")) {
       if (!isLoopbackAddress(req.socket?.remoteAddress) || !req.headers?.host || !isLoopbackHostHeader(req.headers.host)
@@ -447,7 +465,7 @@ export function createAdapterHandler(options = {}) {
     const complete = trackRequest ? requestMetrics.begin(routeName) : () => {};
     const streamPerformance = trackRequest && !isDiscoveryRequest(req.method, pathname) ? streamPerformanceMetrics.begin(routeName, { requestId, application: requestApplication(req.headers) }) : null;
     let finishTerminalActivity = () => {};
-    if (trackRequest && !isDiscoveryRequest(req.method, pathname) && ["responses", "responses_compact", "messages", "images", "image_mcp"].includes(routeName)) {
+    if (trackRequest && !isDiscoveryRequest(req.method, pathname) && ["responses", "responses_compact", "messages", "images", "image_mcp", "search"].includes(routeName)) {
       try {
         const finish = options.terminalActivity?.beginRequest?.();
         if (typeof finish === "function") finishTerminalActivity = finish;
@@ -461,7 +479,7 @@ export function createAdapterHandler(options = {}) {
       if (trackRequest && (statusCode >= 400 || httpEvidence.model_error === true)) {
         try { httpErrors.record(buildHttpFailureDetails({ ...httpEvidence, statusCode, route: routeName, requestId, model: context?.model || context?.requestedModel,
           method: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"].includes(req.method) ? req.method : "OTHER",
-          target: ["/v1/images/generations", "/v1/images/edits", "/v1/responses", "/v1/responses/compact", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens", "/anthropic/v1/models", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",
+          target: ["/v1/images/generations", "/v1/images/edits", "/v1/responses", "/v1/responses/compact", "/v1/alpha/search", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens", "/anthropic/v1/models", "/mcp/image", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp/image"].includes(pathname) ? pathname : "unrecognized_path",
           request_options: context?.requestOptions, upstream_attempts: streamPerformance?.attemptCount?.() ?? context?.upstreamAttempts ?? 0,
           attempt_timings: streamPerformance?.attemptTimings?.(),
           requested_model: context?.requestedModel, provider: context?.provider, application: context?.application || requestApplication(req.headers),
@@ -536,7 +554,7 @@ export function createAdapterHandler(options = {}) {
     if (state?.version !== 1) throw new Error("Unsupported service-state version");
     importResponseHistory(state.history);await optionalRoutes.importState(state.optional);
   };
-  handler.cleanup = () => { activityEvents.close();optionalRoutes.dispose();if (!options.providerRuntime?.privacy) privacy.close(); };
+  handler.cleanup = () => { activityEvents.close();optionalRoutes.dispose();copilotWeb?.close();if (!options.providerRuntime?.privacy) privacy.close(); };
   return handler;
 }
 

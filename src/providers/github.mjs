@@ -44,7 +44,9 @@ export function createGithubProvider({ client = defaultCopilotClient, profileId 
         const native = nativeBase
           || ((customTools || body?.tool_choice?.type === "allowed_tools") && Array.isArray(endpoints)
             && (endpoints.includes("/responses") || endpoints.includes("/v1/responses")));
-        if (customTools && !native) {
+        const carbonChat = upstreamModel === "gemini-4-carbon" && Array.isArray(endpoints)
+          && modelSupportsChatCompletions({ supported_endpoints: endpoints });
+        if (customTools && !native && !carbonChat) {
           const message = `Model ${upstreamModel} has custom tool items that cannot be represented by Chat Completions, and cached endpoint metadata does not confirm Responses support`;
           throw Object.assign(new Error(message), { statusCode: 400, code: "ccdx_custom_tools_require_responses",
             jsonBody: { error: { message, type: "invalid_request_error", code: "ccdx_custom_tools_require_responses", model: upstreamModel } } });

@@ -643,7 +643,9 @@ Responses compatibility only rewrites a standalone tool output after an explicit
 missing-call-ID HTTP validation failure; the Chat bridge represents it as marked
 untrusted context. Valid paired outputs are unchanged. Tool-search, deferred and
 namespaced functions use native Responses when confirmed; Chat-only routes reject
-them instead of discarding those semantics. Allowed function lists retain their
+them instead of discarding those semantics, except that GitHub Carbon maps its
+client tools through a dedicated Chat bridge. Its Copilot search and page reader
+load only when requested. Allowed function lists retain their
 restriction and returned Chat calls are checked before completion. Chat cache
 fields are forwarded only when the catalog explicitly advertises each field.
 

@@ -17,6 +17,8 @@ const args = process.argv.slice(2), binary = args[args.indexOf("--codex") + 1];
 assert.ok(args.includes("--codex") && path.isAbsolute(binary), "Supply --codex /absolute/path/to/codex");
 process.env.CCDX_DISABLE_USAGE = "1";
 const live = args.includes("--live-ghc");
+const carbon = args.includes("--carbon"), modelId = carbon ? "gemini-4-carbon" : "gpt-6.1-sol";
+assert.ok(!(live && carbon), "Carbon replay uses synthetic upstream responses");
 const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "ccdx-image-host-replay-")));
 const profile = path.join(root, "profile"), cwd = path.join(root, "project");
 await fs.mkdir(profile);await fs.mkdir(cwd);
@@ -32,8 +34,8 @@ let child, nextId = 0, buffer = "", stderr = "", sequence = 0, imageIndex = 0, s
 const generated=[]; const mcpCalls=[];
 const finalMessage = () => ({ id: `msg_${sequence}`, type: "message", role: "assistant", phase: "final_answer", status: "completed", content: [{ type: "output_text", text: "Native image complete.", annotations: [] }] });
 const client = {
-  getCachedModelEndpoints: () => ["/responses"],
-  listModels: async () => ({ status: 200, body: JSON.stringify({ data: [{ id: "gpt-6.1-sol", vendor: "OpenAI", model_picker_enabled: true, policy: { state: "enabled" }, supported_endpoints: ["/responses"], capabilities: { type: "chat", supports: { reasoning_effort: ["low", "high"] } } }, { id: "gpt-image-2.5-flare", name: "GPT Image 2.5 Flare", model_picker_enabled: false, capabilities: { type: "image" }, supported_endpoints: ["/v1/images/generations", "/v1/images/edits"] }] }) }),
+  getCachedModelEndpoints: () => carbon ? ["/chat/completions"] : ["/responses"],
+  listModels: async () => ({ status: 200, body: JSON.stringify({ data: [{ id: "gpt-6.1-sol", vendor: "OpenAI", model_picker_enabled: true, policy: { state: "enabled" }, supported_endpoints: ["/responses"], capabilities: { type: "chat", supports: { reasoning_effort: ["low", "high"] } } }, ...(carbon ? [{ id: modelId, vendor: "Google", model_picker_enabled: true, supported_endpoints: ["/chat/completions"], capabilities: { type: "chat", supports: { reasoning_effort: ["low", "high"] } } }] : []), { id: "gpt-image-2.5-flare", name: "GPT Image 2.5 Flare", model_picker_enabled: false, capabilities: { type: "image" }, supported_endpoints: ["/v1/images/generations", "/v1/images/edits"] }] }) }),
   images: async (operation, body) => {
     calls.push({ operation, body });assert.equal(body.model, "gpt-image-2.5-flare");
     if (edit) { assert.equal(operation, "edits");assert.equal(body.images.length, 1);assert.equal(body.images[0].image_url, `data:image/png;base64,${returnedPixels[imageIndex - 1]}`); }
@@ -55,8 +57,27 @@ const client = {
     }
     return new Response(syntheticResponse([finalMessage()],`resp_${sequence++}`),{headers:{"content-type":"text/event-stream"}});
   },
+  chatCompletions: async body => {
+    assert.ok(carbon, "Chat fallback is used only for the Carbon replay");
+    const data = value => "data: " + JSON.stringify(value) + "\n\n";
+    if (step++ % 2 === 0) {
+      const offered = (body.tools || []).find(tool => /(?:^|__)exec$/.test(tool.function?.name || ""));
+      assert.ok(offered, "Carbon must receive the code-mode tool");
+      assert.ok(JSON.stringify(body).includes("ccdx_images__imagegen"), "Host image tool must remain available");
+      const args = { prompt: edit ? "Make it red" : "A blue square", mode: edit ? "edit" : "generate", quality: "low", size: "1024x1024" };
+      const input = "const r = await tools.ccdx_images__imagegen(" + JSON.stringify(args) + "); text(r);";
+      const chunks = [
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_" + sequence, type: "function",
+          function: { name: offered.function.name, arguments: JSON.stringify({ input }) } }] }, finish_reason: "tool_calls" }] },
+      ];
+      sequence++;
+      return new Response(chunks.map(data).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    }
+    return new Response(data({ choices: [{ delta: { content: "Native image complete." }, finish_reason: "stop" }] }) + "data: [DONE]\n\n",
+      { headers: { "content-type": "text/event-stream" } });
+  },
 };
-const handler = createAdapterHandler({ codexClient: client, responsesFn: client.responses, getCachedModelEndpointsFn: client.getCachedModelEndpoints, codexModelCatalog: { load: async () => catalog },
+const handler = createAdapterHandler({ codexClient: client, responsesFn: client.responses, chatCompletionsFn: client.chatCompletions, getCachedModelEndpointsFn: client.getCachedModelEndpoints, codexModelCatalog: { load: async () => catalog },
   env: {}, dashboardOptions: { home: root, serviceControl: { snapshot: () => ({ features: { image: { enabled: true } } }) } },
   imageModels: () => [{ id: "gpt-image-2.5-flare", editing: true }], imagesEnabled: () => true, imagesAllowed: () => true });
 const server = http.createServer((req, res) => {
@@ -74,7 +95,7 @@ await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const base = `http://127.0.0.1:${server.address().port}/v1`;
 const runtimeEnv = testEnvironment(root, { CODEX_HOME: profile, OPENAI_BASE_URL: base,
   HTTP_PROXY: "http://127.0.0.1:1", HTTPS_PROXY: "http://127.0.0.1:1", NO_PROXY: "127.0.0.1,localhost", CODEX_CONNECTORS_TOKEN: "{{CCDX_12ffaa3c972f75110a330979}}" });
-const config = `model = "gpt-6.1-sol"
+const config = `model = "${modelId}"
 model_provider = "openai"
 openai_base_url = "${base}"
 chatgpt_base_url = "http://127.0.0.1:${server.address().port}"
@@ -155,11 +176,16 @@ async function startClient() {
 try {
   const version = execFileSync(binary, ["--version"], { env: runtimeEnv, encoding: "utf8" }).trim();
   catalog = JSON.parse(execFileSync(binary, ["debug", "models", "--bundled"], { env: runtimeEnv, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }));
+  if (carbon) {
+    const template = catalog.models.find(model => model.slug === "gpt-6.1-sol");
+    assert.ok(template, "A Codex model template is required for the synthetic Carbon replay");
+    catalog.models.push({ ...structuredClone(template), slug: modelId, display_name: "Gemini 4 Carbon", use_responses_lite: true });
+  }
   await startClient();
   const available = await call("model/list", { includeHidden: false, cursor: null, limit: 100 });
-  assert.ok(available.data.some(model => model.id === "gpt-6.1-sol"));
+  assert.ok(available.data.some(model => model.id === modelId));
   assert.ok(available.data.every(model => model.id !== "gpt-image-2.5-flare"), "Images must not enter the native conversation picker");
-  const thread = await call("thread/start", { cwd, model: "gpt-6.1-sol", modelProvider: "openai", serviceName: "codex_work_desktop", approvalPolicy: "never", sandbox: "workspace-write"});threadId = thread.thread.id;
+  const thread = await call("thread/start", { cwd, model: modelId, modelProvider: "openai", serviceName: "codex_work_desktop", approvalPolicy: "never", sandbox: "workspace-write"});threadId = thread.thread.id;
   const authBytes=await fs.readFile(path.join(profile,"auth.json"));
   const account=await call("account/read",{refreshToken:false});
   const apps=await call("app/list",{threadId,forceRefetch:true,limit:100,cursor:null});

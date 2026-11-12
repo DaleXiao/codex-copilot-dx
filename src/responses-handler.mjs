@@ -17,7 +17,7 @@ import {
   modelContextWindowTokens,
   resolveOpenAIModel,
 } from "./models.mjs";
-import { chatToResponses, forwardToChat } from "./responses-bridge.mjs";
+import { chatToResponses, forwardToChat, responsesBodyUsesCustomTools } from "./responses-bridge.mjs";
 import { prepareResponsesChatPayload } from "./responses-chat-payload.mjs";
 import { prepareResponsesCompactionRequest } from "./responses-compaction.mjs";
 import { clearResponsesToolOutputPartsCache } from "./responses-content.mjs";
@@ -303,7 +303,16 @@ export function createResponsesHandler(options) {
       } else if (routePlan.protocol === "openai-chat-completions") {
         const chatSupport = (Array.isArray(modelRegistry?.models) ? modelRegistry.models : modelRegistry?.models?.data)
           ?.find(model => model?.id === upstreamModel)?.capabilities?.supports;
-        let { chatReq, bodyText } = await prepareResponsesChatPayload(prepared, {
+        const carbonRoute = provider.id === "github" && upstreamModel === "gemini-4-carbon";
+        let carbonBridge = null, carbonStream = null;
+        if (carbonRoute && responsesBodyUsesCustomTools(prepared.body)) {
+          const { prepareCarbonToolBridge, createCarbonStreamAdapter } = await import("./carbon-tool-bridge.mjs");
+          carbonBridge = prepareCarbonToolBridge(prepared.body, prepared.currentInputStart);
+          if (streaming) carbonStream = createCarbonStreamAdapter(carbonBridge);
+        }
+        const chatContext = carbonBridge
+          ? { ...prepared, body: carbonBridge.body, currentInputStart: carbonBridge.currentInputStart } : prepared;
+        let { chatReq, bodyText } = await prepareResponsesChatPayload(chatContext, {
           assertActive: assertPrepareActive,
           payloadOptions: responsesPayloadOptions,
           reasoningEfforts: chatSupport?.reasoning_effort,
@@ -328,7 +337,8 @@ export function createResponsesHandler(options) {
               Connection: "keep-alive",
             });
             keepalive.activity();
-            const written = await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`, { signal: abort.signal });
+            const wireData = carbonRoute ? { type: event, sequence_number: streamMetadata.sequenceNumber, ...data } : data;
+            const written = await writeOrDrain(res, `event: ${event}\ndata: ${JSON.stringify(wireData)}\n\n`, { signal: abort.signal });
             if (!written) return false;
             if (data.response && typeof data.response === "object") {
               for (const key of ["id", "created_at", "model"]) if (data.response[key] !== undefined) streamMetadata.response[key] = data.response[key];
@@ -353,6 +363,15 @@ export function createResponsesHandler(options) {
               sendJsonError(res, responseError, statusCode || 500);
               return;
             }
+            if (carbonRoute && error?.code === "ccdx_carbon_invalid_tool_call") {
+              const incomplete = { type: "response.incomplete", sequence_number: streamMetadata.sequenceNumber,
+                response: { ...streamMetadata.response, object: "response", status: "incomplete", output: [],
+                  incomplete_details: { reason: "invalid_tool_call" } } };
+              await writeOrDrain(res, `event: response.incomplete\ndata: ${JSON.stringify(incomplete)}\n\n`, { signal: AbortSignal.timeout(1000) }).catch(() => false);
+              markResponseTerminal("incomplete", { model, origin: "carbon_tool_validation", reason: "invalid_tool_call" });
+              if (!res.destroyed && !res.writableEnded) res.end();
+              return;
+            }
             await endStreamWithError(res, error || new Error(errMsg), abort, streamMetadata);
           }, {
             signal: abort.signal,
@@ -362,6 +381,7 @@ export function createResponsesHandler(options) {
             chatCompletionsFn,
             releaseRequest: releaseChatPayload,
             bodyText,
+            ...(carbonStream ? { toolAdapter: carbonStream } : {}),
             onUpstreamResponse: (upstreamResponse) => {
               streamResponseHeaders = safeUpstreamResponseHeaders(upstreamResponse.headers, {
                 contentType: "text/event-stream",
@@ -396,7 +416,7 @@ export function createResponsesHandler(options) {
               sendUpstreamError(res, upstream, data);
               return;
             }
-            const response = chatToResponses(JSON.parse(data), model, { toolChoice });
+            const response = chatToResponses(JSON.parse(data), model, { toolChoice, ...(carbonBridge ? { toolAdapter: carbonBridge } : {}) });
             markResponseTerminal(response.status, {
               model: response.model || model, origin: "chat_completion", reason: response.incomplete_details?.reason,
             });

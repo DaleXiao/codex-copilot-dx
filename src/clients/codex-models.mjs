@@ -19,6 +19,7 @@ export function codexClientCatalog(plan, githubModels = () => null) {
     return { ...value, models: plan.models.map((model, priority) => {
       const template = model.source_id === "github" ? nativeCatalog?.models?.find(entry => entry.slug === model.id) : undefined;
       const entry = codexModelEntry(model, { priority, template, name: model.source_name || model.source_id });
+      if (model.source_id === "github" && model.id === "gemini-4-carbon") entry.use_responses_lite = true;
       if (model.source_id === "github" && !resolveCopilotPriorityTierModel(model.id, "priority", github)) {
         entry.additional_speed_tiers = [];entry.service_tiers = [];delete entry.default_service_tier;
       }
@@ -28,6 +29,9 @@ export function codexClientCatalog(plan, githubModels = () => null) {
 }
 
 export function codexSourceCatalog(source) {
-  return value => ({ ...value, models: source.models("gpt").map((model, priority) =>
-    codexModelEntry({ ...model, capability: model.protocol_capabilities?.responses || model.capability }, { priority, name: source.name || source.id })) });
+  return value => ({ ...value, models: source.models("gpt").map((model, priority) => {
+    const entry = codexModelEntry({ ...model, capability: model.protocol_capabilities?.responses || model.capability }, { priority, name: source.name || source.id });
+    if (source.id === "github" && model.id === "gemini-4-carbon") entry.use_responses_lite = true;
+    return entry;
+  }) });
 }

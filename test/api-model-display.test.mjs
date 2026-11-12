@@ -28,6 +28,9 @@ test('normal discovery publishes maker evidence without changing the legacy conn
  const saved=await runtime.manageConnections({operation:'save_api',config:{name:'Example',base_url:'https://example.test/v1',endpoints:{messages:'https://example.test/v1/messages'},auth_header:'bearer',models:[{id:'model-one',protocols:['messages']}]},key:'synthetic-key',allowed:['claude_app']});
  const id=saved.providers.find(x=>!x.builtin).id;await runtime.manageConnections({operation:'discover',id});
  const model=runtime.dashboardCatalog({provider:id}).models[0];assert.equal(model.vendor,'Example AI');assert.equal(model.owned_by,'gateway');
+ assert.deepEqual(model.clients,['claude_app','claude_code'],'Supported apps describe protocol compatibility independently of grants');
+ assert.equal(model.client_visibility.find(x=>x.client==='claude_code').reason,'source_not_allowed');
+ assert.equal(runtime.connections().clients.find(x=>x.id==='claude_code').allowed.includes(id),false,'Reading the catalog cannot grant access');
  assert.doesNotMatch(fs.readFileSync(accessSettingsPath({home,env}),'utf8'),/publisher|Example AI|model_display/);assert.equal(readAccessSettings({home,env}).version,2);
  const publicApi=runtime.connections().providers.find(x=>x.id===id);
  const {id:ignored,enabled,builtin,key_saved,protocols,model_count,codex_model_count,deployment_revision,discovery,checked_at,...roundtrip}=publicApi;

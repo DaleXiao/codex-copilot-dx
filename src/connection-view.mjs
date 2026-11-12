@@ -311,9 +311,7 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
         return value?.then ? value.then(catalog => catalogVisibility(catalog, source)) : catalogVisibility(value, source);
       }
       if (!enabled(input.provider)) throw accessError("ccdx_client_source_disabled", 503);
-      return catalogVisibility(getSource(input.provider).publicCatalog(
-        CLIENT_IDS.filter(id => binding(id).enabled && binding(id).allowed.includes(input.provider))
-      ), input.provider);
+      return catalogVisibility(getSource(input.provider).publicCatalog(CLIENT_IDS), input.provider);
     },
   };
   return { imageModels, snapshot, sourceImpact, clientRevision, catalogVisibility, methods };

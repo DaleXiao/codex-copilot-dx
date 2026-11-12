@@ -33,7 +33,7 @@ function groundedSearch(result,query){
 export function createAntigravityHandler({client,models=()=>[],selectedModels=()=>null,enabled=()=>false,privacy,searchFn,imageFn,guardSource,acquireRequest=async()=>()=>{},
   fetchGoogle=fetch,googleOrigin=GOOGLE_ORIGIN,requestBodyTimeoutMs=120000,upstreamTimeoutMs=180000,streamIdleTimeoutMs=60000}={}) {
   if(![GOOGLE_ORIGIN,"https://cloudcode-pa.googleapis.com"].includes(googleOrigin))throw new Error("Unrecognized Google control origin");
-  let active=0,observed=false;
+  let active=0,observed=false,catalogModels=null;
   const counts={total:0,google:0,copilot:0,search:0,images:0,failed:0};
   const handler=async(req,res)=>{
     const abort=createRequestAbort(req,res);let release=()=>{},session;
@@ -62,6 +62,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
         if(method==="fetchAvailableModels"&&upstream.ok){
           const value=JSON.parse(await readBoundedResponseText(upstream,{maxBytes:8*1024*1024,signal:abort.signal,label:"Google model catalog"}));
           const merged=mergeAntigravityModels(value,models(),selectedModels());
+          catalogModels=Object.keys(merged.models).filter(id=>id.startsWith(ANTIGRAVITY_MODEL_PREFIX));
           res.writeHead(200,{"Content-Type":"application/json","Cache-Control":"no-store"});res.end(JSON.stringify(merged));return;
         }
         res.writeHead(upstream.status,safeUpstreamResponseHeaders(upstream.headers));
@@ -109,6 +110,7 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       observeRequestedModel({model:target.model});
       session=privacy?.prepareSession?await privacy.prepareSession(converted.chat,{protocol:"chat",client:"gemini",signal:abort.signal}):passthrough(converted.chat);
       const upstream=await client.chatCompletions(session.body,{signal:abort.signal,retryOptions:{retries:0}});
+      markUpstreamHeaders(upstream.status);
       if(!upstream.ok){await upstream.body?.cancel();throw httpError("Copilot generation was refused (HTTP "+upstream.status+")",upstream.status)}
       if(!stream){
         const result=chatToAntigravity(JSON.parse(await readBoundedResponseText(upstream,{maxBytes:MAX_REPLY,signal:abort.signal,label:"Copilot response"})),converted.originalNames);
@@ -136,6 +138,6 @@ export function createAntigravityHandler({client,models=()=>[],selectedModels=()
       else sendJsonError(res,error,error.statusCode||502);
     }finally{session?.release();release();abort.cleanup();active--}
   };
-  handler.snapshot=()=>({enabled:enabled(),observed,active,...counts});
+  handler.snapshot=()=>({enabled:enabled(),observed,catalog_models:catalogModels,active,...counts});
   return handler;
 }

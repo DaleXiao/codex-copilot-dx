@@ -40,7 +40,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
             assert.equal(init.method, "GET");discoveries++;if (failDiscovery) return Response.json({ error: "synthetic unavailable" }, { status: 503 });return Response.json({ data: ["claude-replay", "response-replay", ...Array.from({ length: 6 }, (_, i) => "unselected-" + i)].map(id => ({ id, publisher: "Example Maker", vendor: "example", owned_by: "gateway", ...(id === "claude-replay" ? { type: "model", max_input_tokens: 128000, max_tokens: 16000, capabilities: { thinking: { supported: true }, effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true } } } } : {}) })) });
           } }) }) });
         const serviceControl = createServiceControl({ home: root, env, providerRuntime: runtime });
-        handler = createAdapterHandler({ providerRuntime: runtime, dashboardOptions: { home: root, env, serviceControl,
+        handler = createAdapterHandler({ env, antigravityOptions:{inspect:async()=>({status:"stopped",version:"synthetic",pids:[],app:"/Applications/Gemini.app"})}, providerRuntime: runtime, dashboardOptions: { home: root, env, serviceControl,
           authStatusFn: () => ({ profiles: { codex: { configured: false, valid: false } } }),
           liveModelsFn: async () => ({ models: [], advertised: 0, upstreamHost: "synthetic" }),
           updateStatusFn: async () => ({ source: "release_status", status: "unavailable", current: { version: "synthetic" } }) } });
@@ -48,7 +48,6 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         await page.locator("#connection-add").focus();await page.keyboard.press("Enter");assert.equal(await page.locator("#connection-name").evaluate(node => node === document.activeElement), true, "Add API focuses its first field");
         await page.locator("#connection-name").fill(sampleName);await page.locator("#connection-base").fill("https://api.example.test/v1");await page.locator("#connection-base").blur();
         await page.locator("#connection-key").fill("synthetic-key-no-network");
-        for (const id of ["codex", "claude_app", "claude_code"]) await page.locator(`#connection-allowed-clients input[value="${id}"]`).check();
         const fits = async () => assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "No horizontal page overflow");
         await fits();await page.locator('#connection-api-form button[type="submit"]').click();
         await page.waitForFunction(() => !document.getElementById("connection-discover").disabled && !document.getElementById("connection-discover").hasAttribute("aria-busy"));
@@ -63,23 +62,28 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         assert.equal(await page.locator('#connection-api-form input[name="protocol"]:checked').count(), 2);
         await page.locator("#connection-cancel").click();await page.locator("#connection-editor").waitFor({ state: "hidden" });
         const id = runtime.connections().providers.find(p => !p.builtin).id;
+        await page.locator(`#model-provider-${id}`).click();
+        await page.locator("#source-app-access").waitFor({state:"visible"});
+        for (const app of ["codex", "claude_app", "claude_code"]) await page.locator(`#source-allowed-apps input[value="${app}"]`).check();
+        assert(runtime.connections().clients.every(c=>!c.allowed.includes(id)),"API authorization stays a draft until saved");
+        await page.locator("#source-access-save").click();await page.waitForFunction(()=>document.getElementById("source-access-save").disabled);
         const codexBeforeGrant = fs.readFileSync(path.join(root, ".codex/config.toml"), "utf8");
-        await page.locator("#model-provider-m365").click();await page.locator("#m365-app-access").waitFor({ state: "visible" });
-        assert.equal(await page.locator("#m365-allowed-apps input:checked").count(), 0);
-        await page.locator('#m365-allowed-apps input[value="claude_app"]').check();
-        await page.locator('#m365-allowed-apps input[value="claude_code"]').check();
+        await page.locator("#model-provider-m365").click();await page.locator("#source-app-access").waitFor({ state: "visible" });
+        assert.equal(await page.locator("#source-allowed-apps input:checked").count(), 0);
+        await page.locator('#source-allowed-apps input[value="claude_app"]').check();
+        await page.locator('#source-allowed-apps input[value="claude_code"]').check();
         await page.route("**/_ccdx/ui/connections", async route => {
           if (route.request().method() === "POST" && JSON.parse(route.request().postData()).operation === "source_access") return route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "ccdx_connections_conflict" }) });
           return route.continue();
         });
-        await page.locator("#m365-access-save").click();await page.waitForFunction(() => !document.getElementById("m365-access-save").disabled);
-        assert.equal(await page.locator("#m365-allowed-apps input:checked").count(), 2, "Failed saves keep the app choices");
-        await page.unroute("**/_ccdx/ui/connections");await page.locator("#m365-access-save").click();
-        await page.waitForFunction(() => document.getElementById("m365-access-save").disabled && !document.getElementById("m365-access-save").hasAttribute("aria-busy"));
+        await page.locator("#source-access-save").click();await page.waitForFunction(() => !document.getElementById("source-access-save").disabled);
+        assert.equal(await page.locator("#source-allowed-apps input:checked").count(), 2, "Failed saves keep the app choices");
+        await page.unroute("**/_ccdx/ui/connections");await page.locator("#source-access-save").click();
+        await page.waitForFunction(() => document.getElementById("source-access-save").disabled && !document.getElementById("source-access-save").hasAttribute("aria-busy"));
         assert.deepEqual(runtime.connections().clients.filter(c => c.allowed.includes("m365")).map(c => c.id).sort(), ["claude_app", "claude_code"]);
-        if (options.get("--output")) { fs.mkdirSync(options.get("--output"), { recursive: true });await page.locator("#m365-source-access").screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}-source-access.png`) }); }
-        for (const app of ["claude_app", "claude_code"]) await page.locator(`#m365-allowed-apps input[value="${app}"]`).uncheck();
-        await page.locator("#m365-access-save").click();await page.waitForFunction(() => document.getElementById("m365-access-save").disabled && !document.getElementById("m365-access-save").hasAttribute("aria-busy"));
+        if (options.get("--output")) { fs.mkdirSync(options.get("--output"), { recursive: true });await page.locator("#source-app-access").screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}-source-access.png`) }); }
+        for (const app of ["claude_app", "claude_code"]) await page.locator(`#source-allowed-apps input[value="${app}"]`).uncheck();
+        await page.locator("#source-access-save").click();await page.waitForFunction(() => document.getElementById("source-access-save").disabled && !document.getElementById("source-access-save").hasAttribute("aria-busy"));
         assert(runtime.connections().clients.every(c => !c.allowed.includes("m365")));
         assert.equal(fs.readFileSync(path.join(root, ".codex/config.toml"), "utf8"), codexBeforeGrant);
         await page.locator(`#model-provider-${id}`).click();
@@ -87,7 +91,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         await page.locator('[data-route="claude"]').click();await page.locator("#connection-bindings").waitFor();
         assert.match(await page.locator("#connection-bindings").innerText(), /暂无|No models/);
         await page.locator('[data-route="models"]').click();
-        await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).locator("button").click();
+        await page.locator(`#connection-source-list .connection-row[data-source="${id}"]`).locator("button").click();
         await page.locator("#connection-discover").click();
         await page.waitForFunction(() => document.querySelectorAll("#connection-models > tr:not(.connection-detail-row)").length === 8);
         assert.equal(await page.locator("#connection-manual-model").getAttribute("open"), null, "Manual IDs remain an optional collapsed entry");
@@ -195,8 +199,8 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         assert.deepEqual(runtime.connections().clients.find(c => c.id === "codex").deployments, [{ source: "github", model: "gpt-retained" }]);
         await runtime.manageConnections({ operation: "client", id: "codex", enabled: true, allowed: codexClient.allowed, deployments: [{ source: id, model: "response-replay" }] });
         githubRegistry.models = { data: [] };
-        await page.waitForLoadState("networkidle");await page.goto(base + "/?binding-replay=restored#models");await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).waitFor();
-        await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).locator('input[role="switch"]').click();
+        await page.waitForLoadState("networkidle");await page.goto(base + "/?binding-replay=restored#models");await page.locator(`#connection-source-list .connection-row[data-source="${id}"]`).waitFor();
+        await page.locator(`#connection-source-list .connection-row[data-source="${id}"]`).locator('input[role="switch"]').click();
         await page.locator("#connection-memory-confirm").waitFor({ state: "visible" });
         assert.equal(runtime.connections().providers.find(p => p.id === id).enabled, true, "Source stays on before confirmation");
         await page.locator("#connection-memory-close").click();
@@ -206,7 +210,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         assert.equal(await page.locator("#connection-sources #connection-disabled-sources").count(), 1);
         assert.equal(await page.locator("#connection-clients #connection-disabled-source-list").count(), 0);
         await page.locator("#connection-disabled-sources > summary").click();
-        await page.locator("#connection-disabled-source-list .connection-row").filter({ hasText: sampleName }).locator('[data-i18n="api_restore"]').click();await page.locator("#connection-source-list .connection-row").filter({ hasText: sampleName }).waitFor();
+        await page.locator("#connection-disabled-source-list .connection-row").filter({ hasText: sampleName }).locator('[data-i18n="api_restore"]').click();await page.locator(`#connection-source-list .connection-row[data-source="${id}"]`).waitFor();
         assert.equal(await page.locator("#connection-disabled-source-list .connection-row").filter({ hasText: sampleName }).count(), 0);
         assert.equal(await page.locator("#connection-disabled-sources").isHidden(), !runtime.connections().providers.some(p => !p.enabled));
         assert.equal(runtime.selection().codex, null);assert.equal(values.size, 1);
@@ -222,6 +226,20 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         assert.equal(runtime.connections().clients.find(c => c.id === "claude_app").source, null);
         await page.locator("#connection-disabled-clients").waitFor({ state: "hidden" });
         if (options.get("--output")) { fs.mkdirSync(options.get("--output"), { recursive: true });await page.screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}.png`), fullPage: true }); }
+        await page.locator('[data-route="models"]').click();await page.locator("#model-provider-github").click();
+        await page.waitForFunction(()=>globalThis.ccdxAntigravity?.state&&!globalThis.ccdxAntigravity.pending);
+        const grant=page.locator('#source-allowed-apps input[value="antigravity"]');await grant.check();
+        assert.equal(await page.evaluate(()=>globalThis.ccdxAntigravity.state.enabled),false,"GitHub authorization is a draft");
+        await page.locator("#model-provider-m365").click();await page.locator("#model-provider-github").click();assert.equal(await grant.isChecked(),true,"Source drafts survive tab navigation");
+        await page.locator("#source-access-cancel").click();assert.equal(await grant.isChecked(),false);
+        await grant.check();await page.locator("#source-access-save").click();
+        await page.waitForFunction(()=>globalThis.ccdxAntigravity.state.enabled&&document.getElementById("source-access-save").disabled);
+        assert.match(await page.locator('#source-access-note').innerText(),/Antigravity/);assert.doesNotMatch(await page.locator('#source-access-note').innerText(),/Claude/);
+        await page.locator('#connection-source-list input[role="switch"]').click();
+        await page.locator('#connection-disable-editor').waitFor({state:'visible'});assert.match(await page.locator('#connection-replacements').innerText(),/Antigravity/);
+        await page.locator('#connection-disable-cancel').click();
+        if(options.get("--output")){await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(options.get("--output"),`${engine}-${palette}-${mode}-sources.png`),fullPage:true});}
+        await grant.uncheck();await page.locator("#source-access-save").click();await page.waitForFunction(()=>!globalThis.ccdxAntigravity.state.enabled&&document.getElementById("source-access-save").disabled);
         assert.deepEqual(errors, []);report.push({ engine, palette, mode, language, width, saved: true, assigned: true, disabled: true, restored: true });
       } catch (error) { console.error("Browser details:", errors, await page.locator("#connection-client-note").textContent());throw error; } finally { await context.close();handler?.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime?.close();fs.rmSync(root, { recursive: true, force: true });clearTimeout(watchdog); }
     }

@@ -9,28 +9,49 @@
   const apiForm = el("connection-api-form"), clientForm = el("connection-client-form");
   const node = (tag, text, className) => { const item = document.createElement(tag);if (text !== undefined) item.textContent = text;if (className) item.className = className;return item; };
   const source = id => data.providers.find(item => item.id === id), client = id => data.clients.find(item => item.id === id);
-  let accessDraft = null, accessError = null, accessRefresh = [], accessReview = [];
-  const accessForm = el("m365-app-access");
-  function renderAccess() {
-    if (!accessForm) return;accessForm.hidden = selectedProvider !== "m365";
-    const saved = data.clients.filter(c => c.allowed.includes("m365")).map(c => c.id), selected = accessDraft || saved;
-    const area = el("m365-allowed-apps"), focus = area.contains(document.activeElement) ? document.activeElement.value : null;
-    area.replaceChildren(...data.clients.filter(c => c.enabled).map(c => {
-      const item = check("m365-app", c.id, selected.includes(c.id), c.name);
-      item.firstChild.disabled = busy;item.firstChild.addEventListener("change", () => {
-        accessDraft = [...selected.filter(id => !data.clients.find(c => c.id === id)?.enabled), ...[...area.querySelectorAll("input:checked")].map(input => input.value)];
-        accessError = null;
-        renderAccess();[...area.querySelectorAll("input")].find(input => input.value === c.id)?.focus();
-      });return item;
-    }));
-    const dirty = JSON.stringify([...saved].sort()) !== JSON.stringify([...selected].sort());el("m365-access-save").disabled = busy || !dirty;
-    words(el("m365-access-state"), accessError || (dirty ? "cap_unsaved" : accessReview.length ? "source_apps_review" : accessRefresh.length ? "source_apps_reopen" : saved.length ? "cap_saved" : "source_apps_none"),
-      { apps: (accessReview.length ? [...new Set([...accessReview, ...accessRefresh])] : accessRefresh).map(id => data.clients.find(c => c.id === id)?.name || id).join(" / ") });
-    const affected = data.clients.filter(c => !selected.includes(c.id) && (c.source === "m365" || c.deployments?.some(item => item.source === "m365")));
-    el("m365-access-warning").hidden = !affected.length;words(el("m365-access-warning"), "source_apps_pause", { apps: affected.map(c => c.name).join(" / ") });
-    if (focus) [...area.querySelectorAll("input")].find(input => input.value === focus)?.focus();
+  const accessDrafts = new Map(), accessResults = new Map();
+  const accessForm = el("source-access-form");
+  const sameAccess = (a,b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+  function accessChoices(id) {
+    const provider=source(id);if(!provider)return [];
+    return [...data.clients.filter(c=>compatible(provider,c.id)),...(id==="github"?[{id:"antigravity",name:"Antigravity"}]:[])];
   }
-  accessForm?.addEventListener("submit", event => { event.preventDefault();accessError = null;void change({ operation: "source_access", id: "m365", allowed: accessDraft || [] }, result => { accessDraft = null;accessRefresh = result.client_refresh || [];accessReview = result.client_review || [];renderAccess(); }); });
+  function savedAccess(id) {
+    return [...data.clients.filter(c=>c.allowed.includes(id)).map(c=>c.id),...(id==="github"&&globalThis.ccdxAntigravity?.state?.enabled?["antigravity"]:[])];
+  }
+  function renderAccess() {
+    const id=selectedProvider,provider=source(id),root=el("source-app-access");root.hidden=!provider;if(!provider)return;
+    const waiting=id==="github"&&!globalThis.ccdxAntigravity?.state,pending=busy||id==="github"&&Boolean(globalThis.ccdxAntigravity?.pending);
+    const saved=savedAccess(id),selected=accessDrafts.get(id)||saved,dirty=!sameAccess(saved,selected),area=el("source-allowed-apps");
+    const focus=area.contains(document.activeElement)?document.activeElement.value:null;
+    area.replaceChildren(...(waiting?[]:accessChoices(id).map(c=>{
+      const item=check("source-app",c.id,selected.includes(c.id),c.name);item.firstChild.disabled=pending;
+      item.firstChild.addEventListener("change",()=>{const next=new Set(accessDrafts.get(id)||savedAccess(id));if(item.firstChild.checked)next.add(c.id);else next.delete(c.id);accessDrafts.set(id,[...next]);accessResults.delete(id);renderAccess();[...area.querySelectorAll("input")].find(input=>input.value===c.id)?.focus()});return item;
+    })));
+    el("source-access-save").disabled=pending||waiting||!dirty;el("source-access-cancel").disabled=pending||!dirty;
+    words(el("source-access-save"),busy?"api_saving":"api_save");if(busy)el("source-access-save").setAttribute("aria-busy","true");else el("source-access-save").removeAttribute("aria-busy");
+    words(el("source-access-state"),waiting?"reading":dirty?"cap_unsaved":"cap_saved");
+    const affected=data.clients.filter(c=>!selected.includes(c.id)&&(c.source===id||c.deployments?.some(item=>item.source===id))).map(c=>c.name);
+    if(id==="github"&&saved.includes("antigravity")&&!selected.includes("antigravity"))affected.push("Antigravity");
+    el("source-access-warning").hidden=!affected.length;words(el("source-access-warning"),"source_apps_revoke",{apps:affected.join(" / ")});
+    const result=accessResults.get(id);el("source-access-note").title=result?.detail||"";if(result)words(el("source-access-note"),result.key,result.args);else{el("source-access-note").removeAttribute("data-i18n");el("source-access-note").textContent="";}
+    if(focus)[...area.querySelectorAll("input")].find(input=>input.value===focus)?.focus();
+  }
+  accessForm.addEventListener("submit",async event=>{
+    event.preventDefault();const id=selectedProvider,wanted=accessDrafts.get(id);if(busy||!wanted)return;
+    if(id==="github"&&globalThis.ccdxAntigravity?.pending)return;
+    busy=true;generation++;let wrote=false,review=[],refresh=[];renderAccess();
+    try{
+      const allowed=wanted.filter(value=>value!=="antigravity"),before=data.clients.filter(c=>c.allowed.includes(id)).map(c=>c.id);
+      if(!sameAccess(allowed,before)){data=await api({operation:"source_access",id,allowed,impact_revision:data.source_impacts[id].revision});review=data.client_review||[];refresh=data.client_refresh||[];wrote=true;}
+      if(id==="github"&&globalThis.ccdxAntigravity.state.enabled!==wanted.includes("antigravity")){await globalThis.ccdxAntigravity.setEnabled(wanted.includes("antigravity"));refresh=[...refresh,"antigravity"];wrote=true;}
+      accessDrafts.delete(id);
+      if(review.length||refresh.length)accessResults.set(id,{key:review.length?"source_apps_review":"source_apps_reopen",args:{apps:[...new Set([...review,...refresh])].map(value=>value==="antigravity"?"Antigravity":data.clients.find(c=>c.id===value)?.name||value).join(" / ")}});else accessResults.delete(id);
+      window.dispatchEvent(new CustomEvent("ccdx:connections",{detail:{imageChanged:false}}));void dashboardRefresh.refresh("auth",{force:true});void dashboardRefresh.refresh("status",{force:true});
+    }catch(error){accessResults.set(id,{key:wrote?"source_apps_partial":error.message==="ccdx_connections_conflict"?"source_apps_conflict":"source_apps_failed",detail:error.message});}
+    finally{busy=false;list();}
+  });
+  el("source-access-cancel").addEventListener("click",()=>{accessDrafts.delete(selectedProvider);accessResults.delete(selectedProvider);renderAccess()});
   const compatible = (provider, id) => provider.protocols.includes(id === "codex" ? "responses" : "messages");
   const selectableSource = (provider, id) => compatible(provider, id)
     && (provider.builtin || provider.models?.some(model => model.protocols.includes(id === "codex" ? "responses" : "messages")));
@@ -59,11 +80,9 @@
     const providerList = el("connection-source-list"), clientList = el("connection-client-list"), disabledSources = el("connection-disabled-source-list"), disabledClients = el("connection-disabled-client-list");
     providerList.replaceChildren();clientList.replaceChildren();disabledSources.replaceChildren();disabledClients.replaceChildren();
     for (const provider of data.providers) {
-      const row = node("div", undefined, "connection-row"), info = node("div"), actions = node("div", undefined, "connection-actions");info.append(node("h3", provider.name));
+      const row = node("div", undefined, "connection-row"), info = node("div"), actions = node("div", undefined, "connection-actions");info.append(node("h3", provider.enabled ? format("enable_service") : provider.name));
       if (!provider.builtin) info.append(node("p", provider.base_url, "hint"));
       if (provider.enabled) {
-        const allowed = [...data.clients.filter(c => c.enabled && c.allowed.includes(provider.id)).map(c => c.name),...(provider.id === "github" && globalThis.ccdxGeminiStatus?.enabled ? ["Antigravity"] : [])].join(" / ");
-        const line = node("p", undefined, "hint");words(line, "api_allowed_summary", { clients: allowed || format("api_none") });info.append(line);
         if (provider.discovery?.state === "stale") { const warning = node("p", undefined, "hint");words(warning, "cap_catalog_stale");warning.append(" ", provider.discovery.code);info.append(warning); }
         if (!provider.builtin) actions.append(button("api_manage", () => editApi(provider)));
         const toggle = node("input");toggle.type = "checkbox";toggle.checked = true;toggle.setAttribute("role", "switch");toggle.setAttribute("aria-label", format("api_disable_source") + " " + provider.name);
@@ -73,7 +92,7 @@
         const remove = button("api_remove_source", () => { if (window.confirm(format("api_remove_source_confirm"))) void change({ operation: "remove_api", id: provider.id, impact_revision: data.source_impacts?.[provider.id]?.revision }); });
         remove.disabled = data.clients.some(c => c.source === provider.id || c.deployments?.some(item => item.source === provider.id));actions.append(remove);
       }
-      row.append(info, actions);if (!provider.enabled) disabledSources.append(row);else if (provider.id === selectedProvider) providerList.append(row);
+      row.dataset.source = provider.id;row.append(info, actions);if (!provider.enabled) disabledSources.append(row);else if (provider.id === selectedProvider) providerList.append(row);
     }
     const current = editingClient && client(editingClient);
     if (current) {
@@ -133,7 +152,7 @@
       if (input.operation === "provider" && !input.enabled && error.message === "ccdx_connections_conflict") {
         try { data = await api();list();disableSource(source(input.id));message("api_impact_changed"); } catch { message(error.message); }return;
       }
-      if (input.operation === "source_access") accessError = error.message;else if (["client", "image_model"].includes(input.operation)) words(el("connection-client-note"), error.message);else message(error.message);return;
+      if (["client", "image_model"].includes(input.operation)) words(el("connection-client-note"), error.message);else message(error.message);return;
     }
     finally { busy = false;if (trigger?.tagName === "BUTTON") { trigger.removeAttribute("aria-busy");trigger.disabled = false;if (oldKey) words(trigger, oldKey);else trigger.textContent = oldText; }
       if (["client", "preview_client", "image_model"].includes(input.operation)) bindingRows();
@@ -275,7 +294,6 @@
     apiForm.elements.key_env.value = provider?.key_env || "";keyMode();
     for (const input of apiForm.querySelectorAll('[name="protocol"]')) input.checked = provider ? Boolean(provider.endpoints?.[input.value]) : input.value !== "chat";
     setEndpoints(provider?.base_url || "", provider?.endpoints);
-    const allowed = el("connection-allowed-clients");allowed.replaceChildren(...data.clients.filter(c => c.enabled).map(c => check("allowed", c.id, c.allowed.includes(editing), c.name)));
     el("connection-model-detail").hidden = true;
     models = structuredClone(provider?.models || []);selectedModels = new Set(models.map(model => model.id));modelRows();el("connection-manual-model").open = false;el("connection-discover").disabled = !editing;el("connection-model-id").value = "";apiForm.elements.name.focus();
     words(apiForm.querySelector('button[type="submit"]'), provider ? "api_save" : "api_save_read");
@@ -301,7 +319,7 @@
     const input = { operation: "save_api", ...(editing ? { id: editing } : {}), key,
       config: { name: apiForm.elements.name.value.trim(), base_url: apiForm.elements.base.value.trim().replace(/\/+$/, ""), endpoints, auth_header: apiForm.elements.auth_header.value, models: chosenModels,
         ...(apiForm.elements.key_env.value.trim() ? { key_env: apiForm.elements.key_env.value.trim() } : {}) },
-      allowed: [...apiForm.querySelectorAll('[name="allowed"]:checked')].map(input => input.value).concat(data.clients.filter(c => !c.enabled && c.allowed.includes(editing)).map(c => c.id)) };
+      allowed: data.clients.filter(c => c.allowed.includes(editing)).map(c => c.id) };
     void (async () => {
       const saved = await change(input, first ? result => { const provider = result.providers.find(p => !p.builtin && p.name === input.config.name);if (provider) editApi(provider); } : undefined);
       if (saved && first && editing) await discoverModels();
@@ -474,8 +492,8 @@
     }
     const impact = data.source_impacts?.[provider.id];
     if (!impact) { message("api_impact_unavailable");void load();return; }
-    const affected = impact.clients;disableRevision = impact.revision;
-    if (!affected.length) { void change({ operation: "provider", id: provider.id, enabled: false, impact_revision: disableRevision });return; }
+    const affected = impact.clients,antigravity=provider.id==="github"&&globalThis.ccdxAntigravity?.state?.enabled;disableRevision = impact.revision;
+    if (!affected.length&&!antigravity) { void change({ operation: "provider", id: provider.id, enabled: false, impact_revision: disableRevision });return; }
     disabling = provider.id;panels("disable");const area = el("connection-replacements");area.replaceChildren();
     for (const item of affected) {
       const c = client(item.id), section = node("div", undefined, "source-impact");section.append(node("strong", c.name));
@@ -484,6 +502,7 @@
       if (item.needs_replacement) { const label = node("label"), select = choice(data.providers.filter(p => p.id !== provider.id && p.enabled && c.allowed.includes(p.id) && selectableSource(p, c.id)));select.name = c.id;select.setAttribute("aria-label", c.name);label.append(select);section.append(label); }
       area.append(section);
     }
+    if(antigravity){const section=node("div",undefined,"source-impact"),note=node("p",undefined,"hint");section.append(node("strong","Antigravity"));words(note,"source_antigravity_pause");section.append(note);area.append(section);}
   }
   el("connection-disable-form").addEventListener("submit", e => { e.preventDefault();void change({ operation: "provider", id: disabling, enabled: false,
     impact_revision: disableRevision,

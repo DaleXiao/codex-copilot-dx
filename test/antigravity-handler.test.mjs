@@ -92,3 +92,9 @@ test("unselected Copilot models are absent from discovery and rejected before ei
   const background=await invoke(f.handler,body("gemini-3.8-flash","checkpoint")).done;
   assert.equal(background.status,200);assert.equal(f.copilot.length,1);
 });
+
+test("successful native model discovery acknowledges the latest configuration",async()=>{
+  const f=fixture({fetchGoogle:async()=>Response.json({models:{native:{model:"NATIVE"}}})});
+  const result=await invoke(f.handler,{}, {url:"/antigravity/v1internal:fetchAvailableModels"}).done;
+  assert.equal(result.status,200);assert.ok(f.handler.snapshot().catalog_models.includes(alias));assert.ok(JSON.parse(result.text).models[alias]);
+});

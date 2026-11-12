@@ -163,11 +163,9 @@
         </details>
         </div>
         <div data-view="gemini" hidden>
-          <section class="connection-access"><div class="connection-row"><strong>Antigravity</strong><label class="switch-hit"><input id="gemini-enabled" type="checkbox" role="switch" aria-label="Antigravity" disabled></label></div></section>
+          <section class="connection-access"><div class="connection-row"><label for="gemini-enabled" data-i18n="gemini_access_title">Copilot access</label><label class="switch-hit"><input id="gemini-enabled" type="checkbox" role="switch" data-i18n-label="gemini_access_title" aria-label="Copilot access" disabled></label></div></section>
           <section class="panel dashboard-section">
-            <div class="panel-heading"><h2 data-i18n="model_catalog">Model list</h2><span id="gemini-state" role="status">—</span></div>
-            <p id="gemini-route-state" class="client-sync-state" role="status">—</p>
-            <p class="hint" data-i18n="gemini_scope">Antigravity models, summaries, searches and image generation use Copilot. Ordinary Gemini chat keeps Google.</p>
+            <div class="panel-heading"><h2 data-i18n="gemini_model_selection">Model selection</h2><span id="gemini-draft-state" role="status">—</span></div>
             <form id="gemini-model-form">
               <div class="table-wrap"><table class="binding-table"><thead><tr><th data-i18n="model">Model</th><th data-i18n="source">Source</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th></tr></thead><tbody id="gemini-models"></tbody></table></div>
               <div class="section-actions"><button id="gemini-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="gemini-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button></div>
@@ -176,12 +174,15 @@
           </section>
           <details class="panel dashboard-section" open>
             <summary data-i18n="connection_details">Connection details</summary>
+            <p id="gemini-route-state" class="client-sync-state" role="status">—</p>
+            <p class="hint" data-i18n="gemini_scope">Native Google models remain available. Copilot models and background requests use Copilot.</p>
             <p id="gemini-app-state" class="table-note">—</p><p class="hint"><span data-i18n="gemini_version">Version</span>: <span id="gemini-version">—</span></p>
             <p id="gemini-reopen" class="hint" data-i18n="gemini_reopen" hidden>Quit Gemini, then open it here to load CCDX models.</p>
             <div class="section-actions"><button id="gemini-open" type="button" data-i18n="gemini_open">Open Antigravity</button><button id="gemini-refresh" type="button" data-i18n="refresh">Refresh</button><a class="section-link" href="#models" data-source-link="github">GitHub Copilot</a></div>
           </details>
-          <details class="panel dashboard-section"><summary data-i18n="request_performance">Request performance</summary>
-            <dl class="stats"><div><dt data-i18n="active">Active</dt><dd id="gemini-active">—</dd></div><div><dt data-i18n="failed">Failed</dt><dd id="gemini-failed">—</dd></div><div><dt>Copilot</dt><dd id="gemini-copilot">—</dd></div><div><dt data-i18n="requests">Requests</dt><dd id="gemini-total">—</dd></div></dl>
+          <details class="panel dashboard-section"><summary data-i18n="gemini_activity">Connection activity</summary>
+            <p class="hint" data-i18n="gemini_activity_scope">Includes model requests and client discovery.</p>
+            <dl class="stats"><div><dt data-i18n="active">Active</dt><dd id="gemini-active">—</dd></div><div><dt data-i18n="failed">Failed</dt><dd id="gemini-failed">—</dd></div><div><dt data-i18n="gemini_copilot_requests">Copilot requests</dt><dd id="gemini-copilot">—</dd></div><div><dt data-i18n="requests">Requests</dt><dd id="gemini-total">—</dd></div></dl>
           </details>
         </div>
 
@@ -206,7 +207,7 @@
         <label><span data-i18n="api_messages_auth">Messages authentication</span><select name="auth_header"><option value="x-api-key">x-api-key</option><option value="bearer">Bearer token</option></select></label>
         <label><span data-i18n="api_key_env">Read key from environment</span><input name="key_env" type="text" autocomplete="off" spellcheck="false" placeholder="CCDX_COMPANY_API_KEY"><span class="hint" data-i18n="api_key_env_hint">Optional for servers without a credential service. Set before starting CCDX.</span></label>
       </div></details>
-      <fieldset><legend data-i18n="api_allowed_clients">Allowed clients</legend><div class="connection-checks" id="connection-allowed-clients"></div></fieldset>
+
       <fieldset><legend data-i18n="model_catalog">Model list</legend><div class="section-actions"><button type="button" id="connection-discover" data-i18n="api_read_models">Read models</button><button type="button" id="connection-discover-cancel" data-i18n="cancel" hidden>Cancel</button><span class="hint" data-i18n="api_discovery_save_first">Save the API first. No chat request is sent.</span></div>
         <details class="tool-details" id="connection-manual-model"><summary data-i18n="api_manual_model">Add a model manually</summary><div class="section-actions"><input type="text" id="connection-model-id" spellcheck="false" autocomplete="off" aria-label="Model ID" placeholder="Model ID"><button type="button" id="connection-model-add" data-i18n="api_add_model">Add model</button></div></details>
         <p class="hint" data-i18n="api_model_protocol_hint">Choose the APIs each model supports.</p><div class="table-wrap"><table><thead><tr><th data-i18n="model">Model</th><th data-i18n="api_protocols">Available APIs</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th><th data-i18n="cap_search">Search</th><th></th></tr></thead><tbody id="connection-models"></tbody></table></div>
@@ -222,7 +223,7 @@
         <div id="source-account-panel" role="tabpanel">
         <p id="source-status-note" class="hint" role="status"></p>
         <section class="panel dashboard-section" id="github-account">
-          <div class="panel-heading"><h2 data-i18n="account_access">Account &amp; access</h2><span id="github-account-state"></span></div>
+          <div class="panel-heading"><h2 data-i18n="source_connection">Account &amp; connection</h2><span id="github-account-state"></span></div>
           <p id="github-account-name" class="account-name">—</p><p id="github-account-hint" class="hint"></p>
           <dl id="github-account-fields" class="account-summary"></dl>
           <div class="section-actions"><button id="github-check" type="button" data-i18n="tools_check_connection">Check connection</button><button id="github-signin" type="button" data-i18n="tools_login">Sign in to GitHub</button><button id="github-force-reauth" type="button" data-i18n="tools_reauth">Sign in again</button></div>
@@ -236,17 +237,12 @@
             <button id="github-cancel" type="button" data-i18n="cancel">Cancel</button>
             <p class="hint" data-i18n="tools_keep_old_signin">Old sign-in is kept until verification succeeds.</p>
           </section>
-          <section class="tool-details" id="github-app-access"><h3 data-i18n="api_allowed_clients">Allowed clients</h3>
-            <div class="setting-row"><span>Codex</span><a class="section-link" href="#codex" data-i18n="api_manage">Manage</a></div>
-            <div class="setting-row"><label for="github-antigravity-enabled">Antigravity</label><input id="github-antigravity-enabled" type="checkbox" role="switch" disabled><a class="section-link" href="#gemini" data-i18n="api_manage">Manage</a></div>
-            <p class="hint" data-i18n="gemini_scope">Antigravity uses Copilot; ordinary Gemini chat keeps Google.</p><p id="github-antigravity-note" class="hint" role="status"></p>
-          </section>
           <p id="github-account-note" class="hint" role="status" aria-live="polite"></p>
           <details class="tool-details"><summary data-i18n="tools_details">Check details</summary><dl class="failure-detail"><dt data-i18n="tools_storage">Saved sign-in</dt><dd id="github-store">—</dd><dt data-i18n="tools_error_code">Error code</dt><dd id="github-check-code">—</dd><dt>HTTP</dt><dd id="github-check-http">—</dd><dt data-i18n="tools_github_identity">GitHub identity</dt><dd id="github-identity-detail">—</dd><dt data-i18n="last_verified">Last checked</dt><dd id="github-checked-at">—</dd></dl></details>
           <details class="tool-details"><summary data-i18n="tools_more_actions">More actions</summary><div class="section-actions"><button id="github-logout" type="button" data-i18n="tools_logout">Sign out of CCDX</button></div></details>
         </section>
         <section class="panel dashboard-section" id="m365-source-access" hidden aria-labelledby="source-access-heading">
-          <h2 id="source-access-heading" data-i18n="account_access">Account &amp; access</h2>
+          <h2 id="source-access-heading" data-i18n="source_connection">Account &amp; connection</h2>
 
           <div class="setting-row"><label for="m365-enabled" data-i18n="enable_service">Enable source</label><input id="m365-enabled" type="checkbox" role="switch" disabled><span id="m365-source-effect" class="hint" role="status"></span></div>
           <div id="m365-control-note" class="hint" role="status"></div>
@@ -260,7 +256,17 @@
             <p class="hint" data-i18n="company_account_scope">Applies to Microsoft 365 in Codex and Claude. Start a new conversation after changing accounts.</p>
           </div>
           <p id="m365-account-note" class="hint" role="status" aria-live="polite"></p>
-          <form id="m365-app-access" hidden><fieldset><legend data-i18n="source_allowed_apps">Allowed apps</legend><div class="connection-checks" id="m365-allowed-apps"></div></fieldset><p class="hint" data-i18n="source_apps_hint">Choose models on the app page after granting access.</p><p id="m365-access-warning" class="hint" role="status" hidden></p><div class="section-actions"><button id="m365-access-save" type="submit" data-i18n="api_save" disabled>Save</button><span id="m365-access-state" class="hint" role="status" aria-live="polite"></span></div></form>
+
+        </section>
+        <section class="panel dashboard-section" id="source-app-access" hidden>
+          <div class="panel-heading"><h2 id="source-app-access-heading" data-i18n="source_allowed_apps">Allowed apps</h2><span id="source-access-state" class="hint" role="status" aria-live="polite"></span></div>
+          <form id="source-access-form">
+            <div class="connection-checks" id="source-allowed-apps" role="group" aria-labelledby="source-app-access-heading"></div>
+            <p class="hint" data-i18n="source_apps_hint">Choose models on the app page after granting access.</p>
+            <p id="source-access-warning" class="hint" role="status" hidden></p>
+            <div class="section-actions"><button id="source-access-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="source-access-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button></div>
+            <p id="source-access-note" class="hint" role="status" aria-live="polite"></p>
+          </form>
         </section>
         <details class="panel dashboard-section model-catalog" id="upstream-models" open>
           <summary class="panel-heading"><h2 data-i18n="model_catalog">MODEL LIST</h2><span id="models-state" role="status" aria-live="polite" data-i18n="checking_live">CHECKING</span></summary>

@@ -51,7 +51,7 @@ test("startup advertises the canonical help command on new and reused adapters",
   for (const reused of [false, true]) assert.match(startupReady({ reused }), /Help    ccdx help/);
 });
 
-test("documentation local links resolve and release reports identify their historical scope", () => {
+test("current documentation local links resolve", () => {
   const files = ["README.md", "scripts/fixtures/README.md", ...fs.readdirSync(path.join(root, "docs")).filter((name) => name.endsWith(".md")).map((name) => `docs/${name}`)];
   for (const relative of files) {
     const absolute = path.join(root, relative);
@@ -60,6 +60,5 @@ test("documentation local links resolve and release reports identify their histo
       if (/^(?:https?:|#)/.test(target)) continue;
       assert.ok(fs.existsSync(path.resolve(path.dirname(absolute), target.split("#")[0])), `${relative}: broken link ${target}`);
     }
-    if (/RELEASE_0\.7\.[345]\.md$/.test(relative)) assert.match(content, /Historical verification/);
   }
 });

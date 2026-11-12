@@ -17,6 +17,11 @@ Client integration, image tools and the dashboard are not a general plugin frame
 
 ## Gemini native boundary
 
+Antigravity tool schemas are converted to Chat Completions schemas. Object schemas always include an explicit `properties` map, including zero-argument functions. The upstream Copilot service rejects native schemas that omit that map. Pausing Copilot access keeps model choices visible while generation remains gated.
+
+The dashboard separates source enablement, source-to-app authorization and per-app model choices. Source enablement is immediate; authorization and model drafts use explicit Save / Discard actions. GitHub, Microsoft 365 and custom APIs share the same authorization form. Antigravity's source authorization and its Copilot access switch represent the same saved integration state.
+
+
 `gemini-app.mjs` verifies the installed App and prepares a process-local
 `CLOUD_CODE_URL` launch without editing its bundle or closing a running App.
 `antigravity-runtime.mjs` owns explicit enablement, source-history protection and
@@ -40,7 +45,7 @@ No independent WebKit client or private WebKit SPI is included.
 
 ## Composition and lifecycle
 
-### Manual connection graph (1.2.13)
+### Manual connection graph
 
 `provider-runtime.mjs` composes built-in lifecycle with `connection-runtime.mjs`,
 which owns grants, switches, versioned model-deployment bindings and lifecycle. `access-settings.mjs`
@@ -703,19 +708,19 @@ workflow and GitHub Release must deliver those same package bytes. WebUI source
 selection and Auto Review remain under Codex; M365 lifecycle stays in source
 management. CLI and UI share advertised effort filtering and preference writes.
 
-## Independent appearance settings (1.2.2)
+## Independent appearance settings
 
 Web color (`green` / `klein` / `pink` / `mono`) and dark/light mode are browser-local presentation state applied before CSS in `dashboard/theme.js`. CSS semantic roles keep errors/warnings separate from theme accents. Terminal color (`green`, `klein`, `pink`, `mono`, `orange`) uses a distinct `terminal_color_theme` config field; animation continues to use `terminal_animation`. `terminal-colors.mjs` owns terminal color capability checks and escaping, while the existing layout runs on plain text first. The one-per-second coherent settings snapshot carries terminal color; animation frames introduce no additional settings reads. No inference, provider-routing or installer dependency is added.
 
 The existing same-origin bounded settings action saves terminal color through the strict locked atomic writer, then applies it to the live console. Read or save failures retain existing files and controls revert to the last confirmed choice. Model-list check errors project only bounded public diagnostic fields; UI associates them with the selected source and its last successful snapshot. Existing generation checks, cancellation and deduplication prevent late results from replacing another source's data.
 
-## Activity presentation and Messages timing (1.2.8)
+## Activity presentation and Messages timing
 
 The existing status payload projects `model_activity.active` from the three fixed inference route counters plus actual image-generation activity, never total HTTP activity or image MCP calls. It adds no history store, provider request or listener. `dashboard/activity.js` consumes this metadata through the existing refresh path, expires stale evidence after six seconds and pauses offscreen animation. Idle, active and unknown remain distinct; CSS owns six theme-colored dots and the idle-only halo. Terminal Cache hit reads the existing raw runtime aggregate rather than deriving a ratio from rounded display numbers.
 
 The Claude gateway still relays original native SSE bytes. `stream-performance.mjs` classifies only nonempty text, thinking and tool-argument deltas as first output; empty and signature-only deltas remain transport metadata. Sparse/interleaved blocks are not reordered or translated. Existing provider generations, locked atomic settings writes, cancellation and route ownership remain the composition boundaries.
 
-## Dashboard layout and information scopes (1.2.9)
+## Dashboard layout and information scopes
 
 The existing CSS grid reserves explicit header/body/footer tracks; the body owns spare space from the full-height sidebar. The header uses an opaque themed sticky surface, stable action slots and a deliberate compact toolbar. Scrollbar space is stable, with an always-scroll fallback for older engines. `console.js` owns route titles, scroll reset and main-content focus; refresh code does not navigate or reset scroll.
 
@@ -723,7 +728,7 @@ The eight existing views remain. `status.js` groups Overview clients by applicat
 
 HTML owns grouping: Codex buffer maintenance is separate from request performance, usage filters sit with the data they actually control, Requests prioritizes recent records and folds bounded technical fields into each row, and Checks & repairs owns runtime diagnostics. Settings owns preferences and updates. Request expansion is preserved by bounded request keys, and literal upstream values still use text nodes. Existing settings transactions, same-origin protections and confirmations remain in use; action failures target the affected controls. No framework, runtime dependency, endpoint, log scan, model call or installer policy is added.
 
-## Catalog failure evidence and controls (1.2.10)
+## Catalog failure evidence and controls
 
 `providers/m365-catalog-diagnostic.mjs` classifies model-list HTTP failures using
 fixed causes. The one known Entra-disabled message is recognized exactly; other
@@ -743,7 +748,7 @@ in per-model details. Usage trends and summaries are peer panels, still loaded o
 demand. Saved/effective preference differences are shown only when relevant.
 
 
-## Active request projection and restrained motion (1.2.11)
+## Active request projection and restrained motion
 
 `stream-performance.mjs` remains the timing/outcome owner. Each metrics instance
 retains at most 64 active snapshot closures; `finish` removes them idempotently.
@@ -779,7 +784,7 @@ the last row and following details use whitespace. Programmatic main-content
 focus has no frame; interactive keyboard focus remains visible.
 
 
-## Flow layout and client-hint correction (1.2.12)
+## Flow layout and client-hint correction
 
 `request-application.mjs` normalizes bounded scalar hints using an explicit map.
 The map now recognizes `Codex Desktop`, observed in local desktop session metadata
@@ -805,7 +810,7 @@ styling keeps the M365 navigation link semantically a link while matching the
 existing GitHub shortcut; wording describes navigation rather than a silent check.
 No new polling, framework, runtime dependency, setting or endpoint is introduced.
 
-## Catalog transactions and default identity (1.2.20)
+## Catalog transactions and default identity
 
 GitHub dashboard catalog reads use the existing `profile-model-runtime.mjs` single-flight through an injected refresh callback, rather than a second independent directory request. Successful publication updates the shared provider registry/endpoint cache, and the dashboard rereads connection candidates while preserving drafts. Explicit reads report refresh failures instead of presenting the last-good fallback as fresh success. Credential changes during a read reject publication; catalog browsing never synchronizes client files or changes selected deployments, defaults, grants or native authentication.
 
@@ -986,7 +991,7 @@ Geometry and SVG identity reuse from 1.2.23 remain in place, with hidden/stale/
 reduced-motion behavior and summary tables preserved.
 
 
-## Model presentation and shared source impact (1.2.31)
+## Model presentation and shared source impact
 
 `model-display.mjs` is a pure presentation fallback. `api-model-display.mjs` retains bounded upstream names beside maker declarations in the existing revision-bound, rebuildable cache. `providers/api.mjs` exposes that evidence to `client-model-plan.mjs`, which disambiguates presentation independently of route identity. Claude uses labelOverride for client aliases regardless of the default source. No connection-schema or routing-ID migration is introduced. Existing client-file ordering and manual ownership remain authoritative.
 
@@ -1052,7 +1057,7 @@ Source-catalog tables keep fixed column geometry while native disclosures expand
 
 A full snapshot keeps a local map of compiled client plans, including reuse during source-impact projection. Public data remains cloned and contains the same revisions/route identifiers. No persistent or global cache is added. `updateAccessSettings` retains strict validation, the lock and original-byte v1 backup, then skips an atomic rewrite only when serialized bytes already match. Skipping a file write does not skip an explicit control action or client sync.
 
-The CLI keeps only command/version/status fundamentals before its early command dispatch. Existing tool implementations are imported in their branches; startup composition loads afterward in its previous dependency order. Native account stores, source/key identity, model projections and image/prediction behavior are unchanged. The repository-only `docs/STATE_REFACTOR_PLAN.md` records included boundaries, local measurements and deferred work.
+The CLI keeps only command/version/status fundamentals before its early command dispatch. Existing tool implementations are imported in their branches; startup composition loads afterward in its previous dependency order. Native account stores, source/key identity, model projections and image/prediction behavior are unchanged.
 
 ### Context observations
 
@@ -1160,13 +1165,13 @@ Claude App 3.x and 4.x share the inspected effort-capable adapter. Later unknown
 
 Usage presentation maps configured api_ identifiers to current provider labels after aggregation. Rows, chart filters and historical statistics keep their original keys. Provider-label changes refresh only the table/model labels, preserving the selected raw model key, day and existing chart nodes. The native capability replay disables usage persistence and gives its process a temporary usage path; no production filter recognizes test model names or response IDs.
 
-## Native image recovery and request correlation (1.3.17)
+## Native image recovery and request correlation
 
 `image-control.mjs` owns explicit check/repair/open operations for WebUI and terminal commands, reusing client configuration, host preparation and the existing prediction-aware launcher. Repair cannot kill an App or start another service. `image-host-state.mjs` retains bounded, process-local host evidence; the stdio bridge reports initialization and successful new-thread registration through the protected same-origin settings channel without blocking model traffic. Reporter work is bounded and aborted when the original CLI exits. Runtime evidence never contains prompts, images, paths or raw chat identifiers and cannot establish registration in unobserved chats. Manual loopback checks echo a nonce and explicitly identify their Node-only scope.
 
 The existing salted session observation is projected into request metadata. Active requests can reference the previous retained request from the same anonymous session, application and provider; this does not change request routing, history or tool caches. Chat endpoint recognition accepts both `/chat/completions` and `/v1/chat/completions`. Bare JSON error lines in a Messages event stream terminate with an explicit protocol diagnostic rather than waiting for message_stop; normal SSE frames retain their bytes.
 
-## Boundary reliability (1.3.18)
+## Boundary reliability
 
 Native image failures cancel the vendor response and project safe JSON; API Responses compatibility consumes the existing sanitized error once and retains its metadata. Image history collection records whether the current container appended references instead of rescanning previous containers.
 
@@ -1174,7 +1179,7 @@ The stdio host uses a paused-source line pump only while a destination is blocke
 
 `bounded-file.mjs` and `atomic-file.mjs` provide asynchronous bounded reads and durable single/paired writes for request-path state. Other synchronous configuration callers retain their APIs. Conversation admission and company-account guards use abortable asynchronous lock waiting with their prior timeout/stale policy. Messages transfer plans reserve in-process ownership while committing; primary and marker writes retain rollback behavior. JSON/SSE delivery awaits the applicable commit, and settled source checks keep a synchronous cached path. No new cache, file format or provider-selection policy is introduced.
 
-## Shared Codex App restart and source reliability (1.3.19)
+## Shared Codex App restart and source reliability
 
 The image and input-suggestion panels share `codex-launch-control.mjs`. `codex-app-control.mjs` associates live host reports with the verified macOS App by process ancestry and checks its prediction PAC argument without treating another process's host or an unobserved chat as proof. Its AppKit control targets only the verified bundle path and PID. A restart requires an explicit user action, prepares enabled routes, asks the App to quit normally, waits for exit, applies any pending prediction display setting and then uses the existing launcher. A refusal, unknown identity, multiple Apps or timeout stops the action without force-quit. A failed post-close display write stays pending and is reported after the App is reopened. Host evidence is accepted independently of serialized settings operations so a restarting App's short-lived report is not lost behind its own restart. Later host tool events also re-establish evidence if CCDX restarted while the host remained live.
 
@@ -1182,7 +1187,7 @@ The managed Codex catalog projects explicit source input modalities ahead of nat
 
 `safe-upstream-error.mjs` reads only failed image or custom API responses, with a 64 KiB size bound, a 200 ms timer and four concurrent readers. Only fixed code/status pairs and local messages escape the reader. Original status, stable CCDX codes and validated Retry-After remain intact. Error-header callbacks normally release request admission before the optional body read; an eligible explicit compatibility rejection retains admission through its one retry. Image processing slots are released before their error read. Count-token singleflight forwards callbacks only to the appropriate waiters. Successful requests never invoke the reader.
 
-## Client updates and streaming boundaries (1.3.20)
+## Client updates and streaming boundaries
 
 `client-versions.mjs` inspects bounded local App metadata asynchronously after service readiness. It coalesces checks, preserves a corrupt observation file, and atomically records only installed versions, builds and change times. A timed-out inspection cannot block service startup or inference. The current App process and actual capability adoption remain unverified. A detected unrecognized system Claude App major prevents later writes to shared capability fields without changing existing routing or model aliases. The existing model-refresh timer, manual checks and a nonblocking service-reuse notification schedule observation; a disabled timer leaves startup and manual checks available.
 

@@ -70,6 +70,11 @@ Copilot source page, or with `source github access --edit --apps codex,antigravi
 Choose its exposed models on the Antigravity page or with
 `app antigravity models --edit`. A model file uses `{"models":["<ccdx-copilot-model-id>"]}`.
 Saving model selection requires reopening Gemini through CCDX to reload its model list.
+
+The WebUI uses one authorization form for GitHub Copilot, Microsoft 365 and custom APIs. Source switches apply immediately. App-authorization and model checkboxes are drafts until **Save**; **Discard changes** restores the saved selection. Drafts survive refresh and navigation. Source authorization does not choose app models.
+
+Pausing Antigravity Copilot access retains its saved model selection. Native Google model routes remain available; Copilot models and all Antigravity background summaries, searches and images use Copilot. The connection indicator reports observed requests separately from enabled access, and connection activity includes discovery/control requests.
+
 The page distinguishes enabled access from an observed client connection.
 
 Carbon and Argon appear with Low, Medium and High reasoning levels when the

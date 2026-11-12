@@ -4,18 +4,14 @@ import { createHash } from "node:crypto";
 import { ADAPTER_VERSION } from "./running-adapter.mjs";
 
 const ASSETS = new Map([
-  ["/gemini.js", ["./dashboard/gemini.js", "text/javascript; charset=utf-8"]],
-  ["/privacy.js", ["./dashboard/privacy.js", "text/javascript; charset=utf-8"]],
   ["/", ["./dashboard/index.html", "text/html; charset=utf-8"]],
   ["/ui.css", ["./dashboard/ui.css", "text/css; charset=utf-8"]],
-  ["/theme.js", ["./dashboard/theme.js", "text/javascript; charset=utf-8"]],
   ["/language.js", ["./dashboard/language.js", "text/javascript; charset=utf-8"]],
-  ["/animation.js", ["./dashboard/animation.js", "text/javascript; charset=utf-8"]],
-  ["/ui.js", ["./dashboard/ui.js", "text/javascript; charset=utf-8"]],
-  ["/console.js", ["./dashboard/console.js", "text/javascript; charset=utf-8"]],
-  ["/updates.js", ["./dashboard/updates.js", "text/javascript; charset=utf-8"]],
-  ["/features.js", ["./dashboard/features.js", "text/javascript; charset=utf-8"]],
-  ["/preferences.js", ["./dashboard/preferences.js", "text/javascript; charset=utf-8"]],
+  ["/theme.js", ["./dashboard/theme.js", "text/javascript; charset=utf-8"]],
+  ["/refresh.js", ["./dashboard/refresh.js", "text/javascript; charset=utf-8"]],
+  ["/live.js", ["./dashboard/live.js", "text/javascript; charset=utf-8"]],
+  ["/icons.js", ["./dashboard/icons.js", "text/javascript; charset=utf-8"]],
+  ["/disclosure.js", ["./dashboard/disclosure.js", "text/javascript; charset=utf-8"]],
   ["/time.js", ["./dashboard/time.js", "text/javascript; charset=utf-8"]],
   ["/view-boundary.js", ["./dashboard/view-boundary.js", "text/javascript; charset=utf-8"]],
   ["/status.js", ["./dashboard/status.js", "text/javascript; charset=utf-8"]],
@@ -23,12 +19,16 @@ const ASSETS = new Map([
   ["/flow.js", ["./dashboard/flow.js", "text/javascript; charset=utf-8"]],
   ["/usage.js", ["./dashboard/usage.js", "text/javascript; charset=utf-8"]],
   ["/context.js", ["./dashboard/context.js", "text/javascript; charset=utf-8"]],
-  ["/refresh.js", ["./dashboard/refresh.js", "text/javascript; charset=utf-8"]],
-  ["/live.js", ["./dashboard/live.js", "text/javascript; charset=utf-8"]],
-  ["/icons.js", ["./dashboard/icons.js", "text/javascript; charset=utf-8"]],
-  ["/disclosure.js", ["./dashboard/disclosure.js", "text/javascript; charset=utf-8"]],
+  ["/updates.js", ["./dashboard/updates.js", "text/javascript; charset=utf-8"]],
+  ["/animation.js", ["./dashboard/animation.js", "text/javascript; charset=utf-8"]],
+  ["/ui.js", ["./dashboard/ui.js", "text/javascript; charset=utf-8"]],
+  ["/preferences.js", ["./dashboard/preferences.js", "text/javascript; charset=utf-8"]],
+  ["/features.js", ["./dashboard/features.js", "text/javascript; charset=utf-8"]],
+  ["/console.js", ["./dashboard/console.js", "text/javascript; charset=utf-8"]],
   ["/tools.js", ["./dashboard/tools.js", "text/javascript; charset=utf-8"]],
   ["/connections.js", ["./dashboard/connections.js", "text/javascript; charset=utf-8"]],
+  ["/privacy.js", ["./dashboard/privacy.js", "text/javascript; charset=utf-8"]],
+  ["/gemini.js", ["./dashboard/gemini.js", "text/javascript; charset=utf-8"]],
 ]);
 let bundle;
 function assets() {
@@ -39,7 +39,10 @@ function assets() {
   })).then(async entries => {
     const installed = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
     if (installed.version !== ADAPTER_VERSION) throw new Error("Dashboard files changed; restart CCDX before loading the new dashboard");
-    return new Map(entries);
+    // Shared globals and their consumers execute together, without partial script loading.
+    const scripts = entries.filter(([name, asset]) => asset.type.startsWith("text/javascript") && !["/language.js", "/theme.js"].includes(name));
+    const body = Buffer.concat(scripts.flatMap(([name, asset]) => [Buffer.from("// " + name + "\n"), asset.body, Buffer.from("\n;\n")]));
+    return new Map([...entries, ["/dashboard.js", { body, type: "text/javascript; charset=utf-8", etag: `"${createHash("sha256").update(body).digest("hex")}"` }]]);
   }).catch(error => { bundle = null;throw error; });
   return bundle;
 }

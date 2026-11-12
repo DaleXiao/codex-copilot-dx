@@ -2,6 +2,8 @@
 
 Use your model services in **Codex App, Claude App and Claude Code** through one local gateway.
 
+On macOS, the optional Gemini integration adds Copilot Carbon and Argon to the original App's Antigravity. Ordinary Gemini chat keeps Google. Set it up on the Gemini page or with `ccdx app gemini`; existing clients keep their setup.
+
 Connect GitHub Copilot, Microsoft 365 or your own API. Choose which apps can use each source, then select their models. CI and prebuilt releases cover **macOS on Apple Silicon** and **Windows on x64/ARM64**. Intel Mac code remains available, without CI coverage or new prebuilt assets.
 
 Optional local masking is off by default. Enable it in Settings → Local masking to download the model and component. Checks run locally and may add delay or mistake ordinary text; an unfinished check holds the request back. See [local masking](docs/REFERENCE.md#local-masking).

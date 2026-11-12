@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { runInNewContext } from 'node:vm';
+import { runInNewContext, Script } from 'node:vm';
 import { invokeAdapter } from '../test-support/adapter.mjs';
 
 function fixture(){
@@ -29,9 +29,19 @@ test('dashboard resource validators distinguish HTML, content changes and mismat
  const same=await invokeAdapter({}, {method:'GET',url:'/flow.js',headers:{...headers,'if-none-match':etag}});assert.equal(same.status,304);assert.equal(same.text,'');
  const changed=await invokeAdapter({}, {method:'GET',url:'/flow.js',headers:{...headers,'if-none-match':'"other"'}});assert.equal(changed.status,200);
  const wrong=await invokeAdapter({}, {method:'GET',url:'/flow.js?v=0.0.0',headers});assert.equal(wrong.status,409);assert.equal(wrong.headers['Cache-Control'],'no-store');
- const html=await invokeAdapter({}, {method:'GET',url:'/',headers});assert.equal(html.headers['Cache-Control'],'no-store');assert.match(html.text,/flow\.js\?v=\d+\.\d+\.\d+/);
+ const html=await invokeAdapter({}, {method:'GET',url:'/',headers});assert.equal(html.headers['Cache-Control'],'no-store');assert.match(html.text,/dashboard\.js\?v=\d+\.\d+\.\d+/);
  for(const match of html.text.matchAll(/src="(\/[a-z-]+\.js(?:\?[^\"]*)?)"/g)){
   const asset=await invokeAdapter({}, {method:'GET',url:match[1],headers});assert.equal(asset.status,200,match[1]);
   assert.match(asset.headers['Content-Type'],/javascript/);
  }
+});
+test('one deferred entry delivers shared view dependencies before their consumers',async()=>{
+ const headers={host:'127.0.0.1:2026'},html=await invokeAdapter({}, {method:'GET',url:'/',headers});
+ const deferred=[...html.text.matchAll(/<script src="([^"]+)" defer>/g)];assert.equal(deferred.length,1);
+ const entry=await invokeAdapter({}, {method:'GET',url:deferred[0][1],headers});assert.equal(entry.status,200);
+ const provider=entry.text.indexOf('globalThis.ccdxViewBoundary ='),consumer=entry.text.indexOf('globalThis.ccdxViewBoundary.create(');
+ assert.ok(provider>=0&&consumer>provider);assert.ok(entry.text.includes('globalThis.ccdxRefresh ='));
+ assert.doesNotThrow(()=>new Script(entry.text));
+ const cached=await invokeAdapter({}, {method:'GET',url:deferred[0][1],headers:{...headers,'if-none-match':entry.headers.ETag||entry.headers.etag}});
+ assert.equal(cached.status,304);assert.equal(cached.text,'');
 });

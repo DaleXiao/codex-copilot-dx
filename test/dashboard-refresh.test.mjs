@@ -2,15 +2,19 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
+import { invokeAdapter } from "../test-support/adapter.mjs";
 
 const source = readFileSync(new URL("../src/dashboard/refresh.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../src/dashboard/index.html", import.meta.url), "utf8");
 const createController = runInNewContext(`${source}\nccdxRefresh.createController;`, { AbortController });
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-test("the real page supplies chart timestamps and loads the controller before its consumers", () => {
+test("the real page supplies chart timestamps and loads the controller before its consumers", async () => {
   assert.match(html, /id="analytics-updated"/);
-  assert.ok(html.indexOf('src="/refresh.js"') < html.indexOf('src="/ui.js"'));
+  const entry=/<script src="([^"]+)" defer>/.exec(html)[1];
+  const boot=await invokeAdapter({}, {method:"GET",url:entry,headers:{host:"127.0.0.1:2026"}});
+  const controller=boot.text.indexOf("globalThis.ccdxRefresh ="),consumer=boot.text.indexOf("globalThis.ccdxRefresh.createController(");
+  assert.ok(controller>=0&&consumer>controller);
   assert.match(html, /id="auto-refresh"[^>]*aria-pressed="true"/);
 });
 

@@ -2,6 +2,7 @@ export const DASHBOARD_PATHS = new Set(["/", "/ui.css", "/theme.js", "/language.
 export const DASHBOARD_API_PATHS = new Set(["/_ccdx/ui/animation", "/_ccdx/ui/models/live", "/_ccdx/ui/usage", "/_ccdx/ui/auth", "/_ccdx/ui/providers", "/_ccdx/ui/settings", "/_ccdx/ui/m365/accounts", "/_ccdx/ui/updates", "/_ccdx/ui/account", "/_ccdx/ui/checks", "/_ccdx/ui/connections", "/_ccdx/ui/context", "/_ccdx/ui/privacy"]);
 
 DASHBOARD_PATHS.add("/gemini.js");
+DASHBOARD_PATHS.add("/dashboard.js");
 DASHBOARD_API_PATHS.add("/_ccdx/ui/gemini");
 
 export function isOptionalRoute(method, pathname) {

@@ -918,6 +918,9 @@ the theme ring, with visibility/staleness and reduced-motion gates.
 stamps HTML resource URLs, and computes byte-specific ETags once. Sensitive and
 dynamic endpoints remain uncached. No shell/provider dependency is added to
 rendering, and no content-bearing response is reused across credential scopes.
+Language and theme still load before rendering. The remaining scripts share one
+deferred entrypoint in dependency order, so shared view globals and their
+consumers arrive and execute together. Individual asset URLs remain available.
 
 `api-secrets.mjs` joins concurrent reads of one reference and prevents late
 reads from republishing after clear/set/remove. `providers/api.mjs` reuses the

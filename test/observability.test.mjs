@@ -88,6 +88,7 @@ test("request metrics use fixed protocol route buckets and complete exactly once
   assert.equal(snapshot.by_route.responses.status_2xx, 1);
   assert.equal(snapshot.by_route.not_found.status_5xx, 1);
   assert.deepEqual(Object.keys(snapshot.by_route), [
+    "antigravity",
     "responses",
     "responses_compact",
     "search",

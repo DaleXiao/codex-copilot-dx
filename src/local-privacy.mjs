@@ -43,7 +43,7 @@ export function createLocalPrivacy(options = {}) {
     });changes.changed();
   }
   const find = (texts, options) => detection.find(texts, options);
-  async function prepare(body, { protocol, client, signal, res, policy } = {}) {
+  async function prepare(body, { protocol, client, signal, res, policy, onSession } = {}) {
     const saved = policy || settings();if (!saved.enabled) return body;
     if (disposed) throw privacyFailure("engine_unavailable");
     loadKey();
@@ -72,6 +72,7 @@ export function createLocalPrivacy(options = {}) {
     if (signal?.aborted) { session.release();throw signal.reason; }
     markRequestObservation({ privacy_count: session.count, privacy_ms: Math.round(performance.now() - start), privacy_state: "checked" });
     actionError = null;lastCheck = { state: "checked", at: new Date().toISOString(), elapsed_ms: Math.round(performance.now() - start), count: session.count, wait_budget_ms: budget };changes.changed();
+    if (onSession) { onSession(session);return session.body; }
     if (res && session.count) {
       let current = responses.get(res);
       if (!current) {
@@ -119,6 +120,11 @@ export function createLocalPrivacy(options = {}) {
   function warm() { const current = generation;if (settings().enabled) void model.load().catch(error => { if (current !== generation || !settings().enabled) return;actionError = /^ccdx_privacy_[a-z_]+$/.test(error.code || "") ? error.code : "ccdx_privacy_unavailable";changes.changed(); }); }
   try { warm(); } catch { /* Invalid preferences remain visible and are never rewritten. */ }
   return { snapshot, action, prepare, subscribe: changes.subscribe, busy: () => Boolean(pending || detection.busy() || model.busy()),
+    async prepareSession(body, context) {
+      let session;
+      const masked = await prepare(body, { ...context, onSession: value => { session = value; } });
+      return session || { body: masked, count: 0, restoreText: value => value, restoreValue: value => value, restoreToolValue: value => value, release() {} };
+    },
     wrap(fn, context) {
       if (!fn) return fn;
       const policy = context.res && policies.get(context.res) || settings();if (context.res) policies.set(context.res, policy);

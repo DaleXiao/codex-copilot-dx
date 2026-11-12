@@ -183,8 +183,21 @@ export async function runManagementCommand(command, options = {}) {
     writeSettingsPreferences(body, preferenceOptions);return print({ saved: settingsPreferencesSnapshot(preferenceOptions).values, effect: "Saved for the next CCDX start; no service was started" });
   }
   if (group === "app") {
+    if (path[1] === "gemini") {
+      if (["enable", "disable"].includes(action)) {
+        const preview = { action, background_source: "GitHub Copilot (all Antigravity summaries, searches and image generation)", ordinary_Gemini_chat: "Google; no routing change" };
+        if (flags.preview) return print(preview);
+        output.write(print(preview) + "\n");await confirm(action === "enable" ? "Enable this Antigravity-only routing scope?" : "Pause Copilot access? Reopen Gemini afterward to restore its native route.");
+      }
+      const state = await request({ path: "gemini", ...(["status", "models"].includes(action) ? {} : { body: { action: flags.preview ? "preview" : action, ...(action === "enable" ? { accept_background_copilot: true } : {}) }, timeoutMs: 20000 }) });
+      return print(action === "models" ? state.models : state);
+    }
     const graph = await connection(), snapshot = (await readStatus()).data, view = projectTerminalState(snapshot);
-    if (action === "list") return print(view.clients, [["id", "ID"], ["name", "Client"], ["setup", "Setup"], ["active", "Active"]]);
+    if (action === "list") {
+      const clients=view.clients.filter(client=>client.id!=="gemini");
+      try { const state=await request({path:"gemini",timeoutMs:20000});if(state.source==="gemini_antigravity")clients.push({id:"gemini",name:"Gemini · Antigravity",setup:state.enabled?"configured":"paused",active:state.activity.active}); } catch { /* Older running services do not provide Gemini setup. */ }
+      return print(clients, [["id", "ID"], ["name", "Client"], ["setup", "Setup"], ["active", "Active"]]);
+    }
     const id = ids.app ? CLI_CLIENTS[ids.app] : "codex", client = getClient(graph, id), modelPlan = client.model_plan;
     if (!flags.preview && (flags.edit || ["sync", "enable", "disable"].includes(action))) requireManagement();
     const feature = path.length > 3 ? path[2] : null;

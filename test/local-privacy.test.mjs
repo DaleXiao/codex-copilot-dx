@@ -25,6 +25,14 @@ async function enable(f) {
   await f.privacy.action({ action: "enable", revision: f.privacy.snapshot().revision });
   for (let i = 0; i < 40 && f.privacy.snapshot().action_pending; i++) await new Promise(resolve => setTimeout(resolve, 5));
 }
+test("protocol adapters can own a masking session and release its restoration map", async t => {
+  const f=fixture(t);await enable(f);
+  const token="ghp_"+"a".repeat(36),body={messages:[{role:"user",content:token}]};
+  const session=await f.privacy.prepareSession(body,{protocol:"chat",client:"gemini"});
+  assert.ok(session.count>0);assert.equal(body.messages[0].content,token);
+  const masked=session.body.messages[0].content;assert.notEqual(masked,token);assert.equal(session.restoreText(masked),token);
+  session.release();assert.equal(session.restoreText(masked),masked);
+});
 test("cold detection gets a bounded longer wait while exact hot history submits no new work", async t => {
   const f = fixture(t);await enable(f);
   const input = Array.from({ length: 2200 }, (_, i) => "ordinary history line " + i + " with additional text 中文\n").join("");

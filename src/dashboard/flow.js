@@ -2,7 +2,7 @@
   const root = document.getElementById("request-flow");
   if (!root) return;
   const el = id => document.getElementById(id), ns = "http://www.w3.org/2000/svg";
-  const clients = new Set(["codex_app", "codex_cli", "codex", "claude_app", "claude_code", "claude", "api"]);
+  const clients = new Set(["codex_app", "codex_cli", "codex", "claude_app", "claude_code", "claude", "gemini_app", "api"]);
   const label = (node, key, values = {}) => globalThis.ccdxLanguage.set(node, key, values);
   const format = (key, values = {}) => globalThis.ccdxLanguage.format(key, values);
   const nodes = { apps: new Map(), models: new Map() };
@@ -44,7 +44,7 @@
       if (!map.has(id)) map.set(id, { id, provider: row.provider, model: row.model, rows: [] });
       map.get(id).rows.push(row);
     }
-    const order = ["codex_app", "codex_cli", "codex", "claude_code", "claude_app", "claude", "api"];
+    const order = ["codex_app", "codex_cli", "codex", "claude_code", "claude_app", "claude", "gemini_app", "api"];
     return [...map.values()].sort((a, b) => type === "apps" ? order.indexOf(a.id) - order.indexOf(b.id) : a.id.localeCompare(b.id));
   }
   function project(type, groups) {

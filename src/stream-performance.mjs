@@ -152,7 +152,7 @@ function emptyOutcomes() {
 function modelLabel(value, configured = false) {
   const model = String(value || "").trim();
   if (configured && /^[\w][\w./:@+-]{0,159}$/.test(model)) return model;
-  return model === "codex-auto-review" || /^(?:gpt|claude)-[A-Za-z0-9._-]{1,72}$/.test(model)
+  return model === "codex-auto-review" || /^(?:gpt|claude|gemini)-[A-Za-z0-9._-]{1,72}$/.test(model)
     ? model : "other";
 }
 

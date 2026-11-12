@@ -1,8 +1,8 @@
 import { terminalCell } from "./terminal-text.mjs";
 
 const integer = value => Number.isSafeInteger(value) && value >= 0;
-const appIds = { codex_app: "codex", codex_cli: "codex", codex: "codex", claude_app: "claude_app", claude_code: "claude_code" };
-export const TERMINAL_CLIENT_NAMES = Object.freeze({ codex: "Codex", claude_app: "Claude App", claude_code: "Claude Code" });
+const appIds = { codex_app: "codex", codex_cli: "codex", codex: "codex", claude_app: "claude_app", claude_code: "claude_code", gemini_app: "gemini" };
+export const TERMINAL_CLIENT_NAMES = Object.freeze({ codex: "Codex", claude_app: "Claude App", claude_code: "Claude Code", gemini: "Gemini · Antigravity" });
 const labels = { configured: "Configured", paused: "Paused", disabled: "Disabled", not_configured: "Not configured", not_installed: "Not installed",
   preserved: "Unchanged", partially_preserved: "Partly unchanged", manual_sync: "Manual sync", default_unavailable: "Default unavailable", configuration_unavailable: "Unreadable", unavailable: "Unavailable" };
 export function terminalUptime(milliseconds) {
@@ -16,17 +16,17 @@ export function clientSetup(client = {}) {
   return labels[client.setup] || "Not checked";
 }
 export function projectTerminalState(data = {}) {
-  const routes = data.requests?.by_route, names = ["responses", "responses_compact", "messages"];
+  const routes = data.requests?.by_route, names = ["responses", "responses_compact", "messages", "antigravity"];
   const partialRoutes = routes && names.some(name => routes[name]);
   const active = partialRoutes ? names.reduce((sum, name) => sum + (routes[name]?.active || 0), 0) : null;
   const requests = partialRoutes ? names.reduce((sum, name) => sum + (routes[name]?.total || 0), 0) : null;
   const claude = (data.providers?.claude || data.providers?.m365?.claude)?.requests?.performance;
   const performance = [data.stream_performance, claude].filter(Boolean);
   const outcomes = Object.fromEntries(["completed", "incomplete", "failed", "cancelled", "unknown"].map(key => [key,
-    performance.flatMap(part => Object.entries(part.by_route || {}).filter(([route]) => part === claude ? route === "messages" : ["responses", "responses_compact"].includes(route)).map(([, row]) => row.terminal_outcomes?.totals || {}))
+    performance.flatMap(part => Object.entries(part.by_route || {}).filter(([route]) => part === claude ? route === "messages" : ["responses", "responses_compact", "antigravity"].includes(route)).map(([, row]) => row.terminal_outcomes?.totals || {}))
       .reduce((sum, row) => sum + (integer(row[key]) ? row[key] : 0), 0)]));
   const activity = Object.hasOwn(data.model_activity || {}, "active") ? integer(data.model_activity.active) ? data.model_activity.active : null : active;
-  const running = [...new Map(performance.flatMap(part => (part.active_requests || []).filter(row => part === claude ? !row.route || row.route === "messages" : !row.route || ["responses", "responses_compact"].includes(row.route))).map((row, i) => [row.request_id || `unknown-${i}`, row])).values()];
+  const running = [...new Map(performance.flatMap(part => (part.active_requests || []).filter(row => part === claude ? !row.route || row.route === "messages" : !row.route || ["responses", "responses_compact", "antigravity"].includes(row.route))).map((row, i) => [row.request_id || `unknown-${i}`, row])).values()];
   const byApp = new Map();let unidentified = 0;
   for (const row of running) {
     const app = appIds[row.application];if (app) byApp.set(app, (byApp.get(app) || 0) + 1);else unidentified++;
@@ -37,6 +37,7 @@ export function projectTerminalState(data = {}) {
     ...[["app", "claude_app"], ["code", "claude_code"]].map(([key, id]) => ({ id, setup: data.providers?.m365?.claude?.clients?.[key] })),
   ]).map(client => ({ id: client.id, name: TERMINAL_CLIENT_NAMES[client.id] || terminalCell(client.name || client.id),
     setup: clientSetup(client.id === "codex" && !connection?.managed && !client.setup && data.client_integrations?.codex?.setup ? { ...client, setup: data.client_integrations.codex.setup } : client), active: running.length || active === 0 ? byApp.get(client.id) || 0 : null, observed_at: client.observed_at || null }));
+  if(data.gemini||byApp.has("gemini"))clients.push({id:"gemini",name:TERMINAL_CLIENT_NAMES.gemini,setup:data.gemini?.enabled?"Configured":"Paused",active:byApp.get("gemini")||0,observed_at:null});
   if (integer(active) && active > running.length) unidentified += active - running.length;
   if (unidentified) clients.push({ id: "other", name: "Other clients", setup: "Not identified", active: unidentified });
   const sources = connection?.providers?.filter(item => item.enabled && !(item.id === "m365" && data.providers?.m365?.enabled === false)).map(item => ({ id: item.id, name: terminalCell(item.name || item.id) }))

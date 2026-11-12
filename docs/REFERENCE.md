@@ -54,6 +54,38 @@ For scripts, source access accepts `--apps codex,claude-app` with `--edit`; edit
 
 An app model file contains `deployments: [{"source":"github","model":"<model-id>"}]`, with optional `default_model` and `auto_sync`. An explicit empty array clears the default and pauses access. A file without `deployments` is rejected. Unavailable saved selections remain visible until the user changes them.
 
+## Gemini App and Antigravity (candidate)
+
+The optional **Gemini** page and `ccdx app gemini status|models|enable|disable|open`
+manage the original macOS Gemini App. Enable requires acceptance of this data
+scope: Antigravity main answers follow the selected Google or Copilot model;
+all Antigravity summaries, searches and image generation use GitHub Copilot,
+including background work from Google-model sessions. Ordinary Gemini chat
+keeps its Google route. No OpenAI account or search fallback is used.
+
+Carbon and Argon appear with Low, Medium and High reasoning levels when the
+Copilot account advertises them. Google models, account controls and defaults
+are retained. Conversations keep their initial Google/Copilot source; start a
+new conversation to change source. Unsupported PDF, audio and video inputs are refused
+before Copilot dispatch. Text, inline images and native function tools are
+converted to the advertised Copilot Chat interface; truncated streams report an
+error rather than successful completion.
+
+`enable` saves CCDX settings and prepares its local source guard. `open --preview` shows the launch plan.
+`open` starts a closed, signed `/Applications/Gemini.app` with a process-local
+Antigravity endpoint. An already running App is kept open and must be quit by
+the user before reopening. Existing gateway environment settings cause a
+conflict instead of being overwritten. The Gemini bundle, Google credentials,
+global proxy and certificates are untouched. Endpoint adoption remains
+unconfirmed until an Antigravity request is observed.
+
+`disable` removes Copilot model access and refuses later Copilot/background
+requests without sending them to Google. Quit and reopen Gemini through CCDX
+after disabling to restore its native endpoint. This integration is separate
+from the Codex/Claude source bindings and is off by default. Native-engine
+replay alone does not establish parent-App adoption; observe actual original-App
+requests and check ordinary Gemini chat when accepting a new App version.
+
 ## Context observations
 
 **Usage → Context** shows reported input, declared model windows, cache reuse and observed gateway compactions from this process. It leaves missing values unknown. Input share is reported input divided by the declared window; it is not a measurement of every item currently held by the client. Reused input still occupies context.

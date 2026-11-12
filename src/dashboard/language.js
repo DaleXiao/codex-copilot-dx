@@ -1,5 +1,14 @@
 (() => {
   const translations = {
+    gemini_version: ["Version", "版本"],
+    gemini_enabled: ["Copilot integration is on", "Copilot 接入已启用"], gemini_disabled: ["Copilot integration is off", "Copilot 接入未启用"],
+    gemini_scope: ["Antigravity summaries, searches and image generation use Copilot. Ordinary Gemini chat keeps Google.", "Antigravity 的摘要、搜索和图像生成使用 Copilot；Gemini 普通聊天保留 Google。"],
+    gemini_enable: ["Enable Antigravity", "启用 Antigravity"], gemini_disable: ["Pause Copilot", "停用 Copilot"], gemini_open: ["Open Gemini", "打开 Gemini"],
+    gemini_reopen: ["Quit Gemini, then open it here. Active apps are never restarted automatically.", "请先退出 Gemini，再从这里打开。CCDX 不会自动重启正在运行的应用。"],
+    gemini_opened: ["Gemini opened. Route adoption awaits an Antigravity request.", "已打开 Gemini，等待 Antigravity 请求确认接入。"],
+    gemini_starting: ["Gemini is starting", "Gemini 正在启动"],
+    gemini_conflict: ["An existing gateway route was preserved. Resolve the conflict before opening.", "已保留原有网关路由，请先处理配置冲突。"],
+    gemini_running: ["Gemini is running", "Gemini 正在运行"], gemini_stopped: ["Gemini is closed", "Gemini 已退出"], gemini_unavailable: ["Gemini installation could not be verified", "尚未确认 Gemini 安装状态"],
     limit_default: ["Use default", "使用默认值"],
     ccdx_prediction_app_open: ["Quit Codex, then continue setup here.", "请退出 Codex，再在此继续配置。"], feature_read_failed: ["Settings could not be read. Existing files were preserved.", "无法读取设置，原有文件已保留。"],
     prediction_setup_again: ["Set up again", "重新配置"], prediction_bridge_missing: ["Not ready. Check and repair, or quit Codex and set up again.", "尚未就绪。请检查修复，或退出 Codex 后重新配置。"],
@@ -472,6 +481,7 @@
     "flow_app_codex_cli": ["Codex CLI", "Codex CLI"],
     "flow_app_claude_app": ["Claude App", "Claude App"],
     "flow_app_claude_code": ["Claude Code", "Claude Code"],
+    "flow_app_gemini_app": ["Gemini · Antigravity", "Gemini · Antigravity"],
     "flow_app_claude": ["Claude (app unspecified)", "Claude（未区分应用）"],
     "flow_app_api": ["Unidentified app", "未识别应用"],
     "flow_source_unknown": ["Source unknown", "来源未知"],

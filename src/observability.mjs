@@ -15,6 +15,7 @@ const OBSERVABILITY_RUNTIME_CONFIG = loadRuntimeConfig();
 const OBSERVABILITY_DECODED_BODY_BYTES = decodedBodyLimitPreference().bytes;
 
 const ROUTE_NAMES = Object.freeze([
+  "antigravity",
   "responses",
   "responses_compact",
   "search",
@@ -115,6 +116,7 @@ export function classifyAdapterRoute(method, pathname) {
   if (method === "GET" && pathname === "/v1/models") return "models";
   if (["/v1/images/generations", "/v1/images/edits"].includes(pathname)) return "images";
   if (pathname === "/mcp/image") return "image_mcp";
+  if (pathname.startsWith("/antigravity/")) return ["/antigravity/v1internal:streamGenerateContent", "/antigravity/v1internal:generateContent"].includes(pathname) ? "antigravity" : "antigravity_control";
   return "not_found";
 }
 
@@ -198,7 +200,7 @@ export function runtimeStatusPayload({
   }
   const history = responseHistoryStats();
   const requests = metrics?.snapshot?.() || createRequestMetrics().snapshot();
-  const activityCounts = ["responses", "responses_compact", "messages", "search"].map(route => requests.by_route[route].active);
+  const activityCounts = ["responses", "responses_compact", "messages", "search", "antigravity"].map(route => requests.by_route[route]?.active || 0);
   activityCounts.push(imageGeneration?.active ?? 0);
   const active = activityCounts.every(value => Number.isSafeInteger(value) && value >= 0)
     && Number.isSafeInteger(activityCounts.reduce((sum, value) => sum + value, 0)) ? activityCounts.reduce((sum, value) => sum + value, 0) : null;

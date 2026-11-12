@@ -16,7 +16,7 @@ const RESPONSE_MAX_BYTES = 48 * 1024 * 1024;
 const SIZES = new Set(["auto", "1024x1024", "1536x1024", "1024x1536"]);
 const FIELDS = new Set(["model", "prompt", "images", "background", "quality", "size", "n"]);
 
-async function checkedImage(value, maxBytes, mime) {
+export async function checkedImage(value, maxBytes, mime) {
   if (typeof value !== "string" || !value || value.length > 4 * Math.ceil(maxBytes / 3)
     || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw httpError("Invalid image data", 400);
   const bytes = Buffer.from(value, "base64");
@@ -26,6 +26,7 @@ async function checkedImage(value, maxBytes, mime) {
   catch { throw httpError("Image must be a valid PNG, JPEG or WebP", 400); }
   const type = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" }[info.format];
   if (!type || mime && mime !== type) throw httpError("Image format does not match its data", 400);
+  return type;
 }
 
 export async function nativeImageRequest(body, operation, selectedModel = DEFAULT_IMAGE_MODEL) {

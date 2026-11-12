@@ -1,7 +1,7 @@
 (() => {
   const el = id => document.getElementById(id);
   const label = (node, key, values = {}) => globalThis.ccdxLanguage.set(node, key, values);
-  const titles = { overview: "overview", codex: "Codex", claude: "Claude", models: "model_services", usage: "usage_and_diagnostics", requests: "request_records", checks: "tools_checks_title", system: "system_and_settings" };
+  const titles = { overview: "overview", codex: "Codex", claude: "Claude", gemini: "Gemini", models: "model_services", usage: "usage_and_diagnostics", requests: "request_records", checks: "tools_checks_title", system: "system_and_settings" };
   const settingsViews = ["codex", "claude", "models", "system", "checks"];
   let current = "overview", settings = null, settingsPending = false, stopped = false, timer = null, ticks = 0;
   let sourceDirty = false, reviewDirty = false, sourceModels = [], modelsPreference = null, sourceGeneration = 0, modelsSource = null;

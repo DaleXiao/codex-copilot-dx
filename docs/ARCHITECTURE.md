@@ -15,6 +15,29 @@ Client integration, image tools and the dashboard are not a general plugin frame
 | Management | CLI, dashboard, observability, package updates | Bounded metadata and explicit user actions |
 | Shared foundations | Codex paths, file locks, atomic files, network routes | No dependency on inference or dashboard rendering |
 
+## Gemini native boundary
+
+`gemini-app.mjs` verifies the installed App and prepares a process-local
+`CLOUD_CODE_URL` launch without editing its bundle or closing a running App.
+`antigravity-runtime.mjs` owns explicit enablement, source-history protection and
+the native management snapshot. The adapter loads it only for its management
+or `/antigravity/` routes. Existing inference routes return before that dispatch.
+
+`antigravity-handler.mjs` preserves observed Google account/catalog control
+requests against fixed official Code Assist origins. It merges advertised
+Copilot Carbon/Argon aliases while retaining native models and defaults. Native
+Google agent requests pass through; selected Copilot agents and all unattributed
+background inference use Copilot. Summaries use Carbon Low, searches use the
+existing Copilot search transport, and images use the existing GHC Images API.
+Ordinary Gemini chat is outside this endpoint scope; parent-App route adoption
+and ordinary-chat isolation require native App acceptance beyond engine replay.
+
+The Chat bridge keeps lossless tool integers, explicit effort, cancellation,
+stream backpressure, privacy-token restoration and terminal errors. Native
+conversation labels feed the existing source guard before main-answer dispatch.
+Unsupported input fails explicitly, without Google or OpenAI inference fallback.
+No independent WebKit client or private WebKit SPI is included.
+
 ## Composition and lifecycle
 
 ### Manual connection graph (1.2.13)

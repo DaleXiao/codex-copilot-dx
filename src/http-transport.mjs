@@ -193,11 +193,12 @@ export async function readJsonBody(req, {
   maxBodyBytes = MAX_BODY_BYTES,
   maxDecodedBodyBytes = MAX_DECODED_BODY_BYTES,
   signal,
+  parse = parseRequestJson,
 } = {}) {
   if (signal?.aborted) throw admissionAbortError(signal);
   const encodings = contentEncodings(req.headers?.["content-encoding"]);
   if (encodings.every((encoding) => encoding === "identity")) {
-    return parseRequestJson(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal));
+    return parse(await readIdentityText(req, maxBodyBytes, maxDecodedBodyBytes, signal));
   }
   const buffer = await readRequestBuffer(req, maxBodyBytes, signal);
   let releaseDecompression = () => {};
@@ -251,7 +252,7 @@ export async function readJsonBody(req, {
       if (supportsResizableReservation) decodedReservation.resize(decoded.length);
       else decodedReservation = await admission?.reserveDecodedBody?.(decoded.length, { signal });
     }
-    const parsed = parseRequestJson(decoded.toString("utf8"));
+    const parsed = parse(decoded.toString("utf8"));
     retainDecodedReservation = true;
     return parsed;
   } finally {

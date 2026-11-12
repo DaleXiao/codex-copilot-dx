@@ -26,6 +26,9 @@ const loadAuth = () => dashboardRefresh.refresh("auth", { force: true });
 const statusResourceKey = () => ["codex", "claude", "models", "usage", "requests", "checks"].includes((globalThis.location?.hash || "").slice(1)) ? "status" : "status-summary";
 const refreshStatus = () => dashboardRefresh.refresh(statusResourceKey(), { force: true });
 const refresh = refreshStatus;
+globalThis.addEventListener?.("ccdx-gemini-state", () => {
+  const auth=dashboardRefresh.state("auth").value;if(auth)renderProviders({...auth,gemini:globalThis.ccdxGeminiStatus});
+});
 
 function animateLogo() {
   const icon = element("status-icon");

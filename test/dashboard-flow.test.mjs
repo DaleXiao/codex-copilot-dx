@@ -44,6 +44,12 @@ function fixture() {
 const row = (application, model, extra = {}) => ({ request_id: `${application}-${model}`, application, model, provider: "m365", upstream_attempts: 1, elapsed_ms: 1000, first_output_ms: null, ...extra });
 const snapshot = rows => ({ stream_performance: { active_requests: rows, active_total: rows.length } });
 
+test("Gemini work appears alongside existing clients without becoming unidentified",()=>{
+  const f=fixture();f.api.update(snapshot([row("codex_app","gpt-test"),row("gemini_app","gemini-4-carbon",{provider:"github"})]));
+  assert.equal(f.el("flow-apps").children.length,2);
+  assert.equal(f.el("flow-apps").children[1].children[0].textContent,"flow_app_gemini_app");
+});
+
 test("elapsed updates reuse flow geometry and nodes without repeated layout reads", () => {
   const f = fixture(), records = [row("claude_app", "external-model", { first_output_ms: 10 })];
   f.api.update(snapshot(records));const measured = f.measurements(), node = f.el("flow-models").children[0];assert(measured > 0);

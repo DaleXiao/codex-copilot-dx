@@ -73,6 +73,10 @@
           claudeClients?.append(detail);
         }
       }
+      if (data.gemini || globalThis.ccdxGeminiStatus) {
+        const gemini=data.gemini || globalThis.ccdxGeminiStatus;
+        clients.append(tableRow(["Gemini · Antigravity",gemini.enabled?"Google + Copilot":"Google",gemini.enabled?"configured":"access_paused",gemini.activity?.active>0?"active":gemini.route_observed?"observed":"unknown","—"],{labels:[2,3]}));
+      }
       if (element("claude-client-state")) element("claude-client-state").hidden = Boolean(claudeClients?.children.length);
       text("source-summary", "count_providers", { count: providers.length });
       element("source-detail").replaceChildren(...providers.map(provider => {

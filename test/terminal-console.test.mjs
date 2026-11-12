@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTerminalConsole } from "../src/terminal-console.mjs";
+import { projectTerminalState } from "../src/terminal-state.mjs";
 import { configureLogging } from "../src/log.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -17,6 +18,14 @@ function fixture(tty = true) {
     timers: { setTimeout(fn, ms) { timers.set(fn, ms);return fn; }, clearTimeout(fn) { timers.delete(fn); } } });
   return { terminal, writes, errors, tick() { const [fn, ms] = [...timers][0];timers.delete(fn);time += ms;fn(); } };
 }
+
+test("Gemini activity keeps its own terminal row and contributes to totals",()=>{
+  const view=projectTerminalState({gemini:{enabled:true},requests:{by_route:{antigravity:{active:1,total:2}}},
+    stream_performance:{active_requests:[{route:"antigravity",request_id:"gemini",application:"gemini_app"}],by_route:{antigravity:{terminal_outcomes:{totals:{completed:1}}}}}});
+  assert.equal(view.active,1);assert.equal(view.requests,2);assert.equal(view.outcomes.completed,1);
+  assert.deepEqual(view.clients.find(x=>x.id==="gemini"),{id:"gemini",name:"Gemini · Antigravity",setup:"Configured",active:1,observed_at:null});
+  assert.equal(view.clients.some(x=>x.id==="other"),false);
+});
 
 test("live cache hit keeps zero, partial and unknown evidence aligned with cache-write evidence", () => {
   for (const columns of [40, 80, 120]) for (const [rate, partial, expected] of [[0, false, "0.0%"], [2 / 3, true, "~66.7%"], [1, false, "100.0%"], [null, false, "—"], [undefined, true, "—"], [1.1, false, "—"]]) {

@@ -48,6 +48,7 @@ Model availability depends on your account and service. Microsoft 365 also requi
 | Sign in again | `ccdx source github reauth` |
 | Choose client models | `ccdx app codex models --edit` |
 | Preview client setup | `ccdx app claude-app sync --preview` |
+| Set up Gemini Antigravity | `ccdx app gemini status` / `enable` / `open` |
 | Inspect failures | `ccdx requests --failed` |
 | Read usage | `ccdx usage` / `ccdx usage --scope run` |
 | Inspect preferences | `ccdx config show --effective` |

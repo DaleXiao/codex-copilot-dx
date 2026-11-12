@@ -112,6 +112,8 @@ function fragments(session, json, onRetained) {
   };
 }
 
+export function createPrivacyTextFragments(session) { return fragments(session, false, () => {}); }
+
 function rewrite(wire, event, named = false) {
   let written = false;
   const output = wire.split(/(?<=\n)|(?<=\r)(?!\n)/).map(line => {

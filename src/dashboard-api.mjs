@@ -154,6 +154,7 @@ export async function handleDashboardApi(req, res, pathname, {
   providerStateFn,
   providerAccountsFn,
   connectionsFn,
+  geminiFn,
   contextSnapshotFn,
   updateStatusFn,
   serviceControl,
@@ -170,6 +171,18 @@ export async function handleDashboardApi(req, res, pathname, {
   if (req.headers?.["x-ccdx-dashboard"] !== "1") {
     sendJson(res, 403, { error: "Dashboard API requires a same-origin page request" });
     return;
+  }
+  if (pathname === "/_ccdx/ui/gemini") {
+    if (!geminiFn) { sendJson(res, 503, { error: "Gemini integration is unavailable" });return; }
+    if (req.headers.origin && !sameOrigin(req)) { sendJson(res, 403, { error: "Gemini setup requires the same-origin dashboard" });return; }
+    if (!["GET", "POST"].includes(req.method)) { sendJson(res, 405, { error: "Use GET or POST" });return; }
+    if (req.method === "POST" && (!sameOrigin(req) || !/^application\/json(?:\s*;|$)/i.test(req.headers["content-type"] || ""))) { sendJson(res, 403, { error: "Gemini setup requires same-origin JSON" });return; }
+    const abort = createRequestAbort(req, res);abort.setTimeout(5000, "request_body_timeout");
+    try {
+      const input = req.method === "POST" ? await readJsonBody(req, { maxBodyBytes: 8192, maxDecodedBodyBytes: 8192, signal: abort.signal }) : {};
+      abort.clearTimeout();sendJson(res, 200, await geminiFn(input, `http://${req.headers.host}`));
+    } catch (error) { sendJson(res, error.statusCode || 400, { error: error.message }); }
+    finally { abort.cleanup(); }return;
   }
 
   if (pathname === "/_ccdx/ui/privacy") {

@@ -28,6 +28,7 @@
     <script src="/tools.js" defer></script>
     <script src="/connections.js" defer></script>
     <script src="/privacy.js" defer></script>
+    <script src="/gemini.js" defer></script>
     <title data-i18n="ccdx_local_dashboard">CCDX · Dashboard</title>
   </head>
   <body>
@@ -39,6 +40,7 @@
           <span class="nav-group" data-i18n="clients">Apps</span>
           <a class="nav-child" href="#codex" data-route="codex"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m7 8 4 4-4 4m7 0h3"/></svg><span>Codex</span></a>
           <a class="nav-child" href="#claude" data-route="claude"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 15a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3Z"/></svg><span>Claude</span></a>
+          <a class="nav-child" href="#gemini" data-route="gemini"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c1 6 4 9 10 10-6 1-9 4-10 10C11 16 8 13 2 12c6-1 9-4 10-10Z"/></svg><span>Gemini</span></a>
           <a href="#models" data-route="models"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 3 10 5-10 5L2 8Zm-10 9 10 5 10-5M2 16l10 5 10-5"/></svg><span data-i18n="model_services">Model sources</span></a>
           <a href="#usage" data-route="usage"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 3v18h18M7 16v-5m5 5V7m5 9V4"/></svg><span data-i18n="usage_and_diagnostics">Usage</span></a>
           <a href="#requests" data-route="requests"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span data-i18n="request_records">Requests</span></a>
@@ -180,6 +182,18 @@
           <a class="section-link" href="#requests" data-i18n="view_request_details">View request details</a>
         </details>
         </div>
+        <div data-view="gemini" hidden>
+          <section class="panel dashboard-section">
+            <h2>Gemini · Antigravity</h2>
+            <p id="gemini-state" data-i18n="gemini_disabled">Copilot integration is off</p>
+            <p id="gemini-app-state">—</p><p><span data-i18n="gemini_version">Version</span>: <span id="gemini-version">—</span></p>
+            <p class="hint" data-i18n="gemini_scope">Antigravity summaries, searches and image generation use Copilot. Ordinary Gemini chat keeps Google.</p>
+            <div class="connection-actions"><button id="gemini-enable" type="button" data-i18n="gemini_enable">Enable Antigravity</button><button id="gemini-disable" type="button" data-i18n="gemini_disable">Pause Copilot</button><button id="gemini-open" type="button" data-i18n="gemini_open">Open Gemini</button><button id="gemini-refresh" type="button" data-i18n="refresh">Refresh</button></div>
+            <p id="gemini-reopen" class="hint" data-i18n="gemini_reopen" hidden>Quit Gemini, then open it here. Active apps are never restarted automatically.</p>
+            <ul id="gemini-models"></ul><p id="gemini-note" class="hint" role="status"></p>
+          </section>
+        </div>
+
         <div data-view="models" hidden>
   <section class="panel dashboard-section" id="connection-sources">
     <div class="panel-heading"><h2 data-i18n="source_accounts">Accounts &amp; APIs</h2><button id="connection-add" type="button" data-i18n="api_add">Add API</button></div>

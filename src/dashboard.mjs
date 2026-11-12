@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { ADAPTER_VERSION } from "./running-adapter.mjs";
 
 const ASSETS = new Map([
+  ["/gemini.js", ["./dashboard/gemini.js", "text/javascript; charset=utf-8"]],
   ["/privacy.js", ["./dashboard/privacy.js", "text/javascript; charset=utf-8"]],
   ["/", ["./dashboard/index.html", "text/html; charset=utf-8"]],
   ["/ui.css", ["./dashboard/ui.css", "text/css; charset=utf-8"]],

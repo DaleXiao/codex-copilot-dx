@@ -175,17 +175,29 @@ export function createAdapterHandler(options = {}) {
   const requestBodyTimeoutMs = parsePositiveInteger(options.requestBodyTimeoutMs, ADAPTER_RUNTIME_CONFIG.requestBodyTimeoutMs);
   const acquireRequest = options.acquireRequest || createRequestAdmission();
   const requestMetrics = options.requestMetrics || createRequestMetrics();
-  const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics();
+  const streamPerformanceMetrics = options.streamPerformanceMetrics || createStreamPerformanceMetrics({ routeNames: ["responses", "responses_compact", "antigravity"] });
   const imagePressure = options.imagePressure || createResponsesImagePressureController();
   const responseFailures = options.responseFailures || createResponseFailureDiagnostics();
   const privacy = options.privacy || options.providerRuntime?.privacy || createLocalPrivacy({ env: options.env, home: options.dashboardOptions?.home });
   let carbonSearch = null, copilotWeb = null;
+  let antigravity = null, antigravityLoading = null;
+  const geminiRuntime = async () => {
+    if (!antigravityLoading) antigravityLoading = (async () => {
+      const { createAntigravityRuntime } = await import("./antigravity-runtime.mjs");
+      antigravity = createAntigravityRuntime({ client: codexClient, models: () => codexModelRegistry?.models || [], privacy, acquireRequest,
+        env: options.env, home: options.dashboardOptions?.home, requestBodyTimeoutMs, upstreamTimeoutMs, streamIdleTimeoutMs,
+        ...options.antigravityOptions });
+      return antigravity;
+    })();
+    return antigravityLoading;
+  };
   const httpErrors = createHttpFailureDiagnostics();
   const nativeImages = createNativeImagesHandler({ client: codexClient, acquireRequest, privacy, env: options.env, home: options.dashboardOptions?.home,
     models: options.imageModels || (() => options.providerRuntime?.imageModels?.().models || imageModelCatalog(codexModelRegistry?.models)),
     selection: options.imageSelection || (options.providerRuntime?.imageModels ? () => options.providerRuntime.imageModels().selected_model : undefined),
     requestBodyTimeoutMs, timeoutMs: options.imageTimeoutMs, enabled: options.imagesEnabled, allowed: options.imagesAllowed });
   const optionalRoutes = createOptionalRoutes({ ...options, dashboardOptions: { ...options.dashboardOptions,
+    geminiFn: async (input, baseUrl) => (await geminiRuntime()).action(input, baseUrl),
     privacy,
     contextSnapshotFn: () => {
       const snapshots = [streamPerformanceMetrics.contextSnapshot?.(), options.providerRuntime?.claudePerformance?.contextSnapshot?.()];
@@ -201,7 +213,7 @@ export function createAdapterHandler(options = {}) {
     sources: [requestMetrics, streamPerformanceMetrics, options.providerRuntime?.claudePerformance, privacy],
     snapshot: () => {
       const requests = requestMetrics.snapshot(), image = nativeImages.stats();
-      const active = ["responses", "responses_compact", "messages", "search"].reduce((sum, route) => sum + requests.by_route[route].active, image?.active || 0);
+      const active = ["responses", "responses_compact", "messages", "search", "antigravity"].reduce((sum, route) => sum + (requests.by_route[route]?.active || 0), image?.active || 0);
       const claude = options.providerRuntime?.claudePerformance?.activitySnapshot?.();
       return { ...adapterHealthPayload(), scope: "activity", uptime_ms: Math.round(process.uptime() * 1000), local_privacy: privacy.snapshot(),
         model_activity: { active }, requests, runtime_usage: runtimeUsageSnapshot(),
@@ -233,7 +245,7 @@ export function createAdapterHandler(options = {}) {
       }
       try { snapshot.local_privacy = privacy.snapshot(); }
       catch { snapshot.local_privacy = { state: "error", error: "ccdx_privacy_settings_invalid" }; }
-      return { ...snapshot, http_errors: httpErrors.snapshot(), ...(providers ? { providers } : {}) };
+      return { ...snapshot, ...(antigravity ? { gemini: antigravity.snapshot() } : {}), http_errors: httpErrors.snapshot(), ...(providers ? { providers } : {}) };
     },
   });
   const responsesHandler = createResponsesHandler({
@@ -430,6 +442,7 @@ export function createAdapterHandler(options = {}) {
       return sendRetiredClaudeSurface(res);
     }
 
+    if (pathname.startsWith("/antigravity/")) return (await geminiRuntime()).handle(req, res);
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
   };
@@ -453,7 +466,8 @@ export function createAdapterHandler(options = {}) {
       return;
     }
 
-    const trackRequest = pathname !== ADAPTER_HEALTH_PATH
+    const routeName = classifyAdapterRoute(req.method, pathname);
+    const trackRequest = routeName !== "antigravity_control" && pathname !== ADAPTER_HEALTH_PATH
       && pathname !== ACTIVITY_EVENTS_PATH
       && pathname !== ADAPTER_STATUS_PATH
       && pathname !== ADAPTER_CACHE_PATH
@@ -461,11 +475,10 @@ export function createAdapterHandler(options = {}) {
       && pathname !== PROVIDER_MANAGEMENT_PATH
       && !DASHBOARD_API_PATHS.has(pathname)
       && !((req.method === "GET" || req.method === "HEAD") && DASHBOARD_PATHS.has(pathname));
-    const routeName = classifyAdapterRoute(req.method, pathname);
     const complete = trackRequest ? requestMetrics.begin(routeName) : () => {};
-    const streamPerformance = trackRequest && !isDiscoveryRequest(req.method, pathname) ? streamPerformanceMetrics.begin(routeName, { requestId, application: requestApplication(req.headers) }) : null;
+    const streamPerformance = trackRequest && !isDiscoveryRequest(req.method, pathname) ? streamPerformanceMetrics.begin(routeName, { requestId, application: requestApplication(req.headers, routeName === "antigravity" ? "gemini_app" : "api") }) : null;
     let finishTerminalActivity = () => {};
-    if (trackRequest && !isDiscoveryRequest(req.method, pathname) && ["responses", "responses_compact", "messages", "images", "image_mcp", "search"].includes(routeName)) {
+    if (trackRequest && !isDiscoveryRequest(req.method, pathname) && ["responses", "responses_compact", "messages", "images", "image_mcp", "search", "antigravity"].includes(routeName)) {
       try {
         const finish = options.terminalActivity?.beginRequest?.();
         if (typeof finish === "function") finishTerminalActivity = finish;
@@ -548,13 +561,13 @@ export function createAdapterHandler(options = {}) {
   handler.snapshot = statusSnapshot;
   handler.subscribeActivity = activityEvents.subscribe;
   handler.closeActivity = activityEvents.close;
-  handler.busy = () => optionalRoutes.busy() || options.providerRuntime?.busy?.() === true;
+  handler.busy = () => optionalRoutes.busy() || options.providerRuntime?.busy?.() === true || (antigravity?.snapshot().activity.active || 0) > 0;
   handler.exportState = () => ({ version: 1, history: exportResponseHistory(), optional: optionalRoutes.exportState() });
   handler.importState = async state => {
     if (state?.version !== 1) throw new Error("Unsupported service-state version");
     importResponseHistory(state.history);await optionalRoutes.importState(state.optional);
   };
-  handler.cleanup = () => { activityEvents.close();optionalRoutes.dispose();copilotWeb?.close();if (!options.providerRuntime?.privacy) privacy.close(); };
+  handler.cleanup = () => { activityEvents.close();optionalRoutes.dispose();copilotWeb?.close();antigravity?.close();if (!options.providerRuntime?.privacy) privacy.close(); };
   return handler;
 }
 

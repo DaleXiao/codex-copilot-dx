@@ -2,6 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { antigravityToChat, chatStreamToAntigravity, chatToAntigravity, parseAntigravityJSON } from "../src/antigravity-chat-bridge.mjs";
 
+test("native zero-argument object schemas retain the explicit properties required by Copilot", () => {
+  const parameters = { type: "OBJECT", properties: { options: { type: "OBJECT" }, name: { type: "STRING" } } };
+  const request = { contents: [{ role: "user", parts: [{ text: "fixture" }] }], tools: [{ functionDeclarations: [
+    { name: "list_plugin_accounts", parameters: { type: "OBJECT" } },
+    { name: "configure", parameters },
+  ] }] };
+  const before = structuredClone(request), { chat } = antigravityToChat(request, { model: "gemini-4-carbon", effort: "high" });
+  assert.deepEqual(chat.tools[0].function.parameters, { type: "object", properties: {} });
+  assert.deepEqual(chat.tools[1].function.parameters.properties.options, { type: "object", properties: {} });
+  assert.deepEqual(chat.tools[1].function.parameters.properties.name, { type: "string" });
+  assert.deepEqual(request, before);
+});
+
 const declaration = { name: "view_file", description: "Read a file", parameters: { type: "OBJECT", properties: {
   AbsolutePath: { type: "STRING" }, offset: { type: "INTEGER" }, mode: { type: "STRING", enum: ["UPPER", "lower"] },
 }, required: ["AbsolutePath"] } };

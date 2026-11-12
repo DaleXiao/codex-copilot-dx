@@ -30,6 +30,7 @@ function schemaForChat(schema) {
     else if (schemaLists.has(key) && Array.isArray(value)) result[key] = value.map(schemaForChat);
     else result[key] = value;
   }
+  if (result.type === "object" && !Object.hasOwn(result, "properties")) result.properties = {};
   return result;
 }
 

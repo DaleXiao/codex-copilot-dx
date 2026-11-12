@@ -2,7 +2,7 @@
 
 Use your model services in **Codex App, Claude App and Claude Code** through one local gateway.
 
-On macOS, the optional Gemini integration adds Copilot Carbon and Argon to the original App's Antigravity. Ordinary Gemini chat keeps Google. Set it up on the Gemini page or with `ccdx app gemini`; existing clients keep their setup.
+On macOS, the optional Gemini integration adds Copilot Carbon and Argon to the original App's Antigravity. Ordinary Gemini chat keeps Google. Set it up on the Gemini page; inspect it with `ccdx app gemini status`. Existing clients keep their setup.
 
 Connect GitHub Copilot, Microsoft 365 or your own API. Choose which apps can use each source, then select their models. CI and prebuilt releases cover **macOS on Apple Silicon** and **Windows on x64/ARM64**. Intel Mac code remains available, without CI coverage or new prebuilt assets.
 

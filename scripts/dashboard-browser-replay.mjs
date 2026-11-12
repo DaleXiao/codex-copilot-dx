@@ -971,7 +971,11 @@ try {
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         if (palette === "green" && language === "en" && theme === "light" && width === 1280) {
           const brokenUsage = await fs.readFile(new URL("../src/dashboard/usage.js", import.meta.url), "utf8");
-          await page.route("**/usage.js*", route => route.fulfill({ status: 200, contentType: "text/javascript", body: brokenUsage + "\nwindow.workingUsageCreate=ccdxDashboardUsage.create;ccdxDashboardUsage.create=()=>{throw Error('synthetic optional-view failure')};" }));
+          await page.route("**/dashboard.js*", async route => {
+            const response=await route.fetch({headers:{...route.request().headers(),"if-none-match":"\"fault-injection\""}}),body=await response.text();
+            assert.ok(body.includes(brokenUsage),"The fault must reach the actual delivered usage module");
+            await route.fulfill({status:200,contentType:"text/javascript",body:body.replace(brokenUsage,brokenUsage+"\nwindow.workingUsageCreate=ccdxDashboardUsage.create;ccdxDashboardUsage.create=()=>{throw Error('synthetic optional-view failure')};")});
+          });
           await page.reload();await nav("usage");
           if (await page.locator("#usage-analytics").getAttribute("open") === null) await page.locator("#usage-analytics > summary").click();
           await page.locator("#usage-analytics .view-error").waitFor();

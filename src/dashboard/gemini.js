@@ -14,11 +14,11 @@
     el('gemini-save').disabled=busy||!dirty();el('gemini-cancel').disabled=busy||!dirty();
     words('gemini-save',busy&&pendingAction==='models'?'api_saving':'api_save');if(busy&&pendingAction==='models')el('gemini-save').setAttribute('aria-busy','true');else el('gemini-save').removeAttribute('aria-busy');
     words('gemini-draft-state',dirty()?'cap_unsaved':'cap_saved');
-    words('gemini-route-state',!state.enabled?'gemini_disabled':state.source_enabled===false?'gemini_source_disabled':state.app.status==='starting'?'gemini_route_waiting':state.models_reload_required?'gemini_models_pending':state.route_observed?'gemini_route_observed':'gemini_route_waiting');
+    words('gemini-route-state',!state.enabled?'gemini_disabled':state.source_enabled===false?'gemini_source_disabled':state.app.status==='starting'?'gemini_route_waiting':state.models_reload_required===null?'gemini_catalog_unknown':state.models_reload_required?'gemini_models_pending':state.route_observed?'gemini_route_observed':'gemini_route_waiting');
     el('gemini-version').textContent=state.app.version||'—';
     words('gemini-app-state',state.app.status==='running'?'gemini_running':state.app.status==='stopped'?'gemini_stopped':state.app.status==='starting'?'gemini_starting':'gemini_unavailable');
-    const needsReload=state.enabled&&state.source_enabled!==false&&state.models_reload_required;
-    const hint=!state.enabled&&state.app.status==='running'?'gemini_pause_reopen':needsReload?(state.app.status==='running'?'gemini_reopen':state.app.status==='stopped'?'gemini_open_to_load':null):null;
+    const needsReload=state.enabled&&state.source_enabled!==false&&(state.models_reload_required===true||state.models_reload_required===null);
+    const hint=!state.enabled&&state.app.status==='running'?'gemini_pause_reopen':needsReload?(state.app.status==='running'?(state.models_reload_required===null?'gemini_maybe_reopen':'gemini_reopen'):state.app.status==='stopped'?'gemini_open_to_load':null):null;
     el('gemini-reopen').hidden=!hint;if(hint)words('gemini-reopen',hint);
     el('gemini-open').disabled=busy||state.app.status!=='stopped';
     const list=el('gemini-models'),focus=list.contains(document.activeElement)?document.activeElement.value:null;list.replaceChildren();

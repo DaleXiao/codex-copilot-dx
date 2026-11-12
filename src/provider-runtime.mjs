@@ -4,7 +4,7 @@ import { providerDescriptors } from "./provider-descriptors.mjs";
 import { autoReviewPreference, writeAutoReviewModel } from "./user-settings.mjs";
 import { autoReviewReasoningEfforts, DEFAULT_CODEX_AUTO_REVIEW_MODEL, responsesModelIdsFromCopilotModels } from "./models.mjs";
 import { publicModelCatalog } from "./provider-metadata.mjs";
-import { selectableCopilotModels } from "./live-models.mjs";
+import { publicCopilotModelCatalog } from "./live-models.mjs";
 import { createGithubProvider } from "./providers/github.mjs";
 import { readProviderSettings, writeProviderSettings } from "./provider-settings.mjs";
 import { readM365Settings, updateM365Settings, m365Paths, ensureM365GatewayKey, readM365Account, m365AccountKey } from "./m365-settings.mjs";
@@ -249,10 +249,9 @@ function createBuiltinProviderRuntime({ githubClient, githubRegistry, refreshGit
       if (provider === "github") {
         if (!refreshGithubCatalog) return null;
         const catalog = await refreshGithubCatalog();
-        const selected = new Set(selectableCopilotModels(catalog).models.map(model => model.id));
         const upstreamHost = githubClient.runtimeStatus?.().upstream_host;
         return { source: "live", checkedAt: new Date().toISOString(), upstreamHost: upstreamHost && upstreamHost !== "unknown" ? upstreamHost : "GitHub Copilot", advertised: catalog.data.length,
-          models: publicModelCatalog(catalog.data, { selectable: model => selected.has(model.id) || imageModelCatalog([model]).length > 0, clients: model => selected.has(model.id) || isImageModel(model) ? ["codex"] : [] }) };
+          models: publicCopilotModelCatalog(catalog) };
       }
       if (provider !== "m365") throw Object.assign(new Error("Unknown provider"), { statusCode: 400 });
       if (!enabled || !["darwin", "win32"].includes(platform)) throw unavailable(!enabled ? "m365_disabled" : "m365_unsupported");

@@ -18,7 +18,7 @@ function fixture(t,state="running"){
 test("enable is explicit, edits only CCDX settings, and never restarts a running App",async t=>{
   const f=fixture(t);assert.equal(f.runtime.snapshot().configured,false);
   await assert.rejects(f.runtime.action({action:"enable"},"http://127.0.0.1:2026"),/accept/);
-  const state=await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");assert.equal(state.enabled,true);assert.equal(state.models.length,3);
+  const state=await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");assert.equal(state.enabled,true);assert.equal(state.models.length,3);assert.equal(state.models_reload_required,null,"Client directory state is unknown until native discovery");
   assert.deepEqual(JSON.parse(fs.readFileSync(f.file)),{future:"keep",terminal_color_theme:"pink",gemini_antigravity_enabled:true});
   const open=await f.runtime.action({action:"open"},"http://127.0.0.1:2026");assert.equal(open.last_operation.status,"needs_app_relaunch");assert.equal(f.calls.length,0);
   assert.equal(fs.existsSync(path.join(f.home,".gemini")),false);

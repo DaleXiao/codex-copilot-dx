@@ -6,6 +6,7 @@ import path from "node:path";
 import { imageModelCatalog, imageModelSelection, DEFAULT_IMAGE_MODEL } from "../src/image-models.mjs";
 import { createProviderRuntime } from "../src/provider-runtime.mjs";
 import { createServiceControl } from "../src/service-control.mjs";
+import { publicCopilotModelCatalog, selectableCopilotModels } from "../src/live-models.mjs";
 import { publicModelCatalog } from "../src/provider-metadata.mjs";
 import { authProfilePaths } from "../src/auth-profile.mjs";
 import { readAccessSettings, updateAccessSettings, checkedAccessSettings, defaultAccessSettings } from "../src/access-settings.mjs";
@@ -81,4 +82,15 @@ test("image selection schema rejects invalid IDs and non-Codex image fields", ()
   }
   const settings = defaultAccessSettings();settings.clients.claude_app.image_model = "render-one";
   assert.throws(() => checkedAccessSettings(settings));
+});
+
+test("Copilot source catalog identifies Antigravity models without adding Codex routes", async t => {
+  const f=fixture(t);
+  f.registry.models.data.push({id:"gemini-4-carbon",model_picker_enabled:true,supported_endpoints:["/chat/completions"],capabilities:{supports:{reasoning_effort:["low","medium","high"]}}});
+  const before=f.runtime.connections().clients.find(c=>c.id==="codex").model_plan.models.map(m=>m.id);
+  const catalog=await f.runtime.dashboardCatalog({provider:"github"}),carbon=catalog.models.find(m=>m.id==="gemini-4-carbon");
+  assert.equal(carbon.selectable,true);assert.ok(carbon.clients.includes("antigravity"));assert.ok(carbon.clients.includes("codex"));
+  assert.deepEqual(publicCopilotModelCatalog(f.registry.models).find(m=>m.id===carbon.id).clients,carbon.clients);
+  assert.equal(selectableCopilotModels(f.registry.models).models.some(m=>m.id===carbon.id),false,"The default CLI list retains its existing GPT filter");
+  assert.deepEqual(f.runtime.connections().clients.find(c=>c.id==="codex").model_plan.models.map(m=>m.id),before);
 });

@@ -1,3 +1,5 @@
+import { antigravityCopilotModels } from "./antigravity-models.mjs";
+import { sourceModels } from "./client-model-plan.mjs";
 import { isImageModel, imageModelCatalog } from "./image-models.mjs";
 import os from "node:os";
 import { publicModelCatalog } from "./provider-metadata.mjs";
@@ -58,6 +60,17 @@ export function selectableCopilotModels(payload) {
   models.sort((left, right) => left.vendor.localeCompare(right.vendor, "en")
     || left.id.localeCompare(right.id, "en"));
   return { advertised: data.length, models };
+}
+
+export function publicCopilotModelCatalog(payload) {
+  const data=Array.isArray(payload)?payload:payload.data;
+  const codex=new Set(sourceModels({id:"github",registry:{models:{data}}},"codex")
+    .filter(model=>model.model_picker_enabled!==false&&(!model.policy?.state||model.policy.state==="enabled")).map(model=>model.id));
+  const antigravity=new Set(antigravityCopilotModels(payload).map(model=>model.model));
+  return publicModelCatalog(data,{
+    selectable:model=>codex.has(model.id)||antigravity.has(model.id)||imageModelCatalog([model]).length>0,
+    clients:model=>[...(codex.has(model.id)||isImageModel(model)?["codex"]:[]),...(antigravity.has(model.id)?["antigravity"]:[])],
+  });
 }
 
 function validationFailure(validation) {
@@ -139,10 +152,7 @@ async function lookupLiveModels(credentials, { fetchImpl, timeoutMs, vscodeVersi
     }
     const catalog = selectableCopilotModels(payload);
     if (includeAll) {
-      const selected = new Set(catalog.models.map(model => model.id));
-      catalog.models = publicModelCatalog(Array.isArray(payload) ? payload : payload.data, {
-        selectable: model => selected.has(model.id) || imageModelCatalog([model]).length > 0, clients: model => selected.has(model.id) || isImageModel(model) ? ["codex"] : [],
-      });
+      catalog.models = publicCopilotModelCatalog(payload);
     }
     let upstreamHost = "GitHub Copilot";
     try { upstreamHost = new URL(apiBase).hostname; } catch {}

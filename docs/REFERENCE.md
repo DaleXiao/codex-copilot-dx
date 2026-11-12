@@ -69,7 +69,7 @@ The old `app gemini` commands remain available. Authorize Antigravity on the Git
 Copilot source page, or with `source github access --edit --apps codex,antigravity --yes`.
 Choose its exposed models on the Antigravity page or with
 `app antigravity models --edit`. A model file uses `{"models":["<ccdx-copilot-model-id>"]}`.
-Saving model selection requires reopening Gemini through CCDX to reload its model list.
+After saving, the Antigravity page reports whether the client has fetched the current model list. If the list is pending, reopen Gemini through CCDX.
 
 The WebUI uses one authorization form for GitHub Copilot, Microsoft 365 and custom APIs. Source switches apply immediately. App-authorization and model checkboxes are drafts until **Save**; **Discard changes** restores the saved selection. Drafts survive refresh and navigation. Source authorization does not choose app models.
 
@@ -118,7 +118,7 @@ Clicking the Web UI logo plays one brief rotation and keeps its Overview navigat
 
 Upgrades retain saved account bindings, source IDs, key references, model choices/defaults and capability overrides. Native account stores keep their existing owner; bookkeeping does not request another login. Unchanged client settings need no repeat save or synchronization. Explicit user changes and ordinary credential renewal keep their current behavior.
 
-Sources own accounts, API addresses, keys and model capabilities. Apps own visible models and defaults. Allowing an app to use a source does not select all its models. Selecting no models pauses that app. Settings owns service preferences and appearance, not model routing. An unchanged graph save keeps the file bytes and modification time; explicit sync, refresh and credential actions still run. Existing v1 configuration is backed up byte-for-byte before its first v2 write; reads do not migrate files.
+Sources own accounts, API addresses, keys and model capabilities. Apps own visible models and defaults. Allowing an app to use a source does not select all its models. Selecting no models pauses managed Codex/Claude conversation routing. Antigravity’s Copilot switch also controls its background requests. Settings owns service preferences and appearance, not model routing. An unchanged graph save keeps the file bytes and modification time; explicit sync, refresh and credential actions still run. Existing v1 configuration is backed up byte-for-byte before its first v2 write; reads do not migrate files.
 
 In the Web UI, **Model sources → Add API** saves the source and immediately reads its catalog. A failed read keeps the saved source and editor. Select supported models and their declared interfaces before assigning them to apps. Table details expand downward without shifting their controls or redistributing columns, including request metadata and check results. API-editor capability details open below their model row; manual overrides are separate from reported metadata.
 

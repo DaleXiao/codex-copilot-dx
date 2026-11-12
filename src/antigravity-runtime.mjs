@@ -44,7 +44,7 @@ export function createAntigravityRuntime({client,models=()=>[],privacy,home=os.h
     const config=settings(),sourceEnabled=readAccessSettings(options).providers.github,activity=handler.snapshot();
     const listed=antigravityCopilotModels(models()).map(({id,displayName,effort,maxTokens})=>({id,name:displayName,effort,context_window:maxTokens,selected:config.selected_models===null||config.selected_models.includes(id)}));
     const expected=listed.filter(model=>model.selected).map(model=>model.id).sort();
-    const reload=config.enabled&&sourceEnabled&&(activity.catalog_models===null||JSON.stringify([...activity.catalog_models].sort())!==JSON.stringify(expected));
+    const reload=config.enabled&&sourceEnabled?(activity.catalog_models===null?null:JSON.stringify([...activity.catalog_models].sort())!==JSON.stringify(expected)):false;
     return {source:"gemini_antigravity",...config,source_enabled:sourceEnabled,models_reload_required:reload,app,route_observed:handler.snapshot().observed,
       model_source:"Google + GitHub Copilot",background_source:"GitHub Copilot",ordinary_chat_source:"Google (unchanged)",
       models:listed,activity,last_operation:lastOperation};

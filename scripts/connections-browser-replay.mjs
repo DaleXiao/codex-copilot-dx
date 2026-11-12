@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
+import { publicCopilotModelCatalog } from "../src/live-models.mjs";
 import { createProviderRuntime } from "../src/provider-runtime.mjs";
 import { createApiProvider } from "../src/providers/api.mjs";
 import { createAdapterHandler } from "../src/adapter.mjs";
@@ -42,7 +43,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         const serviceControl = createServiceControl({ home: root, env, providerRuntime: runtime });
         handler = createAdapterHandler({ env, antigravityOptions:{inspect:async()=>({status:"stopped",version:"synthetic",pids:[],app:"/Applications/Gemini.app"})}, providerRuntime: runtime, dashboardOptions: { home: root, env, serviceControl,
           authStatusFn: () => ({ profiles: { codex: { configured: false, valid: false } } }),
-          liveModelsFn: async () => ({ models: [], advertised: 0, upstreamHost: "synthetic" }),
+          liveModelsFn: async () => ({ models: publicCopilotModelCatalog(githubRegistry.models), advertised: githubRegistry.models.data.length, upstreamHost: "synthetic" }),
           updateStatusFn: async () => ({ source: "release_status", status: "unavailable", current: { version: "synthetic" } }) } });
         await page.goto(base + "/#models");await page.locator("#connection-source-list .connection-row").waitFor();assert.equal(await page.locator("html").getAttribute("data-palette"), palette);
         await page.locator("#connection-add").focus();await page.keyboard.press("Enter");assert.equal(await page.locator("#connection-name").evaluate(node => node === document.activeElement), true, "Add API focuses its first field");
@@ -66,7 +67,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         await page.locator("#source-app-access").waitFor({state:"visible"});
         for (const app of ["codex", "claude_app", "claude_code"]) await page.locator(`#source-allowed-apps input[value="${app}"]`).check();
         assert(runtime.connections().clients.every(c=>!c.allowed.includes(id)),"API authorization stays a draft until saved");
-        await page.locator("#source-access-save").click();await page.waitForFunction(()=>document.getElementById("source-access-save").disabled);
+        await page.locator("#source-access-save").click();await page.waitForFunction(()=>document.getElementById("source-access-save").disabled&&!document.getElementById("source-access-save").hasAttribute("aria-busy"));
         const codexBeforeGrant = fs.readFileSync(path.join(root, ".codex/config.toml"), "utf8");
         await page.locator("#model-provider-m365").click();await page.locator("#source-app-access").waitFor({ state: "visible" });
         assert.equal(await page.locator("#source-allowed-apps input:checked").count(), 0);
@@ -76,7 +77,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           if (route.request().method() === "POST" && JSON.parse(route.request().postData()).operation === "source_access") return route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "ccdx_connections_conflict" }) });
           return route.continue();
         });
-        await page.locator("#source-access-save").click();await page.waitForFunction(() => !document.getElementById("source-access-save").disabled);
+        await page.locator("#source-access-save").click();await page.waitForFunction(() => !document.getElementById("source-access-save").disabled&&!document.getElementById("source-access-save").hasAttribute("aria-busy"));
         assert.equal(await page.locator("#source-allowed-apps input:checked").count(), 2, "Failed saves keep the app choices");
         await page.unroute("**/_ccdx/ui/connections");await page.locator("#source-access-save").click();
         await page.waitForFunction(() => document.getElementById("source-access-save").disabled && !document.getElementById("source-access-save").hasAttribute("aria-busy"));
@@ -228,18 +229,21 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
         if (options.get("--output")) { fs.mkdirSync(options.get("--output"), { recursive: true });await page.screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}.png`), fullPage: true }); }
         await page.locator('[data-route="models"]').click();await page.locator("#model-provider-github").click();
         await page.waitForFunction(()=>globalThis.ccdxAntigravity?.state&&!globalThis.ccdxAntigravity.pending);
+        githubRegistry.models.data=[{id:"gemini-4-carbon",model_picker_enabled:true,supported_endpoints:["/chat/completions"],capabilities:{supports:{reasoning_effort:["low","medium","high"]}}}];
+        await page.locator('#refresh-models').click();await page.waitForFunction(()=>document.getElementById('live-models-body').textContent.includes('Antigravity'));
+        assert.match(await page.locator('#live-models-body').innerText(),/Codex App.*Antigravity/s);
         const grant=page.locator('#source-allowed-apps input[value="antigravity"]');await grant.check();
         assert.equal(await page.evaluate(()=>globalThis.ccdxAntigravity.state.enabled),false,"GitHub authorization is a draft");
         await page.locator("#model-provider-m365").click();await page.locator("#model-provider-github").click();assert.equal(await grant.isChecked(),true,"Source drafts survive tab navigation");
         await page.locator("#source-access-cancel").click();assert.equal(await grant.isChecked(),false);
         await grant.check();await page.locator("#source-access-save").click();
-        await page.waitForFunction(()=>globalThis.ccdxAntigravity.state.enabled&&document.getElementById("source-access-save").disabled);
+        await page.waitForFunction(()=>globalThis.ccdxAntigravity.state.enabled&&document.getElementById("source-access-save").disabled&&!document.getElementById("source-access-save").hasAttribute("aria-busy"));
         assert.match(await page.locator('#source-access-note').innerText(),/Antigravity/);assert.doesNotMatch(await page.locator('#source-access-note').innerText(),/Claude/);
         await page.locator('#connection-source-list input[role="switch"]').click();
         await page.locator('#connection-disable-editor').waitFor({state:'visible'});assert.match(await page.locator('#connection-replacements').innerText(),/Antigravity/);
         await page.locator('#connection-disable-cancel').click();
         if(options.get("--output")){await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(options.get("--output"),`${engine}-${palette}-${mode}-sources.png`),fullPage:true});}
-        await grant.uncheck();await page.locator("#source-access-save").click();await page.waitForFunction(()=>!globalThis.ccdxAntigravity.state.enabled&&document.getElementById("source-access-save").disabled);
+        await grant.uncheck();await page.locator("#source-access-save").click();await page.waitForFunction(()=>!globalThis.ccdxAntigravity.state.enabled&&document.getElementById("source-access-save").disabled&&!document.getElementById("source-access-save").hasAttribute("aria-busy"));
         assert.deepEqual(errors, []);report.push({ engine, palette, mode, language, width, saved: true, assigned: true, disabled: true, restored: true });
       } catch (error) { console.error("Browser details:", errors, await page.locator("#connection-client-note").textContent());throw error; } finally { await context.close();handler?.dispose?.();server.closeAllConnections();await new Promise(resolve => server.close(resolve));await runtime?.close();fs.rmSync(root, { recursive: true, force: true });clearTimeout(watchdog); }
     }

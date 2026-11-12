@@ -1017,6 +1017,11 @@ try {
         if(!await page.locator("#gemini-enabled").isChecked())await page.locator("#gemini-enabled").check();
         await page.waitForFunction(()=>document.querySelectorAll('#gemini-models input').length===3&&!document.getElementById("gemini-enabled").disabled);
         const modelBoxes=page.locator("#gemini-models input");
+        const initialCatalog=await page.request.post(`http://127.0.0.1:${server.address().port}/antigravity/v1internal:fetchAvailableModels`,{data:{}});
+        assert.equal(initialCatalog.status(),200);
+        assert.equal(Object.keys((await initialCatalog.json()).models).filter(id=>id.startsWith("ccdx-copilot-")).length,3,"Each case starts with the native client's full model list loaded");
+        await page.locator("#gemini-refresh").click();await page.waitForFunction(()=>!document.getElementById("gemini-refresh").disabled);
+        assert.equal(await page.locator("#gemini-reopen").isVisible(),false);
         await modelBoxes.first().uncheck();
         await page.locator("#gemini-refresh").click();await page.waitForFunction(()=>!document.getElementById("gemini-refresh").disabled);
         assert.equal(await modelBoxes.first().isChecked(),false,"Refresh keeps the model draft");

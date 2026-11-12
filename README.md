@@ -2,7 +2,7 @@
 
 Use your model services in **Codex App, Claude App and Claude Code** through one local gateway.
 
-On macOS, the optional Gemini integration adds Copilot Carbon and Argon to the original App's Antigravity. Ordinary Gemini chat keeps Google. Set it up on the Antigravity page; inspect it with `ccdx app antigravity status`. Existing clients keep their setup. In Model sources, choose which apps may use each source, then save. On each app page, select models and save; source tabs only change the view.
+On macOS, the optional Gemini integration adds Copilot Carbon and Argon to the original App's Antigravity. Ordinary Gemini chat keeps Google. Set it up on the Antigravity page; inspect it with `ccdx app antigravity status`. Existing clients keep their setup.
 
 Connect GitHub Copilot, Microsoft 365 or your own API. Choose which apps can use each source, then select their models. CI and prebuilt releases cover **macOS on Apple Silicon** and **Windows on x64/ARM64**. Intel Mac code remains available, without CI coverage or new prebuilt assets.
 
@@ -30,7 +30,7 @@ On Windows, use `npm.cmd` or `ccdx.cmd` if PowerShell blocks npm-generated scrip
 
 The Web UI opens at [http://127.0.0.1:2026](http://127.0.0.1:2026/). Run `ccdx web` to open it again, including before signing in.
 
-1. **Model sources:** connect an account or API, read its models and choose allowed apps.
+1. **Model sources:** connect an account or API, read its models, choose allowed apps and save. Source tabs only change the view.
 2. **Codex / Claude:** choose visible models, set a default and save. Preview and synchronize client settings when needed.
 3. **Overview / Requests:** check configuration, activity and errors.
 4. **Usage → Context:** inspect reported input, model windows and observed compactions from this run.

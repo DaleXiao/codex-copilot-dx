@@ -4,17 +4,18 @@ import {Readable} from "node:stream";
 import {EventEmitter} from "node:events";
 import {createAntigravityHandler} from "../src/antigravity-handler.mjs";
 import {antigravityCopilotModels,mergeAntigravityModels} from "../src/antigravity-models.mjs";
+import {summarizeUsage} from "../src/usage-store.mjs";
 
 const catalog={data:["gemini-4-carbon","gemini-4-argon"].map(id=>({id,supported_endpoints:["/chat/completions"],capabilities:{supports:{vision:true,reasoning_effort:["low","medium","high"]},limits:{max_context_window_tokens:1000000,max_output_tokens:64000}}}))};
 const alias=antigravityCopilotModels(catalog)[2].id;
 const body=(model=alias,requestType="agent")=>({model,requestType,request:{contents:[{role:"user",parts:[{text:"fixture"}]}],generationConfig:{thinkingConfig:{includeThoughts:true,thinkingBudget:4096}}}});
 const sse=(content="ok")=>new Response('data: '+JSON.stringify({choices:[{delta:{content},finish_reason:"stop"}]})+'\n\ndata: [DONE]\n\n');
 function fixture(options={}){
-  const google=[],copilot=[];
-  const handler=createAntigravityHandler({enabled:()=>true,models:()=>catalog,
+  const google=[],copilot=[],records=[];
+  const handler=createAntigravityHandler({enabled:()=>true,models:()=>catalog,recordUsageFn:record=>records.push(record),
     fetchGoogle:async(url,request)=>{google.push({url,request});return Response.json({native:true})},
     client:{chatCompletions:async(value,options)=>{copilot.push({value,options});return sse()}},...options});
-  return {handler,google,copilot};
+  return {handler,google,copilot,records};
 }
 function invoke(handler,value,{url="/antigravity/v1internal:streamGenerateContent?alt=sse",raw,headers={},onWrite}={}){
   const req=Readable.from([Buffer.from(raw??JSON.stringify(value))]);req.method="POST";req.url=url;req.headers={host:"127.0.0.1:2026","content-type":"application/json",authorization:"Bearer GOOGLE_FIXTURE",...headers};req.socket={remoteAddress:"127.0.0.1"};
@@ -97,4 +98,46 @@ test("successful native model discovery acknowledges the latest configuration",a
   const f=fixture({fetchGoogle:async()=>Response.json({models:{native:{model:"NATIVE"}}})});
   const result=await invoke(f.handler,{}, {url:"/antigravity/v1internal:fetchAvailableModels"}).done;
   assert.equal(result.status,200);assert.ok(f.handler.snapshot().catalog_models.includes(alias));assert.ok(JSON.parse(result.text).models[alias]);
+});
+
+test("Copilot JSON usage reaches the Gemini ledger without dropping zero cache or reasoning counts",async()=>{
+  const usage={prompt_tokens:100,completion_tokens:25,total_tokens:125,prompt_tokens_details:{cached_tokens:0},completion_tokens_details:{reasoning_tokens:10}};
+  const copilot_usage={token_details:[{token_type:"input",token_count:100},{token_type:"output",token_count:25}],total_nano_aiu:123};
+  const f=fixture({client:{chatCompletions:async()=>Response.json({id:"usage-json",model:"gemini-4-carbon",usage,copilot_usage,choices:[{finish_reason:"stop",message:{content:"ok"}}]})}});
+  const result=await invoke(f.handler,body(),{url:"/antigravity/v1internal:generateContent"}).done;assert.equal(result.status,200);
+  assert.equal(f.records.length,1);assert.equal(f.records[0].model,"gemini-4-carbon");assert.equal(f.records[0].provider,"github");assert.equal(f.records[0].surface,"antigravity");
+  assert.deepEqual(f.records[0].usage,{input_tokens:100,cached_input_tokens:0,output_tokens:25,reasoning_output_tokens:10,total_tokens:125});
+  assert.equal(f.records[0].copilot_usage.total_nano_aiu,123);
+  assert.equal(f.records[0].outcome,"completed");assert.equal(f.records[0].partial,undefined);
+  assert.equal(summarizeUsage(f.records).byModel["gemini-4-carbon"].input_tokens,100);
+});
+test("streamed Gemini usage records once and keeps billed partial usage on truncated streams",async()=>{
+  const event={id:"usage-sse",usage:{prompt_tokens:40,completion_tokens:5,total_tokens:45,prompt_tokens_details:{cached_tokens:12}},choices:[]};
+  for(const truncated of [false,true]){
+    const data='data: '+JSON.stringify(event)+'\n\ndata: '+JSON.stringify(event)+'\n\n'+(truncated?'':'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    const model=truncated?"gemini-4-argon":"gemini-4-carbon",id=antigravityCopilotModels(catalog).find(entry=>entry.model===model).id;
+    const f=fixture({client:{chatCompletions:async()=>new Response(data)}});await invoke(f.handler,body(id)).done;
+    assert.equal(f.records.length,1);assert.equal(f.records[0].usage.cached_input_tokens,12);assert.equal(f.records[0].usage.output_tokens,5);
+    assert.equal(f.records[0].outcome,truncated?"failed":"completed");assert.equal(f.records[0].partial,truncated?true:undefined);
+    assert.equal(summarizeUsage(f.records).bySourceModel["github / "+model].output_tokens,5);
+  }
+  const absent=fixture();await invoke(absent.handler,body()).done;assert.equal(absent.records.length,0,"Missing upstream usage cannot be invented");
+});
+
+test("Gemini usage without cache metadata keeps cache unknown and attributes background tasks to the actual Copilot model",async()=>{
+  const f=fixture({client:{chatCompletions:async()=>Response.json({usage:{prompt_tokens:10,completion_tokens:2},choices:[{finish_reason:"stop",message:{content:"ok"}}]})}});
+  await invoke(f.handler,body("gemini-3.8-flash","checkpoint"),{url:"/antigravity/v1internal:generateContent"}).done;
+  assert.equal(f.records.length,1);assert.equal(f.records[0].model,"gemini-4-carbon");assert.equal(f.records[0].usage.cached_input_tokens,undefined);
+  assert.equal(f.records[0].usage.total_tokens,12);
+});
+
+test("client cancellation retains returned Gemini usage once and releases admission",async()=>{
+  let released=0,call;
+  const f=fixture({acquireRequest:async()=>()=>{released++},client:{chatCompletions:async(_,{signal})=>new Response(new ReadableStream({start(controller){
+    signal.addEventListener("abort",()=>controller.error(new Error("cancelled")),{once:true});
+    controller.enqueue(new TextEncoder().encode('data: {"usage":{"prompt_tokens":10,"completion_tokens":1},"choices":[{"delta":{"content":"partial"}}]}\n\n'));
+  }}))}});
+  call=invoke(f.handler,body(),{onWrite:()=>{call.res.destroyed=true;call.res.emit("close")}});await call.done;
+  assert.equal(f.records.length,1);assert.equal(f.records[0].outcome,"cancelled");assert.equal(f.records[0].partial,true);
+  assert.equal(f.records[0].usage.output_tokens,1);assert.equal(released,1);assert.equal(f.handler.snapshot().active,0);
 });

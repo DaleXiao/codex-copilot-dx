@@ -16,8 +16,9 @@
   const visible = () => document.visibilityState === "visible" && !root.closest("[hidden]");
   const integer = value => Number.isSafeInteger(value) && value >= 0;
   const appName = id => format(`flow_app_${id}`);
-  const sourceName = id => id === "github" ? "GitHub Copilot" : id === "m365" ? "Microsoft 365" : globalThis.ccdxConnectionNames?.[id] || format("flow_source_unknown");
-  const modelName = id => !id || id === "other" ? format("flow_model_unknown") : id;
+  const awaitingMetadata = row => !row.terminal_outcome && row.upstream_attempts === 0 && ["received", "admission", "body", "history", "images", "serialization"].includes(row.phase);
+  const sourceName = (id, pending = false) => id === "github" ? "GitHub Copilot" : id === "m365" ? "Microsoft 365" : globalThis.ccdxConnectionNames?.[id] || format(pending ? "flow_source_pending" : "flow_source_unknown");
+  const modelName = (id, pending = false) => !id || id === "other" ? format(pending ? "flow_model_pending" : "flow_model_unknown") : id;
   const modelKey = row => JSON.stringify([row.provider, row.model]);
   const related = row => !selected || (selected.type === "apps" ? row.application === selected.id : modelKey(row) === selected.id);
   const responding = row => row.first_output_ms !== null && !row.terminal_outcome;
@@ -41,8 +42,8 @@
     const map = new Map();
     for (const row of rows) {
       const id = type === "apps" ? row.application : modelKey(row);
-      if (!map.has(id)) map.set(id, { id, provider: row.provider, model: row.model, rows: [] });
-      map.get(id).rows.push(row);
+      if (!map.has(id)) map.set(id, { id, provider: row.provider, model: row.model, rows: [], pending: true });
+      map.get(id).rows.push(row);map.get(id).pending &&= awaitingMetadata(row);
     }
     const order = ["codex_app", "codex_cli", "codex", "claude_code", "claude_app", "claude", "gemini_app", "api"];
     return [...map.values()].sort((a, b) => type === "apps" ? order.indexOf(a.id) - order.indexOf(b.id) : a.id.localeCompare(b.id));
@@ -65,16 +66,16 @@
         cache.set(group.id, node);resize.observe(node);positions = null;
       }
       const [button, count, note] = node.children;
-      const title = type === "apps" ? appName(group.id) : modelName(group.model);
+      const title = type === "apps" ? appName(group.id) : modelName(group.model, group.pending);
       if (button.textContent !== title) { button.textContent = title;positions = null; }
       button.setAttribute("aria-pressed", String(selected?.type === type && selected.id === group.id));
       count.hidden = fresh && omitted === 0 && group.rows.length < 2;
       if (fresh && (group.rows.length || total === 0)) label(count, omitted ? "flow_count_lower" : "flow_count", { count: group.rows.length.toLocaleString() });
       else count.textContent = "—";
-      if (type === "models" && node.children[3].textContent !== sourceName(group.provider)) { node.children[3].textContent = sourceName(group.provider);positions = null; }
+      if (type === "models" && node.children[3].textContent !== sourceName(group.provider, group.pending)) { node.children[3].textContent = sourceName(group.provider, group.pending);positions = null; }
       const output = group.rows.filter(responding).length;
       const phase = group.rows.every(row => row.terminal_outcome) ? "flow_finishing"
-        : group.rows.every(row => row.upstream_attempts > 1) ? "flow_retrying" : "flow_waiting";
+        : group.rows.every(row => row.upstream_attempts > 1) ? "flow_retrying" : group.rows.every(awaitingMetadata) ? "flow_preparing" : "flow_waiting";
       label(note, !fresh || total && !group.rows.length ? "flow_last_observed" : !group.rows.length ? "flow_idle" : output ? group.rows.length === 1 ? "flow_responding" : "flow_group_response" : phase, { count: output });
       node.dataset.related = String(!selected || group.rows.some(related));fragments.push(node);
     }
@@ -91,7 +92,7 @@
       const id = row.request_id || JSON.stringify([row.application, row.provider, row.model, index]);wanted.add(id);
       let tr = detailRows.get(id);
       if (!tr) { tr = entry("tr");for (let i = 0; i < 6; i++) tr.append(entry("td"));detailRows.set(id, tr); }
-      const values = [appName(row.application), sourceName(row.provider), modelName(row.model), format(fresh ? status(row) : "flow_last_observed"), `${((row.elapsed_ms + Math.max(0, Date.now() - sampledAt)) / 1000).toFixed(1)} s`, row.upstream_attempts.toLocaleString()];
+      const values = [appName(row.application), sourceName(row.provider, awaitingMetadata(row)), modelName(row.model, awaitingMetadata(row)), format(fresh ? status(row) : "flow_last_observed"), `${((row.elapsed_ms + Math.max(0, Date.now() - sampledAt)) / 1000).toFixed(1)} s`, row.upstream_attempts.toLocaleString()];
       if (row.previous_request) values[3] += " · " + format("flow_previous_result", { reason: row.previous_request.stop_reason || row.previous_request.outcome || "—", seconds: (row.previous_request.elapsed_ms / 1000).toFixed(1) });
       tr.title = row.session_id ? format("flow_session_previous", { session: row.session_id, reason: row.previous_request?.stop_reason || row.previous_request?.outcome || "—", seconds: row.previous_request ? (row.previous_request.elapsed_ms / 1000).toFixed(1) : "—" }) : format("flow_session_unknown");
       values.forEach((value, i) => { if (tr.children[i].textContent !== value) tr.children[i].textContent = value; });
@@ -107,7 +108,7 @@
     root.dataset.paused = "false";
     const apps = group("apps"), allModels = group("models");
     if (fresh && rows.length) { lastApps = apps;lastModels = allModels; }
-    if (fresh && !rows.length) { for (const groups of [lastApps, lastModels]) for (const group of groups) group.rows = []; }
+    if (fresh && !rows.length) { lastModels = lastModels.filter(group => !(group.pending && (!group.model || group.model === "other")));for (const groups of [lastApps, lastModels]) for (const group of groups) group.rows = []; }
     const shownApps = apps.length ? apps : lastApps, models = allModels.length ? allModels : lastModels;
     if (selected && !rows.some(related)) selected = null;
     const signature = JSON.stringify([fresh, total, omitted, selected, expanded, rows.map(row => [row.request_id, row.application, row.provider, row.model, row.phase, row.upstream_attempts, row.first_output_ms !== null, row.terminal_outcome])]);

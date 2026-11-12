@@ -157,6 +157,8 @@ Catalog diagnostics distinguish local cached data from an online response and ex
 
 Request inspection covers bounded retained records, not a full conversation archive. Unidentified clients stay unidentified. Routine diagnostics omit secrets, prompts and error bodies. Explicit error excerpts use bounded, redacted collection. The usage JSON `requests` field counts recorded usage rows, not HTTP calls. Usage is returned token metadata; cache hit is reused input divided by input from records with valid counts for both. Unknown/invalid records remain in token totals but are excluded from both sides of the rate, with partial coverage indicated. It is not a request-based cache rate or a billing receipt.
 
+Antigravity Copilot answers and background summaries record returned Gemini token usage for both JSON and streaming responses. Each request records its latest reported usage once, including usage received before failure or cancellation. Missing upstream token/cache counts remain unknown. This starts with 1.3.26; previously unrecorded usage cannot be recovered from the ledger. Requests waiting for body parsing show “Model pending” and “Source pending” until actual routing metadata is available.
+
 For an identified conversation, hovering a point in the input-history chart shows that request's available cache-reuse ratio. Missing or invalid counts remain unknown; the bounded in-memory history and retained usage do not change.
 
 ## Settings and appearance

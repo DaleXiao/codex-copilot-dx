@@ -120,3 +120,17 @@ test("flow phase changes preserve wire nodes; hidden pages do not redraw", () =>
   f.document.visibilityState = "hidden";f.api.update(snapshot([]));assert.equal(f.el("flow-wires").children[0], wire);
   f.document.visibilityState = "visible";f.api.visibilityChanged();assert.equal(f.el("flow-active-wires").children.length, 0);assert.equal(f.el("flow-active-wires").attributes.hidden, "");
 });
+
+test("queued metadata is pending rather than a misidentified model, then resolves to the actual model",()=>{
+  const f=fixture(),pending=row("gemini_app","other",{provider:"unknown",phase:"received",upstream_attempts:0});
+  f.api.update(snapshot([pending]));const model=f.el("flow-models").children[0];
+  assert.equal(model.children[0].textContent,"flow_model_pending");assert.equal(model.children[3].textContent,"flow_source_pending");
+  assert.equal(model.children[2].textContent,'flow_preparing{"count":0}');assert.equal(f.el("flow-apps").children[0].children[2].textContent,'flow_preparing{"count":0}');
+  f.api.update(snapshot([{...pending,model:"gemini-4-carbon",provider:"github",phase:"upstream_connection",upstream_attempts:1}]));
+  assert.equal(f.el("flow-models").children[0].children[0].textContent,"gemini-4-carbon");assert.equal(f.el("flow-models").children[0].children[3].textContent,"GitHub Copilot");
+  f.api.update(snapshot([pending]));f.api.update(snapshot([]));assert.equal(f.el("flow-models").children.length,0,"Idle state does not retain a pending placeholder as a real model");
+});
+test("unknown metadata after dispatch remains unknown",()=>{
+  const f=fixture();f.api.update(snapshot([row("gemini_app","other",{provider:"unknown",phase:"upstream_connection",upstream_attempts:1})]));
+  assert.equal(f.el("flow-models").children[0].children[0].textContent,"flow_model_unknown");assert.equal(f.el("flow-models").children[0].children[3].textContent,"flow_source_unknown");
+});

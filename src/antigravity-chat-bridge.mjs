@@ -179,7 +179,7 @@ export function chatToAntigravity(response, originalNames) {
     ...(usage ? { usageMetadata: { promptTokenCount: usage.prompt_tokens || 0, candidatesTokenCount: usage.completion_tokens || 0, totalTokenCount: usage.total_tokens || 0 } } : {}) };
 }
 
-export async function* chatStreamToAntigravity(response, originalNames, { onChunk } = {}) {
+export async function* chatStreamToAntigravity(response, originalNames, { onChunk, onUsage } = {}) {
   if (!response?.body) throw invalid("Upstream Chat stream has no body", 502);
   const calls = new Map(), data = [], guard = new ToolArgumentDeltaGuard();let done = false, finish = null, usage = null, bytes = 0, visible = false;
   const frame = async function* () {
@@ -189,6 +189,7 @@ export async function* chatStreamToAntigravity(response, originalNames, { onChun
     let event;try { event = JSON.parse(raw); } catch { throw invalid("Invalid upstream Chat stream event", 502); }
     const upstreamError = upstreamChatStreamError(event);if (upstreamError) throw upstreamError;
     if (event?.usage) usage = event.usage;
+    if (event?.usage || event?.copilot_usage) onUsage?.(event);
     const choice = event?.choices?.[0];
     if (!choice) return;
     if (choice.finish_reason) finish = choice.finish_reason;

@@ -1208,6 +1208,8 @@ Responses and Messages parsers, Chat line reading and the privacy restoration la
 
 `model-capabilities.mjs` validates explicit limits and protocol-scoped supported-parameter lists. Unknown declarations remain absent. `provider-cooldown.mjs` holds three bounded interface states per API instance. Two confirmed transport failures or temporary server failures open a five-second cooldown, extended by bounded Retry-After. One real request becomes the recovery attempt; client cancellation leaves recovery available. Credential/config instance replacement resets this state. No traffic is switched or replayed by cooldown.
 
+The API provider reuses a cached healthy network directly. Its Messages alias table is validated and built lazily once per provider instance. Configuration changes replace that instance and its table; ambiguous catalogs retain their original rejection behavior.
+
 The request context validates a scalar purpose enum. New usage rows and bounded request metrics carry the purpose; the query layer treats missing legacy tags as unknown. Default totals retain every purpose and existing failure/partial/unknown accounting. Compatibility doctor requests set the local purpose header, which is not a vendor credential or payload field.
 
 `source-import.mjs` interprets only supplied bounded JSON shapes and returns metadata drafts. It invokes existing API validation, removes foreign cached evidence and credential values, reports conflicts, and grants no client access. WebUI draft review reuses the API editor; explicit CLI application reuses the existing save transaction and private key input. No foreign account discovery, executable config loading or multi-source automatic application runs.

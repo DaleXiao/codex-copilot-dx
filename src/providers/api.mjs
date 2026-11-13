@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createRoutePlan } from "../route-plan.mjs";
 import { accessError } from "../access-settings.mjs";
 import { publicModelCatalog } from "../provider-metadata.mjs";
-import { resolveClaudeModel } from "../claude-models.mjs";
+import { claudeModelEntries } from "../claude-models.mjs";
 import { prepareResponsesPayload } from "../image-optimization.mjs";
 import { enforceResponsesPayloadByteBudget } from "../responses-byte-budget.mjs";
 import { MAX_UPSTREAM_MODEL_CATALOG_BYTES, MAX_UPSTREAM_ERROR_BODY_BYTES, readBoundedResponseText } from "../http-transport.mjs";
@@ -59,8 +59,10 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     return initialization.run("network", sharedSignal => networkFactory({ targets, env, platform, signal: AbortSignal.any([sharedSignal, lifetime.signal]) })
       .then(value => { if (closed || sharedSignal.aborted) { value.close();throw accessError("ccdx_api_closed", 503); }network = value;return value; }), { signal });
   };
+  let messageAliases;
   const selected = (id, api) => {
-    const model = api === "messages" ? resolveClaudeModel(catalog, id) : catalog.find(model => model.id === id);
+    if (api === "messages" && !messageAliases) messageAliases = new Map(claudeModelEntries(catalog).map((entry, index) => [entry.name, catalog[index]]));
+    const model = api === "messages" && messageAliases.get(id) || catalog.find(model => model.id === id);
     if (!model?.supported_endpoints.includes(paths[api])) throw accessError("ccdx_api_model_unavailable");return model;
   };
   async function request(url, body, options = {}, api = "responses") {
@@ -86,7 +88,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     const cooldown = body && !options.countTokens ? cooldowns[api] : null;
     const recovery = cooldown?.enter();let observed = false;
     try {
-      const transport = await getNetwork(options.signal);
+      const transport = !closed && network && (network.healthy?.() ?? true) ? network : await getNetwork(options.signal);
       options.onUpstreamStart?.();
       if (body && options.observeUpstream !== false) {
         markUpstreamStarted(body.stream === true);

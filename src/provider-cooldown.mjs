@@ -15,7 +15,7 @@ export function createProviderCooldown({ now = Date.now, delayMs = 5000 } = {}) 
     if (failures < 2) return false;
     if (until > now() || recovering) {
       const error = accessError("ccdx_api_cooling_down", 503);
-      error.jsonBody.error.message = "This source interface is temporarily cooling down after repeated connection failures. Retry shortly.";
+      error.message = error.jsonBody.error.message = "This source interface is temporarily cooling down after repeated connection failures. Retry shortly.";
       error.retryAfterMs = Math.max(1000, until - now());throw error;
     }
     recovering = true;return true;

@@ -6,7 +6,7 @@ test("two failures cool only the selected deployment; one real request recovers 
   let now = 0;const a = createProviderCooldown({ now: () => now }), b = createProviderCooldown({ now: () => now });
   a.acquire().finish({ failed: true });assert.equal(a.snapshot().state, "ready");
   a.acquire().finish({ failed: true });assert.equal(a.snapshot().state, "cooling");
-  assert.throws(() => a.acquire(), error => error.code === "ccdx_api_cooling_down");
+  assert.throws(() => a.acquire(), error => error.code === "ccdx_api_cooling_down" && /connection failures.*Retry shortly/.test(error.message));
   b.acquire().finish();now = 5000;
   const recovery = a.acquire();assert.equal(a.snapshot().state, "recovering");assert.throws(() => a.acquire());
   recovery.finish();assert.deepEqual(a.snapshot(), { state: "ready", failures: 0, retry_after_ms: 0 });

@@ -196,7 +196,7 @@ function createGuardedMessagesObserver(onEvent, maxBytes, clientModel, guard, re
   return { write: chunk => run("write", chunk), finish: () => run("finish") };
 }
 
-export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = false, messagesSystemMode = "passthrough", log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,
+export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = false, appContract, messagesSystemMode = "passthrough", log = () => {}, onRequest = () => {}, env = process.env, performance: sharedPerformance, validateConversation,
   resolveRequest, privacy, privacyClient = "claude", record = recordUsage, acquireRequest = createRequestAdmission({ maxBytes: 16 * 1024 * 1024, maxQueued: 8 }) } = {}) {
   if (!provider || !isProviderId(provider.id) || typeof apiKey !== "string" || apiKey.length < 32) throw new Error("Claude gateway requires a provider and private local key");
   const config = loadRuntimeConfig(env), performance = sharedPerformance || createStreamPerformanceMetrics({ routeNames: ["messages"] });
@@ -212,7 +212,9 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     if (req.method === "GET" && pathname === "/v1/models") {
       try {
         const entries = provider.models("claude");
-        const models = claudeModelEntries(entries, { desktopAliases }).map((entry, index) => ({ id: entry.name, type: "model", ...(entry.supports1m ? { supports_1m: true } : {}), display_name: entry.labelOverride || typeof entries[index].name === "string" && entries[index].name || entry.name }));
+        const models = claudeModelEntries(entries, { desktopAliases, appContract }).map((entry, index) => ({ id: entry.name, type: "model", ...(entry.supports1m ? { supports_1m: true } : {}),
+          ...(entry.behavesAs ? { behaves_as: entry.behavesAs, max_effort_level: entry.maxEffort } : {}),
+          display_name: entry.labelOverride || typeof entries[index].name === "string" && entries[index].name || entry.name }));
         send(res, 200, { data: models, has_more: false, first_id: models[0]?.id || null, last_id: models.at(-1)?.id || null });
       } catch (error) { send(res, 503, apiError(error.code || "ccdx_catalog_unavailable", "Claude model discovery is unavailable; refresh the provider catalog.")); }
       return;
@@ -223,14 +225,14 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
     const parent = currentRequestContext();
     if (parent) parent.provider = provider.id;
     const countTokens = pathname.endsWith("/count_tokens"), requestId = parent?.requestId || randomUUID();
-    const tracker = countTokens ? parent?.streamPerformance : performance.begin("messages", { requestId, application: requestApplication(req.headers, "claude") });
+    const tracker = countTokens ? parent?.streamPerformance : performance.begin("messages", { requestId, purpose: req.headers["x-ccdx-purpose"], application: requestApplication(req.headers, "claude") });
     if (!resolveRequest) tracker?.setProvider(provider.id);
     const abort = createRequestAbort(req, res);
     let release = () => {}, conversation, outcome = "failed", model = null, configuredModel = null, clientModel = null, responseId = null, usage = null, stopReason = null, streamed = false, sawStop = false, failedEvent = false;
     let selectedModel, selectedCapability;
     let terminalOrigin = "client_validation", failureStatus = null, countDeadline = null, rejectionReason;
     if (!countTokens) { stats.total++;stats.active++;stats.last_request_at = new Date().toISOString(); }
-    const context = parent || { requestId };
+    const context = parent || { requestId, purpose: req.headers["x-ccdx-purpose"] };
     context.provider = selectedProvider.id;context.application = requestApplication(req.headers, "claude");
     context.streamPerformance = tracker;context.route = countTokens ? "messages_count_tokens" : "messages";
     await runWithRequestContext(context, async () => {
@@ -265,7 +267,7 @@ export function createClaudeGatewayHandler({ provider, apiKey, desktopAliases = 
         stats.last_model = model;
         context.model = configuredModel || model;
         if (!countTokens) {
-          markRequestObservation({ max_output_tokens_requested: body.max_tokens });
+          markRequestObservation({ max_output_tokens_requested: body.max_tokens, reasoning_effort_requested: body.output_config?.effort });
           observeMessagesWindow(selectedProvider, configuredModel || model, selectedCapability, selectedModel);
         }
         tracker?.setModel(configuredModel || model, { configured: Boolean(configuredModel) });

@@ -11,7 +11,7 @@ import {
   createRequestMetrics,
   runtimeStatusPayload,
 } from "./observability.mjs";
-import { createRequestId, runWithRequestContext, currentRequestContext } from "./request-context.mjs";
+import { createRequestId, runWithRequestContext, currentRequestContext, requestPurpose } from "./request-context.mjs";
 import { requestApplication } from "./request-application.mjs";
 import { createStreamPerformanceMetrics } from "./stream-performance.mjs";
 import { createLocalPrivacy } from "./local-privacy.mjs";
@@ -480,7 +480,8 @@ export function createAdapterHandler(options = {}) {
       && !DASHBOARD_API_PATHS.has(pathname)
       && !((req.method === "GET" || req.method === "HEAD") && DASHBOARD_PATHS.has(pathname));
     const complete = trackRequest ? requestMetrics.begin(routeName) : () => {};
-    const streamPerformance = trackRequest && !isDiscoveryRequest(req.method, pathname) ? streamPerformanceMetrics.begin(routeName, { requestId, application: requestApplication(req.headers, routeName === "antigravity" ? "gemini_app" : "api") }) : null;
+    const purpose = requestPurpose(req.headers["x-ccdx-purpose"]);
+    const streamPerformance = trackRequest && !isDiscoveryRequest(req.method, pathname) ? streamPerformanceMetrics.begin(routeName, { requestId, purpose, application: requestApplication(req.headers, routeName === "antigravity" ? "gemini_app" : "api") }) : null;
     let finishTerminalActivity = () => {};
     if (trackRequest && !isDiscoveryRequest(req.method, pathname) && ["responses", "responses_compact", "messages", "images", "image_mcp", "search", "antigravity"].includes(routeName)) {
       try {
@@ -538,6 +539,7 @@ export function createAdapterHandler(options = {}) {
     try {
       context = {
         requestId,
+        purpose,
         pathname,
         showRequestId: options.showRequestId === true,
         includeHttpErrorDetails: options.includeHttpErrorDetails === true || process.env.CCDX_HTTP_ERROR_DETAILS === "1",

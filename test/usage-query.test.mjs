@@ -4,6 +4,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createUsageQuery } from "../src/usage-query.mjs";
+import { runWithRequestContext, currentRequestContext } from "../src/request-context.mjs";
+
+test("request purposes filter without hiding costs or guessing older usage", () => {
+  const entries = [{ model: "gemini", purpose: "diagnostic" }, { model: "gemini", purpose: "conversation" }, { model: "gemini" }];
+  assert.equal(entries.filter(createUsageQuery().matches).length, 3);
+  assert.equal(entries.filter(createUsageQuery({ purpose: "unknown" }).matches).length, 1);
+  assert.equal(entries.filter(createUsageQuery({ purpose: "diagnostic" }).matches).length, 1);
+  assert.throws(() => createUsageQuery({ purpose: "private purpose" }));
+  runWithRequestContext({ purpose: "compatibility" }, () => assert.equal(currentRequestContext().purpose, "compatibility"));
+  runWithRequestContext({ purpose: "malformed" }, () => assert.equal(currentRequestContext().purpose, "conversation"));
+});
 import { analyzeUsageLogs } from "../src/usage-analysis.mjs";
 import { summarizeUsageLogs } from "../src/usage-store.mjs";
 

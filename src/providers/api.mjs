@@ -20,6 +20,9 @@ import { apiModelDisplay } from "../api-model-display.mjs";
 import { adaptCallLessContext, CALL_LESS_TOOL_RETRIED, normalizeCallLessToolOutputs } from "../responses-tool-output.mjs";
 import { adaptMessagesToolSchemas, hasRootToolSchema, MESSAGES_TOOL_GUARD } from "../messages-tool-schema.mjs";
 import { loadRuntimeConfig } from "../runtime-config.mjs";
+import { currentRequestContext } from "../request-context.mjs";
+import { redactDiagnosticText } from "../diagnostic-text.mjs";
+import { createProviderCooldown, confirmedNetworkFailure } from "../provider-cooldown.mjs";
 
 const paths = { messages: "/v1/messages", responses: "/v1/responses", chat: "/v1/chat/completions" };
 export function apiCatalog(config, env = process.env) {
@@ -29,7 +32,8 @@ export function apiCatalog(config, env = process.env) {
     supported_endpoints: model.protocols.map(api => paths[api]), model_picker_enabled: true, policy: { state: "enabled" },
     capability, protocol_capabilities }); });
 }
-export function createApiProvider({ config, secrets, env = process.env, platform = process.platform, networkFactory = createApiNetwork, modelDisplay = () => ({}) } = {}) {
+export function createApiProvider({ config, secrets, env = process.env, platform = process.platform, networkFactory = createApiNetwork, modelDisplay = () => ({}), now = Date.now } = {}) {
+  const cooldowns = Object.fromEntries(["messages", "responses", "chat"].map(protocol => [protocol, createProviderCooldown({ now })]));
   const catalog = apiCatalog(config, env);
   const fingerprint = config.key_env ? createHash("sha256").update(env[config.key_env] || "").digest("hex") : "";
   const generation = parseInt(createHash("sha256").update(JSON.stringify(config) + fingerprint).digest("hex").slice(0, 8), 16);
@@ -64,7 +68,6 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     if (config.key_env && !env[config.key_env]) throw accessError("ccdx_api_environment_key_missing", 503);
     const key = config.key_env ? checkedApiKey(env[config.key_env]) : await initialization.run("credential", () => secrets.get(config.secret_ref),
       { signal: options.signal ? AbortSignal.any([options.signal, lifetime.signal]) : lifetime.signal });
-    const transport = await getNetwork(options.signal);
     const headers = { "Content-Type": "application/json", Accept: body?.stream ? "text/event-stream" : "application/json" };
     headers[api === "messages" && config.auth_header === "x-api-key" ? "x-api-key" : "Authorization"] = api === "messages" && config.auth_header === "x-api-key" ? key : `Bearer ${key}`;
     if (api === "messages") {
@@ -80,13 +83,21 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     }
     const serialized = body ? options.bodyText ?? JSON.stringify(body) : undefined;
     if (serialized !== undefined) headers["Content-Length"] = String(Buffer.byteLength(serialized));
-    options.onUpstreamStart?.();
-    if (body && options.observeUpstream !== false) {
-      markUpstreamStarted(body.stream === true);
-      if (!options.countTokens) markRequestObservation({ max_output_tokens_sent: api === "messages" ? body.max_tokens : api === "chat" ? body.max_completion_tokens : body.max_output_tokens });
-    }
+    const cooldown = body && !options.countTokens ? cooldowns[api] : null;
+    const recovery = cooldown?.enter();let observed = false;
     try {
+      const transport = await getNetwork(options.signal);
+      options.onUpstreamStart?.();
+      if (body && options.observeUpstream !== false) {
+        markUpstreamStarted(body.stream === true);
+        if (!options.countTokens) markRequestObservation({ max_output_tokens_sent: api === "messages" ? body.max_tokens : api === "chat" ? body.max_completion_tokens : body.max_output_tokens,
+          reasoning_effort_sent: api === "messages" ? body.output_config?.effort : api === "chat" ? body.reasoning_effort : body.reasoning?.effort });
+      }
       const result = await transport.fetch(url, { method: body ? "POST" : "GET", headers, body: serialized, signal: options.signal });
+      const temporary = result.status === 502 || result.status === 503 || result.status === 504;
+      let retryAfterMs = 0;
+      if (temporary) { const retry = result.headers.get("retry-after");retryAfterMs = /^\d{1,8}$/.test(retry || "") ? Number(retry) * 1000 : Math.max(0, Date.parse(retry) - now()); }
+      cooldown?.complete(recovery, temporary, false, Number.isFinite(retryAfterMs) ? retryAfterMs : 0);observed = true;
       if (result.status >= 300 && result.status < 400) { await result.body?.cancel();throw accessError("ccdx_api_redirect_refused", 502); }
       if (!result.ok) {
         const adapted = api === "responses" && [400, 422].includes(result.status) && !options.compatibilityRetried && !options.skipCallLessRetry
@@ -112,13 +123,20 @@ export function createApiProvider({ config, secrets, env = process.env, platform
         if (adapted || schemaCandidate) try { options.onUpstreamErrorHeaders?.(result.status); } catch { /* Preserve the original upstream failure. */ }
         const code = `ccdx_api_http_${result.status}`;
         const safeHeaders = { "Content-Type": "application/json" }, retry = result.headers.get("retry-after");
+        for (const name of ["x-request-id", "x-correlation-id", "request-id"]) {
+          const value = result.headers.get(name);
+          if (value && /^[a-z\d_.:-]{1,80}$/i.test(value) && redactDiagnosticText(value) === value) { safeHeaders["X-Request-Id"] = value;break; }
+        }
         if (/^\d{1,8}$/.test(retry || "")) safeHeaders["Retry-After"] = retry;
         else if (retry && Number.isFinite(Date.parse(retry))) safeHeaders["Retry-After"] = new Date(retry).toUTCString();
-        return new Response(JSON.stringify({ type: "error", error: { type: "api_error", code, message: reason?.message || code,
-          ...(reason ? { upstream_code: reason.code } : {}) } }), { status: result.status, headers: safeHeaders });
+        const requestId=currentRequestContext()?.requestId;
+        const message=(reason?.message||"The source rejected the request (HTTP "+result.status+"); no recognised technical reason was returned.")+" Source: "+redactDiagnosticText(config.name||config.id)+". Model: "+redactDiagnosticText(body?.model||"unknown")+". API: "+api+"."+(requestId?" Request: "+requestId+".":"");
+        return new Response(JSON.stringify({ type: "error", error: { type: "api_error", code, message,
+          ...(reason ? { upstream_code: reason.code, ...(reason.parameter ? { param: reason.parameter } : {}), ...(reason.maximum ? { maximum: reason.maximum } : {}) } : {}) } }), { status: result.status, headers: safeHeaders });
       }
       return result;
     } catch (error) {
+      if (!observed) cooldown?.complete(recovery, confirmedNetworkFailure(error), options.signal?.aborted === true);
       if (options.signal?.aborted) throw error;
       if (error.code === "ccdx_api_redirect_refused") throw error;
       const failure = accessError("ccdx_api_network_unavailable", 502);
@@ -152,6 +170,7 @@ export function createApiProvider({ config, secrets, env = process.env, platform
     models: family => catalog.filter(model => model.supported_endpoints.includes(family === "claude" ? paths.messages : paths.responses))
       .map(model => ({ ...model, ...modelDisplay(model.id), capability: model.protocol_capabilities[family === "claude" ? "messages" : "responses"] })),
     catalog: () => catalog,
+    health: () => Object.fromEntries(Object.entries(cooldowns).filter(([protocol]) => config.endpoints[protocol]).map(([protocol, cooldown]) => [protocol, cooldown.snapshot()])),
     publicCatalog(allowed = []) { return { source: "configured", checkedAt: config.checked_at || null, upstreamHost: new URL(config.base_url).hostname,
       advertised: catalog.length, models: publicModelCatalog(catalog.map(model => ({ ...model, ...modelDisplay(model.id) })), { maker: model => model.publisher || model.vendor || null,
         selectable: model => allowed.some(id => model.supported_endpoints.includes(id === "codex" ? paths.responses : paths.messages)),

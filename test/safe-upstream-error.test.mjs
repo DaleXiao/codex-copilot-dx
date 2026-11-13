@@ -1,6 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readSafeUpstreamReason } from "../src/safe-upstream-error.mjs";
+import { readSafeUpstreamReason, classifyUpstreamError } from "../src/safe-upstream-error.mjs";
+
+test("specific failures retain only a safe field and bounded technical maximum", () => {
+  const output = classifyUpstreamError({ error: { type: "invalid_request_error", message: "max_output_tokens invalid; at most 32,768. Private prompt: fixture-private", param: "max_output_tokens" } }, 400);
+  assert.equal(output.code, "output_limit_invalid");assert.equal(output.parameter, "max_output_tokens");assert.equal(output.maximum, 32768);
+  assert.doesNotMatch(JSON.stringify(output), /Private prompt|fixture-private/);
+  assert.equal(classifyUpstreamError({ error: { message: "Too many tools; maximum number of tools is 128" } }, 400).maximum, 128);
+  assert.equal(classifyUpstreamError({ error: { message: "thinking is not supported" } }, 400)?.code, "reasoning_parameter_unsupported");
+  assert.equal(classifyUpstreamError({ error: { code: "invalid_request_error", message: "private data", param: "private_field" } }, 400).parameter, undefined);
+  assert.equal(classifyUpstreamError({ error: { message: "max_tokens invalid: maximum 123456789123456" } }, 400).maximum, undefined);
+  assert.equal(classifyUpstreamError({ error: { message: "input tokens exceed context window" } }, 400).code, "context_length_exceeded");
+});
 
 test("only known structured error codes and compatible statuses become safe reasons", async () => {
   for (const [status, code, recognized] of [[429, "credit_balance_exhausted", true], [429, "insufficient_quota", true],

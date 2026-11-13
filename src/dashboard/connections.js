@@ -62,6 +62,7 @@
     const response = await fetch("/_ccdx/ui/connections", { method: input ? "POST" : "GET", headers: { "X-CCDX-Dashboard": "1", ...(input ? { "Content-Type": "application/json" } : {}) },
       cache: "no-store", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(35000)]) : AbortSignal.timeout(35000), ...(input ? { body: JSON.stringify(input) } : {}) });
     const result = await response.json();if (!response.ok) throw new Error(result.error || "ccdx_connections_action_failed");
+    if (input?.operation === "preview_import" && Array.isArray(result.drafts)) return result;
     if (result.source !== "connections" || !Array.isArray(result.providers) || !Array.isArray(result.clients)) throw new Error("ccdx_connections_unavailable");return result;
   }
   function panels(which = "list") {
@@ -83,6 +84,7 @@
       const row = node("div", undefined, "connection-row"), info = node("div"), actions = node("div", undefined, "connection-actions");info.append(node("h3", provider.enabled ? format("enable_service") : provider.name));
       if (!provider.builtin) info.append(node("p", provider.base_url, "hint"));
       if (provider.enabled) {
+        if (provider.discovery?.health) { const notice = node("p", undefined, "hint");words(notice, "source_cooling");info.append(notice); }
         if (provider.discovery?.state === "stale") { const warning = node("p", undefined, "hint");words(warning, "cap_catalog_stale");warning.append(" ", provider.discovery.code);info.append(warning); }
         if (!provider.builtin) actions.append(button("api_manage", () => editApi(provider)));
         const toggle = node("input");toggle.type = "checkbox";toggle.checked = true;toggle.setAttribute("role", "switch");toggle.setAttribute("aria-label", format("api_disable_source") + " " + provider.name);
@@ -201,9 +203,9 @@
     const advanced = node("details"), summary = node("summary");words(summary, "cap_manual");advanced.append(summary);detail.append(advanced);
     const note = node("p", undefined, "hint");words(note, "cap_metadata_scope");advanced.append(note);
     const fields = node("div", undefined, "connection-fields");
-    const numeric = ["context_window", "max_input_tokens", "max_output_tokens", "reasoning_budget_min", "reasoning_budget_max"];
+    const numeric = ["context_window", "max_input_tokens", "max_output_tokens", "reasoning_budget_min", "reasoning_budget_max", "max_tool_definitions"];
     const flags = ["reasoning", "reasoning_required", "reasoning_adaptive", "tools", "parallel_tools", "streaming", "structured_output", "mid_conversation_system"];
-    const arrays = ["reasoning_efforts", "thinking_modes", "input_modalities", "web_search"];
+    const arrays = ["reasoning_efforts", "thinking_modes", "input_modalities", "web_search", "supported_parameters"];
     for (const key of [...numeric, ...flags, ...arrays, "reasoning_format"]) {
       const label = node("label"), title = node("span");words(title, "cap_field_" + key);label.append(title);
       let input;
@@ -222,7 +224,7 @@
       words(status, fresh ? "cap_catalog_" + (model.metadata.state || "reported") : "cap_unknown");
       if (fresh && model.metadata.checked_at) status.append(" · ", new Date(model.metadata.checked_at).toLocaleString());
       body.replaceChildren();
-      for (const key of ["context_window", "max_input_tokens", "max_output_tokens", "reasoning_efforts", "reasoning_adaptive", "tools", "input_modalities", "web_search"]) {
+      for (const key of ["context_window", "max_input_tokens", "max_output_tokens", "max_tool_definitions", "supported_parameters", "reasoning_efforts", "reasoning_adaptive", "tools", "input_modalities", "web_search"]) {
         const row = node("tr"), label = node("th");words(label, ({ reasoning_efforts: "cap_reasoning", input_modalities: "cap_input_types", web_search: "cap_search" })[key] || "cap_field_" + key);
         const value = values[key], text = key === "reasoning_efforts" ? reasoningText(values) : key === "web_search" ? searchText(values)
           : value === undefined ? format("cap_unknown") : typeof value === "boolean" ? format(value ? "cap_supported" : "cap_unsupported") : Array.isArray(value) ? value.join(" / ") || format("cap_unsupported") : count(value);
@@ -253,6 +255,10 @@
     if (preview?.image?.selected_model) { const image = node("p");image.textContent = `${format("image_model")}: ${preview.image.selected_model}`;result.append(image); }
     const note = node("p", undefined, "hint");words(note, "cap_preview_scope");result.append(note);
     const sync = preview?.shared || c.model_plan?.sync;
+    if (editingClient === "claude_app" && c.model_plan?.support?.app_contract?.status === "verified") {
+      const contract = node("p", undefined, "hint");words(contract, "cap_contract_checked", { version: c.model_plan.support.app_version });result.append(contract);
+      if (c.capability_adoption?.state === "effort_observed") { const observation = node("p", undefined, "hint");words(observation, "cap_effort_observed", { effort: c.capability_adoption.effort });result.append(observation); }
+    }
     if (c.credential_state === "encrypted_unverified") { const kept = node("p", undefined, "hint");words(kept, "client_key_encrypted_kept");result.append(kept); }
     if (sync) { const status = node("p", undefined, "hint");words(status, "cap_sync_" + sync.state);result.append(status);
       for (const limitation of sync.limitations || []) { const line = node("p", undefined, "hint");words(line, "cap_limit_" + limitation.code);if (limitation.model) line.prepend(limitation.model + ": ");result.append(line); }
@@ -508,6 +514,30 @@
     impact_revision: disableRevision,
     replacements: Object.fromEntries([...el("connection-replacements").querySelectorAll("select")].map(select => [select.name, select.value || null])) }); });
   el("connection-add").addEventListener("click", () => { if (data) editApi(); });
+  el("connection-import").addEventListener("click", () => { if (data && !busy) el("connection-import-file").click(); });
+  el("connection-import-file").addEventListener("change", async event => {
+    const file = event.target.files?.[0];event.target.value = "";if (!file) return;
+    const preview = el("connection-import-preview");preview.hidden = true;preview.replaceChildren();
+    if (file.size > 256 * 1024) { message("ccdx_import_size_invalid");return; }
+    try {
+      const result = await api({ operation: "preview_import", content: JSON.parse(await file.text()) });
+      const heading = node("h3");words(heading, "import_preview");preview.append(heading);
+      const note = node("p", undefined, "hint");words(note, "import_scope");preview.append(note);
+      for (const draft of result.drafts) {
+        const row = node("div", undefined, "connection-row"), info = node("div"), actions = node("div", undefined, "connection-actions");
+        info.append(node("h3", draft.config.name), node("p", draft.config.base_url, "hint"));
+        for (const warning of draft.warnings) { const text = node("p", undefined, "hint");words(text, "import_" + warning);info.append(text); }
+        actions.append(button("import_review", () => {
+          editApi();const config = draft.config;
+          apiForm.elements.name.value = config.name;apiForm.elements.base.value = config.base_url;apiForm.elements.auth_header.value = config.auth_header;
+          apiForm.elements.key_env.value = config.key_env || "";keyMode();
+          for (const input of apiForm.querySelectorAll('[name="protocol"]')) input.checked = Boolean(config.endpoints[input.value]);
+          setEndpoints(config.base_url, config.endpoints);models = structuredClone(config.models);selectedModels = new Set(models.map(model => model.id));modelRows();preview.hidden = true;
+        }));row.append(info, actions);preview.append(row);
+      }
+      preview.hidden = false;
+    } catch (error) { message(/^ccdx_import_/.test(error.message) ? error.message : "ccdx_import_format_invalid"); }
+  });
   for (const id of ["connection-cancel", "connection-disable-cancel"]) el(id).addEventListener("click", () => { panels();(editorOrigin?.isConnected ? editorOrigin : el("connection-source-list").querySelector("button") || el("connection-add")).focus(); });
   el("refresh").addEventListener("click", () => { if (["#models", "#codex", "#claude"].includes(location.hash)) void load(); });
   window.addEventListener("hashchange", () => { apiForm.elements.key.value = "";mountClient();if (["#models", "#claude", "#codex"].includes(location.hash)) void load(); });

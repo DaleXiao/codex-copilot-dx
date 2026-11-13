@@ -30,6 +30,7 @@ import { createMessagesHistoryTransfer } from "./messages-history-transfer.mjs";
 import { compileClientModels } from "./client-model-plan.mjs";
 import { currentRequestContext } from "./request-context.mjs";
 import { inspectClaudeCapabilitySupport } from "./claude-capability-config.mjs";
+import { inspectClaudeAppContract, watchClaudeAppContract } from "./claude-app-contract.mjs";
 import { deploymentModelId, deploymentRevision } from "./model-capabilities.mjs";
 import { m365Paths } from "./m365-settings.mjs";
 
@@ -45,6 +46,7 @@ export function createConnectionRuntime({
   restoreClaude = restoreClaudeClients,
   configureCodex = configureCodexApi,
   inspectDesktop = inspectClaudeDesktopPolicy,
+  inspectAppContract = inspectClaudeAppContract,
   clientAccessChanged,
   preserveClientConfiguration,
   clientVersionsSnapshot,
@@ -86,6 +88,20 @@ export function createConnectionRuntime({
     onState: (id, state) => (state ? discoveries.set(id, state) : discoveries.delete(id)),
   });
   const capabilitySupport = inspectClaudeCapabilitySupport(options);
+  let capabilityFlight = null, capabilityWatch = null;
+  const refreshClientCapabilities = ({ sync = true } = {}) => {
+    if(closed||!managed||!binding("claude_app").enabled||!plan("claude_app").models.length)return Promise.resolve(structuredClone(capabilitySupport));
+    if (capabilityFlight) return capabilityFlight;
+    capabilityFlight = inspectAppContract(options).then(async contract => {
+      if(closed)return;
+      const next=inspectClaudeCapabilitySupport({...options,appContract:contract});
+      const changed=capabilitySupport.app_contract?.fingerprint!==contract.fingerprint||capabilitySupport.app_contract?.installation!==contract.installation||capabilitySupport.app_version!==next.app_version||capabilitySupport.app!==next.app;
+      await enqueue(()=>{Object.assign(capabilitySupport,next);if(changed){plans.delete("claude_app");plans.delete("claude_code")}});
+      if(changed&&sync&&managed)await clientSync.syncClients(["claude_app","claude_code"]);
+      return structuredClone(capabilitySupport);
+    }).finally(()=>{capabilityFlight=null});
+    return capabilityFlight;
+  };
   let operations = 0;
   const identities = () => (keys ||= readClientGatewayKeys(options));
   const enabled = id =>
@@ -180,7 +196,7 @@ export function createConnectionRuntime({
         ["m365", "Microsoft 365"],
         ...settings.apis.map(api => [api.id, api.name]),
       ]),
-      desktopEffortAliases: capabilitySupport.app,
+      desktopEffortAliases: capabilitySupport.app && capabilitySupport.app_aliases !== false,
     });
     plans.set(id, { binding: selected, stamps, value });
     return value;
@@ -259,7 +275,7 @@ export function createConnectionRuntime({
     clientRevision, editable, syncClients, clientAccessChanged, setup, secrets, lifecycle, retire, memoryModel, enqueue, catalogVisibility });
   const { requireSource, methods: routing } = createConnectionRouting({ legacy, legacyClaudeAccess, isManaged: () => managed,
     getSettings: () => settings, binding, plan, permitted, getSource, resolveDeployment, codexAccessMode, codexRequiresKey, requireCodexKey,
-    identities, track, guardConversation, messagesTransfer, acquireClaudeRequest, privacy, env, log, lastClients });
+    identities, track, guardConversation, messagesTransfer, acquireClaudeRequest, privacy, env, log, lastClients, capabilitySupport });
 
 
   async function applyCatalog(id, models, revision, checkedAt, active) {
@@ -358,6 +374,7 @@ export function createConnectionRuntime({
       ),
     privacy,
     busy: () => privacy.busy() ||
+      Boolean(capabilityFlight) ||
       operations > 0 ||
       lifecycle.busy() ||
       clientSync.busy() ||
@@ -365,11 +382,15 @@ export function createConnectionRuntime({
       legacy.snapshot().m365.account_change_in_flight === true ||
       legacy.snapshot().m365.state === "checking",
     syncClients,
+    refreshClientCapabilities,
     manageConnections: management.manageConnections,
     imageModels,
     async start() {
+      const capabilities = refreshClientCapabilities({sync:false});
+      capabilityWatch ||= watchClaudeAppContract({ ...options, onChange: refreshClientCapabilities });
       if (binding("codex").enabled) void memoryModel.refresh();
       const old = legacy.start();
+      await capabilities;
       if (managed) await syncClients();
       const result = await old;
       if (managed) await syncClients();
@@ -377,6 +398,7 @@ export function createConnectionRuntime({
       return result;
     },
     async refresh() {
+      await refreshClientCapabilities();
       const result = await Promise.allSettled([
         !managed || settings.providers.m365 ? legacy.refresh() : Promise.resolve(),
         refreshApis(),
@@ -403,6 +425,8 @@ export function createConnectionRuntime({
     action: management.action,
     async close() {
       closed = true;
+      capabilityWatch?.close();
+      await capabilityFlight;
       privacy.close();
       await memoryModel.close();
       await catalogRefresh.close();

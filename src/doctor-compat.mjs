@@ -50,7 +50,7 @@ function responseFailure(resp, text) {
 async function compatibilityRequest(fetchImpl, url, body, timeoutMs, headers) {
   const { resp, text } = await fetchTextWithTimeout(fetchImpl, url, {
     method: "POST",
-    headers: { ...headers, "Content-Type": "application/json", Accept: body.stream ? "text/event-stream" : "application/json" },
+    headers: { ...headers, "X-CCDX-Purpose": "compatibility", "Content-Type": "application/json", Accept: body.stream ? "text/event-stream" : "application/json" },
     body: JSON.stringify(body),
   }, timeoutMs);
   if (!resp.ok) throw responseFailure(resp, text);

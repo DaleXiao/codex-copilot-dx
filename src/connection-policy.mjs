@@ -176,7 +176,7 @@ export function createConnectionPolicy({ validObject, binding, catalogRefresh, s
         source: getSource,
         enabled,
         names,
-        desktopEffortAliases: capabilitySupport.app,
+        desktopEffortAliases: capabilitySupport.app && capabilitySupport.app_aliases !== false,
       });
       if (c.default_model && !compiled.routes.has(c.default_model))
         throw accessError("ccdx_api_model_unavailable");
@@ -233,7 +233,7 @@ export function createConnectionPolicy({ validObject, binding, catalogRefresh, s
         binding: c,
         source: getSource,
         enabled,
-        desktopEffortAliases: capabilitySupport.app,
+        desktopEffortAliases: capabilitySupport.app && capabilitySupport.app_aliases !== false,
       });
       const shared =
         input.id === "codex"

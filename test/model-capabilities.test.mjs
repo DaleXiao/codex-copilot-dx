@@ -4,6 +4,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { validCapabilities, catalogCapabilities, deploymentRevision, resolveModelCapabilities, constrainModelRequest, deploymentModelId, claudeEffortPrefix } from "../src/model-capabilities.mjs";
+
+test("parameter lists and tool limits use explicit deployment evidence; unknown stays usable", () => {
+  assert.equal(validCapabilities({ supported_parameters: ["tools", "max_tokens"], max_tool_definitions: 152 }), true);
+  assert.equal(validCapabilities({ supported_parameters: ["invented"] }), false);
+  const body = { model: "kimi", max_tokens: 128000, tools: Array.from({ length: 152 }, () => ({ name: "tool" })) };
+  assert.equal(constrainModelRequest(body, { values: {} }, "messages").body, body);
+  assert.throws(() => constrainModelRequest(body, { values: { max_tool_definitions: 128 } }, "messages"), error => error.code === "ccdx_api_tool_limit_exceeded");
+  assert.throws(() => constrainModelRequest(body, { values: { supported_parameters: ["max_tokens"] } }, "messages"), error => error.param === "tools");
+  for (const max_tokens of [-1, 0, 1.5, "128000"]) assert.throws(() => constrainModelRequest({ max_tokens }, {}, "messages"), error => error.code === "ccdx_api_output_limit_invalid");
+});
 import { compileClientModels, sourceModels } from "../src/client-model-plan.mjs";
 import { claudeSharedCapabilityPlan, claudeSupportForSync, syncClaudeCapabilities, inspectClaudeCapabilitySupport } from "../src/claude-capability-config.mjs";
 import { claudeClientPaths, restoreClaudeClients, configureClaudeClients } from "../src/claude-client-config.mjs";
@@ -11,6 +21,18 @@ import { defaultAccessSettings, accessSettingsPath, readAccessSettings, updateAc
 import { m365Paths } from "../src/m365-settings.mjs";
 
 const temporary = t => { const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccdx-capabilities-"));t.after(() => fs.rmSync(home, { recursive: true, force: true }));return { home, env: {}, platform: "linux" }; };
+test("capability-map migration and restore preserve manual entries across repeated synchronization", t => {
+  const options = temporary(t), file = claudeClientPaths(options).code;
+  const plan = capabilities => ({ capabilities, context_tokens: null, output_tokens: null, budgets: {}, limitations: [] });
+  syncClaudeCapabilities(plan("owned=effort;old=effort"), options);
+  const settings = JSON.parse(fs.readFileSync(file));settings.env.CLAUDE_CODE_MODEL_CAPABILITIES = "owned=effort,max_effort;old=effort;manual=effort";fs.writeFileSync(file, JSON.stringify(settings));
+  const next = plan("owned=effort;new=effort");syncClaudeCapabilities(next, options);syncClaudeCapabilities(next, options);
+  const active = JSON.parse(fs.readFileSync(file)).env.CLAUDE_CODE_MODEL_CAPABILITIES;
+  assert.match(active, /owned=effort,max_effort/);assert.match(active, /manual=effort/);assert.match(active, /new=effort/);assert.doesNotMatch(active, /old=/);
+  syncClaudeCapabilities(plan(""), options);
+  const restored = JSON.parse(fs.readFileSync(file)).env.CLAUDE_CODE_MODEL_CAPABILITIES;
+  assert.match(restored, /owned=effort,max_effort/);assert.match(restored, /manual=effort/);assert.doesNotMatch(restored, /new=|old=/);
+});
 const model = (id, window, output = 16000) => ({ id, public_id: id, client_id: id, capability: { values: { ...(window ? { context_window: window } : {}), max_output_tokens: output, reasoning_efforts: ["low", "medium", "high"] } } });
 
 test("verified Claude App 3.x and 4.x retain reasoning routes while unknown major versions stay conservative", () => {

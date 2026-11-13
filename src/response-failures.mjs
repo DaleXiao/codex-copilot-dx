@@ -114,19 +114,21 @@ export function upstreamErrorEvidence(text, { includeMessage = false, status = n
   const technical = value => typeof value === "string" && /^[a-z\d_.:-]{1,80}$/i.test(value)
     && redactDiagnosticText(value) === value ? value : undefined;
   const param = typeof error.param === "string" && error.param.length <= 160
-    && /^(?:model|input|tools|tool_choice|reasoning|text|temperature|top_p|max_output_tokens|service_tier|store|stream|include|previous_response_id|parallel_tool_calls)(?:\.[a-z_][a-z\d_]*|\[\d+\])*$/i.test(error.param)
+    && /^(?:model|messages|input|tools|tool_choice|reasoning|output_config|thinking|text|temperature|top_p|max_tokens|max_output_tokens|max_completion_tokens|service_tier|store|stream|include|previous_response_id|parallel_tool_calls)(?:\.[a-z_][a-z\d_]*|\[\d+\])*$/i.test(error.param)
     ? error.param : undefined;
   const upstreamCode = (safeUpstreamReason(error.upstream_code, status) || safeUpstreamReason(error.code, status)
     || safeUpstreamReason(error.type, status))?.code;
   return { error_body: "structured", code: technical(error.code), error_type: technical(error.type),
     ...(upstreamCode ? { upstream_code: upstreamCode } : {}),
+    ...(upstreamCode && Number.isSafeInteger(error.maximum) && error.maximum > 0 && error.maximum <= 100000000 ? { reported_maximum: error.maximum } : {}),
     parameter: param, ...(includeMessage && typeof error.message === "string" ? { diagnostic_message: safeFailureMessage(error.message) } : {}) };
 }
 
 export function requestOptionsEvidence(body) {
   const result = {};
   if (!body || typeof body !== "object") return result;
-  if (["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(body.reasoning?.effort)) result.reasoning_effort = body.reasoning.effort;
+  const effort = body.reasoning?.effort ?? body.output_config?.effort ?? body.reasoning_effort;
+  if (["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(effort)) result.reasoning_effort = effort;
   if (["auto", "default", "flex", "priority", "scale"].includes(body.service_tier)) result.service_tier = body.service_tier;
   if (["text", "json_object", "json_schema"].includes(body.text?.format?.type)) result.output_format = body.text.format.type;
   if (Number.isSafeInteger(body.max_output_tokens) && body.max_output_tokens >= 0) result.max_output_tokens = body.max_output_tokens;

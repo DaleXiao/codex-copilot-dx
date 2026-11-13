@@ -1,3 +1,4 @@
+import { previewSourceImport } from "./source-import.mjs";
 import { prepareSourceAccess, accessError, CLIENT_IDS } from "./access-settings.mjs";
 import { publicModelCatalog } from "./provider-metadata.mjs";
 import { createConnectionPolicy } from "./connection-policy.mjs";
@@ -137,6 +138,10 @@ export function createConnectionManagement({ binding, catalogRefresh, save, disc
       if (!input) {
         if (binding("codex").enabled) void memoryModel.refresh();
         return snapshot();
+      }
+      if (validObject(input, ["operation", "content"]) && input.operation === "preview_import") {
+        try { return previewSourceImport(input.content, getSettings().apis); }
+        catch (error) { throw accessError(/^ccdx_import_[a-z_]+$/.test(error.message) ? error.message : "ccdx_import_metadata_invalid"); }
       }
       if (validObject(input, ["operation", "id"]) && input.operation === "source_catalog") {
         if (!["github", "m365", ...getSettings().apis.map(api => api.id)].includes(input.id))

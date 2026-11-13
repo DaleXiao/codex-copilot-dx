@@ -3,12 +3,17 @@ import { randomUUID } from "node:crypto";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 
 const requestContextStorage = new AsyncLocalStorage();
+export const REQUEST_PURPOSES = Object.freeze(["conversation", "diagnostic", "compatibility", "unknown"]);
+export function requestPurpose(value, fallback = "conversation") {
+  return REQUEST_PURPOSES.includes(value) ? value : fallback;
+}
 
 export function createRequestId() {
   return randomUUID();
 }
 
 export function runWithRequestContext(context, callback) {
+  context.purpose = requestPurpose(context.purpose);
   return requestContextStorage.run(context, callback);
 }
 

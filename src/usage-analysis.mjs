@@ -57,8 +57,8 @@ function observe() {
   });
 }
 
-export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "UTC", now = Date.now(), warn = console.error, provider = "", model = "", days = "all", from = "", to = "", signal } = {}) {
-  const selection = createUsageQuery({ provider, model, days, from, to, timeZone, now });
+export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "UTC", now = Date.now(), warn = console.error, provider = "", model = "", purpose = "", days = "all", from = "", to = "", signal } = {}) {
+  const selection = createUsageQuery({ provider, model, purpose, days, from, to, timeZone, now });
   const zone = new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
   const file = path.resolve(filePath), query = `${file}\0${selection.key}\0${zone.format(new Date(now))}`;
   const version = warn === console.error ? await usageSummaryVersion(file, { settled: false }) : null;

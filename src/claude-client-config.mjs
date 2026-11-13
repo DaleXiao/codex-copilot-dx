@@ -10,6 +10,7 @@ import { withFileLockSync } from "./lock.mjs";
 import { m365Paths, readM365Json, writeM365Json } from "./m365-settings.mjs";
 import { claudeClientModelId, claudeModelEntries } from "./claude-models.mjs";
 import { claudeRouteAliases } from "./clients/claude-models.mjs";
+import { claudeNativeModelHint } from "./claude-app-contract.mjs";
 
 export const M365_CLAUDE_PROFILE_ID = "00000000-0000-4000-8000-000000202700";
 const M365_CLAUDE_PROFILE_NAME = "CCDX Microsoft 365";
@@ -115,6 +116,42 @@ function appModelsOwned(current, previous, desired, alreadyDesired) {
     withoutAppPreference(recorded.filter(model => wanted.has(model.name))));
 }
 
+function capabilityMap(value){
+  if(typeof value!=="string")return null;const result=new Map();
+  for(const entry of value.split(";").filter(Boolean)){
+    const [id,flags,...extra]=entry.split("=");
+    if(extra.length||!/^[\w][\w./:@+\[\]-]{0,200}$/.test(id)||!flags||flags.split(",").some(flag=>!["effort","xhigh_effort","max_effort"].includes(flag))||result.has(id))return null;
+    result.set(id,flags);
+  }
+  return result;
+}
+const capabilityText = map => [...map].map(([id, flags]) => id + "=" + flags).join(";");
+function mergeCapabilityMap(current, recorded, wanted, original) {
+  const actual = capabilityMap(current ?? ""), previous = capabilityMap(recorded), next = capabilityMap(wanted), before = capabilityMap(original?.value ?? "");
+  if (!actual || !previous || !next || !before) return null;
+  const result = new Map(actual), restoration = new Map(before);let preserved = false;
+  for (const id of new Set([...previous.keys(), ...actual.keys()])) if (actual.get(id) !== previous.get(id)) {
+    if (actual.has(id)) restoration.set(id, actual.get(id));else restoration.delete(id);
+  }
+  for (const [id, flags] of previous) if (actual.get(id) === flags && flags !== before.get(id) && !next.has(id)) result.delete(id);
+  for (const [id, flags] of next) {
+    if (actual.has(id) && actual.get(id) !== flags && (actual.get(id) !== previous.get(id) || actual.get(id) === before.get(id))) { preserved = true;continue; }
+    result.set(id, flags);
+  }
+  return { value: capabilityText(result), before: restoration.size || original?.exists ? { exists: true, value: capabilityText(restoration) } : { exists: false }, preserved };
+}
+function restoreCapabilityMap(current, operation) {
+  const actual = capabilityMap(current.value ?? ""), after = capabilityMap(operation.after), before = capabilityMap(operation.before?.value ?? "");
+  if (!actual || !after || !before) return null;
+  const result = new Map(actual);let preserved = false;
+  for (const [id, flags] of after) {
+    if (flags === before.get(id)) continue;
+    if (actual.get(id) !== flags) { preserved = true;continue; }
+    if (before.has(id)) result.set(id, before.get(id));else result.delete(id);
+  }
+  return { desired: result.size || operation.before?.exists ? { exists: true, value: capabilityText(result) } : { exists: false }, preserved };
+}
+
 export function reconcileClaudeConfiguration(operations, { restore = false, restoreFields = [], restoreSelect, ...options } = {}) {
   const paths = claudeClientPaths(options), allowed = new Set(Object.values(paths)), journalPath = m365Paths(options).ownership;
   fs.mkdirSync(path.dirname(journalPath), { recursive: true, mode: 0o700 });
@@ -124,7 +161,7 @@ export function reconcileClaudeConfiguration(operations, { restore = false, rest
       [paths.code, new Set(["env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN", "env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "env.ANTHROPIC_CUSTOM_HEADERS", "env.ANTHROPIC_MODEL", "env.CLAUDE_CODE_MAX_CONTEXT_TOKENS", "env.CLAUDE_CODE_MAX_OUTPUT_TOKENS", "env.CLAUDE_CODE_MODEL_CAPABILITIES"])],
       [paths.normal, new Set(["deploymentMode"])], [paths.threep, new Set(["deploymentMode"])],
       [paths.meta, new Set(["entries", "appliedId"])],
-      [paths.profile, new Set(["inferenceProvider", "inferenceGatewayBaseUrl", "inferenceGatewayApiKey", "inferenceGatewayAuthScheme", "inferenceModels", "inferenceCustomHeaders"])],
+      [paths.profile, new Set(["inferenceProvider", "inferenceGatewayBaseUrl", "inferenceGatewayApiKey", "inferenceGatewayAuthScheme", "inferenceModels", "inferenceCustomHeaders", "modelDiscoveryEnabled"])],
     ]);
     const safeKeys = op => Array.isArray(op.keys) && !op.keys.some(key => ["__proto__", "constructor", "prototype"].includes(key))
       && (keys.get(op.file)?.has(op.keys.join(".")) || op.file === paths.code && op.keys.length === 3 && op.keys[0] === "modelSettings"
@@ -146,19 +183,27 @@ export function reconcileClaudeConfiguration(operations, { restore = false, rest
       const state = states.get(operation.file);state.next ||= structuredClone(state.value);
       const previous = journal.operations.find(op => op.file === operation.file && isDeepStrictEqual(op.keys, operation.keys) && op.itemId === operation.itemId);
       const restoring = restore || operation.restore === true;
-      const current = operationValue(state.next, operation), desired = restoring ? operation.before : { exists: true, value: operation.value };
+      const current = operationValue(state.next, operation);let desired = restoring ? operation.before : { exists: true, value: operation.value };
+      const capabilityField = operation.file === paths.code && operation.keys.join(".") === "env.CLAUDE_CODE_MODEL_CAPABILITIES";
       if (restoring) {
-        if (!isDeepStrictEqual(current, { exists: true, value: operation.after })) { skipped.push(operation.file);continue; }
+        const capabilityRestore = capabilityField ? restoreCapabilityMap(current, operation) : null;
+        if (capabilityRestore) { desired = capabilityRestore.desired;if (capabilityRestore.preserved) skipped.push(operation.file); }
+        else if (!isDeepStrictEqual(current, { exists: true, value: operation.after })) { skipped.push(operation.file);continue; }
         setOperation(state.next, operation, desired);
         nextJournal.operations = nextJournal.operations.filter(op => !(op.file === operation.file && isDeepStrictEqual(op.keys, operation.keys) && op.itemId === operation.itemId));
       } else {
+        const capabilityMerge = operation.mergeCapabilities && previous && capabilityField
+          ? mergeCapabilityMap(current.value, previous.after, desired.value, previous.before) : null;
+        if(capabilityMerge){desired.value=capabilityMerge.value;operation.value=capabilityMerge.value;if(capabilityMerge.preserved)skipped.push(operation.file)}
         const modelField = operation.file === paths.profile && operation.keys.join(".") === "inferenceModels";
         const currentModels = modelField && parsedAppModels(current.value), desiredModels = modelField && parsedAppModels(desired.value);
         const alreadyDesired = isDeepStrictEqual(current, desired)
           || Boolean(currentModels && desiredModels && isDeepStrictEqual(currentModels, desiredModels));
-        const owned = previous && (isDeepStrictEqual(current, { exists: true, value: previous.after })
+        const owned = previous && (Boolean(capabilityMerge)||isDeepStrictEqual(current, { exists: true, value: previous.after })
           || modelField && current.exists && appModelsOwned(current.value, previous.after, desired.value, alreadyDesired));
         if (alreadyDesired) {
+          if (capabilityMerge) nextJournal.operations = nextJournal.operations.map(op => op.file === operation.file && isDeepStrictEqual(op.keys, operation.keys)
+            ? { ...op, before: capabilityMerge.before, after: current.value } : op);
           if (modelField && owned && previous.after !== current.value) {
             nextJournal.operations = nextJournal.operations.map(op => op.file === operation.file
               && isDeepStrictEqual(op.keys, operation.keys) && op.itemId === operation.itemId ? { ...op, after: current.value } : op);
@@ -169,7 +214,7 @@ export function reconcileClaudeConfiguration(operations, { restore = false, rest
           && current.value === "1p";
         if (current.exists && !replaceMode && !owned) { skipped.push(operation.file);continue; }
         const entry = { file: operation.file, keys: operation.keys, ...(operation.itemId ? { itemId: operation.itemId } : {}),
-          before: previous?.before || current, after: operation.value };
+          before: capabilityMerge?.before || previous?.before || current, after: operation.value };
         setOperation(state.next, operation, desired);
         nextJournal.operations = nextJournal.operations.filter(op => !(op.file === operation.file && isDeepStrictEqual(op.keys, operation.keys) && op.itemId === operation.itemId));
         nextJournal.operations.push(entry);
@@ -200,7 +245,7 @@ export function reconcileClaudeConfiguration(operations, { restore = false, rest
   });
 }
 
-export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstalled, desktopManaged, desktopAliases = false, profileName = M365_CLAUDE_PROFILE_NAME, disableExperimentalBetas = true, defaultModel, ...options } = {}) {
+export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstalled, desktopManaged, desktopAliases = false, appContract, profileName = M365_CLAUDE_PROFILE_NAME, disableExperimentalBetas = true, defaultModel, ...options } = {}) {
   const entries = claudeModelEntries(models);
   const paths = claudeClientPaths(options), ids = entries.map(model => model.name), operations = [], result = {};
   const endpoint = new URL(baseUrl);
@@ -270,7 +315,8 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
       const previousNames = models.map(model => model.route_id ? claudeRouteAliases(model, model.route_id, true).slice(2) : []);
       const desktopEntries = (desktopAliases ? claudeModelEntries(models, { desktopAliases }) : entries).map((entry, index) => {
         const previous = previousByName.get(entry.name) || previousNames[index].map(name => previousByName.get(name)).find(Boolean);
-        return entry.supports1m ? { ...entry, prefer1m: typeof previous?.prefer1m === "boolean" ? previous.prefer1m : true } : entry;
+        const hint = claudeNativeModelHint(models[index].capability?.values, appContract);
+        return { ...entry, ...(hint || {}), ...(entry.supports1m ? { prefer1m: typeof previous?.prefer1m === "boolean" ? previous.prefer1m : true } : {}) };
       });
       for (let index = 0; index < models.length; index++) {
         const old = previousNames[index].map(name => order.get(name)).find(value => value !== undefined) ?? order.get(claudeClientModelId(models[index].id));
@@ -279,6 +325,7 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
       const orderedEntries = [...desktopEntries].sort((left, right) => defaultModel && (left.name === defaultModel || right.name === defaultModel)
         ? left.name === defaultModel ? -1 : 1 : (order.get(left.name) ?? Infinity) - (order.get(right.name) ?? Infinity));
       add(paths.profile, ["inferenceModels"], JSON.stringify(orderedEntries));
+      if(appContract?.fields.discovery)add(paths.profile,["modelDiscoveryEnabled"],true);
       add(paths.profile, ["inferenceCustomHeaders"], JSON.stringify({ "X-CCDX-Client": "claude-app" }));
       add(paths.meta, ["entries"], { id: M365_CLAUDE_PROFILE_ID, name: profileName }, M365_CLAUDE_PROFILE_ID);
       add(paths.meta, ["appliedId"], M365_CLAUDE_PROFILE_ID);

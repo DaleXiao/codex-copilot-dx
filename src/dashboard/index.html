@@ -188,8 +188,9 @@
 
         <div data-view="models" hidden>
   <section class="panel dashboard-section" id="connection-sources">
-    <div class="panel-heading"><h2 data-i18n="source_accounts">Accounts &amp; APIs</h2><button id="connection-add" type="button" data-i18n="api_add">Add API</button></div>
+    <div class="panel-heading"><h2 data-i18n="source_accounts">Accounts &amp; APIs</h2><div class="section-actions"><button id="connection-import" type="button" data-i18n="import_source">Import</button><input id="connection-import-file" type="file" accept=".json,application/json" hidden><button id="connection-add" type="button" data-i18n="api_add">Add API</button></div></div>
     <div id="model-providers" class="provider-tabs" role="tablist" aria-label="Model providers" data-i18n-label="model_providers"></div>
+    <section id="connection-import-preview" class="panel" hidden></section>
     <div id="connection-source-list"></div>
     <details id="connection-disabled-sources" class="connection-disabled" hidden><summary data-i18n="api_disabled_sources">Disabled sources</summary><div id="connection-disabled-source-list"></div></details>
   </section>
@@ -320,6 +321,7 @@
         <div class="section-actions usage-source-controls"><label><span data-i18n="source_entire_page">Source / entire page</span><select id="usage-provider"><option value="" data-i18n="all_providers">All providers</option></select></label>
           <label><span data-i18n="usage_model_page">Model / entire page</span><select id="analytics-model"><option value="" data-i18n="all_models">All models</option></select></label>
           <label><span data-i18n="usage_range_page">Time / entire page</span><select id="analytics-range"><option value="all" selected data-i18n="usage_all_history">All retained history</option><option value="7" data-i18n="7_days">Last 7 days</option><option value="30" data-i18n="30_days">Last 30 days</option><option value="90" data-i18n="90_days">Last 90 days</option><option value="365" data-i18n="usage_365_days">Last 365 days</option></select></label>
+          <label><span data-i18n="request_kind">Request purpose</span><select id="usage-purpose"><option value="" data-i18n="purpose_all">All purposes</option><option value="conversation" data-i18n="purpose_conversation">Conversation</option><option value="diagnostic" data-i18n="purpose_diagnostic">Diagnostic</option><option value="compatibility" data-i18n="purpose_compatibility">Compatibility test</option><option value="unknown" data-i18n="purpose_unknown">Unknown</option></select></label>
           <button id="refresh-usage" type="button" data-i18n="refresh_usage">Refresh usage</button></div>
 
           <details id="usage-analytics" class="panel dashboard-section analytics-section">

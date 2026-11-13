@@ -8,7 +8,7 @@ import readline from "node:readline";
 import { appendRotatingLines, parseByteLimit, rotatedFilePath } from "./file-rotation.mjs";
 import { withFileLock } from "./lock.mjs";
 import { terminalCell } from "./terminal-text.mjs";
-import { currentRequestContext } from "./request-context.mjs";
+import { currentRequestContext, requestPurpose } from "./request-context.mjs";
 
 const DEFAULT_USAGE_PATH = path.join(os.homedir(), ".local", "share", "codex-copilot-dx", "usage.jsonl");
 const DEFAULT_USAGE_MAX_BYTES = 32 * 1024 * 1024;
@@ -203,6 +203,7 @@ function scheduleUsageWriteDrain() {
 
 export function recordUsage(record) {
   if (!record) return Promise.resolve();
+  record = { ...record, purpose: requestPurpose(record.purpose ?? currentRequestContext()?.purpose, "unknown") };
   const usage = record.usage || {};
   const { cached } = usageCacheEvidence(usage);
   const provider = usageProvider(record), label = runtimeUsageByProvider.has(provider) || runtimeUsageByProvider.size < 18 ? provider : "other";

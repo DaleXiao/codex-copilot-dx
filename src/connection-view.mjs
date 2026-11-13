@@ -38,6 +38,12 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
     return {
       ...base,
       revision,
+      ...(id.startsWith("claude_") ? { capability_adoption: (() => {
+        const rows = legacy.claudePerformance?.snapshot?.().recent_requests || [];
+        const observed = rows.findLast(row => row.application === id && row.context?.reasoning_effort_sent);
+        return observed ? { state: "effort_observed", effort: observed.context.reasoning_effort_sent, source: observed.provider, model: observed.model, request_id: observed.request_id, at: observed.at }
+          : { state: "not_observed" };
+      })() } : {}),
       model_plan: {
         ...(id === "codex" ? { image: imageModels() } : {}),
         default_model: compiled.defaultModel,
@@ -117,7 +123,9 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
         },
         ...config.apis.map(api => {
           const { secret_ref, ...publicApi } = api,
-            revision = compact ? null : deploymentRevision(api, env);
+            revision = compact ? null : deploymentRevision(api, env),
+            health = compact ? null : getSource(api.id)?.health?.(),
+            cooling = health && Object.values(health).some(item => item.state !== "ready");
           return {
             ...(compact ? { id: api.id, name: api.name, enabled: api.enabled } : publicApi),
             ...summary(api),
@@ -129,7 +137,7 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
                     api.models.map(model => [model.id, modelDisplay.get(api.id, revision, model.id)])
                   ),
                 }),
-            discovery: discoveries.get(api.id) || null,
+            discovery: cooling ? { ...discoveries.get(api.id), health } : discoveries.get(api.id) || null,
             builtin: false,
             key_saved: api.key_env ? Boolean(env[api.key_env]) : Boolean(secret_ref),
           };
@@ -288,6 +296,7 @@ export function createConnectionView({ legacy, env, binding, plan, getSource, en
             enabled: true,
             generation: old?.generation || source?.registry.generation || 1,
             state: old?.state || "configured",
+            ...(source?.health ? { health: source.health() } : {}),
             auth: old?.auth || { state: "saved", token_cached: false },
             selection: {
               codex: clients.some(client => client.id === "codex"),

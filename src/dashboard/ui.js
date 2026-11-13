@@ -397,6 +397,7 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
         const { mode, provider, model, days, date } = JSON.parse(variant), query = new URLSearchParams();
         if (mode === "analytics") { query.set("analytics", "1");query.set("time_zone", Intl.DateTimeFormat().resolvedOptions().timeZone); }
         if (provider) query.set("provider", provider);
+        if (element("usage-purpose")?.value) query.set("purpose", element("usage-purpose").value);
         if (model) query.set("model", model);
         if (date?.startsWith("<")) query.set("to", new Date(Date.parse(date.slice(1)) - 86400000).toISOString().slice(0, 10));
         else if (date) { query.set("from", date);query.set("to", date); }
@@ -523,3 +524,5 @@ loadAnimation();
 refresh();
 loadAuth();
 animateLogo();
+
+element("usage-purpose")?.addEventListener("change", () => { dashboardRefresh.invalidate("usage");dashboardRefresh.refresh("usage", { force: true }); });

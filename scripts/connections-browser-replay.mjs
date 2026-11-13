@@ -46,6 +46,17 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]].filter
           liveModelsFn: async () => ({ models: publicCopilotModelCatalog(githubRegistry.models), advertised: githubRegistry.models.data.length, upstreamHost: "synthetic" }),
           updateStatusFn: async () => ({ source: "release_status", status: "unavailable", current: { version: "synthetic" } }) } });
         await page.goto(base + "/#models");await page.locator("#connection-source-list .connection-row").waitFor();assert.equal(await page.locator("html").getAttribute("data-palette"), palette);
+        const beforeImport = JSON.stringify(runtime.connections());
+        await page.locator("#connection-import-file").setInputFiles({ name: "provider.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify({ name: "Imported relay", settingsConfig: { env: { ANTHROPIC_BASE_URL: "https://relay.example.test", ANTHROPIC_AUTH_TOKEN: "fixture-private-key" } } })) });
+        await page.locator("#connection-import-preview").waitFor({ state: "visible" });
+        assert.equal(JSON.stringify(runtime.connections()), beforeImport, "Import preview writes nothing");
+        assert.doesNotMatch(await page.locator("#connection-import-preview").innerText(), /fixture-private-key/);
+        if (options.get("--output")) { fs.mkdirSync(options.get("--output"), { recursive: true });await page.locator("#connection-import-preview").screenshot({ path: path.join(options.get("--output"), `${engine}-${palette}-${mode}-import-preview.png`) }); }
+        await page.locator("#connection-import-preview button").click();
+        assert.equal(await page.locator("#connection-base").inputValue(), "https://relay.example.test");
+        assert.equal(await page.locator('[name="messages_url"]').inputValue(), "https://relay.example.test/v1/messages");
+        assert.equal(await page.locator("#connection-key").inputValue(), "");
+        await page.locator("#connection-cancel").click();
         await page.locator("#connection-add").focus();await page.keyboard.press("Enter");assert.equal(await page.locator("#connection-name").evaluate(node => node === document.activeElement), true, "Add API focuses its first field");
         await page.locator("#connection-name").fill(sampleName);await page.locator("#connection-base").fill("https://api.example.test/v1");await page.locator("#connection-base").blur();
         await page.locator("#connection-key").fill("synthetic-key-no-network");

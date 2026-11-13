@@ -12,6 +12,8 @@ import { hiddenQuestion } from "./cli-secret.mjs";
 import { readBoundedFileSync } from "./bounded-file.mjs";
 import { deploymentModelId } from "./model-capabilities.mjs";
 import { TERMINAL_COLOR_THEMES } from "./terminal-colors.mjs";
+import { previewSourceImport } from "./source-import.mjs";
+import { readAccessSettings } from "./access-settings.mjs";
 
 async function readSecretInput(input) {
   const chunks = [];let bytes = 0;
@@ -115,20 +117,20 @@ export async function runManagementCommand(command, options = {}) {
       const found = rows.find(row => row.request_id === ids.request);if (!found) throw new Error("Request not retained. No full-history lookup is available.");return print(found);
     }
     rows = rows.filter(row => (!flags.active || row.active) && (!flags.failed || row.state !== "cancelled" && (row.state === "failed" || row.error))
-      && (!flags.source || row.provider === flags.source) && (!flags.app || (flags.app === "codex" ? ["codex", "codex_app", "codex_cli"].includes(row.application) : row.application === (flags.app === "antigravity" ? "gemini_app" : CLI_CLIENTS[flags.app])))).slice(-(flags.limit || 20));
+      && (!flags.purpose || (row.purpose || "unknown") === flags.purpose) && (!flags.source || row.provider === flags.source) && (!flags.app || (flags.app === "codex" ? ["codex", "codex_app", "codex_cli"].includes(row.application) : row.application === (flags.app === "antigravity" ? "gemini_app" : CLI_CLIENTS[flags.app])))).slice(-(flags.limit || 20));
     return print(flags.format === "json" ? rows : rows.map(row => ({ ...row, state_label: terminalRequestState(row) })), [["request_id", "Request"], ["application", "Client"], ["provider", "Source"], ["model", "Model"], ["route", "Route"], ["state_label", "State"]]);
   }
   if (group === "usage") {
     if (flags.scope === "run") {
-      if (flags.model || flags.days || flags.from || flags.to || flags.time_zone) throw new Error("Model and date filters require --scope all; current-run totals support only --provider.");
+      if (flags.purpose || flags.model || flags.days || flags.from || flags.to || flags.time_zone) throw new Error("Model and date filters require --scope all; current-run totals support only --provider.");
       const usage = (await readStatus()).data.runtime_usage;
       if (!usage) throw new Error("Current-run usage is unavailable.");
       return print(flags.provider ? usage.by_provider?.[flags.provider] || { records: 0 } : usage);
     }
     const { summarizeUsageLogs } = await import("./usage-store.mjs");
     const { createUsageQuery } = await import("./usage-query.mjs");
-    const selection = createUsageQuery({ provider: flags.provider, model: flags.model, days: flags.days, from: flags.from, to: flags.to, timeZone: flags.time_zone });
-    const filtered = selection.filters.model || selection.filters.from || selection.filters.to;
+    const selection = createUsageQuery({ provider: flags.provider, model: flags.model, purpose: flags.purpose, days: flags.days, from: flags.from, to: flags.to, timeZone: flags.time_zone });
+    const filtered = selection.filters.purpose || selection.filters.model || selection.filters.from || selection.filters.to;
     const summary = await summarizeUsageLogs(undefined, { ...(flags.provider ? { provider: flags.provider } : {}), ...(filtered ? { recordFilter: selection.matches } : {}) });
     summary.filters = selection.filters;
     if (flags.format === "json") return print(summary);
@@ -241,7 +243,7 @@ export async function runManagementCommand(command, options = {}) {
       return print({ id: ids.app, access: client.enabled ? clientSetup(client) === "Paused" ? "Paused" : "Enabled" : "Disabled", setup: view.clients.find(row => row.id === id)?.setup || clientSetup(client),
         selected_models: Array.isArray(client.deployments) ? client.deployments.length : modelPlan?.models.length ?? null, unavailable_selection: (modelPlan?.unavailable || []).filter(model => !modelPlan?.available.some(candidate => candidate.source === model.source && candidate.id === model.id)),
         app_adoption: view.clients.find(row => row.id === id)?.active > 0 ? "Active gateway request observed; process liveness not checked" : observed ? `Gateway request observed${observed.at || observed.time ? ` at ${observed.at || observed.time}` : ""}; process liveness not checked` : client.observed_at ? `Gateway request observed at ${client.observed_at}; process liveness not checked` : "Not observed",
-        active: view.clients.find(row => row.id === id)?.active ?? null, ...(id === "codex" && flags.details ? { features: details, chatgpt_sign_in: "Managed by Codex; not inferred from GitHub credentials" } : {}) });
+        active: view.clients.find(row => row.id === id)?.active ?? null, ...(id.startsWith("claude_") && flags.details ? { capability_support: modelPlan?.support, capability_adoption: client.capability_adoption, capability_sync: modelPlan?.sync } : {}), ...(id === "codex" && flags.details ? { features: details, chatgpt_sign_in: "Managed by Codex; not inferred from GitHub credentials" } : {}) });
     }
     if (action === "models" && !flags.edit) {
       if (flags.format === "json") return print(modelPlan);
@@ -313,6 +315,24 @@ export async function runManagementCommand(command, options = {}) {
     const result = await save(imageOnly ? { operation: "image_model", id: "codex", model: body.image_model, client_revision: client.revision } : body);return print({ client: ids.app, setup: getClient(result, id).setup, saved: true, app_adoption: "Not verified" });
   }
   if (group !== "source") throw new Error("Unknown management command.");
+  if (action === "import") {
+    if (!flags.file) throw new Error("Supply one explicit JSON file with --file.");
+    const preview = previewSourceImport(readFile(), readAccessSettings(options).apis);
+    if (!flags.apply || flags.preview) return print(preview);
+    const selected = preview.drafts[(flags.select || 0) - 1];
+    if (!selected) throw new Error("Review the preview, then use --select NUMBER --apply for one source.");
+    output.write(print(selected) + "\n");
+    const graph = await connection();requireManagement();
+    if (graph.providers.some(source => source.name?.trim().toLowerCase() === selected.config.name.trim().toLowerCase())) throw new Error("A source with this name exists. Edit its settings explicitly, or rename the imported draft.");
+    let key;
+    if (!selected.config.key_env) {
+      if (!flags.key_stdin) throw new Error("Use --key-stdin or a configured key_env; foreign credential values are not copied.");
+      key = await readSecretInput(input);
+    }
+    await confirm("Save this one API without granting client access or selecting models?");
+    const result = await save({ operation: "save_api", config: selected.config, allowed: [], ...(key ? { key } : {}) });key = undefined;
+    return print({ saved: true, source: result.providers.find(source => source.name === selected.config.name)?.id, authorized_clients: [] });
+  }
   let graph = await connection();
   if (!flags.preview && (flags.edit || ["add", "edit", "enable", "disable", "remove"].includes(action))) requireManagement();
   if (action === "list") return print(graph.providers.map(source => ({ id: source.id, name: source.name, enabled: source.enabled, key_saved: source.builtin ? undefined : source.key_saved })), [["id", "ID"], ["name", "Source"], ["enabled", "Enabled"]]);
@@ -325,7 +345,7 @@ export async function runManagementCommand(command, options = {}) {
     if (action === "models") return print({ source: id, evidence: "Saved API model selection; access not checked", models: source.models });
     const diagnostics = await request({ path: "providers" }), observed = diagnostics.providers.find(provider => provider.id === id);
     return print({ id, name: source.name, saved_enabled: source.enabled, runtime_state: observed?.state || "Not observed", credentials: source.builtin ? observed?.auth : { key_saved: source.key_saved },
-      catalog: observed?.models || source.discovery || { count: source.models?.length ?? null, source: "configured" }, access: "Not inferred from saved credentials or configuration", diagnostic: observed?.catalog_diagnostic || null });
+      catalog: observed?.models || source.discovery || { count: source.models?.length ?? null, source: "configured" }, health: observed?.health || source.discovery?.health || null, access: "Not inferred from saved credentials or configuration", diagnostic: observed?.catalog_diagnostic || null });
   }
   if (action === "check" || action === "models" && flags.refresh) {
     if (!source.enabled || id === "m365" && graph.m365_state === "disabled") throw new Error("Source is disabled; it was not enabled automatically.");

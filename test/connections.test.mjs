@@ -20,6 +20,22 @@ import { claudeModelEntries } from "../src/claude-models.mjs";
 import { deploymentModelId } from "../src/model-capabilities.mjs";
 
 process.env.CCDX_DISABLE_USAGE = "1";
+test("runtime revalidates installed contracts once, invalidates plans and respects manual sync", async t => {
+  let inspections = 0, release;
+  const contract = { status: "verified", fingerprint: "same-contract", installation: "build-a", app_version: "5.0.0", fields: { models: true, context: true, output: false, discovery: true }, profiles: [{ model: "claude-opus-4-6", efforts: ["low", "medium", "high", "max"] }] };
+  const s = runtime(t, { inspectAppContract: async () => { inspections++;if (release) await release.promise;return structuredClone(contract); } });
+  const id = await save(s.runtime);
+  await s.runtime.manageConnections({ operation: "client", id: "claude_app", enabled: true, allowed: [id], deployments: [{ source: id, model: "any-message-model" }], auto_sync: false });
+  await s.runtime.refreshClientCapabilities();
+  const app = () => s.runtime.connections().clients.find(client => client.id === "claude_app");
+  assert.equal(app().model_plan.support.app, true);assert.equal(app().setup, "manual_sync");
+  let finish;release = { promise: new Promise(resolve => { finish = resolve; }) };
+  const before = inspections;contract.app_version = "6.0.0";contract.installation = "build-b";
+  const a = s.runtime.refreshClientCapabilities(), b = s.runtime.refreshClientCapabilities();finish();await Promise.all([a, b]);release = null;
+  assert.equal(inspections, before + 1);assert.equal(app().model_plan.support.app_version, "6.0.0");assert.equal(app().auto_sync, false);
+  contract.status = "unavailable";contract.fingerprint = null;await s.runtime.refreshClientCapabilities();
+  assert.equal(app().model_plan.support.app, false);assert.equal(app().deployments.length, 1);
+});
 
 test("encrypted credential observations stay with App sync and clear when no longer observed", async t => {
   let sealed = true;

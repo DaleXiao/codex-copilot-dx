@@ -56,6 +56,9 @@ export const MANAGED_COMMANDS = [
     )
   ),
   command("source list", "List registered model sources", read),
+  command("source import", "Preview supplied CCDX, CC Switch or Magpie API metadata; apply one explicitly", {
+    ...read, "--file": "value", "--select": "integer", "--apply": "flag", "--key-stdin": "flag", ...confirm,
+  }),
   command("source add", "Save an API and read its model catalog", {
     "--file": "value",
     "--key-stdin": "flag",
@@ -176,6 +179,7 @@ export const MANAGED_COMMANDS = [
     "--failed": "flag",
     "--app": "value",
     "--source": "value",
+    "--purpose": "purpose",
     "--limit": "integer",
   }),
   command("requests show <request>", "Show a retained request and its original diagnostic fields", read),
@@ -185,6 +189,7 @@ export const MANAGED_COMMANDS = [
     "--scope": "scope",
     "--provider": "value",
     "--model": "value",
+    "--purpose": "purpose",
     "--days": "value",
     "--from": "value",
     "--to": "value",
@@ -226,6 +231,7 @@ function optionsFor(args, definition) {
     if (type === "format" && !["table", "plain", "json"].includes(value))
       throw new Error("Format must be table, plain or json");
     if (type === "scope" && !["run", "all"].includes(value)) throw new Error("Scope must be run or all");
+    if (type === "purpose" && !["conversation", "diagnostic", "compatibility", "unknown"].includes(value)) throw new Error("Purpose must be conversation, diagnostic, compatibility or unknown");
     if (type === "integer" && (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 100))
       throw new Error("Limit must be an integer from 1 to 100");
     values[key] = type === "integer" ? Number(value) : value;
@@ -276,7 +282,7 @@ export function parseManagedCommand(args) {
 
 const extras = {
   source:
-    "Status reads local/cached evidence. check/--refresh may contact the source; no inference.\nSource access grants do not select client models. Disable previews affected clients.\nGitHub login and company-account selection are source-specific.\nChoose visible models and defaults with app <app> models --edit.",
+    "Status reads local/cached evidence. check/--refresh may contact the source; no inference.\nsource import --file FILE previews supplied metadata. --select N --apply saves one source using private key input; no client access is granted.\nSource access grants do not select client models. Disable previews affected clients.\nGitHub login and company-account selection are source-specific.\nChoose visible models and defaults with app <app> models --edit.",
   app: "Configured is not App adoption or process liveness. Unknown stays unknown.\nmodels shows the selected plan; source <id> models shows the upstream catalog.\nsetup/remove changes integration setup; pause/resume retains credentials.\nsync --preview shows the model/configuration plan, not a byte-level file diff.\nNo client program is force-restarted.",
   config:
     "Only service and terminal preferences are in scope. Browser appearance stays in WebUI.\nReset keeps accounts, keys, model plans and chats and stores a pre-reset backup.\nSaved and effective values can differ; restart requirements remain explicit.",
@@ -285,7 +291,7 @@ const extras = {
   status:
     "Default interactive status is brief; --details retains the complete diagnostic view.\nThe installed package version can differ from the running service.\nA listening gateway does not prove upstream model access.",
   usage:
-    "Default usage includes all recorded usage. Filter it with --provider, --model and --days 1..365|all, or --from/--to YYYY-MM-DD.\nDates use --time-zone (UTC by default). Source-qualified models use 'source / model'.\n--scope run reads the running service and supports only --provider.\nGemini usage includes Antigravity Copilot and native Google responses. Missing upstream counts stay unknown; historical missing usage is not reconstructed.\nUsage records are not billed request counts. Cache hit is a token-reuse estimate.",
+    "Default usage includes all recorded usage. Filter it with --provider, --model, --purpose and --days 1..365|all, or --from/--to YYYY-MM-DD.\nPurpose: conversation, diagnostic, compatibility or unknown. Older records without a purpose remain unknown; every purpose stays in default totals.\nDates use --time-zone (UTC by default). Source-qualified models use 'source / model'.\n--scope run reads the running service and supports only --provider.\nGemini usage includes Antigravity Copilot and native Google responses. Missing upstream counts stay unknown; historical missing usage is not reconstructed.\nUsage records are not billed request counts. Cache hit is a token-reuse estimate.",
   doctor:
     "Default checks are read-only. Explicit online/compatibility checks and owned repairs have separate options.",
   update:

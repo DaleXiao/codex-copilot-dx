@@ -385,7 +385,7 @@ export async function handleDashboardApi(req, res, pathname, {
     const provider = query.get("provider") || "";
     if (provider && !isProviderId(provider)) { sendJson(res, 400, { error: "Select a valid provider" });return; }
     let selection;
-    try { selection = createUsageQuery({ provider, model: query.get("model") || "", days: query.get("days") || "all", from: query.get("from") || "", to: query.get("to") || "", timeZone: query.get("time_zone") || "UTC" }); }
+    try { selection = createUsageQuery({ provider, model: query.get("model") || "", purpose: query.get("purpose") || "", days: query.get("days") || "all", from: query.get("from") || "", to: query.get("to") || "", timeZone: query.get("time_zone") || "UTC" }); }
     catch (error) { sendJson(res, 400, { error: error.message });return; }
     let analytics = null;
     if (query.get("analytics") === "1") {
@@ -400,7 +400,7 @@ export async function handleDashboardApi(req, res, pathname, {
     }
     const abort = createRequestAbort(req, res);
     try {
-      const filtered = selection.filters.model || selection.filters.from || selection.filters.to;
+      const filtered = selection.filters.purpose || selection.filters.model || selection.filters.from || selection.filters.to;
       const observedModels = new Set();
       const recordFilter = record => {
         if (observedModels.size < 100) observedModels.add(provider ? record.model || "unknown" : `${usageProvider(record)} / ${record.model || "unknown"}`);

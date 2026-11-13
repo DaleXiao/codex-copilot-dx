@@ -11,6 +11,7 @@ For installation and first use, start with the [README](../README.md). This refe
 | `ccdx` / `ccdx start` | Start or reuse the foreground gateway |
 | `ccdx web` | Open the Web UI, or start management without signing in |
 | `ccdx status` | Show runtime and app configuration; `--details` expands diagnostics |
+| `ccdx source import --file FILE [--select N --apply --key-stdin --yes]` | Preview API metadata; explicitly save one source without client grants |
 | `ccdx source list` / `source add` | List sources or add an API |
 | `ccdx source <id> status` | Read saved account and catalog evidence |
 | `ccdx source <id> models [--refresh]` | Read cached models, or explicitly refresh the source |
@@ -38,7 +39,7 @@ For installation and first use, start with the [README](../README.md). This refe
 | `ccdx config reset --preview` / `restore` | Preview defaults or restore the pre-reset backup |
 | `ccdx requests [--failed] [--active]` | Inspect retained requests |
 | `ccdx requests show <request_id>` | Read one retained request |
-| `ccdx usage [--scope all\|run] [--provider ID] [--model ID] [--days N\|all]` | Read filtered retained usage or current-run totals |
+| `ccdx usage [--scope all\|run] [--provider ID] [--model ID] [--purpose VALUE] [--days N\|all]` | Read filtered retained usage or current-run totals |
 | `ccdx doctor [--online] [--compat] [--fix] [--json]` | Check local setup; optional access checks and repairs |
 | `ccdx doctor config` / `network` / `report` | Read configuration, routing or a redacted local report |
 | `ccdx doctor cache [--limit MiB\|default]` | Inspect runtime buffers or change their limit |
@@ -138,6 +139,28 @@ Claude App can continue an existing conversation on another selected, authorized
 
 Model details show exclusion reasons only when applicable: app/source disabled, source access not granted, missing interface, source restriction, missing catalog entry or no selection. These are configuration/catalog facts, not an online capability test. Expected local GET/HEAD discovery replies are listed separately under Requests → Service probes. Raw HTTP counters remain unchanged; unknown paths, security denials and actual call failures remain inspectable.
 
+## Claude capability adaptation
+
+On macOS, CCDX reads bounded declarations and their consumers from the installed Claude App. It checks model-list fields, behavior hints, native effort options and maximum-effort handling. Installation changes trigger a coalesced background recheck; the existing refresh cadence also covers missed file events. No application code is executed during inspection and no per-request application scan runs.
+
+Verified newer contracts keep stable source-qualified model IDs. Both the native profile and `/v1/models` publish the same behavior hint and maximum effort. Legacy conversation IDs remain accepted. Model order, 1M preferences, manual settings and the existing automatic-sync choice retain their ownership protection. Shared capability maps merge unchanged managed entries and preserve manual entries. A changed native configuration requires a normal Claude restart; CCDX does not interrupt running conversations.
+
+Capability declarations, successful synchronization and an observed outgoing effort are separate facts. `ccdx app claude-app status --details`, sync preview and retained request details expose these facts. A missing effort on one request is not proof of missing support. An unverified contract preserves affected existing settings. A non-contiguous set such as low/high/max stays declared and is reported as limited when the native picker cannot express it exactly; CCDX does not invent an intermediate level or silently remap the selection.
+
+## API import and request validation
+
+**Model sources → Import** and `ccdx source import --file FILE` preview explicitly supplied JSON. Supported shapes are CCDX API metadata/connection exports, CC Switch Claude provider JSON (`settingsConfig.env`), and Magpie `providers.json` with native API bases. Cached deployment evidence, foreign route aliases, account rotation, commands and tool permissions are not adopted. Credential values are not copied; use a private key input or `key_env` when saving. Client access remains a separate explicit choice.
+
+The preview reports existing source names/addresses and fields requiring review. **Review draft** opens the existing API editor. The CLI can save one reviewed draft with `--select N --apply --key-stdin --yes`; this grants no app access. Unsupported shapes and mixed-origin endpoints fail validation without writes.
+
+Model details can declare `max_tool_definitions` and `supported_parameters`. Catalog parameter lists apply only to their explicitly named protocol. Source input, output and context limits remain separate. Known unsupported parameters, invalid positive-integer output limits and excessive tool definitions fail before dispatch. Unknown metadata remains unknown; CCDX does not guess limits from a model name or remove requested tools.
+
+HTTP failures retain a safe technical category, parameter path, reported numeric maximum, source, model, protocol and request ID when available. Unknown vendor explanations remain unknown. Default diagnostics do not copy vendor prose or prompts. HTTP 400 may be a parameter or context rejection; a count-endpoint 404 describes token counting separately.
+
+Two confirmed connection failures or temporary 502/503/504 replies trigger a short cooldown for that source interface. The default delay is five seconds; a reported Retry-After can extend it to at most thirty seconds. One later real request checks recovery. Parameter/auth errors, missing token-count endpoints and client cancellation do not trigger it. Other sources and interfaces continue independently. There is no background paid probe or automatic model/account switch.
+
+New requests accept the explicit local `X-CCDX-Purpose` value `conversation`, `diagnostic` or `compatibility`; untagged requests are conversations. `doctor --compat` tags its checks as compatibility traffic. Usage and Requests support purpose filters; all purposes remain in default totals. Older usage without a tag stays `unknown` and is not inferred from model names or removed.
+
 ## Microsoft 365
 
 Supported company environments discover local accounts at startup. Access depends on the account, tenant, device policy and service entitlement. Optional failure does not block another source.
@@ -154,7 +177,7 @@ Catalog diagnostics distinguish local cached data from an online response and ex
 - **Request failure:** use Requests or `ccdx requests --failed`. HTTP failures and model completion outcomes are separate. A successful HTTP transport can still carry a model error.
 - **Token counting unavailable:** an observed API count-endpoint 404 is cached briefly per model/header scope. Inference and token counting are separate capabilities; no synthetic count is returned.
 - **Local checks:** `doctor` is read-only by default. `--online` checks access; `--compat` sends minimal inference and consumes usage. `--fix` backs up owned configuration and performs bounded repairs. It does not enable optional features, change company policy or force-restart apps. Partial repairs exit 1.
-- **App updates:** after the service is ready, CCDX observes installed App versions in the background. Checks & repairs shows the result; `ccdx doctor` can inspect it locally. On macOS this includes Antigravity (the original Gemini App) and uses known App bundle metadata and, when available, the bundled Codex CLI version. On Windows the registered Codex package is inspected; Claude App remains unknown if reliable metadata is unavailable. The running process may still be an older build, and a version observation does not verify images, predictions, model access or protocol compatibility. A detected unrecognized Claude App major version preserves existing shared capability fields during later synchronization. The compact local version record contains only App versions, builds and observation times, not credentials or conversation data. It is refreshed on startup, local checks and the existing model-refresh cadence; a reused service receives a nonblocking refresh notification.
+- **App updates:** after the service is ready, CCDX observes installed App versions in the background. Checks & repairs shows the result; `ccdx doctor` can inspect it locally. On macOS this includes Antigravity (the original Gemini App) and uses known App bundle metadata and, when available, the bundled Codex CLI version. On Windows the registered Codex package is inspected; Claude App remains unknown if reliable metadata is unavailable. The running process may still be an older build, and a version observation does not verify images, predictions, model access or protocol compatibility. Claude capability synchronization uses the installed macOS App contract described below. An installed version alone does not establish native adoption. The compact local version record contains only App versions, builds and observation times, not credentials or conversation data. It is refreshed on startup, local checks and the existing model-refresh cadence; a reused service receives a nonblocking refresh notification.
 - **Cache cleanup:** adding `--history` can break the next continuation. It does not delete client transcripts or generated images.
 
 Request inspection covers bounded retained records, not a full conversation archive. Unidentified clients stay unidentified. Routine diagnostics omit secrets, prompts and error bodies. Explicit error excerpts use bounded, redacted collection. The usage JSON `requests` field counts recorded usage rows, not HTTP calls. Usage is returned token metadata; cache hit is reused input divided by input from records with valid counts for both. Unknown/invalid records remain in token totals but are excluded from both sides of the rate, with partial coverage indicated. It is not a request-based cache rate or a billing receipt.
@@ -165,12 +188,13 @@ Native records use source `google`; Copilot records use `github`. Google output 
 
 Requests and usage share the CCDX request ID; an upstream response ID is separate. Request details show the original model when it differs from the actual model, and distinguish reported, partial, missing and unreadable usage metadata. Requests waiting for body parsing show “Model pending” and “Source pending”; queue, input processing, upstream wait and response delivery have separate states. The CLI exposes the same retained metadata with `ccdx requests show ID --format json`; `ccdx requests --app antigravity` filters the native integration.
 
-Usage source, model and time controls apply to the entire token-usage page: totals, model rows and charts. Selecting a day narrows that shared query; Clear date restores the previous period. Chart type, language and theme changes remain local. All retained history remains available; date charts keep at most 365 daily points and combine earlier valid records into an Earlier records bucket. Invalid/future timestamps remain in all-history totals but are excluded from date charts and bounded date filters, with the exclusion count shown. Model choices are bounded to 100 and preserve other available choices while a filter is active.
+Usage source, model, purpose and time controls apply to the entire token-usage page: totals, model rows and charts. Selecting a day narrows that shared query; Clear date restores the previous period. Chart type, language and theme changes remain local. All retained history remains available; date charts keep at most 365 daily points and combine earlier valid records into an Earlier records bucket. Invalid/future timestamps remain in all-history totals but are excluded from date charts and bounded date filters, with the exclusion count shown. Model choices are bounded to 100 and preserve other available choices while a filter is active.
 
 CLI and TUI subcommands share the same source/model/calendar semantics:
 
 ```sh
 ccdx usage --provider google --days 7
+ccdx usage --purpose diagnostic
 ccdx usage --model 'github / gemini-4-carbon' --from 2026-11-01 --to 2026-11-13 --time-zone Asia/Shanghai
 ccdx usage --scope run --provider google
 ccdx requests --app antigravity --active

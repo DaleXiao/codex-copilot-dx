@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import { currentRequestContext } from "./request-context.mjs";
+import { currentRequestContext, requestPurpose } from "./request-context.mjs";
 import { isProviderId } from "./provider-metadata.mjs";
 import { applicationLabel } from "./request-application.mjs";
 import { createContextMetrics } from "./context-metrics.mjs";
@@ -225,13 +225,14 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
 
   return {
     subscribe: changes.subscribe,
-    begin(routeName, { requestId, application } = {}) {
+    begin(routeName, { requestId, application, purpose } = {}) {
       const route = routes[routeName];
       if (!route) return null;
       const requestStartedAt = now();
       const activeId = ++activeSequence;
       const safeRequestId = typeof requestId === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(requestId) ? requestId : null;
       const client = applicationLabel(application);
+      const purposeLabel = requestPurpose(purpose);
       activeTotal++;
       let upstreamStartedAt = null;
       let firstOutputAt = null;
@@ -261,7 +262,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
       let stopReason = null;
       const elapsed = (time) => time === null ? null : Number(Math.max(0, time - requestStartedAt).toFixed(1));
       if (activeRequests.size < MAX_ACTIVE_REQUESTS) activeRequests.set(activeId, () => ({
-        request_id: safeRequestId, session_id: session ? session.slice(0, 16) : null, application: client, route: routeName, provider, model, phase,
+        request_id: safeRequestId, session_id: session ? session.slice(0, 16) : null, application: client, purpose: purposeLabel, route: routeName, provider, model, phase,
         started_at: at, elapsed_ms: elapsed(now()), first_output_ms: elapsed(firstOutputAt),
         upstream_attempts: attempts, terminal_outcome: terminalOutcome,
         previous_request: session ? (() => {
@@ -347,8 +348,9 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         observeContext(values) {
           if (finished || !values || typeof values !== "object") return;
           if (Number.isSafeInteger(values.cached_input_tokens) && values.cached_input_tokens >= 0) cachedInput = values.cached_input_tokens;
-          for (const key of [...Object.keys(context), "requested_model", "usage_state", "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "privacy_state", "privacy_pending_bytes", "privacy_new_bytes", "privacy_pending_windows", "privacy_wait_budget_ms", "privacy_error", "privacy_event_type", "privacy_channel_type", "privacy_buffered_bytes", "privacy_terminal_seen", "client_tool_errors_received"]) {
+          for (const key of [...Object.keys(context), "requested_model", "reasoning_effort_requested", "reasoning_effort_sent", "usage_state", "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "privacy_state", "privacy_pending_bytes", "privacy_new_bytes", "privacy_pending_windows", "privacy_wait_budget_ms", "privacy_error", "privacy_event_type", "privacy_channel_type", "privacy_buffered_bytes", "privacy_terminal_seen", "client_tool_errors_received"]) {
             const value = values[key];
+            if (["reasoning_effort_requested", "reasoning_effort_sent"].includes(key)) { if (["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(value)) context[key] = value;continue; }
             if (key === "requested_model") { if (typeof value === "string" && /^[\w][\w./:@+-]{0,159}$/.test(value) && redactDiagnosticText(value) === value) context[key] = value;continue; }
             if (key === "usage_state") { if (["pending", "reported", "partial", "missing", "unavailable"].includes(value)) context[key] = value;continue; }
             if (key === "privacy_state") { if (["checked", "failed", "cancelled"].includes(value)) context[key] = value;continue; }
@@ -413,7 +415,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
           // Only scalar, allowlisted metadata survives the request; never retain payloads.
           recentRequests.push({
             request_id: safeRequestId, ...(session ? { session_id: session.slice(0, 16) } : {}), application: client,
-            at, route: routeName, model, outcome, origin, phase,
+            at, route: routeName, purpose: purposeLabel, model, outcome, origin, phase,
             ...(["ccdx_model_not_selected", "ccdx_client_source_disabled"].includes(rejectionReason) ? { rejection_reason: rejectionReason } : {}),
             ...(stopReason ? { stop_reason: stopReason } : {}),
             ...(provider ? { provider } : {}),

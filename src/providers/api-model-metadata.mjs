@@ -29,6 +29,13 @@ export function apiModelMetadata(model, { deployment, checked_at }) {
     delete values.max_input_tokens;
   }
   const protocols = Object.keys(messages).length ? { messages } : {};
+  // Parameter lists are protocol scoped. A generic OpenAI list says nothing
+  // about a gateway's Messages endpoint.
+  for (const protocol of ["messages", "responses", "chat"]) {
+    const parameters = caps.protocols?.[protocol]?.supported_parameters;
+    if (parameters !== undefined && validCapabilities({ supported_parameters: parameters }))
+      protocols[protocol] = { ...protocols[protocol], supported_parameters: parameters };
+  }
   const reported = Object.keys(values).length || Object.keys(protocols).length;
   const described = Object.keys(caps).length || ["max_tokens", "max_input_tokens", "max_output_tokens", "context_window", "reasoning_efforts"].some(key => Object.hasOwn(model, key));
   return { values, ...(Object.keys(protocols).length ? { protocols } : {}), deployment, checked_at,

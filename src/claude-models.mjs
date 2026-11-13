@@ -2,6 +2,7 @@ import { modelReasoningEfforts } from "./provider-metadata.mjs";
 import { createHash } from "node:crypto";
 import { modelDisplayName } from "./model-display.mjs";
 import { claudeEffortPrefix } from "./model-capabilities.mjs";
+import { claudeNativeModelHint } from "./claude-app-contract.mjs";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
@@ -19,7 +20,7 @@ function desktopModelId(id) {
   return `ccdx/claude-compatible-${BigInt(`0x${digest}`).toString(10)}`;
 }
 
-export function claudeModelEntries(models, { desktopAliases = false } = {}) {
+export function claudeModelEntries(models, { desktopAliases = false, appContract } = {}) {
   const ids = new Set(), upstreamIds = new Set(models.map(model => model.id));
   return models.map(model => {
     const name = model.client_id || (desktopAliases ? desktopModelId(model.id) : claudeClientModelId(model.id));
@@ -28,7 +29,8 @@ export function claudeModelEntries(models, { desktopAliases = false } = {}) {
     const advertised = model.capability?.values.reasoning === false ? [] : model.capability?.values.reasoning_efforts || modelReasoningEfforts(model);
     const prefix = /^mythos-ccdx-\d+$/.test(name) ? claudeEffortPrefix(model.capability?.values) : [];
     const maxEffort = prefix.at(-1) || EFFORTS.filter(value => advertised?.includes(value)).at(-1);
-    return { name, ...(model.display_name || name !== claudeClientModelId(model.id) ? { labelOverride: modelDisplayName(model) } : {}),
+    const hint = claudeNativeModelHint(model.capability?.values, appContract);
+    return { name, ...(hint || {}), ...(model.display_name || name !== claudeClientModelId(model.id) ? { labelOverride: modelDisplayName(model) } : {}),
       ...(model.capability?.values.context_window >= 1000000 ? { supports1m: true } : {}), ...(maxEffort ? { maxEffort } : {}) };
   });
 }

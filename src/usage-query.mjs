@@ -1,12 +1,14 @@
 import { isProviderId } from "./provider-metadata.mjs";
 import { usageProvider } from "./usage-store.mjs";
+import { REQUEST_PURPOSES, requestPurpose } from "./request-context.mjs";
 
 const DAY_MS = 86400000;
 const dateValue = value => /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value))
   && new Date(value).toISOString().slice(0, 10) === value;
 
-export function createUsageQuery({ provider = "", model = "", days = "all", from = "", to = "", timeZone = "UTC", now = Date.now() } = {}) {
+export function createUsageQuery({ provider = "", model = "", purpose = "", days = "all", from = "", to = "", timeZone = "UTC", now = Date.now() } = {}) {
   if (typeof provider !== "string" || provider && !isProviderId(provider)) throw new Error("Select a valid usage source");
+  if (purpose !== "" && !REQUEST_PURPOSES.includes(purpose)) throw new Error("Select a valid request purpose");
   if (typeof model !== "string" || model.length > 200 || /[\u0000-\u001f\u007f]/.test(model)) throw new Error("Select a valid usage model");
   if (String(days) !== "all" && (!/^\d+$/.test(String(days)) || Number(days) < 1 || Number(days) > 365)) throw new Error("Usage days must be all or an integer from 1 to 365");
   if (typeof timeZone !== "string" || timeZone.length > 100) throw new Error("Select a valid usage time zone");
@@ -19,11 +21,12 @@ export function createUsageQuery({ provider = "", model = "", days = "all", from
   }
   if (from && !to) to = today;
   if (from && to && from > to) throw new Error("Usage start date must not follow its end date");
-  const filters = { provider, model, days: String(days), from, to, time_zone: zone.resolvedOptions().timeZone };
+  const filters = { provider, model, purpose, days: String(days), from, to, time_zone: zone.resolvedOptions().timeZone };
   return {
     filters,
     key: JSON.stringify(filters),
     matches(record) {
+      if (purpose && requestPurpose(record.purpose, "unknown") !== purpose) return false;
       if (provider && usageProvider(record) !== provider) return false;
       if (model && model !== record.model && model !== `${usageProvider(record)} / ${record.model || "unknown"}`) return false;
       if (!from && !to) return true;

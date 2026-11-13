@@ -6,7 +6,7 @@ import { currentRequestContext } from "./request-context.mjs";
 
 export function createConnectionRouting({ legacy, legacyClaudeAccess, isManaged, getSettings, binding, plan, permitted, getSource,
   resolveDeployment, codexAccessMode, codexRequiresKey, requireCodexKey, identities, track, guardConversation, messagesTransfer,
-  acquireClaudeRequest, privacy, env, log, lastClients }) {
+  acquireClaudeRequest, privacy, env, log, lastClients, capabilitySupport }) {
   const handlers = new Map();
   function requireSource(clientId, id) {
     if (!permitted(clientId, id)) throw accessError("ccdx_client_source_disabled", 503);
@@ -152,6 +152,7 @@ export function createConnectionRouting({ legacy, legacyClaudeAccess, isManaged,
           log,
           performance: legacy.claudePerformance,
           desktopAliases: id === "claude_app",
+          appContract: id === "claude_app" ? capabilitySupport?.app_contract : undefined,
           messagesSystemMode: id === "claude_app" ? "legacy" : "passthrough",
           resolveRequest(body) {
             const record = resolveDeployment(id, body.model),

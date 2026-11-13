@@ -331,7 +331,10 @@ const clientVersions = {
     if (shuttingDown || serviceWorker?.warming || serviceWorker?.draining || serviceWorker?.preserving) return Promise.resolve(clientVersions.snapshot());
     versionModule ||= import("../src/client-versions.mjs").then(({ createClientVersionMonitor, clientVersionName }) => {
       if (shuttingDown) return null;
-      versionMonitor = createClientVersionMonitor({ onChange: names => console.log(status("info", `Installed ${names.map(clientVersionName).join(" and ")} updated; check integration in the WebUI or ccdx doctor`)) });
+      versionMonitor = createClientVersionMonitor({ onChange: names => {
+        console.log(status("info", `Installed ${names.map(clientVersionName).join(" and ")} updated; checking managed capability configuration`));
+        if(names.includes("claude"))void providerRuntime?.refreshClientCapabilities?.().catch(()=>{});
+      } });
       return versionMonitor;
     }).catch(error => { versionModule = null;throw error; });
     return versionModule.then(monitor => monitor?.refresh());

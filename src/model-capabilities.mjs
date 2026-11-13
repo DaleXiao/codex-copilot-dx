@@ -2,16 +2,17 @@ import { createHash } from "node:crypto";
 
 export const MODEL_PROTOCOLS = Object.freeze(["messages", "responses", "chat"]);
 export const REASONING_EFFORTS = Object.freeze(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
-const limits = ["context_window", "max_input_tokens", "max_output_tokens", "reasoning_budget_min", "reasoning_budget_max"];
+const limits = ["context_window", "max_input_tokens", "max_output_tokens", "reasoning_budget_min", "reasoning_budget_max", "max_tool_definitions"];
+export const MODEL_PARAMETERS = Object.freeze(["max_tokens", "max_output_tokens", "max_completion_tokens", "temperature", "top_p", "tools", "tool_choice", "parallel_tool_calls", "thinking", "output_config", "reasoning", "reasoning_effort", "response_format", "text", "stop", "stop_sequences", "stream", "stream_options"]);
 const flags = ["reasoning", "reasoning_required", "reasoning_adaptive", "tools", "parallel_tools", "streaming", "structured_output", "mid_conversation_system"];
-export const CAPABILITY_FIELDS = Object.freeze([...limits, ...flags, "reasoning_efforts", "reasoning_format", "thinking_modes", "input_modalities", "web_search"]);
+export const CAPABILITY_FIELDS = Object.freeze([...limits, ...flags, "reasoning_efforts", "reasoning_format", "thinking_modes", "input_modalities", "web_search", "supported_parameters"]);
 const object = value => value && typeof value === "object" && !Array.isArray(value);
 export function validCapabilities(value) {
   return object(value) && Object.entries(value).every(([key, item]) => {
     if (limits.includes(key)) return Number.isSafeInteger(item) && item > 0 && item <= 100000000;
     if (flags.includes(key)) return typeof item === "boolean";
     if (key === "reasoning_format") return MODEL_PROTOCOLS.includes(item);
-    const choices = key === "reasoning_efforts" ? REASONING_EFFORTS : key === "thinking_modes" ? ["disabled", "enabled", "adaptive", "between_tools"] : key === "input_modalities" ? ["text", "image", "audio", "video", "file"] : key === "web_search" ? MODEL_PROTOCOLS : null;
+    const choices = key === "supported_parameters" ? MODEL_PARAMETERS : key === "reasoning_efforts" ? REASONING_EFFORTS : key === "thinking_modes" ? ["disabled", "enabled", "adaptive", "between_tools"] : key === "input_modalities" ? ["text", "image", "audio", "video", "file"] : key === "web_search" ? MODEL_PROTOCOLS : null;
     return choices && Array.isArray(item) && item.length <= choices.length && new Set(item).size === item.length && item.every(v => choices.includes(v));
   }) && !(value.max_input_tokens && value.context_window && value.max_input_tokens > value.context_window)
     && !(value.reasoning_budget_min && value.reasoning_budget_max && value.reasoning_budget_min > value.reasoning_budget_max);
@@ -36,6 +37,7 @@ export function catalogCapabilities(model) {
     context_window: first(model.context_window, window.max_context_window_tokens),
     max_input_tokens: first(model.max_input_tokens, window.max_prompt_tokens, window.max_input_tokens),
     max_output_tokens: first(model.max_output_tokens, window.max_output_tokens),
+    max_tool_definitions: first(model.max_tool_definitions, window.max_tool_definitions),
     reasoning: first(typeof caps.reasoning === "boolean" ? caps.reasoning : undefined, supports.reasoning),
     reasoning_efforts: first(model.reasoning_efforts, supports.reasoning_effort),
     input_modalities: first(model.input_modalities, caps.input_modalities, supports.vision === true ? ["text", "image"] : undefined),
@@ -72,7 +74,8 @@ export function resolveModelCapabilities(model, { revision, checkedAt = null, bu
 export function claudeEffortsExpressible(values = {}) {
   const levels = values.reasoning === false ? [] : values.reasoning_efforts || [];
   const native = ["low", "medium", "high", "xhigh", "max"];
-  return levels.length > 0 && levels.every(value => native.includes(value)) && native.slice(0, Math.max(...levels.map(value => native.indexOf(value))) + 1).every(value => levels.includes(value));
+  const base = Math.min(2, Math.max(...levels.map(value => native.indexOf(value))));
+  return levels.length > 0 && levels.every(value => native.includes(value)) && native.slice(0, base + 1).every(value => levels.includes(value));
 }
 
 export function claudeEffortPrefix(values = {}) {
@@ -84,9 +87,19 @@ export function claudeEffortPrefix(values = {}) {
   return prefix.length === levels.length || prefix.length >= 2 ? prefix : [];
 }
 
+function invalidRequestParameter(message, code, param) {
+  throw Object.assign(new Error(message), { code, statusCode: 400, param });
+}
 export function constrainModelRequest(body, capability, protocol) {
   const values = capability?.values || {}, outputKey = protocol === "messages" ? "max_tokens" : protocol === "responses" ? "max_output_tokens" : "max_completion_tokens";
   let result = body;const applied = [];
+  if (body[outputKey] !== undefined && (!Number.isSafeInteger(body[outputKey]) || body[outputKey] <= 0)) invalidRequestParameter("The output token limit must be a positive integer.", "ccdx_api_output_limit_invalid", outputKey);
+  if (protocol === "chat" && body.max_tokens !== undefined && (!Number.isSafeInteger(body.max_tokens) || body.max_tokens <= 0)) invalidRequestParameter("The output token limit must be a positive integer.", "ccdx_api_output_limit_invalid", "max_tokens");
+  if (values.supported_parameters) for (const key of MODEL_PARAMETERS) {
+    if (Object.hasOwn(body, key) && !values.supported_parameters.includes(key)) invalidRequestParameter("This deployment does not declare support for the requested parameter: " + key + ".", "ccdx_api_parameter_unavailable", key);
+  }
+  if (values.max_tool_definitions && Array.isArray(body.tools) && body.tools.length > values.max_tool_definitions)
+    invalidRequestParameter("The number of tool definitions exceeds this deployment's declared limit of " + values.max_tool_definitions + ".", "ccdx_api_tool_limit_exceeded", "tools");
   if (values.max_output_tokens && Number.isFinite(body[outputKey]) && body[outputKey] > values.max_output_tokens) {
     result = { ...result, [outputKey]: values.max_output_tokens };applied.push("output_limit");
   }

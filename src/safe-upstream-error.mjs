@@ -1,5 +1,6 @@
 import { isMissingCallIdError } from "./responses-tool-output.mjs";
 import { isRootToolSchemaError } from "./messages-tool-schema.mjs";
+import { redactDiagnosticText } from "./diagnostic-text.mjs";
 
 // Only fixed, documented-shaped codes leave this module; vendor messages and
 // request data are never returned or logged.
@@ -12,6 +13,13 @@ const reasons = new Map([
   ["context_length_exceeded", { statuses: [400, 413, 422], message: "The source reports that the context is too long." }],
   ["context_window_exceeded", { statuses: [400, 413, 422], message: "The source reports that the context is too long." }],
   ["content_policy_violation", { statuses: [400, 403, 422], message: "The source rejected the request under its content policy." }],
+  ["invalid_request_error", { statuses: [400, 422], message: "The source rejected the request parameters." }],
+  ["unsupported_parameter", { statuses: [400, 422], message: "The source does not support a requested parameter." }],
+  ["output_limit_invalid", { statuses: [400, 422], message: "The source rejected the output token limit." }],
+  ["tool_limit_exceeded", { statuses: [400, 422], message: "The source rejected the number of tool definitions." }],
+  ["reasoning_parameter_unsupported", { statuses: [400, 422], message: "The source does not support the requested reasoning parameter." }],
+  ["authentication_error", { statuses: [401], message: "The source rejected authentication." }],
+  ["permission_denied", { statuses: [403], message: "The source denied access to this model or operation." }],
 ]);
 const MAX_ACTIVE_READS = 4;
 let activeReads = 0;
@@ -23,6 +31,32 @@ function cancelBody(body) {
 export function safeUpstreamReason(code, status) {
   const reason = typeof code === "string" ? reasons.get(code) : null;
   return reason?.statuses.includes(status) ? { code, message: reason.message } : null;
+}
+
+export function safeUpstreamParameter(value){
+  return typeof value==="string"&&value.length<=160&&/^(?:model|messages|input|tools|tool_choice|reasoning|output_config|thinking|temperature|top_p|max_tokens|max_output_tokens|max_completion_tokens|response_format|text|stream|stream_options|stop|stop_sequences)(?:\.[a-z_][a-z\d_]*|\[\d+\])*$/i.test(value)&&redactDiagnosticText(value)===value?value:undefined;
+}
+
+export function classifyUpstreamError(value,status){
+  const error=value?.error??value,text=typeof error==="string"?error:typeof error?.message==="string"?error.message:"";
+  if(text.length>65536)return null;
+  const param=safeUpstreamParameter(error?.param||error?.parameter);
+  let code;
+  if([400,413,422].includes(status)&&/(context (?:length|window)|input tokens|上下文).{0,80}(?:exceed|too (?:long|large)|超|超过)|(?:exceed|超).{0,60}(?:context|上下文)/i.test(text))code="context_length_exceeded";
+  else if([400,422].includes(status)&&/max_(?:completion_)?tokens|max_output_tokens|output token limit|输出.{0,12}(?:上限|限制)/i.test(text)&&/(?:maximum|at most|less than|exceed|between|invalid|unsupported|最多|超过|不支持)/i.test(text))code="output_limit_invalid";
+  else if([400,422].includes(status)&&/(?:too many|maximum number of|at most).{0,40}tools|工具.{0,20}(?:过多|超过)/i.test(text))code="tool_limit_exceeded";
+  else if([400,422].includes(status)&&/(?:effort|thinking|reasoning).{0,60}(?:not support|unsupported)|not support.{0,60}(?:effort|thinking|reasoning)/i.test(text))code="reasoning_parameter_unsupported";
+  const selected=safeUpstreamReason(code,status)||safeUpstreamReason(error?.code,status)||safeUpstreamReason(error?.type,status);
+  if(!selected)return null;
+  const inferred = code === "output_limit_invalid" ? /\b(max_(?:completion_)?tokens|max_output_tokens)\b/i.exec(text)?.[1]?.toLowerCase() : code === "tool_limit_exceeded" ? "tools" : undefined;
+  const bounds = {};
+  if (["output_limit_invalid", "tool_limit_exceeded", "context_length_exceeded"].includes(selected.code)) {
+    const maximum = /(?:maximum(?: (?:context length|number of tools|tokens))?(?: is| of)?|at most|must be (?:less than or equal to|<=)|最多|上限(?:为)?)\s*[:=]?\s*(\d[\d,]{0,11})(?![\d,])/i.exec(text)?.[1];
+    const n = maximum && Number(maximum.replaceAll(",", ""));
+    if (Number.isSafeInteger(n) && n > 0 && n <= 100000000) bounds.maximum = n;
+  }
+  return { ...selected, ...(param || inferred ? { parameter: param || inferred } : {}), ...bounds,
+    message: selected.message + (param ? " Parameter: " + param + "." : "") + (bounds.maximum ? " Reported maximum: " + bounds.maximum + "." : "") };
 }
 
 function readChunk(reader, signal) {
@@ -67,10 +101,8 @@ export async function readSafeUpstreamReason(response, { signal, timeoutMs = 200
     const text = Buffer.concat(chunks, bytes).toString("utf8");
     if (missingCallId && isMissingCallIdError(response.status, text)) return { code: "ccdx_missing_call_id", message: "The source requires a tool call ID." };
     if (rootToolSchema && isRootToolSchemaError(response.status, text)) return { code: "ccdx_tool_schema_root_unsupported", message: "The source rejected a tool's root schema." };
-    let value;try { value = JSON.parse(text); } catch { return null; }
-    const error = value?.error;
-    if (!error || typeof error !== "object" || Array.isArray(error)) return null;
-    return safeUpstreamReason(error.code, response.status) || safeUpstreamReason(error.type, response.status);
+    let value;try { value = JSON.parse(text); } catch { value=text; }
+    return classifyUpstreamError(value,response.status);
   } catch (error) {
     if (signal?.aborted) signal.throwIfAborted();
     return null;

@@ -35,6 +35,8 @@ The Web UI opens at [http://127.0.0.1:2026](http://127.0.0.1:2026/). Run `ccdx w
 3. **Overview / Requests:** check configuration, activity and errors.
 4. **Usage → Context:** inspect reported input, model windows and observed compactions from this run.
 
+Claude capability synchronization checks the installed macOS App contract when it changes. Compatible upgrades can keep their model identities and reasoning controls without a CCDX version-list update. Reopen Claude normally after native configuration changes. Inspect synchronization and observed effort with `ccdx app claude-app status --details`.
+
 For a custom API, enter its HTTPS address and key, then choose **Save & read models**. Select the models and interfaces it provides. Codex uses Responses; Claude uses Messages. Both share port 2026.
 
 Model availability depends on your account and service. Microsoft 365 also requires a supported company environment. Existing account, model and client settings are retained during upgrades. No repeat setup or model selection is needed for an unchanged working configuration.
@@ -46,13 +48,14 @@ Model availability depends on your account and service. Microsoft 365 also requi
 | Start the gateway | `ccdx` |
 | Open the Web UI | `ccdx web` |
 | Check service and apps | `ccdx status` / `ccdx app list` |
+| Preview imported APIs | `ccdx source import --file providers.json` |
 | Manage sources | `ccdx source list` / `ccdx source add` |
 | Sign in again | `ccdx source github reauth` |
 | Choose client models | `ccdx app codex models --edit` |
 | Preview client setup | `ccdx app claude-app sync --preview` |
 | Set up Antigravity | `ccdx app antigravity status` / `enable` / `open` |
 | Inspect failures | `ccdx requests --failed` |
-| Read usage | `ccdx usage` / `ccdx usage --provider google --days 7` / `ccdx usage --scope run` |
+| Read usage | `ccdx usage` / `ccdx usage --provider google --days 7` / `ccdx usage --purpose diagnostic` / `ccdx usage --scope run` |
 | Inspect preferences | `ccdx config show --effective` |
 | Inspect local masking | `ccdx config privacy status` |
 | Check local setup | `ccdx doctor` |

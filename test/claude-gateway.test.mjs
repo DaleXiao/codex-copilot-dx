@@ -10,6 +10,19 @@ import { createStreamPerformanceMetrics } from "../src/stream-performance.mjs";
 import { createApiNetwork } from "../src/providers/api-network.mjs";
 
 const key = "ccdx_m365_" + "a".repeat(64);
+test("native discovery and profile entries carry the same exact reasoning contract", async t => {
+  const models = [
+    { id: "kimi", client_id: "ccdx/claude-compatible-1", capability: { values: { reasoning_efforts: ["low", "medium", "high", "max"], context_window: 1000000 } } },
+    { id: "deepseek", client_id: "ccdx/claude-compatible-2", capability: { values: { reasoning_efforts: ["low", "medium", "high"] } } },
+    { id: "glm", client_id: "ccdx/claude-compatible-3", capability: { values: { reasoning_efforts: ["low", "high", "max"] } } },
+  ];
+  const appContract = { status: "verified", profiles: [{ model: "claude-opus-4-6", efforts: ["low", "medium", "high", "max"] }] };
+  const server = await startClaudeGateway({ port: 0, apiKey: key, provider: { id: "connections", models: () => models }, appContract });t.after(() => server.close());
+  const result = await (await fetch(`http://127.0.0.1:${server.port}/v1/models`, { headers: { Authorization: `Bearer ${key}` } })).json();
+  assert.equal(result.data[0].behaves_as, "claude-opus-4-6");assert.equal(result.data[0].max_effort_level, "max");
+  assert.equal(result.data[1].max_effort_level, "high");assert.equal(result.data[2].behaves_as, undefined);
+  assert.equal(result.data[0].id, models[0].client_id);
+});
 test("unaliased stream framing never forwards a severed JSON fragment and keeps a complete final event", () => {
   const observed = [], reader = createMessagesObserver(value => observed.push(value));
   assert.equal(reader.write(Buffer.from('event: message_start\ndata: {"type":"message_start"}\n\ndata: {"type":"content_')).length, 1);

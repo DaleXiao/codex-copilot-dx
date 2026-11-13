@@ -7,6 +7,16 @@
   const selected=()=>state?.models.filter(model=>model.selected!==false).map(model=>model.id)||[];
   const dirty=()=>draft!==null&&JSON.stringify([...draft].sort())!==JSON.stringify(selected().sort());
   const count=value=>!value?'—':value>=1000000?`${Number((value/1000000).toFixed(2))}M`:value>=1000?`${Number((value/1000).toFixed(1))}K`:String(value);
+  const groupedModels=()=>{
+    if(Array.isArray(state.model_groups))return state.model_groups;
+    const groups=new Map();
+    for(const variant of state.models){
+      const name=variant.name.split(' · Copilot')[0],id=variant.model||name;
+      if(!groups.has(id))groups.set(id,{id,name,context_window:variant.context_window,efforts:[]});
+      groups.get(id).efforts.push({id:variant.id,effort:variant.effort,selected:variant.selected});
+    }
+    return [...groups.values()];
+  };
   function render(){
     for(const id of controls)el(id).disabled=busy||!state;
     if(!state)return;
@@ -22,12 +32,21 @@
     el('gemini-reopen').hidden=!hint;if(hint)words('gemini-reopen',hint);
     el('gemini-open').disabled=busy||state.app.status!=='stopped';
     const list=el('gemini-models'),focus=list.contains(document.activeElement)?document.activeElement.value:null;list.replaceChildren();
-    for(const model of state.models){
+    for(const model of groupedModels()){
+      const chosen=new Set(draft||selected()),ids=model.efforts.map(item=>item.id);
       const row=document.createElement('tr'),name=document.createElement('td'),label=document.createElement('label'),input=document.createElement('input');
-      input.type='checkbox';input.value=model.id;input.checked=(draft||selected()).includes(model.id);input.disabled=busy;input.setAttribute('aria-label',model.name);
-      input.addEventListener('change',()=>{const next=new Set(draft||selected());if(input.checked)next.add(model.id);else next.delete(model.id);draft=[...next];notice=null;clear('gemini-note');el('gemini-save').disabled=!dirty();el('gemini-cancel').disabled=!dirty();words('gemini-draft-state',dirty()?'cap_unsaved':'cap_saved')});
-      label.append(input,document.createTextNode(model.name.split(' · Copilot')[0]));name.append(label);row.append(name);
-      for(const [key,value]of [['source','GitHub Copilot'],['cap_context',count(model.context_window)],['cap_reasoning',language.format(model.effort||'cap_unknown')]]){const cell=document.createElement('td');cell.textContent=value;cell.dataset.label=language.format(key);row.append(cell)}list.append(row);
+      input.type='checkbox';input.value=model.id;input.checked=ids.every(id=>chosen.has(id));input.indeterminate=!input.checked&&ids.some(id=>chosen.has(id));input.disabled=busy;input.setAttribute('aria-label',model.name);
+      const update=(values,checked)=>{const next=new Set(draft||selected());for(const id of values)if(checked)next.add(id);else next.delete(id);draft=[...next];notice=null;clear('gemini-note');render()};
+      input.addEventListener('change',()=>update(ids,input.checked));
+      label.append(input,document.createTextNode(model.name));name.append(label);row.append(name);
+      for(const [key,value]of [['source','GitHub Copilot'],['cap_context',count(model.context_window)]]){const cell=document.createElement('td');cell.textContent=value;cell.dataset.label=language.format(key);row.append(cell)}
+      const efforts=document.createElement('td');efforts.dataset.label=language.format('cap_reasoning');
+      for(const item of model.efforts){
+        const label=document.createElement('label'),choice=document.createElement('input');choice.type='checkbox';choice.value=item.id;choice.checked=chosen.has(item.id);choice.disabled=busy;
+        choice.setAttribute('aria-label',model.name+' · '+language.format(item.effort));choice.addEventListener('change',()=>update([item.id],choice.checked));
+        label.append(choice,document.createTextNode(language.format(item.effort)));efforts.append(label,document.createTextNode(' '));
+      }
+      row.append(efforts);list.append(row);
     }
     if(!state.models.length){const row=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=4;language.set(cell,'gemini_no_models');row.append(cell);list.append(row)}
     if(focus)[...list.querySelectorAll('input')].find(input=>input.value===focus)?.focus();

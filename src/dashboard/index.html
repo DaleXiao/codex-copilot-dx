@@ -316,29 +316,29 @@
         <div data-view="usage" hidden>
         <div class="context-tabs" role="tablist" aria-label="Usage view" data-i18n-label="context_tabs"><button type="button" id="usage-tokens-tab" role="tab" aria-selected="true" aria-controls="usage-tokens-pane" data-i18n="context_tokens">Tokens</button><button type="button" id="usage-context-tab" role="tab" aria-selected="false" aria-controls="usage-context-pane" data-i18n="context_title">Context</button></div>
         <div id="usage-tokens-pane" role="tabpanel" aria-labelledby="usage-tokens-tab">
-        <div class="section-actions usage-source-controls"><label><span data-i18n="source_entire_page">Source / entire page</span><select id="usage-provider"><option value="" data-i18n="all_providers">All providers</option></select></label><button id="refresh-usage" type="button" data-i18n="refresh_usage">Refresh usage</button></div>
+        <div class="section-actions usage-source-controls"><label><span data-i18n="source_entire_page">Source / entire page</span><select id="usage-provider"><option value="" data-i18n="all_providers">All providers</option></select></label>
+          <label><span data-i18n="usage_model_page">Model / entire page</span><select id="analytics-model"><option value="" data-i18n="all_models">All models</option></select></label>
+          <label><span data-i18n="usage_range_page">Time / entire page</span><select id="analytics-range"><option value="all" selected data-i18n="usage_all_history">All retained history</option><option value="7" data-i18n="7_days">Last 7 days</option><option value="30" data-i18n="30_days">Last 30 days</option><option value="90" data-i18n="90_days">Last 90 days</option><option value="365" data-i18n="usage_365_days">Last 365 days</option></select></label>
+          <button id="refresh-usage" type="button" data-i18n="refresh_usage">Refresh usage</button></div>
 
           <details id="usage-analytics" class="panel dashboard-section analytics-section">
             <summary data-i18n="usage_analytics">USAGE TRENDS</summary>
-            <div class="analytics-controls">
-              <label><span data-i18n="model_both_charts">Model / both charts</span> <select id="analytics-model"><option value="" data-i18n="all_models">All models</option></select></label>
-            </div>
             <p id="analytics-note" class="table-note" role="status" data-i18n="open_to_read_retained_usage_history">Loading usage trends…</p>
             <p id="analytics-updated" class="refresh-time"></p>
-            <div class="chart-heading"><h3 data-i18n="daily_tokens">DAILY USAGE</h3><div class="analytics-controls"><label><span data-i18n="daily_range">Date range</span> <select id="analytics-range"><option value="7" data-i18n="7_days">Last 7 days</option><option value="30" selected data-i18n="30_days">Last 30 days</option><option value="90" data-i18n="90_days">Last 90 days</option></select></label>
+            <div class="chart-heading"><h3 data-i18n="daily_tokens">USAGE BY DATE</h3><div class="analytics-controls">
               <label><span data-i18n="chart_view">Chart view</span> <select id="analytics-view"><option value="bars" selected data-i18n="bar_chart">Bar chart</option><option value="line" data-i18n="line_chart">Line chart</option></select></label></div></div>
             <div id="daily-bars" class="daily-bars" aria-label="Daily usage in Token" data-i18n-label="daily_token_usage"></div>
             <div class="daily-axis"><span id="daily-from"></span><span id="daily-to"></span></div>
             <div class="chart-legend"><span class="legend-input" data-i18n="input_36ecb">Input usage</span><span class="legend-output" data-i18n="output_b2439">Output usage</span></div>
-            <div class="chart-heading"><h3 data-i18n="request_activity_365_days">ACTIVITY · LAST 365 DAYS</h3><div class="analytics-controls"><label><span data-i18n="calendar_measure">Calendar measure</span> <select id="analytics-metric"><option value="requests" data-i18n="calls_b73a5">Requests</option><option value="tokens" data-i18n="tokens">Usage (Token)</option></select></label></div></div><p id="activity-scale" class="hint">—</p>
+            <div class="chart-heading"><h3 data-i18n="usage_activity_range">ACTIVITY</h3><div class="analytics-controls"><label><span data-i18n="calendar_measure">Calendar measure</span> <select id="analytics-metric"><option value="requests" data-i18n="recorded_usage">Usage records</option><option value="tokens" data-i18n="tokens">Usage (Token)</option></select></label></div></div><p id="activity-scale" class="hint">—</p>
             <div class="calendar-scroll"><div class="calendar-grid"><div id="calendar-months" class="calendar-months" aria-hidden="true"></div><div id="activity-calendar" class="activity-calendar" aria-label="Daily recorded activity over 365 days" data-i18n-label="daily_recorded_request_activity"></div></div></div>
             <p id="analytics-selection" class="hint" role="status" data-i18n="select_a_day_to_inspect_its_model_totals_no_history_is_distinct_">Select a day for its usage. No records does not mean zero requests.</p>
           </details>
         <details class="panel dashboard-section" id="model-usage" open>
           <summary class="panel-heading"><h2 data-i18n="usage_totals">USAGE TOTALS</h2><span id="usage-state" data-i18n="reading_log">COUNTING</span></summary>
-          <div class="section-actions"><button id="clear-usage-day" type="button" hidden data-i18n="all_history">Show all</button></div>
+          <div class="section-actions"><button id="clear-usage-day" type="button" hidden data-i18n="usage_clear_date">Clear date</button></div>
           <p id="usage-note" class="table-note" data-i18n="aggregating_local_usage_metadata">Counting local usage…</p>
-          <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="calls">REQUESTS</th><th scope="col" data-i18n="input">INPUT USAGE</th><th scope="col" data-i18n="cache_read">REUSED INPUT</th><th scope="col" data-i18n="cache_write">CACHE WRITE</th><th scope="col" data-i18n="output">OUTPUT USAGE</th><th scope="col" data-i18n="total">TOTAL</th><th scope="col" data-i18n="cache_hit">REUSE RATE</th></tr></thead><tbody id="usage-body"><tr><td colspan="8" data-i18n="loading">Loading…</td></tr></tbody></table></div>
+          <div class="table-wrap"><table class="usage-table"><thead><tr><th scope="col" data-i18n="model">MODEL</th><th scope="col" data-i18n="usage_records">RECORDS</th><th scope="col" data-i18n="input">INPUT USAGE</th><th scope="col" data-i18n="cache_read">REUSED INPUT</th><th scope="col" data-i18n="cache_write">CACHE WRITE</th><th scope="col" data-i18n="output">OUTPUT USAGE</th><th scope="col" data-i18n="total">TOTAL</th><th scope="col" data-i18n="cache_hit">REUSE RATE</th></tr></thead><tbody id="usage-body"><tr><td colspan="8" data-i18n="loading">Loading…</td></tr></tbody></table></div>
           <p class="hint" data-i18n="cache_hit_recorded_cached_input_tokens_incomplete_history_unavai">Unit: Token. Reused input is part of input. Rate uses records with valid input and cache-read counts.
 ~ Partial coverage. — No valid input basis.</p>
 

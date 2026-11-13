@@ -17,7 +17,7 @@
   const integer = value => Number.isSafeInteger(value) && value >= 0;
   const appName = id => format(`flow_app_${id}`);
   const awaitingMetadata = row => !row.terminal_outcome && row.upstream_attempts === 0 && ["received", "admission", "body", "history", "images", "serialization"].includes(row.phase);
-  const sourceName = (id, pending = false) => id === "github" ? "GitHub Copilot" : id === "m365" ? "Microsoft 365" : globalThis.ccdxConnectionNames?.[id] || format(pending ? "flow_source_pending" : "flow_source_unknown");
+  const sourceName = (id, pending = false) => id === "github" ? "GitHub Copilot" : id === "m365" ? "Microsoft 365" : id === "google" ? "Google" : globalThis.ccdxConnectionNames?.[id] || format(pending ? "flow_source_pending" : "flow_source_unknown");
   const modelName = (id, pending = false) => !id || id === "other" ? format(pending ? "flow_model_pending" : "flow_model_unknown") : id;
   const modelKey = row => JSON.stringify([row.provider, row.model]);
   const related = row => !selected || (selected.type === "apps" ? row.application === selected.id : modelKey(row) === selected.id);
@@ -25,8 +25,9 @@
   function status(row) {
     if (row.terminal_outcome) return "flow_finishing";
     if (responding(row)) return "flow_responding";
+    if (row.phase === "admission") return "flow_queued";
     if (row.upstream_attempts > 1) return "flow_retrying";
-    return row.upstream_attempts ? "flow_waiting" : "flow_preparing";
+    return row.upstream_attempts ? "flow_waiting" : row.phase === "received" ? "flow_preparing" : "flow_input";
   }
   function entry(tag, className) { const node = document.createElement(tag);if (className) node.className = className;return node; }
   function svg(tag, values) { const node = document.createElementNS(ns, tag);for (const [key, value] of Object.entries(values)) node.setAttribute(key, value);return node; }
@@ -74,8 +75,7 @@
       else count.textContent = "—";
       if (type === "models" && node.children[3].textContent !== sourceName(group.provider, group.pending)) { node.children[3].textContent = sourceName(group.provider, group.pending);positions = null; }
       const output = group.rows.filter(responding).length;
-      const phase = group.rows.every(row => row.terminal_outcome) ? "flow_finishing"
-        : group.rows.every(row => row.upstream_attempts > 1) ? "flow_retrying" : group.rows.every(awaitingMetadata) ? "flow_preparing" : "flow_waiting";
+      const phases = new Set(group.rows.map(status)), phase = phases.size === 1 ? [...phases][0] : "flow_processing";
       label(note, !fresh || total && !group.rows.length ? "flow_last_observed" : !group.rows.length ? "flow_idle" : output ? group.rows.length === 1 ? "flow_responding" : "flow_group_response" : phase, { count: output });
       node.dataset.related = String(!selected || group.rows.some(related));fragments.push(node);
     }

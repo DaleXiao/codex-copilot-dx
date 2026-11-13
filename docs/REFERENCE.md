@@ -38,7 +38,7 @@ For installation and first use, start with the [README](../README.md). This refe
 | `ccdx config reset --preview` / `restore` | Preview defaults or restore the pre-reset backup |
 | `ccdx requests [--failed] [--active]` | Inspect retained requests |
 | `ccdx requests show <request_id>` | Read one retained request |
-| `ccdx usage [--scope all\|run] [--provider ID]` | Read recorded usage or current-run usage |
+| `ccdx usage [--scope all\|run] [--provider ID] [--model ID] [--days N\|all]` | Read filtered retained usage or current-run totals |
 | `ccdx doctor [--online] [--compat] [--fix] [--json]` | Check local setup; optional access checks and repairs |
 | `ccdx doctor config` / `network` / `report` | Read configuration, routing or a redacted local report |
 | `ccdx doctor cache [--limit MiB\|default]` | Inspect runtime buffers or change their limit |
@@ -68,7 +68,9 @@ inspection. Use `app antigravity status` to check the signed installation explic
 The old `app gemini` commands remain available. Authorize Antigravity on the GitHub
 Copilot source page, or with `source github access --edit --apps codex,antigravity --yes`.
 Choose its exposed models on the Antigravity page or with
-`app antigravity models --edit`. A model file uses `{"models":["<ccdx-copilot-model-id>"]}`.
+`app antigravity models --edit`. Each WebUI/terminal row represents one model; reasoning levels are independent choices in that row. A model checkbox selects or clears all its levels, and a mixed checkbox preserves a saved subset. Save/Discard, refresh, navigation and pausing keep that subset.
+
+The native Gemini catalog still uses distinct routing aliases for each level so its original selector can choose the intended effort. JSON model output retains those aliases for compatibility, with a `model` field identifying the actual model; the management status also includes `model_groups`. A model file accepts `{"models":["gemini-4-carbon"]}` to expose all of its levels, or the existing `ccdx-copilot-...-low|medium|high` aliases to choose a subset.
 After saving, the Antigravity page reports whether the client has fetched the current model list. If the list is pending, reopen Gemini through CCDX.
 
 The WebUI uses one authorization form for GitHub Copilot, Microsoft 365 and custom APIs. Source switches apply immediately. App-authorization and model checkboxes are drafts until **Save**; **Discard changes** restores the saved selection. Drafts survive refresh and navigation. Source authorization does not choose app models.
@@ -157,7 +159,24 @@ Catalog diagnostics distinguish local cached data from an online response and ex
 
 Request inspection covers bounded retained records, not a full conversation archive. Unidentified clients stay unidentified. Routine diagnostics omit secrets, prompts and error bodies. Explicit error excerpts use bounded, redacted collection. The usage JSON `requests` field counts recorded usage rows, not HTTP calls. Usage is returned token metadata; cache hit is reused input divided by input from records with valid counts for both. Unknown/invalid records remain in token totals but are excluded from both sides of the rate, with partial coverage indicated. It is not a request-based cache rate or a billing receipt.
 
-Antigravity Copilot answers and background summaries record returned Gemini token usage for both JSON and streaming responses. Each request records its latest reported usage once, including usage received before failure or cancellation. Missing upstream token/cache counts remain unknown. This starts with 1.3.26; previously unrecorded usage cannot be recovered from the ledger. Requests waiting for body parsing show “Model pending” and “Source pending” until actual routing metadata is available.
+Antigravity Copilot answers/background summaries and native Google generation record returned Gemini token usage for JSON and streaming responses. Each request records its latest reported fields once, including usage received before failure or cancellation. Missing upstream token/cache counts remain unknown; a real zero cache count stays zero. This starts with 1.3.26; previously unrecorded usage cannot be recovered from the ledger. Ordinary Gemini chat remains outside the Antigravity bridge.
+
+Native records use source `google`; Copilot records use `github`. Google output includes reported candidate and thought tokens, with thought tokens also identified separately. Reported tool-use prompt tokens are included in input; cached tokens remain a subset of input. The original Google response bytes, status and backpressure remain unchanged. Observation uses the existing SSE buffer limit per event or non-streaming response; oversized/unreadable metadata is marked unavailable and the response continues normally. Only numeric usage and routing metadata are retained.
+
+Requests and usage share the CCDX request ID; an upstream response ID is separate. Request details show the original model when it differs from the actual model, and distinguish reported, partial, missing and unreadable usage metadata. Requests waiting for body parsing show “Model pending” and “Source pending”; queue, input processing, upstream wait and response delivery have separate states. The CLI exposes the same retained metadata with `ccdx requests show ID --format json`; `ccdx requests --app antigravity` filters the native integration.
+
+Usage source, model and time controls apply to the entire token-usage page: totals, model rows and charts. Selecting a day narrows that shared query; Clear date restores the previous period. Chart type, language and theme changes remain local. All retained history remains available; date charts keep at most 365 daily points and combine earlier valid records into an Earlier records bucket. Invalid/future timestamps remain in all-history totals but are excluded from date charts and bounded date filters, with the exclusion count shown. Model choices are bounded to 100 and preserve other available choices while a filter is active.
+
+CLI and TUI subcommands share the same source/model/calendar semantics:
+
+```sh
+ccdx usage --provider google --days 7
+ccdx usage --model 'github / gemini-4-carbon' --from 2026-11-01 --to 2026-11-13 --time-zone Asia/Shanghai
+ccdx usage --scope run --provider google
+ccdx requests --app antigravity --active
+```
+
+`--days` accepts 1–365 or `all` (the default). Explicit inclusive `--from`/`--to` dates use YYYY-MM-DD and cannot be combined with a numeric `--days`. Dates use UTC by default; `--time-zone` chooses another IANA zone. An unqualified model includes matching models across sources; `source / model` narrows it to one source. Current-run totals support only the provider filter; model/date filters use retained history. The service TUI includes returned Google usage in its existing current-run totals without scanning the ledger.
 
 For an identified conversation, hovering a point in the input-history chart shows that request's available cache-reuse ratio. Missing or invalid counts remain unknown; the bounded in-memory history and retained usage do not change.
 

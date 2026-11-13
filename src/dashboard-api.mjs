@@ -14,9 +14,10 @@ import {
   renderTerminalAnimationFrame,
   TERMINAL_ANIMATION_THEMES,
 } from "./terminal-animation.mjs";
-import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate, usageModelGroups } from "./usage-store.mjs";
+import { cacheReadTokens, summarizeUsageLogs, usageCacheHitRate, usageModelGroups, usageProvider } from "./usage-store.mjs";
 import { createUsageAnalytics } from "./usage-analytics.mjs";
 import { analyzeUsageLogs } from "./usage-analysis.mjs";
+import { createUsageQuery } from "./usage-query.mjs";
 import { readUserSettings, terminalAnimationPreference, writeTerminalAnimationTheme } from "./user-settings.mjs";
 import { settingsPreferencesSnapshot } from "./settings-preferences.mjs";
 
@@ -383,12 +384,15 @@ export async function handleDashboardApi(req, res, pathname, {
     const query = new URL(req.url, "http://localhost").searchParams;
     const provider = query.get("provider") || "";
     if (provider && !isProviderId(provider)) { sendJson(res, 400, { error: "Select a valid provider" });return; }
+    let selection;
+    try { selection = createUsageQuery({ provider, model: query.get("model") || "", days: query.get("days") || "all", from: query.get("from") || "", to: query.get("to") || "", timeZone: query.get("time_zone") || "UTC" }); }
+    catch (error) { sendJson(res, 400, { error: error.message });return; }
     let analytics = null;
     if (query.get("analytics") === "1") {
       try {
         const timeZone = query.get("time_zone") || "UTC";
         if (timeZone.length > 100) throw new Error("Invalid time zone");
-        analytics = createUsageAnalytics({ timeZone, qualifyProviders: !provider });
+        analytics = createUsageAnalytics({ timeZone, qualifyProviders: !provider, from: selection.filters.from, to: selection.filters.to });
       } catch {
         sendJson(res, 400, { error: "Select a valid usage time zone" });
         return;
@@ -396,10 +400,19 @@ export async function handleDashboardApi(req, res, pathname, {
     }
     const abort = createRequestAbort(req, res);
     try {
-      const analysis = analytics && !usageSummaryFn
-        ? await analyzeUsageLogs(undefined, { timeZone: query.get("time_zone") || "UTC", provider, signal: abort.signal }) : null;
-      const summary = analysis?.summary || await (usageSummaryFn || (options => summarizeUsageLogs(undefined, { ...options, signal: abort.signal })))({ provider, ...(analytics ? { onRecord: analytics.record } : {}) });
-      if (!abort.signal.aborted) sendJson(res, 200, { source: "local_usage_log", provider: provider || "all", providers: summary.providers, ...usageTable(summary), ...(analytics ? { analytics: analysis?.analytics || analytics.snapshot() } : {}) });
+      const filtered = selection.filters.model || selection.filters.from || selection.filters.to;
+      const observedModels = new Set();
+      const recordFilter = record => {
+        if (observedModels.size < 100) observedModels.add(provider ? record.model || "unknown" : `${usageProvider(record)} / ${record.model || "unknown"}`);
+        return selection.matches(record);
+      };
+      const analysis = (analytics || filtered) && !usageSummaryFn
+        ? await analyzeUsageLogs(undefined, { provider, model: selection.filters.model, from: selection.filters.from, to: selection.filters.to, timeZone: selection.filters.time_zone, signal: abort.signal }) : null;
+      const summary = analysis?.summary || await (usageSummaryFn || (options => summarizeUsageLogs(undefined, { ...options, signal: abort.signal })))({ provider,
+        ...(filtered ? { recordFilter } : {}), ...(analytics ? { onRecord: analytics.record } : {}) });
+      const availableModels = analysis?.analytics.models || (observedModels.size ? [...observedModels].sort() : Object.keys(provider ? summary.byModel : summary.bySourceModel || summary.byModel).sort().slice(0, 100));
+      if (!abort.signal.aborted) sendJson(res, 200, { source: "local_usage_log", provider: provider || "all", providers: summary.providers, filters: selection.filters, available_models: availableModels,
+        ...usageTable(summary), ...(analytics ? { analytics: analysis?.analytics || analytics.snapshot() } : {}) });
     } catch {
       if (!abort.signal.aborted) sendJson(res, 500, { error: "Could not read local usage summary" });
     } finally { abort.cleanup(); }

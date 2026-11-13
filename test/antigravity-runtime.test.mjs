@@ -32,6 +32,7 @@ test("pause retains a safe configured bridge and removes Copilot model access",a
   const f=fixture(t);await f.runtime.action({action:"enable",accept_background_copilot:true},"http://127.0.0.1:2026");
   await f.runtime.action({action:"open"},"http://127.0.0.1:2026");
   const state=await f.runtime.action({action:"disable"},"http://127.0.0.1:2026");assert.equal(state.configured,true);assert.equal(state.enabled,false);assert.equal(state.models.length,3);assert.ok(state.models.every(model=>model.selected));assert.equal(f.calls.length,0);
+  assert.equal(state.model_groups.length,1);assert.equal(state.model_groups[0].id,"gemini-4-carbon");assert.equal(state.model_groups[0].efforts.length,3);
   assert.equal(state.last_operation,null);
   const blocked=await invokeAdapter({env:{},dashboardOptions:{home:f.home},codexModelRegistry:{models:catalog}},{url:"/antigravity/v1internal:streamGenerateContent",headers:{host:"127.0.0.1:2026"},body:{requestType:"agent",model:state.models[0].id,request:{contents:[{role:"user",parts:[{text:"fixture"}]}]}}});
   assert.equal(blocked.status,503);
@@ -65,6 +66,7 @@ test("model selection persists without altering other settings and rejects unava
   const ids=f.runtime.snapshot().models.map(model=>model.id);
   const saved=await f.runtime.action({action:"models",models:[ids[2]]},"http://127.0.0.1:2026");
   assert.deepEqual(saved.models.filter(model=>model.selected).map(model=>model.id),[ids[2]]);
+  assert.deepEqual(saved.model_groups[0].efforts.filter(item=>item.selected).map(item=>item.effort),["high"]);
   assert.equal(JSON.parse(fs.readFileSync(f.file)).future,"keep");
   const before=fs.readFileSync(f.file,"utf8");
   for(const models of [["unknown"],[ids[0],ids[0]],null,"all"])

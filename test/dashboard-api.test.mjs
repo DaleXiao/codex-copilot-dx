@@ -9,6 +9,25 @@ import { createAdapterHandler } from "../src/adapter.mjs";
 import { TERMINAL_ANIMATION_THEMES } from "../src/terminal-animation.mjs";
 import { userSettingsPath } from "../src/user-settings.mjs";
 import { summarizeUsage } from "../src/usage.mjs";
+
+test("usage source, model and calendar filters agree across summary and analytics",async()=>{
+  const today=new Date().toISOString().slice(0,10),yesterday=new Date(Date.now()-86400000).toISOString().slice(0,10);
+  const records=[{provider:"google",model:"gemini",ts:today+"T00:00:00Z",usage:{input_tokens:10,output_tokens:2,cached_input_tokens:0,total_tokens:12}},
+    {provider:"google",model:"other",ts:yesterday+"T00:00:00Z",usage:{input_tokens:20,output_tokens:3,total_tokens:23}},
+    {provider:"github",model:"gemini",ts:today+"T00:00:00Z",usage:{input_tokens:99,output_tokens:3,total_tokens:102}}];
+  let reads=0;
+  const handler=createAdapterHandler({dashboardOptions:{usageSummaryFn:async options=>{
+    reads++;const chosen=records.filter(row=>(!options.provider||row.provider===options.provider)&&(!options.recordFilter||options.recordFilter(row)));
+    for(const row of chosen)options.onRecord?.(row,summarizeUsage([row]));return summarizeUsage(chosen,{provider:options.provider});
+  }}});
+  const result=await invoke(handler,{url:"/_ccdx/ui/usage?analytics=1&provider=google&model=gemini&days=1&time_zone=UTC"});
+  assert.equal(result.status,200);assert.equal(result.body.total.requests,1);assert.equal(result.body.total.input_tokens,10);assert.equal(result.body.total.cache_hit_rate,0);
+  assert.equal(result.body.analytics.days.length,1);assert.equal(result.body.analytics.days[0].input_tokens,10);
+  assert.deepEqual(result.body.available_models,["gemini","other"]);assert.equal(result.body.filters.from,today);
+  const before=reads;
+  for(const query of ["days=0","days=366","from=2026-02-30","time_zone=invalid"]){assert.equal((await invoke(handler,{url:"/_ccdx/ui/usage?"+query})).status,400)}
+  assert.equal(reads,before,"Invalid filters do not read logs");
+});
 import { authStatus } from "../src/cli-auth.mjs";
 import { githubTokenPath, githubTokenMetadataPath } from "../src/auth.mjs";
 import { githubTokenFingerprint } from "../src/github-identity.mjs";

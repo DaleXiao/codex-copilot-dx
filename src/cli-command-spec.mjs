@@ -184,6 +184,11 @@ export const MANAGED_COMMANDS = [
     ...read,
     "--scope": "scope",
     "--provider": "value",
+    "--model": "value",
+    "--days": "value",
+    "--from": "value",
+    "--to": "value",
+    "--time-zone": "value",
   }),
   command("update check", "Check a stable release without installing", read),
   command("update apply", "Request the WebUI's verified idle service update", { "--yes": "flag" }, flags => ({ command: "update-managed", yes: !!flags.yes })),
@@ -225,8 +230,8 @@ function optionsFor(args, definition) {
       throw new Error("Limit must be an integer from 1 to 100");
     values[key] = type === "integer" ? Number(value) : value;
   }
-  if (values.app && !Object.hasOwn(CLI_CLIENTS, values.app))
-    throw new Error("Choose codex, claude-app or claude-code");
+  if (values.app && !Object.hasOwn(CLI_CLIENTS, values.app) && !(definition.path[0] === "requests" && values.app === "antigravity"))
+    throw new Error("Choose codex, claude-app, claude-code or antigravity for requests");
   if (values.provider && !isProviderId(values.provider)) throw new Error("Enter a valid usage source ID");
   if (values.source && !isProviderId(values.source)) throw new Error("Enter a listed source ID");
   if (values.active && values.failed) throw new Error("Choose --active or --failed");
@@ -276,11 +281,11 @@ const extras = {
   config:
     "Only service and terminal preferences are in scope. Browser appearance stays in WebUI.\nReset keeps accounts, keys, model plans and chats and stores a pre-reset backup.\nSaved and effective values can differ; restart requirements remain explicit.",
   requests:
-    "Only retained records are available. Unknown clients are not guessed from an API route.\n--failed filters failed model outcomes and structured HTTP/model errors.\nUsage records, HTTP calls and model outcomes are distinct counters.",
+    "Only retained records are available. Unknown clients are not guessed from an API route.\nApp filters: codex, claude-app, claude-code, antigravity.\n--failed filters failed model outcomes and structured HTTP/model errors.\nUsage records, HTTP calls and model outcomes are distinct counters.",
   status:
     "Default interactive status is brief; --details retains the complete diagnostic view.\nThe installed package version can differ from the running service.\nA listening gateway does not prove upstream model access.",
   usage:
-    "Default usage includes all recorded usage. --scope run reads the running service.\nUsage records are not billed request counts. Cache hit is a token-reuse estimate.",
+    "Default usage includes all recorded usage. Filter it with --provider, --model and --days 1..365|all, or --from/--to YYYY-MM-DD.\nDates use --time-zone (UTC by default). Source-qualified models use 'source / model'.\n--scope run reads the running service and supports only --provider.\nGemini usage includes Antigravity Copilot and native Google responses. Missing upstream counts stay unknown; historical missing usage is not reconstructed.\nUsage records are not billed request counts. Cache hit is a token-reuse estimate.",
   doctor:
     "Default checks are read-only. Explicit online/compatibility checks and owned repairs have separate options.",
   update:

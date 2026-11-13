@@ -42,12 +42,17 @@ export function createAntigravityRuntime({client,models=()=>[],privacy,home=os.h
     imageFn:imageFn||createAntigravityImages({client,models:available,privacy}),guardSource:sourceGuard,fetchGoogle:googleFetch,acquireRequest,...timeouts});
   function snapshot(){
     const config=settings(),sourceEnabled=readAccessSettings(options).providers.github,activity=handler.snapshot();
-    const listed=antigravityCopilotModels(models()).map(({id,displayName,effort,maxTokens})=>({id,name:displayName,effort,context_window:maxTokens,selected:config.selected_models===null||config.selected_models.includes(id)}));
+    const listed=antigravityCopilotModels(models()).map(({id,model,displayName,effort,maxTokens})=>({id,model,name:displayName,effort,context_window:maxTokens,selected:config.selected_models===null||config.selected_models.includes(id)}));
+    const groups=new Map();
+    for(const variant of listed){
+      if(!groups.has(variant.model))groups.set(variant.model,{id:variant.model,name:variant.name.split(" · Copilot")[0],source:"github",context_window:variant.context_window,efforts:[]});
+      groups.get(variant.model).efforts.push({id:variant.id,effort:variant.effort,selected:variant.selected});
+    }
     const expected=listed.filter(model=>model.selected).map(model=>model.id).sort();
     const reload=config.enabled&&sourceEnabled?(activity.catalog_models===null?null:JSON.stringify([...activity.catalog_models].sort())!==JSON.stringify(expected)):false;
     return {source:"gemini_antigravity",...config,source_enabled:sourceEnabled,models_reload_required:reload,app,route_observed:handler.snapshot().observed,
       model_source:"Google + GitHub Copilot",background_source:"GitHub Copilot",ordinary_chat_source:"Google (unchanged)",
-      models:listed,activity,last_operation:lastOperation};
+      models:listed,model_groups:[...groups.values()],activity,last_operation:lastOperation};
   }
   async function action(input={},baseUrl){
     if(input&&Object.keys(input).some(name=>!["action","accept_background_copilot","models"].includes(name)))throw httpError("Invalid Gemini operation",400);

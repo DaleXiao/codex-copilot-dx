@@ -9,7 +9,7 @@
     let issueGroups = { issues: [], capability: [], connection: [] }, issueRequests = [];
     element("failure-kind")?.addEventListener?.("change", () => renderFailures(issueGroups[element("failure-kind").value] || [], element("failure-kind").value === "issues" ? issueRequests : []));
     let contextSignature;
-    const sourceNames = new Map([["github", "GitHub Copilot"], ["m365", "Microsoft 365"]]);
+    const sourceNames = new Map([["github", "GitHub Copilot"], ["m365", "Microsoft 365"], ["google", "Google"]]);
     
     const sourceLabel = id => globalThis.ccdxConnectionNames?.[id] || sourceNames.get(id) || id;
     function renderProviders(data) {
@@ -398,6 +398,8 @@
           ["wire_mib", finite(context.payload_bytes) ? `${(Number(context.payload_bytes) / 1048576).toFixed(2)} MiB` : "—"],
           ["images", number(context.images)], ["model_window", number(context.context_window_tokens)], ["input_window", ratio],
           ["output_requested", number(context.max_output_tokens_requested)], ["output_sent", number(context.max_output_tokens_sent)], ["output_used", number(context.output_tokens)], ["stop_reason", request.stop_reason || "—"],
+          ...(context.requested_model && context.requested_model !== request.model ? [["requested_model", context.requested_model]] : []),
+          ...(["reported", "partial", "missing", "unavailable"].includes(context.usage_state) ? [["request_usage_state", globalThis.ccdxLanguage?.format("request_usage_" + context.usage_state) || context.usage_state]] : []),
           ...(context.client_tool_errors_received > 0 ? [["client_tool_errors_received", number(context.client_tool_errors_received)]] : [])]) {
           const term = document.createElement("dt"), detail = document.createElement("dd");localize(term, key);detail.textContent = value;fields.append(term, detail);
         }

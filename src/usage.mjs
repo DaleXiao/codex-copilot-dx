@@ -40,10 +40,14 @@ function cacheHitPercent(usage) {
 }
 
 function providerSummaryLines(summary) {
-  if (summary.provider_filter) return [`Provider: ${terminalCell(summary.provider_filter)}`];
+  const filter = summary.filters, selection = filter ? [
+    ...(filter.model ? [`Model: ${terminalCell(filter.model)}`] : []),
+    ...(filter.from || filter.to ? [`Dates: ${filter.from || "earliest"} to ${filter.to || "latest"} (${terminalCell(filter.time_zone)})`] : []),
+  ] : [];
+  if (summary.provider_filter) return [`Provider: ${terminalCell(summary.provider_filter)}`, ...selection];
   const sources = Object.entries(summary.providers || {}).filter(([, count]) => count > 0);
-  return sources.some(([id]) => id !== "github")
-    ? [`Providers: ${sources.map(([id, count]) => `${terminalCell(id)} ${fmt(count)}`).join(" / ")} (combined totals; use --provider to separate)`] : [];
+  return [...(sources.some(([id]) => id !== "github")
+    ? [`Providers: ${sources.map(([id, count]) => `${terminalCell(id)} ${fmt(count)}`).join(" / ")} (combined totals; use --provider to separate)`] : []), ...selection];
 }
 
 function formatPlainUsageSummary(summary, filePath, { sanitize = false } = {}) {

@@ -122,7 +122,7 @@ const providerState = () => [
 ];
 let geminiAppState="stopped";
 const handler = createAdapterHandler({ env:{},
-  codexModelRegistry:{models:{data:[{id:"gemini-4-carbon",supported_endpoints:["/chat/completions"],capabilities:{supports:{reasoning_effort:["low","medium","high"]},limits:{max_context_window_tokens:1000000}}}]}},
+  codexModelRegistry:{models:{data:["gemini-4-carbon","gemini-4-argon"].map((id,index)=>({id,supported_endpoints:["/chat/completions"],capabilities:{supports:{reasoning_effort:["low","medium","high"]},limits:{max_context_window_tokens:index?1050000:1000000}}}))}},
   antigravityOptions:{googleFetch:async()=>Response.json({models:{native:{model:"NATIVE"}}}),inspect:async()=>({status:geminiAppState,version:"synthetic",pids:[],app:"/Applications/Gemini.app"})},
   dashboardOptions: { home, env: {}, serviceControl, accountTools, localTools,
   updateStatusFn: async () => { updateReads++;return { source: "release_status", status: updateState,
@@ -145,7 +145,7 @@ const handler = createAdapterHandler({ env:{},
   },
   liveModelsFn: async () => { models++; return { models: [{ id: "gpt-6.1-sol", vendor: "OpenAI", endpoints: ["responses"], clients: ["codex"], auto_review_efforts: ["low", "high"], preview: false }], advertised: 1, upstreamHost: "synthetic.local" }; },
   authStatusFn: () => ({ profiles: { codex: { configured: true, valid: true, login: "synthetic_user" } } }),
-  usageSummaryFn: async options => { summaries++; const selected = records.filter(record => !options?.provider || record.provider === options.provider);
+  usageSummaryFn: async options => { summaries++; const selected = records.filter(record => (!options?.provider || record.provider === options.provider) && (!options?.recordFilter || options.recordFilter(record)));
     for (const record of selected) options?.onRecord?.(record, summarizeUsage([record])); return summarizeUsage(selected, { provider: options?.provider }); },
 } });
 function dashboardSnapshot() {
@@ -784,6 +784,16 @@ try {
         assert.match(await page.locator("#usage-body").innerText(), /claude-opus-5\.5/);
         await page.locator("#usage-provider").selectOption("");
         await page.waitForFunction(() => !document.getElementById("refresh-usage").disabled && document.getElementById("usage-body").textContent.includes("gpt-6.1-sol"));
+        await page.locator("#analytics-model").selectOption("m365 / claude-opus-5.5");
+        await page.waitForFunction(()=>!document.getElementById("refresh-usage").disabled&&document.querySelector("#usage-body .total-row td:nth-child(2)")?.textContent==="5");
+        assert.equal(await page.locator("#usage-body").innerText().then(text=>text.includes("gpt-6.1-sol")),false,"Model filter applies to the usage table");
+        await page.locator("#analytics-range").selectOption("7");
+        await page.waitForFunction(()=>!document.getElementById("refresh-usage").disabled&&document.querySelectorAll(".calendar-day").length===7);
+        assert.equal(await page.locator("#usage-body .total-row td").nth(1).innerText(),"3");
+        assert.equal(await page.locator('.calendar-day:not([data-level="0"]):not(:disabled)').count(),3,"Calendar and table use the same model/time filter");
+        await page.locator("#analytics-model").selectOption("");
+        await page.locator("#analytics-range").selectOption("all");
+        await page.waitForFunction(()=>!document.getElementById("refresh-usage").disabled&&document.querySelectorAll(".calendar-day").length===365);
         assert.equal(await page.locator("#analytics-view").inputValue(), "bars");
         await page.locator("#daily-bars").scrollIntoViewIfNeeded();
         await page.waitForFunction(() => chartMotions.some(motion => motion.frames[0].transform === "scaleY(0)"));
@@ -794,16 +804,19 @@ try {
         const boxes = await page.locator("#daily-bars .daily-curve").evaluateAll(paths => paths.map(path => { const box = path.getBBox();return { min: box.y, max: box.y + box.height }; }));
         assert.ok(boxes.every(box => box.min >= 3 && box.max <= 129), "Curves stay inside the data range and plot");
         await page.locator("#daily-bars .daily-bar:not(:disabled)").last().click();
+        await page.waitForFunction(()=>!document.getElementById("refresh-usage").disabled);
         const selectedDay = await page.locator("#usage-state").innerText();
         assert.match(selectedDay, /^\d{4}-\d{2}-\d{2}$/);
         await page.locator("#analytics-view").selectOption("bars");
         assert.equal(await page.locator("#usage-state").innerText(), selectedDay);
         await page.locator("#analytics-view").selectOption("line");
         assert.equal(await page.locator("#usage-state").innerText(), selectedDay);
-        assert.equal(summaries, readsBeforeView, "Switching charts/days does not scan usage again");
+        assert.equal(summaries, readsBeforeView + 1, "A selected day updates the shared usage query; chart and language switches remain local");
         await page.locator("#clear-usage-day").click();
+        await page.waitForFunction(()=>!document.getElementById("refresh-usage").disabled);
         if (output && language === "zh") { await page.clock.fastForward(700);await page.locator("#usage-analytics").screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-curves.png`) }); }
         await page.locator("#analytics-range").selectOption("90");
+        await page.waitForFunction(()=>!document.getElementById("refresh-usage").disabled&&document.querySelectorAll(".calendar-day").length===90);
         await page.evaluate(() => { window.savedCalendar = document.querySelector(".calendar-day"); window.savedModelRow = document.querySelector("#live-models-body tr"); });
         assert.equal(updateReads, 0, "Other views do not check releases");
         await nav("system");
@@ -1015,19 +1028,25 @@ try {
         await page.locator('[data-route="gemini"]').click();
         await page.waitForFunction(()=>!document.getElementById("gemini-enabled").disabled);
         if(!await page.locator("#gemini-enabled").isChecked())await page.locator("#gemini-enabled").check();
-        await page.waitForFunction(()=>document.querySelectorAll('#gemini-models input').length===3&&!document.getElementById("gemini-enabled").disabled);
-        const modelBoxes=page.locator("#gemini-models input");
+        await page.waitForFunction(()=>document.querySelectorAll('#gemini-models tr').length===2&&document.querySelectorAll('#gemini-models input').length===8&&!document.getElementById("gemini-enabled").disabled);
+        const modelBoxes=page.locator("#gemini-models tr").first().locator("td:last-child input");
+        assert.equal(await page.locator("#gemini-models tr").count(),2,"Two models share their reasoning choices within two rows");
         const initialCatalog=await page.request.post(`http://127.0.0.1:${server.address().port}/antigravity/v1internal:fetchAvailableModels`,{data:{}});
         assert.equal(initialCatalog.status(),200);
-        assert.equal(Object.keys((await initialCatalog.json()).models).filter(id=>id.startsWith("ccdx-copilot-")).length,3,"Each case starts with the native client's full model list loaded");
+        assert.equal(Object.keys((await initialCatalog.json()).models).filter(id=>id.startsWith("ccdx-copilot-")).length,6,"Each case starts with the native client's full model list loaded");
         await page.locator("#gemini-refresh").click();await page.waitForFunction(()=>!document.getElementById("gemini-refresh").disabled);
         assert.equal(await page.locator("#gemini-reopen").isVisible(),false);
+        const modelChoice=page.locator("#gemini-models tr").first().locator("td:first-child input");
+        await modelChoice.uncheck();
+        assert.equal(await modelBoxes.evaluateAll(inputs=>inputs.every(input=>!input.checked)),true);
+        await modelChoice.check();assert.equal(await modelBoxes.evaluateAll(inputs=>inputs.every(input=>input.checked)),true);
         await modelBoxes.first().uncheck();
+        assert.equal(await modelChoice.evaluate(input=>input.indeterminate),true,"Partial effort selections are preserved on the model row");
         await page.locator("#gemini-refresh").click();await page.waitForFunction(()=>!document.getElementById("gemini-refresh").disabled);
         assert.equal(await modelBoxes.first().isChecked(),false,"Refresh keeps the model draft");
         geminiAppState="running";await page.locator("#gemini-enabled").uncheck();await page.waitForFunction(()=>!document.getElementById("gemini-enabled").disabled);
         assert.equal(await page.locator('#gemini-reopen').isVisible(),true);assert.equal(await page.locator('#gemini-open').isDisabled(),true);
-        assert.equal(await modelBoxes.count(),3,"Pausing retains the model list");assert.equal(await modelBoxes.first().isChecked(),false,"Pausing keeps the model draft");
+        assert.equal(await modelBoxes.count(),3,"Pausing retains the reasoning choices");assert.equal(await modelBoxes.first().isChecked(),false,"Pausing keeps the model draft");
         await page.locator("#gemini-enabled").check();await page.waitForFunction(()=>!document.getElementById("gemini-enabled").disabled);
         geminiAppState="stopped";await page.locator("#gemini-save").click();
         await page.waitForFunction(()=>document.getElementById("gemini-save").disabled&&!document.getElementById("gemini-refresh").disabled);

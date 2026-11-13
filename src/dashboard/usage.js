@@ -7,7 +7,7 @@
     }).join(" ");
   }
 
-  function create({ time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator, modelLabel = value => value, motionAllowed = () => false }) {
+  function create({ time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator, modelLabel = value => value, usageChanged = () => {}, motionAllowed = () => false }) {
     function usageValues(row) {
       const rate = Number.isFinite(row.cache_hit_rate) && row.cache_hit_rate >= 0 && row.cache_hit_rate <= 1
         ? `${row.cache_hit_rate_partial ? "~" : ""}${(row.cache_hit_rate * 100).toFixed(1)}%` : "—";
@@ -17,6 +17,7 @@
     let usageData = null;
     let analyticsSignature, calendarSignature;
     let selectedUsageDate = "";
+    let previousRange = "all";
     let dailySignature, dailySelection, chartVisible = false, motionPending = false;
     let motionTargets = [];
     const animations = new Set();
@@ -103,18 +104,20 @@
     }
     
     function renderUsageTable() {
-      const day = selectedUsageDate && usageData.analytics?.days.find((entry) => entry.date === selectedUsageDate);
+      const day = !usageData.filters && selectedUsageDate && usageData.analytics?.days.find((entry) => entry.date === selectedUsageDate);
       const model = element("analytics-model").value;
       const total = day ? { ...analyticsPoint(day, model), model: "TOTAL" } : usageData.total;
       const rows = day ? day.models.filter((row) => !model || row.model === model).sort((a, b) => b.total_tokens - a.total_tokens || a.model.localeCompare(b.model)) : usageData.rows;
       const body = element("usage-body");
       body.replaceChildren();
       if (total.requests > 0) {
-        body.append(tableRow(usageValues(total), { total: true }));
-        for (const row of rows) body.append(tableRow(usageValues(row)));
-      } else { emptyTable("usage-body", 8, "no_usage_records"); }
-      element("clear-usage-day").hidden = !day;
-      text("usage-state", day ? day.date : "local_log");
+        for (const [index, row] of [total, ...rows].entries()) {
+          const entry = tableRow(usageValues(row), { total: index === 0 });
+          localize(entry.children[7], "usage_cache_coverage", { known: number(row.cache_hit_known_requests), unknown: number(row.cache_hit_unknown_requests) }, "title");body.append(entry);
+        }
+      } else { emptyTable("usage-body", 8, usageData.filters ? "usage_empty_selection" : "no_usage_records"); }
+      element("clear-usage-day").hidden = !selectedUsageDate;
+      renderUsageState();
       text("usage-note", "records_records_shown_of_models_models_shown_day", {
         records: number(total.requests), shown: number(rows.length), models: number(day ? rows.length : usageData.model_count),
         day: day ? phrase("zone_model", { zone: usageData.analytics.time_zone, model: model ? modelLabel(model) : phrase("all_models") }) : "",
@@ -122,17 +125,29 @@
     }
     
     function renderUsageState() {
-      text("usage-state", selectedUsageDate && usageData.analytics?.days.some(day => day.date === selectedUsageDate) ? selectedUsageDate : "local_log");
+      if (selectedUsageDate.startsWith("<")) text("usage-state", "usage_earlier_before", { date: selectedUsageDate.slice(1) });
+      else text("usage-state", selectedUsageDate || "local_log");
     }
     
     function analyticsPoint(day, model) {
+      if (usageData?.filters) return day;
       return model ? day.models.find((row) => row.model === model) || { requests: 0, input_tokens: 0, output_tokens: 0 } : day;
     }
     
-    function selectUsageDay(date) {
+    function selectUsageDay(date, { refresh = true } = {}) {
+      const select = element("analytics-range");
+      const hadDate = Boolean(selectedUsageDate);
+      if (date && !selectedUsageDate) previousRange = select.value;
       selectedUsageDate = date;
+      for (const option of [...select.children]) if (option.value === "date") option.remove();
+      if (date) {
+        const option = document.createElement("option");option.value = "date";
+        if (date.startsWith("<")) localize(option, "usage_earlier_before", { date: date.slice(1) });else option.textContent = date;
+        select.append(option);select.value = "date";
+      } else if (hadDate) select.value = previousRange;
       renderUsageTable();
       renderAnalytics();
+      if (refresh) usageChanged();
     }
     
     function dayButton(day, point) {
@@ -142,10 +157,10 @@
       button.setAttribute("aria-pressed", String(day.date === selectedUsageDate));
       const description = !day.available ? phrase("no_retained_history")
         : phrase("calls_recorded_calls_input_input_output_output_cached_cached_inc", {
-          calls: number(point.requests), input: number(point.input_tokens), output: number(point.output_tokens), cached: number(point.cache_read_tokens), partial: point.tokens_partial ? phrase("partial_token_counts") : "",
+        calls: number(point.requests), input: number(point.input_tokens), output: number(point.output_tokens), cached: number(point.cache_read_tokens), partial: point.tokens_partial ? phrase("partial_token_counts") : "",
         });
-      for (const attribute of ["title", "aria-label"]) localize(button, "date_description", { date: day.date, description }, attribute);
-      button.addEventListener("click", () => selectUsageDay(day.date));
+      for (const attribute of ["title", "aria-label"]) localize(button, "date_description", { date: day.date === "earlier" ? phrase("usage_earlier_before", { date: day.before }) : day.date, description }, attribute);
+      button.addEventListener("click", () => selectUsageDay(day.date === "earlier" ? "<" + day.before : day.date));
       return button;
     }
     
@@ -158,13 +173,14 @@
       if (signature === analyticsSignature) return;
       analyticsSignature = signature;
       const days = analytics.days;
-      const daily = days.slice(-Number(element("analytics-range").value));
+      const range = element("analytics-range").value === "date" ? previousRange : element("analytics-range").value;
+      const daily = usageData.filters ? [...(analytics.earlier ? [analytics.earlier] : []), ...days] : range === "all" ? days : days.slice(-Number(range));
       const maximum = Math.max(1, ...daily.map((day) => {
         const point = analyticsPoint(day, model);
         return point.input_tokens + point.output_tokens;
       }));
       renderDaily(daily, model, maximum);
-      text("daily-from", daily[0].date);
+      text("daily-from", daily[0].date === "earlier" ? "usage_earlier" : daily[0].date);
       text("daily-to", analytics.to);
       if (commonSignature === calendarSignature) return;
       calendarSignature = commonSignature;
@@ -174,7 +190,7 @@
         return metric === "tokens" ? point.input_tokens + point.output_tokens : point.requests;
       };
       const peak = Math.max(1, ...days.map(value));
-      text("activity-scale", "metric_peak_peak", { metric: phrase(metric === "tokens" ? "input_output" : "recorded_calls"), peak: number(peak === 1 && days.every((day) => value(day) === 0) ? 0 : peak) });
+      text("activity-scale", "metric_peak_peak", { metric: phrase(metric === "tokens" ? "input_output" : "recorded_usage"), peak: number(peak === 1 && days.every((day) => value(day) === 0) ? 0 : peak) });
       const calendar = element("activity-calendar");
       calendar.replaceChildren();
       const offset = (new Date(`${days[0].date}T00:00:00Z`).getUTCDay() + 6) % 7;
@@ -205,7 +221,7 @@
         calendar.append(button);
       }
       text("analytics-note", "zone_from_to_retained_history_starts_first_oldest_day_may_be_par", {
-        zone: analytics.time_zone, from: daily[0].date, to: analytics.to, first: analytics.first_date || phrase("unknown"),
+        zone: analytics.time_zone, from: analytics.earlier ? analytics.first_date : daily[0].date, to: analytics.to, first: analytics.first_date || phrase("unknown"),
         excluded: analytics.undated_records ? phrase("count_records_with_invalid_future_timestamps_excluded", { count: number(analytics.undated_records) }) : "",
         limit: analytics.models_truncated ? phrase("model_filters_limited_to_100_all_model_totals_include_the_remain") : "",
       });
@@ -216,7 +232,7 @@
       const select = element("analytics-model");
       const previous = select.value;
       select.replaceChildren();
-      for (const model of [...new Set(["", ...usageData.analytics.models, ...(previous ? [previous] : [])])]) {
+      for (const model of [...new Set(["", ...(usageData.available_models || usageData.analytics?.models || []), ...(previous ? [previous] : [])])]) {
         const option = document.createElement("option");
         option.value = model;
         if (model) option.textContent = modelLabel(model);
@@ -228,10 +244,10 @@
     
     function applyUsage(data, { changed }) {
       const sameProvider = (data.provider || "all") === (usageData?.provider || "all");
-      if (!sameProvider) selectedUsageDate = "";
+      if (!sameProvider && selectedUsageDate) selectUsageDay("", { refresh: false });
       usageData = { ...data, ...(!data.analytics && sameProvider && usageData?.analytics ? { analytics: usageData.analytics } : {}) };
       if (changed) {
-        if (data.analytics) updateAnalyticsModels();
+        if (data.available_models || data.analytics) updateAnalyticsModels();
         renderUsageTable();
         if (data.analytics) renderAnalytics();
       }

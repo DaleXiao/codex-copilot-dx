@@ -5,14 +5,15 @@ const DAYS = 365;
 const MAX_MODELS = 100;
 const TOKEN_FIELDS = ["input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "cache_read_input_tokens", "cache_write_input_tokens", "cache_hit_unknown_requests", "cache_hit_invalid_requests", "cache_hit_known_requests", "cache_hit_input_tokens", "cache_hit_read_tokens"];
 
-export function createUsageAnalytics({ timeZone = "UTC", now = Date.now(), qualifyProviders = false } = {}) {
+export function createUsageAnalytics({ timeZone = "UTC", now = Date.now(), qualifyProviders = false, from: rangeFrom = "", to: rangeTo = "" } = {}) {
   const formatter = new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
-  const today = formatter.format(new Date(now));
+  const today = rangeTo || formatter.format(new Date(now));
   const end = Date.parse(`${today}T00:00:00Z`);
-  const start = end - (DAYS - 1) * DAY_MS;
+  const start = Math.max(end - (DAYS - 1) * DAY_MS, rangeFrom ? Date.parse(rangeFrom) : -Infinity);
   const from = new Date(start).toISOString().slice(0, 10);
   const dates = new Map();
   const models = new Set();
+  const earlier = { requests: 0, byModel: new Map() };
   let first = Infinity;
   let last = -Infinity;
   let undated = 0;
@@ -38,6 +39,7 @@ export function createUsageAnalytics({ timeZone = "UTC", now = Date.now(), quali
       cache_hit_rate: usageCacheHitRate(values),
       cache_hit_known_requests: values.cache_hit_known_requests || 0,
       cache_hit_unknown_requests: values.cache_hit_unknown_requests || 0,
+      cache_hit_invalid_requests: values.cache_hit_invalid_requests || 0,
       cache_hit_input_tokens: values.cache_hit_input_tokens ?? null,
       cache_hit_read_tokens: values.cache_hit_read_tokens ?? null,
       cache_hit_rate_partial: values.cache_hit_unknown_requests > 0,
@@ -52,10 +54,9 @@ export function createUsageAnalytics({ timeZone = "UTC", now = Date.now(), quali
       if (!Number.isFinite(timestamp) || timestamp > now) { undated += 1; return; }
       first = Math.min(first, timestamp);
       last = Math.max(last, timestamp);
-      if (timestamp < start - 2 * DAY_MS) return;
       const date = formatter.format(new Date(timestamp));
-      if (date < from || date > today) return;
-      let point = dates.get(date);
+      if (date > today) return;
+      let point = date < from ? earlier : dates.get(date);
       if (!point) { point = { requests: 0, byModel: new Map() }; dates.set(date, point); }
       add(point, summary.totals);
       const model = String(qualifyProviders ? `${usageProvider(record)} / ${record.model || "unknown"}` : record.model || "unknown").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 100);
@@ -66,7 +67,7 @@ export function createUsageAnalytics({ timeZone = "UTC", now = Date.now(), quali
     },
     snapshot() {
       const firstDate = Number.isFinite(first) ? formatter.format(new Date(first)) : null;
-      const days = Array.from({ length: DAYS }, (_, index) => {
+      const days = Array.from({ length: Math.floor((end - start) / DAY_MS) + 1 }, (_, index) => {
         const date = new Date(start + index * DAY_MS).toISOString().slice(0, 10);
         const point = dates.get(date);
         return {
@@ -77,6 +78,7 @@ export function createUsageAnalytics({ timeZone = "UTC", now = Date.now(), quali
         };
       });
       return { time_zone: formatter.resolvedOptions().timeZone, from, to: today, first_date: firstDate,
+        ...(earlier.requests ? { earlier: { date: "earlier", before: from, available: true, ...row(earlier), models: [...earlier.byModel].map(([model, values]) => ({ model, ...row(values) })) } } : {}),
         last_date: Number.isFinite(last) ? formatter.format(new Date(last)) : null,
         undated_records: undated, models_truncated: modelsTruncated, models: [...models].sort(), days };
     },

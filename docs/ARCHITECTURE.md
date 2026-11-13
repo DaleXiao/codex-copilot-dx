@@ -17,6 +17,10 @@ Client integration, image tools and the dashboard are not a general plugin frame
 
 ## Gemini native boundary
 
+`antigravity-usage.mjs` observes Google JSON/SSE within the original forwarding loop, with the existing SSE byte limit and no stream tee or read-ahead. Observation failures mark usage unavailable and never change response bytes. The handler coalesces reported numeric fields and settles one usage row per request, including usage received before failure/cancellation. Google candidate/thought output and prompt/tool-use input are normalized without treating missing cache counts as zero. Request ID, original model, actual model and usage availability are scalar metadata; prompts and response text are not persisted by this observer.
+
+The management snapshot keeps native per-effort aliases in `models` and adds `model_groups` for one model row with several reasoning choices. Saved alias subsets and the native catalog are unchanged. The WebUI and terminal group the display and selection while JSON clients retain the compatible alias list.
+
 Antigravity tool schemas are converted to Chat Completions schemas. Object schemas always include an explicit `properties` map, including zero-argument functions. The upstream Copilot service rejects native schemas that omit that map. Pausing Copilot access keeps model choices visible while generation remains gated.
 
 The dashboard separates source enablement, source-to-app authorization and per-app model choices. Source enablement is immediate; authorization and model drafts use explicit Save / Discard actions. GitHub, Microsoft 365 and custom APIs share the same authorization form. Antigravity's source authorization and its Copilot access switch represent the same saved integration state.
@@ -552,6 +556,8 @@ Summary and complete status have separate refresh resources. `status-summary.mjs
 projects the optional lightweight response; full status stays the default public
 contract. Hidden status regions defer DOM updates, and summary rendering never
 replaces the full request/history cache.
+
+`usage-query.mjs` defines provider/model and inclusive calendar-date selection for the WebUI and CLI. `usage-analysis.mjs` keys its existing bounded cache by that selection and applies the same predicate to full scans and witnessed appends. Model choices are collected before the predicate so changing a filter does not lose the other options. Tables, totals and charts consume one filtered snapshot. Up to 365 daily points remain bounded; older valid records share an earlier bucket, preserving all-history totals without unbounded DOM growth. Chart type and language changes remain local; changes to source, model or period invalidate only usage.
 
 `dashboard/usage.js` owns bar/curve geometry and viewport-gated, one-shot Web Animations. The two views share retained analytics and accessible day buttons; their paths never connect unavailable history or overshoot adjacent values. View-only changes leave the calendar nodes intact. The UI lifecycle cancels motion on hidden/suspended views and reduced-motion changes; no animation timer or chart dependency is added. `usage-store.mjs` shares cache-evidence validation between retained summaries and process-local totals. It keeps paired input/cache-read sums and known/unknown record counts separate from full token totals; CLI/TUI, WebUI and daily analytics use those same sums for the weighted rate and partial-coverage flag. Aggregate snapshots expose that basis without new persistence or log scans. The Overview renderer formats that snapshot and preserves unknown/invalid values.
 

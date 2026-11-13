@@ -197,6 +197,7 @@ test("language switch preserves unsaved animation, chart nodes/selection and exp
   h.nodes.get("analytics-model").value = "test";
   h.nodes.get("analytics-model").listeners.change();
   h.nodes.get("daily-bars").children.at(-1).listeners.click();
+  await flush();
   h.api.renderFailures([{ at: "time", model: "test", code: "response.failed", message: "<script>raw source</script>", retried: true }]);
   const failure = h.nodes.get("failures").children[0].children[0];
   failure.open = true;
@@ -367,7 +368,7 @@ test("animation is lazy, stops while collapsed, and keeps unsaved choices on reo
   assert.equal(h.requests.filter((url) => url === "/_ccdx/ui/animation").length, 1);
 });
 
-test("analytics loads only on opening; client filters and day selection do not read logs again", async () => {
+test("analytics loads only on opening; model, range and day selections refresh the shared usage query", async () => {
   const h = harness();
   await flush();
   assert.equal(h.requests.filter((url) => url.includes("analytics=1")).length, 0);
@@ -384,27 +385,36 @@ test("analytics loads only on opening; client filters and day selection do not r
   h.nodes.get("analytics-range").value = "90";
   h.nodes.get("analytics-range").listeners.change();
   assert.equal(h.nodes.get("daily-bars").children.length, 90);
+  await flush();
   const button = h.nodes.get("daily-bars").children.at(-1);
   assert.equal(button.children[0].children[0].style.height, `${10 / 110 * 100}%`);
   assert.equal(button.children[0].children[1].style.height, `${100 / 110 * 100}%`);
   button.listeners.click();
+  await flush();
   assert.equal(h.nodes.get("usage-state").textContent, "2026-10-01");
   assert.equal(h.nodes.get("clear-usage-day").hidden, false);
   h.nodes.get("analytics-model").value = "missing-model";
   h.nodes.get("analytics-model").listeners.change();
+  await flush();
   assert.equal(h.nodes.get("usage-body").children[0].children[0].textContent, "No usage records yet.");
   h.nodes.get("analytics-model").value = "test";
   h.nodes.get("analytics-model").listeners.change();
+  await flush();
   assert.equal(h.nodes.get("usage-body").children.length, 2);
   h.nodes.get("clear-usage-day").listeners.click();
+  await flush();
   assert.equal(h.nodes.get("usage-state").textContent, "LOCAL RECORDS");
-  assert.equal(h.requests.length, calls);
+  assert.equal(h.requests.length, calls + 5);
+  assert.ok(h.requests.some(url => url.includes("days=90")));
+  assert.ok(h.requests.some(url => url.includes("model=missing-model")));
+  assert.ok(h.requests.some(url => url.includes("from=2026-10-01") && url.includes("to=2026-10-01")));
+  const settledCalls = h.requests.length;
   panel.open = false;
   panel.listeners.toggle();
   panel.open = true;
   panel.listeners.toggle();
   await flush();
-  assert.equal(h.requests.length, calls);
+  assert.equal(h.requests.length, settledCalls);
 });
 
 test("chart switching keeps filters/day selection, accessible daily controls and the same usage snapshot", async () => {
@@ -414,6 +424,7 @@ test("chart switching keeps filters/day selection, accessible daily controls and
   h.nodes.get("analytics-range").value = "7";
   h.nodes.get("analytics-range").listeners.change();
   h.nodes.get("daily-bars").children.at(-1).listeners.click();
+  await flush();
   const calls = h.requests.length;
   const calendar = [...h.nodes.get("activity-calendar").children];
   h.nodes.get("analytics-view").value = "line";h.nodes.get("analytics-view").listeners.change();
@@ -486,7 +497,7 @@ test("reduced motion suppresses animation timers even with open and visible sett
 
 test("usage opening during initial load follows up once and an analytics error does not loop", async () => {
   let release;
-  const h = harness({ fetchFn: (url) => url === "/_ccdx/ui/usage" ? new Promise((resolve) => { release = resolve; }) : url.includes("analytics=1") ? { ok: false, json: async () => ({ error: "failed" }) } : undefined });
+  const h = harness({ fetchFn: (url) => url.startsWith("/_ccdx/ui/usage") && !url.includes("analytics=1") ? new Promise((resolve) => { release = resolve; }) : url.includes("analytics=1") ? { ok: false, json: async () => ({ error: "failed" }) } : undefined });
   await flush();
   h.nodes.get("usage-analytics").open = true;
   h.nodes.get("usage-analytics").listeners.toggle();
@@ -573,7 +584,7 @@ test("unchanged refresh keeps model, usage and chart nodes, filters, selected da
   h.nodes.get("refresh").listeners.click(); await flush();
   assert.equal(h.nodes.get("usage-state").textContent, "2026-10-01");
   assert.equal(h.nodes.get("analytics-model").value, "test");
-  assert.equal(h.nodes.get("analytics-range").value, "90");
+  assert.equal(h.nodes.get("analytics-range").value, "date");
   assert.deepEqual(h.nodes.get("activity-calendar").children, calendar);
   assert.deepEqual(h.nodes.get("usage-body").children, usage);
   assert.deepEqual(h.nodes.get("live-models-body").children, models);

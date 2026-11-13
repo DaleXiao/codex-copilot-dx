@@ -3,6 +3,14 @@ import { terminalCell } from "./terminal-text.mjs";
 const integer = value => Number.isSafeInteger(value) && value >= 0;
 const appIds = { codex_app: "codex", codex_cli: "codex", codex: "codex", claude_app: "claude_app", claude_code: "claude_code", gemini_app: "antigravity" };
 export const TERMINAL_CLIENT_NAMES = Object.freeze({ codex: "Codex", claude_app: "Claude App", claude_code: "Claude Code", gemini: "Antigravity", antigravity: "Antigravity" });
+export function terminalRequestState(row) {
+  if (!row.active) return row.state || "unknown";
+  if (row.terminal_outcome) return "Finishing";
+  if (row.first_output_ms != null) return "Responding";
+  if (row.phase === "admission") return "Queued";
+  if (row.upstream_attempts > 1) return "Retrying";
+  return row.upstream_attempts ? "Waiting upstream" : "Processing input";
+}
 const labels = { configured: "Configured", paused: "Paused", disabled: "Disabled", not_configured: "Not configured", not_installed: "Not installed",
   preserved: "Unchanged", partially_preserved: "Partly unchanged", manual_sync: "Manual sync", default_unavailable: "Default unavailable", configuration_unavailable: "Unreadable", unavailable: "Unavailable" };
 export function terminalUptime(milliseconds) {

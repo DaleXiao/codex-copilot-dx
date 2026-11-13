@@ -3,7 +3,7 @@ import { createInterface } from "node:readline/promises";
 import { dashboardToolRequest } from "./cli-tools.mjs";
 import { readAdapterStatus } from "./cli-status.mjs";
 import { CLI_CLIENTS } from "./cli-command-spec.mjs";
-import { projectTerminalState, retainedRequests, clientSetup, TERMINAL_CLIENT_NAMES, terminalUptime } from "./terminal-state.mjs";
+import { projectTerminalState, retainedRequests, clientSetup, TERMINAL_CLIENT_NAMES, terminalUptime, terminalRequestState } from "./terminal-state.mjs";
 import { formatResponsiveCliTable, cliOutputWidth, terminalCell } from "./cli-table.mjs";
 import { redactDiagnosticText } from "./diagnostic-text.mjs";
 import { settingsPreferencesSnapshot, writeSettingsPreferences, checkedPreferenceValues } from "./settings-preferences.mjs";
@@ -115,17 +115,22 @@ export async function runManagementCommand(command, options = {}) {
       const found = rows.find(row => row.request_id === ids.request);if (!found) throw new Error("Request not retained. No full-history lookup is available.");return print(found);
     }
     rows = rows.filter(row => (!flags.active || row.active) && (!flags.failed || row.state !== "cancelled" && (row.state === "failed" || row.error))
-      && (!flags.source || row.provider === flags.source) && (!flags.app || (flags.app === "codex" ? ["codex", "codex_app", "codex_cli"].includes(row.application) : row.application === CLI_CLIENTS[flags.app]))).slice(-(flags.limit || 20));
-    return print(rows, [["request_id", "Request"], ["application", "Client"], ["provider", "Source"], ["model", "Model"], ["route", "Route"], ["state", "State"]]);
+      && (!flags.source || row.provider === flags.source) && (!flags.app || (flags.app === "codex" ? ["codex", "codex_app", "codex_cli"].includes(row.application) : row.application === (flags.app === "antigravity" ? "gemini_app" : CLI_CLIENTS[flags.app])))).slice(-(flags.limit || 20));
+    return print(flags.format === "json" ? rows : rows.map(row => ({ ...row, state_label: terminalRequestState(row) })), [["request_id", "Request"], ["application", "Client"], ["provider", "Source"], ["model", "Model"], ["route", "Route"], ["state_label", "State"]]);
   }
   if (group === "usage") {
     if (flags.scope === "run") {
+      if (flags.model || flags.days || flags.from || flags.to || flags.time_zone) throw new Error("Model and date filters require --scope all; current-run totals support only --provider.");
       const usage = (await readStatus()).data.runtime_usage;
       if (!usage) throw new Error("Current-run usage is unavailable.");
       return print(flags.provider ? usage.by_provider?.[flags.provider] || { records: 0 } : usage);
     }
     const { summarizeUsageLogs } = await import("./usage-store.mjs");
-    const summary = await summarizeUsageLogs(undefined, { ...(flags.provider ? { provider: flags.provider } : {}) });
+    const { createUsageQuery } = await import("./usage-query.mjs");
+    const selection = createUsageQuery({ provider: flags.provider, model: flags.model, days: flags.days, from: flags.from, to: flags.to, timeZone: flags.time_zone });
+    const filtered = selection.filters.model || selection.filters.from || selection.filters.to;
+    const summary = await summarizeUsageLogs(undefined, { ...(flags.provider ? { provider: flags.provider } : {}), ...(filtered ? { recordFilter: selection.matches } : {}) });
+    summary.filters = selection.filters;
     if (flags.format === "json") return print(summary);
     const { formatUsageSummary } = await import("./usage.mjs");
     return formatUsageSummary(summary, { format: flags.format || "auto", output });
@@ -191,13 +196,28 @@ export async function runManagementCommand(command, options = {}) {
       }
       if(action==="models"&&flags.edit){
         const state=await request({path:"gemini"});
-        const ids=flags.file?readFile().models:(await choose(state.models.map(model=>model.name),state.models.flatMap((model,index)=>model.selected!==false?[index]:[]))).map(index=>state.models[index].id);
+        let ids;
+        if(flags.file){
+          const listed=readFile().models;if(!Array.isArray(listed))throw new Error("Model files require a models array.");
+          ids=listed.flatMap(id=>state.model_groups?.find(model=>model.id===id)?.efforts.map(item=>item.id)||[id]);
+        }
+        else if(Array.isArray(state.model_groups)){
+          const groups=state.model_groups,selected=await choose(groups.map(model=>model.name),groups.flatMap((model,index)=>model.efforts.some(item=>item.selected)?[index]:[]));
+          ids=[];
+          for(const index of selected){
+            const model=groups[index],previous=model.efforts.flatMap((item,i)=>item.selected?[i]:[]);
+            const efforts=await choose(model.efforts.map(item=>model.name+" / "+item.effort),previous.length?previous:model.efforts.map((_,i)=>i));
+            ids.push(...efforts.map(i=>model.efforts[i].id));
+          }
+        }else ids=(await choose(state.models.map(model=>model.name),state.models.flatMap((model,index)=>model.selected!==false?[index]:[]))).map(index=>state.models[index].id);
         if(!Array.isArray(ids)||new Set(ids).size!==ids.length||ids.some(id=>!state.models.some(model=>model.id===id)))throw new Error("Choose listed Antigravity model IDs.");
         if(flags.preview)return print({models:ids,saved:false});
         await confirm("Save Antigravity model selection? Reopen Gemini afterward to reload it.");
         return print(await request({path:"gemini",body:{action:"models",models:ids}}));
       }
       const state = await request({ path: "gemini", ...(["status", "models"].includes(action) ? {} : { body: { action: flags.preview ? "preview" : action, ...(action === "enable" ? { accept_background_copilot: true } : {}) }, timeoutMs: 20000 }) });
+      if(action==="models"&&flags.format!=="json"&&state.model_groups)return print(state.model_groups.map(model=>({model:model.name,id:model.id,source:"GitHub Copilot",context:model.context_window,
+        efforts:model.efforts.map(item=>item.effort+(item.selected?" ✓":"")).join(" / ")})),[["model","Model"],["id","ID"],["source","Source"],["context","Context"],["efforts","Reasoning (selected ✓)"]]);
       return print(action === "models" ? state.models : state);
     }
     const graph = await connection(), snapshot = (await readStatus()).data, view = projectTerminalState(snapshot);

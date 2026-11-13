@@ -5,6 +5,9 @@ import {EventEmitter} from "node:events";
 import {createAntigravityHandler} from "../src/antigravity-handler.mjs";
 import {antigravityCopilotModels,mergeAntigravityModels} from "../src/antigravity-models.mjs";
 import {summarizeUsage} from "../src/usage-store.mjs";
+import {runWithRequestContext} from "../src/request-context.mjs";
+import {createStreamPerformanceMetrics} from "../src/stream-performance.mjs";
+import {createGoogleResponseObserver} from "../src/antigravity-usage.mjs";
 
 const catalog={data:["gemini-4-carbon","gemini-4-argon"].map(id=>({id,supported_endpoints:["/chat/completions"],capabilities:{supports:{vision:true,reasoning_effort:["low","medium","high"]},limits:{max_context_window_tokens:1000000,max_output_tokens:64000}}}))};
 const alias=antigravityCopilotModels(catalog)[2].id;
@@ -140,4 +143,70 @@ test("client cancellation retains returned Gemini usage once and releases admiss
   call=invoke(f.handler,body(),{onWrite:()=>{call.res.destroyed=true;call.res.emit("close")}});await call.done;
   assert.equal(f.records.length,1);assert.equal(f.records[0].outcome,"cancelled");assert.equal(f.records[0].partial,true);
   assert.equal(f.records[0].usage.output_tokens,1);assert.equal(released,1);assert.equal(f.handler.snapshot().active,0);
+});
+
+test("request identity survives Copilot alias resolution and remains attached to usage",async()=>{
+  const metrics=createStreamPerformanceMetrics({routeNames:["antigravity"]}),tracker=metrics.begin("antigravity",{requestId:"identity",application:"gemini_app"});
+  const context={requestId:"identity",streamPerformance:tracker};
+  const f=fixture({client:{chatCompletions:async()=>Response.json({usage:{prompt_tokens:2,completion_tokens:1,prompt_tokens_details:{cached_tokens:0}},choices:[{finish_reason:"stop",message:{content:"ok"}}]})}});
+  await runWithRequestContext(context,()=>invoke(f.handler,body(),{url:"/antigravity/v1internal:generateContent"}).done);tracker.finish({statusCode:200});
+  assert.equal(context.requestedModel,alias);assert.equal(context.model,"gemini-4-carbon");
+  assert.equal(f.records[0].request_id,"identity");assert.equal(f.records[0].requested_model,alias);
+  const recent=metrics.snapshot().recent_requests[0];assert.equal(recent.context.requested_model,alias);assert.equal(recent.context.usage_state,"reported");
+});
+
+test("native Google JSON preserves response bytes and separates cached input and thought tokens",async()=>{
+  const wire=JSON.stringify({response:{responseId:"google-json",modelVersion:"gemini-native-version",usageMetadata:{promptTokenCount:100,toolUsePromptTokenCount:5,candidatesTokenCount:20,thoughtsTokenCount:10,cachedContentTokenCount:0,totalTokenCount:135},candidates:[{finishReason:"STOP",content:{parts:[{text:"原样返回"}]}}]}});
+  const f=fixture({fetchGoogle:async()=>new Response(wire,{headers:{"content-type":"application/json"}})});
+  const result=await invoke(f.handler,body("gemini-native"),{url:"/antigravity/v1internal:generateContent"}).done;
+  assert.equal(result.text,wire);assert.equal(f.records.length,1);assert.equal(f.records[0].provider,"google");assert.equal(f.records[0].model,"gemini-native-version");
+  assert.deepEqual(f.records[0].usage,{input_tokens:105,cached_input_tokens:0,output_tokens:30,reasoning_output_tokens:10,total_tokens:135});
+  assert.equal(summarizeUsage(f.records).providers.google,1);
+});
+
+test("fragmented native Google SSE remains byte-exact and records cumulative usage once",async()=>{
+  const final={response:{usageMetadata:{promptTokenCount:12,candidatesTokenCount:3,cachedContentTokenCount:4},candidates:[{finishReason:"STOP"}]}};
+  const wire=': heartbeat\r\ndata: {"response":{"candidates":[{"content":{"parts":[{"text":"你好"}]}}]}}\r\n\r\ndata: '+JSON.stringify(final)+'\r\n\r\ndata: '+JSON.stringify(final)+'\r\n\r\n';
+  const bytes=Buffer.from(wire);let offset=0;
+  const f=fixture({fetchGoogle:async()=>new Response(new ReadableStream({pull(controller){if(offset===bytes.length)controller.close();else controller.enqueue(bytes.subarray(offset,++offset));}}),{headers:{"content-type":"text/event-stream"}})});
+  const result=await invoke(f.handler,body("gemini-native")).done;
+  assert.equal(result.text,wire);assert.equal(f.records.length,1);assert.equal(f.records[0].usage.input_tokens,12);assert.equal(f.records[0].usage.cached_input_tokens,4);assert.equal(f.records[0].outcome,"completed");
+});
+
+test("Google metadata observation stays bounded and cannot fabricate usage from text",()=>{
+  const seen=[],observer=createGoogleResponseObserver({streaming:true,maxBytes:150,onEvent:event=>seen.push(event)});
+  observer.push(Buffer.from('data: '+JSON.stringify({text:'"usageMetadata": {"promptTokenCount":999}',padding:"x".repeat(200)})+'\r\n\r\n'));
+  observer.push(Buffer.from('data: {"response":{\r\ndata: "usageMetadata":{"promptTokenCount":0}}}\r\n\r\n'));
+  assert.equal(observer.finish().unavailable,true);assert.equal(seen.length,1);assert.equal(seen[0].response.usageMetadata.promptTokenCount,0);
+  const json=createGoogleResponseObserver({streaming:false,maxBytes:10,onEvent:()=>assert.fail("oversized metadata must be skipped")});json.push(Buffer.from('{"text":"a very large response"}'));assert.equal(json.finish().unavailable,true);
+});
+
+test("native forwarding stops at downstream backpressure and cancellation keeps already returned usage",async()=>{
+  let pulls=0,cancelled=false,call,signalWritten;const written=new Promise(resolve=>{signalWritten=resolve});
+  const first='data: {"response":{"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":1},"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}}\n\n';
+  const f=fixture({fetchGoogle:async()=>new Response(new ReadableStream({pull(controller){pulls++;controller.enqueue(Buffer.from(first));},cancel(){cancelled=true}},{highWaterMark:0}),{headers:{"content-type":"text/event-stream"}})});
+  call=invoke(f.handler,body("gemini-native"),{onWrite:()=>signalWritten()});const write=call.res.write;call.res.write=function(value){write.call(this,value);return false};
+  await written;assert.equal(pulls,1);call.res.destroyed=true;call.res.emit("close");await call.done;
+  assert.equal(cancelled,true);assert.equal(pulls,1);assert.equal(f.records.length,1);assert.equal(f.records[0].outcome,"cancelled");assert.equal(f.records[0].usage.output_tokens,1);
+});
+
+test("sparse usage frames retain the last reported fields and invalid usage stays missing",async()=>{
+  const data='data: {"usage":{"prompt_tokens":9,"prompt_tokens_details":{"cached_tokens":0}},"choices":[]}\n\ndata: {"usage":{"completion_tokens":2},"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: {"usage":{},"copilot_usage":{"token_details":{}},"choices":[]}\n\ndata: [DONE]\n\n';
+  const f=fixture({client:{chatCompletions:async()=>new Response(data)}});await invoke(f.handler,body()).done;
+  assert.equal(f.records.length,1);assert.equal(f.records[0].usage.input_tokens,9);assert.equal(f.records[0].usage.output_tokens,2);assert.equal(f.records[0].usage.cached_input_tokens,0);
+  const metrics=createStreamPerformanceMetrics({routeNames:["antigravity"]}),tracker=metrics.begin("antigravity",{requestId:"invalid-usage",application:"gemini_app"});
+  const bad=fixture({client:{chatCompletions:async()=>Response.json({usage:{prompt_tokens:-1,completion_tokens:"3"},choices:[{finish_reason:"stop",message:{content:"ok"}}]})}});
+  const result=await runWithRequestContext({streamPerformance:tracker},()=>invoke(bad.handler,body(),{url:"/antigravity/v1internal:generateContent"}).done);tracker.finish({statusCode:result.status});
+  assert.equal(result.status,200);assert.equal(bad.records.length,0);assert.equal(metrics.snapshot().recent_requests[0].context.usage_state,"missing");
+});
+
+test("a native Google stream failure after a finish frame remains failed with returned usage",async()=>{
+  let step=0;const metrics=createStreamPerformanceMetrics({routeNames:["antigravity"]}),tracker=metrics.begin("antigravity",{requestId:"cut",application:"gemini_app"});
+  const f=fixture({fetchGoogle:async()=>new Response(new ReadableStream({pull(controller){
+    if(step++===0)controller.enqueue(Buffer.from('data: {"response":{"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":1},"candidates":[{"finishReason":"STOP"}]}}\n\n'));
+    else controller.error(new Error("stream cut"));
+  }}),{headers:{"content-type":"text/event-stream"}})});
+  await runWithRequestContext({requestId:"cut",streamPerformance:tracker},()=>invoke(f.handler,body("gemini-native")).done);tracker.finish({statusCode:200});
+  assert.equal(f.records.length,1);assert.equal(f.records[0].outcome,"failed");assert.equal(f.records[0].partial,true);
+  assert.equal(metrics.snapshot().recent_requests[0].outcome,"failed");
 });

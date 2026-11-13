@@ -358,11 +358,12 @@ export function summarizeUsage(records, { provider = "" } = {}) {
   return summary;
 }
 
-async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord, provider = "" } = {}) {
+async function summarizeUsageLogFiles(filePath, { warn = console.error, onRecord, recordFilter, provider = "" } = {}) {
   const summary = summarizeUsage([], { provider });
   for (const candidate of [rotatedFilePath(filePath), filePath]) {
     for await (const record of iterateUsageRecords(candidate, { warn })) {
       if (provider && provider !== usageProvider(record)) continue;
+      if (recordFilter && !recordFilter(record)) continue;
       const one = summarizeUsage([record]);
       onRecord?.(record, one);
       mergeUsageSummary(summary, one);
@@ -403,9 +404,9 @@ export async function usageSummaryVersion(filePath, { settled = true } = {}) {
   } catch { return null; } // Uncacheable metadata never replaces the normal read/error path.
 }
 
-export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord, provider = "", signal } = {}) {
+export async function summarizeUsageLogs(filePath = usageLogPath(), { warn = console.error, onRecord, recordFilter, provider = "", signal } = {}) {
   if (provider && !isProviderId(provider)) throw new Error("Usage provider must be a valid provider ID");
-  if (onRecord || warn !== console.error) return summarizeUsageLogFiles(filePath, { warn, onRecord, provider });
+  if (onRecord || recordFilter || warn !== console.error) return summarizeUsageLogFiles(filePath, { warn, onRecord, recordFilter, provider });
   const fileVersion = await usageSummaryVersion(filePath);
   const version = fileVersion === null ? null : `${fileVersion}\0${provider}`;
   if (version === null) {

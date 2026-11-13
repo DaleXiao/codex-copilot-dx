@@ -4,6 +4,7 @@ import { isProviderId } from "./provider-metadata.mjs";
 import { applicationLabel } from "./request-application.mjs";
 import { createContextMetrics } from "./context-metrics.mjs";
 import { createChangeSignal } from "./activity-events.mjs";
+import { redactDiagnosticText } from "./diagnostic-text.mjs";
 
 const PERFORMANCE_ROUTES = Object.freeze(["responses", "responses_compact"]);
 const PREPARATION_STAGES = Object.freeze(["admission", "body", "history", "images", "serialization"]);
@@ -346,8 +347,10 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         observeContext(values) {
           if (finished || !values || typeof values !== "object") return;
           if (Number.isSafeInteger(values.cached_input_tokens) && values.cached_input_tokens >= 0) cachedInput = values.cached_input_tokens;
-          for (const key of [...Object.keys(context), "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "privacy_state", "privacy_pending_bytes", "privacy_new_bytes", "privacy_pending_windows", "privacy_wait_budget_ms", "privacy_error", "privacy_event_type", "privacy_channel_type", "privacy_buffered_bytes", "privacy_terminal_seen", "client_tool_errors_received"]) {
+          for (const key of [...Object.keys(context), "requested_model", "usage_state", "capability_revision", "capability_constraints", "privacy_count", "privacy_ms", "privacy_state", "privacy_pending_bytes", "privacy_new_bytes", "privacy_pending_windows", "privacy_wait_budget_ms", "privacy_error", "privacy_event_type", "privacy_channel_type", "privacy_buffered_bytes", "privacy_terminal_seen", "client_tool_errors_received"]) {
             const value = values[key];
+            if (key === "requested_model") { if (typeof value === "string" && /^[\w][\w./:@+-]{0,159}$/.test(value) && redactDiagnosticText(value) === value) context[key] = value;continue; }
+            if (key === "usage_state") { if (["pending", "reported", "partial", "missing", "unavailable"].includes(value)) context[key] = value;continue; }
             if (key === "privacy_state") { if (["checked", "failed", "cancelled"].includes(value)) context[key] = value;continue; }
             if (["privacy_error", "privacy_event_type", "privacy_channel_type"].includes(key)) {
               if (typeof value === "string" && /^[a-z0-9_.]{1,80}$/.test(value)) context[key] = value;continue;
@@ -377,6 +380,7 @@ export function createStreamPerformanceMetrics({ now = () => performance.now(), 
         },
         finish({ failed: finishFailed = false, aborted = false, statusCode = 0, rejectionReason } = {}) {
           if (finished) return;
+          if (context.usage_state === "pending") context.usage_state = "missing";
           if (!sourceStats) assignProvider("unknown");
           finished = true;
           activeTotal--;activeRequests.delete(activeId);

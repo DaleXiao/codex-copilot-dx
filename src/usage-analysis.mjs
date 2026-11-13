@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { summarizeUsage, summarizeUsageLogs, usageLogPath, usageSummaryVersion, subscribeUsageAppends, usageProvider, mergeUsageSummary } from "./usage-store.mjs";
 import { createUsageAnalytics } from "./usage-analytics.mjs";
 import { createAbortAwareSingleflight } from "./bounded-result-cache.mjs";
+import { createUsageQuery } from "./usage-query.mjs";
 
 const MAX_ENTRIES = 2;
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -56,9 +57,10 @@ function observe() {
   });
 }
 
-export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "UTC", now = Date.now(), warn = console.error, provider = "", signal } = {}) {
+export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "UTC", now = Date.now(), warn = console.error, provider = "", model = "", days = "all", from = "", to = "", signal } = {}) {
+  const selection = createUsageQuery({ provider, model, days, from, to, timeZone, now });
   const zone = new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
-  const file = path.resolve(filePath), query = `${file}\0${provider}\0${zone.resolvedOptions().timeZone}\0${zone.format(new Date(now))}`;
+  const file = path.resolve(filePath), query = `${file}\0${selection.key}\0${zone.format(new Date(now))}`;
   const version = warn === console.error ? await usageSummaryVersion(file, { settled: false }) : null;
   const collect = async () => {
     const cached = version && cache.get(query);
@@ -68,25 +70,34 @@ export async function analyzeUsageLogs(filePath = usageLogPath(), { timeZone = "
       for (const line of cached.pending) {
         const record = JSON.parse(line);
         if (provider && provider !== usageProvider(record)) continue;
+        const label = provider ? record.model || "unknown" : `${usageProvider(record)} / ${record.model || "unknown"}`;
+        if (cached.models.size < 100) cached.models.add(label);else if (!cached.models.has(label)) cached.modelsTruncated = true;
+        if (!selection.matches(record)) continue;
         const one = summarizeUsage([record]);mergeUsageSummary(cached.summary, one);cached.analytics.record(record, one);
       }
       cached.pending = [];cached.pendingBytes = 0;
-      const result = { summary: cached.summary, analytics: cached.analytics.snapshot() };
+      const snapshot = cached.analytics.snapshot();
+      const result = { summary: cached.summary, analytics: { ...snapshot, models: [...cached.models].sort(), models_truncated: snapshot.models_truncated || cached.modelsTruncated }, filters: selection.filters };
       cached.bytes = Buffer.byteLength(JSON.stringify(result));
       if (result.analytics.undated_records > 0) cache.delete(query);
       prune();return result;
     }
     cache.delete(query);prune();
-    const analytics = createUsageAnalytics({ timeZone, now, qualifyProviders: !provider });
-    let warned = false;
-    const summary = await summarizeUsageLogs(filePath, { provider, onRecord: analytics.record,
+    const analytics = createUsageAnalytics({ timeZone, now, qualifyProviders: !provider, from: selection.filters.from, to: selection.filters.to }), models = new Set();
+    let warned = false, modelsTruncated = false;
+    const summary = await summarizeUsageLogs(filePath, { provider, onRecord: analytics.record, recordFilter: record => {
+      const label = provider ? record.model || "unknown" : `${usageProvider(record)} / ${record.model || "unknown"}`;
+      if (models.size < 100) models.add(label);else if (!models.has(label)) modelsTruncated = true;
+      return selection.matches(record);
+    },
       warn(message) { warned = true;warn(message); } });
-    const result = { summary, analytics: analytics.snapshot() };
+    const snapshot = analytics.snapshot();
+    const result = { summary, analytics: { ...snapshot, models: [...models].sort(), models_truncated: snapshot.models_truncated || modelsTruncated }, filters: selection.filters };
     const complete = version && await completeLines(file);
     const after = version ? await usageSummaryVersion(file, { settled: false }) : null;
     const bytes = Buffer.byteLength(JSON.stringify(result));
     if (version && complete && after === version && !warned && !result.analytics.undated_records && bytes <= MAX_BYTES) {
-      cache.set(query, { file, version, summary, analytics, bytes, pending: [], pendingBytes: 0 });observe();prune();
+      cache.set(query, { file, version, summary, analytics, models, modelsTruncated, bytes, pending: [], pendingBytes: 0 });observe();prune();
     }
     return result;
   };

@@ -11,6 +11,29 @@ import { projectTerminalState, retainedRequests } from "../src/terminal-state.mj
 import { userSettingsPath, readUserSettings } from "../src/user-settings.mjs";
 import { settingsPreferencesSnapshot, settingsBackupPath } from "../src/settings-preferences.mjs";
 
+test("usage command exposes source, model and date filters and rejects combining them with run totals",async()=>{
+  const flags=parseCliArgs(["usage","--provider","google","--model","gemini-test","--days","7","--time-zone","Asia/Shanghai","--format","json"]).flags;
+  assert.equal(flags.provider,"google");assert.equal(flags.days,"7");assert.equal(flags.time_zone,"Asia/Shanghai");
+  const f=fixture();await assert.rejects(f.run(["usage","--scope","run","--model","gemini-test"]),/require --scope all/);
+  assert.match(cliHelp("ccdx","usage"),/--from/);
+});
+
+test("Antigravity lists models once while model files retain base-ID and effort-alias selection",async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"ccdx-grouped-models-")),file=path.join(dir,"models.json");t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const variants=["low","medium","high"].map(effort=>({id:"ccdx-copilot-gemini-4-carbon-"+effort,model:"gemini-4-carbon",name:"Gemini 4 Carbon · Copilot ("+effort+")",effort,selected:true}));
+  const state={models:variants,model_groups:[{id:"gemini-4-carbon",name:"Gemini 4 Carbon",context_window:1000000,efforts:variants}]};
+  const f=fixture();f.options.request=async input=>{f.calls.push(input);return state};
+  const listed=await f.run(["app","antigravity","models","--format","plain"]);
+  assert.equal((listed.match(/Gemini 4 Carbon/g)||[]).length,1);assert.match(listed,/low ✓/);assert.doesNotMatch(listed,/ccdx-copilot-/);
+  assert.equal(JSON.parse(await f.run(["app","antigravity","models","--format","json"])).length,3,"Existing JSON route aliases remain available");
+  fs.writeFileSync(file,JSON.stringify({models:["gemini-4-carbon"]}));
+  const all=await f.run(["app","antigravity","models","--edit","--file",file,"--preview"]);
+  for(const item of variants)assert.ok(all.includes(item.id));
+  fs.writeFileSync(file,JSON.stringify({models:[variants[2].id]}));
+  const subset=await f.run(["app","antigravity","models","--edit","--file",file,"--preview"]);
+  assert.ok(subset.includes(variants[2].id));assert.ok(!subset.includes(variants[0].id));assert.ok(f.calls.every(call=>!call.body));
+});
+
 const graph = () => ({ source: "connections", management_version: 1,
   providers: [{ id: "github", name: "GitHub Copilot", enabled: true, builtin: true }, { id: "m365", name: "Microsoft 365", enabled: true, builtin: true },
     { id: "api_work", name: "Work API", enabled: false, builtin: false, base_url: "https://example.test/v1", endpoints: { responses: "https://example.test/v1/responses", messages: "https://example.test/v1/messages" }, models: [], auth_header: "bearer", key_saved: true }],

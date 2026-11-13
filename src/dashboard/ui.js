@@ -17,6 +17,7 @@ const number = (value) => finite(value) ? Math.max(0, Math.round(Number(value)))
 const mib = (value) => finite(value) ? `${(Number(value) / 1048576).toFixed(1)} MiB` : "—";
 const time = (value, options) => globalThis.ccdxTime?.format(value, options) ?? (value ? new Date(value).toLocaleTimeString() : "—");
 const viewHelpers = { time, element, phrase, localize, text, finite, number, mib, tableRow, emptyTable, document, navigator: globalThis.navigator, modelLabel: usageModelLabel,
+  usageChanged: () => { dashboardRefresh.invalidate("usage");return dashboardRefresh.refresh("usage", { force: true }); },
   motionAllowed: () => !reducedMotion.matches && document.visibilityState === "visible" && element("usage-analytics").open && !element("usage-analytics").closest("[hidden]") };
 const { render, renderActivity, renderProviders, renderFailures, renderContext } = globalThis.ccdxViewBoundary.create("client-features", () => globalThis.ccdxDashboardStatus.create(viewHelpers), ["render", "renderActivity", "renderProviders", "renderFailures", "renderContext"]);
 const usageView = globalThis.ccdxViewBoundary.create("usage-analytics", () => globalThis.ccdxDashboardUsage.create(viewHelpers), ["applyUsage", "renderUsageState", "renderAnalytics", "renderUsageTable", "selectUsageDay", "usageValues", "setChartVisible", "revealChart", "stopMotion", "refreshModelLabels"]);
@@ -80,8 +81,8 @@ let selectedProvider = "";
 function usageModelLabel(value) {
   if (typeof value !== "string") return value;
   const at = value.indexOf(" / "), id = value.slice(0, at);
-  if (at < 0 || !id.startsWith("api_")) return value;
-  const name = providerEntries.find(provider => provider.id === id)?.name;
+  if (at < 0) return value;
+  const name = providerEntries.find(provider => provider.id === id)?.name || ({ github: "GitHub Copilot", m365: "Microsoft 365", google: "Google" })[id];
   return name ? name + value.slice(at) : value;
 }
 const modelSnapshots = new Map();
@@ -91,7 +92,7 @@ try { selectedProvider = localStorage.getItem("ccdx.dashboard.modelProvider") ||
 function syncUsageProviders() {
   const selector = element("usage-provider"), selected = selector.value;
   const entries = new Map(providerEntries.map(provider => [provider.id, provider.name]));
-  for (const id of Object.keys(usageProviders)) if (usageProviders[id] > 0 && !entries.has(id)) entries.set(id, id);
+  for (const id of Object.keys(usageProviders)) if (usageProviders[id] > 0 && !entries.has(id)) entries.set(id, ({ google: "Google", github: "GitHub Copilot", m365: "Microsoft 365" })[id] || id);
   const signature = JSON.stringify([...entries]);
   if (selector.dataset.providers === signature) return;
   selector.dataset.providers = signature;
@@ -390,12 +391,17 @@ const dashboardRefresh = globalThis.ccdxRefresh.createController({
       variant: () => {
         const mode = (element("usage-analytics").open || Boolean(usageView.selectedDate)) ? "analytics" : "summary";
         const provider = element("usage-provider")?.value || "";
-        return mode + (provider ? `:${provider}` : "");
+        return JSON.stringify({ mode, provider, model: element("analytics-model").value || "", days: element("analytics-range").value || "all", date: usageView.selectedDate });
       },
       load: async ({ variant, signal }) => {
-        const [mode, provider = ""] = variant.split(":"), query = new URLSearchParams();
+        const { mode, provider, model, days, date } = JSON.parse(variant), query = new URLSearchParams();
         if (mode === "analytics") { query.set("analytics", "1");query.set("time_zone", Intl.DateTimeFormat().resolvedOptions().timeZone); }
         if (provider) query.set("provider", provider);
+        if (model) query.set("model", model);
+        if (date?.startsWith("<")) query.set("to", new Date(Date.parse(date.slice(1)) - 86400000).toISOString().slice(0, 10));
+        else if (date) { query.set("from", date);query.set("to", date); }
+        else if (days !== "all") query.set("days", days);
+        if (date || days !== "all") query.set("time_zone", Intl.DateTimeFormat().resolvedOptions().timeZone);
         const data = await readDashboard(`/_ccdx/ui/usage${query.size ? `?${query}` : ""}`, { signal, source: "local_usage_log" });
         if (!data.total || !Array.isArray(data.rows) || (mode === "analytics" && (!Array.isArray(data.analytics?.days) || !data.analytics.days.length))) throw new Error("Invalid usage snapshot");
         return data;
@@ -495,12 +501,17 @@ element("usage-analytics").addEventListener("toggle", () => {
   if (element("usage-analytics").open) usageView.revealChart();else usageView.stopMotion();
   if (element("usage-analytics").open) dashboardRefresh.refresh("usage");
 });
-for (const id of ["analytics-model", "analytics-range", "analytics-metric", "analytics-view"]) element(id).addEventListener("change", () => {
+for (const id of ["analytics-metric", "analytics-view"]) element(id).addEventListener("change", () => {
   renderAnalytics();
   if (usageView.data && usageView.selectedDate) renderUsageTable();
 });
+for (const id of ["analytics-model", "analytics-range"]) element(id).addEventListener("change", () => {
+  if (id === "analytics-range" && usageView.selectedDate) { const range = element(id).value;selectUsageDay("", { refresh: false });element(id).value = range; }
+  renderAnalytics();if (usageView.data && !usageView.data.filters) renderUsageTable();
+  dashboardRefresh.invalidate("usage");void dashboardRefresh.refresh("usage", { force: true });
+});
 element("clear-usage-day").addEventListener("click", () => selectUsageDay(""));
-element("usage-provider")?.addEventListener("change", () => { dashboardRefresh.invalidate("usage");dashboardRefresh.refresh("usage", { force: true }); });
+element("usage-provider")?.addEventListener("change", () => { selectUsageDay("", { refresh: false });element("analytics-model").value = "";dashboardRefresh.invalidate("usage");dashboardRefresh.refresh("usage", { force: true }); });
 element("refresh-models").addEventListener("click", loadModels);
 element("refresh-usage").addEventListener("click", loadUsage);
 for (const link of document.querySelectorAll("[data-source-link]")) link.addEventListener("click", () => {

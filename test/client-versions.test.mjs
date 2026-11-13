@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createClientVersionMonitor, inspectInstalledClientVersions, clientVersionChecks } from "../src/client-versions.mjs";
+import { createClientVersionMonitor, inspectInstalledClientVersions, clientVersionChecks, clientVersionName } from "../src/client-versions.mjs";
 import { userSettingsPath } from "../src/user-settings.mjs";
 
 async function fixture(t) {
@@ -105,7 +105,7 @@ test("Antigravity uses the same installed-version observation and preserves old 
   assert.equal(first.antigravity[0].version,"1.141.3.1394");assert.equal(first.claude[0].version,"4.1");
   assert.match(clientVersionChecks(first)[2].message,/Antigravity: Gemini.app 1.141.3.1394/);monitor.close();
   await bundle(f.systemApplications,"Gemini.app","com.google.GeminiMacOS","1.142.0","1400",null);
-  const next=createClientVersionMonitor(options),updated=await next.refresh();assert.equal(updated.antigravity[0].previous.version,"1.141.3.1394");assert.ok(updated.antigravity[0].changed_at);next.close();
+  const updates=[],next=createClientVersionMonitor({...options,onChange:names=>updates.push(names.map(clientVersionName))}),updated=await next.refresh();assert.equal(updated.antigravity[0].previous.version,"1.141.3.1394");assert.ok(updated.antigravity[0].changed_at);assert.deepEqual(updates,[["Antigravity"]]);next.close();
   await bundle(f.systemApplications,"Gemini.app","unknown.bundle","9.0","1",null);
   assert.equal((await inspectInstalledClientVersions(options)).some(row=>row.client==="antigravity"),false);
 });

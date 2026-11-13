@@ -7,6 +7,7 @@ import { userSettingsPath } from "./user-settings.mjs";
 
 const MAX_METADATA_BYTES = 64 * 1024;
 const MAX_APPS = 9;
+export const clientVersionName = client => ({ codex: "Codex App", claude: "Claude App", antigravity: "Antigravity" })[client] || client;
 const validId = value => /^(?:codex|claude)_(?:system|user|windows)_(?:chatgpt|codex|claude)$/.test(value)
   || /^antigravity_(?:system|user)_gemini$/.test(value);
 const validVersion = value => typeof value === "string" && /^[0-9][0-9A-Za-z.+_-]{0,63}$/.test(value);
@@ -134,7 +135,7 @@ export function createClientVersionMonitor({ home = os.homedir(), env = process.
 
 export function clientVersionChecks(snapshot) {
   return ["codex", "claude", "antigravity"].map(client => {
-    const rows = snapshot?.[client] || [], name = client === "codex" ? "Codex App" : client === "claude" ? "Claude App" : "Antigravity";
+    const rows = snapshot?.[client] || [], name = clientVersionName(client);
     if (!rows.length) return { id: "client-versions", kind: "info", message: `${name}: installed version not observed` };
     const versions = rows.map(row => `${row.name} ${row.version}${row.build ? ` (build ${row.build})` : ""}${row.cli_version ? `, CLI ${row.cli_version}` : ""}${row.changed_at ? `, changed ${row.changed_at}` : ""}`).join("; ");
     return { id: "client-versions", kind: "info", message: `${name}: ${versions}. Running version and feature compatibility are not confirmed` };

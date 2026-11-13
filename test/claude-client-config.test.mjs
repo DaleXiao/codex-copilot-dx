@@ -26,6 +26,22 @@ test("removing an owned source-only flag and writing new Claude settings share o
   assert.equal(JSON.parse(fs.readFileSync(paths.code)).env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, undefined);
 });
 function write(file, value) { fs.mkdirSync(path.dirname(file), { recursive: true });fs.writeFileSync(file, JSON.stringify(value)); }
+test("unverified replacement contracts preserve existing native controls without assigning them to new models", t => {
+  const { options, paths } = fixture(t);
+  const reasoner = id => ({ id, capability: { values: { context_window: 1000000, reasoning_efforts: ["low", "medium", "high"] } } });
+  const contract = { status: "verified", fields: { discovery: true }, profiles: [{ model: "claude-opus-4-6", efforts: ["low", "medium", "high", "max"] }] };
+  const input = { ...options, client: "claude_app", desktopAliases: true, models: [reasoner("retained")], appContract: contract };
+  configureClaudeClients(input);
+  const before = JSON.parse(JSON.parse(fs.readFileSync(paths.profile)).inferenceModels)[0];
+  assert.equal(before.behavesAs, "claude-opus-4-6");assert.equal(before.maxEffort, "high");
+  configureClaudeClients({ ...input, models: [...input.models, reasoner("new")], appContract: { status: "unverified", fields: {} } });
+  const after = JSON.parse(JSON.parse(fs.readFileSync(paths.profile)).inferenceModels);
+  const retained = after.find(model => model.name === before.name), added = after.find(model => model.name !== before.name);
+  assert.equal(retained.behavesAs, before.behavesAs);assert.equal(retained.maxEffort, before.maxEffort);assert.equal(added.behavesAs, undefined);
+  configureClaudeClients({ ...input, models: [{ ...input.models[0], capability: { values: { reasoning: false } } }] });
+  const confirmed = JSON.parse(JSON.parse(fs.readFileSync(paths.profile)).inferenceModels)[0];
+  assert.equal(confirmed.behavesAs, undefined);assert.equal(confirmed.maxEffort, undefined);
+});
 const read = file => JSON.parse(fs.readFileSync(file));
 
 test("owned App models sync while the host's encrypted key remains opaque and unchanged", t => {

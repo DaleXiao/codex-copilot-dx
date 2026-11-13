@@ -38,9 +38,10 @@ let modelActivity = 2, fixtureRevision = 0;
 let extraRequests = [];
 let flowRequests = [];
 let contextReads = 0;
+let contextLimit = 1000;
 const contextFixture = () => ({ source: "run_context", sessions: [{ id: "0-session-1", application: "codex_app", provider: "github", model: "gpt-test", concurrent: false,
   points: [100, 200, 120].map((input, index) => ({ at: `2026-10-29T11:00:0${index}Z`, order: index * 10, finished: index * 10 + 1,
-    input_tokens: input, context_window_tokens: 1000, cached_input_tokens: 60, request_id: `context-${index}`, outcome: "completed" })),
+    input_tokens: input, context_window_tokens: contextLimit, cached_input_tokens: 60, request_id: `context-${index}`, outcome: "completed" })),
   compactions: [{ at: "2026-10-29T11:00:02Z", order: 20, elapsed_ms: 2400, outcome: "completed" }] }],
   unassigned: [{ id: "0-request-2", application: "claude_app", provider: "m365", model: "external-test", input_tokens: 50, context_window_tokens: null, cached_input_tokens: null, at: "2026-10-29T10:00:00Z" }] });
 const concurrentFlow = () => [
@@ -66,7 +67,7 @@ const localTools = {
   report: () => ({ source: "local_tools", checks: [], account: "[hidden]" }),
 };
 const networkDiagnostic = { source: "system", stage: "proxy_config", cause_code: "proxy_bypass_invalid" };
-const clientVersions = { snapshot: () => ({ checked_at: "2026-11-07T04:00:00.000Z",
+const clientVersions = { snapshot: () => ({ antigravity:[{name:"Gemini.app",version:"1.141.3.1394",build:"1394",changed_at:null}], checked_at: "2026-11-07T04:00:00.000Z",
   codex: [{ name: "ChatGPT.app", version: "26.1103.32239", build: "25471", cli_version: "0.167.0-alpha.3.2", changed_at: null }],
   claude: [{ name: "Claude.app", version: "4.23119.0", build: "101", previous: { version: "4.23118.0" }, changed_at: "2026-11-07T04:00:00.000Z" }] }),
   refresh: async () => {} };
@@ -621,6 +622,7 @@ try {
         await nav("checks");await page.locator("#check-local").click();
         await page.waitForFunction(() => document.getElementById("client-version-codex").textContent.includes("26.1103.32239"));
         assert.match(await page.locator("#client-version-codex").innerText(), /0\.167\.0-alpha\.3\.2/);
+        assert.match(await page.locator("#client-version-antigravity").innerText(), /1\.141\.3\.1394/);
         assert.match(await page.locator("#client-version-claude").innerText(), language === "zh" ? /已更新，接入待确认/ : /updated, access unverified/);
         await page.waitForFunction(() => document.getElementById("checks-body").children.length > 0);
         assert.equal(await page.locator("#checks-body .state-warning .state-icon").count(), 1);
@@ -764,6 +766,13 @@ try {
         const pointTips = await page.locator("#context-history-chart .context-point title").allTextContents();
         assert.equal(pointTips.length, 3);assert.match(pointTips[0], /60\.0%/);assert.match(pointTips[1], /30\.0%/);assert.match(pointTips[2], /50\.0%/);
         assert.match(await page.locator("#context-compactions").textContent(), /2.4 s/);
+        for(const limit of [1050000,20000000]){
+          contextLimit=limit;await page.locator("#refresh").click();
+          await page.waitForFunction(value=>document.getElementById("context-window").textContent===value.toLocaleString(),limit);
+          const bounds=await page.locator("#context-history-chart svg").evaluate(svg=>({width:svg.viewBox.baseVal.width,labels:[...svg.querySelectorAll("text")].map(text=>{const box=text.getBBox();return {left:box.x,right:box.x+box.width}})}));
+          assert.ok(bounds.labels.every(label=>label.left>=0&&label.right<=bounds.width),"All context labels fit, including million-token limits");
+        }
+        contextLimit=1000;await page.locator("#refresh").click();await page.waitForFunction(()=>document.getElementById("context-window").textContent==="1,000");
         if (output && language === "zh" && width === 1280) await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-context.png`), fullPage: true });
         await page.locator("#context-sessions button").last().click();
         assert.equal(await page.locator("#context-share").textContent(), "—");
@@ -1028,25 +1037,27 @@ try {
         await page.locator('[data-route="gemini"]').click();
         await page.waitForFunction(()=>!document.getElementById("gemini-enabled").disabled);
         if(!await page.locator("#gemini-enabled").isChecked())await page.locator("#gemini-enabled").check();
-        await page.waitForFunction(()=>document.querySelectorAll('#gemini-models tr').length===2&&document.querySelectorAll('#gemini-models input').length===8&&!document.getElementById("gemini-enabled").disabled);
-        const modelBoxes=page.locator("#gemini-models tr").first().locator("td:last-child input");
+        await page.waitForFunction(()=>document.querySelectorAll('#gemini-models tr').length===2&&document.querySelectorAll('#gemini-models input').length===2&&!document.getElementById("gemini-enabled").disabled);
+        const modelBoxes=page.locator("#gemini-models td:first-child input");
+        assert.equal(await page.locator("#gemini-models td:last-child input").count(),0,"Reasoning is capability text, as on Codex and Claude");
+        for(const text of await page.locator("#gemini-models td:last-child").allTextContents())assert.equal(text,"low / medium / high");
         assert.equal(await page.locator("#gemini-models tr").count(),2,"Two models share their reasoning choices within two rows");
         const initialCatalog=await page.request.post(`http://127.0.0.1:${server.address().port}/antigravity/v1internal:fetchAvailableModels`,{data:{}});
         assert.equal(initialCatalog.status(),200);
         assert.equal(Object.keys((await initialCatalog.json()).models).filter(id=>id.startsWith("ccdx-copilot-")).length,6,"Each case starts with the native client's full model list loaded");
         await page.locator("#gemini-refresh").click();await page.waitForFunction(()=>!document.getElementById("gemini-refresh").disabled);
         assert.equal(await page.locator("#gemini-reopen").isVisible(),false);
-        const modelChoice=page.locator("#gemini-models tr").first().locator("td:first-child input");
-        await modelChoice.uncheck();
-        assert.equal(await modelBoxes.evaluateAll(inputs=>inputs.every(input=>!input.checked)),true);
-        await modelChoice.check();assert.equal(await modelBoxes.evaluateAll(inputs=>inputs.every(input=>input.checked)),true);
+        const selectedRoutes=["ccdx-copilot-gemini-4-carbon-high",...['low','medium','high'].map(level=>'ccdx-copilot-gemini-4-argon-'+level)];
+        const subset=await page.request.post(`http://127.0.0.1:${server.address().port}/_ccdx/ui/gemini`,{headers:{'X-CCDX-Dashboard':'1',Origin:`http://127.0.0.1:${server.address().port}`},data:{action:'models',models:selectedRoutes}});assert.equal(subset.status(),200);
+        await page.locator("#gemini-refresh").click();await page.waitForFunction(()=>!document.getElementById("gemini-refresh").disabled);
+        assert.equal(await modelBoxes.first().isChecked(),true,"A saved effort subset is a selected model");
+        await modelBoxes.first().uncheck();await modelBoxes.first().check();assert.equal(await page.locator("#gemini-save").isDisabled(),true,"Off/on restores the saved subset without expanding it");
         await modelBoxes.first().uncheck();
-        assert.equal(await modelChoice.evaluate(input=>input.indeterminate),true,"Partial effort selections are preserved on the model row");
         await page.locator("#gemini-refresh").click();await page.waitForFunction(()=>!document.getElementById("gemini-refresh").disabled);
         assert.equal(await modelBoxes.first().isChecked(),false,"Refresh keeps the model draft");
         geminiAppState="running";await page.locator("#gemini-enabled").uncheck();await page.waitForFunction(()=>!document.getElementById("gemini-enabled").disabled);
         assert.equal(await page.locator('#gemini-reopen').isVisible(),true);assert.equal(await page.locator('#gemini-open').isDisabled(),true);
-        assert.equal(await modelBoxes.count(),3,"Pausing retains the reasoning choices");assert.equal(await modelBoxes.first().isChecked(),false,"Pausing keeps the model draft");
+        assert.equal(await modelBoxes.count(),2,"Pausing retains both model choices");assert.equal(await modelBoxes.first().isChecked(),false,"Pausing keeps the model draft");
         await page.locator("#gemini-enabled").check();await page.waitForFunction(()=>!document.getElementById("gemini-enabled").disabled);
         geminiAppState="stopped";await page.locator("#gemini-save").click();
         await page.waitForFunction(()=>document.getElementById("gemini-save").disabled&&!document.getElementById("gemini-refresh").disabled);
@@ -1069,6 +1080,9 @@ try {
         await page.locator('[data-route="models"]').click();
         await page.locator("#model-provider-github").click();
         await page.locator('[data-route="overview"]').click();
+        const antigRow=page.locator("#provider-clients tr").filter({hasText:"Antigravity"});
+        await antigRow.waitFor();assert.equal(await antigRow.locator(".state-icon").count(),2,"Antigravity uses the common setup/service status icons");
+        assert.equal(await antigRow.locator("td").nth(3).locator(".state-running").count(),1,"Local service does not mean request observation");
         assert.equal(errors.length, 0, errors.join("\n"));
         if (output && language === "zh") await page.screenshot({ path: path.join(output, `${engine}-${palette}-${theme}-${width}-overview.png`), fullPage: true });
         results.push({ engine, language, theme, palette, width, passed: true });

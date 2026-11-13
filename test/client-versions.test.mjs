@@ -96,6 +96,20 @@ test("Windows uses only a recognized registered Codex version and leaves Claude 
   assert.deepEqual(await inspectInstalledClientVersions({ platform: "win32", env: {}, windowsCodexVersion: async () => null }), []);
 });
 
+test("Antigravity uses the same installed-version observation and preserves old version records",async t=>{
+  const f=await fixture(t),options={...f,platform:"darwin"};
+  await bundle(f.systemApplications,"Claude.app","com.anthropic.claudefordesktop","4.1","100",null);
+  const old=createClientVersionMonitor(options);await old.refresh();old.close();
+  await bundle(f.systemApplications,"Gemini.app","com.google.GeminiMacOS","1.141.3.1394","1394",null);
+  const monitor=createClientVersionMonitor(options),first=await monitor.refresh();
+  assert.equal(first.antigravity[0].version,"1.141.3.1394");assert.equal(first.claude[0].version,"4.1");
+  assert.match(clientVersionChecks(first)[2].message,/Antigravity: Gemini.app 1.141.3.1394/);monitor.close();
+  await bundle(f.systemApplications,"Gemini.app","com.google.GeminiMacOS","1.142.0","1400",null);
+  const next=createClientVersionMonitor(options),updated=await next.refresh();assert.equal(updated.antigravity[0].previous.version,"1.141.3.1394");assert.ok(updated.antigravity[0].changed_at);next.close();
+  await bundle(f.systemApplications,"Gemini.app","unknown.bundle","9.0","1",null);
+  assert.equal((await inspectInstalledClientVersions(options)).some(row=>row.client==="antigravity"),false);
+});
+
 test("an unrecognized Claude major remains guarded through temporary observation failures", async t => {
   const f = await fixture(t), row = { id: "claude_system_claude", client: "claude", scope: "system", name: "Claude.app", version: "5.0.0", build: null, cli_version: null };
   let observed = [row];const monitor = createClientVersionMonitor({ ...f, inspect: async () => observed });

@@ -35,17 +35,13 @@
     for(const model of groupedModels()){
       const chosen=new Set(draft||selected()),ids=model.efforts.map(item=>item.id);
       const row=document.createElement('tr'),name=document.createElement('td'),label=document.createElement('label'),input=document.createElement('input');
-      input.type='checkbox';input.value=model.id;input.checked=ids.every(id=>chosen.has(id));input.indeterminate=!input.checked&&ids.some(id=>chosen.has(id));input.disabled=busy;input.setAttribute('aria-label',model.name);
+      input.type='checkbox';input.value=model.id;input.checked=ids.some(id=>chosen.has(id));input.disabled=busy;input.setAttribute('aria-label',model.name);
       const update=(values,checked)=>{const next=new Set(draft||selected());for(const id of values)if(checked)next.add(id);else next.delete(id);draft=[...next];notice=null;clear('gemini-note');render()};
-      input.addEventListener('change',()=>update(ids,input.checked));
+      input.addEventListener('change',()=>{const saved=ids.filter(id=>selected().includes(id));update(input.checked&&saved.length?saved:ids,input.checked)});
       label.append(input,document.createTextNode(model.name));name.append(label);row.append(name);
       for(const [key,value]of [['source','GitHub Copilot'],['cap_context',count(model.context_window)]]){const cell=document.createElement('td');cell.textContent=value;cell.dataset.label=language.format(key);row.append(cell)}
       const efforts=document.createElement('td');efforts.dataset.label=language.format('cap_reasoning');
-      for(const item of model.efforts){
-        const label=document.createElement('label'),choice=document.createElement('input');choice.type='checkbox';choice.value=item.id;choice.checked=chosen.has(item.id);choice.disabled=busy;
-        choice.setAttribute('aria-label',model.name+' · '+language.format(item.effort));choice.addEventListener('change',()=>update([item.id],choice.checked));
-        label.append(choice,document.createTextNode(language.format(item.effort)));efforts.append(label,document.createTextNode(' '));
-      }
+      efforts.textContent=model.efforts.map(item=>item.effort).join(' / ');
       row.append(efforts);list.append(row);
     }
     if(!state.models.length){const row=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=4;language.set(cell,'gemini_no_models');row.append(cell);list.append(row)}

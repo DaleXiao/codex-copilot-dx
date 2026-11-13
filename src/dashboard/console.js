@@ -9,7 +9,7 @@
   let accountsPending = false;
   const accountReasons = new Set(["m365_account_ambiguous", "m365_account_unavailable", "m365_account_conflict", "m365_interaction_required", "m365_llm_permission_unavailable", "m365_account_busy", "m365_account_selection_stale"]);
   function renderClientVersions(value) {
-    for (const client of ["codex", "claude"]) {
+    for (const client of ["codex", "claude", "antigravity"]) {
       const node = el(`client-version-${client}`);if (!node) continue;
       const rows = Array.isArray(value?.[client]) ? value[client] : [];
       if (!rows.length) { node.removeAttribute("data-i18n");node.textContent = "—";node.title = "";continue; }

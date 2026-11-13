@@ -165,7 +165,7 @@
         <div data-view="gemini" hidden>
           <section class="connection-access"><div class="connection-row"><label for="gemini-enabled" data-i18n="gemini_access_title">Copilot access</label><label class="switch-hit"><input id="gemini-enabled" type="checkbox" role="switch" data-i18n-label="gemini_access_title" aria-label="Copilot access" disabled></label></div></section>
           <section class="panel dashboard-section">
-            <div class="panel-heading"><h2 data-i18n="gemini_model_selection">Model selection</h2><span id="gemini-draft-state" role="status">—</span></div>
+            <div class="panel-heading"><h2 data-i18n="cap_visible_model">Available models</h2><span id="gemini-draft-state" role="status">—</span></div>
             <form id="gemini-model-form">
               <div class="table-wrap"><table class="binding-table"><thead><tr><th data-i18n="model">Model</th><th data-i18n="source">Source</th><th data-i18n="cap_context">Context</th><th data-i18n="cap_reasoning">Reasoning</th></tr></thead><tbody id="gemini-models"></tbody></table></div>
               <div class="section-actions"><button id="gemini-save" type="submit" data-i18n="api_save" disabled>Save</button><button id="gemini-cancel" type="button" data-i18n="cap_discard_changes" disabled>Discard changes</button></div>
@@ -289,6 +289,7 @@
             <p class="hint" data-i18n="tools_local_scope">Local checks do not contact external services.</p>
             <p>Codex App: <strong id="client-version-codex">—</strong></p>
             <p>Claude App: <strong id="client-version-claude">—</strong></p>
+            <p>Antigravity: <strong id="client-version-antigravity">—</strong></p>
             <p class="hint" data-i18n="client_versions_scope">Installed versions only; running App adoption and compatibility are separate.</p>
             <div class="section-actions"><button id="check-local" type="button" data-i18n="tools_check_local">Check this computer</button></div>
             <p id="checks-note" class="table-note" role="status" aria-live="polite" data-i18n="tools_checks_empty">Run a check to see the results.</p>

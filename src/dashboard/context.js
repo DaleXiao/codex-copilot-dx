@@ -20,11 +20,9 @@
     if (!points.some(point => valid(point.input_tokens))) { label(host, "context_no_input");return; }
     if (!entry.identified) { label(host, "context_unassigned");return; }
     const width = host.clientWidth;if (!width) return;
-    const height = 210, left = 64, right = 12, top = 25, bottom = 35;
+    const height = 210, right = 12, top = 25, bottom = 35;
     const measured = Math.max(...points.map(point => valid(point.input_tokens) ? point.input_tokens : 0), 1);
     const maximum = Math.max(measured, latest(entry).context_window_tokens || 0);
-    const x = index => left + (width - left - right) * index / Math.max(1, points.length - 1);
-    const y = value => top + (height - top - bottom) * (1 - value / maximum);
     const svg = document.createElementNS(ns, "svg");svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
     svg.setAttribute("role", "img");svg.setAttribute("aria-label", language.format("context_history"));host.append(svg);
     const shape = (tag, attributes, text) => {
@@ -32,10 +30,16 @@
       for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
       if (text !== undefined) node.textContent = text;svg.append(node);return node;
     };
+    const ticks = [0, maximum / 2, maximum].map(value => Math.round(value).toLocaleString());
+    const measures = ticks.map(text => shape("text", { visibility: "hidden" }, text));
+    const left = Math.max(64, Math.ceil(Math.max(...measures.map(node => node.getComputedTextLength()))) + 16);
+    measures.forEach(node => node.remove());
+    const x = index => left + (width - left - right) * index / Math.max(1, points.length - 1);
+    const y = value => top + (height - top - bottom) * (1 - value / maximum);
     for (let index = 0; index <= 2; index++) {
       const value = maximum * index / 2, py = y(value);
       shape("line", { x1: left, x2: width - right, y1: py, y2: py, class: "context-grid" });
-      shape("text", { x: left - 8, y: py + 4, "text-anchor": "end" }, Math.round(value).toLocaleString());
+      shape("text", { x: left - 8, y: py + 4, "text-anchor": "end" }, ticks[index]);
     }
     shape("text", { x: left, y: 12 }, "tokens");
     let path = "", continuing = false;

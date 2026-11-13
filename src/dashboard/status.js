@@ -75,7 +75,14 @@
       }
       if (data.gemini || globalThis.ccdxGeminiStatus) {
         const gemini=data.gemini || globalThis.ccdxGeminiStatus;
-        clients.append(tableRow(["Antigravity",gemini.enabled?"Google + Copilot":"Google",gemini.enabled?"configured":"access_paused",gemini.activity?.active>0?"active":gemini.route_observed?"observed":"unknown","—"],{labels:[2,3]}));
+        const setup=gemini.enabled&&gemini.source_enabled!==false?"configured":gemini.configured?"access_paused":"not_configured";
+        const service=gemini.configured===true?"running":gemini.configured===false?"unavailable":"unknown";
+        const row=tableRow(["Antigravity",gemini.enabled&&gemini.source_enabled!==false?"Google + GitHub Copilot":"Google",setup,service,"—"],{labels:[2,3]});
+        if(globalThis.ccdxIcons){
+          globalThis.ccdxIcons.set(row.children[2],setup,globalThis.ccdxIcons.kind(setup==="access_paused"?"paused":setup));
+          globalThis.ccdxIcons.set(row.children[3],service,globalThis.ccdxIcons.kind(service));
+        }
+        clients.append(row);
       }
       if (element("claude-client-state")) element("claude-client-state").hidden = Boolean(claudeClients?.children.length);
       text("source-summary", "count_providers", { count: providers.length });

@@ -11,6 +11,19 @@ const viewScripts = ["view-boundary", "status", "usage"].map(name => readFileSyn
 const renderScript = viewScripts + "\n" + script.split('\nelement("refresh").addEventListener(')[0]
   + script.slice(script.indexOf("function emptyTable("), script.indexOf("async function loadModels("));
 
+test("Antigravity overview uses common icons and reports local service separately from observed requests",()=>{
+  const nodes=new Map(),calls=[];
+  const createNode=()=>({textContent:"",children:[],attributes:{},setAttribute(key,value){this.attributes[key]=value},replaceChildren(...children){this.children=children},append(...children){this.children.push(...children)}});
+  const document={getElementById(id){if(!nodes.has(id))nodes.set(id,createNode());return nodes.get(id)},createElement:createNode};
+  const icons={kind:state=>state,set(target,key,kind){calls.push([key,kind]);target.textContent=dashboardLanguage.format(key)}};
+  const renderProviders=runInNewContext(`${renderScript}\nrenderProviders;`,{document,ccdxLanguage:dashboardLanguage,ccdxIcons:icons});
+  renderProviders({providers:[],gemini:{configured:true,enabled:true,route_observed:true,activity:{active:0}}});
+  const cells=nodes.get("provider-clients").children[0].children;
+  assert.deepEqual(calls,[["configured","configured"],["running","running"]]);assert.equal(cells[3].textContent,"Running");assert.equal(cells[1].textContent,"Google + GitHub Copilot");
+  calls.length=0;renderProviders({providers:[],gemini:{configured:true,enabled:false,route_observed:false}});
+  assert.deepEqual(calls,[["access_paused","paused"],["running","running"]]);
+});
+
 test("provider status explains a local proxy failure with technical codes in its details", () => {
   const nodes = new Map();
   const createNode = () => ({ textContent: "", children: [], attributes: {}, setAttribute(key, value) { this.attributes[key] = value; },

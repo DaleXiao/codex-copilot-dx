@@ -38,6 +38,10 @@ test("unverified replacement contracts preserve existing native controls without
   const after = JSON.parse(JSON.parse(fs.readFileSync(paths.profile)).inferenceModels);
   const retained = after.find(model => model.name === before.name), added = after.find(model => model.name !== before.name);
   assert.equal(retained.behavesAs, before.behavesAs);assert.equal(retained.maxEffort, before.maxEffort);assert.equal(added.behavesAs, undefined);
+  const lower = { ...input.models[0], capability: { values: { reasoning_efforts: ["low"] } } };
+  configureClaudeClients({ ...input, models: [lower], appContract: { status: "unverified", fields: {} } });
+  const limited = JSON.parse(JSON.parse(fs.readFileSync(paths.profile)).inferenceModels)[0];
+  assert.equal(limited.behavesAs, before.behavesAs);assert.equal(limited.maxEffort, "low", "Known source limits still apply");
   configureClaudeClients({ ...input, models: [{ ...input.models[0], capability: { values: { reasoning: false } } }] });
   const confirmed = JSON.parse(JSON.parse(fs.readFileSync(paths.profile)).inferenceModels)[0];
   assert.equal(confirmed.behavesAs, undefined);assert.equal(confirmed.maxEffort, undefined);

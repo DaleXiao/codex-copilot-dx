@@ -316,8 +316,8 @@ export function configureClaudeClients({ baseUrl, apiKey, models, desktopInstall
       const desktopEntries = (desktopAliases ? claudeModelEntries(models, { desktopAliases }) : entries).map((entry, index) => {
         const previous = previousByName.get(entry.name) || previousNames[index].map(name => previousByName.get(name)).find(Boolean);
         const hint = claudeNativeModelHint(models[index].capability?.values, appContract);
-        const controls = hint || (appContract && appContract.status !== "verified" ? Object.fromEntries(["behavesAs", "maxEffort"]
-          .filter(key => previous?.[key] !== undefined).map(key => [key, previous[key]])) : {});
+        const controls = hint || (appContract && appContract.status !== "verified" && previous?.behavesAs && models[index].capability?.values.reasoning !== false
+          ? { behavesAs: previous.behavesAs, ...(entry.maxEffort === undefined && previous.maxEffort ? { maxEffort: previous.maxEffort } : {}) } : {});
         return { ...entry, ...controls, ...(entry.supports1m ? { prefer1m: typeof previous?.prefer1m === "boolean" ? previous.prefer1m : true } : {}) };
       });
       for (let index = 0; index < models.length; index++) {

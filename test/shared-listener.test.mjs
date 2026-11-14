@@ -15,8 +15,11 @@ test("one dispatcher separates catalogs, accounts once, retains local access gat
         content: [{ type: "text", text: "shared" }], stop_reason: "end_turn", usage: { input_tokens: 2, output_tokens: 1 } });
     } },
   } });
-  const client = { listModels: async () => ({ status: 200, body: JSON.stringify({ data: [{ id: "gpt-5.6-sol" }] }) }),
-    getCachedModelEndpoints: () => ["/responses"], responses: async () => Response.json({ id: "resp_shared", status: "completed", output: [] }) };
+  let modelCalls = 0, responseCalls = 0, compactCalls = 0;
+  const client = { listModels: async () => { modelCalls++;return { status: 200, body: JSON.stringify({ data: [{ id: "gpt-5.6-sol" }] }) }; },
+    getCachedModelEndpoints: () => ["/responses"], responses: async () => { responseCalls++;return Response.json({ id: "resp_shared", status: "completed", output: [] }); },
+    responsesCompact: async () => { compactCalls++;return Response.json({ id: "resp_compact_shared", object: "response.compaction",
+      output: [{ type: "compaction", encrypted_content: "fixture" }] }); } };
   const github = { id: "github", client, profileId: () => "codex" };let enabled = true;
   const runtime = { github, current: () => github, track() {}, historyContext: () => ({}), snapshot: () => ({}),
     dashboardProviders: () => [], dashboardCatalog: () => null,
@@ -43,4 +46,14 @@ test("one dispatcher separates catalogs, accounts once, retains local access gat
   enabled = false;assert.equal((await request("/anthropic/v1/models")).status, 503);
   assert.equal((await request("/v1/models")).status, 200);assert.equal((await request("/_ccdx/status")).status, 200);
   state = handler.snapshot();assert.equal(state.http_errors.by_category.inference >= 1, true);
+  const modelCallsBeforeRebinding = modelCalls, responseCallsBeforeRebinding = responseCalls, compactCallsBeforeRebinding = compactCalls;
+  assert.equal((await request("/v1/models", { headers: { host: "evil.example:2026" } })).status, 403);
+  assert.equal((await request("/v1/responses", { method: "POST", headers: { host: "evil.example:2026" },
+    body: { model: "gpt-5.6-sol", input: "synthetic" } })).status, 403);
+  assert.equal((await request("/v1/responses/compact", { method: "POST", headers: { host: "evil.example:2026" },
+    body: { model: "gpt-5.6-sol", input: "synthetic" } })).status, 403);
+  assert.equal((await request("/_ccdx/health", { headers: { host: "evil.example:2026" } })).status, 403);
+  assert.equal(modelCalls, modelCallsBeforeRebinding);
+  assert.equal(responseCalls, responseCallsBeforeRebinding);
+  assert.equal(compactCalls, compactCallsBeforeRebinding);
 });

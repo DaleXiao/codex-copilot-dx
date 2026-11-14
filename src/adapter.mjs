@@ -36,7 +36,7 @@ import {
 import { httpError } from "./http-errors.mjs";
 import { createRequestAdmission } from "./request-admission.mjs";
 import { PROVIDER_MANAGEMENT_PATH, handleProviderManagement } from "./provider-management.mjs";
-import { isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
+import { isAllowedAdapterHostHeader, isLanAllowed, isLoopbackAddress, isLoopbackHostHeader } from "./security.mjs";
 import { createContextCompactionService } from "./context-compaction.mjs";
 import { readClientGatewayKeys } from "./client-gateway-keys.mjs";
 
@@ -326,6 +326,15 @@ export function createAdapterHandler(options = {}) {
     return providerHandlers.get(provider);
   }
   const dispatch = async (req, res, pathname) => {
+    const statusRouteOwnsHostCheck = req.method === "GET" && pathname === ADAPTER_STATUS_PATH;
+    if (!statusRouteOwnsHostCheck && !isAllowedAdapterHostHeader(req.headers?.host, {
+      remoteAddress: req.socket?.remoteAddress,
+      localAddress: req.socket?.localAddress,
+      configuredHost: options.adapterHost,
+      allowLan: isLanAllowed(options.env),
+    })) {
+      sendJsonError(res, httpError("Adapter Host must identify a local interface", 403));return;
+    }
     if (options.isDraining?.() && ![ADAPTER_STATUS_PATH, ADAPTER_HEALTH_PATH].includes(pathname)) {
       res.setHeader("Retry-After", "1");sendJsonError(res, httpError("CCDX is switching versions; retry shortly", 503));return;
     }
@@ -595,7 +604,7 @@ export async function startAdapter(port = 2026, host = "127.0.0.1", options = {}
   const terminalActivity = ownsTerminalActivity
     ? createTerminalActivityIndicator({ theme: options.terminalAnimationTheme })
     : options.terminalActivity;
-  const handler = createAdapterHandler({ ...options, terminalActivity, imageMcpHostname: host });
+  const handler = createAdapterHandler({ ...options, adapterHost: host, terminalActivity, imageMcpHostname: host });
   const server = http.createServer(handler);
   server.ccdxSnapshot = handler.snapshot;
   server.ccdxSubscribeActivity = handler.subscribeActivity;
